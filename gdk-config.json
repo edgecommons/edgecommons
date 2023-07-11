@@ -1,0 +1,16 @@
+{
+  "component": {
+    "aws.proserve.greengrass.JavaComponentSkeleton": {
+      "author": "Marc Breissinger",
+      "version": "NEXT_PATCH",
+      "build": {
+        "build_system": "maven"
+      },
+      "publish": {
+        "bucket": "mbreissi-gg-component-dev",
+        "region": "us-east-1"
+      }
+    }
+  },
+  "gdk_version": "1.0.0"
+}

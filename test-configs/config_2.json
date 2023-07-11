@@ -1,0 +1,14 @@
+{
+  "logging": {
+    "level": "INFO",
+    "format": "%(asctime)s [%(levelname)s] %(filename)s %(funcName)s(%(lineno)d) [%(threadName)s]: %(message)s"
+  },
+  "component": {
+    "global": {
+      "publish_interval": 3,
+      "message": "Hello world config_2!"
+    },
+    "instances": [
+    ]
+  }
+}
