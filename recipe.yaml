@@ -28,7 +28,7 @@ ComponentConfiguration:
         instances: []
     accessControl:
       aws.greengrass.ipc.pubsub:
-        "ws.proserve.greengrass.python-component-skeleton:pubsub:1":
+        "aws.proserve.greengrass.PythonComponentSkeleton:pubsub:1":
           policyDescription: Allows access to publish/subscribe to all topics.
           operations:
             - "aws.greengrass#PublishToTopic"
@@ -36,7 +36,7 @@ ComponentConfiguration:
           resources:
             - "*"
       aws.greengrass.ShadowManager:
-        "com.aws.proserve.python-component-skeleton:shadow:1":
+        "aws.proserve.greengrass.PythonComponentSkeleton:shadow:1":
           policyDescription: Allows access to shadows.
           operations:
             - 'aws.greengrass#GetThingShadow'
