@@ -1,0 +1,28 @@
+{
+  "logging": {
+    "level": "INFO",
+    "format": "%(asctime)s [%(levelname)s] %(filename)s %(funcName)s(%(lineno)d) [%(threadName)s]: %(message)s"
+  },
+  "heartbeat": {
+    "topic": "heartbeat/{ThingName}/{ComponentName}",
+    "intervalSecs": 5,
+    "metric": {
+        "cpu": true,
+        "memory": true,
+        "disk": false
+    }
+  },
+  "source": {
+    "appId": "foo",
+    "site": "site1",
+    "shop": "shop1",
+    "line": "line1"
+  },
+  "component": {
+    "global": {
+      "publish_interval": 2
+    },
+    "instances": [
+    ]
+  }
+}

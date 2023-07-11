@@ -1,0 +1,37 @@
+import logging
+from abc import ABC
+from awsiot.greengrasscoreipc.clientv2 import GreengrassCoreIPCClientV2
+
+from ggcommons.config.manager.config_manager import ConfigManager
+
+logger = logging.getLogger("GreengrassConfigManager")
+
+class GreengrassConfigManager(ConfigManager, ABC):
+
+    def __init__(self, component_name: str, config_component_name: str, config_key: str):
+        super().__init__(component_name)
+        self._config_component_name = config_component_name
+        self._config_key = config_key if config_key is not None else "ComponentConfig"
+        self.init()
+
+    def _load_configuration(self) -> dict:
+        print(f"Loading Greengrass component configuration from component '{self._config_component_name}'")
+        ipc_client = GreengrassCoreIPCClientV2()
+        if self._config_component_name is None:
+            response = ipc_client.get_configuration()
+        else:
+            response = ipc_client.get_configuration(component_name=self._config_component_name)
+        print(f"Full configuration retrieved from Nucleus: {response.value}")
+        ret_val = None
+        if response.value is not None:
+            if self._config_key in response.value:
+                ret_val = response.value.get(self._config_key)
+                print(f"Component configuration retrieved: {ret_val}")
+            else:
+                print(f"Configuration not found in component '{self._config_component_name}' at key '{self._config_key}")
+                exit(5)
+        ipc_client.close()
+        return ret_val
+
+    def get_config_source(self) -> str:
+        return f"Greengrass config (component: {self._config_component_name}; key: {self._config_key})"
