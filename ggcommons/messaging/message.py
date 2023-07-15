@@ -62,7 +62,7 @@ class MessageHeader:
 
     def make_request(self, reply_to=None):
         if reply_to is None:
-            reply_to = '/' + str(uuid4())
+            reply_to = str(uuid4())
         self.reply_to = reply_to
 
 
