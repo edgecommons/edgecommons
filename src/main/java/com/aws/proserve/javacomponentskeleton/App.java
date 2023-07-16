@@ -11,6 +11,10 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.math.BigDecimal;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * Hello world!
@@ -34,11 +38,19 @@ public class App implements ConfigurationChangeListener
         LOGGER.info("Received message [{}]: {}", topic, message.toString());
     }
 
+    public void requestCallback(String topic, Message request)
+    {
+        LOGGER.info("Received request message [{}]: {}", topic, request.toString());
+        JsonObject replyPayload = new JsonObject();
+        replyPayload.put("reply_message", "I have received your request");
+        Message reply = Message.buildFromConfig("ReplyTest", "1.0", replyPayload, configManager);
+        LOGGER.info("Publishing reply message...");
+        MessagingClient.reply(request, reply);
+    }
+
     @Override
     public boolean onConfigurationChanged()
     {
-        // cycle through the clients and shut them down. then recreate them.
-
         LOGGER.info("Configuration changed. Applying change.");
         publishInterval = ((BigDecimal) configManager.getGlobalConfig().get("publish_interval")).intValue()*1000;
         return true;
@@ -52,8 +64,24 @@ public class App implements ConfigurationChangeListener
 
         MessagingClient.subscribe("testjava/message", App::callback);
         MessagingClient.subscribe("test/hello_world", App::callback);
+        MessagingClient.subscribe("test/request", this::requestCallback);
         String message = (String) configManager.getGlobalConfig().get("message");
         publishInterval = ((BigDecimal) configManager.getGlobalConfig().get("publish_interval")).intValue()*1000;
+
+        LOGGER.info("Publishing request message...");
+        JsonObject requestJson = new JsonObject();
+        requestJson.put("req_message", message);
+        Message request = Message.buildFromConfig("RequestTest", "1.0", requestJson, configManager);
+        try
+        {
+            Message reply = MessagingClient.request("test/request", request).get();
+            LOGGER.info("Received reply: {}", reply.toString());
+        }
+        catch (InterruptedException | ExecutionException e)
+        {
+            LOGGER.error("Error publishing request message: {}", e.getMessage());
+        }
+
         int i = 1;
         while (true)
         {
@@ -61,7 +89,7 @@ public class App implements ConfigurationChangeListener
             jsonPayload.put("index", i);
             jsonPayload.put("message", message);
             Message msg = Message.buildFromConfig("test", "1.0", jsonPayload, configManager);
-            MessagingClient.publish("testjava/message", msg);
+//            MessagingClient.publish("testjava/message", msg);
 
 //            Integer intPayload = i;
 //            msg = Message.buildFromConfig("test", "1.0", intPayload, configManager);

@@ -83,12 +83,13 @@ public class MessageHeader
         return Jsoner.serialize(toDict());
     }
 
-    public void makeRequest(String replyTo)
+    public String makeRequest(String replyTo)
     {
         if (replyTo == null)
             this.replyTo = UUID.randomUUID().toString();
         else
             this.replyTo = replyTo;
+        return this.replyTo;
     }
 
     public String getReplyTo() {
@@ -99,5 +100,10 @@ public class MessageHeader
         if (correlationId == null)
             correlationId = UUID.randomUUID().toString();
         return correlationId;
+    }
+
+    public void setCorrelationId(String correlationId)
+    {
+        this.correlationId = correlationId;
     }
 }

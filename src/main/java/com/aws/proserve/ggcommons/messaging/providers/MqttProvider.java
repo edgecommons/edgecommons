@@ -10,6 +10,8 @@ import org.eclipse.paho.client.mqttv3.*;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Future;
 import java.util.function.BiConsumer;
 
 public class MqttProvider extends MessagingProvider
@@ -19,10 +21,10 @@ public class MqttProvider extends MessagingProvider
     String host;
     int port;
     MqttClient mqttClient;
+    HashMap<String, CompletableFuture<Message>> responseFutures = new HashMap<>();
 
     private class EventCallback implements MqttCallback
     {
-
         MqttProvider provider;
 
         public EventCallback(MqttProvider mqttProvider)
@@ -33,6 +35,7 @@ public class MqttProvider extends MessagingProvider
         @Override
         public void connectionLost(Throwable cause)
         {
+            // TODO: attempt reconnect here
             LOGGER.error("Connection to MQTT broker lost - {}", cause.toString());
         }
 
@@ -42,21 +45,23 @@ public class MqttProvider extends MessagingProvider
             Message msg;
             LOGGER.trace("Message received on topic '{}'", topic);
             String msgChars = new String(message.getPayload(), StandardCharsets.UTF_8);
-            try
-            {
+            try {
                 msg = Message.build(Jsoner.deserialize(msgChars));
-            }
-            catch (Exception e)
-            {
+            } catch (Exception e) {
                 msg = Message.build(msgChars);
             }
 
-            for (Map.Entry<String, BiConsumer<String, Message>> entry : provider.subscriptionHandlers.entrySet())
-            {
-                if (MessagingProvider.topicMatchesFilter(entry.getKey(), topic))
-                {
-                    entry.getValue().accept(topic, msg);
-                    break;
+            if (responseFutures.containsKey(topic)) {
+                CompletableFuture<Message> future = responseFutures.get(topic);
+                future.complete(msg);
+                responseFutures.remove(topic);
+                unsubscribe(topic);
+            } else {
+                for (Map.Entry<String, BiConsumer<String, Message>> entry : provider.subscriptionHandlers.entrySet()) {
+                    if (MessagingProvider.topicMatchesFilter(entry.getKey(), topic)) {
+                        entry.getValue().accept(topic, msg);
+                        break;
+                    }
                 }
             }
         }
@@ -130,5 +135,23 @@ public class MqttProvider extends MessagingProvider
         {
             LOGGER.warn("Problem unsubscribing from '{}'", topicFilter);
         }
+    }
+
+    @Override
+    public CompletableFuture<Message> request(String topic, Message message)
+    {
+        String replyTo = message.makeRequest();
+        CompletableFuture<Message> future = new CompletableFuture<>();
+        responseFutures.put(replyTo, future);
+        subscribe(replyTo, null);
+        publish(topic, message);
+        return future;
+    }
+
+    @Override
+    public void reply(Message request, Message reply)
+    {
+        reply.setCorrelationId(request.getHeader().getCorrelationId());
+        publish(request.getHeader().getReplyTo(), reply);
     }
 }

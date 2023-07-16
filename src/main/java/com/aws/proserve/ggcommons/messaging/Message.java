@@ -78,19 +78,27 @@ public class Message
         return raw;
     }
 
-    public void makeRequest()
+    public String makeRequest()
     {
-        makeRequest(null);
+        return makeRequest(null);
     }
 
-    public void makeRequest(String replyTo)
+    public String makeRequest(String replyTo)
     {
         if (header == null)
         {
             header = new MessageHeader("None", "None", "0.1");
             LOGGER.warn("Attempting to make request from message with no header");
         }
-        header.makeRequest(replyTo);
+        return header.makeRequest(replyTo);
+    }
+
+    public void setCorrelationId(String correlationId)
+    {
+        if (header == null)
+            header = new MessageHeader("None", "None", correlationId);
+        else
+            header.setCorrelationId(correlationId);
     }
 
     public static Message buildFromConfig(String name, String version, Object payload,
@@ -165,8 +173,4 @@ public class Message
         return retVal;
     }
 
-    public static Message buildResponse(String name, String version, Object payload, ConfigManager configManager, Message requestMsg)
-    {
-        return Message.buildFromConfig(name, version, payload, configManager, requestMsg.getCorrelationId());
-    }
 }

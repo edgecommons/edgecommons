@@ -6,6 +6,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.BiConsumer;
 
 public class MessagingClient
@@ -44,15 +45,15 @@ public class MessagingClient
         LOGGER.debug("Subscribed to IPC messages on topic filter {}", topicFilter);
     }
 
+    public static CompletableFuture<Message> request(String topic, Message request)
+    {
+        return messagingProvider.request(topic, request);
+    }
+
     public static void reply(Message request, Message reply)
     {
-        MessageHeader header = request.getHeader();
-        if (header != null && header.getReplyTo() != null) {
-            messagingProvider.publish(request.getHeader().getReplyTo(), reply);
-            LOGGER.debug("Published reply on topic '{}: {}", request.getHeader().getReplyTo(), reply.toString());
-        } else {
-            LOGGER.warn("Missing header and/or 'reply_to' field in request message.  Unable to publish reply: {}", reply.toString());
-        }
+        messagingProvider.reply(request, reply);
+        LOGGER.debug("Published reply on topic '{}: {}", request.getHeader().getReplyTo(), reply.toString());
     }
 
     public static void unsubscribe(String topicFilter)

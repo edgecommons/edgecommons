@@ -13,6 +13,7 @@ import software.amazon.awssdk.eventstreamrpc.StreamResponseHandler;
 
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.BiConsumer;
 
 public class GreengrassIpcProvider extends MessagingProvider
@@ -20,6 +21,8 @@ public class GreengrassIpcProvider extends MessagingProvider
     protected static final Logger LOGGER = LogManager.getLogger(GreengrassIpcProvider.class);
     GreengrassCoreIPCClientV2 ipcClient;
     HashMap<String, SubscribeToTopicResponseHandler> subscriptionStreams;
+
+    HashMap<String, CompletableFuture<Message>> responseFutures = new HashMap<>();
 
     final ReceiveMode receiveMode;
 
@@ -75,9 +78,11 @@ public class GreengrassIpcProvider extends MessagingProvider
         @Override
         public void onStreamClosed()
         {
+            // TODO: attempt to reconnect here
             LOGGER.info("IPC stream for subscription to topicFilter {} closed (unsubscribed)", topicFilter);
         }
     }
+
     public GreengrassIpcProvider(String[] messagingArgs, boolean receiveOwnMessages)
     {
         super(messagingArgs);
@@ -114,8 +119,6 @@ public class GreengrassIpcProvider extends MessagingProvider
         }
     }
 
-    // function that uses greengrass ipc client v2  to fetch a named shadow document
-
     @Override
     public void subscribe(String topicFilter, BiConsumer<String, Message> callback)
     {
@@ -143,5 +146,28 @@ public class GreengrassIpcProvider extends MessagingProvider
             subscriptionStreams.remove(topicFilter);
         }
         LOGGER.debug("Unsubscribed from IPC messages on topic filter {}", topicFilter);
+    }
+
+    @Override
+    public CompletableFuture<Message> request(String topic, Message message)
+    {
+        String replyTo = message.makeRequest();
+        CompletableFuture<Message> future = new CompletableFuture<>();
+        responseFutures.put(replyTo, future);
+        subscribe(replyTo, (t, m) -> {
+            CompletableFuture<Message> f = responseFutures.get(t);
+            future.complete(m);
+            responseFutures.remove(t);
+            unsubscribe(t);
+        });
+        publish(topic, message);
+        return future;
+    }
+
+    @Override
+    public void reply(Message request, Message reply)
+    {
+        reply.setCorrelationId(request.getHeader().getCorrelationId());
+        publish(request.getHeader().getReplyTo(), reply);
     }
 }

@@ -3,6 +3,7 @@ package com.aws.proserve.ggcommons.messaging;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.util.concurrent.CompletableFuture;
 import java.util.function.BiConsumer;
 
 public abstract class MessagingProvider
@@ -22,6 +23,9 @@ public abstract class MessagingProvider
 
     public abstract void unsubscribe(String topicFilter);
 
+    public abstract CompletableFuture<Message> request(String topic, Message message);
+
+    public abstract void reply(Message request, Message reply);
 
     // Copied from open source Paho MQTT Java client
     // (https://github.com/eclipse/paho.mqtt.java/blob/master/org.eclipse.paho.client.mqttv3/src/main/java/org/eclipse/paho/client/mqttv3/MqttTopic.java)
