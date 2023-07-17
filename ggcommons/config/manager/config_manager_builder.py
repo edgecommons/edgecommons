@@ -9,6 +9,7 @@ from ggcommons.config.manager.shadow_config_manager import ShadowConfigManager
 
 logger = logging.getLogger("ConfigManagerBuilder")
 
+
 class ConfigManagerBuilder:
 
     @staticmethod
@@ -31,6 +32,7 @@ class ConfigManagerBuilder:
             shadow_name = config_args[1] if len(config_args) > 1 else component_name
             config_manager = ShadowConfigManager(component_name, shadow_name)
         else:
-            logger.fatal(f"Unrecognized config source '{config_args[0]}'.  Valid values are 'FILE', 'ENV', 'SHADOW' and 'GG_CONFIG")
+            logger.fatal(f"Unrecognized config source '{config_args[0]}'.  "
+                         f"Valid values are 'FILE', 'ENV', 'SHADOW' and 'GG_CONFIG")
             exit(5)
         return config_manager

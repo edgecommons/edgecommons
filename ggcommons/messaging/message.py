@@ -38,7 +38,7 @@ class MessageHeader:
         uuid = src['uuid']
         correlation_id = src['correlation_id']
         reply_to = None
-        if reply_to in src:
+        if 'reply_to' in src:
             reply_to = src['reply_to']
         return MessageHeader(name, version,
                              timestamp=timestamp, correlation_id=correlation_id, uuid=uuid, reply_to=reply_to)
@@ -60,10 +60,14 @@ class MessageHeader:
     def dumps(self, indent=None) -> str:
         return json.dumps(self.to_dict(), indent=indent)
 
-    def make_request(self, reply_to=None):
+    def make_request(self, reply_to=None) -> str:
         if reply_to is None:
             reply_to = str(uuid4())
         self.reply_to = reply_to
+        return self.reply_to
+
+    def get_reply_to(self) -> str:
+        return self.reply_to
 
 
 class MessageSource:
@@ -134,11 +138,14 @@ class Message:
     def get_raw(self):
         return self.raw
 
-    def make_request(self, reply_to: str = None):
+    def make_request(self, reply_to: str = None) -> str:
         if self.header is None:
             self.header = MessageHeader("None", "None", "0.1")
             logger.warning(f"Attempting to make request from message with no header")
-        self.header.make_request(reply_to)
+        return self.header.make_request(reply_to)
+
+    def set_correlation_id(self, correlation_id: str):
+        self.get_header().correlation_id = correlation_id
 
 
 class MessageBuilder:

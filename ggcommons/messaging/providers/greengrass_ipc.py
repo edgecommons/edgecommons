@@ -1,4 +1,5 @@
 import logging
+from asyncio import Future
 from typing import Callable
 import json
 from ggcommons.messaging.messaging_client import MessagingProvider
@@ -63,6 +64,7 @@ class GreengrassIpcProvider(MessagingProvider):
         super().__init__()
         self._subscription_handlers = {}
         self._subscription_operations = {}
+        self._response_futures = {}
         self._receive_mode = 'RECEIVE_MESSAGES_FROM_OTHERS'
         if receive_own_messages:
             self._receive_mode = 'RECEIVE_ALL_MESSAGES'
@@ -86,7 +88,8 @@ class GreengrassIpcProvider(MessagingProvider):
             self._subscription_handlers[topic_filter] = handler
             logger.debug(f"Successfully subscribed to the topic filter: {topic_filter} on IPC channel")
         except UnauthorizedError:
-            logger.error(f"Unauthorized error while subscribing to topic fitler {topic_filter}. Ensure access control policy is "
+            logger.error(f"Unauthorized error while subscribing to topic fitler {topic_filter}. "
+                         f"Ensure access control policy is "
                          f"defined in the component configuration")
         except (ValueError, Exception) as error:
             logger.error(f"Unable to subscribe to topic filter ({topic_filter}): {error}")
@@ -98,3 +101,24 @@ class GreengrassIpcProvider(MessagingProvider):
             del self._subscription_handlers[topic_filter]
         else:
             logger.warning(f"Attempt to unsubscribe from unknown topic {topic_filter}")
+
+    def request(self, topic: str, msg: Message) -> Future:
+        reply_to = msg.make_request()
+        future = Future()
+        self._response_futures[reply_to] = future
+        self.subscribe(reply_to, self._on_reply_received)
+        self.publish(topic, msg)
+        return future
+
+    def reply(self, request: Message, reply: Message):
+        reply.set_correlation_id(request.get_correlation_id())
+        self.publish(request.get_header().get_reply_to(), reply)
+
+    def _on_reply_received(self, topic: str, reply: Message) -> None:
+        if topic in self._response_futures:
+            logger.info(f"Received reply message on topic: {topic}")
+            future = self._response_futures[topic]
+            del self._response_futures[topic]
+            self.unsubscribe(topic)
+            future.set_result(reply)
+

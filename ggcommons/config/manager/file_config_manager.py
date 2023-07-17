@@ -11,6 +11,7 @@ from ggcommons.config.manager.config_manager import ConfigManager
 
 logger = logging.getLogger("FileConfigManager")
 
+
 class FileConfigManager(ConfigManager, ABC):
 
     def __init__(self, component_name, config_file_path):

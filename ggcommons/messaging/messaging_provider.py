@@ -1,5 +1,6 @@
 import abc
 from abc import abstractmethod
+from asyncio import Future
 from typing import Callable
 from ggcommons.messaging.message import Message
 
@@ -19,6 +20,14 @@ class MessagingProvider(metaclass=abc.ABCMeta):
 
     @abstractmethod
     def unsubscribe(self, topic: str):
+        pass
+
+    @abstractmethod
+    def request(self, topic: str, msg: Message) -> Future:
+        pass
+
+    @abstractmethod
+    def reply(self, request_msg: Message, response_msg: Message):
         pass
 
     # Copied from open source Paho MQTT python client

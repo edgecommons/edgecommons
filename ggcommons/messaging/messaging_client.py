@@ -1,4 +1,6 @@
 import threading
+import time
+from asyncio import Future
 from typing import Callable, List
 import logging
 from ggcommons.messaging.message import Message
@@ -50,6 +52,16 @@ class MessagingClient:
     @staticmethod
     def unsubscribe(topic: str):
         MessagingClient._messaging_provider.unsubscribe(topic)
+
+    @staticmethod
+    def request(topic: str, msg: Message) -> Future:
+        future = MessagingClient._messaging_provider.request(topic, msg)
+        time.sleep(0.01)
+        return future
+
+    @staticmethod
+    def reply(request: Message, reply: Message):
+        MessagingClient._messaging_provider.reply(request, reply)
 
     @staticmethod
     def topic_matches_sub(sub: str, topic: str) -> bool:

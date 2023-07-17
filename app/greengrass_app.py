@@ -26,16 +26,31 @@ class GreengrassApp(ConfigurationChangeListener, ABC):
         self._publish_interval = global_config['publish_interval'] if 'publish_interval' in global_config else 5
 
     def hello_world_handler(self, topic: str, msg: Message):
-        logger.info(f"Received a hello world message on topic {topic}: {msg.dumps()}")
+        logger.info(f"Received a hello world message on topic {topic}: {msg.get_body()['message_num']}")
 
-    def run(self):
+    def request_callback(self, topic: str, request: Message):
+        logger.info(f"...Received request message [{topic}]: {request.dumps()}")
+        reply_payload = {'reply_message': "I have received your request and have replied with this message"}
+        reply = MessageBuilder.build_from_config("ReplyTest", "1.0", reply_payload, self._config_manager)
+        logger.info("Publishing reply message...")
+        MessagingClient.reply(request, reply)
+
+    async def run(self):
         i = 1
         try:
             MessagingClient.subscribe("test/hello_world", self.hello_world_handler)
+            MessagingClient.subscribe("test/python/request", self.request_callback)
+
+            logger.info("Publishing reqeust message...")
+            request_payload = {"req_message": "This is a request. I am expecting a reply"}
+            request = MessageBuilder.build_from_config("RequestTest", "1.0", request_payload, self._config_manager)
+            reply = await MessagingClient.request("test/python/request", request)
+            logger.info(f"...Received reply: {reply.dumps()}")
+
             while True:
                 test_message = MessageBuilder.build_from_config(name="hello_world",
                                                                 version="1.0.0",
-                                                                payload={"message_num" : i, "hello": "world!"},
+                                                                payload={"message_num": i, "hello": "world!"},
                                                                 config_manager=self._config_manager)
                 # logger.info(f"Publishing message {test_message.dumps()}")
                 MessagingClient.publish("test/hello_world", test_message)
