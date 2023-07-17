@@ -56,7 +56,7 @@ class MessagingClient:
     @staticmethod
     def request(topic: str, msg: Message) -> Future:
         future = MessagingClient._messaging_provider.request(topic, msg)
-        time.sleep(0.01)
+        time.sleep(0.05)
         return future
 
     @staticmethod

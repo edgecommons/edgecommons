@@ -52,7 +52,7 @@ class GreengrassApp(ConfigurationChangeListener, ABC):
                                                                 version="1.0.0",
                                                                 payload={"message_num": i, "hello": "world!"},
                                                                 config_manager=self._config_manager)
-                # logger.info(f"Publishing message {test_message.dumps()}")
+                logger.info(f"Publishing message {test_message.dumps()}")
                 MessagingClient.publish("test/hello_world", test_message)
                 i += 1
                 time.sleep(self._publish_interval)

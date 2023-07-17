@@ -58,4 +58,4 @@ Manifests:
         Setenv:
           CONFIG: "{configuration:/ComponentConfig}"
         Script: |-
-          python3 -u {artifacts:decompressedPath}/python-component-skeleton/main.py -c SHADOW
+          python3 -u {artifacts:decompressedPath}/python-component-skeleton/main.py

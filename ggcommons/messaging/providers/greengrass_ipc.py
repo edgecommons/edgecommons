@@ -122,3 +122,4 @@ class GreengrassIpcProvider(MessagingProvider):
             self.unsubscribe(topic)
             future.set_result(reply)
 
+
