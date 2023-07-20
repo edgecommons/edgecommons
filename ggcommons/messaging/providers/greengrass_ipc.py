@@ -1,5 +1,4 @@
 import logging
-from asyncio import Future
 from typing import Callable
 import json
 from ggcommons.messaging.messaging_client import MessagingProvider
@@ -12,6 +11,8 @@ from awsiot.greengrasscoreipc.model import (
     UnauthorizedError,
     BinaryMessage, IoTCoreMessage
 )
+
+from ggcommons.utils.iou import Iou
 
 logger = logging.getLogger("GreengrassIpcProvider")
 
@@ -64,7 +65,7 @@ class GreengrassIpcProvider(MessagingProvider):
         super().__init__()
         self._subscription_handlers = {}
         self._subscription_operations = {}
-        self._response_futures = {}
+        self._response_ious = {}
         self._receive_mode = 'RECEIVE_MESSAGES_FROM_OTHERS'
         if receive_own_messages:
             self._receive_mode = 'RECEIVE_ALL_MESSAGES'
@@ -102,24 +103,23 @@ class GreengrassIpcProvider(MessagingProvider):
         else:
             logger.warning(f"Attempt to unsubscribe from unknown topic {topic_filter}")
 
-    def request(self, topic: str, msg: Message) -> Future:
+    def request(self, topic: str, msg: Message) -> Iou:
         reply_to = msg.make_request()
-        future = Future()
-        self._response_futures[reply_to] = future
+        iou = Iou()
+        self._response_ious[reply_to] = iou
         self.subscribe(reply_to, self._on_reply_received)
         self.publish(topic, msg)
-        return future
+        return iou
 
     def reply(self, request: Message, reply: Message):
         reply.set_correlation_id(request.get_correlation_id())
         self.publish(request.get_header().get_reply_to(), reply)
 
     def _on_reply_received(self, topic: str, reply: Message) -> None:
-        if topic in self._response_futures:
+        if topic in self._response_ious:
             logger.info(f"Received reply message on topic: {topic}")
-            future = self._response_futures[topic]
-            del self._response_futures[topic]
+            iou = self._response_ious[topic]
+            del self._response_ious[topic]
             self.unsubscribe(topic)
-            future.set_result(reply)
-
+            iou.set_result(reply)
 
