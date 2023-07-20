@@ -1,8 +1,8 @@
 import abc
 from abc import abstractmethod
-from asyncio import Future
 from typing import Callable
 from ggcommons.messaging.message import Message
+from ggcommons.utils.iou import Iou
 
 
 class MessagingProvider(metaclass=abc.ABCMeta):
@@ -23,7 +23,7 @@ class MessagingProvider(metaclass=abc.ABCMeta):
         pass
 
     @abstractmethod
-    def request(self, topic: str, msg: Message) -> Future:
+    def request(self, topic: str, msg: Message) -> Iou:
         pass
 
     @abstractmethod
@@ -95,4 +95,3 @@ class MessagingProvider(metaclass=abc.ABCMeta):
             result = False
 
         return result
-

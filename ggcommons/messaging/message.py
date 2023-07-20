@@ -156,7 +156,6 @@ class MessageBuilder:
         msg = Message()
         msg.header = MessageHeader(name, version, correlation_id=correlation_id)
         msg.source = MessageSource.from_config(config_manager)
-        msg.body = {}
         if isinstance(payload, str):
             try:
                 body_dict = json.loads(payload)

@@ -32,20 +32,29 @@ class GreengrassApp(ConfigurationChangeListener, ABC):
         logger.info(f"...Received request message [{topic}]: {request.dumps()}")
         reply_payload = {'reply_message': "I have received your request and have replied with this message"}
         reply = MessageBuilder.build_from_config("ReplyTest", "1.0", reply_payload, self._config_manager)
+        time.sleep(request.get_body()['wait_time'])
         logger.info("Publishing reply message...")
         MessagingClient.reply(request, reply)
 
-    async def run(self):
+    def publish_request(self, execution_time: float, time_out: float = -1):
+        logger.info("Publishing reqeust message...")
+        request_payload = {"wait_time": execution_time}
+        request = MessageBuilder.build_from_config("RequestTest", "1.0", request_payload, self._config_manager)
+        done, reply = MessagingClient.request("test/python/request", request).get(time_out)
+        if done is False:
+            logger.warning(f"Request timed out (took more than {time_out} seconds)")
+        else:
+            logger.info(f"...Received reply: {reply.dumps()}")
+
+    def run(self):
         i = 1
         try:
             MessagingClient.subscribe("test/hello_world", self.hello_world_handler)
             MessagingClient.subscribe("test/python/request", self.request_callback)
 
-            logger.info("Publishing reqeust message...")
-            request_payload = {"req_message": "This is a request. I am expecting a reply"}
-            request = MessageBuilder.build_from_config("RequestTest", "1.0", request_payload, self._config_manager)
-            reply = await MessagingClient.request("test/python/request", request)
-            logger.info(f"...Received reply: {reply.dumps()}")
+            self.publish_request(execution_time=0)
+            self.publish_request(execution_time=1, time_out=3)
+            self.publish_request(execution_time=5, time_out=3)
 
             while True:
                 test_message = MessageBuilder.build_from_config(name="hello_world",

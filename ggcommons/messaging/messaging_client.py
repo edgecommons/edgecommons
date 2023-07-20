@@ -8,6 +8,7 @@ from ggcommons.messaging.messaging_provider import MessagingProvider
 from ggcommons.messaging.providers.greengrass_ipc import GreengrassIpcProvider
 from ggcommons.messaging.providers.greengrass_ipc_threaded import GreengrassIpcThreadedProvider
 from ggcommons.messaging.providers.mqtt import MqttProvider
+from ggcommons.utils.iou import Iou
 
 logger = logging.getLogger("MessagingClient")
 
@@ -54,10 +55,12 @@ class MessagingClient:
         MessagingClient._messaging_provider.unsubscribe(topic)
 
     @staticmethod
-    def request(topic: str, msg: Message) -> Future:
-        future = MessagingClient._messaging_provider.request(topic, msg)
-        time.sleep(0.05)
-        return future
+    def request(topic: str, msg: Message) -> Iou:
+        return MessagingClient._messaging_provider.request(topic, msg)
+
+    @staticmethod
+    def get_reply(lock: threading.Lock) -> Message:
+        return MessagingClient._messaging_provider.get_response(lock)
 
     @staticmethod
     def reply(request: Message, reply: Message):

@@ -15,12 +15,13 @@ def init(component_name: str, arg_parser: argparse.ArgumentParser, use_threaded_
                         help="Messaging provider. One of: IPC, MQTT (default: %(default)s)")
     args = arg_parser.parse_args()
 
-    config_manager = ConfigManagerBuilder.build(args.config, component_name)
     logger = logging.getLogger("ggcommons")
-    logger.info(f"ggcommons: Configuration loaded from {config_manager.get_config_source()}")
 
     MessagingClient.init(args.messaging, use_threaded_ipc=use_threaded_ipc, receive_own_messages=receive_own_messages)
     logger.info("ggcommons: Messaging client initialized")
+
+    config_manager = ConfigManagerBuilder.build(args.config, component_name)
+    logger.info(f"ggcommons: Configuration loaded from {config_manager.get_config_source()}")
 
     Heartbeat(config_manager)
     logger.info("ggcommons: Heartbeat started")
