@@ -59,6 +59,10 @@ class MessagingClient:
         return MessagingClient._messaging_provider.request(topic, msg)
 
     @staticmethod
+    def cancel_request(iou: Iou) -> Iou:
+        return MessagingClient._messaging_provider.cancel_request(iou)
+
+    @staticmethod
     def get_reply(lock: threading.Lock) -> Message:
         return MessagingClient._messaging_provider.get_response(lock)
 

@@ -42,7 +42,8 @@ class GreengrassApp(ConfigurationChangeListener, ABC):
         request = MessageBuilder.build_from_config("RequestTest", "1.0", request_payload, self._config_manager)
         done, reply = MessagingClient.request("test/python/request", request).get(time_out)
         if done is False:
-            logger.warning(f"Request timed out (took more than {time_out} seconds)")
+            logger.warning(f"Request timed out (took more than {time_out} seconds). Cancelling.")
+            MessagingClient.cancel_request(reply)
         else:
             logger.info(f"...Received reply: {reply.dumps()}")
 

@@ -42,11 +42,6 @@ class MqttProvider(MessagingProvider):
             del self._response_ious[topic]
             self.unsubscribe(topic)
             iou.set_result(msg)
-            # lock = self._response_locks[topic]
-            # del self._response_locks[topic]
-            # self.unsubscribe(topic)
-            # self._responses[lock] = msg
-            # lock.release()
         else:
             for handler_spec in self._subscription_handlers:
                 if MessagingProvider.topic_matches_sub(handler_spec, topic):
@@ -73,11 +68,16 @@ class MqttProvider(MessagingProvider):
     # def request(self, topic: str, msg: Message) -> Lock:
     def request(self, topic: str, msg: Message) -> Iou:
         reply_to = msg.make_request()
-        iou = Iou()
+        iou = Iou(reply_to)
         self._response_ious[reply_to] = iou
         self.subscribe(reply_to, None)
         self.publish(topic, msg)
         return iou
+
+    def cancel_request(self, iou: Iou):
+        topic = iou.get_user_data()
+        self.unsubscribe(topic)
+        del self._response_ious[topic]
 
     def reply(self, request: Message, reply: Message):
         reply.set_correlation_id(request.get_correlation_id())

@@ -105,11 +105,16 @@ class GreengrassIpcProvider(MessagingProvider):
 
     def request(self, topic: str, msg: Message) -> Iou:
         reply_to = msg.make_request()
-        iou = Iou()
+        iou = Iou(reply_to)
         self._response_ious[reply_to] = iou
         self.subscribe(reply_to, self._on_reply_received)
         self.publish(topic, msg)
         return iou
+
+    def cancel_request(self, iou: Iou):
+        reply_to = iou.get_user_data()
+        self.unsubscribe(reply_to)
+        del self._response_ious[reply_to]
 
     def reply(self, request: Message, reply: Message):
         reply.set_correlation_id(request.get_correlation_id())
