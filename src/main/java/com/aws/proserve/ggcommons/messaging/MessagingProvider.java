@@ -23,7 +23,9 @@ public abstract class MessagingProvider
 
     public abstract void unsubscribe(String topicFilter);
 
-    public abstract CompletableFuture<Message> request(String topic, Message message);
+    public abstract ReplyFuture request(String topic, Message message);
+
+    public abstract void cancelRequest(ReplyFuture future);
 
     public abstract void reply(Message request, Message reply);
 

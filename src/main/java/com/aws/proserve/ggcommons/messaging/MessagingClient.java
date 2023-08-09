@@ -45,11 +45,15 @@ public class MessagingClient
         LOGGER.debug("Subscribed to IPC messages on topic filter {}", topicFilter);
     }
 
-    public static CompletableFuture<Message> request(String topic, Message request)
+    public static ReplyFuture request(String topic, Message request)
     {
         return messagingProvider.request(topic, request);
     }
 
+    public static void cancelRequest(ReplyFuture replyFuture)
+    {
+        messagingProvider.cancelRequest(replyFuture);
+    }
     public static void reply(Message request, Message reply)
     {
         messagingProvider.reply(request, reply);
@@ -66,4 +70,5 @@ public class MessagingClient
     {
         return MessagingProvider.topicMatchesFilter(topicFilter, topic);
     }
+
 }

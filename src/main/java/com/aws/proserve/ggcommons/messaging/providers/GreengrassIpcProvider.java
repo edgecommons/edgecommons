@@ -2,6 +2,7 @@ package com.aws.proserve.ggcommons.messaging.providers;
 
 import com.aws.proserve.ggcommons.messaging.Message;
 import com.aws.proserve.ggcommons.messaging.MessagingProvider;
+import com.aws.proserve.ggcommons.messaging.ReplyFuture;
 import com.github.cliftonlabs.json_simple.JsonObject;
 import com.github.cliftonlabs.json_simple.Jsoner;
 import org.apache.logging.log4j.LogManager;
@@ -22,7 +23,7 @@ public class GreengrassIpcProvider extends MessagingProvider
     GreengrassCoreIPCClientV2 ipcClient;
     HashMap<String, SubscribeToTopicResponseHandler> subscriptionStreams;
 
-    HashMap<String, CompletableFuture<Message>> responseFutures = new HashMap<>();
+    HashMap<String, ReplyFuture> responseFutures = new HashMap<>();
 
     final ReceiveMode receiveMode;
 
@@ -59,7 +60,7 @@ public class GreengrassIpcProvider extends MessagingProvider
                     receivedPayload = (JsonObject) Jsoner.deserialize(decodedBinaryPayload);
                     topic = subscriptionResponseMessage.getBinaryMessage().getContext().getTopic();
                 }
-                LOGGER.trace("Invoking callback");
+                LOGGER.trace("Invoking callback for topic '{}'", topic);
                 callback.accept(topic, Message.build(receivedPayload));
             }
             catch (Exception e)
@@ -149,19 +150,27 @@ public class GreengrassIpcProvider extends MessagingProvider
     }
 
     @Override
-    public CompletableFuture<Message> request(String topic, Message message)
+    public ReplyFuture request(String topic, Message message)
     {
         String replyTo = message.makeRequest();
-        CompletableFuture<Message> future = new CompletableFuture<>();
+        ReplyFuture future = new ReplyFuture(replyTo);
         responseFutures.put(replyTo, future);
         subscribe(replyTo, (t, m) -> {
-            CompletableFuture<Message> f = responseFutures.get(t);
-            future.complete(m);
-            responseFutures.remove(t);
+            ReplyFuture f = responseFutures.get(t);
+            f.complete(m);
             unsubscribe(t);
+            responseFutures.remove(t);
         });
         publish(topic, message);
         return future;
+    }
+
+    @Override
+    public void cancelRequest(ReplyFuture future)
+    {
+        unsubscribe(future.replyTopic);
+        responseFutures.remove(future.replyTopic);
+        future.complete(null);
     }
 
     @Override

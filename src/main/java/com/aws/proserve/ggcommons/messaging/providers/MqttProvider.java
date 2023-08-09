@@ -2,6 +2,7 @@ package com.aws.proserve.ggcommons.messaging.providers;
 
 import com.aws.proserve.ggcommons.messaging.Message;
 import com.aws.proserve.ggcommons.messaging.MessagingProvider;
+import com.aws.proserve.ggcommons.messaging.ReplyFuture;
 import com.github.cliftonlabs.json_simple.Jsoner;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -21,7 +22,7 @@ public class MqttProvider extends MessagingProvider
     String host;
     int port;
     MqttClient mqttClient;
-    HashMap<String, CompletableFuture<Message>> responseFutures = new HashMap<>();
+    HashMap<String, ReplyFuture> responseFutures = new HashMap<>();
 
     private class EventCallback implements MqttCallback
     {
@@ -52,14 +53,18 @@ public class MqttProvider extends MessagingProvider
             }
 
             if (responseFutures.containsKey(topic)) {
-                CompletableFuture<Message> future = responseFutures.get(topic);
+                ReplyFuture future = responseFutures.get(topic);
                 future.complete(msg);
                 responseFutures.remove(topic);
                 unsubscribe(topic);
             } else {
+                final Message msg2 = msg;
                 for (Map.Entry<String, BiConsumer<String, Message>> entry : provider.subscriptionHandlers.entrySet()) {
                     if (MessagingProvider.topicMatchesFilter(entry.getKey(), topic)) {
-                        entry.getValue().accept(topic, msg);
+                        CompletableFuture.runAsync(() -> {
+                            LOGGER.trace("Invoking callback for topic '{}'", topic);
+                            entry.getValue().accept(topic, msg2);
+                        });
                         break;
                     }
                 }
@@ -128,8 +133,8 @@ public class MqttProvider extends MessagingProvider
     {
         try
         {
-            subscriptionHandlers.remove(topicFilter);
             mqttClient.unsubscribe(topicFilter);
+            subscriptionHandlers.remove(topicFilter);
         }
         catch (Exception e)
         {
@@ -138,14 +143,22 @@ public class MqttProvider extends MessagingProvider
     }
 
     @Override
-    public CompletableFuture<Message> request(String topic, Message message)
+    public ReplyFuture request(String topic, Message message)
     {
         String replyTo = message.makeRequest();
-        CompletableFuture<Message> future = new CompletableFuture<>();
+        ReplyFuture future = new ReplyFuture(replyTo);
         responseFutures.put(replyTo, future);
         subscribe(replyTo, null);
         publish(topic, message);
         return future;
+    }
+
+    @Override
+    public void cancelRequest(ReplyFuture future)
+    {
+        unsubscribe(future.replyTopic);
+        responseFutures.remove(future.replyTopic);
+        future.complete(null);
     }
 
     @Override
