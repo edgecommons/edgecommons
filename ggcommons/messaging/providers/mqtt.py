@@ -1,5 +1,6 @@
 import json
 import logging
+from threading import Thread
 from typing import Callable
 from ggcommons.messaging.messaging_client import MessagingProvider
 from ggcommons.messaging.message import Message, MessageBuilder
@@ -45,7 +46,8 @@ class MqttProvider(MessagingProvider):
         else:
             for handler_spec in self._subscription_handlers:
                 if MessagingProvider.topic_matches_sub(handler_spec, topic):
-                    self._subscription_handlers[handler_spec](topic, msg)
+                    Thread(target=self._subscription_handlers[handler_spec], args=(topic, msg)).start()
+                    # self._subscription_handlers[handler_spec](topic, msg)
                     break
 
     def _on_connect(self, client, userdata, flags, rc):
