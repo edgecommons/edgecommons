@@ -28,7 +28,11 @@ public class HeartbeatConfiguration
         if (jsonConfig != null)
         {
             if (jsonConfig.containsKey("intervalSecs"))
+            {
                 intervalSecs = ((BigDecimal) jsonConfig.get("intervalSecs")).intValue();
+                if (intervalSecs < 1)
+                    intervalSecs = 5;
+            }
             if (jsonConfig.containsKey("metric"))
             {
                 JsonObject metricObj = (JsonObject) jsonConfig.get("metric");
