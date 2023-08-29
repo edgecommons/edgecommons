@@ -4,9 +4,9 @@ import com.aws.proserve.ggcommons.messaging.providers.GreengrassIpcProvider;
 import com.aws.proserve.ggcommons.messaging.providers.MqttProvider;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import software.amazon.awssdk.aws.greengrass.model.QOS;
 
 import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
 import java.util.function.BiConsumer;
 
 public class MessagingClient
@@ -39,10 +39,22 @@ public class MessagingClient
         LOGGER.debug("Published IPC message on topic '{}': {}", topic, msg.toString());
     }
 
+    public static void publishToIotCore(String topic, Message msg, QOS qos)
+    {
+        messagingProvider.publishToIoTCore(topic, msg,  qos);
+        LOGGER.debug("Published IoT Core message on topic '{}': {}", topic, msg.toString());
+    }
+
     public static void subscribe(String topicFilter, BiConsumer<String, Message> callback)
     {
         messagingProvider.subscribe(topicFilter, callback);
         LOGGER.debug("Subscribed to IPC messages on topic filter {}", topicFilter);
+    }
+
+    public static void subscribeToIoTCore(String topicFilter, BiConsumer<String, Message> callback, QOS qos)
+    {
+        messagingProvider.subscribeToIoTCore(topicFilter, callback, qos);
+        LOGGER.debug("Subscribed to IoT Core messages on topic filter {}", topicFilter);
     }
 
     public static ReplyFuture request(String topic, Message request)
@@ -63,6 +75,12 @@ public class MessagingClient
     public static void unsubscribe(String topicFilter)
     {
         messagingProvider.unsubscribe(topicFilter);
+        LOGGER.debug("Unsubscribed to IPC messages on topic filter {}", topicFilter);
+    }
+
+    public static void unsubscribeFromIoTCore(String topicFilter)
+    {
+        messagingProvider.unsubscribeFromIoTCore(topicFilter);
         LOGGER.debug("Unsubscribed to IPC messages on topic filter {}", topicFilter);
     }
 

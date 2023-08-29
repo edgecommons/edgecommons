@@ -32,11 +32,19 @@ ComponentConfiguration:
             instance_specific_tag: "dummy2"
     accessControl:
       aws.greengrass.ipc.pubsub:
-        "aws.proserve.greengrass.JavaComponentSkeleton:pubsub:1":
-          policyDescription: Allows access to publish/subscribe to all topics.
+        "aws.proserve.greengrass.JavaComponentSkeleton:ipc:1":
+          policyDescription: Allows access to publish/subscribe to all topics on IPC
           operations:
             - "aws.greengrass#PublishToTopic"
             - "aws.greengrass#SubscribeToTopic"
+          resources:
+            - "*"
+      aws.greengrass.ipc.mqttproxy:
+        "aws.proserve.greengrass.JavaComponentSkeleton:iotcore:1":
+          policyDescription: Allows access to publish/subscribe to all topics on IoT Core.
+          operations:
+            - "aws.greengrass#PublishToIoTCore"
+            - "aws.greengrass#SubscribeToIoTCore"
           resources:
             - "*"
       aws.greengrass.ShadowManager:

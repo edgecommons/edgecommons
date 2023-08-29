@@ -8,31 +8,73 @@ import com.github.cliftonlabs.json_simple.Jsoner;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import software.amazon.awssdk.aws.greengrass.GreengrassCoreIPCClientV2;
+import software.amazon.awssdk.aws.greengrass.SubscribeToIoTCoreResponseHandler;
 import software.amazon.awssdk.aws.greengrass.SubscribeToTopicResponseHandler;
 import software.amazon.awssdk.aws.greengrass.model.*;
 import software.amazon.awssdk.eventstreamrpc.StreamResponseHandler;
 
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
-import java.util.concurrent.CompletableFuture;
 import java.util.function.BiConsumer;
 
 public class GreengrassIpcProvider extends MessagingProvider
 {
     protected static final Logger LOGGER = LogManager.getLogger(GreengrassIpcProvider.class);
     GreengrassCoreIPCClientV2 ipcClient;
-    HashMap<String, SubscribeToTopicResponseHandler> subscriptionStreams;
+    HashMap<String, SubscribeToTopicResponseHandler> ipcSubscriptionStreams;
+    HashMap<String, SubscribeToIoTCoreResponseHandler> iotCoreSubscriptionStreams;
 
     HashMap<String, ReplyFuture> responseFutures = new HashMap<>();
 
     final ReceiveMode receiveMode;
 
-    private static class MessageHandler implements StreamResponseHandler<SubscriptionResponseMessage>
+    private static class IoTCoreMessageHandler implements StreamResponseHandler<IoTCoreMessage>
     {
         private final String topicFilter;
         private final BiConsumer<String, Message> callback;
 
-        public MessageHandler(String topicFilter, BiConsumer<String, Message> callback)
+        public IoTCoreMessageHandler(String topicFilter, BiConsumer<String, Message> callback)
+        {
+            this.topicFilter = topicFilter;
+            this.callback = callback;
+        }
+
+        @Override
+        public void onStreamEvent(IoTCoreMessage ioTCoreMessage)
+        {
+            LOGGER.debug("IoT Core Message received on subscription to topic filter '{}'", topicFilter);
+            String topic = ioTCoreMessage.getMessage().getTopicName();
+            MQTTMessage mqttMessage = ioTCoreMessage.getMessage();
+            String msgChars = new String(mqttMessage.getPayload(), StandardCharsets.UTF_8);
+            Message msg;
+            try {
+                msg = Message.build(Jsoner.deserialize(msgChars));
+            } catch (Exception e) {
+                msg = Message.build(msgChars);
+            }
+            callback.accept(topic, msg);
+        }
+
+        @Override
+        public boolean onStreamError(Throwable throwable)
+        {
+            LOGGER.error("Error on IoT Core stream for subscription to topicFilter {}: {}", topicFilter, throwable.toString());
+            return false;
+        }
+
+        @Override
+        public void onStreamClosed()
+        {
+            LOGGER.info("IoT Core stream for subscription to topicFilter {} closed (unsubscribed)", topicFilter);
+        }
+    }
+
+    private static class IpcMessageHandler implements StreamResponseHandler<SubscriptionResponseMessage>
+    {
+        private final String topicFilter;
+        private final BiConsumer<String, Message> callback;
+
+        public IpcMessageHandler(String topicFilter, BiConsumer<String, Message> callback)
         {
             this.topicFilter = topicFilter;
             this.callback = callback;
@@ -61,7 +103,7 @@ public class GreengrassIpcProvider extends MessagingProvider
                     topic = subscriptionResponseMessage.getBinaryMessage().getContext().getTopic();
                 }
                 LOGGER.trace("Invoking callback for topic '{}'", topic);
-                callback.accept(topic, Message.build(receivedPayload));
+                 callback.accept(topic, Message.build(receivedPayload));
             }
             catch (Exception e)
             {
@@ -91,7 +133,8 @@ public class GreengrassIpcProvider extends MessagingProvider
         try
         {
             ipcClient = GreengrassCoreIPCClientV2.builder().build();
-            subscriptionStreams = new HashMap<>();
+            ipcSubscriptionStreams = new HashMap<>();
+            iotCoreSubscriptionStreams = new HashMap<>();
         }
         catch (Exception e)
         {
@@ -105,14 +148,27 @@ public class GreengrassIpcProvider extends MessagingProvider
     {
         try
         {
-//            JsonMessage ipcMessage = new JsonMessage().withMessage(message.toDict());
-//            PublishMessage pubMessage = new PublishMessage().withJsonMessage(ipcMessage);
-//            PublishToTopicRequest pubRequest = new PublishToTopicRequest().withTopic(topic).withPublishMessage(pubMessage);
-//            ipcClient.publishToTopic(pubRequest);
             BinaryMessage ipcMessage = new BinaryMessage().withMessage(message.toString().getBytes(StandardCharsets.UTF_8));
             PublishMessage pubMessage = new PublishMessage().withBinaryMessage(ipcMessage);
             PublishToTopicRequest pubRequest = new PublishToTopicRequest().withTopic(topic).withPublishMessage(pubMessage);
             ipcClient.publishToTopic(pubRequest);
+        }
+        catch (InterruptedException e)
+        {
+            LOGGER.error("Failed to publish IPC message on topic {}", topic);
+        }
+    }
+
+    @Override
+    public void publishToIoTCore(String topic, Message message, QOS qos)
+    {
+        try
+        {
+            PublishToIoTCoreRequest pubRequest = new PublishToIoTCoreRequest()
+                    .withTopicName(topic)
+                    .withPayload(message.toString().getBytes(StandardCharsets.UTF_8))
+                    .withQos(qos);
+            ipcClient.publishToIoTCore(pubRequest);
         }
         catch (InterruptedException e)
         {
@@ -128,8 +184,8 @@ public class GreengrassIpcProvider extends MessagingProvider
             SubscribeToTopicRequest subRequest = new SubscribeToTopicRequest().withTopic(topicFilter).withReceiveMode(receiveMode);
             GreengrassCoreIPCClientV2.StreamingResponse<SubscribeToTopicResponse,
                     SubscribeToTopicResponseHandler> response =
-                    ipcClient.subscribeToTopic(subRequest, new MessageHandler(topicFilter, callback));
-            subscriptionStreams.put(topicFilter, response.getHandler());
+                    ipcClient.subscribeToTopic(subRequest, new IpcMessageHandler(topicFilter, callback));
+            ipcSubscriptionStreams.put(topicFilter, response.getHandler());
         }
         catch (Exception e)
         {
@@ -138,15 +194,46 @@ public class GreengrassIpcProvider extends MessagingProvider
     }
 
     @Override
+    public void subscribeToIoTCore(String topicFilter, BiConsumer<String, Message> callback, QOS qos)
+    {
+        try
+        {
+            SubscribeToIoTCoreRequest subRequest = new SubscribeToIoTCoreRequest()
+                    .withTopicName(topicFilter)
+                    .withQos(qos);
+            GreengrassCoreIPCClientV2.StreamingResponse<SubscribeToIoTCoreResponse,
+                    SubscribeToIoTCoreResponseHandler> response =
+                    ipcClient.subscribeToIoTCore(subRequest, new IoTCoreMessageHandler(topicFilter, callback));
+            iotCoreSubscriptionStreams.put(topicFilter, response.getHandler());
+        }
+        catch (Exception e)
+        {
+            LOGGER.error("Failed to subscribe to IoT Core messages on topic filter {}: {}", topicFilter, e);
+        }
+    }
+
+    @Override
     public void unsubscribe(String topicFilter)
     {
-        SubscribeToTopicResponseHandler responseHandler = subscriptionStreams.getOrDefault(topicFilter, null);
+        SubscribeToTopicResponseHandler responseHandler = ipcSubscriptionStreams.getOrDefault(topicFilter, null);
         if (responseHandler != null)
         {
             responseHandler.closeStream();
-            subscriptionStreams.remove(topicFilter);
+            ipcSubscriptionStreams.remove(topicFilter);
         }
         LOGGER.debug("Unsubscribed from IPC messages on topic filter {}", topicFilter);
+    }
+
+    @Override
+    public void unsubscribeFromIoTCore(String topicFilter)
+    {
+        SubscribeToIoTCoreResponseHandler responseHandler = iotCoreSubscriptionStreams.getOrDefault(topicFilter, null);
+        if (responseHandler != null)
+        {
+            responseHandler.closeStream();
+            iotCoreSubscriptionStreams.remove(topicFilter);
+        }
+        LOGGER.debug("Unsubscribed from IoT Core messages on topic filter {}", topicFilter);
     }
 
     @Override

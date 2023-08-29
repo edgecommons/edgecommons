@@ -2,8 +2,8 @@ package com.aws.proserve.ggcommons.messaging;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import software.amazon.awssdk.aws.greengrass.model.QOS;
 
-import java.util.concurrent.CompletableFuture;
 import java.util.function.BiConsumer;
 
 public abstract class MessagingProvider
@@ -18,15 +18,15 @@ public abstract class MessagingProvider
     }
 
     public abstract void publish(String topic, Message message);
-
+    public abstract void publishToIoTCore(String topic, Message message, QOS qos);
     public abstract void subscribe(String topicFilter, BiConsumer<String, Message> callback);
-
+    public abstract void subscribeToIoTCore(String topicFilter, BiConsumer<String, Message> callback, QOS qos);
     public abstract void unsubscribe(String topicFilter);
 
+    public abstract void unsubscribeFromIoTCore(String topicFilter);
+
     public abstract ReplyFuture request(String topic, Message message);
-
     public abstract void cancelRequest(ReplyFuture future);
-
     public abstract void reply(Message request, Message reply);
 
     // Copied from open source Paho MQTT Java client

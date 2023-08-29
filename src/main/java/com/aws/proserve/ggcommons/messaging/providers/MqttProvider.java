@@ -7,18 +7,19 @@ import com.github.cliftonlabs.json_simple.Jsoner;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.eclipse.paho.client.mqttv3.*;
+import software.amazon.awssdk.aws.greengrass.model.QOS;
 
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Future;
 import java.util.function.BiConsumer;
 
 public class MqttProvider extends MessagingProvider
 {
     protected static final Logger LOGGER = LogManager.getLogger(MqttProvider.class);
-    HashMap<String,BiConsumer<String,Message>> subscriptionHandlers = new HashMap<>();
+    HashMap<String,BiConsumer<String,Message>> ipcSubscriptionHandlers = new HashMap<>();
+    HashMap<String,BiConsumer<String,Message>> iotCoreSubscriptionHandlers = new HashMap<>();
     String host;
     int port;
     MqttClient mqttClient;
@@ -41,7 +42,7 @@ public class MqttProvider extends MessagingProvider
         }
 
         @Override
-        public void messageArrived(String topic, MqttMessage message) throws Exception
+        public void messageArrived(String topic, MqttMessage message)
         {
             Message msg;
             LOGGER.trace("Message received on topic '{}'", topic);
@@ -59,11 +60,21 @@ public class MqttProvider extends MessagingProvider
                 unsubscribe(topic);
             } else {
                 final Message msg2 = msg;
-                for (Map.Entry<String, BiConsumer<String, Message>> entry : provider.subscriptionHandlers.entrySet()) {
+                HashMap<String,BiConsumer<String,Message>> subscriptionHandlers;
+                if (topic.startsWith("iotcore/")) {
+                    subscriptionHandlers = provider.iotCoreSubscriptionHandlers;
+                } else {
+                    subscriptionHandlers = provider.ipcSubscriptionHandlers;
+                }
+                for (Map.Entry<String, BiConsumer<String, Message>> entry : subscriptionHandlers.entrySet()) {
                     if (MessagingProvider.topicMatchesFilter(entry.getKey(), topic)) {
                         CompletableFuture.runAsync(() -> {
                             LOGGER.trace("Invoking callback for topic '{}'", topic);
-                            entry.getValue().accept(topic, msg2);
+                            String adjustedTopic = topic;
+                            if (topic.startsWith("iotcore/")) {
+                                adjustedTopic = topic.substring(8);
+                            }
+                            entry.getValue().accept(adjustedTopic, msg2);
                         });
                         break;
                     }
@@ -100,12 +111,12 @@ public class MqttProvider extends MessagingProvider
         }
     }
 
-    @Override
-    public void publish(String topic, Message message)
-    {
+    private void internalPublish(String topic, Message message, QOS qos) {
         try
         {
-            mqttClient.publish(topic, new MqttMessage(message.toString().getBytes()));
+            MqttMessage msg = new MqttMessage(message.toString().getBytes());
+            msg.setQos(qos.ordinal());
+            mqttClient.publish(topic, msg);
         }
         catch (MqttException e)
         {
@@ -115,16 +126,44 @@ public class MqttProvider extends MessagingProvider
     }
 
     @Override
+    public void publish(String topic, Message message)
+    {
+        internalPublish(topic, message, QOS.AT_LEAST_ONCE);
+    }
+
+    @Override
+    public void publishToIoTCore(String topic, Message message, QOS qos)
+    {
+        String adjustedTopic = "iotcore/" + topic;
+        internalPublish(adjustedTopic, message, qos);
+    }
+
+    @Override
     public void subscribe(String topicFilter, BiConsumer<String, Message> callback)
     {
-        subscriptionHandlers.put(topicFilter, callback);
+        ipcSubscriptionHandlers.put(topicFilter, callback);
         try
         {
             mqttClient.subscribe(topicFilter);
         }
         catch (MqttException e)
         {
-            LOGGER.error("Failed to subscribe to topicFilter '{}' - {}", topicFilter, e.toString());
+            LOGGER.error("Failed to subscribe to topicFilter '{}' on (pseudo) IPC- {}", topicFilter, e.toString());
+        }
+    }
+
+    @Override
+    public void subscribeToIoTCore(String topicFilter, BiConsumer<String, Message> callback, QOS qos)
+    {
+        String adjustedTopicFilter = "iotcore/" + topicFilter;
+        iotCoreSubscriptionHandlers.put(adjustedTopicFilter, callback);
+        try
+        {
+            mqttClient.subscribe(adjustedTopicFilter);
+        }
+        catch (MqttException e)
+        {
+            LOGGER.error("Failed to subscribe to topicFilter '{}' on (pseudo) IoT Core - {}", adjustedTopicFilter, e.toString());
         }
     }
 
@@ -134,11 +173,27 @@ public class MqttProvider extends MessagingProvider
         try
         {
             mqttClient.unsubscribe(topicFilter);
-            subscriptionHandlers.remove(topicFilter);
+            ipcSubscriptionHandlers.remove(topicFilter);
         }
         catch (Exception e)
         {
-            LOGGER.warn("Problem unsubscribing from '{}'", topicFilter);
+            LOGGER.warn("Problem unsubscribing from '{}' on (pseudo) IPC", topicFilter);
+        }
+    }
+
+    @Override
+    public void unsubscribeFromIoTCore(String topicFilter)
+    {
+        String adjustedTopicFilter = "iotcore/" + topicFilter;
+
+        try
+        {
+            mqttClient.unsubscribe(adjustedTopicFilter);
+            iotCoreSubscriptionHandlers.remove(adjustedTopicFilter);
+        }
+        catch (Exception e)
+        {
+            LOGGER.warn("Problem unsubscribing from '{}' on (pseudo) IoT Core", adjustedTopicFilter);
         }
     }
 

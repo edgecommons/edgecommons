@@ -7,12 +7,11 @@ import com.github.cliftonlabs.json_simple.JsonObject;
 import com.aws.proserve.ggcommons.GGCommons;
 import com.aws.proserve.ggcommons.messaging.Message;
 import com.aws.proserve.ggcommons.messaging.MessagingClient;
-import com.aws.proserve.ggcommons.utils.Utils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import software.amazon.awssdk.aws.greengrass.model.QOS;
 
 import java.math.BigDecimal;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -35,10 +34,14 @@ public class App implements ConfigurationChangeListener
         new App(args);
     }
 
-    public static void callback(String topic, Message message)
+    public static void ipcCallback(String topic, Message message)
     {
-        Object body = message.getBody();
-        LOGGER.info("Received message [{}]: {}", topic, message.toString());
+        LOGGER.info("Received message from IPC [{}]: {}", topic, message.getCorrelationId());
+    }
+
+    public static void iotCoreCallback(String topic, Message message)
+    {
+        LOGGER.info("Received message from IoT Core [{}]: {}", topic, message.getCorrelationId());
     }
 
     public void requestCallback(String topic, Message request)
@@ -66,8 +69,11 @@ public class App implements ConfigurationChangeListener
         configManager = ggCommons.getConfigManager();
         configManager.addConfigChangeListener(this);
 
-        MessagingClient.subscribe("testjava/message", App::callback);
-        MessagingClient.subscribe("test/hello_world", App::callback);
+        String ipcTopic = "testjava/message";
+        String iotCoreTopic = "testjava/iotcore/message";
+
+        MessagingClient.subscribe(ipcTopic, App::ipcCallback);
+        MessagingClient.subscribeToIoTCore(iotCoreTopic, App::iotCoreCallback, QOS.AT_LEAST_ONCE);
         MessagingClient.subscribe("test/request", this::requestCallback);
         String message = (String) configManager.getGlobalConfig().get("message");
         publishInterval = ((BigDecimal) configManager.getGlobalConfig().get("publish_interval")).intValue()*1000;
@@ -99,21 +105,26 @@ public class App implements ConfigurationChangeListener
             JsonObject jsonPayload = new JsonObject();
             jsonPayload.put("index", i);
             jsonPayload.put("message", message);
-            Message msg = Message.buildFromConfig("test", "1.0", jsonPayload, configManager);
-            LOGGER.info("Publishing message: {}", msg.toString());
-            MessagingClient.publish("testjava/message", msg);
+
+            Message ipcMsg = Message.buildFromConfig("test", "1.0", jsonPayload, configManager);
+            LOGGER.info("Publishing message to IPC [{}]: {}", ipcTopic, ipcMsg.getCorrelationId());
+            MessagingClient.publish(ipcTopic, ipcMsg);
+
+            Message iotCoreMsg = Message.buildFromConfig("test", "1.0", jsonPayload, configManager);
+            LOGGER.info("Publishing message to IoT Core [{}]: {}", iotCoreTopic, iotCoreMsg.getCorrelationId());
+            MessagingClient.publishToIotCore(iotCoreTopic, iotCoreMsg, QOS.AT_LEAST_ONCE);
 
 //            Integer intPayload = i;
-//            msg = Message.buildFromConfig("test", "1.0", intPayload, configManager);
-//            MessagingClient.publish("testjava/message", msg);
+//            ipcMsg = Message.buildFromConfig("test", "1.0", intPayload, configManager);
+//            MessagingClient.publish("testjava/message", ipcMsg);
 //
 //            String strPayload = "Hello, I must be going";
-//            msg = Message.buildFromConfig("test", "1.0", strPayload, configManager);
-//            MessagingClient.publish("testjava/message", msg);
+//            ipcMsg = Message.buildFromConfig("test", "1.0", strPayload, configManager);
+//            MessagingClient.publish("testjava/message", ipcMsg);
 //
 //            String strJsonPayload = String.format("{\"index\":%d}", i);
-//            msg = Message.buildFromConfig("test", "1.0", strJsonPayload, configManager);
-//            MessagingClient.publish("testjava/message", msg);
+//            ipcMsg = Message.buildFromConfig("test", "1.0", strJsonPayload, configManager);
+//            MessagingClient.publish("testjava/message", ipcMsg);
 
             i++;
             sleep(publishInterval);
