@@ -35,6 +35,14 @@ ComponentConfiguration:
             - "aws.greengrass#SubscribeToTopic"
           resources:
             - "*"
+      aws.greengrass.ipc.mqttproxy:
+        "aws.proserve.greengrass.JavaComponentSkeleton:iotcore:1":
+          policyDescription: Allows access to publish/subscribe to all topics on IoT Core.
+          operations:
+            - "aws.greengrass#PublishToIoTCore"
+            - "aws.greengrass#SubscribeToIoTCore"
+          resources:
+            - "*"
       aws.greengrass.ShadowManager:
         "aws.proserve.greengrass.PythonComponentSkeleton:shadow:1":
           policyDescription: Allows access to shadows.

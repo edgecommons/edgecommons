@@ -3,7 +3,7 @@ from abc import abstractmethod
 from typing import Callable
 from ggcommons.messaging.message import Message
 from ggcommons.utils.iou import Iou
-
+from awsiot.greengrasscoreipc.model import QOS
 
 class MessagingProvider(metaclass=abc.ABCMeta):
 
@@ -15,11 +15,23 @@ class MessagingProvider(metaclass=abc.ABCMeta):
         pass
 
     @abstractmethod
+    def publish_to_iot_core(self, topic: str, msg: Message, qos: str):
+        pass
+
+    @abstractmethod
     def subscribe(self, topic: str, callback: Callable[[str, Message], None]):
         pass
 
     @abstractmethod
+    def subscribe_to_iot_core(self, topic: str, callback: Callable[[str, Message], None], qos: QOS):
+        pass
+
+    @abstractmethod
     def unsubscribe(self, topic: str):
+        pass
+
+    @abstractmethod
+    def unsubscribe_from_iot_core(self, topic: str):
         pass
 
     @abstractmethod

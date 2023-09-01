@@ -2,7 +2,7 @@ import logging
 import time
 from abc import ABC
 from argparse import Namespace
-
+from awsiot.greengrasscoreipc.model import QOS
 from ggcommons.config.manager.configuration_change_listener import ConfigurationChangeListener
 from ggcommons.config.manager.config_manager import ConfigManager
 from ggcommons.messaging.message import Message, MessageBuilder
@@ -28,8 +28,11 @@ class GreengrassApp(ConfigurationChangeListener, ABC):
         global_config = self._config_manager.get_global_config()
         self._publish_interval = global_config['publish_interval'] if 'publish_interval' in global_config else 5
 
-    def hello_world_handler(self, topic: str, msg: Message):
-        logger.info(f"Received a hello world message on topic {topic}: {msg.get_body()['message_num']}")
+    def ipc_hello_world_handler(self, topic: str, msg: Message):
+        logger.info(f"Received an ipc hello world message on topic {topic}: {msg.get_body()['id']}")
+
+    def iot_core_hello_world_handler(self, topic: str, msg: Message):
+        logger.info(f"Received an iot core hello world message on topic {topic}: {msg.get_body()['id']}")
 
     def request_callback(self, topic: str, request: Message):
         logger.info(f"Received request message [{topic}]: {request.get_body()['id']}")
@@ -43,13 +46,13 @@ class GreengrassApp(ConfigurationChangeListener, ABC):
         logger.info(f"Publishing reqeust message {id}")
         request_payload = {"id": id, "wait_time": execution_time}
         request = MessageBuilder.build_from_config("RequestTest", "1.0", request_payload, self._config_manager)
-        return MessagingClient.request("test/python/request", request)
+        return MessagingClient.request("ggcommons/test/python/request", request)
 
     def wait_for_reply(self, msg_instance: str, iou: Iou, timeout: float):
         logger.info(f"Waiting for reply for {msg_instance}")
         done, reply = iou.get(timeout)
         if done is False:
-            logger.warning(f"Request timed out (took more than {timeout} seconds). Cancelling.")
+            logger.warning(f"Reply for {msg_instance} timed out (took more than {timeout} seconds). Cancelling.")
             MessagingClient.cancel_request(reply)
         else:
             logger.info(f"...Received reply for {msg_instance}: {reply.dumps()}")
@@ -57,8 +60,9 @@ class GreengrassApp(ConfigurationChangeListener, ABC):
     def run(self):
         i = 1
         try:
-            MessagingClient.subscribe("test/hello_world", self.hello_world_handler)
-            MessagingClient.subscribe("test/python/request", self.request_callback)
+            MessagingClient.subscribe("ggcommons/test/python/hello_world", self.ipc_hello_world_handler)
+            MessagingClient.subscribe_to_iot_core("ggcommons/test/python/hello_world", self.iot_core_hello_world_handler, QOS.AT_LEAST_ONCE)
+            MessagingClient.subscribe("ggcommons/test/python/request", self.request_callback)
 
             iou_1 = self.publish_request(id="1", execution_time=0)
             iou_2 = self.publish_request(id="2", execution_time=1)
@@ -70,10 +74,12 @@ class GreengrassApp(ConfigurationChangeListener, ABC):
             while True:
                 test_message = MessageBuilder.build_from_config(name="hello_world",
                                                                 version="1.0.0",
-                                                                payload={"message_num": i, "hello": "world!"},
+                                                                payload={"id": i, "message": "Hello World Python"},
                                                                 config_manager=self._config_manager)
-                logger.info(f"Publishing message {test_message.dumps()}")
-                MessagingClient.publish("test/hello_world", test_message)
+                logger.info(f"Publishing message {i} to ipc")
+                MessagingClient.publish("ggcommons/test/python/hello_world", test_message)
+                logger.info(f"Publishing message {i} to iot core")
+                MessagingClient.publish_to_iot_core("ggcommons/test/python/hello_world", test_message, QOS.AT_LEAST_ONCE)
                 i += 1
                 time.sleep(self._publish_interval)
         except KeyboardInterrupt:

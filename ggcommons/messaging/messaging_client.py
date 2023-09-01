@@ -1,12 +1,9 @@
 import threading
-import time
-from asyncio import Future
 from typing import Callable, List
 import logging
 from ggcommons.messaging.message import Message
 from ggcommons.messaging.messaging_provider import MessagingProvider
 from ggcommons.messaging.providers.greengrass_ipc import GreengrassIpcProvider
-from ggcommons.messaging.providers.greengrass_ipc_threaded import GreengrassIpcThreadedProvider
 from ggcommons.messaging.providers.mqtt import MqttProvider
 from ggcommons.utils.iou import Iou
 
@@ -18,41 +15,42 @@ class MessagingClient:
     _messaging_provider = None
 
     @staticmethod
-    def init(messaging_args: List[str], use_threaded_ipc=False, receive_own_messages=False) -> MessagingProvider:
+    def init(messaging_args: List[str], receive_own_messages=False) -> MessagingProvider:
         if messaging_args[0].upper() == "MQTT":
             logger.info("Using MqttClient")
             host = messaging_args[1] if len(messaging_args) > 1 else "localhost"
             port = messaging_args[2] if len(messaging_args) > 2 else 1883
             MessagingClient._messaging_provider = MqttProvider(host, port)
         else:
-            if not use_threaded_ipc:
-                logger.info("Using Greengrass IPC.")
-                MessagingClient._messaging_provider = GreengrassIpcProvider(receive_own_messages)
-            else:
-                logger.info("Using Threaded Greengrass IPC.")
-                threading.Thread(target=MessagingClient.create_ipc_threaded_provider,
-                                 args=(receive_own_messages,),
-                                 daemon=True,
-                                 name="GGThreadedIpcProvider").start()
+            logger.info("Using Greengrass IPC.")
+            MessagingClient._messaging_provider = GreengrassIpcProvider(receive_own_messages)
         if MessagingClient._messaging_provider is None:
             logger.fatal("Unable to create messaging provider.  Terminating.")
         return MessagingClient._messaging_provider
-
-    @staticmethod
-    def create_ipc_threaded_provider(receive_own_messages: bool):
-        MessagingClient._messaging_provider = GreengrassIpcThreadedProvider(receive_own_messages)
 
     @staticmethod
     def publish(topic: str, msg: Message):
         MessagingClient._messaging_provider.publish(topic, msg)
 
     @staticmethod
+    def publish_to_iot_core(topic: str, msg: Message, qos: str):
+        MessagingClient._messaging_provider.publish_to_iot_core(topic, msg, qos)
+
+    @staticmethod
     def subscribe(topic: str, callback: Callable[[str, Message], None]):
         MessagingClient._messaging_provider.subscribe(topic, callback)
 
     @staticmethod
+    def subscribe_to_iot_core(topic: str, callback: Callable[[str, Message], None], qos: str):
+        MessagingClient._messaging_provider.subscribe_to_iot_core(topic, callback, qos)
+
+    @staticmethod
     def unsubscribe(topic: str):
         MessagingClient._messaging_provider.unsubscribe(topic)
+
+    @staticmethod
+    def unsubscribe_from_iot_core(topic: str):
+        MessagingClient._messaging_provider.unsubscribe_from_iot_core(topic)
 
     @staticmethod
     def request(topic: str, msg: Message) -> Iou:

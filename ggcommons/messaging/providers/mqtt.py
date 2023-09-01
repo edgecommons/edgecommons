@@ -2,9 +2,11 @@ import json
 import logging
 from threading import Thread
 from typing import Callable
+from awsiot.greengrasscoreipc.model import QOS
 from ggcommons.messaging.messaging_client import MessagingProvider
 from ggcommons.messaging.message import Message, MessageBuilder
 import paho.mqtt.client as mqtt
+import re
 
 import uuid
 
@@ -17,7 +19,8 @@ class MqttProvider(MessagingProvider):
 
     def __init__(self, host: str, port: int):
         super().__init__()
-        self._subscription_handlers = {}
+        self._ipc_subscription_handlers = {}
+        self._iot_core_subscription_handlers = {}
         self._response_ious = {}
         self._response_locks = {}
         self._responses = {}
@@ -44,10 +47,14 @@ class MqttProvider(MessagingProvider):
             self.unsubscribe(topic)
             iou.set_result(msg)
         else:
-            for handler_spec in self._subscription_handlers:
+            if topic.startswith("iotcore/"):
+                handlers = self._iot_core_subscription_handlers
+            else:
+                handlers = self._ipc_subscription_handlers
+            for handler_spec in handlers:
                 if MessagingProvider.topic_matches_sub(handler_spec, topic):
-                    Thread(target=self._subscription_handlers[handler_spec], args=(topic, msg)).start()
-                    # self._subscription_handlers[handler_spec](topic, msg)
+                    adjusted_topic = re.sub('^iotcore/', '', topic)
+                    Thread(target=handlers[handler_spec], args=(adjusted_topic, msg)).start()
                     break
 
     def _on_connect(self, client, userdata, flags, rc):
@@ -56,18 +63,38 @@ class MqttProvider(MessagingProvider):
     def _on_disconnect(self, client, userdata, rc):
         logger.error(f"Disconnected from MQTT broker at {self._host}:{self._port}")
 
+    def _internal_publish(self, topic: str, msg: Message, qos: str = QOS.AT_LEAST_ONCE):
+        if qos == QOS.AT_MOST_ONCE:
+            mqtt_qos = 0
+        else:
+            mqtt_qos = 1
+        self._mqtt_client.publish(topic, json.dumps(msg.to_dict()), mqtt_qos)
+
     def publish(self, topic: str, msg: Message):
-        self._mqtt_client.publish(topic, json.dumps(msg.to_dict()))
+        self._internal_publish(topic, msg)
+
+    def publish_to_iot_core(self, topic: str, msg: Message, qos: str):
+        adjusted_topic = f"iotcore/{topic}"
+        self._internal_publish(adjusted_topic, msg, qos)
 
     def subscribe(self, topic: str, callback: Callable[[str, Message], None]):
-        self._subscription_handlers[topic] = callback
+        self._ipc_subscription_handlers[topic] = callback
         self._mqtt_client.subscribe(topic)
+
+    def subscribe_to_iot_core(self, topic: str, callback: Callable[[str, Message], None], qos: str):
+        adjusted_topic = "iotcore/" + topic
+        self._iot_core_subscription_handlers[adjusted_topic] = callback
+        self._mqtt_client.subscribe(adjusted_topic)
 
     def unsubscribe(self, topic: str):
         self._mqtt_client.unsubscribe(topic)
-        del self._subscription_handlers[topic]
+        del self._ipc_subscription_handlers[topic]
 
-    # def request(self, topic: str, msg: Message) -> Lock:
+    def unsubscribe_from_iot_core(self, topic: str):
+        adjusted_topic = f"iotcore/{topic}"
+        self._mqtt_client.unsubscribe(adjusted_topic)
+        del self._iot_core_subscription_handlers[adjusted_topic]
+
     def request(self, topic: str, msg: Message) -> Iou:
         reply_to = msg.make_request()
         iou = Iou(reply_to)

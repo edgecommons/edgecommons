@@ -7,7 +7,7 @@ from ggcommons.heartbeat.heartbeat import Heartbeat
 from ggcommons.messaging.messaging_client import MessagingClient
 
 
-def init(component_name: str, arg_parser: argparse.ArgumentParser, use_threaded_ipc=False, receive_own_messages=False)\
+def init(component_name: str, arg_parser: argparse.ArgumentParser, receive_own_messages=False)\
         -> tuple[argparse.Namespace, ConfigManager]:
     arg_parser.add_argument("-c", "--config", nargs="*", type=str, default=["GG_CONFIG"],
                         help="Configuration source.  One of: ENV, GG_CONFIG, FILE, SHADOW (default: %(default)s)")
@@ -17,7 +17,7 @@ def init(component_name: str, arg_parser: argparse.ArgumentParser, use_threaded_
 
     logger = logging.getLogger("ggcommons")
 
-    MessagingClient.init(args.messaging, use_threaded_ipc=use_threaded_ipc, receive_own_messages=receive_own_messages)
+    MessagingClient.init(args.messaging, receive_own_messages=receive_own_messages)
     logger.info("ggcommons: Messaging client initialized")
 
     config_manager = ConfigManagerBuilder.build(args.config, component_name)
