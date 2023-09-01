@@ -27,39 +27,71 @@ public class App implements ConfigurationChangeListener
 
     GGCommons ggCommons;
     ConfigManager configManager;
+    static final String pubTopic = "ggcommons/test/java/hello_world";
+    static final String reqTopic = "ggcommons/test/java/request";
 
-    int publishInterval;
+    long publishInterval;
 
     public static void main(String[] args) {
         new App(args);
     }
 
-    public static void ipcCallback(String topic, Message message)
+    public static void ipcHelloWorldHandler(String topic, Message message)
     {
-        LOGGER.info("Received message from IPC [{}]: {}", topic, message.getCorrelationId());
+        LOGGER.info("Received an ipc hello world message on topic {}: {}", topic, ((JsonObject) message.getBody()).get("id"));
     }
 
-    public static void iotCoreCallback(String topic, Message message)
+    public static void iotCoreHelloWorldHandler(String topic, Message message)
     {
-        LOGGER.info("Received message from IoT Core [{}]: {}", topic, message.getCorrelationId());
+        LOGGER.info("Received an iot core hello world message on topic {}: {}", topic, ((JsonObject) message.getBody()).get("id"));
     }
 
-    public void requestCallback(String topic, Message request)
+    public void requestCallback(String topic, Message msg)
     {
-        LOGGER.info("Received request message [{}]: {}", topic, request.toString());
+        LOGGER.info("Received request message [{}]: {}", topic, ((JsonObject) msg.getBody()).get("id"));
         JsonObject replyPayload = new JsonObject();
-        replyPayload.put("reply_message", "I have received your request");
-        sleep(10000);
+        replyPayload.put("reply_message", "I have received your request and have replied with this message");
+        int waitTimeSecs =  ((BigDecimal) ((JsonObject) msg.getBody()).get("wait_time")).intValue();
+        sleep((long) waitTimeSecs*1000L);
         Message reply = Message.buildFromConfig("ReplyTest", "1.0", replyPayload, configManager);
-        LOGGER.info("Publishing reply message...");
-        MessagingClient.reply(request, reply);
+        LOGGER.info("Publishing reply message {}", ((JsonObject) msg.getBody()).get("id"));
+        MessagingClient.reply(msg, reply);
+    }
+
+    public ReplyFuture publishRequest(String id, float executionTime)
+    {
+        LOGGER.info("Publishing request message {}", id);
+        JsonObject requestPayload = new JsonObject();
+        requestPayload.put("id", id);
+        requestPayload.put("wait_time", executionTime);
+        Message request = Message.buildFromConfig("RequestTest", "1.0", requestPayload, configManager);
+        return MessagingClient.request(reqTopic, request);
+    }
+
+    public void waitForReply(String msgInstance, ReplyFuture iou, long timeout)
+    {
+        LOGGER.info("Waiting for reply for {}", msgInstance);
+        try
+        {
+            Message reply = iou.get(timeout*1000, TimeUnit.MILLISECONDS);
+            LOGGER.info("...Received reply for {}: {}", msgInstance, reply.toString());
+        }
+        catch (InterruptedException | ExecutionException e)
+        {
+            LOGGER.error("Error waiting for reply for {}: {}", msgInstance, e.getMessage());
+        }
+        catch (TimeoutException e)
+        {
+            LOGGER.warn("Reply for {} timed out (took more than {} seconds). Cancelling.", msgInstance, timeout);
+            MessagingClient.cancelRequest(iou);
+        }
     }
 
     @Override
     public boolean onConfigurationChanged()
     {
         LOGGER.info("Configuration changed. Applying change.");
-        publishInterval = ((BigDecimal) configManager.getGlobalConfig().get("publish_interval")).intValue()*1000;
+        publishInterval = ((BigDecimal) configManager.getGlobalConfig().get("publish_interval")).intValue()*1000L;
         return true;
     }
 
@@ -68,63 +100,31 @@ public class App implements ConfigurationChangeListener
         ggCommons = new GGCommons("GGComponentSkeleton", args);
         configManager = ggCommons.getConfigManager();
         configManager.addConfigChangeListener(this);
+        publishInterval = ((BigDecimal) configManager.getGlobalConfig().get("publish_interval")).intValue()*1000L;
 
-        String ipcTopic = "testjava/message";
-        String iotCoreTopic = "testjava/iotcore/message";
+        MessagingClient.subscribe(pubTopic, App::ipcHelloWorldHandler);
+        MessagingClient.subscribeToIoTCore(pubTopic, App::iotCoreHelloWorldHandler, QOS.AT_LEAST_ONCE);
+        MessagingClient.subscribe(reqTopic, this::requestCallback);
 
-        MessagingClient.subscribe(ipcTopic, App::ipcCallback);
-        MessagingClient.subscribeToIoTCore(iotCoreTopic, App::iotCoreCallback, QOS.AT_LEAST_ONCE);
-        MessagingClient.subscribe("test/request", this::requestCallback);
-        String message = (String) configManager.getGlobalConfig().get("message");
-        publishInterval = ((BigDecimal) configManager.getGlobalConfig().get("publish_interval")).intValue()*1000;
-
-        LOGGER.info("Publishing request message...");
-        JsonObject requestJson = new JsonObject();
-        requestJson.put("req_message", message);
-        Message request = Message.buildFromConfig("RequestTest", "1.0", requestJson, configManager);
-        ReplyFuture replyFuture = null;
-        try
-        {
-            replyFuture = MessagingClient.request("test/request", request);
-            Message reply = replyFuture.get(3000, TimeUnit.MILLISECONDS);
-            LOGGER.info("Received reply: {}", reply.toString());
-        }
-        catch (InterruptedException | ExecutionException e)
-        {
-            LOGGER.error("Error publishing request message: {}", e.getMessage());
-        }
-        catch (TimeoutException e)
-        {
-            LOGGER.warn("Timeout publishing request message.");
-            MessagingClient.cancelRequest(replyFuture);
-        }
+        ReplyFuture iou1 = publishRequest("iou_1", 0);
+        ReplyFuture iou2 = publishRequest("iou_2", 1);
+        ReplyFuture iou3 = publishRequest("iou_3", 5);
+        waitForReply("iou_1", iou1, 1);
+        waitForReply("iou_3", iou3, 3);
+        waitForReply("iou_2", iou2, 2);
 
         int i = 1;
         while (true)
         {
             JsonObject jsonPayload = new JsonObject();
-            jsonPayload.put("index", i);
-            jsonPayload.put("message", message);
+            jsonPayload.put("id", i);
+            jsonPayload.put("message", "Hello World Java");
 
-            Message ipcMsg = Message.buildFromConfig("test", "1.0", jsonPayload, configManager);
-            LOGGER.info("Publishing message to IPC [{}]: {}", ipcTopic, ipcMsg.getCorrelationId());
-            MessagingClient.publish(ipcTopic, ipcMsg);
-
-            Message iotCoreMsg = Message.buildFromConfig("test", "1.0", jsonPayload, configManager);
-            LOGGER.info("Publishing message to IoT Core [{}]: {}", iotCoreTopic, iotCoreMsg.getCorrelationId());
-            MessagingClient.publishToIotCore(iotCoreTopic, iotCoreMsg, QOS.AT_LEAST_ONCE);
-
-//            Integer intPayload = i;
-//            ipcMsg = Message.buildFromConfig("test", "1.0", intPayload, configManager);
-//            MessagingClient.publish("testjava/message", ipcMsg);
-//
-//            String strPayload = "Hello, I must be going";
-//            ipcMsg = Message.buildFromConfig("test", "1.0", strPayload, configManager);
-//            MessagingClient.publish("testjava/message", ipcMsg);
-//
-//            String strJsonPayload = String.format("{\"index\":%d}", i);
-//            ipcMsg = Message.buildFromConfig("test", "1.0", strJsonPayload, configManager);
-//            MessagingClient.publish("testjava/message", ipcMsg);
+            Message msg = Message.buildFromConfig("test", "1.0", jsonPayload, configManager);
+            LOGGER.info("Publishing message {} to ipc", i);
+            MessagingClient.publish(pubTopic, msg);
+            LOGGER.info("Publishing message {} to iot core", i);
+            MessagingClient.publishToIotCore(pubTopic, msg, QOS.AT_LEAST_ONCE);
 
             i++;
             sleep(publishInterval);
