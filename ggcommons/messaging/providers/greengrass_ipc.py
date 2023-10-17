@@ -169,7 +169,7 @@ class GreengrassIpcProvider(MessagingProvider):
 
     def _on_reply_received(self, topic: str, reply: Message) -> None:
         if topic in self._response_ious:
-            logger.info(f"Received reply message on topic: {topic}")
+            logger.debug(f"Received reply message on topic: {topic}")
             iou = self._response_ious[topic]
             del self._response_ious[topic]
             self.unsubscribe(topic)
