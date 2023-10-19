@@ -15,7 +15,7 @@ def main():
     args, config_manager = ggcommons.init(
         component_name="PythonComponentSkeleton",
         arg_parser=arg_parser,
-        receive_own_messages=True,
+        receive_own_messages=True
     )
     app = GreengrassApp(args=args, config_manager=config_manager)
     app.run()
