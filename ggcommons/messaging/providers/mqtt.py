@@ -17,7 +17,13 @@ logger = logging.getLogger("MqttProvider")
 
 
 class SubscriptionInfo:
-    def __init__(self, topic: str, msg_q: queue.Queue, callback: Callable[[str, Message], None], serialize=False):
+    def __init__(
+        self,
+        topic: str,
+        msg_q: queue.Queue,
+        callback: Callable[[str, Message], None],
+        serialize=False,
+    ):
         self.topic_filter = topic
         self.msg_q = msg_q
         self.callback = callback
@@ -60,7 +66,9 @@ class MqttProvider(MessagingProvider):
                 break
 
     def _queue_processor(self, subscription_info: SubscriptionInfo):
-        logger.debug(f"Starting queue monitoring for subscription on {subscription_info.topic_filter}")
+        logger.debug(
+            f"Starting queue monitoring for subscription on {subscription_info.topic_filter}"
+        )
         while True:
             queue_obj = subscription_info.msg_q.get()
             if type(queue_obj) == int and queue_obj == -1:
@@ -101,20 +109,33 @@ class MqttProvider(MessagingProvider):
         adjusted_topic = f"iotcore/{topic}"
         self._internal_publish(adjusted_topic, msg, qos)
 
-    def subscribe(self, topic_filter: str, callback: Callable[[str, Message], None], serialize_processing=False):
+    def subscribe(
+        self,
+        topic_filter: str,
+        callback: Callable[[str, Message], None],
+        serialize_processing=False,
+    ):
         if topic_filter not in self._ipc_subscription_info:
             logger.debug(f"Subscribing to topic filter: {topic_filter}")
-            sub_info = SubscriptionInfo(topic_filter, queue.Queue(), callback, serialize_processing)
+            sub_info = SubscriptionInfo(
+                topic_filter, queue.Queue(), callback, serialize_processing
+            )
             self._ipc_subscription_info[topic_filter] = sub_info
             self._mqtt_client.subscribe(topic_filter)
             Thread(target=self._queue_processor, args=(sub_info,)).start()
 
     def subscribe_to_iot_core(
-        self, topic_filter: str, callback: Callable[[str, Message], None], qos: str, serialize_processing=False
+        self,
+        topic_filter: str,
+        callback: Callable[[str, Message], None],
+        qos: str,
+        serialize_processing=False,
     ):
         adjusted_topic = "iotcore/" + topic_filter
         if adjusted_topic not in self._iot_core_subscription_info:
-            sub_info = SubscriptionInfo(adjusted_topic, queue.Queue(), callback, serialize_processing)
+            sub_info = SubscriptionInfo(
+                adjusted_topic, queue.Queue(), callback, serialize_processing
+            )
             self._iot_core_subscription_info[adjusted_topic] = sub_info
             self._mqtt_client.subscribe(adjusted_topic)
             Thread(target=self._queue_processor, args=(sub_info,)).start()

@@ -18,7 +18,7 @@ class IotCoreSubscriptionHandler(SubscriptionHandler):
     ):
         super().__init__(topic_filter, callback, serialize_processing)
 
-    def parse_raw_payload(self, event) -> (str,dict):
+    def parse_raw_payload(self, event) -> (str, dict):
         received_payload = json.loads(str(event.message.payload, "utf-8"))
         logger.debug(
             f"IoT Core: common: PubSubDataHandler: on_stream_event: subscribed message: {received_payload}"
