@@ -1,9 +1,11 @@
 import threading
-from typing import Callable, List
 import logging
+from typing import Callable, List
 from ggcommons.messaging.message import Message
 from ggcommons.messaging.messaging_provider import MessagingProvider
-from ggcommons.messaging.providers.greengrass_ipc import GreengrassIpcProvider
+from ggcommons.messaging.providers.greengrass.greengrass_ipc import (
+    GreengrassIpcProvider,
+)
 from ggcommons.messaging.providers.mqtt import MqttProvider
 from ggcommons.utils.iou import Iou
 
@@ -11,11 +13,12 @@ logger = logging.getLogger("MessagingClient")
 
 
 class MessagingClient:
-
     _messaging_provider = None
 
     @staticmethod
-    def init(messaging_args: List[str], receive_own_messages=False) -> MessagingProvider:
+    def init(
+        messaging_args: List[str], receive_own_messages=False
+    ) -> MessagingProvider:
         if messaging_args[0].upper() == "MQTT":
             logger.info("Using MqttClient")
             host = messaging_args[1] if len(messaging_args) > 1 else "localhost"
@@ -23,7 +26,9 @@ class MessagingClient:
             MessagingClient._messaging_provider = MqttProvider(host, port)
         else:
             logger.info("Using Greengrass IPC.")
-            MessagingClient._messaging_provider = GreengrassIpcProvider(receive_own_messages)
+            MessagingClient._messaging_provider = GreengrassIpcProvider(
+                receive_own_messages
+            )
         if MessagingClient._messaging_provider is None:
             logger.fatal("Unable to create messaging provider.  Terminating.")
         return MessagingClient._messaging_provider
@@ -37,12 +42,25 @@ class MessagingClient:
         MessagingClient._messaging_provider.publish_to_iot_core(topic, msg, qos)
 
     @staticmethod
-    def subscribe(topic: str, callback: Callable[[str, Message], None]):
-        MessagingClient._messaging_provider.subscribe(topic, callback)
+    def subscribe(
+        topic: str,
+        callback: Callable[[str, Message], None],
+        serialize_processing: bool = False,
+    ):
+        MessagingClient._messaging_provider.subscribe(
+            topic, callback, serialize_processing
+        )
 
     @staticmethod
-    def subscribe_to_iot_core(topic: str, callback: Callable[[str, Message], None], qos: str):
-        MessagingClient._messaging_provider.subscribe_to_iot_core(topic, callback, qos)
+    def subscribe_to_iot_core(
+        topic: str,
+        callback: Callable[[str, Message], None],
+        qos: str,
+        serialize_processing: bool = False,
+    ):
+        MessagingClient._messaging_provider.subscribe_to_iot_core(
+            topic, callback, qos, serialize_processing
+        )
 
     @staticmethod
     def unsubscribe(topic: str):

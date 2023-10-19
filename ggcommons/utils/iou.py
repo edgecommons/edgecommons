@@ -6,7 +6,6 @@ logger = logging.getLogger("iou")
 
 
 class Iou:
-
     def __init__(self, user_data: Any = None):
         self._lock = Lock()
         self._lock.acquire()

@@ -5,7 +5,6 @@ from ggcommons.config.heartbeat_config import HeartbeatConfiguration
 
 
 class HeartbeatMonitor:
-
     def __init__(self, hb_config: HeartbeatConfiguration):
         self._config = hb_config
         self._pid = None
@@ -23,7 +22,7 @@ class HeartbeatMonitor:
         if self._config.include_cpu():
             cpu = {}
             usage = self.proc_info.cpu_percent()
-            cpu['cpu_usage(%)'] = usage
+            cpu["cpu_usage(%)"] = usage
         return cpu
 
     def memory_usage(self):
@@ -31,17 +30,13 @@ class HeartbeatMonitor:
         if self._config.include_memory():
             memory = {}
             usage = self.proc_info.memory_info().rss / 1000000
-            memory['memory_usage(MB)'] = usage
+            memory["memory_usage(MB)"] = usage
         return memory
 
     @staticmethod
     def __get_disk_usage():
-        usage = shutil.disk_usage('..')
-        usage = {
-            'total': usage[0],
-            'used': usage[1],
-            'free': usage[2]
-        }
+        usage = shutil.disk_usage("..")
+        usage = {"total": usage[0], "used": usage[1], "free": usage[2]}
         return usage
 
     def disk_usage(self):
@@ -49,13 +44,13 @@ class HeartbeatMonitor:
         if self._config.include_disk():
             disk = {}
             disk_usage = HeartbeatMonitor.__get_disk_usage()
-            total = disk_usage['total'] / 1000000000
-            used = disk_usage['used'] / 1000000000
-            free = disk_usage['free'] / 1000000000
+            total = disk_usage["total"] / 1000000000
+            used = disk_usage["used"] / 1000000000
+            free = disk_usage["free"] / 1000000000
 
-            disk['total(GB)'] = total
-            disk['used(GB)'] = used
-            disk['free(GB)'] = free
+            disk["total(GB)"] = total
+            disk["used(GB)"] = used
+            disk["free(GB)"] = free
         return disk
 
 

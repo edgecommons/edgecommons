@@ -9,23 +9,22 @@ import logging
 
 
 class LoggingConfiguration:
-
     _default_level = logging.INFO
-    _default_format = '%(asctime)s - %(levelname)s - %(module)s - %(funcName)s(%(lineno)d): %(message)s'
+    _default_format = "%(asctime)s - %(levelname)s - %(module)s - %(funcName)s(%(lineno)d): %(message)s"
 
     def __init__(self, logging_json):
         self._level = self._default_level
-        if logging_json is not None and 'level' in logging_json:
-            self._level = logging.getLevelName(logging_json['level'])
+        if logging_json is not None and "level" in logging_json:
+            self._level = logging.getLevelName(logging_json["level"])
 
         self._format = self._default_format
-        if logging_json is not None and 'format' in logging_json:
-            self._format = logging_json['format']
+        if logging_json is not None and "format" in logging_json:
+            self._format = logging_json["format"]
 
     def to_dict(self):
         dict_rep = {
-            'level': logging.getLevelName(self.get_level()),
-            'format': self.get_format()
+            "level": logging.getLevelName(self.get_level()),
+            "format": self.get_format(),
         }
         return dict_rep
 

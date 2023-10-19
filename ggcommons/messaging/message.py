@@ -14,9 +14,15 @@ logger = logging.getLogger("Message")
 
 
 class MessageHeader:
-
-    def __init__(self, name: str, version: str,
-                 timestamp: str = None, correlation_id: str = None, uuid: str = None, reply_to: str = None):
+    def __init__(
+        self,
+        name: str,
+        version: str,
+        timestamp: str = None,
+        correlation_id: str = None,
+        uuid: str = None,
+        reply_to: str = None,
+    ):
         self.name = name
         self.version = version
         if timestamp is None:
@@ -32,28 +38,34 @@ class MessageHeader:
 
     @staticmethod
     def from_dict(src: dict):
-        name = src['name']
-        version = src['version']
-        timestamp = src['timestamp']
-        uuid = src['uuid']
-        correlation_id = src['correlation_id']
+        name = src["name"]
+        version = src["version"]
+        timestamp = src["timestamp"]
+        uuid = src["uuid"]
+        correlation_id = src["correlation_id"]
         reply_to = None
-        if 'reply_to' in src:
-            reply_to = src['reply_to']
-        return MessageHeader(name, version,
-                             timestamp=timestamp, correlation_id=correlation_id, uuid=uuid, reply_to=reply_to)
+        if "reply_to" in src:
+            reply_to = src["reply_to"]
+        return MessageHeader(
+            name,
+            version,
+            timestamp=timestamp,
+            correlation_id=correlation_id,
+            uuid=uuid,
+            reply_to=reply_to,
+        )
 
     def to_dict(self) -> dict:
         header = {
-            'name': self.name,
-            'version': self.version,
-            'timestamp': self.timestamp,
-            'uuid': self.uuid,
-            'correlation_id': self.correlation_id
+            "name": self.name,
+            "version": self.version,
+            "timestamp": self.timestamp,
+            "uuid": self.uuid,
+            "correlation_id": self.correlation_id,
         }
 
         if self.reply_to is not None:
-            header['reply_to'] = self.reply_to
+            header["reply_to"] = self.reply_to
 
         return header
 
@@ -86,13 +98,11 @@ class MessageSource:
 
     @staticmethod
     def from_dict(src: dict):
-        thing = src['thing']
+        thing = src["thing"]
         return MessageSource(thing, src)
 
     def to_dict(self) -> dict:
-        source = {
-            'thing': self._thing_name
-        }
+        source = {"thing": self._thing_name}
         for key, value in self._hierarchy.items():
             source[key] = value
         return source
@@ -102,7 +112,6 @@ class MessageSource:
 
 
 class Message:
-
     def __init__(self):
         self.header = None
         self.body = None
@@ -112,10 +121,10 @@ class Message:
 
     def to_dict(self) -> dict:
         if self.raw is None:
-            msg = {'header': self.header.to_dict()}
+            msg = {"header": self.header.to_dict()}
             if self.source is not None:
-                msg['source'] = self.source.to_dict()
-            msg['body'] = self.body
+                msg["source"] = self.source.to_dict()
+            msg["body"] = self.body
             return msg
         else:
             return self.raw
@@ -149,10 +158,14 @@ class Message:
 
 
 class MessageBuilder:
-
     @staticmethod
-    def build_from_config(name: str, version: str, payload,
-                          config_manager: ConfigManager, correlation_id: str = None) -> Message:
+    def build_from_config(
+        name: str,
+        version: str,
+        payload,
+        config_manager: ConfigManager,
+        correlation_id: str = None,
+    ) -> Message:
         msg = Message()
         msg.header = MessageHeader(name, version, correlation_id=correlation_id)
         msg.source = MessageSource.from_config(config_manager)
@@ -172,19 +185,34 @@ class MessageBuilder:
     def build(msg_contents, is_json: bool = True):
         ret_msg = Message()
         if is_json:
-            if 'header' in msg_contents:
-                ret_msg.header = MessageHeader.from_dict(msg_contents['header'])
-            if 'source' in msg_contents:
-                ret_msg.source = MessageSource.from_dict(msg_contents['source'])
-            if 'body' in msg_contents:
-                ret_msg.body = msg_contents['body']
-            if not ('header' in msg_contents and 'source' in msg_contents and 'body' in msg_contents):
+            if "header" in msg_contents:
+                ret_msg.header = MessageHeader.from_dict(msg_contents["header"])
+            if "source" in msg_contents:
+                ret_msg.source = MessageSource.from_dict(msg_contents["source"])
+            if "body" in msg_contents:
+                ret_msg.body = msg_contents["body"]
+            if not (
+                "header" in msg_contents
+                and "source" in msg_contents
+                and "body" in msg_contents
+            ):
                 ret_msg.raw = msg_contents
         else:
             ret_msg.raw = msg_contents
         return ret_msg
 
     @staticmethod
-    def build_response(name: str, version: str, payload, config_manager: ConfigManager, request_msg: Message):
-        return MessageBuilder.build_from_config(name, version, payload, config_manager,
-                                                correlation_id=request_msg.get_correlation_id())
+    def build_response(
+        name: str,
+        version: str,
+        payload,
+        config_manager: ConfigManager,
+        request_msg: Message,
+    ):
+        return MessageBuilder.build_from_config(
+            name,
+            version,
+            payload,
+            config_manager,
+            correlation_id=request_msg.get_correlation_id(),
+        )

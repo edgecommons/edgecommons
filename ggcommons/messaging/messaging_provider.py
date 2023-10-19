@@ -5,8 +5,8 @@ from ggcommons.messaging.message import Message
 from ggcommons.utils.iou import Iou
 from awsiot.greengrasscoreipc.model import QOS
 
-class MessagingProvider(metaclass=abc.ABCMeta):
 
+class MessagingProvider(metaclass=abc.ABCMeta):
     def __init__(self):
         pass
 
@@ -19,11 +19,22 @@ class MessagingProvider(metaclass=abc.ABCMeta):
         pass
 
     @abstractmethod
-    def subscribe(self, topic: str, callback: Callable[[str, Message], None]):
+    def subscribe(
+        self,
+        topic: str,
+        callback: Callable[[str, Message], None],
+        serialize_processing=False,
+    ):
         pass
 
     @abstractmethod
-    def subscribe_to_iot_core(self, topic: str, callback: Callable[[str, Message], None], qos: QOS):
+    def subscribe_to_iot_core(
+        self,
+        topic: str,
+        callback: Callable[[str, Message], None],
+        qos: QOS,
+        serialize_processing=False,
+    ):
         pass
 
     @abstractmethod
@@ -63,7 +74,9 @@ class MessagingProvider(metaclass=abc.ABCMeta):
         tlen = len(topic)
 
         if slen > 0 and tlen > 0:
-            if (sub[0] == '$' and topic[0] != '$') or (topic[0] == '$' and sub[0] != '$'):
+            if (sub[0] == "$" and topic[0] != "$") or (
+                topic[0] == "$" and sub[0] != "$"
+            ):
                 return False
 
         spos = 0
@@ -73,7 +86,11 @@ class MessagingProvider(metaclass=abc.ABCMeta):
             if sub[spos] == topic[tpos]:
                 if tpos == tlen - 1:
                     # Check for e.g. foo matching foo/#
-                    if spos == slen - 3 and sub[spos + 1] == '/' and sub[spos + 2] == '#':
+                    if (
+                        spos == slen - 3
+                        and sub[spos + 1] == "/"
+                        and sub[spos + 2] == "#"
+                    ):
                         result = True
                         multilevel_wildcard = True
                         break
@@ -81,20 +98,20 @@ class MessagingProvider(metaclass=abc.ABCMeta):
                 spos += 1
                 tpos += 1
 
-                if tpos == tlen and spos == slen - 1 and sub[spos] == '+':
+                if tpos == tlen and spos == slen - 1 and sub[spos] == "+":
                     spos += 1
                     result = True
                     break
             else:
-                if sub[spos] == '+':
+                if sub[spos] == "+":
                     spos += 1
-                    while tpos < tlen and topic[tpos] != '/':
+                    while tpos < tlen and topic[tpos] != "/":
                         tpos += 1
                     if tpos == tlen and spos == slen:
                         result = True
                         break
 
-                elif sub[spos] == '#':
+                elif sub[spos] == "#":
                     multilevel_wildcard = True
                     if spos + 1 != slen:
                         result = False

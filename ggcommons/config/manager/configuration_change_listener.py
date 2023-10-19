@@ -2,7 +2,6 @@ import abc
 
 
 class ConfigurationChangeListener(metaclass=abc.ABCMeta):
-
     def __init__(self):
         pass
 
