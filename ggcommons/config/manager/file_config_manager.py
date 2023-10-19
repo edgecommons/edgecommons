@@ -1,7 +1,8 @@
 import json
 import logging
 import os
-import time
+
+# import time
 from abc import ABC
 
 from watchdog.events import FileSystemEventHandler
@@ -13,15 +14,18 @@ logger = logging.getLogger("FileConfigManager")
 
 
 class FileConfigManager(ConfigManager, ABC):
-
     def __init__(self, component_name, config_file_path):
         super().__init__(component_name)
         self._config_file_path = config_file_path
         self.init()
         path_to_watch = os.path.dirname(os.path.abspath(self._config_file_path))
-        self._file_change_event_handler = ConfigFileChangeEventHandler(self, config_file_path)
+        self._file_change_event_handler = ConfigFileChangeEventHandler(
+            self, config_file_path
+        )
         self._observer = Observer()
-        self._observer.schedule(self._file_change_event_handler, path=path_to_watch, recursive=False)
+        self._observer.schedule(
+            self._file_change_event_handler, path=path_to_watch, recursive=False
+        )
         logger.info("Starting file change observer")
         self._observer.start()
 
@@ -38,7 +42,6 @@ class FileConfigManager(ConfigManager, ABC):
 
 
 class ConfigFileChangeEventHandler(FileSystemEventHandler):
-
     def __init__(self, file_config_manager: FileConfigManager, file_path: str):
         self._file_config_manager = file_config_manager
         self._file_path = file_path
@@ -51,7 +54,3 @@ class ConfigFileChangeEventHandler(FileSystemEventHandler):
             logger.debug(f"Config file {self._file_path} has been modified")
             new_config = self._file_config_manager._load_configuration()
             self._file_config_manager.configuration_changed(new_config)
-
-
-
-

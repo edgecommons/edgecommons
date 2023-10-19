@@ -1,7 +1,7 @@
 import json
 
-class SourceConfiguration:
 
+class SourceConfiguration:
     def __init__(self, source_json: dict = None):
         self._hierarchy = source_json if source_json is not None else {}
 
@@ -10,4 +10,3 @@ class SourceConfiguration:
 
     def __str__(self):
         return json.dumps(self.to_dict(), indent=2)
-

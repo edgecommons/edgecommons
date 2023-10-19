@@ -11,7 +11,6 @@ logger = logging.getLogger("ConfigManagerBuilder")
 
 
 class ConfigManagerBuilder:
-
     @staticmethod
     def build(config_args: List[str], component_name: str) -> ConfigManager:
         if config_args[0].upper() == "FILE":
@@ -26,13 +25,17 @@ class ConfigManagerBuilder:
             logger.info("GG_CONFIG specified. Using GreengrassConfigManager")
             config_component_name = config_args[1] if len(config_args) > 1 else None
             config_component_key = config_args[2] if len(config_args) > 2 else None
-            config_manager = GreengrassConfigManager(component_name, config_component_name, config_component_key)
+            config_manager = GreengrassConfigManager(
+                component_name, config_component_name, config_component_key
+            )
         elif config_args[0].upper() == "SHADOW":
             logger.info("SHADOW specified. Using ShadowConfigManager")
             shadow_name = config_args[1] if len(config_args) > 1 else component_name
             config_manager = ShadowConfigManager(component_name, shadow_name)
         else:
-            logger.fatal(f"Unrecognized config source '{config_args[0]}'.  "
-                         f"Valid values are 'FILE', 'ENV', 'SHADOW' and 'GG_CONFIG")
+            logger.fatal(
+                f"Unrecognized config source '{config_args[0]}'.  "
+                f"Valid values are 'FILE', 'ENV', 'SHADOW' and 'GG_CONFIG"
+            )
             exit(5)
         return config_manager

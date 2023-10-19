@@ -11,8 +11,7 @@ import json
 
 
 class HeartbeatConfiguration:
-
-    __DEFAULT_HEARTBEAT_TOPIC = 'heartbeat/{ThingName}/{ComponentName}'
+    __DEFAULT_HEARTBEAT_TOPIC = "heartbeat/{ThingName}/{ComponentName}"
     __DEFAULT_HEARTBEAT_INTERVAL_SECS = 5
 
     def __init__(self, heartbeat_json):
@@ -23,27 +22,27 @@ class HeartbeatConfiguration:
         self._include_disk = False
 
         if heartbeat_json is not None:
-            if 'intervalSecs' in heartbeat_json:
-                self._interval_secs = heartbeat_json['intervalSecs']
-            if 'topic' in heartbeat_json:
-                self._topic = heartbeat_json['topic']
-            if 'metric' in heartbeat_json:
-                if 'cpu' in heartbeat_json['metric']:
-                    self._include_cpu = heartbeat_json['metric']['cpu']
-                if 'memory' in heartbeat_json['metric']:
-                    self._include_memory = heartbeat_json['metric']['memory']
-                if 'disk' in heartbeat_json['metric']:
-                    self._include_disk = heartbeat_json['metric']['disk']
+            if "intervalSecs" in heartbeat_json:
+                self._interval_secs = heartbeat_json["intervalSecs"]
+            if "topic" in heartbeat_json:
+                self._topic = heartbeat_json["topic"]
+            if "metric" in heartbeat_json:
+                if "cpu" in heartbeat_json["metric"]:
+                    self._include_cpu = heartbeat_json["metric"]["cpu"]
+                if "memory" in heartbeat_json["metric"]:
+                    self._include_memory = heartbeat_json["metric"]["memory"]
+                if "disk" in heartbeat_json["metric"]:
+                    self._include_disk = heartbeat_json["metric"]["disk"]
 
     def to_dict(self):
         dict_rep = {
-            'topic': self._topic,
-            'intervalSecs': self._interval_secs,
-            'metric': {
-                'cpu': self.include_cpu(),
-                'memory': self.include_memory(),
-                'disk': self.include_disk()
-            }
+            "topic": self._topic,
+            "intervalSecs": self._interval_secs,
+            "metric": {
+                "cpu": self.include_cpu(),
+                "memory": self.include_memory(),
+                "disk": self.include_disk(),
+            },
         }
         return dict_rep
 
