@@ -11,6 +11,7 @@ ComponentConfiguration:
         level: "INFO"
         format: "%(asctime)s [%(levelname)s] %(filename)s %(funcName)s(%(lineno)d) [%(threadName)s]: %(message)s"
       heartbeat:
+        topic: "heartbeat/{ThingName}/{ComponentName}"
         intervalSecs: 5
         metric:
           cpu: true

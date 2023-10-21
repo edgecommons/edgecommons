@@ -19,8 +19,10 @@ public abstract class MessagingProvider
 
     public abstract void publish(String topic, Message message);
     public abstract void publishToIoTCore(String topic, Message message, QOS qos);
-    public abstract void subscribe(String topicFilter, BiConsumer<String, Message> callback);
-    public abstract void subscribeToIoTCore(String topicFilter, BiConsumer<String, Message> callback, QOS qos);
+    public abstract void subscribe(String topicFilter, BiConsumer<String, Message> callback,
+                                   boolean serializeProcessing);
+    public abstract void subscribeToIoTCore(String topicFilter, BiConsumer<String, Message> callback, QOS qos,
+                                            boolean serializeProcessing);
     public abstract void unsubscribe(String topicFilter);
 
     public abstract void unsubscribeFromIoTCore(String topicFilter);

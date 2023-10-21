@@ -1,18 +1,14 @@
-package com.aws.proserve.ggcommons.messaging.providers;
+package com.aws.proserve.ggcommons.messaging.providers.greengrass;
 
 import com.aws.proserve.ggcommons.messaging.Message;
 import com.aws.proserve.ggcommons.messaging.MessagingProvider;
 import com.aws.proserve.ggcommons.messaging.ReplyFuture;
-import com.github.cliftonlabs.json_simple.JsonObject;
-import com.github.cliftonlabs.json_simple.Jsoner;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import software.amazon.awssdk.aws.greengrass.GreengrassCoreIPCClientV2;
 import software.amazon.awssdk.aws.greengrass.SubscribeToIoTCoreResponseHandler;
 import software.amazon.awssdk.aws.greengrass.SubscribeToTopicResponseHandler;
 import software.amazon.awssdk.aws.greengrass.model.*;
-import software.amazon.awssdk.eventstreamrpc.StreamResponseHandler;
-
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.function.BiConsumer;
@@ -27,104 +23,6 @@ public class GreengrassIpcProvider extends MessagingProvider
     HashMap<String, ReplyFuture> responseFutures = new HashMap<>();
 
     final ReceiveMode receiveMode;
-
-    private static class IoTCoreMessageHandler implements StreamResponseHandler<IoTCoreMessage>
-    {
-        private final String topicFilter;
-        private final BiConsumer<String, Message> callback;
-
-        public IoTCoreMessageHandler(String topicFilter, BiConsumer<String, Message> callback)
-        {
-            this.topicFilter = topicFilter;
-            this.callback = callback;
-        }
-
-        @Override
-        public void onStreamEvent(IoTCoreMessage ioTCoreMessage)
-        {
-            LOGGER.debug("IoT Core Message received on subscription to topic filter '{}'", topicFilter);
-            String topic = ioTCoreMessage.getMessage().getTopicName();
-            MQTTMessage mqttMessage = ioTCoreMessage.getMessage();
-            String msgChars = new String(mqttMessage.getPayload(), StandardCharsets.UTF_8);
-            Message msg;
-            try {
-                msg = Message.build(Jsoner.deserialize(msgChars));
-            } catch (Exception e) {
-                msg = Message.build(msgChars);
-            }
-            callback.accept(topic, msg);
-        }
-
-        @Override
-        public boolean onStreamError(Throwable throwable)
-        {
-            LOGGER.error("Error on IoT Core stream for subscription to topicFilter {}: {}", topicFilter, throwable.toString());
-            return false;
-        }
-
-        @Override
-        public void onStreamClosed()
-        {
-            LOGGER.info("IoT Core stream for subscription to topicFilter {} closed (unsubscribed)", topicFilter);
-        }
-    }
-
-    private static class IpcMessageHandler implements StreamResponseHandler<SubscriptionResponseMessage>
-    {
-        private final String topicFilter;
-        private final BiConsumer<String, Message> callback;
-
-        public IpcMessageHandler(String topicFilter, BiConsumer<String, Message> callback)
-        {
-            this.topicFilter = topicFilter;
-            this.callback = callback;
-        }
-
-        @Override
-        public void onStreamEvent(SubscriptionResponseMessage subscriptionResponseMessage)
-        {
-            LOGGER.debug("IPC Message received on subscription to topic filter '{}'", topicFilter);
-            String topic;
-            try
-            {
-                JsonObject receivedPayload;
-                if (subscriptionResponseMessage.getJsonMessage() != null)
-                {
-                    receivedPayload = new JsonObject(subscriptionResponseMessage.getJsonMessage().getMessage());
-                    LOGGER.trace("Received json message: {} of type {}", receivedPayload.toJson(), receivedPayload.getClass().getSimpleName());
-                    topic = subscriptionResponseMessage.getJsonMessage().getContext().getTopic();
-                    LOGGER.trace("On topic {}", topic);
-                }
-                else
-                {
-                    String decodedBinaryPayload = new String(subscriptionResponseMessage.getBinaryMessage().getMessage(), StandardCharsets.UTF_8);
-                    LOGGER.trace("Received binary message: {}", decodedBinaryPayload);
-                    receivedPayload = (JsonObject) Jsoner.deserialize(decodedBinaryPayload);
-                    topic = subscriptionResponseMessage.getBinaryMessage().getContext().getTopic();
-                }
-                LOGGER.trace("Invoking callback for topic '{}'", topic);
-                 callback.accept(topic, Message.build(receivedPayload));
-            }
-            catch (Exception e)
-            {
-                LOGGER.error("Problem decoding IPC payload into Message on topic {}: {}", topicFilter, e.toString());
-            }
-        }
-
-        @Override
-        public boolean onStreamError(Throwable throwable)
-        {
-            LOGGER.error("Error on IPC stream for subscription to topicFilter {}: {}", topicFilter, throwable.toString());
-            return false;
-        }
-
-        @Override
-        public void onStreamClosed()
-        {
-            // TODO: attempt to reconnect here
-            LOGGER.info("IPC stream for subscription to topicFilter {} closed (unsubscribed)", topicFilter);
-        }
-    }
 
     public GreengrassIpcProvider(String[] messagingArgs, boolean receiveOwnMessages)
     {
@@ -177,14 +75,14 @@ public class GreengrassIpcProvider extends MessagingProvider
     }
 
     @Override
-    public void subscribe(String topicFilter, BiConsumer<String, Message> callback)
+    public void subscribe(String topicFilter, BiConsumer<String, Message> callback, boolean serializeProcessing)
     {
         try
         {
             SubscribeToTopicRequest subRequest = new SubscribeToTopicRequest().withTopic(topicFilter).withReceiveMode(receiveMode);
             GreengrassCoreIPCClientV2.StreamingResponse<SubscribeToTopicResponse,
                     SubscribeToTopicResponseHandler> response =
-                    ipcClient.subscribeToTopic(subRequest, new IpcMessageHandler(topicFilter, callback));
+                    ipcClient.subscribeToTopic(subRequest, new IpcSubscriptionHandler(topicFilter, callback, serializeProcessing));
             ipcSubscriptionStreams.put(topicFilter, response.getHandler());
         }
         catch (Exception e)
@@ -194,7 +92,8 @@ public class GreengrassIpcProvider extends MessagingProvider
     }
 
     @Override
-    public void subscribeToIoTCore(String topicFilter, BiConsumer<String, Message> callback, QOS qos)
+    public void subscribeToIoTCore(String topicFilter, BiConsumer<String, Message> callback, QOS qos,
+                                   boolean serializeProcessing)
     {
         try
         {
@@ -203,7 +102,7 @@ public class GreengrassIpcProvider extends MessagingProvider
                     .withQos(qos);
             GreengrassCoreIPCClientV2.StreamingResponse<SubscribeToIoTCoreResponse,
                     SubscribeToIoTCoreResponseHandler> response =
-                    ipcClient.subscribeToIoTCore(subRequest, new IoTCoreMessageHandler(topicFilter, callback));
+                    ipcClient.subscribeToIoTCore(subRequest, new IotCoreSubscriptionHandler(topicFilter, callback, serializeProcessing));
             iotCoreSubscriptionStreams.put(topicFilter, response.getHandler());
         }
         catch (Exception e)
@@ -247,7 +146,7 @@ public class GreengrassIpcProvider extends MessagingProvider
             f.complete(m);
             unsubscribe(t);
             responseFutures.remove(t);
-        });
+        }, false);
         publish(topic, message);
         return future;
     }

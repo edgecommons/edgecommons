@@ -1,6 +1,6 @@
 package com.aws.proserve.ggcommons.messaging;
 
-import com.aws.proserve.ggcommons.messaging.providers.GreengrassIpcProvider;
+import com.aws.proserve.ggcommons.messaging.providers.greengrass.GreengrassIpcProvider;
 import com.aws.proserve.ggcommons.messaging.providers.MqttProvider;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -47,13 +47,24 @@ public class MessagingClient
 
     public static void subscribe(String topicFilter, BiConsumer<String, Message> callback)
     {
-        messagingProvider.subscribe(topicFilter, callback);
+        subscribe(topicFilter, callback, false);
+    }
+    public static void subscribe(String topicFilter, BiConsumer<String, Message> callback,
+                                 boolean serializeProcessing)
+    {
+        messagingProvider.subscribe(topicFilter, callback, serializeProcessing);
         LOGGER.debug("Subscribed to IPC messages on topic filter {}", topicFilter);
     }
 
     public static void subscribeToIoTCore(String topicFilter, BiConsumer<String, Message> callback, QOS qos)
     {
-        messagingProvider.subscribeToIoTCore(topicFilter, callback, qos);
+        subscribeToIoTCore(topicFilter, callback, qos, false);
+    }
+
+    public static void subscribeToIoTCore(String topicFilter, BiConsumer<String, Message> callback, QOS qos,
+                                          boolean serializeProcessing)
+    {
+        messagingProvider.subscribeToIoTCore(topicFilter, callback, qos, serializeProcessing);
         LOGGER.debug("Subscribed to IoT Core messages on topic filter {}", topicFilter);
     }
 

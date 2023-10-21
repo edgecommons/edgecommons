@@ -97,22 +97,22 @@ public class App implements ConfigurationChangeListener
 
     public App(String[] args)
     {
-        ggCommons = new GGCommons("GGComponentSkeleton", args);
+        ggCommons = new GGCommons("JavaComponentSkeleton", args);
         configManager = ggCommons.getConfigManager();
         configManager.addConfigChangeListener(this);
         publishInterval = ((BigDecimal) configManager.getGlobalConfig().get("publish_interval")).intValue()*1000L;
 
-        MessagingClient.subscribe(pubTopic, App::ipcHelloWorldHandler);
-        MessagingClient.subscribeToIoTCore(pubTopic, App::iotCoreHelloWorldHandler, QOS.AT_LEAST_ONCE);
         MessagingClient.subscribe(reqTopic, this::requestCallback);
-
         ReplyFuture iou1 = publishRequest("iou_1", 0);
         ReplyFuture iou2 = publishRequest("iou_2", 1);
         ReplyFuture iou3 = publishRequest("iou_3", 5);
         waitForReply("iou_1", iou1, 1);
         waitForReply("iou_3", iou3, 3);
         waitForReply("iou_2", iou2, 2);
+        MessagingClient.unsubscribe(reqTopic);
 
+        MessagingClient.subscribe(pubTopic, App::ipcHelloWorldHandler);
+        MessagingClient.subscribeToIoTCore(pubTopic, App::iotCoreHelloWorldHandler, QOS.AT_LEAST_ONCE);
         int i = 1;
         while (true)
         {

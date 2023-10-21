@@ -4,6 +4,7 @@
     "format": "%d{yyyy-MM-dd HH:mm:ss} [%-5p] %-25.25c{1}(%4L): %m%n"
   },
   "heartbeat": {
+    "topic": "heartbeat/{ThingName}/{ComponentName}",
     "intervalSecs": 5,
     "metric": {
       "cpu": true,
