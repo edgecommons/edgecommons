@@ -80,14 +80,15 @@ class MqttProvider(MessagingProvider):
                 del self._response_ious[topic]
                 self.unsubscribe(topic)
                 iou.set_result(received_payload)
-            if subscription_info.serialize:
-                subscription_info.callback(topic, received_payload)
             else:
-                tmp_thread = Thread(
-                    target=subscription_info.callback,
-                    args=(topic, received_payload),
-                )
-                tmp_thread.start()
+                if subscription_info.serialize:
+                    subscription_info.callback(topic, received_payload)
+                else:
+                    tmp_thread = Thread(
+                        target=subscription_info.callback,
+                        args=(topic, received_payload),
+                    )
+                    tmp_thread.start()
 
     def _on_connect(self, client, userdata, flags, rc):
         logger.info(f"Connected to MQTT broker at {self._host}:{self._port}")

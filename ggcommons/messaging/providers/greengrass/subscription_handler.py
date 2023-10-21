@@ -59,12 +59,18 @@ class SubscriptionHandler(metaclass=abc.ABCMeta):
             f"Starting queue monitoring for subscription on topic {self._topic_filter}"
         )
         while True:
-            queue_obj = self._queue.get()
-            if type(queue_obj) == int and queue_obj == -1:
-                break
-            topic = queue_obj[0]
-            msg = MessageBuilder.build(queue_obj[1])
-            if self._serialize_processing:
-                self._callback_func(topic, msg)
-            else:
-                Thread(target=self._callback_func, args=(topic, msg)).start()
+            try:
+                queue_obj = self._queue.get()
+                if type(queue_obj) == int and queue_obj == -1:
+                    break
+                topic = queue_obj[0]
+                msg = MessageBuilder.build(queue_obj[1])
+                if self._serialize_processing:
+                    self._callback_func(topic, msg)
+                else:
+                    Thread(target=self._callback_func, args=(topic, msg)).start()
+            except Exception as e:
+                logger.warning(
+                    f"Exception while processing message from subscription to '{self._topic_filter}': {e}"
+                )
+
