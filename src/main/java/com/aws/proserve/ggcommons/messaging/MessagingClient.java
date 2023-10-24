@@ -47,24 +47,24 @@ public class MessagingClient
 
     public static void subscribe(String topicFilter, BiConsumer<String, Message> callback)
     {
-        subscribe(topicFilter, callback, false);
+        subscribe(topicFilter, callback, -1);
     }
     public static void subscribe(String topicFilter, BiConsumer<String, Message> callback,
-                                 boolean serializeProcessing)
+                                 int maxConcurrency)
     {
-        messagingProvider.subscribe(topicFilter, callback, serializeProcessing);
+        messagingProvider.subscribe(topicFilter, callback, maxConcurrency);
         LOGGER.debug("Subscribed to IPC messages on topic filter {}", topicFilter);
     }
 
     public static void subscribeToIoTCore(String topicFilter, BiConsumer<String, Message> callback, QOS qos)
     {
-        subscribeToIoTCore(topicFilter, callback, qos, false);
+        subscribeToIoTCore(topicFilter, callback, qos, -1);
     }
 
     public static void subscribeToIoTCore(String topicFilter, BiConsumer<String, Message> callback, QOS qos,
-                                          boolean serializeProcessing)
+                                          int maxConcurrency)
     {
-        messagingProvider.subscribeToIoTCore(topicFilter, callback, qos, serializeProcessing);
+        messagingProvider.subscribeToIoTCore(topicFilter, callback, qos, maxConcurrency);
         LOGGER.debug("Subscribed to IoT Core messages on topic filter {}", topicFilter);
     }
 

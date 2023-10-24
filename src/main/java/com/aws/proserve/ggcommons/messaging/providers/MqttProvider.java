@@ -36,21 +36,24 @@ public class MqttProvider extends MessagingProvider
     {
         public String topicFilter;
         public BiConsumer<String, Message> callback;
-        public boolean serialize;
+        public int maxConcurrency;
         public LinkedBlockingQueue<QueueEntry> queue;
         ExecutorService executor;
 
-        SubscriptionProcessor(String topicFilter, BiConsumer<String, Message> callback, boolean serialize)
+        SubscriptionProcessor(String topicFilter, BiConsumer<String, Message> callback, int maxConcurrency)
         {
             super();
             this.topicFilter = topicFilter;
             this.callback = callback;
-            this.serialize = serialize;
+            this.maxConcurrency = maxConcurrency;
             this.queue = new LinkedBlockingQueue<>();
-            if (serialize) {
-                executor = Executors.newSingleThreadExecutor();
-            } else {
+            if (maxConcurrency <= 0)
+            {
                 executor = Executors.newCachedThreadPool();
+
+            } else {
+                executor = new ThreadPoolExecutor(0, maxConcurrency,60L, TimeUnit.SECONDS,
+                        new SynchronousQueue<Runnable>());
             }
             new Thread(this).start();
         }
@@ -183,9 +186,9 @@ public class MqttProvider extends MessagingProvider
         internalPublish(adjustedTopic, message, qos);
     }
 
-    private void internalSubscribe(String topicFilter, BiConsumer<String, Message> callback, QOS qos, boolean serializeProcessing)
+    private void internalSubscribe(String topicFilter, BiConsumer<String, Message> callback, QOS qos, int maxConcurrency)
     {
-        SubscriptionProcessor subProcessor = new SubscriptionProcessor(topicFilter, callback, serializeProcessing);
+        SubscriptionProcessor subProcessor = new SubscriptionProcessor(topicFilter, callback, maxConcurrency);
         subscriptionProcessors.put(topicFilter, subProcessor);
         try
         {
@@ -197,17 +200,17 @@ public class MqttProvider extends MessagingProvider
         }
     }
 
-    public void subscribe(String topicFilter, BiConsumer<String, Message> callback, boolean serializeProcessing)
+    public void subscribe(String topicFilter, BiConsumer<String, Message> callback, int maxConcurrency)
     {
-        internalSubscribe(topicFilter, callback, QOS.AT_LEAST_ONCE, serializeProcessing);
+        internalSubscribe(topicFilter, callback, QOS.AT_LEAST_ONCE, maxConcurrency);
     }
 
     @Override
     public void subscribeToIoTCore(String topicFilter, BiConsumer<String, Message> callback, QOS qos,
-                                   boolean serializeProcessing)
+                                   int maxConcurrency)
     {
         String adjustedTopicFilter = "iotcore/" + topicFilter;
-        internalSubscribe(adjustedTopicFilter, callback, qos, serializeProcessing);
+        internalSubscribe(adjustedTopicFilter, callback, qos, maxConcurrency);
     }
 
     @Override
@@ -241,7 +244,7 @@ public class MqttProvider extends MessagingProvider
         String replyTo = message.makeRequest();
         ReplyFuture future = new ReplyFuture(replyTo);
         responseFutures.put(replyTo, future);
-        subscribe(replyTo, null, true);
+        subscribe(replyTo, null, 1);
         publish(topic, message);
         return future;
     }

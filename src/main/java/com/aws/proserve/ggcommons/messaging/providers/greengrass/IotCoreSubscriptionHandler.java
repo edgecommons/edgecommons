@@ -15,9 +15,9 @@ public class IotCoreSubscriptionHandler extends SubscriptionHandler<IoTCoreMessa
 {
     protected static final Logger LOGGER = LogManager.getLogger(IotCoreSubscriptionHandler.class);
 
-    public IotCoreSubscriptionHandler(String topicFilter, BiConsumer<String, Message> callback, boolean serialize)
+    public IotCoreSubscriptionHandler(String topicFilter, BiConsumer<String, Message> callback, int maxConcurrency)
     {
-        super(topicFilter, callback, serialize);
+        super(topicFilter, callback, maxConcurrency);
     }
 
     @Override

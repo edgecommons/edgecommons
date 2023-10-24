@@ -75,14 +75,14 @@ public class GreengrassIpcProvider extends MessagingProvider
     }
 
     @Override
-    public void subscribe(String topicFilter, BiConsumer<String, Message> callback, boolean serializeProcessing)
+    public void subscribe(String topicFilter, BiConsumer<String, Message> callback, int maxConcurrency)
     {
         try
         {
             SubscribeToTopicRequest subRequest = new SubscribeToTopicRequest().withTopic(topicFilter).withReceiveMode(receiveMode);
             GreengrassCoreIPCClientV2.StreamingResponse<SubscribeToTopicResponse,
                     SubscribeToTopicResponseHandler> response =
-                    ipcClient.subscribeToTopic(subRequest, new IpcSubscriptionHandler(topicFilter, callback, serializeProcessing));
+                    ipcClient.subscribeToTopic(subRequest, new IpcSubscriptionHandler(topicFilter, callback, maxConcurrency));
             ipcSubscriptionStreams.put(topicFilter, response.getHandler());
         }
         catch (Exception e)
@@ -93,7 +93,7 @@ public class GreengrassIpcProvider extends MessagingProvider
 
     @Override
     public void subscribeToIoTCore(String topicFilter, BiConsumer<String, Message> callback, QOS qos,
-                                   boolean serializeProcessing)
+                                   int maxConcurrency)
     {
         try
         {
@@ -102,7 +102,7 @@ public class GreengrassIpcProvider extends MessagingProvider
                     .withQos(qos);
             GreengrassCoreIPCClientV2.StreamingResponse<SubscribeToIoTCoreResponse,
                     SubscribeToIoTCoreResponseHandler> response =
-                    ipcClient.subscribeToIoTCore(subRequest, new IotCoreSubscriptionHandler(topicFilter, callback, serializeProcessing));
+                    ipcClient.subscribeToIoTCore(subRequest, new IotCoreSubscriptionHandler(topicFilter, callback, maxConcurrency));
             iotCoreSubscriptionStreams.put(topicFilter, response.getHandler());
         }
         catch (Exception e)
@@ -146,7 +146,7 @@ public class GreengrassIpcProvider extends MessagingProvider
             f.complete(m);
             unsubscribe(t);
             responseFutures.remove(t);
-        }, false);
+        }, 1);
         publish(topic, message);
         return future;
     }

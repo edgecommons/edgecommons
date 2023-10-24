@@ -6,9 +6,7 @@ import org.apache.logging.log4j.Logger;
 import oshi.util.tuples.Pair;
 import software.amazon.awssdk.eventstreamrpc.StreamResponseHandler;
 
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.*;
 import java.util.function.BiConsumer;
 
 public abstract class SubscriptionHandler<T> implements Runnable, StreamResponseHandler<T>
@@ -29,20 +27,22 @@ public abstract class SubscriptionHandler<T> implements Runnable, StreamResponse
 
     protected String topicFilter;
     protected BiConsumer<String, Message> callback;
-    protected boolean serialize;
+    protected int maxConcurrency;
     LinkedBlockingQueue<QueueEntry> queue = new LinkedBlockingQueue<>();
     ExecutorService executor;
 
-    public SubscriptionHandler(String topicFilter, BiConsumer<String, Message> callback, boolean serialize)
+    public SubscriptionHandler(String topicFilter, BiConsumer<String, Message> callback, int maxConcurrency)
     {
         this.topicFilter = topicFilter;
         this.callback = callback;
-        this.serialize = serialize;
-        if (serialize)
+        this.maxConcurrency = maxConcurrency;
+        if (maxConcurrency <= 0)
         {
-            executor = Executors.newSingleThreadExecutor();
-        } else {
             executor = Executors.newCachedThreadPool();
+
+        } else {
+            executor = new ThreadPoolExecutor(0, maxConcurrency,60L, TimeUnit.SECONDS,
+                    new SynchronousQueue<Runnable>());
         }
         new Thread(this).start();
     }
