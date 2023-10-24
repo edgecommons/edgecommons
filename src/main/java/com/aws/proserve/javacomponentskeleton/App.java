@@ -111,8 +111,8 @@ public class App implements ConfigurationChangeListener
         waitForReply("iou_2", iou2, 2);
         MessagingClient.unsubscribe(reqTopic);
 
-        MessagingClient.subscribe(pubTopic, App::ipcHelloWorldHandler);
-        MessagingClient.subscribeToIoTCore(pubTopic, App::iotCoreHelloWorldHandler, QOS.AT_LEAST_ONCE);
+        MessagingClient.subscribe(pubTopic, App::ipcHelloWorldHandler, 3);
+        MessagingClient.subscribeToIoTCore(pubTopic, App::iotCoreHelloWorldHandler, QOS.AT_LEAST_ONCE, 2);
         int i = 1;
         while (true)
         {

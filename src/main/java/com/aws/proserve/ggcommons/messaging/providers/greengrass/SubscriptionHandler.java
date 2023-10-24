@@ -42,7 +42,7 @@ public abstract class SubscriptionHandler<T> implements Runnable, StreamResponse
 
         } else {
             executor = new ThreadPoolExecutor(0, maxConcurrency,60L, TimeUnit.SECONDS,
-                    new SynchronousQueue<Runnable>());
+                    new LinkedBlockingQueue<>());
         }
         new Thread(this).start();
     }

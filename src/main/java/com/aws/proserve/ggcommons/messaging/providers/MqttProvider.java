@@ -53,7 +53,7 @@ public class MqttProvider extends MessagingProvider
 
             } else {
                 executor = new ThreadPoolExecutor(0, maxConcurrency,60L, TimeUnit.SECONDS,
-                        new SynchronousQueue<Runnable>());
+                        new LinkedBlockingQueue<Runnable>());
             }
             new Thread(this).start();
         }
@@ -78,7 +78,7 @@ public class MqttProvider extends MessagingProvider
                         unsubscribe(topic);
                     } else {
                         executor.execute(() -> {
-                            LOGGER.info("Invoking callback for topic '{}'", topic);
+                            LOGGER.debug("Invoking callback for topic '{}'", topic);
                             callback.accept(topic, entry.message);
                         });
                     }
