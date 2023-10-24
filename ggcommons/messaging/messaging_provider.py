@@ -23,7 +23,7 @@ class MessagingProvider(metaclass=abc.ABCMeta):
         self,
         topic: str,
         callback: Callable[[str, Message], None],
-        serialize_processing=False,
+        max_concurrency: int = None,
     ):
         pass
 
@@ -33,7 +33,7 @@ class MessagingProvider(metaclass=abc.ABCMeta):
         topic: str,
         callback: Callable[[str, Message], None],
         qos: QOS,
-        serialize_processing=False,
+        max_concurrency: int = None,
     ):
         pass
 

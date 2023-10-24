@@ -45,10 +45,10 @@ class MessagingClient:
     def subscribe(
         topic: str,
         callback: Callable[[str, Message], None],
-        serialize_processing: bool = False,
+        max_concurrency: int = None,
     ):
         MessagingClient._messaging_provider.subscribe(
-            topic, callback, serialize_processing
+            topic, callback, max_concurrency
         )
 
     @staticmethod
@@ -56,10 +56,10 @@ class MessagingClient:
         topic: str,
         callback: Callable[[str, Message], None],
         qos: str,
-        serialize_processing: bool = False,
+        max_concurrency: int = None,
     ):
         MessagingClient._messaging_provider.subscribe_to_iot_core(
-            topic, callback, qos, serialize_processing
+            topic, callback, qos, max_concurrency
         )
 
     @staticmethod

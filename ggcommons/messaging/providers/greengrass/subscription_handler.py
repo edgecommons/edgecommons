@@ -1,4 +1,5 @@
 import abc
+import concurrent.futures.thread
 import logging
 import queue
 from threading import Thread
@@ -15,12 +16,12 @@ class SubscriptionHandler(metaclass=abc.ABCMeta):
         self,
         topic_filter,
         callback: Callable[[str, Message], None],
-        serialize_processing: bool = False,
+        max_concurrency: int = None,
     ):
         self._topic_filter = topic_filter
         self._callback_func = callback
         self._queue = queue.Queue()
-        self._serialize_processing = serialize_processing
+        self._max_concurrency = max_concurrency
         Thread(target=self._process_queue).start()
 
     @abc.abstractmethod
@@ -58,19 +59,17 @@ class SubscriptionHandler(metaclass=abc.ABCMeta):
         logger.info(
             f"Starting queue monitoring for subscription on topic {self._topic_filter}"
         )
-        while True:
-            try:
-                queue_obj = self._queue.get()
-                if type(queue_obj) == int and queue_obj == -1:
-                    break
-                topic = queue_obj[0]
-                msg = MessageBuilder.build(queue_obj[1])
-                if self._serialize_processing:
-                    self._callback_func(topic, msg)
-                else:
-                    Thread(target=self._callback_func, args=(topic, msg)).start()
-            except Exception as e:
-                logger.warning(
-                    f"Exception while processing message from subscription to '{self._topic_filter}': {e}"
-                )
+        with concurrent.futures.ThreadPoolExecutor(max_workers=self._max_concurrency) as executor:
+            while True:
+                try:
+                    queue_obj = self._queue.get()
+                    if type(queue_obj) == int and queue_obj == -1:
+                        break
+                    topic = queue_obj[0]
+                    msg = MessageBuilder.build(queue_obj[1])
+                    executor.submit(self._callback_func, topic, msg)
+                except Exception as e:
+                    logger.warning(
+                        f"Exception while processing message from subscription to '{self._topic_filter}': {e}"
+                    )
 

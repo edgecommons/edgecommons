@@ -1,3 +1,4 @@
+import concurrent.futures.thread
 import json
 import logging
 import queue
@@ -8,7 +9,6 @@ from ggcommons.messaging.messaging_client import MessagingProvider
 from ggcommons.messaging.message import Message, MessageBuilder
 import paho.mqtt.client as mqtt
 import re
-
 import uuid
 
 from ggcommons.utils.iou import Iou
@@ -22,12 +22,12 @@ class SubscriptionInfo:
         topic: str,
         msg_q: queue.Queue,
         callback: Callable[[str, Message], None],
-        serialize=False,
+        max_concurrency: int,
     ):
         self.topic_filter = topic
         self.msg_q = msg_q
         self.callback = callback
-        self.serialize = serialize
+        self.max_concurrency = max_concurrency
 
 
 class MqttProvider(MessagingProvider):
@@ -69,26 +69,20 @@ class MqttProvider(MessagingProvider):
         logger.debug(
             f"Starting queue monitoring for subscription on {subscription_info.topic_filter}"
         )
-        while True:
-            queue_obj = subscription_info.msg_q.get()
-            if type(queue_obj) == int and queue_obj == -1:
-                break
-            topic = re.sub("^iotcore/", "", queue_obj[0])
-            received_payload = queue_obj[1]
-            if topic in self._response_ious:
-                iou = self._response_ious[topic]
-                del self._response_ious[topic]
-                self.unsubscribe(topic)
-                iou.set_result(received_payload)
-            else:
-                if subscription_info.serialize:
-                    subscription_info.callback(topic, received_payload)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=subscription_info.max_concurrency) as executor:
+            while True:
+                queue_obj = subscription_info.msg_q.get()
+                if type(queue_obj) == int and queue_obj == -1:
+                    break
+                topic = re.sub("^iotcore/", "", queue_obj[0])
+                received_payload = queue_obj[1]
+                if topic in self._response_ious:
+                    iou = self._response_ious[topic]
+                    del self._response_ious[topic]
+                    self.unsubscribe(topic)
+                    iou.set_result(received_payload)
                 else:
-                    tmp_thread = Thread(
-                        target=subscription_info.callback,
-                        args=(topic, received_payload),
-                    )
-                    tmp_thread.start()
+                    executor.submit(subscription_info.callback, topic, received_payload)
 
     def _on_connect(self, client, userdata, flags, rc):
         logger.info(f"Connected to MQTT broker at {self._host}:{self._port}")
@@ -114,12 +108,12 @@ class MqttProvider(MessagingProvider):
         self,
         topic_filter: str,
         callback: Callable[[str, Message], None],
-        serialize_processing=False,
+        max_concurrency: int = None,
     ):
         if topic_filter not in self._ipc_subscription_info:
             logger.debug(f"Subscribing to topic filter: {topic_filter}")
             sub_info = SubscriptionInfo(
-                topic_filter, queue.Queue(), callback, serialize_processing
+                topic_filter, queue.Queue(), callback, max_concurrency
             )
             self._ipc_subscription_info[topic_filter] = sub_info
             self._mqtt_client.subscribe(topic_filter)
@@ -130,12 +124,12 @@ class MqttProvider(MessagingProvider):
         topic_filter: str,
         callback: Callable[[str, Message], None],
         qos: str,
-        serialize_processing=False,
+        max_concurrency: int = None,
     ):
         adjusted_topic = "iotcore/" + topic_filter
         if adjusted_topic not in self._iot_core_subscription_info:
             sub_info = SubscriptionInfo(
-                adjusted_topic, queue.Queue(), callback, serialize_processing
+                adjusted_topic, queue.Queue(), callback, max_concurrency
             )
             self._iot_core_subscription_info[adjusted_topic] = sub_info
             self._mqtt_client.subscribe(adjusted_topic)
