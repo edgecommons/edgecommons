@@ -49,10 +49,10 @@ class GreengrassIpcProvider(MessagingProvider):
         self,
         topic_filter: str,
         callback: Callable[[str, Message], None],
-        serialize_processing=False,
+        max_concurrency: int = None,
     ):
         logger.info(f"Subscribing to IPC messages on topic {topic_filter}")
-        handler = IpcSubscriptionHandler(topic_filter, callback, serialize_processing)
+        handler = IpcSubscriptionHandler(topic_filter, callback, max_concurrency)
         try:
             _, operation = self._ipc_client.subscribe_to_topic(
                 topic=topic_filter,
@@ -82,11 +82,11 @@ class GreengrassIpcProvider(MessagingProvider):
         topic_filter: str,
         callback: Callable[[str, Message], None],
         qos: str,
-        serialize_processing: bool = False,
+        max_concurrency: int = None,
     ):
         logger.info(f"Subscribing to iot core messages on topic {topic_filter}")
         handler = IotCoreSubscriptionHandler(
-            topic_filter, callback, serialize_processing
+            topic_filter, callback, max_concurrency
         )
         try:
             _, operation = self._ipc_client.subscribe_to_iot_core(

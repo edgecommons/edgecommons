@@ -14,9 +14,9 @@ class IotCoreSubscriptionHandler(SubscriptionHandler):
         self,
         topic_filter,
         callback: Callable[[str, Message], None],
-        serialize_processing: bool = False,
+        max_concurrency: int = None,
     ):
-        super().__init__(topic_filter, callback, serialize_processing)
+        super().__init__(topic_filter, callback, max_concurrency)
 
     def parse_raw_payload(self, event) -> (str, dict):
         received_payload = json.loads(str(event.message.payload, "utf-8"))
