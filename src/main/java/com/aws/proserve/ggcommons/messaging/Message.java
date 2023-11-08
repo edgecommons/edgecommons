@@ -137,8 +137,9 @@ public class Message
     {
         Message retVal = new Message();
         LOGGER.trace("In Message::build");
-        if (msgContents instanceof JsonObject msgJsonObj)
+        if (msgContents instanceof JsonObject)
         {
+            JsonObject msgJsonObj = (JsonObject) msgContents;
             LOGGER.trace("Message contents: {}", msgJsonObj.toJson());
             if (msgJsonObj.containsKey("header"))
             {

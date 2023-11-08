@@ -18,18 +18,17 @@ public class MessagingClient
     public static void init(String[] messagingArgs, boolean receiveOwnMessages)
     {
         switch (messagingArgs[0].toUpperCase()) {
-            case "IPC" -> {
+            case "IPC":
                 LOGGER.info("IPC specified in command line.  Using Greengrass IPC.");
                 messagingProvider = new GreengrassIpcProvider(messagingArgs, receiveOwnMessages);
-            }
-            case "MQTT" -> {
+                break;
+            case "MQTT":
                 LOGGER.info("MQTT specified in command line.  Using MqttClient");
                 messagingProvider = new MqttProvider(messagingArgs, UUID.randomUUID().toString());
-            }
-            default -> {
+                break;
+            default:
                 LOGGER.fatal("Invalid com.aws.proseve.ggcommons.messaging provider specified in command line: must be either 'MQTT' or 'IPC'");
                 System.exit(1);
-            }
         }
     }
 
