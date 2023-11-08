@@ -79,3 +79,8 @@ deploy:jdk21:
   only:
     variables:
       - $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+jar:
+  script: mvn package install
+  artifacts:
+    paths:
+      - target/gg-commons*.jar
