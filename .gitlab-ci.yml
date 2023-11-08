@@ -80,6 +80,7 @@ deploy:jdk11:
     variables:
       - $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 jar:
+  script: echo "artifact publishing"
   artifacts:
     paths:
       - target/ggcommons*.jar
