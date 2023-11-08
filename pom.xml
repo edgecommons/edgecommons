@@ -14,11 +14,12 @@
         <junitVersion>5.9.2</junitVersion>
         <mavenPluginVersion>2.1</mavenPluginVersion>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-      <maven.compiler.release>19</maven.compiler.release>
-      <java.version>19</java.version>
-      <maven.compiler.source>19</maven.compiler.source>
-      <maven.compiler.target>19</maven.compiler.target>
-      <corretto.version>19.0.1</corretto.version>
+<!--      <maven.compiler.release>19</maven.compiler.release>-->
+<!--      <java.version>8</java.version>-->
+      <CI_API_V4_URL>https://gitlab.aws.dev/api/v4</CI_API_V4_URL>
+      <CI_PROJECT_ID>83110</CI_PROJECT_ID>
+      <maven.compiler.source>1.8</maven.compiler.source>
+      <maven.compiler.target>1.8</maven.compiler.target>
     </properties>
   <dependencies>
     <dependency>
