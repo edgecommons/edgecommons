@@ -20,7 +20,6 @@ cache:
 before_script:
   - python --version ; pip --version  # For debugging
   - pip install virtualenv
-  - pip install -U pip setuptools 
   - virtualenv venv
   - source venv/bin/activate
 
@@ -49,6 +48,7 @@ before_script:
 run:
   script:
     - pip install .
+    - pip install -U pip setuptools .
     - python setup.py sdist bdist_wheel
   artifacts:
     paths:
@@ -57,6 +57,7 @@ run:
 pages:
   script:
     - pip install sphinx sphinx-rtd-theme
+    - mkdir doc
     - cd doc
     - make html
     - mv build/html/ ../public/
