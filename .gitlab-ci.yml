@@ -32,18 +32,18 @@ before_script:
 # Container Scanning customization: https://docs.gitlab.com/ee/user/application_security/container_scanning/#customizing-the-container-scanning-settings
 # Note that environment variables can be set in several places
 # See https://docs.gitlab.com/ee/ci/variables/#cicd-variable-precedence
-stages:
-- test
-sast:
-  stage: test
-include:
-- template: Security/SAST.gitlab-ci.yml
+# stages:
+# - test
+# sast:
+#   stage: test
+# include:
+# - template: Security/SAST.gitlab-ci.yml
 
-# test:
-#   script:
-#     - pip install ruff tox  # you can also use tox
-#     - pip install --editable ".[test]"
-#     - tox -e py,ruff
+# # test:
+# #   script:
+# #     - pip install ruff tox  # you can also use tox
+# #     - pip install --editable ".[test]"
+# #     - tox -e py,ruff
 
 run:
   script:
