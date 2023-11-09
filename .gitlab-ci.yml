@@ -47,7 +47,7 @@ before_script:
 
 run:
   script:
-    - sudo apk add gcc python3-dev
+    -  apk add gcc python3-dev
     - pip install .
     - pip install -U pip setuptools wheel .
     - python setup.py sdist bdist_wheel
