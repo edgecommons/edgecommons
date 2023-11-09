@@ -1,0 +1,5 @@
+psutil>=5.9.6
+awsiotsdk>=1.19.0
+awsiot>=0.1.3
+paho-mqtt>=1.6.1
+watchdog>=3.0.0
