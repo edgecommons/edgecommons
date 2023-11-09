@@ -59,8 +59,8 @@ pages:
     - pip install sphinx sphinx-rtd-theme
     - mkdir doc
     - cd doc
-    - make html
-    - mv build/html/ ../public/
+    # - make html
+    # - mv build/html/ ../public/
   artifacts:
     paths:
       - public
