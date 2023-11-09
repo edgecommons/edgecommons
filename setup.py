@@ -12,7 +12,7 @@ from setuptools import find_packages, setup, Command
 
 # Package meta-data.
 NAME = "greengrass-commons"
-DESCRIPTION = "Rules-based evaluation system using Lookout 4 Vision"
+DESCRIPTION = "Library for greengrass component development"
 URL = "https://gitlab.aws.dev/greengrass-commons/ggcommons-python-lib"
 EMAIL = "mbreissi@amazon.com"
 AUTHOR = "mbreissi@amazon.com"
@@ -86,8 +86,8 @@ class UploadCommand(Command):
         self.status("Building Source and Wheel (universal) distribution…")
         os.system("{0} setup.py sdist bdist_wheel --universal".format(sys.executable))
 
-        self.status("Uploading the package to PyPI via Twine…")
-        os.system("twine upload dist/*")
+        # self.status("Uploading the package to PyPI via Twine…")
+        # os.system("twine upload dist/*")
 
         self.status("Pushing git tags…")
         os.system("git tag v{0}".format(about["__version__"]))
