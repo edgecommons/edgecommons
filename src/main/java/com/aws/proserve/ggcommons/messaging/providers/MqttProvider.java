@@ -1,5 +1,6 @@
 package com.aws.proserve.ggcommons.messaging.providers;
 
+import com.aws.proserve.ggcommons.messaging.MessagingClient;
 import com.github.cliftonlabs.json_simple.Jsoner;
 import com.aws.proserve.ggcommons.messaging.Message;
 import com.aws.proserve.ggcommons.messaging.MessagingProvider;
@@ -129,7 +130,20 @@ public class MqttProvider extends MessagingProvider
             } catch (Exception e) {
                 msg = Message.build(msgChars);
             }
-            subscriptionProcessors.get(topic).queue.add(new QueueEntry(topic, msg));
+            SubscriptionProcessor subscriptionProcessor = subscriptionProcessors.get(topic);
+            if (subscriptionProcessor == null) {
+                for (SubscriptionProcessor processor : subscriptionProcessors.values()) {
+                    if (topicMatchesFilter(processor.topicFilter, topic)) {
+                        subscriptionProcessor = processor;
+                        break;
+                    }
+                }
+            }
+            if (subscriptionProcessor != null) {
+                subscriptionProcessor.queue.add(new QueueEntry(topic, msg));
+            } else {
+                LOGGER.warn("No callback registered for topic '{}'. Ignoring message.", topic);
+            }
         }
 
         @Override

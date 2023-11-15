@@ -1,0 +1,125 @@
+package com.aws.proserve.ggcommons;
+
+import com.aws.proserve.ggcommons.config.manager.ConfigManager;
+import com.aws.proserve.ggcommons.messaging.Message;
+import com.aws.proserve.ggcommons.messaging.MessagingClient;
+import com.aws.proserve.ggcommons.messaging.ReplyFuture;
+import com.aws.proserve.ggcommons.utils.Utils;
+import com.github.cliftonlabs.json_simple.JsonObject;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import software.amazon.awssdk.aws.greengrass.model.QOS;
+
+import java.math.BigDecimal;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+
+import static com.aws.proserve.ggcommons.utils.Utils.sleep;
+import static org.junit.jupiter.api.Assertions.*;
+
+class GGCommonsTest
+{
+
+    GGCommons ggCommons;
+    ConfigManager configManager;
+    static final Logger LOGGER = LogManager.getLogger(GGCommonsTest.class);
+    Message receivedMessage;
+
+    GGCommonsTest()
+    {
+        String[] args = { "-m", "MQTT", "localhost", "1883", "-c", "FILE", "config_3.json"};
+        ggCommons = new GGCommons("TEST_SUITE", args);
+        configManager = ggCommons.getConfigManager();
+    }
+
+    public void ipcMessageHandler(String topic, Message message)
+    {
+        receivedMessage = message;
+    }
+
+    public void iotCoreMessageHandler(String topic, Message message)
+    {
+        receivedMessage = message;
+    }
+
+    public void requestHandler(String topic, Message message)
+    {
+        JsonObject replyPayload = new JsonObject();
+        replyPayload.put("reply_message", "I have received your request and have replied with this message");
+        Message reply = Message.buildFromConfig("ReplyTest", "1.0", replyPayload, configManager);
+        MessagingClient.reply(message, reply);
+    }
+
+    @BeforeEach
+    void setUp()
+    {
+        receivedMessage = null;
+    }
+
+    @AfterEach
+    void tearDown()
+    {
+    }
+
+    @Test
+    void publishIpcMessage()
+    {
+        String topic = "test/testIpcTopic";
+        MessagingClient.subscribe(topic, this::ipcMessageHandler, 1);
+        JsonObject jsonPayload = new JsonObject();
+        jsonPayload.put("message", "Test IPC message");
+        Message msg = Message.buildFromConfig("IpcMessageTest", "1.0", jsonPayload, configManager);
+        MessagingClient.publish(topic, msg);
+        Utils.sleep(200);
+        assertNotNull(receivedMessage);
+        assertEquals(receivedMessage.getHeader().getName(), "IpcMessageTest");
+    }
+
+    @Test
+    void publishIotCoreMessage()
+    {
+        String topic = "test/testIotCoreTopic";
+        MessagingClient.subscribeToIoTCore(topic, this::iotCoreMessageHandler, QOS.AT_LEAST_ONCE);
+        JsonObject jsonPayload = new JsonObject();
+        jsonPayload.put("message", "Test IoT Core message");
+        Message msg = Message.buildFromConfig("RequestTest", "1.0", jsonPayload, configManager);
+        MessagingClient.publishToIotCore(topic, msg, QOS.AT_LEAST_ONCE);
+        Utils.sleep(200);
+        assertNotNull(receivedMessage);
+        assertEquals(receivedMessage.getHeader().getName(), "IoTCoreMessageTest");
+    }
+
+    @Test
+    void subscribeWithFilter()
+    {
+        String subTopic = "test/+";
+        String pubTopic = "test/testIpcTopic";
+        MessagingClient.subscribe(subTopic, this::ipcMessageHandler, 1);
+        JsonObject jsonPayload = new JsonObject();
+        jsonPayload.put("message", "Test IPC message");
+        Message msg = Message.buildFromConfig("SubscribeWithFilterTest", "1.0", jsonPayload, configManager);
+        MessagingClient.publish(pubTopic, msg);
+        Utils.sleep(200);
+        assertNotNull(receivedMessage);
+        assertEquals(receivedMessage.getHeader().getName(), "SubscribeWithFilterTest");
+    }
+
+    @Test
+    void requestReply() throws ExecutionException, InterruptedException, TimeoutException
+    {
+        String requestTopic = "test/request";
+        MessagingClient.subscribe(requestTopic, this::requestHandler, 1);
+        JsonObject requestPayload = new JsonObject();
+        requestPayload.put("message", "Test Request Reply");
+        Message request = Message.buildFromConfig("RequestTest", "1.0", requestPayload, configManager);
+        String correlationId = request.getCorrelationId();
+        Message reply = MessagingClient.request(requestTopic, request).get(1000, TimeUnit.MILLISECONDS);
+        assertNotNull(reply);
+        assertEquals(reply.getCorrelationId(), correlationId);
+        assertEquals(reply.getHeader().getName(), "ReplyTest");
+    }
+}

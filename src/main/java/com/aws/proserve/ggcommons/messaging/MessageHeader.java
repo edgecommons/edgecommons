@@ -96,6 +96,12 @@ public class MessageHeader
         return replyTo;
     }
 
+    public String getName() { return name; }
+
+    public String getVersion() { return version; }
+
+    public String getTimestamp() { return timestamp; }
+
     public String getCorrelationId() {
         if (correlationId == null)
             correlationId = UUID.randomUUID().toString();
