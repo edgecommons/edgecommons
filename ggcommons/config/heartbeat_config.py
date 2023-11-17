@@ -2,10 +2,13 @@ import json
 
 # {
 #     "intervalSecs": 5,
+#     "topic": "heartbeat/{ThingName}/{ComponentName}"
 #     "metric": {
 #         "cpu": true,
-#         "memory": true
-#         "disk": false
+#         "memory": true,
+#         "disk": false,
+#         "files": false,
+#         "threads": false
 #     }
 # }
 
@@ -20,6 +23,8 @@ class HeartbeatConfiguration:
         self._include_cpu = True
         self._include_memory = True
         self._include_disk = False
+        self._include_files = False
+        self._include_threads = False
 
         if heartbeat_json is not None:
             if "intervalSecs" in heartbeat_json:
@@ -33,6 +38,10 @@ class HeartbeatConfiguration:
                     self._include_memory = heartbeat_json["metric"]["memory"]
                 if "disk" in heartbeat_json["metric"]:
                     self._include_disk = heartbeat_json["metric"]["disk"]
+                if "files" in heartbeat_json["metric"]:
+                    self._include_files = heartbeat_json["metric"]["files"]
+                if "threads" in heartbeat_json["metric"]:
+                    self._include_threads = heartbeat_json["metric"]["threads"]
 
     def to_dict(self):
         dict_rep = {
@@ -42,6 +51,8 @@ class HeartbeatConfiguration:
                 "cpu": self.include_cpu(),
                 "memory": self.include_memory(),
                 "disk": self.include_disk(),
+                "files": self.include_files(),
+                "threads": self.include_threads()
             },
         }
         return dict_rep
@@ -63,3 +74,9 @@ class HeartbeatConfiguration:
 
     def include_disk(self) -> bool:
         return self._include_disk
+
+    def include_files(self):
+        return self._include_files
+
+    def include_threads(self):
+        return self._include_threads

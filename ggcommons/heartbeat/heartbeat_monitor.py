@@ -1,6 +1,7 @@
 import shutil
 import psutil
 import os
+
 from ggcommons.config.heartbeat_config import HeartbeatConfiguration
 
 
@@ -33,6 +34,22 @@ class HeartbeatMonitor:
             memory["memory_usage(MB)"] = usage
         return memory
 
+    def open_files(self):
+        open_files = None
+        if self._config.include_files():
+            open_files = {}
+            usage = len(self.proc_info.open_files())
+            open_files["files"] = usage
+        return open_files
+
+    def thread_count(self):
+        thread_count = None
+        if self._config.include_threads():
+            thread_count = {}
+            usage = len(self.proc_info.threads())
+            thread_count["threads"] = usage
+        return thread_count
+
     @staticmethod
     def __get_disk_usage():
         usage = shutil.disk_usage("..")
@@ -54,16 +71,15 @@ class HeartbeatMonitor:
         return disk
 
 
-# if __name__ == "__main__":
-#     import argparse
-#     from ggcommons.config.config_manager import ConfigManagerBuilder
-#
-#     parser = argparse.ArgumentParser(description="Testing config_manager")
-#     parser.add_argument('--configFile', default='config/samples/config_1.json', required=False)
-#
-#     config = ConfigManagerBuilder.build(parser.parse_args(), "HeartbeatMonitorTester")
-#     monitor = HeartbeatMonitor(config.get_heartbeat_config())
-#     print(monitor.pid)
-#     print(monitor.disk_usage())
-#     print(monitor.cpu_usage())
-#     print(monitor.memory_usage())
+if __name__ == "__main__":
+    from ggcommons.config.manager.file_config_manager import FileConfigManager
+
+    print(os.getcwd())
+    config = FileConfigManager("PYTHON_TEST", "../../config_3.json")
+    monitor = HeartbeatMonitor(config.get_heartbeat_config())
+    print(monitor.pid)
+    print(monitor.disk_usage())
+    print(monitor.cpu_usage())
+    print(monitor.memory_usage())
+    print(monitor.open_files())
+    print(monitor.thread_count())
