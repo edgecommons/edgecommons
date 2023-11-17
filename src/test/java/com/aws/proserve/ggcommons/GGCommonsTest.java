@@ -86,11 +86,11 @@ class GGCommonsTest
         MessagingClient.subscribeToIoTCore(topic, this::iotCoreMessageHandler, QOS.AT_LEAST_ONCE);
         JsonObject jsonPayload = new JsonObject();
         jsonPayload.put("message", "Test IoT Core message");
-        Message msg = Message.buildFromConfig("RequestTest", "1.0", jsonPayload, configManager);
+        Message msg = Message.buildFromConfig("IoTCoreMessage", "1.0", jsonPayload, configManager);
         MessagingClient.publishToIotCore(topic, msg, QOS.AT_LEAST_ONCE);
         Utils.sleep(200);
         assertNotNull(receivedMessage);
-        assertEquals(receivedMessage.getHeader().getName(), "IoTCoreMessageTest");
+        assertEquals(receivedMessage.getHeader().getName(), "IoTCoreMessage");
     }
 
     @Test

@@ -20,6 +20,8 @@ public class HeartbeatConfiguration
     boolean includeCpu = true;
     boolean includeMemory = true;
     boolean includeDisk = false;
+    boolean includeThreads = false;
+    boolean includeFiles = false;
     String topic = "heartbeat/{ThingName}/{ComponentName}";
 
 
@@ -42,6 +44,10 @@ public class HeartbeatConfiguration
                     includeMemory = (boolean) metricObj.get("memory");
                 if (metricObj.containsKey("disk"))
                     includeDisk = (boolean) metricObj.get("disk");
+                if (metricObj.containsKey("threads"))
+                    includeThreads = (boolean) metricObj.get("threads");
+                if (metricObj.containsKey("files"))
+                    includeFiles = (boolean) metricObj.get("files");
             }
             if (jsonConfig.containsKey("topic"))
                 topic = (String) jsonConfig.get("topic");
@@ -56,6 +62,8 @@ public class HeartbeatConfiguration
         metricObj.put("cpu", includeCpu);
         metricObj.put("memory", includeMemory);
         metricObj.put("disk", includeDisk);
+        metricObj.put("threads", includeDisk);
+        metricObj.put("files", includeDisk);
         retVal.put("metric", metricObj);
         return retVal;
     }
@@ -84,6 +92,16 @@ public class HeartbeatConfiguration
     public boolean includeDisk()
     {
         return includeDisk;
+    }
+
+    public boolean includeThreads()
+    {
+        return includeThreads;
+    }
+
+    public boolean includeFiles()
+    {
+        return includeFiles;
     }
 
     public String getTopic() {

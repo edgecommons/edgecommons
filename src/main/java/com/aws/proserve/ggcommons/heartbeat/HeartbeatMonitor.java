@@ -39,6 +39,14 @@ public class HeartbeatMonitor
         if (diskData != null)
             data.put("disk", diskData);
 
+        JsonObject threadData = getThreadCount();
+        if (threadData != null)
+            data.put("threads", threadData);
+
+        JsonObject fileData = getFileCount();
+        if (fileData != null)
+            data.put("files", fileData);
+
         return data;
     }
 
@@ -74,6 +82,28 @@ public class HeartbeatMonitor
         if (heartbeatConfiguration.includeDisk())
         {
             retVal = new JsonObject();
+        }
+        return retVal;
+    }
+
+    private JsonObject getThreadCount()
+    {
+        JsonObject retVal = null;
+        if (heartbeatConfiguration.includeThreads())
+        {
+            retVal = new JsonObject();
+            retVal.put("thread_count", currentProc.getThreadCount());
+        }
+        return retVal;
+    }
+
+    private JsonObject getFileCount()
+    {
+        JsonObject retVal = null;
+        if (heartbeatConfiguration.includeFiles())
+        {
+            retVal = new JsonObject();
+            retVal.put("file_count", currentProc.getOpenFiles());
         }
         return retVal;
     }
