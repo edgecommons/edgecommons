@@ -44,6 +44,12 @@ class Heartbeat(ConfigurationChangeListener, ABC):
         disk_data = heartbeat_monitor.disk_usage()
         if disk_data is not None:
             data["disk"] = disk_data
+        thread_data = heartbeat_monitor.thread_count()
+        if thread_data is not None:
+            data["threads"] = thread_data
+        files_data = heartbeat_monitor.open_files()
+        if files_data is not None:
+            data["files"] = files_data
         message = MessageBuilder.build_from_config(
             name=Heartbeat.__MESSAGE_NAME,
             version=Heartbeat.__MESSAGE_VERSION,
