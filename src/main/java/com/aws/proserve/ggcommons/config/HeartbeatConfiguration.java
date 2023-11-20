@@ -1,7 +1,10 @@
 package com.aws.proserve.ggcommons.config;
 
+import com.aws.proserve.ggcommons.heartbeat.Heartbeat;
 import com.github.cliftonlabs.json_simple.JsonObject;
 import com.github.cliftonlabs.json_simple.Jsoner;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.math.BigDecimal;
 
@@ -16,12 +19,14 @@ import java.math.BigDecimal;
 
 public class HeartbeatConfiguration
 {
+    protected static final Logger LOGGER = LogManager.getLogger(HeartbeatConfiguration.class);
     int intervalSecs = 5;
     boolean includeCpu = true;
     boolean includeMemory = true;
     boolean includeDisk = false;
     boolean includeThreads = false;
     boolean includeFiles = false;
+    boolean includeFds = false;
     String topic = "heartbeat/{ThingName}/{ComponentName}";
 
 
@@ -29,6 +34,8 @@ public class HeartbeatConfiguration
     {
         if (jsonConfig != null)
         {
+            if (jsonConfig.containsKey("topic"))
+                topic = (String) jsonConfig.get("topic");
             if (jsonConfig.containsKey("intervalSecs"))
             {
                 intervalSecs = ((BigDecimal) jsonConfig.get("intervalSecs")).intValue();
@@ -48,9 +55,9 @@ public class HeartbeatConfiguration
                     includeThreads = (boolean) metricObj.get("threads");
                 if (metricObj.containsKey("files"))
                     includeFiles = (boolean) metricObj.get("files");
+                if (metricObj.containsKey("fds"))
+                    LOGGER.warn("Reporting of allocated file descriptors (fds) not supported in ggcommons-java. Ignoring");
             }
-            if (jsonConfig.containsKey("topic"))
-                topic = (String) jsonConfig.get("topic");
         }
     }
 
@@ -64,6 +71,7 @@ public class HeartbeatConfiguration
         metricObj.put("disk", includeDisk);
         metricObj.put("threads", includeDisk);
         metricObj.put("files", includeDisk);
+        metricObj.put("fds", includeFds);
         retVal.put("metric", metricObj);
         return retVal;
     }
@@ -103,6 +111,8 @@ public class HeartbeatConfiguration
     {
         return includeFiles;
     }
+
+    public boolean includeFds() { return includeFds; }
 
     public String getTopic() {
         return topic;

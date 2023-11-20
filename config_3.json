@@ -11,7 +11,8 @@
       "memory": true,
       "disk": false,
       "files": true,
-      "threads": true
+      "threads": true,
+      "fds": true
     }
   },
   "source": {

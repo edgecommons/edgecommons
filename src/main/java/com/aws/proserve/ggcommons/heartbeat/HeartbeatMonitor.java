@@ -92,7 +92,7 @@ public class HeartbeatMonitor
         if (heartbeatConfiguration.includeThreads())
         {
             retVal = new JsonObject();
-            retVal.put("thread_count", currentProc.getThreadCount());
+            retVal.put("threads", currentProc.getThreadCount());
         }
         return retVal;
     }
@@ -103,7 +103,7 @@ public class HeartbeatMonitor
         if (heartbeatConfiguration.includeFiles())
         {
             retVal = new JsonObject();
-            retVal.put("file_count", currentProc.getOpenFiles());
+            retVal.put("files", currentProc.getOpenFiles());
         }
         return retVal;
     }
