@@ -1,6 +1,7 @@
 import shutil
 import psutil
 import os
+import platform
 
 from ggcommons.config.heartbeat_config import HeartbeatConfiguration
 
@@ -10,7 +11,30 @@ class HeartbeatMonitor:
         self._config = hb_config
         self._pid = None
         self._proc_info = None
+        self._platform = platform.system()
         self.pid, self.proc_info = HeartbeatMonitor.build_proc_info()
+
+    def get_stats(self) -> dict:
+        data = {}
+        cpu_data = self.cpu_usage()
+        if cpu_data is not None:
+            data["cpu"] = cpu_data
+        memory_data = self.memory_usage()
+        if memory_data is not None:
+            data["memory"] = memory_data
+        disk_data = self.disk_usage()
+        if disk_data is not None:
+            data["disk"] = disk_data
+        thread_data = self.thread_count()
+        if thread_data is not None:
+            data["threads"] = thread_data
+        files_data = self.open_files()
+        if files_data is not None:
+            data["files"] = files_data
+        fds = self.file_descriptors()
+        if fds is not None:
+            data["fds"] = fds
+        return data
 
     @staticmethod
     def build_proc_info():
@@ -41,6 +65,17 @@ class HeartbeatMonitor:
             usage = len(self.proc_info.open_files())
             open_files["files"] = usage
         return open_files
+
+    def file_descriptors(self):
+        file_descriptors = None
+        if self._config.include_fds():
+            file_descriptors = {}
+            if self._platform != "Windows":
+                usage = self.proc_info.num_fds()
+            else:
+                usage = self.proc_info.num_handles()
+            file_descriptors["fds"] = usage
+        return file_descriptors
 
     def thread_count(self):
         thread_count = None
@@ -78,8 +113,4 @@ if __name__ == "__main__":
     config = FileConfigManager("PYTHON_TEST", "../../config_3.json")
     monitor = HeartbeatMonitor(config.get_heartbeat_config())
     print(monitor.pid)
-    print(monitor.disk_usage())
-    print(monitor.cpu_usage())
-    print(monitor.memory_usage())
-    print(monitor.open_files())
-    print(monitor.thread_count())
+    print(monitor.get_stats())

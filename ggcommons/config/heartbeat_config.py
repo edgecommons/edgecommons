@@ -8,6 +8,7 @@ import json
 #         "memory": true,
 #         "disk": false,
 #         "files": false,
+#         "fds": false,
 #         "threads": false
 #     }
 # }
@@ -24,6 +25,7 @@ class HeartbeatConfiguration:
         self._include_memory = True
         self._include_disk = False
         self._include_files = False
+        self._include_fds = False
         self._include_threads = False
 
         if heartbeat_json is not None:
@@ -42,6 +44,8 @@ class HeartbeatConfiguration:
                     self._include_files = heartbeat_json["metric"]["files"]
                 if "threads" in heartbeat_json["metric"]:
                     self._include_threads = heartbeat_json["metric"]["threads"]
+                if "fds" in heartbeat_json["metric"]:
+                    self._include_fds = heartbeat_json["metric"]["fds"]
 
     def to_dict(self):
         dict_rep = {
@@ -52,7 +56,8 @@ class HeartbeatConfiguration:
                 "memory": self.include_memory(),
                 "disk": self.include_disk(),
                 "files": self.include_files(),
-                "threads": self.include_threads()
+                "threads": self.include_threads(),
+                "fds": self._include_fds()
             },
         }
         return dict_rep
@@ -80,3 +85,6 @@ class HeartbeatConfiguration:
 
     def include_threads(self):
         return self._include_threads
+
+    def include_fds(self):
+        return self._include_fds

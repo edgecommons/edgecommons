@@ -34,22 +34,7 @@ class Heartbeat(ConfigurationChangeListener, ABC):
         configuration_manager: ConfigManager,
     ):
         logger.debug("Publishing heartbeat...")
-        data = {}
-        cpu_data = heartbeat_monitor.cpu_usage()
-        if cpu_data is not None:
-            data["cpu"] = cpu_data
-        memory_data = heartbeat_monitor.memory_usage()
-        if memory_data is not None:
-            data["memory"] = memory_data
-        disk_data = heartbeat_monitor.disk_usage()
-        if disk_data is not None:
-            data["disk"] = disk_data
-        thread_data = heartbeat_monitor.thread_count()
-        if thread_data is not None:
-            data["threads"] = thread_data
-        files_data = heartbeat_monitor.open_files()
-        if files_data is not None:
-            data["files"] = files_data
+        data = heartbeat_monitor.get_stats()
         message = MessageBuilder.build_from_config(
             name=Heartbeat.__MESSAGE_NAME,
             version=Heartbeat.__MESSAGE_VERSION,
