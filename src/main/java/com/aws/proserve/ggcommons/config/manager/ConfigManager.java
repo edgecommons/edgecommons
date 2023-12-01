@@ -149,14 +149,18 @@ public abstract class ConfigManager
             retVal = retVal.replace("{ComponentName}", getComponentName());
         }
 
-        for (String tagKey : tagConfig.getKeys())
+        if (tagConfig.getKeys() != null)
         {
-            String hierarchyLevelTemplate = "{" + tagKey + "}";
-            if (retVal.contains(hierarchyLevelTemplate))
+            for (String tagKey : tagConfig.getKeys())
             {
-                retVal = retVal.replace(hierarchyLevelTemplate, tagConfig.getKeyValue(tagKey));
+                String hierarchyLevelTemplate = "{" + tagKey + "}";
+                if (retVal.contains(hierarchyLevelTemplate))
+                {
+                    retVal = retVal.replace(hierarchyLevelTemplate, tagConfig.getKeyValue(tagKey));
+                }
             }
         }
+
         return retVal;
     }
 

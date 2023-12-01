@@ -7,19 +7,19 @@ import java.util.Set;
 
 public class TagConfiguration
 {
-    JsonObject hierarchy = new JsonObject();
+    JsonObject tags = new JsonObject();
 
     public TagConfiguration(JsonObject jsonConfig)
     {
         if (jsonConfig != null)
         {
-            hierarchy = jsonConfig;
+            tags = jsonConfig;
         }
     }
 
     public JsonObject toDict()
     {
-        return hierarchy;
+        return tags;
     }
 
     @Override
@@ -29,10 +29,10 @@ public class TagConfiguration
     }
 
     public Set<String> getKeys() {
-        return hierarchy.keySet();
+        return tags.keySet();
     }
 
     public String getKeyValue(String key) {
-        return (String) hierarchy.get(key);
+        return (String) tags.get(key);
     }
 }
