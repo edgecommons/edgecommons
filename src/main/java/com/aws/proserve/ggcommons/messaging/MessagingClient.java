@@ -4,6 +4,7 @@ import com.aws.proserve.ggcommons.messaging.providers.MqttProvider;
 import com.aws.proserve.ggcommons.messaging.providers.greengrass.GreengrassIpcProvider;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import software.amazon.awssdk.aws.greengrass.GreengrassCoreIPCClientV2;
 import software.amazon.awssdk.aws.greengrass.model.QOS;
 
 import java.util.UUID;
@@ -99,4 +100,8 @@ public class MessagingClient
         return MessagingProvider.topicMatchesFilter(topicFilter, topic);
     }
 
+    public static Object getNativeClient()
+    {
+        return messagingProvider.getNativeClient();
+    }
 }

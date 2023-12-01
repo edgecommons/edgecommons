@@ -1,5 +1,6 @@
 package com.aws.proserve.ggcommons.config.manager;
 
+import com.aws.proserve.ggcommons.messaging.MessagingClient;
 import com.github.cliftonlabs.json_simple.JsonObject;
 import com.github.cliftonlabs.json_simple.Jsoner;
 import software.amazon.awssdk.aws.greengrass.GreengrassCoreIPCClientV2;
@@ -27,8 +28,8 @@ public class GreengrassConfigManager extends ConfigManager
         JsonObject retVal = null;
         LOGGER.debug("Loading Greengrass component configuration");
 
-        try (GreengrassCoreIPCClientV2 ipcClient = connectToIPC())
-        {
+        GreengrassCoreIPCClientV2 ipcClient = (GreengrassCoreIPCClientV2) MessagingClient.getNativeClient();
+        try {
             GetConfigurationRequest request;
             if (configComponentName == null) {
                 request = new GetConfigurationRequest();
@@ -52,7 +53,8 @@ public class GreengrassConfigManager extends ConfigManager
         }
         catch (Exception e)
         {
-            throw new RuntimeException(e);
+            LOGGER.fatal("Unable to load configuration using Greengrass IPC.  Exiting.");
+            System.exit(1);
         }
 
         return retVal;
@@ -62,20 +64,5 @@ public class GreengrassConfigManager extends ConfigManager
     protected String getConfigSource()
     {
         return String.format("Greengrass com.aws.proseve.ggcommons.config (component: %s; key: %s)", configComponentName, configKey);
-    }
-
-    private GreengrassCoreIPCClientV2 connectToIPC()
-    {
-        GreengrassCoreIPCClientV2 ipcClient = null;
-        try
-        {
-            ipcClient = GreengrassCoreIPCClientV2.builder().build();
-        }
-        catch (Exception e)
-        {
-            LOGGER.fatal("Unable to connect to Greengrass IPC to retrieve configuration.");
-            System.exit(5);
-        }
-        return ipcClient;
     }
 }

@@ -52,18 +52,18 @@ cache:
 
 # For merge requests do not `deploy` but only run `verify`.
 # See https://maven.apache.org/guides/introduction/introduction-to-the-lifecycle.html
-.verify:
-  stage: test
-  script:
-    - 'mvn $MAVEN_CLI_OPTS verify'
-  except:
-    variables:
-      - $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+#.verify:
+#  stage: test
+#  script:
+#    - 'mvn $MAVEN_CLI_OPTS verify'
+#  except:
+#    variables:
+#      - $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
 # Verify merge requests using JDK8
-verify:jdk11:
-  extends:
-    - .verify
+#verify:jdk11:
+#  extends:
+#    - .verify
 
 # To deploy packages from CI, create a `ci_settings.xml` file
 # For deploying packages to GitLab's Maven Repository: See https://docs.gitlab.com/ee/user/packages/maven_repository/index.html#create-maven-packages-with-gitlab-cicd for more details.

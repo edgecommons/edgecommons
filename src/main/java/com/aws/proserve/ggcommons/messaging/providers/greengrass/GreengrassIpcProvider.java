@@ -166,4 +166,10 @@ public class GreengrassIpcProvider extends MessagingProvider
         reply.setCorrelationId(request.getHeader().getCorrelationId());
         publish(request.getHeader().getReplyTo(), reply);
     }
+
+    @Override
+    public Object getNativeClient()
+    {
+        return ipcClient;
+    }
 }

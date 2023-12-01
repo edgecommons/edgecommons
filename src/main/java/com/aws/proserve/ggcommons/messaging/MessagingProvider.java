@@ -31,6 +31,8 @@ public abstract class MessagingProvider
     public abstract void cancelRequest(ReplyFuture future);
     public abstract void reply(Message request, Message reply);
 
+    public abstract Object getNativeClient();
+
     // Copied from open source Paho MQTT Java client
     // (https://github.com/eclipse/paho.mqtt.java/blob/master/org.eclipse.paho.client.mqttv3/src/main/java/org/eclipse/paho/client/mqttv3/MqttTopic.java)
     // Under the Eclipse Public License (https://github.com/eclipse/paho.mqtt.java/blob/master/LICENSE)
