@@ -5,11 +5,11 @@ import com.github.cliftonlabs.json_simple.Jsoner;
 
 import java.util.Set;
 
-public class SourceConfiguration
+public class TagConfiguration
 {
     JsonObject hierarchy = new JsonObject();
 
-    public SourceConfiguration(JsonObject jsonConfig)
+    public TagConfiguration(JsonObject jsonConfig)
     {
         if (jsonConfig != null)
         {

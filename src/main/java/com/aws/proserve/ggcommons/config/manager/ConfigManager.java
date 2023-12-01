@@ -4,7 +4,7 @@ import com.github.cliftonlabs.json_simple.JsonArray;
 import com.github.cliftonlabs.json_simple.JsonObject;
 import com.aws.proserve.ggcommons.config.HeartbeatConfiguration;
 import com.aws.proserve.ggcommons.config.LoggingConfiguration;
-import com.aws.proserve.ggcommons.config.SourceConfiguration;
+import com.aws.proserve.ggcommons.config.TagConfiguration;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -20,7 +20,7 @@ public abstract class ConfigManager
     protected final String componentName;
     protected final String thingName;
     protected final ArrayList<ConfigurationChangeListener> configChangeListeners = new ArrayList<>();
-    protected SourceConfiguration sourceConfig;
+    protected TagConfiguration tagConfig;
     protected HeartbeatConfiguration heartbeatConfig;
     protected JsonObject componentConfig;
     protected JsonObject globalConfig;
@@ -46,7 +46,7 @@ public abstract class ConfigManager
     private void applyConfig(JsonObject config)
     {
         loggingConfig = config.containsKey("logging") ? new LoggingConfiguration((JsonObject) config.get("logging")) : null;
-        sourceConfig = config.containsKey("source") ? new SourceConfiguration((JsonObject) config.get("source")) : null;
+        tagConfig = config.containsKey("tags") ? new TagConfiguration((JsonObject) config.get("tags")) : null;
         heartbeatConfig = config.containsKey("heartbeat") ? new HeartbeatConfiguration((JsonObject) config.get("heartbeat")) : null;
 
         componentConfig = (JsonObject) config.get("component");
@@ -87,9 +87,9 @@ public abstract class ConfigManager
         return instanceConfigs.getOrDefault(instanceId, null);
     }
 
-    public SourceConfiguration getSourceConfig()
+    public TagConfiguration getTagConfig()
     {
-        return sourceConfig;
+        return tagConfig;
     }
 
     public HeartbeatConfiguration getHeartbeatConfig()
@@ -149,12 +149,12 @@ public abstract class ConfigManager
             retVal = retVal.replace("{ComponentName}", getComponentName());
         }
 
-        for (String hierarchyLevel : sourceConfig.getKeys())
+        for (String tagKey : tagConfig.getKeys())
         {
-            String hierarchyLevelTemplate = "{" + hierarchyLevel + "}";
+            String hierarchyLevelTemplate = "{" + tagKey + "}";
             if (retVal.contains(hierarchyLevelTemplate))
             {
-                retVal = retVal.replace(hierarchyLevelTemplate, sourceConfig.getKeyValue(hierarchyLevel));
+                retVal = retVal.replace(hierarchyLevelTemplate, tagConfig.getKeyValue(tagKey));
             }
         }
         return retVal;

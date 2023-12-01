@@ -15,14 +15,14 @@ public class Message
     protected static final Logger LOGGER = LogManager.getLogger(Message.class);
 
     MessageHeader header;
-    MessageSource source;
+    MessageTags tags;
     Object body;
     Object raw;
 
     private Message()
     {
         header = null;
-        source = null;
+        tags = null;
         body = null;
         raw = null;
     }
@@ -34,8 +34,8 @@ public class Message
         {
             if (header != null)
                 retVal.put("header", header.toDict());
-            if (source != null)
-                retVal.put("source", source.toDict());
+            if (tags != null)
+                retVal.put("tags", tags.toDict());
             retVal.put("body", body);
         }
         else
@@ -63,9 +63,9 @@ public class Message
         return header;
     }
 
-    public MessageSource getSource()
+    public MessageTags getTags()
     {
-        return source;
+        return tags;
     }
 
     public Object getBody()
@@ -112,7 +112,7 @@ public class Message
     {
         Message retVal = new Message();
         retVal.header = new MessageHeader(name, version, correlationId);
-        retVal.source = MessageSource.fromConfig(configManager);
+        retVal.tags = MessageTags.fromConfig(configManager);
         if (payload instanceof String)
         {
             try
@@ -150,7 +150,7 @@ public class Message
             if (msgJsonObj.containsKey("source"))
             {
                 LOGGER.trace("processing source");
-                retVal.source = MessageSource.fromDict((Map<String, Object>) msgJsonObj.get("source"));
+                retVal.tags = MessageTags.fromDict((Map<String, Object>) msgJsonObj.get("source"));
                 LOGGER.trace("source deserialized");
             }
             if (msgJsonObj.containsKey("body"))

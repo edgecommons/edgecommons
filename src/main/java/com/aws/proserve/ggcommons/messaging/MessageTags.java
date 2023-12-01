@@ -1,6 +1,6 @@
 package com.aws.proserve.ggcommons.messaging;
 
-import com.aws.proserve.ggcommons.config.SourceConfiguration;
+import com.aws.proserve.ggcommons.config.TagConfiguration;
 import com.aws.proserve.ggcommons.config.manager.ConfigManager;
 import com.github.cliftonlabs.json_simple.JsonObject;
 import com.github.cliftonlabs.json_simple.Jsoner;
@@ -10,42 +10,42 @@ import org.apache.logging.log4j.Logger;
 
 import java.util.Map;
 
-public class MessageSource
+public class MessageTags
 {
-    protected static final Logger LOGGER = LogManager.getLogger(MessageSource.class);
+    protected static final Logger LOGGER = LogManager.getLogger(MessageTags.class);
 
     String thingName;
 
-    JsonObject hierarchy;
+    JsonObject tags;
 
-    public MessageSource(String thingName, JsonObject hierarchy)
+    public MessageTags(String thingName, JsonObject tags)
     {
         this.thingName = thingName;
-        this.hierarchy = hierarchy;
+        this.tags = tags;
     }
 
-    public static MessageSource fromConfig(ConfigManager configManager)
+    public static MessageTags fromConfig(ConfigManager configManager)
     {
-        SourceConfiguration sourceConfig = configManager.getSourceConfig();
+        TagConfiguration sourceConfig = configManager.getTagConfig();
         if (sourceConfig != null)
         {
-            return new MessageSource(configManager.getThingName(), sourceConfig.toDict());
+            return new MessageTags(configManager.getThingName(), sourceConfig.toDict());
         }
         else
         {
-            return new MessageSource(configManager.getThingName(), new JsonObject());
+            return new MessageTags(configManager.getThingName(), new JsonObject());
         }
     }
 
-    public static MessageSource fromDict(Map<String,Object> src)
+    public static MessageTags fromDict(Map<String,Object> src)
     {
         String thing = src.containsKey("thing") ? (String) src.get("thing") : null;
-        JsonObject hierarchy = new JsonObject();
+        JsonObject tagsDict = new JsonObject();
         src.forEach((key,value) -> {
             if (!key.equals("thing"))
-                hierarchy.put(key, value);
+                tagsDict.put(key, value);
         });
-        return new MessageSource(thing, hierarchy);
+        return new MessageTags(thing, tagsDict);
     }
 
     public JsonObject toDict()
@@ -53,7 +53,7 @@ public class MessageSource
         JsonObject retVal = new JsonObject();
 
         retVal.put("thing", thingName);
-        hierarchy.forEach(retVal::put);
+        tags.forEach(retVal::put);
 
         return retVal;
     }

@@ -15,7 +15,7 @@
       "fds": true
     }
   },
-  "source": {
+  "tags": {
     "appId": "IntelliJIdea",
     "site": "site1",
     "shop": "shop1",
