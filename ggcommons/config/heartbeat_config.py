@@ -15,7 +15,7 @@ import json
 
 
 class HeartbeatConfiguration:
-    __DEFAULT_HEARTBEAT_TOPIC = "heartbeat/{ThingName}/{ComponentName}"
+    __DEFAULT_HEARTBEAT_TOPIC = "$ggcommons/{ThingName}/{ComponentName}/heartbeat"
     __DEFAULT_HEARTBEAT_INTERVAL_SECS = 5
 
     def __init__(self, heartbeat_json):

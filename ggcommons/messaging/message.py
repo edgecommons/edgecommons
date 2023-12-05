@@ -14,6 +14,9 @@ logger = logging.getLogger("Message")
 
 
 class MessageHeader:
+
+    __DEFAULT_REPLY_MESSAGE_TOPIC_PREFIX = "$ggcommons/reply-"
+
     def __init__(
         self,
         name: str,
@@ -74,7 +77,7 @@ class MessageHeader:
 
     def make_request(self, reply_to=None) -> str:
         if reply_to is None:
-            reply_to = str(uuid4())
+            reply_to = self.__DEFAULT_REPLY_MESSAGE_TOPIC_PREFIX + str(uuid4())
         self.reply_to = reply_to
         return self.reply_to
 
