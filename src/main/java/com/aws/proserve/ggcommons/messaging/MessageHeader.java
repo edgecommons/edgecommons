@@ -15,6 +15,8 @@ public class MessageHeader
 {
     protected static final Logger LOGGER = LogManager.getLogger(MessageHeader.class);
 
+    static final String REPLY_MESSAGE_TOPIC_PREFIX = "$ggcommons/reply-";
+
     String name;
     String version;
     String timestamp;
@@ -86,7 +88,7 @@ public class MessageHeader
     public String makeRequest(String replyTo)
     {
         if (replyTo == null)
-            this.replyTo = UUID.randomUUID().toString();
+            this.replyTo = REPLY_MESSAGE_TOPIC_PREFIX + UUID.randomUUID();
         else
             this.replyTo = replyTo;
         return this.replyTo;

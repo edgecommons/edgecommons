@@ -27,7 +27,7 @@ public class HeartbeatConfiguration
     boolean includeThreads = false;
     boolean includeFiles = false;
     boolean includeFds = false;
-    String topic = "heartbeat/{ThingName}/{ComponentName}";
+    String topic = "$ggcommons/{ThingName}/{ComponentName}/heartbeat";
 
 
     public HeartbeatConfiguration(JsonObject jsonConfig)

@@ -5,7 +5,6 @@
   },
   "heartbeat": {
     "intervalSecs": 5,
-    "topic": "heartbeat/{ThingName}/{ComponentName}",
     "metric": {
       "cpu": true,
       "memory": true,
