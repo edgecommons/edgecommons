@@ -14,7 +14,7 @@ class ShadowConfigManager(ConfigManager, ABC):
     _ALL_SHADOW_TOPIC_TEMPLATE = "$aws/things/{}/shadow/name/{}/+/+"
     _DEFAULT_CONFIGURATION = {
         "logging": {},
-        "source": {},
+        "tags": {},
         "heartbeat": {},
         "component": {"global": {}, "instances": []},
     }

@@ -41,3 +41,11 @@ def init(
     Heartbeat(config_manager)
     logger.info("ggcommons: Heartbeat started")
     return args, config_manager
+
+
+if __name__ == "__main__":
+    import sys
+    sys.argv = ["ggcommons_python", "--config", "FILE", "../config_3.json",  "--messaging", "MQTT"]
+    init("ggcommons_python", argparse.ArgumentParser())
+    while True:
+        pass

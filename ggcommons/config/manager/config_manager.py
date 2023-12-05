@@ -6,7 +6,7 @@ import time
 from abc import abstractmethod
 
 from ggcommons.config.heartbeat_config import HeartbeatConfiguration
-from ggcommons.config.source_config import SourceConfiguration
+from ggcommons.config.tag_config import TagConfiguration
 from ggcommons.config.logging_config import LoggingConfiguration
 
 # import unittest
@@ -16,7 +16,7 @@ logger = logging.getLogger("ConfigManager")
 
 class ConfigManager(metaclass=abc.ABCMeta):
     def __init__(self, component_name: str):
-        self._source_config = None
+        self._tag_config = None
         self._heartbeat_config = None
         self._component_config = None
         self._global_config = {}
@@ -45,8 +45,8 @@ class ConfigManager(metaclass=abc.ABCMeta):
         logging.Formatter.converter = time.gmtime
         logging.StreamHandler(sys.stdout)
 
-        source_json = None if "source" not in config else config["source"]
-        self._source_config = SourceConfiguration(source_json)
+        tag_json = None if "tags" not in config else config["tags"]
+        self._tag_config = TagConfiguration(tag_json)
 
         heartbeat_json = None if "heartbeat" not in config else config["heartbeat"]
         self._heartbeat_config = HeartbeatConfiguration(heartbeat_json)
@@ -85,13 +85,13 @@ class ConfigManager(metaclass=abc.ABCMeta):
             ret_val = ret_val.replace("{ThingName}", self._thing_name)
         if "{ComponentName}" in template:
             ret_val = ret_val.replace("{ComponentName}", self._component_name)
-        hierarchy_dict = (
-            {} if self._source_config is None else self._source_config.to_dict()
+        tag_dict = (
+            {} if self._tag_config is None else self._tag_config.to_dict()
         )
-        for k in hierarchy_dict.keys():
+        for k in tag_dict.keys():
             key_template = "{" + k + "}"
             if key_template in template:
-                ret_val = ret_val.replace(key_template, hierarchy_dict[k])
+                ret_val = ret_val.replace(key_template, tag_dict[k])
         return ret_val
 
     @abstractmethod
@@ -107,8 +107,8 @@ class ConfigManager(metaclass=abc.ABCMeta):
     def get_instance_config(self, inst_id) -> dict:
         return self._instances[inst_id]
 
-    def get_source_config(self) -> SourceConfiguration:
-        return self._source_config
+    def get_tag_config(self) -> TagConfiguration:
+        return self._tag_config
 
     def get_heartbeat_config(self) -> HeartbeatConfiguration:
         return self._heartbeat_config

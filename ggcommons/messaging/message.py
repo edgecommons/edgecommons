@@ -89,10 +89,10 @@ class MessageSource:
 
     @staticmethod
     def from_config(config_manager: ConfigManager):
-        source_config = config_manager.get_source_config()
-        if source_config is not None:
+        tag_config = config_manager.get_tag_config()
+        if tag_config is not None:
             thing_name = config_manager.get_thing_name()
-            return MessageSource(thing_name, source_config.to_dict())
+            return MessageSource(thing_name, tag_config.to_dict())
         else:
             return None
 
@@ -115,15 +115,15 @@ class Message:
     def __init__(self):
         self.header = None
         self.body = None
-        self.source = None
+        self.tags = None
         # if a message was not constructed with ggcommons, its contents will go into raw
         self.raw = None
 
     def to_dict(self) -> dict:
         if self.raw is None:
             msg = {"header": self.header.to_dict()}
-            if self.source is not None:
-                msg["source"] = self.source.to_dict()
+            if self.tags is not None:
+                msg["tags"] = self.tags.to_dict()
             msg["body"] = self.body
             return msg
         else:
@@ -139,7 +139,7 @@ class Message:
         return self.header
 
     def get_source(self) -> MessageSource:
-        return self.source
+        return self.tags
 
     def get_body(self):
         return self.body
@@ -168,7 +168,7 @@ class MessageBuilder:
     ) -> Message:
         msg = Message()
         msg.header = MessageHeader(name, version, correlation_id=correlation_id)
-        msg.source = MessageSource.from_config(config_manager)
+        msg.tags = MessageSource.from_config(config_manager)
         if isinstance(payload, str):
             try:
                 body_dict = json.loads(payload)
@@ -187,13 +187,13 @@ class MessageBuilder:
         if is_json:
             if "header" in msg_contents:
                 ret_msg.header = MessageHeader.from_dict(msg_contents["header"])
-            if "source" in msg_contents:
-                ret_msg.source = MessageSource.from_dict(msg_contents["source"])
+            if "tags" in msg_contents:
+                ret_msg.tags = MessageSource.from_dict(msg_contents["tags"])
             if "body" in msg_contents:
                 ret_msg.body = msg_contents["body"]
             if not (
                 "header" in msg_contents
-                and "source" in msg_contents
+                and "tags" in msg_contents
                 and "body" in msg_contents
             ):
                 ret_msg.raw = msg_contents
