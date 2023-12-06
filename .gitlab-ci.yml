@@ -52,13 +52,15 @@ cache:
 
 # For merge requests do not `deploy` but only run `verify`.
 # See https://maven.apache.org/guides/introduction/introduction-to-the-lifecycle.html
-#.verify:
-#  stage: test
-#  script:
-#    - 'mvn $MAVEN_CLI_OPTS verify'
-#  except:
-#    variables:
-#      - $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+verify:
+  stage: test
+  script:
+    - 'sudo apt-add-repository ppa:mosquitto-dev/mosquitto-ppa; sudo apt-get update; sudo apt-get install mosquitto; sudo apt clean'
+    - 'sudo systemctl start mosquitto'
+    - 'mvn $MAVEN_CLI_OPTS verify'
+  except:
+    variables:
+      - $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
 # Verify merge requests using JDK8
 #verify:jdk11:
