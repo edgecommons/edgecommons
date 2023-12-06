@@ -1,6 +1,5 @@
 package com.aws.proserve.ggcommons.messaging.providers;
 
-import com.aws.proserve.ggcommons.messaging.MessagingClient;
 import com.github.cliftonlabs.json_simple.Jsoner;
 import com.aws.proserve.ggcommons.messaging.Message;
 import com.aws.proserve.ggcommons.messaging.MessagingProvider;
@@ -56,7 +55,7 @@ public class MqttProvider extends MessagingProvider
 
             } else {
                 executor = new ThreadPoolExecutor(0, maxConcurrency,60L, TimeUnit.SECONDS,
-                        new LinkedBlockingQueue<Runnable>());
+                        new LinkedBlockingQueue<>());
             }
             new Thread(this).start();
         }
@@ -278,6 +277,32 @@ public class MqttProvider extends MessagingProvider
     {
         reply.setCorrelationId(request.getHeader().getCorrelationId());
         publish(request.getHeader().getReplyTo(), reply);
+    }
+
+    @Override
+    public ReplyFuture requestFromIoTCore(String topic, Message message)
+    {
+        String replyTo = message.makeRequest();
+        ReplyFuture future = new ReplyFuture(replyTo);
+        responseFutures.put(replyTo, future);
+        internalSubscribe(replyTo, null, QOS.AT_MOST_ONCE,1);
+        publishToIoTCore(topic, message, QOS.AT_MOST_ONCE);
+        return future;
+    }
+
+    @Override
+    public void cancelRequestFromIoTCore(ReplyFuture future)
+    {
+        unsubscribeFromIoTCore(future.replyTopic);
+        responseFutures.remove(future.replyTopic);
+        future.complete(null);
+    }
+
+    @Override
+    public void replyToIoTCore(Message request, Message reply)
+    {
+        reply.setCorrelationId(request.getHeader().getCorrelationId());
+        publishToIoTCore(request.getHeader().getReplyTo(), reply, QOS.AT_MOST_ONCE);
     }
 
     @Override

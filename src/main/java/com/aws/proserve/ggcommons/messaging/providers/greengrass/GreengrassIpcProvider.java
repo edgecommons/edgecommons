@@ -168,6 +168,37 @@ public class GreengrassIpcProvider extends MessagingProvider
     }
 
     @Override
+    public ReplyFuture requestFromIoTCore(String topic, Message request)
+    {
+        String replyTo = request.makeRequest();
+        ReplyFuture future = new ReplyFuture(replyTo);
+        responseFutures.put(replyTo, future);
+        subscribeToIoTCore(replyTo, (t, m) -> {
+            ReplyFuture f = responseFutures.get(t);
+            f.complete(m);
+            unsubscribe(t);
+            responseFutures.remove(t);
+        }, QOS.AT_MOST_ONCE, 1);
+        publish(topic, request);
+        return future;
+    }
+
+    @Override
+    public void cancelRequestFromIoTCore(ReplyFuture future)
+    {
+        unsubscribeFromIoTCore(future.replyTopic);
+        responseFutures.remove(future.replyTopic);
+        future.complete(null);
+    }
+
+    @Override
+    public void replyToIoTCore(Message request, Message reply)
+    {
+        reply.setCorrelationId(request.getHeader().getCorrelationId());
+        publishToIoTCore(request.getHeader().getReplyTo(), reply, QOS.AT_MOST_ONCE);
+    }
+
+    @Override
     public Object getNativeClient()
     {
         return ipcClient;

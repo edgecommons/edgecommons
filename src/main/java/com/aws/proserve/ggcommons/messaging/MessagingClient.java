@@ -4,7 +4,6 @@ import com.aws.proserve.ggcommons.messaging.providers.MqttProvider;
 import com.aws.proserve.ggcommons.messaging.providers.greengrass.GreengrassIpcProvider;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import software.amazon.awssdk.aws.greengrass.GreengrassCoreIPCClientV2;
 import software.amazon.awssdk.aws.greengrass.model.QOS;
 
 import java.util.UUID;
@@ -73,14 +72,30 @@ public class MessagingClient
         return messagingProvider.request(topic, request);
     }
 
+    public static ReplyFuture requestFromIoTCore(String topic, Message request)
+    {
+        return messagingProvider.requestFromIoTCore(topic, request);
+    }
+
     public static void cancelRequest(ReplyFuture replyFuture)
     {
         messagingProvider.cancelRequest(replyFuture);
     }
+
+    public static void cancelRequestFromIoTCore(ReplyFuture replyFuture)
+    {
+        messagingProvider.cancelRequestFromIoTCore(replyFuture);
+    }
+
     public static void reply(Message request, Message reply)
     {
         messagingProvider.reply(request, reply);
         LOGGER.debug("Published reply on topic '{}: {}", request.getHeader().getReplyTo(), reply.toString());
+    }
+
+    public static void replyToIoTCore(Message request, Message reply)
+    {
+        messagingProvider.replyToIoTCore(request, reply);
     }
 
     public static void unsubscribe(String topicFilter)

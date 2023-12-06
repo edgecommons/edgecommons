@@ -3,7 +3,6 @@ package com.aws.proserve.ggcommons;
 import com.aws.proserve.ggcommons.config.manager.ConfigManager;
 import com.aws.proserve.ggcommons.messaging.Message;
 import com.aws.proserve.ggcommons.messaging.MessagingClient;
-import com.aws.proserve.ggcommons.messaging.ReplyFuture;
 import com.aws.proserve.ggcommons.utils.Utils;
 import com.github.cliftonlabs.json_simple.JsonObject;
 import org.apache.logging.log4j.LogManager;
@@ -13,12 +12,10 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.aws.greengrass.model.QOS;
 
-import java.math.BigDecimal;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
-import static com.aws.proserve.ggcommons.utils.Utils.sleep;
 import static org.junit.jupiter.api.Assertions.*;
 
 class GGCommonsTest
@@ -26,7 +23,6 @@ class GGCommonsTest
 
     GGCommons ggCommons;
     ConfigManager configManager;
-    static final Logger LOGGER = LogManager.getLogger(GGCommonsTest.class);
     Message receivedMessage;
 
     GGCommonsTest()
@@ -53,6 +49,15 @@ class GGCommonsTest
         Message reply = Message.buildFromConfig("ReplyTest", "1.0", replyPayload, configManager);
         MessagingClient.reply(message, reply);
     }
+
+    public void iotCoreRequestHandler(String topic, Message message)
+    {
+        JsonObject replyPayload = new JsonObject();
+        replyPayload.put("reply_message", "(IoT Core) I have received your request and have replied with this message");
+        Message reply = Message.buildFromConfig("ReplyTest", "1.0", replyPayload, configManager);
+        MessagingClient.reply(message, reply);
+    }
+
 
     @BeforeEach
     void setUp()
@@ -115,7 +120,7 @@ class GGCommonsTest
     }
 
     @Test
-    void requestReply() throws ExecutionException, InterruptedException, TimeoutException
+    void requestReplyIpc() throws ExecutionException, InterruptedException, TimeoutException
     {
         String requestTopic = "test/request";
         MessagingClient.subscribe(requestTopic, this::requestHandler, 1);
@@ -129,5 +134,19 @@ class GGCommonsTest
         assertEquals(reply.getHeader().getName(), "ReplyTest");
     }
 
+    @Test
+    void requestReplyIoTCore() throws ExecutionException, InterruptedException, TimeoutException
+    {
+        String requestTopic = "test/iot_core_request";
+        MessagingClient.subscribeToIoTCore(requestTopic, this::iotCoreRequestHandler, QOS.AT_MOST_ONCE, 1);
+        JsonObject requestPayload = new JsonObject();
+        requestPayload.put("message", "Test Request Reply");
+        Message request = Message.buildFromConfig("RequestTest", "1.0", requestPayload, configManager);
+        String correlationId = request.getCorrelationId();
+        Message reply = MessagingClient.requestFromIoTCore(requestTopic, request).get(1000, TimeUnit.MILLISECONDS);
+        assertNotNull(reply);
+        assertEquals(reply.getCorrelationId(), correlationId);
+        assertEquals(reply.getHeader().getName(), "ReplyTest");
+    }
 
 }

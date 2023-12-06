@@ -31,6 +31,10 @@ public abstract class MessagingProvider
     public abstract void cancelRequest(ReplyFuture future);
     public abstract void reply(Message request, Message reply);
 
+    public abstract ReplyFuture requestFromIoTCore(String topic, Message request);
+    public abstract void cancelRequestFromIoTCore(ReplyFuture future);
+    public abstract void replyToIoTCore(Message request, Message reply);
+
     public abstract Object getNativeClient();
 
     // Copied from open source Paho MQTT Java client
