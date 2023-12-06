@@ -72,8 +72,8 @@ cache:
 deploy:jdk11:
   stage: deploy
   script:
-    - 'sudo apt-add-repository ppa:mosquitto-dev/mosquitto-ppa; sudo apt-get update; sudo apt-get install mosquitto; sudo apt clean'
-    - 'sudo systemctl start mosquitto'
+    - 'apt-add-repository ppa:mosquitto-dev/mosquitto-ppa; apt-get update; apt-get install mosquitto; apt clean'
+    - 'systemctl start mosquitto'
     - if [ ! -f ci_settings.xml ]; then
         echo "CI settings missing\! If deploying to GitLab Maven Repository, please see https://docs.gitlab.com/ee/user/packages/maven_repository/index.html#create-maven-packages-with-gitlab-cicd for instructions.";
       fi
