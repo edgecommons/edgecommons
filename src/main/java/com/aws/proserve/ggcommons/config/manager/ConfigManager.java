@@ -177,7 +177,7 @@ public abstract class ConfigManager
         component.put("global", global);
         component.put("instances", instances);
         retVal.put("logging", logging);
-        retVal.put("source", source);
+        retVal.put("tags", source);
         retVal.put("heartbeat", heartbeat);
         retVal.put("component", component);
         return retVal;
