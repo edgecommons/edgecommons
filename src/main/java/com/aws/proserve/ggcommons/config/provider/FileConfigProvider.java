@@ -1,27 +1,31 @@
-package com.aws.proserve.ggcommons.config.manager;
+package com.aws.proserve.ggcommons.config.provider;
 
+import com.aws.proserve.ggcommons.config.ConfigManager;
 import com.github.cliftonlabs.json_simple.JsonException;
 import com.github.cliftonlabs.json_simple.JsonObject;
 import com.github.cliftonlabs.json_simple.Jsoner;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Paths;
 
-class FileConfigManager extends ConfigManager
+class FileConfigProvider extends ConfigProvider
 {
+    private static final Logger LOGGER = LogManager.getLogger(FileConfigProvider.class);
+
     String configFilePath;
 
-    FileConfigManager(String componentName, String configFilePath)
+    FileConfigProvider(ConfigManager configManager, String configFilePath)
     {
-        super(componentName);
+        super(configManager);
         this.configFilePath = configFilePath;
-        init();
     }
 
     @Override
-    protected JsonObject loadConfiguration()
+    public JsonObject loadConfiguration()
     {
         LOGGER.debug("Loading configuration from file '{}'", configFilePath);
         JsonObject retVal = null;
@@ -41,7 +45,7 @@ class FileConfigManager extends ConfigManager
     }
 
     @Override
-    protected String getConfigSource()
+    public String getConfigSource()
     {
         return String.format("Config File (path: %s)", configFilePath);
     }

@@ -1,7 +1,7 @@
 package com.aws.proserve.ggcommons.heartbeat;
 
-import com.aws.proserve.ggcommons.config.manager.ConfigManager;
-import com.aws.proserve.ggcommons.config.manager.ConfigurationChangeListener;
+import com.aws.proserve.ggcommons.config.ConfigManager;
+import com.aws.proserve.ggcommons.config.provider.ConfigurationChangeListener;
 import com.aws.proserve.ggcommons.messaging.Message;
 import com.aws.proserve.ggcommons.messaging.MessagingClient;
 import com.github.cliftonlabs.json_simple.JsonObject;

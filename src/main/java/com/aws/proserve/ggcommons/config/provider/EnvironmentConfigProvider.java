@@ -1,22 +1,26 @@
-package com.aws.proserve.ggcommons.config.manager;
+package com.aws.proserve.ggcommons.config.provider;
 
+import com.aws.proserve.ggcommons.config.ConfigManager;
 import com.github.cliftonlabs.json_simple.JsonException;
 import com.github.cliftonlabs.json_simple.JsonObject;
 import com.github.cliftonlabs.json_simple.Jsoner;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
-class EnvironmentConfigManager extends ConfigManager
+class EnvironmentConfigProvider extends ConfigProvider
 {
+    protected static final Logger LOGGER = LogManager.getLogger(EnvironmentConfigProvider.class);
     private final String environmentVariableName;
 
-    EnvironmentConfigManager(String componentName, String environmentVariableName)
+    EnvironmentConfigProvider(ConfigManager configManager, String environmentVariableName)
     {
-        super(componentName);
+        super(configManager);
         this.environmentVariableName = environmentVariableName;
-        init();
+
     }
 
     @Override
-    protected JsonObject loadConfiguration()
+   public  JsonObject loadConfiguration()
     {
         JsonObject retVal = null;
 
@@ -44,7 +48,7 @@ class EnvironmentConfigManager extends ConfigManager
     }
 
     @Override
-    protected String getConfigSource()
+    public String getConfigSource()
     {
         return String.format("Environment (var name: %s)", environmentVariableName);
     }

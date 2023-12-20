@@ -1,6 +1,6 @@
 package com.aws.proserve.ggcommons.messaging;
 
-import com.aws.proserve.ggcommons.config.manager.ConfigManager;
+import com.aws.proserve.ggcommons.config.ConfigManager;
 import com.github.cliftonlabs.json_simple.JsonException;
 import com.github.cliftonlabs.json_simple.JsonObject;
 import com.github.cliftonlabs.json_simple.Jsoner;
@@ -159,7 +159,7 @@ public class Message
                 retVal.body =  new JsonObject((Map<String, Object>) msgJsonObj.get("body"));
                 LOGGER.trace("body desiralized");
             }
-            if (!(msgJsonObj.containsKey("header") && msgJsonObj.containsKey("source") && msgJsonObj.containsKey("body")))
+            if (!(msgJsonObj.containsKey("header") || msgJsonObj.containsKey("source") || msgJsonObj.containsKey("body")))
             {
                 LOGGER.trace("Json contained raw string: Assigning to raw");
                 retVal.raw = msgJsonObj;
