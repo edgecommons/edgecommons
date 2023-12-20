@@ -31,10 +31,11 @@ class SubscriptionInfo:
 
 
 class MqttProvider(MessagingProvider):
+
     def __init__(self, host: str, port: int):
         super().__init__()
-        self._ipc_subscription_info = {}
-        self._iot_core_subscription_info = {}
+        self._subscription_info = {}
+        self._subscription_info = {}
         self._response_ious = {}
         self._response_locks = {}
         self._responses = {}
@@ -55,14 +56,10 @@ class MqttProvider(MessagingProvider):
             msg = MessageBuilder.build(json.loads(msg_chars), True)
         except json.decoder.JSONDecodeError:
             msg = MessageBuilder.build(msg_chars, False)
-        if topic.startswith("iotcore/"):
-            subscriptions = self._iot_core_subscription_info
-        else:
-            subscriptions = self._ipc_subscription_info
-        for topic_filter in subscriptions:
+        for topic_filter in self._subscription_info:
             if MessagingProvider.topic_matches_sub(topic_filter, topic):
                 topic_payload_tuple = (topic, msg)
-                subscriptions[topic_filter].msg_q.put(topic_payload_tuple)
+                self._subscription_info[topic_filter].msg_q.put(topic_payload_tuple)
                 break
 
     def _queue_processor(self, subscription_info: SubscriptionInfo):
@@ -104,20 +101,23 @@ class MqttProvider(MessagingProvider):
         adjusted_topic = f"iotcore/{topic}"
         self._internal_publish(adjusted_topic, msg, qos)
 
+    def _internal_subscribe(self, topic_filter: str, callback: Callable[[str, Message], None], max_concurrency: int = None):
+        if topic_filter not in self._subscription_info:
+            logger.debug(f"Subscribing to topic filter: {topic_filter}")
+            sub_info = SubscriptionInfo(
+                topic_filter, queue.Queue(), callback, max_concurrency
+            )
+            self._subscription_info[topic_filter] = sub_info
+            self._mqtt_client.subscribe(topic_filter)
+            Thread(target=self._queue_processor, args=(sub_info,)).start()
+
     def subscribe(
         self,
         topic_filter: str,
         callback: Callable[[str, Message], None],
         max_concurrency: int = None,
     ):
-        if topic_filter not in self._ipc_subscription_info:
-            logger.debug(f"Subscribing to topic filter: {topic_filter}")
-            sub_info = SubscriptionInfo(
-                topic_filter, queue.Queue(), callback, max_concurrency
-            )
-            self._ipc_subscription_info[topic_filter] = sub_info
-            self._mqtt_client.subscribe(topic_filter)
-            Thread(target=self._queue_processor, args=(sub_info,)).start()
+        self._internal_subscribe(topic_filter, callback, max_concurrency)
 
     def subscribe_to_iot_core(
         self,
@@ -127,30 +127,24 @@ class MqttProvider(MessagingProvider):
         max_concurrency: int = None,
     ):
         adjusted_topic = "iotcore/" + topic_filter
-        if adjusted_topic not in self._iot_core_subscription_info:
-            sub_info = SubscriptionInfo(
-                adjusted_topic, queue.Queue(), callback, max_concurrency
-            )
-            self._iot_core_subscription_info[adjusted_topic] = sub_info
-            self._mqtt_client.subscribe(adjusted_topic)
-            Thread(target=self._queue_processor, args=(sub_info,)).start()
+        self._internal_subscribe(adjusted_topic, callback, max_concurrency)
 
     def unsubscribe(self, topic: str):
         self._mqtt_client.unsubscribe(topic)
-        self._ipc_subscription_info[topic].msg_q.put(-1)
-        del self._ipc_subscription_info[topic]
+        self._subscription_info[topic].msg_q.put(-1)
+        del self._subscription_info[topic]
 
     def unsubscribe_from_iot_core(self, topic: str):
         adjusted_topic = f"iotcore/{topic}"
         self._mqtt_client.unsubscribe(adjusted_topic)
-        self._iot_core_subscription_info[topic].msg_q.put(-1)
-        del self._iot_core_subscription_info[adjusted_topic]
+        self._subscription_info[topic].msg_q.put(-1)
+        del self._subscription_info[adjusted_topic]
 
     def request(self, topic: str, msg: Message) -> Iou:
         reply_to = msg.make_request()
         iou = Iou(reply_to)
         self._response_ious[reply_to] = iou
-        self.subscribe(reply_to, None)
+        self.subscribe(reply_to, None, 1)
         self.publish(topic, msg)
         return iou
 
@@ -162,3 +156,20 @@ class MqttProvider(MessagingProvider):
     def reply(self, request: Message, reply: Message):
         reply.set_correlation_id(request.get_correlation_id())
         self.publish(request.get_header().get_reply_to(), reply)
+
+    def request_from_iot_core(self, topic: str, msg: Message) -> Iou:
+        reply_to = msg.make_request()
+        iou = Iou(reply_to)
+        self._response_ious[reply_to] = iou
+        self._internal_subscribe(reply_to, None, 1)
+        self.publish_to_iot_core(topic, msg, QOS.AT_MOST_ONCE)
+        return iou
+
+    def cancel_request_from_iot_core(self, iou: Iou):
+        topic = iou.get_user_data()
+        self.unsubscribe_from_iot_core(topic)
+        del self._response_ious[topic]
+
+    def reply_to_iot_core(self, request: Message, reply: Message):
+        reply.set_correlation_id(request.get_correlation_id())
+        self.publish_to_iot_core(request.get_header().get_reply_to(), reply, QOS.AT_MOST_ONCE)

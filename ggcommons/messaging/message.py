@@ -15,7 +15,7 @@ logger = logging.getLogger("Message")
 
 class MessageHeader:
 
-    __DEFAULT_REPLY_MESSAGE_TOPIC_PREFIX = "$ggcommons/reply-"
+    __DEFAULT_REPLY_MESSAGE_TOPIC_PREFIX = "ggcommons/reply-"
 
     def __init__(
         self,

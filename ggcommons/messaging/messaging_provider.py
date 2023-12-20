@@ -50,11 +50,23 @@ class MessagingProvider(metaclass=abc.ABCMeta):
         pass
 
     @abstractmethod
+    def request_from_iot_core(self, topic: str, msg: Message) -> Iou:
+        pass
+
+    @abstractmethod
     def reply(self, request_msg: Message, response_msg: Message):
         pass
 
     @abstractmethod
+    def reply_to_iot_core(self, request_msg: Message, response_msg: Message):
+        pass
+
+    @abstractmethod
     def cancel_request(self, iou: Iou):
+        pass
+
+    @abstractmethod
+    def cancel_request_from_iot_core(self, iou: Iou):
         pass
 
     # Copied from open source Paho MQTT python client

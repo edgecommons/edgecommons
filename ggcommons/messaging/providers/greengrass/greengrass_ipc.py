@@ -6,7 +6,7 @@ from awsiot.greengrasscoreipc.clientv2 import GreengrassCoreIPCClientV2
 from awsiot.greengrasscoreipc.model import (
     PublishMessage,
     UnauthorizedError,
-    BinaryMessage,
+    BinaryMessage, QOS,
 )
 from ggcommons.messaging.providers.greengrass.iotcore_subscription_handler import (
     IotCoreSubscriptionHandler,
@@ -20,6 +20,7 @@ logger = logging.getLogger("GreengrassIpcProvider")
 
 
 class GreengrassIpcProvider(MessagingProvider):
+
     def __init__(self, receive_own_messages: bool):
         super().__init__()
         self._ipc_subscription_handlers = {}
@@ -136,7 +137,7 @@ class GreengrassIpcProvider(MessagingProvider):
         reply_to = msg.make_request()
         iou = Iou(reply_to)
         self._response_ious[reply_to] = iou
-        self.subscribe(reply_to, self._on_reply_received)
+        self.subscribe(reply_to, self._on_reply_received, 1)
         self.publish(topic, msg)
         return iou
 
@@ -156,3 +157,20 @@ class GreengrassIpcProvider(MessagingProvider):
             del self._response_ious[topic]
             self.unsubscribe(topic)
             iou.set_result(reply)
+
+    def request_from_iot_core(self, topic: str, msg: Message) -> Iou:
+        reply_to = msg.make_request()
+        iou = Iou(reply_to)
+        self._response_ious[reply_to] = iou
+        self.subscribe_to_iot_core(reply_to, self._on_reply_received, QOS.AT_MOST_ONCE, 1)
+        self.publish(topic, msg)
+        return iou
+
+    def reply_to_iot_core(self, request: Message, reply: Message):
+        reply.set_correlation_id(request.get_correlation_id())
+        self.publish_to_iot_core(request.get_header().get_reply_to(), reply, QOS.AT_MOST_ONCE)
+
+    def cancel_request_from_iot_core(self, iou: Iou):
+        reply_to = iou.get_user_data()
+        self.unsubscribe_from_iot_core(reply_to)
+        del self._response_ious[reply_to]

@@ -1,6 +1,7 @@
 import threading
 import logging
 from typing import Callable, List
+
 from ggcommons.messaging.message import Message
 from ggcommons.messaging.messaging_provider import MessagingProvider
 from ggcommons.messaging.providers.greengrass.greengrass_ipc import (
@@ -8,12 +9,13 @@ from ggcommons.messaging.providers.greengrass.greengrass_ipc import (
 )
 from ggcommons.messaging.providers.mqtt import MqttProvider
 from ggcommons.utils.iou import Iou
+from awsiot.greengrasscoreipc.model import QOS
 
 logger = logging.getLogger("MessagingClient")
 
 
 class MessagingClient:
-    _messaging_provider = None
+    _messaging_provider: MessagingProvider = None
 
     @staticmethod
     def init(
@@ -55,7 +57,7 @@ class MessagingClient:
     def subscribe_to_iot_core(
         topic: str,
         callback: Callable[[str, Message], None],
-        qos: str,
+        qos: QOS,
         max_concurrency: int = None,
     ):
         MessagingClient._messaging_provider.subscribe_to_iot_core(
@@ -75,15 +77,22 @@ class MessagingClient:
         return MessagingClient._messaging_provider.request(topic, msg)
 
     @staticmethod
+    def request_from_iot_core(topic: str, msg: Message) -> Iou:
+        return MessagingClient._messaging_provider.request_from_iot_core(topic, msg)
+
+    @staticmethod
     def cancel_request(iou: Iou) -> Iou:
         return MessagingClient._messaging_provider.cancel_request(iou)
 
     @staticmethod
-    def get_reply(lock: threading.Lock) -> Message:
-        return MessagingClient._messaging_provider.get_response(lock)
+    def cancel_request_from_iot_core(iou: Iou) -> Iou:
+        return MessagingClient._messaging_provider.cancel_request(iou)
 
     @staticmethod
     def reply(request: Message, reply: Message):
+        MessagingClient._messaging_provider.reply(request, reply)
+
+    def reply_to_iot_core(request: Message, reply: Message):
         MessagingClient._messaging_provider.reply(request, reply)
 
     @staticmethod
