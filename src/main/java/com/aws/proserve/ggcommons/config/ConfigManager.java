@@ -1,10 +1,10 @@
-package com.aws.proserve.ggcommons.config.manager;
+package com.aws.proserve.ggcommons.config;
 
+import com.aws.proserve.ggcommons.config.provider.ConfigProvider;
+import com.aws.proserve.ggcommons.config.provider.ConfigProviderBuilder;
+import com.aws.proserve.ggcommons.config.provider.ConfigurationChangeListener;
 import com.github.cliftonlabs.json_simple.JsonArray;
 import com.github.cliftonlabs.json_simple.JsonObject;
-import com.aws.proserve.ggcommons.config.HeartbeatConfiguration;
-import com.aws.proserve.ggcommons.config.LoggingConfiguration;
-import com.aws.proserve.ggcommons.config.TagConfiguration;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -13,10 +13,11 @@ import java.util.Collection;
 import java.util.HashMap;
 
 
-public abstract class ConfigManager
+public class ConfigManager
 {
-    protected static final Logger LOGGER = LogManager.getLogger(ConfigManager.class);
+    private static final Logger LOGGER = LogManager.getLogger(ConfigManager.class);
 
+    ConfigProvider configProvider;
     protected final String componentName;
     protected final String thingName;
     protected final ArrayList<ConfigurationChangeListener> configChangeListeners = new ArrayList<>();
@@ -28,22 +29,20 @@ public abstract class ConfigManager
     protected final HashMap<String, JsonObject> instanceConfigs = new HashMap<>();
 
 
-    ConfigManager(String componentName)
+   public ConfigManager(String componentName, String[] configArgs)
     {
         this.componentName = componentName;
         thingName = System.getenv("AWS_IOT_THING_NAME") != null ? System.getenv("AWS_IOT_THING_NAME") : "NOT_GREENGRASS";
-    }
+        configProvider = ConfigProviderBuilder.build(this, componentName, thingName, configArgs);
 
-    protected void init()
-    {
-        JsonObject config = loadConfiguration();
+        JsonObject config = configProvider.loadConfiguration();
         if (config != null)
         {
             applyConfig(config);
         }
     }
 
-    private void applyConfig(JsonObject config)
+    public void applyConfig(JsonObject config)
     {
         loggingConfig = config.containsKey("logging") ? new LoggingConfiguration((JsonObject) config.get("logging")) : null;
         tagConfig = config.containsKey("tags") ? new TagConfiguration((JsonObject) config.get("tags")) : null;
@@ -52,7 +51,17 @@ public abstract class ConfigManager
         componentConfig = (JsonObject) config.get("component");
         globalConfig = componentConfig.containsKey("global") ? (JsonObject) componentConfig.get("global") : null;
         genInstancesMap();
+        LOGGER.info("configurationChanged: Notifying {} listeners", configChangeListeners.size());
+        for (ConfigurationChangeListener listener : configChangeListeners)
+        {
+            if (listener != null) {
+                listener.onConfigurationChanged();
+            } else {
+                LOGGER.error("ConfigurationChangeListener is null.  Not notifying.");
+            }
+        }
     }
+
 
     private void genInstancesMap()
     {
@@ -68,9 +77,6 @@ public abstract class ConfigManager
         }
     }
 
-    abstract protected JsonObject loadConfiguration();
-
-    abstract protected String getConfigSource();
 
     public JsonObject getGlobalConfig()
     {
@@ -122,21 +128,6 @@ public abstract class ConfigManager
         configChangeListeners.remove(listener);
     }
 
-    protected void configurationChanged(JsonObject newConfig)
-    {
-        LOGGER.info("configurationChanged: Applying new com.aws.proseve.ggcommons.config: {}", newConfig);
-        applyConfig(newConfig);
-
-        LOGGER.info("configurationChanged: Notifying {} listeners", configChangeListeners.size());
-        for (ConfigurationChangeListener listener : configChangeListeners)
-        {
-            if (listener != null) {
-                listener.onConfigurationChanged();
-            } else {
-                LOGGER.error("ConfigurationChangeListener is null.  Not notifying.");
-            }
-        }
-    }
 
     public String resolveTemplate(String template) {
         String retVal = template;
@@ -164,24 +155,5 @@ public abstract class ConfigManager
         return retVal;
     }
 
-    protected JsonObject getDefaultConfig()
-    {
-        JsonObject retVal = new JsonObject();
-        JsonObject logging = new JsonObject();
-        JsonObject heartbeat = new JsonObject();
-        JsonObject source = new JsonObject();
-        JsonObject component = new JsonObject();
-        JsonObject global = new JsonObject();
-        JsonArray instances = new JsonArray();
 
-        component.put("global", global);
-        component.put("instances", instances);
-        retVal.put("logging", logging);
-        retVal.put("tags", source);
-        retVal.put("heartbeat", heartbeat);
-        retVal.put("component", component);
-        return retVal;
-    }
 }
-
-

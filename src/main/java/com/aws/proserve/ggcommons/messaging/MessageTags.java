@@ -1,7 +1,7 @@
 package com.aws.proserve.ggcommons.messaging;
 
 import com.aws.proserve.ggcommons.config.TagConfiguration;
-import com.aws.proserve.ggcommons.config.manager.ConfigManager;
+import com.aws.proserve.ggcommons.config.ConfigManager;
 import com.github.cliftonlabs.json_simple.JsonObject;
 import com.github.cliftonlabs.json_simple.Jsoner;
 

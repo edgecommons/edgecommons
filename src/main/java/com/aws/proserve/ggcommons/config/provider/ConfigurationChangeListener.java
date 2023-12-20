@@ -1,4 +1,4 @@
-package com.aws.proserve.ggcommons.config.manager;
+package com.aws.proserve.ggcommons.config.provider;
 
 public interface ConfigurationChangeListener
 {

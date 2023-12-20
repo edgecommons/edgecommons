@@ -1,20 +1,12 @@
 package com.aws.proserve.ggcommons;
 
-import com.aws.proserve.ggcommons.config.manager.ConfigManager;
+import com.aws.proserve.ggcommons.config.ConfigManager;
 import com.aws.proserve.ggcommons.messaging.Message;
 import com.aws.proserve.ggcommons.messaging.MessagingClient;
-import com.aws.proserve.ggcommons.utils.Utils;
 import com.github.cliftonlabs.json_simple.JsonObject;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import software.amazon.awssdk.aws.greengrass.model.QOS;
-
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 
 import static org.junit.jupiter.api.Assertions.*;
 

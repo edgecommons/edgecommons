@@ -1,8 +1,13 @@
-package com.aws.proserve.ggcommons.config.manager;
+package com.aws.proserve.ggcommons.config.provider;
 
+
+import com.aws.proserve.ggcommons.config.ConfigManager;
 import com.aws.proserve.ggcommons.utils.Utils;
+import com.github.cliftonlabs.json_simple.JsonArray;
 import com.github.cliftonlabs.json_simple.JsonObject;
 import com.github.cliftonlabs.json_simple.Jsoner;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import software.amazon.awssdk.aws.greengrass.GreengrassCoreIPCClientV2;
 import software.amazon.awssdk.aws.greengrass.SubscribeToTopicResponseHandler;
 import software.amazon.awssdk.aws.greengrass.model.*;
@@ -10,26 +15,28 @@ import software.amazon.awssdk.eventstreamrpc.StreamResponseHandler;
 
 import java.nio.charset.StandardCharsets;
 
-class ShadowConfigManager extends ConfigManager implements StreamResponseHandler<SubscriptionResponseMessage>
+class ShadowConfigProvider extends ConfigProvider implements  StreamResponseHandler<SubscriptionResponseMessage>
 {
+    private static final Logger LOGGER = LogManager.getLogger(ShadowConfigProvider.class);
     protected static final String SHADOW_TOPIC_TEMPLATE = "$aws/things/%s/shadow/name/%s/";
     protected static final String ALL_SHADOW_TOPIC_TEMPLATE = "$aws/things/%s/shadow/name/%s/+/+";
     protected final String shadowTopicPrefix;
     private final String shadowName;
+    private final String thingName;
     GreengrassCoreIPCClientV2 ipcClient;
 
-    ShadowConfigManager(String componentName, String shadowName)
+    ShadowConfigProvider(ConfigManager configManager, String thingName, String shadowName)
     {
-        super(componentName);
+        super(configManager);
         this.shadowName = shadowName;
-        this.shadowTopicPrefix = String.format(SHADOW_TOPIC_TEMPLATE, getThingName(), shadowName);
+        this.thingName =thingName;
+        this.shadowTopicPrefix = String.format(SHADOW_TOPIC_TEMPLATE, thingName, shadowName);
         connectToIPC();
         subscribeShadowTopics();
-        init();
     }
 
     @Override
-    protected JsonObject loadConfiguration()
+    public JsonObject loadConfiguration()
     {
         JsonObject retVal = null;
         LOGGER.debug("Loading configuration from named shadow ('{}')", shadowName);
@@ -44,7 +51,7 @@ class ShadowConfigManager extends ConfigManager implements StreamResponseHandler
     }
 
     @Override
-    protected String getConfigSource()
+    public String getConfigSource()
     {
         return String.format("Named shadow (shadow name: '%s')", shadowName);
     }
@@ -62,7 +69,7 @@ class ShadowConfigManager extends ConfigManager implements StreamResponseHandler
 
         try
         {
-            UpdateThingShadowRequest updateRequest = new UpdateThingShadowRequest().withThingName(getThingName())
+            UpdateThingShadowRequest updateRequest = new UpdateThingShadowRequest().withThingName(thingName)
                                                                                    .withShadowName(shadowName)
                                                                                    .withPayload(shadowDoc.toJson().getBytes(StandardCharsets.UTF_8));
             UpdateThingShadowResponse updateResponse = ipcClient.updateThingShadow(updateRequest);
@@ -92,7 +99,7 @@ class ShadowConfigManager extends ConfigManager implements StreamResponseHandler
         String retVal = null;
         try
         {
-            GetThingShadowRequest request = new GetThingShadowRequest().withThingName(getThingName())
+            GetThingShadowRequest request = new GetThingShadowRequest().withThingName(thingName)
                                                                        .withShadowName(shadowName);
             GetThingShadowResponse response = ipcClient.getThingShadow(request);
             LOGGER.trace("Get shadow response: {}", response.toString());
@@ -118,7 +125,7 @@ class ShadowConfigManager extends ConfigManager implements StreamResponseHandler
 
     private void subscribeShadowTopics()
     {
-        String shadowUpdateDeltaTopic = String.format(ALL_SHADOW_TOPIC_TEMPLATE, getThingName(), shadowName);
+        String shadowUpdateDeltaTopic = String.format(ALL_SHADOW_TOPIC_TEMPLATE, thingName, shadowName);
         try
         {
             SubscribeToTopicRequest subRequest = new SubscribeToTopicRequest().withTopic(shadowUpdateDeltaTopic)
@@ -172,6 +179,25 @@ class ShadowConfigManager extends ConfigManager implements StreamResponseHandler
         }
     }
 
+    private JsonObject getDefaultConfig()
+    {
+        JsonObject retVal = new JsonObject();
+        JsonObject logging = new JsonObject();
+        JsonObject heartbeat = new JsonObject();
+        JsonObject source = new JsonObject();
+        JsonObject component = new JsonObject();
+        JsonObject global = new JsonObject();
+        JsonArray instances = new JsonArray();
+
+        component.put("global", global);
+        component.put("instances", instances);
+        retVal.put("logging", logging);
+        retVal.put("tags", source);
+        retVal.put("heartbeat", heartbeat);
+        retVal.put("component", component);
+        return retVal;
+    }
+
     @Override
     public boolean onStreamError(Throwable throwable)
     {
@@ -184,4 +210,14 @@ class ShadowConfigManager extends ConfigManager implements StreamResponseHandler
     {
         LOGGER.info("IPC stream for subscription to shadow updates closed (unsubscribed)");
     }
+
+
+    protected void configurationChanged(JsonObject newConfig)
+    {
+        LOGGER.info("configurationChanged: Applying new com.aws.proseve.ggcommons.config: {}", newConfig);
+        parentConfigManager.applyConfig(newConfig);
+
+
+    }
+
 }

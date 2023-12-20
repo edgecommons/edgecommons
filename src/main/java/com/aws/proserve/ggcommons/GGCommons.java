@@ -1,7 +1,6 @@
 package com.aws.proserve.ggcommons;
 
-import com.aws.proserve.ggcommons.config.manager.ConfigManager;
-import com.aws.proserve.ggcommons.config.manager.ConfigManagerBuilder;
+import com.aws.proserve.ggcommons.config.ConfigManager;
 import com.aws.proserve.ggcommons.heartbeat.Heartbeat;
 import com.aws.proserve.ggcommons.messaging.MessagingClient;
 import org.apache.commons.cli.*;
@@ -33,7 +32,7 @@ public class GGCommons
     {
         ParsedCommandLine parsedCommandLine = GGCommons.processArgs(componentName, args, appOptions);
         MessagingClient.init(parsedCommandLine.messagingArgs, receiveOwnMessages);
-        configManager = ConfigManagerBuilder.build(componentName, parsedCommandLine.configArgs);
+        configManager = new ConfigManager(componentName, parsedCommandLine.configArgs);
         new Heartbeat(configManager);
     }
 
@@ -55,6 +54,7 @@ public class GGCommons
                                             "'ENV <optional: env_var_name>', " +
                                             "'SHADOW <optional: shadow_name>', " +
                                             "'GG_CONFIG <optional: component_name> <optional: config_key>'\n" +
+                                            "'CONFIG_MANAGER '"+
                                             "Default: GG_CONFIG")
                                     .build();
         Option messagingOption = Option.builder("m")

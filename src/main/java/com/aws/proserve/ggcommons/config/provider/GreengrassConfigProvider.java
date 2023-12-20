@@ -1,29 +1,33 @@
-package com.aws.proserve.ggcommons.config.manager;
+package com.aws.proserve.ggcommons.config.provider;
 
+import com.aws.proserve.ggcommons.config.ConfigManager;
 import com.aws.proserve.ggcommons.messaging.MessagingClient;
 import com.github.cliftonlabs.json_simple.JsonObject;
 import com.github.cliftonlabs.json_simple.Jsoner;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import software.amazon.awssdk.aws.greengrass.GreengrassCoreIPCClientV2;
 import software.amazon.awssdk.aws.greengrass.model.GetConfigurationRequest;
 import software.amazon.awssdk.aws.greengrass.model.GetConfigurationResponse;
 
 import java.util.Map;
 
-public class GreengrassConfigManager extends ConfigManager
+public class GreengrassConfigProvider extends ConfigProvider
 {
-    String configComponentName;
-    String configKey;
+    private static final Logger LOGGER = LogManager.getLogger(GreengrassConfigProvider.class);
 
-    GreengrassConfigManager(String componentName, String configComponentName, String configKey)
+    final String configComponentName;
+    final String configKey;
+
+    GreengrassConfigProvider(ConfigManager configManager, String configComponentName, String configKey)
     {
-        super(componentName);
+        super(configManager);
         this.configComponentName = configComponentName;
         this.configKey = (configKey == null) ? "ComponentConfig" : configKey;
-        init();
     }
 
     @Override
-    protected JsonObject loadConfiguration()
+    public JsonObject loadConfiguration()
     {
         JsonObject retVal = null;
         LOGGER.debug("Loading Greengrass component configuration");
@@ -61,7 +65,7 @@ public class GreengrassConfigManager extends ConfigManager
     }
 
     @Override
-    protected String getConfigSource()
+     public String getConfigSource()
     {
         return String.format("Greengrass com.aws.proseve.ggcommons.config (component: %s; key: %s)", configComponentName, configKey);
     }
