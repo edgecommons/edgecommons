@@ -50,11 +50,11 @@ public class ConfigComponentProvider extends ConfigProvider {
                 System.exit(1);
             } catch (TimeoutException e) {
                 attemptCount++;
-                if (attemptCount ==3) {
-                    LOGGER.fatal("Encountered TimeoutException. Unable to load configuration using Greengrass IPC.  Exiting.");
+                if (attemptCount == 3) {
+                    LOGGER.fatal("Failed to retrieve configuration from configuration manager component after {} tries.  Exiting.", attemptCount);
                     System.exit(1);
                 }
-                LOGGER.warn("Encountered TimeoutException. Unable to load configuration using Greengrass IPC.  Retrying ({})",attemptCount);
+                LOGGER.warn("Failed to retrieve configuration from configuration manager component.  Retrying ({})", attemptCount);
             }
         }while(retry) ;
         return (JsonObject) replyMessage.getBody();

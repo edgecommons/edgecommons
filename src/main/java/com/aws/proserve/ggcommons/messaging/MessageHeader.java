@@ -15,7 +15,7 @@ public class MessageHeader
 {
     protected static final Logger LOGGER = LogManager.getLogger(MessageHeader.class);
 
-    static final String REPLY_MESSAGE_TOPIC_PREFIX = "$ggcommons/reply-";
+    static final String REPLY_MESSAGE_TOPIC_PREFIX = "ggcommons/reply-";
 
     String name;
     String version;
