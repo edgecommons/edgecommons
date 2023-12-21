@@ -62,7 +62,7 @@ public class ConfigComponentProvider extends ConfigProvider {
 
     @Override
     public String getConfigSource() {
-        return String.format("Environment (source topic name: %s)", source);
+        return String.format("Config Manager Component (source topic name: %s)", source);
     }
 
 }

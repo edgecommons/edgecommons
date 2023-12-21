@@ -53,8 +53,8 @@ public class GGCommons
                                             "'FILE <optional: file_path>', " +
                                             "'ENV <optional: env_var_name>', " +
                                             "'SHADOW <optional: shadow_name>', " +
-                                            "'GG_CONFIG <optional: component_name> <optional: config_key>'\n" +
-                                            "'CONFIG_MANAGER '"+
+                                            "'GG_CONFIG <optional: component_name> <optional: config_key>'" +
+                                            "'CONFIG_COMPONENT'\n"+
                                             "Default: GG_CONFIG")
                                     .build();
         Option messagingOption = Option.builder("m")

@@ -19,9 +19,9 @@ class GGCommonsTest
 
     GGCommonsTest()
     {
-        String[] args = { "-m", "MQTT", "localhost", "1883", "-c", "FILE", "config_3.json"};
-//        ggCommons = new GGCommons("TEST_SUITE", args);
-//        configManager = ggCommons.getConfigManager();
+        String[] args = { "-m", "MQTT", "localhost", "1883", "-c", "CONFIG_COMPONENT"};
+        ggCommons = new GGCommons("dump1", args);
+        configManager = ggCommons.getConfigManager();
     }
 
     public void ipcMessageHandler(String topic, Message message)
