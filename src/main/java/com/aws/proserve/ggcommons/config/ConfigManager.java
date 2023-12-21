@@ -140,7 +140,7 @@ public class ConfigManager
             retVal = retVal.replace("{ComponentName}", getComponentName());
         }
 
-        if (tagConfig.getKeys() != null)
+        if (null != tagConfig && tagConfig.getKeys() != null)
         {
             for (String tagKey : tagConfig.getKeys())
             {
