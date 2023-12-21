@@ -39,7 +39,7 @@ public class ConfigProviderBuilder {
                 LOGGER.fatal("Unrecognized com.aws.proseve.ggcommons.config source '{}'.  Valid values are 'FILE', 'ENV', 'SHADOW' and 'GG_CONFIG", configArgs[0]);
                 System.exit(1);
         }
-        LOGGER.info("Configuration loaded from {}", configProvider.getConfigSource());
+        LOGGER.info("Will load configuration from {}", configProvider.getConfigSource());
         return configProvider;
     }
 }

@@ -39,6 +39,10 @@ public class ConfigManager
         if (config != null)
         {
             applyConfig(config);
+            LOGGER.info("Configuration loaded from {}", configProvider.getConfigSource());
+        }  else {
+            LOGGER.error("No configuration found.  Exiting.");
+            System.exit(1);
         }
     }
 
