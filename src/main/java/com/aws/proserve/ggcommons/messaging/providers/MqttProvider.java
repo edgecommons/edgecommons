@@ -63,7 +63,7 @@ public class MqttProvider extends MessagingProvider
         @Override
         public void run()
         {
-            LOGGER.info("Started queue monitoring for subscription on {}", topicFilter);
+            LOGGER.trace("Started queue monitoring for subscription on {}", topicFilter);
             while(true)
             {
                 try
@@ -91,7 +91,7 @@ public class MqttProvider extends MessagingProvider
                             topicFilter, e.getMessage());
                 }
             }
-            LOGGER.info("Queue monitoring stopped for subscription on {}", topicFilter);
+            LOGGER.trace("Queue monitoring stopped for subscription on {}", topicFilter);
         }
     }
 
