@@ -49,6 +49,7 @@ run:
   script:
     - pip install .
     - pip install -U pip setuptools wheel .
+    - python increment_version.py
     - python setup.py sdist bdist_wheel
     - "pip install build twine"
     - "python -m build"
