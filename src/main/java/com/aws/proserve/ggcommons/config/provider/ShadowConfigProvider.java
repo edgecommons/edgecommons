@@ -2,6 +2,7 @@ package com.aws.proserve.ggcommons.config.provider;
 
 
 import com.aws.proserve.ggcommons.config.ConfigManager;
+import com.aws.proserve.ggcommons.messaging.MessagingClient;
 import com.aws.proserve.ggcommons.utils.Utils;
 import com.github.cliftonlabs.json_simple.JsonArray;
 import com.github.cliftonlabs.json_simple.JsonObject;
@@ -85,7 +86,7 @@ class ShadowConfigProvider extends ConfigProvider implements  StreamResponseHand
     {
         try
         {
-            ipcClient = GreengrassCoreIPCClientV2.builder().build();
+            ipcClient = (GreengrassCoreIPCClientV2) MessagingClient.getNativeClient(); // GreengrassCoreIPCClientV2.builder().build();
         }
         catch (Exception e)
         {
