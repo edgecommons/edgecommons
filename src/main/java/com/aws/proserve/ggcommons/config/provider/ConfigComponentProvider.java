@@ -25,7 +25,7 @@ public class ConfigComponentProvider extends ConfigProvider {
         source=configManager.resolveTemplate(GET_TOPIC_TEMPLATE );
         String updated=configManager.resolveTemplate(UPDATED_TOPIC_TEMPLATE);
         MessagingClient.subscribe(updated,(topic, msg)->{
-            parentConfigManager.applyConfig(loadConfiguration());
+            parentConfigManager.applyConfig((JsonObject) msg.getBody());
         });
     }
 
