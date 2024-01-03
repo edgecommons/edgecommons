@@ -1,6 +1,6 @@
 {
   "logging": {
-    "level": "INFO",
+    "level": "DEBUG",
     "format": "%(asctime)s [%(levelname)s] %(filename)s %(funcName)s(%(lineno)d) [%(threadName)s]: %(message)s"
   },
   "heartbeat": {

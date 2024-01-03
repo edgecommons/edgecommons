@@ -1,5 +1,6 @@
 import argparse
 import logging
+from time import sleep
 from typing import Tuple
 from ggcommons.config.manager.config_manager import ConfigManager
 from ggcommons.config.manager.config_manager_builder import ConfigManagerBuilder
@@ -16,7 +17,7 @@ def init(
         nargs="*",
         type=str,
         default=["GG_CONFIG"],
-        help="Configuration source.  One of: ENV, GG_CONFIG, FILE, SHADOW (default: %(default)s)",
+        help="Configuration source.  One of: ENV, GG_CONFIG, FILE, SHADOW, CONFIG_COMPONENT (default: %(default)s)",
     )
     arg_parser.add_argument(
         "-m",
@@ -45,7 +46,7 @@ def init(
 
 if __name__ == "__main__":
     import sys
-    sys.argv = ["ggcommons_python", "--config", "FILE", "../config_3.json",  "--messaging", "MQTT"]
+    sys.argv = ["ggcommons_python", "--config", "CONFIG_COMPONENT",  "--messaging", "MQTT"]
     init("ggcommons_python", argparse.ArgumentParser())
     while True:
-        pass
+        sleep(1000)
