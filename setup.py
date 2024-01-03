@@ -16,7 +16,7 @@ DESCRIPTION = "Library for greengrass component development"
 URL = "https://gitlab.aws.dev/greengrass-commons/ggcommons-python-lib"
 EMAIL = "mbreissi@amazon.com"
 AUTHOR = "mbreissi@amazon.com"
-REQUIRES_PYTHON = ">=3.8.0"
+REQUIRES_PYTHON = ">=3.9.0"
 VERSION = "0.0.1"
 
 # What packages are required for this module to be executed?

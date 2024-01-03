@@ -1,6 +1,7 @@
 import logging
 from typing import List
 
+from ggcommons.config.manager.config_component_manager import ConfigComponentManager
 from ggcommons.config.manager.config_manager import ConfigManager
 from ggcommons.config.manager.environment_config_manager import EnvironmentConfigManager
 from ggcommons.config.manager.file_config_manager import FileConfigManager
@@ -32,10 +33,13 @@ class ConfigManagerBuilder:
             logger.info("SHADOW specified. Using ShadowConfigManager")
             shadow_name = config_args[1] if len(config_args) > 1 else component_name
             config_manager = ShadowConfigManager(component_name, shadow_name)
+        elif config_args[0].upper() == "CONFIG_COMPONENT":
+            logger.info("CONFIG_COMPONENT specified. Using ConfigComponentManager")
+            config_manager = ConfigComponentManager(component_name)
         else:
             logger.fatal(
                 f"Unrecognized config source '{config_args[0]}'.  "
-                f"Valid values are 'FILE', 'ENV', 'SHADOW' and 'GG_CONFIG"
+                f"Valid values are 'FILE', 'ENV', 'SHADOW', 'GG_CONFIG' and 'CONFIG_COMPONENT' "
             )
             exit(5)
         return config_manager
