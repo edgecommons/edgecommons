@@ -34,8 +34,8 @@ Good for development and local testing but does not scale well for industrial se
 Embedding unique configuration in the deployment configuration, while possible, removes the ability to do binary updates to multiple devices.
 3. **Shadow**
 Has core limitations:
- * 7 layers of json nesting
-*  Other considerations when using SHADOW include:
+   * 7 layers of json nesting
+   *  Other considerations when using SHADOW include:
 The configuration should be contained in a single property named ComponentConfig the value of the ComponentConfig property must be a single "stringified" JSON object that matches the structure defined in the configuration reference.  It is stringified to work around the json depth limitation enforced by AWS IoT Shadows
 be aware of the 8K shadow document size limitation (inclusive of desired and reported states).  It is recommended to minify your JSON configuration prior to stringifying it.
 requires the deployment of the Greengrass ShadowManager plug-in component
