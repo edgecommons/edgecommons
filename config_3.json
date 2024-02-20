@@ -21,10 +21,9 @@
     "line": "line1"
   },
   "metricEmission": {
-    "target": "messaging",
+    "target": "log",
     "targetConfig": {
-      "destination": "ipc",
-      "topic": "{ThingName}/{ComponentName}/metric"
+      "logFileName": "{ComponentName}.metric.log"
     }
   },
   "component": {

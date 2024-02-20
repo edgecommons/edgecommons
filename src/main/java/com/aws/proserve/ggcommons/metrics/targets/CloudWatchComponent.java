@@ -3,7 +3,6 @@ package com.aws.proserve.ggcommons.metrics.targets;
 import com.aws.proserve.ggcommons.config.ConfigManager;
 import com.aws.proserve.ggcommons.messaging.MessagingClient;
 import com.aws.proserve.ggcommons.metrics.Metric;
-import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 
 import java.util.Map;
