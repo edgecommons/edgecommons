@@ -1,9 +1,10 @@
 package com.aws.proserve.ggcommons.messaging.providers;
 
-import com.github.cliftonlabs.json_simple.Jsoner;
 import com.aws.proserve.ggcommons.messaging.Message;
 import com.aws.proserve.ggcommons.messaging.MessagingProvider;
 import com.aws.proserve.ggcommons.messaging.ReplyFuture;
+import com.google.gson.Gson;
+import com.google.gson.JsonObject;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.eclipse.paho.client.mqttv3.IMqttDeliveryToken;
@@ -125,7 +126,7 @@ public class MqttProvider extends MessagingProvider
             LOGGER.trace("Message received on topic '{}'", topic);
             String msgChars = new String(message.getPayload(), StandardCharsets.UTF_8);
             try {
-                msg = Message.build(Jsoner.deserialize(msgChars));
+                msg = Message.build(new Gson().fromJson(msgChars, JsonObject.class));
             } catch (Exception e) {
                 msg = Message.build(msgChars);
             }
@@ -177,6 +178,7 @@ public class MqttProvider extends MessagingProvider
     private void internalPublish(String topic, Message message, QOS qos) {
         try
         {
+            String strMsg = message.toString();
             MqttMessage msg = new MqttMessage(message.toString().getBytes());
             msg.setQos(qos.ordinal());
             mqttClient.publish(topic, msg);
@@ -199,6 +201,21 @@ public class MqttProvider extends MessagingProvider
     {
         String adjustedTopic = "iotcore/" + topic;
         internalPublish(adjustedTopic, message, qos);
+    }
+
+    @Override
+    public void publishRaw(String topic, JsonObject payload)
+    {
+        try
+        {
+            MqttMessage msg = new MqttMessage(payload.toString().getBytes());
+            mqttClient.publish(topic, msg);
+        }
+        catch (MqttException e)
+        {
+            LOGGER.error("Failed to publish raw message on topic '{}' - {}",
+                    topic, e.toString());
+        }
     }
 
     private void internalSubscribe(String topicFilter, BiConsumer<String, Message> callback, QOS qos, int maxConcurrency)

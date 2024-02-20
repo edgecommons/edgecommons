@@ -1,0 +1,172 @@
+package com.aws.proserve.ggcommons.metrics.targets;
+
+import com.aws.proserve.ggcommons.config.ConfigManager;
+import com.aws.proserve.ggcommons.metrics.Metric;
+import software.amazon.awssdk.services.cloudwatch.CloudWatchClient;
+import software.amazon.awssdk.services.cloudwatch.model.CloudWatchException;
+import software.amazon.awssdk.services.cloudwatch.model.Dimension;
+import software.amazon.awssdk.services.cloudwatch.model.MetricDatum;
+import software.amazon.awssdk.services.cloudwatch.model.PutMetricDataRequest;
+
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.*;
+import java.util.concurrent.ConcurrentLinkedQueue;
+
+public class CloudWatch extends MetricTarget
+{
+
+    private final CloudWatchClient cwClient;
+//    private final Collection<PendingMetric> pendingMetrics = new ConcurrentLinkedQueue<>();
+
+    private final HashMap<String, Collection<PendingMetric>> pendingMetrics = new HashMap<>();
+
+    private final Timer metricEmitTimer;
+
+    public CloudWatch(ConfigManager configManager)
+    {
+        super(configManager);
+        cwClient = CloudWatchClient.builder().build();
+        metricEmitTimer = new Timer("Metric Emit Timer", true);
+        metricEmitTimer.scheduleAtFixedRate(new CloudWatch.PendingMetricEmitter(), 0,
+                configManager.getMetricConfig().getIntervalSecs() * 1000L);
+    }
+
+    @Override
+    public void emitMetric(Metric metric, Map<String, Float> measureValues)
+    {
+        // need to maintain a hashmap by namespace as we can only submit
+        // from a single namespace at a time
+        if (pendingMetrics.containsKey(metric.getNamespace()))
+        {
+            pendingMetrics.get(metric.getNamespace()).add(new PendingMetric(metric, measureValues));
+            LOGGER.info("Added {} metric to pending queue", metric.getName());
+        }
+        else
+        {
+            Collection<PendingMetric> metricQueue = new ConcurrentLinkedQueue<>();
+            metricQueue.add(new PendingMetric(metric, measureValues));
+            pendingMetrics.put(metric.getNamespace(), metricQueue);
+            LOGGER.info("Created queue for namespace {} and added {} metric to pending queue",
+                    metric.getNamespace(), metric.getName());
+        }
+    }
+
+
+    @Override
+    public void emitMetricNow(Metric metric, Map<String, Float> measureValues)
+    {
+        try
+        {
+            Collection<MetricDatum> data = new ArrayList<>();
+            appendToPutMetricDataRequest(new PendingMetric(metric, measureValues), data);
+            PutMetricDataRequest request = PutMetricDataRequest.builder()
+                                                               .namespace(metric.getNamespace())
+                                                               .metricData(data)
+                                                               .build();
+            cwClient.putMetricData(request);
+        }
+        catch (CloudWatchException e)
+        {
+            LOGGER.error("Error sending metric to CloudWatch. {}. Ignoring.", e.getMessage());
+        }
+        LOGGER.trace("Successfully sent {} metric to CloudWatch", metric.getName());
+    }
+
+    private void flushMetrics()
+    {
+        for (Map.Entry<String, Collection<PendingMetric>> entry : pendingMetrics.entrySet())
+        {
+            String namespace = entry.getKey();
+            Collection<PendingMetric> pendingMetricQueue = entry.getValue();
+            Collection<MetricDatum> data = new ArrayList<>();
+            int numMetrics = 0;
+            Iterator<PendingMetric> it = pendingMetricQueue.iterator();
+            while (it.hasNext())
+            {
+                PendingMetric pendingMetric = it.next();
+                appendToPutMetricDataRequest(pendingMetric, data);
+                numMetrics++;
+                it.remove();
+            }
+            if (numMetrics > 0)
+            {
+                PutMetricDataRequest request = PutMetricDataRequest.builder()
+                                                                   .namespace(namespace)
+                                                                   .metricData(data)
+                                                                   .build();
+                cwClient.putMetricData(request);
+                LOGGER.info("Successfully sent {} pending metrics to CloudWatch", numMetrics);
+            }
+        }
+    }
+
+    private void appendToPutMetricDataRequest(PendingMetric pendingMetric, Collection<MetricDatum> data)
+    {
+        Map<String, Float> measureValues = pendingMetric.getMeasureValues();
+        Collection<Dimension> dimensions = pendingMetric.getMetric().dimensionsAsCollection();
+        Metric metric = pendingMetric.getMetric();
+        Instant timestamp = pendingMetric.getTimestamp();
+
+        for (Map.Entry<String, Float> entry : measureValues.entrySet())
+        {
+            MetricDatum datum = MetricDatum.builder()
+                                           .metricName(entry.getKey())
+                                           .unit(metric.getMeasure(entry.getKey()).getUnit())
+                                           .storageResolution(metric.getMeasure(entry.getKey()).getStorageResolution())
+                                           .value(Double.valueOf(entry.getValue()))
+                                           .timestamp(timestamp)
+                                           .dimensions(dimensions)
+                                           .build();
+            data.add(datum);
+        }
+    }
+
+    private static class PendingMetric
+    {
+        private final Metric metric;
+        private final Map<String, Float> measureValues;
+
+        private final Instant timestamp;
+
+        public PendingMetric(Metric metric, Map<String, Float> measureValues)
+        {
+            this.metric = metric;
+            this.measureValues = measureValues;
+            this.timestamp = Instant.parse(ZonedDateTime.now(ZoneOffset.UTC).format(DateTimeFormatter.ISO_INSTANT));
+        }
+
+        public Metric getMetric()
+        {
+            return metric;
+        }
+
+        public Map<String, Float> getMeasureValues()
+        {
+            return measureValues;
+        }
+
+        public Instant getTimestamp()
+        {
+            return timestamp;
+        }
+    }
+
+    private class PendingMetricEmitter extends TimerTask
+    {
+        @Override
+        public void run()
+        {
+            try
+            {
+                flushMetrics();
+            }
+            catch (Exception e)
+            {
+                LOGGER.error("Error emitting pending metrics to CloudWatch. {}", e.getMessage());
+            }
+        }
+    }
+}

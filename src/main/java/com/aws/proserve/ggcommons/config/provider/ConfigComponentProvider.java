@@ -4,7 +4,7 @@ import com.aws.proserve.ggcommons.config.ConfigManager;
 import com.aws.proserve.ggcommons.messaging.Message;
 import com.aws.proserve.ggcommons.messaging.MessagingClient;
 import com.aws.proserve.ggcommons.messaging.ReplyFuture;
-import com.github.cliftonlabs.json_simple.JsonObject;
+import com.google.gson.JsonObject;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 

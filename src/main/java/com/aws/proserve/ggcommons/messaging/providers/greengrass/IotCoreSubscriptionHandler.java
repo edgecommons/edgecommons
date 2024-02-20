@@ -1,8 +1,9 @@
 package com.aws.proserve.ggcommons.messaging.providers.greengrass;
 
 
-import com.github.cliftonlabs.json_simple.Jsoner;
 import com.aws.proserve.ggcommons.messaging.Message;
+import com.google.gson.Gson;
+import com.google.gson.JsonObject;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import oshi.util.tuples.Pair;
@@ -34,7 +35,7 @@ public class IotCoreSubscriptionHandler extends SubscriptionHandler<IoTCoreMessa
             Message msg;
             try
             {
-                msg = Message.build(Jsoner.deserialize(msgChars));
+                msg = Message.build(new Gson().fromJson(msgChars, JsonObject.class));
             }
             catch (Exception e)
             {

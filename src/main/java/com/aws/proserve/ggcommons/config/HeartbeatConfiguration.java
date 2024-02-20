@@ -1,12 +1,9 @@
 package com.aws.proserve.ggcommons.config;
 
-import com.aws.proserve.ggcommons.heartbeat.Heartbeat;
-import com.github.cliftonlabs.json_simple.JsonObject;
-import com.github.cliftonlabs.json_simple.Jsoner;
+
+import com.google.gson.JsonObject;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-
-import java.math.BigDecimal;
 
 //{
 //    "intervalSecs": 5,
@@ -27,35 +24,31 @@ public class HeartbeatConfiguration
     boolean includeThreads = false;
     boolean includeFiles = false;
     boolean includeFds = false;
-    String topic = "ggcommons/{ThingName}/{ComponentName}/heartbeat";
-
 
     public HeartbeatConfiguration(JsonObject jsonConfig)
     {
         if (jsonConfig != null)
         {
-            if (jsonConfig.containsKey("topic"))
-                topic = (String) jsonConfig.get("topic");
-            if (jsonConfig.containsKey("intervalSecs"))
+            if (jsonConfig.has("intervalSecs"))
             {
-                intervalSecs = ((BigDecimal) jsonConfig.get("intervalSecs")).intValue();
+                intervalSecs = (jsonConfig.get("intervalSecs").getAsBigDecimal()).intValue();
                 if (intervalSecs < 1)
                     intervalSecs = 5;
             }
-            if (jsonConfig.containsKey("metric"))
+            if (jsonConfig.has("metric"))
             {
                 JsonObject metricObj = (JsonObject) jsonConfig.get("metric");
-                if (metricObj.containsKey("cpu"))
-                    includeCpu = (boolean) metricObj.get("cpu");
-                if (metricObj.containsKey("memory"))
-                    includeMemory = (boolean) metricObj.get("memory");
-                if (metricObj.containsKey("disk"))
-                    includeDisk = (boolean) metricObj.get("disk");
-                if (metricObj.containsKey("threads"))
-                    includeThreads = (boolean) metricObj.get("threads");
-                if (metricObj.containsKey("files"))
-                    includeFiles = (boolean) metricObj.get("files");
-                if (metricObj.containsKey("fds"))
+                if (metricObj.has("cpu"))
+                    includeCpu =  metricObj.get("cpu").getAsBoolean();
+                if (metricObj.has("memory"))
+                    includeMemory =  metricObj.get("memory").getAsBoolean();
+                if (metricObj.has("disk"))
+                    includeDisk =  metricObj.get("disk").getAsBoolean();
+                if (metricObj.has("threads"))
+                    includeThreads =  metricObj.get("threads").getAsBoolean();
+                if (metricObj.has("files"))
+                    includeFiles =  metricObj.get("files").getAsBoolean();
+                if (metricObj.has("fds"))
                     LOGGER.warn("Reporting of allocated file descriptors (fds) not supported in ggcommons-java. Ignoring");
             }
         }
@@ -64,22 +57,22 @@ public class HeartbeatConfiguration
     public JsonObject toDict()
     {
         JsonObject retVal = new JsonObject();
-        retVal.put("intervalSecs", intervalSecs);
+        retVal.addProperty("intervalSecs", intervalSecs);
         JsonObject metricObj = new JsonObject();
-        metricObj.put("cpu", includeCpu);
-        metricObj.put("memory", includeMemory);
-        metricObj.put("disk", includeDisk);
-        metricObj.put("threads", includeDisk);
-        metricObj.put("files", includeDisk);
-        metricObj.put("fds", includeFds);
-        retVal.put("metric", metricObj);
+        metricObj.addProperty("cpu", includeCpu);
+        metricObj.addProperty("memory", includeMemory);
+        metricObj.addProperty("disk", includeDisk);
+        metricObj.addProperty("threads", includeDisk);
+        metricObj.addProperty("files", includeDisk);
+        metricObj.addProperty("fds", includeFds);
+        retVal.add("metric", metricObj);
         return retVal;
     }
 
     @Override
     public String toString()
     {
-        return Jsoner.serialize(toDict());
+        return toDict().toString();
     }
 
     public int getIntervalSecs()
@@ -114,7 +107,4 @@ public class HeartbeatConfiguration
 
     public boolean includeFds() { return includeFds; }
 
-    public String getTopic() {
-        return topic;
-    }
 }

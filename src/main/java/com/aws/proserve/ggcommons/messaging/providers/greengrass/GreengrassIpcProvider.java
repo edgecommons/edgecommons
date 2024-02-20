@@ -3,6 +3,9 @@ package com.aws.proserve.ggcommons.messaging.providers.greengrass;
 import com.aws.proserve.ggcommons.messaging.Message;
 import com.aws.proserve.ggcommons.messaging.MessagingProvider;
 import com.aws.proserve.ggcommons.messaging.ReplyFuture;
+import com.google.gson.Gson;
+import com.google.gson.JsonObject;
+import com.google.gson.reflect.TypeToken;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import software.amazon.awssdk.aws.greengrass.GreengrassCoreIPCClientV2;
@@ -12,6 +15,7 @@ import software.amazon.awssdk.aws.greengrass.model.*;
 
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
+import java.util.Map;
 import java.util.function.BiConsumer;
 
 public class GreengrassIpcProvider extends MessagingProvider
@@ -75,8 +79,27 @@ public class GreengrassIpcProvider extends MessagingProvider
         }
     }
 
+    @Override
+    public void publishRaw(String topic, JsonObject payload)
+    {
+        try
+        {
+            Gson gson = new Gson();
+            TypeToken<Map<String, Object>> typeToken = new TypeToken<>() {};
+            Map<String, Object> map = gson.fromJson(payload, typeToken.getType());
+            JsonMessage ipcMessage = new JsonMessage().withMessage(map);
+            PublishMessage pubMessage = new PublishMessage().withJsonMessage(ipcMessage);
+            PublishToTopicRequest pubRequest = new PublishToTopicRequest().withTopic(topic).withPublishMessage(pubMessage);
+            ipcClient.publishToTopic(pubRequest);
+        }
+        catch (InterruptedException e)
+        {
+            LOGGER.error("Failed to publish IPC message on topic {}", topic);
+        }
+    }
 
- @Override
+
+    @Override
  public void subscribe(String topicFilter, BiConsumer<String, Message> callback, int maxConcurrency)
     {
         try

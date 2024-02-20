@@ -2,9 +2,9 @@ package com.aws.proserve.ggcommons.config;
 
 import com.aws.proserve.ggcommons.config.provider.ConfigProvider;
 import com.aws.proserve.ggcommons.config.provider.ConfigProviderBuilder;
-import com.aws.proserve.ggcommons.config.provider.ConfigurationChangeListener;
-import com.github.cliftonlabs.json_simple.JsonArray;
-import com.github.cliftonlabs.json_simple.JsonObject;
+
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -23,6 +23,7 @@ public class ConfigManager
     protected final ArrayList<ConfigurationChangeListener> configChangeListeners = new ArrayList<>();
     protected TagConfiguration tagConfig;
     protected HeartbeatConfiguration heartbeatConfig;
+    protected MetricConfiguration metricConfig;
     protected JsonObject componentConfig;
     protected JsonObject globalConfig;
     protected LoggingConfiguration loggingConfig;
@@ -48,12 +49,15 @@ public class ConfigManager
 
     public void applyConfig(JsonObject config)
     {
-        loggingConfig = config.containsKey("logging") ? new LoggingConfiguration((JsonObject) config.get("logging")) : null;
-        tagConfig = config.containsKey("tags") ? new TagConfiguration((JsonObject) config.get("tags")) : null;
-        heartbeatConfig = config.containsKey("heartbeat") ? new HeartbeatConfiguration((JsonObject) config.get("heartbeat")) : null;
+        tagConfig = config.has("tags") ? new TagConfiguration((JsonObject) config.get("tags")) : null;
+        loggingConfig = config.has("logging") ? new LoggingConfiguration((JsonObject) config.get("logging")) : null;
+        heartbeatConfig = config.has("heartbeat") ? new HeartbeatConfiguration((JsonObject) config.get("heartbeat")) : null;
+        metricConfig = config.has("metricEmission")
+                ? new MetricConfiguration((JsonObject) config.get("metricEmission"))
+                : new MetricConfiguration(null);
 
         componentConfig = (JsonObject) config.get("component");
-        globalConfig = componentConfig.containsKey("global") ? (JsonObject) componentConfig.get("global") : null;
+        globalConfig = componentConfig.has("global") ? (JsonObject) componentConfig.get("global") : null;
         genInstancesMap();
         LOGGER.info("configurationChanged: Notifying {} listeners", configChangeListeners.size());
         for (ConfigurationChangeListener listener : configChangeListeners)
@@ -69,14 +73,14 @@ public class ConfigManager
 
     private void genInstancesMap()
     {
-        JsonArray instances = componentConfig.containsKey("instances") ? (JsonArray) componentConfig.get("instances") : null;
+        JsonArray instances = componentConfig.has("instances") ? componentConfig.get("instances").getAsJsonArray() : null;
         if (instances != null)
         {
             for (Object instance : instances)
             {
                 JsonObject instanceConfig = (JsonObject) instance;
-                instanceConfigs.put((String) instanceConfig.get("id"), instanceConfig);
-                LOGGER.debug("Loaded com.aws.proseve.ggcommons.config for {}", instanceConfig.get("id"));
+                instanceConfigs.put(instanceConfig.get("id").toString(), instanceConfig);
+                LOGGER.debug("Loaded instance config for {}", instanceConfig.get("id"));
             }
         }
     }
@@ -110,6 +114,10 @@ public class ConfigManager
     public LoggingConfiguration getLoggingConfig()
     {
         return loggingConfig;
+    }
+
+    public MetricConfiguration getMetricConfig() {
+        return metricConfig;
     }
 
     public String getThingName()

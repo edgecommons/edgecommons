@@ -3,6 +3,7 @@ package com.aws.proserve.ggcommons;
 import com.aws.proserve.ggcommons.config.ConfigManager;
 import com.aws.proserve.ggcommons.heartbeat.Heartbeat;
 import com.aws.proserve.ggcommons.messaging.MessagingClient;
+import com.aws.proserve.ggcommons.metrics.MetricEmitter;
 import org.apache.commons.cli.*;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -33,6 +34,7 @@ public class GGCommons
         ParsedCommandLine parsedCommandLine = GGCommons.processArgs(componentName, args, appOptions);
         MessagingClient.init(parsedCommandLine.messagingArgs, receiveOwnMessages);
         configManager = new ConfigManager(componentName, parsedCommandLine.configArgs);
+        MetricEmitter.init(configManager);
         new Heartbeat(configManager);
     }
 

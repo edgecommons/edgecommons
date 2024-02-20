@@ -1,7 +1,7 @@
 package com.aws.proserve.ggcommons.messaging;
 
-import com.github.cliftonlabs.json_simple.JsonObject;
-import com.github.cliftonlabs.json_simple.Jsoner;
+import com.google.gson.Gson;
+import com.google.gson.JsonObject;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -9,6 +9,7 @@ import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 
 public class MessageHeader
@@ -51,16 +52,16 @@ public class MessageHeader
         this.replyTo = replyTo;
     }
 
-    public static MessageHeader fromDict(Map<String, Object> src)
+    public static MessageHeader fromDict(JsonObject src)
     {
-        String name = (String) src.get("name");
-        String version = (String) src.get("version");
-        String timestamp = (String) src.get("timestamp");
-        String uuid = (String) src.get("uuid");
-        String correlationId = (String) src.get("correlation_id");
+        String name = src.get("name").getAsString();
+        String version = src.get("version").getAsString();
+        String timestamp = src.get("timestamp").getAsString();
+        String uuid = src.get("uuid").getAsString();
+        String correlationId = src.get("correlation_id").getAsString();
         String replyTo = null;
-        if (src.containsKey("reply_to"))
-            replyTo = (String) src.get("reply_to");
+        if (src.has("reply_to"))
+            replyTo = src.get("reply_to").getAsString();
         return new MessageHeader(name, version, correlationId, timestamp, uuid, replyTo);
     }
 
@@ -68,13 +69,13 @@ public class MessageHeader
     {
         JsonObject retVal = new JsonObject();
 
-        retVal.put("name", name);
-        retVal.put("version", version);
-        retVal.put("timestamp", timestamp);
-        retVal.put("uuid", uuid);
-        retVal.put("correlation_id", correlationId);
+        retVal.addProperty("name", name);
+        retVal.addProperty("version", version);
+        retVal.addProperty("timestamp", timestamp);
+        retVal.addProperty("uuid", uuid);
+        retVal.addProperty("correlation_id", correlationId);
         if (replyTo != null)
-            retVal.put("reply_to", replyTo);
+            retVal.addProperty("reply_to", replyTo);
 
         return retVal;
     }
@@ -82,15 +83,13 @@ public class MessageHeader
     @Override
     public String toString()
     {
-        return Jsoner.serialize(toDict());
+        return new Gson().toJson(toDict());
     }
 
     public String makeRequest(String replyTo)
     {
-        if (replyTo == null)
-            this.replyTo = REPLY_MESSAGE_TOPIC_PREFIX + UUID.randomUUID();
-        else
-            this.replyTo = replyTo;
+        this.replyTo = Objects.requireNonNullElseGet(replyTo, () -> REPLY_MESSAGE_TOPIC_PREFIX + UUID.randomUUID());
+        LOGGER.debug("Setting replyTo field as {}", this.replyTo );
         return this.replyTo;
     }
 

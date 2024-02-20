@@ -1,9 +1,8 @@
 package com.aws.proserve.ggcommons.config.provider;
 
 import com.aws.proserve.ggcommons.config.ConfigManager;
-import com.github.cliftonlabs.json_simple.JsonException;
-import com.github.cliftonlabs.json_simple.JsonObject;
-import com.github.cliftonlabs.json_simple.Jsoner;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonSyntaxException;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -33,9 +32,9 @@ class FileConfigProvider extends ConfigProvider
         {
             File file = new File(configFilePath);
             String configurationFileContents = getFileAsString(file);
-            retVal = (JsonObject) Jsoner.deserialize(configurationFileContents);
+            retVal = gson.fromJson(configurationFileContents, JsonObject.class);
         }
-        catch (JsonException | IOException e)
+        catch (JsonSyntaxException | IOException e)
         {
             LOGGER.fatal("Error reading configuration file '{}': {}", configFilePath, e.toString());
             System.exit(1);

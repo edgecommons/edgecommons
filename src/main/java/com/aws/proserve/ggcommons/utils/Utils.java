@@ -1,14 +1,11 @@
 package com.aws.proserve.ggcommons.utils;
 
-import com.github.cliftonlabs.json_simple.JsonException;
-import com.github.cliftonlabs.json_simple.JsonObject;
-import com.github.cliftonlabs.json_simple.Jsoner;
+import com.google.gson.Gson;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonSyntaxException;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import java.io.IOException;
-import java.io.StringReader;
-import java.io.StringWriter;
 
 public class Utils
 {
@@ -28,25 +25,17 @@ public class Utils
 
     public static String stringify(JsonObject jsonObject)
     {
-        String retVal = null;
-        StringWriter writer = new StringWriter();
-        try {
-            Jsoner.prettyPrint(new StringReader(Jsoner.serialize(jsonObject)), writer, "", "");
-            retVal = Jsoner.escape(writer.toString());
-        } catch (JsonException | IOException e) {
-            LOGGER.error("Unable to stringify json object: {}", jsonObject.toString());
-        }
-        return retVal;
+        return new Gson().toJson(jsonObject);
     }
 
     public static JsonObject destringify(String jsonString) {
-        JsonObject retVal = null;
         try {
-            retVal = (JsonObject) Jsoner.deserialize(jsonString);
-        } catch (JsonException e) {
+            return new Gson().fromJson(jsonString, JsonObject.class);
+        }catch(JsonSyntaxException e)  {
             LOGGER.error("Unable to deserialize string into json object: {}", jsonString);
+
         }
-        return retVal;
+        return null;
     }
 
 

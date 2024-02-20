@@ -2,6 +2,7 @@ package com.aws.proserve.ggcommons.messaging;
 
 import com.aws.proserve.ggcommons.messaging.providers.MqttProvider;
 import com.aws.proserve.ggcommons.messaging.providers.greengrass.GreengrassIpcProvider;
+import com.google.gson.JsonObject;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import software.amazon.awssdk.aws.greengrass.model.QOS;
@@ -42,6 +43,11 @@ public class MessagingClient
     {
         messagingProvider.publishToIoTCore(topic, msg,  qos);
         LOGGER.debug("Published IoT Core message on topic '{}': {}", topic, msg.toString());
+    }
+
+    public static void publishRaw(String topic, JsonObject metricObject)
+    {
+        messagingProvider.publishRaw(topic, metricObject);
     }
 
     public static void subscribe(String topicFilter, BiConsumer<String, Message> callback)
@@ -119,4 +125,6 @@ public class MessagingClient
     {
         return messagingProvider.getNativeClient();
     }
+
+
 }

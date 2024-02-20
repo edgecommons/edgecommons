@@ -1,7 +1,7 @@
 package com.aws.proserve.ggcommons.config;
 
-import com.github.cliftonlabs.json_simple.JsonObject;
-import com.github.cliftonlabs.json_simple.Jsoner;
+import com.google.gson.Gson;
+import com.google.gson.JsonObject;
 
 import java.util.Set;
 
@@ -25,7 +25,7 @@ public class TagConfiguration
     @Override
     public String toString()
     {
-        return Jsoner.serialize(toDict());
+        return new Gson().toJson(toDict());
     }
 
     public Set<String> getKeys() {
@@ -33,6 +33,6 @@ public class TagConfiguration
     }
 
     public String getKeyValue(String key) {
-        return (String) tags.get(key);
+        return tags.get(key).toString();
     }
 }

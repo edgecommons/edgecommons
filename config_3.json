@@ -20,6 +20,13 @@
     "shop": "shop1",
     "line": "line1"
   },
+  "metricEmission": {
+    "target": "messaging",
+    "targetConfig": {
+      "destination": "ipc",
+      "topic": "{ThingName}/{ComponentName}/metric"
+    }
+  },
   "component": {
     "global": {
     },
