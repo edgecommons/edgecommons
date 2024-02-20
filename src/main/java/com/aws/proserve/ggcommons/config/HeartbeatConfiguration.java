@@ -43,7 +43,7 @@ public class HeartbeatConfiguration
                 if (metricObj.has("memory"))
                     includeMemory =  metricObj.get("memory").getAsBoolean();
                 if (metricObj.has("disk"))
-                    includeDisk =  metricObj.get("disk").getAsBoolean();
+                    LOGGER.warn("Reporting of disk space not supported in ggcommons-java. Ignoring");
                 if (metricObj.has("threads"))
                     includeThreads =  metricObj.get("threads").getAsBoolean();
                 if (metricObj.has("files"))

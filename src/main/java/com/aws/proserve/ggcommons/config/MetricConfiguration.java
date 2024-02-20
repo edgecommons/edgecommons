@@ -7,7 +7,8 @@ import org.apache.logging.log4j.Logger;
 public class MetricConfiguration
 {
     protected static final Logger LOGGER = LogManager.getLogger(MetricConfiguration.class);
-    private final static String DEFAULT_METRIC_TOPIC = "cloudwatch/metric/put";
+    private final static String DEFAULT_MESSAGING_TOPIC = "{ThingName}/{ComponentName}/metric";
+    private final static String DEFAULT_CLOUDWATCH_COMPONENT_TOPIC = "cloudwatch/metric/put";
     private final static String DEFAULT_TARGET = "ipc";
     private final static String DEFAULT_METRIC_NAMESPACE = "ggcommons";
     private final static String DEFAULT_METRIC_FILE_NAME_TEMPLATE = "{ComponentName}.metric.log";
@@ -16,7 +17,7 @@ public class MetricConfiguration
     private String target = DEFAULT_TARGET;
     private String namespace = DEFAULT_METRIC_NAMESPACE;
     private String logFileNameTemplate = DEFAULT_METRIC_FILE_NAME_TEMPLATE;
-    private String topic = DEFAULT_METRIC_TOPIC;
+    private String topic;
     private int intervalSecs = DEFAULT_INTERVAL_SECS;
     private String destination = DEFAULT_MESSAGING_DESTINATION;
 
@@ -40,6 +41,7 @@ public class MetricConfiguration
             }
 
             if (target.equalsIgnoreCase("messaging")) {
+                topic = DEFAULT_MESSAGING_TOPIC;
                 if (jsonConfig.has("targetConfig"))
                 {
                     JsonObject targetConfig = jsonConfig.get("targetConfig").getAsJsonObject();
@@ -47,6 +49,16 @@ public class MetricConfiguration
                         topic = targetConfig.get("topic").getAsString();
                     if (targetConfig.has("destination"))
                         destination = targetConfig.get("destination").getAsString();
+                }
+            }
+
+            if (target.equalsIgnoreCase("cloudwatchcomponent")) {
+                topic = DEFAULT_CLOUDWATCH_COMPONENT_TOPIC;
+                if (jsonConfig.has("targetConfig"))
+                {
+                    JsonObject targetConfig = jsonConfig.get("targetConfig").getAsJsonObject();
+                    if (targetConfig.has("topic"))
+                        topic = targetConfig.get("topic").getAsString();
                 }
             }
 

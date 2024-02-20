@@ -73,7 +73,11 @@ public class MetricEmitter
     }
 
     public static void emitMetricNow(String name, Map<String, Float> measureValues) {
-        metricTarget.emitMetricNow(metrics.get(name), measureValues);
+        if (metrics.containsKey(name)) {
+            metricTarget.emitMetricNow(metrics.get(name), measureValues);
+        } else {
+            LOGGER.warn("Metric {} is not defined. Ignoring.", name);
+        }
     }
 
 }

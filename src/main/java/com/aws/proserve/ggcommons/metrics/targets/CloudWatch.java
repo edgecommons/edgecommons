@@ -19,7 +19,6 @@ public class CloudWatch extends MetricTarget
 {
 
     private final CloudWatchClient cwClient;
-//    private final Collection<PendingMetric> pendingMetrics = new ConcurrentLinkedQueue<>();
 
     private final HashMap<String, Collection<PendingMetric>> pendingMetrics = new HashMap<>();
 
