@@ -1,9 +1,8 @@
 package com.aws.proserve.ggcommons.config.provider;
 
 import com.aws.proserve.ggcommons.config.ConfigManager;
-import com.github.cliftonlabs.json_simple.JsonException;
-import com.github.cliftonlabs.json_simple.JsonObject;
-import com.github.cliftonlabs.json_simple.Jsoner;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonSyntaxException;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -28,14 +27,14 @@ class EnvironmentConfigProvider extends ConfigProvider
         String configStr = System.getenv(environmentVariableName);
         if (configStr != null)
         {
-            try
-            {
-                retVal = (JsonObject) Jsoner.deserialize(configStr);
-            }
-            catch (JsonException e)
+            try{
+                retVal = gson.fromJson(configStr, JsonObject.class);
+
+            }   catch(JsonSyntaxException e)
             {
                 LOGGER.fatal("Error parsing configuration: {}\n{}", configStr, e.toString());
                 System.exit(1);
+
             }
         }
         else

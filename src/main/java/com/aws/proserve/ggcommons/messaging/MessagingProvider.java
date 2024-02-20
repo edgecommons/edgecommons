@@ -1,5 +1,6 @@
 package com.aws.proserve.ggcommons.messaging;
 
+import com.google.gson.JsonObject;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import software.amazon.awssdk.aws.greengrass.model.QOS;
@@ -19,6 +20,9 @@ public abstract class MessagingProvider
 
     public abstract void publish(String topic, Message message);
     public abstract void publishToIoTCore(String topic, Message message, QOS qos);
+
+    public abstract void publishRaw(String topic, JsonObject payload);
+
     public abstract void subscribe(String topicFilter, BiConsumer<String, Message> callback,
                                    int maxConcurrency);
     public abstract void subscribeToIoTCore(String topicFilter, BiConsumer<String, Message> callback, QOS qos,

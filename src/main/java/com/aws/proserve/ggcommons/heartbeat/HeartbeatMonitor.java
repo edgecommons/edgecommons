@@ -1,8 +1,7 @@
 package com.aws.proserve.ggcommons.heartbeat;
 
-
 import com.aws.proserve.ggcommons.config.HeartbeatConfiguration;
-import com.github.cliftonlabs.json_simple.JsonObject;
+import com.google.gson.JsonObject;
 import oshi.PlatformEnum;
 import oshi.SystemInfo;
 import oshi.software.os.OSProcess;
@@ -29,23 +28,23 @@ public class HeartbeatMonitor
 
         JsonObject cpuData = getCpuUsage();
         if (cpuData != null)
-            data.put("cpu", cpuData);
+            data.add("cpu", cpuData);
 
         JsonObject memData = getMemoryUsage();
         if (memData != null)
-            data.put("memory", memData);
+            data.add("memory", memData);
 
         JsonObject diskData = getDiskUsage();
         if (diskData != null)
-            data.put("disk", diskData);
+            data.add("disk", diskData);
 
         JsonObject threadData = getThreadCount();
         if (threadData != null)
-            data.put("threads", threadData);
+            data.add("threads", threadData);
 
         JsonObject fileData = getFileCount();
         if (fileData != null)
-            data.put("files", fileData);
+            data.add("files", fileData);
 
         return data;
     }
@@ -60,7 +59,7 @@ public class HeartbeatMonitor
             cpuUsage = currentProc.getProcessCpuLoadBetweenTicks(previousProc)*100;
             if (SystemInfo.getCurrentPlatform() == PlatformEnum.WINDOWS)
                 cpuUsage /= si.getHardware().getProcessor().getLogicalProcessorCount();
-            retVal.put("cpu_usage(%)", cpuUsage);
+            retVal.addProperty("cpu_usage", cpuUsage);
         }
         return retVal;
     }
@@ -71,7 +70,7 @@ public class HeartbeatMonitor
         if (heartbeatConfiguration.includeMemory())
         {
             retVal = new JsonObject();
-            retVal.put("memory_usage(MB)", currentProc.getResidentSetSize()/1000000);
+            retVal.addProperty("memory_usage", currentProc.getResidentSetSize()/1000000);
         }
         return retVal;
     }
@@ -92,7 +91,7 @@ public class HeartbeatMonitor
         if (heartbeatConfiguration.includeThreads())
         {
             retVal = new JsonObject();
-            retVal.put("threads", currentProc.getThreadCount());
+            retVal.addProperty("threads", currentProc.getThreadCount());
         }
         return retVal;
     }
@@ -103,7 +102,7 @@ public class HeartbeatMonitor
         if (heartbeatConfiguration.includeFiles())
         {
             retVal = new JsonObject();
-            retVal.put("files", currentProc.getOpenFiles());
+            retVal.addProperty("files", currentProc.getOpenFiles());
         }
         return retVal;
     }

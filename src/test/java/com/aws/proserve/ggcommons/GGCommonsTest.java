@@ -3,10 +3,20 @@ package com.aws.proserve.ggcommons;
 import com.aws.proserve.ggcommons.config.ConfigManager;
 import com.aws.proserve.ggcommons.messaging.Message;
 import com.aws.proserve.ggcommons.messaging.MessagingClient;
-import com.github.cliftonlabs.json_simple.JsonObject;
+import com.aws.proserve.ggcommons.metrics.Measure;
+import com.aws.proserve.ggcommons.metrics.Metric;
+import com.aws.proserve.ggcommons.metrics.MetricEmitter;
+import com.aws.proserve.ggcommons.utils.Utils;
+import com.google.gson.JsonObject;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import software.amazon.awssdk.aws.greengrass.model.QOS;
+
+import java.util.Map;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -19,37 +29,10 @@ class GGCommonsTest
 
     GGCommonsTest()
     {
-        String[] args = { "-m", "MQTT", "localhost", "1883", "-c", "CONFIG_COMPONENT"};
-        ggCommons = new GGCommons("dump1", args);
+        String[] args = { "-m", "MQTT", "localhost", "1883", "-c", "FILE", "config_3.json"};
+        ggCommons = new GGCommons("UnitTests", args);
         configManager = ggCommons.getConfigManager();
     }
-
-    public void ipcMessageHandler(String topic, Message message)
-    {
-        receivedMessage = message;
-    }
-
-    public void iotCoreMessageHandler(String topic, Message message)
-    {
-        receivedMessage = message;
-    }
-
-    public void requestHandler(String topic, Message message)
-    {
-        JsonObject replyPayload = new JsonObject();
-        replyPayload.put("reply_message", "I have received your request and have replied with this message");
-        Message reply = Message.buildFromConfig("ReplyTest", "1.0", replyPayload, configManager);
-        MessagingClient.reply(message, reply);
-    }
-
-    public void iotCoreRequestHandler(String topic, Message message)
-    {
-        JsonObject replyPayload = new JsonObject();
-        replyPayload.put("reply_message", "(IoT Core) I have received your request and have replied with this message");
-        Message reply = Message.buildFromConfig("ReplyTest", "1.0", replyPayload, configManager);
-        MessagingClient.reply(message, reply);
-    }
-
 
     @BeforeEach
     void setUp()
@@ -68,13 +51,40 @@ class GGCommonsTest
         assertEquals(1, 1);
     }
 
+
+//    public void ipcMessageHandler(String topic, Message message)
+//    {
+//        receivedMessage = message;
+//    }
+//
+//    public void iotCoreMessageHandler(String topic, Message message)
+//    {
+//        receivedMessage = message;
+//    }
+//
+//    public void requestHandler(String topic, Message message)
+//    {
+//        JsonObject replyPayload = new JsonObject();
+//        replyPayload.addProperty("reply_message", "I have received your request and have replied with this message");
+//        Message reply = Message.buildFromConfig("ReplyTest", "1.0", replyPayload, configManager);
+//        MessagingClient.reply(message, reply);
+//    }
+//
+//    public void iotCoreRequestHandler(String topic, Message message)
+//    {
+//        JsonObject replyPayload = new JsonObject();
+//        replyPayload.addProperty("reply_message", "(IoT Core) I have received your request and have replied with this message");
+//        Message reply = Message.buildFromConfig("ReplyTest", "1.0", replyPayload, configManager);
+//        MessagingClient.reply(message, reply);
+//    }
+//
 //    @Test
 //    void publishIpcMessage()
 //    {
 //        String topic = "test/testIpcTopic";
 //        MessagingClient.subscribe(topic, this::ipcMessageHandler, 1);
 //        JsonObject jsonPayload = new JsonObject();
-//        jsonPayload.put("message", "Test IPC message");
+//        jsonPayload.addProperty("message", "Test IPC message");
 //        Message msg = Message.buildFromConfig("IpcMessageTest", "1.0", jsonPayload, configManager);
 //        MessagingClient.publish(topic, msg);
 //        Utils.sleep(200);
@@ -88,7 +98,7 @@ class GGCommonsTest
 //        String topic = "test/testIotCoreTopic";
 //        MessagingClient.subscribeToIoTCore(topic, this::iotCoreMessageHandler, QOS.AT_LEAST_ONCE);
 //        JsonObject jsonPayload = new JsonObject();
-//        jsonPayload.put("message", "Test IoT Core message");
+//        jsonPayload.addProperty("message", "Test IoT Core message");
 //        Message msg = Message.buildFromConfig("IoTCoreMessage", "1.0", jsonPayload, configManager);
 //        MessagingClient.publishToIotCore(topic, msg, QOS.AT_LEAST_ONCE);
 //        Utils.sleep(200);
@@ -103,7 +113,7 @@ class GGCommonsTest
 //        String pubTopic = "test/testIpcTopic";
 //        MessagingClient.subscribe(subTopic, this::ipcMessageHandler, 1);
 //        JsonObject jsonPayload = new JsonObject();
-//        jsonPayload.put("message", "Test IPC message");
+//        jsonPayload.addProperty("message", "Test IPC message");
 //        Message msg = Message.buildFromConfig("SubscribeWithFilterTest", "1.0", jsonPayload, configManager);
 //        MessagingClient.publish(pubTopic, msg);
 //        Utils.sleep(200);
@@ -117,7 +127,7 @@ class GGCommonsTest
 //        String requestTopic = "test/request";
 //        MessagingClient.subscribe(requestTopic, this::requestHandler, 1);
 //        JsonObject requestPayload = new JsonObject();
-//        requestPayload.put("message", "Test Request Reply");
+//        requestPayload.addProperty("message", "Test Request Reply");
 //        Message request = Message.buildFromConfig("RequestTest", "1.0", requestPayload, configManager);
 //        String correlationId = request.getCorrelationId();
 //        Message reply = MessagingClient.request(requestTopic, request).get(1000, TimeUnit.MILLISECONDS);
@@ -132,7 +142,7 @@ class GGCommonsTest
 //        String requestTopic = "test/iot_core_request";
 //        MessagingClient.subscribeToIoTCore(requestTopic, this::iotCoreRequestHandler, QOS.AT_MOST_ONCE, 1);
 //        JsonObject requestPayload = new JsonObject();
-//        requestPayload.put("message", "Test Request Reply");
+//        requestPayload.addProperty("message", "Test Request Reply");
 //        Message request = Message.buildFromConfig("RequestTest", "1.0", requestPayload, configManager);
 //        String correlationId = request.getCorrelationId();
 //        Message reply = MessagingClient.requestFromIoTCore(requestTopic, request).get(1000, TimeUnit.MILLISECONDS);
@@ -140,5 +150,25 @@ class GGCommonsTest
 //        assertEquals(reply.getCorrelationId(), correlationId);
 //        assertEquals(reply.getHeader().getName(), "ReplyTest");
 //    }
-
+//
+//    @Test
+//    void emitMetric() throws ExecutionException, InterruptedException, TimeoutException
+//    {
+//        // Create a Metric named "test" using default namespace and dimensions
+//        Metric metric = new Metric("test");
+//
+//        // Add a measure
+//        Measure measure = new Measure("val", "Count", 1);
+//        metric.addMeasure(measure);
+//
+//        // Define the metric
+//        MetricEmitter.defineMetric(metric);
+//
+//        for (int i = 1; i <= 60; i++)
+//        {
+//            Map<String, Float> measureValues = Map.of("val", (float) i);
+//            MetricEmitter.emitMetric("test", measureValues);
+//            Utils.sleep(1000);
+//        }
+//    }
 }

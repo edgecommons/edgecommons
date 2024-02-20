@@ -1,7 +1,7 @@
 package com.aws.proserve.ggcommons.config;
 
-import com.github.cliftonlabs.json_simple.JsonObject;
-import com.github.cliftonlabs.json_simple.Jsoner;
+import com.google.gson.Gson;
+import com.google.gson.JsonObject;
 import org.apache.logging.log4j.Level;
 
 public class LoggingConfiguration
@@ -16,25 +16,26 @@ public class LoggingConfiguration
     {
         if (jsonConfig != null)
         {
-            if (jsonConfig.containsKey("level"))
-                level = (String) jsonConfig.get("level");
-            if (jsonConfig.containsKey("format"))
-                format = (String) jsonConfig.get("format");
+            if (jsonConfig.has("level"))
+                level = String.valueOf(jsonConfig.get("level"));
+            if (jsonConfig.has("format"))
+                format = String.valueOf(jsonConfig.get("format"));
         }
     }
 
     public JsonObject toDict()
     {
         JsonObject retVal = new JsonObject();
-        retVal.put("level", level);
-        retVal.put("format", format);
+        retVal.addProperty("level", level);
+        retVal.addProperty("format", format);
         return retVal;
     }
 
     @Override
     public String toString()
     {
-        return Jsoner.serialize(toDict());
+        Gson gson = new Gson();
+        return gson.toJson(toDict(), JsonObject.class);
     }
 
     Level getLevel()

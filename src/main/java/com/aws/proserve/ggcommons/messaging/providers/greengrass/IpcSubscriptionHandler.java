@@ -1,15 +1,16 @@
 package com.aws.proserve.ggcommons.messaging.providers.greengrass;
 
 
-import com.github.cliftonlabs.json_simple.JsonObject;
-import com.github.cliftonlabs.json_simple.Jsoner;
 import com.aws.proserve.ggcommons.messaging.Message;
+import com.google.gson.Gson;
+import com.google.gson.JsonObject;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import oshi.util.tuples.Pair;
 import software.amazon.awssdk.aws.greengrass.model.SubscriptionResponseMessage;
 
 import java.nio.charset.StandardCharsets;
+
 import java.util.function.BiConsumer;
 
 public class IpcSubscriptionHandler extends SubscriptionHandler<SubscriptionResponseMessage>
@@ -32,15 +33,16 @@ public class IpcSubscriptionHandler extends SubscriptionHandler<SubscriptionResp
             JsonObject receivedPayload;
             if (subscriptionResponseMessage.getJsonMessage() != null)
             {
-                receivedPayload = new JsonObject(subscriptionResponseMessage.getJsonMessage().getMessage());
+                final Gson gson = new Gson();
+                receivedPayload = gson.toJsonTree(subscriptionResponseMessage.getJsonMessage().getMessage()).getAsJsonObject();
                 topic = subscriptionResponseMessage.getJsonMessage().getContext().getTopic();
-                LOGGER.trace("Received json message: {} on topic {}", receivedPayload.toJson(), topic);
+                LOGGER.trace("Received json message: {} on topic {}", receivedPayload.toString(), topic);
             }
             else
             {
                 String decodedBinaryPayload = new String(subscriptionResponseMessage.getBinaryMessage().getMessage(),
                         StandardCharsets.UTF_8);
-                receivedPayload = (JsonObject) Jsoner.deserialize(decodedBinaryPayload);
+                receivedPayload = new Gson().fromJson(decodedBinaryPayload, JsonObject.class);
                 topic = subscriptionResponseMessage.getBinaryMessage().getContext().getTopic();
                 LOGGER.trace("Received binary message: {} on topic {}", decodedBinaryPayload, topic);
             }

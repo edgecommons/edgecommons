@@ -2,9 +2,10 @@ package com.aws.proserve.ggcommons.messaging;
 
 import com.aws.proserve.ggcommons.config.TagConfiguration;
 import com.aws.proserve.ggcommons.config.ConfigManager;
-import com.github.cliftonlabs.json_simple.JsonObject;
-import com.github.cliftonlabs.json_simple.Jsoner;
 
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonPrimitive;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -37,30 +38,28 @@ public class MessageTags
         }
     }
 
-    public static MessageTags fromDict(Map<String,Object> src)
+    public static MessageTags fromDict(JsonObject src)
     {
-        String thing = src.containsKey("thing") ? (String) src.get("thing") : null;
+        String thing = src.has("thing") ? src.get("thing").getAsString() : null;
         JsonObject tagsDict = new JsonObject();
-        src.forEach((key,value) -> {
-            if (!key.equals("thing"))
-                tagsDict.put(key, value);
-        });
+        for (Map.Entry<String, JsonElement> entry : src.entrySet())
+        {
+            if (!entry.getKey().equals("thing"))
+                tagsDict.add(entry.getKey(), entry.getValue());
+        }
         return new MessageTags(thing, tagsDict);
     }
 
-    public JsonObject toDict()
+    public Map<String, JsonElement> toDict()
     {
-        JsonObject retVal = new JsonObject();
-
-        retVal.put("thing", thingName);
-        tags.forEach(retVal::put);
-
+        final Map<String, JsonElement> retVal = tags.asMap();
+        retVal.put("thing", new JsonPrimitive(thingName));
         return retVal;
     }
 
     @Override
     public String toString()
     {
-        return Jsoner.serialize(toDict());
+        return toDict().toString();
     }
 }

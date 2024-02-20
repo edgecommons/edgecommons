@@ -2,8 +2,7 @@ package com.aws.proserve.ggcommons.config.provider;
 
 import com.aws.proserve.ggcommons.config.ConfigManager;
 import com.aws.proserve.ggcommons.messaging.MessagingClient;
-import com.github.cliftonlabs.json_simple.JsonObject;
-import com.github.cliftonlabs.json_simple.Jsoner;
+import com.google.gson.JsonObject;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import software.amazon.awssdk.aws.greengrass.GreengrassCoreIPCClientV2;
@@ -29,7 +28,7 @@ public class GreengrassConfigProvider extends ConfigProvider
     @Override
     public JsonObject loadConfiguration()
     {
-        JsonObject retVal = null;
+        JsonObject retVal = new JsonObject();
         LOGGER.debug("Loading Greengrass component configuration");
 
         GreengrassCoreIPCClientV2 ipcClient = (GreengrassCoreIPCClientV2) MessagingClient.getNativeClient();
@@ -45,11 +44,12 @@ public class GreengrassConfigProvider extends ConfigProvider
             Map<String,Object> responseValue = response.getValue();
             if (responseValue != null)
             {
-                JsonObject tempConfig = new JsonObject(response.getValue());
-                JsonObject fullConfig = (JsonObject) Jsoner.deserialize(tempConfig.toJson());
-                LOGGER.info("Full configuration retrieved from Nucleus: {}", fullConfig.toJson());
-                retVal = (JsonObject) fullConfig.get(configKey);
-                LOGGER.info("Component configuration retrieved from Nucleus: {}", retVal.toJson());
+
+                String tempConfig = gson.toJson(response.getValue());
+                JsonObject fullConfig = gson.fromJson(tempConfig, JsonObject.class);
+                LOGGER.info("Full configuration retrieved from Nucleus: {}", tempConfig);
+                retVal = fullConfig.getAsJsonObject(configKey);
+                LOGGER.info("Component configuration retrieved from Nucleus: {}", retVal);
             } else {
                 LOGGER.fatal("Configuration not found.  Incorrect component name?  Exiting");
                 System.exit(5);

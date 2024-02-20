@@ -1,9 +1,10 @@
 package com.aws.proserve.ggcommons.messaging;
 
 import com.aws.proserve.ggcommons.config.ConfigManager;
-import com.github.cliftonlabs.json_simple.JsonException;
-import com.github.cliftonlabs.json_simple.JsonObject;
-import com.github.cliftonlabs.json_simple.Jsoner;
+import com.google.gson.Gson;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonSyntaxException;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -33,14 +34,14 @@ public class Message
         if (raw == null)
         {
             if (header != null)
-                retVal.put("header", header.toDict());
+                retVal.add("header", header.toDict());
             if (tags != null)
-                retVal.put("tags", tags.toDict());
-            retVal.put("body", body);
+                retVal.add("tags", new Gson().toJsonTree(tags.toDict()).getAsJsonObject());
+            retVal.add("body", (JsonElement) body);
         }
         else
         {
-            retVal.put("raw", raw);
+            retVal.add("raw", (JsonElement) raw);
         }
         return retVal;
     }
@@ -48,7 +49,7 @@ public class Message
     @Override
     public String toString()
     {
-        return Jsoner.serialize(toDict());
+        return toDict().toString();
     }
 
     public String getCorrelationId()
@@ -115,15 +116,17 @@ public class Message
         retVal.tags = MessageTags.fromConfig(configManager);
         if (payload instanceof String)
         {
+            String payloadStr =(String) payload;
             try
             {
+                Gson gson = new Gson();
                 // check if a "stringified" json object and convert to object if so
-                retVal.body = Jsoner.deserialize((String) payload);
+                retVal.body = gson.fromJson(payloadStr, Object.class);
             }
-            catch (JsonException e)
+            catch (JsonSyntaxException e)
             {
                 // just a regular string
-                retVal.body = payload;
+                retVal.body = payloadStr;
             }
         }
         else
@@ -140,26 +143,26 @@ public class Message
         if (msgContents instanceof JsonObject)
         {
             JsonObject msgJsonObj = (JsonObject) msgContents;
-            LOGGER.trace("Message contents: {}", msgJsonObj.toJson());
-            if (msgJsonObj.containsKey("header"))
+            LOGGER.trace("Message contents: {}", msgJsonObj);
+            if (msgJsonObj.has("header"))
             {
                 LOGGER.trace("processing header");
-                retVal.header = MessageHeader.fromDict((Map<String, Object>) msgJsonObj.get("header"));
+                retVal.header = MessageHeader.fromDict(msgJsonObj.getAsJsonObject("header"));
                 LOGGER.trace("header deserialized");
             }
-            if (msgJsonObj.containsKey("source"))
+            if (msgJsonObj.has("source"))
             {
                 LOGGER.trace("processing source");
-                retVal.tags = MessageTags.fromDict((Map<String, Object>) msgJsonObj.get("source"));
+                retVal.tags = MessageTags.fromDict(msgJsonObj.getAsJsonObject("source"));
                 LOGGER.trace("source deserialized");
             }
-            if (msgJsonObj.containsKey("body"))
+            if (msgJsonObj.has("body"))
             {
                 LOGGER.trace("processing body");
-                retVal.body =  new JsonObject((Map<String, Object>) msgJsonObj.get("body"));
+                retVal.body =  msgJsonObj.getAsJsonObject("body");
                 LOGGER.trace("body desiralized");
             }
-            if (!(msgJsonObj.containsKey("header") || msgJsonObj.containsKey("source") || msgJsonObj.containsKey("body")))
+            if (!(msgJsonObj.has("header") || msgJsonObj.has("source") || msgJsonObj.has("body")))
             {
                 LOGGER.trace("Json contained raw string: Assigning to raw");
                 retVal.raw = msgJsonObj;

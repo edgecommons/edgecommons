@@ -4,9 +4,9 @@ package com.aws.proserve.ggcommons.config.provider;
 import com.aws.proserve.ggcommons.config.ConfigManager;
 import com.aws.proserve.ggcommons.messaging.MessagingClient;
 import com.aws.proserve.ggcommons.utils.Utils;
-import com.github.cliftonlabs.json_simple.JsonArray;
-import com.github.cliftonlabs.json_simple.JsonObject;
-import com.github.cliftonlabs.json_simple.Jsoner;
+import com.google.gson.Gson;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import software.amazon.awssdk.aws.greengrass.GreengrassCoreIPCClientV2;
@@ -64,15 +64,15 @@ class ShadowConfigProvider extends ConfigProvider implements  StreamResponseHand
         JsonObject reportedDoc = new JsonObject();
 
         LOGGER.trace("Updating com.aws.proseve.ggcommons.config to:{}", componentConfig);
-        reportedDoc.put("ComponentConfig", componentConfig);
-        stateDoc.put("reported", reportedDoc);
-        shadowDoc.put("state", stateDoc);
+        reportedDoc.addProperty("ComponentConfig", componentConfig);
+        stateDoc.add("reported", reportedDoc);
+        shadowDoc.add("state", stateDoc);
 
         try
         {
             UpdateThingShadowRequest updateRequest = new UpdateThingShadowRequest().withThingName(thingName)
                                                                                    .withShadowName(shadowName)
-                                                                                   .withPayload(shadowDoc.toJson().getBytes(StandardCharsets.UTF_8));
+                                                                                   .withPayload(shadowDoc.toString().getBytes(StandardCharsets.UTF_8));
             UpdateThingShadowResponse updateResponse = ipcClient.updateThingShadow(updateRequest);
             LOGGER.trace("Update shadow response: {}", updateResponse.toString());
         }
@@ -108,8 +108,8 @@ class ShadowConfigProvider extends ConfigProvider implements  StreamResponseHand
             if (payload != null && payload.length > 0)
             {
                 String payloadAsString = new String(payload, StandardCharsets.UTF_8);
-                JsonObject shadowDoc = (JsonObject) Jsoner.deserialize(payloadAsString);
-                JsonObject desiredDoc = (JsonObject) ((JsonObject) shadowDoc.get("state")).get("desired");
+                JsonObject shadowDoc = new Gson().fromJson(payloadAsString, JsonObject.class);
+                JsonObject desiredDoc =  shadowDoc.getAsJsonObject("state").getAsJsonObject("desired");
                 retVal = desiredDoc.get("ComponentConfig").toString();
             }
             else
@@ -155,12 +155,12 @@ class ShadowConfigProvider extends ConfigProvider implements  StreamResponseHand
 
             if (action.equals("get") && result.equals("rejected")) {
                 LOGGER.warn("Named shadow document {} does not exist.  Creating default configuration.", shadowName);
-                reportUpdatedConfiguration(getDefaultConfig().toJson());
+                reportUpdatedConfiguration(getDefaultConfig().toString());
             } else if (action.equals("update") && result.equals("accepted")) {
                 LOGGER.debug("Received update/accepted message.  Attempting to apply changes. message:  {}", message);
                 String decodedBinaryPayload = new String(subscriptionResponseMessage.getBinaryMessage().getMessage(), StandardCharsets.UTF_8);
-                JsonObject payload = (JsonObject) Jsoner.deserialize(decodedBinaryPayload);
-                JsonObject desiredDoc = (JsonObject) ((JsonObject) (payload.get("state"))).get("desired");
+                JsonObject payload = new Gson().fromJson(decodedBinaryPayload, JsonObject.class);
+                JsonObject desiredDoc = payload.getAsJsonObject("state").getAsJsonObject("desired");
                 if (desiredDoc != null)
                 {
                     String componentConfigStr = desiredDoc.get("ComponentConfig").toString();
@@ -190,12 +190,12 @@ class ShadowConfigProvider extends ConfigProvider implements  StreamResponseHand
         JsonObject global = new JsonObject();
         JsonArray instances = new JsonArray();
 
-        component.put("global", global);
-        component.put("instances", instances);
-        retVal.put("logging", logging);
-        retVal.put("tags", source);
-        retVal.put("heartbeat", heartbeat);
-        retVal.put("component", component);
+        component.add("global", global);
+        component.add("instances", instances);
+        retVal.add("logging", logging);
+        retVal.add("tags", source);
+        retVal.add("heartbeat", heartbeat);
+        retVal.add("component", component);
         return retVal;
     }
 

@@ -50,7 +50,7 @@ Deploy GGCommonsComponent ( for “static” config and separating out unique co
 
 #### Architecture diagram 
      
-![img_1.png](img_1.png)
+![img_1.png](architecture.png)
 
 
 #### Using library
@@ -67,7 +67,7 @@ The optional --config option determines from where the component will load its c
 
 | Source        |      AdditionalArguments      |                                                                                                                                                                                                                      Description |
 | ------------- |:-----------------------------:|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------:|
-| GG_CONFIG     |         right-aligned         |                                                                                                                                                  [Default]  Retrieves configuration from the Greengrass deployment configuration |
+| GG_CONFIG     |                |                                                                                                                                                  [Default]  Retrieves configuration from the Greengrass deployment configuration |
 | GG_CONFIG      | <component_name> <config_key> | Retrieves the configuration from the Greengrass deployment configuration of the specified component using the optionally specified <config_key> to extract the portion of the configuration relevant to the configured component |
 | FILE |          <file_path>          |                                                                                                                                                  Retrieves the configuration from the file specified by the <file_path> argument |
 |ENV    |        <env_var_name>         |                                                                                                                               Retrieves the configuration from the environment variable specified by the <env_var_name> argument |
