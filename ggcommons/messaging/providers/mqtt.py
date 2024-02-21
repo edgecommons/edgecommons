@@ -41,7 +41,9 @@ class MqttProvider(MessagingProvider):
         self._responses = {}
         self._host = host
         self._port = port
-        self._mqtt_client = mqtt.Client(client_id=f"{uuid.uuid4()}")
+        self._mqtt_client = mqtt.Client(
+            mqtt.CallbackAPIVersion.VERSION1, client_id=f"{uuid.uuid4()}"
+        )
         self._mqtt_client.connect(host=self._host, port=self._port)
         self._mqtt_client.on_message = self._on_message
         self._mqtt_client.on_connect = self._on_connect
@@ -66,7 +68,9 @@ class MqttProvider(MessagingProvider):
         logger.debug(
             f"Starting queue monitoring for subscription on {subscription_info.topic_filter}"
         )
-        with concurrent.futures.ThreadPoolExecutor(max_workers=subscription_info.max_concurrency) as executor:
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=subscription_info.max_concurrency
+        ) as executor:
             while True:
                 queue_obj = subscription_info.msg_q.get()
                 if type(queue_obj) == int and queue_obj == -1:
@@ -101,7 +105,12 @@ class MqttProvider(MessagingProvider):
         adjusted_topic = f"iotcore/{topic}"
         self._internal_publish(adjusted_topic, msg, qos)
 
-    def _internal_subscribe(self, topic_filter: str, callback: Callable[[str, Message], None], max_concurrency: int = None):
+    def _internal_subscribe(
+        self,
+        topic_filter: str,
+        callback: Callable[[str, Message], None],
+        max_concurrency: int = None,
+    ):
         if topic_filter not in self._subscription_info:
             logger.debug(f"Subscribing to topic filter: {topic_filter}")
             sub_info = SubscriptionInfo(
@@ -172,4 +181,6 @@ class MqttProvider(MessagingProvider):
 
     def reply_to_iot_core(self, request: Message, reply: Message):
         reply.set_correlation_id(request.get_correlation_id())
-        self.publish_to_iot_core(request.get_header().get_reply_to(), reply, QOS.AT_MOST_ONCE)
+        self.publish_to_iot_core(
+            request.get_header().get_reply_to(), reply, QOS.AT_MOST_ONCE
+        )
