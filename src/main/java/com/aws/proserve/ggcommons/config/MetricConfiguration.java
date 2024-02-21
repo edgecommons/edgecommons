@@ -9,7 +9,7 @@ public class MetricConfiguration
     protected static final Logger LOGGER = LogManager.getLogger(MetricConfiguration.class);
     private final static String DEFAULT_MESSAGING_TOPIC = "{ThingName}/{ComponentName}/metric";
     private final static String DEFAULT_CLOUDWATCH_COMPONENT_TOPIC = "cloudwatch/metric/put";
-    private final static String DEFAULT_TARGET = "ipc";
+    private final static String DEFAULT_TARGET = "messaging";
     private final static String DEFAULT_METRIC_NAMESPACE = "ggcommons";
     private final static String DEFAULT_METRIC_FILE_NAME_TEMPLATE = "{ComponentName}.metric.log";
     private final static int DEFAULT_INTERVAL_SECS = 5;
