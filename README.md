@@ -1,6 +1,13 @@
 # ggcommons-python-lib
 
+`ggcommons` is an open source framework that makes it easier to build reusable, robust, and monitorable components for AWS IoT Greengrass. Some key capabilities it provides include:
+1. Configuration management to simplify how components retrieve configuration settings
+2. Messaging support with enhancements like request-response patterns and message structures
+3. Monitoring at the individual component level for better visibility into system health and performance
+4. Local debugging to streamline the development process
+5. Reusable components that work well together due to following common patterns and interfaces
 
+`ggcommons` aims to reduce barriers to creating industrial strength Greengrass components suitable for industrial IoT scenarios. Some attributes of industrial strength include flexibility in deployment models, high availability, and ability to handle real-time data and events from industrial equipment and processes.
 
 ## Getting started
 
