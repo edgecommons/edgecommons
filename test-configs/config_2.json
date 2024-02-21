@@ -1,7 +1,30 @@
 {
   "logging": {
     "level": "INFO",
-    "format": "%(asctime)s [%(levelname)s] %(filename)s %(funcName)s(%(lineno)d) [%(threadName)s]: %(message)s"
+    "format": "%d{yyyy-MM-dd HH:mm:ss.SSS} [%-5p] %-25.25c{1}(%4L): %m%n"
+  },
+  "heartbeat": {
+    "intervalSecs": 5,
+    "metric": {
+      "cpu": true,
+      "memory": true,
+      "disk": false,
+      "files": true,
+      "threads": true,
+      "fds": true
+    }
+  },
+  "tags": {
+    "appId": "IntelliJIdea",
+    "site": "site1",
+    "shop": "shop1",
+    "line": "line1"
+  },
+  "metricEmission": {
+    "target": "cloudwatch",
+    "targetConfig": {
+      "intervalSecs": 10
+    }
   },
   "component": {
     "global": {

@@ -12,7 +12,7 @@
       "disk": false
     }
   },
-  "source": {
+  "tags": {
     "appId": "ABC12345",
     "site": "site1",
     "shop": "shop1",

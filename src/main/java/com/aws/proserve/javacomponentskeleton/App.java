@@ -1,17 +1,21 @@
 package com.aws.proserve.javacomponentskeleton;
 
-import com.aws.proserve.ggcommons.config.manager.ConfigManager;
-import com.aws.proserve.ggcommons.config.manager.ConfigurationChangeListener;
-import com.aws.proserve.ggcommons.messaging.ReplyFuture;
-import com.github.cliftonlabs.json_simple.JsonObject;
 import com.aws.proserve.ggcommons.GGCommons;
+import com.aws.proserve.ggcommons.config.ConfigManager;
+import com.aws.proserve.ggcommons.config.ConfigurationChangeListener;
+import com.aws.proserve.ggcommons.messaging.ReplyFuture;
 import com.aws.proserve.ggcommons.messaging.Message;
 import com.aws.proserve.ggcommons.messaging.MessagingClient;
+import com.aws.proserve.ggcommons.metrics.Measure;
+import com.aws.proserve.ggcommons.metrics.Metric;
+import com.aws.proserve.ggcommons.metrics.MetricEmitter;
+import com.google.gson.JsonObject;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import software.amazon.awssdk.aws.greengrass.model.QOS;
 
-import java.math.BigDecimal;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -38,20 +42,20 @@ public class App implements ConfigurationChangeListener
 
     public static void ipcHelloWorldHandler(String topic, Message message)
     {
-        LOGGER.info("Received an ipc hello world message on topic {}: {}", topic, ((JsonObject) message.getBody()).get("id"));
+        LOGGER.info("Received an ipc hello world message on topic {}: {}", topic, ((JsonObject) message.getBody()).get("id").getAsString());
     }
 
     public static void iotCoreHelloWorldHandler(String topic, Message message)
     {
-        LOGGER.info("Received an iot core hello world message on topic {}: {}", topic, ((JsonObject) message.getBody()).get("id"));
+        LOGGER.info("Received an iot core hello world message on topic {}: {}", topic, ((JsonObject) message.getBody()).get("id").getAsString());
     }
 
     public void requestCallback(String topic, Message msg)
     {
         LOGGER.info("Received request message [{}]: {}", topic, ((JsonObject) msg.getBody()).get("id"));
         JsonObject replyPayload = new JsonObject();
-        replyPayload.put("reply_message", "I have received your request and have replied with this message");
-        int waitTimeSecs =  ((BigDecimal) ((JsonObject) msg.getBody()).get("wait_time")).intValue();
+        replyPayload.addProperty("reply_message", "I have received your request and have replied with this message");
+        int waitTimeSecs =  ((JsonObject) msg.getBody()).get("wait_time").getAsInt();
         sleep((long) waitTimeSecs*1000L);
         Message reply = Message.buildFromConfig("ReplyTest", "1.0", replyPayload, configManager);
         LOGGER.info("Publishing reply message {}", ((JsonObject) msg.getBody()).get("id"));
@@ -62,8 +66,8 @@ public class App implements ConfigurationChangeListener
     {
         LOGGER.info("Publishing request message {}", id);
         JsonObject requestPayload = new JsonObject();
-        requestPayload.put("id", id);
-        requestPayload.put("wait_time", executionTime);
+        requestPayload.addProperty("id", id);
+        requestPayload.addProperty("wait_time", executionTime);
         Message request = Message.buildFromConfig("RequestTest", "1.0", requestPayload, configManager);
         return MessagingClient.request(reqTopic, request);
     }
@@ -91,8 +95,15 @@ public class App implements ConfigurationChangeListener
     public boolean onConfigurationChanged()
     {
         LOGGER.info("Configuration changed. Applying change.");
-        publishInterval = ((BigDecimal) configManager.getGlobalConfig().get("publish_interval")).intValue()*1000L;
+        publishInterval = configManager.getGlobalConfig().get("publish_interval").getAsInt()*1000L;
         return true;
+    }
+
+    public void defineMetric()
+    {
+        Metric metric = new Metric("performance");
+        metric.addMeasure(new Measure("replyLatency", "Milliseconds", 1));
+        MetricEmitter.defineMetric(metric);
     }
 
     public App(String[] args)
@@ -100,7 +111,10 @@ public class App implements ConfigurationChangeListener
         ggCommons = new GGCommons("JavaComponentSkeleton", args);
         configManager = ggCommons.getConfigManager();
         configManager.addConfigChangeListener(this);
-        publishInterval = ((BigDecimal) configManager.getGlobalConfig().get("publish_interval")).intValue()*1000L;
+        publishInterval = configManager.getGlobalConfig().get("publish_interval").getAsInt()*1000L;
+
+        defineMetric();
+        Map<String, Float> measureValues = new HashMap<>();
 
         MessagingClient.subscribe(reqTopic, this::requestCallback);
         ReplyFuture iou1 = publishRequest("iou_1", 0);
@@ -117,14 +131,17 @@ public class App implements ConfigurationChangeListener
         while (true)
         {
             JsonObject jsonPayload = new JsonObject();
-            jsonPayload.put("id", i);
-            jsonPayload.put("message", "Hello World Java");
+            jsonPayload.addProperty("id", i);
+            jsonPayload.addProperty("message", "Hello World Java");
 
             Message msg = Message.buildFromConfig("test", "1.0", jsonPayload, configManager);
             LOGGER.info("Publishing message {} to ipc", i);
             MessagingClient.publish(pubTopic, msg);
             LOGGER.info("Publishing message {} to iot core", i);
             MessagingClient.publishToIotCore(pubTopic, msg, QOS.AT_LEAST_ONCE);
+
+            measureValues.put("replyLatency", (float) (Math.random()*100));
+            MetricEmitter.emitMetric("performance", measureValues);
 
             i++;
             sleep(publishInterval);
