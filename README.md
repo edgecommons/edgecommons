@@ -11,7 +11,35 @@
 
 ## Getting started
 
+## Local development and testing
 
+Local testing is possible with the set up of a local MQTT server that acts as a local instance of Greengrass IPC. The MQTT messaging provider also allows for mocking request/response patterns between components to validate behavior. 
+
+> :warning: If your component has a hard dependency on other components, ensure that these components are also running in "local" mode. 
+
+### Quickstart
+
+#### Set up local MQTT broker
+
+1. Install [Docker Engine](https://docs.docker.com/engine/install/).
+2. Install [MQTTX desktop (and optionally CLI) client](https://mqttx.app/downloads).
+3. Run `docker run -d --name emqx -p 1883:1883 -p 8083:8083 -p 8084:8084 -p 8883:8883 -p 18083:18083 emqx/emqx:latest`
+4. Open the MQTTX desktop app and connect to `localhost`. 
+
+#### Set up your component source
+
+1. Refer to the [Python component skeleton](https://gitlab.aws.dev/greengrass-commons/python-component-skeleton).
+2. Your entrypoint and dependencies need to be configured to use `ggcommons`. The `ggcommons.init()` function defines the messaging and config provider that is needed. For local run/testing, the messaging provider is `MQTT` and the config provider is `FILE`. 
+
+#### Run your component locally
+
+1. Run your component's entry point with the `-m MQTT` flag. If you need to configure your component, pass the `-c FILE <YOUR JSON CONFIG FILE>` flag E.g.:
+```bash
+python3 main.py -m MQTT -c FILE "test_config.json"
+```
+2. Navigate to the MQTTX desktop app and subscribe to `heartbeat/+/+` and you should see your component's heartbeat messages.
+3. If your component is configured to publish messages, subscribe to the relevant topics to view them. 
+4. To send messages to your component, publish messages to the relevant topics using MQTTX. 
 
 ## Contributing
 State if you are open to contributions and what your requirements are for accepting them.
