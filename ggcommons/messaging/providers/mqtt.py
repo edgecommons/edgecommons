@@ -31,6 +31,64 @@ class SubscriptionInfo:
 
 
 class MqttProvider(MessagingProvider):
+    """
+    MqttProvider(host: str, port: int)
+
+    Bases: MessagingProvider
+
+    MQTT provider for publishing and subscribing to MQTT topics.
+
+    Parameters:
+        host: str
+            The MQTT broker hostname
+        port: int
+            The MQTT broker port number
+
+    Attributes:
+        _subscription_info: dict
+            Maps topic filters to SubscriptionInfo objects
+        _response_ious: dict
+            Maps request reply_to topics to Iou objects
+        _responses: dict
+            Maps request reply_to topics to received response messages
+        _host: str
+            The MQTT broker host
+        _port: int
+            The MQTT broker port
+        _mqtt_client: mqtt.Client
+            The Paho MQTT client instance
+
+    Methods:
+        _on_message(client, userdata, message)
+            Callback for received MQTT messages
+        _queue_processor(subscription_info)
+            Thread target for processing subscription queues
+        _on_connect(client, userdata, flags, rc)
+            Callback for MQTT broker connection
+        _on_disconnect(client, userdata, rc)
+            Callback for MQTT broker disconnection
+        _internal_publish(topic, msg, qos=QOS.AT_LEAST_ONCE)
+            Publishes a message to an MQTT topic
+        publish(topic, msg)
+            Publishes a message to an MQTT topic
+        publish_to_iot_core(topic, msg, qos)
+            Publishes a message to an IoT Core MQTT topic
+        _internal_subscribe(topic_filter, callback, max_concurrency=None)
+            Subscribes to an MQTT topic filter
+        subscribe(topic_filter, callback, max_concurrency=None)
+            Subscribes to an MQTT topic filter
+        subscribe_to_iot_core(...)
+            Subscribes to an IoT Core MQTT topic filter
+        unsubscribe(topic)
+            Unsubscribes from an MQTT topic filter
+        request(topic, msg) -> Iou
+            Makes a request and returns an Iou future
+        cancel_request(iou)
+            Cancels a pending request
+        reply(request, reply)
+            Publishes a reply to a request
+        and other IoT Core specific methods
+    """
 
     def __init__(self, host: str, port: int):
         super().__init__()
@@ -126,6 +184,26 @@ class MqttProvider(MessagingProvider):
         callback: Callable[[str, Message], None],
         max_concurrency: int = None,
     ):
+        """
+        subscribe(topic_filter: str, callback: Callable[[str, Message], None], max_concurrency: int = None)
+
+        Subscribes to an MQTT topic filter.
+
+        Parameters
+        ----------
+        topic_filter : str
+            The topic filter to subscribe to
+        callback : Callable[[str, Message], None]
+            The callback function to invoke on messages
+        max_concurrency : int, optional
+            The maximum number of concurrent messages to allow, by default None
+
+        Returns
+        -------
+        None
+
+        Subscribes the client to a topic filter using the provided callback. Messages received on matching topics will be passed to the callback.
+        """
         self._internal_subscribe(topic_filter, callback, max_concurrency)
 
     def subscribe_to_iot_core(
@@ -135,6 +213,30 @@ class MqttProvider(MessagingProvider):
         qos: str,
         max_concurrency: int = None,
     ):
+        """
+        subscribe_to_iot_core(topic_filter: str, callback: Callable[[str, Message], None], qos: str, max_concurrency: int = None)
+
+        Subscribes to an IoT Core MQTT topic filter.
+
+        Parameters
+        ----------
+        topic_filter : str
+            The topic filter to subscribe to
+        callback : Callable[[str, Message], None]
+            The callback function to invoke on messages
+        qos : str
+            The quality of service level
+        max_concurrency : int, optional
+            The maximum number of concurrent messages to allow, by default None
+
+        Returns
+        -------
+        None
+
+        Subscribes the client to an IoT Core topic filter using the provided callback.
+        Messages received on matching topics will be passed to the callback. The topic
+        filter is prefixed with "iotcore/" before subscribing.
+        """
         adjusted_topic = "iotcore/" + topic_filter
         self._internal_subscribe(adjusted_topic, callback, max_concurrency)
 
@@ -150,6 +252,44 @@ class MqttProvider(MessagingProvider):
         del self._subscription_info[adjusted_topic]
 
     def request(self, topic: str, msg: Message) -> Iou:
+        """
+        request(self, topic: str, msg: Message) -> Iou
+
+        This method makes a request to a specific topic and returns an Iou future object
+        to allow asynchronous waiting for the response message.
+
+        It takes in two required parameters - the topic string that the request
+        message will be published to, and the Message object containing the request data.
+
+        The method first uses the Message.make_request() method to generate a unique
+        identifier string that will be used as the "reply-to" topic for the response.
+
+        It then instantiates a new Iou object, passing in the reply-to topic, to
+        represent the future response.
+
+        The Iou object is stored in an internal dictionary mapped by reply-to topic,
+        to allow later matching of responses.
+
+        Next, the client is subscribed to the reply-to topic using the default None
+        callback, to receive the response without processing.
+
+        The request message is then published to the provided topic.
+
+        Finally, the Iou future object is returned to the caller.
+
+        Parameters
+        ----------
+        topic : str
+            The topic to publish the request message to
+        msg : Message
+            The request data encapsulated in a Message object
+
+        Returns
+        -------
+        Iou : Iou
+            A future object representing the pending response
+
+        """
         reply_to = msg.make_request()
         iou = Iou(reply_to)
         self._response_ious[reply_to] = iou
@@ -163,6 +303,26 @@ class MqttProvider(MessagingProvider):
         del self._response_ious[topic]
 
     def reply(self, request: Message, reply: Message):
+        """
+        reply(self, request: Message, reply: Message)
+
+        Publishes a reply message to a request topic.
+
+        Parameters
+        ----------
+        request : Message
+            The original request message
+        reply : Message
+            The reply message
+
+        Returns
+        -------
+        None
+
+        Sets the correlation ID on the reply message to match
+        the request, and publishes it to the request's reply-to topic.
+        This allows the reply to be routed back to the requestor.
+        """
         reply.set_correlation_id(request.get_correlation_id())
         self.publish(request.get_header().get_reply_to(), reply)
 

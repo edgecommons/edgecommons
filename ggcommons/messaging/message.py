@@ -115,6 +115,43 @@ class MessageSource:
 
 
 class Message:
+    """
+    Message - Represents a message object for messaging operations
+
+    Parameters
+    ----------
+    header : MessageHeader, optional
+        Header object containing metadata for the message
+    body : object, optional
+        Content body of the message
+    tags : MessageTags, optional
+        Tags object containing source information for the message
+    raw : dict, optional
+        Raw message contents if message was not constructed via ggcommons
+
+    Methods
+    -------
+    to_dict()
+        Convert message to dictionary representation
+    dumps()
+        Serialize message to JSON string
+    get_correlation_id()
+        Get correlation ID from header
+    get_header()
+        Get header object
+    get_source()
+        Get source tags object
+    get_body()
+        Get message body
+    get_raw()
+        Get raw message contents
+    make_request()
+        Populate header for request message
+    set_correlation_id()
+        Set correlation ID on header
+
+    """
+
     def __init__(self):
         self.header = None
         self.body = None
@@ -161,6 +198,19 @@ class Message:
 
 
 class MessageBuilder:
+    """
+    MessageBuilder - Class for building Message objects
+
+    Methods
+    -------
+    build_from_config(name, version, payload, config_manager, correlation_id)
+        Build Message from configuration parameters
+    build(msg_contents, is_json)
+        Build Message from dictionary contents
+    build_response(name, version, payload, config_manager, request_msg)
+        Build response Message from request
+    """
+
     @staticmethod
     def build_from_config(
         name: str,
@@ -169,6 +219,34 @@ class MessageBuilder:
         config_manager: ConfigManager,
         correlation_id: str = None,
     ) -> Message:
+        """
+        build_from_config(name, version, payload, config_manager, correlation_id)
+
+        Build a Message object from configuration parameters.
+
+        Parameters
+        ----------
+        name : str
+            Name for the message
+        version : str
+            Version for the message
+        payload : str or dict
+            Message payload as JSON string or dictionary
+        config_manager : ConfigManager
+            Configuration manager for source tags
+        correlation_id : str, optional
+            Correlation ID for the message
+
+        Returns
+        -------
+        Message
+            Message instance populated from parameters
+
+        Raises
+        ------
+        TypeError
+            If payload is neither JSON string nor dictionary
+        """
         msg = Message()
         msg.header = MessageHeader(name, version, correlation_id=correlation_id)
         msg.tags = MessageSource.from_config(config_manager)
@@ -186,6 +264,23 @@ class MessageBuilder:
 
     @staticmethod
     def build(msg_contents, is_json: bool = True):
+        """
+        build(msg_contents, is_json)
+
+        Build a Message object from dictionary contents.
+
+        Parameters
+        ----------
+        msg_contents : dict
+            Dictionary containing message contents
+        is_json : bool, optional
+            Indicates if msg_contents is serialized JSON
+
+        Returns
+        -------
+        Message
+            Message instance populated from dictionary
+        """
         ret_msg = Message()
         if is_json:
             if "header" in msg_contents:
