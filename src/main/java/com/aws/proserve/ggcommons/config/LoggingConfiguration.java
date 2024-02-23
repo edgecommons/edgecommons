@@ -17,9 +17,9 @@ public class LoggingConfiguration
         if (jsonConfig != null)
         {
             if (jsonConfig.has("level"))
-                level = String.valueOf(jsonConfig.get("level"));
+                level = jsonConfig.get("level").getAsString();
             if (jsonConfig.has("format"))
-                format = String.valueOf(jsonConfig.get("format"));
+                format = jsonConfig.get("format").getAsString();
         }
     }
 
@@ -38,12 +38,12 @@ public class LoggingConfiguration
         return gson.toJson(toDict(), JsonObject.class);
     }
 
-    Level getLevel()
+    public Level getLevel()
     {
         return Level.toLevel(level);
     }
 
-    String getFormat()
+    public String getFormat()
     {
         return format;
     }

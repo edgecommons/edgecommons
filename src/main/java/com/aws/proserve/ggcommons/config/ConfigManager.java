@@ -4,13 +4,20 @@ import com.aws.proserve.ggcommons.config.provider.ConfigProvider;
 import com.aws.proserve.ggcommons.config.provider.ConfigProviderBuilder;
 
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.apache.logging.log4j.core.config.Configurator;
+import org.apache.logging.log4j.core.config.builder.api.*;
+import org.apache.logging.log4j.core.config.builder.impl.BuiltConfiguration;
 
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+
+import static org.apache.logging.log4j.core.config.builder.api.ConfigurationBuilderFactory.newConfigurationBuilder;
 
 
 public class ConfigManager
@@ -27,7 +34,7 @@ public class ConfigManager
     protected JsonObject componentConfig;
     protected JsonObject globalConfig;
     protected LoggingConfiguration loggingConfig;
-    protected final HashMap<String, JsonObject> instanceConfigs = new HashMap<>();
+    protected HashMap<String, JsonObject> instanceConfigs;
 
 
    public ConfigManager(String componentName, String[] configArgs)
@@ -49,15 +56,24 @@ public class ConfigManager
 
     public void applyConfig(JsonObject config)
     {
-        tagConfig = config.has("tags") ? new TagConfiguration((JsonObject) config.get("tags")) : null;
-        loggingConfig = config.has("logging") ? new LoggingConfiguration((JsonObject) config.get("logging")) : null;
-        heartbeatConfig = config.has("heartbeat") ? new HeartbeatConfiguration((JsonObject) config.get("heartbeat")) : null;
+        tagConfig = config.has("tags")
+                ? new TagConfiguration(config.get("tags").getAsJsonObject())
+                : new TagConfiguration(null);
+        loggingConfig = config.has("logging")
+                ? new LoggingConfiguration(config.get("logging").getAsJsonObject())
+                : new LoggingConfiguration(null);
+        heartbeatConfig = config.has("heartbeat")
+                ? new HeartbeatConfiguration((JsonObject) config.get("heartbeat"))
+                : new HeartbeatConfiguration(null);
         metricConfig = config.has("metricEmission")
                 ? new MetricConfiguration((JsonObject) config.get("metricEmission"))
                 : new MetricConfiguration(null);
+        reconfigureLoggers();
 
-        componentConfig = (JsonObject) config.get("component");
-        globalConfig = componentConfig.has("global") ? (JsonObject) componentConfig.get("global") : null;
+        componentConfig = config.get("component").getAsJsonObject();
+        globalConfig = componentConfig.has("global")
+                ? componentConfig.get("global").getAsJsonObject()
+                : new JsonObject();
         genInstancesMap();
         LOGGER.info("configurationChanged: Notifying {} listeners", configChangeListeners.size());
         for (ConfigurationChangeListener listener : configChangeListeners)
@@ -73,12 +89,15 @@ public class ConfigManager
 
     private void genInstancesMap()
     {
-        JsonArray instances = componentConfig.has("instances") ? componentConfig.get("instances").getAsJsonArray() : null;
+        instanceConfigs = new HashMap<>();
+        JsonArray instances = componentConfig.has("instances")
+                ? componentConfig.get("instances").getAsJsonArray()
+                : null;
         if (instances != null)
         {
-            for (Object instance : instances)
+            for (JsonElement instance : instances)
             {
-                JsonObject instanceConfig = (JsonObject) instance;
+                JsonObject instanceConfig = instance.getAsJsonObject();
                 instanceConfigs.put(instanceConfig.get("id").toString(), instanceConfig);
                 LOGGER.debug("Loaded instance config for {}", instanceConfig.get("id"));
             }
@@ -167,5 +186,37 @@ public class ConfigManager
         return retVal;
     }
 
+    public void reconfigureLoggers()
+    {
+        ConfigurationBuilder<BuiltConfiguration> configBuilder = newConfigurationBuilder();
 
+        AppenderComponentBuilder consoleAppenderBuilder = configBuilder.newAppender("stdout", "Console");
+        configBuilder.add(consoleAppenderBuilder);
+
+        AppenderComponentBuilder fileAppenderBuilder = configBuilder.newAppender("metric", "File");
+        String metricFile = resolveTemplate(getMetricConfig().getLogFileNameTemplate());
+        fileAppenderBuilder.addAttribute("fileName", metricFile);
+        configBuilder.add(fileAppenderBuilder);
+
+        LayoutComponentBuilder standard = configBuilder.newLayout("PatternLayout");
+        standard.addAttribute("pattern", getLoggingConfig().getFormat());
+        consoleAppenderBuilder.addComponent(standard);
+        fileAppenderBuilder.addComponent(standard);
+
+        configBuilder.add(consoleAppenderBuilder);
+        configBuilder.add(fileAppenderBuilder);
+
+        RootLoggerComponentBuilder rootLogger = configBuilder.newRootLogger(getLoggingConfig().getLevel());
+        rootLogger.add(configBuilder.newAppenderRef("stdout"));
+        configBuilder.add(rootLogger);
+
+        LoggerComponentBuilder metricLogger = configBuilder.newLogger("metric", Level.INFO);
+        metricLogger.add(configBuilder.newAppenderRef("metric"));
+        metricLogger.addAttribute("additivity", false);
+        configBuilder.add(metricLogger);
+
+        Configurator.reconfigure(configBuilder.build());
+
+        LOGGER.debug("Loggers reconfigured with following configuration: {}", configBuilder.toXmlConfiguration());
+    }
 }

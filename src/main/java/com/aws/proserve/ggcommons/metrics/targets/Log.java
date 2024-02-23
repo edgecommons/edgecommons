@@ -5,29 +5,21 @@ import com.aws.proserve.ggcommons.metrics.Measure;
 import com.aws.proserve.ggcommons.metrics.Metric;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
-import java.io.FileWriter;
-import java.io.IOException;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
 import java.util.Map;
 
 
 public class Log extends MetricTarget
 {
-
-    private final String logFileName;
-    private FileWriter metricLogFile;
+    private final static Logger LOGGER = LogManager.getLogger(MetricTarget.class);
+    private final Logger metricLogger;
 
     public Log(ConfigManager configManager)
     {
         super(configManager);
-        logFileName = configManager.resolveTemplate(metricConfig.getLogFileNameTemplate());
-        try
-        {
-            metricLogFile = new FileWriter(logFileName, true);
-        }
-        catch (IOException e)
-        {
-            LOGGER.error("Unable to open {} for metric logging.  No metrics will be written.", logFileName);
-        }
+        metricLogger = LogManager.getLogger("metric");
     }
 
     @Override
@@ -40,16 +32,7 @@ public class Log extends MetricTarget
     public void emitMetricNow(Metric metric, Map<String, Float> measureValues)
     {
         JsonObject metricData = buildMetricData(metric, measureValues);
-        try
-        {
-            metricLogFile.append(metricData.toString()).append("\n");
-            metricLogFile.flush();
-        }
-        catch (IOException e)
-        {
-            LOGGER.warn("Exception writing metric to file {}", logFileName);
-        }
-
+        metricLogger.info(metricData.toString());
         LOGGER.trace("Metric emitted for {} emitted", metric.getName());
     }
 

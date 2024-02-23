@@ -8,6 +8,8 @@ import com.aws.proserve.ggcommons.metrics.Metric;
 import com.aws.proserve.ggcommons.metrics.MetricEmitter;
 import com.aws.proserve.ggcommons.utils.Utils;
 import com.google.gson.JsonObject;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -26,12 +28,14 @@ class GGCommonsTest
     GGCommons ggCommons;
     ConfigManager configManager;
     Message receivedMessage;
+    Logger LOGGER;
 
     GGCommonsTest()
     {
         String[] args = { "-m", "MQTT", "localhost", "1883", "-c", "FILE", "config_3.json"};
         ggCommons = new GGCommons("UnitTests", args);
         configManager = ggCommons.getConfigManager();
+        LOGGER = LogManager.getLogger(GGCommonsTest.class);
     }
 
     @BeforeEach
@@ -164,10 +168,15 @@ class GGCommonsTest
 //        // Define the metric
 //        MetricEmitter.defineMetric(metric);
 //
-//        for (int i = 1; i <= 60; i++)
+//        for (int i = 1; i <= 5; i++)
 //        {
 //            Map<String, Float> measureValues = Map.of("val", (float) i);
 //            MetricEmitter.emitMetric("test", measureValues);
+//            LOGGER.trace("This is a trace log message ({})", i);
+//            LOGGER.debug("This is a debug log message ({})", i);
+//            LOGGER.info("This is an info log message ({})", i);
+//            LOGGER.warn("This is a warn log message ({})", i);
+//            LOGGER.error("This is an error log message ({})", i);
 //            Utils.sleep(1000);
 //        }
 //    }
