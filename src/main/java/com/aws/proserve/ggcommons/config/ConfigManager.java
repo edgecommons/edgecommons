@@ -216,29 +216,19 @@ public class ConfigManager
         AppenderComponentBuilder fileAppenderBuilder = configBuilder.newAppender("metric", "File");
         String metricFile = resolveTemplate(getMetricConfig().getLogFileNameTemplate());
         fileAppenderBuilder.addAttribute("fileName", metricFile);
-        configBuilder.add(fileAppenderBuilder);
 
-        AppenderComponentBuilder componentAppenderBuilder = configBuilder.newAppender(getComponentFullName(), "Console");
-        configBuilder.add(componentAppenderBuilder);
+        LayoutComponentBuilder layoutComponentBuilder = configBuilder.newLayout("PatternLayout");
+        layoutComponentBuilder.addAttribute("pattern", getLoggingConfig().getFormat());
 
-        LayoutComponentBuilder standard = configBuilder.newLayout("PatternLayout");
-        standard.addAttribute("pattern", getLoggingConfig().getFormat());
-        consoleAppenderBuilder.addComponent(standard);
-        componentAppenderBuilder.addComponent(standard);
-        fileAppenderBuilder.addComponent(standard);
+        consoleAppenderBuilder.addComponent(layoutComponentBuilder);
+        fileAppenderBuilder.addComponent(layoutComponentBuilder);
 
         configBuilder.add(consoleAppenderBuilder);
         configBuilder.add(fileAppenderBuilder);
-        configBuilder.add(componentAppenderBuilder);
 
         RootLoggerComponentBuilder rootLogger = configBuilder.newRootLogger(getLoggingConfig().getLevel());
         rootLogger.add(configBuilder.newAppenderRef("stdout"));
         configBuilder.add(rootLogger);
-
-        LoggerComponentBuilder standardLogger = configBuilder.newLogger(getComponentFullName(), getLoggingConfig().getLevel());
-        standardLogger.add(configBuilder.newAppenderRef(getComponentFullName()));
-        standardLogger.addAttribute("additivity", false);
-        configBuilder.add(standardLogger);
 
         LoggerComponentBuilder metricLogger = configBuilder.newLogger("metric", Level.INFO);
         metricLogger.add(configBuilder.newAppenderRef("metric"));
