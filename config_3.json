@@ -23,7 +23,7 @@
   "metricEmission": {
     "target": "log",
     "targetConfig": {
-      "logFileNameTemplate": "/greengrass/v2/logs/{ComponentName}.metric.log"
+      "logFileName": "{ComponentFullName}.metric.log"
     }
   },
   "component": {

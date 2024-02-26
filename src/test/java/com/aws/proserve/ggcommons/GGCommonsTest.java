@@ -33,7 +33,7 @@ class GGCommonsTest
     GGCommonsTest()
     {
         String[] args = { "-m", "MQTT", "localhost", "1883", "-c", "FILE", "config_3.json"};
-        ggCommons = new GGCommons("UnitTests", args);
+        ggCommons = new GGCommons("com.aws.proserve.greengrass.UnitTests", args);
         configManager = ggCommons.getConfigManager();
         LOGGER = LogManager.getLogger(GGCommonsTest.class);
     }

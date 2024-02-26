@@ -26,6 +26,7 @@ public class ConfigManager
 
     ConfigProvider configProvider;
     protected final String componentName;
+    protected final String componentFullName;
     protected final String thingName;
     protected final ArrayList<ConfigurationChangeListener> configChangeListeners = new ArrayList<>();
     protected TagConfiguration tagConfig;
@@ -39,7 +40,17 @@ public class ConfigManager
 
    public ConfigManager(String componentName, String[] configArgs)
     {
-        this.componentName = componentName;
+        if (!componentName.contains("."))
+        {
+            this.componentFullName = componentName;
+            this.componentName = componentName;
+        }
+        else
+        {
+            this.componentFullName = componentName;
+            this.componentName = componentName.substring(componentName.lastIndexOf(".") + 1);
+        }
+        LOGGER.info("");
         thingName = System.getenv("AWS_IOT_THING_NAME") != null ? System.getenv("AWS_IOT_THING_NAME") : "NOT_GREENGRASS";
         configProvider = ConfigProviderBuilder.build(this, componentName, thingName, configArgs);
 
@@ -149,6 +160,11 @@ public class ConfigManager
         return componentName;
     }
 
+    public String getComponentFullName()
+    {
+        return componentFullName;
+    }
+
     public void addConfigChangeListener(ConfigurationChangeListener listener)
     {
         configChangeListeners.add(listener);
@@ -169,6 +185,10 @@ public class ConfigManager
         if (template.contains("{ComponentName}"))
         {
             retVal = retVal.replace("{ComponentName}", getComponentName());
+        }
+        if (template.contains("{ComponentFullName}"))
+        {
+            retVal = retVal.replace("{ComponentFullName}", getComponentFullName());
         }
 
         if (null != tagConfig && tagConfig.getKeys() != null)
@@ -198,17 +218,25 @@ public class ConfigManager
         fileAppenderBuilder.addAttribute("fileName", metricFile);
         configBuilder.add(fileAppenderBuilder);
 
+        AppenderComponentBuilder componentAppenderBuilder = configBuilder.newAppender(getComponentFullName(), "Console");
+        configBuilder.add(componentAppenderBuilder);
+
         LayoutComponentBuilder standard = configBuilder.newLayout("PatternLayout");
         standard.addAttribute("pattern", getLoggingConfig().getFormat());
         consoleAppenderBuilder.addComponent(standard);
-        fileAppenderBuilder.addComponent(standard);
+        componentAppenderBuilder.addComponent(standard);
 
         configBuilder.add(consoleAppenderBuilder);
-        configBuilder.add(fileAppenderBuilder);
+        configBuilder.add(componentAppenderBuilder);
 
         RootLoggerComponentBuilder rootLogger = configBuilder.newRootLogger(getLoggingConfig().getLevel());
         rootLogger.add(configBuilder.newAppenderRef("stdout"));
         configBuilder.add(rootLogger);
+
+        LoggerComponentBuilder standardLogger = configBuilder.newLogger(getComponentFullName(), getLoggingConfig().getLevel());
+        standardLogger.add(configBuilder.newAppenderRef(getComponentFullName()));
+        standardLogger.addAttribute("additivity", false);
+        configBuilder.add(standardLogger);
 
         LoggerComponentBuilder metricLogger = configBuilder.newLogger("metric", Level.INFO);
         metricLogger.add(configBuilder.newAppenderRef("metric"));
