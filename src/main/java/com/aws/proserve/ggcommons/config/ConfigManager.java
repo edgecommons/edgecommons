@@ -225,8 +225,10 @@ public class ConfigManager
         standard.addAttribute("pattern", getLoggingConfig().getFormat());
         consoleAppenderBuilder.addComponent(standard);
         componentAppenderBuilder.addComponent(standard);
+        fileAppenderBuilder.addComponent(standard);
 
         configBuilder.add(consoleAppenderBuilder);
+        configBuilder.add(fileAppenderBuilder);
         configBuilder.add(componentAppenderBuilder);
 
         RootLoggerComponentBuilder rootLogger = configBuilder.newRootLogger(getLoggingConfig().getLevel());
