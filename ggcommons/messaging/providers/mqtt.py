@@ -156,6 +156,13 @@ class MqttProvider(MessagingProvider):
             mqtt_qos = 1
         self._mqtt_client.publish(topic, json.dumps(msg.to_dict()), mqtt_qos)
 
+    def _internal_publish_raw(self, topic: str, msg: dict, qos: str = QOS.AT_LEAST_ONCE):
+        if qos == QOS.AT_MOST_ONCE:
+            mqtt_qos = 0
+        else:
+            mqtt_qos = 1
+        self._mqtt_client.publish(topic, json.dumps(msg), mqtt_qos)
+
     def publish(self, topic: str, msg: Message):
         self._internal_publish(topic, msg)
 
@@ -163,12 +170,14 @@ class MqttProvider(MessagingProvider):
         adjusted_topic = f"iotcore/{topic}"
         self._internal_publish(adjusted_topic, msg, qos)
 
-    def _internal_subscribe(
-        self,
-        topic_filter: str,
-        callback: Callable[[str, Message], None],
-        max_concurrency: int = None,
-    ):
+    def publish_raw(self, topic: str, msg: dict):
+        self._internal_publish_raw(topic, msg)
+
+    def publish_to_iot_core_raw(self, topic: str, msg: dict, qos: str):
+        adjusted_topic = f"iotcore/{topic}"
+        self._internal_publish_raw(adjusted_topic, msg, qos)
+
+    def _internal_subscribe(self, topic_filter: str, callback: Callable[[str, Message], None], max_concurrency: int = None):
         if topic_filter not in self._subscription_info:
             logger.debug(f"Subscribing to topic filter: {topic_filter}")
             sub_info = SubscriptionInfo(

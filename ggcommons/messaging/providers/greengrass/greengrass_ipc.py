@@ -1,4 +1,5 @@
 import logging
+import json
 from typing import Callable
 from ggcommons.messaging.messaging_client import MessagingProvider
 from ggcommons.messaging.message import Message
@@ -6,7 +7,7 @@ from awsiot.greengrasscoreipc.clientv2 import GreengrassCoreIPCClientV2
 from awsiot.greengrasscoreipc.model import (
     PublishMessage,
     UnauthorizedError,
-    BinaryMessage, QOS,
+    BinaryMessage, QOS, JsonMessage,
 )
 from ggcommons.messaging.providers.greengrass.iotcore_subscription_handler import (
     IotCoreSubscriptionHandler,
@@ -42,8 +43,20 @@ class GreengrassIpcProvider(MessagingProvider):
             ),
         )
 
+    def publish_raw(self, topic: str, msg: dict):
+        self._ipc_client.publish_to_topic(
+            topic=topic,
+            publish_message=PublishMessage(
+                json_message=JsonMessage(message=msg)
+            ),
+        )
+
     def publish_to_iot_core(self, topic: str, msg: Message, qos: str):
         payload = msg.dumps()
+        self._ipc_client.publish_to_iot_core(topic_name=topic, payload=payload, qos=qos)
+
+    def publish_to_iot_core_raw(self, topic: str, msg: dict, qos: str):
+        payload = json.dumps(msg)
         self._ipc_client.publish_to_iot_core(topic_name=topic, payload=payload, qos=qos)
 
     def subscribe(

@@ -40,8 +40,16 @@ class MessagingClient:
         MessagingClient._messaging_provider.publish(topic, msg)
 
     @staticmethod
+    def publish_raw(topic: str, msg: dict):
+        MessagingClient._messaging_provider.publish_raw(topic, msg)
+
+    @staticmethod
     def publish_to_iot_core(topic: str, msg: Message, qos: str):
         MessagingClient._messaging_provider.publish_to_iot_core(topic, msg, qos)
+
+    @staticmethod
+    def publish_to_iot_core_raw(topic: str, msg: dict, qos: str):
+        MessagingClient._messaging_provider.publish_to_iot_core_raw(topic, msg, qos)
 
     @staticmethod
     def subscribe(

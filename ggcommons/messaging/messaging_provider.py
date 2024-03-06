@@ -15,7 +15,15 @@ class MessagingProvider(metaclass=abc.ABCMeta):
         pass
 
     @abstractmethod
+    def publish_raw(self, topic: str, msg: dict):
+        pass
+
+    @abstractmethod
     def publish_to_iot_core(self, topic: str, msg: Message, qos: str):
+        pass
+
+    @abstractmethod
+    def publish_to_iot_core_raw(self, topic: str, msg: dict, qos: str):
         pass
 
     @abstractmethod
@@ -140,3 +148,5 @@ class MessagingProvider(metaclass=abc.ABCMeta):
             result = False
 
         return result
+
+

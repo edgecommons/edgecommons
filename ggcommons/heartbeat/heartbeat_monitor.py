@@ -2,36 +2,37 @@ import shutil
 import psutil
 import os
 import platform
-
-from ggcommons.config.heartbeat_config import HeartbeatConfiguration
+from ggcommons import ConfigManager
 
 
 class HeartbeatMonitor:
-    def __init__(self, hb_config: HeartbeatConfiguration):
-        self._config = hb_config
+    def __init__(self, config_manager: ConfigManager):
+        self._config_manager = config_manager
+        self._config = config_manager.get_heartbeat_config()
         self._pid = None
         self._proc_info = None
         self._platform = platform.system()
         self.pid, self.proc_info = HeartbeatMonitor.build_proc_info()
 
-    def get_stats(self) -> dict:
+    def get_stats(self):
         data = {}
         cpu_data = self.cpu_usage()
+        memory_data = self.memory_usage()
+        disk_data = self.disk_usage()
+        thread_data = self.thread_count()
+        files_data = self.open_files()
+        fds = self.file_descriptors()
+        # Check for conflicting configurations
         if cpu_data is not None:
             data["cpu"] = cpu_data
-        memory_data = self.memory_usage()
         if memory_data is not None:
             data["memory"] = memory_data
-        disk_data = self.disk_usage()
         if disk_data is not None:
             data["disk"] = disk_data
-        thread_data = self.thread_count()
         if thread_data is not None:
             data["threads"] = thread_data
-        files_data = self.open_files()
         if files_data is not None:
             data["files"] = files_data
-        fds = self.file_descriptors()
         if fds is not None:
             data["fds"] = fds
         return data
@@ -47,7 +48,7 @@ class HeartbeatMonitor:
         if self._config.include_cpu():
             cpu = {}
             usage = self.proc_info.cpu_percent()
-            cpu["cpu_usage(%)"] = usage
+            cpu["cpu_usage"] = usage
         return cpu
 
     def memory_usage(self):
@@ -55,7 +56,7 @@ class HeartbeatMonitor:
         if self._config.include_memory():
             memory = {}
             usage = self.proc_info.memory_info().rss / 1000000
-            memory["memory_usage(MB)"] = usage
+            memory["memory_usage"] = usage
         return memory
 
     def open_files(self):
@@ -100,9 +101,9 @@ class HeartbeatMonitor:
             used = disk_usage["used"] / 1000000000
             free = disk_usage["free"] / 1000000000
 
-            disk["total(GB)"] = total
-            disk["used(GB)"] = used
-            disk["free(GB)"] = free
+            disk["disk_total"] = total
+            disk["disk_used"] = used
+            disk["disk_free"] = free
         return disk
 
 
@@ -111,6 +112,6 @@ if __name__ == "__main__":
 
     print(os.getcwd())
     config = FileConfigManager("PYTHON_TEST", "../../config_3.json")
-    monitor = HeartbeatMonitor(config.get_heartbeat_config())
+    monitor = HeartbeatMonitor(config)
     print(monitor.pid)
     print(monitor.get_stats())

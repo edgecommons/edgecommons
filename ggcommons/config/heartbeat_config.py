@@ -2,8 +2,8 @@ import json
 
 # {
 #     "intervalSecs": 5,
-#     "topic": "heartbeat/{ThingName}/{ComponentName}"
-#     "metric": {
+#     "topic": "heartbeat/{ThingName}/{ComponentName}",
+#     "measures": {
 #         "cpu": true,
 #         "memory": true,
 #         "disk": false,
@@ -19,7 +19,6 @@ class HeartbeatConfiguration:
     __DEFAULT_HEARTBEAT_INTERVAL_SECS = 5
 
     def __init__(self, heartbeat_json):
-        self._topic = HeartbeatConfiguration.__DEFAULT_HEARTBEAT_TOPIC
         self._interval_secs = HeartbeatConfiguration.__DEFAULT_HEARTBEAT_INTERVAL_SECS
         self._include_cpu = True
         self._include_memory = True
@@ -31,27 +30,24 @@ class HeartbeatConfiguration:
         if heartbeat_json is not None:
             if "intervalSecs" in heartbeat_json:
                 self._interval_secs = heartbeat_json["intervalSecs"]
-            if "topic" in heartbeat_json:
-                self._topic = heartbeat_json["topic"]
-            if "metric" in heartbeat_json:
-                if "cpu" in heartbeat_json["metric"]:
-                    self._include_cpu = heartbeat_json["metric"]["cpu"]
-                if "memory" in heartbeat_json["metric"]:
-                    self._include_memory = heartbeat_json["metric"]["memory"]
-                if "disk" in heartbeat_json["metric"]:
-                    self._include_disk = heartbeat_json["metric"]["disk"]
-                if "files" in heartbeat_json["metric"]:
-                    self._include_files = heartbeat_json["metric"]["files"]
-                if "threads" in heartbeat_json["metric"]:
-                    self._include_threads = heartbeat_json["metric"]["threads"]
-                if "fds" in heartbeat_json["metric"]:
-                    self._include_fds = heartbeat_json["metric"]["fds"]
+            if "measures" in heartbeat_json:
+                if "cpu" in heartbeat_json["measures"]:
+                    self._include_cpu = heartbeat_json["measures"]["cpu"]
+                if "memory" in heartbeat_json["measures"]:
+                    self._include_memory = heartbeat_json["measures"]["memory"]
+                if "disk" in heartbeat_json["measures"]:
+                    self._include_disk = heartbeat_json["measures"]["disk"]
+                if "files" in heartbeat_json["measures"]:
+                    self._include_files = heartbeat_json["measures"]["files"]
+                if "threads" in heartbeat_json["measures"]:
+                    self._include_threads = heartbeat_json["measures"]["threads"]
+                if "fds" in heartbeat_json["measures"]:
+                    self._include_fds = heartbeat_json["measures"]["fds"]
 
     def to_dict(self):
         dict_rep = {
-            "topic": self._topic,
             "intervalSecs": self._interval_secs,
-            "metric": {
+            "measures": {
                 "cpu": self.include_cpu(),
                 "memory": self.include_memory(),
                 "disk": self.include_disk(),
@@ -64,9 +60,6 @@ class HeartbeatConfiguration:
 
     def __str__(self):
         return json.dumps(self.to_dict(), indent=2)
-
-    def get_topic(self) -> str:
-        return self._topic
 
     def get_interval_secs(self) -> int:
         return self._interval_secs
