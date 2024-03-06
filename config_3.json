@@ -5,13 +5,20 @@
   },
   "heartbeat": {
     "intervalSecs": 5,
-    "metric": {
+    "measures": {
       "cpu": true,
       "memory": true,
-      "disk": false,
+      "disk": true,
       "files": true,
       "threads": true,
-      "fds": false
+      "fds": true
+    }
+  },
+  "metricEmission": {
+	"target" : "cloudwatch",
+    "namespace": "ggcommons0304",
+	"targetConfig" : {
+      "intervalSecs": 5
     }
   },
   "tags": {

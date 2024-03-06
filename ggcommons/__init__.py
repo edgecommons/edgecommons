@@ -6,6 +6,7 @@ from ggcommons.config.manager.config_manager import ConfigManager
 from ggcommons.config.manager.config_manager_builder import ConfigManagerBuilder
 from ggcommons.heartbeat.heartbeat import Heartbeat
 from ggcommons.messaging.messaging_client import MessagingClient
+from ggcommons.metrics.metric_emitter import MetricEmitter
 
 
 def init(
@@ -38,7 +39,8 @@ def init(
     logger.info(
         f"ggcommons: Configuration loaded from {config_manager.get_config_source()}"
     )
-
+    MetricEmitter.init(config_manager)
+    logger.info("ggcommons: Metric Emitter initialized")
     Heartbeat(config_manager)
     logger.info("ggcommons: Heartbeat started")
     return args, config_manager

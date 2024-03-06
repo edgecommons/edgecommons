@@ -6,6 +6,7 @@ import time
 from abc import abstractmethod
 
 from ggcommons.config.heartbeat_config import HeartbeatConfiguration
+from ggcommons.config.metric_config import MetricConfiguration
 from ggcommons.config.tag_config import TagConfiguration
 from ggcommons.config.logging_config import LoggingConfiguration
 
@@ -18,6 +19,7 @@ class ConfigManager(metaclass=abc.ABCMeta):
     def __init__(self, component_name: str):
         self._tag_config = None
         self._heartbeat_config = None
+        self._metric_config = None
         self._component_config = None
         self._global_config = {}
         self._instances = {}
@@ -50,6 +52,9 @@ class ConfigManager(metaclass=abc.ABCMeta):
 
         heartbeat_json = None if "heartbeat" not in config else config["heartbeat"]
         self._heartbeat_config = HeartbeatConfiguration(heartbeat_json)
+
+        metric_json = None if "metricEmission" not in config else config["metricEmission"]
+        self._metric_config = MetricConfiguration(metric_json)
 
         component_json = (
             {"global": {}, "instances": []}
@@ -112,6 +117,9 @@ class ConfigManager(metaclass=abc.ABCMeta):
 
     def get_heartbeat_config(self) -> HeartbeatConfiguration:
         return self._heartbeat_config
+
+    def get_metric_config(self) -> MetricConfiguration:
+        return self._metric_config
 
     def get_logging_config(self) -> LoggingConfiguration:
         return self._logging_config
