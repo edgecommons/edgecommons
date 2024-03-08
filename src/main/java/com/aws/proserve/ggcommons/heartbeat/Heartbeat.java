@@ -3,6 +3,9 @@ package com.aws.proserve.ggcommons.heartbeat;
 import com.aws.proserve.ggcommons.config.ConfigManager;
 import com.aws.proserve.ggcommons.config.ConfigurationChangeListener;
 
+import com.aws.proserve.ggcommons.config.HeartbeatConfiguration;
+import com.aws.proserve.ggcommons.messaging.Message;
+import com.aws.proserve.ggcommons.messaging.MessagingClient;
 import com.aws.proserve.ggcommons.metrics.Measure;
 import com.aws.proserve.ggcommons.metrics.Metric;
 import com.aws.proserve.ggcommons.metrics.MetricEmitter;
@@ -10,6 +13,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import software.amazon.awssdk.aws.greengrass.model.QOS;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -55,15 +59,55 @@ public class Heartbeat implements ConfigurationChangeListener
     private void publishHeartbeat()
     {
         JsonObject data = heartbeatMonitor.getStats();
-        Map<String, Float> measureValues = new HashMap<>();
-        for (Map.Entry<String, JsonElement> entry : data.entrySet())
+        for (HeartbeatConfiguration.HeartbeatTarget target : configManager.getHeartbeatConfig().getTargets())
         {
-            for (String measureName : entry.getValue().getAsJsonObject().keySet())
+            switch (target.getType().toLowerCase())
             {
-                measureValues.put(measureName, entry.getValue().getAsJsonObject().get(measureName).getAsFloat());
+                case "metric":
+                    Map<String, Float> measureValues = new HashMap<>();
+                    for (Map.Entry<String, JsonElement> entry : data.entrySet())
+                    {
+                        for (String measureName : entry.getValue().getAsJsonObject().keySet())
+                        {
+                            measureValues.put(measureName, entry.getValue().getAsJsonObject().get(measureName).getAsFloat());
+                        }
+                    }
+                    MetricEmitter.emitMetricNow("heartbeat", measureValues);
+                    break;
+
+                case "messaging":
+                    String topic = HeartbeatConfiguration.DEFAULT_TOPIC;
+                    String destination = HeartbeatConfiguration.DEFAULT_MESSAGING_DESTINATION;
+
+                    if (target.getConfig().has("destination"))
+                    {
+                        destination = target.getConfig().get("destination").getAsString();
+                    }
+                    if (target.getConfig().has("topic"))
+                    {
+                        topic = configManager.resolveTemplate(target.getConfig().get("topic").getAsString());
+                    }
+
+                    if (destination.equalsIgnoreCase("ipc"))
+                    {
+                        MessagingClient.publish(topic, Message.buildFromConfig(
+                                "Heartbeat", "1.0", heartbeatMonitor.getStats(), configManager
+                        ));
+                    }
+                    else if (destination.equalsIgnoreCase("iot_core"))
+                    {
+                        MessagingClient.publishToIotCore(topic, Message.buildFromConfig(
+                                "Heartbeat", "1.0", heartbeatMonitor.getStats(), configManager
+                        ), QOS.AT_LEAST_ONCE);
+                    }
+                    else
+                    {
+                        LOGGER.warn("Unrecognized messaging destination: '{}'. Ignoring.", destination);
+                    }
+                    break;
             }
         }
-        MetricEmitter.emitMetricNow("heartbeat", measureValues);
+
     }
 
     @Override

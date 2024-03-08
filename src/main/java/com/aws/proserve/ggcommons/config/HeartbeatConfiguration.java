@@ -1,9 +1,14 @@
 package com.aws.proserve.ggcommons.config;
 
 
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+
+import java.util.ArrayList;
+import java.util.List;
 
 //{
 //    "intervalSecs": 5,
@@ -11,7 +16,19 @@ import org.apache.logging.log4j.Logger;
 //        "cpu": true,
 //        "memory": true
 //        "disk": false
-//    }
+//    },
+//    "targets": [
+//        {
+//            "type": "metric"
+//        },
+//        {
+//            "type": "messaging",
+//            "config": {
+//                "destination": "ipc",
+//                "topic": "{ThingName}/{ComponentName}/heartbeat"
+//             }
+//        }
+//    ]
 //}
 
 public class HeartbeatConfiguration
@@ -24,6 +41,24 @@ public class HeartbeatConfiguration
     boolean includeThreads = false;
     boolean includeFiles = false;
     boolean includeFds = false;
+    final List<HeartbeatTarget> targets = new ArrayList<>();
+    public final static String DEFAULT_TOPIC = "ggcommons/heartbeat";
+    public final static String DEFAULT_MESSAGING_DESTINATION = "ipc";
+
+    public static class HeartbeatTarget {
+        String type;
+        JsonObject config;
+
+        public String getType()
+        {
+            return type;
+        }
+
+        public JsonObject getConfig()
+        {
+            return config;
+        }
+    }
 
     public HeartbeatConfiguration(JsonObject jsonConfig)
     {
@@ -51,6 +86,32 @@ public class HeartbeatConfiguration
                 if (metricObj.has("fds"))
                     LOGGER.warn("Reporting of allocated file descriptors (fds) not supported in ggcommons-java. Ignoring");
             }
+            if (jsonConfig.has("targets"))
+            {
+                JsonArray targetArray = jsonConfig.get("targets").getAsJsonArray();
+                for (JsonElement targetElem : targetArray)
+                {
+                    JsonObject targetObj = targetElem.getAsJsonObject();
+                    HeartbeatTarget target = new HeartbeatTarget();
+                    target.type = targetObj.get("type").getAsString();
+                    if (target.type.equalsIgnoreCase("messaging") || target.type.equalsIgnoreCase("metric"))
+                    {
+                        if (targetObj.has("config"))
+                            target.config = targetObj.get("config").getAsJsonObject();
+                        targets.add(target);
+                    }
+                    else
+                    {
+                        LOGGER.warn("Unrecognized heartbeat target '{}'. Ignoring", target.type);
+                    }
+                }
+            }
+        }
+        if (targets.isEmpty())
+        {
+            HeartbeatTarget target = new HeartbeatTarget();
+            target.type = "metric";
+            targets.add(target);
         }
     }
 
@@ -66,6 +127,16 @@ public class HeartbeatConfiguration
         metricObj.addProperty("files", includeDisk);
         metricObj.addProperty("fds", includeFds);
         retVal.add("metric", metricObj);
+        JsonArray targetArray = new JsonArray();
+        for (HeartbeatTarget target : targets)
+        {
+            JsonObject targetObj = new JsonObject();
+            targetObj.addProperty("type", target.type);
+            if (target.config != null)
+                targetObj.add("config", target.config);
+            targetArray.add(targetObj);
+        }
+        retVal.add("targets", targetArray);
         return retVal;
     }
 
@@ -106,5 +177,10 @@ public class HeartbeatConfiguration
     }
 
     public boolean includeFds() { return includeFds; }
+
+    public List<HeartbeatTarget> getTargets()
+    {
+        return targets;
+    }
 
 }
