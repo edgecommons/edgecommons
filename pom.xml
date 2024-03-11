@@ -46,7 +46,7 @@
     <dependency>
       <groupId>com.aws.proserve</groupId>
       <artifactId>ggcommons</artifactId>
-      <version>1.1.5-SNAPSHOT</version>
+      <version>1.1.9-SNAPSHOT</version>
     </dependency>
     <dependency>
       <groupId>com.google.code.gson</groupId>

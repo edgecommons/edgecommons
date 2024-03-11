@@ -13,10 +13,14 @@ ComponentConfiguration:
     ComponentConfig:
       logging:
         level: "INFO"
-        format: "%(asctime)s [%(levelname)s] %(filename)s %(funcName)s(%(lineno)d) [%(threadName)s]: %(message)s"
+        format: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%-5p] %C{1} (%L) [%t] : %m%n"
       heartbeat:
         intervalSecs: 5
-        metric:
+        targets:
+          - type: "messaging"
+            config:
+              destination: "ipc"
+        measures:
           cpu: true
           memory: true
           disk: false
@@ -28,9 +32,9 @@ ComponentConfiguration:
         shop: "test_shop"
         line: "test_line"
       metricEmission:
-        target: "cloudwatch"
+        target: "log"
         targetConfig:
-          intervalSecs: 10
+          logFileName: "/greengrass/v2/logs/{ComponentFullName}.metric.log"
       component:
         global:
           'publish_interval': 3
@@ -75,5 +79,6 @@ Manifests:
       Run:
         Setenv:
           CONFIG: "{configuration:/ComponentConfig}"
+        RequiresPrivilege: true
         Script:
           "java -cp {artifacts:path}/java-component-skeleton-1.0.0.jar com.aws.proserve.javacomponentskeleton.App"

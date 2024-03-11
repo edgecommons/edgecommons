@@ -108,7 +108,7 @@ public class App implements ConfigurationChangeListener
 
     public App(String[] args)
     {
-        ggCommons = new GGCommons("JavaComponentSkeleton", args);
+        ggCommons = new GGCommons("aws.proserve.greengrass.JavaComponentSkeleton", args);
         configManager = ggCommons.getConfigManager();
         configManager.addConfigChangeListener(this);
         publishInterval = configManager.getGlobalConfig().get("publish_interval").getAsInt()*1000L;
