@@ -5,14 +5,17 @@ from ggcommons.config.manager.config_manager import ConfigManager
 from ggcommons.metrics.targets.metric_target import MetricTarget
 
 
-class Log(MetricTarget):
+class MetricLog(MetricTarget):
+
     def __init__(self, config_manager: ConfigManager):
         super().__init__(config_manager)
-        self.config_manager = config_manager
+        self._configure_logger()
+
+    def _configure_logger(self):
         self.metric_logger = logging.getLogger("metric_file")
         self.metric_logger.setLevel(logging.INFO)
-        log_file_path_template = config_manager.get_metric_config().get_log_file_name_template()
-        log_file_path = config_manager.resolve_template(log_file_path_template)
+        log_file_path_template = self.config_manager.get_metric_config().get_log_file_name_template()
+        log_file_path = self.config_manager.resolve_template(log_file_path_template)
         handler = logging.FileHandler(log_file_path)
         formatter = logging.Formatter('%(message)s')  # EMF metrics are in JSON format
         handler.setFormatter(formatter)
@@ -54,3 +57,8 @@ class Log(MetricTarget):
             } for measure in metric.get_measures().values()]
         }
         return cw_metrics_array_entry
+
+    def on_configuration_change(self, configuration) -> bool:
+        self.logger.info("Configuration changed. Reconfiguring metric logger")
+        self._configure_logger()
+        return True

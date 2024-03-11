@@ -1,22 +1,40 @@
 import json
 
+
 # {
 #     "intervalSecs": 5,
-#     "topic": "heartbeat/{ThingName}/{ComponentName}",
 #     "measures": {
 #         "cpu": true,
-#         "memory": true,
-#         "disk": false,
-#         "files": false,
-#         "fds": false,
-#         "threads": false
-#     }
+#         "memory": true
+#         "disk": false
+#     },
+#     "targets": [
+#         {
+#             "type": "metric"
+#         },
+#         {
+#             "type": "messaging",
+#             "config": {
+#                 "destination": "ipc",
+#                 "topic": "{ThingName}/{ComponentName}/heartbeat"
+#              }
+#         }
+#     ]
 # }
 
-
 class HeartbeatConfiguration:
-    __DEFAULT_HEARTBEAT_TOPIC = "ggcommons/{ThingName}/{ComponentName}/heartbeat"
+    DEFAULT_HEARTBEAT_MESSAGING_TOPIC = "ggcommons/{ThingName}/{ComponentName}/heartbeat"
+    DEFAULT_HEARTBEAT_MESSAGING_DESTINATION = "ipc"
     __DEFAULT_HEARTBEAT_INTERVAL_SECS = 5
+    __DEFAULT_HEARTBEAT_TARGETS = [
+        {
+            "type": "messaging",
+            "config": {
+                "destination": DEFAULT_HEARTBEAT_MESSAGING_DESTINATION,
+                "topic": DEFAULT_HEARTBEAT_MESSAGING_TOPIC
+            }
+        }
+    ]
 
     def __init__(self, heartbeat_json):
         self._interval_secs = HeartbeatConfiguration.__DEFAULT_HEARTBEAT_INTERVAL_SECS
@@ -26,6 +44,7 @@ class HeartbeatConfiguration:
         self._include_files = False
         self._include_fds = False
         self._include_threads = False
+        self._targets = self.__DEFAULT_HEARTBEAT_TARGETS
 
         if heartbeat_json is not None:
             if "intervalSecs" in heartbeat_json:
@@ -43,11 +62,14 @@ class HeartbeatConfiguration:
                     self._include_threads = heartbeat_json["measures"]["threads"]
                 if "fds" in heartbeat_json["measures"]:
                     self._include_fds = heartbeat_json["measures"]["fds"]
+            if "targets" in heartbeat_json:
+                self._targets = heartbeat_json["targets"]
 
     def to_dict(self):
         dict_rep = {
+            "topic": self._topic,
             "intervalSecs": self._interval_secs,
-            "measures": {
+            "metric": {
                 "cpu": self.include_cpu(),
                 "memory": self.include_memory(),
                 "disk": self.include_disk(),
@@ -55,6 +77,7 @@ class HeartbeatConfiguration:
                 "threads": self.include_threads(),
                 "fds": self._include_fds()
             },
+            "targets": self._targets
         }
         return dict_rep
 
@@ -73,11 +96,14 @@ class HeartbeatConfiguration:
     def include_disk(self) -> bool:
         return self._include_disk
 
-    def include_files(self):
+    def include_files(self) -> bool:
         return self._include_files
 
-    def include_threads(self):
+    def include_threads(self) -> bool:
         return self._include_threads
 
-    def include_fds(self):
+    def include_fds(self) -> bool:
         return self._include_fds
+
+    def get_targets(self) -> list[dict]:
+        return self._targets

@@ -48,7 +48,7 @@ def init(
 
 if __name__ == "__main__":
     import sys
-    sys.argv = ["ggcommons_python", "--config", "CONFIG_COMPONENT",  "--messaging", "MQTT"]
+    sys.argv = ["ggcommons_python", "--config", "FILE",  "../config_3.json", "--messaging", "MQTT"]
     init("ggcommons_python", argparse.ArgumentParser())
     while True:
         sleep(1000)

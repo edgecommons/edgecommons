@@ -2,14 +2,16 @@ from abc import ABC, abstractmethod
 import logging
 from typing import Dict
 from ggcommons.config.manager.config_manager import ConfigManager
+from ggcommons.config.manager.configuration_change_listener import ConfigurationChangeListener
 
 
-class MetricTarget(ABC):
+class MetricTarget(ConfigurationChangeListener, ABC):
     """
     Abstract base class for metric targets.
     """
 
     def __init__(self, config_manager: ConfigManager):
+        super().__init__()
         self.config_manager = config_manager
         self.metric_config = config_manager.get_metric_config()
         self.logger = logging.getLogger(type(self).__name__)
@@ -26,4 +28,8 @@ class MetricTarget(ABC):
         """
         Abstract method to immediately emit a metric with given measure values.
         """
+        pass
+
+    @abstractmethod
+    def on_configuration_change(self, configuration) -> bool:
         pass
