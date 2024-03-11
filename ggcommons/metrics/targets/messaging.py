@@ -1,7 +1,4 @@
 import time
-import json
-import logging
-
 from awsiot.greengrasscoreipc.model import QOS
 from ggcommons.messaging.message import MessageBuilder
 from ggcommons.messaging.messaging_client import MessagingClient
@@ -10,6 +7,7 @@ from ggcommons.metrics.targets.metric_target import MetricTarget
 
 
 class Messaging(MetricTarget):
+
     def __init__(self, config_manager: ConfigManager):
         super().__init__(config_manager)
         self.config_manager = config_manager
@@ -39,3 +37,9 @@ class Messaging(MetricTarget):
             } for key, value in measure_values.items()]
         }
         return metric_data
+
+    def on_configuration_change(self, configuration) -> bool:
+        self.logger.info("Configuration changed. Reconfiguring messaging topic and destination")
+        self.topic = self.config_manager.resolve_template(self.config_manager.get_metric_config().get_topic())
+        self.send_to_ipc = self.config_manager.get_metric_config().get_destination().lower() == "ipc"
+        return True

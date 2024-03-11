@@ -3,6 +3,8 @@ import threading
 import time
 from abc import ABC
 
+from awsiot.greengrasscoreipc.model import QOS
+
 from ggcommons.config.manager.configuration_change_listener import (
     ConfigurationChangeListener,
 )
@@ -26,6 +28,7 @@ class Heartbeat(ConfigurationChangeListener, ABC):
         self._heartbeat_thread = None
         self._configuration_manager = configuration_manager
         self._configuration_manager.add_config_change_listener(self)
+        self._config = self._configuration_manager.get_heartbeat_config()
         # self.__compute_topic()
         self.keep_running = True
         self._define_metric(configuration_manager)
@@ -33,7 +36,7 @@ class Heartbeat(ConfigurationChangeListener, ABC):
 
     def _define_metric(self, configuration_manager: ConfigManager):
         storage_resolution = 1 if configuration_manager.get_heartbeat_config().get_interval_secs() < 60 else 60
-        metric = Metric("heartbeat","ggcommons0305_1")
+        metric = Metric("heartbeat", configuration_manager.get_metric_config().get_namespace())
         metric.add_measure(Measure("disk_total", "Gigabytes", storage_resolution))
         metric.add_measure(Measure("disk_used", "Gigabytes", storage_resolution))
         metric.add_measure(Measure("disk_free", "Gigabytes", storage_resolution))
@@ -44,89 +47,45 @@ class Heartbeat(ConfigurationChangeListener, ABC):
         metric.add_measure(Measure("fds", "Count", storage_resolution))
         MetricEmitter.define_metric(metric)
 
-    @staticmethod
-    def __publish_heartbeat(heartbeat_monitor: HeartbeatMonitor):
+    def __publish_heartbeat(self, heartbeat_monitor: HeartbeatMonitor):
         data = heartbeat_monitor.get_stats()
-        measure_values = {}
-        if "disk" in data:
-            for key, value in data["disk"].items():
-                if isinstance(value, dict):  # Assuming the structure is similar to a JsonObject
-                    for measure_name, measure_value in value.items():
-                        measure_values[measure_name] = float(measure_value)
-        for key, value in data.items():
-            if isinstance(value, dict):  # Assuming the structure is similar to a JsonObject
-                for measure_name, measure_value in value.items():
-                    measure_values[measure_name] = float(measure_value)
-        MetricEmitter.emit_metric_now("heartbeat", measure_values)
-
-    """
-    @staticmethod
-    def __publish_heartbeat(
-            heartbeat_monitor: HeartbeatMonitor,
-            configuration_manager: ConfigManager,
-    ):
-        logger.debug("Publishing heartbeat...")
-        data = heartbeat_monitor.get_stats()
-        # thing_name = configuration_manager.get_thing_name()
-        # component_name = configuration_manager.get_component_name()
-
-        # Define dimensions for all metrics
-        # dimensions = [{"name": "Thing", "value": thing_name}, {"name": "Component", "value": component_name}]
-
-        # Handle disk usage metrics
-        if "disk" in data:
-            for metric_name, value in data["disk"].items():
-                unit = "Gigabytes"  # since disk metrics are explicitly in Gigabytes
-                # Formatting for consistency
-                formatted_metric_name = "disk_" + metric_name.replace("(GB)", "").strip().replace(" ",
-                                                                                                  "_").lower()
-                MetricEmitter.define_metric(formatted_metric_name, unit)
-                MetricEmitter.emit_metric_now(formatted_metric_name, value)
-
-        # Handle other metrics
-        for metric_name, value in data.items():
-            if metric_name in ["cpu", "memory", "threads", "files", "fds"]:
-                if metric_name == "cpu":
-                    MetricEmitter.define_metric("cpu_usage", "Percent")
-                    MetricEmitter.emit_metric_now("cpu_usage", value["cpu_usage(%)"])
-                elif metric_name == "memory":
-                    MetricEmitter.define_metric("memory_usage", "Megabytes")
-                    MetricEmitter.emit_metric_now("memory_usage", value["memory_usage(MB)"])
+        for target in self._config.get_targets():
+            if target["type"] == "messaging":
+                message = MessageBuilder.build_from_config(
+                    Heartbeat.__MESSAGE_NAME,
+                    Heartbeat.__MESSAGE_VERSION,
+                    data,
+                    self._configuration_manager,
+                )
+                topic = self._config.DEFAULT_HEARTBEAT_MESSAGING_TOPIC
+                destination = self._config.DEFAULT_HEARTBEAT_MESSAGING_DESTINATION
+                if "config" in target:
+                    if "topic" in target["config"]:
+                        topic = self._configuration_manager.resolve_template(target["config"]["topic"])
+                    if "destination" in target["config"]:
+                        destination = target["config"]["destination"]
+                if destination.lower() == "ipc":
+                    MessagingClient.publish(topic, message)
                 else:
-                    unit = "Count"
-                    formatted_metric_name = metric_name + "_count"
-                    MetricEmitter.define_metric(formatted_metric_name, unit)
-                    MetricEmitter.emit_metric_now(formatted_metric_name, value[metric_name])
-        
-        else:
-            message = MessageBuilder.build_from_config(
-                name=Heartbeat.__MESSAGE_NAME,
-                version=Heartbeat.__MESSAGE_VERSION,
-                payload=data,
-                config_manager=configuration_manager,
-            )
-            MessagingClient.publish(topic, message)
-        
+                    MessagingClient.publish_to_iot_core(topic, message, QOS.AT_LEAST_ONCE)
+            elif target["type"] == "metric":
+                measure_values = {}
+                for key, value in data.items():
+                    if isinstance(value, dict):  # Assuming the structure is similar to a JsonObject
+                        for measure_name, measure_value in value.items():
+                            measure_values[measure_name] = float(measure_value)
+                MetricEmitter.emit_metric_now("heartbeat", measure_values)
 
-    def __compute_topic(self):
-        self._topic = self._configuration_manager.resolve_template(
-            self._configuration_manager.get_heartbeat_config().get_topic()
-        )
-    """
-
-    @staticmethod
-    def __heartbeat_loop(heartbeater, configuration_manager: ConfigManager):
-        heartbeat_monitor = HeartbeatMonitor(
-            configuration_manager
-        )
+    def __heartbeat_loop(self):
+        heartbeat_monitor = HeartbeatMonitor(self._configuration_manager)
         logger.debug(f"Starting heartbeat")
         try:
-            while heartbeater.keep_running:
-                heartbeater.__publish_heartbeat(
+            while self.keep_running:
+                self.__publish_heartbeat(
                     heartbeat_monitor
                 )
                 time.sleep(
-                    configuration_manager.get_heartbeat_config().get_interval_secs()
+                    self._configuration_manager.get_heartbeat_config().get_interval_secs()
                 )
         except KeyboardInterrupt:
             logger.error("Publishing loop stopped.")
@@ -139,11 +98,7 @@ class Heartbeat(ConfigurationChangeListener, ABC):
                 f"{self._configuration_manager.get_component_name()}-heartbeat"
             )
             self._heartbeat_thread = threading.Thread(
-                target=Heartbeat.__heartbeat_loop,
-                args=(
-                    self,
-                    self._configuration_manager,
-                ),
+                target=self.__heartbeat_loop,
                 name=thread_name,
             )
             self._heartbeat_thread.daemon = True
@@ -152,10 +107,12 @@ class Heartbeat(ConfigurationChangeListener, ABC):
             logger.exception("Error while starting heartbeat thread" + str(exc))
 
     def on_configuration_change(self, configuration) -> bool:
-        logger.debug("Configuration changed, restarting heartbeat")
+        logger.info("Configuration changed, restarting heartbeat")
         self.keep_running = False
         self._heartbeat_thread.join()
         self.keep_running = True
+        self._config = self._configuration_manager.get_heartbeat_config()
+        self._define_metric(self._configuration_manager)
         self.__run_heartbeat()
-        logger.debug("Heartbeat restarted")
+        logger.info("Heartbeat restarted")
         return True

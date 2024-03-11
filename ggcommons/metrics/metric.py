@@ -1,10 +1,9 @@
-import json
 from ggcommons.metrics.metric_emitter import MetricEmitter
-from typing import Dict, List
 
 
 class Metric:
-    def __init__(self, name, namespace=None, measures=None, dimensions=None):
+    def __init__(self, name: str, namespace: str = None, measures: list = None,
+                 dimensions: list = None):
         if measures is None:
             measures = {}
         if dimensions is None:

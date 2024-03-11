@@ -1,24 +1,33 @@
 {
   "logging": {
-    "level": "DEBUG",
+    "level": "INFO",
     "format": "%(asctime)s [%(levelname)s] %(filename)s %(funcName)s(%(lineno)d) [%(threadName)s]: %(message)s"
   },
   "heartbeat": {
-    "intervalSecs": 5,
+    "intervalSecs": 1,
+    "targets": [
+      {
+        "type": "messaging",
+        "config": {
+          "destination": "ipc",
+          "topic": "{ThingName}/{ComponentName}/heartbeat"
+        }
+      }
+    ],
     "measures": {
       "cpu": true,
       "memory": true,
-      "disk": true,
+      "disk": false,
       "files": true,
       "threads": true,
-      "fds": true
+      "fds": false
     }
   },
   "metricEmission": {
 	"target" : "cloudwatch",
-    "namespace": "ggcommons0304",
+    "namespace": "ggcommons",
 	"targetConfig" : {
-      "intervalSecs": 5
+      "intervalSecs": 10
     }
   },
   "tags": {

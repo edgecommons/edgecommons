@@ -50,7 +50,7 @@ class ConfigFileChangeEventHandler(FileSystemEventHandler):
     def on_modified(self, event):
         if event.is_directory:
             return None
-        elif event.src_path.endswith(self._file_path):
+        elif event.src_path.endswith(os.path.basename(self._file_path)):
             logger.debug(f"Config file {self._file_path} has been modified")
             new_config = self._file_config_manager._load_configuration()
             self._file_config_manager.configuration_changed(new_config)

@@ -3,7 +3,7 @@ from ggcommons.config.manager.config_manager import ConfigManager
 from ggcommons.metrics.targets.cloudwatch import CloudWatch
 from ggcommons.metrics.targets.cloudwatch_component import CloudWatchComponent
 from ggcommons.metrics.targets.messaging import Messaging
-from ggcommons.metrics.targets.log import Log
+from ggcommons.metrics.targets.metric_log import MetricLog
 
 
 class MetricEmitter:
@@ -27,7 +27,7 @@ class MetricEmitter:
             if target.lower() == "messaging":
                 MetricEmitter.metric_target = Messaging(config_manager)
             elif target.lower() == "log":
-                MetricEmitter.metric_target = Log(config_manager)
+                MetricEmitter.metric_target = MetricLog(config_manager)
             elif target.lower() == "cloudwatch":
                 MetricEmitter.metric_target = CloudWatch(config_manager)
             elif target.lower() == "cloudwatchcomponent":
@@ -35,8 +35,8 @@ class MetricEmitter:
             else:
                 MetricEmitter.logger.warning(f"Invalid metric target '{target}' specified. Defaulting to 'log'")
                 target = "log"
-                MetricEmitter.metric_target = Log(config_manager)
-
+                MetricEmitter.metric_target = MetricLog(config_manager)
+            config_manager.add_config_change_listener(MetricEmitter.metric_target)
             MetricEmitter.logger.info(f"MetricEmitter initialized with target: {target}")
 
     @staticmethod

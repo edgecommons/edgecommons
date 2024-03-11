@@ -1,4 +1,3 @@
-import json
 import time
 from ggcommons.messaging.messaging_client import MessagingClient
 from ggcommons.config.manager.config_manager import ConfigManager
@@ -6,6 +5,7 @@ from ggcommons.metrics.targets.metric_target import MetricTarget
 
 
 class CloudWatchComponent(MetricTarget):
+
     def __init__(self, config_manager: ConfigManager):
         super().__init__(config_manager)
         self.topic = config_manager.resolve_template(config_manager.get_metric_config().get_topic())
@@ -33,5 +33,9 @@ class CloudWatchComponent(MetricTarget):
                "metricData": metric_data
             }
         }
-
         return data
+
+    def on_configuration_change(self, configuration) -> bool:
+        self.logger.info("Configuration changed. Reconfiguring cloudwatch component topic")
+        self.topic = self.config_manager.resolve_template(self.config_manager.get_metric_config().get_topic())
+        return True
