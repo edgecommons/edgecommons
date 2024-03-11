@@ -11,13 +11,22 @@ ComponentConfiguration:
         level: "INFO"
         format: "%(asctime)s [%(levelname)s] %(filename)s %(funcName)s(%(lineno)d) [%(threadName)s]: %(message)s"
       heartbeat:
-        topic: "heartbeat/{ThingName}/{ComponentName}"
         intervalSecs: 5
-        metric:
+        targets:
+          - type: "messaging"
+            config:
+              destination: "ipc"
+              topic: "heartbeat/{ThingName}/{ComponentName}"
+        measures:
           cpu: true
           memory: true
           disk: false
-      source:
+      metricEmission:
+        target: "cloudwatch"
+        namespace: "ggcommons"
+        targetConfig:
+          intervalSecs: 10
+      tags:
         appId: "Test"
         site: "Chantilly"
         shop: "test_shop"
@@ -63,7 +72,5 @@ Manifests:
         Script: |-
           pip3 install --user -r {artifacts:decompressedPath}/python-component-skeleton/requirements.txt
       Run:
-        Setenv:
-          CONFIG: "{configuration:/ComponentConfig}"
         Script: |-
           python3 -u {artifacts:decompressedPath}/python-component-skeleton/main.py

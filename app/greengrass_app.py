@@ -3,13 +3,18 @@ import time
 import threading
 from abc import ABC
 from argparse import Namespace
+from random import random
+
 from awsiot.greengrasscoreipc.model import QOS
+from ggcommons import MetricEmitter
 from ggcommons.config.manager.configuration_change_listener import (
     ConfigurationChangeListener,
 )
 from ggcommons.config.manager.config_manager import ConfigManager
 from ggcommons.messaging.message import Message, MessageBuilder
 from ggcommons.messaging.messaging_client import MessagingClient
+from ggcommons.metrics.measure import Measure
+from ggcommons.metrics.metric import Metric
 from ggcommons.utils.iou import Iou
 
 logger = logging.getLogger("GreengrassApp")
@@ -33,27 +38,28 @@ class GreengrassApp(ConfigurationChangeListener, ABC):
             if "publish_interval" in global_config
             else 5
         )
+        self.define_metric()
 
     def ipc_hello_world_handler(self, topic: str, msg: Message):
         logger.info(
-            f"Received an ipc hello world message on topic {topic}: {msg.get_body()['id']}"
+            f"Received an ipc hello world message on topic {topic}: {msg.get_body()['msg_id']}"
         )
         time.sleep(5)
         logger.info(
-            f"#### Received an ipc hello world message on topic {topic}: {msg.get_body()['id']}"
+            f"#### Received an ipc hello world message on topic {topic}: {msg.get_body()['msg_id']}"
         )
 
     def iot_core_hello_world_handler(self, topic: str, msg: Message):
         logger.info(
-            f"Received an iot core hello world message on topic {topic}: {msg.get_body()['id']}"
+            f"Received an iot core hello world message on topic {topic}: {msg.get_body()['msg_id']}"
         )
         time.sleep(5)
         logger.info(
-            f"Received an iot core hello world message on topic {topic}: {msg.get_body()['id']}"
+            f"Received an iot core hello world message on topic {topic}: {msg.get_body()['msg_id']}"
         )
 
     def request_callback(self, topic: str, request: Message):
-        logger.info(f"Received request message [{topic}]: {request.get_body()['id']}")
+        logger.info(f"Received request message [{topic}]: {request.get_body()['msg_id']}")
         reply_payload = {
             "reply_message": "I have received your request and have replied with this message"
         }
@@ -61,12 +67,12 @@ class GreengrassApp(ConfigurationChangeListener, ABC):
             "ReplyTest", "1.0", reply_payload, self._config_manager
         )
         time.sleep(request.get_body()["wait_time"])
-        logger.info(f"Publishing reply message {request.get_body()['id']}")
+        logger.info(f"Publishing reply message {request.get_body()['msg_id']}")
         MessagingClient.reply(request, reply)
 
-    def publish_request(self, id: str, execution_time: float) -> Iou:
-        logger.info(f"Publishing reqeust message {id}")
-        request_payload = {"id": id, "wait_time": execution_time}
+    def publish_request(self, msg_id: str, execution_time: float) -> Iou:
+        logger.info(f"Publishing reqeust message {msg_id}")
+        request_payload = {"msg_id": msg_id, "wait_time": execution_time}
         request = MessageBuilder.build_from_config(
             "RequestTest", "1.0", request_payload, self._config_manager
         )
@@ -83,9 +89,17 @@ class GreengrassApp(ConfigurationChangeListener, ABC):
         else:
             logger.info(f"...Received reply for {msg_instance}: {reply.dumps()}")
 
+    def define_metric(self):
+        metric = Metric("performance")
+        metric.add_measure(Measure("latency", "Milliseconds", 1))
+        MetricEmitter.define_metric(metric)
+        return metric
+
     def run(self):
         i = 1
         try:
+            measure_values = {}
+
             MessagingClient.subscribe(
                 "ggcommons/test/python/hello_world", self.ipc_hello_world_handler, True
             )
@@ -98,9 +112,9 @@ class GreengrassApp(ConfigurationChangeListener, ABC):
                 "ggcommons/test/python/request", self.request_callback
             )
 
-            iou_1 = self.publish_request(id="1", execution_time=0)
-            iou_2 = self.publish_request(id="2", execution_time=1)
-            iou_3 = self.publish_request(id="3", execution_time=5)
+            iou_1 = self.publish_request(msg_id="1", execution_time=0)
+            iou_2 = self.publish_request(msg_id="2", execution_time=1)
+            iou_3 = self.publish_request(msg_id="3", execution_time=5)
             print(f"######## number of threads is {threading.active_count()}")
             self.wait_for_reply("iou_1", iou_1, 1)
             self.wait_for_reply("iou_3", iou_3, 3)
@@ -111,7 +125,7 @@ class GreengrassApp(ConfigurationChangeListener, ABC):
                 test_message = MessageBuilder.build_from_config(
                     name="hello_world",
                     version="1.0.0",
-                    payload={"id": i, "message": "Hello World Python"},
+                    payload={"msg_id": i, "message": "Hello World Python"},
                     config_manager=self._config_manager,
                 )
                 logger.info(f"Publishing message {i} to ipc")
@@ -122,8 +136,10 @@ class GreengrassApp(ConfigurationChangeListener, ABC):
                 MessagingClient.publish_to_iot_core(
                     "ggcommons/test/python/hello_world", test_message, QOS.AT_LEAST_ONCE
                 )
+                measure_values["replyLatency"] = random() * 100
+                MetricEmitter.emit_metric("performance", measure_values)
+
                 i += 1
-                print(f"######### number of threads is {threading.active_count()}")
                 time.sleep(self._publish_interval)
         except KeyboardInterrupt:
             print("Finished")

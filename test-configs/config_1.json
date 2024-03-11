@@ -4,16 +4,35 @@
     "format": "%(asctime)s [%(levelname)s] %(filename)s %(funcName)s(%(lineno)d) [%(threadName)s]: %(message)s"
   },
   "heartbeat": {
-    "topic": "heartbeat/{ThingName}/{ComponentName}",
-    "intervalSecs": 5,
-    "metric": {
-        "cpu": true,
-        "memory": true,
-        "disk": false
+    "intervalSecs": 1,
+    "targets": [
+      {
+        "type": "messaging",
+        "config": {
+          "destination": "ipc",
+          "topic": "{ThingName}/{ComponentName}/heartbeat"
+        }
+      }
+    ],
+    "measures": {
+      "cpu": true,
+      "memory": true,
+      "disk": false,
+      "files": true,
+      "threads": true,
+      "fds": false
     }
   },
-  "source": {
-    "appId": "foo",
+  "metricEmission": {
+	"target" : "messaging",
+    "namespace": "ggcommons",
+	"targetConfig" : {
+      "destination": "ipc",
+      "intervalSecs": 10
+    }
+  },
+  "tags": {
+    "appId": "IntelliJIdea",
     "site": "site1",
     "shop": "shop1",
     "line": "line1"
