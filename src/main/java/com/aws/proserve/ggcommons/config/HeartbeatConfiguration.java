@@ -72,7 +72,7 @@ public class HeartbeatConfiguration
             }
             if (jsonConfig.has("measures"))
             {
-                JsonObject metricObj = (JsonObject) jsonConfig.get("metric");
+                JsonObject metricObj = (JsonObject) jsonConfig.get("measures");
                 if (metricObj.has("cpu"))
                     includeCpu =  metricObj.get("cpu").getAsBoolean();
                 if (metricObj.has("memory"))
