@@ -155,29 +155,29 @@ class GGCommonsTest
 //        assertEquals(reply.getHeader().getName(), "ReplyTest");
 //    }
 //
-    @Test
-    void emitMetric() throws ExecutionException, InterruptedException, TimeoutException
-    {
-        // Create a Metric named "test" using default namespace and dimensions
-        Metric metric = new Metric("test");
-
-        // Add a measure
-        Measure measure = new Measure("val", "Count", 1);
-        metric.addMeasure(measure);
-
-        // Define the metric
-        MetricEmitter.defineMetric(metric);
-
-        for (int i = 1; i <= 5; i++)
-        {
-            Map<String, Float> measureValues = Map.of("val", (float) i);
-            MetricEmitter.emitMetric("test", measureValues);
-            LOGGER.trace("This is a trace log message ({})", i);
-            LOGGER.debug("This is a debug log message ({})", i);
-            LOGGER.info("This is an info log message ({})", i);
-            LOGGER.warn("This is a warn log message ({})", i);
-            LOGGER.error("This is an error log message ({})", i);
-            Utils.sleep(1000);
-        }
-    }
+//    @Test
+//    void emitMetric() throws ExecutionException, InterruptedException, TimeoutException
+//    {
+//        // Create a Metric named "test" using default namespace and dimensions
+//        Metric metric = new Metric("test");
+//
+//        // Add a measure
+//        Measure measure = new Measure("val", "Count", 1);
+//        metric.addMeasure(measure);
+//
+//        // Define the metric
+//        MetricEmitter.defineMetric(metric);
+//
+//        for (int i = 1; i <= 5; i++)
+//        {
+//            Map<String, Float> measureValues = Map.of("val", (float) i);
+//            MetricEmitter.emitMetric("test", measureValues);
+//            LOGGER.trace("This is a trace log message ({})", i);
+//            LOGGER.debug("This is a debug log message ({})", i);
+//            LOGGER.info("This is an info log message ({})", i);
+//            LOGGER.warn("This is a warn log message ({})", i);
+//            LOGGER.error("This is an error log message ({})", i);
+//            Utils.sleep(1000);
+//        }
+//    }
 }

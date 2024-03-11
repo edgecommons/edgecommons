@@ -23,6 +23,9 @@ import java.util.TimerTask;
 public class Heartbeat implements ConfigurationChangeListener
 {
     protected static final Logger LOGGER = LogManager.getLogger(Heartbeat.class);
+
+    private static final String MESSAGE_NAME = "heartbeat";
+    private static final String MESSAGE_VERSION = "1.0.0";
     private final ConfigManager configManager;
     private HeartbeatMonitor heartbeatMonitor;
     private Timer heartbeatTimer;
@@ -47,7 +50,9 @@ public class Heartbeat implements ConfigurationChangeListener
     {
         int storageResolution = configManager.getHeartbeatConfig().getIntervalSecs() < 60 ? 1 : 60;
         Metric metric = new Metric("heartbeat");
-        metric.addMeasure(new Measure("disk", "Gigabytes", storageResolution));
+        metric.addMeasure(new Measure("disk_total", "Gigabytes", storageResolution));
+        metric.addMeasure(new Measure("disk_used", "Gigabytes", storageResolution));
+        metric.addMeasure(new Measure("disk_free", "Gigabytes", storageResolution));
         metric.addMeasure(new Measure("cpu_usage", "Percent", storageResolution));
         metric.addMeasure(new Measure("memory_usage", "Megabytes", storageResolution));
         metric.addMeasure(new Measure("threads", "Count", storageResolution));
@@ -91,13 +96,13 @@ public class Heartbeat implements ConfigurationChangeListener
                     if (destination.equalsIgnoreCase("ipc"))
                     {
                         MessagingClient.publish(topic, Message.buildFromConfig(
-                                "Heartbeat", "1.0", heartbeatMonitor.getStats(), configManager
+                                MESSAGE_NAME, MESSAGE_VERSION, heartbeatMonitor.getStats(), configManager
                         ));
                     }
                     else if (destination.equalsIgnoreCase("iot_core"))
                     {
                         MessagingClient.publishToIotCore(topic, Message.buildFromConfig(
-                                "Heartbeat", "1.0", heartbeatMonitor.getStats(), configManager
+                                MESSAGE_NAME, MESSAGE_VERSION, heartbeatMonitor.getStats(), configManager
                         ), QOS.AT_LEAST_ONCE);
                     }
                     else

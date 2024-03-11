@@ -12,7 +12,7 @@ import java.util.List;
 
 //{
 //    "intervalSecs": 5,
-//    "metric": {
+//    "measures": {
 //        "cpu": true,
 //        "memory": true
 //        "disk": false
@@ -42,7 +42,7 @@ public class HeartbeatConfiguration
     boolean includeFiles = false;
     boolean includeFds = false;
     final List<HeartbeatTarget> targets = new ArrayList<>();
-    public final static String DEFAULT_TOPIC = "ggcommons/heartbeat";
+    public final static String DEFAULT_TOPIC = "ggcommons/{ThingName}/{ComponentName}/heartbeat";
     public final static String DEFAULT_MESSAGING_DESTINATION = "ipc";
 
     public static class HeartbeatTarget {
@@ -70,7 +70,7 @@ public class HeartbeatConfiguration
                 if (intervalSecs < 1)
                     intervalSecs = 5;
             }
-            if (jsonConfig.has("metric"))
+            if (jsonConfig.has("measures"))
             {
                 JsonObject metricObj = (JsonObject) jsonConfig.get("metric");
                 if (metricObj.has("cpu"))

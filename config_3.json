@@ -17,7 +17,7 @@
       {
         "type": "messaging",
         "config": {
-          "destination": "iot_core"
+          "destination": "ipc"
         }
       }
     ]
