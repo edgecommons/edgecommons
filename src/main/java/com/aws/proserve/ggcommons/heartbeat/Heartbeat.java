@@ -81,7 +81,7 @@ public class Heartbeat implements ConfigurationChangeListener
                     break;
 
                 case "messaging":
-                    String topic = HeartbeatConfiguration.DEFAULT_TOPIC;
+                    String topic = configManager.resolveTemplate(HeartbeatConfiguration.DEFAULT_TOPIC);
                     String destination = HeartbeatConfiguration.DEFAULT_MESSAGING_DESTINATION;
 
                     if (target.getConfig().has("destination"))
