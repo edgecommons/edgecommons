@@ -77,6 +77,10 @@ class MessagingProvider(metaclass=abc.ABCMeta):
     def cancel_request_from_iot_core(self, iou: Iou):
         pass
 
+    @abstractmethod
+    def get_native_client(self):
+        pass
+
     # Copied from open source Paho MQTT python client
     # (https://github.com/thejuan/paho-mqtt-python/blob/master/src/paho/mqtt/client.py)
     # Under the Eclipse Public License (https://github.com/thejuan/paho-mqtt-python/blob/master/LICENSE.txt)

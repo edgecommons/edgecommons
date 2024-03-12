@@ -4,6 +4,8 @@ from abc import ABC
 
 from awsiot.greengrasscoreipc.clientv2 import GreengrassCoreIPCClientV2
 from awsiot.greengrasscoreipc.model import ReceiveMode, SubscriptionResponseMessage
+
+from ggcommons import MessagingClient
 from ggcommons.config.manager.config_manager import ConfigManager
 
 logger = logging.getLogger("ShadowConfigManager")
@@ -22,7 +24,7 @@ class ShadowConfigManager(ConfigManager, ABC):
     def __init__(self, component_name: str, shadow_name: str):
         super().__init__(component_name)
         self._shadow_name = shadow_name if shadow_name is not None else component_name
-        self._ipc_client = GreengrassCoreIPCClientV2()
+        self._ipc_client = MessagingClient.get_native_client()  # GreengrassCoreIPCClientV2()
         self._shadow_topic_prefix = ShadowConfigManager._SHADOW_TOPIC_TEMPLATE.format(
             self.get_thing_name(), shadow_name
         )

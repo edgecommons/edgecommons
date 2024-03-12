@@ -187,3 +187,6 @@ class GreengrassIpcProvider(MessagingProvider):
         reply_to = iou.get_user_data()
         self.unsubscribe_from_iot_core(reply_to)
         del self._response_ious[reply_to]
+
+    def get_native_client(self):
+        return self._ipc_client

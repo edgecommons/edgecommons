@@ -187,6 +187,9 @@ class MqttProvider(MessagingProvider):
             self._mqtt_client.subscribe(topic_filter)
             Thread(target=self._queue_processor, args=(sub_info,)).start()
 
+    def get_native_client(self):
+        return self._mqtt_client
+
     def subscribe(
         self,
         topic_filter: str,

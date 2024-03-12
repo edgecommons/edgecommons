@@ -106,3 +106,7 @@ class MessagingClient:
     @staticmethod
     def topic_matches_sub(sub: str, topic: str) -> bool:
         return MessagingProvider.topic_matches_sub(sub, topic)
+
+    @staticmethod
+    def get_native_client():
+        return MessagingProvider.get_native_client()
