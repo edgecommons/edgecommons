@@ -9,7 +9,7 @@ import java.util.Map;
 
 public class CloudWatchComponent extends MetricTarget
 {
-    private final String topic;
+    private String topic;
 
     public CloudWatchComponent(ConfigManager configManager) {
         super(configManager);
@@ -25,6 +25,14 @@ public class CloudWatchComponent extends MetricTarget
             MessagingClient.publishRaw(topic, metricObject);
             LOGGER.trace("Metric emitted for {} emitted", metric);
         }
+    }
+
+    @Override
+    public boolean onConfigurationChanged()
+    {
+        LOGGER.info("Configuration changed. Reconfiguring CloudWatch Component topic");
+        this.topic = configManager.resolveTemplate(configManager.getMetricConfig().getTopic());
+        return false;
     }
 
     @Override

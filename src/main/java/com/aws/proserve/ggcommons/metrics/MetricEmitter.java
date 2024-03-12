@@ -46,6 +46,7 @@ public class MetricEmitter
             }
             LOGGER.info("MetricEmitter initialized with target: {}", target);
         }
+        configManager.addConfigChangeListener(metricTarget);
     }
 
     static MetricConfiguration getMetricConfig() {

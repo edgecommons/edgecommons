@@ -6,7 +6,6 @@ import com.aws.proserve.ggcommons.config.provider.ConfigProviderBuilder;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.core.config.Configurator;
@@ -79,7 +78,7 @@ public class ConfigManager
         metricConfig = config.has("metricEmission")
                 ? new MetricConfiguration((JsonObject) config.get("metricEmission"))
                 : new MetricConfiguration(null);
-        reconfigureLoggers();
+        reconfigureLogging();
 
         componentConfig = config.get("component").getAsJsonObject();
         globalConfig = componentConfig.has("global")
@@ -206,37 +205,27 @@ public class ConfigManager
         return retVal;
     }
 
-    public void reconfigureLoggers()
+    public void reconfigureLogging()
     {
         ConfigurationBuilder<BuiltConfiguration> configBuilder = newConfigurationBuilder();
 
         AppenderComponentBuilder consoleAppenderBuilder = configBuilder.newAppender("stdout", "Console");
         configBuilder.add(consoleAppenderBuilder);
 
-        AppenderComponentBuilder fileAppenderBuilder = configBuilder.newAppender("metric", "File");
-        String metricFile = resolveTemplate(getMetricConfig().getLogFileNameTemplate());
-        fileAppenderBuilder.addAttribute("fileName", metricFile);
 
         LayoutComponentBuilder layoutComponentBuilder = configBuilder.newLayout("PatternLayout");
         layoutComponentBuilder.addAttribute("pattern", getLoggingConfig().getFormat());
 
         consoleAppenderBuilder.addComponent(layoutComponentBuilder);
-        fileAppenderBuilder.addComponent(layoutComponentBuilder);
 
         configBuilder.add(consoleAppenderBuilder);
-        configBuilder.add(fileAppenderBuilder);
 
         RootLoggerComponentBuilder rootLogger = configBuilder.newRootLogger(getLoggingConfig().getLevel());
         rootLogger.add(configBuilder.newAppenderRef("stdout"));
         configBuilder.add(rootLogger);
 
-        LoggerComponentBuilder metricLogger = configBuilder.newLogger("metric", Level.INFO);
-        metricLogger.add(configBuilder.newAppenderRef("metric"));
-        metricLogger.addAttribute("additivity", false);
-        configBuilder.add(metricLogger);
-
         Configurator.reconfigure(configBuilder.build());
 
-        LOGGER.debug("Loggers reconfigured with following configuration: {}", configBuilder.toXmlConfiguration());
+        LOGGER.debug("Logging reconfigured with following configuration: {}", configBuilder.toXmlConfiguration());
     }
 }

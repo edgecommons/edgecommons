@@ -22,12 +22,17 @@ public class CloudWatch extends MetricTarget
 
     private final HashMap<String, Collection<PendingMetric>> pendingMetrics = new HashMap<>();
 
-    private final Timer metricEmitTimer;
+    private Timer metricEmitTimer;
 
     public CloudWatch(ConfigManager configManager)
     {
         super(configManager);
         cwClient = CloudWatchClient.builder().build();
+        initEmitTimer();
+    }
+
+    private void initEmitTimer()
+    {
         metricEmitTimer = new Timer("Metric Emit Timer", true);
         metricEmitTimer.scheduleAtFixedRate(new CloudWatch.PendingMetricEmitter(), 0,
                 configManager.getMetricConfig().getIntervalSecs() * 1000L);
@@ -72,6 +77,20 @@ public class CloudWatch extends MetricTarget
             LOGGER.error("Error sending metric to CloudWatch. {}. Ignoring.", e.getMessage());
         }
         LOGGER.trace("Successfully sent {} metric to CloudWatch", metric.getName());
+    }
+
+    @Override
+    public boolean onConfigurationChanged()
+    {
+        LOGGER.info("Configuration changed. Reconfiguring CloudWatch batch interval");
+        if (metricEmitTimer != null)
+        {
+            metricEmitTimer.cancel();
+            metricEmitTimer.purge();
+        }
+        initEmitTimer();
+
+        return true;
     }
 
     private void flushMetrics()

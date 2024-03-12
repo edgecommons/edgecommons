@@ -7,7 +7,9 @@ import com.aws.proserve.ggcommons.metrics.Measure;
 import com.aws.proserve.ggcommons.metrics.Metric;
 import com.aws.proserve.ggcommons.metrics.MetricEmitter;
 import com.aws.proserve.ggcommons.utils.Utils;
+import com.google.gson.Gson;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonSyntaxException;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.junit.jupiter.api.AfterEach;
@@ -15,6 +17,11 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.aws.greengrass.model.QOS;
 
+
+import java.io.File;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Paths;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -29,6 +36,7 @@ class GGCommonsTest
     ConfigManager configManager;
     Message receivedMessage;
     Logger LOGGER;
+    Gson gson = new Gson();
 
     GGCommonsTest()
     {
@@ -179,5 +187,40 @@ class GGCommonsTest
 //            LOGGER.error("This is an error log message ({})", i);
 //            Utils.sleep(1000);
 //        }
+//
+//        configManager.applyConfig(loadConfiguration("config_2.json"));
+//
+//        for (int i = 1; i <= 5; i++)
+//        {
+//            Map<String, Float> measureValues = Map.of("val", (float) i);
+//            MetricEmitter.emitMetric("test", measureValues);
+//            LOGGER.trace("This is a trace log message ({})", i);
+//            LOGGER.debug("This is a debug log message ({})", i);
+//            LOGGER.info("This is an info log message ({})", i);
+//            LOGGER.warn("This is a warn log message ({})", i);
+//            LOGGER.error("This is an error log message ({})", i);
+//            Utils.sleep(1000);
+//        }
 //    }
+
+    public JsonObject loadConfiguration(String configFilePath)
+    {
+        LOGGER.debug("Loading configuration from file '{}'", configFilePath);
+        JsonObject retVal = null;
+        try
+        {
+            File file = new File(configFilePath);
+            byte[] bytes = java.nio.file.Files.readAllBytes(Paths.get(file.getAbsolutePath()));
+            String configurationFileContents = new String(bytes, StandardCharsets.UTF_8);
+            retVal = gson.fromJson(configurationFileContents, JsonObject.class);
+        }
+        catch (JsonSyntaxException | IOException e)
+        {
+            LOGGER.fatal("Error reading configuration file '{}': {}", configFilePath, e.toString());
+            System.exit(1);
+        }
+
+        return retVal;
+    }
+
 }

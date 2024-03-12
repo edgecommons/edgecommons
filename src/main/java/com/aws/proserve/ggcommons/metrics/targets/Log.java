@@ -1,25 +1,32 @@
 package com.aws.proserve.ggcommons.metrics.targets;
 
 import com.aws.proserve.ggcommons.config.ConfigManager;
+import com.aws.proserve.ggcommons.config.MetricConfiguration;
 import com.aws.proserve.ggcommons.metrics.Measure;
 import com.aws.proserve.ggcommons.metrics.Metric;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.apache.logging.log4j.core.config.Configurator;
+import org.apache.logging.log4j.core.config.builder.api.*;
+import org.apache.logging.log4j.core.config.builder.impl.BuiltConfiguration;
 
 import java.util.Map;
+
+import static org.apache.logging.log4j.core.config.builder.api.ConfigurationBuilderFactory.newConfigurationBuilder;
 
 
 public class Log extends MetricTarget
 {
     private final static Logger LOGGER = LogManager.getLogger(MetricTarget.class);
-    private final Logger metricLogger;
+    private Logger metricLogger;
 
     public Log(ConfigManager configManager)
     {
         super(configManager);
-        metricLogger = LogManager.getLogger("metric");
+        metricLogger = configureMetricLogger();
     }
 
     @Override
@@ -34,6 +41,14 @@ public class Log extends MetricTarget
         JsonObject metricData = buildMetricData(metric, measureValues);
         metricLogger.info(metricData.toString());
         LOGGER.trace("Metric emitted for {} emitted", metric.getName());
+    }
+
+    @Override
+    public boolean onConfigurationChanged()
+    {
+        LOGGER.info("Configuration changed. Reconfiguring metric logger");
+        metricLogger = configureMetricLogger();
+        return true;
     }
 
     private JsonObject buildMetricData(Metric metric, Map<String, Float> measureValues) {
@@ -77,6 +92,35 @@ public class Log extends MetricTarget
         }
         cwMetricsArrayEntry.add("Metrics", metricsMetadataArray);
         return cwMetricsArrayEntry;
+    }
+
+    private Logger configureMetricLogger()
+    {
+        MetricConfiguration metricConfig = configManager.getMetricConfig();
+
+        ConfigurationBuilder<BuiltConfiguration> configBuilder = newConfigurationBuilder();
+
+        AppenderComponentBuilder fileAppenderBuilder = configBuilder.newAppender("metric", "File");
+        String metricFile = configManager.resolveTemplate(metricConfig.getLogFileNameTemplate());
+        fileAppenderBuilder.addAttribute("fileName", metricFile);
+
+        LayoutComponentBuilder layoutComponentBuilder = configBuilder.newLayout("PatternLayout");
+        layoutComponentBuilder.addAttribute("pattern", configManager.getLoggingConfig().getFormat());
+
+        fileAppenderBuilder.addComponent(layoutComponentBuilder);
+
+        configBuilder.add(fileAppenderBuilder);
+
+        LoggerComponentBuilder metricLogger = configBuilder.newLogger("metric", Level.INFO);
+        metricLogger.add(configBuilder.newAppenderRef("metric"));
+        metricLogger.addAttribute("additivity", false);
+        configBuilder.add(metricLogger);
+
+        Configurator.reconfigure(configBuilder.build());
+
+        LOGGER.debug("Metric logger configured with following configuration: {}", configBuilder.toXmlConfiguration());
+
+        return LogManager.getLogger("metric");
     }
 }
 

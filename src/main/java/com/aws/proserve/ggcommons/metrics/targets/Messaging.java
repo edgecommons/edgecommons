@@ -12,7 +12,7 @@ import java.util.Map;
 
 public class Messaging extends MetricTarget {
 
-    private final String topic;
+    private String topic;
     private boolean sendToIpc = true;
 
     public Messaging(ConfigManager configManager) {
@@ -31,6 +31,15 @@ public class Messaging extends MetricTarget {
         else
             MessagingClient.publishToIotCore(topic, message, QOS.AT_LEAST_ONCE);
         LOGGER.trace("Metric emitted for {} emitted", metric);
+    }
+
+    @Override
+    public boolean onConfigurationChanged()
+    {
+        LOGGER.info("Configuration changed. Reconfiguring metric messaging topic and destination");
+        this.topic = configManager.resolveTemplate(configManager.getMetricConfig().getTopic());
+        this.sendToIpc = configManager.getMetricConfig().getDestination().equalsIgnoreCase("ipc");
+        return true;
     }
 
     @Override
