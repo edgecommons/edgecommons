@@ -27,8 +27,10 @@ class Messaging(MetricTarget):
         self.emit_metric_now(metric, measure_values)
 
     def build_metric_data(self, metric, measure_values):
+        namespace = metric.get_namespace() if metric.get_namespace is not None \
+            else self.config_manager.get_metric_config().get_namespace()
         metric_data = {
-            "namespace": metric.get_namespace(),
+            "namespace": namespace,
             "timestamp": int(time.time() * 1000),  # Convert to milliseconds
             "dimensions": metric.dimensions_as_json(),
             "measures": [{

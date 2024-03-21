@@ -38,14 +38,16 @@ class CloudWatch(MetricTarget):
         self.logger.info("Flushed pending metrics to CloudWatch.")
 
     def emit_metric(self, metric, measure_values):
-        namespace = metric.get_namespace()
+        namespace = metric.get_namespace() if metric.get_namespace is not None \
+            else self.config_manager.get_metric_config().get_namespace()
         metric_data = self._prepare_metric_data(metric, measure_values)
         if namespace not in self._pending_metrics:
             self._pending_metrics[namespace] = []
         self._pending_metrics[namespace].extend(metric_data)
 
     def emit_metric_now(self, metric, measure_values):
-        namespace = metric.get_namespace()
+        namespace = metric.get_namespace() if metric.get_namespace is not None \
+            else self.config_manager.get_metric_config().get_namespace()
         metric_data = self._prepare_metric_data(metric, measure_values)
         self._cloudwatch_client.put_metric_data(Namespace=namespace, MetricData=metric_data)
         self.logger.info(f"Metric {metric.name} sent to CloudWatch immediately.")

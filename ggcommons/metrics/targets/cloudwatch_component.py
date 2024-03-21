@@ -26,9 +26,11 @@ class CloudWatchComponent(MetricTarget):
             "unit": metric.get_measure(measure_name).get_unit(),
             "dimensions": metric.dimensions_as_json(include_core_name=False)
         }
+        namespace = metric.get_namespace() if metric.get_namespace is not None \
+            else self.config_manager.get_metric_config().get_namespace()
         data = {
            "request": {
-               "namespace": metric.get_namespace(),
+               "namespace": namespace,
                "timestamp": int(time.time()),
                "metricData": metric_data
             }

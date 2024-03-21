@@ -47,8 +47,10 @@ class MetricLog(MetricTarget):
         return emf_object
 
     def get_metrics_metadata(self, metric):
+        namespace = metric.get_namespace() if metric.get_namespace is not None \
+            else self.config_manager.get_metric_config().get_namespace()
         cw_metrics_array_entry = {
-            "Namespace": self.config_manager.get_metric_config().get_namespace(),
+            "Namespace": namespace,
             "Dimensions": [[dimension for dimension in metric.get_dimensions().keys()]],
             "Metrics": [{
                 "Name": measure.get_name(),
