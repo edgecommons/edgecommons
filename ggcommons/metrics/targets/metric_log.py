@@ -28,7 +28,7 @@ class MetricLog(MetricTarget):
     def emit_metric_now(self, metric, measure_values):
         metric_data = self.build_metric_data(metric, measure_values)
         self.metric_logger.info(json.dumps(metric_data))
-        self.logger.info(f"Metric emitted for {metric.get_name()} emitted")
+        self.logger.debug(f"Metric '{metric.get_name()}' emitted")
 
     def build_metric_data(self, metric, measure_values):
         emf_object = {}
@@ -47,7 +47,7 @@ class MetricLog(MetricTarget):
         return emf_object
 
     def get_metrics_metadata(self, metric):
-        namespace = metric.get_namespace() if metric.get_namespace is not None \
+        namespace = metric.get_namespace() if metric.get_namespace() is not None \
             else self.config_manager.get_metric_config().get_namespace()
         cw_metrics_array_entry = {
             "Namespace": namespace,

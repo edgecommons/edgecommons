@@ -24,9 +24,10 @@
     }
   },
   "metricEmission": {
-	"target" : "cloudwatch",
+	"target" : "messaging",
     "namespace": "ggcommons",
 	"targetConfig" : {
+      "destination": "ipc",
       "intervalSecs": 10
     }
   },

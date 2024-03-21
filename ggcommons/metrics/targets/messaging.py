@@ -21,13 +21,13 @@ class Messaging(MetricTarget):
             MessagingClient.publish(self.topic, message)
         else:
             MessagingClient.publish_to_iot_core(self.topic, message, QOS.AT_LEAST_ONCE)
-        self.logger.info(f"Metric emitted for {metric.get_namespace()} emitted")
+        self.logger.debug(f"Metric '{metric.get_name()}' emitted")
 
     def emit_metric(self, metric, measure_values):
         self.emit_metric_now(metric, measure_values)
 
     def build_metric_data(self, metric, measure_values):
-        namespace = metric.get_namespace() if metric.get_namespace is not None \
+        namespace = metric.get_namespace() if metric.get_namespace() is not None \
             else self.config_manager.get_metric_config().get_namespace()
         metric_data = {
             "namespace": namespace,

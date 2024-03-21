@@ -14,7 +14,7 @@ class CloudWatchComponent(MetricTarget):
         for measure_name, measure_value in measure_values.items():
             metric_data = self.build_metric_data(metric, measure_name, measure_value)
             MessagingClient.publish_raw(self.topic, metric_data)
-            self.logger.info(f"Metric {metric.get_name()} emitted")
+        self.logger.debug(f"Metric '{metric.get_name()}' emitted")
 
     def emit_metric(self, metric, measure_values):
         self.emit_metric_now(metric, measure_values)
@@ -26,7 +26,7 @@ class CloudWatchComponent(MetricTarget):
             "unit": metric.get_measure(measure_name).get_unit(),
             "dimensions": metric.dimensions_as_json(include_core_name=False)
         }
-        namespace = metric.get_namespace() if metric.get_namespace is not None \
+        namespace = metric.get_namespace() if metric.get_namespace() is not None \
             else self.config_manager.get_metric_config().get_namespace()
         data = {
            "request": {

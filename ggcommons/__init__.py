@@ -48,7 +48,17 @@ def init(
 
 if __name__ == "__main__":
     import sys
+    from ggcommons.metrics.metric import Metric
+    from ggcommons.metrics.measure import Measure
+    from random import random
+
     sys.argv = ["ggcommons_python", "--config", "FILE",  "../config_3.json", "--messaging", "MQTT"]
     init("ggcommons_python", argparse.ArgumentParser())
+    metric = Metric(name="performance")
+    metric.add_measure(Measure("latency", "Milliseconds", 1))
+    MetricEmitter.define_metric(metric)
+
     while True:
-        sleep(1000)
+        measure_values = {"replyLatency": random() * 100}
+        MetricEmitter.emit_metric("performance", measure_values)
+        sleep(1)
