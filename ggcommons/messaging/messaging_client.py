@@ -1,4 +1,3 @@
-import threading
 import logging
 from typing import Callable, List
 
@@ -100,6 +99,7 @@ class MessagingClient:
     def reply(request: Message, reply: Message):
         MessagingClient._messaging_provider.reply(request, reply)
 
+    @staticmethod
     def reply_to_iot_core(request: Message, reply: Message):
         MessagingClient._messaging_provider.reply(request, reply)
 
@@ -110,3 +110,4 @@ class MessagingClient:
     @staticmethod
     def get_native_client():
         return MessagingProvider.get_native_client()
+
