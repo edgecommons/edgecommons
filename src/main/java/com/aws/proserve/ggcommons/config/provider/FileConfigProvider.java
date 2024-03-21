@@ -1,6 +1,7 @@
 package com.aws.proserve.ggcommons.config.provider;
 
 import com.aws.proserve.ggcommons.config.ConfigManager;
+import com.aws.proserve.ggcommons.utils.FileWatcher;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonSyntaxException;
 import org.apache.logging.log4j.LogManager;
@@ -11,16 +12,21 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Paths;
 
-class FileConfigProvider extends ConfigProvider
+class FileConfigProvider extends ConfigProvider implements FileWatcher.FileChangeHandler
 {
     private static final Logger LOGGER = LogManager.getLogger(FileConfigProvider.class);
 
     String configFilePath;
 
+    final FileWatcher configFileWatcher;
+
     FileConfigProvider(ConfigManager configManager, String configFilePath)
     {
         super(configManager);
         this.configFilePath = configFilePath;
+        this.configFileWatcher = new FileWatcher(configFilePath, this);
+        configFileWatcher.setDaemon(true);
+        configFileWatcher.start();
     }
 
     @Override
@@ -53,5 +59,13 @@ class FileConfigProvider extends ConfigProvider
     {
         byte[] bytes = java.nio.file.Files.readAllBytes(Paths.get(file.getAbsolutePath()));
         return new String(bytes, StandardCharsets.UTF_8);
+    }
+
+    @Override
+    public void onChange()
+    {
+        JsonObject newConfig = loadConfiguration();
+        LOGGER.info("configurationChanged: Applying new config: {}", newConfig);
+        parentConfigManager.applyConfig(newConfig);
     }
 }

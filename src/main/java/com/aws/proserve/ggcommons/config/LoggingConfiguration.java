@@ -40,7 +40,7 @@ public class LoggingConfiguration
 
     public Level getLevel()
     {
-        return Level.toLevel(level);
+        return Level.toLevel(level, Level.TRACE);
     }
 
     public String getFormat()

@@ -1,10 +1,10 @@
 {
   "logging": {
-    "level": "DEBUG",
+    "level": "TRACE",
     "format": "%d{yyyy-MM-dd HH:mm:ss.SSS} [%-5p] %C{1} (%L) [%t] : %m%n"
   },
   "heartbeat": {
-    "intervalSecs": 5,
+    "intervalSecs": 10,
     "measures": {
       "cpu": true,
       "memory": true,
@@ -17,7 +17,7 @@
       {
         "type": "messaging",
         "config": {
-          "destination": "ipc"
+          "destination": "iot_core"
         }
       }
     ]

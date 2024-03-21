@@ -207,25 +207,26 @@ public class ConfigManager
 
     public void reconfigureLogging()
     {
-        ConfigurationBuilder<BuiltConfiguration> configBuilder = newConfigurationBuilder();
+//        ConfigurationBuilder<BuiltConfiguration> configBuilder = newConfigurationBuilder();
+//
+//        AppenderComponentBuilder consoleAppenderBuilder = configBuilder.newAppender("stdout", "Console");
+//        configBuilder.add(consoleAppenderBuilder);
+//
+//
+//        LayoutComponentBuilder layoutComponentBuilder = configBuilder.newLayout("PatternLayout");
+//        layoutComponentBuilder.addAttribute("pattern", getLoggingConfig().getFormat());
+//
+//        consoleAppenderBuilder.addComponent(layoutComponentBuilder);
+//
+//        configBuilder.add(consoleAppenderBuilder);
+//
+//        RootLoggerComponentBuilder rootLogger = configBuilder.newRootLogger(getLoggingConfig().getLevel());
+//        rootLogger.add(configBuilder.newAppenderRef("stdout"));
+//        configBuilder.add(rootLogger);
+//
+//        Configurator.reconfigure(configBuilder.build());
+        Configurator.setAllLevels(LogManager.getRootLogger().getName(), getLoggingConfig().getLevel());
 
-        AppenderComponentBuilder consoleAppenderBuilder = configBuilder.newAppender("stdout", "Console");
-        configBuilder.add(consoleAppenderBuilder);
-
-
-        LayoutComponentBuilder layoutComponentBuilder = configBuilder.newLayout("PatternLayout");
-        layoutComponentBuilder.addAttribute("pattern", getLoggingConfig().getFormat());
-
-        consoleAppenderBuilder.addComponent(layoutComponentBuilder);
-
-        configBuilder.add(consoleAppenderBuilder);
-
-        RootLoggerComponentBuilder rootLogger = configBuilder.newRootLogger(getLoggingConfig().getLevel());
-        rootLogger.add(configBuilder.newAppenderRef("stdout"));
-        configBuilder.add(rootLogger);
-
-        Configurator.reconfigure(configBuilder.build());
-
-        LOGGER.debug("Logging reconfigured with following configuration: {}", configBuilder.toXmlConfiguration());
+        LOGGER.debug("Logging reconfigured with following level: {}", getLoggingConfig().getLevel());
     }
 }

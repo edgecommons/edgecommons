@@ -217,8 +217,6 @@ class ShadowConfigProvider extends ConfigProvider implements  StreamResponseHand
     {
         LOGGER.info("configurationChanged: Applying new com.aws.proseve.ggcommons.config: {}", newConfig);
         parentConfigManager.applyConfig(newConfig);
-
-
     }
 
 }
