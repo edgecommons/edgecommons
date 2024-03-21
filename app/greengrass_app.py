@@ -1,6 +1,5 @@
 import logging
 import time
-import threading
 from abc import ABC
 from argparse import Namespace
 from random import random
@@ -115,11 +114,10 @@ class GreengrassApp(ConfigurationChangeListener, ABC):
             iou_1 = self.publish_request(msg_id="1", execution_time=0)
             iou_2 = self.publish_request(msg_id="2", execution_time=1)
             iou_3 = self.publish_request(msg_id="3", execution_time=5)
-            print(f"######## number of threads is {threading.active_count()}")
+
             self.wait_for_reply("iou_1", iou_1, 1)
             self.wait_for_reply("iou_3", iou_3, 3)
             self.wait_for_reply("iou_2", iou_2, 2)
-            print(f"######### number of threads is {threading.active_count()}")
 
             while True:
                 test_message = MessageBuilder.build_from_config(
