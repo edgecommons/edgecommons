@@ -29,7 +29,11 @@ class ConfigManager(metaclass=abc.ABCMeta):
             if "AWS_IOT_THING_NAME" not in os.environ
             else os.environ["AWS_IOT_THING_NAME"]
         )
-        self._component_name = component_name
+        self._component_full_name = component_name
+        if "." in component_name:
+            self._component_name = component_name.rpartition(".")[-1]
+        else:
+            self._component_name = component_name
 
     def init(self):
         config = self._load_configuration()
@@ -129,6 +133,9 @@ class ConfigManager(metaclass=abc.ABCMeta):
 
     def get_component_name(self) -> str:
         return self._component_name
+
+    def get_component_full_name(self) -> str:
+        return self._component_full_name
 
     def add_config_change_listener(self, listener):
         self._change_listeners.append(listener)
