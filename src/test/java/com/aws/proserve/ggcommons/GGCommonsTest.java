@@ -180,13 +180,9 @@ class GGCommonsTest
 //        {
 //            Map<String, Float> measureValues = Map.of("val", (float) i);
 //            MetricEmitter.emitMetric("test", measureValues);
-//            LOGGER.trace("This is a trace log message ({})", i);
-//            LOGGER.debug("This is a debug log message ({})", i);
-//            LOGGER.info("This is an info log message ({})", i);
-//            LOGGER.warn("This is a warn log message ({})", i);
-//            LOGGER.error("This is an error log message ({})", i);
 //            Utils.sleep(1000);
 //        }
+//    }
 //
 //        configManager.applyConfig(loadConfiguration("config_2.json"));
 //

@@ -39,15 +39,14 @@ public class ConfigManager
 
    public ConfigManager(String componentName, String[] configArgs)
     {
-        if (!componentName.contains("."))
+        this.componentFullName = componentName;
+        if (componentName.contains("."))
         {
-            this.componentFullName = componentName;
-            this.componentName = componentName;
+            this.componentName = componentName.substring(componentName.lastIndexOf(".") + 1);
         }
         else
         {
-            this.componentFullName = componentName;
-            this.componentName = componentName.substring(componentName.lastIndexOf(".") + 1);
+            this.componentName = componentName;
         }
         LOGGER.info("");
         thingName = System.getenv("AWS_IOT_THING_NAME") != null ? System.getenv("AWS_IOT_THING_NAME") : "NOT_GREENGRASS";
@@ -108,7 +107,7 @@ public class ConfigManager
             for (JsonElement instance : instances)
             {
                 JsonObject instanceConfig = instance.getAsJsonObject();
-                instanceConfigs.put(instanceConfig.get("id").toString(), instanceConfig);
+                instanceConfigs.put(instanceConfig.get("id").getAsString(), instanceConfig);
                 LOGGER.debug("Loaded instance config for {}", instanceConfig.get("id"));
             }
         }
@@ -225,7 +224,7 @@ public class ConfigManager
 //        configBuilder.add(rootLogger);
 //
 //        Configurator.reconfigure(configBuilder.build());
-        Configurator.setAllLevels(LogManager.getRootLogger().getName(), getLoggingConfig().getLevel());
+//        Configurator.setAllLevels(LogManager.getRootLogger().getName(), getLoggingConfig().getLevel());
 
         LOGGER.debug("Logging reconfigured with following level: {}", getLoggingConfig().getLevel());
     }
