@@ -1,4 +1,4 @@
-package com.aws.proserve.ggcommons.messaging.providers;
+package com.aws.proserve.ggcommons.messaging.providers.mqtt;
 
 import com.aws.proserve.ggcommons.messaging.Message;
 import com.aws.proserve.ggcommons.messaging.MessagingProvider;
@@ -11,11 +11,21 @@ import org.eclipse.paho.client.mqttv3.IMqttDeliveryToken;
 import org.eclipse.paho.client.mqttv3.MqttCallback;
 import org.eclipse.paho.client.mqttv3.*;
 import software.amazon.awssdk.aws.greengrass.model.QOS;
-
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSocketFactory;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.security.KeyStore;
+import java.security.PrivateKey;
+import java.security.cert.CertificateFactory;
 import java.util.HashMap;
+import java.util.UUID;
 import java.util.concurrent.*;
 import java.util.function.BiConsumer;
+import java.io.*;
+import java.nio.file.*;
+import java.security.cert.*;
+import javax.net.ssl.*;
 
 
 public class MqttProvider extends MessagingProvider
@@ -100,6 +110,8 @@ public class MqttProvider extends MessagingProvider
 
     String host;
     int port;
+    String certFolder;
+    String clientId;
     MqttClient mqttClient;
     HashMap<String, ReplyFuture> responseFutures = new HashMap<>();
 
@@ -158,27 +170,91 @@ public class MqttProvider extends MessagingProvider
         super(messagingArgs);
         host = messagingArgs.length > 1 ? messagingArgs[1] : "localhost";
         port = messagingArgs.length > 2 ? Integer.parseInt(messagingArgs[2]) : 1883;
+        certFolder = messagingArgs.length > 3 ? messagingArgs[3] : null;
+        this.clientId = clientId;
+        String prefix = certFolder != null ? "ssl" : "tcp";
+        String uri =  String.format("%s://%s:%d", prefix, host, port);
         try
         {
-            mqttClient = new MqttClient(String.format("tcp://%s:%d", host, port), clientId);
+            mqttClient = new MqttClient(uri, this.clientId);
             mqttClient.setCallback(new EventCallback(this));
             MqttConnectOptions connOpts = new MqttConnectOptions();
+            if (certFolder != null)
+            {
+                String caCertFile = String.format("%s/root-CA.crt", certFolder);
+                String deviceCertFile = String.format("%s/%s.cert.pem", certFolder, this.clientId);
+                String devicePrivateKeyFile = String.format("%s/%s.private.key", certFolder, this.clientId);
+                SSLSocketFactory socketFactory = getSocketFactory(caCertFile,deviceCertFile,devicePrivateKeyFile);
+                if (socketFactory != null)
+                {
+                    connOpts.setSocketFactory(socketFactory);
+                    LOGGER.info("Attempting to connect to MQTT broker at {}", uri);
+                    LOGGER.info("       ...using private key file: {}", devicePrivateKeyFile);
+                    LOGGER.info("       ...using device cert file: {}", deviceCertFile);
+                    LOGGER.info("       ...using CA Cert file: {}", caCertFile);
+                    LOGGER.info("       ...using client ID:{}", clientId);
+                }
+                else
+                    LOGGER.warn("Unable to load cert/key files. Attempting to connect without credentials.");
+            }
             connOpts.setCleanSession(true);
             connOpts.setMaxInflight(250);
-            mqttClient.connect();
-            LOGGER.info("Connected to MQTT broker tcp://{}:{}", host, port);
+            connOpts.setConnectionTimeout(10);
+            mqttClient.connect(connOpts);
+            LOGGER.info("Connected to MQTT broker {}", uri);
         }
         catch (MqttException e)
         {
-            LOGGER.fatal("Failed to connect to MQTT broker at tcp://{}:{} - {}", host, port, e.toString());
+            LOGGER.fatal("Failed to connect to MQTT broker at {} - {}", uri, e.toString());
             System.exit(4);
         }
+    }
+
+    private static SSLSocketFactory getSocketFactory(final String caCrtFile, final String crtFile, final String keyFile)
+    {
+        SSLSocketFactory retVal = null;
+        try
+        {
+            // load CA certificate
+            X509Certificate caCert = (X509Certificate) CertificateFactory.getInstance("X509").
+                                                                         generateCertificate(new ByteArrayInputStream(Files.readAllBytes(Paths.get(caCrtFile))));
+
+            // load client certificate
+            X509Certificate cert = (X509Certificate) CertificateFactory.getInstance("X509").
+                                                     generateCertificate(new ByteArrayInputStream(Files.readAllBytes(Paths.get(crtFile))));
+
+            // load client private key
+            PrivateKey privateKey = PrivateKeyReader.getPrivateKey(keyFile);
+
+            // CA certificate is used to authenticate server
+            KeyStore caKs = KeyStore.getInstance(KeyStore.getDefaultType());
+            caKs.load(null, null);
+            caKs.setCertificateEntry("ca-certificate", caCert);
+            TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+            tmf.init(caKs);
+
+            // client key and certificates are sent to server so it can authenticate us
+            char[] password = UUID.randomUUID().toString().toCharArray();
+            KeyStore ks = KeyStore.getInstance(KeyStore.getDefaultType());
+            ks.load(null, null);
+            ks.setCertificateEntry("certificate", cert);
+            ks.setKeyEntry("private-key", privateKey, password, new java.security.cert.Certificate[]{cert});
+            KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+            kmf.init(ks, password);
+
+            // finally, create SSL socket factory
+            SSLContext context = SSLContext.getInstance("TLS");
+            context.init(kmf.getKeyManagers(), tmf.getTrustManagers(), null);
+            retVal = context.getSocketFactory();
+        } catch (Exception e) {
+            LOGGER.error("Failed to load certificates - {}", e.toString());
+        }
+        return retVal;
     }
 
     private void internalPublish(String topic, Message message, QOS qos) {
         try
         {
-            String strMsg = message.toString();
             MqttMessage msg = new MqttMessage(message.toString().getBytes());
             msg.setQos(qos.ordinal());
             mqttClient.publish(topic, msg);

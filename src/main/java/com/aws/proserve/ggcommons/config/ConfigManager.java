@@ -1,5 +1,6 @@
 package com.aws.proserve.ggcommons.config;
 
+import com.aws.proserve.ggcommons.ParsedCommandLine;
 import com.aws.proserve.ggcommons.config.provider.ConfigProvider;
 import com.aws.proserve.ggcommons.config.provider.ConfigProviderBuilder;
 
@@ -37,19 +38,26 @@ public class ConfigManager
     protected HashMap<String, JsonObject> instanceConfigs;
 
 
-   public ConfigManager(String componentName, String[] configArgs)
+   public ConfigManager(String componentName, ParsedCommandLine cmdLine)
     {
+        String[] configArgs = cmdLine.configArgs;
         this.componentFullName = componentName;
-        if (componentName.contains("."))
-        {
+        if (componentName.contains(".")) {
             this.componentName = componentName.substring(componentName.lastIndexOf(".") + 1);
         }
-        else
-        {
+        else {
             this.componentName = componentName;
         }
-        LOGGER.info("");
-        thingName = System.getenv("AWS_IOT_THING_NAME") != null ? System.getenv("AWS_IOT_THING_NAME") : "NOT_GREENGRASS";
+
+        if (cmdLine.thingName != null) {
+            thingName = cmdLine.thingName;
+        }
+        else if (System.getenv("AWS_IOT_THING_NAME") != null) {
+            thingName = System.getenv("AWS_IOT_THING_NAME");
+        }
+        else {
+            thingName = "NOT_GREENGRASS";
+        }
         configProvider = ConfigProviderBuilder.build(this, componentName, thingName, configArgs);
 
         JsonObject config = configProvider.loadConfiguration();
@@ -226,6 +234,6 @@ public class ConfigManager
 //        Configurator.reconfigure(configBuilder.build());
 //        Configurator.setAllLevels(LogManager.getRootLogger().getName(), getLoggingConfig().getLevel());
 
-        LOGGER.debug("Logging reconfigured with following level: {}", getLoggingConfig().getLevel());
+        LOGGER.warn("Logging reconfiguration not supported in ggcommons Java version");
     }
 }

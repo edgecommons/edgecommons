@@ -33,8 +33,8 @@ public class GGCommons
     private void init(String componentName, String[] args, Options appOptions, boolean receiveOwnMessages)
     {
         ParsedCommandLine parsedCommandLine = GGCommons.processArgs(componentName, args, appOptions);
-        MessagingClient.init(parsedCommandLine.messagingArgs, receiveOwnMessages);
-        configManager = new ConfigManager(componentName, parsedCommandLine.configArgs);
+        MessagingClient.init(parsedCommandLine, receiveOwnMessages);
+        configManager = new ConfigManager(componentName, parsedCommandLine);
         MetricEmitter.init(configManager);
         new Heartbeat(configManager);
     }
@@ -63,12 +63,18 @@ public class GGCommons
         Option messagingOption = Option.builder("m")
                                        .longOpt("messaging")
                                        .hasArgs()
-                                       .desc("Messaging system - one of: IPC, MQTT <host> <port>\n" +
+                                       .desc("Messaging system - one of: IPC, MQTT <host> <port> <creds dir>\n" +
                                                "Default: IPC")
                                        .build();
+        Option thingOption = Option.builder("t")
+                                    .longOpt("thing")
+                                    .hasArg()
+                                    .desc("Thing name to use (optional)")
+                                    .build();
         options.addOption(helpOption);
         options.addOption(configOption);
         options.addOption(messagingOption);
+        options.addOption(thingOption);
 
         try {
             // parse the command line arguments
@@ -97,6 +103,10 @@ public class GGCommons
                 messagingArgs = new String[] {"IPC"};
             }
             retVal.messagingArgs = messagingArgs;
+
+            if (line.hasOption("t")) {
+                retVal.thingName = line.getOptionValue("thing");
+            }
         }
         catch (ParseException exp) {
             LOGGER.error("Unexpected exception parsing command line options: {}", exp.getMessage());

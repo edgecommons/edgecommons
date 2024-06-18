@@ -1,6 +1,7 @@
 package com.aws.proserve.ggcommons.messaging;
 
-import com.aws.proserve.ggcommons.messaging.providers.MqttProvider;
+import com.aws.proserve.ggcommons.ParsedCommandLine;
+import com.aws.proserve.ggcommons.messaging.providers.mqtt.MqttProvider;
 import com.aws.proserve.ggcommons.messaging.providers.greengrass.GreengrassIpcProvider;
 import com.google.gson.JsonObject;
 import org.apache.logging.log4j.LogManager;
@@ -16,8 +17,10 @@ public class MessagingClient
 
     static MessagingProvider messagingProvider = null;
 
-    public static void init(String[] messagingArgs, boolean receiveOwnMessages)
+    public static void init(ParsedCommandLine cmdLine, boolean receiveOwnMessages)
     {
+        String[] messagingArgs = cmdLine.messagingArgs;
+        String clientId = cmdLine.thingName != null ? cmdLine.thingName : UUID.randomUUID().toString();
         switch (messagingArgs[0].toUpperCase()) {
             case "IPC":
                 LOGGER.info("IPC specified in command line.  Using Greengrass IPC.");
@@ -25,7 +28,7 @@ public class MessagingClient
                 break;
             case "MQTT":
                 LOGGER.info("MQTT specified in command line.  Using MqttClient");
-                messagingProvider = new MqttProvider(messagingArgs, UUID.randomUUID().toString());
+                messagingProvider = new MqttProvider(messagingArgs, clientId);
                 break;
             default:
                 LOGGER.fatal("Invalid com.aws.proseve.ggcommons.messaging provider specified in command line: must be either 'MQTT' or 'IPC'");
