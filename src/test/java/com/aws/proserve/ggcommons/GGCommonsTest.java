@@ -40,7 +40,11 @@ class GGCommonsTest
 
     GGCommonsTest()
     {
-        String[] args = { "-m", "MQTT", "localhost", "1883", "-c", "FILE", "./config_3.json"};
+        String[] args = {
+                "-t", "ggcommons-test-2",
+                "-m", "MQTT", "a3bgkcole5zuv-ats.iot.us-east-1.amazonaws.com", "8883", "./creds",
+                "-c", "FILE", "./config_3.json"
+        };
         ggCommons = new GGCommons("com.aws.proserve.greengrass.UnitTests", args);
         configManager = ggCommons.getConfigManager();
         LOGGER = LogManager.getLogger(GGCommonsTest.class);
@@ -64,32 +68,32 @@ class GGCommonsTest
     }
 
 
-//    public void ipcMessageHandler(String topic, Message message)
-//    {
-//        receivedMessage = message;
-//    }
-//
-//    public void iotCoreMessageHandler(String topic, Message message)
-//    {
-//        receivedMessage = message;
-//    }
-//
-//    public void requestHandler(String topic, Message message)
-//    {
-//        JsonObject replyPayload = new JsonObject();
-//        replyPayload.addProperty("reply_message", "I have received your request and have replied with this message");
-//        Message reply = Message.buildFromConfig("ReplyTest", "1.0", replyPayload, configManager);
-//        MessagingClient.reply(message, reply);
-//    }
-//
-//    public void iotCoreRequestHandler(String topic, Message message)
-//    {
-//        JsonObject replyPayload = new JsonObject();
-//        replyPayload.addProperty("reply_message", "(IoT Core) I have received your request and have replied with this message");
-//        Message reply = Message.buildFromConfig("ReplyTest", "1.0", replyPayload, configManager);
-//        MessagingClient.reply(message, reply);
-//    }
-//
+    public void ipcMessageHandler(String topic, Message message)
+    {
+        receivedMessage = message;
+    }
+
+    public void iotCoreMessageHandler(String topic, Message message)
+    {
+        receivedMessage = message;
+    }
+
+    public void requestHandler(String topic, Message message)
+    {
+        JsonObject replyPayload = new JsonObject();
+        replyPayload.addProperty("reply_message", "I have received your request and have replied with this message");
+        Message reply = Message.buildFromConfig("ReplyTest", "1.0", replyPayload, configManager);
+        MessagingClient.reply(message, reply);
+    }
+
+    public void iotCoreRequestHandler(String topic, Message message)
+    {
+        JsonObject replyPayload = new JsonObject();
+        replyPayload.addProperty("reply_message", "(IoT Core) I have received your request and have replied with this message");
+        Message reply = Message.buildFromConfig("ReplyTest", "1.0", replyPayload, configManager);
+        MessagingClient.reply(message, reply);
+    }
+
 //    @Test
 //    void publishIpcMessage()
 //    {

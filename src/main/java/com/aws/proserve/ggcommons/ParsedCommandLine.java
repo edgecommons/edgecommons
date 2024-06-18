@@ -7,4 +7,5 @@ public class ParsedCommandLine
     public CommandLine commandLine;
     public String[] configArgs;
     public String[] messagingArgs;
+    public String thingName;
 }

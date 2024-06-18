@@ -1,3 +1,9 @@
+# credential files
+creds/
+*.pem
+*.key
+*.crt
+
 # Compiled class files
 *.class
 
