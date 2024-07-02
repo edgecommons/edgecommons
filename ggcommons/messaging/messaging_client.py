@@ -1,4 +1,6 @@
 import logging
+import uuid
+from argparse import Namespace
 from typing import Callable, List
 
 from ggcommons.messaging.message import Message
@@ -18,13 +20,16 @@ class MessagingClient:
 
     @staticmethod
     def init(
-        messaging_args: List[str], receive_own_messages=False
+        args: Namespace, receive_own_messages=False
     ) -> MessagingProvider:
+        messaging_args = args.messaging
+        client_id = str(uuid.uuid4()) if args.thing is None else args.thing[0]
         if messaging_args[0].upper() == "MQTT":
             logger.info("Using MqttClient")
             host = messaging_args[1] if len(messaging_args) > 1 else "localhost"
-            port = messaging_args[2] if len(messaging_args) > 2 else 1883
-            MessagingClient._messaging_provider = MqttProvider(host, port)
+            port = int(messaging_args[2]) if len(messaging_args) > 2 else 1883
+            creds_dir = messaging_args[3] if len(messaging_args) > 3 else None
+            MessagingClient._messaging_provider = MqttProvider(host, port, client_id, creds_dir)
         else:
             logger.info("Using Greengrass IPC.")
             MessagingClient._messaging_provider = GreengrassIpcProvider(

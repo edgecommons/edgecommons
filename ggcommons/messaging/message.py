@@ -271,8 +271,8 @@ class MessageBuilder:
 
         Parameters
         ----------
-        msg_contents : dict
-            Dictionary containing message contents
+        msg_contents : any
+            Dictionary or str containing message contents
         is_json : bool, optional
             Indicates if msg_contents is serialized JSON
 

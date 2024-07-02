@@ -14,8 +14,8 @@ logger = logging.getLogger("FileConfigManager")
 
 
 class FileConfigManager(ConfigManager, ABC):
-    def __init__(self, component_name, config_file_path):
-        super().__init__(component_name)
+    def __init__(self, thing_name: str, component_name: str, config_file_path: str):
+        super().__init__(component_name, thing_name)
         self._config_file_path = config_file_path
         self.init()
         path_to_watch = os.path.dirname(os.path.abspath(self._config_file_path))

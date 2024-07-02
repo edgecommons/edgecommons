@@ -16,7 +16,7 @@ logger = logging.getLogger("ConfigManager")
 
 
 class ConfigManager(metaclass=abc.ABCMeta):
-    def __init__(self, component_name: str):
+    def __init__(self, component_name: str, thing_name: str):
         self._tag_config = None
         self._heartbeat_config = None
         self._metric_config = None
@@ -24,11 +24,7 @@ class ConfigManager(metaclass=abc.ABCMeta):
         self._global_config = {}
         self._instances = {}
         self._change_listeners = []
-        self._thing_name = (
-            "NOT_GREENGRASS"
-            if "AWS_IOT_THING_NAME" not in os.environ
-            else os.environ["AWS_IOT_THING_NAME"]
-        )
+        self._thing_name = thing_name
         self._component_full_name = component_name
         if "." in component_name:
             self._component_name = component_name.rpartition(".")[-1]

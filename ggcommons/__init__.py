@@ -28,14 +28,22 @@ def init(
         default=["IPC"],
         help="Messaging provider. One of: IPC, MQTT (default: %(default)s)",
     )
+    arg_parser.add_argument(
+        "-t",
+        "--thing",
+        nargs="*",
+        type=str,
+        help="Thing name to use (optional)",
+    )
+
     args = arg_parser.parse_args()
 
     logger = logging.getLogger("ggcommons")
 
-    MessagingClient.init(args.messaging, receive_own_messages=receive_own_messages)
+    MessagingClient.init(args, receive_own_messages=receive_own_messages)
     logger.info("ggcommons: Messaging client initialized")
 
-    config_manager = ConfigManagerBuilder.build(args.config, component_name)
+    config_manager = ConfigManagerBuilder.build(args, component_name)
     logger.info(
         f"ggcommons: Configuration loaded from {config_manager.get_config_source()}"
     )
@@ -52,7 +60,12 @@ if __name__ == "__main__":
     from ggcommons.metrics.measure import Measure
     from random import random
 
-    sys.argv = ["ggcommons_python", "--config", "FILE",  "../config_3.json", "--messaging", "MQTT"]
+    sys.argv = [
+        "ggcommons_python",
+        "--config", "FILE", "../config_3.json",
+        "--messaging", "MQTT", "a3bgkcole5zuv-ats.iot.us-east-1.amazonaws.com", "443", "../creds",
+        "--thing", "ggcommons-test-2"
+    ]
     init("ggcommons_python", argparse.ArgumentParser())
     metric = Metric(name="performance")
     metric.add_measure(Measure("latency", "Milliseconds", 1))

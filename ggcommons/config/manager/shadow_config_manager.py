@@ -17,8 +17,8 @@ class ShadowConfigManager(ConfigManager, ABC):
         "component": {"global": {}, "instances": []},
     }
 
-    def __init__(self, component_name: str, shadow_name: str):
-        super().__init__(component_name)
+    def __init__(self, thing_name: str, component_name: str, shadow_name: str):
+        super().__init__(component_name, thing_name)
         self._shadow_name = shadow_name if shadow_name is not None else component_name
         from ggcommons import MessagingClient
         self._ipc_client = MessagingClient.get_native_client()  # GreengrassCoreIPCClientV2()
