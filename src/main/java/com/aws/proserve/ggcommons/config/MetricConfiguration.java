@@ -20,6 +20,7 @@ public class MetricConfiguration
     private String topic;
     private int intervalSecs = DEFAULT_INTERVAL_SECS;
     private String destination = DEFAULT_MESSAGING_DESTINATION;
+    private boolean largeFleetWorkaround = false;
 
     MetricConfiguration(JsonObject jsonConfig)
     {
@@ -29,6 +30,8 @@ public class MetricConfiguration
                 target = jsonConfig.get("target").getAsString();
             if (jsonConfig.has("namespace"))
                 namespace = jsonConfig.get("namespace").getAsString();
+            if (jsonConfig.has("largeFleetWorkaround"))
+                largeFleetWorkaround = jsonConfig.get("largeFleetWorkaround").getAsBoolean();
 
             if (target.equalsIgnoreCase("log"))
             {
@@ -125,4 +128,6 @@ public class MetricConfiguration
     }
 
     public String getDestination() { return destination; }
+
+    public boolean getLargeFleetWorkaround() { return largeFleetWorkaround; }
 }

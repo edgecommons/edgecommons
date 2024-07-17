@@ -128,6 +128,17 @@ public class CloudWatch extends MetricTarget
         Metric metric = pendingMetric.getMetric();
         Instant timestamp = pendingMetric.getTimestamp();
 
+        addToDatum(data, measureValues, dimensions, metric, timestamp);
+
+        if (metricConfig.getLargeFleetWorkaround())
+        {
+            dimensions = pendingMetric.getMetric().dimensionsAsCollection(true);
+            addToDatum(data, measureValues, dimensions, metric, timestamp);
+        }
+    }
+
+    private void addToDatum(Collection<MetricDatum> data, Map<String, Float> measureValues, Collection<Dimension> dimensions, Metric metric, Instant timestamp)
+    {
         for (Map.Entry<String, Float> entry : measureValues.entrySet())
         {
             MetricDatum datum = MetricDatum.builder()

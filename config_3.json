@@ -15,7 +15,7 @@
     },
     "targets": [
       {
-        "type": "messaging",
+        "type": "metric",
         "config": {
           "destination": "iot_core"
         }
@@ -29,10 +29,13 @@
     "line": "line1"
   },
   "metricEmission": {
-    "target": "log",
+    "target": "messaging",
     "targetConfig": {
+      "destination": "ipc",
+      "intervalSecs": 1,
       "logFileName": "{ComponentFullName}.metric.log"
-    }
+    },
+    "largeFleetWorkaround": true
   },
   "component": {
     "global": {

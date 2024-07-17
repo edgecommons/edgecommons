@@ -7,6 +7,10 @@ import com.google.gson.JsonObject;
 
 import java.util.Map;
 
+// NOTE: The CloudWatchComponent target does not honor the "largeFleetWorkaround" configuration flag due to
+//       limitations in the Greengrass CloudWatch Metrics component (the coreName dimension is implicit and
+//       therefore cannot be overridden)
+
 public class CloudWatchComponent extends MetricTarget
 {
     private String topic;

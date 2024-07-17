@@ -42,7 +42,8 @@ class GGCommonsTest
     {
         String[] args = {
                 "-t", "ggcommons-test-2",
-                "-m", "MQTT", "a3bgkcole5zuv-ats.iot.us-east-1.amazonaws.com", "8883", "./creds",
+//                "-m", "MQTT", "a3bgkcole5zuv-ats.iot.us-east-1.amazonaws.com", "8883", "./creds",
+                "-m", "MQTT", "localhost", "1883",
                 "-c", "FILE", "./config_3.json"
         };
         ggCommons = new GGCommons("com.aws.proserve.greengrass.UnitTests", args);
@@ -107,7 +108,7 @@ class GGCommonsTest
 //        assertNotNull(receivedMessage);
 //        assertEquals(receivedMessage.getHeader().getName(), "IpcMessageTest");
 //    }
-//
+
 //    @Test
 //    void publishIotCoreMessage()
 //    {

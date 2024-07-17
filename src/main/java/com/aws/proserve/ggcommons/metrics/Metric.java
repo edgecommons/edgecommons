@@ -4,7 +4,6 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import software.amazon.awssdk.services.cloudwatch.model.Dimension;
 
-import javax.swing.*;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -76,21 +75,38 @@ public class Metric
         return jsonArray;
     }
 
-    public Collection<Dimension> dimensionsAsCollection()
+    public Collection<Dimension> dimensionsAsCollection(boolean largeFleetWorkaround)
     {
         Collection<Dimension> retVal = new ArrayList<>();
         for (Map.Entry<String, String> entry : dimensions.entrySet())
         {
-            Dimension dimension = Dimension.builder()
-                                           .name(entry.getKey())
-                                           .value(entry.getValue())
-                                           .build();
+            Dimension dimension;
+            if (entry.getKey().equals("coreName") && largeFleetWorkaround)
+            {
+                dimension = Dimension.builder()
+                                     .name(entry.getKey())
+                                     .value("ALL")
+                                     .build();
+            }
+            else
+            {
+                dimension = Dimension.builder()
+                                     .name(entry.getKey())
+                                     .value(entry.getValue())
+                                     .build();
+            }
             retVal.add(dimension);
         }
         return retVal;
     }
 
-    public String getName()
+    public Collection<Dimension> dimensionsAsCollection()
+    {
+        return dimensionsAsCollection(false);
+    }
+
+
+        public String getName()
     {
         return name;
     }
