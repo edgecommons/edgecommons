@@ -9,9 +9,9 @@ logger = logging.getLogger("GreengrassConfigManager")
 
 class GreengrassConfigManager(ConfigManager, ABC):
     def __init__(
-        self, component_name: str, config_component_name: str, config_key: str
+        self, thing_name: str, component_name: str, config_component_name: str, config_key: str
     ):
-        super().__init__(component_name)
+        super().__init__(component_name, thing_name)
         self._config_component_name = config_component_name
         self._config_key = config_key if config_key is not None else "ComponentConfig"
         self.init()

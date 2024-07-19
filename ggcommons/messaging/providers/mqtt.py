@@ -9,7 +9,7 @@ from ggcommons.messaging.messaging_client import MessagingProvider
 from ggcommons.messaging.message import Message, MessageBuilder
 import paho.mqtt.client as mqtt
 import re
-import uuid
+import ssl
 
 from ggcommons.utils.iou import Iou
 
@@ -90,7 +90,7 @@ class MqttProvider(MessagingProvider):
         and other IoT Core specific methods
     """
 
-    def __init__(self, host: str, port: int):
+    def __init__(self, host: str, port: int, client_id: str, creds_dir: str = None):
         super().__init__()
         self._subscription_info = {}
         self._subscription_info = {}
@@ -99,14 +99,38 @@ class MqttProvider(MessagingProvider):
         self._responses = {}
         self._host = host
         self._port = port
+        self._client_id = client_id
         self._mqtt_client = mqtt.Client(
-            mqtt.CallbackAPIVersion.VERSION1, client_id=f"{uuid.uuid4()}"
+            mqtt.CallbackAPIVersion.VERSION1, client_id=self._client_id
         )
+        if creds_dir is not None:
+            self._tls_set_certs(creds_dir)
         self._mqtt_client.connect(host=self._host, port=self._port)
         self._mqtt_client.on_message = self._on_message
         self._mqtt_client.on_connect = self._on_connect
         self._mqtt_client.on_disconnect = self._on_disconnect
         self._mqtt_client.loop_start()
+
+    def _tls_set_certs(self, creds_dir: str):
+        key = f"{creds_dir}/{self._client_id}.private.key"
+        cert = f"{creds_dir}/{self._client_id}.cert.pem"
+        ca_cert = f"{creds_dir}/root-CA.crt"
+        ssl_context = self._ssl_alpn(ca_cert, cert, key)
+        self._mqtt_client.tls_set_context(ssl_context)
+
+    def _ssl_alpn(self, ca_file, cert_file, key_file):
+        try:
+            logger.debug("open ssl version:{}".format(ssl.OPENSSL_VERSION))
+            ssl_context = ssl.create_default_context()
+            ssl_context.set_alpn_protocols(["x-amzn-mqtt-ca"])
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
+            ssl_context.load_verify_locations(ca_file)
+            ssl_context.load_cert_chain(cert_file, key_file)
+            return ssl_context
+        except Exception as e:
+            print("exception ssl_alpn()")
+            raise e
 
     def _on_message(self, client, userdata, message: mqtt.MQTTMessage):
         topic = message.topic
@@ -144,7 +168,7 @@ class MqttProvider(MessagingProvider):
                     executor.submit(subscription_info.callback, topic, received_payload)
 
     def _on_connect(self, client, userdata, flags, rc):
-        logger.info(f"Connected to MQTT broker at {self._host}:{self._port}")
+        logger.info(f"Connected to MQTT broker at {self._host}:{self._port} as {self._client_id}")
 
     def _on_disconnect(self, client, userdata, rc):
         logger.error(f"Disconnected from MQTT broker at {self._host}:{self._port}")
