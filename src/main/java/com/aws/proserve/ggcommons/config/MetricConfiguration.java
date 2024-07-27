@@ -11,7 +11,7 @@ public class MetricConfiguration
     private final static String DEFAULT_CLOUDWATCH_COMPONENT_TOPIC = "cloudwatch/metric/put";
     private final static String DEFAULT_TARGET = "log";
     private final static String DEFAULT_METRIC_NAMESPACE = "ggcommons";
-    private final static String DEFAULT_METRIC_FILE_NAME_TEMPLATE = "/greengrass/v2/logs/{ComponentName}.metric.log";
+    private final static String DEFAULT_METRIC_FILE_NAME_TEMPLATE = "/greengrass/v2/logs/{ComponentFullName}.metric.log";
     private final static int DEFAULT_INTERVAL_SECS = 5;
     private final static String DEFAULT_MESSAGING_DESTINATION = "ipc";
     private String target = DEFAULT_TARGET;

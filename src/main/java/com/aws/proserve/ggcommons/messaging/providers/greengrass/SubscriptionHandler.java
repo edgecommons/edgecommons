@@ -84,7 +84,7 @@ public abstract class SubscriptionHandler<T> implements Runnable, StreamResponse
                 if (entry.message == null && entry.topic == null)
                     break;
                 executor.execute(() -> {
-                    LOGGER.info("Invoking callback for topic '{}'", entry.topic);
+                    LOGGER.trace("Invoking callback for topic '{}'", entry.topic);
                     callback.accept(entry.topic, entry.message);
                 });
             }
