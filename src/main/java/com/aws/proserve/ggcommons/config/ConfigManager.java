@@ -29,6 +29,7 @@ public class ConfigManager
     protected final String componentFullName;
     protected final String thingName;
     protected final ArrayList<ConfigurationChangeListener> configChangeListeners = new ArrayList<>();
+    protected final JsonObject fullConfig;
     protected TagConfiguration tagConfig;
     protected HeartbeatConfiguration heartbeatConfig;
     protected MetricConfiguration metricConfig;
@@ -60,10 +61,10 @@ public class ConfigManager
         }
         configProvider = ConfigProviderBuilder.build(this, componentName, thingName, configArgs);
 
-        JsonObject config = configProvider.loadConfiguration();
-        if (config != null)
+        fullConfig = configProvider.loadConfiguration();
+        if (fullConfig != null)
         {
-            applyConfig(config);
+            applyConfig(fullConfig);
             LOGGER.info("Configuration loaded from {}", configProvider.getConfigSource());
         }  else {
             LOGGER.error("No configuration found.  Exiting.");
@@ -136,6 +137,8 @@ public class ConfigManager
     {
         return instanceConfigs.getOrDefault(instanceId, null);
     }
+
+    public JsonObject getFullConfig() { return fullConfig; }
 
     public TagConfiguration getTagConfig()
     {
