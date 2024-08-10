@@ -69,6 +69,13 @@ public class Message
         return tags;
     }
 
+    public void injectTag(String key, String value)
+    {
+        if (tags == null)
+            tags = new MessageTags(null);
+        tags.injectTag(key, value);
+    }
+
     public Object getBody()
     {
         return body;
@@ -88,7 +95,7 @@ public class Message
     {
         if (header == null)
         {
-            header = new MessageHeader("None", "None", "0.1");
+            header = new MessageHeader("None", "None", null);
             LOGGER.warn("Attempting to make request from message with no header");
         }
         return header.makeRequest(replyTo);
@@ -150,10 +157,10 @@ public class Message
                 retVal.header = MessageHeader.fromDict(msgJsonObj.getAsJsonObject("header"));
                 LOGGER.trace("header deserialized");
             }
-            if (msgJsonObj.has("source"))
+            if (msgJsonObj.has("tags"))
             {
-                LOGGER.trace("processing source");
-                retVal.tags = MessageTags.fromDict(msgJsonObj.getAsJsonObject("source"));
+                LOGGER.trace("processing tags");
+                retVal.tags = MessageTags.fromDict(msgJsonObj.getAsJsonObject("tags"));
                 LOGGER.trace("source deserialized");
             }
             if (msgJsonObj.has("body"))
@@ -162,7 +169,7 @@ public class Message
                 retVal.body =  msgJsonObj.getAsJsonObject("body");
                 LOGGER.trace("body desiralized");
             }
-            if (!(msgJsonObj.has("header") || msgJsonObj.has("source") || msgJsonObj.has("body")))
+            if (!(msgJsonObj.has("header") || msgJsonObj.has("tags") || msgJsonObj.has("body")))
             {
                 LOGGER.trace("Json contained raw string: Assigning to raw");
                 retVal.raw = msgJsonObj;

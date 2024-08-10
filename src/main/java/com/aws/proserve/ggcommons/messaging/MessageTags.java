@@ -19,6 +19,12 @@ public class MessageTags
 
     JsonObject tags;
 
+    public MessageTags(String thingName)
+    {
+        this.thingName = thingName;
+        tags = new JsonObject();
+    }
+
     public MessageTags(String thingName, JsonObject tags)
     {
         this.thingName = thingName;
@@ -36,6 +42,11 @@ public class MessageTags
         {
             return new MessageTags(configManager.getThingName(), new JsonObject());
         }
+    }
+
+    public void injectTag(String key, String value)
+    {
+        tags.addProperty(key, value);
     }
 
     public static MessageTags fromDict(JsonObject src)

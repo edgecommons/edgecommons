@@ -69,32 +69,32 @@ class GGCommonsTest
     }
 
 
-    public void ipcMessageHandler(String topic, Message message)
-    {
-        receivedMessage = message;
-    }
-
-    public void iotCoreMessageHandler(String topic, Message message)
-    {
-        receivedMessage = message;
-    }
-
-    public void requestHandler(String topic, Message message)
-    {
-        JsonObject replyPayload = new JsonObject();
-        replyPayload.addProperty("reply_message", "I have received your request and have replied with this message");
-        Message reply = Message.buildFromConfig("ReplyTest", "1.0", replyPayload, configManager);
-        MessagingClient.reply(message, reply);
-    }
-
-    public void iotCoreRequestHandler(String topic, Message message)
-    {
-        JsonObject replyPayload = new JsonObject();
-        replyPayload.addProperty("reply_message", "(IoT Core) I have received your request and have replied with this message");
-        Message reply = Message.buildFromConfig("ReplyTest", "1.0", replyPayload, configManager);
-        MessagingClient.reply(message, reply);
-    }
-
+//    public void ipcMessageHandler(String topic, Message message)
+//    {
+//        receivedMessage = message;
+//    }
+//
+//    public void iotCoreMessageHandler(String topic, Message message)
+//    {
+//        receivedMessage = message;
+//    }
+//
+//    public void requestHandler(String topic, Message message)
+//    {
+//        JsonObject replyPayload = new JsonObject();
+//        replyPayload.addProperty("reply_message", "I have received your request and have replied with this message");
+//        Message reply = Message.buildFromConfig("ReplyTest", "1.0", replyPayload, configManager);
+//        MessagingClient.reply(message, reply);
+//    }
+//
+//    public void iotCoreRequestHandler(String topic, Message message)
+//    {
+//        JsonObject replyPayload = new JsonObject();
+//        replyPayload.addProperty("reply_message", "(IoT Core) I have received your request and have replied with this message");
+//        Message reply = Message.buildFromConfig("ReplyTest", "1.0", replyPayload, configManager);
+//        MessagingClient.reply(message, reply);
+//    }
+//
 //    @Test
 //    void publishIpcMessage()
 //    {
@@ -108,7 +108,7 @@ class GGCommonsTest
 //        assertNotNull(receivedMessage);
 //        assertEquals(receivedMessage.getHeader().getName(), "IpcMessageTest");
 //    }
-
+//
 //    @Test
 //    void publishIotCoreMessage()
 //    {
@@ -116,7 +116,7 @@ class GGCommonsTest
 //        MessagingClient.subscribeToIoTCore(topic, this::iotCoreMessageHandler, QOS.AT_LEAST_ONCE);
 //        JsonObject jsonPayload = new JsonObject();
 //        jsonPayload.addProperty("message", "Test IoT Core message");
-//        Message msg = Message.buildFromConfig("IoTCoreMessageTest", "1.0", jsonPayload, configManager);
+//        Message msg = Message.buildFromConfig("IoTCoreMessage", "1.0", jsonPayload, configManager);
 //        MessagingClient.publishToIotCore(topic, msg, QOS.AT_LEAST_ONCE);
 //        Utils.sleep(200);
 //        assertNotNull(receivedMessage);
@@ -188,33 +188,33 @@ class GGCommonsTest
 //            Utils.sleep(1000);
 //        }
 //    }
-//
-//    @Test
-//    void monitorConfigFileForChanges() throws ExecutionException, InterruptedException, TimeoutException
-//    {
-//        // Create a Metric named "test" using default namespace and dimensions
-//        Metric metric = new Metric("test");
-//
-//        // Add a measure
-//        Measure measure = new Measure("val", "Count", 1);
-//        metric.addMeasure(measure);
-//
-//        // Define the metric
-//        MetricEmitter.defineMetric(metric);
-//
-//        for (int i = 1; i <= 60; i++)
-//        {
-//            Map<String, Float> measureValues = Map.of("val", (float) i);
-//            MetricEmitter.emitMetric("test", measureValues);
-//            LOGGER.trace("This is a trace log message ({})", i);
-//            LOGGER.debug("This is a debug log message ({})", i);
-//            LOGGER.info("This is an info log message ({})", i);
-//            LOGGER.warn("This is a warn log message ({})", i);
-//            LOGGER.error("This is an error log message ({})", i);
-//            Utils.sleep(1000);
-//        }
-//    }
-//
+////
+////    @Test
+////    void monitorConfigFileForChanges() throws ExecutionException, InterruptedException, TimeoutException
+////    {
+////        // Create a Metric named "test" using default namespace and dimensions
+////        Metric metric = new Metric("test");
+////
+////        // Add a measure
+////        Measure measure = new Measure("val", "Count", 1);
+////        metric.addMeasure(measure);
+////
+////        // Define the metric
+////        MetricEmitter.defineMetric(metric);
+////
+////        for (int i = 1; i <= 60; i++)
+////        {
+////            Map<String, Float> measureValues = Map.of("val", (float) i);
+////            MetricEmitter.emitMetric("test", measureValues);
+////            LOGGER.trace("This is a trace log message ({})", i);
+////            LOGGER.debug("This is a debug log message ({})", i);
+////            LOGGER.info("This is an info log message ({})", i);
+////            LOGGER.warn("This is a warn log message ({})", i);
+////            LOGGER.error("This is an error log message ({})", i);
+////            Utils.sleep(1000);
+////        }
+////    }
+////
 //    public JsonObject loadConfiguration(String configFilePath)
 //    {
 //        LOGGER.debug("Loading configuration from file '{}'", configFilePath);

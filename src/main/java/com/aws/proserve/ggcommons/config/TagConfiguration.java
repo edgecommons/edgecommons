@@ -33,6 +33,6 @@ public class TagConfiguration
     }
 
     public String getKeyValue(String key) {
-        return tags.get(key).toString();
+        return tags.get(key).getAsString();
     }
 }
