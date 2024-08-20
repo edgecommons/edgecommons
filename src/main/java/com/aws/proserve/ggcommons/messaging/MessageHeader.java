@@ -54,14 +54,12 @@ public class MessageHeader
 
     public static MessageHeader fromDict(JsonObject src)
     {
-        String name = src.get("name").getAsString();
-        String version = src.get("version").getAsString();
-        String timestamp = src.get("timestamp").getAsString();
-        String uuid = src.get("uuid").getAsString();
-        String correlationId = src.get("correlation_id").getAsString();
-        String replyTo = null;
-        if (src.has("reply_to"))
-            replyTo = src.get("reply_to").getAsString();
+        String name = src.has("name") ? src.get("name").getAsString() : null;
+        String version = src.has("version") ? src.get("version").getAsString() : null;
+        String timestamp = src.has("timestamp") ? src.get("timestamp").getAsString() : null;
+        String uuid = src.has("uuid") ? src.get("uuid").getAsString() : null;
+        String correlationId = src.has("correlation_id") ? src.get("correlation_id").getAsString() : null;
+        String replyTo = src.has("reply_to") ? src.get("reply_to").getAsString() : null;
         return new MessageHeader(name, version, correlationId, timestamp, uuid, replyTo);
     }
 
