@@ -34,6 +34,14 @@ class GreengrassIpcProvider(MessagingProvider):
             self._receive_mode = "RECEIVE_ALL_MESSAGES"
         self._ipc_client = GreengrassCoreIPCClientV2()
 
+    def disconnect(self):
+        for subscription in list(self._ipc_subscription_handlers):
+            self.unsubscribe(subscription.get_topic_filter())
+        for subscription in list(self._iot_core_subscription_handlers):
+            self.unsubscribe(subscription.get_topic_filter())
+        self._ipc_client.client.close()
+        self._ipc_client = None
+
     def publish(self, topic: str, msg: Message):
         msg_str = msg.dumps()
         self._ipc_client.publish_to_topic(

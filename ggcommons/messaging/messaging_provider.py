@@ -11,6 +11,10 @@ class MessagingProvider(metaclass=abc.ABCMeta):
         pass
 
     @abstractmethod
+    def disconnect(self):
+        pass
+
+    @abstractmethod
     def publish(self, topic: str, msg: Message):
         pass
 

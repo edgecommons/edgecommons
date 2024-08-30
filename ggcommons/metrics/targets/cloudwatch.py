@@ -58,13 +58,23 @@ class CloudWatch(MetricTarget):
         for measure_name, value in measure_values.items():
             data_point = {
                 'MetricName': measure_name,
-                'Dimensions': metric.dimensions_as_collection(),
+                'Dimensions': metric.dimensions_as_collection(False),
                 'Timestamp': time.time(),
                 'Value': value,
                 'Unit': metric.get_measure(measure_name).get_unit(),
                 'StorageResolution': metric.get_measure(measure_name).get_storage_resolution()
             }
             metric_data.append(data_point)
+            if self.metric_config.get_large_fleet_workaround():
+                data_point = {
+                    'MetricName': measure_name,
+                    'Dimensions': metric.dimensions_as_collection(True),
+                    'Timestamp': time.time(),
+                    'Value': value,
+                    'Unit': metric.get_measure(measure_name).get_unit(),
+                    'StorageResolution': metric.get_measure(measure_name).get_storage_resolution()
+                }
+                metric_data.append(data_point)
         return metric_data
 
     def on_configuration_change(self, configuration) -> bool:

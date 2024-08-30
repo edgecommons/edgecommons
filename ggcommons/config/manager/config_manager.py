@@ -90,6 +90,8 @@ class ConfigManager(metaclass=abc.ABCMeta):
             ret_val = ret_val.replace("{ThingName}", self._thing_name)
         if "{ComponentName}" in template:
             ret_val = ret_val.replace("{ComponentName}", self._component_name)
+        if "{ComponentFullName}" in template:
+            ret_val = ret_val.replace("{ComponentFullName}", self._component_full_name)
         tag_dict = (
             {} if self._tag_config is None else self._tag_config.to_dict()
         )

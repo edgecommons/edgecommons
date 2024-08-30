@@ -1,7 +1,7 @@
 import logging
-import time
 import json
 from ggcommons.config.manager.config_manager import ConfigManager
+from ggcommons.metrics.targets.emf_helper import build_metric_data_emf
 from ggcommons.metrics.targets.metric_target import MetricTarget
 
 
@@ -26,39 +26,12 @@ class MetricLog(MetricTarget):
         self.emit_metric_now(metric, measure_values)
 
     def emit_metric_now(self, metric, measure_values):
-        metric_data = self.build_metric_data(metric, measure_values)
+        metric_data = build_metric_data_emf(self.metric_config, metric, measure_values, False)
         self.metric_logger.info(json.dumps(metric_data))
+        if self.metric_config.get_large_fleet_workaround():
+            metric_data = build_metric_data_emf(self.metric_config, metric, measure_values, True)
+            self.metric_logger.info(json.dumps(metric_data))
         self.logger.debug(f"Metric '{metric.get_name()}' emitted")
-
-    def build_metric_data(self, metric, measure_values):
-        emf_object = {}
-
-        aws_object = {
-            "Timestamp": int(time.time()),
-            "CloudWatchMetrics": [self.get_metrics_metadata(metric)]
-        }
-
-        emf_object["_aws"] = aws_object
-        for key, value in metric.get_dimensions().items():
-            emf_object[key] = value
-        for key, value in measure_values.items():
-            emf_object[key] = value
-
-        return emf_object
-
-    def get_metrics_metadata(self, metric):
-        namespace = metric.get_namespace() if metric.get_namespace() is not None \
-            else self.config_manager.get_metric_config().get_namespace()
-        cw_metrics_array_entry = {
-            "Namespace": namespace,
-            "Dimensions": [[dimension for dimension in metric.get_dimensions().keys()]],
-            "Metrics": [{
-                "Name": measure.get_name(),
-                "Unit": measure.get_unit(),
-                "StorageResolution": measure.get_storage_resolution()
-            } for measure in metric.get_measures().values()]
-        }
-        return cw_metrics_array_entry
 
     def on_configuration_change(self, configuration) -> bool:
         self.logger.info("Configuration changed. Reconfiguring metric logger")
