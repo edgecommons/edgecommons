@@ -1,5 +1,6 @@
 import logging
 from ggcommons.config.manager.config_manager import ConfigManager
+from ggcommons.metrics.metric import Metric
 from ggcommons.metrics.targets.cloudwatch import CloudWatch
 from ggcommons.metrics.targets.cloudwatch_component import CloudWatchComponent
 from ggcommons.metrics.targets.messaging import Messaging
@@ -52,8 +53,8 @@ class MetricEmitter:
         return MetricEmitter.component_name
 
     @staticmethod
-    def define_metric(metric):
-        MetricEmitter.metrics[metric.name] = metric
+    def define_metric(metric: Metric):
+        MetricEmitter.metrics[metric.get_name()] = metric
 
     @staticmethod
     def emit_metric(name, measure_values):

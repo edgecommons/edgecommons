@@ -4,14 +4,14 @@ from time import sleep
 from typing import Tuple
 from ggcommons.config.manager.config_manager import ConfigManager
 from ggcommons.config.manager.config_manager_builder import ConfigManagerBuilder
-from ggcommons.heartbeat.heartbeat import Heartbeat
 from ggcommons.messaging.messaging_client import MessagingClient
 from ggcommons.metrics.metric_emitter import MetricEmitter
+from ggcommons.heartbeat.heartbeat import Heartbeat
 
 
 def init(
     component_name: str, arg_parser: argparse.ArgumentParser, receive_own_messages=False
-) -> Tuple[argparse.Namespace, ConfigManager]:
+) -> Tuple[argparse.Namespace, ConfigManager, Heartbeat]:
     arg_parser.add_argument(
         "-c",
         "--config",
@@ -49,29 +49,7 @@ def init(
     )
     MetricEmitter.init(config_manager)
     logger.info("ggcommons: Metric Emitter initialized")
-    Heartbeat(config_manager)
+    heartbeat = Heartbeat(config_manager)
     logger.info("ggcommons: Heartbeat started")
-    return args, config_manager
+    return args, config_manager, heartbeat
 
-
-if __name__ == "__main__":
-    import sys
-    from ggcommons.metrics.metric import Metric
-    from ggcommons.metrics.measure import Measure
-    from random import random
-
-    sys.argv = [
-        "ggcommons_python",
-        "--config", "FILE", "../config_3.json",
-        "--messaging", "MQTT", "a3bgkcole5zuv-ats.iot.us-east-1.amazonaws.com", "443", "../creds",
-        "--thing", "ggcommons-test-2"
-    ]
-    init("ggcommons_python", argparse.ArgumentParser())
-    metric = Metric(name="performance")
-    metric.add_measure(Measure("latency", "Milliseconds", 1))
-    MetricEmitter.define_metric(metric)
-
-    while True:
-        measure_values = {"replyLatency": random() * 100}
-        MetricEmitter.emit_metric("performance", measure_values)
-        sleep(1)

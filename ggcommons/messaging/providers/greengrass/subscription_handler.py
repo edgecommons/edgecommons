@@ -24,10 +24,17 @@ class SubscriptionHandler(metaclass=abc.ABCMeta):
         self._max_concurrency = max_concurrency
         Thread(target=self._process_queue).start()
 
+    def get_topic_filter(self):
+        return self._topic_filter
+
+    def get_max_concurrency(self):
+        return self._max_concurrency
+
     @abc.abstractmethod
     def parse_raw_payload(self, event) -> (str, dict):
         pass
 
+    @abc.abstractmethod
     def on_stream_error(self, error: Exception) -> bool:
         logger.error(f"Stream error: {error} for topic filter {self._topic_filter}")
         return True  # Return True to close stream, False to keep stream open.

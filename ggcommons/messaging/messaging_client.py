@@ -40,6 +40,15 @@ class MessagingClient:
         return MessagingClient._messaging_provider
 
     @staticmethod
+    def shutdown():
+        MessagingClient._messaging_provider.disconnect()
+        MessagingClient._messaging_provider = None
+
+    @staticmethod
+    def get_messaging_provider() -> MessagingProvider:
+        return MessagingClient._messaging_provider
+
+    @staticmethod
     def publish(topic: str, msg: Message):
         MessagingClient._messaging_provider.publish(topic, msg)
 

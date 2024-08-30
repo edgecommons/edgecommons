@@ -36,7 +36,10 @@ class Heartbeat(ConfigurationChangeListener, ABC):
 
     def _define_metric(self, configuration_manager: ConfigManager):
         storage_resolution = 1 if configuration_manager.get_heartbeat_config().get_interval_secs() < 60 else 60
-        metric = Metric("heartbeat", configuration_manager.get_metric_config().get_namespace())
+        metric = Metric(thing_name=configuration_manager.get_thing_name(),
+                        component_name=configuration_manager.get_component_name(),
+                        name="heartbeat",
+                        namespace=configuration_manager.get_metric_config().get_namespace())
         metric.add_measure(Measure("disk_total", "Gigabytes", storage_resolution))
         metric.add_measure(Measure("disk_used", "Gigabytes", storage_resolution))
         metric.add_measure(Measure("disk_free", "Gigabytes", storage_resolution))
@@ -87,6 +90,7 @@ class Heartbeat(ConfigurationChangeListener, ABC):
                 time.sleep(
                     self._configuration_manager.get_heartbeat_config().get_interval_secs()
                 )
+            logger.info("Heartbeat stopped intentionally")
         except KeyboardInterrupt:
             logger.error("Publishing loop stopped.")
         except Exception as exc:
@@ -116,3 +120,11 @@ class Heartbeat(ConfigurationChangeListener, ABC):
         self.__run_heartbeat()
         logger.info("Heartbeat restarted")
         return True
+
+    def stop(self):
+        self.keep_running = False
+        self._heartbeat_thread.join()
+
+    def start(self):
+        self.keep_running = True
+        self.__run_heartbeat()

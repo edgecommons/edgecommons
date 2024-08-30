@@ -1,8 +1,5 @@
-from ggcommons.metrics.metric_emitter import MetricEmitter
-
-
 class Metric:
-    def __init__(self, name: str, namespace: str = None, measures: list = None,
+    def __init__(self, thing_name: str, component_name: str, name: str, namespace: str = None, measures: list = None,
                  dimensions: list = None):
         if measures is None:
             measures = {}
@@ -15,9 +12,9 @@ class Metric:
         self.dimensions = dimensions
 
         # Add default dimensions
-        self.dimensions['coreName'] = MetricEmitter.get_thing_name()
+        self.dimensions['coreName'] = thing_name
         self.dimensions['category'] = name
-        self.dimensions['component'] = MetricEmitter.get_component_name()
+        self.dimensions['component'] = component_name
 
     def add_measure(self, measure):
         self.measures[measure.name] = measure
@@ -33,9 +30,9 @@ class Metric:
         ]
         return dimensions_list
 
-    def dimensions_as_collection(self):
+    def dimensions_as_collection(self, large_fleet_workaround: bool = False):
         return [
-            {'Name': key, 'Value': value}
+            {'Name': key, 'Value': "ALL" if large_fleet_workaround and key == 'coreName' else value}
             for key, value in self.dimensions.items()
         ]
 

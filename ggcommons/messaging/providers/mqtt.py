@@ -93,7 +93,6 @@ class MqttProvider(MessagingProvider):
     def __init__(self, host: str, port: int, client_id: str, creds_dir: str = None):
         super().__init__()
         self._subscription_info = {}
-        self._subscription_info = {}
         self._response_ious = {}
         self._response_locks = {}
         self._responses = {}
@@ -101,7 +100,7 @@ class MqttProvider(MessagingProvider):
         self._port = port
         self._client_id = client_id
         self._mqtt_client = mqtt.Client(
-            mqtt.CallbackAPIVersion.VERSION1, client_id=self._client_id
+            mqtt.CallbackAPIVersion.VERSION2, client_id=self._client_id
         )
         if creds_dir is not None:
             self._tls_set_certs(creds_dir)
@@ -110,6 +109,18 @@ class MqttProvider(MessagingProvider):
         self._mqtt_client.on_connect = self._on_connect
         self._mqtt_client.on_disconnect = self._on_disconnect
         self._mqtt_client.loop_start()
+
+    def disconnect(self):
+        subscriptions = list(self._subscription_info.values())
+        for subscription in subscriptions:
+            self.unsubscribe(subscription.topic_filter)
+        self._subscription_info = None
+        self._mqtt_client.loop_stop()
+        self._mqtt_client.disconnect()
+        self._mqtt_client = None
+        self._response_ious = None
+        self._responses = None
+        self._response_locks = None
 
     def _tls_set_certs(self, creds_dir: str):
         key = f"{creds_dir}/{self._client_id}.private.key"
@@ -167,11 +178,11 @@ class MqttProvider(MessagingProvider):
                 else:
                     executor.submit(subscription_info.callback, topic, received_payload)
 
-    def _on_connect(self, client, userdata, flags, rc):
+    def _on_connect(self, client, userdata, flags, reason_code, properties):
         logger.info(f"Connected to MQTT broker at {self._host}:{self._port} as {self._client_id}")
 
-    def _on_disconnect(self, client, userdata, rc):
-        logger.error(f"Disconnected from MQTT broker at {self._host}:{self._port}")
+    def _on_disconnect(self, userdata, flags, reason, properties, other):
+        logger.info(f"Disconnected from MQTT broker at {self._host}:{self._port}")
 
     def _internal_publish(self, topic: str, msg: Message, qos: str = QOS.AT_LEAST_ONCE):
         if qos == QOS.AT_MOST_ONCE:

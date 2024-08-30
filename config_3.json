@@ -24,11 +24,11 @@
     }
   },
   "metricEmission": {
-	"target" : "messaging",
+	"target" : "log",
     "namespace": "ggcommons",
+    "largeFleetWorkaround": true,
 	"targetConfig" : {
-      "destination": "ipc",
-      "intervalSecs": 10
+      "logFileName": "../{ComponentFullName}.metric.log"
     }
   },
   "tags": {
