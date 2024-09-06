@@ -8,6 +8,7 @@ from ggcommons.messaging.providers.greengrass.subscription_handler import (
 
 
 class IpcSubscriptionHandler(SubscriptionHandler):
+
     def __init__(
         self,
         topic_filter,

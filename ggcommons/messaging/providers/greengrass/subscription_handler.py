@@ -34,9 +34,8 @@ class SubscriptionHandler(metaclass=abc.ABCMeta):
     def parse_raw_payload(self, event) -> (str, dict):
         pass
 
-    @abc.abstractmethod
     def on_stream_error(self, error: Exception) -> bool:
-        logger.error(f"Stream error: {error} for topic filter {self._topic_filter}")
+        logger.error(f"Stream error: {error} for topic filter {self._topic_filter}. Keeping stream open.")
         return True  # Return True to close stream, False to keep stream open.
 
     def on_stream_closed(self) -> None:
