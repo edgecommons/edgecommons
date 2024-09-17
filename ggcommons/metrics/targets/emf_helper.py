@@ -20,7 +20,7 @@ def build_metric_data_emf(metric_config: MetricConfiguration, metric: Metric, me
     emf_object = {}
 
     aws_object = {
-        "Timestamp": int(time.time()),
+        "Timestamp": int(time.time()*1000),
         "CloudWatchMetrics": [get_metrics_metadata_emf(metric_config, metric)]
     }
 
