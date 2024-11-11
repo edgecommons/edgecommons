@@ -1,0 +1,74 @@
+---
+RecipeFormatVersion: "2020-01-25"
+ComponentName: "{COMPONENT_NAME}"
+ComponentVersion: "{COMPONENT_VERSION}"
+ComponentDescription: "<<DESCRIPTION>>"
+ComponentPublisher: "{COMPONENT_AUTHOR}"
+ComponentDependencies:
+  aws.greengrass.TokenExchangeService:
+    VersionRequirement: ">=2.0.0"
+    DependencyType: "HARD"
+ComponentConfiguration:
+  DefaultConfiguration:
+    ComponentConfig:
+      logging:
+        level: "INFO"
+        format: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%-5p] %C{1} (%L) [%t] : %m%n"
+      heartbeat:
+        intervalSecs: 5
+        targets:
+          - type: "messaging"
+            config:
+              destination: "ipc"
+        measures:
+          cpu: true
+          memory: true
+          disk: false
+          fds: true
+          files: true
+      tags: {}
+      metricEmission:
+        target: "log"
+        targetConfig:
+          logFileName: "/greengrass/v2/logs/{ComponentFullName}.metric.log"
+      component:
+        global: {}
+        instances: []
+    accessControl:
+      aws.greengrass.ipc.pubsub:
+        "<<COMPONENTFULLNAME>>:ipc:1":
+          policyDescription: Allows access to publish/subscribe to all topics on IPC
+          operations:
+            - "aws.greengrass#PublishToTopic"
+            - "aws.greengrass#SubscribeToTopic"
+          resources:
+            - "*"
+      aws.greengrass.ipc.mqttproxy:
+        "<<COMPONENTFULLNAME>>:iotcore:1":
+          policyDescription: Allows access to publish/subscribe to all topics on IoT Core.
+          operations:
+            - "aws.greengrass#PublishToIoTCore"
+            - "aws.greengrass#SubscribeToIoTCore"
+          resources:
+            - "*"
+      aws.greengrass.ShadowManager:
+        "<<COMPONENTFULLNAME>>:shadow:1":
+          policyDescription: Allows access to shadows.
+          operations:
+            - 'aws.greengrass#GetThingShadow'
+            - 'aws.greengrass#UpdateThingShadow'
+            - 'aws.greengrass#DeleteThingShadow'
+          resources:
+            - "*"
+Manifests:
+  - Platform:
+      os: all
+    Artifacts:
+      - URI: "s3://BUCKET_NAME/COMPONENT_NAME/COMPONENT_VERSION/<<JARNAME>>-1.0.0.jar"
+    Lifecycle:
+      Run:
+        Setenv:
+          CONFIG: "{configuration:/ComponentConfig}"
+        RequiresPrivilege: true
+        Script:
+          "java -cp {artifacts:path}/<<JARNAME>>-1.0.0.jar <<MAINCLASSNAME>>"
