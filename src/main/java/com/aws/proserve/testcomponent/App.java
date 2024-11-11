@@ -6,7 +6,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import static com.aws.proserve.ggcommons.utils.Utils.sleep;
 
-public class App
+public class <<COMPONENTNAME>>
 {
     private static final Logger LOGGER = LogManager.getLogger(App.class);
 
@@ -14,10 +14,10 @@ public class App
     ConfigManager configManager;
  
     public static void main(String[] args) {
-        new App(args);
+        new <<COMPONENTNAME>>(args);
     }
 
-    public App(String[] args)
+    public <<COMPONENTNAME>>(String[] args)
     {
         ggCommons = new GGCommons("<<COMPONENTFULLNAME>>", args);
         configManager = ggCommons.getConfigManager();
