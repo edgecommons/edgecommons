@@ -8,7 +8,7 @@ import static com.aws.proserve.ggcommons.utils.Utils.sleep;
 
 public class <<COMPONENTNAME>>
 {
-    private static final Logger LOGGER = LogManager.getLogger(App.class);
+    private static final Logger LOGGER = LogManager.getLogger(<<COMPONENTNAME>>.class);
 
     GGCommons ggCommons;
     ConfigManager configManager;
