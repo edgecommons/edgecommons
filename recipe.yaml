@@ -64,7 +64,7 @@ Manifests:
   - Platform:
       os: all
     Artifacts:
-      - URI: "s3://BUCKET_NAME/COMPONENT_NAME/COMPONENT_VERSION/COMPONENT_NAME-COMPONENT_VERSION.zip"
+      - URI: "s3://BUCKET_NAME/COMPONENT_NAME/COMPONENT_VERSION/<<COMPONENTNAME>>.zip"
         Unarchive: ZIP
     Lifecycle:
       Install:
