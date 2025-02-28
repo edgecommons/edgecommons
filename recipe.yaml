@@ -64,12 +64,12 @@ Manifests:
   - Platform:
       os: all
     Artifacts:
-      - URI: "s3://BUCKET_NAME/COMPONENT_NAME/COMPONENT_VERSION/<<COMPONENT_NAME>>.zip"
+      - URI: "s3://BUCKET_NAME/COMPONENT_NAME/COMPONENT_VERSION/COMPONENT_NAME-COMPONENT_VERSION.zip"
         Unarchive: ZIP
     Lifecycle:
       Install:
         Script: |-
-          pip3 install --user -r {artifacts:decompressedPath}/<<COMPONENT_NAME>>/requirements.txt
+          pip3 install --user -r {artifacts:decompressedPath}/<<COMPONENTNAME>>/requirements.txt
       Run:
         Script: |-
-          python3 -u {artifacts:decompressedPath}/<<COMPONENT_NAME>>/main.py
+          python3 -u {artifacts:decompressedPath}/<<COMPONENTNAME>>/main.py
