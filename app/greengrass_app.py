@@ -1,5 +1,6 @@
 import logging
 import time
+from abc import ABC
 from argparse import Namespace
 
 from ggcommons.config.manager.configuration_change_listener import (
@@ -15,6 +16,9 @@ class <<COMPONENTNAME>>(ConfigurationChangeListener, ABC):
         super().__init__()
         self._config_manager = config_manager
 
+    def on_configuration_change(self, configuration) -> bool:
+        logger.info("Configuration changed.  Ignoring.")
+        return True
 
     def run(self):
         while True:
