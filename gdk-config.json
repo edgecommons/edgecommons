@@ -1,0 +1,16 @@
+{
+  "component": {
+    "<<COMPONENTFULLNAME>>": {
+      "author": "<<AUTHOR>>",
+      "version": "NEXT_PATCH",
+      "build": {
+        "build_system": "zip"
+      },
+      "publish": {
+        "bucket": "<<BUCKET>>",
+        "region": "<<REGION>>"
+      }
+    }
+  },
+  "gdk_version": "1.0.0"
+}
