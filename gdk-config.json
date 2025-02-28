@@ -9,8 +9,12 @@
       "publish": {
         "bucket": "<<BUCKET>>",
         "region": "<<REGION>>"
-      }
+      },
+      "ignore": [
+        ".idea",
+        "test-configs/**"
+      ]
     }
   },
-  "gdk_version": "1.0.0"
+  "gdk_version": "1.6.2"
 }
