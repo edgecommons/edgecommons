@@ -1,0 +1,67 @@
+{
+  "logging": {
+    "level": "INFO",
+    "format": "%d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %-5level %logger{36} - %msg%n",
+    "fileLogging": {
+      "enabled": true,
+      "filePath": "/var/log/{ComponentName}-{ThingName}.log"
+    },
+    "loggers": {
+      "com.aws.proserve.ggcommons": "DEBUG",
+      "com.aws.proserve.ggcommons.messaging": "DEBUG",
+      "org.apache.http": "WARN"
+    }
+  },
+  "tags": {
+    "Environment": "Development",
+    "Application": "GGCommons",
+    "Region": "us-west-2"
+  },
+  "heartbeat": {
+    "intervalSecs": 60,
+    "targets": [
+      {
+        "type": "metric"
+      },
+      {
+        "type": "messaging",
+        "config": {
+          "destination": "iot_core",
+          "topic": "heartbeat/{ThingName}/{ComponentName}"
+        }
+      }
+    ]
+  },
+  "metricEmission": {
+    "target": "cloudwatch",
+    "namespace": "GGCommons/{Environment}",
+    "dimensions": {
+      "ThingName": "{ThingName}",
+      "ComponentName": "{ComponentName}",
+      "Application": "{Application}",
+      "Region": "{Region}"
+    }
+  },
+  "component": {
+    "global": {
+      "setting1": "value1",
+      "setting2": "value2"
+    },
+    "instances": [
+      {
+        "id": "instance1",
+        "config": {
+          "param1": "instance1-value1",
+          "param2": "instance1-value2"
+        }
+      },
+      {
+        "id": "instance2",
+        "config": {
+          "param1": "instance2-value1",
+          "param2": "instance2-value2"
+        }
+      }
+    ]
+  }
+}
