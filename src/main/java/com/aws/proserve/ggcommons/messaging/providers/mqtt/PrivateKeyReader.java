@@ -27,19 +27,11 @@ import java.util.Base64;
 
 /**
  * Class for reading RSA or ECC private key from PEM file.
- *
+ * <p>
  * It can read PEM files with PKCS#8 or PKCS#1 encodings. It doesn't support
  * encrypted PEM files.
  */
 public class PrivateKeyReader {
-
-    // Private key file using PKCS #1 encoding
-    public static final String P1_BEGIN_MARKER = "-----BEGIN RSA PRIVATE KEY"; //$NON-NLS-1$
-    public static final String P1_END_MARKER = "-----END RSA PRIVATE KEY"; //$NON-NLS-1$
-
-    // Private key file using PKCS #8 encoding
-    public static final String P8_BEGIN_MARKER = "-----BEGIN PRIVATE KEY"; //$NON-NLS-1$
-    public static final String P8_END_MARKER = "-----END PRIVATE KEY"; //$NON-NLS-1$
 
     /**
      * Get a RSA Private Key from InputStream.
@@ -99,7 +91,11 @@ public class PrivateKeyReader {
         BufferedReader br = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8));
         StringBuilder builder = new StringBuilder();
         boolean inKey = false;
-        for (String line = br.readLine(); line != null; line = br.readLine()) {
+        int lineCount = 0;
+        final int MAX_LINES = 100;
+        String line;
+        while ((line = br.readLine()) != null && lineCount < MAX_LINES) {
+            lineCount++;
             if (!inKey) {
                 if (line.startsWith("-----BEGIN ") && line.endsWith(" PRIVATE KEY-----")) {
                     inKey = true;
@@ -115,6 +111,10 @@ public class PrivateKeyReader {
                 builder.append(line);
             }
         }
+        if (lineCount >= MAX_LINES) {
+            throw new IOException("Private key file length exceeded maximum number of lines");
+        }
+
         KeySpec keySpec = null;
         byte[] encoded = Base64.getDecoder().decode(builder.toString());
         if (isRSAKey) {
@@ -290,9 +290,7 @@ class DerParser {
         if (n < length)
             throw new IOException("Invalid DER: stream too short, missing value"); //$NON-NLS-1$
 
-        Asn1Object o = new Asn1Object(tag, length, value);
-
-        return o;
+        return new Asn1Object(tag, length, value);
     }
 
     /**
@@ -358,7 +356,6 @@ class Asn1Object {
     /**
      * Construct a ASN.1 TLV. The TLV could be either a constructed or primitive
      * entity.
-     *
      * <p/>
      * The first byte in DER encoding is made of following fields,
      *

@@ -16,6 +16,10 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 
+/**
+ * Represents the header portion of a message in the Greengrass messaging system.
+ * Contains metadata about the message such as timestamp, correlation ID, and tags.
+ */
 public class MessageHeader
 {
     protected static final Logger LOGGER = LogManager.getLogger(MessageHeader.class);
@@ -29,11 +33,24 @@ public class MessageHeader
     String uuid;
     String replyTo;
 
+    /**
+     * Creates a message header with name and version.
+     *
+     * @param name The name of the message type
+     * @param version The version of the message format
+     */
     public MessageHeader(String name, String version)
     {
         this(name, version, null, null, null, null);
     }
 
+    /**
+     * Creates a message header with name, version, and correlation ID.
+     *
+     * @param name The name of the message type
+     * @param version The version of the message format
+     * @param correlationId The correlation ID for message tracking
+     */
     public MessageHeader(String name, String version, String correlationId)
     {
         this(name, version, correlationId, null, null, null);
@@ -56,6 +73,12 @@ public class MessageHeader
         this.replyTo = replyTo;
     }
 
+    /**
+     * Creates a MessageHeader from a JSON object representation.
+     *
+     * @param src The source JSON object containing header data
+     * @return A new MessageHeader instance
+     */
     public static MessageHeader fromDict(JsonObject src)
     {
         String name = src.has("name") ? src.get("name").getAsString() : null;
@@ -67,6 +90,11 @@ public class MessageHeader
         return new MessageHeader(name, version, correlationId, timestamp, uuid, replyTo);
     }
 
+    /**
+     * Converts the header to its JSON object representation.
+     *
+     * @return JsonObject containing the header data
+     */
     public JsonObject toDict()
     {
         JsonObject retVal = new JsonObject();
@@ -88,6 +116,12 @@ public class MessageHeader
         return new Gson().toJson(toDict());
     }
 
+    /**
+     * Prepares the header for a request message.
+     *
+     * @param replyTo The topic to send replies to
+     * @return The correlation ID for the request
+     */
     public String makeRequest(String replyTo)
     {
         this.replyTo = Objects.requireNonNullElseGet(replyTo, () -> REPLY_MESSAGE_TOPIC_PREFIX + UUID.randomUUID());
@@ -95,6 +129,11 @@ public class MessageHeader
         return this.replyTo;
     }
 
+    /**
+     * Gets the reply-to topic for this message.
+     *
+     * @return The reply-to topic or null if not set
+     */
     public String getReplyTo() {
         return replyTo;
     }
@@ -111,6 +150,11 @@ public class MessageHeader
         return correlationId;
     }
 
+    /**
+     * Sets the correlation ID for this message header.
+     *
+     * @param correlationId The correlation ID to set
+     */
     public void setCorrelationId(String correlationId)
     {
         this.correlationId = correlationId;

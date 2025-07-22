@@ -15,6 +15,10 @@ import org.apache.logging.log4j.Logger;
 
 import java.util.Map;
 
+/**
+ * Manages tags associated with Greengrass messages.
+ * Provides functionality for tag storage, inheritance, and manipulation.
+ */
 public class MessageTags
 {
     protected static final Logger LOGGER = LogManager.getLogger(MessageTags.class);
@@ -23,6 +27,11 @@ public class MessageTags
 
     JsonObject tags;
 
+    /**
+     * Creates a new message tags instance for the specified thing.
+     *
+     * @param thingName The name of the AWS IoT thing
+     */
     public MessageTags(String thingName)
     {
         this.thingName = thingName;
@@ -35,6 +44,12 @@ public class MessageTags
         this.tags = tags;
     }
 
+    /**
+     * Creates a MessageTags instance from configuration settings.
+     *
+     * @param configManager The configuration manager containing tag settings
+     * @return A new MessageTags instance with configured tags
+     */
     public static MessageTags fromConfig(ConfigManager configManager)
     {
         TagConfiguration sourceConfig = configManager.getTagConfig();

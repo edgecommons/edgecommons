@@ -15,6 +15,11 @@ import org.apache.logging.log4j.Logger;
 import java.util.Map;
 
 
+/**
+ * Represents a message in the Greengrass messaging system.
+ * Contains message headers and payload data for communication between components
+ * and with AWS IoT Core.
+ */
 public class Message
 {
     protected static final Logger LOGGER = LogManager.getLogger(Message.class);
@@ -24,6 +29,10 @@ public class Message
     Object body;
     Object raw;
 
+    /**
+     * Private constructor for creating empty messages.
+     * Messages should be created using the build methods.
+     */
     private Message()
     {
         header = null;
@@ -32,6 +41,11 @@ public class Message
         raw = null;
     }
 
+    /**
+     * Converts the message to a JsonObject representation.
+     *
+     * @return JsonObject containing the full message data
+     */
     public JsonObject toDict()
     {
         JsonObject retVal = new JsonObject();
@@ -56,6 +70,11 @@ public class Message
         return toDict().toString();
     }
 
+    /**
+     * Gets the correlation ID associated with this message.
+     *
+     * @return The message correlation ID
+     */
     public String getCorrelationId()
     {
         if (header == null)
@@ -63,16 +82,32 @@ public class Message
         return header.getCorrelationId();
     }
 
+    /**
+     * Gets the header information for this message.
+     *
+     * @return The MessageHeader object
+     */
     public MessageHeader getHeader()
     {
         return header;
     }
 
+    /**
+     * Gets the tags associated with this message.
+     *
+     * @return The MessageTags object
+     */
     public MessageTags getTags()
     {
         return tags;
     }
 
+    /**
+     * Adds a tag to this message.
+     *
+     * @param key The tag key
+     * @param value The tag value
+     */
     public void injectTag(String key, String value)
     {
         if (tags == null)
@@ -80,11 +115,21 @@ public class Message
         tags.injectTag(key, value);
     }
 
+    /**
+     * Gets the message payload body.
+     *
+     * @return The message payload object
+     */
     public Object getBody()
     {
         return body;
     }
 
+    /**
+     * Gets the raw message content.
+     *
+     * @return The raw message object if present, null otherwise
+     */
     public Object getRaw()
     {
         return raw;
@@ -95,6 +140,12 @@ public class Message
         return makeRequest(null);
     }
 
+    /**
+     * Prepares this message as a request, setting up correlation and reply information.
+     *
+     * @param replyTo The topic to send replies to, or null for auto-generated topic
+     * @return The correlation ID for tracking the request
+     */
     public String makeRequest(String replyTo)
     {
         if (header == null)
@@ -105,6 +156,11 @@ public class Message
         return header.makeRequest(replyTo);
     }
 
+    /**
+     * Sets the correlation ID for this message.
+     *
+     * @param correlationId The correlation ID to use
+     */
     public void setCorrelationId(String correlationId)
     {
         if (header == null)
@@ -147,6 +203,12 @@ public class Message
         return retVal;
     }
 
+    /**
+     * Builds a message from a generic message contents object.
+     *
+     * @param msgContents The content to create the message from
+     * @return A new Message instance
+     */
     public static Message build(Object msgContents)
     {
         Message retVal = new Message();

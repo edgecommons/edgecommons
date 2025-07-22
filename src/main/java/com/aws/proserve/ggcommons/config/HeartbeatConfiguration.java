@@ -35,6 +35,10 @@ import java.util.List;
 //    ]
 //}
 
+/**
+ * Configuration class for managing component heartbeat settings.
+ * Controls heartbeat intervals, monitoring parameters, and health check settings.
+ */
 public class HeartbeatConfiguration
 {
     protected static final Logger LOGGER = LogManager.getLogger(HeartbeatConfiguration.class);
@@ -49,6 +53,10 @@ public class HeartbeatConfiguration
     public final static String DEFAULT_TOPIC = "ggcommons/{ThingName}/{ComponentName}/heartbeat";
     public final static String DEFAULT_MESSAGING_DESTINATION = "ipc";
 
+    /**
+     * Inner class representing a heartbeat publishing target.
+     * Contains type and configuration settings for where heartbeats should be sent.
+     */
     public static class HeartbeatTarget {
         String type;
         JsonObject config;
@@ -64,6 +72,11 @@ public class HeartbeatConfiguration
         }
     }
 
+    /**
+     * Creates a new heartbeat configuration from a JSON configuration object.
+     *
+     * @param jsonConfig The JSON object containing heartbeat settings
+     */
     public HeartbeatConfiguration(JsonObject jsonConfig)
     {
         if (jsonConfig != null)

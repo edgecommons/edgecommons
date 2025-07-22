@@ -36,9 +36,8 @@ class EnvironmentConfigProvider extends ConfigProvider
 
             }   catch(JsonSyntaxException e)
             {
-                LOGGER.fatal("Error parsing configuration: {}\n{}", configStr, e.toString());
+                LOGGER.fatal("Error parsing configuration: {}\n{}", configStr, e.toString(), e);
                 System.exit(1);
-
             }
         }
         else

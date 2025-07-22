@@ -11,6 +11,7 @@ import com.aws.proserve.ggcommons.utils.Utils;
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParseException;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import software.amazon.awssdk.aws.greengrass.GreengrassCoreIPCClientV2;
@@ -95,7 +96,7 @@ class ShadowConfigProvider extends ConfigProvider implements  StreamResponseHand
         catch (Exception e)
         {
             LOGGER.fatal("Unable to connect to Greengrass IPC.");
-            System.exit(5);
+            System.exit(1);
         }
     }
 
@@ -147,40 +148,48 @@ class ShadowConfigProvider extends ConfigProvider implements  StreamResponseHand
     }
 
     @Override
-    public void onStreamEvent(SubscriptionResponseMessage subscriptionResponseMessage)
-    {
+    public void onStreamEvent(SubscriptionResponseMessage subscriptionResponseMessage) {
         try {
-            BinaryMessage binaryMessage = subscriptionResponseMessage.getBinaryMessage();
-            String message = new String(binaryMessage.getMessage(), StandardCharsets.UTF_8);
-            String topic = binaryMessage.getContext().getTopic();
-            String[] topicParts = topic.split("/");
-            String action = topicParts[topicParts.length - 2];
-            String result = topicParts[topicParts.length - 1];
-
-            if (action.equals("get") && result.equals("rejected")) {
-                LOGGER.warn("Named shadow document {} does not exist.  Creating default configuration.", shadowName);
-                reportUpdatedConfiguration(getDefaultConfig().toString());
-            } else if (action.equals("update") && result.equals("accepted")) {
-                LOGGER.debug("Received update/accepted message.  Attempting to apply changes. message:  {}", message);
-                String decodedBinaryPayload = new String(subscriptionResponseMessage.getBinaryMessage().getMessage(), StandardCharsets.UTF_8);
-                JsonObject payload = new Gson().fromJson(decodedBinaryPayload, JsonObject.class);
-                JsonObject desiredDoc = payload.getAsJsonObject("state").getAsJsonObject("desired");
-                if (desiredDoc != null)
-                {
-                    String componentConfigStr = desiredDoc.get("ComponentConfig").toString();
-                    JsonObject componentConfig = Utils.destringify(componentConfigStr);
-                    configurationChanged(componentConfig);
-                    reportUpdatedConfiguration(componentConfigStr);
-                }
-            } else if (action.equals("update") && result.equals("delta")) {
-                LOGGER.warn("Received update/delta message. {}", message);
-            }
-            else
-            {
-                LOGGER.debug("Received new shadow message on topic {}. Ignoring", topic);
-            }
+            processStreamEvent(subscriptionResponseMessage);
         } catch (Exception e) {
-            LOGGER.error("Exception occurred while processing subscription response: {}, {}", e.getMessage(), e.getStackTrace());
+            LOGGER.error("Error processing subscription response: {}", e.getMessage());
+        }
+    }
+
+    private void processStreamEvent(SubscriptionResponseMessage subscriptionResponseMessage) throws Exception {
+        BinaryMessage binaryMessage = subscriptionResponseMessage.getBinaryMessage();
+        String message = new String(binaryMessage.getMessage(), StandardCharsets.UTF_8);
+        String topic = binaryMessage.getContext().getTopic();
+        String[] topicParts = topic.split("/");
+        String action = topicParts[topicParts.length - 2];
+        String result = topicParts[topicParts.length - 1];
+
+        if (action.equals("get") && result.equals("rejected")) {
+            handleGetRejected();
+        } else if (action.equals("update") && result.equals("accepted")) {
+            handleUpdateAccepted(message, subscriptionResponseMessage);
+        } else if (action.equals("update") && result.equals("delta")) {
+            LOGGER.warn("Received update/delta message. {}", message);
+        } else {
+            LOGGER.debug("Received new shadow message on topic {}. Ignoring", topic);
+        }
+    }
+
+    private void handleGetRejected() {
+        LOGGER.warn("Named shadow document {} does not exist. Creating default configuration.", shadowName);
+        reportUpdatedConfiguration(getDefaultConfig().toString());
+    }
+
+    private void handleUpdateAccepted(String message, SubscriptionResponseMessage subscriptionResponseMessage) throws Exception {
+        LOGGER.debug("Received update/accepted message. Attempting to apply changes. message: {}", message);
+        String decodedBinaryPayload = new String(subscriptionResponseMessage.getBinaryMessage().getMessage(), StandardCharsets.UTF_8);
+        JsonObject payload = new Gson().fromJson(decodedBinaryPayload, JsonObject.class);
+        JsonObject desiredDoc = payload.getAsJsonObject("state").getAsJsonObject("desired");
+        if (desiredDoc != null) {
+            String componentConfigStr = desiredDoc.get("ComponentConfig").toString();
+            JsonObject componentConfig = Utils.destringify(componentConfigStr);
+            configurationChanged(componentConfig);
+            reportUpdatedConfiguration(componentConfigStr);
         }
     }
 

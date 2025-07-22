@@ -12,6 +12,7 @@ import software.amazon.awssdk.services.cloudwatch.model.Dimension;
 import software.amazon.awssdk.services.cloudwatch.model.MetricDatum;
 import software.amazon.awssdk.services.cloudwatch.model.PutMetricDataRequest;
 
+import java.io.IOException;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
@@ -198,7 +199,7 @@ public class CloudWatch extends MetricTarget
             }
             catch (Exception e)
             {
-                LOGGER.error("Error emitting pending metrics to CloudWatch. {}", e.getMessage());
+                LOGGER.error("Unexpected error while emitting metrics to CloudWatch: {}", e.getMessage(), e);
             }
         }
     }

@@ -8,6 +8,7 @@ package com.aws.proserve.ggcommons.messaging.providers.greengrass;
 import com.aws.proserve.ggcommons.messaging.Message;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonSyntaxException;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import oshi.util.tuples.Pair;
@@ -41,14 +42,16 @@ public class IotCoreSubscriptionHandler extends SubscriptionHandler<IoTCoreMessa
             {
                 msg = Message.build(new Gson().fromJson(msgChars, JsonObject.class));
             }
-            catch (Exception e)
+            catch (JsonSyntaxException e)
             {
                 msg = Message.build(msgChars);
             }
             retVal = new Pair<>(topic, msg);
-        } catch (Exception e) {
+        } catch (JsonSyntaxException | IllegalArgumentException e) {
             LOGGER.warn("Problem decoding IoT Core payload into Message on topic {}: {}.  Ignoring message.",
                     topicFilter, e.toString());
+        } catch (Exception e) {
+            LOGGER.error("Unexpected error while parsing IoT Core payload: {}. Ignoring message", e.toString());
         }
         return retVal;
     }

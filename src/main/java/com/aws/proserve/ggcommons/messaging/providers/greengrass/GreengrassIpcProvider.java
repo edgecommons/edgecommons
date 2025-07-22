@@ -17,6 +17,7 @@ import software.amazon.awssdk.aws.greengrass.SubscribeToIoTCoreResponseHandler;
 import software.amazon.awssdk.aws.greengrass.SubscribeToTopicResponseHandler;
 import software.amazon.awssdk.aws.greengrass.model.*;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
@@ -43,9 +44,9 @@ public class GreengrassIpcProvider extends MessagingProvider
             ipcSubscriptionStreams = new HashMap<>();
             iotCoreSubscriptionStreams = new HashMap<>();
         }
-        catch (Exception e)
+        catch (IOException e)
         {
-            LOGGER.fatal("Unable to connect to Greengrass IPC.");
+            LOGGER.fatal("Unable to connect to Greengrass IPC due to I/O error.", e);
             System.exit(5);
         }
     }
@@ -133,9 +134,13 @@ public class GreengrassIpcProvider extends MessagingProvider
                     ipcClient.subscribeToIoTCore(subRequest, new IotCoreSubscriptionHandler(topicFilter, callback, maxConcurrency));
             iotCoreSubscriptionStreams.put(topicFilter, response.getHandler());
         }
+        catch (InterruptedException e) // import java.lang.InterruptedException
+        {
+            LOGGER.error("Thread interrupted while subscribing to IoT Core messages on topic filter {}: {}", topicFilter, e);
+        }
         catch (Exception e)
         {
-            LOGGER.error("Failed to subscribe to IoT Core messages on topic filter {}: {}", topicFilter, e);
+            LOGGER.error("Unexpected error occurred while subscribing to IoT Core messages on topic filter {}: {}", topicFilter, e);
         }
     }
 

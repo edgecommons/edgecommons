@@ -24,6 +24,10 @@ import java.util.Map;
 import java.util.Timer;
 import java.util.TimerTask;
 
+/**
+ * Implements heartbeat functionality for Greengrass components to monitor their health status.
+ * This class periodically publishes heartbeat messages and handles configuration changes.
+ */
 public class Heartbeat implements ConfigurationChangeListener
 {
     protected static final Logger LOGGER = LogManager.getLogger(Heartbeat.class);
@@ -34,6 +38,11 @@ public class Heartbeat implements ConfigurationChangeListener
     private HeartbeatMonitor heartbeatMonitor;
     private Timer heartbeatTimer;
 
+    /**
+     * Constructs a new Heartbeat instance for the component.
+     *
+     * @param config The configuration manager containing heartbeat settings
+     */
     public Heartbeat(ConfigManager config)
     {
         configManager = config;
@@ -42,6 +51,10 @@ public class Heartbeat implements ConfigurationChangeListener
         initHeartbeat();
     }
 
+    /**
+     * Initializes the heartbeat mechanism based on the current configuration.
+     * Sets up the timer for periodic heartbeat publishing.
+     */
     private void initHeartbeat()
     {
         heartbeatMonitor = new HeartbeatMonitor(configManager.getHeartbeatConfig());
@@ -50,6 +63,10 @@ public class Heartbeat implements ConfigurationChangeListener
         LOGGER.info("Heartbeat initialized at {} second interval", configManager.getHeartbeatConfig().getIntervalSecs());
     }
 
+    /**
+     * Defines the heartbeat metric in the metrics system.
+     * This metric is used to track the component's health status.
+     */
     private void defineMetric()
     {
         int storageResolution = configManager.getHeartbeatConfig().getIntervalSecs() < 60 ? 1 : 60;
@@ -65,6 +82,10 @@ public class Heartbeat implements ConfigurationChangeListener
         MetricEmitter.defineMetric(metric);
     }
 
+    /**
+     * Publishes a heartbeat message to indicate the component is alive and functioning.
+     * The message includes the current timestamp and component information.
+     */
     private void publishHeartbeat()
     {
         JsonObject data = heartbeatMonitor.getStats();
@@ -120,6 +141,11 @@ public class Heartbeat implements ConfigurationChangeListener
     }
 
     @Override
+    /**
+     * Handles configuration changes by reinitializing the heartbeat mechanism.
+     * 
+     * @return true if the configuration change was handled successfully
+     */
     public boolean onConfigurationChanged()
     {
         LOGGER.info("Configuration changed, restarting heartbeat");
@@ -132,6 +158,10 @@ public class Heartbeat implements ConfigurationChangeListener
         return true;
     }
 
+    /**
+     * Inner class that implements the periodic heartbeat task.
+     * Executes the heartbeat publishing operation at configured intervals.
+     */
     private class Heartbeater extends TimerTask
     {
         @Override

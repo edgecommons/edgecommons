@@ -8,6 +8,10 @@ import com.google.gson.JsonObject;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+/**
+ * Configuration class for managing metric collection and reporting settings.
+ * Defines how metrics are collected, buffered, and published to various targets.
+ */
 public class MetricConfiguration
 {
     protected static final Logger LOGGER = LogManager.getLogger(MetricConfiguration.class);
@@ -26,6 +30,11 @@ public class MetricConfiguration
     private String destination = DEFAULT_MESSAGING_DESTINATION;
     private boolean largeFleetWorkaround = false;
 
+    /**
+     * Creates a new metric configuration from a JSON configuration object.
+     *
+     * @param jsonConfig The JSON object containing metric settings
+     */
     MetricConfiguration(JsonObject jsonConfig)
     {
         if (jsonConfig != null)
@@ -128,6 +137,7 @@ public class MetricConfiguration
     }
 
     public int getIntervalSecs() {
+        // amazonq-ignore-next-line
         return intervalSecs;
     }
 

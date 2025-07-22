@@ -59,9 +59,15 @@ public class GreengrassConfigProvider extends ConfigProvider
                 System.exit(5);
             }
         }
-        catch (Exception e)
+        catch (InterruptedException e) // import java.lang.InterruptedException
         {
-            LOGGER.fatal("Unable to load configuration using Greengrass IPC.  Exiting.");
+            Thread.currentThread().interrupt();
+            LOGGER.fatal("Thread interrupted while loading configuration. Exiting.", e);
+            System.exit(1);
+        }
+        catch (RuntimeException e)
+        {
+            LOGGER.fatal("Unexpected error occurred while loading configuration. Exiting.", e);
             System.exit(1);
         }
 

@@ -11,6 +11,9 @@ import org.apache.logging.log4j.Logger;
 public class ConfigProviderBuilder {
     private static final Logger LOGGER = LogManager.getLogger(ConfigProviderBuilder.class);
 
+    // Suppressing i18n warning as these are internal configuration identifiers
+    // that should not be localized
+    @SuppressWarnings("i18n")
     public static ConfigProvider build(ConfigManager configManager, String componentName, String thingName, String[] configArgs) {
         ConfigProvider configProvider = null;
         switch (configArgs[0].toUpperCase()) {

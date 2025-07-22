@@ -19,21 +19,52 @@ public class GGCommons
 
     private ConfigManager configManager;
 
+    /**
+     * Constructs a new GGCommons instance with the given component name and command line arguments.
+     * 
+     * @param componentName The name of the Greengrass component
+     * @param args Command line arguments passed to the component
+     */
     public GGCommons(String componentName, String[] args)
     {
         init(componentName, args, null, true);
     }
 
+    /**
+     * Constructs a new GGCommons instance with custom application options.
+     * 
+     * @param componentName The name of the Greengrass component
+     * @param args Command line arguments passed to the component
+     * @param appOptions Custom options for the application
+     */
     public GGCommons(String componentName, String[] args, Options appOptions)
     {
         init(componentName, args, appOptions, true);
     }
 
+    /**
+     * Constructs a new GGCommons instance with custom options and message reception settings.
+     * 
+     * @param componentName The name of the Greengrass component
+     * @param args Command line arguments passed to the component
+     * @param appOptions Custom options for the application
+     * @param receiveOwnMessages Flag to determine if the component should receive its own messages.  Applies only when
+     *                           messaging target is IPC
+     */
     public GGCommons(String componentName, String[] args, Options appOptions, boolean receiveOwnMessages)
     {
         init(componentName, args, appOptions, receiveOwnMessages);
     }
 
+    /**
+     * Initializes the GGCommons instance with the specified parameters.
+     * This method sets up the core components including messaging, configuration, metrics, and heartbeat.
+     *
+     * @param componentName The name of the Greengrass component
+     * @param args Command line arguments to process
+     * @param appOptions Custom application options
+     * @param receiveOwnMessages Flag indicating whether to receive own messages
+     */
     private void init(String componentName, String[] args, Options appOptions, boolean receiveOwnMessages)
     {
         ParsedCommandLine parsedCommandLine = GGCommons.processArgs(componentName, args, appOptions);
@@ -43,11 +74,24 @@ public class GGCommons
         new Heartbeat(configManager);
     }
 
+    /**
+     * Returns the configuration manager instance for this component.
+     * 
+     * @return The ConfigManager instance managing this component's configuration
+     */
     public ConfigManager getConfigManager()
     {
         return configManager;
     }
 
+    /**
+     * Processes command line arguments for a Greengrass component.
+     * 
+     * @param componentName The name of the Greengrass component
+     * @param args Command line arguments to process
+     * @param appOptions Custom application options to consider during processing
+     * @return A ParsedCommandLine object containing the processed arguments
+     */
     public static ParsedCommandLine processArgs(String componentName, String[] args, Options appOptions) {
         ParsedCommandLine retVal = new ParsedCommandLine();
         CommandLineParser parser = new DefaultParser();

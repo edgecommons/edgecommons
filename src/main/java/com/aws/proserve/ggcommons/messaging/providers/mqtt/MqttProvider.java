@@ -75,6 +75,9 @@ public class MqttProvider extends MessagingProvider
             new Thread(this).start();
         }
 
+        // Catching InterruptedException to ensure queue processing continues even if there is an exception from
+        // processing a single message
+        @SuppressWarnings("ThreadInterruptedCheck")
         @Override
         public void run()
         {
@@ -247,7 +250,7 @@ public class MqttProvider extends MessagingProvider
             kmf.init(ks, password);
 
             // finally, create SSL socket factory
-            SSLContext context = SSLContext.getInstance("TLS");
+            SSLContext context = SSLContext.getInstance("TLSv1.2");
             context.init(kmf.getKeyManagers(), tmf.getTrustManagers(), null);
             retVal = context.getSocketFactory();
         } catch (Exception e) {

@@ -13,6 +13,10 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
 
+/**
+ * Represents a metric definition in the Greengrass metrics system.
+ * Contains metric configuration including name, namespace, dimensions, and measures.
+ */
 public class Metric
 {
     private final String name;
@@ -22,11 +26,24 @@ public class Metric
 
     private final Map<String, String> dimensions;
 
+    /**
+     * Creates a new metric with the specified name.
+     *
+     * @param name The name of the metric
+     */
     public Metric(String name)
     {
         this(name, MetricEmitter.getMetricConfig().getNamespace(), new HashMap<>(), new HashMap<>());
     }
 
+    /**
+     * Creates a new metric with complete configuration.
+     *
+     * @param name The name of the metric
+     * @param namespace The metric namespace
+     * @param measures The map of measure definitions
+     * @param dimensions The map of dimension key-values
+     */
     public Metric(String name, String namespace, Map<String, Measure> measures, Map<String, String> dimensions)
     {
         this.name = name;
@@ -38,6 +55,11 @@ public class Metric
         addDimension("component", MetricEmitter.getComponentName());
     }
 
+    /**
+     * Adds a measure to this metric.
+     *
+     * @param measure The measure to add
+     */
     public void addMeasure(Measure measure)
     {
         measures.put(measure.getName(), measure);
@@ -110,7 +132,12 @@ public class Metric
     }
 
 
-        public String getName()
+        /**
+     * Gets the name of this metric.
+     *
+     * @return The metric name
+     */
+    public String getName()
     {
         return name;
     }

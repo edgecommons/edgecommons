@@ -11,6 +11,10 @@ import oshi.SystemInfo;
 import oshi.software.os.OSProcess;
 
 
+/**
+ * Monitors and tracks the heartbeat status of a Greengrass component.
+ * Manages heartbeat statistics, health checks, and status reporting.
+ */
 public class HeartbeatMonitor
 {
     HeartbeatConfiguration heartbeatConfiguration;
@@ -18,6 +22,11 @@ public class HeartbeatMonitor
     OSProcess currentProc;
     OSProcess previousProc;
     long previousCpuTime = 0L;
+    /**
+     * Creates a new HeartbeatMonitor with the specified configuration.
+     *
+     * @param hbConfig The heartbeat configuration settings to use
+     */
     public HeartbeatMonitor(HeartbeatConfiguration hbConfig)
     {
         heartbeatConfiguration = hbConfig;
@@ -25,6 +34,12 @@ public class HeartbeatMonitor
         currentProc = new SystemInfo().getOperatingSystem().getCurrentProcess();
     }
 
+    /**
+     * Gets the current health statistics for this component.
+     * Collects various metrics based on configuration settings.
+     *
+     * @return JsonObject containing health statistics
+     */
     public JsonObject getStats()
     {
         JsonObject data = new JsonObject();

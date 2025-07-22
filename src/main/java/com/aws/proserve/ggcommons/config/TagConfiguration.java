@@ -9,10 +9,19 @@ import com.google.gson.JsonObject;
 
 import java.util.Set;
 
+/**
+ * Configuration class for managing component and message tags.
+ * Handles tag definitions, inheritance, and tag-based routing settings.
+ */
 public class TagConfiguration
 {
     JsonObject tags = new JsonObject();
 
+    /**
+     * Creates a new tag configuration from a JSON configuration object.
+     *
+     * @param jsonConfig The JSON object containing tag settings
+     */
     public TagConfiguration(JsonObject jsonConfig)
     {
         if (jsonConfig != null)

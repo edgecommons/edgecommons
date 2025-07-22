@@ -15,10 +15,7 @@
     },
     "targets": [
       {
-        "type": "metric",
-        "config": {
-          "destination": "iot_core"
-        }
+        "type": "metric"
       }
     ]
   },

@@ -8,6 +8,7 @@ package com.aws.proserve.ggcommons.messaging.providers.greengrass;
 import com.aws.proserve.ggcommons.messaging.Message;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonSyntaxException;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import oshi.util.tuples.Pair;
@@ -52,9 +53,14 @@ public class IpcSubscriptionHandler extends SubscriptionHandler<SubscriptionResp
             }
             retVal = new Pair<>(topic, Message.build(receivedPayload));
         }
-        catch (Exception e)
+        catch (JsonSyntaxException e) // import com.google.gson.JsonSyntaxException
         {
             LOGGER.error("Problem decoding IPC payload into Message on topic {}: {}. Ignoring message",
+                    topicFilter, e.toString());
+        }
+        catch (NullPointerException e)
+        {
+            LOGGER.error("Null pointer encountered while processing IPC payload on topic {}: {}. Ignoring message",
                     topicFilter, e.toString());
         }
         return retVal;

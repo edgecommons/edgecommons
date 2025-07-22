@@ -67,3 +67,6 @@ nbproject/
 # patch
 *.orig
 *.rej
+
+# Q Developer
+devfile.yaml

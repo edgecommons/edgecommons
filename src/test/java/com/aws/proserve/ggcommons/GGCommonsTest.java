@@ -44,7 +44,7 @@ class GGCommonsTest
                 "-t", "ggcommons-test-2",
 //                "-m", "MQTT", "a3bgkcole5zuv-ats.iot.us-east-1.amazonaws.com", "8883", "./creds",
                 "-m", "MQTT", "localhost", "1883",
-                "-c", "FILE", "./config_3.json"
+                "-c", "FILE", "./config_sample_with_logging.json"
         };
         ggCommons = new GGCommons("com.aws.proserve.greengrass.UnitTests", args);
         configManager = ggCommons.getConfigManager();
