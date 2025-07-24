@@ -322,16 +322,19 @@ public class ConfigManager
 
     /**
      * Reconfigures the logging system based on the current logging configuration.
-     * This method updates log levels, appenders, and other logging properties dynamically.
-     * 
-     * The implementation uses Log4j2's programmatic configuration API to:
-     * 1. Create a new configuration with console and optional file appenders
-     * 2. Configure the root logger with the specified log level
-     * 3. Configure individual loggers with their specific levels if defined
-     * 4. Apply the new configuration to the LoggerContext
+     * Can operate in global mode (controls entire app) or isolated mode (GGCommons only).
      */
     public void reconfigureLogging()
     {
+        // Check if global logging control is enabled
+        boolean globalControl = getLoggingConfig().toDict().has("globalControl") && 
+                               getLoggingConfig().toDict().get("globalControl").getAsBoolean();
+        
+        if (globalControl) {
+            new GlobalLoggingManager(this, true).configureGlobalLogging();
+            return;
+        }
+        
         try {
             // Keep the old implementation commented out for reference
 //        ConfigurationBuilder<BuiltConfiguration> configBuilder = newConfigurationBuilder();

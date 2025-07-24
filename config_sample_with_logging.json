@@ -2,13 +2,14 @@
   "logging": {
     "level": "INFO",
     "format": "%d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %-5level %logger{36} - %msg%n",
+    "globalControl": true,
     "fileLogging": {
       "enabled": true,
       "filePath": "/var/log/{ComponentName}-{ThingName}.log"
     },
     "loggers": {
       "com.aws.proserve.ggcommons": "DEBUG",
-      "com.aws.proserve.ggcommons.messaging": "DEBUG",
+      "com.aws.proserve.ggcommons.messaging": "TRACE",
       "org.apache.http": "WARN"
     }
   },

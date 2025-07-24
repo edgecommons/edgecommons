@@ -4,7 +4,7 @@
 
     <groupId>com.aws.proserve</groupId>
     <artifactId>ggcommons</artifactId>
-    <version>1.1.16-SNAPSHOT</version>
+    <version>1.1.17-SNAPSHOT</version>
     <packaging>jar</packaging>
 
     <name>ggcommons</name>
@@ -50,6 +50,19 @@
             <groupId>org.apache.logging.log4j</groupId>
             <artifactId>log4j-core</artifactId>
             <version>2.20.0</version>
+        </dependency>
+        <!-- Optional SLF4J dependencies for compatibility -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <version>2.0.7</version>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-slf4j2-impl</artifactId>
+            <version>2.20.0</version>
+            <optional>true</optional>
         </dependency>
         <dependency>
             <groupId>software.amazon.awssdk.iotdevicesdk</groupId>

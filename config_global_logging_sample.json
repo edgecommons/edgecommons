@@ -1,0 +1,22 @@
+{
+  "logging": {
+    "level": "INFO",
+    "format": "%d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %-5level %logger{36} - %msg%n",
+    "globalControl": true,
+    "fileLogging": {
+      "enabled": true,
+      "filePath": "/var/log/{ComponentName}-{ThingName}.log"
+    },
+    "loggers": {
+      "com.aws.proserve.ggcommons": "DEBUG",
+      "com.mycompany.myapp": "WARN",
+      "org.springframework": "ERROR",
+      "root": "INFO"
+    }
+  },
+  "component": {
+    "global": {
+      "setting1": "value1"
+    }
+  }
+}

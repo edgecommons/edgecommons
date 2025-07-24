@@ -34,6 +34,9 @@ public class LoggingConfiguration
     
     // Logger-specific level configuration
     private Map<String, Level> loggerLevels = new HashMap<>();
+    
+    // Global control flag
+    private boolean globalControl = false;
 
     /**
      * Creates a new logging configuration from a JSON configuration object.
@@ -72,6 +75,10 @@ public class LoggingConfiguration
                     loggerLevels.put(loggerName, Level.getLevel(levelName));
                 }
             }
+            
+            // Parse global control flag
+            if (jsonConfig.has("globalControl"))
+                globalControl = jsonConfig.get("globalControl").getAsBoolean();
         }
     }
 
@@ -103,6 +110,11 @@ public class LoggingConfiguration
                 loggersConfig.addProperty(entry.getKey(), entry.getValue().toString());
             }
             retVal.add("loggers", loggersConfig);
+        }
+        
+        // Add global control flag if enabled
+        if (globalControl) {
+            retVal.addProperty("globalControl", globalControl);
         }
         
         return retVal;
@@ -160,5 +172,14 @@ public class LoggingConfiguration
      */
     public Map<String, Level> getLoggerLevels() {
         return Collections.unmodifiableMap(loggerLevels);
+    }
+    
+    /**
+     * Checks if global logging control is enabled.
+     *
+     * @return true if GGCommons should control all application logging
+     */
+    public boolean isGlobalControlEnabled() {
+        return globalControl;
     }
 }
