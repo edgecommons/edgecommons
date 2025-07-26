@@ -44,7 +44,7 @@ class GGCommonsTest
                 "-t", "ggcommons-test-2",
 //                "-m", "MQTT", "a3bgkcole5zuv-ats.iot.us-east-1.amazonaws.com", "8883", "./creds",
                 "-m", "MQTT", "localhost", "1883",
-                "-c", "FILE", "./config_sample_with_logging.json"
+                "-c", "FILE", "./config_3.json"
         };
         ggCommons = new GGCommons("com.aws.proserve.greengrass.UnitTests", args);
         configManager = ggCommons.getConfigManager();
@@ -95,20 +95,20 @@ class GGCommonsTest
         MessagingClient.reply(message, reply);
     }
 
-//    @Test
-//    void publishIpcMessage()
-//    {
-//        String topic = "test/testIpcTopic";
-//        MessagingClient.subscribe(topic, this::ipcMessageHandler, 1);
-//        JsonObject jsonPayload = new JsonObject();
-//        jsonPayload.addProperty("message", "Test IPC message");
-//        Message msg = Message.buildFromConfig("IpcMessageTest", "1.0", jsonPayload, configManager);
-//        MessagingClient.publish(topic, msg);
-//        Utils.sleep(200);
-//        assertNotNull(receivedMessage);
-//        assertEquals(receivedMessage.getHeader().getName(), "IpcMessageTest");
-//    }
-//
+    @Test
+    void publishIpcMessage()
+    {
+        String topic = "test/testIpcTopic";
+        MessagingClient.subscribe(topic, this::ipcMessageHandler, 1);
+        JsonObject jsonPayload = new JsonObject();
+        jsonPayload.addProperty("message", "Test IPC message");
+        Message msg = Message.buildFromConfig("IpcMessageTest", "1.0", jsonPayload, configManager);
+        MessagingClient.publish(topic, msg);
+        Utils.sleep(200);
+        assertNotNull(receivedMessage);
+        assertEquals(receivedMessage.getHeader().getName(), "IpcMessageTest");
+    }
+
 //    @Test
 //    void publishRawIpcMessage()
 //    {

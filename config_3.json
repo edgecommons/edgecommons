@@ -1,6 +1,6 @@
 {
   "logging": {
-    "level": "INFO",
+    "level": "TRACE",
     "format": "%d{yyyy-MM-dd HH:mm:ss.SSS} [%-5p] %C{1} (%L) [%t] : %m%n"
   },
   "heartbeat": {
@@ -26,11 +26,11 @@
     "line": "line1"
   },
   "metricEmission": {
-    "target": "log",
+    "target": "messaging",
     "targetConfig": {
-      "logFileName": "{ComponentFullName}.metric.log"
-    },
-    "largeFleetWorkaround": true
+      "topic": "metrics/{ThingName}/data",
+      "destination": "ipc"
+    }
   },
   "component": {
     "global": {
