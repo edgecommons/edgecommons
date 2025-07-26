@@ -22,6 +22,7 @@ public class MetricConfiguration
     private final static String DEFAULT_METRIC_FILE_NAME_TEMPLATE = "/greengrass/v2/logs/{ComponentFullName}.metric.log";
     private final static int DEFAULT_INTERVAL_SECS = 5;
     private final static String DEFAULT_MESSAGING_DESTINATION = "ipc";
+    private final static String DEFAULT_MAX_FILE_SIZE = "10MB";
     private String target = DEFAULT_TARGET;
     private String namespace = DEFAULT_METRIC_NAMESPACE;
     private String logFileNameTemplate = DEFAULT_METRIC_FILE_NAME_TEMPLATE;
@@ -29,6 +30,7 @@ public class MetricConfiguration
     private int intervalSecs = DEFAULT_INTERVAL_SECS;
     private String destination = DEFAULT_MESSAGING_DESTINATION;
     private boolean largeFleetWorkaround = false;
+    private String maxFileSize = DEFAULT_MAX_FILE_SIZE;
 
     /**
      * Creates a new metric configuration from a JSON configuration object.
@@ -53,6 +55,8 @@ public class MetricConfiguration
                     JsonObject targetConfig = jsonConfig.get("targetConfig").getAsJsonObject();
                     if (targetConfig.has("logFileName"))
                         logFileNameTemplate = targetConfig.get("logFileName").getAsString();
+                    if (targetConfig.has("maxFileSize"))
+                        maxFileSize = targetConfig.get("maxFileSize").getAsString();
                 }
             }
 
@@ -109,6 +113,7 @@ public class MetricConfiguration
 
             case "log":
                 targetConfig.addProperty("filename", logFileNameTemplate);
+                targetConfig.addProperty("maxFileSize", maxFileSize);
                 break;
         }
         retVal.add("targetConfig", targetConfig);
@@ -144,4 +149,6 @@ public class MetricConfiguration
     public String getDestination() { return destination; }
 
     public boolean getLargeFleetWorkaround() { return largeFleetWorkaround; }
+
+    public String getMaxFileSize() { return maxFileSize; }
 }

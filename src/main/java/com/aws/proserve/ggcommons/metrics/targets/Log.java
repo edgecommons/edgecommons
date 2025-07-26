@@ -54,6 +54,25 @@ public class Log extends MetricTarget
     public boolean onConfigurationChanged()
     {
         LOGGER.info("Configuration changed. Reconfiguring metric logger");
+        
+        // Clean up existing metric logger configuration
+        try {
+            org.apache.logging.log4j.core.LoggerContext context = 
+                (org.apache.logging.log4j.core.LoggerContext) LogManager.getContext(false);
+            org.apache.logging.log4j.core.config.Configuration config = context.getConfiguration();
+            
+            // Remove existing metric logger and appender
+            config.removeLogger("metric");
+            org.apache.logging.log4j.core.Appender existingAppender = config.getAppender("MetricFileAppender");
+            if (existingAppender != null) {
+                existingAppender.stop();
+                config.getAppenders().remove("MetricFileAppender");
+            }
+            
+        } catch (Exception e) {
+            LOGGER.warn("Failed to clean up existing metric logger: {}", e.getMessage());
+        }
+        
         metricLogger = configureMetricLogger();
         return true;
     }
@@ -109,29 +128,66 @@ public class Log extends MetricTarget
     private Logger configureMetricLogger()
     {
         MetricConfiguration metricConfig = configManager.getMetricConfig();
-
-        ConfigurationBuilder<BuiltConfiguration> configBuilder = newConfigurationBuilder();
-
-        AppenderComponentBuilder fileAppenderBuilder = configBuilder.newAppender("metric", "File");
         String metricFile = configManager.resolveTemplate(metricConfig.getLogFileNameTemplate());
-        fileAppenderBuilder.addAttribute("fileName", metricFile);
-
-        LayoutComponentBuilder layoutComponentBuilder = configBuilder.newLayout("PatternLayout");
-        layoutComponentBuilder.addAttribute("pattern", configManager.getLoggingConfig().getFormat());
-
-        fileAppenderBuilder.addComponent(layoutComponentBuilder);
-
-        configBuilder.add(fileAppenderBuilder);
-
-        LoggerComponentBuilder metricLogger = configBuilder.newLogger("metric", Level.INFO);
-        metricLogger.add(configBuilder.newAppenderRef("metric"));
-        metricLogger.addAttribute("additivity", false);
-        configBuilder.add(metricLogger);
-
-        Configurator.reconfigure(configBuilder.build());
-
-        LOGGER.debug("Metric logger configured with following configuration: {}", configBuilder.toXmlConfiguration());
-
+        
+        try {
+            // Get current context and configuration
+            org.apache.logging.log4j.core.LoggerContext context = 
+                (org.apache.logging.log4j.core.LoggerContext) LogManager.getContext(false);
+            org.apache.logging.log4j.core.config.Configuration config = context.getConfiguration();
+            
+            // Create rolling file appender for metrics with size-based rotation
+            org.apache.logging.log4j.core.layout.PatternLayout layout = 
+                org.apache.logging.log4j.core.layout.PatternLayout.newBuilder()
+                    .withPattern("%d{yyyy-MM-dd HH:mm:ss.SSS} [METRIC] %m%n") // Simple pattern for metric data
+                    .build();
+            
+            org.apache.logging.log4j.core.appender.rolling.SizeBasedTriggeringPolicy triggeringPolicy =
+                org.apache.logging.log4j.core.appender.rolling.SizeBasedTriggeringPolicy.createPolicy(metricConfig.getMaxFileSize());
+            
+            org.apache.logging.log4j.core.appender.rolling.DefaultRolloverStrategy rolloverStrategy =
+                org.apache.logging.log4j.core.appender.rolling.DefaultRolloverStrategy.newBuilder()
+                    .withMax("5")
+                    .build();
+            
+            org.apache.logging.log4j.core.appender.RollingFileAppender appender = 
+                org.apache.logging.log4j.core.appender.RollingFileAppender.newBuilder()
+                    .withFileName(metricFile)
+                    .withFilePattern(metricFile + ".%i")
+                    .withName("MetricFileAppender")
+                    .withLayout(layout)
+                    .withPolicy(triggeringPolicy)
+                    .withStrategy(rolloverStrategy)
+                    .build();
+            
+            appender.start();
+            config.addAppender(appender);
+            
+            // Create logger configuration for metrics
+            org.apache.logging.log4j.core.config.LoggerConfig loggerConfig = 
+                org.apache.logging.log4j.core.config.LoggerConfig.createLogger(
+                    false, // additivity
+                    Level.INFO,
+                    "metric",
+                    "true",
+                    new org.apache.logging.log4j.core.config.AppenderRef[] {
+                        org.apache.logging.log4j.core.config.AppenderRef.createAppenderRef(
+                            "MetricFileAppender", null, null)
+                    },
+                    null,
+                    config,
+                    null
+                );
+            
+            config.addLogger("metric", loggerConfig);
+            context.updateLoggers();
+            
+            LOGGER.debug("Metric logger configured to write to: {}", metricFile);
+            
+        } catch (Exception e) {
+            LOGGER.error("Failed to configure metric logger: {}", e.getMessage(), e);
+        }
+        
         return LogManager.getLogger("metric");
     }
 }

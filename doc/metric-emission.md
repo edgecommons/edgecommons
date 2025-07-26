@@ -1,33 +1,28 @@
-TODO: This file was GenAI generated and needs updating/corrections
+# Metric Emission Configuration Guide
 
-# General Configuration Guide
+This document provides detailed information about the metric emission targets and their configuration options in the ggcommons-java-lib.
 
-This document provides detailed information about the metric emission targets and their configuration options, based on analyzing the actual implementation code.
-
-The metric emission system is designed to be flexible and support multiple emission targets simultaneously. It handles collecting, formatting, and emitting metrics through various channels including CloudWatch, local logs, and messaging systems.
+The metric emission system supports multiple targets for sending metrics, each with specific behaviors and configuration options. Metrics are formatted using the Embedded Metric Format (EMF) for CloudWatch compatibility.
 
 ## Metric Emission Configuration
-
-The system supports multiple metric emission targets for sending metrics, each with specific behaviors and configuration options. The base configuration is controlled through the `metricEmission` section of your configuration file.
 
 ### Metric Structure
 
 Metrics in the system consist of:
-- Name: Unique identifier for the metric
-- Namespace: Logical grouping for metrics (e.g., application name)
-- Measures: Key-value pairs of float values representing the actual measurements
-- Dimensions: Automatically added metadata such as component name and thing name
+- **Name**: Unique identifier for the metric
+- **Namespace**: Logical grouping for metrics (defaults to "ggcommons")
+- **Measures**: Named measurements with values, units, and storage resolution
+- **Dimensions**: Key-value pairs for metric categorization (automatically includes component and thing names)
 
 ### Common Configuration Options
 
-- `target`: (Required) Specifies which metric emission target to use. Valid values:
-  - `"cloudWatch"` - Direct CloudWatch metrics emission
-  - `"cloudwatchcomponent"` - CloudWatch metrics via component
-  - `"log"` - Local file logging
-  - `"messaging"` - Message-based metrics
-- `namespace`: The namespace for your metrics (Default: "ggcommons")
-- `intervalSecs`: The interval between metric emissions (Default: 5 seconds)
-- `largeFleetWorkaround`: Boolean flag for optimizing large fleet deployments by reducing API calls (Default: false)
+- **`target`**: (Required) Specifies which metric emission target to use. Valid values:
+  - `"cloudwatch"` - Direct CloudWatch metrics emission with batching
+  - `"cloudwatchcomponent"` - CloudWatch metrics via Greengrass component
+  - `"log"` - Local file logging with rotation support
+  - `"messaging"` - Message-based metrics via IPC or IoT Core
+- **`namespace`**: The namespace for your metrics (Default: "ggcommons")
+- **`largeFleetWorkaround`**: Boolean flag that creates aggregate metrics by replacing "coreName" dimension with "ALL" (Default: false)
 
 ### Template Variables
 
@@ -43,235 +38,232 @@ Templates can be used in:
 
 ### Available Targets
 
-#### 1. CloudWatch Target (`"cloudWatch"`)
-The CloudWatch target sends metrics directly to Amazon CloudWatch using the AWS SDK.
+#### 1. CloudWatch Target (`"cloudwatch"`)
+Sends metrics directly to Amazon CloudWatch using the AWS SDK with batching for efficiency.
 
-Implementation details:
-- Creates a CloudWatchClient instance for direct AWS API access
-- Maintains separate queues for each metric namespace
-- Batches metrics and sends them on a configurable interval
-- Supports concurrent metric collection via ConcurrentLinkedQueue
-- Automatically handles AWS API limits by batching
+**Implementation details:**
+- Uses CloudWatchClient for direct AWS API access
+- Maintains separate concurrent queues for each metric namespace
+- Batches metrics and sends them on a configurable interval using a Timer
+- Supports immediate emission via `emitMetricNow()` method
+- Handles AWS API limits through batching (max 20 metrics per request)
+- Preserves metric timestamps from when they were created
 
-Configuration options:
-- `namespace`: (Required) The CloudWatch namespace for your metrics
-- `intervalSecs`: Batching interval for CloudWatch API calls (minimum: 1 second)
-- `largeFleetWorkaround`: Enable optimizations for large fleet deployments
+**Configuration options:**
+- **`intervalSecs`**: Batching interval for CloudWatch API calls (Default: 5 seconds, minimum: 1 second)
 
-Example:
+**Example:**
 ```json
 {
   "metricEmission": {
-    "target": "cloudWatch",
+    "target": "cloudwatch",
+    "namespace": "MyApp/Metrics",
     "targetConfig": {
       "intervalSecs": 60
     },
-    "namespace": "MyApp/Metrics",
     "largeFleetWorkaround": false
   }
 }
 ```
 
 #### 2. CloudWatch Component Target (`"cloudwatchcomponent"`)
-This target sends metrics to CloudWatch through a Greengrass component rather than directly.
+Sends metrics to CloudWatch through the Greengrass CloudWatch Metrics component via IPC.
 
-Implementation details:
-- Uses IPC to communicate with CloudWatch component
+**Implementation details:**
+- Uses MessagingClient for IPC communication with CloudWatch component
 - Default topic: "cloudwatch/metric/put"
-- Does not batch metrics (sends immediately)
+- Sends each measure as a separate message (no batching)
+- Does not support `largeFleetWorkaround` due to component limitations
 - Lighter weight than direct CloudWatch target
 
-Configuration options:
-- `topic`: Override the default CloudWatch component topic
-- `namespace`: Metrics namespace
+**Configuration options:**
+- **`topic`**: Override the default CloudWatch component topic (supports templates)
 
-Example:
+**Example:**
 ```json
 {
   "metricEmission": {
     "target": "cloudwatchcomponent",
+    "namespace": "MyComponent/Metrics",
     "targetConfig": {
       "topic": "custom/cloudwatch/metrics"
-    },
-    "namespace": "MyComponent/Metrics"
+    }
   }
 }
 ```
 
 #### 3. Log Target (`"log"`)
-The Log target writes metrics to a local log file with configurable formatting.
+Writes metrics to a local log file using Log4j2 with EMF format and file rotation support.
 
-Implementation details:
-- Uses Log4j2 for file logging
-- Supports template-based file naming
-- Configurable log format through logging configuration
+**Implementation details:**
+- Uses Log4j2 RollingFileAppender for file logging with size-based rotation
+- Metrics are written in EMF (Embedded Metric Format) for CloudWatch compatibility
+- Supports template-based file naming with variable substitution
 - Immediate metric writing (no batching)
 - Thread-safe logging implementation
+- Automatic file rotation when size limit is reached
+- Keeps up to 5 historical files (`.1`, `.2`, etc.)
 
-Configuration options:
-- `logFileNameTemplate`: Template for log file naming (Default: "/greengrass/v2/logs/{ComponentFullName}.metric.log")
-- Template variables supported:
-  - {ComponentFullName}
-  - {ThingName}
-  - {ComponentName}
-  - Standard date/time patterns
+**Configuration options:**
+- **`logFileName`**: Template for log file naming (Default: "/greengrass/v2/logs/{ComponentFullName}.metric.log")
+- **`maxFileSize`**: Maximum file size before rotation (Default: "10MB")
 
-Example:
+**Template variables supported:**
+- `{ComponentFullName}`: Full component name including version
+- `{ComponentName}`: Component name only
+- `{ThingName}`: IoT Thing name
+
+**Example:**
 ```json
 {
   "metricEmission": {
     "target": "log",
+    "namespace": "MyApp/Metrics",
     "targetConfig": {
-      "logFileName": "/custom/path/metrics-%Y-%m-%d.log"
+      "logFileName": "/custom/path/{ComponentName}.metrics.log",
+      "maxFileSize": "50MB"
     }
   }
 }
 ```
 
 #### 4. Messaging Target (`"messaging"`)
-The Messaging target publishes metrics through the messaging system, supporting both local IPC and IoT Core destinations.
+Publishes metrics through the messaging system in EMF format, supporting both local IPC and IoT Core destinations.
 
-Implementation details:
-- Supports both IPC and IoT Core publishing
+**Implementation details:**
+- Uses MessagingClient for both IPC and IoT Core publishing
 - Default topic template: "{ThingName}/{ComponentName}/metric"
-- Uses QoS 1 (at least once delivery) for IoT Core
+- Uses QoS AT_LEAST_ONCE for IoT Core publishing
 - Immediate message publishing (no batching)
-- Messages include version and metadata
+- Messages formatted as EMF with Message wrapper including version and metadata
+- Supports template variable substitution in topic names
 
-Configuration options:
-- `topic`: Override the default topic template
-- `destination`: Specify message destination (Default: "ipc")
-  - "ipc": Local Greengrass IPC communication
+**Configuration options:**
+- **`topic`**: Override the default topic template (supports template variables)
+- **`destination`**: Specify message destination (Default: "ipc")
+  - `"ipc"`: Local Greengrass IPC communication
   - Any other value: Publish to IoT Core
-  
-Example:
+
+**Example:**
 ```json
 {
   "metricEmission": {
     "target": "messaging",
+    "namespace": "MyApp/Metrics",
     "targetConfig": {
-      "topic": "metrics/{ThingName}/data",
+      "topic": "metrics/{ThingName}/{ComponentName}",
       "destination": "cloud"
     }
   }
 }
 ```
 
-## Multiple Instance Configuration Example
+## Configuration Examples
 
-The following example demonstrates how to configure multiple instances with different metric emission strategies. This is provided as an illustration of the configuration structure only.
-
+### Basic Configuration
 ```json
 {
-  "instances": {
-    "critical-metrics": {
-      "metricEmission": {
-        "target": "cloudWatch",
-        "namespace": "Critical/Metrics",
-        "targetConfig": {
-          "intervalSecs": 30
-        }
-      }
+  "metricEmission": {
+    "target": "log",
+    "namespace": "MyApplication"
+  }
+}
+```
+
+### CloudWatch with Custom Batching
+```json
+{
+  "metricEmission": {
+    "target": "cloudwatch",
+    "namespace": "Production/MyApp",
+    "targetConfig": {
+      "intervalSecs": 30
     },
-    "debug-metrics": {
-      "metricEmission": {
-        "target": "log",
-        "targetConfig": {
-          "logFileName": "debug-metrics-%Y-%m-%d.log"
-        }
-      }
-    },
-    "realtime-metrics": {
-      "metricEmission": {
-        "target": "messaging",
-        "targetConfig": {
-          "topic": "metrics/realtime/{ComponentName}",
-          "destination": "cloud"
-        }
-      }
+    "largeFleetWorkaround": true
+  }
+}
+```
+
+### Log with File Rotation
+```json
+{
+  "metricEmission": {
+    "target": "log",
+    "namespace": "Development/Debug",
+    "targetConfig": {
+      "logFileName": "/var/log/{ComponentName}-metrics.log",
+      "maxFileSize": "100MB"
     }
   }
 }
 ```
 
-### Understanding Multiple Instances
+### Messaging to IoT Core
+```json
+{
+  "metricEmission": {
+    "target": "messaging",
+    "namespace": "Telemetry/Sensors",
+    "targetConfig": {
+      "topic": "telemetry/{ThingName}/metrics",
+      "destination": "cloud"
+    }
+  }
+}
+```
 
-The "instances" configuration pattern shown above is an example that demonstrates the system's ability to handle different metric emission configurations for different components or purposes:
+## EMF (Embedded Metric Format)
 
-- Each instance can have completely independent configurations
-- Useful for:
-  - Sending critical metrics directly to CloudWatch while logging debug metrics locally
-  - Using different namespaces for different component types
-  - Implementing different emission strategies based on metric importance
-  - Testing new configurations alongside existing ones
+All targets use the EMF format for CloudWatch compatibility. The EMF structure includes:
+- Timestamp in Unix epoch seconds
+- CloudWatch metadata with namespace, dimensions, and metric definitions
+- Dimension values as top-level properties
+- Measure values as top-level properties
+- AWS-specific metadata in `_aws` object
 
-Implementation Note: Each instance maintains its own metric target instance and configuration, ensuring complete isolation between different metric streams.
+## Performance Considerations
 
-## Performance Considerations and Troubleshooting
+### Target-Specific Behavior
 
-### Batching and Rate Limits
+**CloudWatch Direct:**
+- Batches metrics by namespace using Timer-based emission
+- Each namespace maintains a ConcurrentLinkedQueue
+- Sends up to 20 metrics per API call (AWS limit)
+- Memory usage scales with the batching interval and metric volume
 
-The system handles different rate limits and batching strategies based on the target:
+**CloudWatch Component:**
+- Immediate transmission, no batching
+- Lower memory footprint
+- Relies on component's rate limiting
+- Cannot use `largeFleetWorkaround`
 
-1. CloudWatch Direct:
-   - Metrics are batched and sent every `intervalSecs`
-   - Each namespace maintains a separate queue
-   - Maximum of 20 metrics per batch (AWS API limit)
-   - Uses concurrent queue for thread safety
+**Log Target:**
+- Immediate writing with file rotation
+- Performance limited by disk I/O
+- File rotation prevents unlimited disk usage
+- Thread-safe through Log4j2
 
-2. CloudWatch Component:
-   - No batching - immediate transmission
-   - Relies on component's own rate limiting
-   - Lower overhead than direct CloudWatch
-
-3. Log Target:
-   - Immediate writing to log file
-   - Performance limited by disk I/O
-   - Uses Log4j2 for efficient logging
-
-4. Messaging:
-   - Immediate transmission
-   - IPC: Limited by local processing
-   - IoT Core: Subject to IoT Core limits
-
-### Common Issues and Solutions
-
-1. High Memory Usage:
-   - Check batching interval for CloudWatch target
-   - Consider using CloudWatch Component instead of direct
-   - Verify metric emission frequency
-
-2. Missing Metrics:
-   - Verify namespace configuration
-   - Check log files for errors
-   - Ensure proper IAM permissions for CloudWatch
-
-3. Performance Issues:
-   - Enable `largeFleetWorkaround` for big deployments
-   - Increase `intervalSecs` for less frequent emission
-   - Consider using local logging for debug metrics
-
-4. Template Resolution:
-   - Verify thing name is properly configured
-   - Check component name registration
-   - Validate template syntax
+**Messaging:**
+- Immediate transmission
+- IPC: Local processing limits
+- IoT Core: Subject to IoT Core throttling
 
 ### Best Practices
 
-1. Target Selection:
-   - Use CloudWatch Component for most cases
-   - Direct CloudWatch for custom batching needs
-   - Local logging for debugging
-   - Messaging for real-time monitoring
+1. **Target Selection:**
+   - Use of `cloudwatchcomponent` is no longer recommended due to component limitations
+   - Use `cloudwatch` for low volume emission or if custom batching intervals are needed
+   - Use `log` for local debugging and development, and in conjunction with the [Greengrass LogManager component](https://docs.aws.amazon.com/greengrass/v2/developerguide/log-manager-component.html) for efficient log uploads to CloudWatch
+   - Use `messaging` for real-time monitoring or custom processing
 
-2. Configuration:
-   - Set appropriate intervals based on metric importance
-   - Use namespaces to organize metrics
-   - Leverage template variables for dynamic naming
-   - Configure batching based on metric volume
+2. **Configuration:**
+   - Set `intervalSecs` based on metric volume and latency requirements
+   - Use meaningful namespaces for metric organization
+   - Configure appropriate file rotation sizes for log target
+   - Enable `largeFleetWorkaround` for large deployments to reduce CloudWatch costs
 
-3. Resource Usage:
-   - Monitor memory usage with large metric volumes
-   - Consider disk space for log target
-   - Watch for API throttling with CloudWatch
-   - Use appropriate QoS for messaging
+3. **Monitoring:**
+   - Monitor memory usage with high-volume metrics
+   - Watch for CloudWatch API throttling
+   - Check disk space when using log target
+   - Verify IAM permissions for CloudWatch targets
