@@ -1,11 +1,11 @@
 package com.aws.proserve.ggcommons;
 
-import com.aws.proserve.ggcommons.config.ConfigManager;
+import com.aws.proserve.ggcommons.interfaces.IConfigurationService;
+import com.aws.proserve.ggcommons.interfaces.IMessagingService;
+import com.aws.proserve.ggcommons.interfaces.IMetricService;
 import com.aws.proserve.ggcommons.messaging.Message;
-import com.aws.proserve.ggcommons.messaging.MessagingClient;
 import com.aws.proserve.ggcommons.metrics.Measure;
 import com.aws.proserve.ggcommons.metrics.Metric;
-import com.aws.proserve.ggcommons.metrics.MetricEmitter;
 import com.aws.proserve.ggcommons.utils.Utils;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
@@ -33,7 +33,9 @@ class GGCommonsTest
 {
 
     GGCommons ggCommons;
-    ConfigManager configManager;
+    IConfigurationService configService;
+    IMessagingService messagingService;
+    IMetricService metricService;
     Message receivedMessage;
     Logger LOGGER;
     Gson gson = new Gson();
@@ -47,7 +49,9 @@ class GGCommonsTest
                 "-c", "FILE", "./config_2.json"
         };
         ggCommons = new GGCommons("com.aws.proserve.greengrass.UnitTests", args);
-        configManager = ggCommons.getConfigManager();
+        configService = ggCommons.getService(IConfigurationService.class);
+        messagingService = ggCommons.getService(IMessagingService.class);
+        metricService = ggCommons.getService(IMetricService.class);
         LOGGER = LogManager.getLogger(GGCommonsTest.class);
     }
 
@@ -83,122 +87,122 @@ class GGCommonsTest
     {
         JsonObject replyPayload = new JsonObject();
         replyPayload.addProperty("reply_message", "I have received your request and have replied with this message");
-        Message reply = Message.buildFromConfig("ReplyTest", "1.0", replyPayload, configManager);
-        MessagingClient.reply(message, reply);
+        Message reply = Message.buildFromConfig("ReplyTest", "1.0", replyPayload, ggCommons.getConfigManager());
+        messagingService.reply(message, reply);
     }
 
     public void iotCoreRequestHandler(String topic, Message message)
     {
         JsonObject replyPayload = new JsonObject();
         replyPayload.addProperty("reply_message", "(IoT Core) I have received your request and have replied with this message");
-        Message reply = Message.buildFromConfig("ReplyTest", "1.0", replyPayload, configManager);
-        MessagingClient.reply(message, reply);
+        Message reply = Message.buildFromConfig("ReplyTest", "1.0", replyPayload, ggCommons.getConfigManager());
+        messagingService.reply(message, reply);
     }
 
 //    @Test
 //    void publishIpcMessage()
 //    {
 //        String topic = "test/testIpcTopic";
-//        MessagingClient.subscribe(topic, this::ipcMessageHandler, 1);
+//        messagingService.subscribe(topic, this::ipcMessageHandler, 1);
 //        JsonObject jsonPayload = new JsonObject();
 //        jsonPayload.addProperty("message", "Test IPC message");
-//        Message msg = Message.buildFromConfig("IpcMessageTest", "1.0", jsonPayload, configManager);
-//        MessagingClient.publish(topic, msg);
+//        Message msg = Message.buildFromConfig("IpcMessageTest", "1.0", jsonPayload, ggCommons.getConfigManager());
+//        messagingService.publish(topic, msg);
 //        Utils.sleep(200);
 //        assertNotNull(receivedMessage);
 //        assertEquals("IpcMessageTest", receivedMessage.getHeader().getName());
 //    }
-//
+////
 //    @Test
 //    void publishRawIpcMessage()
 //    {
 //        String topic = "test/testIpcTopic";
-//        MessagingClient.subscribe(topic, this::ipcMessageHandler, 1);
+//        messagingService.subscribe(topic, this::ipcMessageHandler, 1);
 //        JsonObject jsonPayload = new JsonObject();
 //        jsonPayload.addProperty("message", "Test IPC message");
-//        MessagingClient.publishRaw(topic, jsonPayload);
+//        messagingService.publishRaw(topic, jsonPayload);
 //        Utils.sleep(200);
 //        assertNotNull(receivedMessage);
 //        assertNull(receivedMessage.getHeader());
 //        assertNotNull(receivedMessage.getRaw());
 //    }
-//
+////
 //    @Test
 //    void publishMinimalHeaderIpcMessage()
 //    {
 //        String topic = "test/testIpcTopic";
-//        MessagingClient.subscribe(topic, this::ipcMessageHandler, 1);
+//        messagingService.subscribe(topic, this::ipcMessageHandler, 1);
 //        JsonObject message = new JsonObject();
 //        JsonObject header = new JsonObject();
 //        header.addProperty("reply_to", "ggcommons/reply");
 //        message.add("header", header);
-//        MessagingClient.publishRaw(topic, message);
+//        messagingService.publishRaw(topic, message);
 //        Utils.sleep(200);
 //        assertNotNull(receivedMessage);
 //        assertNotNull(receivedMessage.getHeader());
 //        assertEquals("ggcommons/reply", receivedMessage.getHeader().getReplyTo());
 //        assertNull(receivedMessage.getRaw());
 //    }
-//
+////
 //    @Test
 //    void publishIotCoreMessage()
 //    {
 //        String topic = "test/testIotCoreTopic";
-//        MessagingClient.subscribeToIoTCore(topic, this::iotCoreMessageHandler, QOS.AT_LEAST_ONCE);
+//        messagingService.subscribeToIoTCore(topic, this::iotCoreMessageHandler, QOS.AT_LEAST_ONCE);
 //        JsonObject jsonPayload = new JsonObject();
 //        jsonPayload.addProperty("message", "Test IoT Core message");
-//        Message msg = Message.buildFromConfig("IoTCoreMessage", "1.0", jsonPayload, configManager);
-//        MessagingClient.publishToIotCore(topic, msg, QOS.AT_LEAST_ONCE);
+//        Message msg = Message.buildFromConfig("IoTCoreMessage", "1.0", jsonPayload, ggCommons.getConfigManager());
+//        messagingService.publishToIotCore(topic, msg, QOS.AT_LEAST_ONCE);
 //        Utils.sleep(200);
 //        assertNotNull(receivedMessage);
 //        assertEquals("IoTCoreMessage", receivedMessage.getHeader().getName());
 //    }
-//
+////
 //    @Test
 //    void subscribeWithFilter()
 //    {
 //        String subTopic = "test/+";
 //        String pubTopic = "test/testIpcTopic";
-//        MessagingClient.subscribe(subTopic, this::ipcMessageHandler, 1);
+//        messagingService.subscribe(subTopic, this::ipcMessageHandler, 1);
 //        JsonObject jsonPayload = new JsonObject();
 //        jsonPayload.addProperty("message", "Test IPC message");
-//        Message msg = Message.buildFromConfig("SubscribeWithFilterTest", "1.0", jsonPayload, configManager);
-//        MessagingClient.publish(pubTopic, msg);
+//        Message msg = Message.buildFromConfig("SubscribeWithFilterTest", "1.0", jsonPayload, ggCommons.getConfigManager());
+//        messagingService.publish(pubTopic, msg);
 //        Utils.sleep(200);
 //        assertNotNull(receivedMessage);
 //        assertEquals("SubscribeWithFilterTest", receivedMessage.getHeader().getName());
 //    }
-//
+////
 //    @Test
 //    void requestReplyIpc() throws ExecutionException, InterruptedException, TimeoutException
 //    {
 //        String requestTopic = "test/request";
-//        MessagingClient.subscribe(requestTopic, this::requestHandler, 1);
+//        messagingService.subscribe(requestTopic, this::requestHandler, 1);
 //        JsonObject requestPayload = new JsonObject();
 //        requestPayload.addProperty("message", "Test Request Reply");
-//        Message request = Message.buildFromConfig("RequestTest", "1.0", requestPayload, configManager);
+//        Message request = Message.buildFromConfig("RequestTest", "1.0", requestPayload, ggCommons.getConfigManager());
 //        String correlationId = request.getCorrelationId();
-//        Message reply = MessagingClient.request(requestTopic, request).get(1000, TimeUnit.MILLISECONDS);
+//        Message reply = messagingService.request(requestTopic, request).get(1000, TimeUnit.MILLISECONDS);
 //        assertNotNull(reply);
 //        assertEquals(correlationId, reply.getCorrelationId());
 //        assertEquals("ReplyTest", reply.getHeader().getName());
 //    }
-//
+////
 //    @Test
 //    void requestReplyIoTCore() throws ExecutionException, InterruptedException, TimeoutException
 //    {
 //        String requestTopic = "test/iot_core_request";
-//        MessagingClient.subscribeToIoTCore(requestTopic, this::iotCoreRequestHandler, QOS.AT_MOST_ONCE, 1);
+//        messagingService.subscribeToIoTCore(requestTopic, this::iotCoreRequestHandler, QOS.AT_MOST_ONCE, 1);
 //        JsonObject requestPayload = new JsonObject();
 //        requestPayload.addProperty("message", "Test Request Reply");
-//        Message request = Message.buildFromConfig("RequestTest", "1.0", requestPayload, configManager);
+//        Message request = Message.buildFromConfig("RequestTest", "1.0", requestPayload, ggCommons.getConfigManager());
 //        String correlationId = request.getCorrelationId();
-//        Message reply = MessagingClient.requestFromIoTCore(requestTopic, request).get(1000, TimeUnit.MILLISECONDS);
+//        Message reply = messagingService.requestFromIoTCore(requestTopic, request).get(1000, TimeUnit.MILLISECONDS);
 //        assertNotNull(reply);
 //        assertEquals(correlationId, reply.getCorrelationId());
 //        assertEquals("ReplyTest", reply.getHeader().getName());
 //    }
-//
+////
 //    @Test
 //    void emitMetric() throws ExecutionException, InterruptedException, TimeoutException
 //    {
@@ -210,16 +214,16 @@ class GGCommonsTest
 //        metric.addMeasure(measure);
 //
 //        // Define the metric
-//        MetricEmitter.defineMetric(metric);
+//        metricService.defineMetric(metric);
 //
 //        for (int i = 1; i <= 5; i++)
 //        {
 //            Map<String, Float> measureValues = Map.of("val", (float) i);
-//            MetricEmitter.emitMetric("test", measureValues);
+//            metricService.emitMetric("test", measureValues);
 //            Utils.sleep(1000);
 //        }
 //    }
-//
+////
 //    @Test
 //    void configurationChangeListenersNotCalledDuringInitialization()
 //    {
@@ -233,22 +237,23 @@ class GGCommonsTest
 //                "-c", "FILE", "./config_2.json"
 //        };
 //        GGCommons testGGCommons = new GGCommons("com.aws.proserve.test.InitTest", args);
+//        IConfigurationService testConfigService = testGGCommons.getService(IConfigurationService.class);
 //
 //        // Add our test listener after initialization
-//        testGGCommons.getConfigManager().addConfigChangeListener(testListener);
+//        testConfigService.addConfigChangeListener(testListener);
 //
 //        // Verify the listener was not called during initialization
 //        assertFalse(testListener.wasOnConfigurationChangedCalled(),
 //                "onConfigurationChanged should not be called during initialization");
 //
 //        // Now trigger an actual configuration change to verify the listener works
-//        testGGCommons.getConfigManager().notifyConfigurationChanged();
+//        testConfigService.notifyConfigurationChanged();
 //
 //        // Verify the listener was called for the actual configuration change
 //        assertTrue(testListener.wasOnConfigurationChangedCalled(),
 //                "onConfigurationChanged should be called for actual configuration changes");
 //    }
-//
+////
 //    // Test helper class to track configuration change calls
 //    private static class TestConfigurationChangeListener implements com.aws.proserve.ggcommons.config.ConfigurationChangeListener
 //    {
@@ -266,33 +271,33 @@ class GGCommonsTest
 //            return onConfigurationChangedCalled;
 //        }
 //    }
-//
-//    @Test
-//    void monitorConfigFileForChanges() throws ExecutionException, InterruptedException, TimeoutException
-//    {
-//        // Create a Metric named "test" using default namespace and dimensions
-//        Metric metric = new Metric("test");
-//
-//        // Add a measure
-//        Measure measure = new Measure("val", "Count", 1);
-//        metric.addMeasure(measure);
-//
-//        // Define the metric
-//        MetricEmitter.defineMetric(metric);
-//
-//        for (int i = 1; i <= 60; i++)
-//        {
-//            Map<String, Float> measureValues = Map.of("val", (float) i);
-//            MetricEmitter.emitMetric("test", measureValues);
-//            LOGGER.trace("This is a trace log message ({})", i);
-//            LOGGER.debug("This is a debug log message ({})", i);
-//            LOGGER.info("This is an info log message ({})", i);
-//            LOGGER.warn("This is a warn log message ({})", i);
-//            LOGGER.error("This is an error log message ({})", i);
-//            Utils.sleep(1000);
-//        }
-//    }
-//
+////
+////    @Test
+////    void monitorConfigFileForChanges() throws ExecutionException, InterruptedException, TimeoutException
+////    {
+////        // Create a Metric named "test" using default namespace and dimensions
+////        Metric metric = new Metric("test");
+////
+////        // Add a measure
+////        Measure measure = new Measure("val", "Count", 1);
+////        metric.addMeasure(measure);
+////
+////        // Define the metric
+////        metricService.defineMetric(metric);
+////
+////        for (int i = 1; i <= 60; i++)
+////        {
+////            Map<String, Float> measureValues = Map.of("val", (float) i);
+////            metricService.emitMetric("test", measureValues);
+////            LOGGER.trace("This is a trace log message ({})", i);
+////            LOGGER.debug("This is a debug log message ({})", i);
+////            LOGGER.info("This is an info log message ({})", i);
+////            LOGGER.warn("This is a warn log message ({})", i);
+////            LOGGER.error("This is an error log message ({})", i);
+////            Utils.sleep(1000);
+////        }
+////    }
+////
 //    public JsonObject loadConfiguration(String configFilePath)
 //    {
 //        LOGGER.debug("Loading configuration from file '{}'", configFilePath);
@@ -312,5 +317,5 @@ class GGCommonsTest
 //
 //        return retVal;
 //    }
-//
+////
 }

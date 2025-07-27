@@ -5,9 +5,16 @@
 package com.aws.proserve.ggcommons;
 
 import com.aws.proserve.ggcommons.config.ConfigManager;
+import com.aws.proserve.ggcommons.config.ConfigurationService;
+import com.aws.proserve.ggcommons.di.ServiceRegistry;
 import com.aws.proserve.ggcommons.heartbeat.Heartbeat;
+import com.aws.proserve.ggcommons.interfaces.IConfigurationService;
+import com.aws.proserve.ggcommons.interfaces.IMessagingService;
+import com.aws.proserve.ggcommons.interfaces.IMetricService;
 import com.aws.proserve.ggcommons.messaging.MessagingClient;
+import com.aws.proserve.ggcommons.messaging.MessagingService;
 import com.aws.proserve.ggcommons.metrics.MetricEmitter;
+import com.aws.proserve.ggcommons.metrics.MetricService;
 import org.apache.commons.cli.*;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -18,6 +25,7 @@ public class GGCommons
     private static final Logger LOGGER = LogManager.getLogger(GGCommons.class);
 
     private ConfigManager configManager;
+    private ServiceRegistry serviceRegistry;
 
     /**
      * Constructs a new GGCommons instance with the given component name and command line arguments.
@@ -57,6 +65,13 @@ public class GGCommons
     }
 
     /**
+     * Protected constructor for testing that allows service injection before initialization.
+     */
+    protected GGCommons() {
+        // Empty constructor for testing
+    }
+    
+    /**
      * Initializes the GGCommons instance with the specified parameters.
      * This method sets up the core components including messaging, configuration, metrics, and heartbeat.
      *
@@ -68,10 +83,52 @@ public class GGCommons
     private void init(String componentName, String[] args, Options appOptions, boolean receiveOwnMessages)
     {
         ParsedCommandLine parsedCommandLine = GGCommons.processArgs(componentName, args, appOptions);
-        MessagingClient.init(parsedCommandLine, receiveOwnMessages);
+        
+        // Initialize config manager first
         configManager = new ConfigManager(componentName, parsedCommandLine);
+        
+        // Initialize service registry early so services can be injected
+        initializeServiceRegistry();
+        
+        // Initialize other components - these will fail in production if services are unavailable
+        MessagingClient.init(parsedCommandLine, receiveOwnMessages);
         MetricEmitter.init(configManager);
         new Heartbeat(configManager);
+        
+        // Complete initialization - this must be the very last step
+        // After this point, configuration changes will trigger listener notifications
+        configManager.completeInitialization();
+    }
+    
+    /**
+     * Initialize for testing with pre-injected services.
+     * This allows tests to inject mock services before any real initialization occurs.
+     */
+    protected void initForTesting(String componentName, String[] args) {
+        ParsedCommandLine parsedCommandLine = GGCommons.processArgs(componentName, args, null);
+        configManager = new ConfigManager(componentName, parsedCommandLine);
+        
+        if (serviceRegistry == null) {
+            initializeServiceRegistry();
+        }
+        
+        // Skip messaging, metrics, and heartbeat initialization for testing
+        configManager.completeInitialization();
+    }
+    
+    /**
+     * Initializes the service registry and registers default service implementations.
+     */
+    protected void initializeServiceRegistry() {
+        serviceRegistry = new ServiceRegistry();
+        
+        // Register service implementations
+        serviceRegistry.register(IConfigurationService.class, new ConfigurationService(configManager));
+        serviceRegistry.register(IMessagingService.class, new MessagingService());
+        serviceRegistry.register(IMetricService.class, new MetricService());
+        
+        // Also register concrete classes for backward compatibility
+        serviceRegistry.register(ConfigManager.class, configManager);
     }
 
     /**
@@ -82,6 +139,44 @@ public class GGCommons
     public ConfigManager getConfigManager()
     {
         return configManager;
+    }
+    
+    /**
+     * Retrieves a service by its interface type.
+     * 
+     * @param serviceType The service interface class
+     * @param <T> The service type
+     * @return The service implementation, or null if not registered
+     */
+    public <T> T getService(Class<T> serviceType) {
+        if (serviceRegistry == null) {
+            throw new IllegalStateException("GGCommons not properly initialized");
+        }
+        return serviceRegistry.get(serviceType);
+    }
+    
+    /**
+     * Registers a custom service implementation.
+     * This allows applications to override default service implementations.
+     * 
+     * @param serviceType The service interface class
+     * @param implementation The service implementation
+     * @param <T> The service type
+     */
+    public <T> void registerService(Class<T> serviceType, T implementation) {
+        if (serviceRegistry == null) {
+            throw new IllegalStateException("GGCommons not properly initialized");
+        }
+        serviceRegistry.register(serviceType, implementation);
+    }
+    
+    /**
+     * Returns the service registry for advanced service management.
+     * 
+     * @return The service registry instance
+     */
+    public ServiceRegistry getServiceRegistry() {
+        return serviceRegistry;
     }
 
     /**
