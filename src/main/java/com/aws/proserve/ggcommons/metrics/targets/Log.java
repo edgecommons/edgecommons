@@ -11,6 +11,8 @@ import com.google.gson.JsonObject;
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Map;
 
 public class Log extends MetricTarget
@@ -91,10 +93,13 @@ public class Log extends MetricTarget
                     .withMax("5")
                     .build();
             
+            // Create timestamp-based file pattern
+            String filePattern = createTimestampFilePattern(metricFile);
+            
             org.apache.logging.log4j.core.appender.RollingFileAppender appender = 
                 org.apache.logging.log4j.core.appender.RollingFileAppender.newBuilder()
                     .withFileName(metricFile)
-                    .withFilePattern(metricFile + ".%i")
+                    .withFilePattern(filePattern)
                     .setName(uniqueAppenderName)
                     .setLayout(layout)
                     .withPolicy(triggeringPolicy)
@@ -128,6 +133,18 @@ public class Log extends MetricTarget
         // Fallback - try to get existing logger or create a basic one
         currentLoggerName = "metric_fallback";
         return LogManager.getLogger(currentLoggerName);
+    }
+    
+    private String createTimestampFilePattern(String baseFileName) {
+        // Extract file extension if present
+        int lastDotIndex = baseFileName.lastIndexOf('.');
+        if (lastDotIndex > 0) {
+            String nameWithoutExtension = baseFileName.substring(0, lastDotIndex);
+            String extension = baseFileName.substring(lastDotIndex);
+            return nameWithoutExtension + "-%d{yyyyMMddHHmmss}" + extension;
+        } else {
+            return baseFileName + "-%d{yyyyMMddHHmmss}.log";
+        }
     }
 }
 
