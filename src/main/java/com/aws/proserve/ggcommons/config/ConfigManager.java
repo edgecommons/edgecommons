@@ -43,6 +43,7 @@ public class ConfigManager
     protected final String componentFullName;
     protected final String thingName;
     protected final ArrayList<ConfigurationChangeListener> configChangeListeners = new ArrayList<>();
+    private boolean initializing = true;
     protected final JsonObject fullConfig;
     protected TagConfiguration tagConfig;
     protected HeartbeatConfiguration heartbeatConfig;
@@ -93,6 +94,9 @@ public class ConfigManager
         
         // Register logging configuration change listener
         addConfigChangeListener(new LoggingConfigChangeListener(this));
+        
+        // Initialization complete - future applyConfig calls will notify listeners
+        initializing = false;
     }
 
     /**
@@ -121,14 +125,8 @@ public class ConfigManager
                 ? componentConfig.get("global").getAsJsonObject()
                 : new JsonObject();
         genInstancesMap();
-        LOGGER.info("configurationChanged: Notifying {} listeners", configChangeListeners.size());
-        for (ConfigurationChangeListener listener : configChangeListeners)
-        {
-            if (listener != null) {
-                listener.onConfigurationChanged();
-            } else {
-                LOGGER.error("ConfigurationChangeListener is null.  Not notifying.");
-            }
+        if (!initializing) {
+            notifyConfigurationChanged();
         }
     }
 
@@ -280,6 +278,23 @@ public class ConfigManager
     public void removeConfigChangeListener(ConfigurationChangeListener listener)
     {
         configChangeListeners.remove(listener);
+    }
+
+    /**
+     * Notifies all registered configuration change listeners of a configuration change.
+     * This should only be called for actual runtime configuration changes, not during initialization.
+     */
+    public void notifyConfigurationChanged()
+    {
+        LOGGER.info("configurationChanged: Notifying {} listeners", configChangeListeners.size());
+        for (ConfigurationChangeListener listener : configChangeListeners)
+        {
+            if (listener != null) {
+                listener.onConfigurationChanged();
+            } else {
+                LOGGER.error("ConfigurationChangeListener is null.  Not notifying.");
+            }
+        }
     }
 
 

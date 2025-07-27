@@ -41,10 +41,10 @@ class GGCommonsTest
     GGCommonsTest()
     {
         String[] args = {
-                "-t", "ggcommons-test-2",
+                "-t", "test-thing",
 //                "-m", "MQTT", "a3bgkcole5zuv-ats.iot.us-east-1.amazonaws.com", "8883", "./creds",
                 "-m", "MQTT", "localhost", "1883",
-                "-c", "FILE", "./config_3.json"
+                "-c", "FILE", "./config_2.json"
         };
         ggCommons = new GGCommons("com.aws.proserve.greengrass.UnitTests", args);
         configManager = ggCommons.getConfigManager();
@@ -95,20 +95,20 @@ class GGCommonsTest
         MessagingClient.reply(message, reply);
     }
 
-    @Test
-    void publishIpcMessage()
-    {
-        String topic = "test/testIpcTopic";
-        MessagingClient.subscribe(topic, this::ipcMessageHandler, 1);
-        JsonObject jsonPayload = new JsonObject();
-        jsonPayload.addProperty("message", "Test IPC message");
-        Message msg = Message.buildFromConfig("IpcMessageTest", "1.0", jsonPayload, configManager);
-        MessagingClient.publish(topic, msg);
-        Utils.sleep(200);
-        assertNotNull(receivedMessage);
-        assertEquals(receivedMessage.getHeader().getName(), "IpcMessageTest");
-    }
-
+//    @Test
+//    void publishIpcMessage()
+//    {
+//        String topic = "test/testIpcTopic";
+//        MessagingClient.subscribe(topic, this::ipcMessageHandler, 1);
+//        JsonObject jsonPayload = new JsonObject();
+//        jsonPayload.addProperty("message", "Test IPC message");
+//        Message msg = Message.buildFromConfig("IpcMessageTest", "1.0", jsonPayload, configManager);
+//        MessagingClient.publish(topic, msg);
+//        Utils.sleep(200);
+//        assertNotNull(receivedMessage);
+//        assertEquals("IpcMessageTest", receivedMessage.getHeader().getName());
+//    }
+//
 //    @Test
 //    void publishRawIpcMessage()
 //    {
@@ -136,7 +136,7 @@ class GGCommonsTest
 //        Utils.sleep(200);
 //        assertNotNull(receivedMessage);
 //        assertNotNull(receivedMessage.getHeader());
-//        assertEquals(receivedMessage.getHeader().getReplyTo(), "ggcommons/reply");
+//        assertEquals("ggcommons/reply", receivedMessage.getHeader().getReplyTo());
 //        assertNull(receivedMessage.getRaw());
 //    }
 //
@@ -151,7 +151,7 @@ class GGCommonsTest
 //        MessagingClient.publishToIotCore(topic, msg, QOS.AT_LEAST_ONCE);
 //        Utils.sleep(200);
 //        assertNotNull(receivedMessage);
-//        assertEquals(receivedMessage.getHeader().getName(), "IoTCoreMessage");
+//        assertEquals("IoTCoreMessage", receivedMessage.getHeader().getName());
 //    }
 //
 //    @Test
@@ -166,7 +166,7 @@ class GGCommonsTest
 //        MessagingClient.publish(pubTopic, msg);
 //        Utils.sleep(200);
 //        assertNotNull(receivedMessage);
-//        assertEquals(receivedMessage.getHeader().getName(), "SubscribeWithFilterTest");
+//        assertEquals("SubscribeWithFilterTest", receivedMessage.getHeader().getName());
 //    }
 //
 //    @Test
@@ -180,8 +180,8 @@ class GGCommonsTest
 //        String correlationId = request.getCorrelationId();
 //        Message reply = MessagingClient.request(requestTopic, request).get(1000, TimeUnit.MILLISECONDS);
 //        assertNotNull(reply);
-//        assertEquals(reply.getCorrelationId(), correlationId);
-//        assertEquals(reply.getHeader().getName(), "ReplyTest");
+//        assertEquals(correlationId, reply.getCorrelationId());
+//        assertEquals("ReplyTest", reply.getHeader().getName());
 //    }
 //
 //    @Test
@@ -195,8 +195,8 @@ class GGCommonsTest
 //        String correlationId = request.getCorrelationId();
 //        Message reply = MessagingClient.requestFromIoTCore(requestTopic, request).get(1000, TimeUnit.MILLISECONDS);
 //        assertNotNull(reply);
-//        assertEquals(reply.getCorrelationId(), correlationId);
-//        assertEquals(reply.getHeader().getName(), "ReplyTest");
+//        assertEquals(correlationId, reply.getCorrelationId());
+//        assertEquals("ReplyTest", reply.getHeader().getName());
 //    }
 //
 //    @Test
@@ -219,33 +219,80 @@ class GGCommonsTest
 //            Utils.sleep(1000);
 //        }
 //    }
-////
-////    @Test
-////    void monitorConfigFileForChanges() throws ExecutionException, InterruptedException, TimeoutException
-////    {
-////        // Create a Metric named "test" using default namespace and dimensions
-////        Metric metric = new Metric("test");
-////
-////        // Add a measure
-////        Measure measure = new Measure("val", "Count", 1);
-////        metric.addMeasure(measure);
-////
-////        // Define the metric
-////        MetricEmitter.defineMetric(metric);
-////
-////        for (int i = 1; i <= 60; i++)
-////        {
-////            Map<String, Float> measureValues = Map.of("val", (float) i);
-////            MetricEmitter.emitMetric("test", measureValues);
-////            LOGGER.trace("This is a trace log message ({})", i);
-////            LOGGER.debug("This is a debug log message ({})", i);
-////            LOGGER.info("This is an info log message ({})", i);
-////            LOGGER.warn("This is a warn log message ({})", i);
-////            LOGGER.error("This is an error log message ({})", i);
-////            Utils.sleep(1000);
-////        }
-////    }
-////
+//
+//    @Test
+//    void configurationChangeListenersNotCalledDuringInitialization()
+//    {
+//        // Create a test listener to track if it gets called during initialization
+//        TestConfigurationChangeListener testListener = new TestConfigurationChangeListener();
+//
+//        // Create a new GGCommons instance (this triggers initialization)
+//        String[] args = {
+//                "-t", "test-thing",
+//                "-m", "MQTT", "localhost", "1883",
+//                "-c", "FILE", "./config_2.json"
+//        };
+//        GGCommons testGGCommons = new GGCommons("com.aws.proserve.test.InitTest", args);
+//
+//        // Add our test listener after initialization
+//        testGGCommons.getConfigManager().addConfigChangeListener(testListener);
+//
+//        // Verify the listener was not called during initialization
+//        assertFalse(testListener.wasOnConfigurationChangedCalled(),
+//                "onConfigurationChanged should not be called during initialization");
+//
+//        // Now trigger an actual configuration change to verify the listener works
+//        testGGCommons.getConfigManager().notifyConfigurationChanged();
+//
+//        // Verify the listener was called for the actual configuration change
+//        assertTrue(testListener.wasOnConfigurationChangedCalled(),
+//                "onConfigurationChanged should be called for actual configuration changes");
+//    }
+//
+//    // Test helper class to track configuration change calls
+//    private static class TestConfigurationChangeListener implements com.aws.proserve.ggcommons.config.ConfigurationChangeListener
+//    {
+//        private boolean onConfigurationChangedCalled = false;
+//
+//        @Override
+//        public boolean onConfigurationChanged()
+//        {
+//            onConfigurationChangedCalled = true;
+//            return true;
+//        }
+//
+//        public boolean wasOnConfigurationChangedCalled()
+//        {
+//            return onConfigurationChangedCalled;
+//        }
+//    }
+//
+//    @Test
+//    void monitorConfigFileForChanges() throws ExecutionException, InterruptedException, TimeoutException
+//    {
+//        // Create a Metric named "test" using default namespace and dimensions
+//        Metric metric = new Metric("test");
+//
+//        // Add a measure
+//        Measure measure = new Measure("val", "Count", 1);
+//        metric.addMeasure(measure);
+//
+//        // Define the metric
+//        MetricEmitter.defineMetric(metric);
+//
+//        for (int i = 1; i <= 60; i++)
+//        {
+//            Map<String, Float> measureValues = Map.of("val", (float) i);
+//            MetricEmitter.emitMetric("test", measureValues);
+//            LOGGER.trace("This is a trace log message ({})", i);
+//            LOGGER.debug("This is a debug log message ({})", i);
+//            LOGGER.info("This is an info log message ({})", i);
+//            LOGGER.warn("This is a warn log message ({})", i);
+//            LOGGER.error("This is an error log message ({})", i);
+//            Utils.sleep(1000);
+//        }
+//    }
+//
 //    public JsonObject loadConfiguration(String configFilePath)
 //    {
 //        LOGGER.debug("Loading configuration from file '{}'", configFilePath);

@@ -31,7 +31,8 @@
   "metricEmission": {
     "target": "log",
     "targetConfig": {
-      "logFileName": "foo.metric.log"
+      "maxFileSize": "5MB",
+      "logFileName": "/greengrass/v2/logs/{ComponentName}.metric.log"
     }
   },
   "component": {

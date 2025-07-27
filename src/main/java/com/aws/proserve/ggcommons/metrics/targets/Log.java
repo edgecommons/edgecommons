@@ -17,22 +17,26 @@ public class Log extends MetricTarget
 {
     private final static Logger LOGGER = LogManager.getLogger(MetricTarget.class);
     private Logger metricLogger;
+    private String currentLoggerName;
 
     public Log(ConfigManager configManager)
     {
         super(configManager);
-        metricLogger = configureMetricLogger();
+        // Don't configure logger immediately - wait for logging system to stabilize
+        metricLogger = null;
     }
 
     @Override
     public void emitMetric(Metric metric, Map<String, Float> measureValues)
     {
+        ensureMetricLoggerConfigured();
         emitMetricNow(metric, measureValues);
     }
 
     @Override
     public void emitMetricNow(Metric metric, Map<String, Float> measureValues)
     {
+        ensureMetricLoggerConfigured();
         JsonObject metricData = EmfHelper.buildMetricData(metricConfig.getNamespace(), metric, measureValues, false);
         metricLogger.info(metricData.toString());
         if (metricConfig.getLargeFleetWorkaround())
@@ -46,34 +50,26 @@ public class Log extends MetricTarget
     @Override
     public boolean onConfigurationChanged()
     {
-        LOGGER.info("Configuration changed. Reconfiguring metric logger");
-        
-        // Clean up existing metric logger configuration
-        try {
-            org.apache.logging.log4j.core.LoggerContext context = 
-                (org.apache.logging.log4j.core.LoggerContext) LogManager.getContext(false);
-            org.apache.logging.log4j.core.config.Configuration config = context.getConfiguration();
-            
-            // Remove existing metric logger and appender
-            config.removeLogger("metric");
-            org.apache.logging.log4j.core.Appender existingAppender = config.getAppender("MetricFileAppender");
-            if (existingAppender != null) {
-                existingAppender.stop();
-                config.getAppenders().remove("MetricFileAppender");
-            }
-            
-        } catch (Exception e) {
-            LOGGER.warn("Failed to clean up existing metric logger: {}", e.getMessage());
-        }
-        
-        metricLogger = configureMetricLogger();
+        LOGGER.info("Configuration changed. Resetting metric logger");
+        // Reset the logger so it gets reconfigured on next use
+        metricLogger = null;
+        currentLoggerName = null;
         return true;
+    }
+    
+    private void ensureMetricLoggerConfigured()
+    {
+        if (metricLogger == null) {
+            metricLogger = configureMetricLogger();
+        }
     }
 
     private Logger configureMetricLogger()
     {
         MetricConfiguration metricConfig = configManager.getMetricConfig();
         String metricFile = configManager.resolveTemplate(metricConfig.getLogFileNameTemplate());
+        String uniqueAppenderName = "MetricFileAppender_" + System.currentTimeMillis();
+        String uniqueLoggerName = "metric_" + System.currentTimeMillis();
         
         try {
             // Get current context and configuration
@@ -99,7 +95,7 @@ public class Log extends MetricTarget
                 org.apache.logging.log4j.core.appender.RollingFileAppender.newBuilder()
                     .withFileName(metricFile)
                     .withFilePattern(metricFile + ".%i")
-                    .setName("MetricFileAppender")
+                    .setName(uniqueAppenderName)
                     .setLayout(layout)
                     .withPolicy(triggeringPolicy)
                     .withStrategy(rolloverStrategy)
@@ -111,22 +107,27 @@ public class Log extends MetricTarget
             // Create logger configuration for metrics
             org.apache.logging.log4j.core.config.LoggerConfig loggerConfig = 
                 new org.apache.logging.log4j.core.config.LoggerConfig(
-                    "metric",
+                    uniqueLoggerName,
                     Level.INFO,
                     false // additivity
                 );
             loggerConfig.addAppender(appender, Level.INFO, null);
             
-            config.addLogger("metric", loggerConfig);
+            config.addLogger(uniqueLoggerName, loggerConfig);
             context.updateLoggers();
             
-            LOGGER.debug("Metric logger configured to write to: {}", metricFile);
+            currentLoggerName = uniqueLoggerName;
+            LOGGER.debug("Metric logger configured to write to: {} with logger: {}", metricFile, uniqueLoggerName);
+            
+            return LogManager.getLogger(uniqueLoggerName);
             
         } catch (Exception e) {
             LOGGER.error("Failed to configure metric logger: {}", e.getMessage(), e);
         }
         
-        return LogManager.getLogger("metric");
+        // Fallback - try to get existing logger or create a basic one
+        currentLoggerName = "metric_fallback";
+        return LogManager.getLogger(currentLoggerName);
     }
 }
 
