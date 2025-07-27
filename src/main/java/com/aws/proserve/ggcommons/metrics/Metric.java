@@ -46,10 +46,14 @@ public class Metric
      */
     public Metric(String name, String namespace, Map<String, Measure> measures, Map<String, String> dimensions)
     {
+        if (measures == null) {
+            throw new IllegalArgumentException("Measures cannot be null. At least 1 measure must be defined for a metric.");
+        }
+        
         this.name = name;
         this.namespace = namespace;
         this.measures = measures;
-        this.dimensions = dimensions;
+        this.dimensions = dimensions != null ? dimensions : new HashMap<>();
         addDimension("coreName", MetricEmitter.getThingName());
         addDimension("category", name);
         addDimension("component", MetricEmitter.getComponentName());

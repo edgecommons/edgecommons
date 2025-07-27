@@ -95,8 +95,7 @@ public class ConfigManager
         // Register logging configuration change listener
         addConfigChangeListener(new LoggingConfigChangeListener(this));
         
-        // Initialization complete - future applyConfig calls will notify listeners
-        initializing = false;
+        // Note: initializing flag will be set to false by GGCommons after all initialization is complete
     }
 
     /**
@@ -295,6 +294,16 @@ public class ConfigManager
                 LOGGER.error("ConfigurationChangeListener is null.  Not notifying.");
             }
         }
+    }
+    
+    /**
+     * Marks initialization as complete. Called by GGCommons after all initialization is finished.
+     * Future configuration changes will trigger listener notifications.
+     */
+    public void completeInitialization()
+    {
+        initializing = false;
+        LOGGER.debug("ConfigManager initialization completed - listeners will now be notified of configuration changes");
     }
 
 
