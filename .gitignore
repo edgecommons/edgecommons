@@ -70,3 +70,7 @@ nbproject/
 
 # Q Developer
 devfile.yaml
+
+# lock files
+*.lck
+.lck
