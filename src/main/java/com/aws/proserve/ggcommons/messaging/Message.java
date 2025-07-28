@@ -33,7 +33,7 @@ public class Message
      * Private constructor for creating empty messages.
      * Messages should be created using the build methods.
      */
-    private Message()
+    Message()
     {
         header = null;
         tags = null;
@@ -172,7 +172,10 @@ public class Message
     public static Message buildFromConfig(String name, String version, Object payload,
                                           ConfigManager configManager)
     {
-        return Message.buildFromConfig(name, version, payload, configManager, null);
+        return MessageBuilder.create(name, version)
+            .withPayload(payload)
+            .withConfig(configManager)
+            .build();
     }
 
     public static Message buildFromConfig(String name, String version, Object payload,

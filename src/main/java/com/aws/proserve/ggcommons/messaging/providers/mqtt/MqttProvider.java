@@ -301,6 +301,23 @@ public class MqttProvider extends MessagingProvider
         }
     }
 
+    @Override
+    public void publishToIoTCoreRaw(String topic, JsonObject payload, QOS qos)
+    {
+        try
+        {
+            String adjustedTopic = "iotcore/" + topic;
+            MqttMessage msg = new MqttMessage(payload.toString().getBytes());
+            msg.setQos(qos.ordinal());
+            mqttClient.publish(adjustedTopic, msg);
+        }
+        catch (MqttException e)
+        {
+            LOGGER.error("Failed to publish raw message on topic '{}' - {}",
+                    topic, e.toString());
+        }
+    }
+
     private void internalSubscribe(String topicFilter, BiConsumer<String, Message> callback, QOS qos, int maxConcurrency)
     {
         SubscriptionProcessor subProcessor = new SubscriptionProcessor(topicFilter, callback, maxConcurrency);

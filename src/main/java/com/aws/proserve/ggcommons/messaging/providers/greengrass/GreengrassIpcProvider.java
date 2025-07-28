@@ -103,9 +103,26 @@ public class GreengrassIpcProvider extends MessagingProvider
         }
     }
 
+    @Override
+    public void publishToIoTCoreRaw(String topic, JsonObject payload, QOS qos)
+    {
+        try
+        {
+            PublishToIoTCoreRequest pubRequest = new PublishToIoTCoreRequest()
+                    .withTopicName(topic)
+                    .withPayload(payload.toString().getBytes(StandardCharsets.UTF_8))
+                    .withQos(qos);
+            ipcClient.publishToIoTCore(pubRequest);
+        }
+        catch (InterruptedException e)
+        {
+            LOGGER.error("Failed to publish IPC message on topic {}", topic);
+        }
+    }
+
 
     @Override
- public void subscribe(String topicFilter, BiConsumer<String, Message> callback, int maxConcurrency)
+    public void subscribe(String topicFilter, BiConsumer<String, Message> callback, int maxConcurrency)
     {
         try
         {

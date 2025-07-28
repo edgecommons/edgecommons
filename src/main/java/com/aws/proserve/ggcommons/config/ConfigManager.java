@@ -105,18 +105,10 @@ public class ConfigManager
      */
     public void applyConfig(JsonObject config)
     {
-        tagConfig = config.has("tags")
-                ? new TagConfiguration(config.get("tags").getAsJsonObject())
-                : new TagConfiguration(null);
-        loggingConfig = config.has("logging")
-                ? new LoggingConfiguration(config.get("logging").getAsJsonObject())
-                : new LoggingConfiguration(null);
-        heartbeatConfig = config.has("heartbeat")
-                ? new HeartbeatConfiguration((JsonObject) config.get("heartbeat"))
-                : new HeartbeatConfiguration(null);
-        metricConfig = config.has("metricEmission")
-                ? new MetricConfiguration((JsonObject) config.get("metricEmission"))
-                : new MetricConfiguration(null);
+        tagConfig = ConfigurationFactory.createTagConfiguration(config);
+        loggingConfig = ConfigurationFactory.createLoggingConfiguration(config);
+        heartbeatConfig = ConfigurationFactory.createHeartbeatConfiguration(config);
+        metricConfig = ConfigurationFactory.createMetricConfiguration(config);
         reconfigureLogging();
 
         componentConfig = config.get("component").getAsJsonObject();

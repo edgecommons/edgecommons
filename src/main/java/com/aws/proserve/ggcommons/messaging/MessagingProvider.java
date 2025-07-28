@@ -26,6 +26,7 @@ public abstract class MessagingProvider
     public abstract void publishToIoTCore(String topic, Message message, QOS qos);
 
     public abstract void publishRaw(String topic, JsonObject payload);
+    public abstract void publishToIoTCoreRaw(String topic, JsonObject payload, QOS qos);
 
     public abstract void subscribe(String topicFilter, BiConsumer<String, Message> callback,
                                    int maxConcurrency);

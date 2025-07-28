@@ -5,16 +5,11 @@
 package com.aws.proserve.ggcommons;
 
 import com.aws.proserve.ggcommons.config.ConfigManager;
-import com.aws.proserve.ggcommons.config.ConfigurationService;
+import com.aws.proserve.ggcommons.di.ServiceFactory;
 import com.aws.proserve.ggcommons.di.ServiceRegistry;
 import com.aws.proserve.ggcommons.heartbeat.Heartbeat;
-import com.aws.proserve.ggcommons.interfaces.IConfigurationService;
-import com.aws.proserve.ggcommons.interfaces.IMessagingService;
-import com.aws.proserve.ggcommons.interfaces.IMetricService;
 import com.aws.proserve.ggcommons.messaging.MessagingClient;
-import com.aws.proserve.ggcommons.messaging.MessagingService;
 import com.aws.proserve.ggcommons.metrics.MetricEmitter;
-import com.aws.proserve.ggcommons.metrics.MetricService;
 import org.apache.commons.cli.*;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -121,14 +116,7 @@ public class GGCommons
      */
     protected void initializeServiceRegistry() {
         serviceRegistry = new ServiceRegistry();
-        
-        // Register service implementations
-        serviceRegistry.register(IConfigurationService.class, new ConfigurationService(configManager));
-        serviceRegistry.register(IMessagingService.class, new MessagingService());
-        serviceRegistry.register(IMetricService.class, new MetricService());
-        
-        // Also register concrete classes for backward compatibility
-        serviceRegistry.register(ConfigManager.class, configManager);
+        ServiceFactory.registerDefaultServices(serviceRegistry, configManager);
     }
 
     /**

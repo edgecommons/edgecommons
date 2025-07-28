@@ -89,6 +89,17 @@ public class MessagingClient
     }
 
     /**
+     * Publishes a raw JSON object to a topic without wrapping it in a Message.
+     *
+     * @param topic The topic to publish to
+     * @param metricObject The JSON object to publish
+     */
+    public static void publishToIotCoreRaw(String topic, JsonObject metricObject, QOS qos)
+    {
+        messagingProvider.publishToIoTCoreRaw(topic, metricObject, qos);
+    }
+
+    /**
      * Subscribes to messages on a topic with a callback for message handling.
      *
      * @param topicFilter The topic filter to subscribe to
