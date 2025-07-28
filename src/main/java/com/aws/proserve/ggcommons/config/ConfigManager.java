@@ -54,43 +54,19 @@ public class ConfigManager
     protected HashMap<String, JsonObject> instanceConfigs;
 
 
-   /**
-     * Creates a new ConfigManager instance for the specified component.
-     *
-     * @param componentName The name of the Greengrass component
-     * @param cmdLine Parsed command line arguments containing configuration options
+    /**
+     * Package-private constructor used by ConfigManagerFactory.
+     * Use ConfigManagerFactory.create() instead of calling this directly.
      */
-    public ConfigManager(String componentName, ParsedCommandLine cmdLine)
-    {
-        String[] configArgs = cmdLine.configArgs;
-        this.componentFullName = componentName;
-        if (componentName.contains(".")) {
-            this.componentName = componentName.substring(componentName.lastIndexOf(".") + 1);
-        }
-        else {
-            this.componentName = componentName;
-        }
-
-        if (cmdLine.thingName != null) {
-            thingName = cmdLine.thingName;
-        }
-        else if (System.getenv("AWS_IOT_THING_NAME") != null) {
-            thingName = System.getenv("AWS_IOT_THING_NAME");
-        }
-        else {
-            thingName = "NOT_GREENGRASS";
-        }
-        configProvider = ConfigProviderBuilder.build(this, componentName, thingName, configArgs);
-
-        fullConfig = configProvider.loadConfiguration();
-        if (fullConfig != null)
-        {
-            applyConfig(fullConfig);
-            LOGGER.info("Configuration loaded from {}", configProvider.getConfigSource());
-        }  else {
-            LOGGER.error("No configuration found.  Exiting.");
-            System.exit(1);
-        }
+    ConfigManager(String componentFullName, String componentName, String thingName, 
+                 ConfigProvider configProvider, JsonObject fullConfig) {
+        this.componentFullName = componentFullName;
+        this.componentName = componentName;
+        this.thingName = thingName;
+        this.configProvider = configProvider;
+        this.fullConfig = fullConfig;
+        
+        applyConfig(fullConfig);
         
         // Register logging configuration change listener
         addConfigChangeListener(new LoggingConfigChangeListener(this));

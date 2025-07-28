@@ -398,22 +398,51 @@ String resolvedPath = configManager.resolveTemplate("/data/{ThingName}/{site}/lo
 - Validate all configuration inputs to prevent injection attacks
 - Restrict file permissions on configuration files
 
-## 8. Troubleshooting
+## 8. Configuration Schema
+
+The GGCommons configuration system includes automatic validation against a JSON Schema to ensure configuration correctness and provide better error messages.
+
+### Schema Reference
+The complete JSON Schema definition is available at: [ggcommons-config-schema.json](ggcommons-config-schema.json)
+
+This schema defines:
+- Required and optional properties for each configuration section
+- Valid values and data types for all settings
+- Default values where applicable
+- Detailed descriptions for all configuration options
+
+### Schema Validation
+Configuration validation occurs automatically during component initialization. If validation fails, the component will exit with detailed error messages indicating:
+- Which configuration properties are invalid
+- Expected data types and valid values
+- Missing required properties
+
+### Using the Schema
+Developers can use the schema file with JSON editors and IDEs that support JSON Schema validation to get:
+- Auto-completion for configuration properties
+- Real-time validation while editing
+- Inline documentation for configuration options
+- Error highlighting for invalid values
+
+## 9. Troubleshooting
 
 ### Common Issues
 - **Configuration not loading**: Check source specification and file permissions
 - **Template variables not resolving**: Verify tag definitions and variable syntax
 - **Instance configuration not found**: Check instance ID spelling and array structure
 - **Changes not applied**: Ensure configuration change listeners are registered
+- **Schema validation errors**: Check configuration against the JSON schema
 
 ### Debugging Configuration
 - Enable DEBUG logging for `com.aws.proserve.ggcommons.config` package
 - Use `getFullConfig()` to inspect the complete loaded configuration
 - Test template resolution with `resolveTemplate()` method
 - Verify configuration source with `configProvider.getConfigSource()`
+- Validate configuration against the JSON schema before deployment
 
 ### Validation
 - Validate JSON syntax before deployment
+- Use the JSON schema for IDE validation and auto-completion
 - Test configuration with different template variable values
 - Verify all required configuration sections are present
 - Check for circular dependencies in template variables

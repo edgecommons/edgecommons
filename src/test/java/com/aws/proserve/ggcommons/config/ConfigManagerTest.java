@@ -289,10 +289,14 @@ class ConfigManagerTest {
     }
     
     private ConfigManager createConfigManager(String configPath) {
-        ParsedCommandLine cmdLine = new ParsedCommandLine();
-        cmdLine.configArgs = new String[]{"FILE", configPath};
-        cmdLine.thingName = "test-thing";
-        return new ConfigManager("com.test.TestComponent", cmdLine);
+        try {
+            ParsedCommandLine cmdLine = new ParsedCommandLine();
+            cmdLine.configArgs = new String[]{"FILE", configPath};
+            cmdLine.thingName = "test-thing";
+            return ConfigManagerFactory.create("com.test.TestComponent", cmdLine);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to create ConfigManager: " + e.getMessage(), e);
+        }
     }
     
     private void runWithTempConfig(String configJson, ConfigTest test) throws IOException {

@@ -5,6 +5,7 @@
 package com.aws.proserve.ggcommons;
 
 import com.aws.proserve.ggcommons.config.ConfigManager;
+import com.aws.proserve.ggcommons.config.ConfigManagerFactory;
 import com.aws.proserve.ggcommons.di.ServiceFactory;
 import com.aws.proserve.ggcommons.di.ServiceRegistry;
 import com.aws.proserve.ggcommons.heartbeat.Heartbeat;
@@ -73,35 +74,40 @@ public class GGCommons
      * @param componentName The name of the Greengrass component
      * @param args Command line arguments to process
      * @param appOptions Custom application options
-     * @param receiveOwnMessages Flag indicating whether to receive own messages
+     * @param receiveOwnMessages Flag indicating whether to receive own messages (used only for Greengrass components)
      */
     private void init(String componentName, String[] args, Options appOptions, boolean receiveOwnMessages)
     {
-        ParsedCommandLine parsedCommandLine = GGCommons.processArgs(componentName, args, appOptions);
-        
-        // Initialize config manager first
-        configManager = new ConfigManager(componentName, parsedCommandLine);
-        
-        // Initialize service registry early so services can be injected
-        initializeServiceRegistry();
-        
-        // Initialize other components - these will fail in production if services are unavailable
-        MessagingClient.init(parsedCommandLine, receiveOwnMessages);
-        MetricEmitter.init(configManager);
-        new Heartbeat(configManager);
-        
-        // Complete initialization - this must be the very last step
-        // After this point, configuration changes will trigger listener notifications
-        configManager.completeInitialization();
+        try {
+            ParsedCommandLine parsedCommandLine = GGCommons.processArgs(componentName, args, appOptions);
+            
+            // Initialize config manager first
+            configManager = ConfigManagerFactory.create(componentName, parsedCommandLine);
+            
+            // Initialize service registry early so services can be injected
+            initializeServiceRegistry();
+            
+            // Initialize other components - these will fail in production if services are unavailable
+            MessagingClient.init(parsedCommandLine, receiveOwnMessages);
+            MetricEmitter.init(configManager);
+            new Heartbeat(configManager);
+            
+            // Complete initialization - this must be the very last step
+            // After this point, configuration changes will trigger listener notifications
+            configManager.completeInitialization();
+        } catch (Exception e) {
+            LOGGER.error("Failed to initialize GGCommons: {}", e.getMessage(), e);
+            System.exit(1);
+        }
     }
     
     /**
      * Initialize for testing with pre-injected services.
      * This allows tests to inject mock services before any real initialization occurs.
      */
-    protected void initForTesting(String componentName, String[] args) {
+    protected void initForTesting(String componentName, String[] args) throws Exception {
         ParsedCommandLine parsedCommandLine = GGCommons.processArgs(componentName, args, null);
-        configManager = new ConfigManager(componentName, parsedCommandLine);
+        configManager = ConfigManagerFactory.create(componentName, parsedCommandLine);
         
         if (serviceRegistry == null) {
             initializeServiceRegistry();

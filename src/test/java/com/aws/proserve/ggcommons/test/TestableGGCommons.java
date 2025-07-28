@@ -19,14 +19,18 @@ public class TestableGGCommons extends GGCommons {
     public TestableGGCommons(String componentName, String[] args) {
         super(); // Use protected empty constructor
         
-        // Initialize with mocks - this will create configManager and serviceRegistry
-        initForTesting(componentName, args);
-        
-        // Initialize MetricEmitter for tests that create Metric objects directly
-        MetricEmitter.init(getConfigManager());
-        
-        // Now override with our specific mock instances
-        registerService(IMessagingService.class, new MockMessagingService());
-        registerService(IMetricService.class, new MockMetricService());
+        try {
+            // Initialize with mocks - this will create configManager and serviceRegistry
+            initForTesting(componentName, args);
+            
+            // Initialize MetricEmitter for tests that create Metric objects directly
+            MetricEmitter.init(getConfigManager());
+            
+            // Now override with our specific mock instances
+            registerService(IMessagingService.class, new MockMessagingService());
+            registerService(IMetricService.class, new MockMetricService());
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to initialize TestableGGCommons: " + e.getMessage(), e);
+        }
     }
 }
