@@ -91,7 +91,7 @@ class ShadowConfigProvider extends ConfigProvider implements  StreamResponseHand
     {
         try
         {
-            ipcClient = (GreengrassCoreIPCClientV2) MessagingClient.getNativeClient(); // GreengrassCoreIPCClientV2.builder().build();
+            ipcClient = (GreengrassCoreIPCClientV2) MessagingClient.getNativeLocalClient(); // GreengrassCoreIPCClientV2.builder().build();
         }
         catch (Exception e)
         {

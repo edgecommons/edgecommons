@@ -35,7 +35,7 @@ public class GreengrassConfigProvider extends ConfigProvider
         JsonObject retVal = new JsonObject();
         LOGGER.debug("Loading Greengrass component configuration");
 
-        GreengrassCoreIPCClientV2 ipcClient = (GreengrassCoreIPCClientV2) MessagingClient.getNativeClient();
+        GreengrassCoreIPCClientV2 ipcClient = (GreengrassCoreIPCClientV2) MessagingClient.getNativeLocalClient();
         try {
             GetConfigurationRequest request;
             if (configComponentName == null) {

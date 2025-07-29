@@ -7,6 +7,7 @@ package com.aws.proserve.ggcommons.test;
 import com.aws.proserve.ggcommons.interfaces.IMessagingService;
 import com.aws.proserve.ggcommons.messaging.Message;
 import com.aws.proserve.ggcommons.messaging.MessageHandler;
+import com.aws.proserve.ggcommons.messaging.ReplyFuture;
 import com.google.gson.JsonObject;
 import software.amazon.awssdk.aws.greengrass.model.QOS;
 import java.util.ArrayList;
@@ -105,5 +106,73 @@ public class MockMessagingService implements IMessagingService {
         if (handler != null) {
             handler.handle(topic, message);
         }
+    }
+    
+    @Override
+    public void subscribe(String topicFilter, MessageHandler handler) {
+        subscriptions.put(topicFilter, handler);
+    }
+    
+    @Override
+    public void publishToIotCoreRaw(String topic, JsonObject payload, QOS qos) {
+        publishedMessages.add(new PublishedMessage(topic, payload));
+    }
+    
+    @Override
+    public void unsubscribe(String topicFilter) {
+        subscriptions.remove(topicFilter);
+    }
+    
+    @Override
+    public void unsubscribeFromIoTCore(String topicFilter) {
+        subscriptions.remove(topicFilter);
+    }
+    
+    @Override
+    public void cancelRequest(ReplyFuture replyFuture) {
+        // Mock implementation - no-op
+    }
+    
+    @Override
+    public void cancelRequestFromIoTCore(ReplyFuture replyFuture) {
+        // Mock implementation - no-op
+    }
+    
+    @Override
+    public void replyToIoTCore(Message request, Message reply) {
+        publishedMessages.add(new PublishedMessage("iot_core_reply", reply, null));
+    }
+    
+    @Override
+    public boolean topicMatchesFilter(String topicFilter, String topic) {
+        // Simple mock implementation
+        if (topicFilter.equals(topic)) return true;
+        if (topicFilter.contains("+")) {
+            String[] filterParts = topicFilter.split("/");
+            String[] topicParts = topic.split("/");
+            if (filterParts.length != topicParts.length) return false;
+            for (int i = 0; i < filterParts.length; i++) {
+                if (!filterParts[i].equals("+") && !filterParts[i].equals(topicParts[i])) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        return false;
+    }
+    
+    @Override
+    public Object getNativeLocalClient() {
+        return "MockLocalClient";
+    }
+    
+    @Override
+    public Object getNativeIotCoreClient() {
+        return "MockIotCoreClient";
+    }
+    
+    public void reset() {
+        publishedMessages.clear();
+        subscriptions.clear();
     }
 }

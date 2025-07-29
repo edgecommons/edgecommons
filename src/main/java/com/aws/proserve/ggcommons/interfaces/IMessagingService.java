@@ -6,6 +6,7 @@ package com.aws.proserve.ggcommons.interfaces;
 
 import com.aws.proserve.ggcommons.messaging.Message;
 import com.aws.proserve.ggcommons.messaging.MessageHandler;
+import com.aws.proserve.ggcommons.messaging.ReplyFuture;
 import com.google.gson.JsonObject;
 import software.amazon.awssdk.aws.greengrass.model.QOS;
 import java.util.concurrent.CompletableFuture;
@@ -94,4 +95,80 @@ public interface IMessagingService {
      * @param replyMessage The reply message
      */
     void reply(Message originalMessage, Message replyMessage);
+    
+    /**
+     * Subscribes to IPC messages without maxMessages parameter.
+     * 
+     * @param topicFilter Topic pattern (supports wildcards)
+     * @param handler Message handler function
+     */
+    void subscribe(String topicFilter, MessageHandler handler);
+    
+    /**
+     * Publishes raw JSON payload to IoT Core.
+     * 
+     * @param topic Target topic
+     * @param payload JSON payload to publish
+     * @param qos Quality of service level
+     */
+    void publishToIotCoreRaw(String topic, JsonObject payload, QOS qos);
+    
+    /**
+     * Unsubscribes from IPC messages on a topic.
+     * 
+     * @param topicFilter The topic filter to unsubscribe from
+     */
+    void unsubscribe(String topicFilter);
+    
+    /**
+     * Unsubscribes from IoT Core messages on a topic.
+     * 
+     * @param topicFilter The topic filter to unsubscribe from
+     */
+    void unsubscribeFromIoTCore(String topicFilter);
+    
+    /**
+     * Cancels a pending IPC request.
+     * 
+     * @param replyFuture The ReplyFuture to cancel
+     */
+    void cancelRequest(ReplyFuture replyFuture);
+    
+    /**
+     * Cancels a pending IoT Core request.
+     * 
+     * @param replyFuture The ReplyFuture to cancel
+     */
+    void cancelRequestFromIoTCore(ReplyFuture replyFuture);
+    
+    /**
+     * Sends reply to an IoT Core message.
+     * 
+     * @param request The original request message
+     * @param reply The reply message
+     */
+    void replyToIoTCore(Message request, Message reply);
+    
+    /**
+     * Checks if a topic matches a topic filter pattern.
+     * 
+     * @param topicFilter The topic filter pattern
+     * @param topic The topic to check
+     * @return true if the topic matches the filter
+     */
+    boolean topicMatchesFilter(String topicFilter, String topic);
+    
+    /**
+     * Returns the native local messaging client.
+     * 
+     * @return The native messaging client object
+     */
+    Object getNativeLocalClient();
+    
+    /**
+     * Returns the native IoT Core messaging client.
+     * 
+     * @return The native messaging client object
+     */
+    Object getNativeIotCoreClient();
 }

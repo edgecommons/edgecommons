@@ -17,6 +17,8 @@ import com.aws.proserve.ggcommons.test.MockMetricService;
 import com.aws.proserve.ggcommons.test.TestableGGCommons;
 
 import com.google.gson.JsonObject;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.aws.greengrass.model.QOS;
@@ -39,13 +41,13 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class GGCommonsUnitTest {
     
-    private GGCommons ggCommons;
-    private MockConfigurationService mockConfigService;
-    private MockMessagingService mockMessagingService;
-    private MockMetricService mockMetricService;
+    private static GGCommons ggCommons;
+    private static MockConfigurationService mockConfigService;
+    private static MockMessagingService mockMessagingService;
+    private static MockMetricService mockMetricService;
     
-    @BeforeEach
-    void setUp() {
+    @BeforeAll
+    static void setUpClass() {
         // Create mocks first
         mockConfigService = new MockConfigurationService();
         mockMessagingService = new MockMessagingService();
@@ -63,6 +65,19 @@ class GGCommonsUnitTest {
         ggCommons.registerService(IConfigurationService.class, mockConfigService);
         ggCommons.registerService(IMessagingService.class, mockMessagingService);
         ggCommons.registerService(IMetricService.class, mockMetricService);
+    }
+    
+    @AfterAll
+    static void tearDownClass() {
+        // Cleanup if needed in future
+    }
+    
+    @BeforeEach
+    void setUp() {
+        // Reset mock state for each test
+        if (mockMessagingService != null) mockMessagingService.reset();
+        if (mockMetricService != null) mockMetricService.reset();
+//        if (mockConfigService != null) mockConfigService.reset();
     }
     
     @Test

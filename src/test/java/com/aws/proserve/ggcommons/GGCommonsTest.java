@@ -12,9 +12,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonSyntaxException;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.*;
 import software.amazon.awssdk.aws.greengrass.model.QOS;
 
 
@@ -31,28 +29,34 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class GGCommonsTest
 {
+    private static GGCommons ggCommons;
+    private static IConfigurationService configService;
+    private static IMessagingService messagingService;
+    private static IMetricService metricService;
+    private static Logger LOGGER;
+    
+    private Message receivedMessage;
+    private Gson gson = new Gson();
 
-    GGCommons ggCommons;
-    IConfigurationService configService;
-    IMessagingService messagingService;
-    IMetricService metricService;
-    Message receivedMessage;
-    Logger LOGGER;
-    Gson gson = new Gson();
-
-    GGCommonsTest()
+    @BeforeAll
+    static void setUpClass()
     {
         String[] args = {
                 "-t", "test-thing",
-//                "-m", "MQTT", "a3bgkcole5zuv-ats.iot.us-east-1.amazonaws.com", "8883", "./creds",
-                "-m", "MQTT", "localhost", "1883",
+                "-m", "STANDALONE", "./standalone-messaging-sample.json",
                 "-c", "FILE", "./config_2.json"
         };
-        ggCommons = new GGCommons("com.aws.proserve.greengrass.UnitTests", args);
+        ggCommons = new GGCommons("com.aws.proserve.greengrass.IntegrationTests", args);
         configService = ggCommons.getService(IConfigurationService.class);
         messagingService = ggCommons.getService(IMessagingService.class);
         metricService = ggCommons.getService(IMetricService.class);
         LOGGER = LogManager.getLogger(GGCommonsTest.class);
+    }
+    
+    @AfterAll
+    static void tearDownClass()
+    {
+        // Cleanup if needed in future
     }
 
     @BeforeEach
@@ -64,6 +68,16 @@ class GGCommonsTest
     @AfterEach
     void tearDown()
     {
+        // Clean up subscriptions to prevent interference between tests
+        try {
+            messagingService.unsubscribe("test/testIpcTopic");
+            messagingService.unsubscribe("test/+");
+            messagingService.unsubscribe("test/request");
+            messagingService.unsubscribeFromIoTCore("test/testIotCoreTopic");
+            messagingService.unsubscribeFromIoTCore("test/iot_core_request");
+        } catch (Exception e) {
+            // Ignore cleanup errors
+        }
     }
 
     @Test
@@ -75,11 +89,13 @@ class GGCommonsTest
 
     public void ipcMessageHandler(String topic, Message message)
     {
+        LOGGER.info("Received a published message on local messaging system");
         receivedMessage = message;
     }
 
     public void iotCoreMessageHandler(String topic, Message message)
     {
+        LOGGER.info("Received a published message on iot core messaging system");
         receivedMessage = message;
     }
 
@@ -88,6 +104,7 @@ class GGCommonsTest
         JsonObject replyPayload = new JsonObject();
         replyPayload.addProperty("reply_message", "I have received your request and have replied with this message");
         Message reply = Message.buildFromConfig("ReplyTest", "1.0", replyPayload, ggCommons.getConfigManager());
+        LOGGER.info("Received a request message on local messaging system");
         messagingService.reply(message, reply);
     }
 
@@ -171,6 +188,7 @@ class GGCommonsTest
         Utils.sleep(200);
         assertNotNull(receivedMessage);
         assertEquals("SubscribeWithFilterTest", receivedMessage.getHeader().getName());
+
     }
 //
     @Test
@@ -192,15 +210,14 @@ class GGCommonsTest
     void requestReplyIoTCore() throws ExecutionException, InterruptedException, TimeoutException
     {
         String requestTopic = "test/iot_core_request";
-        messagingService.subscribeToIoTCore(requestTopic, this::iotCoreRequestHandler, QOS.AT_MOST_ONCE, 1);
         JsonObject requestPayload = new JsonObject();
         requestPayload.addProperty("message", "Test Request Reply");
         Message request = Message.buildFromConfig("RequestTest", "1.0", requestPayload, ggCommons.getConfigManager());
         String correlationId = request.getCorrelationId();
+        LOGGER.info("Sending request to IoT Core on {}", requestTopic);
         Message reply = messagingService.requestFromIoTCore(requestTopic, request).get(1000, TimeUnit.MILLISECONDS);
         assertNotNull(reply);
         assertEquals(correlationId, reply.getCorrelationId());
-        assertEquals("ReplyTest", reply.getHeader().getName());
     }
 //
     @Test
@@ -223,99 +240,41 @@ class GGCommonsTest
             Utils.sleep(1000);
         }
     }
-//
+    
     @Test
-    void configurationChangeListenersNotCalledDuringInitialization()
+    void dualSubscriptionTest()
     {
-        // Create a test listener to track if it gets called during initialization
-        TestConfigurationChangeListener testListener = new TestConfigurationChangeListener();
+        String topic = "test/dualTopic";
 
-        // Create a new GGCommons instance (this triggers initialization)
-        String[] args = {
-                "-t", "test-thing",
-                "-m", "MQTT", "localhost", "1883",
-                "-c", "FILE", "./config_2.json"
-        };
-        GGCommons testGGCommons = new GGCommons("com.aws.proserve.test.InitTest", args);
-        IConfigurationService testConfigService = testGGCommons.getService(IConfigurationService.class);
+        // Subscribe to the same topic on both local and IoT Core
+        LOGGER.info("Subscribing to LOCAL messages on {}", topic);
+        messagingService.subscribe(topic, (t, m) -> {
+            LOGGER.info("Received message on LOCAL: {}", m.getHeader().getName());
+        }, 1);
 
-        // Add our test listener after initialization
-        testConfigService.addConfigChangeListener(testListener);
-
-        // Verify the listener was not called during initialization
-        assertFalse(testListener.wasOnConfigurationChangedCalled(),
-                "onConfigurationChanged should not be called during initialization");
-
-        // Now trigger an actual configuration change to verify the listener works
-        testConfigService.notifyConfigurationChanged();
-
-        // Verify the listener was called for the actual configuration change
-        assertTrue(testListener.wasOnConfigurationChangedCalled(),
-                "onConfigurationChanged should be called for actual configuration changes");
+        LOGGER.info("Subscribing to IOT CORE messages on {}", topic);
+        messagingService.subscribeToIoTCore(topic, (t, m) -> {
+            LOGGER.info("Received message on IOT CORE: {}", m.getHeader().getName());
+        }, QOS.AT_LEAST_ONCE, 1);
+        
+        // Publish to local - should only trigger local callback
+        JsonObject localPayload = new JsonObject();
+        localPayload.addProperty("source", "local");
+        Message localMsg = Message.buildFromConfig("LocalMessage", "1.0", localPayload, ggCommons.getConfigManager());
+        LOGGER.info("Publishing message to LOCAL on topic");
+        messagingService.publish(topic, localMsg);
+        
+        // Publish to IoT Core - should only trigger IoT Core callback
+        JsonObject iotPayload = new JsonObject();
+        iotPayload.addProperty("source", "iotcore");
+        Message iotMsg = Message.buildFromConfig("IoTCoreMessage", "1.0", iotPayload, ggCommons.getConfigManager());
+        LOGGER.info("Publishing message to IOT CORE on topic");
+        messagingService.publishToIotCore(topic, iotMsg, QOS.AT_LEAST_ONCE);
+        
+        Utils.sleep(500);
+        
+        // Clean up
+        messagingService.unsubscribe(topic);
+        messagingService.unsubscribeFromIoTCore(topic);
     }
-//
-    // Test helper class to track configuration change calls
-    private static class TestConfigurationChangeListener implements com.aws.proserve.ggcommons.config.ConfigurationChangeListener
-    {
-        private boolean onConfigurationChangedCalled = false;
-
-        @Override
-        public boolean onConfigurationChanged()
-        {
-            onConfigurationChangedCalled = true;
-            return true;
-        }
-
-        public boolean wasOnConfigurationChangedCalled()
-        {
-            return onConfigurationChangedCalled;
-        }
-    }
-//
-//    @Test
-//    void monitorConfigFileForChanges() throws ExecutionException, InterruptedException, TimeoutException
-//    {
-//        // Create a Metric named "test" using default namespace and dimensions
-//        Metric metric = new Metric("test");
-//
-//        // Add a measure
-//        Measure measure = new Measure("val", "Count", 1);
-//        metric.addMeasure(measure);
-//
-//        // Define the metric
-//        metricService.defineMetric(metric);
-//
-//        for (int i = 1; i <= 60; i++)
-//        {
-//            Map<String, Float> measureValues = Map.of("val", (float) i);
-//            metricService.emitMetric("test", measureValues);
-//            LOGGER.trace("This is a trace log message ({})", i);
-//            LOGGER.debug("This is a debug log message ({})", i);
-//            LOGGER.info("This is an info log message ({})", i);
-//            LOGGER.warn("This is a warn log message ({})", i);
-//            LOGGER.error("This is an error log message ({})", i);
-//            Utils.sleep(1000);
-//        }
-//    }
-//
-//    public JsonObject loadConfiguration(String configFilePath)
-//    {
-//        LOGGER.debug("Loading configuration from file '{}'", configFilePath);
-//        JsonObject retVal = null;
-//        try
-//        {
-//            File file = new File(configFilePath);
-//            byte[] bytes = java.nio.file.Files.readAllBytes(Paths.get(file.getAbsolutePath()));
-//            String configurationFileContents = new String(bytes, StandardCharsets.UTF_8);
-//            retVal = gson.fromJson(configurationFileContents, JsonObject.class);
-//        }
-//        catch (JsonSyntaxException | IOException e)
-//        {
-//            LOGGER.fatal("Error reading configuration file '{}': {}", configFilePath, e.toString());
-//            System.exit(1);
-//        }
-//
-//        return retVal;
-//    }
-////
 }

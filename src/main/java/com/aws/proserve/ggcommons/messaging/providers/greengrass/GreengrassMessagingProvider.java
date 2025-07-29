@@ -23,9 +23,9 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiConsumer;
 
-public class GreengrassIpcProvider extends MessagingProvider
+public class GreengrassMessagingProvider extends MessagingProvider
 {
-    protected static final Logger LOGGER = LogManager.getLogger(GreengrassIpcProvider.class);
+    protected static final Logger LOGGER = LogManager.getLogger(GreengrassMessagingProvider.class);
     GreengrassCoreIPCClientV2 ipcClient;
     ConcurrentHashMap<String, SubscribeToTopicResponseHandler> ipcSubscriptionStreams;
     ConcurrentHashMap<String, SubscribeToIoTCoreResponseHandler> iotCoreSubscriptionStreams;
@@ -34,9 +34,8 @@ public class GreengrassIpcProvider extends MessagingProvider
 
     final ReceiveMode receiveMode;
 
-    public GreengrassIpcProvider(String[] messagingArgs, boolean receiveOwnMessages)
+    public GreengrassMessagingProvider(boolean receiveOwnMessages)
     {
-        super(messagingArgs);
         receiveMode = receiveOwnMessages ? ReceiveMode.RECEIVE_ALL_MESSAGES : ReceiveMode.RECEIVE_MESSAGES_FROM_OTHERS;
         try
         {
@@ -248,7 +247,13 @@ public class GreengrassIpcProvider extends MessagingProvider
     }
 
     @Override
-    public Object getNativeClient()
+    public Object getNativeLocalClient()
+    {
+        return ipcClient;
+    }
+
+    @Override
+    public Object getNativeIotCoreClient()
     {
         return ipcClient;
     }

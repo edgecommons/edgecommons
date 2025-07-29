@@ -26,15 +26,28 @@ This document describes the available command line options provided by the AWS P
   * `CONFIG_COMPONENT` - Load configuration from a configuration component
 * **Effect**: Determines how the component obtains its configuration settings
 
-### -m, --messaging
-* **Description**: Specifies the messaging system to use for component communication
+### -m, --mode
+* **Description**: Specifies the runtime mode and messaging system for component communication
 * **Usage**: `-m <system> [args]` or `--messaging <system> [args]`
-* **Required**: No (defaults to "IPC" if not specified)
+* **Required**: No (defaults to "GREENGRASS" if not specified)
 * **Dependencies**: None
 * **Values**: One of:
-  * `IPC` - Use Greengrass IPC for messaging (default)
-  * `MQTT <host> <port> <creds dir>` - Use MQTT with specified broker details
-* **Effect**: Determines how the component sends and receives messages
+  * `GREENGRASS` - Use native Greengrass IPC for messaging (default)
+  * `STANDALONE <config_file_path>` - **NEW!** Use dual MQTT clients for non-Greengrass environments
+* **Effect**: Determines the runtime environment and messaging architecture
+
+#### GREENGRASS Mode
+- Uses native Greengrass v2 IPC communication
+- Managed by Greengrass runtime
+- Single messaging channel for inter-component communication
+- Automatic device provisioning and management
+
+#### STANDALONE Mode (Container-Ready)
+- **Dual MQTT clients**: Local broker + AWS IoT Core connectivity
+- **Container deployment**: Perfect for Kubernetes, Docker, ECS, etc.
+- **Independent subscriptions**: Subscribe to same topic on both clients
+- **Flexible authentication**: Certificate-based and username/password
+- **Configuration file required**: JSON file defining both MQTT connections
 
 ### -t, --thing
 * **Description**: Specifies the AWS IoT thing name for the component

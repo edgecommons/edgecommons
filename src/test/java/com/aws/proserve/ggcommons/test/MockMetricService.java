@@ -66,4 +66,9 @@ public class MockMetricService implements IMetricService {
     public void clearDefinedMetrics() {
         definedMetrics.clear();
     }
+    
+    public void reset() {
+        definedMetrics.clear();
+        emittedMetrics.clear();
+    }
 }

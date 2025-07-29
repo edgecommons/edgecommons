@@ -13,11 +13,15 @@ import org.apache.commons.cli.CommandLine;
  */
 public class ParsedCommandLine
 {
+    public enum Mode { GREENGRASS, STANDALONE }
+    
     public CommandLine commandLine;
     /** Arguments related to component configuration settings */
     public String[] configArgs;
-    /** Arguments related to messaging provider and settings */
-    public String[] messagingArgs;
+    /** Runtime mode for the component */
+    public ParsedCommandLine.Mode mode;
+    /** Path to standalone configuration file */
+    public String standaloneConfigPath;
     /** AWS IoT thing name associated with this component */
     public String thingName;
 }

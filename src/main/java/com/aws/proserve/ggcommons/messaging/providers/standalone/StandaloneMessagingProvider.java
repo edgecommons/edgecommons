@@ -2,9 +2,10 @@
  * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
-package com.aws.proserve.ggcommons.messaging.providers.mqtt;
+package com.aws.proserve.ggcommons.messaging.providers.standalone;
 
 import com.aws.proserve.ggcommons.messaging.Message;
+import com.aws.proserve.ggcommons.messaging.MessagingConfiguration;
 import com.aws.proserve.ggcommons.messaging.MessagingProvider;
 import com.aws.proserve.ggcommons.messaging.ReplyFuture;
 import com.google.gson.Gson;
@@ -22,7 +23,6 @@ import java.nio.file.Files;
 import java.security.KeyStore;
 import java.security.PrivateKey;
 import java.security.cert.CertificateFactory;
-import java.util.HashMap;
 import java.util.UUID;
 import java.util.concurrent.*;
 import java.util.function.BiConsumer;
@@ -32,9 +32,9 @@ import java.security.cert.*;
 import javax.net.ssl.*;
 
 
-public class MqttProvider extends MessagingProvider
+public class StandaloneMessagingProvider extends MessagingProvider
 {
-    protected static final Logger LOGGER = LogManager.getLogger(MqttProvider.class);
+    protected static final Logger LOGGER = LogManager.getLogger(StandaloneMessagingProvider.class);
 
 
     private static class QueueEntry
@@ -113,22 +113,19 @@ public class MqttProvider extends MessagingProvider
         }
     }
 
-    HashMap<String,SubscriptionProcessor> subscriptionProcessors = new HashMap<>();
-
-    String host;
-    int port;
-    String certFolder;
-    String clientId;
-    MqttClient mqttClient;
-    HashMap<String, ReplyFuture> responseFutures = new HashMap<>();
+    private final ConcurrentHashMap<String,SubscriptionProcessor> localSubscriptionProcessors = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String,SubscriptionProcessor> iotCoreSubscriptionProcessors = new ConcurrentHashMap<>();
+    private final MqttClient localMqttClient;
+    private final MqttClient iotCoreMqttClient;
+    private final ConcurrentHashMap<String, ReplyFuture> responseFutures = new ConcurrentHashMap<>();
 
     private class EventCallback implements MqttCallback
     {
-        MqttProvider provider;
+        private final ConcurrentHashMap<String,SubscriptionProcessor> subscriptionMap;
 
-        public EventCallback(MqttProvider mqttProvider)
+        public EventCallback(ConcurrentHashMap<String,SubscriptionProcessor> subscriptionMap)
         {
-            this.provider = mqttProvider;
+            this.subscriptionMap = subscriptionMap;
         }
 
         @Override
@@ -149,9 +146,10 @@ public class MqttProvider extends MessagingProvider
             } catch (Exception e) {
                 msg = Message.build(msgChars);
             }
-            SubscriptionProcessor subscriptionProcessor = subscriptionProcessors.get(topic);
+            
+            SubscriptionProcessor subscriptionProcessor = subscriptionMap.get(topic);
             if (subscriptionProcessor == null) {
-                for (SubscriptionProcessor processor : subscriptionProcessors.values()) {
+                for (SubscriptionProcessor processor : subscriptionMap.values()) {
                     if (topicMatchesFilter(processor.topicFilter, topic)) {
                         subscriptionProcessor = processor;
                         break;
@@ -172,47 +170,109 @@ public class MqttProvider extends MessagingProvider
         }
     }
 
-    public MqttProvider(String[] messagingArgs, String clientId)
+    public StandaloneMessagingProvider(MessagingConfiguration config, String thingName) {
+        try {
+            // Initialize local MQTT client
+            MessagingConfiguration.LocalMqttConfig localConfig = config.getMessaging().getLocal();
+            MessagingConfiguration.IoTCoreConfig iotCoreConfig = config.getMessaging().getIotCore();
+
+            boolean useSSL = localConfig.getCredentials() != null && localConfig.getCredentials().getCertPath() != null;
+            String protocol = useSSL ? "ssl" : "tcp";
+            String localBrokerUrl = protocol + "://" + localConfig.getHost() + ":" + localConfig.getPort();
+            localMqttClient = new MqttClient(localBrokerUrl, localConfig.getClientId());
+
+            MqttConnectOptions localOptions = new MqttConnectOptions();
+            if (localConfig.getCredentials() != null) {
+                if (useSSL) {
+                    // Use certificate-based authentication
+                    localOptions.setSocketFactory(createSslContext(localConfig.getCredentials()).getSocketFactory());
+                } else {
+                    // Use username/password authentication
+                    localOptions.setUserName(localConfig.getCredentials().getUsername());
+                    localOptions.setPassword(localConfig.getCredentials().getPassword().toCharArray());
+                }
+            }
+            localMqttClient.setCallback(new EventCallback(localSubscriptionProcessors));
+            localMqttClient.connect(localOptions);
+            LOGGER.info("Connected to local broker at {}", localBrokerUrl);
+
+            // Initialize IoT Core MQTT client
+            String iotCoreBrokerUrl = "ssl://" + iotCoreConfig.getEndpoint() + ":" + iotCoreConfig.getPort();
+            iotCoreMqttClient = new MqttClient(iotCoreBrokerUrl, iotCoreConfig.getClientId());
+            connectToIotCore(iotCoreConfig);
+
+        } catch (Exception e) {
+            LOGGER.error("Failed to initialize MQTT clients", e);
+            throw new RuntimeException("Failed to initialize MQTT clients", e);
+        }
+    }
+
+    private SSLContext createSslContext(MessagingConfiguration.CredentialsConfig credentials) throws Exception {
+        // Load CA certificate
+        X509Certificate caCert = (X509Certificate) CertificateFactory.getInstance("X.509")
+                                                                     .generateCertificate(new ByteArrayInputStream(Files.readAllBytes(Paths.get(credentials.getCaPath()))));
+
+        // Load client certificate
+        X509Certificate clientCert = (X509Certificate) CertificateFactory.getInstance("X.509")
+                                                                         .generateCertificate(new ByteArrayInputStream(Files.readAllBytes(Paths.get(credentials.getCertPath()))));
+
+        // Load client private key using PrivateKeyReader
+        PrivateKey privateKey = PrivateKeyReader.getPrivateKey(credentials.getKeyPath());
+
+        // Create trust store for CA certificate
+        KeyStore caKs = KeyStore.getInstance(KeyStore.getDefaultType());
+        caKs.load(null, null);
+        caKs.setCertificateEntry("ca-certificate", caCert);
+        TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+        tmf.init(caKs);
+
+        // Create key store for client certificate and private key
+        char[] password = java.util.UUID.randomUUID().toString().toCharArray();
+        KeyStore ks = KeyStore.getInstance(KeyStore.getDefaultType());
+        ks.load(null, null);
+        ks.setCertificateEntry("certificate", clientCert);
+        ks.setKeyEntry("private-key", privateKey, password, new java.security.cert.Certificate[]{clientCert});
+        KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+        kmf.init(ks, password);
+
+        // Create SSL context
+        SSLContext context = SSLContext.getInstance("TLSv1.2");
+        context.init(kmf.getKeyManagers(), tmf.getTrustManagers(), null);
+
+        return context;
+    }
+
+    public void connectToIotCore(MessagingConfiguration.IoTCoreConfig config)
     {
-        super(messagingArgs);
-        host = messagingArgs.length > 1 ? messagingArgs[1] : "localhost";
-        port = messagingArgs.length > 2 ? Integer.parseInt(messagingArgs[2]) : 1883;
-        certFolder = messagingArgs.length > 3 ? messagingArgs[3] : null;
-        this.clientId = clientId;
-        String prefix = certFolder != null ? "ssl" : "tcp";
-        String uri =  String.format("%s://%s:%d", prefix, host, port);
+        String uri = String.format("ssl://%s:%d", config.getEndpoint(), config.getPort());
         try
         {
-            mqttClient = new MqttClient(uri, this.clientId);
-            mqttClient.setCallback(new EventCallback(this));
+            iotCoreMqttClient.setCallback(new EventCallback(iotCoreSubscriptionProcessors));
             MqttConnectOptions connOpts = new MqttConnectOptions();
-            if (certFolder != null)
+            SSLSocketFactory socketFactory = getSocketFactory(config.getCredentials().getCaPath(),
+                    config.getCredentials().getCertPath(),
+                    config.getCredentials().getKeyPath());
+            if (socketFactory != null)
             {
-                String caCertFile = String.format("%s/root-CA.crt", certFolder);
-                String deviceCertFile = String.format("%s/%s.cert.pem", certFolder, this.clientId);
-                String devicePrivateKeyFile = String.format("%s/%s.private.key", certFolder, this.clientId);
-                SSLSocketFactory socketFactory = getSocketFactory(caCertFile,deviceCertFile,devicePrivateKeyFile);
-                if (socketFactory != null)
-                {
-                    connOpts.setSocketFactory(socketFactory);
-                    LOGGER.info("Attempting to connect to MQTT broker at {}", uri);
-                    LOGGER.info("       ...using private key file: {}", devicePrivateKeyFile);
-                    LOGGER.info("       ...using device cert file: {}", deviceCertFile);
-                    LOGGER.info("       ...using CA Cert file: {}", caCertFile);
-                    LOGGER.info("       ...using client ID:{}", clientId);
-                }
-                else
-                    LOGGER.warn("Unable to load cert/key files. Attempting to connect without credentials.");
+                connOpts.setSocketFactory(socketFactory);
+                LOGGER.info("Attempting to connect to IoT Core at {}", uri);
+                LOGGER.info("       ...using private key file: {}", config.getCredentials().getKeyPath());
+                LOGGER.info("       ...using device cert file: {}", config.getCredentials().getCertPath());
+                LOGGER.info("       ...using CA Cert file: {}", config.getCredentials().getCaPath());
+                LOGGER.info("       ...using client ID: {}", config.getClientId());
             }
+            else
+                LOGGER.warn("Unable to load cert/key files. Attempting to connect without credentials.");
+
             connOpts.setCleanSession(true);
             connOpts.setMaxInflight(250);
             connOpts.setConnectionTimeout(10);
-            mqttClient.connect(connOpts);
-            LOGGER.info("Connected to MQTT broker {}", uri);
+            iotCoreMqttClient.connect(connOpts);
+            LOGGER.info("Connected to AWS IoT Core broker {}", uri);
         }
         catch (MqttException e)
         {
-            LOGGER.fatal("Failed to connect to MQTT broker at {} - {}", uri, e.toString());
+            LOGGER.fatal("Failed to connect to IoT Core at {} - {}", uri, e.toString());
             System.exit(4);
         }
     }
@@ -259,12 +319,12 @@ public class MqttProvider extends MessagingProvider
         return retVal;
     }
 
-    private void internalPublish(String topic, Message message, QOS qos) {
+    private void internalPublish(MqttClient client, String topic, Message message, QOS qos) {
         try
         {
             MqttMessage msg = new MqttMessage(message.toString().getBytes());
             msg.setQos(qos.ordinal());
-            mqttClient.publish(topic, msg);
+            client.publish(topic, msg);
         }
         catch (MqttException e)
         {
@@ -276,14 +336,13 @@ public class MqttProvider extends MessagingProvider
     @Override
     public void publish(String topic, Message message)
     {
-        internalPublish(topic, message, QOS.AT_LEAST_ONCE);
+        internalPublish(localMqttClient, topic, message, QOS.AT_LEAST_ONCE);
     }
 
     @Override
     public void publishToIoTCore(String topic, Message message, QOS qos)
     {
-        String adjustedTopic = "iotcore/" + topic;
-        internalPublish(adjustedTopic, message, qos);
+        internalPublish(iotCoreMqttClient, topic, message, qos);
     }
 
     @Override
@@ -292,7 +351,7 @@ public class MqttProvider extends MessagingProvider
         try
         {
             MqttMessage msg = new MqttMessage(payload.toString().getBytes());
-            mqttClient.publish(topic, msg);
+            localMqttClient.publish(topic, msg);
         }
         catch (MqttException e)
         {
@@ -306,10 +365,9 @@ public class MqttProvider extends MessagingProvider
     {
         try
         {
-            String adjustedTopic = "iotcore/" + topic;
             MqttMessage msg = new MqttMessage(payload.toString().getBytes());
             msg.setQos(qos.ordinal());
-            mqttClient.publish(adjustedTopic, msg);
+            iotCoreMqttClient.publish(topic, msg);
         }
         catch (MqttException e)
         {
@@ -318,13 +376,13 @@ public class MqttProvider extends MessagingProvider
         }
     }
 
-    private void internalSubscribe(String topicFilter, BiConsumer<String, Message> callback, QOS qos, int maxConcurrency)
+    private void internalSubscribe(MqttClient client, String topicFilter, BiConsumer<String, Message> callback, QOS qos, int maxConcurrency, ConcurrentHashMap<String,SubscriptionProcessor> subscriptionMap)
     {
         SubscriptionProcessor subProcessor = new SubscriptionProcessor(topicFilter, callback, maxConcurrency);
-        subscriptionProcessors.put(topicFilter, subProcessor);
+        subscriptionMap.put(topicFilter, subProcessor);
         try
         {
-            mqttClient.subscribe(topicFilter, qos.ordinal());
+            client.subscribe(topicFilter, qos.ordinal());
         }
         catch (MqttException e)
         {
@@ -334,27 +392,25 @@ public class MqttProvider extends MessagingProvider
 
     public void subscribe(String topicFilter, BiConsumer<String, Message> callback, int maxConcurrency)
     {
-        internalSubscribe(topicFilter, callback, QOS.AT_LEAST_ONCE, maxConcurrency);
+        internalSubscribe(localMqttClient, topicFilter, callback, QOS.AT_LEAST_ONCE, maxConcurrency, localSubscriptionProcessors);
     }
 
     @Override
     public void subscribeToIoTCore(String topicFilter, BiConsumer<String, Message> callback, QOS qos,
                                    int maxConcurrency)
     {
-        String adjustedTopicFilter = "iotcore/" + topicFilter;
-        internalSubscribe(adjustedTopicFilter, callback, qos, maxConcurrency);
+        internalSubscribe(iotCoreMqttClient, topicFilter, callback, qos, maxConcurrency, iotCoreSubscriptionProcessors);
     }
 
-    @Override
-    public void unsubscribe(String topicFilter)
+    private void internalUnsubscribe(MqttClient client, String topicFilter, ConcurrentHashMap<String,SubscriptionProcessor> subscriptionMap)
     {
         try
         {
-            SubscriptionProcessor subProcessor = subscriptionProcessors.get(topicFilter);
+            SubscriptionProcessor subProcessor = subscriptionMap.get(topicFilter);
             if (subProcessor != null) {
                 subProcessor.queue.put(new QueueEntry(null, null));
-                subscriptionProcessors.remove(topicFilter);
-                mqttClient.unsubscribe(topicFilter);
+                subscriptionMap.remove(topicFilter);
+                client.unsubscribe(topicFilter);
             }
         }
         catch (Exception e)
@@ -363,11 +419,17 @@ public class MqttProvider extends MessagingProvider
         }
     }
 
+
+    @Override
+    public void unsubscribe(String topicFilter)
+    {
+        internalUnsubscribe(localMqttClient, topicFilter, localSubscriptionProcessors);
+    }
+
     @Override
     public void unsubscribeFromIoTCore(String topicFilter)
     {
-        String adjustedTopicFilter = "iotcore/" + topicFilter;
-        unsubscribe(adjustedTopicFilter);
+        internalUnsubscribe(iotCoreMqttClient, topicFilter, iotCoreSubscriptionProcessors);
     }
 
     @Override
@@ -402,7 +464,7 @@ public class MqttProvider extends MessagingProvider
         String replyTo = message.makeRequest();
         ReplyFuture future = new ReplyFuture(replyTo);
         responseFutures.put(replyTo, future);
-        internalSubscribe(replyTo, null, QOS.AT_MOST_ONCE,1);
+        internalSubscribe(iotCoreMqttClient, replyTo, null, QOS.AT_MOST_ONCE, 1, iotCoreSubscriptionProcessors);
         publishToIoTCore(topic, message, QOS.AT_MOST_ONCE);
         return future;
     }
@@ -423,8 +485,11 @@ public class MqttProvider extends MessagingProvider
     }
 
     @Override
-    public Object getNativeClient()
+    public Object getNativeLocalClient()
     {
-        return mqttClient;
+        return localMqttClient;
     }
+
+    @Override
+    public Object getNativeIotCoreClient() { return iotCoreMqttClient; }
 }

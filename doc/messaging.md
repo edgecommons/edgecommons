@@ -3,7 +3,11 @@ TODO: This file was GenAI generated and needs enriching/corrections
 # GGCommons Messaging Documentation
 
 ## Overview
-The GGCommons library provides a unified messaging abstraction layer that supports both AWS Greengrass IPC and MQTT-based communication patterns. This documentation explains the key components, message structure, and usage patterns of the messaging system.
+The GGCommons library provides a unified messaging abstraction layer that supports multiple runtime environments:
+- **Greengrass Mode**: Native AWS Greengrass IPC communication
+- **STANDALONE Mode**: Dual MQTT clients for non-Greengrass environments (Kubernetes, Docker, etc.)
+
+This documentation explains the key components, message structure, and usage patterns of the messaging system across all supported runtimes.
 
 ## Key Components
 
@@ -57,16 +61,25 @@ MessagingClient.reply(requestMessage, replyMessage);
 ```
 
 ### Providers
-The library includes two messaging providers:
+The library includes three messaging providers:
 
 1. **GreengrassIpcProvider**: 
    - Implements native Greengrass v2 IPC communication
    - Used in production deployments on Greengrass cores
+   - Single client for inter-component communication
 
 2. **MqttProvider**: 
-   - Simulates Greengrass IPC behavior using MQTT
+   - Single MQTT client simulating Greengrass IPC behavior
    - Useful for development and debugging
    - Supports local testing without Greengrass runtime
+
+3. **StandaloneMessagingProvider** (NEW!):
+   - **Dual MQTT clients** for maximum flexibility
+   - **Local MQTT client**: For local/edge communication
+   - **IoT Core MQTT client**: Direct AWS IoT Core connectivity
+   - **Independent subscriptions**: Subscribe to same topic on both clients
+   - **Multiple authentication**: Certificate-based and username/password
+   - **Container-ready**: Perfect for Kubernetes, Docker, ECS, etc.
 
 ## Message Creation
 Messages can be created in two ways:
@@ -99,26 +112,70 @@ Message msg = Message.build(messageContents);
    - Unsubscribe from topics when no longer needed
    - Cancel outstanding requests if no longer waiting for replies
 
-## Development vs Production
-- Use MQTT provider during development for easier debugging
-- Switch to Greengrass IPC provider for production deployments
-- Code remains unchanged; only provider initialization differs
+## Runtime Environment Options
+
+### Greengrass Mode (Traditional)
+```bash
+java -jar component.jar -m GREENGRASS -c GG_CONFIG -t thing-name
+```
+- Native Greengrass v2 IPC communication
+- Automatic device provisioning
+- Managed by Greengrass runtime
+
+### STANDALONE Mode (Container-Ready)
+```bash
+java -jar component.jar -m STANDALONE ./messaging-config.json -c FILE ./config.json -t thing-name
+```
+- **Kubernetes**: Deploy as pods with dual connectivity
+- **Docker**: Run in containers with external MQTT broker
+- **Edge Computing**: Industrial gateways, edge servers
+- **Development**: Local testing without Greengrass
+- **Hybrid Architectures**: Mix Greengrass and container deployments
+
+### Code Compatibility
+- **Same application code** works across all modes
+- **Only configuration changes** between environments
+- **Seamless migration** from Greengrass to containers or vice versa
 
 ## Common Use Cases
 
-1. **Component Communication**
-   - Inter-component messaging in Greengrass
-   - Local development using MQTT simulation
+### Greengrass Mode
+1. **Inter-Component Communication**
+   - Native Greengrass component messaging
+   - Managed device deployments
+   - Edge computing with AWS management
 
-2. **Request-Response Workflows**
+### STANDALONE Mode
+1. **Kubernetes Deployments**
+   - Microservices architecture with dual connectivity
+   - ConfigMaps for configuration, Secrets for certificates
+   - Horizontal scaling with load balancers
+
+2. **Industrial IoT Gateways**
+   - Local MQTT for sensor data collection
+   - IoT Core for cloud telemetry and commands
+   - Edge processing with cloud connectivity
+
+3. **Hybrid Cloud-Edge Architecture**
+   - Some components in Greengrass, others in containers
+   - Consistent messaging patterns across environments
+   - Flexible deployment based on requirements
+
+4. **Development and Testing**
+   - Local development without Greengrass installation
+   - CI/CD pipelines with containerized testing
+   - Easier debugging with standard MQTT tools
+
+### Universal Use Cases (All Modes)
+1. **Request-Response Workflows**
    - Service invocation patterns
    - Blocking and non-blocking requests
 
-3. **Event Broadcasting**
+2. **Event Broadcasting**
    - Publishing state changes
    - Broadcasting metrics or telemetry
 
-4. **Configuration Updates**
+3. **Configuration Updates**
    - Distributing configuration changes
    - Component coordination
 
@@ -132,3 +189,72 @@ Tags provide contextual information about messages and can be used for:
 Tags can be:
 1. Loaded from configuration files
 2. Added programmatically using `injectTag()`
+
+## STANDALONE Mode Configuration
+
+STANDALONE mode requires a messaging configuration file that defines both local and IoT Core MQTT connections:
+
+```json
+{
+  "messaging": {
+    "local": {
+      "host": "mqtt-broker.local",
+      "port": 1883,
+      "clientId": "my-component-local",
+      "credentials": {
+        "username": "mqtt-user",
+        "password": "mqtt-password"
+      }
+    },
+    "iotCore": {
+      "endpoint": "your-endpoint.iot.us-east-1.amazonaws.com",
+      "port": 8883,
+      "clientId": "my-component-iotcore",
+      "credentials": {
+        "certPath": "/certs/device-cert.pem",
+        "keyPath": "/certs/private-key.pem",
+        "caPath": "/certs/root-ca.pem"
+      }
+    }
+  }
+}
+```
+
+### Local Broker Authentication
+- **Username/Password**: For development or brokers with basic auth
+- **Certificate-based**: For production with mutual TLS authentication
+
+### Dual Connectivity Benefits
+1. **Local Communication**: Fast, low-latency messaging for edge processing
+2. **Cloud Integration**: Direct AWS IoT Core connectivity for telemetry and commands
+3. **Independent Subscriptions**: Subscribe to same topic on both brokers
+4. **Flexible Routing**: Route messages based on content, priority, or destination
+
+### Kubernetes Example
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: messaging-config
+data:
+  messaging.json: |
+    {
+      "messaging": {
+        "local": {
+          "host": "mosquitto-service",
+          "port": 1883,
+          "clientId": "my-component-local"
+        },
+        "iotCore": {
+          "endpoint": "your-endpoint.iot.us-east-1.amazonaws.com",
+          "port": 8883,
+          "clientId": "my-component-iotcore",
+          "credentials": {
+            "certPath": "/certs/device-cert.pem",
+            "keyPath": "/certs/private-key.pem",
+            "caPath": "/certs/root-ca.pem"
+          }
+        }
+      }
+    }
+```

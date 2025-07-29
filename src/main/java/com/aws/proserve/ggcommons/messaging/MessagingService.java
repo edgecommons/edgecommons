@@ -59,4 +59,54 @@ public class MessagingService implements IMessagingService {
     public void reply(Message originalMessage, Message replyMessage) {
         MessagingClient.reply(originalMessage, replyMessage);
     }
+    
+    @Override
+    public void subscribe(String topicFilter, MessageHandler handler) {
+        MessagingClient.subscribe(topicFilter, handler::handle);
+    }
+    
+    @Override
+    public void publishToIotCoreRaw(String topic, JsonObject payload, QOS qos) {
+        MessagingClient.publishToIotCoreRaw(topic, payload, qos);
+    }
+    
+    @Override
+    public void unsubscribe(String topicFilter) {
+        MessagingClient.unsubscribe(topicFilter);
+    }
+    
+    @Override
+    public void unsubscribeFromIoTCore(String topicFilter) {
+        MessagingClient.unsubscribeFromIoTCore(topicFilter);
+    }
+    
+    @Override
+    public void cancelRequest(ReplyFuture replyFuture) {
+        MessagingClient.cancelRequest(replyFuture);
+    }
+    
+    @Override
+    public void cancelRequestFromIoTCore(ReplyFuture replyFuture) {
+        MessagingClient.cancelRequestFromIoTCore(replyFuture);
+    }
+    
+    @Override
+    public void replyToIoTCore(Message request, Message reply) {
+        MessagingClient.replyToIoTCore(request, reply);
+    }
+    
+    @Override
+    public boolean topicMatchesFilter(String topicFilter, String topic) {
+        return MessagingClient.topicMatchesFilter(topicFilter, topic);
+    }
+    
+    @Override
+    public Object getNativeLocalClient() {
+        return MessagingClient.getNativeLocalClient();
+    }
+    
+    @Override
+    public Object getNativeIotCoreClient() {
+        return MessagingClient.getNativeIotCoreClient();
+    }
 }

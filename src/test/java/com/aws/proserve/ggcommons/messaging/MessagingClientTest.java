@@ -166,9 +166,7 @@ class MessagingClientTest {
         String lastUnsubscribeTopic;
         String lastUnsubscribeIoTCoreTopic;
 
-        public TestMessagingProvider() {
-            super(new String[]{"TEST"});
-        }
+        public TestMessagingProvider() {}
 
         @Override
         public void publish(String topic, Message message) {}
@@ -237,8 +235,17 @@ class MessagingClientTest {
         }
 
         @Override
-        public Object getNativeClient() {
+        public Object getNativeLocalClient()
+        {
             return null;
         }
+
+        @Override
+        public Object getNativeIotCoreClient()
+        {
+            return null;
+        }
+
+
     }
 }

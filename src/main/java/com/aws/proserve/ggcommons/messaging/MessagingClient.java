@@ -5,14 +5,13 @@
 package com.aws.proserve.ggcommons.messaging;
 
 import com.aws.proserve.ggcommons.ParsedCommandLine;
-import com.aws.proserve.ggcommons.messaging.providers.mqtt.MqttProvider;
-import com.aws.proserve.ggcommons.messaging.providers.greengrass.GreengrassIpcProvider;
+import com.aws.proserve.ggcommons.messaging.providers.standalone.StandaloneMessagingProvider;
+import com.aws.proserve.ggcommons.messaging.providers.greengrass.GreengrassMessagingProvider;
 import com.google.gson.JsonObject;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import software.amazon.awssdk.aws.greengrass.model.QOS;
 
-import java.util.UUID;
 import java.util.function.BiConsumer;
 
 /**
@@ -32,22 +31,25 @@ public class MessagingClient
      * @param cmdLine Parsed command line arguments containing messaging configuration
      * @param receiveOwnMessages Flag indicating whether to receive messages published by this component
      */
-    @SuppressWarnings("i18n")  // These are protocol identifiers that should not be localized
     public static void init(ParsedCommandLine cmdLine, boolean receiveOwnMessages)
     {
-        String[] messagingArgs = cmdLine.messagingArgs;
-        String clientId = cmdLine.thingName != null ? cmdLine.thingName : UUID.randomUUID().toString();
-        switch (messagingArgs[0].toUpperCase()) {
-            case "IPC":
-                LOGGER.info("IPC specified in command line.  Using Greengrass IPC.");
-                messagingProvider = new GreengrassIpcProvider(messagingArgs, receiveOwnMessages);
+        switch (cmdLine.mode) {
+            case GREENGRASS:
+                LOGGER.info("GREENGRASS mode specified. Using Greengrass IPC.");
+                messagingProvider = new GreengrassMessagingProvider(receiveOwnMessages);
                 break;
-            case "MQTT":
-                LOGGER.info("MQTT specified in command line.  Using MqttClient");
-                messagingProvider = new MqttProvider(messagingArgs, clientId);
+            case STANDALONE:
+                LOGGER.info("STANDALONE mode specified. Using dual MQTT clients.");
+                try {
+                    MessagingConfiguration config = MessagingConfiguration.loadFromFile(cmdLine.standaloneConfigPath);
+                    messagingProvider = new StandaloneMessagingProvider(config, cmdLine.thingName);
+                } catch (Exception e) {
+                    LOGGER.fatal("Failed to load standalone messaging configuration: {}", e.getMessage());
+                    System.exit(1);
+                }
                 break;
             default:
-                LOGGER.fatal("Invalid com.aws.proseve.ggcommons.messaging provider specified in command line: must be either 'MQTT' or 'IPC'");
+                LOGGER.fatal("Invalid mode specified: {}", cmdLine.mode);
                 System.exit(1);
         }
     }
@@ -277,18 +279,31 @@ public class MessagingClient
     }
 
     /**
-     * Returns the underlying native messaging client implementation.
+     * Returns the underlying native local messaging client implementation.
      *
      * @return The native messaging client object
      */
-    public static Object getNativeClient()
+    public static Object getNativeLocalClient()
     {
         MessagingProvider provider = messagingProvider;
         if (provider == null) {
             throw new IllegalStateException("MessagingClient not initialized");
         }
-        return provider.getNativeClient();
+        return provider.getNativeLocalClient();
     }
 
+    /**
+     * Returns the underlying native iot core messaging client implementation.
+     *
+     * @return The native messaging client object
+     */
+    public static Object getNativeIotCoreClient()
+    {
+        MessagingProvider provider = messagingProvider;
+        if (provider == null) {
+            throw new IllegalStateException("MessagingClient not initialized");
+        }
+        return provider.getNativeIotCoreClient();
+    }
 
 }

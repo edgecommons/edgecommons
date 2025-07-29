@@ -15,13 +15,6 @@ public abstract class MessagingProvider
 {
     protected static final Logger LOGGER = LogManager.getLogger(MessagingProvider.class);
 
-    String[] messagingArgs;
-
-    protected MessagingProvider(String[] messagingArgs)
-    {
-        this.messagingArgs = messagingArgs;
-    }
-
     public abstract void publish(String topic, Message message);
     public abstract void publishToIoTCore(String topic, Message message, QOS qos);
 
@@ -43,8 +36,6 @@ public abstract class MessagingProvider
     public abstract ReplyFuture requestFromIoTCore(String topic, Message request);
     public abstract void cancelRequestFromIoTCore(ReplyFuture future);
     public abstract void replyToIoTCore(Message request, Message reply);
-
-    public abstract Object getNativeClient();
 
     // Copied from open source Paho MQTT Java client
     // (https://github.com/eclipse/paho.mqtt.java/blob/master/org.eclipse.paho.client.mqttv3/src/main/java/org/eclipse/paho/client/mqttv3/MqttTopic.java)
@@ -123,4 +114,8 @@ public abstract class MessagingProvider
         }
         return false;
     }
+
+    public abstract Object getNativeLocalClient();
+
+    public abstract Object getNativeIotCoreClient();
 }

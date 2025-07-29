@@ -197,11 +197,10 @@ public class GGCommons
                                             "'CONFIG_COMPONENT'\n"+
                                             "Default: GG_CONFIG")
                                     .build();
-        Option messagingOption = Option.builder("m")
-                                       .longOpt("messaging")
+        Option modeOption = Option.builder("m")
+                                       .longOpt("mode")
                                        .hasArgs()
-                                       .desc("Messaging system - one of: IPC, MQTT <host> <port> <creds dir>\n" +
-                                               "Default: IPC")
+                                       .desc("Runtime mode - 'GREENGRASS' (default) or 'STANDALONE <config_file_path>'")
                                        .build();
         Option thingOption = Option.builder("t")
                                     .longOpt("thing")
@@ -210,7 +209,7 @@ public class GGCommons
                                     .build();
         options.addOption(helpOption);
         options.addOption(configOption);
-        options.addOption(messagingOption);
+        options.addOption(modeOption);
         options.addOption(thingOption);
 
         try {
@@ -232,14 +231,25 @@ public class GGCommons
             }
             retVal.configArgs = configArgs;
 
-            String[] messagingArgs;
+            String[] modeArgs;
             if (line.hasOption("m")) {
-                messagingArgs = line.getOptionValues("messaging");
+                modeArgs = line.getOptionValues("mode");
             } else {
-                LOGGER.info("No com.aws.proseve.ggcommons.messaging system specified. Assuming IPC");
-                messagingArgs = new String[] {"IPC"};
+                LOGGER.info("No mode specified. Assuming GREENGRASS");
+                modeArgs = new String[] {"GREENGRASS"};
             }
-            retVal.messagingArgs = messagingArgs;
+            
+            if (modeArgs[0].equalsIgnoreCase("STANDALONE")) {
+                retVal.mode = ParsedCommandLine.Mode.STANDALONE;
+                if (modeArgs.length > 1) {
+                    retVal.standaloneConfigPath = modeArgs[1];
+                } else {
+                    LOGGER.error("STANDALONE mode requires config file path");
+                    System.exit(1);
+                }
+            } else {
+                retVal.mode = ParsedCommandLine.Mode.GREENGRASS;
+            }
 
             if (line.hasOption("t")) {
                 retVal.thingName = line.getOptionValue("thing");
