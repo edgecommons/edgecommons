@@ -37,6 +37,7 @@ public class Heartbeat implements ConfigurationChangeListener
     private final ConfigManager configManager;
     private HeartbeatMonitor heartbeatMonitor;
     private Timer heartbeatTimer;
+    private final Object timerLock = new Object();
 
     /**
      * Constructs a new Heartbeat instance for the component.
@@ -57,10 +58,16 @@ public class Heartbeat implements ConfigurationChangeListener
      */
     private void initHeartbeat()
     {
-        heartbeatMonitor = new HeartbeatMonitor(configManager.getHeartbeatConfig());
-        heartbeatTimer = new Timer("Heartbeat timer", true);
-        heartbeatTimer.scheduleAtFixedRate(new Heartbeater(), 0, configManager.getHeartbeatConfig().getIntervalSecs()*1000L);
-        LOGGER.info("Heartbeat initialized at {} second interval", configManager.getHeartbeatConfig().getIntervalSecs());
+        synchronized (timerLock) {
+            if (heartbeatTimer != null) {
+                heartbeatTimer.cancel();
+                heartbeatTimer.purge();
+            }
+            heartbeatMonitor = new HeartbeatMonitor(configManager.getHeartbeatConfig());
+            heartbeatTimer = new Timer("Heartbeat timer", true);
+            heartbeatTimer.scheduleAtFixedRate(new Heartbeater(), 0, configManager.getHeartbeatConfig().getIntervalSecs()*1000L);
+            LOGGER.info("Heartbeat initialized at {} second interval", configManager.getHeartbeatConfig().getIntervalSecs());
+        }
     }
 
     /**
@@ -149,11 +156,6 @@ public class Heartbeat implements ConfigurationChangeListener
     public boolean onConfigurationChanged()
     {
         LOGGER.info("Configuration changed, restarting heartbeat");
-        if (heartbeatTimer != null)
-        {
-            heartbeatTimer.cancel();
-            heartbeatTimer.purge();
-        }
         initHeartbeat();
         return true;
     }

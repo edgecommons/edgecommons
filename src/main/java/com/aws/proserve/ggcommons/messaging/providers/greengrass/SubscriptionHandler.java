@@ -35,6 +35,7 @@ public abstract class SubscriptionHandler<T> implements Runnable, StreamResponse
     protected int maxConcurrency;
     LinkedBlockingQueue<QueueEntry> queue = new LinkedBlockingQueue<>();
     ExecutorService executor;
+    private volatile boolean shutdown = false;
 
     public SubscriptionHandler(String topicFilter, BiConsumer<String, Message> callback, int maxConcurrency)
     {
@@ -52,6 +53,20 @@ public abstract class SubscriptionHandler<T> implements Runnable, StreamResponse
         new Thread(this).start();
     }
 
+    public void shutdown() {
+        shutdown = true;
+        queue.offer(new QueueEntry(null, null)); // Poison pill
+        executor.shutdown();
+        try {
+            if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
+                executor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            executor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+    }
+    
     abstract Pair<String,Message> parseRawPayload(T rawPayload);
 
     @Override
@@ -75,13 +90,14 @@ public abstract class SubscriptionHandler<T> implements Runnable, StreamResponse
     public void onStreamClosed()
     {
         LOGGER.info("Stream for subscription to topicFilter {} closed (unsubscribed)", topicFilter);
+        shutdown();
     }
 
     @Override
     public void run()
     {
         LOGGER.info("Starting queue monitoring for subscription on {}", topicFilter);
-        while(true) {
+        while(!shutdown) {
             try
             {
                 final QueueEntry entry = queue.take();

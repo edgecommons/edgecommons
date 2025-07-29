@@ -11,6 +11,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Provides functionality for emitting metrics from Greengrass components.
@@ -23,7 +24,7 @@ public class MetricEmitter
 
     private static MetricTarget metricTarget = null;
 
-    private static final HashMap<String, Metric> metrics = new HashMap<>();
+    private static final ConcurrentHashMap<String, Metric> metrics = new ConcurrentHashMap<>();
 
     private static MetricConfiguration metricConfig;
 

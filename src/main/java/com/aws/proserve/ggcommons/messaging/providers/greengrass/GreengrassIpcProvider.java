@@ -19,18 +19,18 @@ import software.amazon.awssdk.aws.greengrass.model.*;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiConsumer;
 
 public class GreengrassIpcProvider extends MessagingProvider
 {
     protected static final Logger LOGGER = LogManager.getLogger(GreengrassIpcProvider.class);
     GreengrassCoreIPCClientV2 ipcClient;
-    HashMap<String, SubscribeToTopicResponseHandler> ipcSubscriptionStreams;
-    HashMap<String, SubscribeToIoTCoreResponseHandler> iotCoreSubscriptionStreams;
+    ConcurrentHashMap<String, SubscribeToTopicResponseHandler> ipcSubscriptionStreams;
+    ConcurrentHashMap<String, SubscribeToIoTCoreResponseHandler> iotCoreSubscriptionStreams;
 
-    HashMap<String, ReplyFuture> responseFutures = new HashMap<>();
+    ConcurrentHashMap<String, ReplyFuture> responseFutures = new ConcurrentHashMap<>();
 
     final ReceiveMode receiveMode;
 
@@ -41,8 +41,8 @@ public class GreengrassIpcProvider extends MessagingProvider
         try
         {
             ipcClient = GreengrassCoreIPCClientV2.builder().build();
-            ipcSubscriptionStreams = new HashMap<>();
-            iotCoreSubscriptionStreams = new HashMap<>();
+            ipcSubscriptionStreams = new ConcurrentHashMap<>();
+            iotCoreSubscriptionStreams = new ConcurrentHashMap<>();
         }
         catch (IOException e)
         {

@@ -21,10 +21,10 @@ import org.apache.logging.log4j.core.config.Configurator;
 import org.apache.logging.log4j.core.config.builder.api.*;
 import org.apache.logging.log4j.core.config.builder.impl.BuiltConfiguration;
 
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.apache.logging.log4j.core.config.builder.api.ConfigurationBuilderFactory.newConfigurationBuilder;
 
@@ -42,7 +42,7 @@ public class ConfigManager
     protected final String componentName;
     protected final String componentFullName;
     protected final String thingName;
-    protected final ArrayList<ConfigurationChangeListener> configChangeListeners = new ArrayList<>();
+    protected final CopyOnWriteArrayList<ConfigurationChangeListener> configChangeListeners = new CopyOnWriteArrayList<>();
     private boolean initializing = true;
     protected final JsonObject fullConfig;
     protected TagConfiguration tagConfig;

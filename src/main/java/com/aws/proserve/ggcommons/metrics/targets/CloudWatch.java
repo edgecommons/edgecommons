@@ -18,6 +18,7 @@ import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 public class CloudWatch extends MetricTarget
@@ -25,7 +26,7 @@ public class CloudWatch extends MetricTarget
 
     private final CloudWatchClient cwClient;
 
-    private final HashMap<String, Collection<PendingMetric>> pendingMetrics = new HashMap<>();
+    private final ConcurrentHashMap<String, ConcurrentLinkedQueue<PendingMetric>> pendingMetrics = new ConcurrentHashMap<>();
 
     private Timer metricEmitTimer;
 
@@ -48,19 +49,9 @@ public class CloudWatch extends MetricTarget
     {
         // need to maintain a hashmap by namespace as we can only submit
         // from a single namespace at a time
-        if (pendingMetrics.containsKey(metric.getNamespace()))
-        {
-            pendingMetrics.get(metric.getNamespace()).add(new PendingMetric(metric, measureValues));
-            LOGGER.info("Added {} metric to pending queue", metric.getName());
-        }
-        else
-        {
-            Collection<PendingMetric> metricQueue = new ConcurrentLinkedQueue<>();
-            metricQueue.add(new PendingMetric(metric, measureValues));
-            pendingMetrics.put(metric.getNamespace(), metricQueue);
-            LOGGER.info("Created queue for namespace {} and added {} metric to pending queue",
-                    metric.getNamespace(), metric.getName());
-        }
+        pendingMetrics.computeIfAbsent(metric.getNamespace(), k -> new ConcurrentLinkedQueue<>())
+                     .add(new PendingMetric(metric, measureValues));
+        LOGGER.info("Added {} metric to pending queue", metric.getName());
     }
 
 
@@ -100,19 +91,17 @@ public class CloudWatch extends MetricTarget
 
     private void flushMetrics()
     {
-        for (Map.Entry<String, Collection<PendingMetric>> entry : pendingMetrics.entrySet())
+        for (Map.Entry<String, ConcurrentLinkedQueue<PendingMetric>> entry : pendingMetrics.entrySet())
         {
             String namespace = entry.getKey();
-            Collection<PendingMetric> pendingMetricQueue = entry.getValue();
+            ConcurrentLinkedQueue<PendingMetric> pendingMetricQueue = entry.getValue();
             Collection<MetricDatum> data = new ArrayList<>();
             int numMetrics = 0;
-            Iterator<PendingMetric> it = pendingMetricQueue.iterator();
-            while (it.hasNext())
+            PendingMetric pendingMetric;
+            while ((pendingMetric = pendingMetricQueue.poll()) != null)
             {
-                PendingMetric pendingMetric = it.next();
                 appendToPutMetricDataRequest(pendingMetric, data);
                 numMetrics++;
-                it.remove();
             }
             if (numMetrics > 0)
             {
