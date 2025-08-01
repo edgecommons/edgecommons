@@ -30,7 +30,9 @@ public class Metric
      * Creates a new metric with the specified name.
      *
      * @param name The name of the metric
+     * @deprecated Use {@link MetricBuilder#create(String)} instead
      */
+    @Deprecated
     public Metric(String name)
     {
         this(name, MetricEmitter.getMetricConfig().getNamespace(), new HashMap<>(), new HashMap<>());
@@ -43,7 +45,9 @@ public class Metric
      * @param namespace The metric namespace
      * @param measures The map of measure definitions
      * @param dimensions The map of dimension key-values
+     * @deprecated Use {@link MetricBuilder#create(String)} instead
      */
+    @Deprecated
     public Metric(String name, String namespace, Map<String, Measure> measures, Map<String, String> dimensions)
     {
         if (measures == null) {

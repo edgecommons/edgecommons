@@ -4,8 +4,10 @@ import com.aws.proserve.ggcommons.interfaces.IConfigurationService;
 import com.aws.proserve.ggcommons.interfaces.IMessagingService;
 import com.aws.proserve.ggcommons.interfaces.IMetricService;
 import com.aws.proserve.ggcommons.messaging.Message;
+import com.aws.proserve.ggcommons.messaging.MessageBuilder;
 import com.aws.proserve.ggcommons.metrics.Measure;
 import com.aws.proserve.ggcommons.metrics.Metric;
+import com.aws.proserve.ggcommons.metrics.MetricBuilder;
 import com.aws.proserve.ggcommons.utils.Utils;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
@@ -46,7 +48,9 @@ class GGCommonsTest
                 "-m", "STANDALONE", "./standalone-messaging-sample.json",
                 "-c", "FILE", "./config_2.json"
         };
-        ggCommons = new GGCommons("com.aws.proserve.greengrass.IntegrationTests", args);
+        ggCommons = GGCommonsBuilder.create("com.aws.proserve.greengrass.IntegrationTests")
+                .withArgs(args)
+                .build();
         configService = ggCommons.getService(IConfigurationService.class);
         messagingService = ggCommons.getService(IMessagingService.class);
         metricService = ggCommons.getService(IMetricService.class);
@@ -103,7 +107,10 @@ class GGCommonsTest
     {
         JsonObject replyPayload = new JsonObject();
         replyPayload.addProperty("reply_message", "I have received your request and have replied with this message");
-        Message reply = Message.buildFromConfig("ReplyTest", "1.0", replyPayload, ggCommons.getConfigManager());
+        Message reply = MessageBuilder.create("ReplyTest", "1.0")
+                                      .withPayload(replyPayload).
+                                      withConfig(configService)
+                                      .build();
         LOGGER.info("Received a request message on local messaging system");
         messagingService.reply(message, reply);
     }
@@ -112,7 +119,10 @@ class GGCommonsTest
     {
         JsonObject replyPayload = new JsonObject();
         replyPayload.addProperty("reply_message", "(IoT Core) I have received your request and have replied with this message");
-        Message reply = Message.buildFromConfig("ReplyTest", "1.0", replyPayload, ggCommons.getConfigManager());
+        Message reply = MessageBuilder.create("ReplyTest", "1.0")
+                .withPayload(replyPayload)
+                .withConfig(configService)
+                .build();
         messagingService.reply(message, reply);
     }
 
@@ -123,7 +133,10 @@ class GGCommonsTest
         messagingService.subscribe(topic, this::ipcMessageHandler, 1);
         JsonObject jsonPayload = new JsonObject();
         jsonPayload.addProperty("message", "Test IPC message");
-        Message msg = Message.buildFromConfig("IpcMessageTest", "1.0", jsonPayload, ggCommons.getConfigManager());
+        Message msg = MessageBuilder.create("IpcMessageTest", "1.0")
+                .withPayload(jsonPayload)
+                .withConfig(configService)
+                .build();
         messagingService.publish(topic, msg);
         Utils.sleep(200);
         assertNotNull(receivedMessage);
@@ -168,7 +181,10 @@ class GGCommonsTest
         messagingService.subscribeToIoTCore(topic, this::iotCoreMessageHandler, QOS.AT_LEAST_ONCE);
         JsonObject jsonPayload = new JsonObject();
         jsonPayload.addProperty("message", "Test IoT Core message");
-        Message msg = Message.buildFromConfig("IoTCoreMessage", "1.0", jsonPayload, ggCommons.getConfigManager());
+        Message msg = MessageBuilder.create("IoTCoreMessage", "1.0")
+                .withPayload(jsonPayload)
+                .withConfig(configService)
+                .build();
         messagingService.publishToIotCore(topic, msg, QOS.AT_LEAST_ONCE);
         Utils.sleep(200);
         assertNotNull(receivedMessage);
@@ -183,7 +199,10 @@ class GGCommonsTest
         messagingService.subscribe(subTopic, this::ipcMessageHandler, 1);
         JsonObject jsonPayload = new JsonObject();
         jsonPayload.addProperty("message", "Test IPC message");
-        Message msg = Message.buildFromConfig("SubscribeWithFilterTest", "1.0", jsonPayload, ggCommons.getConfigManager());
+        Message msg = MessageBuilder.create("SubscribeWithFilterTest", "1.0")
+                .withPayload(jsonPayload)
+                .withConfig(configService)
+                .build();
         messagingService.publish(pubTopic, msg);
         Utils.sleep(200);
         assertNotNull(receivedMessage);
@@ -198,7 +217,10 @@ class GGCommonsTest
         messagingService.subscribe(requestTopic, this::requestHandler, 1);
         JsonObject requestPayload = new JsonObject();
         requestPayload.addProperty("message", "Test Request Reply");
-        Message request = Message.buildFromConfig("RequestTest", "1.0", requestPayload, ggCommons.getConfigManager());
+        Message request = MessageBuilder.create("RequestTest", "1.0")
+                .withPayload(requestPayload)
+                .withConfig(configService)
+                .build();
         String correlationId = request.getCorrelationId();
         Message reply = messagingService.request(requestTopic, request).get(1000, TimeUnit.MILLISECONDS);
         assertNotNull(reply);
@@ -212,7 +234,10 @@ class GGCommonsTest
         String requestTopic = "test/iot_core_request";
         JsonObject requestPayload = new JsonObject();
         requestPayload.addProperty("message", "Test Request Reply");
-        Message request = Message.buildFromConfig("RequestTest", "1.0", requestPayload, ggCommons.getConfigManager());
+        Message request = MessageBuilder.create("RequestTest", "1.0")
+                .withPayload(requestPayload)
+                .withConfig(configService)
+                .build();
         String correlationId = request.getCorrelationId();
         LOGGER.info("Sending request to IoT Core on {}", requestTopic);
         Message reply = messagingService.requestFromIoTCore(requestTopic, request).get(1000, TimeUnit.MILLISECONDS);
@@ -224,11 +249,9 @@ class GGCommonsTest
     void emitMetric() throws ExecutionException, InterruptedException, TimeoutException
     {
         // Create a Metric named "test" using default namespace and dimensions
-        Metric metric = new Metric("test");
-
-        // Add a measure
-        Measure measure = new Measure("val", "Count", 1);
-        metric.addMeasure(measure);
+        Metric metric = MetricBuilder.create("test")
+                .addMeasure("val", "Count", 1)
+                .build();
 
         // Define the metric
         metricService.defineMetric(metric);
@@ -260,14 +283,20 @@ class GGCommonsTest
         // Publish to local - should only trigger local callback
         JsonObject localPayload = new JsonObject();
         localPayload.addProperty("source", "local");
-        Message localMsg = Message.buildFromConfig("LocalMessage", "1.0", localPayload, ggCommons.getConfigManager());
+        Message localMsg = MessageBuilder.create("LocalMessage", "1.0")
+                .withPayload(localPayload)
+                .withConfig(configService)
+                .build();
         LOGGER.info("Publishing message to LOCAL on topic");
         messagingService.publish(topic, localMsg);
         
         // Publish to IoT Core - should only trigger IoT Core callback
         JsonObject iotPayload = new JsonObject();
         iotPayload.addProperty("source", "iotcore");
-        Message iotMsg = Message.buildFromConfig("IoTCoreMessage", "1.0", iotPayload, ggCommons.getConfigManager());
+        Message iotMsg = MessageBuilder.create("IoTCoreMessage", "1.0")
+                .withPayload(iotPayload)
+                .withConfig(configService)
+                .build();
         LOGGER.info("Publishing message to IOT CORE on topic");
         messagingService.publishToIotCore(topic, iotMsg, QOS.AT_LEAST_ONCE);
         

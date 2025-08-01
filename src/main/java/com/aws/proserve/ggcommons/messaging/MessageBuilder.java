@@ -1,7 +1,9 @@
 package com.aws.proserve.ggcommons.messaging;
 
 import com.aws.proserve.ggcommons.config.ConfigManager;
+import com.aws.proserve.ggcommons.interfaces.IConfigurationService;
 import com.google.gson.Gson;
+import com.google.gson.JsonObject;
 import com.google.gson.JsonSyntaxException;
 
 /**
@@ -12,7 +14,7 @@ public class MessageBuilder {
     private String version;
     private String correlationId;
     private Object payload;
-    private ConfigManager configManager;
+    private IConfigurationService configService;
     
     private MessageBuilder(String name, String version) {
         this.name = name;
@@ -21,6 +23,35 @@ public class MessageBuilder {
     
     public static MessageBuilder create(String name, String version) {
         return new MessageBuilder(name, version);
+    }
+    
+    public static Message fromObject(Object msgContents) {
+        Message retVal = new Message();
+        if (msgContents instanceof JsonObject)
+        {
+            JsonObject msgJsonObj = (JsonObject) msgContents;
+            if (msgJsonObj.has("header"))
+            {
+                retVal.header = MessageHeader.fromDict(msgJsonObj.getAsJsonObject("header"));
+            }
+            if (msgJsonObj.has("tags"))
+            {
+                retVal.tags = MessageTags.fromDict(msgJsonObj.getAsJsonObject("tags"));
+            }
+            if (msgJsonObj.has("body"))
+            {
+                retVal.body = msgJsonObj.getAsJsonObject("body");
+            }
+            if (!(msgJsonObj.has("header") || msgJsonObj.has("tags") || msgJsonObj.has("body")))
+            {
+                retVal.raw = msgJsonObj;
+            }
+        }
+        else
+        {
+            retVal.raw = msgContents;
+        }
+        return retVal;
     }
     
 
@@ -35,19 +66,28 @@ public class MessageBuilder {
         return this;
     }
     
+    /**
+     * @deprecated Use {@link #withConfig(IConfigurationService)} instead
+     */
+    @Deprecated
     public MessageBuilder withConfig(ConfigManager configManager) {
-        this.configManager = configManager;
+        this.configService = configManager;
+        return this;
+    }
+    
+    public MessageBuilder withConfig(IConfigurationService configService) {
+        this.configService = configService;
         return this;
     }
     
     public Message build() {
-        if (configManager == null) {
-            throw new IllegalStateException("ConfigManager is required - call withConfig()");
+        if (configService == null) {
+            throw new IllegalStateException("Configuration service is required - call withConfig()");
         }
         
         Message message = new Message();
         message.header = new MessageHeader(name, version, correlationId);
-        message.tags = MessageTags.fromConfig(configManager);
+        message.tags = MessageTags.fromConfig(configService);
         
         if (payload instanceof String) {
             String payloadStr = (String) payload;

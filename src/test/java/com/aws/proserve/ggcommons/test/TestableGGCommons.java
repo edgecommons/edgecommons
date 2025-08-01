@@ -24,7 +24,9 @@ public class TestableGGCommons extends GGCommons {
             initForTesting(componentName, args);
             
             // Initialize MetricEmitter for tests that create Metric objects directly
-            MetricEmitter.init(getConfigManager());
+            if (getConfigManager() != null) {
+                MetricEmitter.init(getConfigManager());
+            }
             
             // Now override with our specific mock instances
             registerService(IMessagingService.class, new MockMessagingService());

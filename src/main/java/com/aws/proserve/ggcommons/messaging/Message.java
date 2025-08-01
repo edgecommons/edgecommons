@@ -5,6 +5,7 @@
 package com.aws.proserve.ggcommons.messaging;
 
 import com.aws.proserve.ggcommons.config.ConfigManager;
+import com.aws.proserve.ggcommons.interfaces.IConfigurationService;
 import com.google.gson.Gson;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -169,6 +170,10 @@ public class Message
             header.setCorrelationId(correlationId);
     }
 
+    /**
+     * @deprecated Use {@link #buildFromConfig(String, String, Object, IConfigurationService)} instead
+     */
+    @Deprecated
     public static Message buildFromConfig(String name, String version, Object payload,
                                           ConfigManager configManager)
     {
@@ -178,6 +183,10 @@ public class Message
             .build();
     }
 
+    /**
+     * @deprecated Use {@link #buildFromConfig(String, String, Object, IConfigurationService, String)} instead
+     */
+    @Deprecated
     public static Message buildFromConfig(String name, String version, Object payload,
                                           ConfigManager configManager, String correlationId)
     {
@@ -207,11 +216,58 @@ public class Message
     }
 
     /**
+     * @deprecated Use {@link MessageBuilder#create(String, String)} instead
+     */
+    @Deprecated
+    public static Message buildFromConfig(String name, String version, Object payload,
+                                          IConfigurationService configService)
+    {
+        return MessageBuilder.create(name, version)
+            .withPayload(payload)
+            .withConfig(configService)
+            .build();
+    }
+
+    /**
+     * @deprecated Use {@link MessageBuilder#create(String, String)} instead
+     */
+    @Deprecated
+    public static Message buildFromConfig(String name, String version, Object payload,
+                                          IConfigurationService configService, String correlationId)
+    {
+        Message retVal = new Message();
+        retVal.header = new MessageHeader(name, version, correlationId);
+        retVal.tags = MessageTags.fromConfig(configService);
+        if (payload instanceof String)
+        {
+            String payloadStr =(String) payload;
+            try
+            {
+                Gson gson = new Gson();
+                // check if a "stringified" json object and convert to object if so
+                retVal.body = gson.fromJson(payloadStr, Object.class);
+            }
+            catch (JsonSyntaxException e)
+            {
+                // just a regular string
+                retVal.body = payloadStr;
+            }
+        }
+        else
+        {
+            retVal.body = payload;
+        }
+        return retVal;
+    }
+
+    /**
      * Builds a message from a generic message contents object.
      *
      * @param msgContents The content to create the message from
      * @return A new Message instance
+     * @deprecated Use {@link MessageBuilder#fromObject(Object)} instead
      */
+    @Deprecated
     public static Message build(Object msgContents)
     {
         Message retVal = new Message();

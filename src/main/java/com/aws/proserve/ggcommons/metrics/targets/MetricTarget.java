@@ -5,6 +5,7 @@
 package com.aws.proserve.ggcommons.metrics.targets;
 
 import com.aws.proserve.ggcommons.config.ConfigManager;
+import com.aws.proserve.ggcommons.interfaces.IConfigurationService;
 import com.aws.proserve.ggcommons.config.ConfigurationChangeListener;
 import com.aws.proserve.ggcommons.config.MetricConfiguration;
 import com.aws.proserve.ggcommons.metrics.Metric;
@@ -19,11 +20,22 @@ public abstract class MetricTarget implements ConfigurationChangeListener
     protected static final Logger LOGGER = LogManager.getLogger(MetricTarget.class);
 
     protected final ConfigManager configManager;
+    protected final IConfigurationService configService;
     protected final MetricConfiguration metricConfig;
 
+    /**
+     * @deprecated Use {@link #MetricTarget(IConfigurationService)} instead
+     */
+    @Deprecated
     MetricTarget(ConfigManager configManager)
     {
-        this.configManager = configManager;
+        this((IConfigurationService) configManager);
+    }
+    
+    MetricTarget(IConfigurationService configService)
+    {
+        this.configManager = (ConfigManager) configService;
+        this.configService = configService;
         this.metricConfig = configManager.getMetricConfig();
     }
 

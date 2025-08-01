@@ -17,17 +17,19 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class MessageTest {
     
-    private TestableGGCommons ggCommons;
-    private MockConfigurationService mockConfigService;
+    private static TestableGGCommons ggCommons;
+    private static MockConfigurationService mockConfigService;
     
     @BeforeEach
     void setUp() {
-        mockConfigService = new MockConfigurationService();
-        mockConfigService.setThingName("test-thing");
-        mockConfigService.setComponentName("TestComponent");
-        
-        String[] args = {"-t", "test-thing", "-c", "FILE", "./config.json"};
-        ggCommons = new TestableGGCommons("test.component", args);
+        if (ggCommons == null) {
+            mockConfigService = new MockConfigurationService();
+            mockConfigService.setThingName("test-thing");
+            mockConfigService.setComponentName("TestComponent");
+            
+            String[] args = {"-t", "test-thing", "-c", "FILE", "./config.json"};
+            ggCommons = new TestableGGCommons("test.component", args);
+        }
     }
 
     @Test

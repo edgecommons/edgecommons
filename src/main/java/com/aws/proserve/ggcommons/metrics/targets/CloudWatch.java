@@ -5,6 +5,7 @@
 package com.aws.proserve.ggcommons.metrics.targets;
 
 import com.aws.proserve.ggcommons.config.ConfigManager;
+import com.aws.proserve.ggcommons.interfaces.IConfigurationService;
 import com.aws.proserve.ggcommons.metrics.Metric;
 import software.amazon.awssdk.services.cloudwatch.CloudWatchClient;
 import software.amazon.awssdk.services.cloudwatch.model.CloudWatchException;
@@ -30,9 +31,18 @@ public class CloudWatch extends MetricTarget
 
     private Timer metricEmitTimer;
 
+    /**
+     * @deprecated Use {@link #CloudWatch(IConfigurationService)} instead
+     */
+    @Deprecated
     public CloudWatch(ConfigManager configManager)
     {
-        super(configManager);
+        this((IConfigurationService) configManager);
+    }
+    
+    public CloudWatch(IConfigurationService configService)
+    {
+        super(configService);
         cwClient = CloudWatchClient.builder().build();
         initEmitTimer();
     }

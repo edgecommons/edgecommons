@@ -9,6 +9,9 @@ import com.aws.proserve.ggcommons.config.ConfigManagerFactory;
 import com.aws.proserve.ggcommons.di.ServiceFactory;
 import com.aws.proserve.ggcommons.di.ServiceRegistry;
 import com.aws.proserve.ggcommons.heartbeat.Heartbeat;
+import com.aws.proserve.ggcommons.interfaces.IConfigurationService;
+import com.aws.proserve.ggcommons.interfaces.IMessagingService;
+import com.aws.proserve.ggcommons.interfaces.IMetricService;
 import com.aws.proserve.ggcommons.messaging.MessagingClient;
 import com.aws.proserve.ggcommons.metrics.MetricEmitter;
 import org.apache.commons.cli.*;
@@ -28,7 +31,9 @@ public class GGCommons
      * 
      * @param componentName The name of the Greengrass component
      * @param args Command line arguments passed to the component
+     * @deprecated Use {@link GGCommonsBuilder#create(String)} instead
      */
+    @Deprecated
     public GGCommons(String componentName, String[] args)
     {
         init(componentName, args, null, true);
@@ -40,7 +45,9 @@ public class GGCommons
      * @param componentName The name of the Greengrass component
      * @param args Command line arguments passed to the component
      * @param appOptions Custom options for the application
+     * @deprecated Use {@link GGCommonsBuilder#create(String)} instead
      */
+    @Deprecated
     public GGCommons(String componentName, String[] args, Options appOptions)
     {
         init(componentName, args, appOptions, true);
@@ -54,7 +61,9 @@ public class GGCommons
      * @param appOptions Custom options for the application
      * @param receiveOwnMessages Flag to determine if the component should receive its own messages.  Applies only when
      *                           messaging target is IPC
+     * @deprecated Use {@link GGCommonsBuilder#create(String)} instead
      */
+    @Deprecated
     public GGCommons(String componentName, String[] args, Options appOptions, boolean receiveOwnMessages)
     {
         init(componentName, args, appOptions, receiveOwnMessages);
@@ -89,8 +98,15 @@ public class GGCommons
             
             // Initialize other components - these will fail in production if services are unavailable
             MessagingClient.init(parsedCommandLine, receiveOwnMessages);
+            
+            // Inject messaging service into MetricEmitter before initialization
+            MetricEmitter.setMessagingService(getService(IMessagingService.class));
             MetricEmitter.init(configManager);
-            new Heartbeat(configManager);
+            
+            // Create heartbeat and inject services
+            Heartbeat heartbeat = new Heartbeat(configManager);
+            heartbeat.setMessagingService(getService(IMessagingService.class));
+            heartbeat.setMetricService(getService(IMetricService.class));
             
             // Complete initialization - this must be the very last step
             // After this point, configuration changes will trigger listener notifications
@@ -134,6 +150,18 @@ public class GGCommons
     {
         return configManager;
     }
+    
+    /**
+     * Returns the configuration service interface for this component.
+     * 
+     * @return The IConfigurationService interface
+     */
+    public IConfigurationService getConfigurationService()
+    {
+        return getService(IConfigurationService.class);
+    }
+    
+
     
     /**
      * Retrieves a service by its interface type.

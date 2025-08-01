@@ -7,6 +7,7 @@ package com.aws.proserve.ggcommons.config;
 import com.aws.proserve.ggcommons.ParsedCommandLine;
 import com.aws.proserve.ggcommons.config.provider.ConfigProvider;
 import com.aws.proserve.ggcommons.config.provider.ConfigProviderBuilder;
+import com.aws.proserve.ggcommons.interfaces.IConfigurationService;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -34,7 +35,7 @@ import static org.apache.logging.log4j.core.config.builder.api.ConfigurationBuil
  * logging, metrics, heartbeat, and tag configurations. This class provides methods to access and modify
  * component configurations and handles configuration change notifications.
  */
-public class ConfigManager
+public class ConfigManager implements IConfigurationService
 {
     private static final Logger LOGGER = LogManager.getLogger(ConfigManager.class);
 

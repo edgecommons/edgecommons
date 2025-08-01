@@ -6,6 +6,7 @@ package com.aws.proserve.ggcommons.metrics;
 
 import com.aws.proserve.ggcommons.config.ConfigManager;
 import com.aws.proserve.ggcommons.config.MetricConfiguration;
+import com.aws.proserve.ggcommons.interfaces.IMessagingService;
 import com.aws.proserve.ggcommons.metrics.targets.*;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -31,7 +32,11 @@ public class MetricEmitter
     private static String thingName;
 
     private static String componentName;
+    
+    private static IMessagingService messagingService;
 
+
+    
     /**
      * Initializes the MetricEmitter with configuration settings.
      *
@@ -44,15 +49,23 @@ public class MetricEmitter
         componentName = configManager.getComponentName();
         if (metricTarget == null) {
             String target = metricConfig.getTarget();
-            if (target.equalsIgnoreCase("messaging"))
-                metricTarget = new Messaging(configManager);
-            else if (target.equalsIgnoreCase("log"))
+            if (target.equalsIgnoreCase("messaging")) {
+                Messaging messaging = new Messaging(configManager);
+                if (messagingService != null) {
+                    messaging.setMessagingService(messagingService);
+                }
+                metricTarget = messaging;
+            } else if (target.equalsIgnoreCase("log"))
                 metricTarget = new Log(configManager);
             else if (target.equalsIgnoreCase("cloudwatch"))
                 metricTarget = new CloudWatch(configManager);
-            else if (target.equalsIgnoreCase("cloudwatchcomponent"))
-                metricTarget = new CloudWatchComponent(configManager);
-            else
+            else if (target.equalsIgnoreCase("cloudwatchcomponent")) {
+                CloudWatchComponent cwComponent = new CloudWatchComponent(configManager);
+                if (messagingService != null) {
+                    cwComponent.setMessagingService(messagingService);
+                }
+                metricTarget = cwComponent;
+            } else
             {
                 LOGGER.warn("Invalid metric target '{}' specified. Defaulting to 'log'", target);
                 target = "log";
@@ -88,6 +101,15 @@ public class MetricEmitter
      */
     static String getComponentName() {
         return componentName;
+    }
+    
+    /**
+     * Sets the messaging service for dependency injection.
+     * 
+     * @param service The messaging service implementation
+     */
+    public static void setMessagingService(IMessagingService service) {
+        messagingService = service;
     }
 
     /**
