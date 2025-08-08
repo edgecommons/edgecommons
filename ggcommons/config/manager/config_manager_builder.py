@@ -21,7 +21,7 @@ class ConfigManagerBuilder:
         if "AWS_IOT_THING_NAME" in os.environ:
             thing_name = os.environ["AWS_IOT_THING_NAME"]
         elif args.thing is not None:
-            thing_name = args.thing[0]
+            thing_name = args.thing
         else:
             thing_name = str(uuid.uuid4())
         if config_args[0].upper() == "FILE":
@@ -31,7 +31,9 @@ class ConfigManagerBuilder:
         elif config_args[0].upper() == "ENV":
             logger.info("Environment config specified. Using EnvironmentConfigManager")
             env_var = config_args[1] if len(config_args) > 1 else "CONFIG"
-            config_manager = EnvironmentConfigManager(thing_name, component_name, env_var)
+            config_manager = EnvironmentConfigManager(
+                thing_name, component_name, env_var
+            )
         elif config_args[0].upper() == "GG_CONFIG":
             logger.info("GG_CONFIG specified. Using GreengrassConfigManager")
             config_component_name = config_args[1] if len(config_args) > 1 else None
@@ -42,7 +44,9 @@ class ConfigManagerBuilder:
         elif config_args[0].upper() == "SHADOW":
             logger.info("SHADOW specified. Using ShadowConfigManager")
             shadow_name = config_args[1] if len(config_args) > 1 else component_name
-            config_manager = ShadowConfigManager(thing_name, component_name, shadow_name)
+            config_manager = ShadowConfigManager(
+                thing_name, component_name, shadow_name
+            )
         elif config_args[0].upper() == "CONFIG_COMPONENT":
             logger.info("CONFIG_COMPONENT specified. Using ConfigComponentManager")
             config_manager = ConfigComponentManager(thing_name, component_name)

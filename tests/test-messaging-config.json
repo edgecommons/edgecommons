@@ -1,0 +1,20 @@
+{
+  "localMqtt": {
+    "host": "localhost",
+    "port": 1883,
+    "credentials": {
+      "username": "test",
+      "password": "test"
+    }
+  },
+  "iotCore": {
+    "host": "test-endpoint.iot.us-east-1.amazonaws.com",
+    "port": 8883,
+    "clientId": "ggcommons-test-2",
+    "credentials": {
+      "caCertPath": "/path/to/test-ca.crt",
+      "certPath": "/path/to/test-cert.pem",
+      "keyPath": "/path/to/test-key.pem"
+    }
+  }
+}

@@ -1,6 +1,13 @@
 class Metric:
-    def __init__(self, thing_name: str, component_name: str, name: str, namespace: str = None, measures: list = None,
-                 dimensions: list = None):
+    def __init__(
+        self,
+        thing_name: str,
+        component_name: str,
+        name: str,
+        namespace: str = None,
+        measures: list = None,
+        dimensions: list = None,
+    ):
         if measures is None:
             measures = {}
         if dimensions is None:
@@ -12,9 +19,9 @@ class Metric:
         self.dimensions = dimensions
 
         # Add default dimensions
-        self.dimensions['coreName'] = thing_name
-        self.dimensions['category'] = name
-        self.dimensions['component'] = component_name
+        self.dimensions["coreName"] = thing_name
+        self.dimensions["category"] = name
+        self.dimensions["component"] = component_name
 
     def add_measure(self, measure):
         self.measures[measure.name] = measure
@@ -24,15 +31,20 @@ class Metric:
 
     def dimensions_as_json(self, include_core_name=True) -> list:
         dimensions_list = [
-            {'name': key, 'value': value}
+            {"name": key, "value": value}
             for key, value in self.dimensions.items()
-            if include_core_name or key != 'coreName'
+            if include_core_name or key != "coreName"
         ]
         return dimensions_list
 
     def dimensions_as_collection(self, large_fleet_workaround: bool = False):
         return [
-            {'Name': key, 'Value': "ALL" if large_fleet_workaround and key == 'coreName' else value}
+            {
+                "Name": key,
+                "Value": "ALL"
+                if large_fleet_workaround and key == "coreName"
+                else value,
+            }
             for key, value in self.dimensions.items()
         ]
 

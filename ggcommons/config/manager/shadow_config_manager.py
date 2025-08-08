@@ -1,13 +1,13 @@
 import json
 import logging
-from abc import ABC
+
 from awsiot.greengrasscoreipc.model import ReceiveMode, SubscriptionResponseMessage
 from ggcommons.config.manager.config_manager import ConfigManager
 
 logger = logging.getLogger("ShadowConfigManager")
 
 
-class ShadowConfigManager(ConfigManager, ABC):
+class ShadowConfigManager(ConfigManager):
     _SHADOW_TOPIC_TEMPLATE = "$aws/things/{}/shadow/name/{}/"
     _ALL_SHADOW_TOPIC_TEMPLATE = "$aws/things/{}/shadow/name/{}/+/+"
     _DEFAULT_CONFIGURATION = {
@@ -21,7 +21,10 @@ class ShadowConfigManager(ConfigManager, ABC):
         super().__init__(component_name, thing_name)
         self._shadow_name = shadow_name if shadow_name is not None else component_name
         from ggcommons import MessagingClient
-        self._ipc_client = MessagingClient.get_native_client()  # GreengrassCoreIPCClientV2()
+
+        self._ipc_client = (
+            MessagingClient.get_native_client()
+        )  # GreengrassCoreIPCClientV2()
         self._shadow_topic_prefix = ShadowConfigManager._SHADOW_TOPIC_TEMPLATE.format(
             self.get_thing_name(), shadow_name
         )

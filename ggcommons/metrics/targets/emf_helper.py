@@ -15,13 +15,17 @@ from ggcommons.metrics.metric import Metric
 from ggcommons.config.metric_config import MetricConfiguration
 
 
-def build_metric_data_emf(metric_config: MetricConfiguration, metric: Metric, measure_values: dict,
-                          large_fleet_workaround: bool):
+def build_metric_data_emf(
+    metric_config: MetricConfiguration,
+    metric: Metric,
+    measure_values: dict,
+    large_fleet_workaround: bool,
+):
     emf_object = {}
 
     aws_object = {
-        "Timestamp": int(time.time()*1000),
-        "CloudWatchMetrics": [get_metrics_metadata_emf(metric_config, metric)]
+        "Timestamp": int(time.time() * 1000),
+        "CloudWatchMetrics": [get_metrics_metadata_emf(metric_config, metric)],
     }
 
     emf_object["_aws"] = aws_object
@@ -37,15 +41,21 @@ def build_metric_data_emf(metric_config: MetricConfiguration, metric: Metric, me
 
 
 def get_metrics_metadata_emf(metric_config: MetricConfiguration, metric: Metric):
-    namespace = metric.get_namespace() if metric.get_namespace() is not None \
-                                       else metric_config.get_namespace()
+    namespace = (
+        metric.get_namespace()
+        if metric.get_namespace() is not None
+        else metric_config.get_namespace()
+    )
     cw_metrics_array_entry = {
         "Namespace": namespace,
         "Dimensions": [[dimension for dimension in metric.get_dimensions().keys()]],
-        "Metrics": [{
-            "Name": measure.get_name(),
-            "Unit": measure.get_unit(),
-            "StorageResolution": measure.get_storage_resolution()
-        } for measure in metric.get_measures().values()]
+        "Metrics": [
+            {
+                "Name": measure.get_name(),
+                "Unit": measure.get_unit(),
+                "StorageResolution": measure.get_storage_resolution(),
+            }
+            for measure in metric.get_measures().values()
+        ],
     }
     return cw_metrics_array_entry

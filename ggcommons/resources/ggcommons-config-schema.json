@@ -1,0 +1,278 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "GGCommons Configuration Schema",
+  "description": "JSON schema for validating GGCommons component configuration",
+  "type": "object",
+  "properties": {
+    "logging": {
+      "type": "object",
+      "properties": {
+        "level": {
+          "type": "string",
+          "enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+        },
+        "format": {
+          "type": "string"
+        },
+        "fileLogging": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "filePath": {
+              "type": "string"
+            },
+            "maxFileSize": {
+              "type": "string",
+              "pattern": "^\\d+[KMGT]?B$"
+            },
+            "backupCount": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "loggers": {
+          "type": "object",
+          "patternProperties": {
+            ".*": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "level": {
+                      "type": "string",
+                      "enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+                    }
+                  },
+                  "required": ["level"]
+                }
+              ]
+            }
+          }
+        },
+        "globalControl": {
+          "type": "boolean"
+        }
+      }
+    },
+    "heartbeat": {
+      "type": "object",
+      "properties": {
+        "intervalSecs": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "measures": {
+          "type": "object",
+          "properties": {
+            "cpu": {
+              "type": "boolean"
+            },
+            "memory": {
+              "type": "boolean"
+            },
+            "disk": {
+              "type": "boolean"
+            },
+            "files": {
+              "type": "boolean"
+            },
+            "threads": {
+              "type": "boolean"
+            },
+            "fds": {
+              "type": "boolean"
+            }
+          }
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["messaging", "metric"]
+              },
+              "config": {
+                "type": "object",
+                "properties": {
+                  "destination": {
+                    "type": "string",
+                    "enum": ["ipc", "iot_core"]
+                  },
+                  "topic": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "required": ["type"]
+          }
+        }
+      }
+    },
+    "metricEmission": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "type": "string",
+          "enum": ["cloudwatch", "log", "messaging"]
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "intervalSecs": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "largeFleetWorkaround": {
+          "type": "boolean"
+        },
+        "targetConfig": {
+          "type": "object",
+          "properties": {
+            "logFileName": {
+              "type": "string"
+            },
+            "topic": {
+              "type": "string"
+            },
+            "destination": {
+              "type": "string",
+              "enum": ["ipc", "iot_core"]
+            }
+          }
+        }
+      }
+    },
+    "messaging": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["IPC", "STANDALONE"]
+        },
+        "receiveOwnMessages": {
+          "type": "boolean"
+        },
+        "localBroker": {
+          "type": "object",
+          "properties": {
+            "host": {
+              "type": "string"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "useTls": {
+              "type": "boolean"
+            },
+            "caCertPath": {
+              "type": "string"
+            },
+            "certPath": {
+              "type": "string"
+            },
+            "keyPath": {
+              "type": "string"
+            },
+            "username": {
+              "type": "string"
+            },
+            "password": {
+              "type": "string"
+            },
+            "clientIdPrefix": {
+              "type": "string"
+            },
+            "keepAlive": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "cleanSession": {
+              "type": "boolean"
+            }
+          }
+        },
+        "iotCoreBroker": {
+          "type": "object",
+          "properties": {
+            "host": {
+              "type": "string"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "useTls": {
+              "type": "boolean"
+            },
+            "caCertPath": {
+              "type": "string"
+            },
+            "certPath": {
+              "type": "string"
+            },
+            "keyPath": {
+              "type": "string"
+            },
+            "username": {
+              "type": "string"
+            },
+            "password": {
+              "type": "string"
+            },
+            "clientIdPrefix": {
+              "type": "string"
+            },
+            "keepAlive": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "cleanSession": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    },
+    "tags": {
+      "type": "object",
+      "patternProperties": {
+        ".*": {
+          "type": "string"
+        }
+      }
+    },
+    "component": {
+      "type": "object",
+      "properties": {
+        "global": {
+          "type": "object"
+        },
+        "instances": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              }
+            },
+            "required": ["id"]
+          }
+        }
+      }
+    }
+  }
+}

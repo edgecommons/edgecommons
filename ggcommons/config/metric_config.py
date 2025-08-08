@@ -9,7 +9,9 @@ class MetricConfiguration:
     DEFAULT_CLOUDWATCH_COMPONENT_TOPIC = "cloudwatch/metric/put"
     DEFAULT_TARGET = "log"
     DEFAULT_METRIC_NAMESPACE = "ggcommons"
-    DEFAULT_METRIC_FILE_NAME_TEMPLATE = "/greengrass/v2/logs/{ComponentFullName}_metric.log"
+    DEFAULT_METRIC_FILE_NAME_TEMPLATE = (
+        "/greengrass/v2/logs/{ComponentFullName}_metric.log"
+    )
     DEFAULT_INTERVAL_SECS = 5
     DEFAULT_MESSAGING_DESTINATION = "ipc"
     DEFAULT_LARGE_FLEET_WORKAROUND = False
@@ -29,13 +31,17 @@ class MetricConfiguration:
         if json_config:
             self._target = json_config.get("target", self._target)
             self._namespace = json_config.get("namespace", self._namespace)
-            self._large_fleet_workaround = json_config.get("largeFleetWorkaround", self._large_fleet_workaround)
+            self._large_fleet_workaround = json_config.get(
+                "largeFleetWorkaround", self._large_fleet_workaround
+            )
 
             if self._target.lower() == "log":
                 self._log_file_name_template = self.DEFAULT_METRIC_FILE_NAME_TEMPLATE
                 if "targetConfig" in json_config:
                     if "logFileName" in json_config["targetConfig"]:
-                        self._log_file_name_template = json_config["targetConfig"]["logFileName"]
+                        self._log_file_name_template = json_config["targetConfig"][
+                            "logFileName"
+                        ]
 
             if self._target.lower() == "messaging":
                 self._topic = self.DEFAULT_MESSAGING_TOPIC
@@ -50,20 +56,24 @@ class MetricConfiguration:
 
             if self._target.lower() == "cloudwatch":
                 target_config = json_config.get("targetConfig", {})
-                self._interval_secs = int(target_config.get("intervalSecs", self._interval_secs))
+                self._interval_secs = int(
+                    target_config.get("intervalSecs", self._interval_secs)
+                )
                 if self._interval_secs < 1:
                     self._interval_secs = self.DEFAULT_INTERVAL_SECS
 
-            self.logger.debug(f"Metric configuration: target={self._target}, namespace={self._namespace}, logFileName={self._log_file_name_template}, topic={self._topic}, intervalSecs={self._interval_secs}")
+            self.logger.debug(
+                f"Metric configuration: target={self._target}, namespace={self._namespace}, logFileName={self._log_file_name_template}, topic={self._topic}, intervalSecs={self._interval_secs}"
+            )
 
     def to_dict(self):
-        config = {
-          "target": self._target,
-          "targetConfig": {}
-        }
+        config = {"target": self._target, "targetConfig": {}}
 
         if self._target == "messaging":
-            config["targetConfig"] = {"topic": self._topic, "destination": self._destination}
+            config["targetConfig"] = {
+                "topic": self._topic,
+                "destination": self._destination,
+            }
         elif self._target == "cloudwatchcomponent":
             config["targetConfig"] = {"topic": self._topic}
         elif self._target == "cloudwatch":

@@ -156,5 +156,3 @@ class MessagingProvider(metaclass=abc.ABCMeta):
             result = False
 
         return result
-
-

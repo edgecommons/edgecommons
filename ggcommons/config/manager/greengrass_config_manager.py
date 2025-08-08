@@ -1,5 +1,5 @@
 import logging
-from abc import ABC
+
 from awsiot.greengrasscoreipc.clientv2 import GreengrassCoreIPCClientV2
 
 from ggcommons.config.manager.config_manager import ConfigManager
@@ -7,13 +7,18 @@ from ggcommons.config.manager.config_manager import ConfigManager
 logger = logging.getLogger("GreengrassConfigManager")
 
 
-class GreengrassConfigManager(ConfigManager, ABC):
+class GreengrassConfigManager(ConfigManager):
     def __init__(
-        self, thing_name: str, component_name: str, config_component_name: str, config_key: str
+        self,
+        thing_name: str,
+        component_name: str,
+        config_component_name: str,
+        config_key: str,
     ):
         super().__init__(component_name, thing_name)
         self._config_component_name = config_component_name
         self._config_key = config_key if config_key is not None else "ComponentConfig"
+        self._config_source = f"Greengrass config (component: {config_component_name}; key: {self._config_key})"
         self.init()
 
     def _load_configuration(self) -> dict:

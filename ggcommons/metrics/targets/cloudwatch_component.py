@@ -5,10 +5,11 @@ from ggcommons.metrics.targets.metric_target import MetricTarget
 
 
 class CloudWatchComponent(MetricTarget):
-
     def __init__(self, config_manager: ConfigManager):
         super().__init__(config_manager)
-        self.topic = config_manager.resolve_template(config_manager.get_metric_config().get_topic())
+        self.topic = config_manager.resolve_template(
+            config_manager.get_metric_config().get_topic()
+        )
 
     def emit_metric_now(self, metric, measure_values):
         for measure_name, measure_value in measure_values.items():
@@ -24,20 +25,27 @@ class CloudWatchComponent(MetricTarget):
             "metricName": measure_name,
             "value": measure_value,
             "unit": metric.get_measure(measure_name).get_unit(),
-            "dimensions": metric.dimensions_as_json(include_core_name=False)
+            "dimensions": metric.dimensions_as_json(include_core_name=False),
         }
-        namespace = metric.get_namespace() if metric.get_namespace() is not None \
+        namespace = (
+            metric.get_namespace()
+            if metric.get_namespace() is not None
             else self.config_manager.get_metric_config().get_namespace()
+        )
         data = {
-           "request": {
-               "namespace": namespace,
-               "timestamp": int(time.time()),
-               "metricData": metric_data
+            "request": {
+                "namespace": namespace,
+                "timestamp": int(time.time()),
+                "metricData": metric_data,
             }
         }
         return data
 
     def on_configuration_change(self, configuration) -> bool:
-        self.logger.info("Configuration changed. Reconfiguring cloudwatch component topic")
-        self.topic = self.config_manager.resolve_template(self.config_manager.get_metric_config().get_topic())
+        self.logger.info(
+            "Configuration changed. Reconfiguring cloudwatch component topic"
+        )
+        self.topic = self.config_manager.resolve_template(
+            self.config_manager.get_metric_config().get_topic()
+        )
         return True

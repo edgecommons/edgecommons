@@ -1,17 +1,19 @@
 import json
 import logging
 import os
-from abc import ABC
 
 from ggcommons.config.manager.config_manager import ConfigManager
 
 logger = logging.getLogger("EnvironmentConfigManager")
 
 
-class EnvironmentConfigManager(ConfigManager, ABC):
-    def __init__(self, thing_name: str, component_name: str, environment_variable_name: str):
+class EnvironmentConfigManager(ConfigManager):
+    def __init__(
+        self, thing_name: str, component_name: str, environment_variable_name: str
+    ):
         self._environment_variable_name = environment_variable_name
         super().__init__(component_name, thing_name)
+        self._config_source = f"Environment (var name: {environment_variable_name})"
         self.init()
 
     def _load_configuration(self) -> dict:

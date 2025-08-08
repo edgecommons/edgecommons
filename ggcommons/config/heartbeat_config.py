@@ -22,8 +22,11 @@ import json
 #     ]
 # }
 
+
 class HeartbeatConfiguration:
-    DEFAULT_HEARTBEAT_MESSAGING_TOPIC = "ggcommons/{ThingName}/{ComponentName}/heartbeat"
+    DEFAULT_HEARTBEAT_MESSAGING_TOPIC = (
+        "ggcommons/{ThingName}/{ComponentName}/heartbeat"
+    )
     DEFAULT_HEARTBEAT_MESSAGING_DESTINATION = "ipc"
     __DEFAULT_HEARTBEAT_INTERVAL_SECS = 5
     __DEFAULT_HEARTBEAT_TARGETS = [
@@ -31,8 +34,8 @@ class HeartbeatConfiguration:
             "type": "messaging",
             "config": {
                 "destination": DEFAULT_HEARTBEAT_MESSAGING_DESTINATION,
-                "topic": DEFAULT_HEARTBEAT_MESSAGING_TOPIC
-            }
+                "topic": DEFAULT_HEARTBEAT_MESSAGING_TOPIC,
+            },
         }
     ]
 
@@ -75,9 +78,9 @@ class HeartbeatConfiguration:
                 "disk": self.include_disk(),
                 "files": self.include_files(),
                 "threads": self.include_threads(),
-                "fds": self._include_fds()
+                "fds": self._include_fds(),
             },
-            "targets": self._targets
+            "targets": self._targets,
         }
         return dict_rep
 

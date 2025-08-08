@@ -2,13 +2,13 @@ import shutil
 import psutil
 import os
 import platform
-from ggcommons import ConfigManager
+from ggcommons.interfaces import IConfigurationService
 
 
 class HeartbeatMonitor:
-    def __init__(self, config_manager: ConfigManager):
-        self._config_manager = config_manager
-        self._config = config_manager.get_heartbeat_config()
+    def __init__(self, config_service: IConfigurationService):
+        self._config_service = config_service
+        self._config = config_service.get_heartbeat_config()
         self._pid = None
         self._proc_info = None
         self._platform = platform.system()

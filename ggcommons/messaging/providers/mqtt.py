@@ -6,7 +6,8 @@ from threading import Thread
 from typing import Callable
 from awsiot.greengrasscoreipc.model import QOS
 from ggcommons.messaging.messaging_client import MessagingProvider
-from ggcommons.messaging.message import Message, MessageBuilder
+from ggcommons.messaging.message import Message
+from ggcommons.messaging.message_builder import MessageBuilder
 import paho.mqtt.client as mqtt
 import re
 import ssl
@@ -148,9 +149,10 @@ class MqttProvider(MessagingProvider):
         logger.debug(f"Received message on topic: {topic}")
         msg_chars = message.payload.decode("utf-8")
         try:
-            msg = MessageBuilder.build(json.loads(msg_chars), True)
+            msg = MessageBuilder.from_object(json.loads(msg_chars)).build()
         except json.decoder.JSONDecodeError:
-            msg = MessageBuilder.build(msg_chars, False)
+            msg = Message()
+            msg.raw = msg_chars
         for topic_filter in self._subscription_info:
             if MessagingProvider.topic_matches_sub(topic_filter, topic):
                 topic_payload_tuple = (topic, msg)
@@ -179,7 +181,9 @@ class MqttProvider(MessagingProvider):
                     executor.submit(subscription_info.callback, topic, received_payload)
 
     def _on_connect(self, client, userdata, flags, reason_code, properties):
-        logger.info(f"Connected to MQTT broker at {self._host}:{self._port} as {self._client_id}")
+        logger.info(
+            f"Connected to MQTT broker at {self._host}:{self._port} as {self._client_id}"
+        )
 
     def _on_disconnect(self, userdata, flags, reason, properties, other):
         logger.info(f"Disconnected from MQTT broker at {self._host}:{self._port}")
@@ -191,7 +195,9 @@ class MqttProvider(MessagingProvider):
             mqtt_qos = 1
         self._mqtt_client.publish(topic, json.dumps(msg.to_dict()), mqtt_qos)
 
-    def _internal_publish_raw(self, topic: str, msg: dict, qos: str = QOS.AT_LEAST_ONCE):
+    def _internal_publish_raw(
+        self, topic: str, msg: dict, qos: str = QOS.AT_LEAST_ONCE
+    ):
         if qos == QOS.AT_MOST_ONCE:
             mqtt_qos = 0
         else:
@@ -212,7 +218,12 @@ class MqttProvider(MessagingProvider):
         adjusted_topic = f"iotcore/{topic}"
         self._internal_publish_raw(adjusted_topic, msg, qos)
 
-    def _internal_subscribe(self, topic_filter: str, callback: Callable[[str, Message], None], max_concurrency: int = None):
+    def _internal_subscribe(
+        self,
+        topic_filter: str,
+        callback: Callable[[str, Message], None],
+        max_concurrency: int = None,
+    ):
         if topic_filter not in self._subscription_info:
             logger.debug(f"Subscribing to topic filter: {topic_filter}")
             sub_info = SubscriptionInfo(

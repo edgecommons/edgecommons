@@ -3,8 +3,6 @@ import logging
 import os
 
 # import time
-from abc import ABC
-
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
@@ -13,10 +11,11 @@ from ggcommons.config.manager.config_manager import ConfigManager
 logger = logging.getLogger("FileConfigManager")
 
 
-class FileConfigManager(ConfigManager, ABC):
+class FileConfigManager(ConfigManager):
     def __init__(self, thing_name: str, component_name: str, config_file_path: str):
         super().__init__(component_name, thing_name)
         self._config_file_path = config_file_path
+        self._config_source = f"Config File (file name: {config_file_path})"
         self.init()
         path_to_watch = os.path.dirname(os.path.abspath(self._config_file_path))
         self._file_change_event_handler = ConfigFileChangeEventHandler(

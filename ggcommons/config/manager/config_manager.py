@@ -1,41 +1,58 @@
-import abc
 import logging
 import os
 import sys
 import time
-from abc import abstractmethod
+from typing import Dict, Any, Optional, List
 
 from ggcommons.config.heartbeat_config import HeartbeatConfiguration
 from ggcommons.config.metric_config import MetricConfiguration
 from ggcommons.config.tag_config import TagConfiguration
 from ggcommons.config.logging_config import LoggingConfiguration
-
-# import unittest
+from ggcommons.config.manager.configuration_change_listener import ConfigurationChangeListener
 
 logger = logging.getLogger("ConfigManager")
 
 
-class ConfigManager(metaclass=abc.ABCMeta):
-    def __init__(self, component_name: str, thing_name: str):
+class ConfigManager:
+    def __init__(self, component_name: str, thing_name: str = None, validate_config: bool = True):
+        if not component_name:
+            raise ValueError("Component name cannot be None or empty")
+            
         self._tag_config = None
         self._heartbeat_config = None
         self._metric_config = None
         self._component_config = None
+        self._logging_config = None
         self._global_config = {}
         self._instances = {}
         self._change_listeners = []
         self._thing_name = thing_name
         self._component_full_name = component_name
+        self._validate_config = validate_config
+        self._initializing = True
+        self._config_source = "unknown"
+        
         if "." in component_name:
             self._component_name = component_name.rpartition(".")[-1]
         else:
             self._component_name = component_name
 
     def init(self):
-        config = self._load_configuration()
-        if config is None:
-            config = {"component": {}}
-        self._apply_config(config)
+        try:
+            config = self._load_configuration()
+            if config is None:
+                config = {"component": {}}
+                
+            # Validate configuration if enabled
+            if self._validate_config:
+                self._validate_configuration(config)
+                
+            self._apply_config(config)
+            logger.info("Configuration manager initialized successfully")
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize configuration manager: {e}")
+            raise
 
     def _apply_config(self, config: dict):
         logging_json = None if "logging" not in config else config["logging"]
@@ -53,7 +70,9 @@ class ConfigManager(metaclass=abc.ABCMeta):
         heartbeat_json = None if "heartbeat" not in config else config["heartbeat"]
         self._heartbeat_config = HeartbeatConfiguration(heartbeat_json)
 
-        metric_json = None if "metricEmission" not in config else config["metricEmission"]
+        metric_json = (
+            None if "metricEmission" not in config else config["metricEmission"]
+        )
         self._metric_config = MetricConfiguration(metric_json)
 
         component_json = (
@@ -76,13 +95,26 @@ class ConfigManager(metaclass=abc.ABCMeta):
                 logger.debug(f"loaded config for {self._instances[instance['id']]}")
 
     def configuration_changed(self, new_config: dict) -> bool:
-        logger.debug(f"configuration_changed: Applying new config: {new_config}")
-        self._apply_config(new_config)
-
-        logger.info(f"configuration_changed: Notifying change listeners")
-        for listener in self._change_listeners:
-            listener.on_configuration_change(new_config)
-        return True
+        try:
+            logger.debug("Processing configuration change")
+            
+            # Validate new configuration if enabled
+            if self._validate_config:
+                self._validate_configuration(new_config)
+                
+            # Apply the new configuration
+            self._apply_config(new_config)
+            
+            # Notify listeners only if not initializing
+            if not self._initializing:
+                self._notify_configuration_changed(new_config)
+                
+            logger.info("Configuration change processed successfully")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to process configuration change: {e}")
+            return False
 
     def resolve_template(self, template: str) -> str:
         ret_val = template
@@ -92,18 +124,16 @@ class ConfigManager(metaclass=abc.ABCMeta):
             ret_val = ret_val.replace("{ComponentName}", self._component_name)
         if "{ComponentFullName}" in template:
             ret_val = ret_val.replace("{ComponentFullName}", self._component_full_name)
-        tag_dict = (
-            {} if self._tag_config is None else self._tag_config.to_dict()
-        )
+        tag_dict = {} if self._tag_config is None else self._tag_config.to_dict()
         for k in tag_dict.keys():
             key_template = "{" + k + "}"
             if key_template in template:
                 ret_val = ret_val.replace(key_template, tag_dict[k])
         return ret_val
 
-    @abstractmethod
     def _load_configuration(self) -> dict:
-        pass
+        """Default implementation returns empty config. Subclasses should override."""
+        return {"component": {}}
 
     def get_global_config(self) -> dict:
         return self._global_config
@@ -135,9 +165,80 @@ class ConfigManager(metaclass=abc.ABCMeta):
     def get_component_full_name(self) -> str:
         return self._component_full_name
 
-    def add_config_change_listener(self, listener):
+    def add_config_change_listener(self, listener: ConfigurationChangeListener) -> None:
+        if listener is None:
+            raise ValueError("Listener cannot be None")
         self._change_listeners.append(listener)
+        logger.debug(f"Added configuration change listener: {listener}")
 
-    @abstractmethod
     def get_config_source(self) -> str:
-        pass
+        return self._config_source
+        
+    def _validate_configuration(self, config: Dict[str, Any]) -> None:
+        """Validates configuration. Override in subclasses for specific validation."""
+        try:
+            from ggcommons.validation.configuration_validator import (
+                ConfigurationValidator,
+                ConfigurationValidationException
+            )
+            ConfigurationValidator.validate(config)
+            logger.debug("Configuration validation passed")
+            
+        except ImportError:
+            logger.debug("Configuration validator not available, skipping validation")
+        except Exception as e:
+            logger.error(f"Configuration validation failed: {e}")
+            if self._initializing:
+                raise
+            else:
+                logger.warning("Continuing with invalid configuration")
+                
+    def complete_initialization(self) -> None:
+        """Marks initialization as complete."""
+        self._initializing = False
+        logger.debug("Configuration manager initialization completed")
+        
+    def _notify_configuration_changed(self, new_config: Dict[str, Any]) -> None:
+        """Notifies all registered listeners of configuration changes."""
+        logger.info(f"Notifying {len(self._change_listeners)} configuration change listeners")
+        
+        for listener in self._change_listeners:
+            try:
+                if listener is not None:
+                    result = listener.on_configuration_change(new_config)
+                    if not result:
+                        logger.warning(f"Listener {listener} returned False for configuration change")
+                else:
+                    logger.error("Configuration change listener is None")
+                    
+            except Exception as e:
+                logger.error(f"Error notifying configuration change listener {listener}: {e}")
+                
+    def remove_config_change_listener(self, listener: ConfigurationChangeListener) -> None:
+        """Removes a configuration change listener."""
+        if listener is None:
+            raise ValueError("Listener cannot be None")
+            
+        if listener in self._change_listeners:
+            self._change_listeners.remove(listener)
+            logger.debug(f"Removed configuration change listener: {listener}")
+        else:
+            logger.warning(f"Attempted to remove non-existent listener: {listener}")
+            
+    def get_full_config(self) -> Dict[str, Any]:
+        """Returns the complete configuration object."""
+        return {
+            'component': self._component_config,
+            'tags': self._tag_config.to_dict() if self._tag_config else {},
+            'heartbeat': self._heartbeat_config.to_dict() if self._heartbeat_config else {},
+            'metricEmission': self._metric_config.to_dict() if self._metric_config else {},
+            'logging': self._logging_config.to_dict() if self._logging_config else {}
+        }
+        
+    def is_validation_enabled(self) -> bool:
+        """Returns whether configuration validation is enabled."""
+        return self._validate_config
+        
+    def is_initializing(self) -> bool:
+        """Returns whether the configuration manager is still initializing."""
+        return self._initializing

@@ -1,0 +1,38 @@
+{
+  "logging": {
+    "level": "INFO",
+    "format": "%(asctime)s [%(levelname)s] %(name)s %(lineno)d: %(message)s"
+  },
+  "heartbeat": {
+    "intervalSecs": 30,
+    "measures": {
+      "cpu": true,
+      "memory": true,
+      "disk": false
+    },
+    "targets": [{"type": "metric"}]
+  },
+  "metricEmission": {
+    "target": "messaging",
+    "namespace": "TestApplication"
+  },
+  "tags": {
+    "environment": "test",
+    "site": "local"
+  },
+  "component": {
+    "global": {
+      "serverUrl": "https://api.test.com",
+      "timeout": 5000
+    },
+    "instances": [
+      {
+        "id": "test",
+        "database": {
+          "host": "localhost",
+          "port": 5432
+        }
+      }
+    ]
+  }
+}

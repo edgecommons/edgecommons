@@ -5,7 +5,7 @@ import queue
 from threading import Thread
 from typing import Callable
 from ggcommons.messaging.message import Message
-from ggcommons.messaging.message import MessageBuilder
+from ggcommons.messaging.message_builder import MessageBuilder
 
 
 logger = logging.getLogger("ConfigManager")
@@ -35,7 +35,9 @@ class SubscriptionHandler(metaclass=abc.ABCMeta):
         pass
 
     def on_stream_error(self, error: Exception) -> bool:
-        logger.error(f"Stream error: {error} for topic filter {self._topic_filter}. Keeping stream open.")
+        logger.error(
+            f"Stream error: {error} for topic filter {self._topic_filter}. Keeping stream open."
+        )
         return True  # Return True to close stream, False to keep stream open.
 
     def on_stream_closed(self) -> None:
@@ -65,17 +67,18 @@ class SubscriptionHandler(metaclass=abc.ABCMeta):
         logger.info(
             f"Starting queue monitoring for subscription on topic {self._topic_filter}"
         )
-        with concurrent.futures.ThreadPoolExecutor(max_workers=self._max_concurrency) as executor:
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=self._max_concurrency
+        ) as executor:
             while True:
                 try:
                     queue_obj = self._queue.get()
                     if type(queue_obj) == int and queue_obj == -1:
                         break
                     topic = queue_obj[0]
-                    msg = MessageBuilder.build(queue_obj[1])
+                    msg = Message.from_object(queue_obj[1])
                     executor.submit(self._callback_func, topic, msg)
                 except Exception as e:
                     logger.warning(
                         f"Exception while processing message from subscription to '{self._topic_filter}': {e}"
                     )
-

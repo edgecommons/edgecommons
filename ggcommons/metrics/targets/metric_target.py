@@ -2,7 +2,9 @@ from abc import ABC, abstractmethod
 import logging
 from typing import Dict
 from ggcommons.config.manager.config_manager import ConfigManager
-from ggcommons.config.manager.configuration_change_listener import ConfigurationChangeListener
+from ggcommons.config.manager.configuration_change_listener import (
+    ConfigurationChangeListener,
+)
 
 
 class MetricTarget(ConfigurationChangeListener, ABC):
