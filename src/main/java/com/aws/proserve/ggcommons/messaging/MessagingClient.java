@@ -23,26 +23,22 @@ public class MessagingClient
 {
     protected static final Logger LOGGER = LogManager.getLogger(MessagingClient.class);
 
-    static MessagingProvider messagingProvider = null;
+    private MessagingProvider messagingProvider;
 
     /**
-     * Initializes the messaging client with command line arguments and message reception settings.
-     *
-     * @param cmdLine Parsed command line arguments containing messaging configuration
-     * @param receiveOwnMessages Flag indicating whether to receive messages published by this component
+     * Package-private constructor for builder pattern.
      */
-    public static void init(ParsedCommandLine cmdLine, boolean receiveOwnMessages)
-    {
+    MessagingClient(ParsedCommandLine cmdLine, boolean receiveOwnMessages) {
         switch (cmdLine.mode) {
             case GREENGRASS:
                 LOGGER.info("GREENGRASS mode specified. Using Greengrass IPC.");
-                messagingProvider = new GreengrassMessagingProvider(receiveOwnMessages);
+                this.messagingProvider = new GreengrassMessagingProvider(receiveOwnMessages);
                 break;
             case STANDALONE:
                 LOGGER.info("STANDALONE mode specified. Using dual MQTT clients.");
                 try {
                     MessagingConfiguration config = MessagingConfiguration.loadFromFile(cmdLine.standaloneConfigPath);
-                    messagingProvider = new StandaloneMessagingProvider(config, cmdLine.thingName);
+                    this.messagingProvider = new StandaloneMessagingProvider(config, cmdLine.thingName);
                 } catch (Exception e) {
                     LOGGER.fatal("Failed to load standalone messaging configuration: {}", e.getMessage());
                     System.exit(1);
@@ -51,6 +47,7 @@ public class MessagingClient
             default:
                 LOGGER.fatal("Invalid mode specified: {}", cmdLine.mode);
                 System.exit(1);
+                this.messagingProvider = null; // Never reached but satisfies compiler
         }
     }
 
@@ -60,13 +57,9 @@ public class MessagingClient
      * @param topic The topic to publish the message to
      * @param msg The message to publish
      */
-    public static void publish(String topic, Message msg)
+    public void publish(String topic, Message msg)
     {
-        MessagingProvider provider = messagingProvider;
-        if (provider == null) {
-            throw new IllegalStateException("MessagingClient not initialized");
-        }
-        provider.publish(topic, msg);
+        messagingProvider.publish(topic, msg);
         LOGGER.debug("Published IPC message on topic '{}': {}", topic, msg.toString());
     }
 
@@ -77,13 +70,9 @@ public class MessagingClient
      * @param msg The message to publish
      * @param qos The quality of service level for message delivery
      */
-    public static void publishToIotCore(String topic, Message msg, QOS qos)
+    public void publishToIotCore(String topic, Message msg, QOS qos)
     {
-        MessagingProvider provider = messagingProvider;
-        if (provider == null) {
-            throw new IllegalStateException("MessagingClient not initialized");
-        }
-        provider.publishToIoTCore(topic, msg,  qos);
+        messagingProvider.publishToIoTCore(topic, msg, qos);
         LOGGER.debug("Published IoT Core message on topic '{}': {}", topic, msg.toString());
     }
 
@@ -93,13 +82,9 @@ public class MessagingClient
      * @param topic The topic to publish to
      * @param metricObject The JSON object to publish
      */
-    public static void publishRaw(String topic, JsonObject metricObject)
+    public void publishRaw(String topic, JsonObject metricObject)
     {
-        MessagingProvider provider = messagingProvider;
-        if (provider == null) {
-            throw new IllegalStateException("MessagingClient not initialized");
-        }
-        provider.publishRaw(topic, metricObject);
+        messagingProvider.publishRaw(topic, metricObject);
     }
 
     /**
@@ -108,13 +93,9 @@ public class MessagingClient
      * @param topic The topic to publish to
      * @param metricObject The JSON object to publish
      */
-    public static void publishToIotCoreRaw(String topic, JsonObject metricObject, QOS qos)
+    public void publishToIotCoreRaw(String topic, JsonObject metricObject, QOS qos)
     {
-        MessagingProvider provider = messagingProvider;
-        if (provider == null) {
-            throw new IllegalStateException("MessagingClient not initialized");
-        }
-        provider.publishToIoTCoreRaw(topic, metricObject, qos);
+        messagingProvider.publishToIoTCoreRaw(topic, metricObject, qos);
     }
 
     /**
@@ -123,18 +104,14 @@ public class MessagingClient
      * @param topicFilter The topic filter to subscribe to
      * @param callback The callback to invoke when messages are received
      */
-    public static void subscribe(String topicFilter, BiConsumer<String, Message> callback)
+    public void subscribe(String topicFilter, BiConsumer<String, Message> callback)
     {
         subscribe(topicFilter, callback, -1);
     }
-    public static void subscribe(String topicFilter, BiConsumer<String, Message> callback,
-                                 int maxConcurrency)
+    
+    public void subscribe(String topicFilter, BiConsumer<String, Message> callback, int maxConcurrency)
     {
-        MessagingProvider provider = messagingProvider;
-        if (provider == null) {
-            throw new IllegalStateException("MessagingClient not initialized");
-        }
-        provider.subscribe(topicFilter, callback, maxConcurrency);
+        messagingProvider.subscribe(topicFilter, callback, maxConcurrency);
         LOGGER.debug("Subscribed to IPC messages on topic filter {}", topicFilter);
     }
 
@@ -145,19 +122,14 @@ public class MessagingClient
      * @param callback The callback to invoke when messages are received
      * @param qos The quality of service level for the subscription
      */
-    public static void subscribeToIoTCore(String topicFilter, BiConsumer<String, Message> callback, QOS qos)
+    public void subscribeToIoTCore(String topicFilter, BiConsumer<String, Message> callback, QOS qos)
     {
         subscribeToIoTCore(topicFilter, callback, qos, -1);
     }
 
-    public static void subscribeToIoTCore(String topicFilter, BiConsumer<String, Message> callback, QOS qos,
-                                          int maxConcurrency)
+    public void subscribeToIoTCore(String topicFilter, BiConsumer<String, Message> callback, QOS qos, int maxConcurrency)
     {
-        MessagingProvider provider = messagingProvider;
-        if (provider == null) {
-            throw new IllegalStateException("MessagingClient not initialized");
-        }
-        provider.subscribeToIoTCore(topicFilter, callback, qos, maxConcurrency);
+        messagingProvider.subscribeToIoTCore(topicFilter, callback, qos, maxConcurrency);
         LOGGER.debug("Subscribed to IoT Core messages on topic filter {}", topicFilter);
     }
 
@@ -168,13 +140,9 @@ public class MessagingClient
      * @param request The request message
      * @return A ReplyFuture for handling the response
      */
-    public static ReplyFuture request(String topic, Message request)
+    public ReplyFuture request(String topic, Message request)
     {
-        MessagingProvider provider = messagingProvider;
-        if (provider == null) {
-            throw new IllegalStateException("MessagingClient not initialized");
-        }
-        return provider.request(topic, request);
+        return messagingProvider.request(topic, request);
     }
 
     /**
@@ -184,13 +152,9 @@ public class MessagingClient
      * @param request The request message
      * @return A ReplyFuture for handling the response
      */
-    public static ReplyFuture requestFromIoTCore(String topic, Message request)
+    public ReplyFuture requestFromIoTCore(String topic, Message request)
     {
-        MessagingProvider provider = messagingProvider;
-        if (provider == null) {
-            throw new IllegalStateException("MessagingClient not initialized");
-        }
-        return provider.requestFromIoTCore(topic, request);
+        return messagingProvider.requestFromIoTCore(topic, request);
     }
 
     /**
@@ -198,22 +162,14 @@ public class MessagingClient
      *
      * @param replyFuture The ReplyFuture associated with the request to cancel
      */
-    public static void cancelRequest(ReplyFuture replyFuture)
+    public void cancelRequest(ReplyFuture replyFuture)
     {
-        MessagingProvider provider = messagingProvider;
-        if (provider == null) {
-            throw new IllegalStateException("MessagingClient not initialized");
-        }
-        provider.cancelRequest(replyFuture);
+        messagingProvider.cancelRequest(replyFuture);
     }
 
-    public static void cancelRequestFromIoTCore(ReplyFuture replyFuture)
+    public void cancelRequestFromIoTCore(ReplyFuture replyFuture)
     {
-        MessagingProvider provider = messagingProvider;
-        if (provider == null) {
-            throw new IllegalStateException("MessagingClient not initialized");
-        }
-        provider.cancelRequestFromIoTCore(replyFuture);
+        messagingProvider.cancelRequestFromIoTCore(replyFuture);
     }
 
     /**
@@ -222,23 +178,15 @@ public class MessagingClient
      * @param request The original request message
      * @param reply The reply message
      */
-    public static void reply(Message request, Message reply)
+    public void reply(Message request, Message reply)
     {
-        MessagingProvider provider = messagingProvider;
-        if (provider == null) {
-            throw new IllegalStateException("MessagingClient not initialized");
-        }
-        provider.reply(request, reply);
+        messagingProvider.reply(request, reply);
         LOGGER.debug("Published reply on topic '{}: {}", request.getHeader().getReplyTo(), reply.toString());
     }
 
-    public static void replyToIoTCore(Message request, Message reply)
+    public void replyToIoTCore(Message request, Message reply)
     {
-        MessagingProvider provider = messagingProvider;
-        if (provider == null) {
-            throw new IllegalStateException("MessagingClient not initialized");
-        }
-        provider.replyToIoTCore(request, reply);
+        messagingProvider.replyToIoTCore(request, reply);
     }
 
     /**
@@ -246,23 +194,15 @@ public class MessagingClient
      *
      * @param topicFilter The topic filter to unsubscribe from
      */
-    public static void unsubscribe(String topicFilter)
+    public void unsubscribe(String topicFilter)
     {
-        MessagingProvider provider = messagingProvider;
-        if (provider == null) {
-            throw new IllegalStateException("MessagingClient not initialized");
-        }
-        provider.unsubscribe(topicFilter);
+        messagingProvider.unsubscribe(topicFilter);
         LOGGER.debug("Unsubscribed to IPC messages on topic filter {}", topicFilter);
     }
 
-    public static void unsubscribeFromIoTCore(String topicFilter)
+    public void unsubscribeFromIoTCore(String topicFilter)
     {
-        MessagingProvider provider = messagingProvider;
-        if (provider == null) {
-            throw new IllegalStateException("MessagingClient not initialized");
-        }
-        provider.unsubscribeFromIoTCore(topicFilter);
+        messagingProvider.unsubscribeFromIoTCore(topicFilter);
         LOGGER.debug("Unsubscribed to IPC messages on topic filter {}", topicFilter);
     }
 
@@ -283,13 +223,9 @@ public class MessagingClient
      *
      * @return The native messaging client object
      */
-    public static Object getNativeLocalClient()
+    public Object getNativeLocalClient()
     {
-        MessagingProvider provider = messagingProvider;
-        if (provider == null) {
-            throw new IllegalStateException("MessagingClient not initialized");
-        }
-        return provider.getNativeLocalClient();
+        return messagingProvider.getNativeLocalClient();
     }
 
     /**
@@ -297,13 +233,9 @@ public class MessagingClient
      *
      * @return The native messaging client object
      */
-    public static Object getNativeIotCoreClient()
+    public Object getNativeIotCoreClient()
     {
-        MessagingProvider provider = messagingProvider;
-        if (provider == null) {
-            throw new IllegalStateException("MessagingClient not initialized");
-        }
-        return provider.getNativeIotCoreClient();
+        return messagingProvider.getNativeIotCoreClient();
     }
 
 }

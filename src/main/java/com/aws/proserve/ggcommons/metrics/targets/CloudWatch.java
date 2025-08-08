@@ -51,7 +51,7 @@ public class CloudWatch extends MetricTarget
     {
         metricEmitTimer = new Timer("Metric Emit Timer", true);
         metricEmitTimer.scheduleAtFixedRate(new CloudWatch.PendingMetricEmitter(), 0,
-                configManager.getMetricConfig().getIntervalSecs() * 1000L);
+                configService.getMetricConfig().getIntervalSecs() * 1000L);
     }
 
     @Override

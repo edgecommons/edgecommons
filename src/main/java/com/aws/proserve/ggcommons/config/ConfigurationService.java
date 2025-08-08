@@ -73,4 +73,24 @@ public class ConfigurationService implements IConfigurationService {
     public void notifyConfigurationChanged() {
         configManager.notifyConfigurationChanged();
     }
+    
+    @Override
+    public HeartbeatConfiguration getHeartbeatConfig() {
+        return configManager.getHeartbeatConfig();
+    }
+    
+    @Override
+    public TagConfiguration getTagConfig() {
+        return configManager.getTagConfig();
+    }
+    
+    @Override
+    public LoggingConfiguration getLoggingConfig() {
+        return configManager.getLoggingConfig();
+    }
+    
+    @Override
+    public MetricConfiguration getMetricConfig() {
+        return configManager.getMetricConfig();
+    }
 }

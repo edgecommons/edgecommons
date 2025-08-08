@@ -37,7 +37,7 @@ public class ConfigManagerFactory {
             String thingName = resolveThingName(cmdLine);
             
             // Load configuration
-            ConfigProvider configProvider = ConfigProviderBuilder.build(null, componentName, thingName, cmdLine.configArgs);
+            ConfigProvider configProvider = ConfigProviderBuilder.build(null, componentName, thingName, cmdLine.configArgs, null);
             JsonObject fullConfig = configProvider.loadConfiguration();
             
             if (fullConfig == null) {

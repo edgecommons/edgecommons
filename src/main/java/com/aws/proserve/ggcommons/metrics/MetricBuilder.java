@@ -40,9 +40,16 @@ public class MetricBuilder {
         return this;
     }
     
+    public Metric build(MetricEmitter metricEmitter) {
+        if (namespace == null) {
+            namespace = metricEmitter.getMetricConfig().getNamespace();
+        }
+        return new Metric(name, namespace, measures, dimensions);
+    }
+    
     public Metric build() {
         if (namespace == null) {
-            namespace = MetricEmitter.getMetricConfig().getNamespace();
+            throw new IllegalStateException("Namespace must be set or MetricEmitter instance must be provided");
         }
         return new Metric(name, namespace, measures, dimensions);
     }

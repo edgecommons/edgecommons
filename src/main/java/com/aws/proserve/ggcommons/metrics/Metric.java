@@ -20,23 +20,9 @@ import java.util.Map;
 public class Metric
 {
     private final String name;
-
     private final String namespace;
     private final Map<String, Measure> measures;
-
     private final Map<String, String> dimensions;
-
-    /**
-     * Creates a new metric with the specified name.
-     *
-     * @param name The name of the metric
-     * @deprecated Use {@link MetricBuilder#create(String)} instead
-     */
-    @Deprecated
-    public Metric(String name)
-    {
-        this(name, MetricEmitter.getMetricConfig().getNamespace(), new HashMap<>(), new HashMap<>());
-    }
 
     /**
      * Creates a new metric with complete configuration.
@@ -45,9 +31,7 @@ public class Metric
      * @param namespace The metric namespace
      * @param measures The map of measure definitions
      * @param dimensions The map of dimension key-values
-     * @deprecated Use {@link MetricBuilder#create(String)} instead
      */
-    @Deprecated
     public Metric(String name, String namespace, Map<String, Measure> measures, Map<String, String> dimensions)
     {
         if (measures == null) {
@@ -58,9 +42,7 @@ public class Metric
         this.namespace = namespace;
         this.measures = measures;
         this.dimensions = dimensions != null ? dimensions : new HashMap<>();
-        addDimension("coreName", MetricEmitter.getThingName());
         addDimension("category", name);
-        addDimension("component", MetricEmitter.getComponentName());
     }
 
     /**
@@ -139,8 +121,7 @@ public class Metric
         return dimensionsAsCollection(false);
     }
 
-
-        /**
+    /**
      * Gets the name of this metric.
      *
      * @return The metric name

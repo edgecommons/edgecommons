@@ -16,20 +16,18 @@ public class ServiceFactory {
         return configManager;
     }
     
-    public static IMessagingService createMessagingService() {
-        return new MessagingService();
+    public static IMessagingService createMessagingService(com.aws.proserve.ggcommons.messaging.MessagingClient messagingClient) {
+        return new MessagingService(messagingClient);
     }
     
-    public static IMetricService createMetricService() {
-        return new MetricService();
+    public static IMetricService createMetricService(com.aws.proserve.ggcommons.metrics.MetricEmitter metricEmitter) {
+        return new com.aws.proserve.ggcommons.metrics.MetricService(metricEmitter);
     }
     
     /**
-     * Registers all default services with the provided registry.
+     * Registers default services with the provided registry (excluding messaging and metric services).
      */
     public static void registerDefaultServices(ServiceRegistry registry, ConfigManager configManager) {
         registry.register(IConfigurationService.class, createConfigurationService(configManager));
-        registry.register(IMessagingService.class, createMessagingService());
-        registry.register(IMetricService.class, createMetricService());
     }
 }

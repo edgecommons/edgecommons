@@ -62,7 +62,7 @@ public class MessageTags
 
     public static MessageTags fromConfig(IConfigurationService configService)
     {
-        TagConfiguration sourceConfig = ((ConfigManager) configService).getTagConfig();
+        TagConfiguration sourceConfig = configService.getTagConfig();
         if (sourceConfig != null)
         {
             return new MessageTags(configService.getThingName(), sourceConfig.toDict());

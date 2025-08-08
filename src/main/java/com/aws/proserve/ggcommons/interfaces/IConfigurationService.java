@@ -5,6 +5,10 @@
 package com.aws.proserve.ggcommons.interfaces;
 
 import com.aws.proserve.ggcommons.config.ConfigurationChangeListener;
+import com.aws.proserve.ggcommons.config.HeartbeatConfiguration;
+import com.aws.proserve.ggcommons.config.LoggingConfiguration;
+import com.aws.proserve.ggcommons.config.MetricConfiguration;
+import com.aws.proserve.ggcommons.config.TagConfiguration;
 import com.google.gson.JsonObject;
 import java.util.Collection;
 
@@ -90,4 +94,32 @@ public interface IConfigurationService {
      * Manually triggers configuration change notifications.
      */
     void notifyConfigurationChanged();
+    
+    /**
+     * Returns the heartbeat configuration settings.
+     * 
+     * @return HeartbeatConfiguration object containing heartbeat-related settings
+     */
+    HeartbeatConfiguration getHeartbeatConfig();
+    
+    /**
+     * Returns the tag configuration settings.
+     * 
+     * @return TagConfiguration object containing tag-related settings
+     */
+    TagConfiguration getTagConfig();
+    
+    /**
+     * Returns the logging configuration settings.
+     * 
+     * @return LoggingConfiguration object containing logging-related settings
+     */
+    LoggingConfiguration getLoggingConfig();
+    
+    /**
+     * Returns the metric configuration settings.
+     * 
+     * @return MetricConfiguration object containing metric-related settings
+     */
+    MetricConfiguration getMetricConfig();
 }

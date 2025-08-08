@@ -152,7 +152,10 @@ class GGCommonsUnitTest {
         testPayload.addProperty("message", "test message");
         
         // Test message creation
-        Message testMessage = Message.buildFromConfig("TestMessage", "1.0", testPayload, ggCommons.getConfigManager());
+        Message testMessage = com.aws.proserve.ggcommons.messaging.MessageBuilder.create("TestMessage", "1.0")
+                .withPayload(testPayload)
+                .withConfig(ggCommons.getConfigurationService())
+                .build();
         assertNotNull(testMessage);
         assertEquals("TestMessage", testMessage.getHeader().getName());
         assertEquals("1.0", testMessage.getHeader().getVersion());
@@ -185,7 +188,10 @@ class GGCommonsUnitTest {
         // Simulate message
         JsonObject payload = new JsonObject();
         payload.addProperty("test", "data");
-        Message testMessage = Message.buildFromConfig("SubTest", "1.0", payload, ggCommons.getConfigManager());
+        Message testMessage = com.aws.proserve.ggcommons.messaging.MessageBuilder.create("SubTest", "1.0")
+                .withPayload(payload)
+                .withConfig(ggCommons.getConfigurationService())
+                .build();
         
         mockMessagingService.simulateMessage(testTopic, testMessage);
         
@@ -201,7 +207,10 @@ class GGCommonsUnitTest {
         JsonObject requestPayload = new JsonObject();
         requestPayload.addProperty("request", "data");
         
-        Message requestMessage = Message.buildFromConfig("RequestTest", "1.0", requestPayload, ggCommons.getConfigManager());
+        Message requestMessage = com.aws.proserve.ggcommons.messaging.MessageBuilder.create("RequestTest", "1.0")
+                .withPayload(requestPayload)
+                .withConfig(ggCommons.getConfigurationService())
+                .build();
         
         // Test request (mock returns the same message as response)
         CompletableFuture<Message> responseFuture = mockMessagingService.request(requestTopic, requestMessage);
@@ -220,9 +229,10 @@ class GGCommonsUnitTest {
     @Test
     void testMetricService() {
         // Test metric definition
-        Metric testMetric = new Metric("test_metric");
-        testMetric.addMeasure(new Measure("count", "Count", 1));
-        testMetric.addMeasure(new Measure("latency", "Milliseconds", 1));
+        Map<String, com.aws.proserve.ggcommons.metrics.Measure> measures = new HashMap<>();
+        measures.put("count", new Measure("count", "Count", 1));
+        measures.put("latency", new Measure("latency", "Milliseconds", 1));
+        Metric testMetric = new Metric("test_metric", "TestNamespace", measures, new HashMap<>());
         
         mockMetricService.defineMetric(testMetric);
         
@@ -303,7 +313,10 @@ class GGCommonsUnitTest {
         JsonObject payload = new JsonObject();
         payload.addProperty("iot", "message");
         
-        Message message = Message.buildFromConfig("IoTTest", "1.0", payload, ggCommons.getConfigManager());
+        Message message = com.aws.proserve.ggcommons.messaging.MessageBuilder.create("IoTTest", "1.0")
+                .withPayload(payload)
+                .withConfig(ggCommons.getConfigurationService())
+                .build();
         
         // Test IoT Core publish
         mockMessagingService.publishToIotCore(topic, message, QOS.AT_LEAST_ONCE);
@@ -328,7 +341,10 @@ class GGCommonsUnitTest {
         payload.addProperty("testData", "testValue");
         payload.addProperty("number", 42);
         
-        Message message = Message.buildFromConfig("TestMessage", "2.1", payload, ggCommons.getConfigManager());
+        Message message = com.aws.proserve.ggcommons.messaging.MessageBuilder.create("TestMessage", "2.1")
+                .withPayload(payload)
+                .withConfig(ggCommons.getConfigurationService())
+                .build();
         
         assertNotNull(message);
         assertNotNull(message.getHeader());
@@ -349,8 +365,14 @@ class GGCommonsUnitTest {
         JsonObject payload = new JsonObject();
         payload.addProperty("data", "value");
         
-        Message message1 = Message.buildFromConfig("Msg1", "1.0", payload, ggCommons.getConfigManager());
-        Message message2 = Message.buildFromConfig("Msg2", "1.0", payload, ggCommons.getConfigManager());
+        Message message1 = com.aws.proserve.ggcommons.messaging.MessageBuilder.create("Msg1", "1.0")
+                .withPayload(payload)
+                .withConfig(ggCommons.getConfigurationService())
+                .build();
+        Message message2 = com.aws.proserve.ggcommons.messaging.MessageBuilder.create("Msg2", "1.0")
+                .withPayload(payload)
+                .withConfig(ggCommons.getConfigurationService())
+                .build();
         
         assertNotEquals(message1.getCorrelationId(), message2.getCorrelationId());
         
@@ -371,9 +393,11 @@ class GGCommonsUnitTest {
     
     @Test
     void testMetricConstruction() {
-        Metric metric1 = new Metric("test_metric");
+        Map<String, com.aws.proserve.ggcommons.metrics.Measure> basicMeasures = new HashMap<>();
+        basicMeasures.put("basic", new Measure("basic", "Count", 1));
+        Metric metric1 = new Metric("test_metric", "TestNamespace", basicMeasures, new HashMap<>());
         assertEquals("test_metric", metric1.getName());
-        assertNotNull(metric1.getNamespace());
+        assertEquals("TestNamespace", metric1.getNamespace());
         
         // Test metric with custom namespace, measures, and dimensions
         Map<String, Measure> measures = new HashMap<>();
@@ -484,11 +508,17 @@ class GGCommonsUnitTest {
     void testMessagingReply() {
         JsonObject originalPayload = new JsonObject();
         originalPayload.addProperty("request", "data");
-        Message originalMessage = Message.buildFromConfig("OriginalMsg", "1.0", originalPayload, ggCommons.getConfigManager());
+        Message originalMessage = com.aws.proserve.ggcommons.messaging.MessageBuilder.create("OriginalMsg", "1.0")
+                .withPayload(originalPayload)
+                .withConfig(ggCommons.getConfigurationService())
+                .build();
         
         JsonObject replyPayload = new JsonObject();
         replyPayload.addProperty("response", "data");
-        Message replyMessage = Message.buildFromConfig("ReplyMsg", "1.0", replyPayload, ggCommons.getConfigManager());
+        Message replyMessage = com.aws.proserve.ggcommons.messaging.MessageBuilder.create("ReplyMsg", "1.0")
+                .withPayload(replyPayload)
+                .withConfig(ggCommons.getConfigurationService())
+                .build();
         
         mockMessagingService.reply(originalMessage, replyMessage);
         

@@ -14,7 +14,7 @@ public class ConfigProviderBuilder {
     // Suppressing i18n warning as these are internal configuration identifiers
     // that should not be localized
     @SuppressWarnings("i18n")
-    public static ConfigProvider build(ConfigManager configManager, String componentName, String thingName, String[] configArgs) {
+    public static ConfigProvider build(ConfigManager configManager, String componentName, String thingName, String[] configArgs, com.aws.proserve.ggcommons.messaging.MessagingClient messagingClient) {
         ConfigProvider configProvider = null;
         switch (configArgs[0].toUpperCase()) {
             case "FILE":
@@ -30,17 +30,26 @@ public class ConfigProviderBuilder {
             case "SHADOW":
                 LOGGER.debug("Using Shadow com.aws.proseve.ggcommons.config provider");
                 String shadowName = configArgs.length > 1 ? configArgs[1] : componentName;
-                configProvider = new ShadowConfigProvider(configManager, thingName, shadowName);
+                if (messagingClient == null) {
+                    throw new IllegalStateException("MessagingClient required for SHADOW config provider but not available during initialization");
+                }
+                configProvider = new ShadowConfigProvider(configManager, thingName, shadowName, messagingClient);
                 break;
             case "GG_CONFIG":
                 LOGGER.debug("Using Greengrass com.aws.proseve.ggcommons.config provider");
                 String configComponentName = configArgs.length > 1 ? configArgs[1] : null;
                 String configKey = configArgs.length > 2 ? configArgs[2] : null;
-                configProvider = new GreengrassConfigProvider(configManager, configComponentName, configKey);
+                if (messagingClient == null) {
+                    throw new IllegalStateException("MessagingClient required for GG_CONFIG config provider but not available during initialization");
+                }
+                configProvider = new GreengrassConfigProvider(configManager, configComponentName, configKey, messagingClient);
                 break;
             case "CONFIG_COMPONENT":
                 LOGGER.debug("Using Config com.aws.proseve.ggcommons.config provider");
-                configProvider =new ConfigComponentProvider(configManager);
+                if (messagingClient == null) {
+                    throw new IllegalStateException("MessagingClient required for CONFIG_COMPONENT config provider but not available during initialization");
+                }
+                configProvider = new ConfigComponentProvider(configManager, messagingClient);
                 break;
             default:
                 LOGGER.fatal("Unrecognized com.aws.proseve.ggcommons.config source '{}'.  Valid values are 'FILE', 'ENV', 'SHADOW' and 'GG_CONFIG", configArgs[0]);

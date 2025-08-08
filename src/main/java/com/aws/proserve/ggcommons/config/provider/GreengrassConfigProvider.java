@@ -22,9 +22,12 @@ public class GreengrassConfigProvider extends ConfigProvider
     final String configComponentName;
     final String configKey;
 
-    GreengrassConfigProvider(ConfigManager configManager, String configComponentName, String configKey)
+    private final MessagingClient messagingClient;
+
+    GreengrassConfigProvider(ConfigManager configManager, String configComponentName, String configKey, MessagingClient messagingClient)
     {
         super(configManager);
+        this.messagingClient = messagingClient;
         this.configComponentName = configComponentName;
         this.configKey = (configKey == null) ? "ComponentConfig" : configKey;
     }
@@ -35,7 +38,7 @@ public class GreengrassConfigProvider extends ConfigProvider
         JsonObject retVal = new JsonObject();
         LOGGER.debug("Loading Greengrass component configuration");
 
-        GreengrassCoreIPCClientV2 ipcClient = (GreengrassCoreIPCClientV2) MessagingClient.getNativeLocalClient();
+        GreengrassCoreIPCClientV2 ipcClient = (GreengrassCoreIPCClientV2) messagingClient.getNativeLocalClient();
         try {
             GetConfigurationRequest request;
             if (configComponentName == null) {

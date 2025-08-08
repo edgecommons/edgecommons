@@ -9,11 +9,14 @@ import com.aws.proserve.ggcommons.config.ConfigManagerFactory;
 import com.aws.proserve.ggcommons.di.ServiceFactory;
 import com.aws.proserve.ggcommons.di.ServiceRegistry;
 import com.aws.proserve.ggcommons.heartbeat.Heartbeat;
+import com.aws.proserve.ggcommons.heartbeat.HeartbeatBuilder;
 import com.aws.proserve.ggcommons.interfaces.IConfigurationService;
 import com.aws.proserve.ggcommons.interfaces.IMessagingService;
 import com.aws.proserve.ggcommons.interfaces.IMetricService;
 import com.aws.proserve.ggcommons.messaging.MessagingClient;
+import com.aws.proserve.ggcommons.messaging.MessagingClientBuilder;
 import com.aws.proserve.ggcommons.metrics.MetricEmitter;
+import com.aws.proserve.ggcommons.metrics.MetricEmitterBuilder;
 import org.apache.commons.cli.*;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -96,17 +99,29 @@ public class GGCommons
             // Initialize service registry early so services can be injected
             initializeServiceRegistry();
             
-            // Initialize other components - these will fail in production if services are unavailable
-            MessagingClient.init(parsedCommandLine, receiveOwnMessages);
+            // Initialize messaging client using builder pattern
+            MessagingClient messagingClient = MessagingClientBuilder.create(parsedCommandLine)
+                    .withReceiveOwnMessages(receiveOwnMessages)
+                    .build();
             
-            // Inject messaging service into MetricEmitter before initialization
-            MetricEmitter.setMessagingService(getService(IMessagingService.class));
-            MetricEmitter.init(configManager);
+            // Register messaging client and create messaging service
+            registerService(MessagingClient.class, messagingClient);
+            registerService(IMessagingService.class, ServiceFactory.createMessagingService(messagingClient));
             
-            // Create heartbeat and inject services
-            Heartbeat heartbeat = new Heartbeat(configManager);
-            heartbeat.setMessagingService(getService(IMessagingService.class));
-            heartbeat.setMetricService(getService(IMetricService.class));
+            // Initialize metric emitter using builder pattern
+            MetricEmitter metricEmitter = MetricEmitterBuilder.create(getService(IConfigurationService.class))
+                    .withMessagingService(getService(IMessagingService.class))
+                    .build();
+            
+            // Register metric emitter and create metric service
+            registerService(MetricEmitter.class, metricEmitter);
+            registerService(IMetricService.class, ServiceFactory.createMetricService(metricEmitter));
+            
+            // Create heartbeat using builder pattern
+            Heartbeat heartbeat = HeartbeatBuilder.create(configManager)
+                    .withMessagingService(getService(IMessagingService.class))
+                    .withMetricService(getService(IMetricService.class))
+                    .build();
             
             // Complete initialization - this must be the very last step
             // After this point, configuration changes will trigger listener notifications
@@ -129,7 +144,22 @@ public class GGCommons
             initializeServiceRegistry();
         }
         
-        // Skip messaging, metrics, and heartbeat initialization for testing
+        // For testing, use builder patterns
+        MessagingClient messagingClient = MessagingClientBuilder.create(parsedCommandLine)
+                .withReceiveOwnMessages(true)
+                .build();
+        
+        // Register messaging client and create messaging service
+        registerService(MessagingClient.class, messagingClient);
+        registerService(IMessagingService.class, ServiceFactory.createMessagingService(messagingClient));
+        
+        MetricEmitter metricEmitter = MetricEmitterBuilder.create(getService(IConfigurationService.class))
+                .withMessagingService(getService(IMessagingService.class))
+                .build();
+        
+        // Register metric emitter and create metric service for testing
+        registerService(MetricEmitter.class, metricEmitter);
+        registerService(IMetricService.class, ServiceFactory.createMetricService(metricEmitter));
         configManager.completeInitialization();
     }
     

@@ -5,6 +5,11 @@
 package com.aws.proserve.ggcommons.test;
 
 import com.aws.proserve.ggcommons.config.ConfigurationChangeListener;
+import com.aws.proserve.ggcommons.config.ConfigurationFactory;
+import com.aws.proserve.ggcommons.config.HeartbeatConfiguration;
+import com.aws.proserve.ggcommons.config.LoggingConfiguration;
+import com.aws.proserve.ggcommons.config.MetricConfiguration;
+import com.aws.proserve.ggcommons.config.TagConfiguration;
 import com.aws.proserve.ggcommons.interfaces.IConfigurationService;
 import com.google.gson.JsonObject;
 import java.util.ArrayList;
@@ -115,5 +120,25 @@ public class MockConfigurationService implements IConfigurationService {
     
     public void simulateConfigurationChange() {
         notifyConfigurationChanged();
+    }
+    
+    @Override
+    public HeartbeatConfiguration getHeartbeatConfig() {
+        return ConfigurationFactory.createHeartbeatConfiguration(null);
+    }
+    
+    @Override
+    public TagConfiguration getTagConfig() {
+        return ConfigurationFactory.createTagConfiguration(null);
+    }
+    
+    @Override
+    public LoggingConfiguration getLoggingConfig() {
+        return ConfigurationFactory.createLoggingConfiguration(null);
+    }
+    
+    @Override
+    public MetricConfiguration getMetricConfig() {
+        return ConfigurationFactory.createMetricConfiguration(null);
     }
 }

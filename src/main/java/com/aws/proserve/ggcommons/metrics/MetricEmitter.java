@@ -4,8 +4,8 @@
  */
 package com.aws.proserve.ggcommons.metrics;
 
-import com.aws.proserve.ggcommons.config.ConfigManager;
 import com.aws.proserve.ggcommons.config.MetricConfiguration;
+import com.aws.proserve.ggcommons.interfaces.IConfigurationService;
 import com.aws.proserve.ggcommons.interfaces.IMessagingService;
 import com.aws.proserve.ggcommons.metrics.targets.*;
 import org.apache.logging.log4j.LogManager;
@@ -20,68 +20,59 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public class MetricEmitter
 {
-
     protected static final Logger LOGGER = LogManager.getLogger(MetricEmitter.class);
 
-    private static MetricTarget metricTarget = null;
-
-    private static final ConcurrentHashMap<String, Metric> metrics = new ConcurrentHashMap<>();
-
-    private static MetricConfiguration metricConfig;
-
-    private static String thingName;
-
-    private static String componentName;
-    
-    private static IMessagingService messagingService;
 
 
-    
+    private final MetricTarget metricTarget;
+    private final ConcurrentHashMap<String, Metric> metrics = new ConcurrentHashMap<>();
+    private final MetricConfiguration metricConfig;
+    private final String thingName;
+    private final String componentName;
+
+
     /**
-     * Initializes the MetricEmitter with configuration settings.
-     *
-     * @param configManager The configuration manager containing metric settings
+     * Package-private constructor for builder pattern.
      */
-    public static void init(ConfigManager configManager)
-    {
-        metricConfig = configManager.getMetricConfig();
-        thingName = configManager.getThingName();
-        componentName = configManager.getComponentName();
-        if (metricTarget == null) {
-            String target = metricConfig.getTarget();
-            if (target.equalsIgnoreCase("messaging")) {
-                Messaging messaging = new Messaging(configManager);
-                if (messagingService != null) {
-                    messaging.setMessagingService(messagingService);
-                }
-                metricTarget = messaging;
-            } else if (target.equalsIgnoreCase("log"))
-                metricTarget = new Log(configManager);
-            else if (target.equalsIgnoreCase("cloudwatch"))
-                metricTarget = new CloudWatch(configManager);
-            else if (target.equalsIgnoreCase("cloudwatchcomponent")) {
-                CloudWatchComponent cwComponent = new CloudWatchComponent(configManager);
-                if (messagingService != null) {
-                    cwComponent.setMessagingService(messagingService);
-                }
-                metricTarget = cwComponent;
-            } else
-            {
-                LOGGER.warn("Invalid metric target '{}' specified. Defaulting to 'log'", target);
-                target = "log";
-                metricTarget = new Log(configManager);
+    MetricEmitter(IConfigurationService configurationService, IMessagingService messagingService) {
+        this.metricConfig = configurationService.getMetricConfig();
+        this.thingName = configurationService.getThingName();
+        this.componentName = configurationService.getComponentName();
+        
+        String target = metricConfig.getTarget();
+        if (target.equalsIgnoreCase("messaging")) {
+            Messaging messaging = new Messaging(configurationService);
+            if (messagingService != null) {
+                messaging.setMessagingService(messagingService);
             }
-            LOGGER.info("MetricEmitter initialized with target: {}", target);
+            this.metricTarget = messaging;
+        } else if (target.equalsIgnoreCase("log")) {
+            this.metricTarget = new Log(configurationService);
+        } else if (target.equalsIgnoreCase("cloudwatch")) {
+            this.metricTarget = new CloudWatch(configurationService);
+        } else if (target.equalsIgnoreCase("cloudwatchcomponent")) {
+            CloudWatchComponent cwComponent = new CloudWatchComponent(configurationService);
+            if (messagingService != null) {
+                cwComponent.setMessagingService(messagingService);
+            }
+            this.metricTarget = cwComponent;
+        } else {
+            LOGGER.warn("Invalid metric target '{}' specified. Defaulting to 'log'", target);
+            this.metricTarget = new Log(configurationService);
         }
-        configManager.addConfigChangeListener(metricTarget);
+        
+        LOGGER.info("MetricEmitter initialized with target: {}", target);
+        configurationService.addConfigChangeListener(metricTarget);
     }
+    
+
 
     /**
      * Returns the current metric configuration.
      *
      * @return The MetricConfiguration instance
      */
-    static MetricConfiguration getMetricConfig() {
+    public MetricConfiguration getMetricConfig() {
         return metricConfig;
     }
 
@@ -90,7 +81,7 @@ public class MetricEmitter
      *
      * @return The thing name
      */
-    static String getThingName() {
+    public String getThingName() {
         return thingName;
     }
 
@@ -99,26 +90,19 @@ public class MetricEmitter
      *
      * @return The component name
      */
-    static String getComponentName() {
+    public String getComponentName() {
         return componentName;
     }
     
-    /**
-     * Sets the messaging service for dependency injection.
-     * 
-     * @param service The messaging service implementation
-     */
-    public static void setMessagingService(IMessagingService service) {
-        messagingService = service;
-    }
+
 
     /**
      * Defines a new metric with its configuration and dimensions.
      *
      * @param metric The metric definition to register
      */
-    public static void defineMetric(Metric metric) {
-        MetricEmitter.metrics.put(metric.getName(), metric);
+    public void defineMetric(Metric metric) {
+        this.metrics.put(metric.getName(), metric);
     }
 
     /**
@@ -128,7 +112,7 @@ public class MetricEmitter
      * @param name The name of the metric to emit
      * @param measureValues Map of measure names to their values
      */
-    public static void emitMetric(String name, Map<String, Float> measureValues) {
+    public void emitMetric(String name, Map<String, Float> measureValues) {
         if (metrics.containsKey(name)) {
             metricTarget.emitMetric(metrics.get(name), measureValues);
         } else {
@@ -142,12 +126,14 @@ public class MetricEmitter
      * @param name The name of the metric to emit
      * @param measureValues Map of measure names to their values
      */
-    public static void emitMetricNow(String name, Map<String, Float> measureValues) {
+    public void emitMetricNow(String name, Map<String, Float> measureValues) {
         if (metrics.containsKey(name)) {
             metricTarget.emitMetricNow(metrics.get(name), measureValues);
         } else {
             LOGGER.warn("Metric {} is not defined. Ignoring.", name);
         }
     }
+    
+
 
 }

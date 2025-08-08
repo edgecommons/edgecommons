@@ -19,9 +19,12 @@ public abstract class MetricTarget implements ConfigurationChangeListener
 
     protected static final Logger LOGGER = LogManager.getLogger(MetricTarget.class);
 
-    protected final ConfigManager configManager;
     protected final IConfigurationService configService;
     protected final MetricConfiguration metricConfig;
+    
+    // Backward compatibility field
+    @Deprecated
+    protected final ConfigManager configManager;
 
     /**
      * @deprecated Use {@link #MetricTarget(IConfigurationService)} instead
@@ -29,14 +32,16 @@ public abstract class MetricTarget implements ConfigurationChangeListener
     @Deprecated
     MetricTarget(ConfigManager configManager)
     {
-        this((IConfigurationService) configManager);
+        this.configService = configManager;
+        this.configManager = configManager;
+        this.metricConfig = configManager.getMetricConfig();
     }
     
     MetricTarget(IConfigurationService configService)
     {
-        this.configManager = (ConfigManager) configService;
         this.configService = configService;
-        this.metricConfig = configManager.getMetricConfig();
+        this.configManager = configService instanceof ConfigManager ? (ConfigManager) configService : null;
+        this.metricConfig = configService.getMetricConfig();
     }
 
     public abstract void emitMetric(Metric metric, Map<String, Float> measureValues);

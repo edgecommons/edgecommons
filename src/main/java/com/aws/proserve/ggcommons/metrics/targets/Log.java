@@ -76,7 +76,7 @@ public class Log extends MetricTarget
 
     private Logger configureMetricLogger()
     {
-        MetricConfiguration metricConfig = configManager.getMetricConfig();
+        MetricConfiguration metricConfig = configService.getMetricConfig();
         String metricFile = configService.resolveTemplate(metricConfig.getLogFileNameTemplate());
         String uniqueAppenderName = "MetricFileAppender_" + System.currentTimeMillis();
         String uniqueLoggerName = "metric_" + System.currentTimeMillis();

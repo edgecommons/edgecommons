@@ -4,15 +4,16 @@
  */
 package com.aws.proserve.ggcommons.heartbeat;
 
-import com.aws.proserve.ggcommons.config.ConfigManager;
 import com.aws.proserve.ggcommons.config.ConfigurationChangeListener;
 import com.aws.proserve.ggcommons.config.HeartbeatConfiguration;
+import com.aws.proserve.ggcommons.interfaces.IConfigurationService;
 import com.aws.proserve.ggcommons.interfaces.IMessagingService;
 import com.aws.proserve.ggcommons.interfaces.IMetricService;
 import com.aws.proserve.ggcommons.messaging.Message;
-import com.aws.proserve.ggcommons.messaging.MessagingClient;
+import com.aws.proserve.ggcommons.messaging.MessageBuilder;
 import com.aws.proserve.ggcommons.metrics.Measure;
 import com.aws.proserve.ggcommons.metrics.Metric;
+import com.aws.proserve.ggcommons.metrics.MetricBuilder;
 import com.aws.proserve.ggcommons.metrics.MetricEmitter;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -35,7 +36,7 @@ public class Heartbeat implements ConfigurationChangeListener
 
     private static final String MESSAGE_NAME = "heartbeat";
     private static final String MESSAGE_VERSION = "1.0.0";
-    private final ConfigManager configManager;
+    private final IConfigurationService configurationService;
     private IMessagingService messagingService;
     private IMetricService metricService;
     private HeartbeatMonitor heartbeatMonitor;
@@ -43,34 +44,25 @@ public class Heartbeat implements ConfigurationChangeListener
     private final Object timerLock = new Object();
 
     /**
-     * Constructs a new Heartbeat instance for the component.
-     *
-     * @param config The configuration manager containing heartbeat settings
+     * Package-private constructor used by HeartbeatBuilder.
+     * Use HeartbeatBuilder.create() instead of calling this directly.
      */
-    public Heartbeat(ConfigManager config)
+    Heartbeat(IConfigurationService configurationService, IMessagingService messagingService, IMetricService metricService)
     {
-        configManager = config;
-        configManager.addConfigChangeListener(this);
+        this.configurationService = configurationService;
+        this.messagingService = messagingService;
+        this.metricService = metricService;
+        
+        configurationService.addConfigChangeListener(this);
+        initialize();
+    }
+    
+    /**
+     * Initializes the heartbeat after all dependencies are set.
+     */
+    private void initialize() {
         defineMetric();
         initHeartbeat();
-    }
-    
-    /**
-     * Sets the messaging service for dependency injection.
-     * 
-     * @param messagingService The messaging service implementation
-     */
-    public void setMessagingService(IMessagingService messagingService) {
-        this.messagingService = messagingService;
-    }
-    
-    /**
-     * Sets the metric service for dependency injection.
-     * 
-     * @param metricService The metric service implementation
-     */
-    public void setMetricService(IMetricService metricService) {
-        this.metricService = metricService;
     }
 
     /**
@@ -84,10 +76,10 @@ public class Heartbeat implements ConfigurationChangeListener
                 heartbeatTimer.cancel();
                 heartbeatTimer.purge();
             }
-            heartbeatMonitor = new HeartbeatMonitor(configManager.getHeartbeatConfig());
+            heartbeatMonitor = new HeartbeatMonitor(configurationService.getHeartbeatConfig());
             heartbeatTimer = new Timer("Heartbeat timer", true);
-            heartbeatTimer.scheduleAtFixedRate(new Heartbeater(), 0, configManager.getHeartbeatConfig().getIntervalSecs()*1000L);
-            LOGGER.info("Heartbeat initialized at {} second interval", configManager.getHeartbeatConfig().getIntervalSecs());
+            heartbeatTimer.scheduleAtFixedRate(new Heartbeater(), 0, configurationService.getHeartbeatConfig().getIntervalSecs()*1000L);
+            LOGGER.info("Heartbeat initialized at {} second interval", configurationService.getHeartbeatConfig().getIntervalSecs());
         }
     }
 
@@ -97,21 +89,19 @@ public class Heartbeat implements ConfigurationChangeListener
      */
     private void defineMetric()
     {
-        int storageResolution = configManager.getHeartbeatConfig().getIntervalSecs() < 60 ? 1 : 60;
-        Metric metric = new Metric("heartbeat");
-        metric.addMeasure(new Measure("disk_total", "Gigabytes", storageResolution));
-        metric.addMeasure(new Measure("disk_used", "Gigabytes", storageResolution));
-        metric.addMeasure(new Measure("disk_free", "Gigabytes", storageResolution));
-        metric.addMeasure(new Measure("cpu_usage", "Percent", storageResolution));
-        metric.addMeasure(new Measure("memory_usage", "Megabytes", storageResolution));
-        metric.addMeasure(new Measure("threads", "Count", storageResolution));
-        metric.addMeasure(new Measure("files", "Count", storageResolution));
-        metric.addMeasure(new Measure("fds", "Count", storageResolution));
-        if (metricService != null) {
-            metricService.defineMetric(metric);
-        } else {
-            MetricEmitter.defineMetric(metric);
-        }
+        int storageResolution = configurationService.getHeartbeatConfig().getIntervalSecs() < 60 ? 1 : 60;
+        Metric metric = MetricBuilder.create("heartbeat")
+                .withNamespace(configurationService.getMetricConfig().getNamespace())
+                .addMeasure("disk_total", "Gigabytes", storageResolution)
+                .addMeasure("disk_used", "Gigabytes", storageResolution)
+                .addMeasure("disk_free", "Gigabytes", storageResolution)
+                .addMeasure("cpu_usage", "Percent", storageResolution)
+                .addMeasure("memory_usage", "Megabytes", storageResolution)
+                .addMeasure("threads", "Count", storageResolution)
+                .addMeasure("files", "Count", storageResolution)
+                .addMeasure("fds", "Count", storageResolution)
+                .build();
+        metricService.defineMetric(metric);
     }
 
     /**
@@ -121,7 +111,7 @@ public class Heartbeat implements ConfigurationChangeListener
     private void publishHeartbeat()
     {
         JsonObject data = heartbeatMonitor.getStats();
-        for (HeartbeatConfiguration.HeartbeatTarget target : configManager.getHeartbeatConfig().getTargets())
+        for (HeartbeatConfiguration.HeartbeatTarget target : configurationService.getHeartbeatConfig().getTargets())
         {
             switch (target.getType().toLowerCase())
             {
@@ -134,15 +124,11 @@ public class Heartbeat implements ConfigurationChangeListener
                             measureValues.put(measureName, entry.getValue().getAsJsonObject().get(measureName).getAsFloat());
                         }
                     }
-                    if (metricService != null) {
-                        metricService.emitMetricNow("heartbeat", measureValues);
-                    } else {
-                        MetricEmitter.emitMetricNow("heartbeat", measureValues);
-                    }
+                    metricService.emitMetricNow("heartbeat", measureValues);
                     break;
 
                 case "messaging":
-                    String topic = configManager.resolveTemplate(HeartbeatConfiguration.DEFAULT_TOPIC);
+                    String topic = configurationService.resolveTemplate(HeartbeatConfiguration.DEFAULT_TOPIC);
                     String destination = HeartbeatConfiguration.DEFAULT_MESSAGING_DESTINATION;
 
                     if (target.getConfig().has("destination"))
@@ -151,32 +137,21 @@ public class Heartbeat implements ConfigurationChangeListener
                     }
                     if (target.getConfig().has("topic"))
                     {
-                        topic = configManager.resolveTemplate(target.getConfig().get("topic").getAsString());
+                        topic = configurationService.resolveTemplate(target.getConfig().get("topic").getAsString());
                     }
 
+                    Message heartbeatMessage = MessageBuilder.create(MESSAGE_NAME, MESSAGE_VERSION)
+                            .withPayload(heartbeatMonitor.getStats())
+                            .withConfig(configurationService)
+                            .build();
+                    
                     if (destination.equalsIgnoreCase("ipc"))
                     {
-                        if (messagingService != null) {
-                            messagingService.publish(topic, Message.buildFromConfig(
-                                    MESSAGE_NAME, MESSAGE_VERSION, heartbeatMonitor.getStats(), configManager
-                            ));
-                        } else {
-                            MessagingClient.publish(topic, Message.buildFromConfig(
-                                    MESSAGE_NAME, MESSAGE_VERSION, heartbeatMonitor.getStats(), configManager
-                            ));
-                        }
+                        messagingService.publish(topic, heartbeatMessage);
                     }
                     else if (destination.equalsIgnoreCase("iot_core"))
                     {
-                        if (messagingService != null) {
-                            messagingService.publishToIotCore(topic, Message.buildFromConfig(
-                                    MESSAGE_NAME, MESSAGE_VERSION, heartbeatMonitor.getStats(), configManager
-                            ), QOS.AT_LEAST_ONCE);
-                        } else {
-                            MessagingClient.publishToIotCore(topic, Message.buildFromConfig(
-                                    MESSAGE_NAME, MESSAGE_VERSION, heartbeatMonitor.getStats(), configManager
-                            ), QOS.AT_LEAST_ONCE);
-                        }
+                        messagingService.publishToIotCore(topic, heartbeatMessage, QOS.AT_LEAST_ONCE);
                     }
                     else
                     {

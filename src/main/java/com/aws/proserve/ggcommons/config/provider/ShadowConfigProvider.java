@@ -29,13 +29,15 @@ class ShadowConfigProvider extends ConfigProvider implements  StreamResponseHand
     protected final String shadowTopicPrefix;
     private final String shadowName;
     private final String thingName;
+    private final MessagingClient messagingClient;
     GreengrassCoreIPCClientV2 ipcClient;
 
-    ShadowConfigProvider(ConfigManager configManager, String thingName, String shadowName)
+    ShadowConfigProvider(ConfigManager configManager, String thingName, String shadowName, MessagingClient messagingClient)
     {
         super(configManager);
         this.shadowName = shadowName;
         this.thingName =thingName;
+        this.messagingClient = messagingClient;
         this.shadowTopicPrefix = String.format(SHADOW_TOPIC_TEMPLATE, thingName, shadowName);
         connectToIPC();
         subscribeShadowTopics();
@@ -91,7 +93,7 @@ class ShadowConfigProvider extends ConfigProvider implements  StreamResponseHand
     {
         try
         {
-            ipcClient = (GreengrassCoreIPCClientV2) MessagingClient.getNativeLocalClient(); // GreengrassCoreIPCClientV2.builder().build();
+            ipcClient = (GreengrassCoreIPCClientV2) messagingClient.getNativeLocalClient(); // GreengrassCoreIPCClientV2.builder().build();
         }
         catch (Exception e)
         {

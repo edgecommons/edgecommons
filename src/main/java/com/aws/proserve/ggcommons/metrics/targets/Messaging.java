@@ -8,6 +8,7 @@ import com.aws.proserve.ggcommons.config.ConfigManager;
 import com.aws.proserve.ggcommons.interfaces.IConfigurationService;
 import com.aws.proserve.ggcommons.interfaces.IMessagingService;
 import com.aws.proserve.ggcommons.messaging.Message;
+import com.aws.proserve.ggcommons.messaging.MessageBuilder;
 import com.aws.proserve.ggcommons.messaging.MessagingClient;
 import com.aws.proserve.ggcommons.metrics.Metric;
 import com.google.gson.JsonObject;
@@ -31,7 +32,7 @@ public class Messaging extends MetricTarget {
     }
     
     public Messaging(IConfigurationService configService) {
-        super((ConfigManager) configService); // Cast for backward compatibility
+        super(configService);
         this.configService = configService;
         this.topic = configService.resolveTemplate(metricConfig.getTopic());
         this.sendToIpc = metricConfig.getDestination().equalsIgnoreCase("ipc");
@@ -56,18 +57,14 @@ public class Messaging extends MetricTarget {
 
     private void publishMessage(Metric metric, JsonObject metricObject)
     {
-        Message message = Message.buildFromConfig("Metric", "1.0", metricObject, configService);
-        if (messagingService != null) {
-            if (sendToIpc)
-                messagingService.publish(topic, message);
-            else
-                messagingService.publishToIotCore(topic, message, QOS.AT_LEAST_ONCE);
-        } else {
-            if (sendToIpc)
-                MessagingClient.publish(topic, message);
-            else
-                MessagingClient.publishToIotCore(topic, message, QOS.AT_LEAST_ONCE);
-        }
+        Message message = MessageBuilder.create("Metric", "1.0")
+                .withPayload(metricObject)
+                .withConfig(configService)
+                .build();
+        if (sendToIpc)
+            messagingService.publish(topic, message);
+        else
+            messagingService.publishToIotCore(topic, message, QOS.AT_LEAST_ONCE);
         LOGGER.trace("Metric emitted for {} emitted", metric);
     }
 
@@ -75,8 +72,8 @@ public class Messaging extends MetricTarget {
     public boolean onConfigurationChanged()
     {
         LOGGER.info("Configuration changed. Reconfiguring metric messaging topic and destination");
-        this.topic = configService.resolveTemplate(((ConfigManager) configService).getMetricConfig().getTopic());
-        this.sendToIpc = ((ConfigManager) configService).getMetricConfig().getDestination().equalsIgnoreCase("ipc");
+        this.topic = configService.resolveTemplate(configService.getMetricConfig().getTopic());
+        this.sendToIpc = configService.getMetricConfig().getDestination().equalsIgnoreCase("ipc");
         return true;
     }
 

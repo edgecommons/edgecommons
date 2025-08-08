@@ -13,19 +13,25 @@ import java.util.Map;
  */
 public class MetricService implements IMetricService {
     
+    private final MetricEmitter metricEmitter;
+    
+    public MetricService(MetricEmitter metricEmitter) {
+        this.metricEmitter = metricEmitter;
+    }
+    
     @Override
     public void defineMetric(Metric metric) {
-        MetricEmitter.defineMetric(metric);
+        metricEmitter.defineMetric(metric);
     }
     
     @Override
     public void emitMetric(String name, Map<String, Float> measureValues) {
-        MetricEmitter.emitMetric(name, measureValues);
+        metricEmitter.emitMetric(name, measureValues);
     }
     
     @Override
     public void emitMetricNow(String name, Map<String, Float> measureValues) {
-        MetricEmitter.emitMetricNow(name, measureValues);
+        metricEmitter.emitMetricNow(name, measureValues);
     }
     
     @Override
@@ -33,7 +39,7 @@ public class MetricService implements IMetricService {
         // This would require adding this method to MetricEmitter
         // For now, we'll implement a basic check
         try {
-            MetricEmitter.emitMetric(name, Map.of());
+            metricEmitter.emitMetric(name, Map.of());
             return true;
         } catch (Exception e) {
             return false;

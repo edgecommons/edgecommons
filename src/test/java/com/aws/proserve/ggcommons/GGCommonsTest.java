@@ -251,6 +251,7 @@ class GGCommonsTest
         // Create a Metric named "test" using default namespace and dimensions
         Metric metric = MetricBuilder.create("test")
                 .addMeasure("val", "Count", 1)
+                .withNamespace(configService.getMetricConfig().getNamespace())
                 .build();
 
         // Define the metric

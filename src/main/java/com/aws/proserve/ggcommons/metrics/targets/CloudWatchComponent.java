@@ -45,11 +45,7 @@ public class CloudWatchComponent extends MetricTarget
         for (Map.Entry<String,Float> entry : measureValues.entrySet())
         {
             JsonObject metricObject = buildMetricData(metric, entry.getKey(), entry.getValue());
-            if (messagingService != null) {
-                messagingService.publishRaw(topic, metricObject);
-            } else {
-                MessagingClient.publishRaw(topic, metricObject);
-            }
+            messagingService.publishRaw(topic, metricObject);
             LOGGER.trace("Metric emitted for {} emitted", metric);
         }
     }
@@ -58,7 +54,7 @@ public class CloudWatchComponent extends MetricTarget
     public boolean onConfigurationChanged()
     {
         LOGGER.info("Configuration changed. Reconfiguring CloudWatch Component topic");
-        this.topic = configService.resolveTemplate(configManager.getMetricConfig().getTopic());
+        this.topic = configService.resolveTemplate(configService.getMetricConfig().getTopic());
         return false;
     }
 

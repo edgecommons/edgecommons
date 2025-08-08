@@ -6,6 +6,7 @@ package com.aws.proserve.ggcommons.config.provider;
 
 import com.aws.proserve.ggcommons.config.ConfigManager;
 import com.aws.proserve.ggcommons.messaging.Message;
+import com.aws.proserve.ggcommons.messaging.MessageBuilder;
 import com.aws.proserve.ggcommons.messaging.MessagingClient;
 import com.aws.proserve.ggcommons.messaging.ReplyFuture;
 import com.google.gson.JsonObject;
@@ -22,13 +23,15 @@ public class ConfigComponentProvider extends ConfigProvider {
     public static final String UPDATED_TOPIC_TEMPLATE = "ggcommons/{ThingName}/config/{ComponentName}/updated";
 
     private final String source;
+    private final MessagingClient messagingClient;
 
 
-    ConfigComponentProvider(ConfigManager configManager) {
+    ConfigComponentProvider(ConfigManager configManager, MessagingClient messagingClient) {
         super(configManager);
+        this.messagingClient = messagingClient;
         source=configManager.resolveTemplate(GET_TOPIC_TEMPLATE );
         String updated=configManager.resolveTemplate(UPDATED_TOPIC_TEMPLATE);
-        MessagingClient.subscribe(updated,(topic, msg)->{
+        messagingClient.subscribe(updated,(topic, msg)->{
             parentConfigManager.applyConfig((JsonObject) msg.getBody());
         });
     }
@@ -37,8 +40,11 @@ public class ConfigComponentProvider extends ConfigProvider {
     public JsonObject loadConfiguration() {
 
         JsonObject requestPayload = new JsonObject();
-        Message request = Message.buildFromConfig("GetConfiguration", "1.0", requestPayload, this.parentConfigManager);
-        final ReplyFuture replyFuture = MessagingClient.request(source, request);
+        Message request = MessageBuilder.create("GetConfiguration", "1.0")
+                .withPayload(requestPayload)
+                .withConfig((com.aws.proserve.ggcommons.interfaces.IConfigurationService) this.parentConfigManager)
+                .build();
+        final ReplyFuture replyFuture = messagingClient.request(source, request);
         Message replyMessage = null;
         int attemptCount = 0;
         boolean retry =true;
