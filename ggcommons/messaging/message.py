@@ -137,10 +137,10 @@ class Message:
             return None
         return self.header.correlation_id
 
-    def get_header(self):
+    def get_header(self) -> MessageHeader:
         return self.header
 
-    def get_tags(self):
+    def get_tags(self) -> MessageTags:
         return self.tags
 
     def get_source(self):

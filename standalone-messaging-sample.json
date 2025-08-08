@@ -11,9 +11,9 @@
       "port": 8883,
       "clientId": "ggcommons-test-2",
       "credentials": {
-        "certPath": "../creds/ggcommons-test-2.cert.pem",
-        "keyPath": "../creds/ggcommons-test-2.private.key",
-        "caPath": "../creds/root-CA.crt"
+        "certPath": "c:/Users/breis/source/ggcommons/ggcommons-python-lib/creds/ggcommons-test-2.cert.pem",
+        "keyPath": "c:/Users/breis/source/ggcommons/ggcommons-python-lib/creds/ggcommons-test-2.private.key",
+        "caPath": "c:/Users/breis/source/ggcommons/ggcommons-python-lib/creds/root-CA.crt"
       }
     }
   }

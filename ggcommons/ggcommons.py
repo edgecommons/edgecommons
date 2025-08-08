@@ -46,6 +46,7 @@ class GGCommons:
         self._component_name = component_name
         self._config_manager: Optional[ConfigManager] = None
         self._service_registry: Optional[ServiceRegistry] = None
+        self._heartbeat = None
         
         try:
             # Process command line arguments
@@ -175,19 +176,19 @@ class GGCommons:
     def _init_heartbeat(self) -> None:
         """Initialize the heartbeat system."""
         # Import here to avoid circular imports
-        from ggcommons.heartbeat.heartbeat import Heartbeat
+        from ggcommons.heartbeat.enhanced_heartbeat import EnhancedHeartbeat
         
         config_service = self.get_service(IConfigurationService)
-        heartbeat = Heartbeat(config_service)
+        self._heartbeat = EnhancedHeartbeat(config_service)
         
         # Inject services if available
         messaging_service = self.get_service(IMessagingService)
         metric_service = self.get_service(IMetricService)
         
-        if hasattr(heartbeat, 'set_messaging_service') and messaging_service:
-            heartbeat.set_messaging_service(messaging_service)
-        if hasattr(heartbeat, 'set_metric_service') and metric_service:
-            heartbeat.set_metric_service(metric_service)
+        if messaging_service:
+            self._heartbeat.set_messaging_service(messaging_service)
+        if metric_service:
+            self._heartbeat.set_metric_service(metric_service)
             
     def get_config_manager(self) -> ConfigManager:
         """
@@ -278,9 +279,8 @@ class GGCommons:
             MessagingClient.shutdown()
             
             # Shutdown heartbeat if available
-            from ggcommons.heartbeat.heartbeat import Heartbeat
-            if hasattr(Heartbeat, 'shutdown'):
-                Heartbeat.shutdown()
+            if self._heartbeat and hasattr(self._heartbeat, 'stop'):
+                self._heartbeat.stop()
                 
             # Clear service registry
             if self._service_registry:

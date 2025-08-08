@@ -22,8 +22,8 @@ def ggcommons_instance():
     try:
         ggcommons = GGCommonsBuilder.create("ggcommons_python") \
             .with_args([
-                '-c', 'FILE', 'test-config.json', 
-                '-m', 'STANDALONE', '../standalone-messaging-sample.json',
+                '-c', 'FILE', 'c:/Users/breis/source/ggcommons/ggcommons-python-lib/tests/test-config.json',
+                '-m', 'STANDALONE', 'c:/Users/breis/source/ggcommons/ggcommons-python-lib/tests/test-messaging-config.json',
                 '-t', 'ggcommons-test-2'
             ]) \
             .build()

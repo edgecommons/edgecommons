@@ -28,7 +28,7 @@ class EnhancedHeartbeat(ConfigurationChangeListener):
     - Proper resource cleanup
     """
     
-    MESSAGE_NAME = "heartbeat"
+    MESSAGE_NAME = "Heartbeat"
     MESSAGE_VERSION = "1.0.0"
     
     def __init__(self, config_service: IConfigurationService):
@@ -68,7 +68,7 @@ class EnhancedHeartbeat(ConfigurationChangeListener):
             messaging_service: The messaging service implementation
         """
         self._messaging_service = messaging_service
-        logger.debug("Messaging service injected into heartbeat")
+        logger.info(f"Messaging service injected into heartbeat: {messaging_service.__class__.__name__}")
         
     def set_metric_service(self, metric_service: IMetricService) -> None:
         """
@@ -78,7 +78,7 @@ class EnhancedHeartbeat(ConfigurationChangeListener):
             metric_service: The metric service implementation
         """
         self._metric_service = metric_service
-        logger.debug("Metric service injected into heartbeat")
+        logger.info(f"Metric service injected into heartbeat: {metric_service.__class__.__name__}")
         
     def _initialize_heartbeat(self) -> None:
         """Initialize the heartbeat system with current configuration."""
@@ -90,7 +90,7 @@ class EnhancedHeartbeat(ConfigurationChangeListener):
                 return
                 
             # Create heartbeat monitor
-            self._heartbeat_monitor = HeartbeatMonitor(heartbeat_config)
+            self._heartbeat_monitor = HeartbeatMonitor(self._config_service)
             
             # Define metrics
             self._define_heartbeat_metric()
@@ -98,22 +98,24 @@ class EnhancedHeartbeat(ConfigurationChangeListener):
             # Start heartbeat timer
             self._start_heartbeat_timer()
             
-            logger.info(f"Enhanced heartbeat initialized with {heartbeat_config.get('intervalSecs', 30)}s interval")
+            interval = heartbeat_config.get_interval_secs() if heartbeat_config else 30
+            logger.info(f"Enhanced heartbeat initialized with {interval}s interval")
+            logger.debug(f"Messaging service available: {self._messaging_service is not None}")
+            logger.debug(f"Metric service available: {self._metric_service is not None}")
             
         except Exception as e:
             logger.error(f"Failed to initialize enhanced heartbeat: {e}")
             raise
             
-    def _get_heartbeat_config(self) -> Optional[Dict[str, Any]]:
+    def _get_heartbeat_config(self):
         """
         Get heartbeat configuration from config service.
         
         Returns:
-            Heartbeat configuration dictionary or None
+            HeartbeatConfiguration object or None
         """
         try:
-            full_config = self._config_service.get_full_config()
-            return full_config.get('heartbeat')
+            return self._config_service.get_heartbeat_config()
         except Exception as e:
             logger.error(f"Failed to get heartbeat configuration: {e}")
             return None
@@ -130,11 +132,23 @@ class EnhancedHeartbeat(ConfigurationChangeListener):
             
             # Get configuration for metric definition
             heartbeat_config = self._get_heartbeat_config()
-            interval_secs = heartbeat_config.get('intervalSecs', 30) if heartbeat_config else 30
+            interval_secs = heartbeat_config.get_interval_secs() if heartbeat_config else 30
             storage_resolution = 1 if interval_secs < 60 else 60
             
             # Build heartbeat metric
-            metric = MetricBuilder.create("heartbeat") \\\n                .with_namespace("GGCommons/Heartbeat") \\\n                .with_thing_name(self._config_service.get_thing_name()) \\\n                .with_component_name(self._config_service.get_component_name()) \\\n                .add_measure("disk_total", "Gigabytes", storage_resolution) \\\n                .add_measure("disk_used", "Gigabytes", storage_resolution) \\\n                .add_measure("disk_free", "Gigabytes", storage_resolution) \\\n                .add_measure("cpu_usage", "Percent", storage_resolution) \\\n                .add_measure("memory_usage", "Megabytes", storage_resolution) \\\n                .add_measure("threads", "Count", storage_resolution) \\\n                .add_measure("files", "Count", storage_resolution) \\\n                .add_measure("fds", "Count", storage_resolution) \\\n                .build()
+            metric = MetricBuilder.create("heartbeat") \
+                .with_namespace("GGCommons/Heartbeat") \
+                .with_thing_name(self._config_service.get_thing_name()) \
+                .with_component_name(self._config_service.get_component_name()) \
+                .add_measure("disk_total", "Gigabytes", storage_resolution) \
+                .add_measure("disk_used", "Gigabytes", storage_resolution) \
+                .add_measure("disk_free", "Gigabytes", storage_resolution) \
+                .add_measure("cpu_usage", "Percent", storage_resolution) \
+                .add_measure("memory_usage", "Megabytes", storage_resolution) \
+                .add_measure("threads", "Count", storage_resolution) \
+                .add_measure("files", "Count", storage_resolution) \
+                .add_measure("fds", "Count", storage_resolution) \
+                .build()
                 
             self._metric_service.define_metric(metric)
             logger.debug("Heartbeat metric defined successfully")
@@ -150,7 +164,7 @@ class EnhancedHeartbeat(ConfigurationChangeListener):
             
             # Get interval from configuration
             heartbeat_config = self._get_heartbeat_config()
-            interval_secs = heartbeat_config.get('intervalSecs', 30) if heartbeat_config else 30
+            interval_secs = heartbeat_config.get_interval_secs() if heartbeat_config else 30
             
             # Create and start new timer
             self._heartbeat_timer = threading.Timer(interval_secs, self._heartbeat_callback)
@@ -206,11 +220,13 @@ class EnhancedHeartbeat(ConfigurationChangeListener):
             if heartbeat_config is None:
                 return
                 
-            targets = heartbeat_config.get('targets', [])
+            targets = heartbeat_config.get_targets() if heartbeat_config else []
+            logger.debug(f"Publishing heartbeat to {len(targets)} targets")
             
             # Publish to each configured target
             for target in targets:
                 target_type = target.get('type', 'messaging')
+                logger.debug(f"Processing heartbeat target type: {target_type}")
                 
                 if target_type == 'messaging':
                     self._publish_to_messaging(stats, target)
@@ -232,8 +248,10 @@ class EnhancedHeartbeat(ConfigurationChangeListener):
         """
         try:
             if self._messaging_service is None:
-                logger.debug("No messaging service available for heartbeat")
+                logger.warning("No messaging service available for heartbeat - service not injected yet")
                 return
+            
+            logger.debug("Publishing heartbeat via messaging service")
                 
             # Import here to avoid circular imports
             from ggcommons.messaging.message_builder import MessageBuilder
@@ -241,24 +259,27 @@ class EnhancedHeartbeat(ConfigurationChangeListener):
             # Get topic and destination from config
             config = target_config.get('config', {})
             topic = config.get('topic', 'ggcommons/{ThingName}/{ComponentName}/heartbeat')
-            destination = config.get('destination', 'ipc')
+            destination = config.get('destination', 'local')
             
             # Resolve template variables
             resolved_topic = self._config_service.resolve_template(topic)
             
             # Build heartbeat message
-            message = MessageBuilder.create(self.MESSAGE_NAME, self.MESSAGE_VERSION) \\\n                .with_payload(stats) \\\n                .with_config(self._config_service.config_manager) \\\n                .build()
+            message = MessageBuilder.create(self.MESSAGE_NAME, self.MESSAGE_VERSION) \
+                .with_payload(stats) \
+                .with_config(self._config_service.config_manager) \
+                .build()
             
             # Publish based on destination
-            if destination.lower() == 'ipc':
+            if destination.lower() == 'local':
                 self._messaging_service.publish(resolved_topic, message)
-            elif destination.lower() == 'iot_core':
+            elif destination.lower() == 'iotcore':
                 from awsiot.greengrasscoreipc.model import QOS
                 self._messaging_service.publish_to_iot_core(resolved_topic, message, QOS.AT_LEAST_ONCE)
             else:
                 logger.warning(f"Unknown messaging destination: {destination}")
                 
-            logger.debug(f"Published heartbeat to {destination} topic: {resolved_topic}")
+            logger.info(f"Published heartbeat to {destination} topic: {resolved_topic}")
             
         except Exception as e:
             logger.error(f"Failed to publish heartbeat to messaging: {e}")
