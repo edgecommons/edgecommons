@@ -13,8 +13,8 @@ class Messaging(MetricTarget):
         self.topic = config_manager.resolve_template(
             config_manager.get_metric_config().get_topic()
         )
-        self.send_to_ipc = (
-            config_manager.get_metric_config().get_destination().lower() == "ipc"
+        self.send_to_local = (
+            config_manager.get_metric_config().get_destination().lower() == "local"
         )
 
     def emit_metric_now(self, metric, measure_values):
@@ -39,7 +39,7 @@ class Messaging(MetricTarget):
         self.emit_metric_now(metric, measure_values)
 
     def __publish_message(self, metric_dict: dict):
-        destination = "IPC" if self.send_to_ipc else "IoT Core"
+        destination = "local" if self.send_to_local else "IoT Core"
         self.logger.debug(f"Publishing metric message to {destination} on topic: {self.topic}")
         
         message = MessageBuilder.create("Metric", "1.0") \
@@ -47,7 +47,7 @@ class Messaging(MetricTarget):
             .with_config(self.config_manager) \
             .build()
             
-        if self.send_to_ipc:
+        if self.send_to_local:
             MessagingClient.publish(self.topic, message)
         else:
             MessagingClient.publish_to_iot_core(self.topic, message, QOS.AT_LEAST_ONCE)
@@ -56,16 +56,16 @@ class Messaging(MetricTarget):
         self.logger.info("Metric messaging configuration changed, reconfiguring target")
         
         old_topic = self.topic
-        old_destination = "IPC" if self.send_to_ipc else "IoT Core"
+        old_destination = "local" if self.send_to_local else "IoT Core"
         
         self.topic = self.config_manager.resolve_template(
             self.config_manager.get_metric_config().get_topic()
         )
-        self.send_to_ipc = (
-            self.config_manager.get_metric_config().get_destination().lower() == "ipc"
+        self.send_to_local = (
+            self.config_manager.get_metric_config().get_destination().lower() == "local"
         )
         
-        new_destination = "IPC" if self.send_to_ipc else "IoT Core"
+        new_destination = "IPC" if self.send_to_local else "IoT Core"
         
         self.logger.info(f"Metric messaging reconfigured - topic: {old_topic} -> {self.topic}, destination: {old_destination} -> {new_destination}")
         return True
