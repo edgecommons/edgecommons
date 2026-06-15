@@ -8,7 +8,7 @@
 //! once, then `emit_metric` / `emit_metric_now` measure values by metric name. The
 //! [`MetricEmitter`] routes emissions to the target selected by
 //! `metricEmission.target`: [`target::log`], [`target::messaging`],
-//! [`target::cloudwatch_component`], or [`target::cloudwatch`] (feature `cloudwatch`).
+//! [`target::cloudwatch_component`], or `target::cloudwatch` (feature `cloudwatch`).
 //!
 //! ## Semantics & Architecture
 //! - `define_metric` / `is_metric_defined` are synchronous (pure registry ops);
@@ -82,9 +82,13 @@ pub trait MetricService: Send + Sync {
 
 /// Routes metric emissions to the configured [`MetricTarget`]. The default
 /// [`MetricService`] implementation.
+///
+/// The target is swappable: registering the emitter as a
+/// [`crate::config::ConfigChangeListener`] rebuilds it on config hot-reload.
 pub struct MetricEmitter {
-    target: Box<dyn MetricTarget>,
+    target: Mutex<Arc<dyn MetricTarget>>,
     metrics: Mutex<HashMap<String, Metric>>,
+    messaging: Option<Arc<dyn MessagingService>>,
 }
 
 impl MetricEmitter {
@@ -92,7 +96,8 @@ impl MetricEmitter {
     ///
     /// # Semantics & Syntax
     /// - **Signature**: `pub async fn new(config: &Config, messaging: Option<Arc<dyn MessagingService>>) -> Result<MetricEmitter>`
-    /// - `messaging` is required by the `messaging` and `cloudwatchcomponent` targets.
+    /// - `messaging` is required by the `messaging` and `cloudwatchcomponent` targets;
+    ///   it is retained so the target can be rebuilt on config change.
     ///
     /// # Errors
     /// | Error Variant | Condition | Recovery |
@@ -103,53 +108,11 @@ impl MetricEmitter {
         config: &Config,
         messaging: Option<Arc<dyn MessagingService>>,
     ) -> Result<MetricEmitter> {
-        let metric_config = &config.parsed.metric_emission;
-        let namespace = metric_config.namespace().to_string();
-        let large_fleet = metric_config.large_fleet_workaround;
-        let target_name = metric_config.target().to_ascii_lowercase();
-
-        let target: Box<dyn MetricTarget> = match target_name.as_str() {
-            "log" => {
-                let path = resolve(config, &metric_config.log_file_name());
-                Box::new(target::log::LogTarget::new(
-                    path,
-                    namespace,
-                    large_fleet,
-                    &metric_config.max_file_size(),
-                )?)
-            }
-            "messaging" => {
-                let messaging = require_messaging(messaging, "messaging")?;
-                let topic = resolve(config, &metric_config.topic());
-                let iot_core = metric_config.destination().eq_ignore_ascii_case("iotcore");
-                Box::new(target::messaging::MessagingMetricTarget::new(
-                    messaging, topic, iot_core, namespace, large_fleet,
-                ))
-            }
-            "cloudwatchcomponent" => {
-                let messaging = require_messaging(messaging, "cloudwatchcomponent")?;
-                let topic = resolve(config, &metric_config.topic());
-                Box::new(target::cloudwatch_component::CloudWatchComponentTarget::new(
-                    messaging, topic, namespace,
-                ))
-            }
-            "cloudwatch" => build_cloudwatch_target(&namespace, large_fleet, metric_config.interval_secs()).await?,
-            other => {
-                tracing::warn!(target = %other, "unknown metric target; defaulting to 'log'");
-                let path = resolve(config, &metric_config.log_file_name());
-                Box::new(target::log::LogTarget::new(
-                    path,
-                    namespace,
-                    large_fleet,
-                    &metric_config.max_file_size(),
-                )?)
-            }
-        };
-
-        tracing::info!(target = %target_name, "MetricEmitter initialized");
+        let target = build_target(config, messaging.clone()).await?;
         Ok(MetricEmitter {
-            target,
+            target: Mutex::new(target),
             metrics: Mutex::new(HashMap::new()),
+            messaging,
         })
     }
 
@@ -157,6 +120,65 @@ impl MetricEmitter {
     fn lookup(&self, name: &str) -> Option<Metric> {
         self.metrics.lock().ok()?.get(name).cloned()
     }
+
+    /// Snapshot the current target (cheap `Arc` clone; lock not held across `.await`).
+    fn current_target(&self) -> Result<Arc<dyn MetricTarget>> {
+        Ok(self
+            .target
+            .lock()
+            .map_err(|_| GgError::Metrics("metric target mutex poisoned".to_string()))?
+            .clone())
+    }
+}
+
+/// Build the configured metric target.
+async fn build_target(
+    config: &Config,
+    messaging: Option<Arc<dyn MessagingService>>,
+) -> Result<Arc<dyn MetricTarget>> {
+    let metric_config = &config.parsed.metric_emission;
+    let namespace = metric_config.namespace().to_string();
+    let large_fleet = metric_config.large_fleet_workaround;
+    let target_name = metric_config.target().to_ascii_lowercase();
+
+    let log_target = || -> Result<Arc<dyn MetricTarget>> {
+        let path = resolve(config, &metric_config.log_file_name());
+        Ok(Arc::new(target::log::LogTarget::new(
+            path,
+            namespace.clone(),
+            large_fleet,
+            &metric_config.max_file_size(),
+        )?))
+    };
+
+    let target: Arc<dyn MetricTarget> = match target_name.as_str() {
+        "log" => log_target()?,
+        "messaging" => {
+            let messaging = require_messaging(messaging, "messaging")?;
+            let topic = resolve(config, &metric_config.topic());
+            let iot_core = metric_config.destination().eq_ignore_ascii_case("iotcore");
+            Arc::new(target::messaging::MessagingMetricTarget::new(
+                messaging, topic, iot_core, namespace, large_fleet,
+            ))
+        }
+        "cloudwatchcomponent" => {
+            let messaging = require_messaging(messaging, "cloudwatchcomponent")?;
+            let topic = resolve(config, &metric_config.topic());
+            Arc::new(target::cloudwatch_component::CloudWatchComponentTarget::new(
+                messaging, topic, namespace,
+            ))
+        }
+        "cloudwatch" => {
+            build_cloudwatch_target(&namespace, large_fleet, metric_config.interval_secs()).await?
+        }
+        other => {
+            tracing::warn!(target = %other, "unknown metric target; defaulting to 'log'");
+            log_target()?
+        }
+    };
+
+    tracing::info!(target = %target_name, "metric target built");
+    Ok(target)
 }
 
 /// Require a messaging service for targets that need one.
@@ -175,10 +197,10 @@ async fn build_cloudwatch_target(
     namespace: &str,
     large_fleet_workaround: bool,
     interval_secs: u64,
-) -> Result<Box<dyn MetricTarget>> {
+) -> Result<Arc<dyn MetricTarget>> {
     #[cfg(feature = "cloudwatch")]
     {
-        Ok(Box::new(
+        Ok(Arc::new(
             target::cloudwatch::CloudWatchTarget::new(namespace, large_fleet_workaround, interval_secs)
                 .await?,
         ))
@@ -205,7 +227,7 @@ impl MetricService for MetricEmitter {
 
     async fn emit_metric(&self, name: &str, values: HashMap<String, f64>) -> Result<()> {
         match self.lookup(name) {
-            Some(metric) => self.target.emit(&metric, &values).await,
+            Some(metric) => self.current_target()?.emit(&metric, &values).await,
             None => {
                 tracing::warn!(metric = %name, "metric is not defined; ignoring emit");
                 Ok(())
@@ -215,7 +237,7 @@ impl MetricService for MetricEmitter {
 
     async fn emit_metric_now(&self, name: &str, values: HashMap<String, f64>) -> Result<()> {
         match self.lookup(name) {
-            Some(metric) => self.target.emit_now(&metric, &values).await,
+            Some(metric) => self.current_target()?.emit_now(&metric, &values).await,
             None => {
                 tracing::warn!(metric = %name, "metric is not defined; ignoring emit");
                 Ok(())
@@ -224,11 +246,33 @@ impl MetricService for MetricEmitter {
     }
 
     async fn flush_metrics(&self) -> Result<()> {
-        self.target.flush().await
+        self.current_target()?.flush().await
     }
 
     async fn shutdown(&self) {
-        self.target.shutdown().await;
+        if let Ok(target) = self.current_target() {
+            target.shutdown().await;
+        }
+    }
+}
+
+#[async_trait]
+impl crate::config::ConfigChangeListener for MetricEmitter {
+    /// Rebuild the metric target from the new config (keeping the previous one on error).
+    async fn on_configuration_change(&self, config: Arc<Config>) -> bool {
+        match build_target(&config, self.messaging.clone()).await {
+            Ok(target) => {
+                if let Ok(mut slot) = self.target.lock() {
+                    *slot = target;
+                }
+                tracing::info!("metric target reconfigured after config change");
+                true
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to rebuild metric target on config change; keeping previous");
+                false
+            }
+        }
     }
 }
 

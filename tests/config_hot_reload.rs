@@ -4,6 +4,7 @@
 //! broker is needed), registers a config-change listener, modifies the file, and
 //! asserts the snapshot updates and the listener fires.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -81,6 +82,69 @@ async fn file_config_hot_reloads_and_notifies_listeners() {
     assert_eq!(gg.config().global()["v"], 2, "snapshot updated");
     assert_eq!(*listener.last_v.lock().unwrap(), Some(2), "listener saw new value");
     assert!(listener.count.load(Ordering::SeqCst) >= 1, "listener fired");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn metric_target_reconfigures_on_reload() {
+    let dir = std::env::temp_dir().join(format!("ggcommons-mreload-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let config_path = dir.join("config.json");
+    let log_a = dir.join("a.log");
+    let log_b = dir.join("b.log");
+    write_config(&config_path, &log_a, 1);
+
+    let gg = GgCommonsBuilder::new("com.example.MetricReload")
+        .args([
+            "prog".to_string(),
+            "-c".to_string(),
+            "FILE".to_string(),
+            config_path.to_string_lossy().into_owned(),
+            "-t".to_string(),
+            "thing-1".to_string(),
+        ])
+        .build()
+        .await
+        .expect("build");
+
+    let metrics = gg.metrics();
+    metrics.define_metric(MetricBuilder::create("m").add_measure("count", "Count", 60).build());
+    let mut values = HashMap::new();
+    values.insert("count".to_string(), 1.0);
+    metrics.emit_metric_now("m", values.clone()).await.unwrap();
+    metrics.flush_metrics().await.unwrap();
+    assert!(
+        !std::fs::read_to_string(&log_a).unwrap().trim().is_empty(),
+        "first metric goes to the original log file"
+    );
+
+    // Register a listener that fires AFTER the internal metric-target listener (it is
+    // registered earlier, so by the time this fires the target has been rebuilt).
+    let listener = Arc::new(RecordingListener {
+        last_v: Mutex::new(None),
+        count: AtomicUsize::new(0),
+    });
+    gg.add_config_change_listener(listener.clone());
+
+    // Hot-reload: point the metric log at a different file.
+    write_config(&config_path, &log_b, 2);
+    for _ in 0..100 {
+        if listener.count.load(Ordering::SeqCst) >= 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(listener.count.load(Ordering::SeqCst) >= 1, "reload happened");
+
+    let mut values2 = HashMap::new();
+    values2.insert("count".to_string(), 2.0);
+    metrics.emit_metric_now("m", values2).await.unwrap();
+    metrics.flush_metrics().await.unwrap();
+    assert!(
+        !std::fs::read_to_string(&log_b).unwrap_or_default().trim().is_empty(),
+        "after reload, metrics go to the reconfigured log file"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }

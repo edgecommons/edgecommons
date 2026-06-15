@@ -195,11 +195,17 @@ impl GgCommonsBuilder {
         let config: Arc<ArcSwap<Config>> = Arc::new(ArcSwap::from_pointee(cfg));
         let messaging = init_messaging(&parsed.mode).await?;
         let snapshot = config.load_full();
-        let metrics: Arc<dyn metrics::MetricService> =
-            Arc::new(metrics::MetricEmitter::new(&snapshot, messaging.clone()).await?);
+        let emitter = Arc::new(metrics::MetricEmitter::new(&snapshot, messaging.clone()).await?);
+        let metrics: Arc<dyn metrics::MetricService> = emitter.clone();
         let heartbeat = heartbeat::Heartbeat::start(config.clone(), metrics.clone(), messaging.clone());
 
+        // Internal listeners reconfigure the metric target and logging on hot reload.
         let listeners: ConfigListeners = Arc::new(std::sync::Mutex::new(Vec::new()));
+        if let Ok(mut l) = listeners.lock() {
+            l.push(emitter as Arc<dyn config::ConfigChangeListener>);
+            l.push(Arc::new(logging::LoggingReconfigurer) as Arc<dyn config::ConfigChangeListener>);
+        }
+
         let reload_task = source.watch().map(|updates| {
             spawn_config_reload(
                 updates,

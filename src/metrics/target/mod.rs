@@ -8,7 +8,7 @@
 //! - [`messaging`]: publish EMF over the messaging service (local or IoT Core).
 //! - [`cloudwatch_component`]: publish to the Greengrass CloudWatch Metrics
 //!   component topic.
-//! - [`cloudwatch`] (feature `cloudwatch`): send to CloudWatch via the AWS SDK.
+//! - `cloudwatch` (feature `cloudwatch`): send to CloudWatch via the AWS SDK.
 //!
 //! ## Semantics & Architecture
 //! - Async (`tokio`); object-safe via `async_trait`.

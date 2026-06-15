@@ -15,6 +15,8 @@ default = ["standalone"]
 # STANDALONE runtime mode: dual-broker MQTT (local + AWS IoT Core).
 standalone = ["dep:rumqttc"]
 # GREENGRASS runtime mode: IPC via aws-greengrass-component-sdk (Phase 2).
+# NOTE: the SDK is a Linux-only C-FFI crate (bindgen + cc, GNU/Linux flags, UDS IPC);
+# it will not build on Windows/MSVC. Wire the dep in on a Linux toolchain.
 greengrass = []
 # CloudWatch metric target via the AWS SDK (heavy deps; off by default).
 cloudwatch = ["dep:aws-config", "dep:aws-sdk-cloudwatch"]
