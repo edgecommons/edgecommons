@@ -1,7 +1,7 @@
 //! # Messaging
 //!
-//! **One-liner purpose**: Transport-agnostic messaging — publish/subscribe and
-//! request/reply — over a pluggable provider.
+//! **One-liner purpose**: Transport-agnostic messaging — callback-based
+//! publish/subscribe and request/reply — over a pluggable provider.
 //!
 //! ## Overview
 //! The subsystem has two layers:
@@ -10,27 +10,47 @@
 //!    standalone implementation is [`provider::mqtt`] (dual-broker MQTT via
 //!    `rumqttc`); the Greengrass IPC provider lands in Phase 2.
 //! 2. [`MessagingService`] — built **once** over any provider; owns [`message::Message`]
-//!    (de)serialization and request/reply correlation. Because correlation lives
-//!    above the transport, it is identical over MQTT and IPC.
+//!    (de)serialization, the callback dispatch model, and request/reply correlation.
 //!
 //! ## Semantics & Architecture
+//! - **Callback delivery** (matching the Java/Python contract): a subscription
+//!   registers a [`service::MessageHandler`] that is *invoked* on each matching
+//!   message — there is no polling.
+//! - **Internal queue**: the provider pushes matched messages into an unbounded
+//!   per-subscription channel ([`Subscription`]) as they arrive, so messages are
+//!   never dropped while a handler is busy.
+//! - **Per-subscription concurrency**: each subscription sets a max concurrency for
+//!   handler invocation. The default of `1` means strictly serial, ordered
+//!   processing; `N` allows up to `N` handlers to run at once (order not
+//!   guaranteed across concurrent handlers).
 //! - Async throughout (`tokio`); traits are object-safe via `async_trait` so they
 //!   can be held as `Arc<dyn _>` (the testable seam).
-//! - [`Subscription`] cleans up on `Drop` (RAII): dropping it deregisters the
-//!   routing entry, so request/reply reply-subscriptions never leak.
+//! - **Cleanup**: subscriptions are tracked internally; stop one with
+//!   [`MessagingService::unsubscribe`], which aborts its dispatcher **and** sends an
+//!   UNSUBSCRIBE to the broker (no orphaned broker subscriptions). All
+//!   subscriptions are stopped when the service is dropped. (Dropping the raw
+//!   internal [`Subscription`] deregisters local routing.)
 //! - Error handling: all fallible operations return [`crate::error::Result`]; the
 //!   library never panics on transport errors.
 //!
 //! ## Usage Example
 //! ```no_run
-//! use ggcommons::messaging::{Destination, MessagingService};
-//! use ggcommons::messaging::message::MessageBuilder;
-//! use std::time::Duration;
+//! use ggcommons::messaging::{message_handler, Destination, MessagingService};
+//! use std::sync::Arc;
 //!
-//! # async fn demo(svc: std::sync::Arc<dyn MessagingService>) -> ggcommons::Result<()> {
-//! let req = MessageBuilder::new("Ping", "1.0").thing_name("t").build();
-//! let reply = svc.request("svc/ping", req, Destination::Local, Duration::from_secs(5)).await?;
-//! println!("got reply: {}", reply.header.name);
+//! # async fn demo(svc: Arc<dyn MessagingService>) -> ggcommons::Result<()> {
+//! // Serial processing (max_concurrency = 1): handlers run one at a time, in order.
+//! svc.subscribe(
+//!     "requests/process",
+//!     Destination::Local,
+//!     1,
+//!     message_handler(|topic, msg| async move {
+//!         println!("got {} on {topic}", msg.header.name);
+//!     }),
+//! )
+//! .await?;
+//! // ... later, to stop receiving:
+//! svc.unsubscribe("requests/process", Destination::Local).await?;
 //! # Ok(())
 //! # }
 //! ```
@@ -40,6 +60,8 @@
 //!   than a shared correlation map: the reply subscription's `Drop` guarantees
 //!   cleanup with no bookkeeping, structurally avoiding the leak/key-mismatch
 //!   bugs found in the Java implementation.
+//! - Concurrency is bounded by a `tokio` semaphore acquired *before* dispatch, so
+//!   `max_concurrency = 1` yields ordered serial processing for free.
 //!
 //! ## Safety & Panics
 //! None in normal operation.
@@ -54,14 +76,14 @@ pub mod request_reply;
 pub mod service;
 
 pub use message::{Message, MessageBuilder};
-pub use service::MessagingService;
+pub use service::{message_handler, DefaultMessagingService, MessageHandler, MessagingService};
 
 use async_trait::async_trait;
 
 use crate::error::Result;
 
 /// Which broker a message targets.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Destination {
     /// Local broker (standalone) or local IPC pub/sub (Greengrass).
     Local,
@@ -76,10 +98,12 @@ pub enum Qos {
     AtLeastOnce,
 }
 
-/// A live subscription to raw topic payloads.
+/// A live, raw subscription: the internal queue of `(topic, payload)` pairs that
+/// the provider pushes into as messages arrive.
 ///
-/// Dropping the `Subscription` deregisters it from its provider (RAII), so a
-/// reply subscription created for a single request is cleaned up automatically.
+/// This is the transport-level primitive consumed by the service's dispatcher; it
+/// is not used directly by component authors (who register callbacks instead).
+/// Dropping it deregisters the subscription from its provider (RAII).
 pub struct Subscription {
     rx: tokio::sync::mpsc::UnboundedReceiver<(String, Vec<u8>)>,
     /// Provider-supplied cleanup guard; runs its `Drop` when the subscription ends.
@@ -100,35 +124,6 @@ impl Subscription {
     /// Await the next `(topic, payload)`; `None` once the provider goes away.
     pub async fn recv(&mut self) -> Option<(String, Vec<u8>)> {
         self.rx.recv().await
-    }
-}
-
-/// A live subscription that deserializes payloads into [`Message`]s.
-///
-/// Payloads that fail to parse are logged at WARN and skipped, so a single
-/// malformed message cannot stall the stream.
-pub struct MessageStream {
-    inner: Subscription,
-}
-
-impl MessageStream {
-    /// Wrap a raw [`Subscription`] in a message-deserializing stream.
-    pub fn new(inner: Subscription) -> Self {
-        Self { inner }
-    }
-
-    /// Await the next `(topic, Message)`; `None` once the provider goes away.
-    pub async fn recv(&mut self) -> Option<(String, Message)> {
-        while let Some((topic, bytes)) = self.inner.recv().await {
-            match Message::from_slice(&bytes) {
-                Ok(msg) => return Some((topic, msg)),
-                Err(e) => {
-                    tracing::warn!(topic = %topic, error = %e, "dropping unparseable message");
-                    continue;
-                }
-            }
-        }
-        None
     }
 }
 

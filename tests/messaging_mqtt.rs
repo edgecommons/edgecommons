@@ -11,7 +11,8 @@
 //! GGCOMMONS_IT_MQTT=1 cargo test --test messaging_mqtt
 //! ```
 
-use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde_json::json;
@@ -21,7 +22,7 @@ use ggcommons::messaging::config::MessagingConfig;
 use ggcommons::messaging::message::MessageBuilder;
 use ggcommons::messaging::provider::mqtt::MqttProvider;
 use ggcommons::messaging::service::{DefaultMessagingService, MessagingService};
-use ggcommons::messaging::Destination;
+use ggcommons::messaging::{message_handler, Destination};
 
 /// Returns `true` (and prints a skip notice) when the broker-backed tests are disabled.
 fn skipped() -> bool {
@@ -53,19 +54,32 @@ async fn connect_service(client_id: &str) -> Arc<DefaultMessagingService> {
 }
 
 #[tokio::test]
-async fn publish_subscribe_roundtrip() {
+async fn publish_subscribe_invokes_handler() {
     if skipped() {
         return;
     }
     let svc = connect_service(&format!("it-pubsub-{}", Uuid::new_v4())).await;
     let topic = format!("itest/pubsub/{}", Uuid::new_v4());
 
-    let mut stream = svc
-        .subscribe(&topic, Destination::Local)
-        .await
-        .expect("subscribe");
-    // Give the broker a moment to register the subscription (SUBACK).
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    let received: Arc<Mutex<Option<(String, serde_json::Value)>>> = Arc::new(Mutex::new(None));
+    let count = Arc::new(AtomicUsize::new(0));
+    let (received_h, count_h) = (received.clone(), count.clone());
+
+    svc.subscribe(
+        &topic,
+        Destination::Local,
+        1,
+        message_handler(move |topic, msg| {
+            let (received_h, count_h) = (received_h.clone(), count_h.clone());
+            async move {
+                *received_h.lock().unwrap() = Some((topic, msg.body.clone()));
+                count_h.fetch_add(1, Ordering::SeqCst);
+            }
+        }),
+    )
+    .await
+    .expect("subscribe");
+    tokio::time::sleep(Duration::from_millis(300)).await; // let SUBACK settle
 
     let msg = MessageBuilder::new("Evt", "1.0")
         .payload(json!({ "n": 1 }))
@@ -75,13 +89,16 @@ async fn publish_subscribe_roundtrip() {
         .await
         .expect("publish");
 
-    let (recv_topic, received) = tokio::time::timeout(Duration::from_secs(5), stream.recv())
-        .await
-        .expect("did not time out")
-        .expect("a message");
-    assert_eq!(recv_topic, topic);
-    assert_eq!(received.body["n"], 1);
-    assert_eq!(received.header.name, "Evt");
+    // Wait for the callback to fire.
+    for _ in 0..50 {
+        if count.load(Ordering::SeqCst) >= 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let got = received.lock().unwrap().clone().expect("handler was invoked");
+    assert_eq!(got.0, topic);
+    assert_eq!(got.1["n"], 1);
 }
 
 #[tokio::test]
@@ -92,26 +109,27 @@ async fn request_reply_roundtrip() {
     let svc = connect_service(&format!("it-reqrep-{}", Uuid::new_v4())).await;
     let req_topic = format!("itest/req/{}", Uuid::new_v4());
 
-    // Responder: subscribe, signal readiness, reply to the first request.
+    // Responder: a callback subscription that replies to each request.
     let responder_svc = svc.clone();
-    let responder_topic = req_topic.clone();
-    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
-    let responder = tokio::spawn(async move {
-        let mut stream = responder_svc
-            .subscribe(&responder_topic, Destination::Local)
-            .await
-            .expect("responder subscribe");
-        let _ = ready_tx.send(());
-        if let Some((_t, request)) = stream.recv().await {
-            let reply = MessageBuilder::new("Pong", "1.0")
-                .payload(json!({ "ok": true }))
-                .thing_name("test-thing")
-                .build();
-            responder_svc.reply(&request, reply).await.expect("reply");
-        }
-    });
-
-    ready_rx.await.expect("responder ready");
+    svc.subscribe(
+        &req_topic,
+        Destination::Local,
+        1,
+        message_handler(move |_topic, request| {
+            let responder_svc = responder_svc.clone();
+            async move {
+                let reply = MessageBuilder::new("Pong", "1.0")
+                    .payload(json!({ "ok": true }))
+                    .thing_name("test-thing")
+                    .build();
+                if let Err(e) = responder_svc.reply(&request, reply).await {
+                    eprintln!("responder reply failed: {e}");
+                }
+            }
+        }),
+    )
+    .await
+    .expect("responder subscribe");
     tokio::time::sleep(Duration::from_millis(300)).await;
 
     let request = MessageBuilder::new("Ping", "1.0")
@@ -127,10 +145,53 @@ async fn request_reply_roundtrip() {
 
     assert_eq!(reply.header.name, "Pong");
     assert_eq!(reply.body["ok"], true);
-    // The reply must carry the request's correlation id.
     assert_eq!(reply.header.correlation_id, correlation);
+}
 
-    responder.await.expect("responder task");
+#[tokio::test]
+async fn serial_subscription_preserves_order() {
+    if skipped() {
+        return;
+    }
+    let svc = connect_service(&format!("it-serial-{}", Uuid::new_v4())).await;
+    let topic = format!("itest/serial/{}", Uuid::new_v4());
+
+    let order = Arc::new(Mutex::new(Vec::<u64>::new()));
+    let done = Arc::new(AtomicUsize::new(0));
+    let (order_h, done_h) = (order.clone(), done.clone());
+
+    svc.subscribe(
+        &topic,
+        Destination::Local,
+        1, // serial
+        message_handler(move |_topic, m| {
+            let (order_h, done_h) = (order_h.clone(), done_h.clone());
+            async move {
+                let n = m.body.as_u64().unwrap();
+                // Earlier messages dwell longer; serial dispatch must still
+                // record them in arrival order.
+                tokio::time::sleep(Duration::from_millis((5 - n) * 20)).await;
+                order_h.lock().unwrap().push(n);
+                done_h.fetch_add(1, Ordering::SeqCst);
+            }
+        }),
+    )
+    .await
+    .expect("subscribe");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    for n in 0..4u64 {
+        let m = MessageBuilder::new("Seq", "1.0").payload(json!(n)).thing_name("t").build();
+        svc.publish(&topic, &m, Destination::Local).await.expect("publish");
+    }
+
+    for _ in 0..50 {
+        if done.load(Ordering::SeqCst) >= 4 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(*order.lock().unwrap(), vec![0, 1, 2, 3]);
 }
 
 #[tokio::test]

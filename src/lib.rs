@@ -209,6 +209,8 @@ async fn init_messaging(
 pub mod prelude {
     pub use crate::cli::{ConfigSourceSpec, ParsedArgs, RuntimeMode};
     pub use crate::config::model::Config;
-    pub use crate::messaging::{Destination, Qos};
+    pub use crate::messaging::{
+        message_handler, Destination, MessageHandler, MessagingService, Qos,
+    };
     pub use crate::{GgCommons, GgCommonsBuilder, GgError, Result};
 }
