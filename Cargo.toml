@@ -1,0 +1,44 @@
+[package]
+name = "ggcommons"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "Apache-2.0"
+description = "Greengrass Commons — Rust library for building AWS IoT Greengrass v2 components"
+readme = "README.md"
+
+# Coexists with the Java (canonical) and Python implementations; tracks the same
+# config schema and CLI contract. See ../GGCOMMONS_RUST_PORT.md for the full plan.
+
+[features]
+default = ["standalone"]
+# STANDALONE runtime mode: dual-broker MQTT (local + AWS IoT Core).
+standalone = ["dep:rumqttc"]
+# GREENGRASS runtime mode: IPC via aws-greengrass-component-sdk (Phase 2).
+greengrass = []
+
+[dependencies]
+thiserror = "2"
+clap = "4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+jsonschema = "0.29"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "fs"] }
+async-trait = "0.1"
+arc-swap = "1"
+
+# STANDALONE-only (Phase 1). Pure-Rust async MQTT — no C toolchain, clean ARM/musl cross-compile.
+rumqttc = { version = "0.24", optional = true }
+
+# Phase 1 additions (added when the corresponding subsystems land):
+#   tracing-appender   — rotating file logging
+#   sysinfo            — heartbeat system metrics
+#   notify             — FILE config hot-reload
+#   tokio-rustls       — IoT Core mTLS
+#   aws-sdk-cloudwatch — cloudwatch metric target
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
+anyhow = "1"

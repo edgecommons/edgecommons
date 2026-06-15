@@ -1,0 +1,79 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "GGCommons component configuration",
+  "type": "object",
+  "properties": {
+    "logging": {
+      "type": "object",
+      "properties": {
+        "level": { "type": "string" },
+        "format": { "type": "string" },
+        "fileLogging": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "filePath": { "type": "string" }
+          },
+          "additionalProperties": true
+        },
+        "loggers": { "type": "object" },
+        "globalControl": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    },
+    "metricEmission": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "type": "string",
+          "enum": ["log", "messaging", "cloudwatch", "cloudwatchcomponent"]
+        },
+        "namespace": { "type": "string" },
+        "largeFleetWorkaround": { "type": "boolean" },
+        "targetConfig": { "type": "object" }
+      },
+      "additionalProperties": true
+    },
+    "heartbeat": {
+      "type": "object",
+      "properties": {
+        "intervalSecs": { "type": "integer", "minimum": 1 },
+        "measures": {
+          "type": "object",
+          "properties": {
+            "cpu": { "type": "boolean" },
+            "memory": { "type": "boolean" },
+            "disk": { "type": "boolean" },
+            "threads": { "type": "boolean" },
+            "files": { "type": "boolean" },
+            "fds": { "type": "boolean" }
+          },
+          "additionalProperties": true
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": { "type": "string" },
+              "config": { "type": "object" }
+            },
+            "required": ["type"],
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "tags": { "type": "object" },
+    "component": {
+      "type": "object",
+      "properties": {
+        "global": {},
+        "instances": { "type": "array" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}
