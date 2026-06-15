@@ -202,24 +202,30 @@ fn flatten(stats: &Value) -> std::collections::HashMap<String, f64> {
 }
 
 /// Collects system health statistics for the enabled measures.
+///
+/// CPU usage is measured as a delta between consecutive [`get_stats`](Self::get_stats)
+/// calls, so the value is meaningful only when the calls are spaced by a real
+/// interval (the heartbeat period). The first sample has no baseline and therefore
+/// reports `0.0`, matching psutil's first `cpu_percent()` call. The reported value
+/// follows the sysinfo convention where `100%` is one fully-used core (it can exceed
+/// 100% for a multi-threaded process).
 pub struct HeartbeatMonitor {
     system: sysinfo::System,
     pid: Option<sysinfo::Pid>,
     measures: Measures,
+    /// False until the first sample establishes a CPU baseline.
+    primed: bool,
 }
 
 impl HeartbeatMonitor {
-    /// Create a monitor and take an initial process sample (needed for CPU deltas).
+    /// Create a monitor. The first [`get_stats`](Self::get_stats) call establishes the
+    /// CPU baseline (and reports CPU as `0.0`); later calls measure over the interval.
     pub fn new(measures: Measures) -> Self {
-        let mut system = sysinfo::System::new();
-        let pid = sysinfo::get_current_pid().ok();
-        if let Some(pid) = pid {
-            system.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[pid]), true);
-        }
         Self {
-            system,
-            pid,
+            system: sysinfo::System::new(),
+            pid: sysinfo::get_current_pid().ok(),
             measures,
+            primed: false,
         }
     }
 
@@ -229,16 +235,25 @@ impl HeartbeatMonitor {
             self.system
                 .refresh_processes(sysinfo::ProcessesToUpdate::Some(&[pid]), true);
         }
-        let process = self.pid.and_then(|pid| self.system.process(pid));
+        // The first refresh has no prior sample, so its CPU delta is meaningless.
+        let was_primed = self.primed;
+        self.primed = true;
+
+        let (cpu_usage, memory_mb) = match self.pid.and_then(|pid| self.system.process(pid)) {
+            Some(process) => (
+                process.cpu_usage() as f64,
+                process.memory() as f64 / 1_000_000.0,
+            ),
+            None => (0.0, 0.0),
+        };
 
         let mut data = Map::new();
         if self.measures.cpu {
-            let cpu = process.map(|p| p.cpu_usage() as f64).unwrap_or(0.0);
+            let cpu = if was_primed { cpu_usage } else { 0.0 };
             data.insert("cpu".to_string(), json!({ "cpu_usage": cpu }));
         }
         if self.measures.memory {
-            let mb = process.map(|p| p.memory() as f64 / 1_000_000.0).unwrap_or(0.0);
-            data.insert("memory".to_string(), json!({ "memory_usage": mb }));
+            data.insert("memory".to_string(), json!({ "memory_usage": memory_mb }));
         }
         if self.measures.disk {
             let (total, used, free) = disk_usage_gb();

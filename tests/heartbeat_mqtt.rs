@@ -108,20 +108,26 @@ async fn heartbeat_publishes_to_messaging_target() {
     info!("starting heartbeat");
     let _heartbeat = Heartbeat::start(&config, metrics, Some(svc.clone()));
 
-    // First tick is immediate; wait for a heartbeat to arrive.
-    for _ in 0..50 {
-        if count.load(Ordering::SeqCst) >= 1 {
+    // Wait for the SECOND heartbeat: the first sample primes the CPU baseline (and
+    // reports 0); the second measures CPU over the real ~1s interval.
+    for _ in 0..80 {
+        if count.load(Ordering::SeqCst) >= 2 {
             break;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
     let msg = received.lock().unwrap().clone().expect("a heartbeat message arrived");
-    info!(payload = %msg.body, "asserting heartbeat payload");
+    let cpu = msg.body["cpu"]["cpu_usage"].as_f64().unwrap();
+    let mem = msg.body["memory"]["memory_usage"].as_f64().unwrap();
+    info!(cpu_usage = cpu, memory_mb = mem, "asserting heartbeat payload");
     assert_eq!(msg.header.name, "heartbeat");
     assert_eq!(msg.header.version, "1.0.0");
-    assert!(msg.body["memory"]["memory_usage"].as_f64().unwrap() > 0.0);
-    assert!(msg.body["cpu"]["cpu_usage"].is_number());
+    assert!(mem > 0.0, "memory should be positive MB");
+    // CPU is measured over the interval; for a near-idle process it should be a
+    // small, finite, non-negative percentage (100% == one core) — never a spike.
+    assert!(cpu.is_finite() && cpu >= 0.0, "cpu must be finite and non-negative, got {cpu}");
+    assert!(cpu < 100.0, "near-idle cpu should be well under one full core, got {cpu}");
 
     let _ = std::fs::remove_file(&metric_log);
     info!("=== PASS heartbeat_publishes_to_messaging_target ===");
