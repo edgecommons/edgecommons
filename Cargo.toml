@@ -45,3 +45,5 @@ rumqttc = { version = "0.24", optional = true }
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
 anyhow = "1"
+# Integration-test logging to a file (in addition to the console).
+tracing-appender = "0.2"

@@ -51,7 +51,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
-use tokio::sync::mpsc::{self, UnboundedSender};
+use tokio::sync::mpsc::{self, error::TrySendError, Sender};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
@@ -68,7 +68,7 @@ const EVENTLOOP_CAP: usize = 32;
 struct SubEntry {
     filter: String,
     qos: QoS,
-    sender: UnboundedSender<(String, Vec<u8>)>,
+    sender: Sender<(String, Vec<u8>)>,
 }
 
 /// Shared subscription registry for a broker connection.
@@ -164,10 +164,16 @@ impl MessagingProvider for MqttProvider {
             .map_err(|e| GgError::Messaging(format!("publish to '{topic}' failed: {e}")))
     }
 
-    async fn subscribe(&self, filter: &str, dest: Destination, qos: Qos) -> Result<Subscription> {
+    async fn subscribe(
+        &self,
+        filter: &str,
+        dest: Destination,
+        qos: Qos,
+        max_messages: usize,
+    ) -> Result<Subscription> {
         let conn = self.conn(dest)?;
         let rqos = to_rumqttc_qos(qos);
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::channel(max_messages.max(1));
         let id = conn.next_id.fetch_add(1, Ordering::Relaxed);
 
         {
@@ -247,7 +253,18 @@ async fn connect_broker(broker: &BrokerConfig) -> Result<BrokerConn> {
                     if let Ok(map) = registry_task.lock() {
                         for entry in map.values() {
                             if topic_matches(&entry.filter, &p.topic) {
-                                let _ = entry.sender.send((p.topic.clone(), p.payload.to_vec()));
+                                // Non-blocking: never stall the shared event loop. A full
+                                // queue means the subscription's max_messages is exceeded;
+                                // drop with a warning (closed = subscription gone, ignore).
+                                match entry.sender.try_send((p.topic.clone(), p.payload.to_vec())) {
+                                    Ok(()) => {}
+                                    Err(TrySendError::Full(_)) => tracing::warn!(
+                                        topic = %p.topic,
+                                        filter = %entry.filter,
+                                        "subscription queue full (max_messages exceeded); dropping message"
+                                    ),
+                                    Err(TrySendError::Closed(_)) => {}
+                                }
                             }
                         }
                     }

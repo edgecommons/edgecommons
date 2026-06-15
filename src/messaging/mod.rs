@@ -1,67 +1,66 @@
 //! # Messaging
 //!
 //! **One-liner purpose**: Transport-agnostic messaging — callback-based
-//! publish/subscribe and request/reply — over a pluggable provider.
+//! publish/subscribe and request/reply — mirroring the Java/Python
+//! `IMessagingService` contract (explicit local vs IoT Core method pairs).
 //!
 //! ## Overview
 //! The subsystem has two layers:
 //! 1. [`MessagingProvider`] — raw transport primitives (publish / subscribe /
-//!    unsubscribe) over [`Destination::Local`] or [`Destination::IotCore`]. The
-//!    standalone implementation is [`provider::mqtt`] (dual-broker MQTT via
-//!    `rumqttc`); the Greengrass IPC provider lands in Phase 2.
-//! 2. [`MessagingService`] — built **once** over any provider; owns [`message::Message`]
-//!    (de)serialization, the callback dispatch model, and request/reply correlation.
+//!    unsubscribe). To keep the transport extensible it takes a [`Destination`]
+//!    argument; the standalone implementation is [`provider::mqtt`] (dual-broker
+//!    MQTT via `rumqttc`), and the Greengrass IPC provider lands in Phase 2.
+//! 2. [`MessagingService`] — the user-facing contract, built **once** over any
+//!    provider. It exposes **explicit `…`/`…ToIoTCore` method pairs** (mirroring
+//!    the Greengrass v2 / Java / Python API), owns [`message::Message`]
+//!    (de)serialization, the callback dispatch model, and request/reply.
 //!
 //! ## Semantics & Architecture
-//! - **Callback delivery** (matching the Java/Python contract): a subscription
-//!   registers a [`service::MessageHandler`] that is *invoked* on each matching
-//!   message — there is no polling.
-//! - **Internal queue**: the provider pushes matched messages into an unbounded
-//!   per-subscription channel ([`Subscription`]) as they arrive, so messages are
-//!   never dropped while a handler is busy.
-//! - **Per-subscription concurrency**: each subscription sets a max concurrency for
-//!   handler invocation. The default of `1` means strictly serial, ordered
-//!   processing; `N` allows up to `N` handlers to run at once (order not
-//!   guaranteed across concurrent handlers).
-//! - Async throughout (`tokio`); traits are object-safe via `async_trait` so they
-//!   can be held as `Arc<dyn _>` (the testable seam).
-//! - **Cleanup**: subscriptions are tracked internally; stop one with
-//!   [`MessagingService::unsubscribe`], which aborts its dispatcher **and** sends an
-//!   UNSUBSCRIBE to the broker (no orphaned broker subscriptions). All
-//!   subscriptions are stopped when the service is dropped. (Dropping the raw
-//!   internal [`Subscription`] deregisters local routing.)
-//! - Error handling: all fallible operations return [`crate::error::Result`]; the
-//!   library never panics on transport errors.
+//! - **Callback delivery** (Java/Python contract): a subscription registers a
+//!   [`service::MessageHandler`] invoked on each matching message — no polling.
+//! - **Two per-subscription settings** (mirroring/correcting the Java model, which
+//!   conflated them): `max_messages` is the bounded client-side queue capacity
+//!   (prevents memory overflow; the oldest-style backpressure is "drop when full"
+//!   with a warning), and `max_concurrency` is how many queued messages a
+//!   subscription processes at once (`1` = serial, ordered).
+//! - **Stopping**: [`MessagingService::unsubscribe`] /
+//!   [`MessagingService::unsubscribe_from_iot_core`] abort the dispatcher **and**
+//!   UNSUBSCRIBE at the broker; the service stops all dispatchers on drop.
+//! - **Request/reply** returns a [`service::ReplyFuture`] handle (the Rust analog of
+//!   Java's `CompletableFuture` / Python's `Iou`): await it (wrap in
+//!   `tokio::time::timeout` for a deadline) or cancel via
+//!   [`MessagingService::cancel_request`]. Completing, cancelling, or timing out all
+//!   clean up the ephemeral reply subscription at the broker.
+//! - Async throughout (`tokio`); traits are object-safe via `async_trait`.
+//! - Error handling: [`crate::error::Result`]; never panics on transport errors.
 //!
 //! ## Usage Example
 //! ```no_run
-//! use ggcommons::messaging::{message_handler, Destination, MessagingService};
+//! use ggcommons::messaging::{message_handler, MessagingService};
 //! use std::sync::Arc;
 //!
 //! # async fn demo(svc: Arc<dyn MessagingService>) -> ggcommons::Result<()> {
-//! // Serial processing (max_concurrency = 1): handlers run one at a time, in order.
 //! svc.subscribe(
 //!     "requests/process",
-//!     Destination::Local,
-//!     1,
 //!     message_handler(|topic, msg| async move {
 //!         println!("got {} on {topic}", msg.header.name);
 //!     }),
+//!     32, // max_messages: bounded client-side queue
+//!     1,  // max_concurrency: 1 = serial, ordered
 //! )
 //! .await?;
-//! // ... later, to stop receiving:
-//! svc.unsubscribe("requests/process", Destination::Local).await?;
+//! // ... later:
+//! svc.unsubscribe("requests/process").await?;
 //! # Ok(())
 //! # }
 //! ```
 //!
 //! ## Design Choices
-//! - Request/reply uses a **dedicated ephemeral reply topic per request** rather
-//!   than a shared correlation map: the reply subscription's `Drop` guarantees
-//!   cleanup with no bookkeeping, structurally avoiding the leak/key-mismatch
-//!   bugs found in the Java implementation.
-//! - Concurrency is bounded by a `tokio` semaphore acquired *before* dispatch, so
-//!   `max_concurrency = 1` yields ordered serial processing for free.
+//! - The user-facing service mirrors the Java/Python explicit-pair surface
+//!   (`publish`/`publish_to_iot_core`, etc.) intentionally; the lower-level provider
+//!   keeps a `Destination` argument as an internal transport detail.
+//! - Request/reply uses a dedicated ephemeral reply topic per request; cleanup runs
+//!   on completion, cancel, or timeout.
 //!
 //! ## Safety & Panics
 //! None in normal operation.
@@ -76,13 +75,18 @@ pub mod request_reply;
 pub mod service;
 
 pub use message::{Message, MessageBuilder};
-pub use service::{message_handler, DefaultMessagingService, MessageHandler, MessagingService};
+pub use service::{
+    message_handler, DefaultMessagingService, MessageHandler, MessagingService, ReplyFuture,
+};
+
+use std::task::{Context, Poll};
 
 use async_trait::async_trait;
 
 use crate::error::Result;
 
-/// Which broker a message targets.
+/// Which broker a message targets. Used by the lower-level [`MessagingProvider`];
+/// the user-facing [`MessagingService`] exposes explicit method pairs instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Destination {
     /// Local broker (standalone) or local IPC pub/sub (Greengrass).
@@ -98,24 +102,26 @@ pub enum Qos {
     AtLeastOnce,
 }
 
-/// A live, raw subscription: the internal queue of `(topic, payload)` pairs that
-/// the provider pushes into as messages arrive.
+/// A live, raw subscription: the **bounded** internal queue of `(topic, payload)`
+/// pairs that the provider pushes into as messages arrive.
 ///
-/// This is the transport-level primitive consumed by the service's dispatcher; it
-/// is not used directly by component authors (who register callbacks instead).
-/// Dropping it deregisters the subscription from its provider (RAII).
+/// The capacity is the subscription's `max_messages`. When the queue is full the
+/// provider drops the message (with a warning) rather than blocking the shared
+/// event loop. Dropping the subscription deregisters it from its provider (RAII).
+/// This is the transport-level primitive consumed by the service dispatcher; it is
+/// not used directly by component authors.
 pub struct Subscription {
-    rx: tokio::sync::mpsc::UnboundedReceiver<(String, Vec<u8>)>,
+    rx: tokio::sync::mpsc::Receiver<(String, Vec<u8>)>,
     /// Provider-supplied cleanup guard; runs its `Drop` when the subscription ends.
     _guard: Box<dyn std::any::Any + Send>,
 }
 
 impl Subscription {
-    /// Construct a subscription from a receiver and a provider cleanup guard.
+    /// Construct a subscription from a bounded receiver and a provider cleanup guard.
     ///
     /// Intended for provider implementations.
     pub fn new(
-        rx: tokio::sync::mpsc::UnboundedReceiver<(String, Vec<u8>)>,
+        rx: tokio::sync::mpsc::Receiver<(String, Vec<u8>)>,
         guard: Box<dyn std::any::Any + Send>,
     ) -> Self {
         Self { rx, _guard: guard }
@@ -124,6 +130,11 @@ impl Subscription {
     /// Await the next `(topic, payload)`; `None` once the provider goes away.
     pub async fn recv(&mut self) -> Option<(String, Vec<u8>)> {
         self.rx.recv().await
+    }
+
+    /// Poll for the next `(topic, payload)`. Used by [`crate::messaging::ReplyFuture`].
+    pub fn poll_recv(&mut self, cx: &mut Context<'_>) -> Poll<Option<(String, Vec<u8>)>> {
+        self.rx.poll_recv(cx)
     }
 }
 
@@ -135,8 +146,15 @@ pub trait MessagingProvider: Send + Sync {
     async fn publish(&self, topic: &str, payload: Vec<u8>, dest: Destination, qos: Qos)
         -> Result<()>;
 
-    /// Subscribe to `filter` on `dest`, returning a [`Subscription`] of raw payloads.
-    async fn subscribe(&self, filter: &str, dest: Destination, qos: Qos) -> Result<Subscription>;
+    /// Subscribe to `filter` on `dest`, returning a [`Subscription`] whose internal
+    /// queue is bounded to `max_messages` entries.
+    async fn subscribe(
+        &self,
+        filter: &str,
+        dest: Destination,
+        qos: Qos,
+        max_messages: usize,
+    ) -> Result<Subscription>;
 
     /// Unsubscribe from `filter` on `dest`.
     async fn unsubscribe(&self, filter: &str, dest: Destination) -> Result<()>;

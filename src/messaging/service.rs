@@ -1,59 +1,58 @@
 //! # Messaging — service layer
 //!
-//! **One-liner purpose**: The transport-agnostic [`MessagingService`] (callback
-//! subscribe, unsubscribe, publish, request/reply over [`Message`]s) and its
-//! default implementation over any [`MessagingProvider`].
+//! **One-liner purpose**: The user-facing [`MessagingService`] — explicit local /
+//! IoT Core method pairs for publish, subscribe, request/reply — over any
+//! [`MessagingProvider`].
 //!
 //! ## Overview
-//! [`DefaultMessagingService`] wraps an `Arc<dyn MessagingProvider>` and adds:
-//! - message (de)serialization,
-//! - the **callback dispatch** model — a per-subscription background task drains
-//!   the provider's internal queue and invokes a [`MessageHandler`] under a
-//!   concurrency limit, and
-//! - request/reply correlation.
+//! [`DefaultMessagingService`] wraps an `Arc<dyn MessagingProvider>` and adds
+//! message (de)serialization, the callback dispatch model, and request/reply
+//! correlation. The surface mirrors the Java/Python `IMessagingService`:
+//! `publish`/`publish_to_iot_core`, `publish_raw`/`publish_to_iot_core_raw`,
+//! `subscribe`/`subscribe_to_iot_core`, `unsubscribe`/`unsubscribe_from_iot_core`,
+//! `request`/`request_from_iot_core`, `reply`/`reply_to_iot_core`,
+//! `cancel_request`/`cancel_request_from_iot_core`.
 //!
 //! ## Semantics & Architecture
-//! - **Callback delivery**: [`MessagingService::subscribe`] registers a handler
-//!   invoked on each matching message and returns `()` (matching the Java/Python
-//!   contract). The service tracks each subscription internally keyed by
-//!   `(destination, filter)`.
-//! - **Stopping**: [`MessagingService::unsubscribe`] is the only way for callers to
-//!   stop a subscription; it aborts the dispatcher **and** sends an UNSUBSCRIBE to
-//!   the broker, so no broker subscription is orphaned. Dropping the service aborts
-//!   all dispatchers (the broker drops the subscriptions when the connection closes).
-//! - **Queuing**: the provider pushes into an unbounded channel, so no messages
-//!   are dropped while a handler runs.
-//! - **Concurrency**: `max_concurrency` bounds simultaneous handler invocations. A
-//!   value of `1` gives strictly serial, ordered processing; `N` permits up to `N`
-//!   concurrent handlers.
+//! - **Callback delivery**: `subscribe*` registers a [`MessageHandler`] and returns
+//!   `()`; the service tracks each subscription internally by `(destination, filter)`.
+//! - **Two settings**: `max_messages` bounds the client-side queue (the provider
+//!   drops on overflow with a warning); `max_concurrency` bounds simultaneous
+//!   handler invocations (`1` = serial, ordered).
+//! - **Stopping**: only `unsubscribe*` stops a subscription (aborts the dispatcher
+//!   AND UNSUBSCRIBEs at the broker). Dropping the service stops all dispatchers.
+//! - **Request/reply**: `request*` returns a [`ReplyFuture`] (await it, or wrap in
+//!   `tokio::time::timeout`); `cancel_request*` abandons it. All paths
+//!   (completion, timeout, cancel) UNSUBSCRIBE the ephemeral reply topic.
 //! - Async (`tokio`); object-safe via `async_trait`.
-//! - Error handling: [`crate::error::Result`]; timeouts and closed channels are
-//!   reported as [`crate::error::GgError::Messaging`], never panics.
+//! - Error handling: [`crate::error::Result`]; never panics.
 //!
 //! ## Usage Example
 //! ```no_run
 //! # async fn demo(provider: std::sync::Arc<dyn ggcommons::messaging::MessagingProvider>) -> ggcommons::Result<()> {
 //! use ggcommons::messaging::service::{DefaultMessagingService, MessagingService};
-//! use ggcommons::messaging::{message_handler, Destination};
+//! use ggcommons::messaging::{message_handler, message::MessageBuilder};
+//! use std::time::Duration;
 //!
 //! let svc = DefaultMessagingService::new(provider);
-//! svc.subscribe("events/+", Destination::Local, 4, message_handler(|topic, msg| async move {
-//!     println!("{topic}: {}", msg.header.name);
-//! })).await?;
-//! // ... later:
-//! svc.unsubscribe("events/+", Destination::Local).await?;
+//! svc.subscribe("events/+", message_handler(|t, m| async move {
+//!     println!("{t}: {}", m.header.name);
+//! }), 32, 4).await?;
+//!
+//! let reply = tokio::time::timeout(
+//!     Duration::from_secs(5),
+//!     svc.request("svc/ping", MessageBuilder::new("Ping", "1.0").thing_name("t").build()).await?,
+//! ).await;
+//! # let _ = reply;
 //! # Ok(())
 //! # }
 //! ```
 //!
 //! ## Design Choices
-//! - Subscription lifecycle handles are kept **internal** (a map of dispatcher
-//!   tasks). Callers never hold a handle, so they cannot accidentally orphan a
-//!   broker subscription by dropping one — they must call `unsubscribe`.
-//! - The concurrency semaphore is acquired *before* each dispatch, so a limit of
-//!   `1` yields ordered serial processing without a separate code path.
-//! - Replies are published on [`Destination::Local`]; cross-destination reply
-//!   routing is a later refinement (standalone request/reply runs on the local bus).
+//! - Subscription lifecycle handles are kept internal; callers stop via
+//!   `unsubscribe*` so a broker subscription can't be orphaned.
+//! - `request*` returns a `ReplyFuture` (Rust analog of Java `CompletableFuture` /
+//!   Python `Iou`) rather than taking a timeout argument, matching both libraries.
 //!
 //! ## Safety & Panics
 //! None in normal operation.
@@ -63,16 +62,24 @@
 
 use std::collections::HashMap;
 use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::task::{Context, Poll};
 
 use async_trait::async_trait;
+use serde_json::Value;
 use tokio::sync::Semaphore;
 use tokio::task::JoinHandle;
 
 use super::message::Message;
 use super::{request_reply, Destination, MessagingProvider, Qos, Subscription};
 use crate::error::{GgError, Result};
+
+/// Default QoS for local (IPC-style) operations, which have no explicit QoS in the
+/// Java/Python contract.
+const LOCAL_QOS: Qos = Qos::AtLeastOnce;
+/// Reply subscriptions only ever receive one message.
+const REPLY_QUEUE_SIZE: usize = 1;
 
 /// A handler invoked for each message delivered to a subscription.
 ///
@@ -98,12 +105,7 @@ where
     }
 }
 
-/// Wrap an async closure as a [`MessageHandler`] for [`MessagingService::subscribe`].
-///
-/// # Purpose
-/// Provide an ergonomic way to register a handler without defining a type, while
-/// keeping [`MessagingService`] object-safe (the trait method takes
-/// `Arc<dyn MessageHandler>`).
+/// Wrap an async closure as a [`MessageHandler`] for `subscribe*`.
 ///
 /// # Examples
 /// ```
@@ -120,48 +122,112 @@ where
     Arc::new(FnHandler(f))
 }
 
-/// Transport-agnostic messaging operations over [`Message`]s.
+/// A pending request's reply, the Rust analog of Java's `CompletableFuture<Message>`
+/// / Python's `Iou`.
+///
+/// Await it directly for the reply, or wrap it in `tokio::time::timeout` for a
+/// deadline. Completing, timing out (the outer future is dropped), or passing it to
+/// [`MessagingService::cancel_request`] all UNSUBSCRIBE the ephemeral reply topic at
+/// the broker, so no reply subscription is orphaned.
+pub struct ReplyFuture {
+    sub: Subscription,
+    provider: Arc<dyn MessagingProvider>,
+    reply_topic: String,
+    dest: Destination,
+}
+
+impl Future for ReplyFuture {
+    type Output = Result<Message>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.get_mut(); // ReplyFuture is Unpin
+        match this.sub.poll_recv(cx) {
+            Poll::Ready(Some((_topic, bytes))) => Poll::Ready(Message::from_slice(&bytes)),
+            Poll::Ready(None) => Poll::Ready(Err(GgError::Messaging(
+                "reply channel closed before a reply arrived".to_string(),
+            ))),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+impl Drop for ReplyFuture {
+    fn drop(&mut self) {
+        // Best-effort broker cleanup on completion, timeout, or cancel. (Local queue
+        // routing is removed by the Subscription's own Drop.)
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            let provider = self.provider.clone();
+            let topic = self.reply_topic.clone();
+            let dest = self.dest;
+            handle.spawn(async move {
+                let _ = provider.unsubscribe(&topic, dest).await;
+            });
+        }
+    }
+}
+
+/// Transport-agnostic messaging operations over [`Message`]s, with explicit local /
+/// IoT Core method pairs (mirroring the Java/Python `IMessagingService`).
 #[async_trait]
 pub trait MessagingService: Send + Sync {
-    /// Publish a message to `topic` on `dest`.
-    async fn publish(&self, topic: &str, msg: &Message, dest: Destination) -> Result<()>;
+    /// Publish a message to `topic` on the local broker.
+    async fn publish(&self, topic: &str, msg: &Message) -> Result<()>;
+    /// Publish a message to `topic` on AWS IoT Core at `qos`.
+    async fn publish_to_iot_core(&self, topic: &str, msg: &Message, qos: Qos) -> Result<()>;
 
-    /// Register a callback `handler` for messages matching `filter` on `dest`.
+    /// Publish a raw JSON payload to `topic` on the local broker.
+    async fn publish_raw(&self, topic: &str, payload: &Value) -> Result<()>;
+    /// Publish a raw JSON payload to `topic` on AWS IoT Core at `qos`.
+    async fn publish_to_iot_core_raw(&self, topic: &str, payload: &Value, qos: Qos) -> Result<()>;
+
+    /// Register a callback for `filter` on the local broker.
     ///
-    /// `max_concurrency` bounds simultaneous handler invocations; use `1` for
-    /// strictly serial, ordered processing. Subscribing again with the same
-    /// `(dest, filter)` replaces the previous handler. Stop a subscription with
-    /// [`MessagingService::unsubscribe`].
+    /// `max_messages` bounds the client-side queue; `max_concurrency` bounds
+    /// simultaneous handler invocations (`1` = serial, ordered).
     async fn subscribe(
         &self,
         filter: &str,
-        dest: Destination,
-        max_concurrency: usize,
         handler: Arc<dyn MessageHandler>,
+        max_messages: usize,
+        max_concurrency: usize,
     ) -> Result<()>;
 
-    /// Stop the subscription for `filter` on `dest`: aborts its dispatcher and
-    /// unsubscribes at the broker.
-    async fn unsubscribe(&self, filter: &str, dest: Destination) -> Result<()>;
-
-    /// Send `msg` to `topic` and await a single correlated reply, up to `timeout`.
-    async fn request(
+    /// Register a callback for `filter` on AWS IoT Core at `qos`.
+    async fn subscribe_to_iot_core(
         &self,
-        topic: &str,
-        msg: Message,
-        dest: Destination,
-        timeout: Duration,
-    ) -> Result<Message>;
+        filter: &str,
+        handler: Arc<dyn MessageHandler>,
+        qos: Qos,
+        max_messages: usize,
+        max_concurrency: usize,
+    ) -> Result<()>;
 
-    /// Reply to a previously received request message.
+    /// Stop the local subscription for `filter` (aborts dispatch + broker UNSUBSCRIBE).
+    async fn unsubscribe(&self, filter: &str) -> Result<()>;
+    /// Stop the IoT Core subscription for `filter`.
+    async fn unsubscribe_from_iot_core(&self, filter: &str) -> Result<()>;
+
+    /// Send a request on the local broker; await the returned [`ReplyFuture`].
+    async fn request(&self, topic: &str, msg: Message) -> Result<ReplyFuture>;
+    /// Send a request on AWS IoT Core; await the returned [`ReplyFuture`].
+    async fn request_from_iot_core(&self, topic: &str, msg: Message) -> Result<ReplyFuture>;
+
+    /// Reply to a received request on the local broker.
     async fn reply(&self, request: &Message, reply: Message) -> Result<()>;
+    /// Reply to a received request on AWS IoT Core.
+    async fn reply_to_iot_core(&self, request: &Message, reply: Message) -> Result<()>;
+
+    /// Abandon a pending local request, cleaning up its reply subscription.
+    fn cancel_request(&self, reply_future: ReplyFuture);
+    /// Abandon a pending IoT Core request, cleaning up its reply subscription.
+    fn cancel_request_from_iot_core(&self, reply_future: ReplyFuture);
 }
 
 /// Default [`MessagingService`] built over a [`MessagingProvider`].
 pub struct DefaultMessagingService {
     provider: Arc<dyn MessagingProvider>,
     /// Internal dispatcher handles, keyed by `(destination, filter)`. Not exposed —
-    /// callers stop subscriptions via [`MessagingService::unsubscribe`].
+    /// callers stop subscriptions via `unsubscribe*`.
     subscriptions: Mutex<HashMap<(Destination, String), JoinHandle<()>>>,
 }
 
@@ -173,49 +239,18 @@ impl DefaultMessagingService {
             subscriptions: Mutex::new(HashMap::new()),
         }
     }
-}
 
-impl Drop for DefaultMessagingService {
-    fn drop(&mut self) {
-        if let Ok(mut map) = self.subscriptions.lock() {
-            for (_key, task) in map.drain() {
-                task.abort();
-            }
-        }
-    }
-}
-
-#[async_trait]
-impl MessagingService for DefaultMessagingService {
-    async fn publish(&self, topic: &str, msg: &Message, dest: Destination) -> Result<()> {
-        let bytes = msg.to_vec()?;
-        self.provider.publish(topic, bytes, dest, Qos::AtLeastOnce).await
-    }
-
-    /// Subscribe with a callback handler.
-    ///
-    /// # Algorithmic Choices
-    /// Opens a raw provider subscription (the internal queue), spawns a dispatcher
-    /// task that drains it and invokes `handler` under a `Semaphore(max_concurrency)`,
-    /// and records the task handle internally keyed by `(dest, filter)`. The
-    /// semaphore permit is acquired before each dispatch, so `max_concurrency == 1`
-    /// processes messages serially and in order.
-    ///
-    /// # Post-conditions
-    /// Any prior subscription for the same `(dest, filter)` has its dispatcher aborted.
-    ///
-    /// # Errors
-    /// | Error Variant | Condition | Recovery |
-    /// |---------------|-----------|----------|
-    /// | `GgError::Messaging` | The provider could not establish the subscription | Verify connectivity |
-    async fn subscribe(
+    /// Open a provider subscription, spawn its dispatcher, and record the handle.
+    async fn start_subscription(
         &self,
         filter: &str,
         dest: Destination,
+        qos: Qos,
+        max_messages: usize,
         max_concurrency: usize,
         handler: Arc<dyn MessageHandler>,
     ) -> Result<()> {
-        let sub = self.provider.subscribe(filter, dest, Qos::AtLeastOnce).await?;
+        let sub = self.provider.subscribe(filter, dest, qos, max_messages).await?;
         let task = tokio::spawn(run_dispatcher(sub, handler, max_concurrency));
 
         let previous = {
@@ -231,16 +266,8 @@ impl MessagingService for DefaultMessagingService {
         Ok(())
     }
 
-    /// Stop a subscription and unsubscribe at the broker.
-    ///
-    /// # Post-conditions
-    /// The dispatcher (if any) is aborted and the broker is asked to UNSUBSCRIBE.
-    ///
-    /// # Errors
-    /// | Error Variant | Condition | Recovery |
-    /// |---------------|-----------|----------|
-    /// | `GgError::Messaging` | The broker unsubscribe failed | Retry; local dispatch is already stopped |
-    async fn unsubscribe(&self, filter: &str, dest: Destination) -> Result<()> {
+    /// Abort the dispatcher (if any) and UNSUBSCRIBE at the broker.
+    async fn stop_subscription(&self, filter: &str, dest: Destination) -> Result<()> {
         let task = {
             let mut map = self
                 .subscriptions
@@ -254,69 +281,151 @@ impl MessagingService for DefaultMessagingService {
         self.provider.unsubscribe(filter, dest).await
     }
 
-    /// Send a request and await its reply.
-    ///
-    /// # Algorithmic Choices
-    /// Subscribes to a unique reply topic, stamps it as the request's `replyTo`,
-    /// publishes, then awaits the first message with [`tokio::time::timeout`]. The
-    /// reply subscription is dropped (local cleanup) and UNSUBSCRIBE-d at the broker
-    /// on return — success, timeout, or error — so no reply topic is orphaned.
-    ///
-    /// # Errors
-    /// | Error Variant | Condition | Recovery |
-    /// |---------------|-----------|----------|
-    /// | `GgError::Messaging` | Timed out, channel closed, or transport failure | Retry; check the responder |
-    /// | `GgError::Json` | Reply payload was not a valid message | Validate the responder's format |
-    async fn request(
+    /// Issue a request on `dest` and return its reply handle.
+    async fn start_request(
         &self,
         topic: &str,
         msg: Message,
         dest: Destination,
-        timeout: Duration,
-    ) -> Result<Message> {
+        qos: Qos,
+    ) -> Result<ReplyFuture> {
         let reply_topic = request_reply::new_reply_topic();
-        let mut sub = self.provider.subscribe(&reply_topic, dest, Qos::AtLeastOnce).await?;
+        let sub = self
+            .provider
+            .subscribe(&reply_topic, dest, qos, REPLY_QUEUE_SIZE)
+            .await?;
 
         let mut request = msg;
         request.header.reply_to = Some(reply_topic.clone());
         self.provider
-            .publish(topic, request.to_vec()?, dest, Qos::AtLeastOnce)
+            .publish(topic, request.to_vec()?, dest, qos)
             .await?;
 
-        let result = match tokio::time::timeout(timeout, sub.recv()).await {
-            Ok(Some((_topic, bytes))) => Message::from_slice(&bytes),
-            Ok(None) => Err(GgError::Messaging(
-                "reply channel closed before a reply arrived".to_string(),
-            )),
-            Err(_) => Err(GgError::Messaging("request timed out".to_string())),
-        };
-
-        // Local cleanup (drop) + broker cleanup, so the ephemeral reply topic is
-        // never left subscribed at the broker.
-        drop(sub);
-        let _ = self.provider.unsubscribe(&reply_topic, dest).await;
-        result
+        Ok(ReplyFuture {
+            sub,
+            provider: self.provider.clone(),
+            reply_topic,
+            dest,
+        })
     }
 
-    /// Publish a reply correlated with `request`.
-    ///
-    /// # Pre-conditions
-    /// `request.header.reply_to` is set (i.e. it was created via `request`).
-    ///
-    /// # Errors
-    /// | Error Variant | Condition | Recovery |
-    /// |---------------|-----------|----------|
-    /// | `GgError::Messaging` | The request carried no `replyTo`, or publish failed | Ensure the inbound message is a request |
-    async fn reply(&self, request: &Message, reply: Message) -> Result<()> {
+    /// Publish a reply correlated with `request` on `dest`.
+    async fn send_reply(&self, request: &Message, reply: Message, dest: Destination) -> Result<()> {
         let topic = request.header.reply_to.clone().ok_or_else(|| {
             GgError::Messaging("cannot reply: request has no replyTo".to_string())
         })?;
-
         let mut reply = reply;
         reply.header.correlation_id = request.header.correlation_id.clone();
         self.provider
-            .publish(&topic, reply.to_vec()?, Destination::Local, Qos::AtLeastOnce)
+            .publish(&topic, reply.to_vec()?, dest, LOCAL_QOS)
             .await
+    }
+}
+
+impl Drop for DefaultMessagingService {
+    fn drop(&mut self) {
+        if let Ok(mut map) = self.subscriptions.lock() {
+            for (_key, task) in map.drain() {
+                task.abort();
+            }
+        }
+    }
+}
+
+#[async_trait]
+impl MessagingService for DefaultMessagingService {
+    async fn publish(&self, topic: &str, msg: &Message) -> Result<()> {
+        self.provider
+            .publish(topic, msg.to_vec()?, Destination::Local, LOCAL_QOS)
+            .await
+    }
+
+    async fn publish_to_iot_core(&self, topic: &str, msg: &Message, qos: Qos) -> Result<()> {
+        self.provider
+            .publish(topic, msg.to_vec()?, Destination::IotCore, qos)
+            .await
+    }
+
+    async fn publish_raw(&self, topic: &str, payload: &Value) -> Result<()> {
+        self.provider
+            .publish(topic, serde_json::to_vec(payload)?, Destination::Local, LOCAL_QOS)
+            .await
+    }
+
+    async fn publish_to_iot_core_raw(&self, topic: &str, payload: &Value, qos: Qos) -> Result<()> {
+        self.provider
+            .publish(topic, serde_json::to_vec(payload)?, Destination::IotCore, qos)
+            .await
+    }
+
+    async fn subscribe(
+        &self,
+        filter: &str,
+        handler: Arc<dyn MessageHandler>,
+        max_messages: usize,
+        max_concurrency: usize,
+    ) -> Result<()> {
+        self.start_subscription(
+            filter,
+            Destination::Local,
+            LOCAL_QOS,
+            max_messages,
+            max_concurrency,
+            handler,
+        )
+        .await
+    }
+
+    async fn subscribe_to_iot_core(
+        &self,
+        filter: &str,
+        handler: Arc<dyn MessageHandler>,
+        qos: Qos,
+        max_messages: usize,
+        max_concurrency: usize,
+    ) -> Result<()> {
+        self.start_subscription(
+            filter,
+            Destination::IotCore,
+            qos,
+            max_messages,
+            max_concurrency,
+            handler,
+        )
+        .await
+    }
+
+    async fn unsubscribe(&self, filter: &str) -> Result<()> {
+        self.stop_subscription(filter, Destination::Local).await
+    }
+
+    async fn unsubscribe_from_iot_core(&self, filter: &str) -> Result<()> {
+        self.stop_subscription(filter, Destination::IotCore).await
+    }
+
+    async fn request(&self, topic: &str, msg: Message) -> Result<ReplyFuture> {
+        self.start_request(topic, msg, Destination::Local, LOCAL_QOS).await
+    }
+
+    async fn request_from_iot_core(&self, topic: &str, msg: Message) -> Result<ReplyFuture> {
+        self.start_request(topic, msg, Destination::IotCore, Qos::AtLeastOnce)
+            .await
+    }
+
+    async fn reply(&self, request: &Message, reply: Message) -> Result<()> {
+        self.send_reply(request, reply, Destination::Local).await
+    }
+
+    async fn reply_to_iot_core(&self, request: &Message, reply: Message) -> Result<()> {
+        self.send_reply(request, reply, Destination::IotCore).await
+    }
+
+    fn cancel_request(&self, reply_future: ReplyFuture) {
+        drop(reply_future); // Drop runs the broker cleanup.
+    }
+
+    fn cancel_request_from_iot_core(&self, reply_future: ReplyFuture) {
+        drop(reply_future);
     }
 }
 
@@ -342,10 +451,9 @@ async fn run_dispatcher(
             }
         };
 
-        // Acquire before dispatch: a single permit => serial, ordered processing.
         let permit = match semaphore.clone().acquire_owned().await {
             Ok(p) => p,
-            Err(_) => break, // semaphore closed (shouldn't happen; we never close it)
+            Err(_) => break,
         };
         let handler = handler.clone();
         tokio::spawn(async move {
@@ -361,16 +469,16 @@ mod tests {
     use crate::messaging::message::MessageBuilder;
     use serde_json::json;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use tokio::sync::mpsc::UnboundedSender;
+    use std::time::Duration;
+    use tokio::sync::mpsc::Sender;
 
     /// Raw `(topic, payload)` pair pushed from the provider to a subscription.
     type RawMessage = (String, Vec<u8>);
 
     /// A fake provider that hands out a single subscription and lets the test push
-    /// messages into it, so the dispatcher (callback + concurrency) can be tested
-    /// without a broker.
+    /// messages into it, so the dispatcher can be tested without a broker.
     struct FakeProvider {
-        sender: Mutex<Option<UnboundedSender<RawMessage>>>,
+        sender: Mutex<Option<Sender<RawMessage>>>,
         unsubscribed: AtomicUsize,
     }
 
@@ -381,12 +489,10 @@ mod tests {
                 unsubscribed: AtomicUsize::new(0),
             }
         }
-        /// Inject a message after a subscription has been created. Tolerates a
-        /// closed receiver (e.g. after the subscription is stopped).
         fn push(&self, topic: &str, msg: &Message) {
             let guard = self.sender.lock().unwrap();
             let tx = guard.as_ref().expect("subscribe was called first");
-            let _ = tx.send((topic.to_string(), msg.to_vec().unwrap()));
+            let _ = tx.try_send((topic.to_string(), msg.to_vec().unwrap()));
         }
     }
 
@@ -395,8 +501,14 @@ mod tests {
         async fn publish(&self, _t: &str, _p: Vec<u8>, _d: Destination, _q: Qos) -> Result<()> {
             Ok(())
         }
-        async fn subscribe(&self, _f: &str, _d: Destination, _q: Qos) -> Result<Subscription> {
-            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        async fn subscribe(
+            &self,
+            _f: &str,
+            _d: Destination,
+            _q: Qos,
+            max_messages: usize,
+        ) -> Result<Subscription> {
+            let (tx, rx) = tokio::sync::mpsc::channel(max_messages.max(1));
             *self.sender.lock().unwrap() = Some(tx);
             Ok(Subscription::new(rx, Box::new(())))
         }
@@ -410,7 +522,6 @@ mod tests {
         MessageBuilder::new("T", "1.0").payload(json!(n)).build()
     }
 
-    /// Wait until `counter` reaches `target` or a timeout elapses.
     async fn wait_for(counter: &AtomicUsize, target: usize) {
         for _ in 0..200 {
             if counter.load(Ordering::SeqCst) >= target {
@@ -433,14 +544,14 @@ mod tests {
         let count_h = count.clone();
         svc.subscribe(
             "t",
-            Destination::Local,
-            1,
-            message_handler(move |_topic, _msg| {
+            message_handler(move |_t, _m| {
                 let count_h = count_h.clone();
                 async move {
                     count_h.fetch_add(1, Ordering::SeqCst);
                 }
             }),
+            16,
+            1,
         )
         .await
         .unwrap();
@@ -462,20 +573,18 @@ mod tests {
         let done_h = done.clone();
         svc.subscribe(
             "t",
-            Destination::Local,
-            1, // serial
-            message_handler(move |_topic, m| {
+            message_handler(move |_t, m| {
                 let order_h = order_h.clone();
                 let done_h = done_h.clone();
                 async move {
                     let n = m.body.as_u64().unwrap();
-                    // Earlier messages sleep longer; serial processing must still
-                    // preserve arrival order regardless of per-handler duration.
                     tokio::time::sleep(Duration::from_millis((5 - n) * 20)).await;
                     order_h.lock().unwrap().push(n);
                     done_h.fetch_add(1, Ordering::SeqCst);
                 }
             }),
+            16,
+            1, // serial
         )
         .await
         .unwrap();
@@ -499,9 +608,7 @@ mod tests {
 
         svc.subscribe(
             "t",
-            Destination::Local,
-            3, // up to 3 concurrent
-            message_handler(move |_topic, _m| {
+            message_handler(move |_t, _m| {
                 let (active_h, max_h, done_h) = (active_h.clone(), max_h.clone(), done_h.clone());
                 async move {
                     let now = active_h.fetch_add(1, Ordering::SeqCst) + 1;
@@ -511,6 +618,8 @@ mod tests {
                     done_h.fetch_add(1, Ordering::SeqCst);
                 }
             }),
+            16,
+            3, // up to 3 concurrent
         )
         .await
         .unwrap();
@@ -519,7 +628,6 @@ mod tests {
             provider.push("t", &msg(n));
         }
         wait_for(&done, 3).await;
-        // All three overlap given the limit of 3 and the 80ms dwell.
         assert_eq!(max_seen.load(Ordering::SeqCst), 3);
     }
 
@@ -532,14 +640,14 @@ mod tests {
         let count_h = count.clone();
         svc.subscribe(
             "t",
-            Destination::Local,
-            1,
             message_handler(move |_t, _m| {
                 let count_h = count_h.clone();
                 async move {
                     count_h.fetch_add(1, Ordering::SeqCst);
                 }
             }),
+            16,
+            1,
         )
         .await
         .unwrap();
@@ -547,13 +655,56 @@ mod tests {
         provider.push("t", &msg(1));
         wait_for(&count, 1).await;
 
-        svc.unsubscribe("t", Destination::Local).await.unwrap();
+        svc.unsubscribe("t").await.unwrap();
         assert_eq!(provider.unsubscribed.load(Ordering::SeqCst), 1, "broker unsubscribe called");
 
         tokio::time::sleep(Duration::from_millis(50)).await;
         provider.push("t", &msg(2));
         tokio::time::sleep(Duration::from_millis(100)).await;
-        // The second message is not processed after unsubscribe.
         assert_eq!(count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn request_delivers_reply_and_unsubscribes_reply_topic() {
+        let provider = Arc::new(FakeProvider::new());
+        let svc = DefaultMessagingService::new(provider.clone());
+
+        let reply_future = svc.request("svc/op", msg(1)).await.unwrap();
+        // Simulate the reply arriving on the ephemeral reply topic.
+        provider.push("reply", &msg(99));
+
+        let reply = reply_future.await.unwrap();
+        assert_eq!(reply.body.as_u64().unwrap(), 99);
+
+        // Completing the request drops the ReplyFuture, which UNSUBSCRIBEs the
+        // ephemeral reply topic at the broker (no orphan).
+        wait_for(&provider.unsubscribed, 1).await;
+    }
+
+    #[tokio::test]
+    async fn cancel_request_unsubscribes_reply_topic() {
+        let provider = Arc::new(FakeProvider::new());
+        let svc = DefaultMessagingService::new(provider.clone());
+
+        let reply_future = svc.request("svc/op", msg(1)).await.unwrap();
+        // No reply pushed; abandon it.
+        svc.cancel_request(reply_future);
+
+        // Cancellation cleans up the reply subscription at the broker.
+        wait_for(&provider.unsubscribed, 1).await;
+    }
+
+    #[tokio::test]
+    async fn request_timeout_unsubscribes_reply_topic() {
+        let provider = Arc::new(FakeProvider::new());
+        let svc = DefaultMessagingService::new(provider.clone());
+
+        let reply_future = svc.request("svc/op", msg(1)).await.unwrap();
+        // No reply pushed; the await times out and drops the ReplyFuture.
+        let result = tokio::time::timeout(Duration::from_millis(50), reply_future).await;
+        assert!(result.is_err(), "expected the await to time out");
+
+        // Timing out cleans up the reply subscription at the broker.
+        wait_for(&provider.unsubscribed, 1).await;
     }
 }

@@ -12,7 +12,6 @@
 //! ```
 
 use ggcommons::messaging::message::MessageBuilder;
-use ggcommons::messaging::Destination;
 use ggcommons::prelude::*;
 use serde_json::json;
 
@@ -36,7 +35,7 @@ async fn main() -> anyhow::Result<()> {
             .payload(json!({ "greeting": "hello from rust ggcommons" }))
             .from_config(&cfg)
             .build();
-        messaging.publish(&topic, &msg, Destination::Local).await?;
+        messaging.publish(&topic, &msg).await?;
         println!("published:   {topic}");
     }
 
