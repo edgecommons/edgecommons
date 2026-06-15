@@ -76,6 +76,24 @@ pub fn build_emf(
     Value::Object(root)
 }
 
+/// The EMF objects to emit for one metric emission.
+///
+/// Returns the normal EMF object, plus a second `coreName="ALL"` duplicate when
+/// `large_fleet_workaround` is set (matching the Java/Python behavior of emitting
+/// both records, not just the masked one).
+pub fn build_emf_variants(
+    namespace: &str,
+    metric: &Metric,
+    measure_values: &HashMap<String, f64>,
+    large_fleet_workaround: bool,
+) -> Vec<Value> {
+    let mut variants = vec![build_emf(namespace, metric, measure_values, false)];
+    if large_fleet_workaround {
+        variants.push(build_emf(namespace, metric, measure_values, true));
+    }
+    variants
+}
+
 /// Build the `_aws` metadata block (`Timestamp`, `CloudWatchMetrics`).
 fn metrics_metadata(namespace: &str, metric: &Metric) -> Value {
     let dimension_keys: Vec<Value> = metric

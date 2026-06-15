@@ -111,7 +111,12 @@ impl MetricEmitter {
         let target: Box<dyn MetricTarget> = match target_name.as_str() {
             "log" => {
                 let path = resolve(config, &metric_config.log_file_name());
-                Box::new(target::log::LogTarget::new(path, namespace, large_fleet)?)
+                Box::new(target::log::LogTarget::new(
+                    path,
+                    namespace,
+                    large_fleet,
+                    &metric_config.max_file_size(),
+                )?)
             }
             "messaging" => {
                 let messaging = require_messaging(messaging, "messaging")?;
@@ -125,14 +130,19 @@ impl MetricEmitter {
                 let messaging = require_messaging(messaging, "cloudwatchcomponent")?;
                 let topic = resolve(config, &metric_config.topic());
                 Box::new(target::cloudwatch_component::CloudWatchComponentTarget::new(
-                    messaging, topic, namespace, large_fleet,
+                    messaging, topic, namespace,
                 ))
             }
             "cloudwatch" => build_cloudwatch_target(&namespace, large_fleet, metric_config.interval_secs()).await?,
             other => {
                 tracing::warn!(target = %other, "unknown metric target; defaulting to 'log'");
                 let path = resolve(config, &metric_config.log_file_name());
-                Box::new(target::log::LogTarget::new(path, namespace, large_fleet)?)
+                Box::new(target::log::LogTarget::new(
+                    path,
+                    namespace,
+                    large_fleet,
+                    &metric_config.max_file_size(),
+                )?)
             }
         };
 

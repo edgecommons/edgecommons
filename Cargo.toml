@@ -30,6 +30,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "fs"] }
 async-trait = "0.1"
 arc-swap = "1"
+sysinfo = "0.33"
 # Message wire-format parity with Java/Python: UUID correlation ids + RFC3339 timestamps.
 uuid = { version = "1", features = ["v4"] }
 time = { version = "0.3", features = ["formatting"] }

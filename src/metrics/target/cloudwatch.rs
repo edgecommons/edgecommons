@@ -82,13 +82,28 @@ impl CloudWatchTarget {
         })
     }
 
+    /// All datums to emit for one emission: the normal datums plus a
+    /// `coreName="ALL"` set when `large_fleet_workaround` is enabled.
+    fn datums_for(&self, metric: &Metric, values: &HashMap<String, f64>) -> Vec<MetricDatum> {
+        let mut datums = self.to_datums(metric, values, false);
+        if self.large_fleet_workaround {
+            datums.extend(self.to_datums(metric, values, true));
+        }
+        datums
+    }
+
     /// Convert a metric + values into CloudWatch datums (one per measure value).
-    fn to_datums(&self, metric: &Metric, values: &HashMap<String, f64>) -> Vec<MetricDatum> {
+    fn to_datums(
+        &self,
+        metric: &Metric,
+        values: &HashMap<String, f64>,
+        mask_core_name: bool,
+    ) -> Vec<MetricDatum> {
         let dimensions: Vec<Dimension> = metric
             .get_dimensions()
             .iter()
             .map(|(k, v)| {
-                let value = if self.large_fleet_workaround && k == "coreName" {
+                let value = if mask_core_name && k == "coreName" {
                     "ALL".to_string()
                 } else {
                     v.clone()
@@ -129,7 +144,7 @@ impl Drop for CloudWatchTarget {
 #[async_trait]
 impl MetricTarget for CloudWatchTarget {
     async fn emit(&self, metric: &Metric, values: &HashMap<String, f64>) -> Result<()> {
-        let datums = self.to_datums(metric, values);
+        let datums = self.datums_for(metric, values);
         if let Ok(mut pending) = self.pending.lock() {
             pending.extend(datums);
         }
@@ -137,7 +152,7 @@ impl MetricTarget for CloudWatchTarget {
     }
 
     async fn emit_now(&self, metric: &Metric, values: &HashMap<String, f64>) -> Result<()> {
-        let datums = self.to_datums(metric, values);
+        let datums = self.datums_for(metric, values);
         send_batches(&self.client, &self.namespace, datums).await;
         Ok(())
     }

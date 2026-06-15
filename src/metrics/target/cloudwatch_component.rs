@@ -30,11 +30,13 @@ use crate::metrics::emf::build_emf;
 use crate::metrics::metric::Metric;
 
 /// Publishes metrics to the Greengrass CloudWatch Metrics component topic.
+///
+/// Note: this target does **not** honor `largeFleetWorkaround` (matching the Java
+/// implementation — the component sets `coreName` itself).
 pub struct CloudWatchComponentTarget {
     messaging: Arc<dyn MessagingService>,
     topic: String,
     namespace: String,
-    large_fleet_workaround: bool,
 }
 
 impl CloudWatchComponentTarget {
@@ -42,18 +44,16 @@ impl CloudWatchComponentTarget {
         messaging: Arc<dyn MessagingService>,
         topic: impl Into<String>,
         namespace: impl Into<String>,
-        large_fleet_workaround: bool,
     ) -> Self {
         Self {
             messaging,
             topic: topic.into(),
             namespace: namespace.into(),
-            large_fleet_workaround,
         }
     }
 
     async fn publish(&self, metric: &Metric, values: &HashMap<String, f64>) -> Result<()> {
-        let emf = build_emf(&self.namespace, metric, values, self.large_fleet_workaround);
+        let emf = build_emf(&self.namespace, metric, values, false);
         self.messaging.publish_raw(&self.topic, &emf).await
     }
 }

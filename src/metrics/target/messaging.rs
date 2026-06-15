@@ -24,7 +24,7 @@ use async_trait::async_trait;
 use super::MetricTarget;
 use crate::error::Result;
 use crate::messaging::{MessagingService, Qos};
-use crate::metrics::emf::build_emf;
+use crate::metrics::emf::build_emf_variants;
 use crate::metrics::metric::Metric;
 
 /// Publishes EMF metrics over messaging.
@@ -55,14 +55,17 @@ impl MessagingMetricTarget {
     }
 
     async fn publish(&self, metric: &Metric, values: &HashMap<String, f64>) -> Result<()> {
-        let emf = build_emf(&self.namespace, metric, values, self.large_fleet_workaround);
-        if self.iot_core {
-            self.messaging
-                .publish_to_iot_core_raw(&self.topic, &emf, Qos::AtLeastOnce)
-                .await
-        } else {
-            self.messaging.publish_raw(&self.topic, &emf).await
+        // large_fleet_workaround emits both the normal and the coreName="ALL" record.
+        for emf in build_emf_variants(&self.namespace, metric, values, self.large_fleet_workaround) {
+            if self.iot_core {
+                self.messaging
+                    .publish_to_iot_core_raw(&self.topic, &emf, Qos::AtLeastOnce)
+                    .await?;
+            } else {
+                self.messaging.publish_raw(&self.topic, &emf).await?;
+            }
         }
+        Ok(())
     }
 }
 
