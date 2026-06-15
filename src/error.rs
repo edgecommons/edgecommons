@@ -1,7 +1,39 @@
-//! Library error type. The library never calls `std::process::exit`; every
-//! fallible path returns `Result<T, GgError>` and the application decides how to
-//! handle failure (a deliberate departure from the Java library, which exits the
-//! host JVM in 18 places).
+//! # Error
+//!
+//! **One-liner purpose**: The library-wide error type [`GgError`] and [`Result`] alias.
+//!
+//! ## Overview
+//! Every fallible path in the library returns `Result<T, GgError>`. The library
+//! **never** calls `std::process::exit` (a deliberate departure from the Java
+//! library, which exits the host JVM in 18 places) — the application decides how
+//! to handle failure.
+//!
+//! ## Semantics & Architecture
+//! - `GgError` is a `thiserror` enum with one variant per subsystem plus `From`
+//!   conversions for `std::io::Error` and `serde_json::Error`.
+//! - Thread-safety: the type is `Send + Sync`.
+//! - Error handling strategy for the whole crate: typed errors via `thiserror`;
+//!   `anyhow` is reserved for binaries/examples.
+//!
+//! ## Usage Example
+//! ```
+//! use ggcommons::{GgError, Result};
+//!
+//! fn fallible() -> Result<()> {
+//!     Err(GgError::Config("bad config".into()))
+//! }
+//! assert!(fallible().is_err());
+//! ```
+//!
+//! ## Design Choices
+//! Subsystem-keyed variants (`Config`, `Messaging`, …) keep call-site mapping
+//! explicit and let callers match on failure category without string parsing.
+//!
+//! ## Safety & Panics
+//! None; constructing or matching errors cannot panic.
+//!
+//! ## Related Modules
+//! Used by every module in the crate.
 
 use thiserror::Error;
 

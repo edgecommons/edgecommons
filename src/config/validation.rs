@@ -1,8 +1,36 @@
-//! JSON-schema validation of the configuration document.
+//! # Configuration — validation
 //!
+//! **One-liner purpose**: Validate the configuration document against the embedded
+//! JSON schema.
+//!
+//! ## Overview
 //! The schema is **embedded** with `include_str!`, so it can never be "missing
 //! from the classpath" — closing the fail-open hole in the Java validator. A
 //! document that does not satisfy the schema is a hard error by default.
+//!
+//! ## Semantics & Architecture
+//! - Synchronous; compiles the schema per call (config loading is infrequent).
+//! - Fail-closed: any schema violation returns [`crate::error::GgError::Validation`]
+//!   listing every error.
+//!
+//! ## Usage Example
+//! ```
+//! use ggcommons::config::validation::validate;
+//! use serde_json::json;
+//!
+//! assert!(validate(&json!({ "logging": { "level": "INFO" } })).is_ok());
+//! assert!(validate(&json!({ "metricEmission": { "target": "nope" } })).is_err());
+//! ```
+//!
+//! ## Design Choices
+//! Embedding (vs. loading from disk) guarantees validation can't be silently
+//! skipped due to packaging mistakes.
+//!
+//! ## Safety & Panics
+//! None; an invalid embedded schema is reported as an error, not a panic.
+//!
+//! ## Related Modules
+//! - [`super::model`], [`super`].
 
 use serde_json::Value;
 

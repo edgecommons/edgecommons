@@ -1,9 +1,36 @@
-//! Template-variable substitution: `{ThingName}`, `{ComponentName}`,
-//! `{ComponentFullName}`, and any `tags` key.
+//! # Configuration — template substitution
 //!
-//! Substitution values are not yet sanitized for use in file paths or MQTT
-//! topics; that hardening (closing the Java path-traversal/topic-injection
-//! concern) lands alongside the file/messaging targets in Phase 1.
+//! **One-liner purpose**: Resolve `{ThingName}`, `{ComponentName}`,
+//! `{ComponentFullName}`, and any `tags` key inside config strings.
+//!
+//! ## Overview
+//! Used to expand placeholders in values such as log file paths and MQTT topics,
+//! matching the substitution behavior of the Java/Python libraries.
+//!
+//! ## Semantics & Architecture
+//! - Pure function over a [`Config`] snapshot; no I/O, no async, no panics.
+//! - Error handling: infallible — unknown placeholders are left untouched.
+//!
+//! ## Usage Example
+//! ```
+//! use ggcommons::config::model::Config;
+//! use ggcommons::config::template::resolve;
+//! use serde_json::json;
+//!
+//! let cfg = Config::from_value("com.example.C", "t1", json!({})).unwrap();
+//! assert_eq!(resolve(&cfg, "x/{ThingName}"), "x/t1");
+//! ```
+//!
+//! ## Design Choices
+//! Simple `String::replace` passes; substitution values are not yet sanitized for
+//! file-path/topic injection — that hardening lands with the file/messaging
+//! targets (closing the Java path-traversal/topic-injection concern).
+//!
+//! ## Safety & Panics
+//! None.
+//!
+//! ## Related Modules
+//! - [`super::model`].
 
 use super::model::Config;
 

@@ -1,10 +1,35 @@
-//! Logging initialization via `tracing`.
+//! # Logging
 //!
-//! Phase 0 wires the log **level** from config to a `tracing-subscriber` fmt
-//! layer. Phase 1/3 add: custom format strings, file logging with rotation
-//! (`tracing-appender`), per-logger levels (`loggers`), `globalControl`
-//! semantics, and runtime reconfiguration via a `reload::Handle` driven by the
-//! config watch channel.
+//! **One-liner purpose**: Initialize the `tracing` subscriber from the config's
+//! logging settings.
+//!
+//! ## Overview
+//! Wires the log **level** from config to a `tracing-subscriber` fmt layer.
+//! Later sub-steps add: custom format strings, file logging with rotation
+//! (`tracing-appender`), per-logger levels (`loggers`), `globalControl` semantics,
+//! and runtime reconfiguration via a `reload::Handle` driven by the config watch
+//! channel.
+//!
+//! ## Semantics & Architecture
+//! - Idempotent: installing a subscriber when one already exists is a no-op.
+//! - Thread-safety: installs a process-global subscriber.
+//! - Error handling: infallible — an unparseable level falls back to `info`.
+//!
+//! ## Usage Example
+//! ```
+//! use ggcommons::config::model::Config;
+//! use ggcommons::logging;
+//! use serde_json::json;
+//!
+//! let cfg = Config::from_value("c", "t", json!({ "logging": { "level": "DEBUG" } })).unwrap();
+//! logging::init(&cfg);
+//! ```
+//!
+//! ## Safety & Panics
+//! None.
+//!
+//! ## Related Modules
+//! - [`crate::config::model`].
 
 use tracing_subscriber::EnvFilter;
 

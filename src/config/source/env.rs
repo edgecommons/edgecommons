@@ -1,4 +1,24 @@
-//! `ENV` config source: reads a JSON document from an environment variable.
+//! # Configuration source — ENV
+//!
+//! **One-liner purpose**: Load configuration from a JSON document held in an
+//! environment variable (default `CONFIG`).
+//!
+//! ## Semantics & Architecture
+//! - No hot-reload (environment is fixed for the process lifetime); `Send + Sync`.
+//! - Error handling: [`crate::error::GgError::Config`] if the variable is unset,
+//!   [`crate::error::GgError::Json`] if it is not valid JSON.
+//!
+//! ## Usage Example
+//! ```no_run
+//! use ggcommons::config::source::{env::EnvConfigSource, ConfigSource};
+//! # async fn demo() -> ggcommons::Result<()> {
+//! let _doc = EnvConfigSource::new("CONFIG".to_string()).load().await?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Related Modules
+//! - [`super`].
 
 use async_trait::async_trait;
 use serde_json::Value;

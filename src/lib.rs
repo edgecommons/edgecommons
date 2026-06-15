@@ -54,6 +54,7 @@ pub struct GgCommons {
     component_name: String,
     args: ParsedArgs,
     config: Arc<ArcSwap<Config>>,
+    messaging: Option<Arc<dyn messaging::MessagingService>>,
 }
 
 impl GgCommons {
@@ -71,6 +72,25 @@ impl GgCommons {
     /// the live snapshot, which is replaced atomically on reload (Phase 1).
     pub fn config(&self) -> Arc<Config> {
         self.config.load_full()
+    }
+
+    /// The messaging service for this component.
+    ///
+    /// # Purpose
+    /// Obtain the wired [`messaging::MessagingService`] (the testable seam) for
+    /// publish/subscribe and request/reply.
+    ///
+    /// # Errors
+    /// | Error Variant | Condition | Recovery |
+    /// |---------------|-----------|----------|
+    /// | `GgError::Messaging` | Messaging is not available in this mode (GREENGRASS IPC messaging is Phase 2) | Run in STANDALONE mode, or wait for Phase 2 |
+    pub fn messaging(&self) -> Result<Arc<dyn messaging::MessagingService>> {
+        self.messaging.clone().ok_or_else(|| {
+            GgError::Messaging(
+                "messaging is not available in this mode (GREENGRASS IPC messaging is Phase 2)"
+                    .to_string(),
+            )
+        })
     }
 }
 
@@ -129,11 +149,59 @@ impl GgCommonsBuilder {
             "GGCommons initialized"
         );
 
+        let messaging = init_messaging(&parsed.mode).await?;
+
         Ok(GgCommons {
             component_name: self.component_name,
             args: parsed,
             config: Arc::new(ArcSwap::from_pointee(cfg)),
+            messaging,
         })
+    }
+}
+
+/// Initialize the messaging service for the selected runtime mode.
+///
+/// # Purpose
+/// In STANDALONE mode, load the messaging config and connect the dual-broker MQTT
+/// provider; in GREENGRASS mode, messaging is deferred to Phase 2 (returns `None`).
+///
+/// # Semantics & Syntax
+/// - **Signature**: `async fn init_messaging(mode: &RuntimeMode) -> Result<Option<Arc<dyn MessagingService>>>`
+///
+/// # Errors
+/// | Error Variant | Condition | Recovery |
+/// |---------------|-----------|----------|
+/// | `GgError::Io` / `GgError::Json` | Messaging config file missing or malformed | Check the `-m STANDALONE <path>` file |
+/// | `GgError::Messaging` | Broker connection failed, or `standalone` feature disabled | Verify the broker; enable the feature |
+async fn init_messaging(
+    mode: &cli::RuntimeMode,
+) -> Result<Option<Arc<dyn messaging::MessagingService>>> {
+    match mode {
+        cli::RuntimeMode::Standalone {
+            messaging_config_path,
+        } => {
+            #[cfg(feature = "standalone")]
+            {
+                use crate::messaging::config::MessagingConfig;
+                use crate::messaging::provider::mqtt::MqttProvider;
+                use crate::messaging::service::DefaultMessagingService;
+
+                let mc = MessagingConfig::load(messaging_config_path).await?;
+                let provider = Arc::new(MqttProvider::connect(&mc).await?);
+                let service: Arc<dyn messaging::MessagingService> =
+                    Arc::new(DefaultMessagingService::new(provider));
+                Ok(Some(service))
+            }
+            #[cfg(not(feature = "standalone"))]
+            {
+                let _ = messaging_config_path;
+                Err(GgError::Messaging(
+                    "STANDALONE messaging requires the 'standalone' cargo feature".to_string(),
+                ))
+            }
+        }
+        cli::RuntimeMode::Greengrass => Ok(None), // Phase 2: Greengrass IPC messaging
     }
 }
 

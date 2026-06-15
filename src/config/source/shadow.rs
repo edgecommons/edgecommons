@@ -1,6 +1,18 @@
-//! `SHADOW` source: IoT named device shadow via IPC
-//! (`GetThingShadow` + delta subscription, reporting state via `UpdateThingShadow`).
-//! Phase 2.
+//! # Configuration source — SHADOW
+//!
+//! **One-liner purpose**: Load configuration from an IoT named device shadow via
+//! IPC (`GetThingShadow` + delta subscription, reporting via `UpdateThingShadow`).
+//!
+//! ## Overview
+//! Placeholder until Phase 2: [`ConfigSource::load`] returns a clear "not
+//! implemented" error. Compiled only with the `greengrass` feature.
+//!
+//! ## Semantics & Architecture
+//! - `Send + Sync`; will use the Greengrass component SDK once implemented.
+//! - Error handling: currently always [`crate::error::GgError::Ipc`].
+//!
+//! ## Related Modules
+//! - [`super`].
 
 use async_trait::async_trait;
 use serde_json::Value;

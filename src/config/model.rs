@@ -1,5 +1,38 @@
-//! Typed configuration model (mirrors the cross-language JSON schema) plus the
+//! # Configuration — model
+//!
+//! **One-liner purpose**: Typed `serde` structs for the config sections plus the
 //! runtime [`Config`] snapshot.
+//!
+//! ## Overview
+//! Mirrors the cross-language JSON schema (`logging`, `heartbeat`, `metricEmission`,
+//! `tags`, `component`). [`Config`] pairs the typed [`RawConfig`] view with the
+//! original JSON document and the resolved component/thing identity.
+//!
+//! ## Semantics & Architecture
+//! - All structs derive `Default` and use `#[serde(default)]`, so absent fields
+//!   fall back to defaults rather than failing.
+//! - `Config` is immutable and cloneable; no interior mutability.
+//! - Error handling: [`Config::from_value`] returns [`crate::error::Result`] on
+//!   deserialization failure.
+//!
+//! ## Usage Example
+//! ```
+//! use ggcommons::config::model::Config;
+//! use serde_json::json;
+//!
+//! let cfg = Config::from_value("c", "t", json!({ "component": { "instances": [ { "id": "main" } ] } })).unwrap();
+//! assert_eq!(cfg.instance_ids(), vec!["main"]);
+//! ```
+//!
+//! ## Design Choices
+//! Loose subtrees (`component.global`, instances) stay as `serde_json::Value` so
+//! component-specific config needs no library changes.
+//!
+//! ## Safety & Panics
+//! None.
+//!
+//! ## Related Modules
+//! - [`super`], [`super::template`], [`super::validation`].
 
 use std::collections::BTreeMap;
 

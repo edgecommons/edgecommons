@@ -1,4 +1,27 @@
-//! `FILE` config source. Hot-reload via `notify` lands in Phase 1.
+//! # Configuration source — FILE
+//!
+//! **One-liner purpose**: Load configuration from a JSON file on disk.
+//!
+//! ## Overview
+//! Reads and parses the configured path on [`ConfigSource::load`]. File hot-reload
+//! via `notify` lands in a later sub-step.
+//!
+//! ## Semantics & Architecture
+//! - Async file read (`tokio::fs`); `Send + Sync`.
+//! - Error handling: [`crate::error::GgError::Io`] / [`crate::error::GgError::Json`].
+//!
+//! ## Usage Example
+//! ```no_run
+//! use ggcommons::config::source::{file::FileConfigSource, ConfigSource};
+//! use std::path::PathBuf;
+//! # async fn demo() -> ggcommons::Result<()> {
+//! let _doc = FileConfigSource::new(PathBuf::from("config.json")).load().await?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Related Modules
+//! - [`super`].
 
 use std::path::PathBuf;
 

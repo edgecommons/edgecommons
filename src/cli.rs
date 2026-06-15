@@ -1,12 +1,42 @@
-//! Standard CLI contract, shared verbatim across the Java, Python, and Rust
-//! libraries:
+//! # CLI
 //!
+//! **One-liner purpose**: Parse the standard command-line contract shared verbatim
+//! across the Java, Python, and Rust libraries.
+//!
+//! ## Overview
+//! The contract:
 //! - `-c/--config <SOURCE> [args...]` — `FILE | ENV | GG_CONFIG (default) | SHADOW | CONFIG_COMPONENT`
 //! - `-m/--mode <MODE> [path]` — `GREENGRASS (default) | STANDALONE <messaging_config.json>`
 //! - `-t/--thing <name>` — IoT Thing name (takes the **full** string value)
 //!
 //! The variadic `-c`/`-m` options mirror the Java `configArgs[]` array: the first
 //! token selects the source/mode and the remaining tokens are source-specific.
+//!
+//! ## Semantics & Architecture
+//! - Pure parsing via `clap`; no I/O, no async.
+//! - Invariants: `STANDALONE` without a path is a hard error; `-t` is never
+//!   truncated (guards a historical bug).
+//! - Error handling: parse failures (including unknown sources/modes) surface as
+//!   [`crate::error::GgError::Cli`].
+//!
+//! ## Usage Example
+//! ```
+//! use ggcommons::cli::{parse_from, RuntimeMode};
+//!
+//! let args = parse_from(["prog", "-m", "STANDALONE", "msg.json", "-t", "thing-1"]).unwrap();
+//! assert!(matches!(args.mode, RuntimeMode::Standalone { .. }));
+//! assert_eq!(args.thing.as_deref(), Some("thing-1"));
+//! ```
+//!
+//! ## Design Choices
+//! Variadic options (`num_args(1..=3)`) model the "source token + extra args"
+//! shape directly, matching the other libraries rather than inventing subcommands.
+//!
+//! ## Safety & Panics
+//! None; all failure modes are returned as `Result`.
+//!
+//! ## Related Modules
+//! - [`crate::config::source`] consumes [`ConfigSourceSpec`]; [`crate`] consumes [`ParsedArgs`].
 
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -87,8 +117,33 @@ pub fn command() -> Command {
 
 /// Parse the standard arguments from an argv-style iterator.
 ///
-/// The iterator is expected to include the program name as its first element
-/// (as produced by `std::env::args_os()`).
+/// # Purpose
+/// Turn raw process arguments into a typed [`ParsedArgs`] (mode, config source,
+/// thing name), enforcing the cross-language CLI contract.
+///
+/// # Semantics & Syntax
+/// - **Signature**: `pub fn parse_from<I, T>(args: I) -> Result<ParsedArgs>`
+/// - The iterator must include the program name as its first element (as produced
+///   by `std::env::args_os()`); it is consumed by value.
+///
+/// # Pre-conditions
+/// - The first element is the program name (it is skipped, per `clap` convention).
+///
+/// # Post-conditions
+/// - On success, `mode`/`config` are fully resolved (defaults applied) and `thing`
+///   reflects `-t` verbatim.
+///
+/// # Errors
+/// | Error Variant | Condition | Recovery |
+/// |---------------|-----------|----------|
+/// | `GgError::Cli` | Unknown flag, unknown source/mode, or STANDALONE without a path | Fix the arguments |
+///
+/// # Examples
+/// ```
+/// # use ggcommons::cli::parse_from;
+/// let a = parse_from(["prog", "-c", "FILE", "config.json"]).unwrap();
+/// assert!(a.thing.is_none());
+/// ```
 pub fn parse_from<I, T>(args: I) -> Result<ParsedArgs>
 where
     I: IntoIterator<Item = T>,

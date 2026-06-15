@@ -1,5 +1,18 @@
-//! `CONFIG_COMPONENT` source: request/reply to a dedicated config component over
-//! messaging. Implemented in Phase 2 (depends on the messaging service).
+//! # Configuration source — CONFIG_COMPONENT
+//!
+//! **One-liner purpose**: Load configuration from a dedicated config component via
+//! request/reply over messaging.
+//!
+//! ## Overview
+//! Placeholder until Phase 2: [`ConfigSource::load`] returns a clear "not
+//! implemented" error rather than silently succeeding.
+//!
+//! ## Semantics & Architecture
+//! - `Send + Sync`; will depend on the messaging service once implemented.
+//! - Error handling: currently always [`crate::error::GgError::Config`].
+//!
+//! ## Related Modules
+//! - [`super`], [`crate::messaging`].
 
 use async_trait::async_trait;
 use serde_json::Value;
