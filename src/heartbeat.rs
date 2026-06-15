@@ -44,6 +44,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use arc_swap::ArcSwap;
 use serde_json::{json, Map, Value};
 use tokio::task::JoinHandle;
 
@@ -68,28 +69,27 @@ impl Heartbeat {
     /// Define the `heartbeat` metric and start the periodic publishing task.
     ///
     /// # Semantics & Syntax
-    /// - **Signature**: `pub fn start(config: &Config, metrics: Arc<dyn MetricService>, messaging: Option<Arc<dyn MessagingService>>) -> Heartbeat`
+    /// - **Signature**: `pub fn start(config: Arc<ArcSwap<Config>>, metrics: Arc<dyn MetricService>, messaging: Option<Arc<dyn MessagingService>>) -> Heartbeat`
+    /// - Takes the live config handle so it reacts to hot reloads: each tick re-reads
+    ///   the current snapshot (measures, targets, topic), and the tick interval is
+    ///   rebuilt when `intervalSecs` changes.
     /// - `messaging` is required only by the `messaging` target; a `messaging`
     ///   target with no service logs a warning and is skipped.
     ///
     /// # Post-conditions
     /// The `heartbeat` metric is defined and a background task is running.
     pub fn start(
-        config: &Config,
+        config: Arc<ArcSwap<Config>>,
         metrics: Arc<dyn MetricService>,
         messaging: Option<Arc<dyn MessagingService>>,
     ) -> Heartbeat {
-        let interval = config
-            .parsed
-            .heartbeat
-            .interval_secs
-            .unwrap_or(DEFAULT_INTERVAL_SECS)
-            .max(1);
+        let initial = config.load_full();
+        let interval = heartbeat_interval(&initial);
 
         // Define the heartbeat metric (all measures, like the Java/Python libs).
         let storage_resolution = if interval < 60 { 1 } else { 60 };
         let metric = MetricBuilder::create("heartbeat")
-            .with_config(config)
+            .with_config(initial.as_ref())
             .add_measure("disk_total", "Gigabytes", storage_resolution)
             .add_measure("disk_used", "Gigabytes", storage_resolution)
             .add_measure("disk_free", "Gigabytes", storage_resolution)
@@ -101,20 +101,41 @@ impl Heartbeat {
             .build();
         metrics.define_metric(metric);
 
-        let config = config.clone();
         let task = tokio::spawn(async move {
-            let mut monitor = HeartbeatMonitor::new(config.parsed.heartbeat.measures.clone());
-            let mut ticker = tokio::time::interval(Duration::from_secs(interval));
+            let mut monitor = HeartbeatMonitor::new(initial.parsed.heartbeat.measures.clone());
+            let mut current_interval = interval;
+            let mut ticker = tokio::time::interval(Duration::from_secs(current_interval));
             loop {
                 ticker.tick().await;
+                let cfg = config.load_full();
+
+                // React to an interval change by rebuilding the ticker.
+                let new_interval = heartbeat_interval(&cfg);
+                if new_interval != current_interval {
+                    current_interval = new_interval;
+                    ticker = tokio::time::interval(Duration::from_secs(current_interval));
+                    ticker.tick().await; // consume the immediate first tick
+                }
+
+                monitor.set_measures(cfg.parsed.heartbeat.measures.clone());
                 let stats = monitor.get_stats();
-                publish(&config, &metrics, &messaging, &stats).await;
+                publish(&cfg, &metrics, &messaging, &stats).await;
             }
         });
 
         tracing::info!(interval_secs = interval, "heartbeat started");
         Heartbeat { task: Some(task) }
     }
+}
+
+/// The configured heartbeat interval in seconds (default 5, minimum 1).
+fn heartbeat_interval(config: &Config) -> u64 {
+    config
+        .parsed
+        .heartbeat
+        .interval_secs
+        .unwrap_or(DEFAULT_INTERVAL_SECS)
+        .max(1)
 }
 
 impl Drop for Heartbeat {
@@ -227,6 +248,11 @@ impl HeartbeatMonitor {
             measures,
             primed: false,
         }
+    }
+
+    /// Update which measures are collected (used when config is hot-reloaded).
+    pub fn set_measures(&mut self, measures: Measures) {
+        self.measures = measures;
     }
 
     /// Collect the enabled measures as a nested JSON object.

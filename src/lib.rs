@@ -56,8 +56,26 @@ pub struct GgCommons {
     config: Arc<ArcSwap<Config>>,
     messaging: Option<Arc<dyn messaging::MessagingService>>,
     metrics: Arc<dyn metrics::MetricService>,
+    /// Config-change listeners notified on hot reload.
+    listeners: ConfigListeners,
     /// Owns the heartbeat task; dropping `GgCommons` stops it (RAII).
     _heartbeat: heartbeat::Heartbeat,
+    /// Owns the hot-reload task; aborted on drop. `None` if the source can't watch.
+    _reload_task: Option<AbortOnDrop>,
+    /// Keeps the config source (and its OS file watcher) alive for hot reload.
+    _config_source: Box<dyn config::source::ConfigSource>,
+}
+
+/// Shared, mutable set of config-change listeners.
+type ConfigListeners = Arc<std::sync::Mutex<Vec<Arc<dyn config::ConfigChangeListener>>>>;
+
+/// Aborts a background task when dropped (RAII).
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
 }
 
 impl GgCommons {
@@ -99,6 +117,23 @@ impl GgCommons {
     /// The metric service for this component (the testable seam).
     pub fn metrics(&self) -> Arc<dyn metrics::MetricService> {
         self.metrics.clone()
+    }
+
+    /// Register a listener invoked after the configuration is hot-reloaded.
+    ///
+    /// Mirrors the Java/Python `addConfigChangeListener`. The listener fires on
+    /// successful reloads of a watchable config source (e.g. `FILE`).
+    pub fn add_config_change_listener(&self, listener: Arc<dyn config::ConfigChangeListener>) {
+        if let Ok(mut listeners) = self.listeners.lock() {
+            listeners.push(listener);
+        }
+    }
+
+    /// Remove a previously-registered config-change listener (by identity).
+    pub fn remove_config_change_listener(&self, listener: &Arc<dyn config::ConfigChangeListener>) {
+        if let Ok(mut listeners) = self.listeners.lock() {
+            listeners.retain(|existing| !Arc::ptr_eq(existing, listener));
+        }
     }
 }
 
@@ -146,7 +181,7 @@ impl GgCommonsBuilder {
         let source = config::source::build(&parsed.config)?;
         let raw = source.load().await?;
         config::validation::validate(&raw)?;
-        let cfg = Config::from_value(self.component_name.clone(), thing_name, raw)?;
+        let cfg = Config::from_value(self.component_name.clone(), thing_name.clone(), raw)?;
 
         logging::init(&cfg);
 
@@ -157,20 +192,69 @@ impl GgCommonsBuilder {
             "GGCommons initialized"
         );
 
+        let config: Arc<ArcSwap<Config>> = Arc::new(ArcSwap::from_pointee(cfg));
         let messaging = init_messaging(&parsed.mode).await?;
+        let snapshot = config.load_full();
         let metrics: Arc<dyn metrics::MetricService> =
-            Arc::new(metrics::MetricEmitter::new(&cfg, messaging.clone()).await?);
-        let heartbeat = heartbeat::Heartbeat::start(&cfg, metrics.clone(), messaging.clone());
+            Arc::new(metrics::MetricEmitter::new(&snapshot, messaging.clone()).await?);
+        let heartbeat = heartbeat::Heartbeat::start(config.clone(), metrics.clone(), messaging.clone());
+
+        let listeners: ConfigListeners = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let reload_task = source.watch().map(|updates| {
+            spawn_config_reload(
+                updates,
+                config.clone(),
+                listeners.clone(),
+                self.component_name.clone(),
+                thing_name,
+            )
+        });
 
         Ok(GgCommons {
             component_name: self.component_name,
             args: parsed,
-            config: Arc::new(ArcSwap::from_pointee(cfg)),
+            config,
             messaging,
             metrics,
+            listeners,
             _heartbeat: heartbeat,
+            _reload_task: reload_task,
+            _config_source: source,
         })
     }
+}
+
+/// Spawn the task that applies hot-reloaded config documents: validate, publish a
+/// new snapshot atomically, then notify listeners.
+fn spawn_config_reload(
+    mut updates: tokio::sync::mpsc::UnboundedReceiver<serde_json::Value>,
+    config: Arc<ArcSwap<Config>>,
+    listeners: ConfigListeners,
+    component_name: String,
+    thing_name: String,
+) -> AbortOnDrop {
+    AbortOnDrop(tokio::spawn(async move {
+        while let Some(raw) = updates.recv().await {
+            if let Err(e) = config::validation::validate(&raw) {
+                tracing::warn!(error = %e, "reloaded config failed validation; keeping previous");
+                continue;
+            }
+            match Config::from_value(component_name.clone(), thing_name.clone(), raw) {
+                Ok(new_config) => {
+                    let snapshot = Arc::new(new_config);
+                    config.store(snapshot.clone());
+                    tracing::info!("configuration reloaded");
+                    let current = listeners.lock().map(|l| l.clone()).unwrap_or_default();
+                    for listener in current {
+                        let _ = listener.on_configuration_change(snapshot.clone()).await;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "reloaded config could not be parsed; keeping previous")
+                }
+            }
+        }
+    }))
 }
 
 /// Initialize the messaging service for the selected runtime mode.
@@ -222,6 +306,7 @@ async fn init_messaging(
 pub mod prelude {
     pub use crate::cli::{ConfigSourceSpec, ParsedArgs, RuntimeMode};
     pub use crate::config::model::Config;
+    pub use crate::config::ConfigChangeListener;
     pub use crate::messaging::{
         message_handler, MessageHandler, MessagingService, Qos, ReplyFuture,
     };

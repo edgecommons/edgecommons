@@ -55,6 +55,14 @@ pub trait ConfigSource: Send + Sync {
 
     /// Short name of the source (for diagnostics).
     fn source_name(&self) -> &str;
+
+    /// Begin watching for changes, returning a receiver of new raw config documents.
+    ///
+    /// Returns `None` for sources that don't support hot reload. The source must be
+    /// kept alive for the receiver to keep producing (it may own an OS watcher).
+    fn watch(&self) -> Option<tokio::sync::mpsc::UnboundedReceiver<Value>> {
+        None
+    }
 }
 
 /// Construct the configuration source for a parsed spec.

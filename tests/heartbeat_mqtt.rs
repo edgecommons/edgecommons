@@ -105,8 +105,9 @@ async fn heartbeat_publishes_to_messaging_target() {
     let metrics: Arc<dyn MetricService> =
         Arc::new(MetricEmitter::new(&config, Some(svc.clone())).await.expect("metrics"));
 
+    let config_handle = Arc::new(arc_swap::ArcSwap::from_pointee(config));
     info!("starting heartbeat");
-    let _heartbeat = Heartbeat::start(&config, metrics, Some(svc.clone()));
+    let _heartbeat = Heartbeat::start(config_handle, metrics, Some(svc.clone()));
 
     // Wait for the SECOND heartbeat: the first sample primes the CPU baseline (and
     // reports 0); the second measures CPU over the real ~1s interval.

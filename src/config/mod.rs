@@ -41,3 +41,19 @@ pub mod template;
 pub mod validation;
 
 pub use model::Config;
+
+use std::sync::Arc;
+
+use async_trait::async_trait;
+
+/// A listener notified after the configuration is hot-reloaded.
+///
+/// Mirrors the Java/Python `ConfigurationChangeListener`. Register one with
+/// [`crate::GgCommons::add_config_change_listener`]. Implementations should be quick
+/// or spawn their own work; the return value indicates whether the change was
+/// handled (kept for parity with the Java/Python contract).
+#[async_trait]
+pub trait ConfigChangeListener: Send + Sync {
+    /// Called with the new configuration snapshot after a successful reload.
+    async fn on_configuration_change(&self, config: Arc<Config>) -> bool;
+}
