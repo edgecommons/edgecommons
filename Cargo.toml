@@ -16,6 +16,8 @@ default = ["standalone"]
 standalone = ["dep:rumqttc"]
 # GREENGRASS runtime mode: IPC via aws-greengrass-component-sdk (Phase 2).
 greengrass = []
+# CloudWatch metric target via the AWS SDK (heavy deps; off by default).
+cloudwatch = ["dep:aws-config", "dep:aws-sdk-cloudwatch"]
 
 [dependencies]
 thiserror = "2"
@@ -34,6 +36,10 @@ time = { version = "0.3", features = ["formatting"] }
 
 # STANDALONE-only (Phase 1). Pure-Rust async MQTT — no C toolchain, clean ARM/musl cross-compile.
 rumqttc = { version = "0.24", optional = true }
+
+# cloudwatch metric target (feature = "cloudwatch").
+aws-config = { version = "1", optional = true }
+aws-sdk-cloudwatch = { version = "1", optional = true }
 
 # Phase 1 additions (added when the corresponding subsystems land):
 #   tracing-appender   — rotating file logging

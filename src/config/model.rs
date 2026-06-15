@@ -100,6 +100,64 @@ pub struct MetricConfig {
     pub target_config: Option<Value>,
 }
 
+impl MetricConfig {
+    /// Selected target (`log` | `messaging` | `cloudwatch` | `cloudwatchcomponent`); default `log`.
+    pub fn target(&self) -> &str {
+        self.target.as_deref().unwrap_or("log")
+    }
+
+    /// CloudWatch namespace; default `ggcommons`.
+    pub fn namespace(&self) -> &str {
+        self.namespace.as_deref().unwrap_or("ggcommons")
+    }
+
+    /// Read a string field from `targetConfig`.
+    fn target_config_str(&self, key: &str) -> Option<String> {
+        self.target_config
+            .as_ref()?
+            .get(key)?
+            .as_str()
+            .map(str::to_string)
+    }
+
+    /// `targetConfig.logFileName` template (log target); default Greengrass path.
+    pub fn log_file_name(&self) -> String {
+        self.target_config_str("logFileName")
+            .unwrap_or_else(|| "/greengrass/v2/logs/{ComponentFullName}.metric.log".to_string())
+    }
+
+    /// `targetConfig.maxFileSize` (log target); default `10MB`.
+    pub fn max_file_size(&self) -> String {
+        self.target_config_str("maxFileSize").unwrap_or_else(|| "10MB".to_string())
+    }
+
+    /// `targetConfig.topic` template; per-target default if unset.
+    pub fn topic(&self) -> String {
+        if let Some(topic) = self.target_config_str("topic") {
+            return topic;
+        }
+        match self.target() {
+            "cloudwatchcomponent" => "cloudwatch/metric/put".to_string(),
+            _ => "{ThingName}/{ComponentName}/metric".to_string(),
+        }
+    }
+
+    /// `targetConfig.destination` (messaging target): `ipc`/`local` or `iotcore`; default `ipc`.
+    pub fn destination(&self) -> String {
+        self.target_config_str("destination").unwrap_or_else(|| "ipc".to_string())
+    }
+
+    /// `targetConfig.intervalSecs` (cloudwatch batch flush); default 5, minimum 1.
+    pub fn interval_secs(&self) -> u64 {
+        self.target_config
+            .as_ref()
+            .and_then(|tc| tc.get("intervalSecs"))
+            .and_then(Value::as_u64)
+            .filter(|&n| n >= 1)
+            .unwrap_or(5)
+    }
+}
+
 /// `component` section.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]

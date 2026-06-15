@@ -55,6 +55,7 @@ pub struct GgCommons {
     args: ParsedArgs,
     config: Arc<ArcSwap<Config>>,
     messaging: Option<Arc<dyn messaging::MessagingService>>,
+    metrics: Arc<dyn metrics::MetricService>,
 }
 
 impl GgCommons {
@@ -91,6 +92,11 @@ impl GgCommons {
                     .to_string(),
             )
         })
+    }
+
+    /// The metric service for this component (the testable seam).
+    pub fn metrics(&self) -> Arc<dyn metrics::MetricService> {
+        self.metrics.clone()
     }
 }
 
@@ -150,12 +156,15 @@ impl GgCommonsBuilder {
         );
 
         let messaging = init_messaging(&parsed.mode).await?;
+        let metrics: Arc<dyn metrics::MetricService> =
+            Arc::new(metrics::MetricEmitter::new(&cfg, messaging.clone()).await?);
 
         Ok(GgCommons {
             component_name: self.component_name,
             args: parsed,
             config: Arc::new(ArcSwap::from_pointee(cfg)),
             messaging,
+            metrics,
         })
     }
 }
@@ -212,5 +221,6 @@ pub mod prelude {
     pub use crate::messaging::{
         message_handler, MessageHandler, MessagingService, Qos, ReplyFuture,
     };
+    pub use crate::metrics::{Measure, Metric, MetricBuilder, MetricService};
     pub use crate::{GgCommons, GgCommonsBuilder, GgError, Result};
 }
