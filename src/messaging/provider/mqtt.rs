@@ -50,13 +50,13 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
+use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS, TlsConfiguration, Transport};
 use tokio::sync::mpsc::{self, error::TrySendError, Sender};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
 use crate::error::{GgError, Result};
-use crate::messaging::config::{BrokerConfig, MessagingConfig};
+use crate::messaging::config::{BrokerConfig, Credentials, MessagingConfig};
 use crate::messaging::{topic_matches, Destination, MessagingProvider, Qos, Subscription};
 
 /// How long [`MqttProvider::connect`] waits for the first `CONNACK`.
@@ -102,9 +102,17 @@ impl Drop for BrokerConn {
     }
 }
 
+/// Whether a broker connection is the local broker or AWS IoT Core (which mandates mTLS).
+#[derive(Debug, Clone, Copy)]
+enum BrokerRole {
+    Local,
+    IotCore,
+}
+
 /// MQTT [`MessagingProvider`] over one or more broker connections.
 pub struct MqttProvider {
     local: BrokerConn,
+    iot_core: Option<BrokerConn>,
 }
 
 impl MqttProvider {
@@ -124,26 +132,29 @@ impl MqttProvider {
     /// # Errors
     /// | Error Variant | Condition | Recovery |
     /// |---------------|-----------|----------|
-    /// | `GgError::Config` | Local broker host missing, or `iotCore` configured (TLS not yet supported) | Fix the messaging config |
+    /// | `GgError::Config` | Missing host, or missing/unreadable TLS credentials (IoT Core requires caPath/certPath/keyPath) | Fix the messaging config / credential paths |
     /// | `GgError::Messaging` | CONNACK not received within the connect timeout | Verify the broker is up and reachable |
+    ///
+    /// The local broker connects over plain TCP unless its credentials include a
+    /// `caPath` (then TLS). AWS IoT Core always connects over mutual TLS
+    /// (caPath + certPath + keyPath, all required). Missing/unreadable credential
+    /// files are a hard error — there is no insecure fallback.
     pub async fn connect(config: &MessagingConfig) -> Result<MqttProvider> {
-        if config.messaging.iot_core.is_some() {
-            return Err(GgError::Config(
-                "IoT Core (TLS) messaging is not implemented yet; configure only 'local' for now"
-                    .to_string(),
-            ));
-        }
-        let local = connect_broker(&config.messaging.local).await?;
-        Ok(MqttProvider { local })
+        let local = connect_broker(&config.messaging.local, BrokerRole::Local).await?;
+        let iot_core = match &config.messaging.iot_core {
+            Some(broker) => Some(connect_broker(broker, BrokerRole::IotCore).await?),
+            None => None,
+        };
+        Ok(MqttProvider { local, iot_core })
     }
 
     /// Resolve the broker connection for a destination.
     fn conn(&self, dest: Destination) -> Result<&BrokerConn> {
         match dest {
             Destination::Local => Ok(&self.local),
-            Destination::IotCore => Err(GgError::Messaging(
-                "IoT Core destination is not available (TLS not yet implemented)".to_string(),
-            )),
+            Destination::IotCore => self.iot_core.as_ref().ok_or_else(|| {
+                GgError::Messaging("IoT Core destination is not configured".to_string())
+            }),
         }
     }
 }
@@ -216,14 +227,23 @@ impl MessagingProvider for MqttProvider {
 }
 
 /// Establish one broker connection over plain TCP and block until its first CONNACK.
-async fn connect_broker(broker: &BrokerConfig) -> Result<BrokerConn> {
+async fn connect_broker(broker: &BrokerConfig, role: BrokerRole) -> Result<BrokerConn> {
     let host = broker.resolved_host()?.to_string();
-    let mut options = MqttOptions::new(broker.client_id.clone(), host, broker.port);
+    let mut options = MqttOptions::new(broker.client_id.clone(), host.clone(), broker.port);
     options.set_keep_alive(Duration::from_secs(30));
     options.set_clean_session(true);
-    if let Some(creds) = &broker.credentials {
-        if let (Some(u), Some(p)) = (&creds.username, &creds.password) {
-            options.set_credentials(u.clone(), p.clone());
+
+    match build_tls(broker.credentials.as_ref(), role)? {
+        Some(tls) => {
+            options.set_transport(Transport::Tls(tls));
+            tracing::info!(host = %host, port = broker.port, "connecting to broker over TLS");
+        }
+        None => {
+            if let Some(creds) = &broker.credentials {
+                if let (Some(user), Some(pass)) = (&creds.username, &creds.password) {
+                    options.set_credentials(user.clone(), pass.clone());
+                }
+            }
         }
     }
 
@@ -299,9 +319,165 @@ async fn connect_broker(broker: &BrokerConfig) -> Result<BrokerConn> {
 }
 
 /// Map the library QoS to the `rumqttc` QoS.
+/// Build the TLS configuration for a broker, or `None` for a plain connection.
+///
+/// # Algorithmic Choices
+/// - **IoT Core** always uses mutual TLS: `caPath`, `certPath`, and `keyPath` are all
+///   required; any missing/unreadable file is a hard error (never an insecure fallback,
+///   unlike the Java implementation which silently connected without credentials).
+/// - **Local** uses TLS only when `caPath` is set (with optional client auth via
+///   `certPath`/`keyPath`); otherwise it connects plain.
+fn build_tls(creds: Option<&Credentials>, role: BrokerRole) -> Result<Option<TlsConfiguration>> {
+    match role {
+        BrokerRole::IotCore => {
+            let creds = creds.ok_or_else(|| {
+                GgError::Config(
+                    "IoT Core requires TLS credentials (caPath, certPath, keyPath)".to_string(),
+                )
+            })?;
+            let ca = read_credential_file(creds.ca_path.as_deref(), "caPath")?;
+            let cert = read_credential_file(creds.cert_path.as_deref(), "certPath")?;
+            let key = read_credential_file(creds.key_path.as_deref(), "keyPath")?;
+            Ok(Some(TlsConfiguration::Simple {
+                ca,
+                alpn: None,
+                client_auth: Some((cert, key)),
+            }))
+        }
+        BrokerRole::Local => {
+            let Some(creds) = creds else { return Ok(None) };
+            let Some(ca_path) = creds.ca_path.as_deref() else {
+                return Ok(None); // no CA configured => plain connection
+            };
+            let ca = read_credential_file(Some(ca_path), "caPath")?;
+            let client_auth = match (creds.cert_path.as_deref(), creds.key_path.as_deref()) {
+                (Some(cert_path), Some(key_path)) => Some((
+                    read_credential_file(Some(cert_path), "certPath")?,
+                    read_credential_file(Some(key_path), "keyPath")?,
+                )),
+                _ => None,
+            };
+            Ok(Some(TlsConfiguration::Simple {
+                ca,
+                alpn: None,
+                client_auth,
+            }))
+        }
+    }
+}
+
+/// Read a required PEM credential file, erroring (never silently skipping) if the
+/// path is missing or unreadable.
+fn read_credential_file(path: Option<&str>, field: &str) -> Result<Vec<u8>> {
+    let path = path.ok_or_else(|| {
+        GgError::Config(format!("TLS requires '{field}' in the messaging credentials"))
+    })?;
+    std::fs::read(path)
+        .map_err(|e| GgError::Config(format!("failed to read {field} '{path}': {e}")))
+}
+
 fn to_rumqttc_qos(qos: Qos) -> QoS {
     match qos {
         Qos::AtMostOnce => QoS::AtMostOnce,
         Qos::AtLeastOnce => QoS::AtLeastOnce,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use std::path::{Path, PathBuf};
+
+    fn temp_pem(content: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!("ggc-pem-{}.pem", uuid::Uuid::new_v4()));
+        std::fs::File::create(&path)
+            .unwrap()
+            .write_all(content.as_bytes())
+            .unwrap();
+        path
+    }
+
+    fn creds(ca: Option<&Path>, cert: Option<&Path>, key: Option<&Path>) -> Credentials {
+        let to_s = |p: Option<&Path>| p.map(|p| p.to_string_lossy().into_owned());
+        Credentials {
+            username: None,
+            password: None,
+            cert_path: to_s(cert),
+            key_path: to_s(key),
+            ca_path: to_s(ca),
+        }
+    }
+
+    #[test]
+    fn local_without_ca_is_plain() {
+        assert!(build_tls(None, BrokerRole::Local).unwrap().is_none());
+        let c = creds(None, None, None);
+        assert!(build_tls(Some(&c), BrokerRole::Local).unwrap().is_none());
+    }
+
+    #[test]
+    fn local_with_ca_only_is_server_tls() {
+        let ca = temp_pem("ca-bytes");
+        let c = creds(Some(&ca), None, None);
+        match build_tls(Some(&c), BrokerRole::Local).unwrap() {
+            Some(TlsConfiguration::Simple { ca: ca_bytes, client_auth, .. }) => {
+                assert_eq!(ca_bytes, b"ca-bytes");
+                assert!(client_auth.is_none(), "ca-only => server TLS, no client auth");
+            }
+            _ => panic!("expected Simple TLS"),
+        }
+        let _ = std::fs::remove_file(ca);
+    }
+
+    #[test]
+    fn local_with_ca_cert_key_is_mutual_tls() {
+        let (ca, cert, key) = (temp_pem("ca"), temp_pem("cert"), temp_pem("key"));
+        let c = creds(Some(&ca), Some(&cert), Some(&key));
+        match build_tls(Some(&c), BrokerRole::Local).unwrap() {
+            Some(TlsConfiguration::Simple { client_auth: Some((cert_b, key_b)), .. }) => {
+                assert_eq!(cert_b, b"cert");
+                assert_eq!(key_b, b"key");
+            }
+            _ => panic!("expected mutual TLS"),
+        }
+        for p in [ca, cert, key] {
+            let _ = std::fs::remove_file(p);
+        }
+    }
+
+    #[test]
+    fn iot_core_requires_ca_cert_and_key() {
+        // No credentials at all.
+        assert!(build_tls(None, BrokerRole::IotCore).is_err());
+        // Missing key => error (no insecure fallback).
+        let (ca, cert) = (temp_pem("ca"), temp_pem("cert"));
+        let c = creds(Some(&ca), Some(&cert), None);
+        assert!(build_tls(Some(&c), BrokerRole::IotCore).is_err());
+        for p in [ca, cert] {
+            let _ = std::fs::remove_file(p);
+        }
+    }
+
+    #[test]
+    fn iot_core_with_all_three_is_mutual_tls() {
+        let (ca, cert, key) = (temp_pem("ca"), temp_pem("cert"), temp_pem("key"));
+        let c = creds(Some(&ca), Some(&cert), Some(&key));
+        match build_tls(Some(&c), BrokerRole::IotCore).unwrap() {
+            Some(TlsConfiguration::Simple { client_auth: Some(_), .. }) => {}
+            _ => panic!("expected mutual TLS"),
+        }
+        for p in [ca, cert, key] {
+            let _ = std::fs::remove_file(p);
+        }
+    }
+
+    #[test]
+    fn missing_credential_file_errors_rather_than_falling_back() {
+        let c = creds(Some(Path::new("/no/such/ca.pem")), None, None);
+        assert!(
+            build_tls(Some(&c), BrokerRole::Local).is_err(),
+            "an unreadable CA must error, never silently connect"
+        );
     }
 }
