@@ -49,6 +49,14 @@ aws-sdk-cloudwatch = { version = "1", optional = true }
 #   tokio-rustls       — IoT Core mTLS
 #   aws-sdk-cloudwatch — cloudwatch metric target
 
+# Windows: per-process thread + handle counts for the heartbeat (sysinfo lacks these).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+    "Win32_System_Diagnostics_ToolHelp",
+] }
+
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
 anyhow = "1"

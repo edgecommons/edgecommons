@@ -56,6 +56,8 @@ pub struct GgCommons {
     config: Arc<ArcSwap<Config>>,
     messaging: Option<Arc<dyn messaging::MessagingService>>,
     metrics: Arc<dyn metrics::MetricService>,
+    /// Owns the heartbeat task; dropping `GgCommons` stops it (RAII).
+    _heartbeat: heartbeat::Heartbeat,
 }
 
 impl GgCommons {
@@ -158,6 +160,7 @@ impl GgCommonsBuilder {
         let messaging = init_messaging(&parsed.mode).await?;
         let metrics: Arc<dyn metrics::MetricService> =
             Arc::new(metrics::MetricEmitter::new(&cfg, messaging.clone()).await?);
+        let heartbeat = heartbeat::Heartbeat::start(&cfg, metrics.clone(), messaging.clone());
 
         Ok(GgCommons {
             component_name: self.component_name,
@@ -165,6 +168,7 @@ impl GgCommonsBuilder {
             config: Arc::new(ArcSwap::from_pointee(cfg)),
             messaging,
             metrics,
+            _heartbeat: heartbeat,
         })
     }
 }
