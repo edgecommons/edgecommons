@@ -87,6 +87,49 @@ async fn file_config_hot_reloads_and_notifies_listeners() {
 }
 
 #[tokio::test]
+async fn multi_instance_config_is_exposed_through_the_runtime() {
+    let dir = std::env::temp_dir().join(format!("ggcommons-multi-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let config_path = dir.join("config.json");
+    let log_path = dir.join("metric.log");
+    let contents = serde_json::json!({
+        "metricEmission": { "target": "log", "targetConfig": { "logFileName": log_path.to_string_lossy() } },
+        "component": {
+            "global": { "publish_interval": 3 },
+            "instances": [
+                { "id": "lineA", "sensor": "/dev/ttyUSB0" },
+                { "id": "lineB", "sensor": "/dev/ttyUSB1" }
+            ]
+        }
+    });
+    std::fs::write(&config_path, serde_json::to_vec_pretty(&contents).unwrap()).unwrap();
+
+    let gg = GgCommonsBuilder::new("com.example.MultiInstance")
+        .args([
+            "prog".to_string(),
+            "-c".to_string(),
+            "FILE".to_string(),
+            config_path.to_string_lossy().into_owned(),
+            "-t".to_string(),
+            "thing-1".to_string(),
+        ])
+        .build()
+        .await
+        .expect("build");
+
+    let cfg = gg.config();
+    assert_eq!(cfg.instance_ids(), vec!["lineA", "lineB"]);
+    assert_eq!(
+        cfg.instance("lineB").and_then(|i| i.get("sensor")).and_then(|v| v.as_str()),
+        Some("/dev/ttyUSB1"),
+        "per-instance config is accessible by id"
+    );
+    assert!(cfg.instance("missing").is_none());
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
 async fn metric_target_reconfigures_on_reload() {
     let dir = std::env::temp_dir().join(format!("ggcommons-mreload-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();

@@ -22,9 +22,13 @@
 //! ```
 //!
 //! ## Design Choices
-//! Simple `String::replace` passes; substitution values are not yet sanitized for
-//! file-path/topic injection — that hardening lands with the file/messaging
-//! targets (closing the Java path-traversal/topic-injection concern).
+//! Simple `String::replace` passes. The **substituted values** (thing name,
+//! component name, tag values) are sanitized before insertion so a hostile value
+//! cannot inject path traversal (`..`, `/`, `\`) or MQTT topic wildcards (`+`, `#`)
+//! into a resolved file path or topic — closing the Java path-traversal /
+//! topic-injection concern (review M15). The template literal itself is left
+//! intact, so legitimate separators in the template (e.g. `a/{ThingName}/b`) are
+//! preserved.
 //!
 //! ## Safety & Panics
 //! None.
@@ -35,18 +39,40 @@
 use super::model::Config;
 
 /// Replace known placeholders in `template` using values from `config`.
+///
+/// Each substituted value is passed through `sanitize` so it cannot break out of
+/// the path or topic it is interpolated into.
 pub fn resolve(config: &Config, template: &str) -> String {
     let mut out = template
-        .replace("{ThingName}", &config.thing_name)
-        .replace("{ComponentName}", &config.component_name)
-        .replace("{ComponentFullName}", &config.component_name);
+        .replace("{ThingName}", &sanitize(&config.thing_name))
+        .replace("{ComponentName}", &sanitize(&config.component_name))
+        .replace("{ComponentFullName}", &sanitize(&config.component_name));
 
     for (key, value) in &config.parsed.tags {
         if let Some(s) = value.as_str() {
-            out = out.replace(&format!("{{{key}}}"), s);
+            out = out.replace(&format!("{{{key}}}"), &sanitize(s));
         }
     }
     out
+}
+
+/// Neutralize characters in a substituted value that are dangerous in a file path
+/// or MQTT topic: path separators (`/`, `\`), traversal dots, MQTT wildcards
+/// (`+`, `#`), and control characters are each replaced with `_`.
+///
+/// Applied only to interpolated values, never to the surrounding template, so
+/// structural separators in the template are preserved.
+fn sanitize(value: &str) -> String {
+    value
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' | '+' | '#' => '_',
+            c if c.is_control() => '_',
+            c => c,
+        })
+        .collect::<String>()
+        // Collapse traversal sequences (e.g. "..") that remain after separator replacement.
+        .replace("..", "_")
 }
 
 #[cfg(test)]
@@ -74,5 +100,32 @@ mod tests {
     fn leaves_unknown_placeholders_untouched() {
         let cfg = Config::from_value("c", "t", json!({})).unwrap();
         assert_eq!(resolve(&cfg, "{Unknown}"), "{Unknown}");
+    }
+
+    #[test]
+    fn sanitizes_path_traversal_and_topic_wildcards_in_values() {
+        // A hostile thing name / tag value must not break out of the path or topic.
+        let cfg = Config::from_value(
+            "com.example.C",
+            "../../etc/passwd",
+            json!({ "tags": { "evil": "a/+/#" } }),
+        )
+        .unwrap();
+
+        // Path separators and traversal in the value are neutralized; the template's
+        // own separators are preserved.
+        assert_eq!(resolve(&cfg, "/logs/{ThingName}.log"), "/logs/____etc_passwd.log");
+        assert_eq!(resolve(&cfg, "t/{evil}/x"), "t/a____/x");
+    }
+
+    #[test]
+    fn preserves_template_separators_and_clean_values() {
+        let cfg = Config::from_value("com.example.MyComponent", "thing-7", json!({})).unwrap();
+        // Dotted component names are fine (no traversal sequence) and template
+        // slashes are kept.
+        assert_eq!(
+            resolve(&cfg, "{ThingName}/{ComponentName}/metric"),
+            "thing-7/com.example.MyComponent/metric"
+        );
     }
 }
