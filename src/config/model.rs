@@ -36,10 +36,29 @@
 
 use std::collections::BTreeMap;
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use serde_json::Value;
 
 use crate::error::Result;
+
+/// Read a JSON value as `u64`, accepting an integer **or** a (truncated) float.
+///
+/// Greengrass stores configuration numbers as doubles, so an integer like `5`
+/// arrives over IPC as `5.0`; `serde_json`'s `as_u64` rejects floats, so accept
+/// both representations to stay robust across config sources.
+fn value_as_u64(value: &Value) -> Option<u64> {
+    value.as_u64().or_else(|| value.as_f64().map(|f| f as u64))
+}
+
+/// `serde` deserializer for an optional `u64` config field that may be encoded as a
+/// JSON float (see [`value_as_u64`]). Absent or `null` yields `None`.
+fn de_lenient_opt_u64<'de, D>(deserializer: D) -> std::result::Result<Option<u64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<Value>::deserialize(deserializer)?;
+    Ok(value.as_ref().and_then(value_as_u64))
+}
 
 /// `logging` section.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -64,6 +83,7 @@ pub struct FileLogging {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct HeartbeatConfig {
+    #[serde(default, deserialize_with = "de_lenient_opt_u64")]
     pub interval_secs: Option<u64>,
     pub measures: Measures,
     pub targets: Vec<HeartbeatTarget>,
@@ -152,7 +172,7 @@ impl MetricConfig {
         self.target_config
             .as_ref()
             .and_then(|tc| tc.get("intervalSecs"))
-            .and_then(Value::as_u64)
+            .and_then(value_as_u64)
             .filter(|&n| n >= 1)
             .unwrap_or(5)
     }
@@ -314,6 +334,22 @@ mod tests {
         assert_eq!(m.topic(), "my/topic");
         assert_eq!(m.destination(), "iotcore");
         assert_eq!(m.interval_secs(), 10);
+    }
+
+    #[test]
+    fn numeric_config_accepts_floats_from_greengrass() {
+        // Greengrass returns config numbers as doubles (e.g. 10.0, not 10).
+        let cfg = Config::from_value(
+            "c",
+            "t",
+            json!({
+                "heartbeat": { "intervalSecs": 10.0 },
+                "metricEmission": { "targetConfig": { "intervalSecs": 7.0 } }
+            }),
+        )
+        .unwrap();
+        assert_eq!(cfg.parsed.heartbeat.interval_secs, Some(10));
+        assert_eq!(cfg.parsed.metric_emission.interval_secs(), 7);
     }
 
     #[test]
