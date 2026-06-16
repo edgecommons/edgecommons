@@ -6,7 +6,9 @@
 //! messaging, metrics, heartbeat, logging) behind service traits so component
 //! authors write only business logic.
 //!
-//! **Status: Phase 0 scaffold** — the standalone-mode MVP is in progress. See
+//! **Status:** the STANDALONE MVP (Phases 0–1) is complete; Phase 3 parity work is
+//! done; Greengrass IPC (Phase 2, `greengrass` feature) is implemented and compiles
+//! on Linux but is not yet validated against a live core. See
 //! `../GGCOMMONS_RUST_PORT.md` for the full design and plan.
 //!
 //! ```no_run
@@ -28,6 +30,8 @@ pub mod cli;
 pub mod config;
 pub mod error;
 pub mod heartbeat;
+#[cfg(feature = "greengrass")]
+pub mod ipc;
 pub mod logging;
 pub mod messaging;
 pub mod metrics;
@@ -104,11 +108,12 @@ impl GgCommons {
     /// # Errors
     /// | Error Variant | Condition | Recovery |
     /// |---------------|-----------|----------|
-    /// | `GgError::Messaging` | Messaging is not available in this mode (GREENGRASS IPC messaging is Phase 2) | Run in STANDALONE mode, or wait for Phase 2 |
+    /// | `GgError::Messaging` | No messaging service was wired (GREENGRASS mode without the `greengrass` feature) | Enable the `greengrass` feature, or run in STANDALONE mode |
     pub fn messaging(&self) -> Result<Arc<dyn messaging::MessagingService>> {
         self.messaging.clone().ok_or_else(|| {
             GgError::Messaging(
-                "messaging is not available in this mode (GREENGRASS IPC messaging is Phase 2)"
+                "messaging is not available: GREENGRASS mode requires the 'greengrass' feature, \
+                 or use STANDALONE mode"
                     .to_string(),
             )
         })
@@ -178,7 +183,17 @@ impl GgCommonsBuilder {
             std::env::var(THING_NAME_ENV).unwrap_or_else(|_| DEFAULT_THING_NAME.to_string())
         });
 
-        let source = config::source::build(&parsed.config)?;
+        // Messaging is initialized first: it depends only on the runtime mode (the
+        // `-m` messaging config / IPC), not on the component config — and the
+        // CONFIG_COMPONENT source needs a messaging handle to fetch the config.
+        let messaging = init_messaging(&parsed.mode).await?;
+
+        let source = config::source::build(
+            &parsed.config,
+            messaging.clone(),
+            &thing_name,
+            &self.component_name,
+        )?;
         let raw = source.load().await?;
         config::validation::validate(&raw)?;
         let cfg = Config::from_value(self.component_name.clone(), thing_name.clone(), raw)?;
@@ -193,7 +208,6 @@ impl GgCommonsBuilder {
         );
 
         let config: Arc<ArcSwap<Config>> = Arc::new(ArcSwap::from_pointee(cfg));
-        let messaging = init_messaging(&parsed.mode).await?;
         let snapshot = config.load_full();
         let emitter = Arc::new(metrics::MetricEmitter::new(&snapshot, messaging.clone()).await?);
         let metrics: Arc<dyn metrics::MetricService> = emitter.clone();
@@ -304,7 +318,22 @@ async fn init_messaging(
                 ))
             }
         }
-        cli::RuntimeMode::Greengrass => Ok(None), // Phase 2: Greengrass IPC messaging
+        cli::RuntimeMode::Greengrass => {
+            #[cfg(feature = "greengrass")]
+            {
+                use crate::messaging::provider::ipc::IpcProvider;
+                use crate::messaging::service::DefaultMessagingService;
+
+                let provider = Arc::new(IpcProvider::connect().await?);
+                let service: Arc<dyn messaging::MessagingService> =
+                    Arc::new(DefaultMessagingService::new(provider));
+                Ok(Some(service))
+            }
+            #[cfg(not(feature = "greengrass"))]
+            {
+                Ok(None) // Greengrass IPC messaging requires the 'greengrass' feature.
+            }
+        }
     }
 }
 

@@ -3,6 +3,12 @@
 //! Builds GgCommons against a FILE config source in GREENGRASS mode (so no MQTT
 //! broker is needed), registers a config-change listener, modifies the file, and
 //! asserts the snapshot updates and the listener fires.
+//!
+//! Skipped under the `greengrass` feature: there, GREENGRASS mode performs a real
+//! IPC `connect()` to the nucleus, which is unavailable in a unit-test environment.
+//! The config-reload logic exercised here is feature-independent and is covered by
+//! the default (standalone) build.
+#![cfg(not(feature = "greengrass"))]
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};

@@ -21,7 +21,13 @@
 //! use std::path::PathBuf;
 //!
 //! # async fn demo() -> ggcommons::Result<()> {
-//! let source = build(&ConfigSourceSpec::File { path: PathBuf::from("config.json") })?;
+//! // CONFIG_COMPONENT needs a messaging service + identity; other sources ignore them.
+//! let source = build(
+//!     &ConfigSourceSpec::File { path: PathBuf::from("config.json") },
+//!     None,
+//!     "my-thing",
+//!     "com.example.MyComponent",
+//! )?;
 //! let _doc = source.load().await?;
 //! # Ok(())
 //! # }
@@ -33,11 +39,14 @@
 //! ## Related Modules
 //! - [`crate::cli`] (defines [`ConfigSourceSpec`]), [`super::model`].
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use serde_json::Value;
 
 use crate::cli::ConfigSourceSpec;
 use crate::error::Result;
+use crate::messaging::MessagingService;
 
 pub mod config_component;
 pub mod env;
@@ -66,12 +75,29 @@ pub trait ConfigSource: Send + Sync {
 }
 
 /// Construct the configuration source for a parsed spec.
-pub fn build(spec: &ConfigSourceSpec) -> Result<Box<dyn ConfigSource>> {
+///
+/// `messaging` (and the `thing_name` / `component_name` identity) are required only
+/// by the `CONFIG_COMPONENT` source; the other sources ignore them.
+pub fn build(
+    spec: &ConfigSourceSpec,
+    messaging: Option<Arc<dyn MessagingService>>,
+    thing_name: &str,
+    component_name: &str,
+) -> Result<Box<dyn ConfigSource>> {
     Ok(match spec {
         ConfigSourceSpec::File { path } => Box::new(file::FileConfigSource::new(path.clone())),
         ConfigSourceSpec::Env { var } => Box::new(env::EnvConfigSource::new(var.clone())),
         ConfigSourceSpec::ConfigComponent => {
-            Box::new(config_component::ConfigComponentSource::new())
+            let messaging = messaging.ok_or_else(|| {
+                crate::error::GgError::Config(
+                    "CONFIG_COMPONENT source requires a messaging service (run in a mode that provides one)".to_string(),
+                )
+            })?;
+            Box::new(config_component::ConfigComponentSource::new(
+                messaging,
+                thing_name,
+                component_name,
+            ))
         }
         #[cfg(feature = "greengrass")]
         ConfigSourceSpec::Greengrass { component, key } => {

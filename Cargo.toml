@@ -16,8 +16,8 @@ default = ["standalone"]
 standalone = ["dep:rumqttc"]
 # GREENGRASS runtime mode: IPC via aws-greengrass-component-sdk (Phase 2).
 # NOTE: the SDK is a Linux-only C-FFI crate (bindgen + cc, GNU/Linux flags, UDS IPC);
-# it will not build on Windows/MSVC. Wire the dep in on a Linux toolchain.
-greengrass = []
+# it will not build on Windows/MSVC. Only enable this feature on a Linux toolchain.
+greengrass = ["dep:aws-greengrass-component-sdk"]
 # CloudWatch metric target via the AWS SDK (heavy deps; off by default).
 cloudwatch = ["dep:aws-config", "dep:aws-sdk-cloudwatch"]
 
@@ -44,6 +44,11 @@ rumqttc = { version = "0.24", optional = true }
 # cloudwatch metric target (feature = "cloudwatch").
 aws-config = { version = "1", optional = true }
 aws-sdk-cloudwatch = { version = "1", optional = true }
+
+# GREENGRASS-only (Phase 2). Native AWS Greengrass IPC SDK (lib name `gg_sdk`).
+# Linux-only C-FFI crate (bindgen + cc); only built when the `greengrass` feature is
+# enabled, which must only be done on a Linux toolchain.
+aws-greengrass-component-sdk = { version = "1.0.4", optional = true }
 
 # Phase 1 additions (added when the corresponding subsystems land):
 #   tracing-appender   — rotating file logging
