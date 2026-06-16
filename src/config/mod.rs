@@ -53,7 +53,7 @@ use async_trait::async_trait;
 /// or spawn their own work; the return value indicates whether the change was
 /// handled (kept for parity with the Java/Python contract).
 #[async_trait]
-pub trait ConfigChangeListener: Send + Sync {
+pub trait ConfigurationChangeListener: Send + Sync {
     /// Called with the new configuration snapshot after a successful reload.
     async fn on_configuration_change(&self, config: Arc<Config>) -> bool;
 }

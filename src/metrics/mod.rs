@@ -84,7 +84,7 @@ pub trait MetricService: Send + Sync {
 /// [`MetricService`] implementation.
 ///
 /// The target is swappable: registering the emitter as a
-/// [`crate::config::ConfigChangeListener`] rebuilds it on config hot-reload.
+/// [`crate::config::ConfigurationChangeListener`] rebuilds it on config hot-reload.
 pub struct MetricEmitter {
     target: Mutex<Arc<dyn MetricTarget>>,
     metrics: Mutex<HashMap<String, Metric>>,
@@ -257,7 +257,7 @@ impl MetricService for MetricEmitter {
 }
 
 #[async_trait]
-impl crate::config::ConfigChangeListener for MetricEmitter {
+impl crate::config::ConfigurationChangeListener for MetricEmitter {
     /// Rebuild the metric target from the new config (keeping the previous one on error).
     async fn on_configuration_change(&self, config: Arc<Config>) -> bool {
         match build_target(&config, self.messaging.clone()).await {
@@ -381,7 +381,7 @@ mod tests {
 
     #[tokio::test]
     async fn on_config_change_rebuilds_target() {
-        use crate::config::ConfigChangeListener;
+        use crate::config::ConfigurationChangeListener;
 
         let dir = std::env::temp_dir().join(format!("ggcommons-recfg-{}", uuid::Uuid::new_v4()));
         let path = dir.join("m.log");

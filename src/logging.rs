@@ -30,7 +30,7 @@
 //! None.
 //!
 //! ## Related Modules
-//! - [`crate::config::model`], [`crate::config::ConfigChangeListener`].
+//! - [`crate::config::model`], [`crate::config::ConfigurationChangeListener`].
 
 use std::sync::{Arc, OnceLock};
 
@@ -39,7 +39,7 @@ use tracing_subscriber::prelude::*;
 use tracing_subscriber::{fmt, reload, EnvFilter};
 
 use crate::config::model::Config;
-use crate::config::ConfigChangeListener;
+use crate::config::ConfigurationChangeListener;
 
 /// Type-erased "reload the level filter" callback, installed once by [`init`].
 static RECONFIGURE: OnceLock<Box<dyn Fn(EnvFilter) + Send + Sync>> = OnceLock::new();
@@ -78,11 +78,11 @@ fn level_filter(config: &Config) -> EnvFilter {
     EnvFilter::try_new(level.to_ascii_lowercase()).unwrap_or_else(|_| EnvFilter::new("info"))
 }
 
-/// A [`ConfigChangeListener`] that re-applies the log level on config hot-reload.
+/// A [`ConfigurationChangeListener`] that re-applies the log level on config hot-reload.
 pub struct LoggingReconfigurer;
 
 #[async_trait]
-impl ConfigChangeListener for LoggingReconfigurer {
+impl ConfigurationChangeListener for LoggingReconfigurer {
     async fn on_configuration_change(&self, config: Arc<Config>) -> bool {
         reconfigure(&config);
         true

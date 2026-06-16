@@ -25,7 +25,7 @@ struct RecordingListener {
 }
 
 #[async_trait::async_trait]
-impl ConfigChangeListener for RecordingListener {
+impl ConfigurationChangeListener for RecordingListener {
     async fn on_configuration_change(&self, config: Arc<Config>) -> bool {
         let v = config.global().get("v").and_then(serde_json::Value::as_i64);
         *self.last_v.lock().unwrap() = v;

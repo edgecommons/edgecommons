@@ -75,10 +75,10 @@ library validates the new document, builds a fresh `Config`, swaps it atomically
 then notifies registered listeners:
 
 ```rust
-use ggcommons::config::ConfigChangeListener;
+use ggcommons::config::ConfigurationChangeListener;
 use std::sync::Arc;
 
-gg.add_config_change_listener(my_listener); // Arc<dyn ConfigChangeListener>
+gg.add_config_change_listener(my_listener); // Arc<dyn ConfigurationChangeListener>
 ```
 
 Internally the metric target and the logging level reconfigure themselves on reload

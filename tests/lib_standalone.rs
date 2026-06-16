@@ -23,7 +23,7 @@ fn skipped() -> bool {
 struct NoopListener;
 
 #[async_trait::async_trait]
-impl ConfigChangeListener for NoopListener {
+impl ConfigurationChangeListener for NoopListener {
     async fn on_configuration_change(&self, _config: Arc<Config>) -> bool {
         true
     }
@@ -101,7 +101,7 @@ async fn standalone_runtime_exposes_all_services_and_accessors() {
     messaging.publish("lib-it/ping", &msg).await.expect("publish");
 
     // Listener add/remove (identity-based remove).
-    let listener: Arc<dyn ConfigChangeListener> = Arc::new(NoopListener);
+    let listener: Arc<dyn ConfigurationChangeListener> = Arc::new(NoopListener);
     gg.add_config_change_listener(listener.clone());
     gg.remove_config_change_listener(&listener);
 

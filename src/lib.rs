@@ -74,7 +74,7 @@ pub struct GgCommons {
 }
 
 /// Shared, mutable set of config-change listeners.
-type ConfigListeners = Arc<std::sync::Mutex<Vec<Arc<dyn config::ConfigChangeListener>>>>;
+type ConfigListeners = Arc<std::sync::Mutex<Vec<Arc<dyn config::ConfigurationChangeListener>>>>;
 
 /// Aborts a background task when dropped (RAII).
 struct AbortOnDrop(tokio::task::JoinHandle<()>);
@@ -129,16 +129,16 @@ impl GgCommons {
 
     /// Register a listener invoked after the configuration is hot-reloaded.
     ///
-    /// Mirrors the Java/Python `addConfigChangeListener`. The listener fires on
+    /// Mirrors the Java/Python `addConfigurationChangeListener`. The listener fires on
     /// successful reloads of a watchable config source (e.g. `FILE`).
-    pub fn add_config_change_listener(&self, listener: Arc<dyn config::ConfigChangeListener>) {
+    pub fn add_config_change_listener(&self, listener: Arc<dyn config::ConfigurationChangeListener>) {
         if let Ok(mut listeners) = self.listeners.lock() {
             listeners.push(listener);
         }
     }
 
     /// Remove a previously-registered config-change listener (by identity).
-    pub fn remove_config_change_listener(&self, listener: &Arc<dyn config::ConfigChangeListener>) {
+    pub fn remove_config_change_listener(&self, listener: &Arc<dyn config::ConfigurationChangeListener>) {
         if let Ok(mut listeners) = self.listeners.lock() {
             listeners.retain(|existing| !Arc::ptr_eq(existing, listener));
         }
@@ -219,8 +219,8 @@ impl GgCommonsBuilder {
         // Internal listeners reconfigure the metric target and logging on hot reload.
         let listeners: ConfigListeners = Arc::new(std::sync::Mutex::new(Vec::new()));
         if let Ok(mut l) = listeners.lock() {
-            l.push(emitter as Arc<dyn config::ConfigChangeListener>);
-            l.push(Arc::new(logging::LoggingReconfigurer) as Arc<dyn config::ConfigChangeListener>);
+            l.push(emitter as Arc<dyn config::ConfigurationChangeListener>);
+            l.push(Arc::new(logging::LoggingReconfigurer) as Arc<dyn config::ConfigurationChangeListener>);
         }
 
         let reload_task = source.watch().map(|updates| {
@@ -344,7 +344,7 @@ async fn init_messaging(
 pub mod prelude {
     pub use crate::cli::{ConfigSourceSpec, ParsedArgs, RuntimeMode};
     pub use crate::config::model::Config;
-    pub use crate::config::ConfigChangeListener;
+    pub use crate::config::ConfigurationChangeListener;
     pub use crate::messaging::{
         message_handler, MessageHandler, MessagingService, Qos, ReplyFuture,
     };
