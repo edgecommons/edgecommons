@@ -120,3 +120,135 @@ impl ConfigSource for ConfigComponentSource {
         Some(rx)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    use std::time::Duration;
+
+    use crate::messaging::message::Message;
+    use crate::messaging::service::DefaultMessagingService;
+    use crate::messaging::{Destination, MessagingProvider, Qos, Subscription};
+
+    /// Bounded delivery channel for one fake subscription.
+    type SubSender = tokio::sync::mpsc::Sender<(String, Vec<u8>)>;
+
+    /// A provider that (optionally) auto-replies to any request, and lets a test push
+    /// messages into live subscriptions — enough to exercise request/reply + watch
+    /// without a broker.
+    struct FakeProvider {
+        subs: Mutex<HashMap<String, SubSender>>,
+        reply_body: Option<Value>,
+    }
+
+    impl FakeProvider {
+        fn new(reply_body: Option<Value>) -> Arc<Self> {
+            Arc::new(Self { subs: Mutex::new(HashMap::new()), reply_body })
+        }
+        fn has_sub(&self, topic: &str) -> bool {
+            self.subs.lock().unwrap().contains_key(topic)
+        }
+        fn push(&self, topic: &str, msg: &Message) {
+            if let Some(tx) = self.subs.lock().unwrap().get(topic) {
+                let _ = tx.try_send((topic.to_string(), msg.to_vec().unwrap()));
+            }
+        }
+    }
+
+    #[async_trait]
+    impl MessagingProvider for FakeProvider {
+        async fn publish(&self, _t: &str, payload: Vec<u8>, _d: Destination, _q: Qos) -> Result<()> {
+            if let Some(body) = &self.reply_body {
+                if let Ok(req) = Message::from_slice(&payload) {
+                    if let Some(reply_to) = req.header.reply_to.clone() {
+                        let reply = crate::messaging::message::MessageBuilder::new("Config", "1.0")
+                            .correlation_id(req.header.correlation_id.clone())
+                            .payload(body.clone())
+                            .build();
+                        if let Some(tx) = self.subs.lock().unwrap().get(&reply_to) {
+                            let _ = tx.try_send((reply_to.clone(), reply.to_vec().unwrap()));
+                        }
+                    }
+                }
+            }
+            Ok(())
+        }
+        async fn subscribe(
+            &self,
+            filter: &str,
+            _d: Destination,
+            _q: Qos,
+            max: usize,
+        ) -> Result<Subscription> {
+            let (tx, rx) = tokio::sync::mpsc::channel(max.max(1));
+            self.subs.lock().unwrap().insert(filter.to_string(), tx);
+            Ok(Subscription::new(rx, Box::new(())))
+        }
+        async fn unsubscribe(&self, filter: &str, _d: Destination) -> Result<()> {
+            self.subs.lock().unwrap().remove(filter);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn topic_templates_resolve() {
+        assert_eq!(
+            resolve_topic(GET_TOPIC_TEMPLATE, "T", "C"),
+            "ggcommons/T/config/get/C"
+        );
+        assert_eq!(
+            resolve_topic(UPDATED_TOPIC_TEMPLATE, "T", "C"),
+            "ggcommons/T/config/C/updated"
+        );
+    }
+
+    #[tokio::test]
+    async fn load_fetches_config_via_request_reply() {
+        let provider = FakeProvider::new(Some(serde_json::json!({ "feature": "on", "n": 5 })));
+        let svc: Arc<dyn MessagingService> = Arc::new(DefaultMessagingService::new(provider));
+        let src = ConfigComponentSource::new(svc, "thing-1", "com.example.C");
+
+        let doc = src.load().await.unwrap();
+        assert_eq!(doc["feature"], "on");
+        assert_eq!(doc["n"], 5);
+        assert_eq!(src.source_name(), "CONFIG_COMPONENT");
+    }
+
+    #[tokio::test]
+    async fn load_errors_when_request_fails() {
+        // RecordingMessaging.request returns Err -> load propagates it.
+        let svc: Arc<dyn MessagingService> = crate::testutil::RecordingMessaging::new();
+        let src = ConfigComponentSource::new(svc, "t", "c");
+        assert!(src.load().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn watch_forwards_updated_config_messages() {
+        let provider = FakeProvider::new(None);
+        let svc: Arc<dyn MessagingService> = Arc::new(DefaultMessagingService::new(provider.clone()));
+        let src = ConfigComponentSource::new(svc, "thing-1", "com.example.C");
+
+        let mut rx = src.watch().unwrap();
+        let updated = "ggcommons/thing-1/config/com.example.C/updated";
+        for _ in 0..100 {
+            if provider.has_sub(updated) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(provider.has_sub(updated), "watch should subscribe to the updated topic");
+
+        let update = crate::messaging::message::MessageBuilder::new("ConfigUpdated", "1.0")
+            .payload(serde_json::json!({ "v": 9 }))
+            .build();
+        provider.push(updated, &update);
+
+        let body = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .expect("update delivered within timeout")
+            .expect("a body");
+        assert_eq!(body["v"], 9);
+    }
+}

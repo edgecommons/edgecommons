@@ -263,4 +263,80 @@ mod tests {
         assert_eq!(cfg.parsed.logging.level, None);
         assert!(cfg.instance_ids().is_empty());
     }
+
+    #[test]
+    fn metric_config_defaults() {
+        let cfg = Config::from_value("c", "t", json!({})).unwrap();
+        let m = &cfg.parsed.metric_emission;
+        assert_eq!(m.target(), "log");
+        assert_eq!(m.namespace(), "ggcommons");
+        assert!(m.log_file_name().contains("{ComponentFullName}"));
+        assert_eq!(m.max_file_size(), "10MB");
+        assert_eq!(m.topic(), "{ThingName}/{ComponentName}/metric");
+        assert_eq!(m.destination(), "ipc");
+        assert_eq!(m.interval_secs(), 5);
+        assert!(!m.large_fleet_workaround);
+    }
+
+    #[test]
+    fn metric_config_cloudwatchcomponent_default_topic() {
+        let cfg =
+            Config::from_value("c", "t", json!({ "metricEmission": { "target": "cloudwatchcomponent" } }))
+                .unwrap();
+        assert_eq!(cfg.parsed.metric_emission.topic(), "cloudwatch/metric/put");
+    }
+
+    #[test]
+    fn metric_config_reads_target_config_values() {
+        let cfg = Config::from_value(
+            "c",
+            "t",
+            json!({ "metricEmission": {
+                "target": "messaging",
+                "namespace": "ns",
+                "largeFleetWorkaround": true,
+                "targetConfig": {
+                    "logFileName": "/x.log",
+                    "maxFileSize": "5MB",
+                    "topic": "my/topic",
+                    "destination": "iotcore",
+                    "intervalSecs": 10
+                }
+            } }),
+        )
+        .unwrap();
+        let m = &cfg.parsed.metric_emission;
+        assert_eq!(m.target(), "messaging");
+        assert_eq!(m.namespace(), "ns");
+        assert!(m.large_fleet_workaround);
+        assert_eq!(m.log_file_name(), "/x.log");
+        assert_eq!(m.max_file_size(), "5MB");
+        assert_eq!(m.topic(), "my/topic");
+        assert_eq!(m.destination(), "iotcore");
+        assert_eq!(m.interval_secs(), 10);
+    }
+
+    #[test]
+    fn interval_secs_below_minimum_falls_back_to_default() {
+        let cfg = Config::from_value(
+            "c",
+            "t",
+            json!({ "metricEmission": { "targetConfig": { "intervalSecs": 0 } } }),
+        )
+        .unwrap();
+        assert_eq!(cfg.parsed.metric_emission.interval_secs(), 5);
+    }
+
+    #[test]
+    fn instance_lookup_returns_none_for_missing_id() {
+        let cfg = Config::from_value(
+            "c",
+            "t",
+            json!({ "component": { "instances": [ { "id": "a" } ] } }),
+        )
+        .unwrap();
+        assert!(cfg.instance("a").is_some());
+        assert!(cfg.instance("missing").is_none());
+        assert!(cfg.global().is_null() || cfg.global().is_object());
+    }
 }

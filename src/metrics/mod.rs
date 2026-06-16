@@ -318,4 +318,100 @@ mod tests {
         let result = MetricEmitter::new(&config, None).await;
         assert!(matches!(result, Err(GgError::Metrics(_))));
     }
+
+    fn one_value() -> HashMap<String, f64> {
+        let mut v = HashMap::new();
+        v.insert("count".to_string(), 1.0);
+        v
+    }
+
+    fn define(emitter: &MetricEmitter) {
+        emitter.define_metric(MetricBuilder::create("m").add_measure("count", "Count", 60).build());
+    }
+
+    #[tokio::test]
+    async fn messaging_target_builds_and_emits() {
+        let raw = json!({ "metricEmission": { "target": "messaging", "targetConfig": { "topic": "m/t", "destination": "ipc" } } });
+        let config = Config::from_value("c", "t", raw).unwrap();
+        let recorder = crate::testutil::RecordingMessaging::new();
+        let emitter = MetricEmitter::new(&config, Some(recorder.clone())).await.unwrap();
+        define(&emitter);
+        emitter.emit_metric("m", one_value()).await.unwrap();
+        assert_eq!(recorder.local().len(), 1, "messaging target should publish EMF");
+    }
+
+    #[tokio::test]
+    async fn cloudwatchcomponent_target_builds_and_emits() {
+        let raw = json!({ "metricEmission": { "target": "cloudwatchcomponent" } });
+        let config = Config::from_value("c", "t", raw).unwrap();
+        let recorder = crate::testutil::RecordingMessaging::new();
+        let emitter = MetricEmitter::new(&config, Some(recorder.clone())).await.unwrap();
+        define(&emitter);
+        emitter.emit_metric_now("m", one_value()).await.unwrap();
+        assert_eq!(recorder.local().len(), 1);
+        assert_eq!(recorder.local()[0].0, "cloudwatch/metric/put");
+    }
+
+    #[tokio::test]
+    async fn cloudwatch_target_without_feature_is_error() {
+        let raw = json!({ "metricEmission": { "target": "cloudwatch" } });
+        let config = Config::from_value("c", "t", raw).unwrap();
+        // Without the `cloudwatch` cargo feature, selecting it is a clear error.
+        let result = MetricEmitter::new(&config, None).await;
+        #[cfg(not(feature = "cloudwatch"))]
+        assert!(matches!(result, Err(GgError::Metrics(_))));
+        #[cfg(feature = "cloudwatch")]
+        let _ = result; // with the feature it constructs (needs AWS env at emit time)
+    }
+
+    #[tokio::test]
+    async fn unknown_target_defaults_to_log() {
+        let dir = std::env::temp_dir().join(format!("ggcommons-unk-{}", uuid::Uuid::new_v4()));
+        let path = dir.join("m.log");
+        let raw = json!({ "metricEmission": { "target": "bogus", "targetConfig": { "logFileName": path.to_string_lossy() } } });
+        let config = Config::from_value("c", "t", raw).unwrap();
+        let emitter = MetricEmitter::new(&config, None).await.unwrap();
+        define(&emitter);
+        emitter.emit_metric_now("m", one_value()).await.unwrap();
+        emitter.flush_metrics().await.unwrap();
+        emitter.shutdown().await;
+        assert!(std::fs::read_to_string(&path).unwrap().lines().count() >= 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn on_config_change_rebuilds_target() {
+        use crate::config::ConfigChangeListener;
+
+        let dir = std::env::temp_dir().join(format!("ggcommons-recfg-{}", uuid::Uuid::new_v4()));
+        let path = dir.join("m.log");
+        let raw_log = json!({ "metricEmission": { "target": "log", "targetConfig": { "logFileName": path.to_string_lossy() } } });
+        let config = Config::from_value("c", "t", raw_log).unwrap();
+        // Build with messaging available so the rebuilt messaging target can be created.
+        let recorder = crate::testutil::RecordingMessaging::new();
+        let emitter = MetricEmitter::new(&config, Some(recorder.clone())).await.unwrap();
+        define(&emitter);
+
+        // Reconfigure to a messaging target.
+        let raw_msg = json!({ "metricEmission": { "target": "messaging", "targetConfig": { "topic": "mt", "destination": "ipc" } } });
+        let new_cfg = Arc::new(Config::from_value("c", "t", raw_msg).unwrap());
+        assert!(emitter.on_configuration_change(new_cfg).await, "rebuild should succeed");
+
+        emitter.emit_metric_now("m", one_value()).await.unwrap();
+        assert_eq!(recorder.local().len(), 1, "metrics now flow to the messaging target");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn emitting_undefined_metric_is_ignored() {
+        let dir = std::env::temp_dir().join(format!("ggcommons-undef-{}", uuid::Uuid::new_v4()));
+        let path = dir.join("m.log");
+        let raw = json!({ "metricEmission": { "target": "log", "targetConfig": { "logFileName": path.to_string_lossy() } } });
+        let config = Config::from_value("c", "t", raw).unwrap();
+        let emitter = MetricEmitter::new(&config, None).await.unwrap();
+        // No definition -> both emit paths are no-ops (Ok), not errors.
+        emitter.emit_metric("nope", one_value()).await.unwrap();
+        emitter.emit_metric_now("nope", one_value()).await.unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

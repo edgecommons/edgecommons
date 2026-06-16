@@ -36,6 +36,9 @@ pub mod logging;
 pub mod messaging;
 pub mod metrics;
 
+#[cfg(test)]
+mod testutil;
+
 pub use error::{GgError, Result};
 
 use std::ffi::OsString;

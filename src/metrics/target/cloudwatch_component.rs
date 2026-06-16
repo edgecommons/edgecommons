@@ -68,3 +68,35 @@ impl MetricTarget for CloudWatchComponentTarget {
         self.publish(metric, values).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::metrics::MetricBuilder;
+    use crate::testutil::RecordingMessaging;
+
+    fn values() -> HashMap<String, f64> {
+        let mut v = HashMap::new();
+        v.insert("count".to_string(), 3.0);
+        v
+    }
+
+    #[tokio::test]
+    async fn publishes_emf_to_the_component_topic() {
+        let recorder = RecordingMessaging::new();
+        let target = CloudWatchComponentTarget::new(recorder.clone(), "cloudwatch/metric/put", "demo");
+        let metric = MetricBuilder::create("requests").add_measure("count", "Count", 60).build();
+
+        target.emit(&metric, &values()).await.unwrap();
+        target.emit_now(&metric, &values()).await.unwrap();
+
+        let published = recorder.local();
+        assert_eq!(published.len(), 2);
+        assert_eq!(published[0].0, "cloudwatch/metric/put");
+        // The published body is the EMF object (carries the `_aws` metadata key).
+        assert!(published[0].1.body.get("_aws").is_some(), "payload should be EMF");
+        // This target also exercises the default no-op flush/shutdown trait methods.
+        target.flush().await.unwrap();
+        target.shutdown().await;
+    }
+}

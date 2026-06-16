@@ -49,3 +49,40 @@ impl ConfigSource for EnvConfigSource {
         "ENV"
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn unique_var(prefix: &str) -> String {
+        format!("GGC_{prefix}_{}", uuid::Uuid::new_v4().simple())
+    }
+
+    #[tokio::test]
+    async fn loads_json_from_env_var() {
+        let var = unique_var("OK");
+        std::env::set_var(&var, r#"{ "a": 1, "b": "x" }"#);
+        let src = EnvConfigSource::new(var.clone());
+        let doc = src.load().await.unwrap();
+        assert_eq!(doc["a"], 1);
+        assert_eq!(doc["b"], "x");
+        assert_eq!(src.source_name(), "ENV");
+        std::env::remove_var(&var);
+    }
+
+    #[tokio::test]
+    async fn missing_var_is_config_error() {
+        let var = unique_var("MISSING");
+        let err = EnvConfigSource::new(var).load().await.unwrap_err();
+        assert!(matches!(err, GgError::Config(_)));
+    }
+
+    #[tokio::test]
+    async fn invalid_json_is_error() {
+        let var = unique_var("BAD");
+        std::env::set_var(&var, "this is not json");
+        let result = EnvConfigSource::new(var.clone()).load().await;
+        assert!(result.is_err());
+        std::env::remove_var(&var);
+    }
+}

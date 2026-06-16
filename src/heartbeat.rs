@@ -506,4 +506,181 @@ mod tests {
         assert_eq!(flat.get("disk_free"), Some(&60.0));
         assert_eq!(flat.len(), 5);
     }
+
+    fn config_with_target(measures: Value, target: Value) -> Config {
+        let raw = json!({
+            "heartbeat": { "intervalSecs": 1, "measures": measures, "targets": [ target ] }
+        });
+        Config::from_value("com.example.C", "thing-1", raw).unwrap()
+    }
+
+    /// The messaging target publishes a heartbeat whose body carries EVERY enabled
+    /// measure category — the gap the integration test (cpu/memory only) left open.
+    #[tokio::test]
+    async fn messaging_target_publishes_all_measures() {
+        let config = config_with_target(
+            json!({ "cpu": true, "memory": true, "disk": true, "threads": true, "files": true, "fds": true }),
+            json!({ "type": "messaging", "config": { "topic": "hb/{ThingName}", "destination": "ipc" } }),
+        );
+        let recorder = crate::testutil::RecordingMessaging::new();
+        let metrics: Arc<dyn MetricService> = crate::testutil::RecordingMetrics::new();
+        let messaging: Option<Arc<dyn MessagingService>> = Some(recorder.clone());
+
+        let mut monitor = HeartbeatMonitor::new(config.parsed.heartbeat.measures.clone());
+        let stats = monitor.get_stats();
+        publish(&config, &metrics, &messaging, &stats).await;
+
+        let local = recorder.local();
+        assert_eq!(local.len(), 1, "one heartbeat published locally");
+        let (topic, msg) = &local[0];
+        assert_eq!(topic, "hb/thing-1", "topic template resolved");
+        assert_eq!(msg.header.name, "heartbeat");
+        assert_eq!(msg.header.version, "1.0.0");
+        for category in ["cpu", "memory", "disk", "threads", "files", "fds"] {
+            assert!(
+                msg.body.get(category).is_some(),
+                "heartbeat body should include the '{category}' measure"
+            );
+        }
+        assert!(recorder.iot().is_empty(), "ipc destination must not hit IoT Core");
+    }
+
+    /// The `iotcore` destination routes the heartbeat to the IoT Core publish path.
+    #[tokio::test]
+    async fn messaging_target_iot_core_destination() {
+        let config = config_with_target(
+            json!({ "cpu": true, "memory": true }),
+            json!({ "type": "messaging", "config": { "topic": "hb/core", "destination": "iotcore" } }),
+        );
+        let recorder = crate::testutil::RecordingMessaging::new();
+        let metrics: Arc<dyn MetricService> = crate::testutil::RecordingMetrics::new();
+        let messaging: Option<Arc<dyn MessagingService>> = Some(recorder.clone());
+
+        let stats = HeartbeatMonitor::new(config.parsed.heartbeat.measures.clone()).get_stats();
+        publish(&config, &metrics, &messaging, &stats).await;
+
+        assert!(recorder.local().is_empty(), "iotcore must not publish locally");
+        let iot = recorder.iot();
+        assert_eq!(iot.len(), 1);
+        assert_eq!(iot[0].0, "hb/core");
+    }
+
+    /// The `metric` target flattens the stats and emits them through the metric service.
+    #[tokio::test]
+    async fn metric_target_emits_flattened_measures() {
+        let config = config_with_target(
+            json!({ "cpu": true, "memory": true, "disk": true }),
+            json!({ "type": "metric" }),
+        );
+        let recorder = crate::testutil::RecordingMetrics::new();
+        let metrics: Arc<dyn MetricService> = recorder.clone();
+        let messaging: Option<Arc<dyn MessagingService>> = None;
+
+        let stats = HeartbeatMonitor::new(config.parsed.heartbeat.measures.clone()).get_stats();
+        publish(&config, &metrics, &messaging, &stats).await;
+
+        let emissions = recorder.emissions();
+        assert_eq!(emissions.len(), 1);
+        let (name, values) = &emissions[0];
+        assert_eq!(name, "heartbeat");
+        // Flattened: disk contributes three measures, plus cpu_usage + memory_usage.
+        assert!(values.contains_key("cpu_usage"));
+        assert!(values.contains_key("memory_usage"));
+        assert!(values.contains_key("disk_total"));
+    }
+
+    /// A messaging target configured without a messaging service is skipped (warned),
+    /// not a panic — and nothing is published.
+    #[tokio::test]
+    async fn messaging_target_without_service_is_skipped() {
+        let config = config_with_target(
+            json!({ "cpu": true }),
+            json!({ "type": "messaging", "config": { "topic": "hb", "destination": "ipc" } }),
+        );
+        let metrics: Arc<dyn MetricService> = crate::testutil::RecordingMetrics::new();
+        let messaging: Option<Arc<dyn MessagingService>> = None;
+        let stats = HeartbeatMonitor::new(config.parsed.heartbeat.measures.clone()).get_stats();
+        // Must not panic.
+        publish(&config, &metrics, &messaging, &stats).await;
+    }
+
+    /// The running heartbeat fires on its configured interval: the gap between
+    /// consecutive published heartbeats is ~`intervalSecs` (within tolerance).
+    #[tokio::test]
+    async fn heartbeat_fires_on_its_interval() {
+        let raw = json!({
+            "heartbeat": {
+                "intervalSecs": 1,
+                "measures": { "cpu": true, "memory": true },
+                "targets": [ { "type": "messaging", "config": { "topic": "hb", "destination": "ipc" } } ]
+            }
+        });
+        let config = Config::from_value("com.example.C", "thing-1", raw).unwrap();
+        let recorder = crate::testutil::RecordingMessaging::new();
+        let metrics: Arc<dyn MetricService> = crate::testutil::RecordingMetrics::new();
+        let config_handle = Arc::new(ArcSwap::from_pointee(config));
+
+        let _hb = Heartbeat::start(config_handle, metrics, Some(recorder.clone()));
+
+        // Collect at least 3 heartbeats (t≈0, ≈1s, ≈2s).
+        for _ in 0..40 {
+            if recorder.times().len() >= 3 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        let times = recorder.times();
+        assert!(times.len() >= 3, "expected >=3 heartbeats, got {}", times.len());
+
+        // Gap between the 2nd and 3rd heartbeat should be ~1s (avoid the first,
+        // which fires immediately on interval start).
+        let gap = times[2].duration_since(times[1]).as_secs_f64();
+        assert!(
+            (0.6..=1.6).contains(&gap),
+            "interval gap should be ~1s, measured {gap:.3}s"
+        );
+    }
+
+    /// Raising `intervalSecs` via hot-reload rebuilds the ticker so later heartbeats
+    /// are spaced by the new interval.
+    #[tokio::test]
+    async fn heartbeat_reacts_to_interval_change() {
+        let raw = json!({
+            "heartbeat": {
+                "intervalSecs": 1,
+                "measures": { "cpu": true },
+                "targets": [ { "type": "messaging", "config": { "topic": "hb", "destination": "ipc" } } ]
+            }
+        });
+        let config = Config::from_value("com.example.C", "thing-1", raw).unwrap();
+        let recorder = crate::testutil::RecordingMessaging::new();
+        let metrics: Arc<dyn MetricService> = crate::testutil::RecordingMetrics::new();
+        let handle = Arc::new(ArcSwap::from_pointee(config));
+
+        let _hb = Heartbeat::start(handle.clone(), metrics, Some(recorder.clone()));
+
+        // Let a couple of 1s ticks happen, then widen the interval to 3s.
+        for _ in 0..25 {
+            if recorder.times().len() >= 2 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        let raw2 = json!({
+            "heartbeat": {
+                "intervalSecs": 3,
+                "measures": { "cpu": true },
+                "targets": [ { "type": "messaging", "config": { "topic": "hb", "destination": "ipc" } } ]
+            }
+        });
+        handle.store(Arc::new(
+            Config::from_value("com.example.C", "thing-1", raw2).unwrap(),
+        ));
+        let before = recorder.times().len();
+        // Within ~1.5s the old 1s cadence would have added multiple heartbeats; the
+        // new 3s cadence should add at most one.
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        let added = recorder.times().len() - before;
+        assert!(added <= 1, "after widening to 3s, expected <=1 new heartbeat in 1.5s, got {added}");
+    }
 }

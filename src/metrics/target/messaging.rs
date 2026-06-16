@@ -79,3 +79,53 @@ impl MetricTarget for MessagingMetricTarget {
         self.publish(metric, values).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::metrics::MetricBuilder;
+    use crate::testutil::RecordingMessaging;
+
+    fn values() -> HashMap<String, f64> {
+        let mut v = HashMap::new();
+        v.insert("count".to_string(), 1.0);
+        v
+    }
+
+    fn metric() -> Metric {
+        MetricBuilder::create("requests").add_measure("count", "Count", 60).build()
+    }
+
+    #[tokio::test]
+    async fn emits_to_local_broker() {
+        let recorder = RecordingMessaging::new();
+        let target = MessagingMetricTarget::new(recorder.clone(), "m/topic", false, "demo", false);
+        target.emit(&metric(), &values()).await.unwrap();
+
+        assert!(recorder.iot().is_empty());
+        let local = recorder.local();
+        assert_eq!(local.len(), 1);
+        assert_eq!(local[0].0, "m/topic");
+        assert!(local[0].1.body.get("_aws").is_some());
+    }
+
+    #[tokio::test]
+    async fn emits_to_iot_core_when_selected() {
+        let recorder = RecordingMessaging::new();
+        let target = MessagingMetricTarget::new(recorder.clone(), "m/topic", true, "demo", false);
+        target.emit_now(&metric(), &values()).await.unwrap();
+
+        assert!(recorder.local().is_empty());
+        assert_eq!(recorder.iot().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn large_fleet_workaround_emits_two_variants() {
+        let recorder = RecordingMessaging::new();
+        let target = MessagingMetricTarget::new(recorder.clone(), "m/topic", false, "demo", true);
+        target.emit(&metric(), &values()).await.unwrap();
+
+        // Normal record + the coreName="ALL" record.
+        assert_eq!(recorder.local().len(), 2);
+    }
+}

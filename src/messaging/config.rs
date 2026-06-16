@@ -144,4 +144,49 @@ mod tests {
         let iot = mc.messaging.iot_core.unwrap();
         assert_eq!(iot.resolved_host().unwrap(), "x.iot.amazonaws.com");
     }
+
+    #[test]
+    fn resolved_host_errors_without_host_or_endpoint() {
+        let json = r#"{ "messaging": { "local": { "port": 1883, "clientId": "c" } } }"#;
+        let mc: MessagingConfig = serde_json::from_str(json).unwrap();
+        assert!(mc.messaging.local.resolved_host().is_err());
+    }
+
+    #[test]
+    fn parses_credentials_both_kinds() {
+        let json = r#"{ "messaging": {
+            "local": { "host": "h", "port": 1883, "clientId": "l",
+                       "credentials": { "username": "u", "password": "p" } },
+            "iotCore": { "endpoint": "e", "port": 8883, "clientId": "i",
+                         "credentials": { "certPath": "c.pem", "keyPath": "k.pem", "caPath": "ca.pem" } } } }"#;
+        let mc: MessagingConfig = serde_json::from_str(json).unwrap();
+        let local_creds = mc.messaging.local.credentials.unwrap();
+        assert_eq!(local_creds.username.as_deref(), Some("u"));
+        assert_eq!(local_creds.password.as_deref(), Some("p"));
+        let iot_creds = mc.messaging.iot_core.unwrap().credentials.unwrap();
+        assert_eq!(iot_creds.cert_path.as_deref(), Some("c.pem"));
+        assert_eq!(iot_creds.key_path.as_deref(), Some("k.pem"));
+        assert_eq!(iot_creds.ca_path.as_deref(), Some("ca.pem"));
+    }
+
+    #[tokio::test]
+    async fn load_reads_and_parses_a_file() {
+        let dir = std::env::temp_dir().join(format!("ggcommons-mc-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("messaging.json");
+        std::fs::write(
+            &path,
+            r#"{ "messaging": { "local": { "host": "localhost", "port": 1884, "clientId": "c" } } }"#,
+        )
+        .unwrap();
+        let mc = MessagingConfig::load(&path).await.unwrap();
+        assert_eq!(mc.messaging.local.port, 1884);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn load_missing_file_is_error() {
+        let result = MessagingConfig::load("/no/such/messaging.json").await;
+        assert!(result.is_err());
+    }
 }

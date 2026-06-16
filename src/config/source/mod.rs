@@ -113,3 +113,52 @@ pub fn build(
         }
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::ConfigSourceSpec;
+    use std::path::PathBuf;
+
+    #[test]
+    fn builds_file_and_env_sources() {
+        let file = build(
+            &ConfigSourceSpec::File { path: PathBuf::from("config.json") },
+            None,
+            "thing",
+            "comp",
+        )
+        .unwrap();
+        assert_eq!(file.source_name(), "FILE");
+
+        let env = build(&ConfigSourceSpec::Env { var: "CONFIG".into() }, None, "thing", "comp").unwrap();
+        assert_eq!(env.source_name(), "ENV");
+    }
+
+    #[test]
+    fn config_component_requires_a_messaging_service() {
+        let result = build(&ConfigSourceSpec::ConfigComponent, None, "thing", "comp");
+        assert!(result.is_err(), "CONFIG_COMPONENT needs messaging");
+    }
+
+    #[test]
+    fn config_component_builds_with_messaging() {
+        let svc: Arc<dyn MessagingService> = crate::testutil::RecordingMessaging::new();
+        let source =
+            build(&ConfigSourceSpec::ConfigComponent, Some(svc), "thing", "comp").unwrap();
+        assert_eq!(source.source_name(), "CONFIG_COMPONENT");
+    }
+
+    #[cfg(not(feature = "greengrass"))]
+    #[test]
+    fn greengrass_sources_require_the_feature() {
+        assert!(build(
+            &ConfigSourceSpec::Greengrass { component: None, key: "ComponentConfig".into() },
+            None,
+            "thing",
+            "comp"
+        )
+        .is_err());
+        assert!(build(&ConfigSourceSpec::Shadow { name: None }, None, "thing", "comp").is_err());
+    }
+}
