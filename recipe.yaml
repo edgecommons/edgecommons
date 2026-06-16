@@ -1,0 +1,72 @@
+---
+RecipeFormatVersion: "2020-01-25"
+ComponentName: "{COMPONENT_NAME}"
+ComponentVersion: "{COMPONENT_VERSION}"
+ComponentDescription: "Skeleton Rust component built on the ggcommons Rust library: standardized configuration, logging, messaging, metrics, and heartbeats."
+ComponentPublisher: "{COMPONENT_AUTHOR}"
+ComponentConfiguration:
+  DefaultConfiguration:
+    ComponentConfig:
+      logging:
+        level: "INFO"
+      heartbeat:
+        intervalSecs: 5
+        # Heartbeat publishes via the metric service. (Messaging-target heartbeats
+        # over Greengrass IPC require GREENGRASS-mode messaging — Phase 2.)
+        targets:
+          - type: "metric"
+        measures:
+          cpu: true
+          memory: true
+          disk: false
+      metricEmission:
+        target: "log"
+        namespace: "ggcommons"
+        targetConfig:
+          logFileName: "/greengrass/v2/logs/{ComponentFullName}.metric.log"
+      tags:
+        appId: "Test"
+        site: "Chantilly"
+        shop: "test_shop"
+        line: "test_line"
+      component:
+        global:
+          publish_interval: 3
+        instances: []
+    accessControl:
+      aws.greengrass.ipc.pubsub:
+        "aws.proserve.greengrass.RustComponentSkeleton:pubsub:1":
+          policyDescription: Allows access to publish/subscribe to all topics.
+          operations:
+            - "aws.greengrass#PublishToTopic"
+            - "aws.greengrass#SubscribeToTopic"
+          resources:
+            - "*"
+      aws.greengrass.ipc.mqttproxy:
+        "aws.proserve.greengrass.RustComponentSkeleton:iotcore:1":
+          policyDescription: Allows access to publish/subscribe to all topics on IoT Core.
+          operations:
+            - "aws.greengrass#PublishToIoTCore"
+            - "aws.greengrass#SubscribeToIoTCore"
+          resources:
+            - "*"
+      aws.greengrass.ShadowManager:
+        "aws.proserve.greengrass.RustComponentSkeleton:shadow:1":
+          policyDescription: Allows access to shadows.
+          operations:
+            - 'aws.greengrass#GetThingShadow'
+            - 'aws.greengrass#UpdateThingShadow'
+            - 'aws.greengrass#DeleteThingShadow'
+          resources:
+            - "*"
+Manifests:
+  - Platform:
+      os: linux
+    Artifacts:
+      - URI: "s3://BUCKET_NAME/COMPONENT_NAME/COMPONENT_VERSION/rust-component-skeleton"
+        Permissions:
+          Execute: OWNER
+    Lifecycle:
+      # Runs in GREENGRASS mode (default) reading config from the deployment (GG_CONFIG).
+      Run:
+        Script: "{artifacts:path}/rust-component-skeleton -c GG_CONFIG"
