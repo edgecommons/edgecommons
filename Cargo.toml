@@ -21,6 +21,9 @@ path = "src/main.rs"
 default = ["standalone"]
 standalone = ["ggcommons/standalone"]
 greengrass = ["ggcommons/greengrass"]
+# Direct CloudWatch metric target (AWS SDK PutMetricData). Pulls in aws-config +
+# aws-sdk-cloudwatch; combine with `greengrass` for on-device use.
+cloudwatch = ["ggcommons/cloudwatch"]
 
 [dependencies]
 # Local path dependency on the ggcommons Rust library (sibling project).
