@@ -13,20 +13,23 @@
 #   GGCOMMONS_TARGET=x86_64-unknown-linux-gnu ./build.sh
 set -euo pipefail
 
-# Keep these in sync with gdk-config.json.
+# Keep these in sync with gdk-config.json / recipe.yaml.
 COMPONENT_NAME="aws.proserve.greengrass.RustComponentSkeleton"
-COMPONENT_VERSION="NEXT_PATCH"
+COMPONENT_VERSION="1.0.0"
 BIN_NAME="rust-component-skeleton"
 
+# Device artifact uses the Greengrass IPC feature (Linux-only; needs libclang).
+FEATURES="${GGCOMMONS_FEATURES:-greengrass}"
 TARGET="${GGCOMMONS_TARGET:-}"
+TARGET_DIR="${CARGO_TARGET_DIR:-target}"
 
-echo "Building ${BIN_NAME} (release)${TARGET:+ for ${TARGET}}..."
+echo "Building ${BIN_NAME} (release, features=${FEATURES})${TARGET:+ for ${TARGET}}..."
 if [[ -n "${TARGET}" ]]; then
-  cargo build --release --target "${TARGET}"
-  BIN_DIR="target/${TARGET}/release"
+  cargo build --release --no-default-features --features "${FEATURES}" --target "${TARGET}"
+  BIN_DIR="${TARGET_DIR}/${TARGET}/release"
 else
-  cargo build --release
-  BIN_DIR="target/release"
+  cargo build --release --no-default-features --features "${FEATURES}"
+  BIN_DIR="${TARGET_DIR}/release"
 fi
 
 # Resolve the binary path (Windows host builds produce a .exe).

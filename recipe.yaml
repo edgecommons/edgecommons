@@ -1,9 +1,9 @@
 ---
 RecipeFormatVersion: "2020-01-25"
-ComponentName: "{COMPONENT_NAME}"
-ComponentVersion: "{COMPONENT_VERSION}"
+ComponentName: "aws.proserve.greengrass.RustComponentSkeleton"
+ComponentVersion: "1.0.0"
 ComponentDescription: "Skeleton Rust component built on the ggcommons Rust library: standardized configuration, logging, messaging, metrics, and heartbeats."
-ComponentPublisher: "{COMPONENT_AUTHOR}"
+ComponentPublisher: "Marc Breissinger"
 ComponentConfiguration:
   DefaultConfiguration:
     ComponentConfig:
@@ -22,8 +22,9 @@ ComponentConfiguration:
       metricEmission:
         target: "log"
         namespace: "ggcommons"
+        # Component work dir — writable by a non-root (ggc_user) component.
         targetConfig:
-          logFileName: "/greengrass/v2/logs/{ComponentFullName}.metric.log"
+          logFileName: "/greengrass/v2/work/{ComponentFullName}/metric.log"
       tags:
         appId: "Test"
         site: "Chantilly"
@@ -64,9 +65,11 @@ Manifests:
       os: linux
     Artifacts:
       - URI: "s3://BUCKET_NAME/COMPONENT_NAME/COMPONENT_VERSION/rust-component-skeleton"
-        Permissions:
-          Execute: OWNER
     Lifecycle:
+      # Make the binary executable (an artifact Permissions block is rejected by
+      # CreateComponentVersion; chmod is robust for non-root and local deploys).
+      Install:
+        Script: "chmod +x {artifacts:path}/rust-component-skeleton"
       # Runs in GREENGRASS mode (default) reading config from the deployment (GG_CONFIG).
       Run:
         Script: "{artifacts:path}/rust-component-skeleton -c GG_CONFIG"
