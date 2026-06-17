@@ -1,9 +1,9 @@
 ---
 RecipeFormatVersion: "2020-01-25"
-ComponentName: "{COMPONENT_NAME}"
-ComponentVersion: "{COMPONENT_VERSION}"
+ComponentName: "<<COMPONENTFULLNAME>>"
+ComponentVersion: "1.0.0"
 ComponentDescription: "<<DESCRIPTION>>"
-ComponentPublisher: "{COMPONENT_AUTHOR}"
+ComponentPublisher: "<<AUTHOR>>"
 ComponentDependencies:
   aws.greengrass.TokenExchangeService:
     VersionRequirement: ">=2.0.0"
@@ -20,6 +20,7 @@ ComponentConfiguration:
           - type: "messaging"
             config:
               destination: "ipc"
+              topic: "heartbeat/{ThingName}/{ComponentName}"
         measures:
           cpu: true
           memory: true
