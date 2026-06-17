@@ -104,7 +104,11 @@ pub fn build(
             Box::new(greengrass::GreengrassConfigSource::new(component.clone(), key.clone()))
         }
         #[cfg(feature = "greengrass")]
-        ConfigSourceSpec::Shadow { name } => Box::new(shadow::ShadowConfigSource::new(name.clone())),
+        ConfigSourceSpec::Shadow { name } => Box::new(shadow::ShadowConfigSource::new(
+            name.clone(),
+            thing_name,
+            component_name,
+        )),
         #[cfg(not(feature = "greengrass"))]
         ConfigSourceSpec::Greengrass { .. } | ConfigSourceSpec::Shadow { .. } => {
             return Err(crate::error::GgError::Config(

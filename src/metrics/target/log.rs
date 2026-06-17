@@ -12,6 +12,12 @@
 //! ## Semantics & Architecture
 //! - Single open file behind a `std::sync::Mutex`; writes are short and never hold
 //!   the lock across an `.await`.
+//! - **Fail-soft, lazy open** (matching Java's `Log` target): the file is *not*
+//!   opened at construction. It is opened on the first emit; if it cannot be opened
+//!   (e.g. the default `/greengrass/v2/logs` path is not writable by a non-root
+//!   component), a single warning is logged and metrics are dropped rather than
+//!   crashing the component. Java's target likewise catches appender-configuration
+//!   failures and falls back instead of propagating.
 //! - **Rotation**: when a write would exceed `targetConfig.maxFileSize` (default
 //!   `10MB`, parsed with 1024-based KB/MB/GB units), the current file is renamed to
 //!   `<stem>-<UTC-timestamp><ext>` and a fresh file is opened; up to 5 rolled files
@@ -42,10 +48,12 @@ const DEFAULT_MAX_BYTES: u64 = 10 * 1024 * 1024;
 /// Number of rolled files to retain (matches Java's `DefaultRolloverStrategy(max=5)`).
 const MAX_BACKUPS: usize = 5;
 
-/// Mutable state behind the lock: the open file and its current byte size.
+/// Mutable state behind the lock: the open file, its current byte size, and whether
+/// an open failure has already been warned about (so we warn at most once).
 struct LogState {
     file: Option<File>,
     size: u64,
+    open_warned: bool,
 }
 
 /// Appends EMF JSON lines to a file, rotating by size.
@@ -58,13 +66,12 @@ pub struct LogTarget {
 }
 
 impl LogTarget {
-    /// Open (creating parent directories) the metric log file at `path`, rotating at
-    /// `max_file_size` (e.g. `"10MB"`).
+    /// Construct a log target for `path`, rotating at `max_file_size` (e.g. `"10MB"`).
     ///
-    /// # Errors
-    /// | Error Variant | Condition | Recovery |
-    /// |---------------|-----------|----------|
-    /// | `GgError::Io` | The file or its parent directory cannot be created/opened | Check the configured `logFileName` path and permissions |
+    /// The file is **not** opened here — it is opened lazily on the first emit (see
+    /// the module docs). Construction is therefore infallible; the `Result` is
+    /// retained for call-site/signature compatibility and is always `Ok`.
+    #[allow(clippy::unnecessary_wraps)]
     pub fn new(
         path: impl AsRef<Path>,
         namespace: impl Into<String>,
@@ -72,23 +79,53 @@ impl LogTarget {
         max_file_size: &str,
     ) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
-        if let Some(parent) = path.parent() {
-            if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent)?;
-            }
-        }
-        let file = OpenOptions::new().create(true).append(true).open(&path)?;
-        let size = file.metadata().map(|m| m.len()).unwrap_or(0);
         Ok(Self {
             path,
             max_bytes: parse_size(max_file_size).unwrap_or(DEFAULT_MAX_BYTES),
             namespace: namespace.into(),
             large_fleet_workaround,
             state: Mutex::new(LogState {
-                file: Some(file),
-                size,
+                file: None,
+                size: 0,
+                open_warned: false,
             }),
         })
+    }
+
+    /// Open (creating parent directories) the metric log file at `self.path`.
+    fn open_file(&self) -> std::io::Result<File> {
+        if let Some(parent) = self.path.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent)?;
+            }
+        }
+        OpenOptions::new().create(true).append(true).open(&self.path)
+    }
+
+    /// Ensure the file is open, opening it lazily on first use. Returns `false`
+    /// (fail-soft) if the file cannot be opened, warning at most once.
+    fn ensure_open(&self, state: &mut LogState) -> bool {
+        if state.file.is_some() {
+            return true;
+        }
+        match self.open_file() {
+            Ok(file) => {
+                state.size = file.metadata().map(|m| m.len()).unwrap_or(0);
+                state.file = Some(file);
+                true
+            }
+            Err(e) => {
+                if !state.open_warned {
+                    tracing::warn!(
+                        path = %self.path.display(),
+                        error = %e,
+                        "metric log: cannot open file; dropping metrics (fail-soft, matching Java)"
+                    );
+                    state.open_warned = true;
+                }
+                false
+            }
+        }
     }
 
     fn write(&self, metric: &Metric, values: &HashMap<String, f64>) -> Result<()> {
@@ -98,6 +135,10 @@ impl LogTarget {
             .state
             .lock()
             .map_err(|_| GgError::Metrics("metric log mutex poisoned".to_string()))?;
+        // Lazy, fail-soft open: if the file is unavailable, drop the metric.
+        if !self.ensure_open(&mut state) {
+            return Ok(());
+        }
         for emf in variants {
             let line = serde_json::to_string(&emf)?;
             let needed = line.len() as u64 + 1; // + newline
@@ -318,6 +359,27 @@ mod tests {
         let second: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
         assert_eq!(first["coreName"], "thing-1");
         assert_eq!(second["coreName"], "ALL");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn unwritable_path_is_fail_soft_not_a_crash() {
+        // Use a regular file as a directory component so create_dir_all/open fails.
+        let dir = std::env::temp_dir().join(format!("ggcommons-fs-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let blocker = dir.join("not-a-dir");
+        std::fs::write(&blocker, b"x").unwrap(); // a file where we'll pretend a dir is
+        let path = blocker.join("sub").join("metric.log");
+
+        // Construction must not fail (lazy open).
+        let target = LogTarget::new(&path, "ns", false, "10MB").unwrap();
+        let metric = MetricBuilder::create("requests").add_measure("count", "Count", 60).build();
+
+        // Emitting must not error even though the file can't be opened (fail-soft).
+        target.emit_now(&metric, &values(1.0)).await.unwrap();
+        target.flush().await.unwrap();
+        assert!(!path.exists(), "no file should have been created");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

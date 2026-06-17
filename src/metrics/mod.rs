@@ -103,7 +103,9 @@ impl MetricEmitter {
     /// | Error Variant | Condition | Recovery |
     /// |---------------|-----------|----------|
     /// | `GgError::Metrics` | A messaging target was selected without a messaging service, or `cloudwatch` selected without the feature | Provide messaging / enable the `cloudwatch` feature |
-    /// | `GgError::Io` | The log target's file could not be created | Check `logFileName` and permissions |
+    ///
+    /// The `log` target is fail-soft: an unwritable `logFileName` does not error
+    /// here (it warns and drops metrics on emit), matching the Java target.
     pub async fn new(
         config: &Config,
         messaging: Option<Arc<dyn MessagingService>>,
