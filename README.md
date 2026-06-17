@@ -16,9 +16,9 @@ only business logic.
 - **Graceful shutdown** — runs until Ctrl-C / SIGTERM, unsubscribes, and drops the
   runtime cleanly (RAII).
 
-> Messaging in **GREENGRASS** mode (Greengrass IPC) is Phase 2 of the Rust port. On
-> a Greengrass core today the component runs heartbeat-only. The messaging features
-> above are fully exercised in **STANDALONE** mode against an MQTT broker.
+> The messaging features above work in both **STANDALONE** mode (against an MQTT
+> broker) and **GREENGRASS** mode (Greengrass IPC, built with the `greengrass`
+> feature) — both validated against a live Greengrass core.
 
 ## Run locally (STANDALONE mode)
 

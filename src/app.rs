@@ -13,8 +13,9 @@
 //! 4. **Graceful shutdown** — runs until Ctrl-C / SIGTERM, then unsubscribes and
 //!    returns so the [`ggcommons::GgCommons`] runtime can drop cleanly (RAII).
 //!
-//! In GREENGRASS mode the messaging service is not yet available (Phase 2), so the
-//! app degrades to heartbeat-only operation and simply waits for shutdown.
+//! Messaging is available in both STANDALONE and GREENGRASS mode (the latter with
+//! the `greengrass` feature). If a build omits a messaging transport, the app
+//! degrades to heartbeat-only operation and simply waits for shutdown.
 //!
 //! ## Semantics & Architecture
 //! - Async (`tokio`); the app holds cloned `Arc` service handles, never the runtime.
@@ -44,7 +45,7 @@ const PUBLISH_METRIC: &str = "messages_published";
 pub struct SkeletonApp {
     config: Arc<Config>,
     metrics: Arc<dyn MetricService>,
-    /// `None` in GREENGRASS mode (IPC messaging is Phase 2).
+    /// `None` only when the build provides no messaging transport for the mode.
     messaging: Option<Arc<dyn MessagingService>>,
     /// Live publish interval (seconds), updated by [`IntervalListener`] on config
     /// hot-reload so the running loops pick up changes without a restart.
@@ -134,7 +135,7 @@ impl SkeletonApp {
 
         let Some(messaging) = self.messaging.clone() else {
             tracing::warn!(
-                "messaging unavailable (GREENGRASS IPC is Phase 2); running heartbeat-only until shutdown"
+                "messaging unavailable for this build/mode; running heartbeat-only until shutdown"
             );
             shutdown_signal().await;
             return Ok(());

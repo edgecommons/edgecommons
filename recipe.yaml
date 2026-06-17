@@ -11,8 +11,8 @@ ComponentConfiguration:
         level: "INFO"
       heartbeat:
         intervalSecs: 5
-        # Heartbeat publishes via the metric service. (Messaging-target heartbeats
-        # over Greengrass IPC require GREENGRASS-mode messaging — Phase 2.)
+        # Heartbeat publishes via the metric service. (A messaging-target heartbeat
+        # is also available — it uses the mode's messaging service.)
         targets:
           - type: "metric"
         measures:
