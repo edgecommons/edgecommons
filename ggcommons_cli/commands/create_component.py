@@ -39,6 +39,7 @@ class CreateComponent(CommandBase):
         self.region = None
         self.ggcommons_path = None
         self.template_url = None
+        self.template_ref = None
         self.force = False
 
     @classmethod
@@ -133,6 +134,13 @@ class CreateComponent(CommandBase):
                     "required": False
                 },
                 {
+                    "name": "template-ref",
+                    "description": "Git branch or tag to clone for the template "
+                                   "(default: the repo's default branch; ignored for local dirs)",
+                    "type": "string",
+                    "required": False
+                },
+                {
                     "name": "force",
                     "short": "f",
                     "description": "Overwrite the target directory if it already exists",
@@ -159,6 +167,7 @@ class CreateComponent(CommandBase):
         # argparse maps --ggcommons-path / --template-url to underscore dest names.
         self.ggcommons_path = args.get('ggcommons_path')
         self.template_url = args.get('template_url')
+        self.template_ref = args.get('template_ref')
         self.force = bool(args.get('force'))
 
         self._validate_args()
@@ -177,19 +186,13 @@ class CreateComponent(CommandBase):
         self._fetch_template(source, target_dir)
 
         manifest = self._read_manifest(target_dir)
-        values = self._placeholder_values()
-        if manifest is not None:
-            # Manifest-driven (generic) — no per-language CLI code required.
-            self._apply_manifest(manifest, target_dir, values)
-        elif self.component_language == "PYTHON":
-            self._legacy_python(target_dir)
-        elif self.component_language == "JAVA":
-            self._legacy_java(target_dir)
-        else:
+        if manifest is None:
             raise RuntimeError(
-                f"Template for '{self.component_language}' has no '{MANIFEST_NAME}' and no "
-                f"built-in generator. Add a manifest to the template."
+                f"Template for '{self.component_language}' has no '{MANIFEST_NAME}'. "
+                f"Add a manifest to the template (see an existing template for the schema)."
             )
+        # Manifest-driven (generic) — no per-language CLI code required.
+        self._apply_manifest(manifest, target_dir, self._placeholder_values())
 
         # Post-generation correctness checks (fail fast on a broken scaffold).
         self._verify_no_leftover_tokens(target_dir)
@@ -270,8 +273,9 @@ class CreateComponent(CommandBase):
         temp_dir = None
         try:
             temp_dir = tempfile.mkdtemp()
+            clone_kwargs = {"branch": self.template_ref} if self.template_ref else {}
             try:
-                Repo.clone_from(repo_url, temp_dir)
+                Repo.clone_from(repo_url, temp_dir, **clone_kwargs)
             except GitCommandError as e:
                 raise RuntimeError(f"Failed to clone template from '{repo_url}': {e}") from e
             self._copy_tree_into(temp_dir, target_dir)
@@ -316,6 +320,20 @@ class CreateComponent(CommandBase):
             frm = os.path.join(target_dir, *self._interp(rename["from"], values).split("/"))
             to = os.path.join(target_dir, *self._interp(rename["to"], values).split("/"))
             self.rename_file_or_directory(frm, to)
+
+        # Renames can leave empty parent dirs behind (e.g. the old Java package path).
+        self._prune_empty_dirs(target_dir)
+
+    @staticmethod
+    def _prune_empty_dirs(target_dir: str):
+        for root, _dirs, _files in os.walk(target_dir, topdown=False):
+            if os.path.abspath(root) == os.path.abspath(target_dir):
+                continue
+            try:
+                if not os.listdir(root):
+                    os.rmdir(root)
+            except OSError:
+                pass
 
     @staticmethod
     def _interp(template: str, values: Dict[str, str]) -> str:
@@ -375,56 +393,3 @@ class CreateComponent(CommandBase):
             lines[i] = line
         with open(file_path, 'w', encoding='utf-8') as file:
             file.writelines(lines)
-
-    # ----- legacy per-language generators (used when a template has no manifest) --------
-
-    def _legacy_python(self, base: str):
-        self.replace_in_file(os.path.join(base, "recipe.yaml"),
-                             {"<<DESCRIPTION>>": self.component_description,
-                              "<<COMPONENTFULLNAME>>": self.component_full_name,
-                              "<<COMPONENTNAME>>": self.component_name,
-                              "<<MAINCLASSNAME>>": f"{self.package_name}.{self.component_name}"})
-        self.replace_in_file(os.path.join(base, "gdk-config.json"),
-                             {"<<COMPONENTFULLNAME>>": self.component_full_name,
-                              "<<AUTHOR>>": self.author, "<<BUCKET>>": self.bucket,
-                              "<<REGION>>": self.region})
-        self.replace_in_file(os.path.join(base, "main.py"),
-                             {"<<PACKAGE>>": self.package_name,
-                              "<<COMPONENTFULLNAME>>": self.component_full_name,
-                              "<<COMPONENTNAME>>": self.component_name})
-        self.replace_in_file(os.path.join(base, "app", "greengrass_app.py"),
-                             {"<<PACKAGE>>": self.package_name,
-                              "<<COMPONENTFULLNAME>>": self.component_full_name,
-                              "<<COMPONENTNAME>>": self.component_name})
-        self.rename_file_or_directory(os.path.join(base, "app", "greengrass_app.py"),
-                                      os.path.join(base, "app", self.component_name + ".py"))
-
-    def _legacy_java(self, base: str):
-        old_pkg_dir = os.path.join(base, "src/main/java/com/aws/proserve/testcomponent")
-        self.replace_in_file(os.path.join(old_pkg_dir, "App.java"),
-                             {"com.aws.proserve.testcomponent": self.component_full_name})
-        self.rename_file_or_directory(old_pkg_dir,
-                                      os.path.join(base, "src/main/java/com/aws/proserve/" + self.component_name.lower()))
-        self.rename_file_or_directory(os.path.join(base, "test-configs/TestComponent.json"),
-                                      os.path.join(base, "test-configs", self.component_name + ".json"))
-        self.replace_in_file(os.path.join(base, "recipe.yaml"),
-                             {"<<DESCRIPTION>>": self.component_description,
-                              "<<COMPONENTFULLNAME>>": self.component_full_name,
-                              "<<JARNAME>>": self.jar_name,
-                              "<<MAINCLASSNAME>>": f"{self.package_name}.{self.component_name}"})
-        self.replace_in_file(os.path.join(base, "pom.xml"),
-                             {"<<PACKAGE>>": self.package_name, "<<JARNAME>>": self.jar_name,
-                              "<<COMPONENTNAME>>": self.component_name})
-        self.replace_in_file(os.path.join(base, "gdk-config.json"),
-                             {"<<COMPONENTFULLNAME>>": self.component_full_name,
-                              "<<AUTHOR>>": self.author, "<<BUCKET>>": self.bucket,
-                              "<<REGION>>": self.region})
-        new_main = os.path.join(base, "src/main/java", self.package_name.replace(".", "/"),
-                                self.component_name + ".java")
-        self.rename_file_or_directory(os.path.join(base, "src/main/java",
-                                                   self.package_name.replace(".", "/"), "App.java"),
-                                      new_main)
-        self.replace_in_file(new_main,
-                             {"<<PACKAGE>>": self.package_name,
-                              "<<COMPONENTNAME>>": self.component_name,
-                              "<<COMPONENTFULLNAME>>": self.component_full_name})
