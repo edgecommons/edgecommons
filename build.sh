@@ -14,9 +14,11 @@
 #   GGCOMMONS_TARGET=x86_64-unknown-linux-gnu ./build.sh
 set -euo pipefail
 
-# Keep these in sync with gdk-config.json.
 COMPONENT_NAME="<<COMPONENTFULLNAME>>"
-COMPONENT_VERSION="NEXT_PATCH"
+# Read the version from gdk-config.json so build.sh and the recipe never drift.
+# (For the GDK custom build system, use a concrete version in gdk-config.json rather
+# than NEXT_PATCH, so the staged artifact path matches what `gdk` expects.)
+COMPONENT_VERSION="$(python3 -c 'import json; c = json.load(open("gdk-config.json"))["component"]; print(next(iter(c.values()))["version"])')"
 BIN_NAME="<<BINNAME>>"
 
 # Greengrass-mode features for the device build. Add ggcommons features here as
@@ -24,13 +26,16 @@ BIN_NAME="<<BINNAME>>"
 FEATURES="${GGCOMMONS_FEATURES:-greengrass}"
 TARGET="${GGCOMMONS_TARGET:-}"
 
+# Honor CARGO_TARGET_DIR if the caller set one (else cargo's default ./target).
+TARGET_DIR="${CARGO_TARGET_DIR:-target}"
+
 echo "Building ${BIN_NAME} (release, features=${FEATURES})${TARGET:+ for ${TARGET}}..."
 if [[ -n "${TARGET}" ]]; then
   cargo build --release --no-default-features --features "${FEATURES}" --target "${TARGET}"
-  BIN_DIR="target/${TARGET}/release"
+  BIN_DIR="${TARGET_DIR}/${TARGET}/release"
 else
   cargo build --release --no-default-features --features "${FEATURES}"
-  BIN_DIR="target/release"
+  BIN_DIR="${TARGET_DIR}/release"
 fi
 
 # Resolve the binary path (Windows host builds produce a .exe).
