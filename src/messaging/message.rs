@@ -9,10 +9,19 @@
 //! interoperate on the same topics:
 //!
 //! ```json
-//! { "header": { "name", "version", "timestamp", "correlationId", "uuid", "replyTo" },
+//! { "header": { "name", "version", "timestamp", "correlation_id", "uuid", "reply_to" },
 //!   "tags":   { "thing": "<thingName>", "...": "..." },
 //!   "body":   <any JSON> }
 //! ```
+//!
+//! Header keys are **snake_case** (`correlation_id`, `reply_to`) to match the
+//! Java/Python `MessageHeader.toDict()` wire format exactly.
+//!
+//! A message can also be **raw** (a non-envelope payload). When a received payload
+//! is not an envelope (it has none of `header`/`tags`/`body`, or is not even a JSON
+//! object), it is delivered as a raw message carrying the original value, mirroring
+//! Java's `Message.getRaw()` / Python's `Message.raw`. A raw message serializes as
+//! `{ "raw": <value> }`.
 //!
 //! ## Semantics & Architecture
 //! - Messages are plain owned value types: `Clone`, `Send`, `Sync`. There is no
@@ -53,6 +62,8 @@
 
 use std::collections::BTreeMap;
 
+use serde::de::{self, Deserializer};
+use serde::ser::{SerializeMap, Serializer};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use time::format_description::well_known::Rfc3339;
@@ -62,9 +73,9 @@ use uuid::Uuid;
 use crate::config::model::Config;
 use crate::error::Result;
 
-/// Message metadata. Field names serialize as camelCase for cross-language parity.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+/// Message metadata. Field names serialize as snake_case (`correlation_id`,
+/// `reply_to`) to match the Java/Python `MessageHeader` wire format.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MessageHeader {
     /// Logical message name (e.g. `"Heartbeat"`).
     pub name: String,
@@ -83,7 +94,7 @@ pub struct MessageHeader {
 
 /// Message tags: the thing name plus arbitrary string/JSON key-values, serialized
 /// flat alongside `"thing"`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MessageTags {
     /// IoT Thing name, serialized as `"thing"`.
     #[serde(rename = "thing")]
@@ -93,15 +104,102 @@ pub struct MessageTags {
     pub extra: BTreeMap<String, Value>,
 }
 
-/// A message: header, tags, and an arbitrary JSON body.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// A message: either an **envelope** (header + tags + body) or a **raw**
+/// (non-envelope) payload.
+///
+/// For an envelope, `header`/`tags`/`body` are meaningful and `raw` is `None`. For a
+/// raw message, `raw` is `Some(value)` and `header`/`tags`/`body` hold defaults that
+/// should be ignored (check [`Message::is_raw`] / read [`Message::get_raw`]). This
+/// mirrors Java's `Message` (`getRaw()`) and Python's `Message.raw`.
+///
+/// Serialization (matching Java/Python `toDict`): a raw message serializes as
+/// `{ "raw": <value> }`; an envelope as `{ "header", "tags", "body" }`.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Message {
     pub header: MessageHeader,
     pub tags: MessageTags,
     pub body: Value,
+    /// When `Some`, this is a raw (non-envelope) message; the other fields are
+    /// defaults and should be ignored.
+    pub raw: Option<Value>,
+}
+
+impl Serialize for Message {
+    /// Serialize as `{ "raw": .. }` for a raw message, else as the
+    /// `{ "header", "tags", "body" }` envelope (matching Java/Python `toDict`).
+    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        if let Some(raw) = &self.raw {
+            let mut map = serializer.serialize_map(Some(1))?;
+            map.serialize_entry("raw", raw)?;
+            map.end()
+        } else {
+            let mut map = serializer.serialize_map(Some(3))?;
+            map.serialize_entry("header", &self.header)?;
+            map.serialize_entry("tags", &self.tags)?;
+            map.serialize_entry("body", &self.body)?;
+            map.end()
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Message {
+    /// Classify the incoming JSON: an object with any of `header`/`tags`/`body` is an
+    /// envelope (missing parts default); anything else becomes a raw message carrying
+    /// the original value (mirroring Java's `Message.build` / Python's `from_object`).
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        let value = Value::deserialize(deserializer)?;
+        Message::from_json_value(value).map_err(de::Error::custom)
+    }
 }
 
 impl Message {
+    /// Construct a raw (non-envelope) message carrying `value`.
+    pub fn raw(value: Value) -> Message {
+        Message {
+            header: MessageHeader::default(),
+            tags: MessageTags::default(),
+            body: Value::Null,
+            raw: Some(value),
+        }
+    }
+
+    /// Whether this is a raw (non-envelope) message.
+    pub fn is_raw(&self) -> bool {
+        self.raw.is_some()
+    }
+
+    /// The raw payload, if this is a raw message (`None` for an envelope).
+    pub fn get_raw(&self) -> Option<&Value> {
+        self.raw.as_ref()
+    }
+
+    /// Classify a parsed JSON value into an envelope or a raw message.
+    ///
+    /// An object carrying any of `header`/`tags`/`body` is treated as an envelope
+    /// (missing parts default; a malformed `header`/`tags` is an error). Any other
+    /// value (including an object with none of those keys) becomes a raw message.
+    fn from_json_value(value: Value) -> Result<Message> {
+        if let Value::Object(map) = &value {
+            let is_envelope = map.contains_key("header")
+                || map.contains_key("tags")
+                || map.contains_key("body");
+            if is_envelope {
+                let header = match map.get("header") {
+                    Some(h) => serde_json::from_value(h.clone())?,
+                    None => MessageHeader::default(),
+                };
+                let tags = match map.get("tags") {
+                    Some(t) => serde_json::from_value(t.clone())?,
+                    None => MessageTags::default(),
+                };
+                let body = map.get("body").cloned().unwrap_or(Value::Null);
+                return Ok(Message { header, tags, body, raw: None });
+            }
+        }
+        // Non-envelope (or non-object): deliver as raw, matching Java/Python.
+        Ok(Message::raw(value))
+    }
+
     /// Serialize this message to JSON bytes for the wire.
     ///
     /// # Purpose
@@ -119,18 +217,29 @@ impl Message {
         Ok(serde_json::to_vec(self)?)
     }
 
-    /// Deserialize a message from JSON bytes received off the wire.
+    /// Deserialize a message from bytes received off the wire.
     ///
     /// # Semantics & Syntax
     /// - **Signature**: `pub fn from_slice(bytes: &[u8]) -> Result<Message>`
     /// - Borrows the input slice; returns an owned `Message`.
     ///
+    /// Valid JSON is classified into an envelope or a raw message (see
+    /// [`Message::from_json_value`]). Bytes that are **not valid JSON** are delivered
+    /// as a raw message carrying the payload as a UTF-8 (lossy) string, so a message
+    /// is never silently dropped — matching the Java/Python `Message.build` behavior.
+    ///
     /// # Errors
     /// | Error Variant | Condition | Recovery |
     /// |---------------|-----------|----------|
-    /// | `GgError::Json` | Bytes are not valid JSON or do not match the message shape | Validate the producer's format |
+    /// | `GgError::Json` | Bytes are valid JSON but a present `header`/`tags` is malformed | Validate the producer's envelope shape |
     pub fn from_slice(bytes: &[u8]) -> Result<Message> {
-        Ok(serde_json::from_slice(bytes)?)
+        match serde_json::from_slice::<Value>(bytes) {
+            Ok(value) => Message::from_json_value(value),
+            // Not valid JSON: deliver as a raw string rather than dropping it.
+            Err(_) => Ok(Message::raw(Value::String(
+                String::from_utf8_lossy(bytes).into_owned(),
+            ))),
+        }
     }
 
     /// The correlation id of this message.
@@ -225,6 +334,7 @@ impl MessageBuilder {
                 extra: self.extra,
             },
             body: self.body,
+            raw: None,
         }
     }
 }
@@ -264,8 +374,9 @@ mod tests {
         let bytes = m.to_vec().unwrap();
         let value: Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(value["header"]["name"], "ProcessData");
-        assert_eq!(value["header"]["correlationId"], "corr-123");
-        assert_eq!(value["header"]["replyTo"], "reply/here");
+        // Wire keys are snake_case, matching Java/Python.
+        assert_eq!(value["header"]["correlation_id"], "corr-123");
+        assert_eq!(value["header"]["reply_to"], "reply/here");
         assert_eq!(value["tags"]["thing"], "thing-1");
         assert_eq!(value["tags"]["site"], "factory-1");
         assert_eq!(value["body"]["v"], 42);
@@ -278,7 +389,40 @@ mod tests {
     fn reply_to_is_omitted_when_absent() {
         let m = MessageBuilder::new("N", "1.0").build();
         let value: Value = serde_json::from_slice(&m.to_vec().unwrap()).unwrap();
-        assert!(value["header"].get("replyTo").is_none());
+        assert!(value["header"].get("reply_to").is_none());
+    }
+
+    #[test]
+    fn non_envelope_object_is_received_as_raw() {
+        // A payload with none of header/tags/body is delivered as a raw message.
+        let bytes = serde_json::to_vec(&json!({ "temperature": 21.5, "ok": true })).unwrap();
+        let m = Message::from_slice(&bytes).unwrap();
+        assert!(m.is_raw());
+        assert_eq!(m.get_raw().unwrap()["temperature"], 21.5);
+    }
+
+    #[test]
+    fn non_json_payload_is_received_as_raw_string() {
+        let m = Message::from_slice(b"not json at all").unwrap();
+        assert!(m.is_raw());
+        assert_eq!(m.get_raw().unwrap(), &json!("not json at all"));
+    }
+
+    #[test]
+    fn raw_message_serializes_under_raw_key() {
+        let m = Message::raw(json!({ "x": 1 }));
+        let value: Value = serde_json::from_slice(&m.to_vec().unwrap()).unwrap();
+        assert_eq!(value, json!({ "raw": { "x": 1 } }));
+    }
+
+    #[test]
+    fn envelope_with_missing_parts_defaults_them() {
+        // Body-only object is still an envelope (it has the `body` key).
+        let bytes = serde_json::to_vec(&json!({ "body": { "v": 1 } })).unwrap();
+        let m = Message::from_slice(&bytes).unwrap();
+        assert!(!m.is_raw());
+        assert_eq!(m.body, json!({ "v": 1 }));
+        assert_eq!(m.header, MessageHeader::default());
     }
 
     #[test]

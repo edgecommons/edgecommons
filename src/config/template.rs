@@ -43,10 +43,18 @@ use super::model::Config;
 /// Each substituted value is passed through `sanitize` so it cannot break out of
 /// the path or topic it is interpolated into.
 pub fn resolve(config: &Config, template: &str) -> String {
+    // `{ComponentName}` is the SHORT name (the segment after the last '.'),
+    // `{ComponentFullName}` is the full name — matching Java's
+    // ConfigManagerFactory (componentShortName = substring after last '.').
+    let short_name = config
+        .component_name
+        .rsplit('.')
+        .next()
+        .unwrap_or(&config.component_name);
     let mut out = template
         .replace("{ThingName}", &sanitize(&config.thing_name))
-        .replace("{ComponentName}", &sanitize(&config.component_name))
-        .replace("{ComponentFullName}", &sanitize(&config.component_name));
+        .replace("{ComponentFullName}", &sanitize(&config.component_name))
+        .replace("{ComponentName}", &sanitize(short_name));
 
     for (key, value) in &config.parsed.tags {
         if let Some(s) = value.as_str() {
@@ -91,9 +99,21 @@ mod tests {
 
         assert_eq!(
             resolve(&cfg, "heartbeat/{ThingName}/{ComponentName}"),
-            "heartbeat/thing-7/com.example.MyComponent"
+            "heartbeat/thing-7/MyComponent"
         );
         assert_eq!(resolve(&cfg, "/var/log/{site}.log"), "/var/log/factory-1.log");
+    }
+
+    #[test]
+    fn component_name_is_short_and_full_name_is_full() {
+        let cfg = Config::from_value("com.example.MyComponent", "t", json!({})).unwrap();
+        // {ComponentName} is the segment after the last '.', {ComponentFullName} is the whole name.
+        assert_eq!(resolve(&cfg, "{ComponentName}"), "MyComponent");
+        assert_eq!(resolve(&cfg, "{ComponentFullName}"), "com.example.MyComponent");
+        // A name with no dots: short == full.
+        let cfg2 = Config::from_value("Simple", "t", json!({})).unwrap();
+        assert_eq!(resolve(&cfg2, "{ComponentName}"), "Simple");
+        assert_eq!(resolve(&cfg2, "{ComponentFullName}"), "Simple");
     }
 
     #[test]
@@ -125,7 +145,7 @@ mod tests {
         // slashes are kept.
         assert_eq!(
             resolve(&cfg, "{ThingName}/{ComponentName}/metric"),
-            "thing-7/com.example.MyComponent/metric"
+            "thing-7/MyComponent/metric"
         );
     }
 }

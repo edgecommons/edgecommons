@@ -10,8 +10,11 @@
 //!
 //! ## Semantics & Architecture
 //! - Pure function over a [`Metric`] and values; no I/O, no async.
-//! - **Correctness**: `_aws.Timestamp` is emitted in **milliseconds** (the Java
-//!   implementation divided by 1000, which CloudWatch misinterprets).
+//! - **Correctness**: `_aws.Timestamp` is emitted in **milliseconds since the Unix
+//!   epoch**, as required by the official CloudWatch Embedded Metric Format
+//!   specification ("Values MUST be expressed as the number of milliseconds after
+//!   Jan 1, 1970 00:00:00 UTC"). The Java target divides by 1000 (seconds), which
+//!   deviates from the spec; Rust follows the spec (as does Python).
 //! - `large_fleet_workaround` emits the `coreName` dimension value as `"ALL"`.
 //! - Error handling: infallible.
 //!
@@ -48,7 +51,8 @@ use crate::metrics::metric::Metric;
 /// # Algorithmic Choices
 /// Flattens dimensions and measure values to the top level and attaches the
 /// `_aws` metadata block (single dimension set = all dimension keys), matching the
-/// Java/Python EMF layout but with a millisecond timestamp.
+/// Java/Python EMF layout. `_aws.Timestamp` is in **milliseconds** per the official
+/// EMF specification.
 pub fn build_emf(
     namespace: &str,
     metric: &Metric,

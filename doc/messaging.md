@@ -46,7 +46,27 @@ let msg = MessageBuilder::new("ProcessData", "1.0")
 svc.publish("plant/line-a/data", &msg).await?;
 ```
 
-`uuid`, `correlationId`, and the RFC3339 `timestamp` are stamped at construction.
+`uuid`, `correlation_id`, and the RFC3339 `timestamp` are stamped at construction.
+
+### Wire format & parity
+
+Header keys are **snake_case** (`correlation_id`, `reply_to`) and request/reply uses
+the `ggcommons/reply-` topic prefix — both matching the Java/Python `MessageHeader`
+exactly so the three libraries interoperate on the same topics.
+
+A received payload that is **not an envelope** (no `header`/`tags`/`body`, or not even
+JSON) is delivered as a **raw** message rather than dropped: check `Message::is_raw()`
+and read `Message::get_raw()` (mirrors Java `getRaw()` / Python `Message.raw`). A raw
+message serializes as `{ "raw": <value> }`.
+
+### `receiveOwnMessages`
+
+`GgCommonsBuilder::receive_own_messages(bool)` exists for parity (default `true`).
+Setting it to `false` is currently a **no-op that logs a warning**: the
+`aws-greengrass-component-sdk` exposes no IPC `ReceiveMode`, so own-message
+suppression cannot be done natively, and no client-side scheme covers all message
+shapes (raw messages carry no sender identity). See
+[`sdk-receive-mode-feature-request.md`](./sdk-receive-mode-feature-request.md).
 
 ## Publish / subscribe
 

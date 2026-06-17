@@ -5,7 +5,7 @@
 //!
 //! ## Overview
 //! Each request subscribes to a unique reply topic, publishes the request with
-//! that topic as `replyTo`, and awaits the first message on it. The uniqueness of
+//! that topic as `reply_to`, and awaits the first message on it. The uniqueness of
 //! the topic is what correlates the reply — no shared correlation map is needed,
 //! and the reply subscription's `Drop` handles cleanup.
 //!
@@ -16,7 +16,7 @@
 //! ## Usage Example
 //! ```
 //! let topic = ggcommons::messaging::request_reply::new_reply_topic();
-//! assert!(topic.starts_with("ggcommons/reply/"));
+//! assert!(topic.starts_with("ggcommons/reply-"));
 //! ```
 //!
 //! ## Related Modules
@@ -24,8 +24,10 @@
 
 use uuid::Uuid;
 
-/// Prefix for all generated reply topics.
-pub const REPLY_TOPIC_PREFIX: &str = "ggcommons/reply/";
+/// Prefix for all generated reply topics. Matches the Java/Python
+/// `MessageHeader.REPLY_MESSAGE_TOPIC_PREFIX` exactly (note the trailing `-`, not `/`)
+/// so request/reply interoperates across the three libraries.
+pub const REPLY_TOPIC_PREFIX: &str = "ggcommons/reply-";
 
 /// Generate a globally-unique reply topic for a single request.
 ///

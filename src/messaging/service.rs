@@ -312,7 +312,7 @@ impl DefaultMessagingService {
     /// Publish a reply correlated with `request` on `dest`.
     async fn send_reply(&self, request: &Message, reply: Message, dest: Destination) -> Result<()> {
         let topic = request.header.reply_to.clone().ok_or_else(|| {
-            GgError::Messaging("cannot reply: request has no replyTo".to_string())
+            GgError::Messaging("cannot reply: request has no reply_to".to_string())
         })?;
         let mut reply = reply;
         reply.header.correlation_id = request.header.correlation_id.clone();

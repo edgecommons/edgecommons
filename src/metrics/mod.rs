@@ -160,7 +160,13 @@ async fn build_target(
             let topic = resolve(config, &metric_config.topic());
             let iot_core = metric_config.destination().eq_ignore_ascii_case("iotcore");
             Arc::new(target::messaging::MessagingMetricTarget::new(
-                messaging, topic, iot_core, namespace, large_fleet,
+                messaging,
+                topic,
+                iot_core,
+                namespace,
+                large_fleet,
+                config.thing_name.clone(),
+                config.parsed.tags.clone(),
             ))
         }
         "cloudwatchcomponent" => {

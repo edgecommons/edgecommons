@@ -36,8 +36,8 @@ Selected by `metricEmission.target` (default `log`):
 | Target | Behavior | Notes |
 |--------|----------|-------|
 | `log` | Append EMF JSON lines to a file | Size-based rotation (5 backups); `largeFleetWorkaround` double-emits (normal + `coreName=ALL`) |
-| `messaging` | Publish EMF over the messaging service | `targetConfig.destination`: `ipc`/`local` or `iotcore` |
-| `cloudwatchcomponent` | Publish to the Greengrass CloudWatch component topic | Default topic `cloudwatch/metric/put` |
+| `messaging` | Publish EMF wrapped in a `Metric` message envelope (header/tags/body) | `targetConfig.destination`: `ipc`/`local` or `iotcore` |
+| `cloudwatchcomponent` | Publish a `{request:{namespace,metricData}}` PutMetricData message **per measure** | Default topic `cloudwatch/metric/put` |
 | `cloudwatch` | Send to CloudWatch via the AWS SDK | Requires the `cloudwatch` cargo feature; batched on an interval |
 
 Selecting `cloudwatch` without the feature, or a messaging target without a messaging
@@ -58,7 +58,14 @@ String values support template substitution (`{ThingName}`, `{ComponentName}`,
 
 ## EMF correctness
 
-- `_aws.Timestamp` is in **milliseconds** (fixing the Java H5 seconds bug).
+- `_aws.Timestamp` is in **milliseconds** since the Unix epoch, as required by the
+  official CloudWatch Embedded Metric Format specification ("Values MUST be expressed
+  as the number of milliseconds after Jan 1, 1970 00:00:00 UTC"). The Java target
+  divides by 1000 (seconds), which deviates from the spec; Rust and Python follow it.
+- The `cloudwatchcomponent` target's `metricData.timestamp` is in **seconds** — that
+  is the Greengrass CloudWatch Metrics component's PutMetricData contract, which is
+  distinct from EMF's `_aws.Timestamp`. Its `dimensions` array excludes `coreName`
+  (the component supplies it implicitly).
 - The ≤10-dimension cap is enforced on the `Metric` itself, not just the builder.
 
 ## Live reconfiguration

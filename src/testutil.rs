@@ -75,18 +75,16 @@ impl MessagingService for RecordingMessaging {
     }
 
     async fn publish_raw(&self, topic: &str, payload: &Value) -> Result<()> {
-        // Wrap the raw payload so it can be recorded as a Message body.
-        let msg = crate::messaging::message::MessageBuilder::new("raw", "1.0")
-            .payload(payload.clone())
-            .build();
+        // Record as a raw message so tests can read it via `get_raw()`.
+        let msg = Message::raw(payload.clone());
+        self.publish_times.lock().unwrap().push(Instant::now());
         self.published.lock().unwrap().push((topic.to_string(), msg));
         Ok(())
     }
 
     async fn publish_to_iot_core_raw(&self, topic: &str, payload: &Value, _qos: Qos) -> Result<()> {
-        let msg = crate::messaging::message::MessageBuilder::new("raw", "1.0")
-            .payload(payload.clone())
-            .build();
+        let msg = Message::raw(payload.clone());
+        self.publish_times.lock().unwrap().push(Instant::now());
         self.iot_published.lock().unwrap().push((topic.to_string(), msg));
         Ok(())
     }

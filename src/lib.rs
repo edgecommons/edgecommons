@@ -149,6 +149,7 @@ impl GgCommons {
 pub struct GgCommonsBuilder {
     component_name: String,
     argv: Option<Vec<OsString>>,
+    receive_own_messages: bool,
 }
 
 impl GgCommonsBuilder {
@@ -157,7 +158,26 @@ impl GgCommonsBuilder {
         Self {
             component_name: component_name.into(),
             argv: None,
+            // Default matches Java/Python (`receiveOwnMessages = true`).
+            receive_own_messages: true,
         }
+    }
+
+    /// Whether the component should receive messages it itself published (mirrors the
+    /// Java/Python `receiveOwnMessages` flag; default `true`).
+    ///
+    /// **Limitation:** setting this to `false` is currently a **no-op**. The
+    /// underlying `aws-greengrass-component-sdk` does not expose the Greengrass IPC
+    /// `SubscribeToTopic` `ReceiveMode` (`RECEIVE_MESSAGES_FROM_OTHERS`) that the
+    /// Java/Python libraries use, so own-message suppression cannot be performed
+    /// natively, and a client-side equivalent cannot reliably cover all message
+    /// shapes (e.g. raw messages carry no header/tags to identify the sender). When
+    /// `false` is requested, [`build`](Self::build) logs a warning and proceeds as if
+    /// `true`. The flag is retained for API parity and forward-compatibility; see the
+    /// upstream feature request to add `ReceiveMode` to the SDK.
+    pub fn receive_own_messages(mut self, receive_own_messages: bool) -> Self {
+        self.receive_own_messages = receive_own_messages;
+        self
     }
 
     /// Supply the argv (including the program name, as from `std::env::args_os()`).
@@ -202,6 +222,17 @@ impl GgCommonsBuilder {
         let cfg = Config::from_value(self.component_name.clone(), thing_name.clone(), raw)?;
 
         logging::init(&cfg);
+
+        // Option C: the SDK exposes no IPC ReceiveMode, so `receiveOwnMessages=false`
+        // is a documented no-op rather than a silently-broken or memory-unbounded
+        // client-side filter. Warn so the developer is not surprised.
+        if !self.receive_own_messages {
+            tracing::warn!(
+                "receiveOwnMessages=false is not supported by the Greengrass Rust SDK \
+                 (no IPC ReceiveMode); proceeding as if true — the component WILL receive \
+                 its own messages on subscribed topics"
+            );
+        }
 
         tracing::info!(
             component = %self.component_name,
