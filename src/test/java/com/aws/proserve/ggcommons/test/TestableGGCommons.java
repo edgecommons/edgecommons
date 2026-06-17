@@ -5,31 +5,38 @@
 package com.aws.proserve.ggcommons.test;
 
 import com.aws.proserve.ggcommons.GGCommons;
-import com.aws.proserve.ggcommons.interfaces.IConfigurationService;
-import com.aws.proserve.ggcommons.interfaces.IMessagingService;
-import com.aws.proserve.ggcommons.interfaces.IMetricService;
-import com.aws.proserve.ggcommons.metrics.MetricEmitter;
+import com.aws.proserve.ggcommons.ParsedCommandLine;
+import com.aws.proserve.ggcommons.config.ConfigManagerFactory;
 
 /**
- * Test-specific GGCommons that allows service injection before initialization.
- * This enables true unit testing by injecting mocks before any real services are created.
+ * Test-specific GGCommons that wires a real (file-backed) ConfigManager together with mock
+ * messaging and metric collaborators, without standing up real Greengrass IPC / brokers.
+ * This enables true unit testing of components that depend on a GGCommons instance.
  */
 public class TestableGGCommons extends GGCommons {
-    
+
     public TestableGGCommons(String componentName, String[] args) {
-        super(); // Use protected empty constructor
-        
+        super(); // protected no-arg constructor
         try {
-            // Initialize with mocks - this will create configManager and serviceRegistry
-            initForTesting(componentName, args);
-            
-            // MetricEmitter is now instance-based and will be created via builder pattern
-            
-            // Now override with our specific mock instances
-            registerService(IMessagingService.class, new MockMessagingService());
-            registerService(IMetricService.class, new MockMetricService());
+            ParsedCommandLine parsedCommandLine = GGCommons.processArgs(componentName, args, null);
+            // Real config manager (use a FILE config source so no messaging/IPC is required).
+            this.configManager = ConfigManagerFactory.create(componentName, parsedCommandLine);
+            // Mock collaborators injected directly - no real provider is created.
+            this.messagingClient = new MockMessagingService();
+            this.metricEmitter = new MockMetricService();
+            this.configManager.completeInitialization();
         } catch (Exception e) {
             throw new RuntimeException("Failed to initialize TestableGGCommons: " + e.getMessage(), e);
         }
+    }
+
+    /** Convenience accessor returning the injected messaging mock. */
+    public MockMessagingService getMockMessaging() {
+        return (MockMessagingService) getMessaging();
+    }
+
+    /** Convenience accessor returning the injected metric mock. */
+    public MockMetricService getMockMetrics() {
+        return (MockMetricService) getMetrics();
     }
 }

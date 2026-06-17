@@ -6,7 +6,6 @@ package com.aws.proserve.ggcommons.messaging;
 
 import com.aws.proserve.ggcommons.config.TagConfiguration;
 import com.aws.proserve.ggcommons.config.ConfigManager;
-import com.aws.proserve.ggcommons.interfaces.IConfigurationService;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -48,19 +47,10 @@ public class MessageTags
     /**
      * Creates a MessageTags instance from configuration settings.
      *
-     * @param configManager The configuration manager containing tag settings
+     * @param configService The configuration manager containing tag settings
      * @return A new MessageTags instance with configured tags
      */
-    /**
-     * @deprecated Use {@link #fromConfig(IConfigurationService)} instead
-     */
-    @Deprecated
-    public static MessageTags fromConfig(ConfigManager configManager)
-    {
-        return fromConfig((IConfigurationService) configManager);
-    }
-
-    public static MessageTags fromConfig(IConfigurationService configService)
+    public static MessageTags fromConfig(ConfigManager configService)
     {
         TagConfiguration sourceConfig = configService.getTagConfig();
         if (sourceConfig != null)

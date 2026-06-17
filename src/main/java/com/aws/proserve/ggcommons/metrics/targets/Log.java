@@ -6,7 +6,6 @@ package com.aws.proserve.ggcommons.metrics.targets;
 
 import com.aws.proserve.ggcommons.config.ConfigManager;
 import com.aws.proserve.ggcommons.config.MetricConfiguration;
-import com.aws.proserve.ggcommons.interfaces.IConfigurationService;
 import com.aws.proserve.ggcommons.metrics.Metric;
 import com.google.gson.JsonObject;
 import org.apache.logging.log4j.Level;
@@ -20,18 +19,9 @@ public class Log extends MetricTarget
     private Logger metricLogger;
     private String currentLoggerName;
 
-    /**
-     * @deprecated Use {@link #Log(IConfigurationService)} instead
-     */
-    @Deprecated
     public Log(ConfigManager configManager)
     {
-        this((IConfigurationService) configManager);
-    }
-    
-    public Log(IConfigurationService configService)
-    {
-        super(configService);
+        super(configManager);
         // Don't configure logger immediately - wait for logging system to stabilize
         metricLogger = null;
     }
@@ -76,8 +66,8 @@ public class Log extends MetricTarget
 
     private Logger configureMetricLogger()
     {
-        MetricConfiguration metricConfig = configService.getMetricConfig();
-        String metricFile = configService.resolveTemplate(metricConfig.getLogFileNameTemplate());
+        MetricConfiguration metricConfig = configManager.getMetricConfig();
+        String metricFile = configManager.resolveTemplate(metricConfig.getLogFileNameTemplate());
         String uniqueAppenderName = "MetricFileAppender_" + System.currentTimeMillis();
         String uniqueLoggerName = "metric_" + System.currentTimeMillis();
         

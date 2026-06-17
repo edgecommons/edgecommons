@@ -42,7 +42,7 @@ public class ConfigComponentProvider extends ConfigProvider {
         JsonObject requestPayload = new JsonObject();
         Message request = MessageBuilder.create("GetConfiguration", "1.0")
                 .withPayload(requestPayload)
-                .withConfig((com.aws.proserve.ggcommons.interfaces.IConfigurationService) this.parentConfigManager)
+                .withConfig(this.parentConfigManager)
                 .build();
         final ReplyFuture replyFuture = messagingClient.request(source, request);
         Message replyMessage = null;

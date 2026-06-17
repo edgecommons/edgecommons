@@ -4,9 +4,9 @@
  */
 package com.aws.proserve.ggcommons.metrics;
 
+import com.aws.proserve.ggcommons.config.ConfigManager;
 import com.aws.proserve.ggcommons.config.MetricConfiguration;
-import com.aws.proserve.ggcommons.interfaces.IConfigurationService;
-import com.aws.proserve.ggcommons.interfaces.IMessagingService;
+import com.aws.proserve.ggcommons.messaging.MessagingClient;
 import com.aws.proserve.ggcommons.metrics.targets.*;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -32,9 +32,19 @@ public class MetricEmitter
 
 
     /**
+     * Protected no-arg constructor for testing/subclassing (e.g. mock metric services).
+     */
+    protected MetricEmitter() {
+        this.metricTarget = null;
+        this.metricConfig = null;
+        this.thingName = null;
+        this.componentName = null;
+    }
+
+    /**
      * Package-private constructor for builder pattern.
      */
-    MetricEmitter(IConfigurationService configurationService, IMessagingService messagingService) {
+    MetricEmitter(ConfigManager configurationService, MessagingClient messagingService) {
         this.metricConfig = configurationService.getMetricConfig();
         this.thingName = configurationService.getThingName();
         this.componentName = configurationService.getComponentName();
@@ -103,6 +113,16 @@ public class MetricEmitter
      */
     public void defineMetric(Metric metric) {
         this.metrics.put(metric.getName(), metric);
+    }
+
+    /**
+     * Returns whether a metric with the given name has been defined.
+     *
+     * @param name The metric name
+     * @return true if a metric with this name has been defined, false otherwise
+     */
+    public boolean isMetricDefined(String name) {
+        return metrics.containsKey(name);
     }
 
     /**

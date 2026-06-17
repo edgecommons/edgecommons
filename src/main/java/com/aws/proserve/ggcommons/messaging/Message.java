@@ -5,7 +5,6 @@
 package com.aws.proserve.ggcommons.messaging;
 
 import com.aws.proserve.ggcommons.config.ConfigManager;
-import com.aws.proserve.ggcommons.interfaces.IConfigurationService;
 import com.google.gson.Gson;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -171,7 +170,7 @@ public class Message
     }
 
     /**
-     * @deprecated Use {@link #buildFromConfig(String, String, Object, IConfigurationService)} instead
+     * @deprecated Use {@link MessageBuilder#create(String, String)} instead
      */
     @Deprecated
     public static Message buildFromConfig(String name, String version, Object payload,
@@ -184,7 +183,7 @@ public class Message
     }
 
     /**
-     * @deprecated Use {@link #buildFromConfig(String, String, Object, IConfigurationService, String)} instead
+     * @deprecated Use {@link MessageBuilder#create(String, String)} instead
      */
     @Deprecated
     public static Message buildFromConfig(String name, String version, Object payload,
@@ -197,55 +196,6 @@ public class Message
         }
         retVal.header = headerBuilder.build();
         retVal.tags = MessageTags.fromConfig(configManager);
-        if (payload instanceof String)
-        {
-            String payloadStr =(String) payload;
-            try
-            {
-                Gson gson = new Gson();
-                // check if a "stringified" json object and convert to object if so
-                retVal.body = gson.fromJson(payloadStr, Object.class);
-            }
-            catch (JsonSyntaxException e)
-            {
-                // just a regular string
-                retVal.body = payloadStr;
-            }
-        }
-        else
-        {
-            retVal.body = payload;
-        }
-        return retVal;
-    }
-
-    /**
-     * @deprecated Use {@link MessageBuilder#create(String, String)} instead
-     */
-    @Deprecated
-    public static Message buildFromConfig(String name, String version, Object payload,
-                                          IConfigurationService configService)
-    {
-        return MessageBuilder.create(name, version)
-            .withPayload(payload)
-            .withConfig(configService)
-            .build();
-    }
-
-    /**
-     * @deprecated Use {@link MessageBuilder#create(String, String)} instead
-     */
-    @Deprecated
-    public static Message buildFromConfig(String name, String version, Object payload,
-                                          IConfigurationService configService, String correlationId)
-    {
-        Message retVal = new Message();
-        MessageHeaderBuilder headerBuilder = MessageHeaderBuilder.create(name, version);
-        if (correlationId != null) {
-            headerBuilder.withCorrelationId(correlationId);
-        }
-        retVal.header = headerBuilder.build();
-        retVal.tags = MessageTags.fromConfig(configService);
         if (payload instanceof String)
         {
             String payloadStr =(String) payload;

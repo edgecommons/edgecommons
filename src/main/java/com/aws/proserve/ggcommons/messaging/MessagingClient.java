@@ -26,6 +26,13 @@ public class MessagingClient
     private MessagingProvider messagingProvider;
 
     /**
+     * Protected no-arg constructor for testing/subclassing (e.g. mock messaging clients).
+     * Leaves the underlying provider null; subclasses are expected to override the messaging methods.
+     */
+    protected MessagingClient() {
+    }
+
+    /**
      * Package-private constructor for builder pattern.
      */
     MessagingClient(ParsedCommandLine cmdLine, boolean receiveOwnMessages) {

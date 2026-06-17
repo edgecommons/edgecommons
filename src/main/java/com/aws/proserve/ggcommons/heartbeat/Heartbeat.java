@@ -4,14 +4,12 @@
  */
 package com.aws.proserve.ggcommons.heartbeat;
 
+import com.aws.proserve.ggcommons.config.ConfigManager;
 import com.aws.proserve.ggcommons.config.ConfigurationChangeListener;
 import com.aws.proserve.ggcommons.config.HeartbeatConfiguration;
-import com.aws.proserve.ggcommons.interfaces.IConfigurationService;
-import com.aws.proserve.ggcommons.interfaces.IMessagingService;
-import com.aws.proserve.ggcommons.interfaces.IMetricService;
 import com.aws.proserve.ggcommons.messaging.Message;
 import com.aws.proserve.ggcommons.messaging.MessageBuilder;
-import com.aws.proserve.ggcommons.metrics.Measure;
+import com.aws.proserve.ggcommons.messaging.MessagingClient;
 import com.aws.proserve.ggcommons.metrics.Metric;
 import com.aws.proserve.ggcommons.metrics.MetricBuilder;
 import com.aws.proserve.ggcommons.metrics.MetricEmitter;
@@ -36,9 +34,9 @@ public class Heartbeat implements ConfigurationChangeListener
 
     private static final String MESSAGE_NAME = "heartbeat";
     private static final String MESSAGE_VERSION = "1.0.0";
-    private final IConfigurationService configurationService;
-    private IMessagingService messagingService;
-    private IMetricService metricService;
+    private final ConfigManager configurationService;
+    private MessagingClient messagingService;
+    private MetricEmitter metricService;
     private HeartbeatMonitor heartbeatMonitor;
     private Timer heartbeatTimer;
     private final Object timerLock = new Object();
@@ -47,7 +45,7 @@ public class Heartbeat implements ConfigurationChangeListener
      * Package-private constructor used by HeartbeatBuilder.
      * Use HeartbeatBuilder.create() instead of calling this directly.
      */
-    Heartbeat(IConfigurationService configurationService, IMessagingService messagingService, IMetricService metricService)
+    Heartbeat(ConfigManager configurationService, MessagingClient messagingService, MetricEmitter metricService)
     {
         this.configurationService = configurationService;
         this.messagingService = messagingService;

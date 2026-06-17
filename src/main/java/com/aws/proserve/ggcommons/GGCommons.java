@@ -6,13 +6,8 @@ package com.aws.proserve.ggcommons;
 
 import com.aws.proserve.ggcommons.config.ConfigManager;
 import com.aws.proserve.ggcommons.config.ConfigManagerFactory;
-import com.aws.proserve.ggcommons.di.ServiceFactory;
-import com.aws.proserve.ggcommons.di.ServiceRegistry;
 import com.aws.proserve.ggcommons.heartbeat.Heartbeat;
 import com.aws.proserve.ggcommons.heartbeat.HeartbeatBuilder;
-import com.aws.proserve.ggcommons.interfaces.IConfigurationService;
-import com.aws.proserve.ggcommons.interfaces.IMessagingService;
-import com.aws.proserve.ggcommons.interfaces.IMetricService;
 import com.aws.proserve.ggcommons.messaging.MessagingClient;
 import com.aws.proserve.ggcommons.messaging.MessagingClientBuilder;
 import com.aws.proserve.ggcommons.metrics.MetricEmitter;
@@ -26,8 +21,10 @@ public class GGCommons
 {
     private static final Logger LOGGER = LogManager.getLogger(GGCommons.class);
 
-    private ConfigManager configManager;
-    private ServiceRegistry serviceRegistry;
+    protected ConfigManager configManager;
+    protected MessagingClient messagingClient;
+    protected MetricEmitter metricEmitter;
+    protected Heartbeat heartbeat;
 
     /**
      * Constructs a new GGCommons instance with the given component name and command line arguments.
@@ -92,37 +89,24 @@ public class GGCommons
     {
         try {
             ParsedCommandLine parsedCommandLine = GGCommons.processArgs(componentName, args, appOptions);
-            
+
             // Initialize config manager first
             configManager = ConfigManagerFactory.create(componentName, parsedCommandLine);
-            
-            // Initialize service registry early so services can be injected
-            initializeServiceRegistry();
-            
-            // Initialize messaging client using builder pattern
-            MessagingClient messagingClient = MessagingClientBuilder.create(parsedCommandLine)
+
+            // Wire the messaging, metric and heartbeat subsystems directly (no service locator).
+            messagingClient = MessagingClientBuilder.create(parsedCommandLine)
                     .withReceiveOwnMessages(receiveOwnMessages)
                     .build();
-            
-            // Register messaging client and create messaging service
-            registerService(MessagingClient.class, messagingClient);
-            registerService(IMessagingService.class, ServiceFactory.createMessagingService(messagingClient));
-            
-            // Initialize metric emitter using builder pattern
-            MetricEmitter metricEmitter = MetricEmitterBuilder.create(getService(IConfigurationService.class))
-                    .withMessagingService(getService(IMessagingService.class))
+
+            metricEmitter = MetricEmitterBuilder.create(configManager)
+                    .withMessagingService(messagingClient)
                     .build();
-            
-            // Register metric emitter and create metric service
-            registerService(MetricEmitter.class, metricEmitter);
-            registerService(IMetricService.class, ServiceFactory.createMetricService(metricEmitter));
-            
-            // Create heartbeat using builder pattern
-            Heartbeat heartbeat = HeartbeatBuilder.create(configManager)
-                    .withMessagingService(getService(IMessagingService.class))
-                    .withMetricService(getService(IMetricService.class))
+
+            heartbeat = HeartbeatBuilder.create(configManager)
+                    .withMessagingService(messagingClient)
+                    .withMetricService(metricEmitter)
                     .build();
-            
+
             // Complete initialization - this must be the very last step
             // After this point, configuration changes will trigger listener notifications
             configManager.completeInitialization();
@@ -133,102 +117,33 @@ public class GGCommons
     }
     
     /**
-     * Initialize for testing with pre-injected services.
-     * This allows tests to inject mock services before any real initialization occurs.
-     */
-    protected void initForTesting(String componentName, String[] args) throws Exception {
-        ParsedCommandLine parsedCommandLine = GGCommons.processArgs(componentName, args, null);
-        configManager = ConfigManagerFactory.create(componentName, parsedCommandLine);
-        
-        if (serviceRegistry == null) {
-            initializeServiceRegistry();
-        }
-        
-        // For testing, use builder patterns
-        MessagingClient messagingClient = MessagingClientBuilder.create(parsedCommandLine)
-                .withReceiveOwnMessages(true)
-                .build();
-        
-        // Register messaging client and create messaging service
-        registerService(MessagingClient.class, messagingClient);
-        registerService(IMessagingService.class, ServiceFactory.createMessagingService(messagingClient));
-        
-        MetricEmitter metricEmitter = MetricEmitterBuilder.create(getService(IConfigurationService.class))
-                .withMessagingService(getService(IMessagingService.class))
-                .build();
-        
-        // Register metric emitter and create metric service for testing
-        registerService(MetricEmitter.class, metricEmitter);
-        registerService(IMetricService.class, ServiceFactory.createMetricService(metricEmitter));
-        configManager.completeInitialization();
-    }
-    
-    /**
-     * Initializes the service registry and registers default service implementations.
-     */
-    protected void initializeServiceRegistry() {
-        serviceRegistry = new ServiceRegistry();
-        ServiceFactory.registerDefaultServices(serviceRegistry, configManager);
-    }
-
-    /**
-     * Returns the configuration manager instance for this component.
-     * 
-     * @return The ConfigManager instance managing this component's configuration
+     * Returns the configuration manager for this component.
+     *
+     * @return The ConfigManager managing this component's configuration
      */
     public ConfigManager getConfigManager()
     {
         return configManager;
     }
-    
-    /**
-     * Returns the configuration service interface for this component.
-     * 
-     * @return The IConfigurationService interface
-     */
-    public IConfigurationService getConfigurationService()
-    {
-        return getService(IConfigurationService.class);
-    }
-    
 
-    
     /**
-     * Retrieves a service by its interface type.
-     * 
-     * @param serviceType The service interface class
-     * @param <T> The service type
-     * @return The service implementation, or null if not registered
+     * Returns the messaging client for this component.
+     *
+     * @return The MessagingClient for local IPC / IoT Core publish, subscribe and request/reply
      */
-    public <T> T getService(Class<T> serviceType) {
-        if (serviceRegistry == null) {
-            throw new IllegalStateException("GGCommons not properly initialized");
-        }
-        return serviceRegistry.get(serviceType);
+    public MessagingClient getMessaging()
+    {
+        return messagingClient;
     }
-    
+
     /**
-     * Registers a custom service implementation.
-     * This allows applications to override default service implementations.
-     * 
-     * @param serviceType The service interface class
-     * @param implementation The service implementation
-     * @param <T> The service type
+     * Returns the metric emitter for this component.
+     *
+     * @return The MetricEmitter for defining and emitting metrics
      */
-    public <T> void registerService(Class<T> serviceType, T implementation) {
-        if (serviceRegistry == null) {
-            throw new IllegalStateException("GGCommons not properly initialized");
-        }
-        serviceRegistry.register(serviceType, implementation);
-    }
-    
-    /**
-     * Returns the service registry for advanced service management.
-     * 
-     * @return The service registry instance
-     */
-    public ServiceRegistry getServiceRegistry() {
-        return serviceRegistry;
+    public MetricEmitter getMetrics()
+    {
+        return metricEmitter;
     }
 
     /**

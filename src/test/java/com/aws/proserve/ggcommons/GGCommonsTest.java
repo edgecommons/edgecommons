@@ -1,8 +1,8 @@
 package com.aws.proserve.ggcommons;
 
-import com.aws.proserve.ggcommons.interfaces.IConfigurationService;
-import com.aws.proserve.ggcommons.interfaces.IMessagingService;
-import com.aws.proserve.ggcommons.interfaces.IMetricService;
+import com.aws.proserve.ggcommons.config.ConfigManager;
+import com.aws.proserve.ggcommons.messaging.MessagingClient;
+import com.aws.proserve.ggcommons.metrics.MetricEmitter;
 import com.aws.proserve.ggcommons.messaging.Message;
 import com.aws.proserve.ggcommons.messaging.MessageBuilder;
 import com.aws.proserve.ggcommons.metrics.Measure;
@@ -32,9 +32,9 @@ import static org.junit.jupiter.api.Assertions.*;
 class GGCommonsTest
 {
     private static GGCommons ggCommons;
-    private static IConfigurationService configService;
-    private static IMessagingService messagingService;
-    private static IMetricService metricService;
+    private static ConfigManager configService;
+    private static MessagingClient messagingService;
+    private static MetricEmitter metricService;
     private static Logger LOGGER;
     
     private Message receivedMessage;
@@ -51,9 +51,9 @@ class GGCommonsTest
         ggCommons = GGCommonsBuilder.create("com.aws.proserve.greengrass.IntegrationTests")
                 .withArgs(args)
                 .build();
-        configService = ggCommons.getService(IConfigurationService.class);
-        messagingService = ggCommons.getService(IMessagingService.class);
-        metricService = ggCommons.getService(IMetricService.class);
+        configService = ggCommons.getConfigManager();
+        messagingService = ggCommons.getMessaging();
+        metricService = ggCommons.getMetrics();
         LOGGER = LogManager.getLogger(GGCommonsTest.class);
     }
     

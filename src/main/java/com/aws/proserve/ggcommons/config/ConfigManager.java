@@ -7,7 +7,6 @@ package com.aws.proserve.ggcommons.config;
 import com.aws.proserve.ggcommons.ParsedCommandLine;
 import com.aws.proserve.ggcommons.config.provider.ConfigProvider;
 import com.aws.proserve.ggcommons.config.provider.ConfigProviderBuilder;
-import com.aws.proserve.ggcommons.interfaces.IConfigurationService;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -35,7 +34,7 @@ import static org.apache.logging.log4j.core.config.builder.api.ConfigurationBuil
  * logging, metrics, heartbeat, and tag configurations. This class provides methods to access and modify
  * component configurations and handles configuration change notifications.
  */
-public class ConfigManager implements IConfigurationService
+public class ConfigManager
 {
     private static final Logger LOGGER = LogManager.getLogger(ConfigManager.class);
 
@@ -59,7 +58,18 @@ public class ConfigManager implements IConfigurationService
      * Package-private constructor used by ConfigManagerFactory.
      * Use ConfigManagerFactory.create() instead of calling this directly.
      */
-    ConfigManager(String componentFullName, String componentName, String thingName, 
+    /**
+     * Protected no-arg constructor for testing/subclassing (e.g. mock configuration services).
+     * Leaves the final identity fields null; subclasses are expected to override the accessors.
+     */
+    protected ConfigManager() {
+        this.componentFullName = null;
+        this.componentName = null;
+        this.thingName = null;
+        this.fullConfig = null;
+    }
+
+    ConfigManager(String componentFullName, String componentName, String thingName,
                  ConfigProvider configProvider, JsonObject fullConfig) {
         this.componentFullName = componentFullName;
         this.componentName = componentName;

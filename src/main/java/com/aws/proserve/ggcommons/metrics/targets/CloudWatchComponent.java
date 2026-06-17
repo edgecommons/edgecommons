@@ -5,8 +5,6 @@
 package com.aws.proserve.ggcommons.metrics.targets;
 
 import com.aws.proserve.ggcommons.config.ConfigManager;
-import com.aws.proserve.ggcommons.interfaces.IConfigurationService;
-import com.aws.proserve.ggcommons.interfaces.IMessagingService;
 import com.aws.proserve.ggcommons.messaging.MessagingClient;
 import com.aws.proserve.ggcommons.metrics.Metric;
 import com.google.gson.JsonObject;
@@ -20,22 +18,14 @@ import java.util.Map;
 public class CloudWatchComponent extends MetricTarget
 {
     private String topic;
-    private IMessagingService messagingService;
+    private MessagingClient messagingService;
 
-    /**
-     * @deprecated Use {@link #CloudWatchComponent(IConfigurationService)} instead
-     */
-    @Deprecated
     public CloudWatchComponent(ConfigManager configManager) {
-        this((IConfigurationService) configManager);
+        super(configManager);
+        this.topic = configManager.resolveTemplate(metricConfig.getTopic());
     }
-    
-    public CloudWatchComponent(IConfigurationService configService) {
-        super(configService);
-        this.topic = configService.resolveTemplate(metricConfig.getTopic());
-    }
-    
-    public void setMessagingService(IMessagingService messagingService) {
+
+    public void setMessagingService(MessagingClient messagingService) {
         this.messagingService = messagingService;
     }
 
@@ -54,7 +44,7 @@ public class CloudWatchComponent extends MetricTarget
     public boolean onConfigurationChanged()
     {
         LOGGER.info("Configuration changed. Reconfiguring CloudWatch Component topic");
-        this.topic = configService.resolveTemplate(configService.getMetricConfig().getTopic());
+        this.topic = configManager.resolveTemplate(configManager.getMetricConfig().getTopic());
         return false;
     }
 

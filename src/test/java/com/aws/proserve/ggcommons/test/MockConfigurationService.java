@@ -4,13 +4,13 @@
  */
 package com.aws.proserve.ggcommons.test;
 
+import com.aws.proserve.ggcommons.config.ConfigManager;
 import com.aws.proserve.ggcommons.config.ConfigurationChangeListener;
 import com.aws.proserve.ggcommons.config.ConfigurationFactory;
 import com.aws.proserve.ggcommons.config.HeartbeatConfiguration;
 import com.aws.proserve.ggcommons.config.LoggingConfiguration;
 import com.aws.proserve.ggcommons.config.MetricConfiguration;
 import com.aws.proserve.ggcommons.config.TagConfiguration;
-import com.aws.proserve.ggcommons.interfaces.IConfigurationService;
 import com.google.gson.JsonObject;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -21,7 +21,7 @@ import java.util.Map;
 /**
  * Mock implementation of IConfigurationService for testing.
  */
-public class MockConfigurationService implements IConfigurationService {
+public class MockConfigurationService extends ConfigManager {
     private JsonObject fullConfig = new JsonObject();
     private JsonObject globalConfig = new JsonObject();
     private Map<String, JsonObject> instanceConfigs = new HashMap<>();

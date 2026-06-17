@@ -4,8 +4,8 @@
  */
 package com.aws.proserve.ggcommons.test;
 
-import com.aws.proserve.ggcommons.interfaces.IMetricService;
 import com.aws.proserve.ggcommons.metrics.Metric;
+import com.aws.proserve.ggcommons.metrics.MetricEmitter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -14,7 +14,7 @@ import java.util.Map;
 /**
  * Mock implementation of IMetricService for testing.
  */
-public class MockMetricService implements IMetricService {
+public class MockMetricService extends MetricEmitter {
     private final Map<String, Metric> definedMetrics = new HashMap<>();
     private final List<EmittedMetric> emittedMetrics = new ArrayList<>();
     

@@ -1,7 +1,6 @@
 package com.aws.proserve.ggcommons.messaging;
 
 import com.aws.proserve.ggcommons.config.ConfigManager;
-import com.aws.proserve.ggcommons.interfaces.IConfigurationService;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonSyntaxException;
@@ -14,7 +13,7 @@ public class MessageBuilder {
     private String version;
     private String correlationId;
     private Object payload;
-    private IConfigurationService configService;
+    private ConfigManager configService;
     
     private MessageBuilder(String name, String version) {
         this.name = name;
@@ -40,7 +39,7 @@ public class MessageBuilder {
             }
             if (msgJsonObj.has("body"))
             {
-                retVal.body = msgJsonObj.getAsJsonObject("body");
+                retVal.body = msgJsonObj.get("body");
             }
             if (!(msgJsonObj.has("header") || msgJsonObj.has("tags") || msgJsonObj.has("body")))
             {
@@ -66,16 +65,7 @@ public class MessageBuilder {
         return this;
     }
     
-    /**
-     * @deprecated Use {@link #withConfig(IConfigurationService)} instead
-     */
-    @Deprecated
-    public MessageBuilder withConfig(ConfigManager configManager) {
-        this.configService = configManager;
-        return this;
-    }
-    
-    public MessageBuilder withConfig(IConfigurationService configService) {
+    public MessageBuilder withConfig(ConfigManager configService) {
         this.configService = configService;
         return this;
     }
