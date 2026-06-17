@@ -18,7 +18,7 @@ public class EmfHelper
         JsonObject emfObject = new JsonObject();
 
         JsonObject awsObject = new JsonObject();
-        awsObject.addProperty("Timestamp", System.currentTimeMillis()/1000);
+        awsObject.addProperty("Timestamp", System.currentTimeMillis());
 
         JsonArray cwMetricsArray = new JsonArray();
         JsonObject cwMetricsArrayEntry = getMetricsMetadata(namespace, metric);

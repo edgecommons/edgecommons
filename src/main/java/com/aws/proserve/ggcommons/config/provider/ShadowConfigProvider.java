@@ -98,7 +98,7 @@ class ShadowConfigProvider extends ConfigProvider implements  StreamResponseHand
         catch (Exception e)
         {
             LOGGER.fatal("Unable to connect to Greengrass IPC.");
-            System.exit(1);
+            throw new RuntimeException("Unable to connect to Greengrass IPC.", e);
         }
     }
 

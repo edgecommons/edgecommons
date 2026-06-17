@@ -53,6 +53,21 @@ class MetricBuilderTest {
     }
     
     @Test
+    void testDimensionLimit() {
+        MetricBuilder builder = MetricBuilder.create("test-metric")
+                .withNamespace("TestNamespace");
+        
+        // Add 10 dimensions (should work)
+        for (int i = 0; i < 10; i++) {
+            builder.addDimension("dim" + i, "value" + i);
+        }
+        
+        // Adding 11th dimension should fail
+        assertThrows(IllegalArgumentException.class, () -> 
+            builder.addDimension("dim10", "value10"));
+    }
+    
+    @Test
     void testBuilderChaining() {
         Measure measure = new Measure("count", "Count", 1);
         
@@ -63,5 +78,43 @@ class MetricBuilderTest {
                 .addDimension("env", "test");
         
         assertNotNull(builder);
+    }
+    
+    @Test
+    void testBuilderValidation() {
+        MetricBuilder builder = MetricBuilder.create("test-metric")
+                .withNamespace("TestNamespace");
+        
+        // Test duplicate measure names
+        builder.addMeasure("count", "Count", 1);
+        assertThrows(IllegalArgumentException.class, () -> 
+            builder.addMeasure("count", "Count", 1));
+        
+        // Test null measure
+        assertThrows(IllegalArgumentException.class, () -> 
+            builder.addMeasure(null));
+        
+        // Test empty measure name
+        assertThrows(IllegalArgumentException.class, () -> 
+            builder.addMeasure("", "Count", 1));
+        
+        // Test null dimension key
+        assertThrows(IllegalArgumentException.class, () -> 
+            builder.addDimension(null, "value"));
+    }
+    
+    @Test
+    void testBuildValidation() {
+        // Test build without measures
+        MetricBuilder builder = MetricBuilder.create("test-metric")
+                .withNamespace("TestNamespace");
+        
+        assertThrows(IllegalStateException.class, () -> builder.build());
+        
+        // Test build without namespace
+        MetricBuilder builder2 = MetricBuilder.create("test-metric")
+                .addMeasure("count", "Count", 1);
+        
+        assertThrows(IllegalStateException.class, () -> builder2.build());
     }
 }

@@ -46,7 +46,7 @@ public class GreengrassMessagingProvider extends MessagingProvider
         catch (IOException e)
         {
             LOGGER.fatal("Unable to connect to Greengrass IPC due to I/O error.", e);
-            System.exit(5);
+            throw new RuntimeException("Unable to connect to Greengrass IPC due to I/O error.", e);
         }
     }
 
@@ -224,10 +224,10 @@ public class GreengrassMessagingProvider extends MessagingProvider
         subscribeToIoTCore(replyTo, (t, m) -> {
             ReplyFuture f = responseFutures.get(t);
             f.complete(m);
-            unsubscribe(t);
+            unsubscribeFromIoTCore(t);
             responseFutures.remove(t);
         }, QOS.AT_MOST_ONCE, 1);
-        publish(topic, request);
+        publishToIoTCore(topic, request, QOS.AT_MOST_ONCE);
         return future;
     }
 

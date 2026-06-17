@@ -58,20 +58,15 @@ public class GreengrassConfigProvider extends ConfigProvider
                 retVal = fullConfig.getAsJsonObject(configKey);
                 LOGGER.info("Component configuration retrieved from Nucleus: {}", retVal);
             } else {
-                LOGGER.fatal("Configuration not found.  Incorrect component name?  Exiting");
-                System.exit(5);
+                LOGGER.fatal("Configuration not found.  Incorrect component name?");
+                throw new RuntimeException("Configuration not found. Incorrect component name?");
             }
         }
         catch (InterruptedException e) // import java.lang.InterruptedException
         {
             Thread.currentThread().interrupt();
-            LOGGER.fatal("Thread interrupted while loading configuration. Exiting.", e);
-            System.exit(1);
-        }
-        catch (RuntimeException e)
-        {
-            LOGGER.fatal("Unexpected error occurred while loading configuration. Exiting.", e);
-            System.exit(1);
+            LOGGER.fatal("Thread interrupted while loading configuration.", e);
+            throw new RuntimeException("Thread interrupted while loading configuration.", e);
         }
 
         return retVal;

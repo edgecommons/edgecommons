@@ -47,7 +47,7 @@ class FileConfigProvider extends ConfigProvider implements FileWatcher.FileChang
         catch (JsonSyntaxException | IOException e)
         {
             LOGGER.fatal("Error reading configuration file '{}': {}", configFilePath, e.toString());
-            System.exit(1);
+            throw new RuntimeException("Error reading configuration file '" + configFilePath + "': " + e, e);
         }
 
         return retVal;

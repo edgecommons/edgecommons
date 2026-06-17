@@ -140,10 +140,10 @@ public class HeartbeatConfiguration
         metricObj.addProperty("cpu", includeCpu);
         metricObj.addProperty("memory", includeMemory);
         metricObj.addProperty("disk", includeDisk);
-        metricObj.addProperty("threads", includeDisk);
-        metricObj.addProperty("files", includeDisk);
+        metricObj.addProperty("threads", includeThreads);
+        metricObj.addProperty("files", includeFiles);
         metricObj.addProperty("fds", includeFds);
-        retVal.add("metric", metricObj);
+        retVal.add("measures", metricObj);
         JsonArray targetArray = new JsonArray();
         for (HeartbeatTarget target : targets)
         {

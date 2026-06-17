@@ -128,7 +128,7 @@ public class GGCommons
             configManager.completeInitialization();
         } catch (Exception e) {
             LOGGER.error("Failed to initialize GGCommons: {}", e.getMessage(), e);
-            System.exit(1);
+            throw new RuntimeException("Failed to initialize GGCommons: " + e.getMessage(), e);
         }
     }
     
@@ -303,7 +303,7 @@ public class GGCommons
                     retVal.standaloneConfigPath = modeArgs[1];
                 } else {
                     LOGGER.error("STANDALONE mode requires config file path");
-                    System.exit(1);
+                    throw new IllegalArgumentException("STANDALONE mode requires a config file path");
                 }
             } else {
                 retVal.mode = ParsedCommandLine.Mode.GREENGRASS;

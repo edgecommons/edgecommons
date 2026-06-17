@@ -37,13 +37,13 @@ class EnvironmentConfigProvider extends ConfigProvider
             }   catch(JsonSyntaxException e)
             {
                 LOGGER.fatal("Error parsing configuration: {}\n{}", configStr, e.toString(), e);
-                System.exit(1);
+                throw new RuntimeException("Error parsing configuration from environment variable '" + environmentVariableName + "'", e);
             }
         }
         else
         {
             LOGGER.fatal("Configuration environment variable ('{}') not defined.", environmentVariableName);
-            System.exit(2);
+            throw new RuntimeException("Configuration environment variable ('" + environmentVariableName + "') not defined.");
         }
 
         return retVal;

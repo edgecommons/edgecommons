@@ -91,7 +91,7 @@ public class StandaloneMessagingProvider extends MessagingProvider
                         break;
                     }
                     final String topic = entry.topic.replaceFirst("^iotcore/", "");
-                    if (responseFutures.containsKey(entry.topic)) {
+                    if (responseFutures.containsKey(topic)) {
                         ReplyFuture future = responseFutures.get(topic);
                         future.complete(entry.message);
                         responseFutures.remove(topic);
@@ -273,7 +273,7 @@ public class StandaloneMessagingProvider extends MessagingProvider
         catch (MqttException e)
         {
             LOGGER.fatal("Failed to connect to IoT Core at {} - {}", uri, e.toString());
-            System.exit(4);
+            throw new RuntimeException("Failed to connect to IoT Core at " + uri, e);
         }
     }
 

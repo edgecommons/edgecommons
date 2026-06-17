@@ -52,8 +52,8 @@ public class ConfigProviderBuilder {
                 configProvider = new ConfigComponentProvider(configManager, messagingClient);
                 break;
             default:
-                LOGGER.fatal("Unrecognized com.aws.proseve.ggcommons.config source '{}'.  Valid values are 'FILE', 'ENV', 'SHADOW' and 'GG_CONFIG", configArgs[0]);
-                System.exit(1);
+                LOGGER.fatal("Unrecognized config source '{}'.  Valid values are 'FILE', 'ENV', 'SHADOW', 'GG_CONFIG', 'CONFIG_COMPONENT'", configArgs[0]);
+                throw new IllegalArgumentException("Unrecognized config source: " + configArgs[0]);
         }
         LOGGER.info("Will load configuration from {}", configProvider.getConfigSource());
         return configProvider;

@@ -108,7 +108,7 @@ public class MetricConfiguration
                 break;
 
             case "cloudwatch":
-                targetConfig.addProperty("intervalSecs", topic);
+                targetConfig.addProperty("intervalSecs", intervalSecs);
                 break;
 
             case "log":

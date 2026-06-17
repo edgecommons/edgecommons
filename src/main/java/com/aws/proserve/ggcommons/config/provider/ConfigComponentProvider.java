@@ -53,16 +53,17 @@ public class ConfigComponentProvider extends ConfigProvider {
                 replyMessage = replyFuture.get(30, TimeUnit.SECONDS);
                 retry = false;
             } catch (InterruptedException e) {
-                LOGGER.fatal("Encountered InterruptedException. Unable to load configuration using Greengrass IPC.  Exiting.");
-                System.exit(1);
+                Thread.currentThread().interrupt();
+                LOGGER.fatal("Encountered InterruptedException. Unable to load configuration using Greengrass IPC.");
+                throw new RuntimeException("Interrupted while loading configuration using Greengrass IPC.", e);
             } catch (ExecutionException e) {
-                LOGGER.fatal("Encountered ExecutionException. Unable to load configuration using Greengrass IPC.  Exiting.");
-                System.exit(1);
+                LOGGER.fatal("Encountered ExecutionException. Unable to load configuration using Greengrass IPC.");
+                throw new RuntimeException("Failed to load configuration using Greengrass IPC.", e);
             } catch (TimeoutException e) {
                 attemptCount++;
                 if (attemptCount == 3) {
-                    LOGGER.fatal("Failed to retrieve configuration from configuration manager component after {} tries.  Exiting.", attemptCount);
-                    System.exit(1);
+                    LOGGER.fatal("Failed to retrieve configuration from configuration manager component after {} tries.", attemptCount);
+                    throw new RuntimeException("Failed to retrieve configuration from configuration manager component after " + attemptCount + " tries.", e);
                 }
                 LOGGER.warn("Failed to retrieve configuration from configuration manager component.  Retrying ({})", attemptCount);
             }

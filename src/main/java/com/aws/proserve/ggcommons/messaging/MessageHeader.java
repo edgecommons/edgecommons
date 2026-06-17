@@ -38,7 +38,9 @@ public class MessageHeader
      *
      * @param name The name of the message type
      * @param version The version of the message format
+     * @deprecated Use {@link MessageHeaderBuilder#create(String, String)} instead
      */
+    @Deprecated
     public MessageHeader(String name, String version)
     {
         this(name, version, null, null, null, null);
@@ -50,7 +52,9 @@ public class MessageHeader
      * @param name The name of the message type
      * @param version The version of the message format
      * @param correlationId The correlation ID for message tracking
+     * @deprecated Use {@link MessageHeaderBuilder#create(String, String)} instead
      */
+    @Deprecated
     public MessageHeader(String name, String version, String correlationId)
     {
         this(name, version, correlationId, null, null, null);
@@ -87,7 +91,16 @@ public class MessageHeader
         String uuid = src.has("uuid") ? src.get("uuid").getAsString() : null;
         String correlationId = src.has("correlation_id") ? src.get("correlation_id").getAsString() : null;
         String replyTo = src.has("reply_to") ? src.get("reply_to").getAsString() : null;
-        return new MessageHeader(name, version, correlationId, timestamp, uuid, replyTo);
+        if (name == null || version == null) {
+            return new MessageHeader(name, version, correlationId, timestamp, uuid, replyTo);
+        }
+        
+        MessageHeaderBuilder builder = MessageHeaderBuilder.create(name, version);
+        if (correlationId != null) builder.withCorrelationId(correlationId);
+        if (timestamp != null) builder.withTimestamp(timestamp);
+        if (uuid != null) builder.withUuid(uuid);
+        if (replyTo != null) builder.withReplyTo(replyTo);
+        return builder.build();
     }
 
     /**

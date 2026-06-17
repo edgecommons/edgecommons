@@ -86,7 +86,11 @@ public class MessageBuilder {
         }
         
         Message message = new Message();
-        message.header = new MessageHeader(name, version, correlationId);
+        MessageHeaderBuilder headerBuilder = MessageHeaderBuilder.create(name, version);
+        if (correlationId != null) {
+            headerBuilder.withCorrelationId(correlationId);
+        }
+        message.header = headerBuilder.build();
         message.tags = MessageTags.fromConfig(configService);
         
         if (payload instanceof String) {

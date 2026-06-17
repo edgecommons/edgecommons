@@ -191,7 +191,11 @@ public class Message
                                           ConfigManager configManager, String correlationId)
     {
         Message retVal = new Message();
-        retVal.header = new MessageHeader(name, version, correlationId);
+        MessageHeaderBuilder headerBuilder = MessageHeaderBuilder.create(name, version);
+        if (correlationId != null) {
+            headerBuilder.withCorrelationId(correlationId);
+        }
+        retVal.header = headerBuilder.build();
         retVal.tags = MessageTags.fromConfig(configManager);
         if (payload instanceof String)
         {
@@ -236,7 +240,11 @@ public class Message
                                           IConfigurationService configService, String correlationId)
     {
         Message retVal = new Message();
-        retVal.header = new MessageHeader(name, version, correlationId);
+        MessageHeaderBuilder headerBuilder = MessageHeaderBuilder.create(name, version);
+        if (correlationId != null) {
+            headerBuilder.withCorrelationId(correlationId);
+        }
+        retVal.header = headerBuilder.build();
         retVal.tags = MessageTags.fromConfig(configService);
         if (payload instanceof String)
         {
@@ -291,7 +299,7 @@ public class Message
             if (msgJsonObj.has("body"))
             {
                 LOGGER.trace("processing body");
-                retVal.body =  msgJsonObj.getAsJsonObject("body");
+                retVal.body = msgJsonObj.get("body");
                 LOGGER.trace("body desiralized");
             }
             if (!(msgJsonObj.has("header") || msgJsonObj.has("tags") || msgJsonObj.has("body")))

@@ -41,13 +41,12 @@ public class MessagingClient
                     this.messagingProvider = new StandaloneMessagingProvider(config, cmdLine.thingName);
                 } catch (Exception e) {
                     LOGGER.fatal("Failed to load standalone messaging configuration: {}", e.getMessage());
-                    System.exit(1);
+                    throw new RuntimeException("Failed to load standalone messaging configuration: " + e.getMessage(), e);
                 }
                 break;
             default:
                 LOGGER.fatal("Invalid mode specified: {}", cmdLine.mode);
-                System.exit(1);
-                this.messagingProvider = null; // Never reached but satisfies compiler
+                throw new RuntimeException("Invalid mode specified: " + cmdLine.mode);
         }
     }
 
