@@ -38,7 +38,7 @@ Selected by `metricEmission.target` (default `log`):
 | `log` | Append EMF JSON lines to a file | Size-based rotation (5 backups); `largeFleetWorkaround` double-emits (normal + `coreName=ALL`) |
 | `messaging` | Publish EMF wrapped in a `Metric` message envelope (header/tags/body) | `targetConfig.destination`: `ipc`/`local` or `iotcore` |
 | `cloudwatchcomponent` | Publish a `{request:{namespace,metricData}}` PutMetricData message **per measure** | Default topic `cloudwatch/metric/put` |
-| `cloudwatch` | Send to CloudWatch via the AWS SDK | Requires the `cloudwatch` cargo feature; batched on an interval |
+| `cloudwatch` | Send to CloudWatch via the AWS SDK (`PutMetricData`) | Requires the `cloudwatch` cargo feature; batched on an interval. **Validated on-device.** |
 
 Selecting `cloudwatch` without the feature, or a messaging target without a messaging
 service, is a clear `GgError::Metrics` rather than a silent no-op.
@@ -67,6 +67,20 @@ String values support template substitution (`{ThingName}`, `{ComponentName}`,
   distinct from EMF's `_aws.Timestamp`. Its `dimensions` array excludes `coreName`
   (the component supplies it implicitly).
 - The ≤10-dimension cap is enforced on the `Metric` itself, not just the builder.
+
+## Direct `cloudwatch` target on a Greengrass core
+
+The direct `cloudwatch` target uses the AWS SDK's default credential chain. On a
+Greengrass core that means the **Token Exchange Service** credentials, which requires:
+
+1. The component recipe **must depend on `aws.greengrass.TokenExchangeService`** —
+   that is what makes the Nucleus inject `AWS_CONTAINER_CREDENTIALS_FULL_URI` (plus
+   `AWS_CONTAINER_AUTHORIZATION_TOKEN`) into the component's environment. Without the
+   dependency the SDK finds no credentials.
+2. The core's **token-exchange IAM role** must allow `cloudwatch:PutMetricData`.
+
+Validated end-to-end on a live core: heartbeat measures (`cpu_usage`, `memory_usage`)
+appeared in CloudWatch at the heartbeat cadence with no dropped batches.
 
 ## Live reconfiguration
 

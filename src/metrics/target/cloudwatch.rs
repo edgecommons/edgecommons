@@ -16,6 +16,14 @@
 //! - The background flush task is aborted on `shutdown`/drop.
 //! - Error handling: [`crate::error::GgError::Metrics`].
 //!
+//! ## Status
+//! Validated on a live Greengrass core (non-root): heartbeat measures landed in
+//! CloudWatch via `PutMetricData` at the expected cadence with no dropped batches.
+//! On a Greengrass core the component must (1) declare a dependency on
+//! `aws.greengrass.TokenExchangeService` so the Nucleus injects
+//! `AWS_CONTAINER_CREDENTIALS_FULL_URI` (which the AWS SDK's default credential chain
+//! uses), and (2) the token-exchange IAM role must allow `cloudwatch:PutMetricData`.
+//!
 //! ## Related Modules
 //! - [`crate::metrics`], [`crate::metrics::metric`].
 
