@@ -74,10 +74,15 @@ fn default_config() -> Value {
     })
 }
 
-/// Extract the component config from a full shadow document: prefer
-/// `state.desired.ComponentConfig`, fall back to `state.reported.ComponentConfig`.
-/// The value is a JSON **string** that is itself parsed into the config object.
-fn extract_config(doc: &Value) -> Option<Value> {
+/// Extract the component config from a full shadow document as the **verbatim JSON
+/// string** stored under `ComponentConfig`: prefer `state.desired.ComponentConfig`,
+/// fall back to `state.reported.ComponentConfig`.
+///
+/// The raw string is returned (not a re-parsed value) so it can be reported back
+/// **byte-for-byte**. The shadow service treats `ComponentConfig` as an opaque
+/// string, so the delta only clears when `reported` equals `desired` exactly;
+/// re-serializing a parsed value would reorder keys and the delta would never clear.
+fn extract_config_str(doc: &Value) -> Option<String> {
     let state = doc.get("state")?;
     for key in ["desired", "reported"] {
         if let Some(s) = state
@@ -85,19 +90,21 @@ fn extract_config(doc: &Value) -> Option<Value> {
             .and_then(|d| d.get("ComponentConfig"))
             .and_then(Value::as_str)
         {
-            if let Ok(cfg) = serde_json::from_str::<Value>(s) {
-                return Some(cfg);
-            }
+            return Some(s.to_string());
         }
     }
     None
 }
 
-/// Report the applied config back into `state.reported.ComponentConfig` (stringified),
+/// Report the applied config back into `state.reported.ComponentConfig`,
 /// acknowledging the desired state and clearing the shadow delta.
-async fn report_config(rt: &ipc::IpcRuntime, thing: &str, shadow: &str, config: &Value) {
-    let stringified = serde_json::to_string(config).unwrap_or_else(|_| "{}".to_string());
-    let doc = json!({ "state": { "reported": { "ComponentConfig": stringified } } });
+///
+/// `component_config` is the **stringified** config JSON, reported verbatim. To clear
+/// the delta this string MUST byte-match `state.desired.ComponentConfig`, so callers
+/// pass the exact string they received from the shadow (never a re-serialized value);
+/// mirrors the Java/Python `reportUpdatedConfiguration(String)`.
+async fn report_config(rt: &ipc::IpcRuntime, thing: &str, shadow: &str, component_config: &str) {
+    let doc = json!({ "state": { "reported": { "ComponentConfig": component_config } } });
     match serde_json::to_vec(&doc) {
         Ok(payload) => {
             if let Err(e) = rt
@@ -111,24 +118,32 @@ async fn report_config(rt: &ipc::IpcRuntime, thing: &str, shadow: &str, config: 
     }
 }
 
+/// The default config as a compact JSON string (for reporting when no shadow exists).
+fn default_config_str() -> String {
+    serde_json::to_string(&default_config()).unwrap_or_else(|_| "{}".to_string())
+}
+
 #[async_trait]
 impl ConfigSource for ShadowConfigSource {
     async fn load(&self) -> Result<Value> {
         let rt = ipc::global();
         rt.connect().await?;
-        let config = match rt.get_shadow(&self.thing_name, Some(self.shadow_name.clone())).await {
+        // The raw `ComponentConfig` string is reported back verbatim so it byte-matches
+        // `desired` and clears the delta; it is also parsed into the config we return.
+        let config_str = match rt.get_shadow(&self.thing_name, Some(self.shadow_name.clone())).await {
             Ok(bytes) if !bytes.is_empty() => {
                 let doc: Value = serde_json::from_slice(&bytes)?;
-                extract_config(&doc).unwrap_or_else(default_config)
+                extract_config_str(&doc).unwrap_or_else(default_config_str)
             }
             // Shadow does not exist yet (or is empty): bootstrap a default.
             _ => {
                 tracing::info!(shadow = %self.shadow_name, "SHADOW: no shadow document; using default config");
-                default_config()
+                default_config_str()
             }
         };
-        // Acknowledge by reporting the applied config back (clears the delta).
-        report_config(rt, &self.thing_name, &self.shadow_name, &config).await;
+        // Acknowledge by reporting the applied config back verbatim (clears the delta).
+        report_config(rt, &self.thing_name, &self.shadow_name, &config_str).await;
+        let config: Value = serde_json::from_str(&config_str).unwrap_or_else(|_| default_config());
         Ok(config)
     }
 
@@ -160,29 +175,70 @@ impl ConfigSource for ShadowConfigSource {
                 let action = suffix.next().unwrap_or("");
                 match (action, result) {
                     ("update", "delta") => {
-                        // The delta's `state` carries the changed `ComponentConfig`.
+                        // The delta's `state` carries the changed `ComponentConfig` (a string).
                         if let Ok(doc) = serde_json::from_slice::<Value>(&payload) {
-                            if let Some(cfg) = doc
+                            if let Some(cfg_str) = doc
                                 .get("state")
                                 .and_then(|s| s.get("ComponentConfig"))
                                 .and_then(Value::as_str)
-                                .and_then(|s| serde_json::from_str::<Value>(s).ok())
                             {
-                                report_config(rt, &thing, &shadow, &cfg).await;
-                                if out_tx.send(cfg).is_err() {
-                                    break; // consumer gone
+                                // Report the EXACT string back to clear the delta (byte-match),
+                                // then parse it for the consumer.
+                                report_config(rt, &thing, &shadow, cfg_str).await;
+                                if let Ok(cfg) = serde_json::from_str::<Value>(cfg_str) {
+                                    if out_tx.send(cfg).is_err() {
+                                        break; // consumer gone
+                                    }
                                 }
                             }
                         }
                     }
                     ("get", "rejected") => {
                         tracing::warn!(shadow = %shadow, "SHADOW: shadow missing; reporting default config");
-                        report_config(rt, &thing, &shadow, &default_config()).await;
+                        report_config(rt, &thing, &shadow, &default_config_str()).await;
                     }
                     _ => {} // update/accepted, get/accepted, etc. — ignored
                 }
             }
         });
         Some(out_rx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `extract_config_str` must return the `ComponentConfig` string **verbatim**
+    /// (key order preserved), so it can be reported back byte-for-byte to clear the
+    /// shadow delta. Re-serializing would reorder keys and the delta would never
+    /// clear (the on-device storm bug this guards against).
+    #[test]
+    fn extract_config_str_preserves_desired_string_verbatim() {
+        // Note the deliberately non-alphabetical key order.
+        let desired = r#"{"logging":{"level":"DEBUG"},"component":{"global":{"publish_interval":7}}}"#;
+        let doc = json!({ "state": { "desired": { "ComponentConfig": desired } } });
+        let extracted = extract_config_str(&doc).expect("desired present");
+        assert_eq!(extracted, desired, "must be byte-identical (no re-serialization)");
+    }
+
+    #[test]
+    fn extract_config_str_falls_back_to_reported() {
+        let reported = r#"{"component":{"global":{"publish_interval":3}}}"#;
+        let doc = json!({ "state": { "reported": { "ComponentConfig": reported } } });
+        assert_eq!(extract_config_str(&doc).as_deref(), Some(reported));
+    }
+
+    #[test]
+    fn extract_config_str_none_when_absent() {
+        assert!(extract_config_str(&json!({ "state": {} })).is_none());
+        assert!(extract_config_str(&json!({})).is_none());
+    }
+
+    #[test]
+    fn default_config_str_is_valid_json() {
+        let s = default_config_str();
+        let v: Value = serde_json::from_str(&s).expect("default config is valid JSON");
+        assert!(v.get("component").is_some());
     }
 }
