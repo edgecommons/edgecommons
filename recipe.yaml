@@ -62,8 +62,13 @@ Manifests:
     Artifacts:
       - URI: "s3://BUCKET_NAME/COMPONENT_NAME/COMPONENT_VERSION/<<BINNAME>>"
         Permissions:
-          Execute: OWNER
+          Read: ALL
+          Execute: ALL
     Lifecycle:
+      # Ensure the artifact is executable regardless of how it was staged (robust for
+      # non-root run-as users and local `greengrass-cli` deployments).
+      Install:
+        Script: "chmod +x {artifacts:path}/<<BINNAME>>"
       # Runs in GREENGRASS mode (default), reading config from the deployment (GG_CONFIG).
       Run:
         Script: "{artifacts:path}/<<BINNAME>> -c GG_CONFIG"
