@@ -1,4 +1,4 @@
-//! # Configuration source — SHADOW (Phase 2)
+//! # Configuration source — SHADOW
 //!
 //! **One-liner purpose**: Load (and hot-reload) configuration from an AWS IoT
 //! **named** device shadow via IPC, mirroring the Java/Python `ShadowConfigProvider`
@@ -32,7 +32,10 @@
 //!   [`crate::error::GgError::Ipc`] / [`crate::error::GgError::Json`].
 //!
 //! ## Status
-//! Phase 2; validated on a live Greengrass core with the `ShadowManager` component.
+//! Validated end-to-end on a live Greengrass core with the `ShadowManager`
+//! component: clean load (report-back clears the delta), and a real-time cloud→local
+//! desired update applied via the watch path with the cloud reconverging
+//! (`reported == desired`).
 //!
 //! ## Related Modules
 //! - [`super`], [`crate::ipc`].

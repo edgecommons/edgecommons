@@ -15,9 +15,9 @@ source-specific. Default (when omitted): `GG_CONFIG ComponentConfig`.
 |--------|-----------|---------|
 | `FILE` | `[path]` | JSON file (default `config.json`). Supports hot-reload. |
 | `ENV` | `[var]` | JSON read from an environment variable (default `CONFIG`). |
-| `GG_CONFIG` | `[component] [key]` | Greengrass deployment config (default key `ComponentConfig`). **Phase 2.** |
-| `SHADOW` | `[name]` | IoT named device shadow. **Phase 2.** |
-| `CONFIG_COMPONENT` | — | Dedicated configuration component over messaging. **Phase 2.** |
+| `GG_CONFIG` | `[component] [key]` | Greengrass deployment config (default key `ComponentConfig`). Requires the `greengrass` feature. |
+| `SHADOW` | `[name]` | IoT named device shadow (name defaults to the component name). Requires the `greengrass` feature. |
+| `CONFIG_COMPONENT` | — | Dedicated configuration component over messaging. |
 
 ### `-m` / `--mode <MODE> [path]`
 
@@ -25,7 +25,7 @@ Selects the runtime mode. Default: `GREENGRASS`.
 
 | Mode | Extra args | Meaning |
 |------|-----------|---------|
-| `GREENGRASS` | — | Greengrass IPC. (Messaging is Phase 2.) |
+| `GREENGRASS` | — | Greengrass IPC messaging (requires the `greengrass` feature). |
 | `STANDALONE` | `<messaging_config.json>` | Dual-broker MQTT. **The path is required** — `STANDALONE` with no path is a hard error. |
 
 ### `-t` / `--thing <name>`

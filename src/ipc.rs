@@ -1,4 +1,4 @@
-//! # Greengrass IPC runtime (Phase 2)
+//! # Greengrass IPC runtime
 //!
 //! **One-liner purpose**: Bridge the synchronous, `no_std`, process-global
 //! `aws-greengrass-component-sdk` (lib `gg_sdk`) into this crate's async,
@@ -38,9 +38,9 @@
 //!   nothing here panics except the unavoidable one-time `Sdk::init()` contract.
 //!
 //! ## Status
-//! Phase 2, **compile-only**: validated to build against the SDK on Linux, but not
-//! yet exercised against a live Greengrass core (no nucleus in the dev/CI
-//! environment). On-device validation is the remaining Phase 2 step.
+//! Implemented and **validated on a live Greengrass core** (non-root): IPC connect,
+//! local pub/sub, IoT Core bridge (both directions), config fetch + hot reload, and
+//! device-shadow get/update. Builds only on Linux (the SDK is a C-FFI crate).
 //!
 //! ## Related Modules
 //! - [`crate::messaging::provider::ipc`], [`crate::config::source::greengrass`],

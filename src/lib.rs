@@ -6,10 +6,12 @@
 //! messaging, metrics, heartbeat, logging) behind service traits so component
 //! authors write only business logic.
 //!
-//! **Status:** the STANDALONE MVP (Phases 0–1) is complete; Phase 3 parity work is
-//! done; Greengrass IPC (Phase 2, `greengrass` feature) is implemented and compiles
-//! on Linux but is not yet validated against a live core. See
-//! `../GGCOMMONS_RUST_PORT.md` for the full design and plan.
+//! **Status:** complete and validated on-device. The STANDALONE runtime, the
+//! cross-language parity work, and Greengrass IPC (the `greengrass` feature: IPC
+//! messaging, `GG_CONFIG`, `SHADOW`, and `CONFIG_COMPONENT`) are all implemented and
+//! have been **validated against a live Greengrass core** (non-root), including the
+//! real-time device-shadow round-trip. See `../GGCOMMONS_RUST_PORT.md` for the full
+//! design and history.
 //!
 //! ```no_run
 //! use ggcommons::prelude::*;
@@ -97,7 +99,7 @@ impl GgCommons {
     }
 
     /// A consistent snapshot of the current configuration. Cheap to call; returns
-    /// the live snapshot, which is replaced atomically on reload (Phase 1).
+    /// the live snapshot, which is replaced atomically on hot reload.
     pub fn config(&self) -> Arc<Config> {
         self.config.load_full()
     }
@@ -191,11 +193,8 @@ impl GgCommonsBuilder {
         self
     }
 
-    /// Parse arguments, load and validate configuration, initialize logging, and
-    /// return the runtime.
-    ///
-    /// Phase 0 wires configuration + logging. Messaging, metrics, and heartbeat
-    /// are wired in Phase 1.
+    /// Parse arguments, load and validate configuration, initialize logging,
+    /// messaging, metrics, and heartbeat, and return the runtime.
     pub async fn build(self) -> Result<GgCommons> {
         let parsed = match self.argv {
             Some(argv) => cli::parse_from(argv)?,
@@ -315,7 +314,8 @@ fn spawn_config_reload(
 ///
 /// # Purpose
 /// In STANDALONE mode, load the messaging config and connect the dual-broker MQTT
-/// provider; in GREENGRASS mode, messaging is deferred to Phase 2 (returns `None`).
+/// provider; in GREENGRASS mode, connect the Greengrass IPC provider (requires the
+/// `greengrass` feature; returns `None` only if that feature is disabled).
 ///
 /// # Semantics & Syntax
 /// - **Signature**: `async fn init_messaging(mode: &RuntimeMode) -> Result<Option<Arc<dyn MessagingService>>>`

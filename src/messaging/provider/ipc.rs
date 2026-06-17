@@ -1,4 +1,4 @@
-//! # Messaging provider — Greengrass IPC (Phase 2)
+//! # Messaging provider — Greengrass IPC
 //!
 //! **One-liner purpose**: A [`MessagingProvider`] that moves bytes over Greengrass
 //! IPC (local pub/sub) and the IoT Core MQTT bridge, via the shared [`crate::ipc`]
@@ -20,8 +20,8 @@
 //! - Async (`tokio`); object-safe via `async_trait`.
 //!
 //! ## Status
-//! Phase 2, **compile-only** — builds against the SDK on Linux; not yet validated
-//! against a live Greengrass core.
+//! Implemented and **validated on a live Greengrass core** (non-root): local pub/sub
+//! with inbound delivery, request/reply, and the IoT Core bridge in both directions.
 //!
 //! ## Related Modules
 //! - [`crate::ipc`], [`super::mqtt`], [`crate::messaging::service`].

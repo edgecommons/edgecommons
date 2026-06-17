@@ -9,7 +9,8 @@
 //! 1. [`MessagingProvider`] — raw transport primitives (publish / subscribe /
 //!    unsubscribe). To keep the transport extensible it takes a [`Destination`]
 //!    argument; the standalone implementation is [`provider::mqtt`] (dual-broker
-//!    MQTT via `rumqttc`), and the Greengrass IPC provider lands in Phase 2.
+//!    MQTT via `rumqttc`) and the Greengrass implementation is [`provider::ipc`]
+//!    (behind the `greengrass` feature).
 //! 2. [`MessagingService`] — the user-facing contract, built **once** over any
 //!    provider. It exposes **explicit `…`/`…ToIoTCore` method pairs** (mirroring
 //!    the Greengrass v2 / Java / Python API), owns [`message::Message`]

@@ -11,10 +11,12 @@ phased plan.
 A component selects its runtime mode at startup with `-m/--mode`:
 
 - **GREENGRASS** (default) — Greengrass IPC for messaging; config from the deployment.
-  IPC messaging and the Greengrass config sources are **Phase 2** (not yet wired).
+  IPC messaging and the Greengrass config sources (`GG_CONFIG`, `SHADOW`) are behind
+  the `greengrass` feature and are validated on a live Greengrass core.
 - **STANDALONE** — dual-broker MQTT (local broker + AWS IoT Core) for
-  Kubernetes/Docker/bare containers. Requires a messaging-config JSON file. This is
-  the shipped MVP and is fully functional today.
+  Kubernetes/Docker/bare containers. Requires a messaging-config JSON file.
+
+Both modes are implemented and functional.
 
 ## The runtime object
 
@@ -72,5 +74,6 @@ their Rust resolutions.
 ## Cargo features
 
 - `standalone` (default) — STANDALONE MQTT messaging (`rumqttc`).
-- `greengrass` — Greengrass IPC (Phase 2; the SDK is a Linux-only C-FFI crate).
+- `greengrass` — Greengrass IPC messaging + `GG_CONFIG`/`SHADOW` config sources
+  (the SDK is a Linux-only C-FFI crate, so this feature builds only on Linux).
 - `cloudwatch` — the CloudWatch metric target via the AWS SDK (heavy; off by default).

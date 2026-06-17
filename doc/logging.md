@@ -36,7 +36,7 @@ logging.level: "INFO"  ->  (edit config)  ->  logging.level: "DEBUG"  // takes e
 |-----|--------|
 | `level` | Implemented (maps to `EnvFilter`; supports per-target directives). |
 | `format` | Reserved (the `fmt` layer's default format is used today). |
-| `fileLogging` | Reserved — Phase 3 file logging with rotation. |
+| `fileLogging` | Reserved — file logging with rotation is parsed but **not yet implemented**. |
 | `loggers` (per-logger levels) | Reserved — map to `EnvFilter` directives. |
 | `globalControl` | Reserved. |
 

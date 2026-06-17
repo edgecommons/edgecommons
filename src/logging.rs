@@ -13,8 +13,9 @@
 //! - The reload handle is stored type-erased in a `OnceLock`; reconfiguration is a
 //!   cheap filter swap with no re-init.
 //! - Error handling: infallible — an unparseable level falls back to `info`.
-//! - Custom format strings, file logging with rotation, and per-logger levels remain
-//!   future Phase 3 work; runtime *level* reconfiguration is implemented here.
+//! - Custom format strings, file logging with rotation, and per-logger levels are
+//!   parsed from config but **not yet implemented**; runtime *level* reconfiguration
+//!   is implemented here.
 //!
 //! ## Usage Example
 //! ```

@@ -1,4 +1,4 @@
-//! # Configuration source — GG_CONFIG (Phase 2)
+//! # Configuration source — GG_CONFIG
 //!
 //! **One-liner purpose**: Load (and hot-reload) configuration from the Greengrass
 //! deployment via IPC `GetConfiguration` + `SubscribeToConfigurationUpdate`.
@@ -17,7 +17,8 @@
 //!   [`crate::error::GgError::Ipc`].
 //!
 //! ## Status
-//! Phase 2, **compile-only** — not yet validated against a live Greengrass core.
+//! Implemented and **validated on a live Greengrass core** (non-root): `load` reads
+//! the deployed `ComponentConfig`, and `watch` applies deployment-driven updates.
 //!
 //! ## Related Modules
 //! - [`super`], [`crate::ipc`].

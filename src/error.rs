@@ -63,7 +63,7 @@ pub enum GgError {
     #[error("metrics error: {0}")]
     Metrics(String),
 
-    /// Greengrass IPC error (Phase 2).
+    /// Greengrass IPC error.
     #[error("Greengrass IPC error: {0}")]
     Ipc(String),
 

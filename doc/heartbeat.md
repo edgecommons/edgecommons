@@ -41,8 +41,8 @@ Counters without a portable source are simply omitted on platforms that lack the
   - `destination`: `ipc`/`local` or `iotcore`
   - `topic`: template, e.g. `heartbeat/{ThingName}/{ComponentName}`
 
-  (Messaging-target heartbeats require an available messaging service — STANDALONE
-  mode today; GREENGRASS IPC is Phase 2.)
+  (Messaging-target heartbeats require an available messaging service — provided in
+  both STANDALONE mode and GREENGRASS mode with the `greengrass` feature.)
 
 ## Sample configuration
 

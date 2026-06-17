@@ -5,8 +5,8 @@
 //!
 //! ## Overview
 //! Each source loads (and, where applicable, watches) a raw JSON config document.
-//! `FILE`/`ENV` are implemented; `GG_CONFIG`/`SHADOW` are gated behind the
-//! `greengrass` feature and `CONFIG_COMPONENT` lands in Phase 2.
+//! `FILE`/`ENV` and `CONFIG_COMPONENT` work in any mode; `GG_CONFIG`/`SHADOW` are
+//! gated behind the `greengrass` feature. All are implemented and on-device-validated.
 //!
 //! ## Semantics & Architecture
 //! - Async trait (`async_trait`) so sources can be held as `Box<dyn ConfigSource>`.

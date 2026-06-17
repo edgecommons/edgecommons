@@ -1,4 +1,4 @@
-//! # Configuration source — CONFIG_COMPONENT (Phase 2)
+//! # Configuration source — CONFIG_COMPONENT
 //!
 //! **One-liner purpose**: Load (and hot-reload) configuration from a dedicated
 //! configuration-manager component via request/reply over messaging.
@@ -17,6 +17,11 @@
 //! - `watch` subscribes to the updated topic and forwards each message body.
 //! - `Send + Sync`; async via `async_trait`. Errors map to
 //!   [`crate::error::GgError::Config`].
+//!
+//! ## Status
+//! Implemented over the shared messaging service. The underlying request/reply
+//! mechanism is validated on a live Greengrass core (via the local request/reply
+//! path); a standalone configuration-manager component was not separately deployed.
 //!
 //! ## Related Modules
 //! - [`super`], [`crate::messaging`].
