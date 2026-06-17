@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ggcommons-cli"
+version = "0.2.0"
+description = "Scaffolding CLI that generates AWS IoT Greengrass v2 components built on the ggcommons libraries (Java, Python, Rust)."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "Apache-2.0" }
+dependencies = [
+    "jsonschema>=4",
+    "GitPython>=3.1",
+]
+
+[project.scripts]
+ggcommons = "ggcommons_cli.cli:main"
+ggcommons-cli = "ggcommons_cli.cli:main"
+
+[tool.setuptools]
+packages = ["ggcommons_cli", "ggcommons_cli.commands"]
