@@ -117,4 +117,19 @@ class MetricBuilderTest {
         
         assertThrows(IllegalStateException.class, () -> builder2.build());
     }
+
+    @Test
+    void testStandardDimensionsInjected() {
+        Metric metric = MetricBuilder.create("requests")
+                .withNamespace("TestNamespace")
+                .withThingName("thing-1")
+                .withComponentName("com.example.Component")
+                .addMeasure("count", "Count", 1)
+                .build();
+
+        // category (= metric name), coreName (= thing name), component (= component name)
+        assertEquals("requests", metric.getDimensions().get("category"));
+        assertEquals("thing-1", metric.getDimensions().get("coreName"));
+        assertEquals("com.example.Component", metric.getDimensions().get("component"));
+    }
 }

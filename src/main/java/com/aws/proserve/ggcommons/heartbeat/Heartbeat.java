@@ -90,6 +90,7 @@ public class Heartbeat implements ConfigurationChangeListener
         int storageResolution = configurationService.getHeartbeatConfig().getIntervalSecs() < 60 ? 1 : 60;
         Metric metric = MetricBuilder.create("heartbeat")
                 .withNamespace(configurationService.getMetricConfig().getNamespace())
+                .withConfig(configurationService)
                 .addMeasure("disk_total", "Gigabytes", storageResolution)
                 .addMeasure("disk_used", "Gigabytes", storageResolution)
                 .addMeasure("disk_free", "Gigabytes", storageResolution)

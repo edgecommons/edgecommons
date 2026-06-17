@@ -1,30 +1,66 @@
 package com.aws.proserve.ggcommons.metrics;
 
+import com.aws.proserve.ggcommons.config.ConfigManager;
+
 import java.util.HashMap;
 import java.util.Map;
 
 /**
- * Builder for creating Metric instances with fluent API.
+ * Builder for creating Metric instances with a fluent API.
+ *
+ * <p>On build the standard dimensions {@code coreName} (thing name) and {@code component}
+ * (component name) are injected when known; the {@code category} dimension (= metric name)
+ * is added by the {@link Metric} constructor. This matches the Python and Rust libraries.
  */
 public class MetricBuilder {
     private String name;
     private String namespace;
+    private String thingName;
+    private String componentName;
     private Map<String, Measure> measures = new HashMap<>();
     private Map<String, String> dimensions = new HashMap<>();
-    
+
     private MetricBuilder() {}
-    
+
     public static MetricBuilder create(String name) {
         MetricBuilder builder = new MetricBuilder();
         builder.name = name;
         return builder;
     }
-    
+
     public MetricBuilder withNamespace(String namespace) {
         this.namespace = namespace;
         return this;
     }
-    
+
+    /**
+     * Sets the thing name, which becomes the {@code coreName} dimension.
+     */
+    public MetricBuilder withThingName(String thingName) {
+        this.thingName = thingName;
+        return this;
+    }
+
+    /**
+     * Sets the component name, which becomes the {@code component} dimension.
+     */
+    public MetricBuilder withComponentName(String componentName) {
+        this.componentName = componentName;
+        return this;
+    }
+
+    /**
+     * Populates the thing name, component name and (if not already set) namespace from configuration.
+     */
+    public MetricBuilder withConfig(ConfigManager configManager) {
+        this.thingName = configManager.getThingName();
+        this.componentName = configManager.getComponentName();
+        if (this.namespace == null) {
+            this.namespace = configManager.getMetricConfig().getNamespace();
+        }
+        return this;
+    }
+
     public MetricBuilder addMeasure(String name, String unit, int precision) {
         if (name == null || name.trim().isEmpty()) {
             throw new IllegalArgumentException("Measure name cannot be null or empty");
@@ -35,7 +71,7 @@ public class MetricBuilder {
         this.measures.put(name, new Measure(name, unit, precision));
         return this;
     }
-    
+
     public MetricBuilder addMeasure(Measure measure) {
         if (measure == null) {
             throw new IllegalArgumentException("Measure cannot be null");
@@ -46,31 +82,54 @@ public class MetricBuilder {
         this.measures.put(measure.getName(), measure);
         return this;
     }
-    
+
     public MetricBuilder addDimension(String key, String value) {
         if (key == null || key.trim().isEmpty()) {
             throw new IllegalArgumentException("Dimension key cannot be null or empty");
         }
-        if (dimensions.size() >= 10) {
+        if (!dimensions.containsKey(key) && dimensions.size() >= 10) {
             throw new IllegalArgumentException("Maximum of 10 dimensions allowed per metric");
         }
         this.dimensions.put(key, value);
         return this;
     }
-    
+
     public Metric build(MetricEmitter metricEmitter) {
         if (namespace == null) {
             namespace = metricEmitter.getMetricConfig().getNamespace();
         }
-        return new Metric(name, namespace, measures, dimensions);
+        if (thingName == null) {
+            thingName = metricEmitter.getThingName();
+        }
+        if (componentName == null) {
+            componentName = metricEmitter.getComponentName();
+        }
+        if (measures.isEmpty()) {
+            throw new IllegalStateException("At least one measure must be defined for a metric");
+        }
+        return assemble();
     }
-    
+
     public Metric build() {
         if (namespace == null) {
             throw new IllegalStateException("Namespace must be set or MetricEmitter instance must be provided");
         }
         if (measures.isEmpty()) {
             throw new IllegalStateException("At least one measure must be defined for a metric");
+        }
+        return assemble();
+    }
+
+    /**
+     * Assembles the Metric, injecting the standard {@code coreName} (thing name) and
+     * {@code component} (component name) dimensions when known.
+     */
+    private Metric assemble() {
+        if (thingName != null) {
+            dimensions.put("coreName", thingName);
+        }
+        if (componentName != null) {
+            dimensions.put("component", componentName);
         }
         return new Metric(name, namespace, measures, dimensions);
     }

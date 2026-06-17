@@ -57,6 +57,9 @@ public class Metric
 
     public void addDimension(String name, String value)
     {
+        if (!dimensions.containsKey(name) && dimensions.size() >= 10) {
+            throw new IllegalArgumentException("Maximum of 10 dimensions allowed per metric");
+        }
         dimensions.put(name, value);
     }
 
