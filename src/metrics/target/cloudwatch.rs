@@ -71,6 +71,10 @@ impl CloudWatchTarget {
             let pending = pending.clone();
             Some(tokio::spawn(async move {
                 let mut ticker = tokio::time::interval(Duration::from_secs(interval_secs.max(1)));
+                // tokio interval's first tick fires immediately; consume it so the first
+                // flush happens after one full interval. Nothing is buffered at startup, so
+                // an immediate flush is pointless (parity with Java/Python CloudWatch).
+                ticker.tick().await;
                 loop {
                     ticker.tick().await;
                     let batch = take_all(&pending);
