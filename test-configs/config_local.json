@@ -1,0 +1,38 @@
+{
+  "logging": {
+    "level": "INFO"
+  },
+  "heartbeat": {
+    "intervalSecs": 1,
+    "targets": [
+      {
+        "type": "metric"
+      }
+    ],
+    "measures": {
+      "cpu": true,
+      "memory": true,
+      "disk": false,
+      "files": false,
+      "threads": true,
+      "fds": false
+    }
+  },
+  "metricEmission": {
+    "target": "log",
+    "namespace": "ggcommons",
+    "targetConfig": {
+      "logFileName": "skeleton_test.metric.log"
+    }
+  },
+  "tags": {
+    "site": "site1",
+    "line": "line1"
+  },
+  "component": {
+    "global": {
+      "publish_interval": 1
+    },
+    "instances": []
+  }
+}

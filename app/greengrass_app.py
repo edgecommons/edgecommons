@@ -1,20 +1,19 @@
 import logging
 import time
 from abc import ABC
-from argparse import Namespace
 from random import random
 
 from awsiot.greengrasscoreipc.model import QOS
-from ggcommons import MetricEmitter
+from ggcommons.utils.iou import Iou
+from ggcommons.metrics.metric_emitter import MetricEmitter
+from ggcommons.metrics.metric_builder import MetricBuilder
 from ggcommons.config.manager.configuration_change_listener import (
     ConfigurationChangeListener,
 )
 from ggcommons.config.manager.config_manager import ConfigManager
-from ggcommons.messaging.message import Message, MessageBuilder
+from ggcommons.messaging.message import Message
+from ggcommons.messaging.message_builder import MessageBuilder
 from ggcommons.messaging.messaging_client import MessagingClient
-from ggcommons.metrics.measure import Measure
-from ggcommons.metrics.metric import Metric
-from ggcommons.utils.iou import Iou
 
 logger = logging.getLogger("GreengrassApp")
 
@@ -27,7 +26,7 @@ logger = logging.getLogger("GreengrassApp")
 
 
 class GreengrassApp(ConfigurationChangeListener, ABC):
-    def __init__(self, args: Namespace, config_manager: ConfigManager):
+    def __init__(self, config_manager: ConfigManager):
         super().__init__()
         self._config_manager = config_manager
         self._config_manager.add_config_change_listener(self)
@@ -62,8 +61,11 @@ class GreengrassApp(ConfigurationChangeListener, ABC):
         reply_payload = {
             "reply_message": "I have received your request and have replied with this message"
         }
-        reply = MessageBuilder.build_from_config(
-            "ReplyTest", "1.0", reply_payload, self._config_manager
+        reply = (
+            MessageBuilder.create("ReplyTest", "1.0")
+            .with_payload(reply_payload)
+            .with_config(self._config_manager)
+            .build()
         )
         time.sleep(request.get_body()["wait_time"])
         logger.info(f"Publishing reply message {request.get_body()['msg_id']}")
@@ -72,8 +74,11 @@ class GreengrassApp(ConfigurationChangeListener, ABC):
     def publish_request(self, msg_id: str, execution_time: float) -> Iou:
         logger.info(f"Publishing reqeust message {msg_id}")
         request_payload = {"msg_id": msg_id, "wait_time": execution_time}
-        request = MessageBuilder.build_from_config(
-            "RequestTest", "1.0", request_payload, self._config_manager
+        request = (
+            MessageBuilder.create("RequestTest", "1.0")
+            .with_payload(request_payload)
+            .with_config(self._config_manager)
+            .build()
         )
         return MessagingClient.request("ggcommons/test/python/request", request)
 
@@ -89,8 +94,12 @@ class GreengrassApp(ConfigurationChangeListener, ABC):
             logger.info(f"...Received reply for {msg_instance}: {reply.dumps()}")
 
     def define_metric(self):
-        metric = Metric("performance")
-        metric.add_measure(Measure("latency", "Milliseconds", 1))
+        metric = (
+            MetricBuilder.create("performance")
+            .with_config(self._config_manager)
+            .add_measure("latency", "Milliseconds", 1)
+            .build()
+        )
         MetricEmitter.define_metric(metric)
         return metric
 
@@ -98,7 +107,6 @@ class GreengrassApp(ConfigurationChangeListener, ABC):
         i = 1
         try:
             measure_values = {}
-
             MessagingClient.subscribe(
                 "ggcommons/test/python/hello_world", self.ipc_hello_world_handler, True
             )
@@ -120,11 +128,11 @@ class GreengrassApp(ConfigurationChangeListener, ABC):
             self.wait_for_reply("iou_2", iou_2, 2)
 
             while True:
-                test_message = MessageBuilder.build_from_config(
-                    name="hello_world",
-                    version="1.0.0",
-                    payload={"msg_id": i, "message": "Hello World Python"},
-                    config_manager=self._config_manager,
+                test_message = (
+                    MessageBuilder.create("hello_world", "1.0.0")
+                    .with_payload({"msg_id": i, "message": "Hello World Python"})
+                    .with_config(self._config_manager)
+                    .build()
                 )
                 logger.info(f"Publishing message {i} to ipc")
                 MessagingClient.publish(
