@@ -88,6 +88,56 @@ def test_messaging_round_trip(gg):
     MessagingClient.unsubscribe(topic)
 
 
+def test_request_reply_round_trip(gg):
+    from ggcommons import MessagingClient
+    from ggcommons.messaging.message_builder import MessageBuilder
+
+    cm = gg.get_config_manager()
+
+    def responder(topic, request):
+        reply = (
+            MessageBuilder.create("Reply", "1.0")
+            .with_payload({"answer": 42})
+            .with_config(cm)
+            .build()
+        )
+        MessagingClient.reply(request, reply)
+
+    MessagingClient.subscribe("skeleton/test/req", responder)
+    req = (
+        MessageBuilder.create("Req", "1.0")
+        .with_payload({"q": "x"})
+        .with_config(cm)
+        .build()
+    )
+    iou = MessagingClient.request("skeleton/test/req", req)
+    done, reply = iou.get(5)
+    assert done is True, "request should receive a reply over the local broker"
+    assert reply.get_body()["answer"] == 42
+    MessagingClient.unsubscribe("skeleton/test/req")
+
+
+def test_cancel_request_carries_reply_topic(gg):
+    """Tier B fix: the standalone request Iou carries its reply topic so
+    cancel_request can tear down the right subscription (was Iou() -> None)."""
+    from ggcommons import MessagingClient
+    from ggcommons.messaging.message_builder import MessageBuilder
+
+    cm = gg.get_config_manager()
+    req = (
+        MessageBuilder.create("Req", "1.0")
+        .with_payload({"q": "x"})
+        .with_config(cm)
+        .build()
+    )
+    iou = MessagingClient.request("skeleton/test/never-answered", req)
+    done, _pending = iou.get(1)  # no responder -> times out
+    assert done is False
+    user_data = iou.get_user_data()
+    assert isinstance(user_data, str) and user_data.startswith("ggcommons/reply-")
+    MessagingClient.cancel_request(iou)  # must not raise
+
+
 def test_greengrass_app_constructs_and_defines_metric(gg):
     from app.greengrass_app import GreengrassApp
 
