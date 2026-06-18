@@ -7,6 +7,7 @@ package com.aws.proserve.ggcommons.config;
 import com.aws.proserve.ggcommons.ParsedCommandLine;
 import com.aws.proserve.ggcommons.config.provider.ConfigProvider;
 import com.aws.proserve.ggcommons.config.provider.ConfigProviderBuilder;
+import com.aws.proserve.ggcommons.messaging.MessagingClient;
 import com.google.gson.JsonObject;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -26,18 +27,34 @@ public class ConfigManagerFactory {
      * @throws ConfigurationException if configuration loading or validation fails
      */
     public static ConfigManager create(String componentName, ParsedCommandLine cmdLine) throws ConfigurationException {
+        return create(componentName, cmdLine, null);
+    }
+
+    /**
+     * Creates a ConfigManager, supplying a messaging client for config sources (GG_CONFIG,
+     * CONFIG_COMPONENT) that load the component configuration over IPC.
+     *
+     * @param componentName The name of the Greengrass component
+     * @param cmdLine Parsed command line arguments containing configuration options
+     * @param messagingClient The messaging client (required for GG_CONFIG / CONFIG_COMPONENT sources;
+     *                        may be null for FILE / ENV / SHADOW)
+     * @return Configured ConfigManager instance
+     * @throws ConfigurationException if configuration loading or validation fails
+     */
+    public static ConfigManager create(String componentName, ParsedCommandLine cmdLine,
+                                       MessagingClient messagingClient) throws ConfigurationException {
         try {
             // Parse component name
             String componentFullName = componentName;
-            String componentShortName = componentName.contains(".") 
+            String componentShortName = componentName.contains(".")
                 ? componentName.substring(componentName.lastIndexOf(".") + 1)
                 : componentName;
-            
+
             // Determine thing name
             String thingName = resolveThingName(cmdLine);
-            
+
             // Load configuration
-            ConfigProvider configProvider = ConfigProviderBuilder.build(null, componentName, thingName, cmdLine.configArgs, null);
+            ConfigProvider configProvider = ConfigProviderBuilder.build(null, componentName, thingName, cmdLine.configArgs, messagingClient);
             JsonObject fullConfig = configProvider.loadConfiguration();
             
             if (fullConfig == null) {

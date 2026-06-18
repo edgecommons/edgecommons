@@ -90,13 +90,14 @@ public class GGCommons
         try {
             ParsedCommandLine parsedCommandLine = GGCommons.processArgs(componentName, args, appOptions);
 
-            // Initialize config manager first
-            configManager = ConfigManagerFactory.create(componentName, parsedCommandLine);
-
-            // Wire the messaging, metric and heartbeat subsystems directly (no service locator).
+            // Messaging must be initialized first: the GG_CONFIG / CONFIG_COMPONENT config sources
+            // load the component configuration over IPC and therefore need the messaging client.
             messagingClient = MessagingClientBuilder.create(parsedCommandLine)
                     .withReceiveOwnMessages(receiveOwnMessages)
                     .build();
+
+            // Initialize the config manager (passing messaging for IPC-backed config sources).
+            configManager = ConfigManagerFactory.create(componentName, parsedCommandLine, messagingClient);
 
             metricEmitter = MetricEmitterBuilder.create(configManager)
                     .withMessagingService(messagingClient)
