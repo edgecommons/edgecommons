@@ -89,6 +89,24 @@ public class CloudWatch extends MetricTarget
         return true;
     }
 
+    @Override
+    public void close()
+    {
+        if (metricEmitTimer != null)
+        {
+            metricEmitTimer.cancel();
+            metricEmitTimer.purge();
+        }
+        try
+        {
+            cwClient.close();
+        }
+        catch (Exception e)
+        {
+            LOGGER.warn("Error closing CloudWatch client: {}", e.getMessage());
+        }
+    }
+
     // CloudWatch PutMetricData accepts at most 1000 metric data items per request.
     private static final int MAX_DATUMS_PER_REQUEST = 1000;
 

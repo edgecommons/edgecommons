@@ -20,5 +20,8 @@ public abstract class ConfigProvider {
     public abstract JsonObject loadConfiguration();
     public abstract String getConfigSource();
 
+    /** Releases any resources held by this provider (e.g. file watchers). Default no-op. */
+    public void close() {}
+
 
 }

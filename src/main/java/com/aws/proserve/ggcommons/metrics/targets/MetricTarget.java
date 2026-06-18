@@ -33,4 +33,7 @@ public abstract class MetricTarget implements ConfigurationChangeListener
 
     @Override
     public abstract boolean onConfigurationChanged();
+
+    /** Releases any resources held by this target (timers, clients, appenders). Default no-op. */
+    public void close() {}
 }

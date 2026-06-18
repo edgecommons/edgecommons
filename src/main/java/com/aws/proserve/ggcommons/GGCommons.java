@@ -147,6 +147,30 @@ public class GGCommons
     }
 
     /**
+     * Shuts down this GGCommons instance, releasing background timers, threads and connections
+     * held by the heartbeat, metric, messaging and configuration subsystems.
+     */
+    public void shutdown()
+    {
+        if (heartbeat != null)
+        {
+            heartbeat.close();
+        }
+        if (metricEmitter != null)
+        {
+            metricEmitter.close();
+        }
+        if (messagingClient != null)
+        {
+            messagingClient.close();
+        }
+        if (configManager != null)
+        {
+            configManager.close();
+        }
+    }
+
+    /**
      * Processes command line arguments for a Greengrass component.
      * 
      * @param componentName The name of the Greengrass component

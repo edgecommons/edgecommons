@@ -118,4 +118,7 @@ public abstract class MessagingProvider
     public abstract Object getNativeLocalClient();
 
     public abstract Object getNativeIotCoreClient();
+
+    /** Releases any resources held by this provider (connections, threads). Default no-op. */
+    public void close() {}
 }

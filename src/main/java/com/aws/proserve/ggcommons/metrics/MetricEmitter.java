@@ -126,6 +126,15 @@ public class MetricEmitter
     }
 
     /**
+     * Releases resources held by the underlying metric target (timers, clients, appenders).
+     */
+    public void close() {
+        if (metricTarget != null) {
+            metricTarget.close();
+        }
+    }
+
+    /**
      * Emits metric values for a defined metric. The values will be buffered according to
      * the metric's configuration before being published.
      *

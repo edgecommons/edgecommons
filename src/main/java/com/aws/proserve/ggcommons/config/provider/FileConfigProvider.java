@@ -34,6 +34,12 @@ class FileConfigProvider extends ConfigProvider implements FileWatcher.FileChang
     }
 
     @Override
+    public void close()
+    {
+        configFileWatcher.stopThread();
+    }
+
+    @Override
     public JsonObject loadConfiguration()
     {
         LOGGER.debug("Loading configuration from file '{}'", configFilePath);

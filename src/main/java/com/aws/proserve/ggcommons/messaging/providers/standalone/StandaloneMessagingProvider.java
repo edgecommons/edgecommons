@@ -113,6 +113,12 @@ public class StandaloneMessagingProvider extends MessagingProvider
             }
             LOGGER.trace("Queue monitoring stopped for subscription on {}", topicFilter);
         }
+
+        void shutdown()
+        {
+            queue.add(new QueueEntry(null, null)); // sentinel to break the processing loop
+            executor.shutdownNow();
+        }
     }
 
     private final ConcurrentHashMap<String,SubscriptionProcessor> localSubscriptionProcessors = new ConcurrentHashMap<>();
@@ -306,6 +312,37 @@ public class StandaloneMessagingProvider extends MessagingProvider
         {
             LOGGER.fatal("Failed to connect to IoT Core at {} - {}", uri, e.toString());
             throw new RuntimeException("Failed to connect to IoT Core at " + uri, e);
+        }
+    }
+
+    @Override
+    public void close()
+    {
+        for (SubscriptionProcessor p : localSubscriptionProcessors.values()) { p.shutdown(); }
+        for (SubscriptionProcessor p : iotCoreSubscriptionProcessors.values()) { p.shutdown(); }
+        localSubscriptionProcessors.clear();
+        iotCoreSubscriptionProcessors.clear();
+        disconnectQuietly(localMqttClient);
+        disconnectQuietly(iotCoreMqttClient);
+    }
+
+    private void disconnectQuietly(MqttClient client)
+    {
+        if (client == null)
+        {
+            return;
+        }
+        try
+        {
+            if (client.isConnected())
+            {
+                client.disconnect();
+            }
+            client.close();
+        }
+        catch (MqttException e)
+        {
+            LOGGER.warn("Error disconnecting MQTT client: {}", e.toString());
         }
     }
 

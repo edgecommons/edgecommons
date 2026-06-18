@@ -18,6 +18,7 @@ public class Log extends MetricTarget
     private final static Logger LOGGER = LogManager.getLogger(MetricTarget.class);
     private Logger metricLogger;
     private String currentLoggerName;
+    private org.apache.logging.log4j.core.appender.RollingFileAppender currentAppender;
 
     public Log(ConfigManager configManager)
     {
@@ -70,7 +71,13 @@ public class Log extends MetricTarget
         String metricFile = configManager.resolveTemplate(metricConfig.getLogFileNameTemplate());
         String uniqueAppenderName = "MetricFileAppender_" + System.currentTimeMillis();
         String uniqueLoggerName = "metric_" + System.currentTimeMillis();
-        
+
+        // Stop any previously-created appender to avoid leaking file handles on reconfiguration.
+        if (currentAppender != null) {
+            currentAppender.stop();
+            currentAppender = null;
+        }
+
         try {
             // Get current context and configuration
             org.apache.logging.log4j.core.LoggerContext context = 
@@ -106,6 +113,7 @@ public class Log extends MetricTarget
             
             appender.start();
             config.addAppender(appender);
+            currentAppender = appender;
             
             // Create logger configuration for metrics
             org.apache.logging.log4j.core.config.LoggerConfig loggerConfig = 
@@ -142,6 +150,16 @@ public class Log extends MetricTarget
             return nameWithoutExtension + "-%d{yyyyMMddHHmmss}" + extension;
         } else {
             return baseFileName + "-%d{yyyyMMddHHmmss}.log";
+        }
+    }
+
+    @Override
+    public void close()
+    {
+        if (currentAppender != null)
+        {
+            currentAppender.stop();
+            currentAppender = null;
         }
     }
 }

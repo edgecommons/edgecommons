@@ -51,6 +51,22 @@ public class GreengrassMessagingProvider extends MessagingProvider
     }
 
     @Override
+    public void close()
+    {
+        try
+        {
+            if (ipcClient != null)
+            {
+                ipcClient.close();
+            }
+        }
+        catch (Exception e)
+        {
+            LOGGER.warn("Error closing Greengrass IPC client: {}", e.getMessage());
+        }
+    }
+
+    @Override
     public void publish(String topic, Message message)
     {
         try

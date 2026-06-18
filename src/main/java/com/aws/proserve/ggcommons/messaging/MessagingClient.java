@@ -225,6 +225,17 @@ public class MessagingClient
     }
 
     /**
+     * Closes the underlying messaging provider, releasing connections and background threads.
+     */
+    public void close()
+    {
+        if (messagingProvider != null)
+        {
+            messagingProvider.close();
+        }
+    }
+
+    /**
      * Returns the underlying native local messaging client implementation.
      *
      * @return The native messaging client object

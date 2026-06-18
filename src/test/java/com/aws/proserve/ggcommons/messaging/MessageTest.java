@@ -59,6 +59,13 @@ class MessageTest {
     }
 
     @Test
+    void testShutdownDoesNotThrow() {
+        TestableGGCommons local = new TestableGGCommons("test.component",
+                new String[]{"-t", "test-thing", "-c", "FILE", "./config.json"});
+        assertDoesNotThrow(local::shutdown);
+    }
+
+    @Test
     void testBuildFromConfigWithCorrelationId() {
         JsonObject payload = new JsonObject();
         payload.addProperty("data", "test");

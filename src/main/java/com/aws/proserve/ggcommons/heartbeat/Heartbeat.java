@@ -162,6 +162,22 @@ public class Heartbeat implements ConfigurationChangeListener
 
     }
 
+    /**
+     * Stops the heartbeat, cancelling its periodic timer.
+     */
+    public void close()
+    {
+        synchronized (timerLock)
+        {
+            if (heartbeatTimer != null)
+            {
+                heartbeatTimer.cancel();
+                heartbeatTimer.purge();
+                heartbeatTimer = null;
+            }
+        }
+    }
+
     @Override
     /**
      * Handles configuration changes by reinitializing the heartbeat mechanism.

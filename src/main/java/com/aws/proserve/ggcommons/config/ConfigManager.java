@@ -285,6 +285,13 @@ public class ConfigManager
      * Marks initialization as complete. Called by GGCommons after all initialization is finished.
      * Future configuration changes will trigger listener notifications.
      */
+    public void close()
+    {
+        if (configProvider != null) {
+            configProvider.close();
+        }
+    }
+
     public void completeInitialization()
     {
         initializing = false;
