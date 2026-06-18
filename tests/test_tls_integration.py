@@ -61,7 +61,12 @@ def _roundtrip(provider):
         got.set()
 
     provider.subscribe(topic, handler)
-    message = MessageBuilder.create("TlsTest", "1.0").with_payload({"hello": "secure"}).build()
+    message = (
+        MessageBuilder.create("TlsTest", "1.0")
+        .with_payload({"hello": "secure"})
+        .with_tags({})
+        .build()
+    )
     provider.publish(topic, message)
 
     assert got.wait(timeout=5.0), "did not receive the published message over TLS"
