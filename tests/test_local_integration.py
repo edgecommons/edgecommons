@@ -138,6 +138,45 @@ def test_cancel_request_carries_reply_topic(gg):
     MessagingClient.cancel_request(iou)  # must not raise
 
 
+def test_max_concurrency_cap_limits_callbacks(gg):
+    """Tier D: standalone subscriptions honor the maxConcurrency cap (parity with
+    the IPC handler / Java / Rust). With cap=2 and 6 queued messages, at most two
+    callbacks run at once."""
+    import time
+
+    from ggcommons import MessagingClient
+    from ggcommons.messaging.message_builder import MessageBuilder
+
+    cm = gg.get_config_manager()
+    topic = "skeleton/test/concurrency"
+    messages = 6
+    lock = threading.Lock()
+    state = {"active": 0, "max": 0, "done": 0}
+    finished = threading.Event()
+
+    def handler(t, m):
+        with lock:
+            state["active"] += 1
+            state["max"] = max(state["max"], state["active"])
+        time.sleep(0.2)
+        with lock:
+            state["active"] -= 1
+            state["done"] += 1
+            if state["done"] >= messages:
+                finished.set()
+
+    MessagingClient.subscribe(topic, handler, 2)  # cap = 2
+    for i in range(messages):
+        MessagingClient.publish(
+            topic,
+            MessageBuilder.create("C", "1.0").with_payload({"i": i}).with_config(cm).build(),
+        )
+    assert finished.wait(15), "all messages should be processed"
+    assert state["max"] <= 2, f"cap of 2 exceeded; observed {state['max']}"
+    assert state["max"] >= 2, f"with 6 queued msgs and cap 2, concurrency should reach 2; observed {state['max']}"
+    MessagingClient.unsubscribe(topic)
+
+
 def test_greengrass_app_constructs_and_defines_metric(gg):
     from app.greengrass_app import GreengrassApp
 
