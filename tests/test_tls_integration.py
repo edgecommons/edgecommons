@@ -1,10 +1,11 @@
 """
 Integration test: verify a real *secure* (TLS) connection to the local broker.
 
-Requires:
-- the TLS test certs (tests/gen-tls-certs.sh), and
-- a local MQTT broker (EMQX) with a TLS listener on :8883 trusting tests/tls-certs/ca.crt
-  and presenting tests/tls-certs/server.crt (see the EMQX setup notes in the PR/commit).
+Requires the shared ggcommons-test-infra repo:
+- generate the TLS test certs there (bash gen-tls-certs.sh) and point at them with
+  GGCOMMONS_TLS_CERTS_DIR, and
+- start the broker (docker compose up -d) — EMQX TLS listener on :8883 trusting
+  tls-certs/ca.crt and presenting tls-certs/server.crt.
 
 Skips cleanly if the certs are missing or the secure connection cannot be established.
 """
@@ -22,7 +23,9 @@ from ggcommons.messaging.message_builder import MessageBuilder
 
 pytestmark = pytest.mark.integration
 
-CERTS = os.path.join(os.path.dirname(__file__), "tls-certs")
+CERTS = os.environ.get("GGCOMMONS_TLS_CERTS_DIR") or os.path.join(
+    os.path.dirname(__file__), "tls-certs"
+)
 HAVE_CERTS = os.path.isdir(CERTS) and os.path.exists(os.path.join(CERTS, "ca.crt"))
 TLS_PORT = int(os.environ.get("GGCOMMONS_TLS_PORT", "8883"))
 

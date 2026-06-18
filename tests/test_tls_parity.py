@@ -5,7 +5,8 @@ Unit tests for TLS / messaging-config parity (no broker required):
 - IoT Core is now optional in the standalone messaging config (parity with Java/Rust)
 
 The TLS-context construction tests need real cert files; they are skipped unless
-tests/tls-certs/ has been generated (tests/gen-tls-certs.sh).
+certs are available. Certs live in the shared ggcommons-test-infra repo; point at
+them with GGCOMMONS_TLS_CERTS_DIR (falls back to a local tests/tls-certs/).
 """
 
 import json
@@ -16,8 +17,11 @@ import pytest
 from ggcommons.messaging.providers.standalone_provider import StandaloneProvider
 from ggcommons.messaging.messaging_config import MessagingConfiguration
 
-CERTS = os.path.join(os.path.dirname(__file__), "tls-certs")
+CERTS = os.environ.get("GGCOMMONS_TLS_CERTS_DIR") or os.path.join(
+    os.path.dirname(__file__), "tls-certs"
+)
 HAVE_CERTS = os.path.isdir(CERTS) and os.path.exists(os.path.join(CERTS, "ca.crt"))
+_SKIP_REASON = "set GGCOMMONS_TLS_CERTS_DIR (see the ggcommons-test-infra repo)"
 
 
 class _FakeClient:
@@ -87,7 +91,7 @@ def test_config_requires_at_least_one_broker(tmp_path):
     assert mc.validate() is False
 
 
-@pytest.mark.skipif(not HAVE_CERTS, reason="run tests/gen-tls-certs.sh first")
+@pytest.mark.skipif(not HAVE_CERTS, reason=_SKIP_REASON)
 def test_local_server_only_tls_builds_context():
     prov = _provider()
     client = _FakeClient()
@@ -97,7 +101,7 @@ def test_local_server_only_tls_builds_context():
     assert client.ctx is not None  # server-only TLS (CA only, no client cert)
 
 
-@pytest.mark.skipif(not HAVE_CERTS, reason="run tests/gen-tls-certs.sh first")
+@pytest.mark.skipif(not HAVE_CERTS, reason=_SKIP_REASON)
 def test_local_mutual_tls_builds_context():
     prov = _provider()
     client = _FakeClient()
@@ -115,7 +119,7 @@ def test_local_mutual_tls_builds_context():
     assert client.ctx is not None  # mutual TLS (CA + client cert)
 
 
-@pytest.mark.skipif(not HAVE_CERTS, reason="run tests/gen-tls-certs.sh first")
+@pytest.mark.skipif(not HAVE_CERTS, reason=_SKIP_REASON)
 def test_iot_core_complete_creds_builds_context():
     prov = _provider()
     client = _FakeClient()
