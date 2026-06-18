@@ -6,14 +6,24 @@ from ggcommons.metrics.targets.emf_helper import build_metric_data_emf
 from ggcommons.metrics.targets.metric_target import MetricTarget
 
 
+def _is_local_destination(destination: str) -> bool:
+    """True for the local/IPC transport, False for IoT Core.
+
+    Canonical values are "ipc" (local/IPC) and "iot_core" (IoT Core); the legacy
+    "local"/"iotcore" spellings are also accepted. Mirrors the heartbeat target,
+    the Java/Rust metric targets, and the config schema.
+    """
+    return destination.lower() in ("ipc", "local")
+
+
 class Messaging(MetricTarget):
     def __init__(self, config_manager: ConfigManager):
         super().__init__(config_manager)
         self.topic = config_manager.resolve_template(
             config_manager.get_metric_config().get_topic()
         )
-        self.send_to_local = (
-            config_manager.get_metric_config().get_destination().lower() == "local"
+        self.send_to_local = _is_local_destination(
+            config_manager.get_metric_config().get_destination()
         )
 
     def emit_metric_now(self, metric, measure_values):
@@ -57,10 +67,10 @@ class Messaging(MetricTarget):
         self.topic = self.config_manager.resolve_template(
             self.config_manager.get_metric_config().get_topic()
         )
-        self.send_to_local = (
-            self.config_manager.get_metric_config().get_destination().lower() == "local"
+        self.send_to_local = _is_local_destination(
+            self.config_manager.get_metric_config().get_destination()
         )
-        
+
         new_destination = "local" if self.send_to_local else "IoT Core"
         
         self.logger.info(f"Metric messaging reconfigured - topic: {old_topic} -> {self.topic}, destination: {old_destination} -> {new_destination}")

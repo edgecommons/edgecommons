@@ -273,26 +273,30 @@ class EnhancedHeartbeat(ConfigurationChangeListener):
             # Get topic and destination from config
             config = target_config.get('config', {})
             topic = config.get('topic', 'ggcommons/{ThingName}/{ComponentName}/heartbeat')
-            destination = config.get('destination', 'local')
-            
+            destination = config.get('destination', 'ipc')
+
             # Resolve template variables
             resolved_topic = self._config_service.resolve_template(topic)
-            
-            # Build heartbeat message
+
+            # Build heartbeat message (the config service IS the ConfigManager).
             message = MessageBuilder.create(self.MESSAGE_NAME, self.MESSAGE_VERSION) \
                 .with_payload(stats) \
-                .with_config(self._config_service.config_manager) \
+                .with_config(self._config_service) \
                 .build()
-            
-            # Publish based on destination
-            if destination.lower() == 'local':
+
+            # Route on destination. Canonical values are "ipc" (local/IPC transport)
+            # and "iot_core" (IoT Core); the legacy "local"/"iotcore" spellings are
+            # also accepted, for parity with Java/Rust and the config schema.
+            dest = destination.lower()
+            if dest in ('ipc', 'local'):
                 self._messaging_service.publish(resolved_topic, message)
-            elif destination.lower() == 'iotcore':
+            elif dest in ('iot_core', 'iotcore'):
                 from awsiot.greengrasscoreipc.model import QOS
                 self._messaging_service.publish_to_iot_core(resolved_topic, message, QOS.AT_LEAST_ONCE)
             else:
-                logger.warning(f"Unknown messaging destination: {destination}")
-                
+                logger.warning(f"Unrecognized heartbeat messaging destination: {destination}")
+                return
+
             logger.info(f"Published heartbeat to {destination} topic: {resolved_topic}")
             
         except Exception as e:
