@@ -83,7 +83,9 @@ public class MessageTags
     public Map<String, JsonElement> toDict()
     {
         final Map<String, JsonElement> retVal = new java.util.LinkedHashMap<>(tags.asMap());
-        retVal.put("thing", new JsonPrimitive(thingName));
+        if (thingName != null) {
+            retVal.put("thing", new JsonPrimitive(thingName));
+        }
         return retVal;
     }
 

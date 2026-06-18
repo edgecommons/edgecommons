@@ -1,0 +1,200 @@
+/*
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+package com.aws.proserve.ggcommons.metrics.targets;
+
+import com.aws.proserve.ggcommons.config.MetricConfiguration;
+import com.aws.proserve.ggcommons.config.ConfigurationFactory;
+import com.aws.proserve.ggcommons.metrics.Metric;
+import com.aws.proserve.ggcommons.metrics.MetricBuilder;
+import com.aws.proserve.ggcommons.test.MockConfigurationService;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+import software.amazon.awssdk.services.cloudwatch.CloudWatchClient;
+import software.amazon.awssdk.services.cloudwatch.model.CloudWatchException;
+import software.amazon.awssdk.services.cloudwatch.model.PutMetricDataRequest;
+
+import java.util.HashMap;
+import java.util.Map;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
+
+/**
+ * Unit tests for the {@link CloudWatch} metric target. A mocked {@link CloudWatchClient}
+ * is injected via the package-private constructor so no real AWS calls are made.
+ */
+class CloudWatchTest {
+
+    private CloudWatch cloudWatch;
+
+    /**
+     * MockConfigurationService that returns a caller-supplied metric configuration so we
+     * can exercise the CloudWatch target (interval, large-fleet workaround) deterministically.
+     */
+    private static class CwConfig extends MockConfigurationService {
+        private final MetricConfiguration metricConfig;
+
+        CwConfig(String metricJson) {
+            JsonObject root = new JsonObject();
+            root.add("metricEmission", JsonParser.parseString(metricJson).getAsJsonObject());
+            this.metricConfig = ConfigurationFactory.createMetricConfiguration(root);
+        }
+
+        @Override
+        public MetricConfiguration getMetricConfig() {
+            return metricConfig;
+        }
+    }
+
+    private static Metric metric(String name, String namespace) {
+        return MetricBuilder.create(name)
+                .withNamespace(namespace)
+                .addMeasure("value", "Count", 60)
+                .build();
+    }
+
+    @AfterEach
+    void tearDown() {
+        if (cloudWatch != null) {
+            cloudWatch.close();
+            cloudWatch = null;
+        }
+    }
+
+    @Test
+    void emitMetricNowSendsToCloudWatchImmediately() {
+        CwConfig config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600}}");
+        CloudWatchClient client = mock(CloudWatchClient.class);
+        cloudWatch = new CloudWatch(config, client);
+
+        Map<String, Float> values = new HashMap<>();
+        values.put("value", 42.0f);
+        cloudWatch.emitMetricNow(metric("m1", "ns1"), values);
+
+        verify(client, times(1)).putMetricData(any(PutMetricDataRequest.class));
+    }
+
+    @Test
+    void emitMetricNowSwallowsCloudWatchException() {
+        CwConfig config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600}}");
+        CloudWatchClient client = mock(CloudWatchClient.class);
+        when(client.putMetricData(any(PutMetricDataRequest.class)))
+                .thenThrow(CloudWatchException.builder().message("boom").build());
+        cloudWatch = new CloudWatch(config, client);
+
+        Map<String, Float> values = new HashMap<>();
+        values.put("value", 1.0f);
+        // Must not propagate the exception.
+        assertDoesNotThrow(() -> cloudWatch.emitMetricNow(metric("m1", "ns1"), values));
+        verify(client, times(1)).putMetricData(any(PutMetricDataRequest.class));
+    }
+
+    @Test
+    void emitMetricBuffersUntilFlush() {
+        CwConfig config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600}}");
+        CloudWatchClient client = mock(CloudWatchClient.class);
+        cloudWatch = new CloudWatch(config, client);
+
+        Map<String, Float> values = new HashMap<>();
+        values.put("value", 5.0f);
+        cloudWatch.emitMetric(metric("m1", "ns1"), values);
+        cloudWatch.emitMetric(metric("m2", "ns1"), values);
+
+        // Buffered metrics flushed in a single batch (one namespace, well under 1000 datums).
+        cloudWatch.flush();
+        verify(client, atLeast(1)).putMetricData(any(PutMetricDataRequest.class));
+    }
+
+    @Test
+    void flushChunksWhenExceeding1000Datums() {
+        CwConfig config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600}}");
+        CloudWatchClient client = mock(CloudWatchClient.class);
+        cloudWatch = new CloudWatch(config, client);
+
+        // Build a single metric carrying 600 measures; one measure value -> one datum.
+        MetricBuilder builder = MetricBuilder.create("bulk").withNamespace("ns1");
+        Map<String, Float> values = new HashMap<>();
+        for (int i = 0; i < 600; i++) {
+            builder.addMeasure("v" + i, "Count", 60);
+            values.put("v" + i, (float) i);
+        }
+        Metric bulk = builder.build();
+
+        // Enqueue twice -> 1200 datums in the same namespace -> must chunk into >1 request.
+        cloudWatch.emitMetric(bulk, values);
+        cloudWatch.emitMetric(bulk, values);
+
+        cloudWatch.flush();
+        // 1200 datums / 1000 per request -> 2 putMetricData calls.
+        verify(client, times(2)).putMetricData(any(PutMetricDataRequest.class));
+    }
+
+    @Test
+    void flushIsolatesFailuresPerNamespace() {
+        CwConfig config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600}}");
+        CloudWatchClient client = mock(CloudWatchClient.class);
+        when(client.putMetricData(any(PutMetricDataRequest.class)))
+                .thenThrow(new RuntimeException("network down"));
+        cloudWatch = new CloudWatch(config, client);
+
+        Map<String, Float> values = new HashMap<>();
+        values.put("value", 9.0f);
+        cloudWatch.emitMetric(metric("m1", "nsA"), values);
+        cloudWatch.emitMetric(metric("m2", "nsB"), values);
+
+        // Both namespaces attempted; failure in one must not stop the other.
+        assertDoesNotThrow(() -> cloudWatch.flush());
+        verify(client, times(2)).putMetricData(any(PutMetricDataRequest.class));
+    }
+
+    @Test
+    void largeFleetWorkaroundDoublesDatums() {
+        CwConfig config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"largeFleetWorkaround\":true,\"targetConfig\":{\"intervalSecs\":3600}}");
+        CloudWatchClient client = mock(CloudWatchClient.class);
+        cloudWatch = new CloudWatch(config, client);
+
+        Map<String, Float> values = new HashMap<>();
+        values.put("value", 7.0f);
+        assertTrue(config.getMetricConfig().getLargeFleetWorkaround());
+        cloudWatch.emitMetricNow(metric("m1", "ns1"), values);
+
+        verify(client, times(1)).putMetricData(any(PutMetricDataRequest.class));
+    }
+
+    @Test
+    void onConfigurationChangedReinitializesTimer() {
+        CwConfig config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600}}");
+        CloudWatchClient client = mock(CloudWatchClient.class);
+        cloudWatch = new CloudWatch(config, client);
+
+        assertTrue(cloudWatch.onConfigurationChanged());
+    }
+
+    @Test
+    void closeCancelsTimerAndClosesClient() {
+        CwConfig config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600}}");
+        CloudWatchClient client = mock(CloudWatchClient.class);
+        CloudWatch cw = new CloudWatch(config, client);
+
+        cw.close();
+        verify(client, times(1)).close();
+        // Guard against double-close in tearDown.
+        cloudWatch = null;
+    }
+
+    @Test
+    void closeSwallowsClientCloseException() {
+        CwConfig config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600}}");
+        CloudWatchClient client = mock(CloudWatchClient.class);
+        doThrow(new RuntimeException("close failed")).when(client).close();
+        CloudWatch cw = new CloudWatch(config, client);
+
+        assertDoesNotThrow(cw::close);
+        cloudWatch = null;
+    }
+}

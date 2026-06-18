@@ -32,8 +32,14 @@ public class CloudWatch extends MetricTarget
 
     public CloudWatch(ConfigManager configManager)
     {
+        this(configManager, CloudWatchClient.builder().build());
+    }
+
+    /** Package-private constructor allowing a CloudWatch client to be injected for testing. */
+    CloudWatch(ConfigManager configManager, CloudWatchClient cwClient)
+    {
         super(configManager);
-        cwClient = CloudWatchClient.builder().build();
+        this.cwClient = cwClient;
         initEmitTimer();
     }
 
@@ -124,20 +130,17 @@ public class CloudWatch extends MetricTarget
             ConcurrentLinkedQueue<PendingMetric> pendingMetricQueue = entry.getValue();
             try
             {
-                Collection<MetricDatum> data = new ArrayList<>();
+                List<MetricDatum> data = new ArrayList<>();
                 PendingMetric pendingMetric;
                 while ((pendingMetric = pendingMetricQueue.poll()) != null)
                 {
                     appendToPutMetricDataRequest(pendingMetric, data);
-                    if (data.size() >= MAX_DATUMS_PER_REQUEST)
-                    {
-                        sendBatch(namespace, data);
-                        data = new ArrayList<>();
-                    }
                 }
-                if (!data.isEmpty())
+                // CloudWatch PutMetricData accepts at most 1000 metric data items per call;
+                // chunk the full datum list regardless of how it maps to individual metrics.
+                for (int i = 0; i < data.size(); i += MAX_DATUMS_PER_REQUEST)
                 {
-                    sendBatch(namespace, data);
+                    sendBatch(namespace, data.subList(i, Math.min(i + MAX_DATUMS_PER_REQUEST, data.size())));
                 }
             }
             catch (Exception e)

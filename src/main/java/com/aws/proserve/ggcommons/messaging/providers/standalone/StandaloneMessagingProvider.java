@@ -231,10 +231,15 @@ public class StandaloneMessagingProvider extends MessagingProvider
             localMqttClient.connect(localOptions);
             LOGGER.info("Connected to local broker at {}", localBrokerUrl);
 
-            // Initialize IoT Core MQTT client
-            String iotCoreBrokerUrl = "ssl://" + iotCoreConfig.getEndpoint() + ":" + iotCoreConfig.getPort();
-            iotCoreMqttClient = new MqttClient(iotCoreBrokerUrl, iotCoreConfig.getClientId());
-            connectToIotCore(iotCoreConfig);
+            // Initialize IoT Core MQTT client (optional — only when an iotCore section is present)
+            if (iotCoreConfig != null) {
+                String iotCoreBrokerUrl = "ssl://" + iotCoreConfig.getEndpoint() + ":" + iotCoreConfig.getPort();
+                iotCoreMqttClient = new MqttClient(iotCoreBrokerUrl, iotCoreConfig.getClientId());
+                connectToIotCore(iotCoreConfig);
+            } else {
+                iotCoreMqttClient = null;
+                LOGGER.info("No 'iotCore' section in the standalone messaging config; IoT Core messaging is disabled.");
+            }
 
         } catch (Exception e) {
             LOGGER.error("Failed to initialize MQTT clients", e);
@@ -242,7 +247,7 @@ public class StandaloneMessagingProvider extends MessagingProvider
         }
     }
 
-    private SSLContext createSslContext(MessagingConfiguration.CredentialsConfig credentials) throws Exception {
+    static SSLContext createSslContext(MessagingConfiguration.CredentialsConfig credentials) throws Exception {
         // Load CA certificate (required for TLS — establishes server trust)
         X509Certificate caCert = (X509Certificate) CertificateFactory.getInstance("X.509")
                                                                      .generateCertificate(new ByteArrayInputStream(Files.readAllBytes(Paths.get(credentials.getCaPath()))));
@@ -349,7 +354,7 @@ public class StandaloneMessagingProvider extends MessagingProvider
         }
     }
 
-    private static SSLSocketFactory getSocketFactory(final String caCrtFile, final String crtFile, final String keyFile)
+    static SSLSocketFactory getSocketFactory(final String caCrtFile, final String crtFile, final String keyFile)
     {
         SSLSocketFactory retVal = null;
         try
@@ -411,10 +416,20 @@ public class StandaloneMessagingProvider extends MessagingProvider
         internalPublish(localMqttClient, topic, message, QOS.AT_LEAST_ONCE);
     }
 
+    private MqttClient requireIotCore()
+    {
+        if (iotCoreMqttClient == null)
+        {
+            throw new IllegalStateException(
+                    "IoT Core is not configured in the standalone messaging config (no 'iotCore' section)");
+        }
+        return iotCoreMqttClient;
+    }
+
     @Override
     public void publishToIoTCore(String topic, Message message, QOS qos)
     {
-        internalPublish(iotCoreMqttClient, topic, message, qos);
+        internalPublish(requireIotCore(), topic, message, qos);
     }
 
     @Override
@@ -439,7 +454,7 @@ public class StandaloneMessagingProvider extends MessagingProvider
         {
             MqttMessage msg = new MqttMessage(payload.toString().getBytes());
             msg.setQos(qos.ordinal());
-            iotCoreMqttClient.publish(topic, msg);
+            requireIotCore().publish(topic, msg);
         }
         catch (MqttException e)
         {
@@ -472,7 +487,7 @@ public class StandaloneMessagingProvider extends MessagingProvider
     public void subscribeToIoTCore(String topicFilter, BiConsumer<String, Message> callback, QOS qos,
                                    int maxConcurrency)
     {
-        internalSubscribe(iotCoreMqttClient, topicFilter, callback, qos, maxConcurrency, iotCoreSubscriptionProcessors);
+        internalSubscribe(requireIotCore(), topicFilter, callback, qos, maxConcurrency, iotCoreSubscriptionProcessors);
     }
 
     private void internalUnsubscribe(MqttClient client, String topicFilter, ConcurrentHashMap<String,SubscriptionProcessor> subscriptionMap)
@@ -502,7 +517,7 @@ public class StandaloneMessagingProvider extends MessagingProvider
     @Override
     public void unsubscribeFromIoTCore(String topicFilter)
     {
-        internalUnsubscribe(iotCoreMqttClient, topicFilter, iotCoreSubscriptionProcessors);
+        internalUnsubscribe(requireIotCore(), topicFilter, iotCoreSubscriptionProcessors);
     }
 
     @Override
@@ -537,7 +552,7 @@ public class StandaloneMessagingProvider extends MessagingProvider
         String replyTo = message.makeRequest();
         ReplyFuture future = new ReplyFuture(replyTo);
         responseFutures.put(replyTo, future);
-        internalSubscribe(iotCoreMqttClient, replyTo, null, QOS.AT_MOST_ONCE, 1, iotCoreSubscriptionProcessors);
+        internalSubscribe(requireIotCore(), replyTo, null, QOS.AT_MOST_ONCE, 1, iotCoreSubscriptionProcessors);
         publishToIoTCore(topic, message, QOS.AT_MOST_ONCE);
         return future;
     }
