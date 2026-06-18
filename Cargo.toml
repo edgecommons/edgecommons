@@ -26,20 +26,20 @@ thiserror = "2"
 clap = "4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-jsonschema = "0.29"
+jsonschema = "0.46"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "fs"] }
 async-trait = "0.1"
 arc-swap = "1"
-sysinfo = "0.33"
-notify = "6"
+sysinfo = "0.39"
+notify = "8"
 # Message wire-format parity with Java/Python: UUID correlation ids + RFC3339 timestamps.
 uuid = { version = "1", features = ["v4"] }
 time = { version = "0.3", features = ["formatting"] }
 
 # STANDALONE-only. Pure-Rust async MQTT — no C toolchain, clean ARM/musl cross-compile.
-rumqttc = { version = "0.24", optional = true }
+rumqttc = { version = "0.25", optional = true }
 
 # cloudwatch metric target (feature = "cloudwatch").
 aws-config = { version = "1", optional = true }
@@ -53,14 +53,13 @@ aws-greengrass-component-sdk = { version = "1.0.4", optional = true }
 # logging.fileLogging (size-rotated file output) is implemented self-contained in
 # src/logging.rs (std::fs only) — no tracing-appender needed (it only does
 # time-based rotation; we match the Python library's size-based maxFileSize/backupCount).
-# Not yet implemented (config keys are parsed but inert):
-#   notify             — FILE config hot-reload
-#   tokio-rustls       — IoT Core mTLS
-#   aws-sdk-cloudwatch — cloudwatch metric target
+# notify drives FILE config hot-reload (src/config/source/file.rs); local + IoT Core
+# TLS (incl. mutual) is provided by rumqttc's rustls. The cloudwatch metric target
+# (aws-config / aws-sdk-cloudwatch) is gated behind the optional `cloudwatch` feature.
 
 # Windows: per-process thread + handle counts for the heartbeat (sysinfo lacks these).
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = [
+windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_System_Threading",
     "Win32_System_Diagnostics_ToolHelp",

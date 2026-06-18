@@ -48,7 +48,7 @@ pub fn validate(instance: &Value) -> Result<()> {
 
     let errors: Vec<String> = validator
         .iter_errors(instance)
-        .map(|e| format!("{e} (at {})", e.instance_path))
+        .map(|e| format!("{e} (at {})", e.instance_path()))
         .collect();
 
     if errors.is_empty() {
