@@ -1,14 +1,10 @@
 [build-system]
+# Pure-Python library: only setuptools + wheel are needed to build. (The previous
+# numpy/cmake/astunparse/pyyaml/requests entries were never used and broke offline
+# builds.)
 requires = [
     "setuptools",
     "wheel",
-    "astunparse",
-    "numpy",
-    "pyyaml",
-    "setuptools",
-    "cmake",
-    "typing-extensions",
-    "requests",
 ]
 # Use legacy backend to import local packages in setup.py
 build-backend = "setuptools.build_meta:__legacy__"

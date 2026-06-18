@@ -85,6 +85,11 @@ class EnhancedHeartbeat(ConfigurationChangeListener):
         self._metric_service = metric_service
         name = getattr(metric_service, "__name__", type(metric_service).__name__)
         logger.info(f"Metric handle set on heartbeat: {name}")
+        # The metric must be defined now that a metric service is available: the
+        # definition attempted during __init__ was a no-op because the service had
+        # not been injected yet, which previously left ticks emitting an undefined
+        # "heartbeat" metric.
+        self._define_heartbeat_metric()
         
     def _initialize_heartbeat(self) -> None:
         """Initialize the heartbeat system with current configuration."""

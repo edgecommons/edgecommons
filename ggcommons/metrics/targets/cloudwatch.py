@@ -1,6 +1,6 @@
 import boto3
 import time
-from threading import Thread, Event
+from threading import Thread, Event, Lock
 from ggcommons.config.manager.config_manager import ConfigManager
 from ggcommons.metrics.targets.metric_target import MetricTarget
 
@@ -15,6 +15,9 @@ class CloudWatch(MetricTarget):
         
         self._cloudwatch_client = boto3.client("cloudwatch", region_name="us-east-1")
         self._pending_metrics = {}
+        # Guards _pending_metrics against the flush thread's read-modify-write
+        # racing with concurrent emit_metric() appends.
+        self._pending_lock = Lock()
         self._interval_secs = -1
         self._flush_event = None
         self._flush_thread = None
@@ -64,14 +67,21 @@ class CloudWatch(MetricTarget):
                 break
 
     def _flush_metrics(self):
-        total_metrics = sum(len(metrics) for metrics in self._pending_metrics.values())
+        # Atomically take everything pending and reset it, so metrics emitted
+        # during the (network-bound) send below queue for the next flush rather
+        # than being dropped by a concurrent read-modify-write.
+        with self._pending_lock:
+            snapshot = self._pending_metrics
+            self._pending_metrics = {}
+
+        total_metrics = sum(len(metrics) for metrics in snapshot.values())
         if total_metrics == 0:
             self.logger.debug("No pending metrics to flush to CloudWatch")
             return
 
-        self.logger.debug(f"Flushing {total_metrics} metrics across {len(self._pending_metrics)} namespaces to CloudWatch")
+        self.logger.debug(f"Flushing {total_metrics} metrics across {len(snapshot)} namespaces to CloudWatch")
 
-        for namespace, metrics in self._pending_metrics.items():
+        for namespace, metrics in snapshot.items():
             if not metrics:
                 continue
             # Isolate each namespace so one failing PutMetricData does not drop the
@@ -98,25 +108,28 @@ class CloudWatch(MetricTarget):
                     )
                     failed = True
                     remaining.extend(batch)
-            self._pending_metrics[namespace] = remaining
+            # Write back the not-yet-sent datums for this namespace, ahead of
+            # anything emitted concurrently during the flush.
+            with self._pending_lock:
+                self._pending_metrics[namespace] = (
+                    remaining + self._pending_metrics.get(namespace, [])
+                )
 
         self.logger.debug("CloudWatch flush cycle complete")
 
     def emit_metric(self, metric, measure_values):
         namespace = (
             metric.get_namespace()
-            if metric.get_namespace is not None
+            if metric.get_namespace() is not None
             else self.config_manager.get_metric_config().get_namespace()
         )
-        
+
         self.logger.debug(f"Queuing metric '{metric.get_name()}' for CloudWatch namespace: {namespace} with {len(measure_values)} measures")
-        
+
         metric_data = self._prepare_metric_data(metric, measure_values)
-        if namespace not in self._pending_metrics:
-            self._pending_metrics[namespace] = []
-        self._pending_metrics[namespace].extend(metric_data)
-        
-        total_pending = len(self._pending_metrics[namespace])
+        with self._pending_lock:
+            self._pending_metrics.setdefault(namespace, []).extend(metric_data)
+            total_pending = len(self._pending_metrics[namespace])
         self.logger.debug(f"Metric '{metric.get_name()}' queued for CloudWatch - {total_pending} metrics pending in namespace {namespace}")
 
     def emit_metric_now(self, metric, measure_values):

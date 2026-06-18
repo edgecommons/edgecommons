@@ -7,6 +7,7 @@ Unit tests for metric parity fixes (no broker / AWS required):
 """
 
 import logging
+import threading
 import pytest
 
 from ggcommons.metrics.metric import Metric
@@ -74,6 +75,7 @@ def test_cloudwatch_flush_chunks_and_isolates():
     # Build an instance without running __init__ (avoids boto3 client + threads).
     cw = object.__new__(CloudWatch)
     cw.logger = logging.getLogger("test_cw")
+    cw._pending_lock = threading.Lock()
 
     # 2300 datums in nsA -> 1000 + 1000 + 300; nsB small.
     fake = FakeClient()

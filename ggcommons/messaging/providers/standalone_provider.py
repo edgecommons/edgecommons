@@ -494,14 +494,16 @@ class StandaloneProvider(MessagingProvider):
         logger.debug(f"Sending request to local broker topic: {topic}")
         
         reply_topic = f"ggcommons/reply-{uuid.uuid4()}"
-        iou = Iou()
-        
+        # Carry the reply topic as the Iou's user_data so cancel_request() can
+        # find and tear down the right subscription/pending entry.
+        iou = Iou(reply_topic)
+
         with self._lock:
             self._response_ious[reply_topic] = iou
-        
+
         # Set reply-to header
         msg.get_header().reply_to = reply_topic
-        
+
         # Subscribe to reply topic
         self.subscribe(reply_topic, None)
         
@@ -516,14 +518,16 @@ class StandaloneProvider(MessagingProvider):
         logger.debug(f"Sending request to IoT Core broker topic: {topic}")
         
         reply_topic = f"ggcommons/reply-{uuid.uuid4()}"
-        iou = Iou()
-        
+        # Carry the reply topic as the Iou's user_data so
+        # cancel_request_from_iot_core() can find and tear down the right entry.
+        iou = Iou(reply_topic)
+
         with self._lock:
             self._response_ious[reply_topic] = iou
-        
+
         # Set reply-to header
         msg.get_header().reply_to = reply_topic
-        
+
         # Subscribe to reply topic
         self.subscribe_to_iot_core(reply_topic, None, QOS.AT_MOST_ONCE)
         

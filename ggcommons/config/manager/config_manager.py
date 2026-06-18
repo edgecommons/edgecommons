@@ -99,6 +99,9 @@ class ConfigManager:
         self._gen_instances_map()
 
     def _gen_instances_map(self):
+        # Rebuild from scratch so a hot reload that removes an instance does not
+        # leave a stale entry behind.
+        self._instances = {}
         if "instances" in self._component_config:
             for instance in self._component_config["instances"]:
                 self._instances[instance["id"]] = instance

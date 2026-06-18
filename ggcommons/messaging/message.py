@@ -43,8 +43,7 @@ class MessageHeader:
         timestamp = src.get("timestamp")
         uuid = src.get("uuid")
         correlation_id = src.get("correlation_id")
-        if 'reply_to' in src:
-            reply_to = src.get("reply_to")
+        reply_to = src.get("reply_to")
         return MessageHeader(name, version, correlation_id, timestamp, uuid, reply_to)
 
     def to_dict(self) -> dict:

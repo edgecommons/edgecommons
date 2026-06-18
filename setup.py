@@ -22,11 +22,12 @@ VERSION = "0.0.1"
 # What packages are required for this module to be executed?
 
 REQUIRED = [
-    "psutil",
-    "awsiotsdk",
-    "awsiot",
-    "paho-mqtt",
-    "watchdog",
+    "psutil>=7.0.0",
+    "awsiotsdk>=1.30.0",
+    "awsiot>=0.1.3",
+    "paho-mqtt>=2.1.0",
+    "watchdog>=6.0.0",
+    "boto3>=1.43.0",
 ]
 
 # What packages are optional?
@@ -120,6 +121,8 @@ setup(
     install_requires=REQUIRED,
     extras_require=EXTRAS,
     include_package_data=True,
+    # Ship the JSON config schema (loaded at runtime by the config validator).
+    package_data={"ggcommons": ["resources/*.json"]},
     license="MIT",
     classifiers=[
         # Trove classifiers

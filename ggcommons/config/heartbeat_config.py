@@ -1,3 +1,4 @@
+import copy
 import json
 
 
@@ -47,7 +48,9 @@ class HeartbeatConfiguration:
         self._include_files = False
         self._include_fds = False
         self._include_threads = False
-        self._targets = self.__DEFAULT_HEARTBEAT_TARGETS
+        # Deep-copy the class-level default so a caller mutating get_targets() can
+        # never corrupt the shared default for other instances.
+        self._targets = copy.deepcopy(self.__DEFAULT_HEARTBEAT_TARGETS)
 
         if heartbeat_json is not None:
             self._interval_secs = heartbeat_json.get("intervalSecs", self._interval_secs)
@@ -61,20 +64,20 @@ class HeartbeatConfiguration:
             self._targets = heartbeat_json.get("targets", self._targets)
 
     def to_dict(self):
-        dict_rep = {
-            "topic": self._topic,
+        # Mirrors the parsed input structure so the config round-trips:
+        # {intervalSecs, measures: {...}, targets: [...]}.
+        return {
             "intervalSecs": self._interval_secs,
-            "metric": {
+            "measures": {
                 "cpu": self.include_cpu(),
                 "memory": self.include_memory(),
                 "disk": self.include_disk(),
                 "files": self.include_files(),
                 "threads": self.include_threads(),
-                "fds": self._include_fds(),
+                "fds": self.include_fds(),
             },
             "targets": self._targets,
         }
-        return dict_rep
 
     def __str__(self):
         return json.dumps(self.to_dict(), indent=2)

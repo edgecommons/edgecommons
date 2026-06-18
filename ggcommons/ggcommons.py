@@ -72,6 +72,13 @@ class GGCommons:
             
         except Exception as e:
             logger.error(f"Failed to initialize GGCommons: {e}")
+            # Tear down whatever was already started (messaging/metrics/heartbeat
+            # threads, file watchers) so a failed init does not leak resources.
+            # shutdown() is fully defensive, so it is safe on a partial init.
+            try:
+                self.shutdown()
+            except Exception as cleanup_error:
+                logger.error(f"Error during cleanup after failed init: {cleanup_error}")
             raise
             
     def _process_args(self, component_name: str, args: List[str], 
