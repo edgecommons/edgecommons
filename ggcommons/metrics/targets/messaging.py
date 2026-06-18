@@ -9,11 +9,12 @@ from ggcommons.metrics.targets.metric_target import MetricTarget
 def _is_local_destination(destination: str) -> bool:
     """True for the local/IPC transport, False for IoT Core.
 
-    Canonical values are "ipc" (local/IPC) and "iot_core" (IoT Core); the legacy
-    "local"/"iotcore" spellings are also accepted. Mirrors the heartbeat target,
-    the Java/Rust metric targets, and the config schema.
+    IoT Core is selected only by "iot_core"/"iotcore"; everything else (the
+    canonical "ipc", the legacy "local", and any unrecognized value) uses the
+    local transport, so a metric never fails by routing to an unconfigured IoT
+    Core. Matches the Java/Rust metric targets and the config schema.
     """
-    return destination.lower() in ("ipc", "local")
+    return destination.lower() not in ("iot_core", "iotcore")
 
 
 class Messaging(MetricTarget):

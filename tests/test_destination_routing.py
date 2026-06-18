@@ -80,8 +80,9 @@ def test_heartbeat_unrecognized_destination_skips():
 
 @pytest.mark.parametrize(
     "destination,is_local",
-    [("ipc", True), ("local", True), ("IPC", True),
-     ("iot_core", False), ("iotcore", False), ("bogus", False)],
+    # IoT Core only for iot_core/iotcore; everything else (incl. unrecognized) is local.
+    [("ipc", True), ("local", True), ("IPC", True), ("bogus", True),
+     ("iot_core", False), ("iotcore", False), ("IOT_CORE", False)],
 )
 def test_metric_is_local_destination(destination, is_local):
     assert _is_local_destination(destination) is is_local
