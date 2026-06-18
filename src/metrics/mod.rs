@@ -158,7 +158,12 @@ async fn build_target(
         "messaging" => {
             let messaging = require_messaging(messaging, "messaging")?;
             let topic = resolve(config, &metric_config.topic());
-            let iot_core = metric_config.destination().eq_ignore_ascii_case("iotcore");
+            // Canonical "iot_core" (schema) plus the legacy "iotcore" spelling both
+            // select IoT Core; everything else (e.g. "ipc"/"local") is the local
+            // transport. Matches the heartbeat target's destination handling.
+            let dest = metric_config.destination();
+            let iot_core =
+                dest.eq_ignore_ascii_case("iot_core") || dest.eq_ignore_ascii_case("iotcore");
             Arc::new(target::messaging::MessagingMetricTarget::new(
                 messaging,
                 topic,
@@ -346,6 +351,22 @@ mod tests {
         define(&emitter);
         emitter.emit_metric("m", one_value()).await.unwrap();
         assert_eq!(recorder.local().len(), 1, "messaging target should publish EMF");
+    }
+
+    #[tokio::test]
+    async fn messaging_target_iot_core_destination_routes_to_iot_core() {
+        // The schema-valid "iot_core" (underscore) must select the IoT Core
+        // transport, not only the legacy "iotcore" spelling.
+        for dest in ["iot_core", "iotcore"] {
+            let raw = json!({ "metricEmission": { "target": "messaging", "targetConfig": { "topic": "m/t", "destination": dest } } });
+            let config = Config::from_value("c", "t", raw).unwrap();
+            let recorder = crate::testutil::RecordingMessaging::new();
+            let emitter = MetricEmitter::new(&config, Some(recorder.clone())).await.unwrap();
+            define(&emitter);
+            emitter.emit_metric_now("m", one_value()).await.unwrap();
+            assert_eq!(recorder.iot().len(), 1, "dest {dest} should publish to IoT Core");
+            assert!(recorder.local().is_empty(), "dest {dest} must not publish locally");
+        }
     }
 
     #[tokio::test]
