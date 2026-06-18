@@ -35,6 +35,7 @@ public abstract class SubscriptionHandler<T> implements Runnable, StreamResponse
     protected int maxConcurrency;
     LinkedBlockingQueue<QueueEntry> queue = new LinkedBlockingQueue<>();
     ExecutorService executor;
+    private final Semaphore concurrencyLimit;
     private volatile boolean shutdown = false;
 
     public SubscriptionHandler(String topicFilter, BiConsumer<String, Message> callback, int maxConcurrency)
@@ -42,15 +43,12 @@ public abstract class SubscriptionHandler<T> implements Runnable, StreamResponse
         this.topicFilter = topicFilter;
         this.callback = callback;
         this.maxConcurrency = maxConcurrency;
-        if (maxConcurrency <= 0)
-        {
-            executor = Executors.newCachedThreadPool();
-
-        } else {
-            executor = new ThreadPoolExecutor(0, maxConcurrency,60L, TimeUnit.SECONDS,
-                    new LinkedBlockingQueue<>());
-        }
-        new Thread(this).start();
+        // One virtual thread per callback (callbacks block on IPC / IoT Core / CloudWatch
+        // I/O). A positive maxConcurrency is enforced with a Semaphore, preserving the
+        // bounded-concurrency contract without a fixed platform-thread pool.
+        executor = Executors.newVirtualThreadPerTaskExecutor();
+        concurrencyLimit = maxConcurrency > 0 ? new Semaphore(maxConcurrency) : null;
+        new Thread(this, "gg-sub-" + topicFilter).start();
     }
 
     public void shutdown() {
@@ -103,9 +101,25 @@ public abstract class SubscriptionHandler<T> implements Runnable, StreamResponse
                 final QueueEntry entry = queue.take();
                 if (entry.message == null && entry.topic == null)
                     break;
+                if (concurrencyLimit != null)
+                {
+                    // Backpressure: block the drain thread until a permit frees, so at
+                    // most maxConcurrency callbacks run (and are in flight) at once.
+                    concurrencyLimit.acquireUninterruptibly();
+                }
                 executor.execute(() -> {
-                    LOGGER.trace("Invoking callback for topic '{}'", entry.topic);
-                    callback.accept(entry.topic, entry.message);
+                    try
+                    {
+                        LOGGER.trace("Invoking callback for topic '{}'", entry.topic);
+                        callback.accept(entry.topic, entry.message);
+                    }
+                    finally
+                    {
+                        if (concurrencyLimit != null)
+                        {
+                            concurrencyLimit.release();
+                        }
+                    }
                 });
             }
             catch (InterruptedException e)

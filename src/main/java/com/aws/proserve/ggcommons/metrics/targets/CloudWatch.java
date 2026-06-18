@@ -59,7 +59,9 @@ public final class CloudWatch extends MetricTarget
             emitTask.cancel(false);
         }
         long periodMs = configManager.getMetricConfig().getIntervalSecs() * 1000L;
-        emitTask = scheduler.scheduleAtFixedRate(this::runEmit, 0, periodMs, TimeUnit.MILLISECONDS);
+        // First flush after one interval (not at delay 0): nothing is buffered at
+        // startup, so an immediate flush is pointless and only races with callers.
+        emitTask = scheduler.scheduleAtFixedRate(this::runEmit, periodMs, periodMs, TimeUnit.MILLISECONDS);
     }
 
     @Override

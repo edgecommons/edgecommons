@@ -20,6 +20,7 @@ import java.util.Properties;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import software.amazon.awssdk.aws.greengrass.model.QOS;
@@ -102,6 +103,33 @@ class StandaloneMessagingIntegrationTest {
         provider.publish("itest/wild/abc", msg("W", "k", "v"));
         assertTrue(latch.await(5, TimeUnit.SECONDS), "wildcard subscription should match");
         provider.unsubscribe("itest/wild/+");
+    }
+
+    @Test
+    void maxConcurrencyCapLimitsConcurrentCallbacks() throws Exception {
+        String topic = "itest/concurrency";
+        int messages = 6;
+        var active = new AtomicInteger();
+        var maxObserved = new AtomicInteger();
+        var done = new CountDownLatch(messages);
+        // Cap = 2: at most two callbacks may run at once, enforced by the Semaphore over
+        // the per-subscription virtual-thread executor.
+        provider.subscribe(topic, (t, m) -> {
+            int now = active.incrementAndGet();
+            maxObserved.accumulateAndGet(now, Math::max);
+            try { Thread.sleep(200); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            active.decrementAndGet();
+            done.countDown();
+        }, 2);
+        for (int i = 0; i < messages; i++) {
+            provider.publish(topic, msg("C" + i, "k", "v"));
+        }
+        assertTrue(done.await(15, TimeUnit.SECONDS), "all messages should be processed");
+        assertTrue(maxObserved.get() <= 2,
+                "no more than maxConcurrency(2) callbacks may run at once; observed " + maxObserved.get());
+        assertTrue(maxObserved.get() >= 2,
+                "with 6 queued messages and cap 2, concurrency should reach 2; observed " + maxObserved.get());
+        provider.unsubscribe(topic);
     }
 
     @Test

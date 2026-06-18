@@ -59,6 +59,7 @@ public final class StandaloneMessagingProvider extends MessagingProvider
         public int qos;
         public LinkedBlockingQueue<QueueEntry> queue;
         ExecutorService executor;
+        private final Semaphore concurrencyLimit;
 
         SubscriptionProcessor(String topicFilter, BiConsumer<String, Message> callback, int maxConcurrency)
         {
@@ -67,15 +68,12 @@ public final class StandaloneMessagingProvider extends MessagingProvider
             this.callback = callback;
             this.maxConcurrency = maxConcurrency;
             this.queue = new LinkedBlockingQueue<>();
-            if (maxConcurrency <= 0)
-            {
-                executor = Executors.newCachedThreadPool();
-
-            } else {
-                executor = new ThreadPoolExecutor(0, maxConcurrency,60L, TimeUnit.SECONDS,
-                        new LinkedBlockingQueue<>());
-            }
-            new Thread(this).start();
+            // One virtual thread per callback (callbacks block on MQTT / IoT Core I/O).
+            // A positive maxConcurrency is enforced with a Semaphore, preserving the
+            // bounded-concurrency contract without a fixed platform-thread pool.
+            executor = Executors.newVirtualThreadPerTaskExecutor();
+            concurrencyLimit = maxConcurrency > 0 ? new Semaphore(maxConcurrency) : null;
+            new Thread(this, "standalone-sub-" + topicFilter).start();
         }
 
         // Catching InterruptedException to ensure queue processing continues even if there is an exception from
@@ -100,9 +98,24 @@ public final class StandaloneMessagingProvider extends MessagingProvider
                         responseFutures.remove(topic);
                         unsubscribe(topic);
                     } else {
+                        if (concurrencyLimit != null)
+                        {
+                            // Backpressure: at most maxConcurrency callbacks in flight.
+                            concurrencyLimit.acquireUninterruptibly();
+                        }
                         executor.execute(() -> {
-                            LOGGER.debug("Invoking callback for topic '{}'", topic);
-                            callback.accept(topic, entry.message);
+                            try
+                            {
+                                LOGGER.debug("Invoking callback for topic '{}'", topic);
+                                callback.accept(topic, entry.message);
+                            }
+                            finally
+                            {
+                                if (concurrencyLimit != null)
+                                {
+                                    concurrencyLimit.release();
+                                }
+                            }
                         });
                     }
                 }
