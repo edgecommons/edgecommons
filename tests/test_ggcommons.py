@@ -218,8 +218,13 @@ def test_metric_builder_pattern():
 
 @pytest.mark.integration
 @pytest.mark.slow
+@pytest.mark.aws
 def test_dual_subscription(messaging_service, config_service):
-    """Test that local and IoT Core subscriptions on same topic don't interfere."""
+    """Test that local and IoT Core subscriptions on same topic don't interfere.
+
+    Requires real AWS IoT Core connectivity (the messaging fixture's iotCore
+    endpoint), hence @pytest.mark.aws. For an AWS-free dual-broker check see
+    tests/test_dual_broker_integration.py."""
     topic = "test/dualTopic"
     local_received = []
     iot_core_received = []
