@@ -310,15 +310,15 @@ public class ConfigManager
         String retVal = template;
         if (template.contains("{ThingName}"))
         {
-            retVal = retVal.replace("{ThingName}", getThingName());
+            retVal = retVal.replace("{ThingName}", sanitize(getThingName()));
         }
         if (template.contains("{ComponentName}"))
         {
-            retVal = retVal.replace("{ComponentName}", getComponentName());
+            retVal = retVal.replace("{ComponentName}", sanitize(getComponentName()));
         }
         if (template.contains("{ComponentFullName}"))
         {
-            retVal = retVal.replace("{ComponentFullName}", getComponentFullName());
+            retVal = retVal.replace("{ComponentFullName}", sanitize(getComponentFullName()));
         }
 
         if (null != tagConfig && tagConfig.getKeys() != null)
@@ -328,12 +328,46 @@ public class ConfigManager
                 String hierarchyLevelTemplate = "{" + tagKey + "}";
                 if (retVal.contains(hierarchyLevelTemplate))
                 {
-                    retVal = retVal.replace(hierarchyLevelTemplate, tagConfig.getKeyValue(tagKey));
+                    retVal = retVal.replace(hierarchyLevelTemplate, sanitize(tagConfig.getKeyValue(tagKey)));
                 }
             }
         }
 
         return retVal;
+    }
+
+    /**
+     * Neutralizes characters in a substituted value that are dangerous in a file
+     * path or MQTT topic: path separators ({@code /}, {@code \}), traversal dot
+     * sequences ({@code ..}), MQTT wildcards ({@code +}, {@code #}), and control
+     * characters are each replaced with {@code _}. Applied only to interpolated
+     * values, never to the surrounding template, so structural separators in the
+     * template are preserved. Mirrors the Rust library's {@code config::template::sanitize}.
+     *
+     * @param value The raw value to be interpolated (may be null)
+     * @return The sanitized value, or an empty string if {@code value} is null
+     */
+    private static String sanitize(String value)
+    {
+        if (value == null)
+        {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder(value.length());
+        for (int i = 0; i < value.length(); i++)
+        {
+            char c = value.charAt(i);
+            if (c == '/' || c == '\\' || c == '+' || c == '#' || Character.isISOControl(c))
+            {
+                sb.append('_');
+            }
+            else
+            {
+                sb.append(c);
+            }
+        }
+        // Collapse traversal sequences (e.g. "..") that remain after separator replacement.
+        return sb.toString().replace("..", "_");
     }
 
     /**

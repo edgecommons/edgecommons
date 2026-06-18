@@ -58,6 +58,47 @@ class ConfigManagerTest {
     }
     
     @Test
+    void testTemplateSanitizationOfHostileValues() throws IOException {
+        // A tag value containing path separators, traversal dots, and MQTT
+        // wildcards must be neutralized so it cannot break out of the path/topic
+        // it is interpolated into (M15 parity with the Rust library). The JSON
+        // value below parses to: a/b\c+d#e..g
+        String configJson = "{" +
+            "\"logging\": {\"level\": \"INFO\"}," +
+            "\"metricEmission\": {\"target\": \"log\"}," +
+            "\"heartbeat\": {\"intervalSecs\": 30}," +
+            "\"tags\": {\"evil\": \"a/b\\\\c+d#e..g\"}," +
+            "\"component\": {\"global\": {}}" +
+        "}";
+
+        runWithTempConfig(configJson, configManager -> {
+            String resolved = configManager.resolveTemplate("prefix/{evil}/suffix");
+            // The value's dangerous characters are each replaced with '_', while the
+            // template's own '/' separators are preserved.
+            assertEquals("prefix/a_b_c_d_e_g/suffix", resolved);
+            assertFalse(resolved.contains("{evil}"));
+        });
+    }
+
+    @Test
+    void testTemplateSanitizationPreservesCleanDottedNames() throws IOException {
+        // Single dots (e.g. in a reverse-DNS component name) are NOT a traversal
+        // sequence and must survive sanitization intact.
+        String configJson = "{" +
+            "\"logging\": {\"level\": \"INFO\"}," +
+            "\"metricEmission\": {\"target\": \"log\"}," +
+            "\"heartbeat\": {\"intervalSecs\": 30}," +
+            "\"tags\": {}," +
+            "\"component\": {\"global\": {}}" +
+        "}";
+
+        runWithTempConfig(configJson, configManager -> {
+            String resolved = configManager.resolveTemplate("/var/log/{ComponentFullName}.log");
+            assertEquals("/var/log/com.test.TestComponent.log", resolved);
+        });
+    }
+
+    @Test
     void testMultipleInstanceConfiguration() throws IOException {
         String configJson = "{" +
             "\"logging\": {\"level\": \"INFO\"}," +

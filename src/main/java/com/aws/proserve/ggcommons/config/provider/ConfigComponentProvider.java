@@ -29,8 +29,13 @@ public class ConfigComponentProvider extends ConfigProvider {
     ConfigComponentProvider(ConfigManager configManager, MessagingClient messagingClient) {
         super(configManager);
         this.messagingClient = messagingClient;
-        source=configManager.resolveTemplate(GET_TOPIC_TEMPLATE );
-        String updated=configManager.resolveTemplate(UPDATED_TOPIC_TEMPLATE);
+        // The config-component topics are a wire-protocol contract shared with the
+        // configuration-manager component, so they are substituted directly rather
+        // than via resolveTemplate (which sanitizes values). This keeps the topic
+        // strings byte-identical with the Python/Rust libraries' config-component
+        // sources (Python .format / Rust resolve_topic), which also do not sanitize.
+        source=resolveProtocolTopic(configManager, GET_TOPIC_TEMPLATE);
+        String updated=resolveProtocolTopic(configManager, UPDATED_TOPIC_TEMPLATE);
         messagingClient.subscribe(updated,(topic, msg)->{
             parentConfigManager.applyConfig((JsonObject) msg.getBody());
         });
@@ -74,6 +79,17 @@ public class ConfigComponentProvider extends ConfigProvider {
     @Override
     public String getConfigSource() {
         return String.format("Config Manager Component (source topic name: %s)", source);
+    }
+
+    /**
+     * Substitutes {@code {ThingName}}/{@code {ComponentName}} into a config-component
+     * topic template without sanitization, mirroring the Rust library's
+     * {@code resolve_topic}. Keeps the wire-protocol topic identical across libraries.
+     */
+    private static String resolveProtocolTopic(ConfigManager configManager, String template) {
+        return template
+                .replace("{ThingName}", configManager.getThingName())
+                .replace("{ComponentName}", configManager.getComponentName());
     }
 
 }
