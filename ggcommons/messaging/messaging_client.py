@@ -149,7 +149,7 @@ class MessagingClient:
 
     @staticmethod
     def cancel_request_from_iot_core(iou: Iou) -> Iou:
-        return MessagingClient._messaging_provider.cancel_request(iou)
+        return MessagingClient._messaging_provider.cancel_request_from_iot_core(iou)
 
     @staticmethod
     def reply(request: Message, reply: Message):

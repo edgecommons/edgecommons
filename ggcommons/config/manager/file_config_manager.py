@@ -32,9 +32,11 @@ class FileConfigManager(ConfigManager):
         try:
             with open(self._config_file_path) as f:
                 return json.load(f)
-        except EnvironmentError:
+        except EnvironmentError as e:
             logger.fatal(f"Unable to open config file at {self._config_file_path}")
-            exit(1)
+            raise RuntimeError(
+                f"Unable to open config file at {self._config_file_path}"
+            ) from e
 
     def get_config_source(self) -> str:
         return f"Config File (file name: {self._config_file_path})"

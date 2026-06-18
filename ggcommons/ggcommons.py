@@ -50,12 +50,14 @@ class GGCommons:
             # Process command line arguments
             parsed_args = self._process_args(component_name, args, app_options)
 
+            # Initialize messaging FIRST: the GG_CONFIG / SHADOW / CONFIG_COMPONENT
+            # config sources load the component configuration over messaging, so the
+            # MessagingClient must be available before the config manager is built.
+            self._init_messaging(parsed_args, receive_own_messages)
+
             # Initialize configuration manager
             self._init_config_manager(component_name, parsed_args)
 
-            # Initialize messaging client
-            self._init_messaging(parsed_args, receive_own_messages)
-            
             # Initialize metric emitter
             self._init_metrics()
             
@@ -112,13 +114,29 @@ class GGCommons:
         # Process mode argument to match Java behavior
         if not hasattr(parsed, 'mode') or not parsed.mode:
             parsed.mode = ['GREENGRASS']
-        
+
+        mode_name = parsed.mode[0].upper()
         # Validate STANDALONE mode has config path
-        if parsed.mode[0].upper() == 'STANDALONE':
+        if mode_name == 'STANDALONE':
             if len(parsed.mode) < 2:
                 logger.error("STANDALONE mode requires config file path")
                 raise ValueError("STANDALONE mode requires config file path")
-        
+        elif mode_name != 'GREENGRASS':
+            # Reject unknown modes instead of silently treating them as GREENGRASS.
+            logger.error(f"Unknown mode '{parsed.mode[0]}'")
+            raise ValueError(
+                f"Unknown mode '{parsed.mode[0]}'. Valid values are 'GREENGRASS' and 'STANDALONE'"
+            )
+
+        # Validate the config source token up front rather than failing later.
+        valid_sources = {'FILE', 'ENV', 'GG_CONFIG', 'SHADOW', 'CONFIG_COMPONENT'}
+        if parsed.config and parsed.config[0].upper() not in valid_sources:
+            logger.error(f"Unrecognized config source '{parsed.config[0]}'")
+            raise ValueError(
+                f"Unrecognized config source '{parsed.config[0]}'. Valid values are "
+                f"{', '.join(sorted(valid_sources))}"
+            )
+
         return parsed
         
     def _init_config_manager(self, component_name: str, parsed_args: argparse.Namespace) -> None:

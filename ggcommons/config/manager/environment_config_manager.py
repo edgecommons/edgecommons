@@ -23,7 +23,9 @@ class EnvironmentConfigManager(ConfigManager):
                 f"Check component recipe to ensure '{self._environment_variable_name}' environment variable is set to the "
                 f"component configuration in the 'Run' lifecycle section."
             )
-            exit(1)
+            raise RuntimeError(
+                f"Configuration environment variable '{self._environment_variable_name}' is not set"
+            )
         return json.loads(os.environ.get(self._environment_variable_name))
 
     def get_config_source(self) -> str:

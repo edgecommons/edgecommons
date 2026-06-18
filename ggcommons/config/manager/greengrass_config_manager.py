@@ -39,10 +39,10 @@ class GreengrassConfigManager(ConfigManager):
                 ret_val = response.value.get(self._config_key)
                 print(f"Component configuration retrieved: {ret_val}")
             else:
-                print(
-                    f"Configuration not found in component '{self._config_component_name}' at key '{self._config_key}"
+                ipc_client.close()
+                raise RuntimeError(
+                    f"Configuration not found in component '{self._config_component_name}' at key '{self._config_key}'"
                 )
-                exit(5)
         ipc_client.close()
         return ret_val
 

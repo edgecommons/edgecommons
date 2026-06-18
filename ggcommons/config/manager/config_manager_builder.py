@@ -55,5 +55,8 @@ class ConfigManagerBuilder:
                 f"Unrecognized config source '{config_args[0]}'.  "
                 f"Valid values are 'FILE', 'ENV', 'SHADOW', 'GG_CONFIG' and 'CONFIG_COMPONENT' "
             )
-            exit(5)
+            raise ValueError(
+                f"Unrecognized config source '{config_args[0]}'. Valid values are "
+                f"'FILE', 'ENV', 'SHADOW', 'GG_CONFIG' and 'CONFIG_COMPONENT'"
+            )
         return config_manager

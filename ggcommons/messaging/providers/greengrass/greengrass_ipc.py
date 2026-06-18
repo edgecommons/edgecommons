@@ -36,10 +36,12 @@ class GreengrassIpcProvider(MessagingProvider):
         self._ipc_client = GreengrassCoreIPCClientV2()
 
     def disconnect(self):
-        for subscription in list(self._ipc_subscription_handlers):
-            self.unsubscribe(subscription.get_topic_filter())
-        for subscription in list(self._iot_core_subscription_handlers):
-            self.unsubscribe(subscription.get_topic_filter())
+        # The handler maps are keyed by topic filter, so iterate the keys directly
+        # and unsubscribe on the matching transport.
+        for topic_filter in list(self._ipc_subscription_handlers):
+            self.unsubscribe(topic_filter)
+        for topic_filter in list(self._iot_core_subscription_handlers):
+            self.unsubscribe_from_iot_core(topic_filter)
         self._ipc_client.client.close()
         self._ipc_client = None
 
@@ -176,14 +178,22 @@ class GreengrassIpcProvider(MessagingProvider):
             self.unsubscribe(topic)
             iou.set_result(reply)
 
+    def _on_iot_core_reply_received(self, topic: str, reply: Message) -> None:
+        if topic in self._response_ious:
+            logger.debug(f"Received IoT Core reply message on topic: {topic}")
+            iou = self._response_ious[topic]
+            del self._response_ious[topic]
+            self.unsubscribe_from_iot_core(topic)
+            iou.set_result(reply)
+
     def request_from_iot_core(self, topic: str, msg: Message) -> Iou:
         reply_to = msg.make_request()
         iou = Iou(reply_to)
         self._response_ious[reply_to] = iou
         self.subscribe_to_iot_core(
-            reply_to, self._on_reply_received, QOS.AT_MOST_ONCE, 1
+            reply_to, self._on_iot_core_reply_received, QOS.AT_MOST_ONCE, 1
         )
-        self.publish(topic, msg)
+        self.publish_to_iot_core(topic, msg, QOS.AT_MOST_ONCE)
         return iou
 
     def reply_to_iot_core(self, request: Message, reply: Message):
