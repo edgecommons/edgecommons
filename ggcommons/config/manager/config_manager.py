@@ -219,6 +219,14 @@ class ConfigManager:
         """Marks initialization as complete."""
         self._initializing = False
         logger.debug("Configuration manager initialization completed")
+
+    def close(self) -> None:
+        """Release any resources held by this config manager (e.g. file watchers).
+
+        No-op by default; subclasses such as FileConfigManager override this to
+        stop their background threads.
+        """
+        pass
         
     def _notify_configuration_changed(self, new_config: Dict[str, Any]) -> None:
         """Notifies all registered listeners of configuration changes."""

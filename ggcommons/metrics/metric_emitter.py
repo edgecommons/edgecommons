@@ -80,6 +80,19 @@ class MetricEmitter:
         return name in MetricEmitter.metrics
 
     @staticmethod
+    def shutdown():
+        """Close the active metric target (releasing any background threads) and
+        reset emitter state. Safe to call when not initialized."""
+        target = MetricEmitter.metric_target
+        if target is not None:
+            try:
+                target.close()
+            except Exception as e:
+                MetricEmitter.logger.warning(f"Error closing metric target: {e}")
+        MetricEmitter.metric_target = None
+        MetricEmitter.metrics = {}
+
+    @staticmethod
     def emit_metric(name, measure_values):
         if name in MetricEmitter.metrics:
             MetricEmitter.logger.debug(f"Emitting metric: {name} with {len(measure_values)} measures")

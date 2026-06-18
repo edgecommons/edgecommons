@@ -97,7 +97,10 @@ class MessageTags:
 
     def to_dict(self) -> dict:
         result = dict(self.tags)
-        result["thing"] = self.thing_name
+        # Omit the "thing" key entirely when there is no thing name (rather than
+        # emitting "thing": null), matching the Java/Rust serialization.
+        if self.thing_name is not None:
+            result["thing"] = self.thing_name
         return result
 
 

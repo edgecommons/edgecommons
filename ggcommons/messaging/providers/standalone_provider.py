@@ -496,16 +496,20 @@ class StandaloneProvider(MessagingProvider):
             logger.error("Cannot send reply - no reply-to topic in request")
             raise ValueError("Request message missing reply-to topic")
         
+        # Correlate the reply with the request so the requester can match it.
+        reply.set_correlation_id(request.get_correlation_id())
         logger.debug(f"Sending reply to local broker topic: {reply_topic}")
         self.publish(reply_topic, reply)
-    
+
     def reply_to_iot_core(self, request: Message, reply: Message):
         """Send reply to IoT Core broker."""
         reply_topic = request.get_header().reply_to
         if not reply_topic:
             logger.error("Cannot send reply - no reply-to topic in request")
             raise ValueError("Request message missing reply-to topic")
-        
+
+        # Correlate the reply with the request so the requester can match it.
+        reply.set_correlation_id(request.get_correlation_id())
         logger.debug(f"Sending reply to IoT Core broker topic: {reply_topic}")
         self.publish_to_iot_core(reply_topic, reply, QOS.AT_LEAST_ONCE)
     

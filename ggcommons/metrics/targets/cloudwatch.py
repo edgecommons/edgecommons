@@ -39,6 +39,20 @@ class CloudWatch(MetricTarget):
         
         self.logger.debug("CloudWatch flush thread started")
 
+    def close(self) -> None:
+        """Stop the periodic-flush thread and flush any remaining metrics."""
+        self._terminate_thread = True
+        if self._flush_event is not None:
+            self._flush_event.set()  # wake the pending wait()
+        if self._flush_thread is not None:
+            self._flush_thread.join(timeout=5)
+            self._flush_thread = None
+        # Best-effort final flush of anything still pending.
+        try:
+            self._flush_metrics()
+        except Exception as e:
+            self.logger.warning(f"Error during final CloudWatch flush: {e}")
+
     def _flush_metrics_periodically(self):
         while not self._flush_event.wait(self._interval_secs):
             # Never let an unexpected error kill the flush thread.

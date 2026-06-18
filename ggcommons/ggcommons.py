@@ -229,17 +229,37 @@ class GGCommons:
     def shutdown(self) -> None:
         """
         Shutdown GGCommons and clean up resources.
+
+        Each subsystem is closed independently so a failure in one does not leave
+        the others leaking: heartbeat -> metrics -> messaging -> config (matching
+        the Java shutdown order).
         """
+        from ggcommons.messaging.messaging_client import MessagingClient
+        from ggcommons.metrics.metric_emitter import MetricEmitter
+
         try:
-            # Shutdown messaging client
-            from ggcommons.messaging.messaging_client import MessagingClient
-            MessagingClient.shutdown()
-            
-            # Shutdown heartbeat if available
+            # Stop the heartbeat first so it stops publishing/emitting.
             if self._heartbeat and hasattr(self._heartbeat, 'stop'):
                 self._heartbeat.stop()
-
-            logger.info("GGCommons shutdown completed")
-            
         except Exception as e:
-            logger.error(f"Error during GGCommons shutdown: {e}")
+            logger.error(f"Error stopping heartbeat during shutdown: {e}")
+
+        try:
+            # Flush + stop the metric emitter's target thread.
+            MetricEmitter.shutdown()
+        except Exception as e:
+            logger.error(f"Error shutting down metrics during shutdown: {e}")
+
+        try:
+            MessagingClient.shutdown()
+        except Exception as e:
+            logger.error(f"Error shutting down messaging during shutdown: {e}")
+
+        try:
+            # Stop the config manager's file-watcher thread (if any).
+            if self._config_manager is not None:
+                self._config_manager.close()
+        except Exception as e:
+            logger.error(f"Error closing config manager during shutdown: {e}")
+
+        logger.info("GGCommons shutdown completed")

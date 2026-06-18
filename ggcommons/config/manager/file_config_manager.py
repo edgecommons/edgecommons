@@ -41,6 +41,17 @@ class FileConfigManager(ConfigManager):
     def get_config_source(self) -> str:
         return f"Config File (file name: {self._config_file_path})"
 
+    def close(self) -> None:
+        """Stop the file-change observer thread so it does not leak on shutdown."""
+        observer = getattr(self, "_observer", None)
+        if observer is not None:
+            try:
+                observer.stop()
+                observer.join(timeout=5)
+            except Exception as e:
+                logger.warning(f"Error stopping config file observer: {e}")
+            self._observer = None
+
 
 class ConfigFileChangeEventHandler(FileSystemEventHandler):
     def __init__(self, file_config_manager: FileConfigManager, file_path: str):
@@ -48,10 +59,38 @@ class ConfigFileChangeEventHandler(FileSystemEventHandler):
         self._file_path = file_path
         super().__init__()
 
-    def on_modified(self, event):
-        if event.is_directory:
-            return None
-        elif event.src_path.endswith(os.path.basename(self._file_path)):
-            logger.debug(f"Config file {self._file_path} has been modified")
+    def _matches(self, path) -> bool:
+        return bool(path) and path.endswith(os.path.basename(self._file_path))
+
+    def _reload(self) -> None:
+        # Isolate reload failures so a parse error or a transient read during an
+        # atomic save-and-rename never kills the observer thread (H9).
+        try:
+            logger.debug(f"Config file {self._file_path} changed; reloading")
             new_config = self._file_config_manager._load_configuration()
             self._file_config_manager.configuration_changed(new_config)
+        except Exception as e:
+            logger.error(
+                f"Failed to reload configuration after change to {self._file_path}: {e}",
+                exc_info=True,
+            )
+
+    def on_modified(self, event):
+        if event.is_directory:
+            return
+        if self._matches(event.src_path):
+            self._reload()
+
+    def on_created(self, event):
+        # Editors/config writers often write a temp file then rename it onto the
+        # target, which surfaces as a create (or move) rather than a modify.
+        if event.is_directory:
+            return
+        if self._matches(event.src_path):
+            self._reload()
+
+    def on_moved(self, event):
+        if event.is_directory:
+            return
+        if self._matches(getattr(event, "dest_path", None)):
+            self._reload()

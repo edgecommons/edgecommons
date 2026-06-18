@@ -79,8 +79,11 @@ class MessagingClient:
 
     @staticmethod
     def shutdown():
-        MessagingClient._messaging_provider.disconnect()
-        MessagingClient._messaging_provider = None
+        # Idempotent: safe to call more than once (e.g. GGCommons.shutdown plus a
+        # caller's own cleanup).
+        if MessagingClient._messaging_provider is not None:
+            MessagingClient._messaging_provider.disconnect()
+            MessagingClient._messaging_provider = None
 
     @staticmethod
     def get_messaging_provider() -> MessagingProvider:

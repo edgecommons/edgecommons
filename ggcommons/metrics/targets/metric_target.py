@@ -35,3 +35,11 @@ class MetricTarget(ConfigurationChangeListener, ABC):
     @abstractmethod
     def on_configuration_change(self, configuration) -> bool:
         pass
+
+    def close(self) -> None:
+        """Release any resources held by the target (threads, files).
+
+        No-op by default; targets that own background resources (e.g. the
+        CloudWatch periodic-flush thread) override this.
+        """
+        pass
