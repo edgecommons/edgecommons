@@ -13,17 +13,23 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/tls-certs"
 mkdir -p "$DIR"
 cd "$DIR"
 
-# --- CA ---
+# --- CA --- (basicConstraints + keyUsage are required; strict TLS stacks, e.g.
+# Python 3.13+/OpenSSL 3, reject a CA cert that lacks the keyCertSign key usage)
 openssl genrsa -out ca.key 2048
 openssl req -x509 -new -nodes -key ca.key -sha256 -days 3650 \
-  -subj "/CN=ggcommons-test-ca" -out ca.crt
+  -subj "/CN=ggcommons-test-ca" \
+  -addext "basicConstraints=critical,CA:TRUE" \
+  -addext "keyUsage=critical,keyCertSign,cRLSign" \
+  -out ca.crt
 
 # --- Server cert (CN/SAN localhost) ---
 openssl genrsa -out server.key 2048
 openssl req -new -key server.key -subj "/CN=localhost" -out server.csr
 cat > server.ext <<'EOF'
-subjectAltName = DNS:localhost,IP:127.0.0.1
+basicConstraints = CA:FALSE
+keyUsage = critical,digitalSignature,keyEncipherment
 extendedKeyUsage = serverAuth
+subjectAltName = DNS:localhost,IP:127.0.0.1
 EOF
 openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
   -out server.crt -days 3650 -sha256 -extfile server.ext
@@ -32,6 +38,8 @@ openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
 openssl genrsa -out client.key 2048
 openssl req -new -key client.key -subj "/CN=ggcommons-test-client" -out client.csr
 cat > client.ext <<'EOF'
+basicConstraints = CA:FALSE
+keyUsage = critical,digitalSignature
 extendedKeyUsage = clientAuth
 EOF
 openssl x509 -req -in client.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
