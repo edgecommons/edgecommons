@@ -186,8 +186,25 @@ class StandaloneProvider(MessagingProvider):
         """Handle MQTT connection."""
         if rc == 0:
             logger.info(f"Successfully connected to {broker_type} broker")
+            # Re-establish subscriptions after a (re)connect. paho's loop does not
+            # restore them automatically, so on a reconnect they would otherwise be
+            # silently lost (M11). No-op on the first connect (nothing tracked yet).
+            self._resubscribe(client, broker_type)
         else:
             logger.error(f"Failed to connect to {broker_type} broker with code {rc}")
+
+    def _resubscribe(self, client, broker_type: str) -> None:
+        subs = self._subscriptions if broker_type == "local" else self._iot_core_subscriptions
+        with self._lock:
+            items = list(subs.items())
+        if not items:
+            return
+        logger.info(f"Re-subscribing to {len(items)} {broker_type} topic(s) after connect")
+        for topic, info in items:
+            try:
+                client.subscribe(topic, qos=info.get("qos", 0))
+            except Exception as e:
+                logger.error(f"Failed to re-subscribe to {broker_type} topic {topic}: {e}")
     
     def _on_disconnect(self, client, userdata, flags, rc, properties, broker_type: str):
         """Handle MQTT disconnection."""
@@ -392,8 +409,8 @@ class StandaloneProvider(MessagingProvider):
                     self._local_mid_to_topic.pop(result[1], None)
                 raise TimeoutError(f"Local subscription to {topic} timed out after {self._subscription_timeout} seconds")
             
-            # Subscription confirmed, store it
-            self._subscriptions[topic] = {'callback': callback, 'max_concurrency': max_concurrency}
+            # Subscription confirmed, store it (qos retained for re-subscribe on reconnect)
+            self._subscriptions[topic] = {'callback': callback, 'max_concurrency': max_concurrency, 'qos': 0}
             logger.debug(f"Successfully subscribed to local broker topic: {topic}")
             logger.debug(f"Local broker subscription count: {len(self._subscriptions)}")
                 
@@ -436,8 +453,8 @@ class StandaloneProvider(MessagingProvider):
                     self._iot_core_mid_to_topic.pop(result[1], None)
                 raise TimeoutError(f"IoT Core subscription to {topic} timed out after {self._subscription_timeout} seconds")
             
-            # Subscription confirmed, store it
-            self._iot_core_subscriptions[topic] = {'callback': callback, 'max_concurrency': max_concurrency}
+            # Subscription confirmed, store it (qos retained for re-subscribe on reconnect)
+            self._iot_core_subscriptions[topic] = {'callback': callback, 'max_concurrency': max_concurrency, 'qos': mqtt_qos}
             logger.debug(f"Successfully subscribed to IoT Core broker topic: {topic} (QoS: {mqtt_qos})")
             logger.debug(f"IoT Core broker subscription count: {len(self._iot_core_subscriptions)}")
                 
