@@ -29,8 +29,13 @@ public class LoggingConfiguration
     private String format = DEFAULT_FORMAT;
     
     // File logging properties
+    static String DEFAULT_MAX_FILE_SIZE = "10MB";
+    static int DEFAULT_BACKUP_COUNT = 5;
+
     private boolean fileLoggingEnabled = false;
     private String logFilePath = null;
+    private String maxFileSize = DEFAULT_MAX_FILE_SIZE;
+    private int backupCount = DEFAULT_BACKUP_COUNT;
     
     // Logger-specific level configuration
     private Map<String, Level> loggerLevels = new HashMap<>();
@@ -61,9 +66,15 @@ public class LoggingConfiguration
                 
                 if (fileConfig.has("enabled"))
                     fileLoggingEnabled = fileConfig.get("enabled").getAsBoolean();
-                    
+
                 if (fileConfig.has("filePath"))
                     logFilePath = fileConfig.get("filePath").getAsString();
+
+                if (fileConfig.has("maxFileSize"))
+                    maxFileSize = fileConfig.get("maxFileSize").getAsString();
+
+                if (fileConfig.has("backupCount"))
+                    backupCount = fileConfig.get("backupCount").getAsInt();
             }
             
             // Parse logger-specific levels if provided
@@ -100,6 +111,8 @@ public class LoggingConfiguration
             if (logFilePath != null) {
                 fileConfig.addProperty("filePath", logFilePath);
             }
+            fileConfig.addProperty("maxFileSize", maxFileSize);
+            fileConfig.addProperty("backupCount", backupCount);
             retVal.add("fileLogging", fileConfig);
         }
         
@@ -164,7 +177,25 @@ public class LoggingConfiguration
     public String getLogFilePath() {
         return logFilePath;
     }
-    
+
+    /**
+     * Gets the maximum size a log file may reach before it is rotated.
+     *
+     * @return A size string such as {@code 10MB} (accepts KB/MB/GB suffixes)
+     */
+    public String getMaxFileSize() {
+        return maxFileSize;
+    }
+
+    /**
+     * Gets the number of rotated backup files to retain.
+     *
+     * @return The backup count (0 keeps no backups)
+     */
+    public int getBackupCount() {
+        return backupCount;
+    }
+
     /**
      * Gets the map of logger-specific level configurations.
      *

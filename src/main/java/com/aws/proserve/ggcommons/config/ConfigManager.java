@@ -433,12 +433,22 @@ public class ConfigManager
                 
                 // Resolve any template variables in the file path
                 logFilePath = resolveTemplate(logFilePath);
-                
-                AppenderComponentBuilder fileAppender = builder.newAppender("File", "File")
+
+                // Size-rotated file output: rotate at maxFileSize, keep backupCount
+                // backups named <path>.1, <path>.2 (fileIndex=min => .1 is newest),
+                // matching the Python/Rust libraries' RotatingFileHandler contract.
+                AppenderComponentBuilder fileAppender = builder.newAppender("File", "RollingFile")
                     .addAttribute("fileName", logFilePath)
+                    .addAttribute("filePattern", logFilePath + ".%i")
                     .addAttribute("append", true)
-                    .add(layoutBuilder);
-                
+                    .add(layoutBuilder)
+                    .addComponent(builder.newComponent("Policies")
+                        .addComponent(builder.newComponent("SizeBasedTriggeringPolicy")
+                            .addAttribute("size", getLoggingConfig().getMaxFileSize())))
+                    .addComponent(builder.newComponent("DefaultRolloverStrategy")
+                        .addAttribute("max", getLoggingConfig().getBackupCount())
+                        .addAttribute("fileIndex", "min"));
+
                 builder.add(fileAppender);
             }
             

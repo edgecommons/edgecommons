@@ -32,6 +32,17 @@
             "filePath": {
               "type": "string",
               "description": "Path to log file (supports template variables)"
+            },
+            "maxFileSize": {
+              "type": "string",
+              "default": "10MB",
+              "description": "Maximum size before the log file is rotated (e.g. 10MB, 512KB, 1GB)"
+            },
+            "backupCount": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 5,
+              "description": "Number of rotated backup files to keep"
             }
           },
           "required": ["enabled"],

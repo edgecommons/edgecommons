@@ -55,12 +55,20 @@ public class GlobalLoggingManager {
                 .add(layoutBuilder);
             builder.add(consoleAppender);
             
-            // File appender if enabled
+            // File appender if enabled — size-rotated (maxFileSize / backupCount),
+            // matching the Python/Rust RotatingFileHandler contract.
             if (loggingConfig.isFileLoggingEnabled() && loggingConfig.getLogFilePath() != null) {
                 String logFilePath = configManager.resolveTemplate(loggingConfig.getLogFilePath());
-                AppenderComponentBuilder fileAppender = builder.newAppender("File", "File")
+                AppenderComponentBuilder fileAppender = builder.newAppender("File", "RollingFile")
                     .addAttribute("fileName", logFilePath)
-                    .add(layoutBuilder);
+                    .addAttribute("filePattern", logFilePath + ".%i")
+                    .add(layoutBuilder)
+                    .addComponent(builder.newComponent("Policies")
+                        .addComponent(builder.newComponent("SizeBasedTriggeringPolicy")
+                            .addAttribute("size", loggingConfig.getMaxFileSize())))
+                    .addComponent(builder.newComponent("DefaultRolloverStrategy")
+                        .addAttribute("max", loggingConfig.getBackupCount())
+                        .addAttribute("fileIndex", "min"));
                 builder.add(fileAppender);
             }
             
