@@ -34,7 +34,7 @@ class MessagingTest {
         MsgConfig(String topic, String destination, boolean largeFleet) {
             String json = "{\"target\":\"messaging\",\"namespace\":\"ns1\",\"largeFleetWorkaround\":" + largeFleet
                     + ",\"targetConfig\":{\"topic\":\"" + topic + "\",\"destination\":\"" + destination + "\"}}";
-            JsonObject root = new JsonObject();
+            var root = new JsonObject();
             root.add("metricEmission", JsonParser.parseString(json).getAsJsonObject());
             this.metricConfig = ConfigurationFactory.createMetricConfiguration(root);
         }
@@ -53,15 +53,15 @@ class MessagingTest {
     }
 
     private static Map<String, Float> values() {
-        Map<String, Float> v = new HashMap<>();
+        var v = new HashMap<String, Float>();
         v.put("value", 11.0f);
         return v;
     }
 
     @Test
     void emitMetricPublishesToIpc() {
-        Messaging messaging = new Messaging(new MsgConfig("metrics/topic", "ipc", false));
-        MockMessagingService mock = new MockMessagingService();
+        var messaging = new Messaging(new MsgConfig("metrics/topic", "ipc", false));
+        var mock = new MockMessagingService();
         messaging.setMessagingService(mock);
 
         messaging.emitMetric(metric(), values());
@@ -76,8 +76,8 @@ class MessagingTest {
 
     @Test
     void emitMetricNowPublishesToIotCoreWhenDestinationNotIpc() {
-        Messaging messaging = new Messaging(new MsgConfig("metrics/topic", "iotcore", false));
-        MockMessagingService mock = new MockMessagingService();
+        var messaging = new Messaging(new MsgConfig("metrics/topic", "iotcore", false));
+        var mock = new MockMessagingService();
         messaging.setMessagingService(mock);
 
         messaging.emitMetricNow(metric(), values());
@@ -89,8 +89,8 @@ class MessagingTest {
 
     @Test
     void largeFleetWorkaroundPublishesTwice() {
-        Messaging messaging = new Messaging(new MsgConfig("metrics/topic", "ipc", true));
-        MockMessagingService mock = new MockMessagingService();
+        var messaging = new Messaging(new MsgConfig("metrics/topic", "ipc", true));
+        var mock = new MockMessagingService();
         messaging.setMessagingService(mock);
 
         messaging.emitMetricNow(metric(), values());
@@ -100,8 +100,8 @@ class MessagingTest {
 
     @Test
     void onConfigurationChangedRecomputesTopicAndDestination() {
-        Messaging messaging = new Messaging(new MsgConfig("metrics/topic", "ipc", false));
-        MockMessagingService mock = new MockMessagingService();
+        var messaging = new Messaging(new MsgConfig("metrics/topic", "ipc", false));
+        var mock = new MockMessagingService();
         messaging.setMessagingService(mock);
 
         assertTrue(messaging.onConfigurationChanged());
@@ -115,8 +115,8 @@ class MessagingTest {
     @Test
     void templateInTopicIsResolved() {
         // MockConfigurationService.resolveTemplate replaces {ComponentName} / {ThingName}.
-        Messaging messaging = new Messaging(new MsgConfig("{ThingName}/{ComponentName}/metric", "ipc", false));
-        MockMessagingService mock = new MockMessagingService();
+        var messaging = new Messaging(new MsgConfig("{ThingName}/{ComponentName}/metric", "ipc", false));
+        var mock = new MockMessagingService();
         messaging.setMessagingService(mock);
 
         messaging.emitMetric(metric(), values());

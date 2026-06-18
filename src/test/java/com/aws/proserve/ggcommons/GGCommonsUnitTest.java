@@ -56,9 +56,9 @@ class GGCommonsUnitTest {
 
     @Test
     void testConfigurationService() {
-        JsonObject testConfig = new JsonObject();
-        JsonObject component = new JsonObject();
-        JsonObject global = new JsonObject();
+        var testConfig = new JsonObject();
+        var component = new JsonObject();
+        var global = new JsonObject();
         global.addProperty("testProperty", "testValue");
         component.add("global", global);
         testConfig.add("component", component);
@@ -78,7 +78,7 @@ class GGCommonsUnitTest {
 
     @Test
     void testConfigurationChangeListener() {
-        TestConfigurationChangeListener listener = new TestConfigurationChangeListener();
+        var listener = new TestConfigurationChangeListener();
 
         mockConfigService.addConfigChangeListener(listener);
         assertFalse(listener.wasOnConfigurationChangedCalled());
@@ -95,7 +95,7 @@ class GGCommonsUnitTest {
     @Test
     void testMessagingService() {
         String testTopic = "test/topic";
-        JsonObject testPayload = new JsonObject();
+        var testPayload = new JsonObject();
         testPayload.addProperty("message", "test message");
 
         Message testMessage = MessageBuilder.create("TestMessage", "1.0")
@@ -124,11 +124,11 @@ class GGCommonsUnitTest {
     @Test
     void testMessagingSubscription() {
         String testTopic = "test/subscription";
-        TestMessageHandler handler = new TestMessageHandler();
+        var handler = new TestMessageHandler();
 
         mockMessagingService.subscribe(testTopic, handler::handle, 1);
 
-        JsonObject payload = new JsonObject();
+        var payload = new JsonObject();
         payload.addProperty("test", "data");
         Message testMessage = MessageBuilder.create("SubTest", "1.0")
                 .withPayload(payload)
@@ -145,7 +145,7 @@ class GGCommonsUnitTest {
     @Test
     void testMessagingRequestResponse() throws ExecutionException, InterruptedException, TimeoutException {
         String requestTopic = "test/request";
-        JsonObject requestPayload = new JsonObject();
+        var requestPayload = new JsonObject();
         requestPayload.addProperty("request", "data");
 
         Message requestMessage = MessageBuilder.create("RequestTest", "1.0")
@@ -167,10 +167,10 @@ class GGCommonsUnitTest {
 
     @Test
     void testMetricService() {
-        Map<String, Measure> measures = new HashMap<>();
+        var measures = new HashMap<String, Measure>();
         measures.put("count", new Measure("count", "Count", 1));
         measures.put("latency", new Measure("latency", "Milliseconds", 1));
-        Metric testMetric = new Metric("test_metric", "TestNamespace", measures, new HashMap<>());
+        var testMetric = new Metric("test_metric", "TestNamespace", measures, new HashMap<>());
 
         mockMetricService.defineMetric(testMetric);
 
@@ -222,7 +222,7 @@ class GGCommonsUnitTest {
     @Test
     void testIoTCoreMessaging() {
         String topic = "iot/test/topic";
-        JsonObject payload = new JsonObject();
+        var payload = new JsonObject();
         payload.addProperty("iot", "message");
 
         Message message = MessageBuilder.create("IoTTest", "1.0")
@@ -238,7 +238,7 @@ class GGCommonsUnitTest {
         assertEquals(message, published.message);
         assertEquals(QOS.AT_LEAST_ONCE, published.qos);
 
-        TestMessageHandler handler = new TestMessageHandler();
+        var handler = new TestMessageHandler();
         mockMessagingService.subscribeToIoTCore(topic, handler::handle, QOS.AT_MOST_ONCE);
 
         mockMessagingService.simulateMessage(topic, message);
@@ -247,7 +247,7 @@ class GGCommonsUnitTest {
 
     @Test
     void testMessageConstruction() {
-        JsonObject payload = new JsonObject();
+        var payload = new JsonObject();
         payload.addProperty("testData", "testValue");
         payload.addProperty("number", 42);
 
@@ -272,7 +272,7 @@ class GGCommonsUnitTest {
 
     @Test
     void testMessageHeaders() {
-        JsonObject payload = new JsonObject();
+        var payload = new JsonObject();
         payload.addProperty("data", "value");
 
         Message message1 = MessageBuilder.create("Msg1", "1.0")
@@ -301,21 +301,21 @@ class GGCommonsUnitTest {
 
     @Test
     void testMetricConstruction() {
-        Map<String, Measure> basicMeasures = new HashMap<>();
+        var basicMeasures = new HashMap<String, Measure>();
         basicMeasures.put("basic", new Measure("basic", "Count", 1));
-        Metric metric1 = new Metric("test_metric", "TestNamespace", basicMeasures, new HashMap<>());
+        var metric1 = new Metric("test_metric", "TestNamespace", basicMeasures, new HashMap<>());
         assertEquals("test_metric", metric1.getName());
         assertEquals("TestNamespace", metric1.getNamespace());
 
-        Map<String, Measure> measures = new HashMap<>();
+        var measures = new HashMap<String, Measure>();
         measures.put("response_time", new Measure("response_time", "Milliseconds", 1));
         measures.put("error_count", new Measure("error_count", "Count", 60));
 
-        Map<String, String> dimensions = new HashMap<>();
+        var dimensions = new HashMap<String, String>();
         dimensions.put("Service", "TestService");
         dimensions.put("Region", "us-west-2");
 
-        Metric metric2 = new Metric("custom_metric", "CustomNamespace", measures, dimensions);
+        var metric2 = new Metric("custom_metric", "CustomNamespace", measures, dimensions);
         assertEquals("custom_metric", metric2.getName());
         assertEquals("CustomNamespace", metric2.getNamespace());
 
@@ -330,8 +330,8 @@ class GGCommonsUnitTest {
         assertEquals("TestService", metric2.getDimensions().get("Service"));
         assertEquals("us-west-2", metric2.getDimensions().get("Region"));
 
-        Measure measure1 = new Measure("count", "Count", 1);
-        Measure measure2 = new Measure("duration", "Milliseconds", 60);
+        var measure1 = new Measure("count", "Count", 1);
+        var measure2 = new Measure("duration", "Milliseconds", 60);
 
         metric1.addMeasure(measure1);
         metric1.addMeasure(measure2);
@@ -351,17 +351,17 @@ class GGCommonsUnitTest {
             new Metric("null_test_metric", "TestNamespace", null, null);
         });
 
-        Map<String, Measure> validMeasures = new HashMap<>();
+        var validMeasures = new HashMap<String, Measure>();
         validMeasures.put("test_measure", new Measure("test_measure", "Count", 1));
-        Metric metric3 = new Metric("null_dimensions_metric", "TestNamespace", validMeasures, null);
+        var metric3 = new Metric("null_dimensions_metric", "TestNamespace", validMeasures, null);
         assertEquals("null_dimensions_metric", metric3.getName());
         assertEquals("TestNamespace", metric3.getNamespace());
         // The Metric constructor adds the "category" default dimension.
         assertTrue(metric3.getDimensions().containsKey("category"));
 
-        Map<String, Measure> emptyMeasures = new HashMap<>();
-        Map<String, String> emptyDimensions = new HashMap<>();
-        Metric metric4 = new Metric("empty_test_metric", "TestNamespace", emptyMeasures, emptyDimensions);
+        var emptyMeasures = new HashMap<String, Measure>();
+        var emptyDimensions = new HashMap<String, String>();
+        var metric4 = new Metric("empty_test_metric", "TestNamespace", emptyMeasures, emptyDimensions);
         assertEquals("empty_test_metric", metric4.getName());
         assertEquals("TestNamespace", metric4.getNamespace());
         assertEquals(0, emptyMeasures.size());
@@ -383,7 +383,7 @@ class GGCommonsUnitTest {
 
     @Test
     void testRawMessageHandling() {
-        JsonObject rawPayload = new JsonObject();
+        var rawPayload = new JsonObject();
         rawPayload.addProperty("raw", "data");
 
         mockMessagingService.publishRaw("test/raw", rawPayload);
@@ -397,14 +397,14 @@ class GGCommonsUnitTest {
 
     @Test
     void testMessagingReply() {
-        JsonObject originalPayload = new JsonObject();
+        var originalPayload = new JsonObject();
         originalPayload.addProperty("request", "data");
         Message originalMessage = MessageBuilder.create("OriginalMsg", "1.0")
                 .withPayload(originalPayload)
                 .withConfig(mockConfigService)
                 .build();
 
-        JsonObject replyPayload = new JsonObject();
+        var replyPayload = new JsonObject();
         replyPayload.addProperty("response", "data");
         Message replyMessage = MessageBuilder.create("ReplyMsg", "1.0")
                 .withPayload(replyPayload)

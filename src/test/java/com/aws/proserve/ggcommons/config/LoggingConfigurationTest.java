@@ -23,7 +23,8 @@ class LoggingConfigurationTest {
 
     @Test
     void rotationDefaultsWhenOmitted() {
-        LoggingConfiguration cfg = parse("{\"fileLogging\": {\"enabled\": true, \"filePath\": \"/var/log/x.log\"}}");
+        LoggingConfiguration cfg = parse("""
+                {"fileLogging": {"enabled": true, "filePath": "/var/log/x.log"}}""");
         assertTrue(cfg.isFileLoggingEnabled());
         assertEquals("10MB", cfg.getMaxFileSize());
         assertEquals(5, cfg.getBackupCount());
@@ -31,16 +32,17 @@ class LoggingConfigurationTest {
 
     @Test
     void rotationValuesParsedWhenPresent() {
-        LoggingConfiguration cfg = parse(
-            "{\"fileLogging\": {\"enabled\": true, \"filePath\": \"/var/log/x.log\", " +
-            "\"maxFileSize\": \"512KB\", \"backupCount\": 3}}");
+        LoggingConfiguration cfg = parse("""
+            {"fileLogging": {"enabled": true, "filePath": "/var/log/x.log", \
+            "maxFileSize": "512KB", "backupCount": 3}}""");
         assertEquals("512KB", cfg.getMaxFileSize());
         assertEquals(3, cfg.getBackupCount());
     }
 
     @Test
     void rotationDefaultsWhenNoFileLoggingSection() {
-        LoggingConfiguration cfg = parse("{\"level\": \"INFO\"}");
+        LoggingConfiguration cfg = parse("""
+                {"level": "INFO"}""");
         assertFalse(cfg.isFileLoggingEnabled());
         assertEquals("10MB", cfg.getMaxFileSize());
         assertEquals(5, cfg.getBackupCount());
@@ -48,9 +50,9 @@ class LoggingConfigurationTest {
 
     @Test
     void toDictIncludesRotationSettingsWhenEnabled() {
-        LoggingConfiguration cfg = parse(
-            "{\"fileLogging\": {\"enabled\": true, \"filePath\": \"/var/log/x.log\", " +
-            "\"maxFileSize\": \"1GB\", \"backupCount\": 2}}");
+        LoggingConfiguration cfg = parse("""
+            {"fileLogging": {"enabled": true, "filePath": "/var/log/x.log", \
+            "maxFileSize": "1GB", "backupCount": 2}}""");
         JsonObject dict = cfg.toDict();
         assertTrue(dict.has("fileLogging"));
         JsonObject fileLogging = dict.getAsJsonObject("fileLogging");

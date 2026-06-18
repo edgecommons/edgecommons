@@ -40,7 +40,7 @@ class CloudWatchTest {
         private final MetricConfiguration metricConfig;
 
         CwConfig(String metricJson) {
-            JsonObject root = new JsonObject();
+            var root = new JsonObject();
             root.add("metricEmission", JsonParser.parseString(metricJson).getAsJsonObject());
             this.metricConfig = ConfigurationFactory.createMetricConfiguration(root);
         }
@@ -68,11 +68,11 @@ class CloudWatchTest {
 
     @Test
     void emitMetricNowSendsToCloudWatchImmediately() {
-        CwConfig config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600}}");
+        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600}}");
         CloudWatchClient client = mock(CloudWatchClient.class);
         cloudWatch = new CloudWatch(config, client);
 
-        Map<String, Float> values = new HashMap<>();
+        var values = new HashMap<String, Float>();
         values.put("value", 42.0f);
         cloudWatch.emitMetricNow(metric("m1", "ns1"), values);
 
@@ -81,13 +81,13 @@ class CloudWatchTest {
 
     @Test
     void emitMetricNowSwallowsCloudWatchException() {
-        CwConfig config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600}}");
+        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600}}");
         CloudWatchClient client = mock(CloudWatchClient.class);
         when(client.putMetricData(any(PutMetricDataRequest.class)))
                 .thenThrow(CloudWatchException.builder().message("boom").build());
         cloudWatch = new CloudWatch(config, client);
 
-        Map<String, Float> values = new HashMap<>();
+        var values = new HashMap<String, Float>();
         values.put("value", 1.0f);
         // Must not propagate the exception.
         assertDoesNotThrow(() -> cloudWatch.emitMetricNow(metric("m1", "ns1"), values));
@@ -96,11 +96,11 @@ class CloudWatchTest {
 
     @Test
     void emitMetricBuffersUntilFlush() {
-        CwConfig config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600}}");
+        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600}}");
         CloudWatchClient client = mock(CloudWatchClient.class);
         cloudWatch = new CloudWatch(config, client);
 
-        Map<String, Float> values = new HashMap<>();
+        var values = new HashMap<String, Float>();
         values.put("value", 5.0f);
         cloudWatch.emitMetric(metric("m1", "ns1"), values);
         cloudWatch.emitMetric(metric("m2", "ns1"), values);
@@ -112,13 +112,13 @@ class CloudWatchTest {
 
     @Test
     void flushChunksWhenExceeding1000Datums() {
-        CwConfig config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600}}");
+        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600}}");
         CloudWatchClient client = mock(CloudWatchClient.class);
         cloudWatch = new CloudWatch(config, client);
 
         // Build a single metric carrying 600 measures; one measure value -> one datum.
         MetricBuilder builder = MetricBuilder.create("bulk").withNamespace("ns1");
-        Map<String, Float> values = new HashMap<>();
+        var values = new HashMap<String, Float>();
         for (int i = 0; i < 600; i++) {
             builder.addMeasure("v" + i, "Count", 60);
             values.put("v" + i, (float) i);
@@ -136,13 +136,13 @@ class CloudWatchTest {
 
     @Test
     void flushIsolatesFailuresPerNamespace() {
-        CwConfig config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600}}");
+        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600}}");
         CloudWatchClient client = mock(CloudWatchClient.class);
         when(client.putMetricData(any(PutMetricDataRequest.class)))
                 .thenThrow(new RuntimeException("network down"));
         cloudWatch = new CloudWatch(config, client);
 
-        Map<String, Float> values = new HashMap<>();
+        var values = new HashMap<String, Float>();
         values.put("value", 9.0f);
         cloudWatch.emitMetric(metric("m1", "nsA"), values);
         cloudWatch.emitMetric(metric("m2", "nsB"), values);
@@ -154,11 +154,11 @@ class CloudWatchTest {
 
     @Test
     void largeFleetWorkaroundDoublesDatums() {
-        CwConfig config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"largeFleetWorkaround\":true,\"targetConfig\":{\"intervalSecs\":3600}}");
+        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"largeFleetWorkaround\":true,\"targetConfig\":{\"intervalSecs\":3600}}");
         CloudWatchClient client = mock(CloudWatchClient.class);
         cloudWatch = new CloudWatch(config, client);
 
-        Map<String, Float> values = new HashMap<>();
+        var values = new HashMap<String, Float>();
         values.put("value", 7.0f);
         assertTrue(config.getMetricConfig().getLargeFleetWorkaround());
         cloudWatch.emitMetricNow(metric("m1", "ns1"), values);
@@ -168,7 +168,7 @@ class CloudWatchTest {
 
     @Test
     void onConfigurationChangedReinitializesTimer() {
-        CwConfig config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600}}");
+        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600}}");
         CloudWatchClient client = mock(CloudWatchClient.class);
         cloudWatch = new CloudWatch(config, client);
 
@@ -177,9 +177,9 @@ class CloudWatchTest {
 
     @Test
     void closeCancelsTimerAndClosesClient() {
-        CwConfig config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600}}");
+        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600}}");
         CloudWatchClient client = mock(CloudWatchClient.class);
-        CloudWatch cw = new CloudWatch(config, client);
+        var cw = new CloudWatch(config, client);
 
         cw.close();
         verify(client, times(1)).close();
@@ -189,10 +189,10 @@ class CloudWatchTest {
 
     @Test
     void closeSwallowsClientCloseException() {
-        CwConfig config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600}}");
+        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600}}");
         CloudWatchClient client = mock(CloudWatchClient.class);
         doThrow(new RuntimeException("close failed")).when(client).close();
-        CloudWatch cw = new CloudWatch(config, client);
+        var cw = new CloudWatch(config, client);
 
         assertDoesNotThrow(cw::close);
         cloudWatch = null;

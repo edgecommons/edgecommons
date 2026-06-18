@@ -28,7 +28,7 @@ class MessageTagsBuilderTest {
     
     @Test
     void testAddMultipleTags() {
-        Map<String, String> tagMap = new HashMap<>();
+        var tagMap = new HashMap<String, String>();
         tagMap.put("env", "prod");
         tagMap.put("region", "us-west-2");
         
@@ -43,7 +43,7 @@ class MessageTagsBuilderTest {
     
     @Test
     void testAddJsonTags() {
-        JsonObject jsonTags = new JsonObject();
+        var jsonTags = new JsonObject();
         jsonTags.addProperty("service", "test-service");
         jsonTags.addProperty("version", "1.2.3");
         

@@ -34,14 +34,14 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class ConfigManagerApplyConfigTest {
 
-    private static final String INITIAL_CONFIG =
-            "{" +
-            "\"logging\":{\"level\":\"INFO\"}," +
-            "\"metricEmission\":{\"target\":\"log\"}," +
-            "\"heartbeat\":{\"intervalSecs\":30}," +
-            "\"tags\":{}," +
-            "\"component\":{\"global\":{\"v\":1}}" +
-            "}";
+    private static final String INITIAL_CONFIG = """
+            {\
+            "logging":{"level":"INFO"},\
+            "metricEmission":{"target":"log"},\
+            "heartbeat":{"intervalSecs":30},\
+            "tags":{},\
+            "component":{"global":{"v":1}}\
+            }""";
 
     private ConfigManager createConfigManager(String configPath) {
         try {
@@ -73,8 +73,8 @@ class ConfigManagerApplyConfigTest {
 
         // New config whose "component" has NO "global" -> exercises the empty-global else branch,
         // and because initialization is complete, applyConfig notifies the listener.
-        JsonObject reload = JsonParser.parseString(
-                "{\"component\":{\"other\":{\"x\":2}}}").getAsJsonObject();
+        JsonObject reload = JsonParser.parseString("""
+                {"component":{"other":{"x":2}}}""").getAsJsonObject();
         cm.applyConfig(reload);
 
         assertTrue(notified[0], "applyConfig after init must notify configuration-change listeners");

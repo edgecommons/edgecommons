@@ -19,11 +19,12 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
  */
 class MessagingConfigurationTest {
 
-    private static final String JSON = "{ \"messaging\": {" +
-            "\"local\": {\"type\":\"mqtt\",\"host\":\"localhost\",\"port\":1883,\"clientId\":\"loc\"," +
-            "  \"credentials\":{\"username\":\"u\",\"password\":\"p\"}}," +
-            "\"iotCore\": {\"endpoint\":\"x.iot.amazonaws.com\",\"port\":8883,\"clientId\":\"iot\"," +
-            "  \"credentials\":{\"certPath\":\"c.pem\",\"keyPath\":\"k.pem\",\"caPath\":\"ca.pem\"}} } }";
+    private static final String JSON = """
+            { "messaging": {\
+            "local": {"type":"mqtt","host":"localhost","port":1883,"clientId":"loc",\
+              "credentials":{"username":"u","password":"p"}},\
+            "iotCore": {"endpoint":"x.iot.amazonaws.com","port":8883,"clientId":"iot",\
+              "credentials":{"certPath":"c.pem","keyPath":"k.pem","caPath":"ca.pem"}} } }""";
 
     @Test
     void deserializesAndExposesGetters() {

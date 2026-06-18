@@ -23,9 +23,9 @@ import static org.junit.jupiter.api.Assertions.*;
 class MetricTest {
 
     private static Metric metricWithCoreName() {
-        Map<String, Measure> measures = new HashMap<>();
+        var measures = new HashMap<String, Measure>();
         measures.put("count", new Measure("count", "Count", 1));
-        Map<String, String> dims = new HashMap<>();
+        var dims = new HashMap<String, String>();
         dims.put("coreName", "thing-1");
         dims.put("component", "com.example.Component");
         // Metric constructor adds "category" = name.

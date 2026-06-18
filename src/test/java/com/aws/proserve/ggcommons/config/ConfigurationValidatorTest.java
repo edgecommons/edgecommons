@@ -23,19 +23,20 @@ class ConfigurationValidatorTest {
     @Test
     void validConfigurationPasses() {
         // "component" with "global" is the only required block per the schema.
-        JsonObject valid = obj(
-                "{\"component\":{\"global\":{\"timeout\":1000}}," +
-                "\"logging\":{\"level\":\"INFO\"}," +
-                "\"metricEmission\":{\"target\":\"log\"}," +
-                "\"heartbeat\":{\"intervalSecs\":5}," +
-                "\"tags\":{\"env\":\"prod\"}}");
+        JsonObject valid = obj("""
+                {"component":{"global":{"timeout":1000}},\
+                "logging":{"level":"INFO"},\
+                "metricEmission":{"target":"log"},\
+                "heartbeat":{"intervalSecs":5},\
+                "tags":{"env":"prod"}}""");
         assertDoesNotThrow(() -> ConfigurationValidator.validate(valid));
     }
 
     @Test
     void missingRequiredComponentFails() {
         // "component" is required at the top level.
-        JsonObject invalid = obj("{\"logging\":{\"level\":\"INFO\"}}");
+        JsonObject invalid = obj("""
+                {"logging":{"level":"INFO"}}""");
         assertThrows(ConfigurationValidator.ConfigurationValidationException.class,
                 () -> ConfigurationValidator.validate(invalid));
     }
@@ -43,8 +44,8 @@ class ConfigurationValidatorTest {
     @Test
     void invalidEnumValueFails() {
         // "BOGUS" is not a valid logging level enum value.
-        JsonObject invalid = obj(
-                "{\"component\":{\"global\":{}},\"logging\":{\"level\":\"BOGUS\"}}");
+        JsonObject invalid = obj("""
+                {"component":{"global":{}},"logging":{"level":"BOGUS"}}""");
         assertThrows(ConfigurationValidator.ConfigurationValidationException.class,
                 () -> ConfigurationValidator.validate(invalid));
     }
@@ -52,8 +53,8 @@ class ConfigurationValidatorTest {
     @Test
     void additionalPropertyAtRootFails() {
         // additionalProperties:false at root rejects unknown keys.
-        JsonObject invalid = obj(
-                "{\"component\":{\"global\":{}},\"unknownTopLevel\":true}");
+        JsonObject invalid = obj("""
+                {"component":{"global":{}},"unknownTopLevel":true}""");
         assertThrows(ConfigurationValidator.ConfigurationValidationException.class,
                 () -> ConfigurationValidator.validate(invalid));
     }

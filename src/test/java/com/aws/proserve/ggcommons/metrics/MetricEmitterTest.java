@@ -35,7 +35,7 @@ class MetricEmitterTest {
         private final MetricConfiguration metricConfig;
 
         EmitterConfig(String metricJson) {
-            JsonObject root = new JsonObject();
+            var root = new JsonObject();
             root.add("metricEmission", JsonParser.parseString(metricJson).getAsJsonObject());
             this.metricConfig = ConfigurationFactory.createMetricConfiguration(root);
         }
@@ -54,7 +54,7 @@ class MetricEmitterTest {
     }
 
     private static Map<String, Float> values() {
-        Map<String, Float> v = new HashMap<>();
+        var v = new HashMap<String, Float>();
         v.put("value", 1.0f);
         return v;
     }
@@ -62,7 +62,7 @@ class MetricEmitterTest {
     @Test
     void noArgConstructorYieldsNullConfigAndSafeFlushClose() {
         // Protected constructor is reachable from the same package via an anonymous subclass.
-        MetricEmitter emitter = new MetricEmitter() {};
+        var emitter = new MetricEmitter() {};
         assertNull(emitter.getMetricConfig());
         assertNull(emitter.getThingName());
         assertNull(emitter.getComponentName());
@@ -73,10 +73,10 @@ class MetricEmitterTest {
 
     @Test
     void messagingTargetEmitsThroughInjectedService() {
-        EmitterConfig config = new EmitterConfig(
+        var config = new EmitterConfig(
                 "{\"target\":\"messaging\",\"namespace\":\"ns1\",\"targetConfig\":{\"topic\":\"t/topic\",\"destination\":\"ipc\"}}");
-        MockMessagingService mock = new MockMessagingService();
-        MetricEmitter emitter = new MetricEmitter(config, mock);
+        var mock = new MockMessagingService();
+        var emitter = new MetricEmitter(config, mock);
 
         assertEquals("test-thing", emitter.getThingName());
         assertEquals("TestComponent", emitter.getComponentName());
@@ -95,10 +95,10 @@ class MetricEmitterTest {
 
     @Test
     void emitUndefinedMetricIsIgnored() {
-        EmitterConfig config = new EmitterConfig(
+        var config = new EmitterConfig(
                 "{\"target\":\"messaging\",\"namespace\":\"ns1\",\"targetConfig\":{\"topic\":\"t/topic\",\"destination\":\"ipc\"}}");
-        MockMessagingService mock = new MockMessagingService();
-        MetricEmitter emitter = new MetricEmitter(config, mock);
+        var mock = new MockMessagingService();
+        var emitter = new MetricEmitter(config, mock);
 
         emitter.emitMetric("undefined", values());
         emitter.emitMetricNow("undefined", values());
@@ -112,8 +112,8 @@ class MetricEmitterTest {
         File logFile = tempDir.resolve("emitter-metrics.log").toFile();
         String json = "{\"target\":\"log\",\"namespace\":\"ns1\",\"targetConfig\":{\"logFileName\":\""
                 + logFile.getAbsolutePath().replace("\\", "\\\\") + "\",\"maxFileSize\":\"10MB\"}}";
-        EmitterConfig config = new EmitterConfig(json);
-        MetricEmitter emitter = new MetricEmitter(config, null);
+        var config = new EmitterConfig(json);
+        var emitter = new MetricEmitter(config, null);
 
         emitter.defineMetric(metric("m1"));
         emitter.emitMetricNow("m1", values());
@@ -129,8 +129,8 @@ class MetricEmitterTest {
         // writable in the test environment, but Log internally falls back to a logger without
         // throwing, so emit must complete cleanly. (logFileName under a non-"log" target is
         // ignored by MetricConfiguration, so the emitter uses the default Greengrass path here.)
-        EmitterConfig config = new EmitterConfig("{\"target\":\"bogus\",\"namespace\":\"ns1\"}");
-        MetricEmitter emitter = new MetricEmitter(config, null);
+        var config = new EmitterConfig("{\"target\":\"bogus\",\"namespace\":\"ns1\"}");
+        var emitter = new MetricEmitter(config, null);
 
         emitter.defineMetric(metric("m1"));
         assertDoesNotThrow(() -> emitter.emitMetricNow("m1", values()));
@@ -139,10 +139,10 @@ class MetricEmitterTest {
 
     @Test
     void cloudwatchComponentTargetUsesInjectedMessaging() {
-        EmitterConfig config = new EmitterConfig(
+        var config = new EmitterConfig(
                 "{\"target\":\"cloudwatchcomponent\",\"namespace\":\"ns1\",\"targetConfig\":{\"topic\":\"cw/put\"}}");
-        MockMessagingService mock = new MockMessagingService();
-        MetricEmitter emitter = new MetricEmitter(config, mock);
+        var mock = new MockMessagingService();
+        var emitter = new MetricEmitter(config, mock);
 
         emitter.defineMetric(metric("m1"));
         emitter.emitMetricNow("m1", values());

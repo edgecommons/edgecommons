@@ -32,7 +32,7 @@ class CloudWatchComponentTest {
 
         CwcConfig(String topic) {
             String json = "{\"target\":\"cloudwatchcomponent\",\"namespace\":\"ns1\",\"targetConfig\":{\"topic\":\"" + topic + "\"}}";
-            JsonObject root = new JsonObject();
+            var root = new JsonObject();
             root.add("metricEmission", JsonParser.parseString(json).getAsJsonObject());
             this.metricConfig = ConfigurationFactory.createMetricConfiguration(root);
         }
@@ -52,11 +52,11 @@ class CloudWatchComponentTest {
 
     @Test
     void emitMetricPublishesRawPerMeasure() {
-        CloudWatchComponent target = new CloudWatchComponent(new CwcConfig("cloudwatch/metric/put"));
-        MockMessagingService mock = new MockMessagingService();
+        var target = new CloudWatchComponent(new CwcConfig("cloudwatch/metric/put"));
+        var mock = new MockMessagingService();
         target.setMessagingService(mock);
 
-        Map<String, Float> values = new LinkedHashMap<>();
+        var values = new LinkedHashMap<String, Float>();
         values.put("cpu", 55.5f);
         target.emitMetric(metric(), values);
 
@@ -78,8 +78,8 @@ class CloudWatchComponentTest {
 
     @Test
     void emitMetricNowPublishesOnePerMeasure() {
-        CloudWatchComponent target = new CloudWatchComponent(new CwcConfig("cloudwatch/metric/put"));
-        MockMessagingService mock = new MockMessagingService();
+        var target = new CloudWatchComponent(new CwcConfig("cloudwatch/metric/put"));
+        var mock = new MockMessagingService();
         target.setMessagingService(mock);
 
         Metric twoMeasures = MetricBuilder.create("m2")
@@ -88,7 +88,7 @@ class CloudWatchComponentTest {
                 .addMeasure("mem", "Megabytes", 60)
                 .build();
 
-        Map<String, Float> values = new LinkedHashMap<>();
+        var values = new LinkedHashMap<String, Float>();
         values.put("cpu", 10.0f);
         values.put("mem", 20.0f);
         target.emitMetricNow(twoMeasures, values);
@@ -99,14 +99,14 @@ class CloudWatchComponentTest {
 
     @Test
     void onConfigurationChangedReturnsFalseAndReresolvesTopic() {
-        CloudWatchComponent target = new CloudWatchComponent(new CwcConfig("{ThingName}/cw"));
-        MockMessagingService mock = new MockMessagingService();
+        var target = new CloudWatchComponent(new CwcConfig("{ThingName}/cw"));
+        var mock = new MockMessagingService();
         target.setMessagingService(mock);
 
         // CloudWatchComponent.onConfigurationChanged is documented to return false.
         assertFalse(target.onConfigurationChanged());
 
-        Map<String, Float> values = new LinkedHashMap<>();
+        var values = new LinkedHashMap<String, Float>();
         values.put("cpu", 1.0f);
         target.emitMetricNow(metric(), values);
         assertEquals("test-thing/cw", mock.getPublishedMessages().get(0).topic);

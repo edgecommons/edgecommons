@@ -37,12 +37,12 @@ class ConfigManagerFactoryTest {
         return cmdLine;
     }
 
-    private static final String VALID_CONFIG =
-            "{\"logging\":{\"level\":\"INFO\"}," +
-            "\"metricEmission\":{\"target\":\"log\"}," +
-            "\"heartbeat\":{\"intervalSecs\":30}," +
-            "\"tags\":{}," +
-            "\"component\":{\"global\":{}}}";
+    private static final String VALID_CONFIG = """
+            {"logging":{"level":"INFO"},\
+            "metricEmission":{"target":"log"},\
+            "heartbeat":{"intervalSecs":30},\
+            "tags":{},\
+            "component":{"global":{}}}""";
 
     @Test
     void createParsesDottedComponentNameIntoShortName() throws Exception {
@@ -67,7 +67,8 @@ class ConfigManagerFactoryTest {
     @Test
     void createThrowsConfigurationExceptionForInvalidSchema() throws Exception {
         // Missing required "component" block -> schema validation failure.
-        File config = writeTempConfig("{\"logging\":{\"level\":\"INFO\"}}");
+        File config = writeTempConfig("""
+                {"logging":{"level":"INFO"}}""");
         ConfigurationException ex = assertThrows(ConfigurationException.class,
                 () -> ConfigManagerFactory.create("com.test.Comp", fileCmdLine(config, "t")));
         assertTrue(ex.getMessage().toLowerCase().contains("validation"));

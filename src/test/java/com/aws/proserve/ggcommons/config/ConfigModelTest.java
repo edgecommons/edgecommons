@@ -51,11 +51,11 @@ class ConfigModelTest {
 
     @Test
     void loggingConfigurationFullyPopulatedAndToString() {
-        LoggingConfiguration cfg = new LoggingConfiguration(obj(
-                "{\"level\":\"DEBUG\",\"format\":\"%m%n\"," +
-                "\"fileLogging\":{\"enabled\":true,\"filePath\":\"/tmp/app.log\"}," +
-                "\"loggers\":{\"com.aws.proserve\":\"warn\"}," +
-                "\"globalControl\":true}"));
+        LoggingConfiguration cfg = new LoggingConfiguration(obj("""
+                {"level":"DEBUG","format":"%m%n",\
+                "fileLogging":{"enabled":true,"filePath":"/tmp/app.log"},\
+                "loggers":{"com.aws.proserve":"warn"},\
+                "globalControl":true}"""));
 
         assertEquals("DEBUG", cfg.getLevel().toString());
         assertEquals("%m%n", cfg.getFormat());
@@ -78,8 +78,8 @@ class ConfigModelTest {
 
     @Test
     void loggingConfigurationFileLoggingEnabledWithoutPath() {
-        LoggingConfiguration cfg = new LoggingConfiguration(obj(
-                "{\"fileLogging\":{\"enabled\":true}}"));
+        LoggingConfiguration cfg = new LoggingConfiguration(obj("""
+                {"fileLogging":{"enabled":true}}"""));
         assertTrue(cfg.isFileLoggingEnabled());
         assertNull(cfg.getLogFilePath());
         JsonObject fileDict = cfg.toDict().getAsJsonObject("fileLogging");
@@ -89,7 +89,8 @@ class ConfigModelTest {
 
     @Test
     void loggingConfigurationGetLoggerLevelsIsUnmodifiable() {
-        LoggingConfiguration cfg = new LoggingConfiguration(obj("{\"level\":\"INFO\"}"));
+        LoggingConfiguration cfg = new LoggingConfiguration(obj("""
+                {"level":"INFO"}"""));
         assertThrows(UnsupportedOperationException.class,
                 () -> cfg.getLoggerLevels().put("x", org.apache.logging.log4j.Level.INFO));
     }
@@ -112,9 +113,9 @@ class ConfigModelTest {
 
     @Test
     void metricConfigurationLogTarget() {
-        MetricConfiguration cfg = new MetricConfiguration(obj(
-                "{\"target\":\"log\",\"namespace\":\"ns\"," +
-                "\"targetConfig\":{\"logFileName\":\"/var/m.log\",\"maxFileSize\":\"50MB\"}}"));
+        MetricConfiguration cfg = new MetricConfiguration(obj("""
+                {"target":"log","namespace":"ns",\
+                "targetConfig":{"logFileName":"/var/m.log","maxFileSize":"50MB"}}"""));
         assertEquals("log", cfg.getTarget());
         assertEquals("ns", cfg.getNamespace());
         assertEquals("/var/m.log", cfg.getLogFileNameTemplate());
@@ -128,9 +129,9 @@ class ConfigModelTest {
 
     @Test
     void metricConfigurationMessagingTarget() {
-        MetricConfiguration cfg = new MetricConfiguration(obj(
-                "{\"target\":\"messaging\"," +
-                "\"targetConfig\":{\"topic\":\"a/b/c\",\"destination\":\"iotcore\"}}"));
+        MetricConfiguration cfg = new MetricConfiguration(obj("""
+                {"target":"messaging",\
+                "targetConfig":{"topic":"a/b/c","destination":"iotcore"}}"""));
         assertEquals("messaging", cfg.getTarget());
         assertEquals("a/b/c", cfg.getTopic());
         assertEquals("iotcore", cfg.getDestination());
@@ -142,16 +143,17 @@ class ConfigModelTest {
 
     @Test
     void metricConfigurationMessagingTargetUsesDefaultTopic() {
-        MetricConfiguration cfg = new MetricConfiguration(obj("{\"target\":\"messaging\"}"));
+        MetricConfiguration cfg = new MetricConfiguration(obj("""
+                {"target":"messaging"}"""));
         assertEquals("{ThingName}/{ComponentName}/metric", cfg.getTopic());
         assertEquals("ipc", cfg.getDestination());
     }
 
     @Test
     void metricConfigurationCloudwatchTarget() {
-        MetricConfiguration cfg = new MetricConfiguration(obj(
-                "{\"target\":\"cloudwatch\",\"largeFleetWorkaround\":true," +
-                "\"targetConfig\":{\"intervalSecs\":42}}"));
+        MetricConfiguration cfg = new MetricConfiguration(obj("""
+                {"target":"cloudwatch","largeFleetWorkaround":true,\
+                "targetConfig":{"intervalSecs":42}}"""));
         assertEquals("cloudwatch", cfg.getTarget());
         assertEquals(42, cfg.getIntervalSecs());
         assertTrue(cfg.getLargeFleetWorkaround());
@@ -160,21 +162,22 @@ class ConfigModelTest {
 
     @Test
     void metricConfigurationCloudwatchIntervalBelowOneResetsToDefault() {
-        MetricConfiguration cfg = new MetricConfiguration(obj(
-                "{\"target\":\"cloudwatch\",\"targetConfig\":{\"intervalSecs\":0}}"));
+        MetricConfiguration cfg = new MetricConfiguration(obj("""
+                {"target":"cloudwatch","targetConfig":{"intervalSecs":0}}"""));
         assertEquals(5, cfg.getIntervalSecs());
     }
 
     @Test
     void metricConfigurationCloudwatchComponentTarget() {
         // Default topic for cloudwatchcomponent when no targetConfig.topic supplied.
-        MetricConfiguration deflt = new MetricConfiguration(obj("{\"target\":\"cloudwatchcomponent\"}"));
+        MetricConfiguration deflt = new MetricConfiguration(obj("""
+                {"target":"cloudwatchcomponent"}"""));
         assertEquals("cloudwatchcomponent", deflt.getTarget());
         assertEquals("cloudwatch/metric/put", deflt.getTopic());
 
         // Overridden topic.
-        MetricConfiguration cfg = new MetricConfiguration(obj(
-                "{\"target\":\"cloudwatchcomponent\",\"targetConfig\":{\"topic\":\"cw/custom\"}}"));
+        MetricConfiguration cfg = new MetricConfiguration(obj("""
+                {"target":"cloudwatchcomponent","targetConfig":{"topic":"cw/custom"}}"""));
         assertEquals("cw/custom", cfg.getTopic());
 
         // toDict() has no switch case for cloudwatchcomponent -> empty targetConfig block.
@@ -205,19 +208,20 @@ class ConfigModelTest {
 
     @Test
     void heartbeatConfigurationIntervalBelowOneResetsToDefault() {
-        HeartbeatConfiguration cfg = new HeartbeatConfiguration(obj("{\"intervalSecs\":0}"));
+        HeartbeatConfiguration cfg = new HeartbeatConfiguration(obj("""
+                {"intervalSecs":0}"""));
         assertEquals(5, cfg.getIntervalSecs());
     }
 
     @Test
     void heartbeatConfigurationMeasuresAndTargets() {
-        HeartbeatConfiguration cfg = new HeartbeatConfiguration(obj(
-                "{\"intervalSecs\":15," +
-                "\"measures\":{\"cpu\":false,\"memory\":true,\"disk\":true,\"threads\":true,\"files\":true,\"fds\":true}," +
-                "\"targets\":[" +
-                "{\"type\":\"metric\"}," +
-                "{\"type\":\"messaging\",\"config\":{\"destination\":\"ipc\",\"topic\":\"hb/t\"}}," +
-                "{\"type\":\"bogus\"}]}"));
+        HeartbeatConfiguration cfg = new HeartbeatConfiguration(obj("""
+                {"intervalSecs":15,\
+                "measures":{"cpu":false,"memory":true,"disk":true,"threads":true,"files":true,"fds":true},\
+                "targets":[\
+                {"type":"metric"},\
+                {"type":"messaging","config":{"destination":"ipc","topic":"hb/t"}},\
+                {"type":"bogus"}]}"""));
 
         assertEquals(15, cfg.getIntervalSecs());
         assertFalse(cfg.includeCpu());
@@ -257,7 +261,8 @@ class ConfigModelTest {
 
     @Test
     void tagConfigurationKeysValuesAndRoundTrip() {
-        JsonObject tags = obj("{\"env\":\"prod\",\"region\":\"us-east-1\"}");
+        JsonObject tags = obj("""
+                {"env":"prod","region":"us-east-1"}""");
         TagConfiguration cfg = new TagConfiguration(tags);
         assertTrue(cfg.getKeys().contains("env"));
         assertTrue(cfg.getKeys().contains("region"));
@@ -284,7 +289,8 @@ class ConfigModelTest {
 
     @Test
     void factoryReturnsDefaultsWhenSectionsAbsent() {
-        JsonObject empty = obj("{}");
+        JsonObject empty = obj("""
+                {}""");
         assertEquals("INFO", ConfigurationFactory.createLoggingConfiguration(empty).getLevel().toString());
         assertEquals("log", ConfigurationFactory.createMetricConfiguration(empty).getTarget());
         assertEquals(5, ConfigurationFactory.createHeartbeatConfiguration(empty).getIntervalSecs());
@@ -293,11 +299,11 @@ class ConfigModelTest {
 
     @Test
     void factoryParsesPopulatedSections() {
-        JsonObject cfg = obj(
-                "{\"logging\":{\"level\":\"DEBUG\"}," +
-                "\"metricEmission\":{\"target\":\"cloudwatch\"}," +
-                "\"heartbeat\":{\"intervalSecs\":20}," +
-                "\"tags\":{\"k\":\"v\"}}");
+        JsonObject cfg = obj("""
+                {"logging":{"level":"DEBUG"},\
+                "metricEmission":{"target":"cloudwatch"},\
+                "heartbeat":{"intervalSecs":20},\
+                "tags":{"k":"v"}}""");
 
         assertEquals("DEBUG", ConfigurationFactory.createLoggingConfiguration(cfg).getLevel().toString());
         assertEquals("cloudwatch", ConfigurationFactory.createMetricConfiguration(cfg).getTarget());

@@ -34,7 +34,7 @@ class LogTest {
         LogConfig(String logFile, boolean largeFleet) {
             String json = "{\"target\":\"log\",\"namespace\":\"ns1\",\"largeFleetWorkaround\":" + largeFleet
                     + ",\"targetConfig\":{\"logFileName\":\"" + logFile.replace("\\", "\\\\") + "\",\"maxFileSize\":\"10MB\"}}";
-            JsonObject root = new JsonObject();
+            var root = new JsonObject();
             root.add("metricEmission", JsonParser.parseString(json).getAsJsonObject());
             this.metricConfig = ConfigurationFactory.createMetricConfiguration(root);
         }
@@ -55,9 +55,9 @@ class LogTest {
     @Test
     void emitMetricWritesLogFile(@TempDir Path tempDir) {
         File logFile = tempDir.resolve("metrics.log").toFile();
-        Log log = new Log(new LogConfig(logFile.getAbsolutePath(), false));
+        var log = new Log(new LogConfig(logFile.getAbsolutePath(), false));
 
-        Map<String, Float> values = new HashMap<>();
+        var values = new HashMap<String, Float>();
         values.put("value", 3.0f);
         assertDoesNotThrow(() -> log.emitMetric(metric(), values));
         log.close();
@@ -68,9 +68,9 @@ class LogTest {
     @Test
     void emitMetricNowWritesLogFile(@TempDir Path tempDir) {
         File logFile = tempDir.resolve("metrics2.log").toFile();
-        Log log = new Log(new LogConfig(logFile.getAbsolutePath(), false));
+        var log = new Log(new LogConfig(logFile.getAbsolutePath(), false));
 
-        Map<String, Float> values = new HashMap<>();
+        var values = new HashMap<String, Float>();
         values.put("value", 4.0f);
         assertDoesNotThrow(() -> log.emitMetricNow(metric(), values));
         log.close();
@@ -81,9 +81,9 @@ class LogTest {
     @Test
     void largeFleetWorkaroundEmitsSecondRecord(@TempDir Path tempDir) {
         File logFile = tempDir.resolve("metrics3.log").toFile();
-        Log log = new Log(new LogConfig(logFile.getAbsolutePath(), true));
+        var log = new Log(new LogConfig(logFile.getAbsolutePath(), true));
 
-        Map<String, Float> values = new HashMap<>();
+        var values = new HashMap<String, Float>();
         values.put("value", 5.0f);
         assertDoesNotThrow(() -> log.emitMetricNow(metric(), values));
         log.close();
@@ -94,9 +94,9 @@ class LogTest {
     @Test
     void onConfigurationChangedResetsLoggerAndReconfigures(@TempDir Path tempDir) {
         File logFile = tempDir.resolve("metrics4.log").toFile();
-        Log log = new Log(new LogConfig(logFile.getAbsolutePath(), false));
+        var log = new Log(new LogConfig(logFile.getAbsolutePath(), false));
 
-        Map<String, Float> values = new HashMap<>();
+        var values = new HashMap<String, Float>();
         values.put("value", 6.0f);
         log.emitMetricNow(metric(), values);
 
@@ -111,7 +111,7 @@ class LogTest {
     @Test
     void closeWithoutEmitDoesNotThrow(@TempDir Path tempDir) {
         File logFile = tempDir.resolve("metrics5.log").toFile();
-        Log log = new Log(new LogConfig(logFile.getAbsolutePath(), false));
+        var log = new Log(new LogConfig(logFile.getAbsolutePath(), false));
         // No emit was performed -> no appender created -> close must be a safe no-op.
         assertDoesNotThrow(log::close);
     }
@@ -119,9 +119,9 @@ class LogTest {
     @Test
     void logFileWithoutExtensionStillEmits(@TempDir Path tempDir) {
         File logFile = tempDir.resolve("metrics_noext").toFile();
-        Log log = new Log(new LogConfig(logFile.getAbsolutePath(), false));
+        var log = new Log(new LogConfig(logFile.getAbsolutePath(), false));
 
-        Map<String, Float> values = new HashMap<>();
+        var values = new HashMap<String, Float>();
         values.put("value", 8.0f);
         assertDoesNotThrow(() -> log.emitMetricNow(metric(), values));
         log.close();
