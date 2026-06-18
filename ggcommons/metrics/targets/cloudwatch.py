@@ -6,6 +6,9 @@ from ggcommons.metrics.targets.metric_target import MetricTarget
 
 
 class CloudWatch(MetricTarget):
+    # CloudWatch PutMetricData accepts at most 1000 metric datums per request.
+    MAX_DATUMS_PER_REQUEST = 1000
+
     def __init__(self, config_manager: ConfigManager):
         super().__init__(config_manager)
         self.logger.info("Initializing CloudWatch metric target")
@@ -38,7 +41,11 @@ class CloudWatch(MetricTarget):
 
     def _flush_metrics_periodically(self):
         while not self._flush_event.wait(self._interval_secs):
-            self._flush_metrics()
+            # Never let an unexpected error kill the flush thread.
+            try:
+                self._flush_metrics()
+            except Exception as e:
+                self.logger.error(f"Unexpected error during CloudWatch flush: {e}")
             if self._terminate_thread:
                 break
 
@@ -47,18 +54,39 @@ class CloudWatch(MetricTarget):
         if total_metrics == 0:
             self.logger.debug("No pending metrics to flush to CloudWatch")
             return
-            
+
         self.logger.debug(f"Flushing {total_metrics} metrics across {len(self._pending_metrics)} namespaces to CloudWatch")
-        
+
         for namespace, metrics in self._pending_metrics.items():
-            if metrics:
-                self.logger.debug(f"Sending {len(metrics)} metrics to CloudWatch namespace: {namespace}")
-                self._cloudwatch_client.put_metric_data(
-                    Namespace=namespace, MetricData=metrics
-                )
-                self._pending_metrics[namespace] = []  # Clear after sending
-                
-        self.logger.debug(f"Successfully flushed {total_metrics} metrics to CloudWatch")
+            if not metrics:
+                continue
+            # Isolate each namespace so one failing PutMetricData does not drop the
+            # others, and chunk into <=1000-datum batches (CloudWatch's per-request
+            # limit) so large batches are not rejected wholesale. On failure, keep
+            # only the not-yet-sent datums so the next flush retries without
+            # re-sending datums already accepted.
+            remaining = []
+            failed = False
+            for start in range(0, len(metrics), self.MAX_DATUMS_PER_REQUEST):
+                batch = metrics[start:start + self.MAX_DATUMS_PER_REQUEST]
+                if failed:
+                    remaining.extend(batch)
+                    continue
+                try:
+                    self.logger.debug(f"Sending {len(batch)} metrics to CloudWatch namespace: {namespace}")
+                    self._cloudwatch_client.put_metric_data(
+                        Namespace=namespace, MetricData=batch
+                    )
+                except Exception as e:
+                    self.logger.error(
+                        f"Error sending metrics to CloudWatch namespace '{namespace}': {e}. "
+                        f"Will retry on next flush."
+                    )
+                    failed = True
+                    remaining.extend(batch)
+            self._pending_metrics[namespace] = remaining
+
+        self.logger.debug("CloudWatch flush cycle complete")
 
     def emit_metric(self, metric, measure_values):
         namespace = (

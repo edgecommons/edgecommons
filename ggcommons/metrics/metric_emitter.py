@@ -70,8 +70,14 @@ class MetricEmitter:
         MetricEmitter.logger.debug(f"Metric {metric_name} measures: {list(metric.get_measures().keys())}")
         
         MetricEmitter.metrics[metric_name] = metric
-        
+
         MetricEmitter.logger.debug(f"Total defined metrics: {len(MetricEmitter.metrics)}")
+
+    @staticmethod
+    def is_metric_defined(name: str) -> bool:
+        """Pure lookup: True if a metric with this name has been defined. Has no
+        side effects (does not emit or register anything)."""
+        return name in MetricEmitter.metrics
 
     @staticmethod
     def emit_metric(name, measure_values):

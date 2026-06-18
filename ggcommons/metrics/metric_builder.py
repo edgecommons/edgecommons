@@ -209,7 +209,16 @@ class MetricBuilder:
         metric.dimensions["coreName"] = metric.thing_name
         metric.dimensions["category"] = metric.name
         metric.dimensions["component"] = metric.component_name
-        
+
+        # Enforce the CloudWatch 10-dimension cap (this path bypasses the Metric
+        # constructor, so check the assembled total here).
+        if len(metric.dimensions) > Metric.MAX_DIMENSIONS:
+            raise ValueError(
+                f"A metric may have at most {Metric.MAX_DIMENSIONS} dimensions "
+                f"(including the default coreName/category/component); got "
+                f"{len(metric.dimensions)}"
+            )
+
         return metric
 
 # For backward compatibility, add deprecated constructor warning

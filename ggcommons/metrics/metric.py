@@ -1,22 +1,22 @@
 class Metric:
+    # CloudWatch allows at most 10 dimensions per metric.
+    MAX_DIMENSIONS = 10
+
     def __init__(
         self,
         thing_name: str,
         component_name: str,
         name: str,
         namespace: str = None,
-        measures: list = None,
-        dimensions: list = None,
+        measures: dict = None,
+        dimensions: dict = None,
     ):
-        if measures is None:
-            measures = {}
-        if dimensions is None:
-            dimensions = {}
-
+        # Copy the incoming dicts so we never mutate a caller-owned collection when
+        # injecting the default dimensions below.
         self.name = name
         self.namespace = namespace
-        self.measures = measures
-        self.dimensions = dimensions
+        self.measures = dict(measures) if measures else {}
+        self.dimensions = dict(dimensions) if dimensions else {}
 
         # Add default dimensions
         self.dimensions["coreName"] = thing_name
@@ -27,6 +27,13 @@ class Metric:
         self.measures[measure.name] = measure
 
     def add_dimension(self, name, value):
+        # Enforce the CloudWatch 10-dimension cap on the Metric itself (not just in
+        # the builder), so the limit holds regardless of how the metric is built.
+        if name not in self.dimensions and len(self.dimensions) >= self.MAX_DIMENSIONS:
+            raise ValueError(
+                f"Cannot add dimension '{name}': a metric may have at most "
+                f"{self.MAX_DIMENSIONS} dimensions"
+            )
         self.dimensions[name] = value
 
     def dimensions_as_json(self, include_core_name=True) -> list:
