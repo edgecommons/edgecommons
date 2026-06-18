@@ -27,6 +27,3 @@ class EnvironmentConfigManager(ConfigManager):
                 f"Configuration environment variable '{self._environment_variable_name}' is not set"
             )
         return json.loads(os.environ.get(self._environment_variable_name))
-
-    def get_config_source(self) -> str:
-        return f"Environment (var name: {self._environment_variable_name})"

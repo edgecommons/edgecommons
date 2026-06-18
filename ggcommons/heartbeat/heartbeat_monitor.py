@@ -12,8 +12,6 @@ class HeartbeatMonitor:
     def __init__(self, config_service: "ConfigManager"):
         self._config_service = config_service
         self._config = config_service.get_heartbeat_config()
-        self._pid = None
-        self._proc_info = None
         self._platform = platform.system()
         self.pid, self.proc_info = HeartbeatMonitor.build_proc_info()
 
@@ -25,7 +23,6 @@ class HeartbeatMonitor:
         thread_data = self.thread_count()
         files_data = self.open_files()
         fds = self.file_descriptors()
-        # Check for conflicting configurations
         if cpu_data is not None:
             data["cpu"] = cpu_data
         if memory_data is not None:
@@ -108,13 +105,3 @@ class HeartbeatMonitor:
             disk["disk_used"] = used
             disk["disk_free"] = free
         return disk
-
-
-if __name__ == "__main__":
-    from ggcommons.config.manager.file_config_manager import FileConfigManager
-
-    print(os.getcwd())
-    config = FileConfigManager("PYTHON_TEST", "../../config_3.json")
-    monitor = HeartbeatMonitor(config)
-    print(monitor.pid)
-    print(monitor.get_stats())

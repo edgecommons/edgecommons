@@ -2,7 +2,7 @@
 Builder for creating Message instances with fluent API.
 """
 import json
-from typing import Dict, Any, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ggcommons.config.manager.config_manager import ConfigManager

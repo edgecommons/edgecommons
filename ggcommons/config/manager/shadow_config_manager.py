@@ -20,6 +20,7 @@ class ShadowConfigManager(ConfigManager):
     def __init__(self, thing_name: str, component_name: str, shadow_name: str):
         super().__init__(component_name, thing_name)
         self._shadow_name = shadow_name if shadow_name is not None else component_name
+        self._config_source = f"Named Shadow (shadow name: {self._shadow_name})"
         from ggcommons import MessagingClient
 
         self._ipc_client = (
@@ -126,6 +127,3 @@ class ShadowConfigManager(ConfigManager):
         except Exception as e:
             logger.error(f"_get_configuration: Failed to get configuration: {str(e)}")
             return None
-
-    def get_config_source(self) -> str:
-        return f"Named Shadow (shadow name: {self._shadow_name})"

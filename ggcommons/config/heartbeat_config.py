@@ -50,23 +50,15 @@ class HeartbeatConfiguration:
         self._targets = self.__DEFAULT_HEARTBEAT_TARGETS
 
         if heartbeat_json is not None:
-            if "intervalSecs" in heartbeat_json:
-                self._interval_secs = heartbeat_json["intervalSecs"]
-            if "measures" in heartbeat_json:
-                if "cpu" in heartbeat_json["measures"]:
-                    self._include_cpu = heartbeat_json["measures"]["cpu"]
-                if "memory" in heartbeat_json["measures"]:
-                    self._include_memory = heartbeat_json["measures"]["memory"]
-                if "disk" in heartbeat_json["measures"]:
-                    self._include_disk = heartbeat_json["measures"]["disk"]
-                if "files" in heartbeat_json["measures"]:
-                    self._include_files = heartbeat_json["measures"]["files"]
-                if "threads" in heartbeat_json["measures"]:
-                    self._include_threads = heartbeat_json["measures"]["threads"]
-                if "fds" in heartbeat_json["measures"]:
-                    self._include_fds = heartbeat_json["measures"]["fds"]
-            if "targets" in heartbeat_json:
-                self._targets = heartbeat_json["targets"]
+            self._interval_secs = heartbeat_json.get("intervalSecs", self._interval_secs)
+            measures = heartbeat_json.get("measures", {})
+            self._include_cpu = measures.get("cpu", self._include_cpu)
+            self._include_memory = measures.get("memory", self._include_memory)
+            self._include_disk = measures.get("disk", self._include_disk)
+            self._include_files = measures.get("files", self._include_files)
+            self._include_threads = measures.get("threads", self._include_threads)
+            self._include_fds = measures.get("fds", self._include_fds)
+            self._targets = heartbeat_json.get("targets", self._targets)
 
     def to_dict(self):
         dict_rep = {

@@ -5,10 +5,9 @@ import queue
 from threading import Thread
 from typing import Callable
 from ggcommons.messaging.message import Message
-from ggcommons.messaging.message_builder import MessageBuilder
 
 
-logger = logging.getLogger("ConfigManager")
+logger = logging.getLogger("SubscriptionHandler")
 
 
 class SubscriptionHandler(metaclass=abc.ABCMeta):

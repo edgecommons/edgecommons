@@ -7,7 +7,6 @@ simultaneously in STANDALONE mode, similar to the Java version.
 
 import json
 import logging
-import queue
 import ssl
 import threading
 import uuid

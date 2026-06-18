@@ -41,10 +41,11 @@ class EnhancedLoggingConfiguration:
         self._format = self._config.get('format', self.DEFAULT_FORMAT)
         
         # File logging settings
-        self._file_logging_enabled = self._config.get('fileLogging', {}).get('enabled', False)
-        self._log_file_path = self._config.get('fileLogging', {}).get('filePath')
-        self._max_file_size = self._config.get('fileLogging', {}).get('maxFileSize', '10MB')
-        self._backup_count = self._config.get('fileLogging', {}).get('backupCount', 5)
+        file_cfg = self._config.get('fileLogging', {})
+        self._file_logging_enabled = file_cfg.get('enabled', False)
+        self._log_file_path = file_cfg.get('filePath')
+        self._max_file_size = file_cfg.get('maxFileSize', '10MB')
+        self._backup_count = file_cfg.get('backupCount', 5)
         
         # Per-logger settings
         self._logger_levels = {}

@@ -1,6 +1,5 @@
 import json
 import logging
-import os
 
 
 class MetricConfiguration:
@@ -35,27 +34,24 @@ class MetricConfiguration:
                 "largeFleetWorkaround", self._large_fleet_workaround
             )
 
-            if self._target.lower() == "log":
-                self._log_file_name_template = self.DEFAULT_METRIC_FILE_NAME_TEMPLATE
-                if "targetConfig" in json_config:
-                    if "logFileName" in json_config["targetConfig"]:
-                        self._log_file_name_template = json_config["targetConfig"][
-                            "logFileName"
-                        ]
+            target = self._target.lower()
+            target_config = json_config.get("targetConfig", {})
 
-            if self._target.lower() == "messaging":
+            if target == "log":
+                self._log_file_name_template = target_config.get(
+                    "logFileName", self.DEFAULT_METRIC_FILE_NAME_TEMPLATE
+                )
+
+            if target == "messaging":
                 self._topic = self.DEFAULT_MESSAGING_TOPIC
-                target_config = json_config.get("targetConfig", {})
                 self._topic = target_config.get("topic", self._topic)
                 self._destination = target_config.get("destination", self._destination)
 
-            if self._target.lower() == "cloudwatchcomponent":
+            if target == "cloudwatchcomponent":
                 self._topic = self.DEFAULT_CLOUDWATCH_COMPONENT_TOPIC
-                target_config = json_config.get("targetConfig", {})
                 self._topic = target_config.get("topic", self._topic)
 
-            if self._target.lower() == "cloudwatch":
-                target_config = json_config.get("targetConfig", {})
+            if target == "cloudwatch":
                 self._interval_secs = int(
                     target_config.get("intervalSecs", self._interval_secs)
                 )

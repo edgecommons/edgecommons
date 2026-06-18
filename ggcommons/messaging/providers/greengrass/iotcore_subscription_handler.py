@@ -6,7 +6,7 @@ from ggcommons.messaging.providers.greengrass.subscription_handler import (
     SubscriptionHandler,
 )
 
-logger = logging.getLogger("ConfigManager")
+logger = logging.getLogger("IotCoreSubscriptionHandler")
 
 
 class IotCoreSubscriptionHandler(SubscriptionHandler):

@@ -2,7 +2,6 @@ import json
 import logging
 import os
 
-# import time
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
@@ -37,9 +36,6 @@ class FileConfigManager(ConfigManager):
             raise RuntimeError(
                 f"Unable to open config file at {self._config_file_path}"
             ) from e
-
-    def get_config_source(self) -> str:
-        return f"Config File (file name: {self._config_file_path})"
 
     def close(self) -> None:
         """Stop the file-change observer thread so it does not leak on shutdown."""

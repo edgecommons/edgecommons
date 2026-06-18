@@ -20,7 +20,7 @@ class CloudWatch(MetricTarget):
         self._flush_thread = None
         self._terminate_thread = False
         
-        self.logger.info(f"CloudWatch client initialized for region: us-east-1")
+        self.logger.info("CloudWatch client initialized for region: us-east-1")
         self._start_periodic_flush()
 
     def _start_periodic_flush(self):

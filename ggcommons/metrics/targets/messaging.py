@@ -9,7 +9,6 @@ from ggcommons.metrics.targets.metric_target import MetricTarget
 class Messaging(MetricTarget):
     def __init__(self, config_manager: ConfigManager):
         super().__init__(config_manager)
-        self.config_manager = config_manager
         self.topic = config_manager.resolve_template(
             config_manager.get_metric_config().get_topic()
         )
@@ -65,7 +64,7 @@ class Messaging(MetricTarget):
             self.config_manager.get_metric_config().get_destination().lower() == "local"
         )
         
-        new_destination = "IPC" if self.send_to_local else "IoT Core"
+        new_destination = "local" if self.send_to_local else "IoT Core"
         
         self.logger.info(f"Metric messaging reconfigured - topic: {old_topic} -> {self.topic}, destination: {old_destination} -> {new_destination}")
         return True

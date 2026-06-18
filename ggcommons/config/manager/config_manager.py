@@ -1,7 +1,6 @@
 import logging
-import os
 import time
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any
 
 from ggcommons.config.heartbeat_config import HeartbeatConfiguration
 from ggcommons.config.metric_config import MetricConfiguration
@@ -77,10 +76,10 @@ class ConfigManager:
     def _apply_config(self, config: dict):
         # Tags first: the log file path template ({ThingName}/{ComponentName}/{tag})
         # is resolved during logging setup below, so tag_config must already exist.
-        tag_json = None if "tags" not in config else config["tags"]
+        tag_json = config.get("tags")
         self._tag_config = TagConfiguration(tag_json)
 
-        logging_json = None if "logging" not in config else config["logging"]
+        logging_json = config.get("logging")
         self._logging_config = EnhancedLoggingConfiguration(logging_json)
         # configure_logging wires the console handler plus, when
         # logging.fileLogging.enabled, a size-rotated RotatingFileHandler
@@ -89,25 +88,14 @@ class ConfigManager:
         self._logging_config.configure_logging(self)
         logging.Formatter.converter = time.gmtime
 
-        heartbeat_json = None if "heartbeat" not in config else config["heartbeat"]
+        heartbeat_json = config.get("heartbeat")
         self._heartbeat_config = HeartbeatConfiguration(heartbeat_json)
 
-        metric_json = (
-            None if "metricEmission" not in config else config["metricEmission"]
-        )
+        metric_json = config.get("metricEmission")
         self._metric_config = MetricConfiguration(metric_json)
 
-        component_json = (
-            {"global": {}, "instances": []}
-            if "component" not in config
-            else config["component"]
-        )
-        self._component_config = component_json
-        self._global_config = (
-            {}
-            if "global" not in self._component_config
-            else self._component_config["global"]
-        )
+        self._component_config = config.get("component", {"global": {}, "instances": []})
+        self._global_config = self._component_config.get("global", {})
         self._gen_instances_map()
 
     def _gen_instances_map(self):

@@ -22,7 +22,7 @@ class GreengrassConfigManager(ConfigManager):
         self.init()
 
     def _load_configuration(self) -> dict:
-        print(
+        logger.info(
             f"Loading Greengrass component configuration from component '{self._config_component_name}'"
         )
         ipc_client = GreengrassCoreIPCClientV2()
@@ -32,12 +32,12 @@ class GreengrassConfigManager(ConfigManager):
             response = ipc_client.get_configuration(
                 component_name=self._config_component_name
             )
-        print(f"Full configuration retrieved from Nucleus: {response.value}")
+        logger.debug(f"Full configuration retrieved from Nucleus: {response.value}")
         ret_val = None
         if response.value is not None:
             if self._config_key in response.value:
                 ret_val = response.value.get(self._config_key)
-                print(f"Component configuration retrieved: {ret_val}")
+                logger.debug(f"Component configuration retrieved: {ret_val}")
             else:
                 ipc_client.close()
                 raise RuntimeError(
@@ -45,6 +45,3 @@ class GreengrassConfigManager(ConfigManager):
                 )
         ipc_client.close()
         return ret_val
-
-    def get_config_source(self) -> str:
-        return f"Greengrass config (component: {self._config_component_name}; key: {self._config_key})"
