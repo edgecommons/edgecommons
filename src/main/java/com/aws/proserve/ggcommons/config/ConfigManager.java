@@ -267,10 +267,16 @@ public class ConfigManager
         LOGGER.info("configurationChanged: Notifying {} listeners", configChangeListeners.size());
         for (ConfigurationChangeListener listener : configChangeListeners)
         {
-            if (listener != null) {
-                listener.onConfigurationChanged();
-            } else {
+            if (listener == null) {
                 LOGGER.error("ConfigurationChangeListener is null.  Not notifying.");
+                continue;
+            }
+            // Isolate each listener: one listener throwing must not prevent the others from being notified.
+            try {
+                listener.onConfigurationChanged();
+            } catch (Exception e) {
+                LOGGER.error("ConfigurationChangeListener {} threw during notification: {}",
+                        listener.getClass().getName(), e.getMessage(), e);
             }
         }
     }

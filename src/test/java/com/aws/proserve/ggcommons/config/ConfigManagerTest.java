@@ -278,6 +278,26 @@ class ConfigManagerTest {
         });
     }
     
+    @Test
+    void testListenerIsolationOnException() throws IOException {
+        String configJson = "{" +
+            "\"logging\": {\"level\": \"INFO\"}," +
+            "\"metricEmission\": {\"target\": \"log\"}," +
+            "\"heartbeat\": {\"intervalSecs\": 30}," +
+            "\"tags\": {}," +
+            "\"component\": {\"global\": {}}" +
+        "}";
+
+        runWithTempConfig(configJson, configManager -> {
+            boolean[] secondCalled = {false};
+            configManager.addConfigChangeListener(() -> { throw new RuntimeException("listener boom"); });
+            configManager.addConfigChangeListener(() -> { secondCalled[0] = true; return true; });
+            // A throwing listener must not prevent later listeners from being notified (M4).
+            configManager.notifyConfigurationChanged();
+            assertTrue(secondCalled[0], "second listener must still be notified despite the first throwing");
+        });
+    }
+
     private File createTempConfig(String configJson) throws IOException {
         File tempFile = File.createTempFile("test-config", ".json");
         tempFile.deleteOnExit(); // Ensure cleanup if test fails

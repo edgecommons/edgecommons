@@ -89,30 +89,50 @@ public class CloudWatch extends MetricTarget
         return true;
     }
 
+    // CloudWatch PutMetricData accepts at most 1000 metric data items per request.
+    private static final int MAX_DATUMS_PER_REQUEST = 1000;
+
     private void flushMetrics()
     {
         for (Map.Entry<String, ConcurrentLinkedQueue<PendingMetric>> entry : pendingMetrics.entrySet())
         {
             String namespace = entry.getKey();
             ConcurrentLinkedQueue<PendingMetric> pendingMetricQueue = entry.getValue();
-            Collection<MetricDatum> data = new ArrayList<>();
-            int numMetrics = 0;
-            PendingMetric pendingMetric;
-            while ((pendingMetric = pendingMetricQueue.poll()) != null)
+            try
             {
-                appendToPutMetricDataRequest(pendingMetric, data);
-                numMetrics++;
+                Collection<MetricDatum> data = new ArrayList<>();
+                PendingMetric pendingMetric;
+                while ((pendingMetric = pendingMetricQueue.poll()) != null)
+                {
+                    appendToPutMetricDataRequest(pendingMetric, data);
+                    if (data.size() >= MAX_DATUMS_PER_REQUEST)
+                    {
+                        sendBatch(namespace, data);
+                        data = new ArrayList<>();
+                    }
+                }
+                if (!data.isEmpty())
+                {
+                    sendBatch(namespace, data);
+                }
             }
-            if (numMetrics > 0)
+            catch (Exception e)
             {
-                PutMetricDataRequest request = PutMetricDataRequest.builder()
-                                                                   .namespace(namespace)
-                                                                   .metricData(data)
-                                                                   .build();
-                cwClient.putMetricData(request);
-                LOGGER.info("Successfully sent {} pending metrics to CloudWatch", numMetrics);
+                // Isolate failures per namespace so one failing namespace does not drop the others.
+                LOGGER.error("Error sending pending metrics for namespace {} to CloudWatch. {}",
+                        namespace, e.getMessage());
             }
         }
+    }
+
+    private void sendBatch(String namespace, Collection<MetricDatum> data)
+    {
+        PutMetricDataRequest request = PutMetricDataRequest.builder()
+                                                           .namespace(namespace)
+                                                           .metricData(data)
+                                                           .build();
+        cwClient.putMetricData(request);
+        LOGGER.info("Successfully sent {} metric datums to CloudWatch namespace {}", data.size(), namespace);
     }
 
     private void appendToPutMetricDataRequest(PendingMetric pendingMetric, Collection<MetricDatum> data)

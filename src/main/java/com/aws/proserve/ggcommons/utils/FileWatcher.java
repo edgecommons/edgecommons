@@ -83,15 +83,19 @@ public class FileWatcher extends Thread {
     public void run() {
         try (WatchService watcher = FileSystems.getDefault().newWatchService())
         {
-            Path path = file.toPath().getParent();
-            path.register(watcher, StandardWatchEventKinds.ENTRY_MODIFY);
+            Path path = file.toPath().toAbsolutePath().getParent();
+            // Watch MODIFY (in-place writes) and CREATE (atomic save-and-rename: many editors
+            // and config writers write a temp file then rename it onto the target).
+            path.register(watcher,
+                    StandardWatchEventKinds.ENTRY_MODIFY,
+                    StandardWatchEventKinds.ENTRY_CREATE);
             while (!isStopped())
             {
                 WatchKey key;
 
                 try
                 {
-                    key = watcher.poll(25, TimeUnit.MILLISECONDS);
+                    key = watcher.poll(1, TimeUnit.SECONDS);
                 }
                 catch (InterruptedException e)
                 {
@@ -101,39 +105,41 @@ public class FileWatcher extends Thread {
 
                 if (key == null)
                 {
-                    Thread.yield();
                     continue;
                 }
 
                 for (WatchEvent<?> event : key.pollEvents())
                 {
                     WatchEvent.Kind<?> kind = event.kind();
+                    if (kind == StandardWatchEventKinds.OVERFLOW)
+                    {
+                        continue;
+                    }
                     @SuppressWarnings("unchecked")
                     WatchEvent<Path> ev = (WatchEvent<Path>) event;
                     Path filename = ev.context();
 
-                    if (kind == StandardWatchEventKinds.OVERFLOW)
-                    {
-                        Thread.yield();
-                        continue;
-                    }
-                    else if (kind == java.nio.file.StandardWatchEventKinds.ENTRY_MODIFY
+                    if ((kind == StandardWatchEventKinds.ENTRY_MODIFY
+                            || kind == StandardWatchEventKinds.ENTRY_CREATE)
+                            && filename != null
                             && filename.toString().equals(file.getName()))
                     {
                         doOnChange();
                     }
-                    boolean valid = key.reset();
-                    if (!valid)
-                    {
-                        break;
-                    }
                 }
-                Thread.yield();
+
+                boolean valid = key.reset();
+                if (!valid)
+                {
+                    LOGGER.warn("FileWatcher watch key for {} is no longer valid; stopping watch.", file);
+                    break;
+                }
             }
         }
         catch (Throwable e)
         {
-            LOGGER.error("Error in FileWatcher {}. Ignoring.", e.getMessage());
+            // Log the full exception (with stack trace) rather than swallowing it silently.
+            LOGGER.error("FileWatcher for {} terminated due to an unrecoverable error.", file, e);
         }
     }
 }

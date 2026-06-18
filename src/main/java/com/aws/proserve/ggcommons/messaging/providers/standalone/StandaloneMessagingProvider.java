@@ -14,6 +14,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.eclipse.paho.client.mqttv3.IMqttDeliveryToken;
 import org.eclipse.paho.client.mqttv3.MqttCallback;
+import org.eclipse.paho.client.mqttv3.MqttCallbackExtended;
 import org.eclipse.paho.client.mqttv3.*;
 import software.amazon.awssdk.aws.greengrass.model.QOS;
 import javax.net.ssl.SSLContext;
@@ -54,6 +55,7 @@ public class StandaloneMessagingProvider extends MessagingProvider
         public String topicFilter;
         public BiConsumer<String, Message> callback;
         public int maxConcurrency;
+        public int qos;
         public LinkedBlockingQueue<QueueEntry> queue;
         ExecutorService executor;
 
@@ -119,20 +121,44 @@ public class StandaloneMessagingProvider extends MessagingProvider
     private final MqttClient iotCoreMqttClient;
     private final ConcurrentHashMap<String, ReplyFuture> responseFutures = new ConcurrentHashMap<>();
 
-    private class EventCallback implements MqttCallback
+    private class EventCallback implements MqttCallbackExtended
     {
+        private final MqttClient client;
         private final ConcurrentHashMap<String,SubscriptionProcessor> subscriptionMap;
 
-        public EventCallback(ConcurrentHashMap<String,SubscriptionProcessor> subscriptionMap)
+        public EventCallback(MqttClient client, ConcurrentHashMap<String,SubscriptionProcessor> subscriptionMap)
         {
+            this.client = client;
             this.subscriptionMap = subscriptionMap;
+        }
+
+        @Override
+        public void connectComplete(boolean reconnect, String serverURI)
+        {
+            if (reconnect)
+            {
+                LOGGER.info("Reconnected to MQTT broker {}. Re-subscribing to {} topic(s).",
+                        serverURI, subscriptionMap.size());
+                for (SubscriptionProcessor processor : subscriptionMap.values())
+                {
+                    try
+                    {
+                        client.subscribe(processor.topicFilter, processor.qos);
+                    }
+                    catch (MqttException e)
+                    {
+                        LOGGER.error("Failed to re-subscribe to '{}' after reconnect: {}",
+                                processor.topicFilter, e.toString());
+                    }
+                }
+            }
         }
 
         @Override
         public void connectionLost(Throwable cause)
         {
-            // TODO: attempt reconnect here
-            LOGGER.error("Connection to MQTT broker lost - {}", cause.toString());
+            // Automatic reconnect is enabled on the client; re-subscription happens in connectComplete().
+            LOGGER.error("Connection to MQTT broker lost - {}. Automatic reconnect in progress.", cause.toString());
         }
 
         @Override
@@ -182,6 +208,7 @@ public class StandaloneMessagingProvider extends MessagingProvider
             localMqttClient = new MqttClient(localBrokerUrl, localConfig.getClientId());
 
             MqttConnectOptions localOptions = new MqttConnectOptions();
+            localOptions.setAutomaticReconnect(true);
             if (localConfig.getCredentials() != null) {
                 if (useSSL) {
                     // Use certificate-based authentication
@@ -192,7 +219,7 @@ public class StandaloneMessagingProvider extends MessagingProvider
                     localOptions.setPassword(localConfig.getCredentials().getPassword().toCharArray());
                 }
             }
-            localMqttClient.setCallback(new EventCallback(localSubscriptionProcessors));
+            localMqttClient.setCallback(new EventCallback(localMqttClient, localSubscriptionProcessors));
             localMqttClient.connect(localOptions);
             LOGGER.info("Connected to local broker at {}", localBrokerUrl);
 
@@ -247,8 +274,9 @@ public class StandaloneMessagingProvider extends MessagingProvider
         String uri = String.format("ssl://%s:%d", config.getEndpoint(), config.getPort());
         try
         {
-            iotCoreMqttClient.setCallback(new EventCallback(iotCoreSubscriptionProcessors));
+            iotCoreMqttClient.setCallback(new EventCallback(iotCoreMqttClient, iotCoreSubscriptionProcessors));
             MqttConnectOptions connOpts = new MqttConnectOptions();
+            connOpts.setAutomaticReconnect(true);
             SSLSocketFactory socketFactory = getSocketFactory(config.getCredentials().getCaPath(),
                     config.getCredentials().getCertPath(),
                     config.getCredentials().getKeyPath());
@@ -262,7 +290,11 @@ public class StandaloneMessagingProvider extends MessagingProvider
                 LOGGER.info("       ...using client ID: {}", config.getClientId());
             }
             else
-                LOGGER.warn("Unable to load cert/key files. Attempting to connect without credentials.");
+            {
+                LOGGER.fatal("Unable to load cert/key files for IoT Core at {}. Refusing to connect without credentials.", uri);
+                throw new RuntimeException("Unable to load IoT Core credentials (cert/key/CA) for " + uri
+                        + "; refusing to connect unauthenticated.");
+            }
 
             connOpts.setCleanSession(true);
             connOpts.setMaxInflight(250);
@@ -379,6 +411,7 @@ public class StandaloneMessagingProvider extends MessagingProvider
     private void internalSubscribe(MqttClient client, String topicFilter, BiConsumer<String, Message> callback, QOS qos, int maxConcurrency, ConcurrentHashMap<String,SubscriptionProcessor> subscriptionMap)
     {
         SubscriptionProcessor subProcessor = new SubscriptionProcessor(topicFilter, callback, maxConcurrency);
+        subProcessor.qos = qos.ordinal();
         subscriptionMap.put(topicFilter, subProcessor);
         try
         {
