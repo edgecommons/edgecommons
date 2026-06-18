@@ -113,34 +113,35 @@ class MessagingConfiguration:
             else:
                 logger.info("No local broker configuration found")
             
-            # Parse IoT Core config (required)
-            if 'iotCore' not in messaging_data:
-                logger.error("IoT Core configuration is required but not found")
-                raise ValueError("IoT Core configuration is required")
-            
-            logger.debug("Parsing IoT Core broker configuration")
-            iot_data = messaging_data['iotCore']
-            
-            if 'credentials' not in iot_data:
-                logger.error("IoT Core credentials are required but not found")
-                raise ValueError("IoT Core credentials are required")
-            
-            iot_credentials = CredentialsConfig(
-                cert_path=iot_data['credentials']['certPath'],
-                key_path=iot_data['credentials']['keyPath'],
-                ca_path=iot_data['credentials']['caPath']
-            )
-            
-            iot_config = IoTCoreConfig(
-                endpoint=iot_data['endpoint'],
-                port=iot_data['port'],
-                client_id=iot_data['clientId'],
-                credentials=iot_credentials
-            )
-            
-            logger.info(f"IoT Core broker configured: {iot_config.endpoint}:{iot_config.port} (client_id: {iot_config.client_id})")
-            logger.debug(f"IoT Core certificate paths - CA: {iot_credentials.ca_path}, Cert: {iot_credentials.cert_path}, Key: {iot_credentials.key_path}")
-            
+            # Parse IoT Core config (optional — parity with Java/Rust, which allow a
+            # local-only standalone deployment). When present it must carry creds.
+            iot_config = None
+            if 'iotCore' in messaging_data:
+                logger.debug("Parsing IoT Core broker configuration")
+                iot_data = messaging_data['iotCore']
+
+                if 'credentials' not in iot_data:
+                    logger.error("IoT Core credentials are required but not found")
+                    raise ValueError("IoT Core credentials are required")
+
+                iot_credentials = CredentialsConfig(
+                    cert_path=iot_data['credentials']['certPath'],
+                    key_path=iot_data['credentials']['keyPath'],
+                    ca_path=iot_data['credentials']['caPath']
+                )
+
+                iot_config = IoTCoreConfig(
+                    endpoint=iot_data['endpoint'],
+                    port=iot_data['port'],
+                    client_id=iot_data['clientId'],
+                    credentials=iot_credentials
+                )
+
+                logger.info(f"IoT Core broker configured: {iot_config.endpoint}:{iot_config.port} (client_id: {iot_config.client_id})")
+                logger.debug(f"IoT Core certificate paths - CA: {iot_credentials.ca_path}, Cert: {iot_credentials.cert_path}, Key: {iot_credentials.key_path}")
+            else:
+                logger.info("No IoT Core configuration found (local-only standalone)")
+
             config.messaging = MessagingConfigData(
                 local=local_config,
                 iot_core=iot_config
@@ -169,30 +170,32 @@ class MessagingConfiguration:
         if not self.messaging:
             logger.error("Messaging configuration is required but not provided")
             return False
-        
-        # IoT Core is required and must have certificates
-        if not self.messaging.iot_core:
-            logger.error("IoT Core configuration is required but not provided")
+
+        # At least one broker (local or IoT Core) must be configured.
+        if not self.messaging.local and not self.messaging.iot_core:
+            logger.error("At least one of 'local' or 'iotCore' must be configured")
             return False
-        
-        logger.debug("Validating IoT Core configuration")
-        iot_creds = self.messaging.iot_core.credentials
-        if not iot_creds:
-            logger.error("IoT Core credentials are required but not provided")
-            return False
-            
-        missing_creds = []
-        if not iot_creds.cert_path:
-            missing_creds.append("certificate path")
-        if not iot_creds.key_path:
-            missing_creds.append("private key path")
-        if not iot_creds.ca_path:
-            missing_creds.append("CA certificate path")
-            
-        if missing_creds:
-            logger.error(f"IoT Core missing required credentials: {', '.join(missing_creds)}")
-            return False
-        
+
+        # IoT Core, when configured, must carry complete certificate credentials.
+        if self.messaging.iot_core:
+            logger.debug("Validating IoT Core configuration")
+            iot_creds = self.messaging.iot_core.credentials
+            if not iot_creds:
+                logger.error("IoT Core credentials are required but not provided")
+                return False
+
+            missing_creds = []
+            if not iot_creds.cert_path:
+                missing_creds.append("certificate path")
+            if not iot_creds.key_path:
+                missing_creds.append("private key path")
+            if not iot_creds.ca_path:
+                missing_creds.append("CA certificate path")
+
+            if missing_creds:
+                logger.error(f"IoT Core missing required credentials: {', '.join(missing_creds)}")
+                return False
+
         # Validate local broker if configured
         if self.messaging.local:
             logger.debug("Validating local broker configuration")

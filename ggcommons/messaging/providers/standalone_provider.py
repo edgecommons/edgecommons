@@ -96,17 +96,18 @@ class StandaloneProvider(MessagingProvider):
         
         client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
         
-        # Configure TLS for IoT Core (required) or local broker (if certificates provided)
+        # Configure TLS for IoT Core (required) or the local broker (when a CA is
+        # configured — server-only or, with a client cert, mutual TLS).
         if broker_type == "iotcore":
             logger.debug(f"Configuring TLS for IoT Core broker connection")
-            self._configure_tls(client, broker_config)
+            self._configure_tls(client, broker_config, "iotcore")
         elif broker_type == "local" and hasattr(broker_config, 'credentials') and broker_config.credentials:
             creds = broker_config.credentials
-            if creds.ca_path and creds.cert_path and creds.key_path:
-                logger.debug(f"Configuring TLS for local broker connection with certificates")
-                self._configure_tls(client, broker_config)
+            if creds.ca_path:
+                logger.debug(f"Configuring TLS for local broker connection (caPath present)")
+                self._configure_tls(client, broker_config, "local")
             else:
-                logger.debug(f"Local broker TLS configuration incomplete, using plain connection")
+                logger.debug(f"No caPath for local broker, using plain connection")
         
         # Configure authentication for local broker
         if broker_type == "local" and hasattr(broker_config, 'credentials') and broker_config.credentials:
@@ -140,18 +141,45 @@ class StandaloneProvider(MessagingProvider):
         logger.debug(f"Using default {broker_type} client ID: {client_id}")
         return client_id
     
-    def _configure_tls(self, client: mqtt.Client, broker_config):
-        """Configure TLS for MQTT client."""
-        if hasattr(broker_config, 'credentials') and broker_config.credentials:
-            creds = broker_config.credentials
-            if creds.ca_path and creds.cert_path and creds.key_path:
-                # Use certificate-based authentication
-                ssl_context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
-                ssl_context.load_verify_locations(creds.ca_path)
-                ssl_context.load_cert_chain(creds.cert_path, creds.key_path)
-                ssl_context.check_hostname = False
-                ssl_context.verify_mode = ssl.CERT_REQUIRED
-                client.tls_set_context(ssl_context)
+    def _configure_tls(self, client: mqtt.Client, broker_config, broker_type: str):
+        """Configure TLS for an MQTT client.
+
+        IoT Core requires mutual TLS: if any of caPath/certPath/keyPath is missing
+        we refuse to connect rather than silently falling back to an unauthenticated
+        plaintext connection (C3). For the local broker, TLS is keyed on caPath
+        alone (parity with Java/Rust): with a CA only we do server-only TLS
+        (verify the broker's certificate); if a client cert+key are also present we
+        additionally present them for mutual TLS.
+        """
+        creds = getattr(broker_config, 'credentials', None)
+        ca = getattr(creds, 'ca_path', None) if creds else None
+        cert = getattr(creds, 'cert_path', None) if creds else None
+        key = getattr(creds, 'key_path', None) if creds else None
+
+        if broker_type == "iotcore":
+            if not (ca and cert and key):
+                raise RuntimeError(
+                    "Refusing to connect to IoT Core without complete TLS credentials "
+                    "(caPath, certPath and keyPath are all required)"
+                )
+            ssl_context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+            ssl_context.load_verify_locations(ca)
+            ssl_context.load_cert_chain(cert, key)
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_REQUIRED
+            client.tls_set_context(ssl_context)
+            return
+
+        # Local broker: TLS only when a CA is configured; client cert/key optional.
+        if not ca:
+            return
+        ssl_context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+        ssl_context.load_verify_locations(ca)
+        if cert and key:
+            ssl_context.load_cert_chain(cert, key)  # mutual TLS
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_REQUIRED
+        client.tls_set_context(ssl_context)
     
     def _connect_client(self, client: mqtt.Client, broker_config, broker_type: str):
         """Connect MQTT client to broker and wait for connection."""
