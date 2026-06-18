@@ -1,7 +1,7 @@
 //! # Messaging — MQTT provider (standalone)
 //!
 //! **One-liner purpose**: A [`MessagingProvider`] backed by `rumqttc`, managing a
-//! local broker connection (and, in a later sub-step, AWS IoT Core over TLS).
+//! local broker connection and an optional AWS IoT Core connection, both supporting TLS.
 //!
 //! ## Overview
 //! On connect, the provider spawns a background task that drives the `rumqttc`
@@ -18,9 +18,10 @@
 //!   survive reconnects (closing the Java `connectionLost` no-op gap).
 //! - **Cleanup (RAII)**: dropping a [`Subscription`] removes its routing entry;
 //!   dropping the provider aborts the event-loop task.
-//! - **Scope**: this sub-step implements the **local broker over plain TCP**.
-//!   Configuring `iotCore` returns a clear error (TLS lands next) rather than
-//!   connecting insecurely.
+//! - **Transport/TLS**: the local broker uses plain TCP, server TLS (CA only), or
+//!   mutual TLS (CA + client cert/key) depending on its `credentials`; AWS IoT Core
+//!   always uses mutual TLS (CA + cert + key, all required). Missing/unreadable
+//!   credential files are a hard error — there is no insecure fallback.
 //! - Error handling: [`crate::error::Result`]; transport failures are logged and
 //!   retried by the event loop, never `panic`.
 //!
