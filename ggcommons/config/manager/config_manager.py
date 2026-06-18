@@ -13,6 +13,27 @@ from ggcommons.config.manager.configuration_change_listener import Configuration
 logger = logging.getLogger("ConfigManager")
 
 
+def _sanitize(value: str) -> str:
+    """Neutralize characters in a substituted value that are dangerous in a file
+    path or MQTT topic: path separators (``/``, ``\\``), traversal dot sequences
+    (``..``), MQTT wildcards (``+``, ``#``), and control characters are each
+    replaced with ``_``. Applied only to interpolated values, never to the
+    surrounding template, so structural separators in the template are preserved.
+    Mirrors the Rust library's ``config::template::sanitize``.
+    """
+    if value is None:
+        return ""
+    result = []
+    for c in str(value):
+        o = ord(c)
+        if c in "/\\+#" or o < 0x20 or 0x7F <= o <= 0x9F:
+            result.append("_")
+        else:
+            result.append(c)
+    # Collapse traversal sequences (e.g. "..") that remain after separator replacement.
+    return "".join(result).replace("..", "_")
+
+
 class ConfigManager:
     def __init__(self, component_name: str, thing_name: str = None, validate_config: bool = True):
         if not component_name:
@@ -119,16 +140,16 @@ class ConfigManager:
     def resolve_template(self, template: str) -> str:
         ret_val = template
         if "{ThingName}" in template:
-            ret_val = ret_val.replace("{ThingName}", self._thing_name)
+            ret_val = ret_val.replace("{ThingName}", _sanitize(self._thing_name))
         if "{ComponentName}" in template:
-            ret_val = ret_val.replace("{ComponentName}", self._component_name)
+            ret_val = ret_val.replace("{ComponentName}", _sanitize(self._component_name))
         if "{ComponentFullName}" in template:
-            ret_val = ret_val.replace("{ComponentFullName}", self._component_full_name)
+            ret_val = ret_val.replace("{ComponentFullName}", _sanitize(self._component_full_name))
         tag_dict = {} if self._tag_config is None else self._tag_config.to_dict()
         for k in tag_dict.keys():
             key_template = "{" + k + "}"
             if key_template in template:
-                ret_val = ret_val.replace(key_template, tag_dict[k])
+                ret_val = ret_val.replace(key_template, _sanitize(tag_dict[k]))
         return ret_val
 
     def _load_configuration(self) -> dict:
