@@ -28,6 +28,7 @@ REQUIRED = [
     "paho-mqtt>=2.1.0",
     "watchdog>=6.0.0",
     "boto3>=1.43.0",
+    "jsonschema>=4.0.0",
 ]
 
 # What packages are optional?
