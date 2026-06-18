@@ -58,10 +58,15 @@ class FileWatcher:
     def __init__(self, poll_interval: float = 1.0):
         """
         Initialize file watcher.
-        
+
         Args:
             poll_interval: Polling interval in seconds
         """
+        from ggcommons.utils.deprecation import warn_deprecated
+        warn_deprecated(
+            "FileWatcher is deprecated (the library uses watchdog directly in "
+            "FileConfigManager) and will be removed in a future release."
+        )
         self._poll_interval = poll_interval
         self._watched_files: Dict[str, Dict[str, Any]] = {}
         self._handlers: Dict[str, FileChangeHandler] = {}
@@ -246,6 +251,11 @@ class ConfigFileWatcher(FileChangeHandler):
             change_callback: Callback function for configuration changes
             debounce_seconds: Debounce period to avoid rapid-fire changes
         """
+        from ggcommons.utils.deprecation import warn_deprecated
+        warn_deprecated(
+            "ConfigFileWatcher is deprecated (the library uses watchdog directly "
+            "in FileConfigManager) and will be removed in a future release."
+        )
         self.config_file_path = config_file_path
         self.change_callback = change_callback
         self.debounce_seconds = debounce_seconds

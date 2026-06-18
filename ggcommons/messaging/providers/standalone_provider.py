@@ -291,6 +291,22 @@ class StandaloneProvider(MessagingProvider):
         """Handle message from IoT Core broker."""
         self._process_message(message, self._iot_core_subscriptions, "iotcore")
     
+    @staticmethod
+    def _make_semaphore(max_concurrency):
+        """A bounded Semaphore for a positive maxConcurrency, else None (uncapped)."""
+        if max_concurrency and max_concurrency > 0:
+            return threading.Semaphore(max_concurrency)
+        return None
+
+    @staticmethod
+    def _run_capped_callback(semaphore, callback, topic, msg):
+        """Run a subscription callback while holding a concurrency permit."""
+        semaphore.acquire()
+        try:
+            callback(topic, msg)
+        finally:
+            semaphore.release()
+
     def _process_message(self, message: mqtt.MQTTMessage, subscriptions: Dict, broker_type: str):
         """Process received MQTT message."""
         topic = message.topic
@@ -327,7 +343,16 @@ class StandaloneProvider(MessagingProvider):
                     callback = sub_info['callback']
                     if callback:
                         logger.debug(f"Dispatching message to callback for {broker_type} topic: {topic} (filter: {topic_filter})")
-                        self._executor.submit(callback, topic, msg)
+                        semaphore = sub_info.get('semaphore')
+                        if semaphore is not None:
+                            # Enforce the per-subscription maxConcurrency cap: at most
+                            # N callbacks for this subscription run at once (parity with
+                            # the IPC handler / Java / Rust).
+                            self._executor.submit(
+                                self._run_capped_callback, semaphore, callback, topic, msg
+                            )
+                        else:
+                            self._executor.submit(callback, topic, msg)
                         matched_subscription = True
                     break
             
@@ -437,7 +462,12 @@ class StandaloneProvider(MessagingProvider):
                 raise TimeoutError(f"Local subscription to {topic} timed out after {self._subscription_timeout} seconds")
             
             # Subscription confirmed, store it (qos retained for re-subscribe on reconnect)
-            self._subscriptions[topic] = {'callback': callback, 'max_concurrency': max_concurrency, 'qos': 0}
+            self._subscriptions[topic] = {
+                'callback': callback,
+                'max_concurrency': max_concurrency,
+                'semaphore': self._make_semaphore(max_concurrency),
+                'qos': 0,
+            }
             logger.debug(f"Successfully subscribed to local broker topic: {topic}")
             logger.debug(f"Local broker subscription count: {len(self._subscriptions)}")
                 
@@ -481,7 +511,12 @@ class StandaloneProvider(MessagingProvider):
                 raise TimeoutError(f"IoT Core subscription to {topic} timed out after {self._subscription_timeout} seconds")
             
             # Subscription confirmed, store it (qos retained for re-subscribe on reconnect)
-            self._iot_core_subscriptions[topic] = {'callback': callback, 'max_concurrency': max_concurrency, 'qos': mqtt_qos}
+            self._iot_core_subscriptions[topic] = {
+                'callback': callback,
+                'max_concurrency': max_concurrency,
+                'semaphore': self._make_semaphore(max_concurrency),
+                'qos': mqtt_qos,
+            }
             logger.debug(f"Successfully subscribed to IoT Core broker topic: {topic} (QoS: {mqtt_qos})")
             logger.debug(f"IoT Core broker subscription count: {len(self._iot_core_subscriptions)}")
                 
