@@ -5,7 +5,7 @@ import json
 from typing import Dict, Any, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ggcommons.interfaces import IConfigurationService
+    from ggcommons.config.manager.config_manager import ConfigManager
 
 
 class MessageBuilder:
@@ -61,7 +61,7 @@ class MessageBuilder:
         self.payload = payload
         return self
 
-    def with_config(self, config_service: 'IConfigurationService') -> 'MessageBuilder':
+    def with_config(self, config_service: 'ConfigManager') -> 'MessageBuilder':
         self.config_service = config_service
         return self
 

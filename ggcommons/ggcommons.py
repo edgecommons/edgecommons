@@ -1,20 +1,19 @@
 """
-Enhanced GGCommons main class with dependency injection and builder support.
+GGCommons main class with builder support.
 
-This module provides the main GGCommons class with enhanced features including
-dependency injection, service registry, and builder pattern support.
+This module provides the main GGCommons class. Component code accesses the
+underlying subsystems through typed accessors (get_config_manager / get_messaging
+/ get_metrics) rather than a service registry — matching the Java and Rust
+libraries, which depend on the concrete ConfigManager / MessagingClient /
+MetricEmitter directly.
 """
 
 import argparse
 import logging
-from typing import Optional, List, TypeVar, Type
+from typing import Optional, List
 from ggcommons.config.manager.config_manager import ConfigManager
 from ggcommons.config.manager.config_manager_builder import ConfigManagerBuilder
-from ggcommons.di.service_registry import ServiceRegistry
-from ggcommons.di.service_factory import ServiceFactory
-from ggcommons.interfaces import IConfigurationService, IMessagingService, IMetricService
 
-T = TypeVar('T')
 logger = logging.getLogger(__name__)
 
 
@@ -45,19 +44,15 @@ class GGCommons:
             
         self._component_name = component_name
         self._config_manager: Optional[ConfigManager] = None
-        self._service_registry: Optional[ServiceRegistry] = None
         self._heartbeat = None
-        
+
         try:
             # Process command line arguments
             parsed_args = self._process_args(component_name, args, app_options)
-            
+
             # Initialize configuration manager
             self._init_config_manager(component_name, parsed_args)
-            
-            # Initialize service registry
-            self._init_service_registry()
-            
+
             # Initialize messaging client
             self._init_messaging(parsed_args, receive_own_messages)
             
@@ -137,11 +132,6 @@ class GGCommons:
         # Use config manager builder to create appropriate manager
         self._config_manager = ConfigManagerBuilder.build(parsed_args, component_name)
         
-    def _init_service_registry(self) -> None:
-        """Initialize the service registry with default services."""
-        self._service_registry = ServiceRegistry()
-        ServiceFactory.register_default_services(self._service_registry, self._config_manager)
-        
     def _init_messaging(self, parsed_args: argparse.Namespace, receive_own_messages: bool) -> None:
         """
         Initialize the messaging client.
@@ -165,30 +155,21 @@ class GGCommons:
         """Initialize the metric emitter."""
         # Import here to avoid circular imports
         from ggcommons.metrics.metric_emitter import MetricEmitter
-        
-        # Inject messaging service if available
-        messaging_service = self.get_service(IMessagingService)
-        if messaging_service and hasattr(MetricEmitter, 'set_messaging_service'):
-            MetricEmitter.set_messaging_service(messaging_service)
-            
+
         MetricEmitter.init(self._config_manager)
-        
+
     def _init_heartbeat(self) -> None:
-        """Initialize the heartbeat system."""
+        """Initialize the heartbeat system, wiring it to the concrete subsystems."""
         # Import here to avoid circular imports
         from ggcommons.heartbeat.enhanced_heartbeat import EnhancedHeartbeat
-        
-        config_service = self.get_service(IConfigurationService)
-        self._heartbeat = EnhancedHeartbeat(config_service)
-        
-        # Inject services if available
-        messaging_service = self.get_service(IMessagingService)
-        metric_service = self.get_service(IMetricService)
-        
-        if messaging_service:
-            self._heartbeat.set_messaging_service(messaging_service)
-        if metric_service:
-            self._heartbeat.set_metric_service(metric_service)
+        from ggcommons.messaging.messaging_client import MessagingClient
+        from ggcommons.metrics.metric_emitter import MetricEmitter
+
+        self._heartbeat = EnhancedHeartbeat(self._config_manager)
+        # MessagingClient / MetricEmitter expose their operations as static methods,
+        # so the classes themselves serve as the messaging/metric handles.
+        self._heartbeat.set_messaging_service(MessagingClient)
+        self._heartbeat.set_metric_service(MetricEmitter)
             
     def get_config_manager(self) -> ConfigManager:
         """
@@ -204,71 +185,29 @@ class GGCommons:
             raise RuntimeError("GGCommons not properly initialized")
         return self._config_manager
         
-    def get_configuration_service(self) -> IConfigurationService:
+    def get_messaging(self):
         """
-        Get the configuration service interface.
-        
+        Get the messaging handle (the MessagingClient class, whose operations are
+        static). Mirrors Java's getMessaging() / Rust's messaging() accessor.
+
         Returns:
-            The configuration service
+            The MessagingClient class
         """
-        return self.get_service(IConfigurationService)
-        
-    def get_service(self, service_type: Type[T]) -> Optional[T]:
+        from ggcommons.messaging.messaging_client import MessagingClient
+        return MessagingClient
+
+    def get_metrics(self):
         """
-        Retrieve a service by its interface type.
-        
-        Args:
-            service_type: The service interface class
-            
+        Get the metrics handle (the MetricEmitter class, whose operations are
+        static). Mirrors Java's getMetrics() / Rust's metrics() accessor.
+
         Returns:
-            The service implementation, or None if not registered
-            
-        Raises:
-            RuntimeError: If service registry not initialized
-            ValueError: If service_type is None
+            The MetricEmitter class
         """
-        if service_type is None:
-            raise ValueError("Service type cannot be None")
-        if self._service_registry is None:
-            raise RuntimeError("GGCommons not properly initialized")
-            
-        return self._service_registry.get(service_type)
-        
-    def register_service(self, service_type: Type[T], implementation: T) -> None:
-        """
-        Register a custom service implementation.
-        
-        Args:
-            service_type: The service interface class
-            implementation: The service implementation
-            
-        Raises:
-            RuntimeError: If service registry not initialized
-            ValueError: If parameters are invalid
-        """
-        if service_type is None:
-            raise ValueError("Service type cannot be None")
-        if implementation is None:
-            raise ValueError("Implementation cannot be None")
-        if self._service_registry is None:
-            raise RuntimeError("GGCommons not properly initialized")
-            
-        self._service_registry.register(service_type, implementation)
-        
-    def get_service_registry(self) -> ServiceRegistry:
-        """
-        Get the service registry for advanced service management.
-        
-        Returns:
-            The service registry instance
-            
-        Raises:
-            RuntimeError: If not properly initialized
-        """
-        if self._service_registry is None:
-            raise RuntimeError("GGCommons not properly initialized")
-        return self._service_registry
-        
+        from ggcommons.metrics.metric_emitter import MetricEmitter
+        return MetricEmitter
+
+
     def shutdown(self) -> None:
         """
         Shutdown GGCommons and clean up resources.
@@ -281,11 +220,7 @@ class GGCommons:
             # Shutdown heartbeat if available
             if self._heartbeat and hasattr(self._heartbeat, 'stop'):
                 self._heartbeat.stop()
-                
-            # Clear service registry
-            if self._service_registry:
-                self._service_registry.clear()
-                
+
             logger.info("GGCommons shutdown completed")
             
         except Exception as e:

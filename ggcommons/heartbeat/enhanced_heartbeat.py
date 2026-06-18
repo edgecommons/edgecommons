@@ -8,10 +8,12 @@ better error handling, and improved timer management.
 import logging
 import threading
 import time
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, TYPE_CHECKING
 from ggcommons.config.manager.configuration_change_listener import ConfigurationChangeListener
 from ggcommons.heartbeat.heartbeat_monitor import HeartbeatMonitor
-from ggcommons.interfaces import IMessagingService, IMetricService, IConfigurationService
+
+if TYPE_CHECKING:
+    from ggcommons.config.manager.config_manager import ConfigManager
 
 logger = logging.getLogger(__name__)
 
@@ -31,24 +33,26 @@ class EnhancedHeartbeat(ConfigurationChangeListener):
     MESSAGE_NAME = "Heartbeat"
     MESSAGE_VERSION = "1.0.0"
     
-    def __init__(self, config_service: IConfigurationService):
+    def __init__(self, config_service: "ConfigManager"):
         """
-        Initialize enhanced heartbeat with configuration service.
-        
+        Initialize enhanced heartbeat with the configuration manager.
+
         Args:
-            config_service: Configuration service for accessing heartbeat config
-            
+            config_service: ConfigManager for accessing heartbeat config
+
         Raises:
             ValueError: If config_service is None
         """
         if config_service is None:
-            raise ValueError("Configuration service cannot be None")
-            
+            raise ValueError("Configuration manager cannot be None")
+
         super().__init__()
         self._config_service = config_service
-        self._messaging_service: Optional[IMessagingService] = None
-        self._metric_service: Optional[IMetricService] = None
-        
+        # Messaging/metric handles (the MessagingClient / MetricEmitter classes,
+        # whose operations are static); injected via the setters below.
+        self._messaging_service = None
+        self._metric_service = None
+
         self._heartbeat_timer: Optional[threading.Timer] = None
         self._heartbeat_monitor: Optional[HeartbeatMonitor] = None
         self._timer_lock = threading.RLock()
@@ -60,25 +64,27 @@ class EnhancedHeartbeat(ConfigurationChangeListener):
         # Initialize heartbeat
         self._initialize_heartbeat()
         
-    def set_messaging_service(self, messaging_service: IMessagingService) -> None:
+    def set_messaging_service(self, messaging_service) -> None:
         """
-        Set the messaging service for dependency injection.
-        
+        Set the messaging handle (the MessagingClient class).
+
         Args:
-            messaging_service: The messaging service implementation
+            messaging_service: The MessagingClient class (static-method API)
         """
         self._messaging_service = messaging_service
-        logger.info(f"Messaging service injected into heartbeat: {messaging_service.__class__.__name__}")
-        
-    def set_metric_service(self, metric_service: IMetricService) -> None:
+        name = getattr(messaging_service, "__name__", type(messaging_service).__name__)
+        logger.info(f"Messaging handle set on heartbeat: {name}")
+
+    def set_metric_service(self, metric_service) -> None:
         """
-        Set the metric service for dependency injection.
-        
+        Set the metric handle (the MetricEmitter class).
+
         Args:
-            metric_service: The metric service implementation
+            metric_service: The MetricEmitter class (static-method API)
         """
         self._metric_service = metric_service
-        logger.info(f"Metric service injected into heartbeat: {metric_service.__class__.__name__}")
+        name = getattr(metric_service, "__name__", type(metric_service).__name__)
+        logger.info(f"Metric handle set on heartbeat: {name}")
         
     def _initialize_heartbeat(self) -> None:
         """Initialize the heartbeat system with current configuration."""

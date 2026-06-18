@@ -10,7 +10,6 @@ from awsiot.greengrasscoreipc.model import QOS
 from ggcommons.messaging.message import Message
 from ggcommons.ggcommons_builder import GGCommonsBuilder
 from ggcommons.messaging.message_builder import MessageBuilder
-from ggcommons.interfaces import IMessagingService, IConfigurationService
 from ggcommons import MessagingClient
 
 logger = logging.getLogger(__name__)
@@ -43,14 +42,14 @@ def ggcommons_instance():
 
 @pytest.fixture
 def messaging_service(ggcommons_instance):
-    """Get messaging service from GGCommons instance."""
-    return ggcommons_instance.get_service(IMessagingService)
+    """Get the messaging handle from the GGCommons instance."""
+    return ggcommons_instance.get_messaging()
 
 
 @pytest.fixture
 def config_service(ggcommons_instance):
-    """Get configuration service from GGCommons instance."""
-    return ggcommons_instance.get_service(IConfigurationService)
+    """Get the configuration manager from the GGCommons instance."""
+    return ggcommons_instance.get_config_manager()
 
 
 @pytest.fixture
@@ -276,13 +275,15 @@ def test_dual_subscription(messaging_service, config_service):
 
 
 @pytest.mark.integration
-def test_service_interfaces(messaging_service, config_service):
-    """Test service interface functionality."""
-    # Test that services implement expected interfaces
-    assert isinstance(messaging_service, IMessagingService)
-    assert isinstance(config_service, IConfigurationService)
-    
-    # Test service methods exist
+def test_service_accessors(messaging_service, config_service):
+    """Test the typed accessors return the concrete subsystems."""
+    from ggcommons.config.manager.config_manager import ConfigManager
+
+    # Typed accessors return the concrete handles (no DI/interfaces).
+    assert messaging_service is MessagingClient
+    assert isinstance(config_service, ConfigManager)
+
+    # Test expected methods exist
     assert hasattr(messaging_service, 'publish')
     assert hasattr(messaging_service, 'subscribe')
     assert hasattr(config_service, 'get_global_config')

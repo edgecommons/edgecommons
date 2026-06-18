@@ -12,9 +12,9 @@ import os
 
 from ggcommons.messaging.message import Message
 from ggcommons.ggcommons_builder import GGCommonsBuilder
-from ggcommons.interfaces import IMessagingService, IMetricService
 from ggcommons.metrics.metric_builder import MetricBuilder
 from ggcommons import MessagingClient
+from ggcommons.metrics.metric_emitter import MetricEmitter
 
 logger = logging.getLogger(__name__)
 
@@ -79,8 +79,8 @@ def ggcommons_metric_messaging(metric_messaging_config):
 @pytest.mark.integration
 def test_metric_emission_emf_format(ggcommons_metric_messaging):
     """Test metric emission produces EMF format messages."""
-    messaging_service = ggcommons_metric_messaging.get_service(IMessagingService)
-    metric_service = ggcommons_metric_messaging.get_service(IMetricService)
+    messaging_service = ggcommons_metric_messaging.get_messaging()
+    metric_service = ggcommons_metric_messaging.get_metrics()
     received_messages = []
     
     def metric_handler(topic: str, message: Message):
@@ -165,8 +165,8 @@ def test_metric_emission_emf_format(ggcommons_metric_messaging):
 @pytest.mark.integration
 def test_metric_emission_multiple_metrics(ggcommons_metric_messaging):
     """Test emission of multiple different metrics."""
-    messaging_service = ggcommons_metric_messaging.get_service(IMessagingService)
-    metric_service = ggcommons_metric_messaging.get_service(IMetricService)
+    messaging_service = ggcommons_metric_messaging.get_messaging()
+    metric_service = ggcommons_metric_messaging.get_metrics()
     received_messages = []
     
     def metric_handler(topic: str, message: Message):
@@ -212,8 +212,8 @@ def test_metric_emission_multiple_metrics(ggcommons_metric_messaging):
 @pytest.mark.integration
 def test_metric_emission_timestamp_format(ggcommons_metric_messaging):
     """Test that metric emission includes proper timestamp in EMF format."""
-    messaging_service = ggcommons_metric_messaging.get_service(IMessagingService)
-    metric_service = ggcommons_metric_messaging.get_service(IMetricService)
+    messaging_service = ggcommons_metric_messaging.get_messaging()
+    metric_service = ggcommons_metric_messaging.get_metrics()
     received_messages = []
     
     def metric_handler(topic: str, message: Message):

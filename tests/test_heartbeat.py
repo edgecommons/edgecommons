@@ -13,8 +13,8 @@ import os
 from awsiot.greengrasscoreipc.model import QOS
 from ggcommons.messaging.message import Message
 from ggcommons.ggcommons_builder import GGCommonsBuilder
-from ggcommons.interfaces import IMessagingService, IConfigurationService, IMetricService
 from ggcommons import MessagingClient
+from ggcommons.metrics.metric_emitter import MetricEmitter
 
 logger = logging.getLogger(__name__)
 
@@ -290,7 +290,7 @@ def ggcommons_heartbeat_dual(heartbeat_dual_config):
 def test_heartbeat_messaging_target_local(ggcommons_heartbeat_messaging):
     """Test heartbeat with messaging target to local broker."""
     logger.info(f"Starting test_heartbeat_messaging_target_local test...")
-    messaging_service = ggcommons_heartbeat_messaging.get_service(IMessagingService)
+    messaging_service = ggcommons_heartbeat_messaging.get_messaging()
     received_messages = []
     
     def heartbeat_handler(topic: str, message: Message):
@@ -337,7 +337,7 @@ def test_heartbeat_messaging_target_local(ggcommons_heartbeat_messaging):
 @pytest.mark.aws
 def test_heartbeat_messaging_target_iot_core(ggcommons_heartbeat_iotcore):
     """Test heartbeat with messaging target to IoT Core."""
-    messaging_service = ggcommons_heartbeat_iotcore.get_service(IMessagingService)
+    messaging_service = ggcommons_heartbeat_iotcore.get_messaging()
     received_messages = []
     
     def heartbeat_handler(topic: str, message: Message):
@@ -375,7 +375,7 @@ def test_heartbeat_messaging_target_iot_core(ggcommons_heartbeat_iotcore):
 @pytest.mark.integration
 def test_heartbeat_metric_target(ggcommons_heartbeat_metric):
     """Test heartbeat with metric target."""
-    metric_service = ggcommons_heartbeat_metric.get_service(IMetricService)
+    metric_service = ggcommons_heartbeat_metric.get_metrics()
     
     # Get initial metric count
     initial_metrics = len(metric_service._metrics) if hasattr(metric_service, '_metrics') else 0
@@ -394,7 +394,7 @@ def test_heartbeat_metric_target(ggcommons_heartbeat_metric):
 @pytest.mark.aws
 def test_heartbeat_dual_targets(ggcommons_heartbeat_dual):
     """Test heartbeat with both messaging and metric targets."""
-    messaging_service = ggcommons_heartbeat_dual.get_service(IMessagingService)
+    messaging_service = ggcommons_heartbeat_dual.get_messaging()
     received_messages = []
     
     def local_handler(topic: str, message: Message):
@@ -449,7 +449,7 @@ def test_heartbeat_configuration_validation(heartbeat_messaging_config):
             ]) \
             .build()
         
-        config_service = ggcommons.get_service(IConfigurationService)
+        config_service = ggcommons.get_config_manager()
         
         # Verify heartbeat configuration is loaded correctly
         heartbeat_config = config_service.get_heartbeat_config()
@@ -478,7 +478,7 @@ def test_heartbeat_configuration_validation(heartbeat_messaging_config):
 @pytest.mark.integration
 def test_heartbeat_measure_values(ggcommons_heartbeat_messaging):
     """Test that heartbeat measures contain valid values."""
-    messaging_service = ggcommons_heartbeat_messaging.get_service(IMessagingService)
+    messaging_service = ggcommons_heartbeat_messaging.get_messaging()
     received_messages = []
     
     def heartbeat_handler(topic: str, message: Message):
@@ -520,7 +520,7 @@ def test_heartbeat_measure_values(ggcommons_heartbeat_messaging):
 @pytest.mark.slow
 def test_heartbeat_interval_timing(ggcommons_heartbeat_messaging):
     """Test that heartbeat messages are sent at the configured interval."""
-    messaging_service = ggcommons_heartbeat_messaging.get_service(IMessagingService)
+    messaging_service = ggcommons_heartbeat_messaging.get_messaging()
     received_times = []
     
     def heartbeat_handler(topic: str, message: Message):

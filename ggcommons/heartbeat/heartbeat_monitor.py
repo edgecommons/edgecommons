@@ -2,11 +2,14 @@ import shutil
 import psutil
 import os
 import platform
-from ggcommons.interfaces import IConfigurationService
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ggcommons.config.manager.config_manager import ConfigManager
 
 
 class HeartbeatMonitor:
-    def __init__(self, config_service: IConfigurationService):
+    def __init__(self, config_service: "ConfigManager"):
         self._config_service = config_service
         self._config = config_service.get_heartbeat_config()
         self._pid = None

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 from ggcommons.utils import Utils
 
 if TYPE_CHECKING:
-    from ggcommons.interfaces import IConfigurationService
+    from ggcommons.config.manager.config_manager import ConfigManager
 
 
 logger = logging.getLogger("Message")
@@ -79,7 +79,7 @@ class MessageTags:
         self.tags = tags or {}
 
     @staticmethod
-    def from_config(config_service: 'IConfigurationService'):
+    def from_config(config_service: 'ConfigManager'):
         tag_config = config_service.get_tag_config()
         if tag_config is not None:
             return MessageTags(config_service.get_thing_name(), tag_config.to_dict())

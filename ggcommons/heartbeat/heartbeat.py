@@ -9,12 +9,15 @@ from ggcommons.config.manager.configuration_change_listener import (
     ConfigurationChangeListener,
 )
 from ggcommons.heartbeat.heartbeat_monitor import HeartbeatMonitor
-from ggcommons.interfaces import IConfigurationService
 from ggcommons.messaging.message_builder import MessageBuilder
 from ggcommons.messaging.messaging_client import MessagingClient
 from ggcommons.metrics.metric_emitter import MetricEmitter
 from ggcommons.metrics.metric import Metric
 from ggcommons.metrics.measure import Measure
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ggcommons.config.manager.config_manager import ConfigManager
 
 logger = logging.getLogger("Heartbeat")
 
@@ -23,7 +26,7 @@ class Heartbeat(ConfigurationChangeListener, ABC):
     __MESSAGE_NAME = "heartbeat"
     __MESSAGE_VERSION = "1.0.0"
 
-    def __init__(self, config_service: IConfigurationService):
+    def __init__(self, config_service: "ConfigManager"):
         super().__init__()
         logger.info(f"Initializing Heartbeat system for component: {config_service.get_component_name()}")
         
@@ -41,7 +44,7 @@ class Heartbeat(ConfigurationChangeListener, ABC):
         
         logger.info("Heartbeat system initialization completed")
 
-    def _define_metric(self, config_service: IConfigurationService):
+    def _define_metric(self, config_service: "ConfigManager"):
         logger.info("Defining heartbeat metrics")
         
         storage_resolution = (
