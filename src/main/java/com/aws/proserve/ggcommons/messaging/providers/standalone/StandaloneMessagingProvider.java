@@ -209,7 +209,7 @@ public class StandaloneMessagingProvider extends MessagingProvider
             MessagingConfiguration.LocalMqttConfig localConfig = config.getMessaging().getLocal();
             MessagingConfiguration.IoTCoreConfig iotCoreConfig = config.getMessaging().getIotCore();
 
-            boolean useSSL = localConfig.getCredentials() != null && localConfig.getCredentials().getCertPath() != null;
+            boolean useSSL = localConfig.getCredentials() != null && localConfig.getCredentials().getCaPath() != null;
             String protocol = useSSL ? "ssl" : "tcp";
             String localBrokerUrl = protocol + "://" + localConfig.getHost() + ":" + localConfig.getPort();
             localMqttClient = new MqttClient(localBrokerUrl, localConfig.getClientId());
@@ -218,9 +218,10 @@ public class StandaloneMessagingProvider extends MessagingProvider
             localOptions.setAutomaticReconnect(true);
             if (localConfig.getCredentials() != null) {
                 if (useSSL) {
-                    // Use certificate-based authentication
+                    // TLS: server trust via CA, with optional client-certificate (mutual) auth
                     localOptions.setSocketFactory(createSslContext(localConfig.getCredentials()).getSocketFactory());
-                } else {
+                } else if (localConfig.getCredentials().getUsername() != null
+                        && localConfig.getCredentials().getPassword() != null) {
                     // Use username/password authentication
                     localOptions.setUserName(localConfig.getCredentials().getUsername());
                     localOptions.setPassword(localConfig.getCredentials().getPassword().toCharArray());
@@ -242,36 +243,37 @@ public class StandaloneMessagingProvider extends MessagingProvider
     }
 
     private SSLContext createSslContext(MessagingConfiguration.CredentialsConfig credentials) throws Exception {
-        // Load CA certificate
+        // Load CA certificate (required for TLS — establishes server trust)
         X509Certificate caCert = (X509Certificate) CertificateFactory.getInstance("X.509")
                                                                      .generateCertificate(new ByteArrayInputStream(Files.readAllBytes(Paths.get(credentials.getCaPath()))));
 
-        // Load client certificate
-        X509Certificate clientCert = (X509Certificate) CertificateFactory.getInstance("X.509")
-                                                                         .generateCertificate(new ByteArrayInputStream(Files.readAllBytes(Paths.get(credentials.getCertPath()))));
-
-        // Load client private key using PrivateKeyReader
-        PrivateKey privateKey = PrivateKeyReader.getPrivateKey(credentials.getKeyPath());
-
-        // Create trust store for CA certificate
+        // Create trust store for the CA certificate
         KeyStore caKs = KeyStore.getInstance(KeyStore.getDefaultType());
         caKs.load(null, null);
         caKs.setCertificateEntry("ca-certificate", caCert);
         TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
         tmf.init(caKs);
 
-        // Create key store for client certificate and private key
-        char[] password = java.util.UUID.randomUUID().toString().toCharArray();
-        KeyStore ks = KeyStore.getInstance(KeyStore.getDefaultType());
-        ks.load(null, null);
-        ks.setCertificateEntry("certificate", clientCert);
-        ks.setKeyEntry("private-key", privateKey, password, new java.security.cert.Certificate[]{clientCert});
-        KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
-        kmf.init(ks, password);
+        // Client certificate + private key are optional: present => mutual TLS, absent => server-only TLS.
+        KeyManager[] keyManagers = null;
+        if (credentials.getCertPath() != null && credentials.getKeyPath() != null)
+        {
+            X509Certificate clientCert = (X509Certificate) CertificateFactory.getInstance("X.509")
+                                                                             .generateCertificate(new ByteArrayInputStream(Files.readAllBytes(Paths.get(credentials.getCertPath()))));
+            PrivateKey privateKey = PrivateKeyReader.getPrivateKey(credentials.getKeyPath());
+            char[] password = java.util.UUID.randomUUID().toString().toCharArray();
+            KeyStore ks = KeyStore.getInstance(KeyStore.getDefaultType());
+            ks.load(null, null);
+            ks.setCertificateEntry("certificate", clientCert);
+            ks.setKeyEntry("private-key", privateKey, password, new java.security.cert.Certificate[]{clientCert});
+            KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+            kmf.init(ks, password);
+            keyManagers = kmf.getKeyManagers();
+        }
 
         // Create SSL context
         SSLContext context = SSLContext.getInstance("TLSv1.2");
-        context.init(kmf.getKeyManagers(), tmf.getTrustManagers(), null);
+        context.init(keyManagers, tmf.getTrustManagers(), null);
 
         return context;
     }
