@@ -1,13 +1,12 @@
 import logging
 import os
-import sys
 import time
 from typing import Dict, Any, Optional, List
 
 from ggcommons.config.heartbeat_config import HeartbeatConfiguration
 from ggcommons.config.metric_config import MetricConfiguration
 from ggcommons.config.tag_config import TagConfiguration
-from ggcommons.config.logging_config import LoggingConfiguration
+from ggcommons.config.enhanced_logging_config import EnhancedLoggingConfiguration
 from ggcommons.config.manager.configuration_change_listener import ConfigurationChangeListener
 
 logger = logging.getLogger("ConfigManager")
@@ -76,17 +75,19 @@ class ConfigManager:
             raise
 
     def _apply_config(self, config: dict):
-        logging_json = None if "logging" not in config else config["logging"]
-        self._logging_config = LoggingConfiguration(logging_json)
-        logging.basicConfig(
-            format=self._logging_config.get_format(),
-            level=self._logging_config.get_level(),
-        )
-        logging.Formatter.converter = time.gmtime
-        logging.StreamHandler(sys.stdout)
-
+        # Tags first: the log file path template ({ThingName}/{ComponentName}/{tag})
+        # is resolved during logging setup below, so tag_config must already exist.
         tag_json = None if "tags" not in config else config["tags"]
         self._tag_config = TagConfiguration(tag_json)
+
+        logging_json = None if "logging" not in config else config["logging"]
+        self._logging_config = EnhancedLoggingConfiguration(logging_json)
+        # configure_logging wires the console handler plus, when
+        # logging.fileLogging.enabled, a size-rotated RotatingFileHandler
+        # (maxFileSize / backupCount). It clears existing handlers first, so calling
+        # it again on a config hot-reload reconfigures cleanly without leaking.
+        self._logging_config.configure_logging(self)
+        logging.Formatter.converter = time.gmtime
 
         heartbeat_json = None if "heartbeat" not in config else config["heartbeat"]
         self._heartbeat_config = HeartbeatConfiguration(heartbeat_json)
@@ -174,7 +175,7 @@ class ConfigManager:
     def get_metric_config(self) -> MetricConfiguration:
         return self._metric_config
 
-    def get_logging_config(self) -> LoggingConfiguration:
+    def get_logging_config(self) -> EnhancedLoggingConfiguration:
         return self._logging_config
 
     def get_thing_name(self) -> str:
