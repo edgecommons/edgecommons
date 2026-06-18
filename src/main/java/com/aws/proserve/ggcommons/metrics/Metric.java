@@ -52,7 +52,7 @@ public class Metric
      */
     public void addMeasure(Measure measure)
     {
-        measures.put(measure.getName(), measure);
+        measures.put(measure.name(), measure);
     }
 
     public void addDimension(String name, String value)

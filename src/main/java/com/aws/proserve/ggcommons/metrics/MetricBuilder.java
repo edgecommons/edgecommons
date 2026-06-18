@@ -76,10 +76,10 @@ public class MetricBuilder {
         if (measure == null) {
             throw new IllegalArgumentException("Measure cannot be null");
         }
-        if (measures.containsKey(measure.getName())) {
-            throw new IllegalArgumentException("Measure with name '" + measure.getName() + "' already exists");
+        if (measures.containsKey(measure.name())) {
+            throw new IllegalArgumentException("Measure with name '" + measure.name() + "' already exists");
         }
-        this.measures.put(measure.getName(), measure);
+        this.measures.put(measure.name(), measure);
         return this;
     }
 

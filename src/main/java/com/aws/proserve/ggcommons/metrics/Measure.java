@@ -7,17 +7,25 @@ package com.aws.proserve.ggcommons.metrics;
 /**
  * Represents a measure within a metric.
  * Contains the measure name and any additional properties like unit or aggregation type.
+ *
+ * <p>An immutable value type (Java record). Accessors are {@code name()}, {@code unit()},
+ * and {@code storageResolution()}.
  */
-public class Measure
+public record Measure(String name, String unit, int storageResolution)
 {
-    private final String name;
-    private final String unit;
-
-    private final static int DEFAULT_STORAGE_RESOLUTION = 60;
-    private final int storageResolution;
+    private static final int DEFAULT_STORAGE_RESOLUTION = 60;
 
     /**
-     * Creates a new measure with name and unit.
+     * Canonical constructor. Clamps the storage resolution to CloudWatch's two
+     * supported values: 1 second (high resolution) or 60 seconds (standard).
+     */
+    public Measure
+    {
+        storageResolution = storageResolution < 60 ? 1 : 60;
+    }
+
+    /**
+     * Creates a new measure with name and unit at the standard (60s) storage resolution.
      *
      * @param name The name of the measure
      * @param unit The unit of measurement
@@ -25,34 +33,5 @@ public class Measure
     public Measure(String name, String unit)
     {
         this(name, unit, DEFAULT_STORAGE_RESOLUTION);
-    }
-
-    /**
-     * Creates a new measure with name, unit, and storage resolution.
-     *
-     * @param name The name of the measure
-     * @param unit The unit of measurement
-     * @param storageResolution The storage resolution in seconds
-     */
-    public Measure(String name, String unit, int storageResolution)
-    {
-        this.name = name;
-        this.unit = unit;
-        this.storageResolution = storageResolution < 60 ? 1 : 60;
-    }
-
-    public String getName()
-    {
-        return name;
-    }
-
-    public String getUnit()
-    {
-        return unit;
-    }
-
-    public int getStorageResolution()
-    {
-        return storageResolution;
     }
 }

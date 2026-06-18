@@ -181,8 +181,8 @@ public final class CloudWatch extends MetricTarget
         {
             MetricDatum datum = MetricDatum.builder()
                                            .metricName(entry.getKey())
-                                           .unit(metric.getMeasure(entry.getKey()).getUnit())
-                                           .storageResolution(metric.getMeasure(entry.getKey()).getStorageResolution())
+                                           .unit(metric.getMeasure(entry.getKey()).unit())
+                                           .storageResolution(metric.getMeasure(entry.getKey()).storageResolution())
                                            .value(Double.valueOf(entry.getValue()))
                                            .timestamp(timestamp)
                                            .dimensions(dimensions)

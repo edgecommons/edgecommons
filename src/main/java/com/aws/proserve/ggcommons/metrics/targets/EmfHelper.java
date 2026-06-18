@@ -53,9 +53,9 @@ public class EmfHelper
         for (Measure measure : metric.getMeasures().values())
         {
             JsonObject measureMetadataEntry = new JsonObject();
-            measureMetadataEntry.addProperty("Name", measure.getName());
-            measureMetadataEntry.addProperty("Unit", measure.getUnit());
-            measureMetadataEntry.addProperty("StorageResolution", measure.getStorageResolution());
+            measureMetadataEntry.addProperty("Name", measure.name());
+            measureMetadataEntry.addProperty("Unit", measure.unit());
+            measureMetadataEntry.addProperty("StorageResolution", measure.storageResolution());
             metricsMetadataArray.add(measureMetadataEntry);
         }
         cwMetricsArrayEntry.add("Metrics", metricsMetadataArray);

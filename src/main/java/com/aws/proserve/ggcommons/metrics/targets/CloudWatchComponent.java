@@ -65,7 +65,7 @@ public final class CloudWatchComponent extends MetricTarget
         metricData.addProperty("metricName", measureName);
         metricData.addProperty("timestamp", System.currentTimeMillis()/1000);
         metricData.addProperty("value", measureValue);
-        metricData.addProperty("unit", metric.getMeasure(measureName).getUnit());
+        metricData.addProperty("unit", metric.getMeasure(measureName).unit());
         metricData.add("dimensions", metric.dimensionsAsJson(false));
 
         requestObject.add("metricData", metricData);

@@ -322,8 +322,8 @@ class GGCommonsUnitTest {
         assertEquals(2, metric2.getMeasures().size());
         assertNotNull(metric2.getMeasure("response_time"));
         assertNotNull(metric2.getMeasure("error_count"));
-        assertEquals("Milliseconds", metric2.getMeasure("response_time").getUnit());
-        assertEquals("Count", metric2.getMeasure("error_count").getUnit());
+        assertEquals("Milliseconds", metric2.getMeasure("response_time").unit());
+        assertEquals("Count", metric2.getMeasure("error_count").unit());
 
         assertTrue(metric2.getDimensions().containsKey("Service"));
         assertTrue(metric2.getDimensions().containsKey("Region"));

@@ -18,41 +18,41 @@ class MeasureTest {
     void twoArgConstructorUsesDefaultStorageResolution() {
         Measure measure = new Measure("Latency", "Milliseconds");
 
-        assertEquals("Latency", measure.getName());
-        assertEquals("Milliseconds", measure.getUnit());
+        assertEquals("Latency", measure.name());
+        assertEquals("Milliseconds", measure.unit());
         // Default storage resolution is 60 (standard resolution).
-        assertEquals(60, measure.getStorageResolution());
+        assertEquals(60, measure.storageResolution());
     }
 
     @Test
     void storageResolutionBelow60NormalizesToHighResolution1() {
         Measure measure = new Measure("Cpu", "Percent", 1);
-        assertEquals(1, measure.getStorageResolution());
+        assertEquals(1, measure.storageResolution());
     }
 
     @Test
     void storageResolutionBelow60AtBoundary59NormalizesTo1() {
         Measure measure = new Measure("Cpu", "Percent", 59);
-        assertEquals(1, measure.getStorageResolution());
+        assertEquals(1, measure.storageResolution());
     }
 
     @Test
     void storageResolution60StaysStandard() {
         Measure measure = new Measure("Cpu", "Percent", 60);
-        assertEquals(60, measure.getStorageResolution());
+        assertEquals(60, measure.storageResolution());
     }
 
     @Test
     void storageResolutionAbove60NormalizesToStandard60() {
         Measure measure = new Measure("Cpu", "Percent", 300);
-        assertEquals(60, measure.getStorageResolution());
+        assertEquals(60, measure.storageResolution());
     }
 
     @Test
     void gettersReturnConstructedValues() {
         Measure measure = new Measure("Throughput", "Count/Second", 1);
-        assertEquals("Throughput", measure.getName());
-        assertEquals("Count/Second", measure.getUnit());
-        assertEquals(1, measure.getStorageResolution());
+        assertEquals("Throughput", measure.name());
+        assertEquals("Count/Second", measure.unit());
+        assertEquals(1, measure.storageResolution());
     }
 }
