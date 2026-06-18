@@ -9,7 +9,6 @@ from ggcommons.messaging.messaging_config import MessagingConfiguration
 from ggcommons.messaging.providers.greengrass.greengrass_ipc import (
     GreengrassIpcProvider,
 )
-from ggcommons.messaging.providers.mqtt import MqttProvider
 from ggcommons.messaging.providers.standalone_provider import StandaloneProvider
 from ggcommons.utils.iou import Iou
 from awsiot.greengrasscoreipc.model import QOS
