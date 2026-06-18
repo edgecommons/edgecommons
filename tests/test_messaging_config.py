@@ -208,8 +208,8 @@ def test_messaging_configuration_load_from_file_iot_core_only():
 
 
 def test_messaging_configuration_load_from_file_missing_iot_core():
-    """Test loading configuration without IoT Core (should fail)."""
-    invalid_config = {
+    """Loading a local-only config (no IoT Core) is valid: IoT Core is optional."""
+    local_only_config = {
         "messaging": {
             "local": {
                 "type": "mqtt",
@@ -219,14 +219,15 @@ def test_messaging_configuration_load_from_file_missing_iot_core():
             }
         }
     }
-    
+
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-        json.dump(invalid_config, f)
+        json.dump(local_only_config, f)
         temp_path = f.name
-    
+
     try:
-        with pytest.raises(ValueError, match="IoT Core configuration is required"):
-            MessagingConfiguration.load_from_file(temp_path)
+        config = MessagingConfiguration.load_from_file(temp_path)
+        assert config.messaging.local is not None
+        assert config.messaging.iot_core is None
     finally:
         os.unlink(temp_path)
 
