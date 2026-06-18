@@ -6,6 +6,7 @@ package com.aws.proserve.ggcommons.messaging.providers.greengrass;
 
 
 import com.aws.proserve.ggcommons.messaging.Message;
+import com.aws.proserve.ggcommons.messaging.MessageBuilder;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonSyntaxException;
@@ -40,11 +41,11 @@ public class IotCoreSubscriptionHandler extends SubscriptionHandler<IoTCoreMessa
             Message msg;
             try
             {
-                msg = Message.build(new Gson().fromJson(msgChars, JsonObject.class));
+                msg = MessageBuilder.fromObject(new Gson().fromJson(msgChars, JsonObject.class));
             }
             catch (JsonSyntaxException e)
             {
-                msg = Message.build(msgChars);
+                msg = MessageBuilder.fromObject(msgChars);
             }
             retVal = new Pair<>(topic, msg);
         } catch (JsonSyntaxException | IllegalArgumentException e) {

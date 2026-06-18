@@ -6,6 +6,7 @@ package com.aws.proserve.ggcommons.messaging.providers.greengrass;
 
 
 import com.aws.proserve.ggcommons.messaging.Message;
+import com.aws.proserve.ggcommons.messaging.MessageBuilder;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonSyntaxException;
@@ -51,7 +52,7 @@ public class IpcSubscriptionHandler extends SubscriptionHandler<SubscriptionResp
                 topic = subscriptionResponseMessage.getBinaryMessage().getContext().getTopic();
                 LOGGER.trace("Received binary message: {} on topic {}", decodedBinaryPayload, topic);
             }
-            retVal = new Pair<>(topic, Message.build(receivedPayload));
+            retVal = new Pair<>(topic, MessageBuilder.fromObject(receivedPayload));
         }
         catch (JsonSyntaxException e) // import com.google.gson.JsonSyntaxException
         {

@@ -150,7 +150,7 @@ public class Message
     {
         if (header == null)
         {
-            header = new MessageHeader("None", "None", null);
+            header = new MessageHeader("None", "None", null, null, null, null);
             LOGGER.warn("Attempting to make request from message with no header");
         }
         return header.makeRequest(replyTo);
@@ -164,7 +164,7 @@ public class Message
     public void setCorrelationId(String correlationId)
     {
         if (header == null)
-            header = new MessageHeader("None", "None", correlationId);
+            header = new MessageHeader("None", "None", correlationId, null, null, null);
         else
             header.setCorrelationId(correlationId);
     }

@@ -85,7 +85,7 @@ public class GGCommons
      * @param appOptions Custom application options
      * @param receiveOwnMessages Flag indicating whether to receive own messages (used only for Greengrass components)
      */
-    private void init(String componentName, String[] args, Options appOptions, boolean receiveOwnMessages)
+    void init(String componentName, String[] args, Options appOptions, boolean receiveOwnMessages)
     {
         try {
             ParsedCommandLine parsedCommandLine = GGCommons.processArgs(componentName, args, appOptions);

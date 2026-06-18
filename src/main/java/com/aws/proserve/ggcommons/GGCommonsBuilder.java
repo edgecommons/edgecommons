@@ -42,6 +42,8 @@ public class GGCommonsBuilder {
             args = new String[0];
         }
         
-        return new GGCommons(componentName, args, appOptions, receiveOwnMessages);
+        GGCommons ggCommons = new GGCommons();
+        ggCommons.init(componentName, args, appOptions, receiveOwnMessages);
+        return ggCommons;
     }
 }

@@ -5,6 +5,7 @@
 package com.aws.proserve.ggcommons.messaging.providers.standalone;
 
 import com.aws.proserve.ggcommons.messaging.Message;
+import com.aws.proserve.ggcommons.messaging.MessageBuilder;
 import com.aws.proserve.ggcommons.messaging.MessagingConfiguration;
 import com.aws.proserve.ggcommons.messaging.MessagingProvider;
 import com.aws.proserve.ggcommons.messaging.ReplyFuture;
@@ -174,9 +175,9 @@ public class StandaloneMessagingProvider extends MessagingProvider
             LOGGER.trace("Message received on topic '{}'", topic);
             String msgChars = new String(message.getPayload(), StandardCharsets.UTF_8);
             try {
-                msg = Message.build(new Gson().fromJson(msgChars, JsonObject.class));
+                msg = MessageBuilder.fromObject(new Gson().fromJson(msgChars, JsonObject.class));
             } catch (Exception e) {
-                msg = Message.build(msgChars);
+                msg = MessageBuilder.fromObject(msgChars);
             }
             
             SubscriptionProcessor subscriptionProcessor = subscriptionMap.get(topic);
