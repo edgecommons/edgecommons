@@ -23,9 +23,6 @@ class MetricLog(MetricTarget):
         self.metric_logger.addHandler(handler)
         self.metric_logger.propagate = False
 
-    def emit_metric(self, metric, measure_values):
-        self.emit_metric_now(metric, measure_values)
-
     def emit_metric_now(self, metric, measure_values):
         metric_data = build_metric_data_emf(
             self.metric_config, metric, measure_values, False

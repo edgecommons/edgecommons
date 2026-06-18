@@ -18,12 +18,12 @@ class MetricTarget(ConfigurationChangeListener, ABC):
         self.metric_config = config_manager.get_metric_config()
         self.logger = logging.getLogger(type(self).__name__)
 
-    @abstractmethod
     def emit_metric(self, metric, measure_values: Dict[str, float]):
         """
-        Abstract method to emit a metric with given measure values.
+        Emit a metric with given measure values. The default is immediate
+        emission; targets that batch (e.g. CloudWatch) override this.
         """
-        pass
+        self.emit_metric_now(metric, measure_values)
 
     @abstractmethod
     def emit_metric_now(self, metric, measure_values: Dict[str, float]):

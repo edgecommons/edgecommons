@@ -63,23 +63,37 @@ class ConfigurationValidator:
             return None
             
         try:
-            # Look for schema file in multiple locations
+            # Primary: load as packaged data so it is found when installed as a
+            # wheel (the schema is the parity contract, so silent-disable is bad).
+            try:
+                from importlib.resources import files
+                resource = files("ggcommons.resources").joinpath(
+                    "ggcommons-config-schema.json"
+                )
+                if resource.is_file():
+                    cls._schema = json.loads(resource.read_text(encoding="utf-8"))
+                    logger.debug("Configuration schema loaded from package resources")
+                    return cls._schema
+            except (ImportError, FileNotFoundError, ModuleNotFoundError):
+                pass
+
+            # Fallback: probe relative paths (editable/source checkouts).
             schema_paths = [
                 Path(__file__).parent.parent / "resources" / "ggcommons-config-schema.json",
                 Path(__file__).parent.parent.parent / "resources" / "ggcommons-config-schema.json",
                 Path("resources") / "ggcommons-config-schema.json"
             ]
-            
+
             for schema_path in schema_paths:
                 if schema_path.exists():
                     with open(schema_path, 'r') as f:
                         cls._schema = json.load(f)
                     logger.debug(f"Configuration schema loaded from {schema_path}")
                     return cls._schema
-                    
+
             logger.warning("Configuration schema file not found, validation disabled")
             return None
-            
+
         except Exception as e:
             logger.warning(f"Failed to load configuration schema: {e}, validation disabled")
             return None

@@ -196,6 +196,15 @@ class GGCommons:
         self._heartbeat.set_messaging_service(MessagingClient)
         self._heartbeat.set_metric_service(MetricEmitter)
             
+    def __enter__(self) -> "GGCommons":
+        """Support `with GGCommonsBuilder...build() as gg:` so callers get
+        deterministic shutdown without a manual try/finally."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+        self.shutdown()
+        return False
+
     def get_config_manager(self) -> ConfigManager:
         """
         Get the configuration manager instance.

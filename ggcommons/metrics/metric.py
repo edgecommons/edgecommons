@@ -10,7 +10,17 @@ class Metric:
         namespace: str = None,
         measures: dict = None,
         dimensions: dict = None,
+        _from_builder: bool = False,
     ):
+        # Direct construction is deprecated in favor of MetricBuilder; the builder
+        # passes _from_builder=True so the sanctioned path does not warn.
+        if not _from_builder:
+            import warnings
+            warnings.warn(
+                "Direct Metric construction is deprecated. Use MetricBuilder.create() instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         # Copy the incoming dicts so we never mutate a caller-owned collection when
         # injecting the default dimensions below.
         self.name = name

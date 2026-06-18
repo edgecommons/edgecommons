@@ -34,9 +34,6 @@ class Messaging(MetricTarget):
 
         self.logger.debug(f"Metric '{metric_name}' emission completed")
 
-    def emit_metric(self, metric, measure_values):
-        self.emit_metric_now(metric, measure_values)
-
     def __publish_message(self, metric_dict: dict):
         destination = "local" if self.send_to_local else "IoT Core"
         self.logger.debug(f"Publishing metric message to {destination} on topic: {self.topic}")

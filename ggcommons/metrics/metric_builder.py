@@ -193,25 +193,23 @@ class MetricBuilder:
         """
         # Import here to avoid circular imports
         from ggcommons.metrics.metric import Metric
-        
-        # Create metric instance directly without using deprecated constructor
-        metric = object.__new__(Metric)
-        
-        # Initialize metric attributes directly
-        metric.name = self._name
-        metric.namespace = self._namespace or "GGCommons/Metrics"
-        metric.thing_name = self._thing_name or "test-thing"
-        metric.component_name = self._component_name or "test-component"
-        metric.measures = dict(self._measures)
-        metric.dimensions = dict(self._dimensions)
-        
-        # Add default dimensions
-        metric.dimensions["coreName"] = metric.thing_name
-        metric.dimensions["category"] = metric.name
-        metric.dimensions["component"] = metric.component_name
 
-        # Enforce the CloudWatch 10-dimension cap (this path bypasses the Metric
-        # constructor, so check the assembled total here).
+        # Build through the real constructor (the sanctioned path: _from_builder=True
+        # suppresses the direct-construction deprecation warning). The constructor
+        # copies the dicts and injects the default coreName/category/component
+        # dimensions.
+        metric = Metric(
+            self._thing_name or "test-thing",
+            self._component_name or "test-component",
+            self._name,
+            namespace=self._namespace or "GGCommons/Metrics",
+            measures=self._measures,
+            dimensions=self._dimensions,
+            _from_builder=True,
+        )
+
+        # Enforce the CloudWatch 10-dimension cap on the assembled total (user
+        # dimensions plus the three defaults added by the constructor).
         if len(metric.dimensions) > Metric.MAX_DIMENSIONS:
             raise ValueError(
                 f"A metric may have at most {Metric.MAX_DIMENSIONS} dimensions "
@@ -220,32 +218,3 @@ class MetricBuilder:
             )
 
         return metric
-
-# For backward compatibility, add deprecated constructor warning
-def _patch_metric_class():
-    """Patches the Metric class with deprecation warnings for direct construction."""
-    try:
-        from ggcommons.metrics.metric import Metric
-        
-        # Store original __init__
-        original_init = Metric.__init__
-        
-        def __init_with_warning__(self, *args, **kwargs):
-            """Metric constructor with deprecation warning."""
-            if len(args) > 1 or any(k in kwargs for k in ['thing_name', 'component_name', 'namespace']):
-                import warnings
-                warnings.warn(
-                    "Direct Metric construction is deprecated. Use MetricBuilder.create() instead.",
-                    DeprecationWarning,
-                    stacklevel=2
-                )
-            return original_init(self, *args, **kwargs)
-        
-        Metric.__init__ = __init_with_warning__
-        
-    except ImportError:
-        # Metric class not available yet
-        pass
-
-# Apply the patch when module is imported
-_patch_metric_class()

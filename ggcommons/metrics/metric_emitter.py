@@ -17,6 +17,15 @@ class MetricEmitter:
     thing_name = ""
     component_name = ""
 
+    # Maps the configured target name (lower-cased) to its target class. Adding a
+    # target is a one-line registration rather than another if/elif branch.
+    _TARGET_FACTORIES = {
+        "messaging": Messaging,
+        "log": MetricLog,
+        "cloudwatch": CloudWatch,
+        "cloudwatchcomponent": CloudWatchComponent,
+    }
+
     @staticmethod
     def init(config_manager: ConfigManager):
         MetricEmitter.logger.info(f"Initializing MetricEmitter for component: {config_manager.get_component_name()}")
@@ -32,22 +41,16 @@ class MetricEmitter:
             namespace = MetricEmitter.metric_config.get_namespace()
             
             MetricEmitter.logger.info(f"Configuring metric target: {target}, namespace: {namespace}")
-            
-            if target.lower() == "messaging":
-                MetricEmitter.metric_target = Messaging(config_manager)
-            elif target.lower() == "log":
-                MetricEmitter.metric_target = MetricLog(config_manager)
-            elif target.lower() == "cloudwatch":
-                MetricEmitter.metric_target = CloudWatch(config_manager)
-            elif target.lower() == "cloudwatchcomponent":
-                MetricEmitter.metric_target = CloudWatchComponent(config_manager)
-            else:
+
+            factory = MetricEmitter._TARGET_FACTORIES.get(target.lower())
+            if factory is None:
                 MetricEmitter.logger.warning(
                     f"Invalid metric target '{target}' specified. Defaulting to 'log'"
                 )
                 target = "log"
-                MetricEmitter.metric_target = MetricLog(config_manager)
-                
+                factory = MetricLog
+            MetricEmitter.metric_target = factory(config_manager)
+
             config_manager.add_config_change_listener(MetricEmitter.metric_target)
             MetricEmitter.logger.info(f"MetricEmitter initialized successfully - target: {target}, registered metrics: {len(MetricEmitter.metrics)}")
 

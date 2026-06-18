@@ -53,7 +53,12 @@ class EnhancedHeartbeat(ConfigurationChangeListener):
         self._messaging_service = None
         self._metric_service = None
 
-        self._heartbeat_timer: Optional[threading.Timer] = None
+        # Single long-lived loop thread driven by an Event (replaces the previous
+        # self-rescheduling Timer chain, which spun up a new OS thread every tick
+        # and had a _running read/write race). stop() sets the event to interrupt
+        # the wait immediately and join the thread.
+        self._heartbeat_thread: Optional[threading.Thread] = None
+        self._stop_event = threading.Event()
         self._heartbeat_monitor: Optional[HeartbeatMonitor] = None
         self._timer_lock = threading.RLock()
         self._running = False
@@ -167,55 +172,53 @@ class EnhancedHeartbeat(ConfigurationChangeListener):
         except Exception as e:
             logger.error(f"Failed to define heartbeat metric: {e}")
             
+    def _get_interval_secs(self) -> float:
+        """Resolve the heartbeat interval (seconds), defaulting to 30."""
+        heartbeat_config = self._get_heartbeat_config()
+        return heartbeat_config.get_interval_secs() if heartbeat_config else 30
+
     def _start_heartbeat_timer(self) -> None:
-        """Start the heartbeat timer with proper synchronization."""
+        """Start the heartbeat loop thread with proper synchronization."""
         with self._timer_lock:
-            # Stop existing timer if running
+            # Stop any existing loop first.
             self._stop_heartbeat_timer()
-            
-            # Get interval from configuration
-            heartbeat_config = self._get_heartbeat_config()
-            interval_secs = heartbeat_config.get_interval_secs() if heartbeat_config else 30
-            
-            # Create and start new timer
-            self._heartbeat_timer = threading.Timer(interval_secs, self._heartbeat_callback)
-            self._heartbeat_timer.daemon = True
-            self._heartbeat_timer.start()
+
+            # Fresh stop signal for the new loop.
+            self._stop_event = threading.Event()
+            self._heartbeat_thread = threading.Thread(
+                target=self._run_loop, name="heartbeat", daemon=True
+            )
+            self._heartbeat_thread.start()
             self._running = True
-            
-            logger.debug(f"Heartbeat timer started with {interval_secs}s interval")
-            
+
+            logger.debug(f"Heartbeat loop started with {self._get_interval_secs()}s interval")
+
     def _stop_heartbeat_timer(self) -> None:
-        """Stop the heartbeat timer with proper cleanup."""
-        if self._heartbeat_timer is not None:
-            self._heartbeat_timer.cancel()
-            self._heartbeat_timer = None
-            
+        """Signal the heartbeat loop to stop and join it."""
+        self._stop_event.set()
+        thread = self._heartbeat_thread
+        # Never join from within the loop thread itself.
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=5)
+        self._heartbeat_thread = None
         self._running = False
-        logger.debug("Heartbeat timer stopped")
-        
-    def _heartbeat_callback(self) -> None:
-        """Heartbeat timer callback that publishes heartbeat data."""
-        try:
-            if not self._running:
-                return
-                
-            # Publish heartbeat
-            self._publish_heartbeat()
-            
-            # Schedule next heartbeat
-            if self._running:
-                self._start_heartbeat_timer()
-                
-        except Exception as e:
-            logger.error(f"Error in heartbeat callback: {e}")
-            # Try to restart timer on error
-            if self._running:
-                try:
-                    self._start_heartbeat_timer()
-                except Exception as restart_error:
-                    logger.error(f"Failed to restart heartbeat timer: {restart_error}")
-                    
+        logger.debug("Heartbeat loop stopped")
+
+    def _run_loop(self) -> None:
+        """Single loop thread: wait one interval, publish, repeat until stopped.
+
+        Re-reads the interval each iteration so a configuration change takes
+        effect, and guards each tick so a throwing publish cannot kill the loop.
+        """
+        while not self._stop_event.is_set():
+            # wait() returns True if the stop event is set during the wait.
+            if self._stop_event.wait(self._get_interval_secs()):
+                break
+            try:
+                self._publish_heartbeat()
+            except Exception as e:
+                logger.error(f"Error in heartbeat loop: {e}")
+
     def _publish_heartbeat(self) -> None:
         """Publish heartbeat data to configured targets."""
         try:

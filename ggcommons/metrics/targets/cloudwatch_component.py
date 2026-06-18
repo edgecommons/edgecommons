@@ -17,9 +17,6 @@ class CloudWatchComponent(MetricTarget):
             MessagingClient.publish_raw(self.topic, metric_data)
         self.logger.debug(f"Metric '{metric.get_name()}' emitted")
 
-    def emit_metric(self, metric, measure_values):
-        self.emit_metric_now(metric, measure_values)
-
     def _build_metric_data(self, metric, measure_name, measure_value):
         metric_data = {
             "metricName": measure_name,
