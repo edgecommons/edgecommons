@@ -66,6 +66,38 @@ class CloudWatchTest {
         }
     }
 
+    // --- Scheduling integration tests (ScheduledExecutorService-based flush) ---
+
+    @Test
+    void periodicFlushSendsQueuedMetrics() {
+        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":1}}");
+        CloudWatchClient client = mock(CloudWatchClient.class);
+        cloudWatch = new CloudWatch(config, client);
+
+        var values = new HashMap<String, Float>();
+        values.put("value", 1.0f);
+        cloudWatch.emitMetric(metric("m1", "ns1"), values);
+
+        // The 1s scheduled flush must send the queued metric within a few seconds.
+        verify(client, timeout(4000).atLeastOnce()).putMetricData(any(PutMetricDataRequest.class));
+    }
+
+    @Test
+    void configurationChangeReschedulesFlush() {
+        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":1}}");
+        CloudWatchClient client = mock(CloudWatchClient.class);
+        cloudWatch = new CloudWatch(config, client);
+
+        // Reschedule on the same executor; flushing must keep working afterward.
+        assertTrue(cloudWatch.onConfigurationChanged());
+
+        var values = new HashMap<String, Float>();
+        values.put("value", 2.0f);
+        cloudWatch.emitMetric(metric("m2", "ns1"), values);
+
+        verify(client, timeout(4000).atLeastOnce()).putMetricData(any(PutMetricDataRequest.class));
+    }
+
     @Test
     void emitMetricNowSendsToCloudWatchImmediately() {
         var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600}}");

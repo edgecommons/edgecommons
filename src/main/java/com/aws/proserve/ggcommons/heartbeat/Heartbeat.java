@@ -21,8 +21,10 @@ import software.amazon.awssdk.aws.greengrass.model.QOS;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Timer;
-import java.util.TimerTask;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Implements heartbeat functionality for Greengrass components to monitor their health status.
@@ -38,7 +40,13 @@ public class Heartbeat implements ConfigurationChangeListener
     private MessagingClient messagingService;
     private MetricEmitter metricService;
     private HeartbeatMonitor heartbeatMonitor;
-    private Timer heartbeatTimer;
+    private final ScheduledExecutorService scheduler =
+            Executors.newSingleThreadScheduledExecutor(runnable -> {
+                Thread thread = new Thread(runnable, "Heartbeat-scheduler");
+                thread.setDaemon(true);
+                return thread;
+            });
+    private ScheduledFuture<?> heartbeatTask;
     private final Object timerLock = new Object();
 
     /**
@@ -70,13 +78,15 @@ public class Heartbeat implements ConfigurationChangeListener
     private void initHeartbeat()
     {
         synchronized (timerLock) {
-            if (heartbeatTimer != null) {
-                heartbeatTimer.cancel();
-                heartbeatTimer.purge();
+            // Reschedule on the same executor: cancel the current task and submit a
+            // new one at the configured interval. The task is a reusable Runnable, so
+            // the executor is kept alive across reconfigures and only shut down in close().
+            if (heartbeatTask != null) {
+                heartbeatTask.cancel(false);
             }
             heartbeatMonitor = new HeartbeatMonitor(configurationService.getHeartbeatConfig());
-            heartbeatTimer = new Timer("Heartbeat timer", true);
-            heartbeatTimer.scheduleAtFixedRate(new Heartbeater(), 0, configurationService.getHeartbeatConfig().getIntervalSecs()*1000L);
+            long periodMs = configurationService.getHeartbeatConfig().getIntervalSecs() * 1000L;
+            heartbeatTask = scheduler.scheduleAtFixedRate(this::runHeartbeat, 0, periodMs, TimeUnit.MILLISECONDS);
             LOGGER.info("Heartbeat initialized at {} second interval", configurationService.getHeartbeatConfig().getIntervalSecs());
         }
     }
@@ -169,12 +179,12 @@ public class Heartbeat implements ConfigurationChangeListener
     {
         synchronized (timerLock)
         {
-            if (heartbeatTimer != null)
+            if (heartbeatTask != null)
             {
-                heartbeatTimer.cancel();
-                heartbeatTimer.purge();
-                heartbeatTimer = null;
+                heartbeatTask.cancel(false);
+                heartbeatTask = null;
             }
+            scheduler.shutdownNow();
         }
     }
 
@@ -195,21 +205,19 @@ public class Heartbeat implements ConfigurationChangeListener
      * Inner class that implements the periodic heartbeat task.
      * Executes the heartbeat publishing operation at configured intervals.
      */
-    private class Heartbeater extends TimerTask
+    /**
+     * The periodic heartbeat task. Guarded so an exception in one run cannot
+     * propagate to the scheduler and silently cancel future heartbeats.
+     */
+    private void runHeartbeat()
     {
-        @Override
-        public void run()
+        try
         {
-            // Guard the timer task: an uncaught exception would kill the Timer
-            // thread and silently stop all future heartbeats.
-            try
-            {
-                publishHeartbeat();
-            }
-            catch (Exception e)
-            {
-                LOGGER.error("Heartbeat task failed; will retry next interval", e);
-            }
+            publishHeartbeat();
+        }
+        catch (Exception e)
+        {
+            LOGGER.error("Heartbeat task failed; will retry next interval", e);
         }
     }
 }

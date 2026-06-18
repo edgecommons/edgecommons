@@ -17,6 +17,10 @@ import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 
 public final class CloudWatch extends MetricTarget
 {
@@ -25,7 +29,13 @@ public final class CloudWatch extends MetricTarget
 
     private final ConcurrentHashMap<String, ConcurrentLinkedQueue<PendingMetric>> pendingMetrics = new ConcurrentHashMap<>();
 
-    private Timer metricEmitTimer;
+    private final ScheduledExecutorService scheduler =
+            Executors.newSingleThreadScheduledExecutor(runnable -> {
+                Thread thread = new Thread(runnable, "CloudWatch-emit-scheduler");
+                thread.setDaemon(true);
+                return thread;
+            });
+    private ScheduledFuture<?> emitTask;
 
     public CloudWatch(ConfigManager configManager)
     {
@@ -37,14 +47,19 @@ public final class CloudWatch extends MetricTarget
     {
         super(configManager);
         this.cwClient = cwClient;
-        initEmitTimer();
+        scheduleEmit();
     }
 
-    private void initEmitTimer()
+    private void scheduleEmit()
     {
-        metricEmitTimer = new Timer("Metric Emit Timer", true);
-        metricEmitTimer.scheduleAtFixedRate(new CloudWatch.PendingMetricEmitter(), 0,
-                configManager.getMetricConfig().getIntervalSecs() * 1000L);
+        // Reschedule on the same executor: cancel the current task and submit a new
+        // one at the configured interval (executor reused; only shut down in close()).
+        if (emitTask != null)
+        {
+            emitTask.cancel(false);
+        }
+        long periodMs = configManager.getMetricConfig().getIntervalSecs() * 1000L;
+        emitTask = scheduler.scheduleAtFixedRate(this::runEmit, 0, periodMs, TimeUnit.MILLISECONDS);
     }
 
     @Override
@@ -82,12 +97,7 @@ public final class CloudWatch extends MetricTarget
     public boolean onConfigurationChanged()
     {
         LOGGER.info("Configuration changed. Reconfiguring CloudWatch batch interval");
-        if (metricEmitTimer != null)
-        {
-            metricEmitTimer.cancel();
-            metricEmitTimer.purge();
-        }
-        initEmitTimer();
+        scheduleEmit();
 
         return true;
     }
@@ -101,11 +111,11 @@ public final class CloudWatch extends MetricTarget
     @Override
     public void close()
     {
-        if (metricEmitTimer != null)
+        if (emitTask != null)
         {
-            metricEmitTimer.cancel();
-            metricEmitTimer.purge();
+            emitTask.cancel(false);
         }
+        scheduler.shutdownNow();
         try
         {
             cwClient.close();
@@ -221,19 +231,19 @@ public final class CloudWatch extends MetricTarget
         }
     }
 
-    private class PendingMetricEmitter extends TimerTask
+    /**
+     * The periodic flush task. Guarded so an exception cannot propagate to the
+     * scheduler and silently cancel future flushes.
+     */
+    private void runEmit()
     {
-        @Override
-        public void run()
+        try
         {
-            try
-            {
-                flushMetrics();
-            }
-            catch (Exception e)
-            {
-                LOGGER.error("Unexpected error while emitting metrics to CloudWatch: {}", e.getMessage(), e);
-            }
+            flushMetrics();
+        }
+        catch (Exception e)
+        {
+            LOGGER.error("Unexpected error while emitting metrics to CloudWatch: {}", e.getMessage(), e);
         }
     }
 }
