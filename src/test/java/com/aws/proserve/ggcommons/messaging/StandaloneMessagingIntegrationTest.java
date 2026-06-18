@@ -57,8 +57,9 @@ class StandaloneMessagingIntegrationTest {
         broker = new Server();
         broker.startServer(new MemoryConfig(props));
 
-        String json = "{ \"messaging\": { \"local\": {" +
-                "\"host\": \"127.0.0.1\", \"port\": " + port + ", \"clientId\": \"itest-local\" } } }";
+        var json = """
+                { "messaging": { "local": {"host": "127.0.0.1", "port": %s, "clientId": "itest-local" } } }"""
+                .formatted(port);
         MessagingConfiguration config = new Gson().fromJson(json, MessagingConfiguration.class);
         provider = new StandaloneMessagingProvider(config, "test-thing");
     }
@@ -74,7 +75,7 @@ class StandaloneMessagingIntegrationTest {
     }
 
     private Message msg(String name, String key, String value) {
-        JsonObject payload = new JsonObject();
+        var payload = new JsonObject();
         payload.addProperty(key, value);
         return MessageBuilder.create(name, "1.0").withPayload(payload).withConfig(CFG).build();
     }
@@ -82,8 +83,8 @@ class StandaloneMessagingIntegrationTest {
     @Test
     void publishAndSubscribeLocal() throws Exception {
         String topic = "itest/pubsub";
-        CountDownLatch latch = new CountDownLatch(1);
-        AtomicReference<Message> received = new AtomicReference<>();
+        var latch = new CountDownLatch(1);
+        var received = new AtomicReference<Message>();
         provider.subscribe(topic, (t, m) -> { received.set(m); latch.countDown(); }, 1);
 
         provider.publish(topic, msg("Hello", "k", "v"));
@@ -96,7 +97,7 @@ class StandaloneMessagingIntegrationTest {
 
     @Test
     void subscribeWithWildcard() throws Exception {
-        CountDownLatch latch = new CountDownLatch(1);
+        var latch = new CountDownLatch(1);
         provider.subscribe("itest/wild/+", (t, m) -> latch.countDown(), 1);
         provider.publish("itest/wild/abc", msg("W", "k", "v"));
         assertTrue(latch.await(5, TimeUnit.SECONDS), "wildcard subscription should match");
@@ -106,11 +107,11 @@ class StandaloneMessagingIntegrationTest {
     @Test
     void rawPublishDeliversNonEnvelopePayload() throws Exception {
         String topic = "itest/raw";
-        CountDownLatch latch = new CountDownLatch(1);
-        AtomicReference<Message> received = new AtomicReference<>();
+        var latch = new CountDownLatch(1);
+        var received = new AtomicReference<Message>();
         provider.subscribe(topic, (t, m) -> { received.set(m); latch.countDown(); }, 1);
 
-        JsonObject raw = new JsonObject();
+        var raw = new JsonObject();
         raw.addProperty("just", "data");
         provider.publishRaw(topic, raw);
 

@@ -73,8 +73,8 @@ class MetricEmitterTest {
 
     @Test
     void messagingTargetEmitsThroughInjectedService() {
-        var config = new EmitterConfig(
-                "{\"target\":\"messaging\",\"namespace\":\"ns1\",\"targetConfig\":{\"topic\":\"t/topic\",\"destination\":\"ipc\"}}");
+        var config = new EmitterConfig("""
+                {"target":"messaging","namespace":"ns1","targetConfig":{"topic":"t/topic","destination":"ipc"}}""");
         var mock = new MockMessagingService();
         var emitter = new MetricEmitter(config, mock);
 
@@ -95,8 +95,8 @@ class MetricEmitterTest {
 
     @Test
     void emitUndefinedMetricIsIgnored() {
-        var config = new EmitterConfig(
-                "{\"target\":\"messaging\",\"namespace\":\"ns1\",\"targetConfig\":{\"topic\":\"t/topic\",\"destination\":\"ipc\"}}");
+        var config = new EmitterConfig("""
+                {"target":"messaging","namespace":"ns1","targetConfig":{"topic":"t/topic","destination":"ipc"}}""");
         var mock = new MockMessagingService();
         var emitter = new MetricEmitter(config, mock);
 
@@ -129,7 +129,8 @@ class MetricEmitterTest {
         // writable in the test environment, but Log internally falls back to a logger without
         // throwing, so emit must complete cleanly. (logFileName under a non-"log" target is
         // ignored by MetricConfiguration, so the emitter uses the default Greengrass path here.)
-        var config = new EmitterConfig("{\"target\":\"bogus\",\"namespace\":\"ns1\"}");
+        var config = new EmitterConfig("""
+                {"target":"bogus","namespace":"ns1"}""");
         var emitter = new MetricEmitter(config, null);
 
         emitter.defineMetric(metric("m1"));
@@ -139,8 +140,8 @@ class MetricEmitterTest {
 
     @Test
     void cloudwatchComponentTargetUsesInjectedMessaging() {
-        var config = new EmitterConfig(
-                "{\"target\":\"cloudwatchcomponent\",\"namespace\":\"ns1\",\"targetConfig\":{\"topic\":\"cw/put\"}}");
+        var config = new EmitterConfig("""
+                {"target":"cloudwatchcomponent","namespace":"ns1","targetConfig":{"topic":"cw/put"}}""");
         var mock = new MockMessagingService();
         var emitter = new MetricEmitter(config, mock);
 

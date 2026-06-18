@@ -28,8 +28,8 @@ class FileWatcherTest {
 
     @Test
     void doOnChangeInvokesHandler() {
-        AtomicInteger counter = new AtomicInteger(0);
-        FileWatcher watcher = new FileWatcher("nonexistent-path-not-watched.json",
+        var counter = new AtomicInteger(0);
+        var watcher = new FileWatcher("nonexistent-path-not-watched.json",
                 counter::incrementAndGet);
 
         watcher.doOnChange();
@@ -40,7 +40,7 @@ class FileWatcherTest {
 
     @Test
     void isStoppedAndStopThreadToggleFlag() {
-        FileWatcher watcher = new FileWatcher(new File("any.json"), () -> { });
+        var watcher = new FileWatcher(new File("any.json"), () -> { });
         assertFalse(watcher.isStopped());
 
         watcher.stopThread();
@@ -49,8 +49,8 @@ class FileWatcherTest {
 
     @Test
     void fileObjectConstructorUsesProvidedHandler() {
-        AtomicInteger counter = new AtomicInteger(0);
-        FileWatcher watcher = new FileWatcher(new File("some.json"), counter::incrementAndGet);
+        var counter = new AtomicInteger(0);
+        var watcher = new FileWatcher(new File("some.json"), counter::incrementAndGet);
         watcher.doOnChange();
         assertEquals(1, counter.get());
     }
@@ -60,8 +60,8 @@ class FileWatcherTest {
         Path target = tempDir.resolve("watched-config.json");
         Files.write(target, "{\"v\":1}".getBytes(StandardCharsets.UTF_8));
 
-        CountDownLatch latch = new CountDownLatch(1);
-        FileWatcher watcher = new FileWatcher(target.toFile(), latch::countDown);
+        var latch = new CountDownLatch(1);
+        var watcher = new FileWatcher(target.toFile(), latch::countDown);
         watcher.start();
 
         try {

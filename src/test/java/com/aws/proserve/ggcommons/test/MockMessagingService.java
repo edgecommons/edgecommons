@@ -89,7 +89,7 @@ public class MockMessagingService extends MessagingClient {
     @Override
     public ReplyFuture request(String topic, Message message) {
         publish(topic, message);
-        ReplyFuture future = new ReplyFuture(topic);
+        var future = new ReplyFuture(topic);
         future.complete(message); // Echo back for testing
         return future;
     }
@@ -97,7 +97,7 @@ public class MockMessagingService extends MessagingClient {
     @Override
     public ReplyFuture requestFromIoTCore(String topic, Message message) {
         publishToIotCore(topic, message, QOS.AT_LEAST_ONCE);
-        ReplyFuture future = new ReplyFuture(topic);
+        var future = new ReplyFuture(topic);
         future.complete(message); // Echo back for testing
         return future;
     }

@@ -51,15 +51,15 @@ class StandaloneTlsIntegrationTest {
 
     private static String json(String dir, boolean includeClientCert) {
         String ca = (dir + "/ca.crt").replace("\\", "/");
-        StringBuilder creds = new StringBuilder("{ \"caPath\": \"" + ca + "\"");
+        var creds = new StringBuilder("{ \"caPath\": \"" + ca + "\"");
         if (includeClientCert) {
             creds.append(", \"certPath\": \"").append((dir + "/client.crt").replace("\\", "/")).append("\"");
             creds.append(", \"keyPath\": \"").append((dir + "/client.key").replace("\\", "/")).append("\"");
         }
         creds.append(" }");
-        return "{ \"messaging\": { \"local\": {" +
-                "\"host\": \"localhost\", \"port\": 8883, \"clientId\": \"ggcommons-java-tls-it\"," +
-                "\"credentials\": " + creds + " } } }";
+        return """
+                { "messaging": { "local": {"host": "localhost", "port": 8883, "clientId": "ggcommons-java-tls-it","credentials": %s } } }"""
+                .formatted(creds);
     }
 
     private static StandaloneMessagingProvider connectOrSkip(boolean mutual) {
@@ -76,7 +76,7 @@ class StandaloneTlsIntegrationTest {
     }
 
     private Message msg(String name, String key, String value) {
-        JsonObject payload = new JsonObject();
+        var payload = new JsonObject();
         payload.addProperty(key, value);
         return MessageBuilder.create(name, "1.0").withPayload(payload).withConfig(CFG).build();
     }
@@ -86,8 +86,8 @@ class StandaloneTlsIntegrationTest {
         StandaloneMessagingProvider provider = connectOrSkip(true);
         try {
             String topic = "ggcommons/test/tls/java/" + System.nanoTime();
-            CountDownLatch latch = new CountDownLatch(1);
-            AtomicReference<Message> received = new AtomicReference<>();
+            var latch = new CountDownLatch(1);
+            var received = new AtomicReference<Message>();
             provider.subscribe(topic, (t, m) -> { received.set(m); latch.countDown(); }, 1);
 
             provider.publish(topic, msg("SecureHello", "hello", "secure"));

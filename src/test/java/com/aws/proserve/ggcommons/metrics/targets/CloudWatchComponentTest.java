@@ -31,7 +31,8 @@ class CloudWatchComponentTest {
         private final MetricConfiguration metricConfig;
 
         CwcConfig(String topic) {
-            String json = "{\"target\":\"cloudwatchcomponent\",\"namespace\":\"ns1\",\"targetConfig\":{\"topic\":\"" + topic + "\"}}";
+            String json = """
+                    {"target":"cloudwatchcomponent","namespace":"ns1","targetConfig":{"topic":"%s"}}""".formatted(topic);
             var root = new JsonObject();
             root.add("metricEmission", JsonParser.parseString(json).getAsJsonObject());
             this.metricConfig = ConfigurationFactory.createMetricConfiguration(root);

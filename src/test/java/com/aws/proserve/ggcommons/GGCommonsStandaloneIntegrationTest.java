@@ -65,19 +65,22 @@ class GGCommonsStandaloneIntegrationTest {
         workDir = Files.createTempDirectory("ggstandalone").toFile();
 
         File msgCfg = new File(workDir, "standalone-messaging.json");
-        Files.write(msgCfg.toPath(), ("{ \"messaging\": { \"local\": {" +
-                "\"host\": \"127.0.0.1\", \"port\": " + port + ", \"clientId\": \"gg-local\" } } }").getBytes());
+        Files.write(msgCfg.toPath(), """
+                { "messaging": { "local": {"host": "127.0.0.1", "port": %s, "clientId": "gg-local" } } }"""
+                .formatted(port).getBytes());
 
         File appCfg = new File(workDir, "config.json");
         String metricLog = new File(workDir, "metric.log").getAbsolutePath().replace("\\", "/");
-        Files.write(appCfg.toPath(), ("{" +
-                "\"logging\": {\"level\": \"INFO\"}," +
-                "\"metricEmission\": {\"target\": \"log\", \"targetConfig\": {\"logFileName\": \"" + metricLog + "\"}}," +
-                "\"heartbeat\": {\"intervalSecs\": 3600, \"measures\": {\"cpu\": true, \"memory\": true}," +
-                "  \"targets\": [{\"type\":\"metric\"},{\"type\":\"messaging\",\"config\":{\"topic\":\"heartbeat/test\",\"destination\":\"ipc\"}}]}," +
-                "\"tags\": {\"env\": \"test\"}," +
-                "\"component\": {\"global\": {\"setting\": \"value\"}}" +
-                "}").getBytes());
+        Files.write(appCfg.toPath(), """
+                {\
+                "logging": {"level": "INFO"},\
+                "metricEmission": {"target": "log", "targetConfig": {"logFileName": "%s"}},\
+                "heartbeat": {"intervalSecs": 3600, "measures": {"cpu": true, "memory": true},\
+                  "targets": [{"type":"metric"},{"type":"messaging","config":{"topic":"heartbeat/test","destination":"ipc"}}]},\
+                "tags": {"env": "test"},\
+                "component": {"global": {"setting": "value"}}\
+                }"""
+                .formatted(metricLog).getBytes());
 
         String[] args = {
                 "-t", "test-thing",
@@ -110,11 +113,11 @@ class GGCommonsStandaloneIntegrationTest {
     void messagingClientPublishSubscribeRoundTrip() throws Exception {
         MessagingClient mc = gg.getMessaging();
         String topic = "gg/itest/topic";
-        CountDownLatch latch = new CountDownLatch(1);
-        AtomicReference<Message> received = new AtomicReference<>();
+        var latch = new CountDownLatch(1);
+        var received = new AtomicReference<Message>();
         mc.subscribe(topic, (t, m) -> { received.set(m); latch.countDown(); }, 1);
 
-        JsonObject payload = new JsonObject();
+        var payload = new JsonObject();
         payload.addProperty("hello", "world");
         Message m = MessageBuilder.create("Greeting", "1.0")
                 .withPayload(payload).withConfig(gg.getConfigManager()).build();
@@ -134,7 +137,7 @@ class GGCommonsStandaloneIntegrationTest {
         gg.getMetrics().defineMetric(metric);
         assertTrue(gg.getMetrics().isMetricDefined("itest_metric"));
 
-        Map<String, Float> values = new HashMap<>();
+        var values = new HashMap<String, Float>();
         values.put("count", 3.0f);
         assertDoesNotThrow(() -> gg.getMetrics().emitMetricNow("itest_metric", values));
     }
@@ -145,20 +148,20 @@ class GGCommonsStandaloneIntegrationTest {
 
         String reqTopic = "gg/itest/req";
         mc.subscribe(reqTopic, (t, request) -> {
-            JsonObject rp = new JsonObject();
+            var rp = new JsonObject();
             rp.addProperty("ok", "yes");
             Message reply = MessageBuilder.create("R", "1.0")
                     .withPayload(rp).withConfig(gg.getConfigManager()).build();
             mc.reply(request, reply);
         }, 1);
-        JsonObject qp = new JsonObject();
+        var qp = new JsonObject();
         qp.addProperty("q", "x");
         Message req = MessageBuilder.create("Q", "1.0").withPayload(qp).withConfig(gg.getConfigManager()).build();
         Message reply = mc.request(reqTopic, req).get(5, TimeUnit.SECONDS);
         assertEquals(req.getCorrelationId(), reply.getCorrelationId());
         mc.unsubscribe(reqTopic);
 
-        JsonObject raw = new JsonObject();
+        var raw = new JsonObject();
         raw.addProperty("r", "1");
         assertDoesNotThrow(() -> mc.publishRaw("gg/itest/raw", raw));
         assertNotNull(mc.getNativeLocalClient());
