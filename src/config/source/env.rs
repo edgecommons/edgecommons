@@ -61,13 +61,15 @@ mod tests {
     #[tokio::test]
     async fn loads_json_from_env_var() {
         let var = unique_var("OK");
-        std::env::set_var(&var, r#"{ "a": 1, "b": "x" }"#);
+        // FIXME: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::set_var(&var, r#"{ "a": 1, "b": "x" }"#) };
         let src = EnvConfigSource::new(var.clone());
         let doc = src.load().await.unwrap();
         assert_eq!(doc["a"], 1);
         assert_eq!(doc["b"], "x");
         assert_eq!(src.source_name(), "ENV");
-        std::env::remove_var(&var);
+        // FIXME: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::remove_var(&var) };
     }
 
     #[tokio::test]
@@ -80,9 +82,11 @@ mod tests {
     #[tokio::test]
     async fn invalid_json_is_error() {
         let var = unique_var("BAD");
-        std::env::set_var(&var, "this is not json");
+        // FIXME: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::set_var(&var, "this is not json") };
         let result = EnvConfigSource::new(var.clone()).load().await;
         assert!(result.is_err());
-        std::env::remove_var(&var);
+        // FIXME: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::remove_var(&var) };
     }
 }
