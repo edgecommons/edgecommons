@@ -32,9 +32,9 @@ ComponentConfiguration:
         shop: "test_shop"
         line: "test_line"
       metricEmission:
-        target: "log"
+        target: "cloudwatch"
         targetConfig:
-          logFileName: "/greengrass/v2/logs/{ComponentFullName}.metric.log"
+          intervalSecs: 5
       component:
         global:
           'publish_interval': 3
@@ -77,8 +77,6 @@ Manifests:
       - URI: "s3://BUCKET_NAME/COMPONENT_NAME/COMPONENT_VERSION/java-component-skeleton-1.0.0.jar"
     Lifecycle:
       Run:
-        Setenv:
-          CONFIG: "{configuration:/ComponentConfig}"
         RequiresPrivilege: true
         Script:
-          "java -cp {artifacts:path}/java-component-skeleton-1.0.0.jar com.aws.proserve.javacomponentskeleton.App"
+          "java -jar {artifacts:path}/java-component-skeleton-1.0.0.jar"

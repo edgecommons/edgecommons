@@ -1,7 +1,14 @@
 {
   "logging": {
-    "level": "INFO",
-    "format": "%d{yyyy-MM-dd HH:mm:ss.SSS} [%-5p] %C{1} (%L) [%t] : %m%n"
+    "level": "DEBUG",
+    "format": "%d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %-5level %logger{36} - %msg%n",
+    "globalControl": true,
+    "loggers": {
+      "com.aws.proserve.javacomponentskeleton": "DEBUG",
+      "com.aws.proserve.ggcommons": "DEBUG",
+      "com.aws.proserve.ggcommons.messaging": "INFO",
+      "org.apache.http": "WARN"
+    }
   },
   "heartbeat": {
     "intervalSecs": 5,
@@ -15,10 +22,7 @@
     },
     "targets": [
       {
-        "type": "messaging",
-        "config": {
-          "destination": "ipc"
-        }
+        "type": "metric"
       }
     ]
   },
@@ -31,12 +35,13 @@
   "metricEmission": {
     "target": "log",
     "targetConfig": {
-      "logFileName": "{ComponentFullName}.metric.log"
+      "maxFileSize": "5MB",
+      "logFileName": "/greengrass/v2/logs/{ComponentName}.metric.log"
     }
   },
   "component": {
     "global": {
-      "publish_interval": 3,
+      "publish_interval": 1,
       "message": "Hello world config_2!"
     },
     "instances": [
