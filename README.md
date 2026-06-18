@@ -37,6 +37,32 @@ GGCOMMONS_TLS_CERTS_DIR=/abs/path/to/ggcommons-test-infra/tls-certs \
 If the variable is unset, a library may fall back to a local `tests/tls-certs/`
 directory; tests skip cleanly when no certs / no broker are available.
 
+## Running the libraries' secure-connection tests
+
+One command (brings up the broker, generates certs if needed, runs all three):
+```bash
+bash run-tls-integration.sh
+```
+
+Or per library (broker up + `GGCOMMONS_TLS_CERTS_DIR` exported first):
+```bash
+# Python — locates certs via GGCOMMONS_TLS_CERTS_DIR
+GGCOMMONS_TLS_CERTS_DIR=$PWD/tls-certs \
+  python -m pytest -m integration tests/test_tls_integration.py -v        # in ggcommons-python-lib
+
+# Java — same env var; self-skips (mvn verify stays green) when it is unset
+GGCOMMONS_TLS_CERTS_DIR=$PWD/tls-certs \
+  mvn -Dtest=StandaloneTlsIntegrationTest -DfailIfNoTests=false test       # in ggcommons-java-lib
+
+# Rust — gated on GGCOMMONS_IT_MQTT=1 + per-file cert vars
+GGCOMMONS_IT_MQTT=1 GGCOMMONS_IT_MQTT_CA=$PWD/tls-certs/ca.crt \
+  GGCOMMONS_IT_MQTT_CERT=$PWD/tls-certs/client.crt \
+  GGCOMMONS_IT_MQTT_KEY=$PWD/tls-certs/client.key \
+  cargo test --test tls_mqtt -- --nocapture                               # in ggcommons-rust-lib
+```
+All three skip cleanly when the broker/certs are absent, so they never break a
+normal build.
+
 ## Convention
 - TLS is keyed on the CA: a client with only `caPath` does **server-only** TLS;
   adding `certPath`+`keyPath` does **mutual** TLS. The broker above requires a client
