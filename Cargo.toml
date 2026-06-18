@@ -50,8 +50,10 @@ aws-sdk-cloudwatch = { version = "1", optional = true }
 # enabled, which must only be done on a Linux toolchain.
 aws-greengrass-component-sdk = { version = "1.0.4", optional = true }
 
+# logging.fileLogging (size-rotated file output) is implemented self-contained in
+# src/logging.rs (std::fs only) — no tracing-appender needed (it only does
+# time-based rotation; we match the Python library's size-based maxFileSize/backupCount).
 # Not yet implemented (config keys are parsed but inert):
-#   tracing-appender   — rotating file logging (logging.fileLogging)
 #   notify             — FILE config hot-reload
 #   tokio-rustls       — IoT Core mTLS
 #   aws-sdk-cloudwatch — cloudwatch metric target

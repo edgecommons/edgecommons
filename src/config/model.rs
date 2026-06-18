@@ -77,6 +77,24 @@ pub struct LoggingConfig {
 pub struct FileLogging {
     pub enabled: bool,
     pub file_path: Option<String>,
+    pub max_file_size: Option<String>,
+    #[serde(default, deserialize_with = "de_lenient_opt_u64")]
+    pub backup_count: Option<u64>,
+}
+
+impl FileLogging {
+    /// `maxFileSize` for size-based rotation; default `10MB` (parity with the
+    /// Python library's `RotatingFileHandler` default).
+    pub fn max_file_size(&self) -> String {
+        self.max_file_size
+            .clone()
+            .unwrap_or_else(|| "10MB".to_string())
+    }
+
+    /// Number of rotated backups to keep; default `5` (parity with Python).
+    pub fn backup_count(&self) -> u64 {
+        self.backup_count.unwrap_or(5)
+    }
 }
 
 /// `heartbeat` section.
