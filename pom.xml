@@ -18,8 +18,11 @@
         <!--      <java.version>8</java.version>-->
         <CI_API_V4_URL>https://gitlab.aws.dev/api/v4</CI_API_V4_URL>
         <CI_PROJECT_ID>83110</CI_PROJECT_ID>
-        <maven.compiler.source>11</maven.compiler.source>
-        <maven.compiler.target>11</maven.compiler.target>
+        <!-- Language level: Java 21 (LTS). Built on JDK 25; deployed devices run
+             JRE 21 or newer (lab-5950x runs 25). The compiler "release" setting
+             links against the Java 21 API so newer (22-25) APIs cannot be used
+             accidentally. -->
+        <maven.compiler.release>21</maven.compiler.release>
     </properties>
     <dependencyManagement>
         <dependencies>
@@ -168,8 +171,7 @@
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>3.13.0</version>
                 <configuration>
-                    <source>${maven.compiler.source}</source>
-                    <target>${maven.compiler.target}</target>
+                    <release>${maven.compiler.release}</release>
                 </configuration>
             </plugin>
             <plugin>
