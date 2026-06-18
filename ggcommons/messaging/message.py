@@ -5,8 +5,9 @@
 
 import json
 import logging
+from dataclasses import dataclass
 from uuid import uuid4
-from typing import TYPE_CHECKING
+from typing import Any, Optional, TYPE_CHECKING
 
 from ggcommons.utils import Utils
 
@@ -17,24 +18,25 @@ if TYPE_CHECKING:
 logger = logging.getLogger("Message")
 
 
+@dataclass
 class MessageHeader:
-    REPLY_MESSAGE_TOPIC_PREFIX = "ggcommons/reply-"
+    REPLY_MESSAGE_TOPIC_PREFIX = "ggcommons/reply-"  # class constant, not a field
 
-    def __init__(
-        self,
-        name: str,
-        version: str,
-        correlation_id: str = None,
-        timestamp: str = None,
-        uuid: str = None,
-        reply_to: str = None,
-    ):
-        self.name = name
-        self.version = version
-        self.timestamp = timestamp if timestamp is not None else Utils.get_utc_z()
-        self.correlation_id = correlation_id if correlation_id is not None else str(uuid4())
-        self.uuid = uuid if uuid is not None else str(uuid4())
-        self.reply_to = reply_to
+    name: str
+    version: str
+    correlation_id: Optional[str] = None
+    timestamp: Optional[str] = None
+    uuid: Optional[str] = None
+    reply_to: Optional[str] = None
+
+    def __post_init__(self):
+        # Fill computed defaults (matches the previous hand-written constructor).
+        if self.timestamp is None:
+            self.timestamp = Utils.get_utc_z()
+        if self.correlation_id is None:
+            self.correlation_id = str(uuid4())
+        if self.uuid is None:
+            self.uuid = str(uuid4())
 
     @staticmethod
     def from_dict(src: dict):
@@ -72,10 +74,14 @@ class MessageHeader:
         self.correlation_id = correlation_id
 
 
+@dataclass
 class MessageTags:
-    def __init__(self, thing_name: str, tags: dict = None):
-        self.thing_name = thing_name
-        self.tags = tags or {}
+    thing_name: Optional[str]
+    tags: Optional[dict] = None
+
+    def __post_init__(self):
+        if self.tags is None:
+            self.tags = {}
 
     @staticmethod
     def from_config(config_service: 'ConfigManager'):
@@ -103,12 +109,12 @@ class MessageTags:
         return result
 
 
+@dataclass
 class Message:
-    def __init__(self):
-        self.header = None
-        self.tags = None
-        self.body = None
-        self.raw = None
+    header: Optional[MessageHeader] = None
+    tags: Optional[MessageTags] = None
+    body: Any = None
+    raw: Any = None
 
     def to_dict(self) -> dict:
         if self.raw is None:
@@ -180,26 +186,20 @@ class Message:
     def from_object(msg_contents):
         message = Message()
         logger.debug("In Message.from_object")
-        
+
         if isinstance(msg_contents, dict):
             logger.debug(f"Message contents: {msg_contents}")
             if "header" in msg_contents:
-                logger.debug("processing header")
                 message.header = MessageHeader.from_dict(msg_contents["header"])
-                logger.debug("header deserialized")
             if "tags" in msg_contents:
-                logger.debug("processing tags")
                 message.tags = MessageTags.from_dict(msg_contents["tags"])
-                logger.debug("tags deserialized")
             if "body" in msg_contents:
-                logger.debug("processing body")
                 message.body = msg_contents["body"]
-                logger.debug("body deserialized")
             if not any(key in msg_contents for key in ["header", "tags", "body"]):
                 logger.debug("Dict contained raw data: Assigning to raw")
                 message.raw = msg_contents
         else:
             logger.debug("Message not instance of dict, assigning to raw")
             message.raw = msg_contents
-            
+
         return message

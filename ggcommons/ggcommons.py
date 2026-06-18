@@ -10,11 +10,28 @@ MetricEmitter directly.
 
 import argparse
 import logging
+from enum import Enum
 from typing import Optional, List
 from ggcommons.config.manager.config_manager import ConfigManager
 from ggcommons.config.manager.config_manager_builder import ConfigManagerBuilder
 
 logger = logging.getLogger(__name__)
+
+
+class RuntimeMode(str, Enum):
+    """Runtime mode passed via -m/--mode (str-valued so it compares to the raw
+    uppercased CLI token)."""
+    GREENGRASS = "GREENGRASS"
+    STANDALONE = "STANDALONE"
+
+
+class ConfigSource(str, Enum):
+    """Configuration source passed via -c/--config."""
+    FILE = "FILE"
+    ENV = "ENV"
+    GG_CONFIG = "GG_CONFIG"
+    SHADOW = "SHADOW"
+    CONFIG_COMPONENT = "CONFIG_COMPONENT"
 
 
 class GGCommons:
@@ -101,7 +118,7 @@ class GGCommons:
             '-c', '--config',
             nargs='*',
             type=str,
-            default=['GG_CONFIG'],
+            default=[ConfigSource.GG_CONFIG.value],
             help='Configuration source. One of: ENV, GG_CONFIG, FILE, SHADOW, CONFIG_COMPONENT'
         )
         parser.add_argument(
@@ -120,23 +137,24 @@ class GGCommons:
         
         # Process mode argument to match Java behavior
         if not hasattr(parsed, 'mode') or not parsed.mode:
-            parsed.mode = ['GREENGRASS']
+            parsed.mode = [RuntimeMode.GREENGRASS.value]
 
         mode_name = parsed.mode[0].upper()
         # Validate STANDALONE mode has config path
-        if mode_name == 'STANDALONE':
+        if mode_name == RuntimeMode.STANDALONE:
             if len(parsed.mode) < 2:
                 logger.error("STANDALONE mode requires config file path")
                 raise ValueError("STANDALONE mode requires config file path")
-        elif mode_name != 'GREENGRASS':
+        elif mode_name != RuntimeMode.GREENGRASS:
             # Reject unknown modes instead of silently treating them as GREENGRASS.
             logger.error(f"Unknown mode '{parsed.mode[0]}'")
             raise ValueError(
-                f"Unknown mode '{parsed.mode[0]}'. Valid values are 'GREENGRASS' and 'STANDALONE'"
+                f"Unknown mode '{parsed.mode[0]}'. Valid values are "
+                f"{' and '.join(repr(m.value) for m in RuntimeMode)}"
             )
 
         # Validate the config source token up front rather than failing later.
-        valid_sources = {'FILE', 'ENV', 'GG_CONFIG', 'SHADOW', 'CONFIG_COMPONENT'}
+        valid_sources = {s.value for s in ConfigSource}
         if parsed.config and parsed.config[0].upper() not in valid_sources:
             logger.error(f"Unrecognized config source '{parsed.config[0]}'")
             raise ValueError(
@@ -171,7 +189,7 @@ class GGCommons:
         # Determine standalone config path
         standalone_config_path = None
         if hasattr(parsed_args, 'mode') and parsed_args.mode:
-            if len(parsed_args.mode) > 1 and parsed_args.mode[0].upper() == 'STANDALONE':
+            if len(parsed_args.mode) > 1 and parsed_args.mode[0].upper() == RuntimeMode.STANDALONE:
                 standalone_config_path = parsed_args.mode[1]
         
         MessagingClient.init(parsed_args, standalone_config_path, receive_own_messages)
