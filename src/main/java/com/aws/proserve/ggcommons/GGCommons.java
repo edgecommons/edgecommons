@@ -190,8 +190,8 @@ public class GGCommons
                                             "'FILE <optional: file_path>', " +
                                             "'ENV <optional: env_var_name>', " +
                                             "'SHADOW <optional: shadow_name>', " +
-                                            "'GG_CONFIG <optional: component_name> <optional: config_key>'" +
-                                            "'CONFIG_COMPONENT'\n"+
+                                            "'GG_CONFIG <optional: component_name> <optional: config_key>', " +
+                                            "'CONFIG_COMPONENT'\n" +
                                             "Default: GG_CONFIG")
                                     .build();
         Option modeOption = Option.builder("m")
@@ -244,8 +244,11 @@ public class GGCommons
                     LOGGER.error("STANDALONE mode requires config file path");
                     throw new IllegalArgumentException("STANDALONE mode requires a config file path");
                 }
-            } else {
+            } else if (modeArgs[0].equalsIgnoreCase("GREENGRASS")) {
                 retVal.mode = ParsedCommandLine.Mode.GREENGRASS;
+            } else {
+                throw new IllegalArgumentException("Unknown mode '" + modeArgs[0]
+                        + "'. Valid modes: GREENGRASS (default), STANDALONE <config_file_path>.");
             }
 
             if (line.hasOption("t")) {

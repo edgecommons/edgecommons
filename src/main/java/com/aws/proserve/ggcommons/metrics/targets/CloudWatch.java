@@ -90,6 +90,12 @@ public class CloudWatch extends MetricTarget
     }
 
     @Override
+    public void flush()
+    {
+        flushMetrics();
+    }
+
+    @Override
     public void close()
     {
         if (metricEmitTimer != null)

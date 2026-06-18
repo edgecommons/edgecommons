@@ -34,6 +34,9 @@ public abstract class MetricTarget implements ConfigurationChangeListener
     @Override
     public abstract boolean onConfigurationChanged();
 
+    /** Flushes any buffered metrics to the target. Default no-op (targets that don't buffer). */
+    public void flush() {}
+
     /** Releases any resources held by this target (timers, clients, appenders). Default no-op. */
     public void close() {}
 }

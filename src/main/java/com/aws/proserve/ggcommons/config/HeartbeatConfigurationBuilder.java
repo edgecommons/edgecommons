@@ -12,10 +12,8 @@ public class HeartbeatConfigurationBuilder {
     private int intervalSecs = 5;
     private boolean includeCpu = true;
     private boolean includeMemory = true;
-    private boolean includeDisk = false;
     private boolean includeThreads = false;
     private boolean includeFiles = false;
-    private boolean includeFds = false;
     private List<TargetConfig> targets = new ArrayList<>();
     
     private static class TargetConfig {
@@ -82,10 +80,8 @@ public class HeartbeatConfigurationBuilder {
         JsonObject measures = new JsonObject();
         measures.addProperty("cpu", includeCpu);
         measures.addProperty("memory", includeMemory);
-        measures.addProperty("disk", includeDisk);
         measures.addProperty("threads", includeThreads);
         measures.addProperty("files", includeFiles);
-        measures.addProperty("fds", includeFds);
         config.add("measures", measures);
         
         if (!targets.isEmpty()) {

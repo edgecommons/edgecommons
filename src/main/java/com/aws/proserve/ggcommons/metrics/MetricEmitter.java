@@ -126,6 +126,15 @@ public class MetricEmitter
     }
 
     /**
+     * Flushes any metrics buffered by the underlying target (e.g. the CloudWatch batch buffer).
+     */
+    public void flushMetrics() {
+        if (metricTarget != null) {
+            metricTarget.flush();
+        }
+    }
+
+    /**
      * Releases resources held by the underlying metric target (timers, clients, appenders).
      */
     public void close() {
