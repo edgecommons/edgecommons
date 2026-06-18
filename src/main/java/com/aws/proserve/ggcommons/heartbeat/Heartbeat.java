@@ -154,11 +154,13 @@ public class Heartbeat implements ConfigurationChangeListener
                             .withConfig(configurationService)
                             .build();
                     
-                    if (destination.equalsIgnoreCase("ipc"))
+                    // Canonical "ipc"/"iot_core"; the legacy "local"/"iotcore" spellings
+                    // are accepted too (parity with the Python/Rust heartbeat targets).
+                    if (destination.equalsIgnoreCase("ipc") || destination.equalsIgnoreCase("local"))
                     {
                         messagingService.publish(topic, heartbeatMessage);
                     }
-                    else if (destination.equalsIgnoreCase("iot_core"))
+                    else if (destination.equalsIgnoreCase("iot_core") || destination.equalsIgnoreCase("iotcore"))
                     {
                         messagingService.publishToIotCore(topic, heartbeatMessage, QOS.AT_LEAST_ONCE);
                     }

@@ -23,7 +23,17 @@ public final class Messaging extends MetricTarget {
     public Messaging(ConfigManager configManager) {
         super(configManager);
         this.topic = configManager.resolveTemplate(metricConfig.getTopic());
-        this.sendToIpc = metricConfig.getDestination().equalsIgnoreCase("ipc");
+        this.sendToIpc = !isIotCoreDestination(metricConfig.getDestination());
+    }
+
+    /**
+     * IoT Core is selected only by "iot_core"/"iotcore"; everything else (the
+     * canonical "ipc", the legacy "local", and any unrecognized value) uses the
+     * local/IPC transport, so a metric never routes to a possibly-unconfigured
+     * IoT Core. Matches the heartbeat target and the Python/Rust metric targets.
+     */
+    private static boolean isIotCoreDestination(String destination) {
+        return destination.equalsIgnoreCase("iot_core") || destination.equalsIgnoreCase("iotcore");
     }
 
     public void setMessagingService(MessagingClient messagingService) {
@@ -61,7 +71,7 @@ public final class Messaging extends MetricTarget {
     {
         LOGGER.info("Configuration changed. Reconfiguring metric messaging topic and destination");
         this.topic = configManager.resolveTemplate(configManager.getMetricConfig().getTopic());
-        this.sendToIpc = configManager.getMetricConfig().getDestination().equalsIgnoreCase("ipc");
+        this.sendToIpc = !isIotCoreDestination(configManager.getMetricConfig().getDestination());
         return true;
     }
 
