@@ -196,9 +196,8 @@ public class Message
         }
         retVal.header = headerBuilder.build();
         retVal.tags = MessageTags.fromConfig(configManager);
-        if (payload instanceof String)
+        if (payload instanceof String payloadStr)
         {
-            String payloadStr =(String) payload;
             try
             {
                 Gson gson = new Gson();
@@ -230,9 +229,8 @@ public class Message
     {
         Message retVal = new Message();
         LOGGER.trace("In Message::build");
-        if (msgContents instanceof JsonObject)
+        if (msgContents instanceof JsonObject msgJsonObj)
         {
-            JsonObject msgJsonObj = (JsonObject) msgContents;
             LOGGER.trace("Message contents: {}", msgJsonObj);
             if (msgJsonObj.has("header"))
             {

@@ -50,26 +50,28 @@ public class MetricEmitter
         this.componentName = configurationService.getComponentName();
         
         String target = metricConfig.getTarget();
-        if (target.equalsIgnoreCase("messaging")) {
-            Messaging messaging = new Messaging(configurationService);
-            if (messagingService != null) {
-                messaging.setMessagingService(messagingService);
+        this.metricTarget = switch (target.toLowerCase()) {
+            case "messaging" -> {
+                Messaging messaging = new Messaging(configurationService);
+                if (messagingService != null) {
+                    messaging.setMessagingService(messagingService);
+                }
+                yield messaging;
             }
-            this.metricTarget = messaging;
-        } else if (target.equalsIgnoreCase("log")) {
-            this.metricTarget = new Log(configurationService);
-        } else if (target.equalsIgnoreCase("cloudwatch")) {
-            this.metricTarget = new CloudWatch(configurationService);
-        } else if (target.equalsIgnoreCase("cloudwatchcomponent")) {
-            CloudWatchComponent cwComponent = new CloudWatchComponent(configurationService);
-            if (messagingService != null) {
-                cwComponent.setMessagingService(messagingService);
+            case "cloudwatch" -> new CloudWatch(configurationService);
+            case "cloudwatchcomponent" -> {
+                CloudWatchComponent cwComponent = new CloudWatchComponent(configurationService);
+                if (messagingService != null) {
+                    cwComponent.setMessagingService(messagingService);
+                }
+                yield cwComponent;
             }
-            this.metricTarget = cwComponent;
-        } else {
-            LOGGER.warn("Invalid metric target '{}' specified. Defaulting to 'log'", target);
-            this.metricTarget = new Log(configurationService);
-        }
+            case "log" -> new Log(configurationService);
+            default -> {
+                LOGGER.warn("Invalid metric target '{}' specified. Defaulting to 'log'", target);
+                yield new Log(configurationService);
+            }
+        };
         
         LOGGER.info("MetricEmitter initialized with target: {}", target);
         configurationService.addConfigChangeListener(metricTarget);

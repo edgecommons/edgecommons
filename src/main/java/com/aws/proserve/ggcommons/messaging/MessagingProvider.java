@@ -11,6 +11,8 @@ import software.amazon.awssdk.aws.greengrass.model.QOS;
 
 import java.util.function.BiConsumer;
 
+// NOTE: not sealed — its impls live in sub-packages and sealed cross-package
+// permits requires a named module (this lib is built as an unnamed-module JAR).
 public abstract class MessagingProvider
 {
     protected static final Logger LOGGER = LogManager.getLogger(MessagingProvider.class);

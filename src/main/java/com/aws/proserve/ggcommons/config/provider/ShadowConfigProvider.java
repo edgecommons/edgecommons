@@ -21,7 +21,7 @@ import software.amazon.awssdk.eventstreamrpc.StreamResponseHandler;
 
 import java.nio.charset.StandardCharsets;
 
-class ShadowConfigProvider extends ConfigProvider implements  StreamResponseHandler<SubscriptionResponseMessage>
+final class ShadowConfigProvider extends ConfigProvider implements  StreamResponseHandler<SubscriptionResponseMessage>
 {
     private static final Logger LOGGER = LogManager.getLogger(ShadowConfigProvider.class);
     protected static final String SHADOW_TOPIC_TEMPLATE = "$aws/things/%s/shadow/name/%s/";

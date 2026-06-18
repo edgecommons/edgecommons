@@ -13,7 +13,8 @@ import org.apache.logging.log4j.Logger;
 
 import java.util.Map;
 
-public abstract class MetricTarget implements ConfigurationChangeListener
+public abstract sealed class MetricTarget implements ConfigurationChangeListener
+        permits CloudWatch, CloudWatchComponent, Messaging, Log
 {
 
     protected static final Logger LOGGER = LogManager.getLogger(MetricTarget.class);

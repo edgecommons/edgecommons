@@ -15,7 +15,7 @@ import software.amazon.awssdk.aws.greengrass.model.GetConfigurationResponse;
 
 import java.util.Map;
 
-public class GreengrassConfigProvider extends ConfigProvider
+public final class GreengrassConfigProvider extends ConfigProvider
 {
     private static final Logger LOGGER = LogManager.getLogger(GreengrassConfigProvider.class);
 

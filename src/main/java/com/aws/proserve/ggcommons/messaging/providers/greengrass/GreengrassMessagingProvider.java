@@ -23,7 +23,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiConsumer;
 
-public class GreengrassMessagingProvider extends MessagingProvider
+public final class GreengrassMessagingProvider extends MessagingProvider
 {
     protected static final Logger LOGGER = LogManager.getLogger(GreengrassMessagingProvider.class);
     GreengrassCoreIPCClientV2 ipcClient;

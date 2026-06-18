@@ -15,7 +15,7 @@ import java.util.Map;
 //       limitations in the Greengrass CloudWatch Metrics component (the coreName dimension is implicit and
 //       therefore cannot be overridden)
 
-public class CloudWatchComponent extends MetricTarget
+public final class CloudWatchComponent extends MetricTarget
 {
     private String topic;
     private MessagingClient messagingService;

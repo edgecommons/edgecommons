@@ -17,7 +17,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
-public class ConfigComponentProvider extends ConfigProvider {
+public final class ConfigComponentProvider extends ConfigProvider {
     private static final Logger LOGGER = LogManager.getLogger(ConfigComponentProvider.class);
     public static final String GET_TOPIC_TEMPLATE = "ggcommons/{ThingName}/config/get/{ComponentName}";
     public static final String UPDATED_TOPIC_TEMPLATE = "ggcommons/{ThingName}/config/{ComponentName}/updated";

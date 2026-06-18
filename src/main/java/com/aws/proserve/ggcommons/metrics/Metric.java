@@ -96,7 +96,7 @@ public class Metric
 
     public Collection<Dimension> dimensionsAsCollection(boolean largeFleetWorkaround)
     {
-        Collection<Dimension> retVal = new ArrayList<>();
+        var retVal = new ArrayList<Dimension>();
         for (Map.Entry<String, String> entry : dimensions.entrySet())
         {
             Dimension dimension;

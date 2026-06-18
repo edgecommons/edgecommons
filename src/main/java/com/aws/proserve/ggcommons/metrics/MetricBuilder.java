@@ -62,7 +62,7 @@ public class MetricBuilder {
     }
 
     public MetricBuilder addMeasure(String name, String unit, int precision) {
-        if (name == null || name.trim().isEmpty()) {
+        if (name == null || name.isBlank()) {
             throw new IllegalArgumentException("Measure name cannot be null or empty");
         }
         if (measures.containsKey(name)) {
@@ -84,7 +84,7 @@ public class MetricBuilder {
     }
 
     public MetricBuilder addDimension(String key, String value) {
-        if (key == null || key.trim().isEmpty()) {
+        if (key == null || key.isBlank()) {
             throw new IllegalArgumentException("Dimension key cannot be null or empty");
         }
         if (!dimensions.containsKey(key) && dimensions.size() >= 10) {

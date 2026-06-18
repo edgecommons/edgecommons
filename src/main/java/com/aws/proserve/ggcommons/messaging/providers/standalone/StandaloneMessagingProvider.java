@@ -34,7 +34,7 @@ import java.security.cert.*;
 import javax.net.ssl.*;
 
 
-public class StandaloneMessagingProvider extends MessagingProvider
+public final class StandaloneMessagingProvider extends MessagingProvider
 {
     protected static final Logger LOGGER = LogManager.getLogger(StandaloneMessagingProvider.class);
 

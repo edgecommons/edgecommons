@@ -26,9 +26,8 @@ public class MessageBuilder {
     
     public static Message fromObject(Object msgContents) {
         Message retVal = new Message();
-        if (msgContents instanceof JsonObject)
+        if (msgContents instanceof JsonObject msgJsonObj)
         {
-            JsonObject msgJsonObj = (JsonObject) msgContents;
             if (msgJsonObj.has("header"))
             {
                 retVal.header = MessageHeader.fromDict(msgJsonObj.getAsJsonObject("header"));
@@ -83,8 +82,7 @@ public class MessageBuilder {
         message.header = headerBuilder.build();
         message.tags = MessageTags.fromConfig(configService);
         
-        if (payload instanceof String) {
-            String payloadStr = (String) payload;
+        if (payload instanceof String payloadStr) {
             try {
                 Gson gson = new Gson();
                 message.body = gson.fromJson(payloadStr, Object.class);

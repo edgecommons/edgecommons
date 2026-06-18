@@ -237,18 +237,18 @@ public class GGCommons
                 modeArgs = new String[] {"GREENGRASS"};
             }
             
-            if (modeArgs[0].equalsIgnoreCase("STANDALONE")) {
-                retVal.mode = ParsedCommandLine.Mode.STANDALONE;
-                if (modeArgs.length > 1) {
-                    retVal.standaloneConfigPath = modeArgs[1];
-                } else {
-                    LOGGER.error("STANDALONE mode requires config file path");
-                    throw new IllegalArgumentException("STANDALONE mode requires a config file path");
+            switch (modeArgs[0].toUpperCase()) {
+                case "STANDALONE" -> {
+                    retVal.mode = ParsedCommandLine.Mode.STANDALONE;
+                    if (modeArgs.length > 1) {
+                        retVal.standaloneConfigPath = modeArgs[1];
+                    } else {
+                        LOGGER.error("STANDALONE mode requires config file path");
+                        throw new IllegalArgumentException("STANDALONE mode requires a config file path");
+                    }
                 }
-            } else if (modeArgs[0].equalsIgnoreCase("GREENGRASS")) {
-                retVal.mode = ParsedCommandLine.Mode.GREENGRASS;
-            } else {
-                throw new IllegalArgumentException("Unknown mode '" + modeArgs[0]
+                case "GREENGRASS" -> retVal.mode = ParsedCommandLine.Mode.GREENGRASS;
+                default -> throw new IllegalArgumentException("Unknown mode '" + modeArgs[0]
                         + "'. Valid modes: GREENGRASS (default), STANDALONE <config_file_path>.");
             }
 

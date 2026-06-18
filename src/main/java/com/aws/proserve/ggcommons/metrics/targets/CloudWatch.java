@@ -14,14 +14,11 @@ import software.amazon.awssdk.services.cloudwatch.model.PutMetricDataRequest;
 
 import java.io.IOException;
 import java.time.Instant;
-import java.time.ZoneOffset;
-import java.time.ZonedDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
-public class CloudWatch extends MetricTarget
+public final class CloudWatch extends MetricTarget
 {
 
     private final CloudWatchClient cwClient;
@@ -66,7 +63,7 @@ public class CloudWatch extends MetricTarget
     {
         try
         {
-            Collection<MetricDatum> data = new ArrayList<>();
+            var data = new ArrayList<MetricDatum>();
             appendToPutMetricDataRequest(new PendingMetric(metric, measureValues), data);
             PutMetricDataRequest request = PutMetricDataRequest.builder()
                                                                .namespace(metric.getNamespace())
@@ -130,7 +127,7 @@ public class CloudWatch extends MetricTarget
             ConcurrentLinkedQueue<PendingMetric> pendingMetricQueue = entry.getValue();
             try
             {
-                List<MetricDatum> data = new ArrayList<>();
+                var data = new ArrayList<MetricDatum>();
                 PendingMetric pendingMetric;
                 while ((pendingMetric = pendingMetricQueue.poll()) != null)
                 {
@@ -205,7 +202,7 @@ public class CloudWatch extends MetricTarget
         {
             this.metric = metric;
             this.measureValues = measureValues;
-            this.timestamp = Instant.parse(ZonedDateTime.now(ZoneOffset.UTC).format(DateTimeFormatter.ISO_INSTANT));
+            this.timestamp = Instant.now();
         }
 
         public Metric getMetric()

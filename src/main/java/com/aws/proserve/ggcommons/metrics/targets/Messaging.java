@@ -14,7 +14,7 @@ import software.amazon.awssdk.aws.greengrass.model.QOS;
 
 import java.util.Map;
 
-public class Messaging extends MetricTarget {
+public final class Messaging extends MetricTarget {
 
     private String topic;
     private boolean sendToIpc = true;

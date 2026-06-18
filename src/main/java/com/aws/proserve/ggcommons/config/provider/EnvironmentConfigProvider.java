@@ -10,7 +10,7 @@ import com.google.gson.JsonSyntaxException;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-class EnvironmentConfigProvider extends ConfigProvider
+final class EnvironmentConfigProvider extends ConfigProvider
 {
     protected static final Logger LOGGER = LogManager.getLogger(EnvironmentConfigProvider.class);
     private final String environmentVariableName;

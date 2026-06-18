@@ -13,7 +13,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import java.util.Map;
 
-public class Log extends MetricTarget
+public final class Log extends MetricTarget
 {
     private final static Logger LOGGER = LogManager.getLogger(MetricTarget.class);
     private Logger metricLogger;

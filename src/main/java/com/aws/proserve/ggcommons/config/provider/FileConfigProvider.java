@@ -16,7 +16,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Paths;
 
-class FileConfigProvider extends ConfigProvider implements FileWatcher.FileChangeHandler
+final class FileConfigProvider extends ConfigProvider implements FileWatcher.FileChangeHandler
 {
     private static final Logger LOGGER = LogManager.getLogger(FileConfigProvider.class);
 

@@ -115,7 +115,7 @@ public class Heartbeat implements ConfigurationChangeListener
             switch (target.getType().toLowerCase())
             {
                 case "metric":
-                    Map<String, Float> measureValues = new HashMap<>();
+                    var measureValues = new HashMap<String, Float>();
                     for (Map.Entry<String, JsonElement> entry : data.entrySet())
                     {
                         for (String measureName : entry.getValue().getAsJsonObject().keySet())
@@ -200,7 +200,16 @@ public class Heartbeat implements ConfigurationChangeListener
         @Override
         public void run()
         {
-            publishHeartbeat();
+            // Guard the timer task: an uncaught exception would kill the Timer
+            // thread and silently stop all future heartbeats.
+            try
+            {
+                publishHeartbeat();
+            }
+            catch (Exception e)
+            {
+                LOGGER.error("Heartbeat task failed; will retry next interval", e);
+            }
         }
     }
 }

@@ -8,7 +8,9 @@ import com.aws.proserve.ggcommons.config.ConfigManager;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 
-public abstract class ConfigProvider {
+public abstract sealed class ConfigProvider
+        permits FileConfigProvider, EnvironmentConfigProvider, GreengrassConfigProvider,
+                ShadowConfigProvider, ConfigComponentProvider {
 
    ConfigProvider(ConfigManager configManager)
    {
