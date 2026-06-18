@@ -13,25 +13,21 @@ import java.io.IOException;
 /**
  * Configuration class for standalone messaging setup.
  * Handles both local MQTT broker and AWS IoT Core connection settings.
+ *
+ * <p>The nested config sections are immutable records, deserialized by Gson (2.10+)
+ * via their canonical constructors. {@code getX()} delegates are retained alongside
+ * the record accessors so existing call sites continue to compile unchanged.
  */
 public class MessagingConfiguration {
     private MessagingConfig messaging;
 
-    public static class MessagingConfig {
-        private LocalMqttConfig local;
-        private IoTCoreConfig iotCore;
-
+    public record MessagingConfig(LocalMqttConfig local, IoTCoreConfig iotCore) {
         public LocalMqttConfig getLocal() { return local; }
         public IoTCoreConfig getIotCore() { return iotCore; }
     }
 
-    public static class LocalMqttConfig {
-        private String type;
-        private String host;
-        private int port;
-        private String clientId;
-        private CredentialsConfig credentials;
-
+    public record LocalMqttConfig(String type, String host, int port, String clientId,
+                                  CredentialsConfig credentials) {
         public String getType() { return type; }
         public String getHost() { return host; }
         public int getPort() { return port; }
@@ -39,25 +35,16 @@ public class MessagingConfiguration {
         public CredentialsConfig getCredentials() { return credentials; }
     }
 
-    public static class IoTCoreConfig {
-        private String endpoint;
-        private int port;
-        private String clientId;
-        private CredentialsConfig credentials;
-
+    public record IoTCoreConfig(String endpoint, int port, String clientId,
+                                CredentialsConfig credentials) {
         public String getEndpoint() { return endpoint; }
         public int getPort() { return port; }
         public String getClientId() { return clientId; }
         public CredentialsConfig getCredentials() { return credentials; }
     }
 
-    public static class CredentialsConfig {
-        private String username;
-        private String password;
-        private String certPath;
-        private String keyPath;
-        private String caPath;
-
+    public record CredentialsConfig(String username, String password, String certPath,
+                                    String keyPath, String caPath) {
         public String getUsername() { return username; }
         public String getPassword() { return password; }
         public String getCertPath() { return certPath; }
