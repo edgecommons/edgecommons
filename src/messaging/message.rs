@@ -96,8 +96,10 @@ pub struct MessageHeader {
 /// flat alongside `"thing"`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MessageTags {
-    /// IoT Thing name, serialized as `"thing"`.
-    #[serde(rename = "thing")]
+    /// IoT Thing name, serialized as `"thing"`. Omitted when empty and tolerated
+    /// when absent on the wire, so messages from Java/Python (which omit `thing`
+    /// when there is no thing name) deserialize cleanly (cross-language interop).
+    #[serde(rename = "thing", default, skip_serializing_if = "String::is_empty")]
     pub thing_name: String,
     /// Additional tags, flattened into the same JSON object.
     #[serde(flatten)]
