@@ -7,6 +7,7 @@ import com.google.gson.Gson;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -100,6 +101,51 @@ public class InteropNode {
                 System.out.println(out);
                 System.exit(1);
             }
+        } else if (role.equals("raw-sub")) {
+            String topic = args[1];
+            String token = args[2];
+            StandaloneMessagingProvider prov = provider("rawsub");
+            final CountDownLatch latch = new CountDownLatch(1);
+            final Message[] box = new Message[1];
+            prov.subscribe(topic, (t, m) -> {
+                box[0] = m;
+                latch.countDown();
+            }, 1);
+            System.out.println("READY");
+            System.out.flush();
+            JsonObject out = new JsonObject();
+            if (!latch.await(10, TimeUnit.SECONDS)) {
+                out.addProperty("ok", false);
+                out.addProperty("error", "timeout");
+                System.out.println(out);
+                System.exit(1);
+            }
+            Object raw = box[0].getRaw();
+            boolean isRaw = raw != null;
+            String rawToken = null;
+            JsonElement rawEl = isRaw ? asElement(raw) : null;
+            if (rawEl != null && rawEl.isJsonObject() && rawEl.getAsJsonObject().has("token")) {
+                rawToken = rawEl.getAsJsonObject().get("token").getAsString();
+            }
+            boolean ok = isRaw && token.equals(rawToken);
+            out.addProperty("ok", ok);
+            out.addProperty("is_raw", isRaw);
+            if (rawToken != null) {
+                out.addProperty("raw_token", rawToken);
+            }
+            System.out.println(out);
+            prov.close();
+            System.exit(ok ? 0 : 1);
+        } else if (role.equals("raw-pub")) {
+            String topic = args[1];
+            String token = args[2];
+            StandaloneMessagingProvider prov = provider("rawpub");
+            JsonObject payload = new JsonObject();
+            payload.addProperty("token", token);
+            payload.addProperty("from", LANG);
+            prov.publishRaw(topic, payload);
+            Thread.sleep(500);
+            prov.close();
         } else {
             System.err.println("unknown role: " + role);
             System.exit(2);

@@ -87,17 +87,16 @@ def commands():
     except Exception:
         pass
 
-    # Rust: cargo build the node.
+    # Rust: cargo build the node. (Absent cargo -> skip; a build *failure* raises,
+    # so a broken node surfaces loudly instead of masquerading as a skip.)
     if shutil.which("cargo"):
         rn = HERE / "rust_node"
-        try:
-            subprocess.run(["cargo", "build"], cwd=rn, check=True, capture_output=True, timeout=600)
-            exe = rn / "target" / "debug" / ("interop-rust-node.exe" if os.name == "nt"
-                                             else "interop-rust-node")
-            if exe.exists():
-                cmd["rust"] = lambda *a, _e=str(exe): [_e, *a]
-        except Exception:
-            pass
+        r = subprocess.run(["cargo", "build"], cwd=rn, capture_output=True, text=True, timeout=600)
+        assert r.returncode == 0, f"rust node build failed:\n{r.stderr}"
+        exe = rn / "target" / "debug" / ("interop-rust-node.exe" if os.name == "nt"
+                                         else "interop-rust-node")
+        if exe.exists():
+            cmd["rust"] = lambda *a, _e=str(exe): [_e, *a]
 
     # Java: compile the node against the shaded jar.
     java, javac = _find_java()
@@ -105,14 +104,12 @@ def commands():
     if java and javac and jar:
         out = HERE / "java_node" / "out"
         out.mkdir(parents=True, exist_ok=True)
-        try:
-            subprocess.run([javac, "-cp", jar, "-d", str(out),
+        r = subprocess.run([javac, "-cp", jar, "-d", str(out),
                             str(HERE / "java_node" / "InteropNode.java")],
-                           check=True, capture_output=True, timeout=120)
-            cp = jar + os.pathsep + str(out)
-            cmd["java"] = lambda *a, _cp=cp, _j=java: [_j, "-cp", _cp, "InteropNode", *a]
-        except Exception:
-            pass
+                           capture_output=True, text=True, timeout=120)
+        assert r.returncode == 0, f"java node compile failed:\n{r.stderr}"
+        cp = jar + os.pathsep + str(out)
+        cmd["java"] = lambda *a, _cp=cp, _j=java: [_j, "-cp", _cp, "InteropNode", *a]
 
     _CMD.update(cmd)
     return cmd
@@ -130,6 +127,31 @@ def _wait_ready(proc, timeout=20.0):
 
     threading.Thread(target=reader, daemon=True).start()
     return ready.wait(timeout)
+
+
+def _launch(cmd):
+    """Start a node, capturing all stdout lines (for nodes that print READY and then
+    a result line). Returns (proc, lines, ready_event)."""
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                            text=True, cwd=str(RUN_DIR))
+    lines, ready = [], threading.Event()
+
+    def reader():
+        for line in proc.stdout:
+            lines.append(line)
+            if "READY" in line:
+                ready.set()
+
+    threading.Thread(target=reader, daemon=True).start()
+    return proc, lines, ready
+
+
+def _last_json(lines):
+    for ln in reversed(lines):
+        s = ln.strip()
+        if s.startswith("{"):
+            return json.loads(s)
+    return None
 
 
 @pytest.mark.parametrize("responder", LANGS)
@@ -170,3 +192,44 @@ def test_interop_request_reply(commands, requester, responder):
             resp_proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
             resp_proc.kill()
+
+
+@pytest.mark.parametrize("subscriber", LANGS)
+@pytest.mark.parametrize("publisher", LANGS)
+def test_interop_raw_publish(commands, publisher, subscriber):
+    """One language publishes a raw (non-envelope) payload; another ingests it as a
+    raw message. Proves the {"raw": <value>} wire convention interoperates."""
+    for lang in (publisher, subscriber):
+        if lang not in commands:
+            pytest.skip(f"{lang} toolchain/artifact unavailable")
+
+    topic = f"interop/raw/{subscriber}/{uuid.uuid4()}"
+    token = uuid.uuid4().hex
+
+    sub_proc, lines, ready = _launch(commands[subscriber]("raw-sub", topic, token))
+    try:
+        assert ready.wait(20), f"{subscriber} raw-sub never signalled READY"
+
+        pub = subprocess.run(commands[publisher]("raw-pub", topic, token),
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                             timeout=30, cwd=str(RUN_DIR))
+        assert pub.returncode == 0, f"{publisher} raw-pub failed: {pub.stdout}\n{pub.stderr}"
+
+        # The subscriber exits after receiving (or its own 10s timeout).
+        try:
+            sub_proc.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            pass
+
+        payload = _last_json(lines)
+        assert payload is not None, f"no JSON from {subscriber} raw-sub; lines={lines}"
+        assert payload["ok"] is True, f"{publisher}->{subscriber} raw failed: {payload}"
+        assert payload["is_raw"] is True, "non-envelope payload must arrive as a raw message"
+        assert payload["raw_token"] == token, "raw payload must round-trip intact"
+    finally:
+        if sub_proc.poll() is None:
+            sub_proc.terminate()
+            try:
+                sub_proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                sub_proc.kill()

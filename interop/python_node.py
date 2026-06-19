@@ -99,12 +99,51 @@ def run_request(topic, token):
         prov.disconnect()
 
 
+def run_raw_sub(topic, token):
+    prov = _provider("rawsub")
+    state = {}
+    got = __import__("threading").Event()
+
+    def handler(_t, m):
+        state["raw"] = m.get_raw()
+        got.set()
+
+    prov.subscribe(topic, handler)
+    print("READY", flush=True)
+    try:
+        if not got.wait(10):
+            print(json.dumps({"ok": False, "error": "timeout"}), flush=True)
+            return 1
+        raw = state["raw"]
+        is_raw = raw is not None
+        raw_token = raw.get("token") if isinstance(raw, dict) else None
+        ok = is_raw and raw_token == token
+        print(json.dumps({"ok": bool(ok), "is_raw": is_raw, "raw_token": raw_token}), flush=True)
+        return 0 if ok else 1
+    finally:
+        prov.disconnect()
+
+
+def run_raw_pub(topic, token):
+    prov = _provider("rawpub")
+    try:
+        prov.publish_raw(topic, {"token": token, "from": LANG})
+        time.sleep(0.5)  # let the QoS-0 publish drain before disconnect
+        return 0
+    finally:
+        prov.disconnect()
+
+
 if __name__ == "__main__":
     role = sys.argv[1]
     if role == "responder":
         run_responder(sys.argv[2])
     elif role == "request":
         sys.exit(run_request(sys.argv[2], sys.argv[3]))
+    elif role == "raw-sub":
+        sys.exit(run_raw_sub(sys.argv[2], sys.argv[3]))
+    elif role == "raw-pub":
+        sys.exit(run_raw_pub(sys.argv[2], sys.argv[3]))
     else:
         sys.stderr.write(f"unknown role: {role}\n")
         sys.exit(2)
