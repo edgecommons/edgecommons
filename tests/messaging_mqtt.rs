@@ -285,3 +285,46 @@ async fn request_times_out_with_no_responder() {
     assert!(result.is_err(), "expected the await to time out, got {result:?}");
     info!("=== PASS request_times_out_with_no_responder ===");
 }
+
+#[tokio::test]
+async fn publish_raw_is_received_as_raw() {
+    if skipped() {
+        return;
+    }
+    init_logs();
+    info!("=== TEST publish_raw_is_received_as_raw ===");
+    let svc = connect_service(&format!("it-raw-{}", Uuid::new_v4())).await;
+    let topic = format!("itest/raw/{}", Uuid::new_v4());
+
+    let received = Arc::new(Mutex::new(None));
+    let rh = received.clone();
+    svc.subscribe(
+        &topic,
+        message_handler(move |_t, msg| {
+            let rh = rh.clone();
+            async move {
+                *rh.lock().unwrap() = Some((msg.is_raw(), msg.get_raw().cloned()));
+            }
+        }),
+        MAX_MESSAGES,
+        1,
+    )
+    .await
+    .expect("subscribe");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    let payload = json!({ "sensor": "temp", "value": 21.5 });
+    svc.publish_raw(&topic, &payload).await.expect("publish_raw");
+
+    for _ in 0..50 {
+        if received.lock().unwrap().is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    let (is_raw, raw) = received.lock().unwrap().clone().expect("received a message");
+    assert!(is_raw, "a non-envelope payload must be delivered as a raw message");
+    assert_eq!(raw.expect("raw value"), payload);
+    info!("=== PASS publish_raw_is_received_as_raw ===");
+}
