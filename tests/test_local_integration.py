@@ -177,6 +177,29 @@ def test_max_concurrency_cap_limits_callbacks(gg):
     MessagingClient.unsubscribe(topic)
 
 
+def test_raw_publish_delivers_non_envelope_payload(gg):
+    """publish_raw sends a non-envelope payload; the subscriber receives it as a
+    raw message (get_raw() set, get_body() None) -- parity with the Java/Rust raw
+    handling, exercised over the local broker."""
+    from ggcommons import MessagingClient
+
+    topic = "skeleton/test/raw"
+    received = []
+    got = threading.Event()
+
+    def handler(_t, m):
+        received.append(m)
+        got.set()
+
+    MessagingClient.subscribe(topic, handler)
+    MessagingClient.publish_raw(topic, {"sensor": "temp", "value": 21.5})
+    assert got.wait(5), "raw message should be delivered"
+    msg = received[0]
+    assert msg.get_raw() == {"sensor": "temp", "value": 21.5}
+    assert msg.get_body() is None
+    MessagingClient.unsubscribe(topic)
+
+
 def test_greengrass_app_constructs_and_defines_metric(gg):
     from app.greengrass_app import GreengrassApp
 
