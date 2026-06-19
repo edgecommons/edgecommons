@@ -24,7 +24,6 @@ import paho.mqtt.client as mqtt
 from awsiot.greengrasscoreipc.model import QOS
 
 from ggcommons.messaging.message import Message
-from ggcommons.messaging.message_builder import MessageBuilder
 from ggcommons.messaging.messaging_provider import MessagingProvider
 from ggcommons.messaging.messaging_config import MessagingConfiguration
 from ggcommons.utils.iou import Iou
@@ -291,7 +290,9 @@ class StandaloneProvider(MessagingProvider):
         try:
             payload = message.payload.decode('utf-8')
             try:
-                msg = MessageBuilder.from_object(json.loads(payload)).build()
+                # Use Message.from_object (same as the IPC path): a non-envelope
+                # JSON payload becomes a raw message (.raw), matching Java/Rust.
+                msg = Message.from_object(json.loads(payload))
             except json.JSONDecodeError:
                 logger.debug(f"Message from {channel.name} broker is not JSON, treating as raw payload")
                 msg = Message()

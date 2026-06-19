@@ -64,6 +64,21 @@ def test_from_object_roundtrip():
     assert m.get_header().name == "N"
 
 
+def test_from_object_non_envelope_dict_is_raw():
+    # A JSON object with none of header/tags/body is a raw message (parity with
+    # Java getRaw()/Rust is_raw()), not an envelope body.
+    m = Message.from_object({"temperature": 21.5})
+    assert m.get_raw() == {"temperature": 21.5}
+    assert m.get_body() is None
+    assert m.to_dict() == {"raw": {"temperature": 21.5}}
+
+
+def test_from_object_non_dict_is_raw():
+    m = Message.from_object("hello")
+    assert m.get_raw() == "hello"
+    assert m.get_body() is None
+
+
 def test_message_equality():
     a = Message()
     a.body = {"x": 1}
