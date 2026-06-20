@@ -117,7 +117,10 @@ final class ShadowConfigProvider extends ConfigProvider implements  StreamRespon
                 String payloadAsString = new String(payload, StandardCharsets.UTF_8);
                 JsonObject shadowDoc = new Gson().fromJson(payloadAsString, JsonObject.class);
                 JsonObject desiredDoc =  shadowDoc.getAsJsonObject("state").getAsJsonObject("desired");
-                retVal = desiredDoc.get("ComponentConfig").toString();
+                // ComponentConfig is a STRINGIFIED JSON string (cross-language contract,
+                // used to dodge the IoT shadow JSON-depth limit). getAsString() returns the
+                // raw inner JSON for destringify(); toString() would keep the quotes/escapes.
+                retVal = desiredDoc.get("ComponentConfig").getAsString();
             }
             else
             {
@@ -188,7 +191,8 @@ final class ShadowConfigProvider extends ConfigProvider implements  StreamRespon
         JsonObject payload = new Gson().fromJson(decodedBinaryPayload, JsonObject.class);
         JsonObject desiredDoc = payload.getAsJsonObject("state").getAsJsonObject("desired");
         if (desiredDoc != null) {
-            String componentConfigStr = desiredDoc.get("ComponentConfig").toString();
+            // Stringified JSON string — see getConfiguration().
+            String componentConfigStr = desiredDoc.get("ComponentConfig").getAsString();
             JsonObject componentConfig = Utils.destringify(componentConfigStr);
             configurationChanged(componentConfig);
             reportUpdatedConfiguration(componentConfigStr);

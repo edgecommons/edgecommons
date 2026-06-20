@@ -24,13 +24,17 @@ Result observed (name fix confirmed via the log
 and the loaded marker values):
 `{"lang":"java","connected":true,"config_loaded":{"publish_interval":37,"site":"java-shadow",...}}`
 
-## ⚠️ Cross-language shadow-format inconsistency (separate, pre-existing)
+## Cross-language shadow-format bug (found here, now FIXED)
 
-Surfaced by this validation: Java's `ShadowConfigProvider.getConfiguration()` reads
-`state.desired.ComponentConfig` with `.toString()` and parses it as a JSON **object**.
-Python/Rust/TS instead store/read `ComponentConfig` as a **stringified JSON string**
-(`extractConfigStr` → `JSON.parse`). So a shadow written by Java is not readable by the
-other three (and vice versa) — they are NOT interoperable on the shadow payload format.
-This is independent of the shadow-NAME fix and needs a decision on the canonical format
-before fixing (likely Java should use `.getAsString()` to match the stringified
-contract the other three + the source docs describe).
+This validation surfaced a separate pre-existing bug: Java's
+`ShadowConfigProvider` extracted `state.desired.ComponentConfig` with `.toString()`,
+which on a Gson string primitive keeps the quotes/escapes, so `Utils.destringify`
+failed ("Unable to deserialize string into json object") and init failed with "No
+configuration found". `ComponentConfig` is a **stringified JSON string** in all four
+libs (the canonical format — it avoids the IoT shadow JSON-depth limit). Fixed by
+using `.getAsString()` (the raw inner JSON) at both extraction sites (load + delta).
+
+Verified end-to-end: with a **stringified** cloud shadow (the format Python/Rust/TS
+write), the fixed Java component loaded `{"connected":true,"config_loaded":
+{"publish_interval":41,"site":"java-stringified",...}}`. All four libraries now agree
+on both the shadow name and the payload format.
