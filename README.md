@@ -6,8 +6,8 @@ edge component needs — **configuration, messaging, metrics, heartbeat, logging
 service interfaces, so component authors write only business logic. The CLI scaffolds new
 components from templates; the skeletons are worked, runnable examples.
 
-The same library exists in three languages (**Java, Python, Rust**) as deliberate mirrors of
-each other: same config schema, same CLI contract, same subsystem boundaries.
+The same library exists in four languages (**Java, Python, Rust, TypeScript**) as deliberate
+mirrors of each other: same config schema, same CLI contract, same subsystem boundaries.
 
 > This directory is a **workspace of independent git repositories**, not a single buildable
 > repo — the workspace root is not itself a git repo. Each subproject below has its own repo,
@@ -26,7 +26,7 @@ business logic runs in both:
   same messaging interface. Requires a separate messaging-config JSON
   (`-m STANDALONE <messaging_config.json>`).
 
-The standard CLI contract is identical across all three languages:
+The standard CLI contract is identical across all four languages:
 `-c/--config <SOURCE> [args]` (one of `FILE`, `ENV`, `GG_CONFIG` (default), `SHADOW`,
 `CONFIG_COMPONENT`), `-m/--mode <GREENGRASS|STANDALONE [path]>`, and `-t/--thing <name>`.
 
@@ -39,13 +39,14 @@ The standard CLI contract is identical across all three languages:
 | `ggcommons-java-lib/` | The **canonical**, most complete library. Maven/Java artifact `com.aws.proserve:ggcommons`. | Java 11+ (built on JDK 25, language target 21), Maven |
 | `ggcommons-python-lib/` | The Python port (PyPI `greengrass-commons`), at feature parity with Java. | Python 3.9+, setuptools |
 | `ggcommons-rust-lib/` | The Rust port (crate `ggcommons`), at parity with Java/Python. | Rust (edition 2024), Cargo |
+| `libs/ts/` | The TypeScript port (npm `ggcommons`), at parity with Java/Python/Rust; STANDALONE MQTT + GREENGRASS IPC, validated cross-language on a live nucleus. | TypeScript / Node 18+ |
 
 ### Tooling
 
 | Repo | What it is | Stack |
 |------|-----------|-------|
 | `ggcommons-cli/` | Scaffolding CLI (`ggcommons` / `ggcommons-cli`) that generates new components from templates and helps validate/build/publish/deploy/upgrade them. | Python |
-| `ggcommons-test-infra/` | Shared integration-test infrastructure used by **all three** libraries: an EMQX broker (`compose.yaml`, plaintext + mutual-TLS listeners), TLS cert generation, and the **cross-language interop** harness (`interop/`). | Docker + Python |
+| `ggcommons-test-infra/` | Shared integration-test infrastructure used by **all four** libraries: an EMQX broker (`compose.yaml`, plaintext + mutual-TLS listeners), TLS cert generation, and the **cross-language interop** harness (`interop/`). | Docker + Python |
 
 ### Component templates (minimal starting points the CLI copies)
 
@@ -54,6 +55,7 @@ The standard CLI contract is identical across all three languages:
 | `java-componen-template/` | Minimal Java component template *(note the typo in the directory name)*. | Java / Maven |
 | `python-component-template/` | Minimal Python component template. | Python |
 | `rust-component-template/` | Minimal Rust component template. | Rust |
+| `templates/typescript/` | Minimal TypeScript component template. | TypeScript |
 
 Templates are **manifest-driven**: each ships a `ggcommons-template.json` declaring the
 placeholder substitutions and file renames, so adding a language needs a template, not CLI code.
@@ -65,6 +67,7 @@ placeholder substitutions and file renames, so adding a language needs a templat
 | `java-component-skeleton/` | A fuller worked example component demonstrating the library. | Java |
 | `python-component-skeleton/` | Worked example component (also carries local integration tests). | Python |
 | `rust-component-skeleton/` | Worked example component. | Rust |
+| `examples/ts/` | Worked example TypeScript component. | TypeScript |
 
 ### Root docs
 

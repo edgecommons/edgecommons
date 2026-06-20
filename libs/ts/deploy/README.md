@@ -31,15 +31,15 @@ mkdir -p stage/tsverify && cp -r dist node_modules package.json stage/tsverify/
 ( cd stage/tsverify && zip -rq ../../tsverify.zip dist node_modules package.json )
 
 # 3. Lay out recipe + artifact for a local deployment
-mkdir -p ggc/recipes ggc/artifacts/com.ggcommons.TsIpcVerify/1.0.1
-cp com.ggcommons.TsIpcVerify-1.0.1.yaml ggc/recipes/
-cp tsverify.zip ggc/artifacts/com.ggcommons.TsIpcVerify/1.0.1/
+mkdir -p ggc/recipes ggc/artifacts/com.ggcommons.TsIpcVerify/1.0.2
+cp com.ggcommons.TsIpcVerify-1.0.2.yaml ggc/recipes/
+cp tsverify.zip ggc/artifacts/com.ggcommons.TsIpcVerify/1.0.2/
 
 # 4. Deploy
 sudo /greengrass/v2/bin/greengrass-cli deployment create \
   --recipeDir   ggc/recipes \
   --artifactDir ggc/artifacts \
-  --merge "com.ggcommons.TsIpcVerify=1.0.1"
+  --merge "com.ggcommons.TsIpcVerify=1.0.2"
 
 # 5. Read the result (component runs as root → /tmp file is world-readable)
 cat /tmp/ts_ipc_verify_result.json    # expect "all_ok": true

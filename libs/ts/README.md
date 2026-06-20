@@ -1,77 +1,86 @@
-# ggcommons (TypeScript) — spike
+# ggcommons (TypeScript)
 
-A thin TypeScript port of the ggcommons messaging core, proving that a 4th-language
-library interoperates on the same wire with the Java, Python, and Rust libraries.
+A TypeScript implementation of the Greengrass Commons library — a 4th implementation
+alongside Java (canonical), Python, and Rust. It bundles the cross-cutting concerns
+of an AWS IoT Greengrass v2 component (configuration, messaging, metrics, heartbeat,
+logging) behind service interfaces so component authors write only business logic.
 
-**Scope (deliberately minimal):** the cross-language message envelope, a
-STANDALONE-mode MQTT provider, and a GREENGRASS-mode IPC provider. It is *not* yet
-feature-complete — config sources, metrics, heartbeat, and the dual-MQTT IoT-Core
-leg are out of scope for the spike.
+It is at **feature parity** with the other libraries: the same config schema, the
+same CLI contract, the same subsystem boundaries, the same on-wire message envelope.
 
-## What's here
+## Subsystems
 
-| File | Purpose |
-|------|---------|
-| `src/message.ts` | `Message` / `MessageHeader` / `MessageTags` + fluent `MessageBuilder`. Byte-compatible wire shape (snake_case header keys, `thing` tag, `{raw}` for non-envelope payloads). |
-| `src/standalone.ts` | `StandaloneProvider` over [`mqtt.js`](https://github.com/mqttjs/MQTT.js): connect/subscribe (block until confirmed), publish/publishRaw, request/reply (ephemeral `ggcommons/reply-…` topic + copied `correlation_id`), plus an MQTT `topicMatches` helper. |
-| `src/ipc.ts` | `IpcProvider` over `aws-iot-device-sdk-v2`'s `greengrasscoreipc` client (GREENGRASS mode): the same public surface as `StandaloneProvider`, over Greengrass local pub/sub (`publishToTopic`/`subscribeToTopic`) and the IoT Core bridge. Envelope→`binaryMessage`, raw→`jsonMessage`, matching the Java/Python/Rust IPC providers. |
-| `src/index.ts` | Public surface. |
-| `src/interop_node.ts` | The cross-language interop node (compiled to `dist/interop_node.js`); joins the shared matrix in `test-infra/interop/` as the `ts` language. |
+| Area | Module | Notes |
+|------|--------|-------|
+| Lifecycle | `src/ggcommons.ts` | `GGCommonsBuilder` / `GGCommons` — parse args, init messaging, load+validate config, init logging/metrics/heartbeat, wire hot-reload. `close()` releases resources (TS has no RAII). |
+| CLI contract | `src/cli.ts` | `-c/--config` (FILE/ENV/GG_CONFIG/SHADOW/CONFIG_COMPONENT), `-m/--mode` (GREENGRASS/STANDALONE), `-t/--thing`. |
+| Config | `src/config/` | Typed model + defaulting accessors, template substitution (sanitized), embedded JSON schema + `ajv` validation, all 5 sources, hot reload. |
+| Messaging | `src/messaging/` | Transport/service split: `MessagingProvider` (`StandaloneMqttProvider` dual-broker, `IpcMessagingProvider` Greengrass IPC) + `DefaultMessagingService` (envelope, dispatch, request/reply). |
+| Metrics | `src/metrics/` | `Metric`/`MetricBuilder`, EMF (ms timestamps), targets (log w/ rotation, messaging, cloudwatchcomponent, cloudwatch via optional `@aws-sdk/client-cloudwatch`), `MetricEmitter`. |
+| Heartbeat | `src/heartbeat.ts` | Periodic cpu/mem/disk/threads/files/fds to metric/messaging targets; reacts to config reload. |
+| Logging | `src/logging.ts` | Leveled logger with file rotation; reconfigures on reload. |
+| Message | `src/message.ts` | The cross-language `Message` envelope + `MessageBuilder`. |
 
-## Build
+## Quick start
+
+```ts
+import { GGCommonsBuilder, MetricBuilder, MessageBuilder, Qos } from "ggcommons";
+
+const gg = await new GGCommonsBuilder("com.example.MyComponent")
+  .args(process.argv.slice(2))
+  .build();
+
+const cfg = gg.config();
+gg.metrics().defineMetric(MetricBuilder.create("ticks").addMeasure("count", "Count", 60).build());
+
+const svc = gg.messaging(); // throws if unavailable
+await svc.subscribe(`${cfg.thingName}/cmd`, (topic, msg) => {
+  // handle msg.getBody()
+}, 16, 1);
+
+await gg.metrics().emitMetric("ticks", { count: 1 });
+// on shutdown:
+await gg.close();
+```
+
+## Build, test
 
 ```bash
 npm install
 npm run build      # tsc -> dist/
+npm test           # vitest unit tests (cli, config, message, metrics, messaging, heartbeat)
 ```
 
-## Greengrass IPC (GREENGRASS mode)
+## Runtime modes
 
-`src/ipc.ts` implements GREENGRASS-mode messaging over `aws-iot-device-sdk-v2`'s
-`greengrasscoreipc` client. The JS SDK exposes only the **V1** IPC surface (manual
-streaming operations — `subscribeToTopic(...).on('message', …)` + `.activate()`);
-the simplified clientV2 used by Python/Java is Java/Python-only. The V1 surface is
-fully capable of the local pub/sub + IoT-Core-bridge operations the library needs.
-`IpcProvider` mirrors `StandaloneProvider`'s methods, so the transport-agnostic
-parts (request/reply, the envelope) are identical across both modes.
+- **STANDALONE** — dual-broker MQTT over [`mqtt.js`](https://github.com/mqttjs/MQTT.js):
+  a local broker plus an optional AWS IoT Core leg (mutual-TLS). Needs a
+  `-m STANDALONE <messaging_config.json>` file (`messaging.local` required,
+  `messaging.iotCore` optional). No native build.
+- **GREENGRASS** — Greengrass IPC over `aws-iot-device-sdk-v2`'s `greengrasscoreipc`
+  client (the **V1** IPC surface — `subscribeToTopic(...).on('message', …)` +
+  `.activate()`; the simplified clientV2 is Java/Python-only). Local pub/sub + the
+  IoT Core bridge + config (`GG_CONFIG`) + device shadow (`SHADOW`). Requires a
+  running nucleus: a deployed component supplies the IPC env (`SVCUID`, the
+  domain-socket path) and the recipe must grant `aws.greengrass.ipc.pubsub` (and,
+  for the bridge/shadow, `aws.greengrass.ipc.mqttproxy` / `aws.greengrass.ShadowManager`)
+  `accessControl`.
 
-The provider **compiles against the real SDK types** and reuses the exact wire
-envelope already proven byte-identical across Java/Python/Rust/TS over MQTT.
-Running it requires a live Greengrass nucleus: a deployed component supplies the
-IPC env (`SVCUID`, the domain-socket path) and the recipe must grant
-`aws.greengrass.ipc.pubsub` (and, for the bridge, `aws.greengrass.ipc.mqttproxy`)
-`accessControl` for the topics used. `mqtt.js` (STANDALONE) needs none of this.
+## Interoperability — validated
 
-### Validated on a live Greengrass core (2026-06-19)
+- **Cross-language wire (STANDALONE/MQTT):** joins the shared suite in
+  `test-infra/interop/` as the `ts` node. The full matrix is 4×4×2 = **32 combos,
+  all passing** (request/reply + raw publish/ingest, every ordered pair across
+  python/java/rust/ts, both directions).
+- **GREENGRASS IPC, on a live nucleus:** `IpcProvider` deployed as a component on a
+  real AWS IoT Greengrass v2 nucleus (`deploy/`, `src/ipc_verify.ts`) confirmed
+  connect + request/reply + raw over IPC, **plus cross-language Java→TS** (decoding
+  the heartbeat envelope the already-deployed Java ggcommons component publishes over
+  IPC). See `deploy/README.md` to reproduce.
 
-Deployed `IpcProvider` as a component (`deploy/com.ggcommons.TsIpcVerify-1.0.1.yaml`,
-artifact = `src/ipc_verify.ts`) on a real AWS IoT Greengrass v2 nucleus (Ubuntu
-`lab-5950x`, run-as root). All checks passed against the live nucleus:
+## Cross-language parity
 
-- **`connected: true`** — the JS SDK's eventstream-RPC IPC client connected over
-  the domain socket.
-- **request/reply over IPC** — `correlation_match: true`, the responder echoed the
-  request body (full request/reply traversed the nucleus).
-- **raw publish/ingest over IPC** — a non-envelope payload arrived as `is_raw`.
-- **cross-language Java → TS** — subscribed to
-  `ggcommons/lab-5950x/JavaComponentSkeleton/heartbeat` and decoded the heartbeat
-  **envelope published over IPC by the already-deployed Java ggcommons component**
-  (`header.name="heartbeat"`, `thing="lab-5950x"`, tags `appId/line/shop/site/thing`,
-  body `cpu/memory/files`) with the shared TS `Message` model.
-
-This confirms the TS IPC binding interoperates with the other libraries over
-Greengrass IPC, not just on the shared MQTT wire. See `deploy/README.md` to
-reproduce.
-
-## Interop
-
-This library is exercised by the shared cross-language suite:
-
-```bash
-docker start ggcommons-emqx                       # local broker on :1883
-cd ../../test-infra/interop && python -m pytest test_interop.py -v
-```
-
-It runs request/reply **and** raw publish/ingest for every ordered pair across
-`{python, java, rust, ts}` — confirming `ts` is mutually intelligible with the
-other three in both directions.
+Maintained intentionally with the Java/Python/Rust libraries: identical config
+schema, CLI flags, subsystem boundaries, message envelope (snake_case header keys,
+`thing` tag, `{raw}` for non-envelope payloads), EMF layout, and heartbeat stats
+shape. Change public behavior here only alongside the matching change in the mirrors.
