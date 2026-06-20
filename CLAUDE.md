@@ -10,7 +10,7 @@ This directory is a **workspace of independent projects**, not a single buildabl
 
 | Directory | What it is | Stack |
 |-----------|-----------|-------|
-| `ggcommons-java-lib/` | The Java library (canonical, most complete). PyPI/Maven artifact `com.aws.proserve:ggcommons`. | Java 11, Maven |
+| `ggcommons-java-lib/` | The Java library (canonical, most complete). PyPI/Maven artifact `com.aws.proserve:ggcommons`. | Java 25 (LTS), Maven |
 | `ggcommons-python-lib/` | The Python port (PyPI `greengrass-commons`), being brought to feature parity with Java. **Has its own `CLAUDE.md` — read it before working here.** | Python 3.8+, setuptools |
 | `ggcommons-cli/` | Scaffolding CLI that generates new components from templates. | Python |
 | `java-component-skeleton/`, `python-component-skeleton/` | Worked example components ("best practices demos") using the libraries. | Java / Python |
