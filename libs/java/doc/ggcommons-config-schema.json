@@ -1,0 +1,241 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://aws.com/schemas/ggcommons-config.json",
+  "title": "GGCommons Configuration Schema",
+  "description": "JSON Schema for AWS IoT Greengrass GGCommons library configuration",
+  "type": "object",
+  "properties": {
+    "logging": {
+      "type": "object",
+      "description": "Logging configuration settings",
+      "properties": {
+        "level": {
+          "type": "string",
+          "enum": ["TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"],
+          "default": "INFO",
+          "description": "Root logger level"
+        },
+        "format": {
+          "type": "string",
+          "default": "%d{yyyy-MM-dd HH:mm:ss} [%-5p] %-25.25c{1}(%4L): %m%n",
+          "description": "Log4j2 pattern format string"
+        },
+        "fileLogging": {
+          "type": "object",
+          "description": "File logging configuration",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false,
+              "description": "Enable file logging"
+            },
+            "filePath": {
+              "type": "string",
+              "description": "Path to log file (supports template variables)"
+            }
+          },
+          "required": ["enabled"],
+          "additionalProperties": false
+        },
+        "loggers": {
+          "type": "object",
+          "description": "Logger-specific level configuration",
+          "patternProperties": {
+            "^[a-zA-Z0-9._-]+$": {
+              "type": "string",
+              "enum": ["TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"]
+            }
+          },
+          "additionalProperties": false
+        },
+        "globalControl": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable global logging control for entire application"
+        }
+      },
+      "additionalProperties": false
+    },
+    "metricEmission": {
+      "type": "object",
+      "description": "Metric collection and emission configuration",
+      "properties": {
+        "target": {
+          "type": "string",
+          "enum": ["log", "messaging", "cloudwatch", "cloudwatchcomponent"],
+          "default": "log",
+          "description": "Target destination for metrics"
+        },
+        "namespace": {
+          "type": "string",
+          "default": "ggcommons",
+          "description": "CloudWatch namespace for metrics"
+        },
+        "largeFleetWorkaround": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable workaround for large fleet deployments"
+        },
+        "targetConfig": {
+          "type": "object",
+          "description": "Target-specific configuration",
+          "properties": {
+            "logFileName": {
+              "type": "string",
+              "description": "Log file path template (for log target)"
+            },
+            "maxFileSize": {
+              "type": "string",
+              "description": "Maximum log file size (for log target)"
+            },
+            "topic": {
+              "type": "string",
+              "description": "Topic template (for messaging/cloudwatch component targets)"
+            },
+            "destination": {
+              "type": "string",
+              "enum": ["ipc", "iotcore"],
+              "description": "Messaging destination (for messaging target)"
+            },
+            "intervalSecs": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Emission interval in seconds (for cloudwatch target)"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "heartbeat": {
+      "type": "object",
+      "description": "Component heartbeat and health monitoring configuration",
+      "properties": {
+        "intervalSecs": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 5,
+          "description": "Heartbeat interval in seconds"
+        },
+        "measures": {
+          "type": "object",
+          "description": "System metrics to include in heartbeat",
+          "properties": {
+            "cpu": {
+              "type": "boolean",
+              "default": true,
+              "description": "Include CPU usage metrics"
+            },
+            "memory": {
+              "type": "boolean",
+              "default": true,
+              "description": "Include memory usage metrics"
+            },
+            "disk": {
+              "type": "boolean",
+              "default": false,
+              "description": "Include disk usage metrics (not supported in Java)"
+            },
+            "threads": {
+              "type": "boolean",
+              "default": false,
+              "description": "Include thread count metrics"
+            },
+            "files": {
+              "type": "boolean",
+              "default": false,
+              "description": "Include open file count metrics"
+            },
+            "fds": {
+              "type": "boolean",
+              "default": false,
+              "description": "Include file descriptor metrics (not supported in Java)"
+            }
+          },
+          "additionalProperties": false
+        },
+        "targets": {
+          "type": "array",
+          "description": "Heartbeat publishing targets",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["metric", "messaging"],
+                "description": "Target type for heartbeat data"
+              },
+              "config": {
+                "type": "object",
+                "description": "Target-specific configuration",
+                "properties": {
+                  "destination": {
+                    "type": "string",
+                    "enum": ["ipc", "iotcore"],
+                    "default": "ipc",
+                    "description": "Messaging destination (for messaging targets)"
+                  },
+                  "topic": {
+                    "type": "string",
+                    "default": "ggcommons/{ThingName}/{ComponentName}/heartbeat",
+                    "description": "Topic template (for messaging targets)"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "topic": {
+                "type": "string",
+                "description": "Topic template (alternative to config.topic)"
+              }
+            },
+            "required": ["type"],
+            "additionalProperties": false
+          },
+          "default": [{"type": "metric"}]
+        }
+      },
+      "additionalProperties": false
+    },
+    "tags": {
+      "type": "object",
+      "description": "Component tags for template variable substitution",
+      "patternProperties": {
+        "^[a-zA-Z0-9_-]+$": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "component": {
+      "type": "object",
+      "description": "Component-specific configuration",
+      "properties": {
+        "global": {
+          "type": "object",
+          "description": "Global configuration applied to all instances",
+          "additionalProperties": true
+        },
+        "instances": {
+          "type": "array",
+          "description": "Instance-specific configurations",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Unique instance identifier"
+              }
+            },
+            "required": ["id"],
+            "additionalProperties": true
+          }
+        }
+      },
+      "required": ["global"],
+      "additionalProperties": false
+    }
+  },
+  "required": ["component"],
+  "additionalProperties": false
+}

@@ -1,0 +1,143 @@
+{
+  "logging": {
+    "level": "TRACE",
+    "format": "%d{yyyy-MM-dd HH:mm:ss.SSS} [%-5p] %C{1} (%L) [%t] : %m%n"
+  },
+  "heartbeat": {
+    "intervalSecs": 10,
+    "measures": {
+      "cpu": true,
+      "memory": true,
+      "disk": false,
+      "files": true,
+      "threads": true,
+      "fds": true
+    },
+    "targets": [
+      {
+        "type": "metric"
+      }
+    ]
+  },
+  "tags": {
+    "appId": "IntelliJIdea",
+    "site": "site1",
+    "shop": "shop1",
+    "line": "line1"
+  },
+  "metricEmission": {
+    "target": "messaging",
+    "targetConfig": {
+      "topic": "metrics/{ThingName}/data",
+      "destination": "ipc"
+    }
+  },
+  "component": {
+    "global": {
+    },
+    "instances": [
+      {
+        "id": "kep1-right",
+        "connectionInfo": {
+          "url": "opc.tcp://DESKTOP-A3J778C:49320/",
+          "security": {
+            "type": "Anonymous",
+            "ssl": {
+              "client_cert": "",
+              "client_key": "",
+              "server_cert": ""
+            }
+          }
+        },
+        "defaultPublishInterval": 1000,
+        "defaultSamplingRate": 500,
+        "defaultQueueSize": 100,
+        "metricsPublishInterval": 5,
+        "writeRequestTopic": "{ThingName}/{ComponentName}/{InstanceId}/write",
+        "readRequestTopic": "{ThingName}/{ComponentName}/{InstanceId}/read",
+        "subscriptions": [
+          {
+            "id": "Sine Tags 1-3, 16 bit K Reg DWORDS",
+            "publishInterval": 100,
+            "include": [
+              {
+                "ns": 2,
+                "tagExpression": "^Simulation Examples\\.Functions\\.Sine.*",
+                "samplingRate": 50,
+                "queueSize": 100,
+                "pubTopic": "{ThingName}/{ComponentName}/{InstanceId}/sineTags"
+              },
+              {
+                "ns": 2,
+                "tagExpression": "^Data Type Examples\\.16 Bit Device\\.K Registers\\.DWord\\d",
+                "samplingRate": 50,
+                "queueSize": 100,
+                "pubTopic": "{ThingName}/{ComponentName}/{InstanceId}/16bitKregs"
+              }
+            ],
+            "exclude": [
+              {
+                "ns": 2,
+                "tagExpression": "Simulation Examples\\.Functions\\.Sine4"
+              }
+            ]
+          },
+          {
+            "id": "Tag1",
+            "publishInterval": 100,
+            "include": [
+              {
+                "ns": 2,
+                "tagExpression": "^Channel1\\.Device1\\.Tag2",
+                "samplingRate": 25,
+                "queueSize": 100,
+                "deadband": {
+                  "type": "Absolute",
+                  "value": 5
+                },
+                "pubTopic": "{ThingName}/{ComponentName}/{InstanceId}/ch1dev1Tag2"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "simulator-baremetal",
+        "connectionInfo": {
+          "url": "opc.tcp://OFFICE-3950X:53530/OPCUA/SimulationServer",
+          "security": {
+            "type": "Anonymous",
+            "ssl": {
+              "client_cert": "",
+              "client_key": "",
+              "server_cert": ""
+            }
+          }
+        },
+        "defaultPublishInterval": 1000,
+        "defaultSamplingRate": 500,
+        "defaultQueueSize": 100,
+        "ipcPublishInterval": 0,
+        "subscriptions": [
+          {
+            "id": "All",
+            "publishInterval": 300,
+            "include": [
+              {
+                "ns": 3,
+                "tagExpression": "Sawtooth",
+                "samplingRate": 100,
+                "queueSize": 100,
+                "deadband": {
+                  "type": "None",
+                  "value": 0.8
+                },
+                "pubTopic": "{ThingName}/{ComponentName}/{InstanceId}/all-tags"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
