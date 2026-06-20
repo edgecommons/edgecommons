@@ -16,6 +16,12 @@ python -m pip install .   # or a plain install
 python -m pip install -e .   # editable install, for developing the CLI itself
 ```
 
+The component templates are **bundled into the wheel at build time** (from the
+monorepo's `templates/`), so an installed CLI scaffolds **offline** — no repo
+checkout or network needed. Override the template source per command with
+`--template-url` (a git URL or a local directory). An editable install falls back
+to the in-repo `templates/`.
+
 ## Usage at a glance
 
 ```bash

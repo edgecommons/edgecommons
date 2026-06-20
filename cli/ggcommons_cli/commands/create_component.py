@@ -16,15 +16,36 @@ MANIFEST_NAME = "ggcommons-template.json"
 # Monorepo root, resolved relative to this file (cli/ggcommons_cli/commands -> repo root).
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
-# Default template sources per language. Override any with --template-url. A source
-# may be a git URL (cloned) or a local directory (copied) — see _fetch_template.
-# In this monorepo the templates ship under templates/, so the defaults point at the
-# in-repo template directories (works from a checkout, no network). For a *published*
-# CLI, override with --template-url or package the templates (see the repo README).
+
+def _bundled_templates_root():
+    """templates/ bundled inside the installed package (built into the wheel by
+    setup.py's build_py), or None when running from a source checkout."""
+    try:
+        from importlib.resources import files
+        path = os.path.join(str(files("ggcommons_cli")), "templates")
+        return path if os.path.isdir(path) else None
+    except Exception:
+        return None
+
+
+def _default_template_source(language: str) -> str:
+    """Default template source for a language: the bundled copy when the CLI is
+    installed (works offline), else the in-repo templates/<lang> for dev/checkout."""
+    bundled = _bundled_templates_root()
+    if bundled:
+        candidate = os.path.join(bundled, language)
+        if os.path.isdir(candidate):
+            return candidate
+    return os.path.join(_REPO_ROOT, "templates", language)
+
+
+# Default template sources per language. Override any with --template-url (a git URL
+# cloned, or a local directory copied — see _fetch_template). Templates are bundled
+# into the wheel at build time, so the installed CLI scaffolds offline.
 DEFAULT_TEMPLATE_SOURCES = {
-    "JAVA": os.path.join(_REPO_ROOT, "templates", "java"),
-    "PYTHON": os.path.join(_REPO_ROOT, "templates", "python"),
-    "RUST": os.path.join(_REPO_ROOT, "templates", "rust"),
+    "JAVA": _default_template_source("java"),
+    "PYTHON": _default_template_source("python"),
+    "RUST": _default_template_source("rust"),
 }
 
 
