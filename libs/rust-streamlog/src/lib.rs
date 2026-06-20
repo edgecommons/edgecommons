@@ -8,6 +8,9 @@
 //! - [`blockstore`] — the durability seam ([`blockstore::segment_log::SegmentLog`]).
 //! - [`log`] — the embedded buffer (retention, backpressure, fsync, export cursor).
 //! - [`export`] — the export engine + the [`export::Sink`] seam.
+//!
+//! The C ABI for Phase-2 language bindings is finalized (design only) in
+//! `include/ggstreamlog.h`; the Rust implementation lands in Phase 2.
 
 pub mod blockstore;
 pub mod config;
