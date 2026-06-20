@@ -1,0 +1,16 @@
+*build/
+build
+.idea/
+**.DS_STORE
+**.DS_Store
+*.iml
+target/
+greengrass-build/
+dependency-reduced-pom.xml
+
+# Local credentials and runtime artifacts — never commit these
+creds/
+logs/
+*.pem
+*.key
+*.crt

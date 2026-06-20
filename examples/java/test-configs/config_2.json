@@ -1,0 +1,50 @@
+{
+  "logging": {
+    "level": "DEBUG",
+    "format": "%d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %-5level %logger{36} - %msg%n",
+    "globalControl": true,
+    "loggers": {
+      "com.aws.proserve.javacomponentskeleton": "DEBUG",
+      "com.aws.proserve.ggcommons": "DEBUG",
+      "com.aws.proserve.ggcommons.messaging": "INFO",
+      "org.apache.http": "WARN"
+    }
+  },
+  "heartbeat": {
+    "intervalSecs": 5,
+    "measures": {
+      "cpu": true,
+      "memory": true,
+      "disk": false,
+      "files": true,
+      "threads": true,
+      "fds": true
+    },
+    "targets": [
+      {
+        "type": "metric"
+      }
+    ]
+  },
+  "tags": {
+    "appId": "IntelliJIdea",
+    "site": "site1",
+    "shop": "shop1",
+    "line": "line1"
+  },
+  "metricEmission": {
+    "target": "log",
+    "targetConfig": {
+      "maxFileSize": "5MB",
+      "logFileName": "/greengrass/v2/logs/{ComponentName}.metric.log"
+    }
+  },
+  "component": {
+    "global": {
+      "publish_interval": 1,
+      "message": "Hello world config_2!"
+    },
+    "instances": [
+    ]
+  }
+}
