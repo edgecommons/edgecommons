@@ -1,0 +1,5 @@
+/target
+/greengrass-build
+*.metric.log
+# Cargo.lock is committed: this is a deployable binary component, not a library.
+

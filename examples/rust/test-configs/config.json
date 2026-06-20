@@ -1,0 +1,14 @@
+{
+  "logging": { "level": "DEBUG" },
+  "heartbeat": {
+    "intervalSecs": 5,
+    "measures": { "cpu": true, "memory": true },
+    "targets": [ { "type": "metric" } ]
+  },
+  "metricEmission": { "target": "log", "namespace": "ggcommons" },
+  "tags": { "site": "factory-1" },
+  "component": {
+    "global": { "publish_interval": 3 },
+    "instances": [ { "id": "main" } ]
+  }
+}
