@@ -1,0 +1,13 @@
+{
+  "language": "PYTHON",
+  "description": "Python Greengrass component built on the ggcommons (greengrass-commons) library.",
+  "substitutions": {
+    "recipe.yaml": ["DESCRIPTION", "COMPONENTFULLNAME", "AUTHOR", "COMPONENTNAME"],
+    "gdk-config.json": ["COMPONENTFULLNAME", "AUTHOR", "BUCKET", "REGION"],
+    "main.py": ["COMPONENTNAME"],
+    "app/greengrass_app.py": ["COMPONENTNAME"]
+  },
+  "renames": [
+    {"from": "app/greengrass_app.py", "to": "app/{COMPONENTNAME}.py"}
+  ]
+}

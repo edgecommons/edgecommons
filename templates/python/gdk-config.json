@@ -1,0 +1,20 @@
+{
+  "component": {
+    "<<COMPONENTFULLNAME>>": {
+      "author": "<<AUTHOR>>",
+      "version": "NEXT_PATCH",
+      "build": {
+        "build_system": "zip"
+      },
+      "publish": {
+        "bucket": "<<BUCKET>>",
+        "region": "<<REGION>>"
+      },
+      "ignore": [
+        ".idea",
+        "test-configs/**"
+      ]
+    }
+  },
+  "gdk_version": "1.6.2"
+}
