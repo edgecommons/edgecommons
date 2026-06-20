@@ -8,6 +8,13 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # A broker so the STANDALONE provider + lifecycle integration tests run (they
+    # self-skip without one, which would let coverage fall below the threshold).
+    services:
+      emqx:
+        image: emqx/emqx:5
+        ports:
+          - 1883:1883
     defaults:
       run:
         working-directory: libs/ts
@@ -18,4 +25,6 @@ jobs:
           node-version: "20"
       - run: npm ci || npm install
       - run: npm run build
-      - run: npm test
+      # `coverage` runs the full suite AND enforces the >=90% statements/lines gate
+      # (thresholds in vitest.config.ts).
+      - run: npm run coverage

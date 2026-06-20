@@ -91,10 +91,12 @@ export class CloudWatchTarget implements MetricTarget {
   ): Promise<CloudWatchTarget> {
     let module: CloudWatchModule;
     try {
-      // Indirect specifier so the optional dependency is NOT statically resolved by
-      // tsc (it may not be installed); resolved lazily at runtime instead.
-      const pkg = "@aws-sdk/client-cloudwatch";
-      module = (await import(pkg)) as unknown as CloudWatchModule;
+      // Literal dynamic import: still loaded lazily (so the "absent -> GgError" path
+      // is preserved) but the literal specifier lets vitest's `vi.mock` intercept it
+      // for the batching/datum coverage.
+      // TESTABILITY SEAM: was an indirect `import(pkg)` to keep tsc from resolving the
+      // optional dep; a devDependency now provides it and the literal form is mockable.
+      module = (await import("@aws-sdk/client-cloudwatch")) as unknown as CloudWatchModule;
     } catch {
       throw GgError.metrics(
         "metric target 'cloudwatch' requires the optional '@aws-sdk/client-cloudwatch' dependency",

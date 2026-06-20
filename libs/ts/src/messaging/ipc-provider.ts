@@ -55,6 +55,19 @@ export class IpcMessagingProvider implements MessagingProvider {
     return new IpcMessagingProvider(client, receiveMode);
   }
 
+  /**
+   * TESTABILITY SEAM: construct a provider around an already-built IPC client,
+   * bypassing the live `createClient()`/`connect()` handshake. Lets tests inject a
+   * fake client to cover the transport + config/shadow paths without a nucleus. The
+   * real {@link connect} is unchanged; this adds no new runtime behavior.
+   */
+  static _withClient(
+    client: greengrasscoreipc.Client,
+    receiveMode: model.ReceiveMode,
+  ): IpcMessagingProvider {
+    return new IpcMessagingProvider(client, receiveMode);
+  }
+
   /** The raw IPC client (escape hatch for advanced use). */
   nativeClient(): greengrasscoreipc.Client {
     return this.client;

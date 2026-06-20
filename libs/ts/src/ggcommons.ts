@@ -185,9 +185,15 @@ export class GGCommonsBuilder {
       reconfigureLogging(next);
       logger.info("configuration reloaded");
       for (const listener of [...listeners]) {
-        Promise.resolve(listener.onConfigurationChange(next)).catch((e) =>
-          logger.warn(`config change listener threw: ${String(e)}`),
-        );
+        // Guard both synchronous throws and rejected promises so one bad listener
+        // can never break a hot reload (matches the other libraries).
+        try {
+          Promise.resolve(listener.onConfigurationChange(next)).catch((e) =>
+            logger.warn(`config change listener threw: ${String(e)}`),
+          );
+        } catch (e) {
+          logger.warn(`config change listener threw: ${String(e)}`);
+        }
       }
     };
 
