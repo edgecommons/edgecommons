@@ -62,6 +62,8 @@ class GGCommons:
         self._component_name = component_name
         self._config_manager: Optional[ConfigManager] = None
         self._heartbeat = None
+        self._streams = None
+        self._stream_metrics = None
 
         try:
             # Process command line arguments
@@ -80,7 +82,11 @@ class GGCommons:
             
             # Initialize heartbeat
             self._init_heartbeat()
-            
+
+            # Telemetry streaming (only when a `streaming` config section is present, so components
+            # that don't use it never load the native library).
+            self._init_streaming()
+
             # Complete initialization
             if hasattr(self._config_manager, 'complete_initialization'):
                 self._config_manager.complete_initialization()
@@ -214,6 +220,34 @@ class GGCommons:
         self._heartbeat.set_messaging_service(MessagingClient)
         self._heartbeat.set_metric_service(MetricEmitter)
             
+    def _init_streaming(self) -> None:
+        """Open telemetry streams from the ``streaming`` config section (if any), resolving
+        templates, and start the stats->metrics bridge. No-op when the section is absent."""
+        import json as _json
+
+        full_config = self._config_manager.get_full_config()
+        streaming = full_config.get("streaming") if isinstance(full_config, dict) else None
+        if not isinstance(streaming, dict):
+            return
+
+        from ggcommons.streaming import StreamMetricsBridge, StreamService
+
+        # Resolve {ThingName} etc. across the streaming section (buffer paths, Kinesis stream names).
+        streaming_json = self._config_manager.resolve_template(_json.dumps(streaming))
+        self._streams = StreamService.open(streaming_json)
+        names = StreamService.stream_names(streaming_json)
+        if names:
+            self._stream_metrics = StreamMetricsBridge(self._config_manager, self._streams, names)
+        logger.info(f"Telemetry streaming initialized with {len(names)} stream(s)")
+
+    def get_streams(self):
+        """
+        Get the telemetry streaming service, or ``None`` if the component config has no
+        ``streaming`` section. Obtain a stream with ``service.stream(name)`` and append durable
+        records. Mirrors Java's getStreams() / Rust's gg.streams().
+        """
+        return self._streams
+
     def __enter__(self) -> "GGCommons":
         """Support `with GGCommonsBuilder...build() as gg:` so callers get
         deterministic shutdown without a manual try/finally."""
@@ -270,6 +304,18 @@ class GGCommons:
         """
         from ggcommons.messaging.messaging_client import MessagingClient
         from ggcommons.metrics.metric_emitter import MetricEmitter
+
+        try:
+            # Stop the streaming stats bridge + close the native service (flush + stop engines).
+            if self._stream_metrics is not None:
+                self._stream_metrics.close()
+        except Exception as e:
+            logger.error(f"Error stopping stream metrics during shutdown: {e}")
+        try:
+            if self._streams is not None:
+                self._streams.close()
+        except Exception as e:
+            logger.error(f"Error closing streams during shutdown: {e}")
 
         try:
             # Stop the heartbeat first so it stops publishing/emitting.
