@@ -19,6 +19,7 @@ Harnesses (under `src/`, compiled to `dist/`):
 
 Recipes: `com.ggcommons.TsGgVerify-1.0.1.yaml` (`-c GG_CONFIG`),
 `-1.0.2.yaml` (`-c CONFIG_COMPONENT`), `-1.0.3.yaml` (`-c SHADOW TsGgVerify`),
+`-1.0.4.yaml` (`-c SHADOW` with no name — exercises the sanitized default),
 `com.ggcommons.TsConfigProvider-1.0.0.yaml`, `com.ggcommons.TsIpcVerify-1.0.2.yaml`.
 
 ## Results
@@ -28,7 +29,8 @@ Recipes: `com.ggcommons.TsGgVerify-1.0.1.yaml` (`-c GG_CONFIG`),
 | Full `GGCommonsBuilder` lifecycle (GREENGRASS) | ✅ | component built end-to-end on the nucleus |
 | `GG_CONFIG` load | ✅ | values read from the recipe `ComponentConfig` |
 | `GG_CONFIG` hot-reload | ✅ | `greengrass-cli --update-config` (publish_interval 7→11) → `SubscribeToConfigurationUpdate` → in-process reload, no restart |
-| `SHADOW` load | ✅ | named shadow `TsGgVerify` set in the cloud (`aws iot-data update-thing-shadow`) → ShadowManager 2.3.14 sync → IPC `GetThingShadow` → `state.desired.ComponentConfig` (publish_interval 9, site shadow-site); reported back |
+| `SHADOW` load (explicit name) | ✅ | named shadow `TsGgVerify` set in the cloud (`aws iot-data update-thing-shadow`) → ShadowManager 2.3.14 sync → IPC `GetThingShadow` → `state.desired.ComponentConfig` (publish_interval 9, site shadow-site); reported back |
+| `SHADOW` load (default name, sanitized) | ✅ | `-c SHADOW` with NO name → the component-name default is sanitized to `com_ggcommons_TsGgVerify`; loaded the marker config (publish_interval 17, site shadow-default) from that named shadow. Exercises the dotted-name fix end-to-end (recipe `…TsGgVerify-1.0.4.yaml`). |
 | `CONFIG_COMPONENT` load | ✅ | TS consumer ↔ TS `config_provider` request/reply over IPC on `ggcommons/<thing>/config/get/<full-component-name>` |
 | Heartbeat over IPC | ✅ | library heartbeat received on `ggcommons/<thing>/TsGgVerify/heartbeat` (body cpu/memory) |
 | Metric target — `log` | ✅ | EMF line written to the configured file |
