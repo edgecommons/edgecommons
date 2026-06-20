@@ -17,3 +17,4 @@ export {
   REPLY_TOPIC_PREFIX,
   topicMatches,
 } from "./standalone";
+export { IpcProvider, IpcOptions, IpcQos } from "./ipc";
