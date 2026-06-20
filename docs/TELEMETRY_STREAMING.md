@@ -184,15 +184,22 @@ stack already does (`awscrt`, `gg_sdk`). The shared Rust core is the chosen path
 
 ### 5.3 C ABI surface (sketch)
 
+Because the **export engine + sinks live in the core**, the host does **not** drive export —
+it only appends and reads stats. So the ABI is append/flush/stats/lifecycle (+ a credential
+callback for Phase-3 Kafka), with config passed as a JSON string:
+
 ```c
-ggsl_log*  ggsl_open(const char* dir, const GgslConfig* cfg, char** err);
-int64_t    ggsl_append(ggsl_log*, const uint8_t* pk, uint16_t pk_len,
-                       uint64_t ts_ms, const uint8_t* payload, uint32_t len); // returns offset
-int        ggsl_read_batch(ggsl_log*, GgslBatch* out, uint32_t max_records, uint32_t max_bytes);
-int        ggsl_commit(ggsl_log*, uint64_t offset);
-void       ggsl_stats(ggsl_log*, GgslStats* out);   // depth, oldest-age, dropped, bytes-on-disk
-void       ggsl_close(ggsl_log*);
+int  ggsl_open(const char* config_json, ggsl_service** out, char** err);
+int  ggsl_stream_get(ggsl_service*, const char* name, ggsl_stream** out, char** err);
+int  ggsl_append(ggsl_stream*, const uint8_t* pk, uint16_t pk_len, uint64_t ts_ms,
+                 const uint8_t* payload, uint32_t len, uint64_t* out_offset, char** err);
+int  ggsl_flush(ggsl_stream*, char** err);
+int  ggsl_stats(ggsl_stream*, ggsl_stats_t* out);
+void ggsl_shutdown(ggsl_service*);
 ```
+
+The full, normative ABI + rules (ownership, thread-safety, `catch_unwind` at the boundary)
+are in the Phase-1 spec: **[TELEMETRY_STREAMING_PHASE1.md](./TELEMETRY_STREAMING_PHASE1.md) §11**.
 
 ### 5.4 Usage — identical shape in every lib
 
@@ -330,6 +337,7 @@ Both modes run the **same EmbeddedLog + sinks**. Differences are only environmen
 1. **MVP**: Rust `ggstreamlog` core (append/read/commit/retention/recovery, fsync policies,
    `dropOldest`) + fuzz/crash tests + bench; `KinesisSink`; STANDALONE; metrics. Pure-Rust
    first proves the core before bindings.
+   → **Implementation-ready spec: [TELEMETRY_STREAMING_PHASE1.md](./TELEMETRY_STREAMING_PHASE1.md).**
 2. Bindings (napi-rs / PyO3 / Panama) + `IStreamService` in TS/Python/Java.
 3. `KafkaSink` (core, librdkafka) + `ICredentialProvider` (File + SecretsManager-via-SDK
    refresh) + the host-language sink-override hook (enables Java `kafka-clients`).
