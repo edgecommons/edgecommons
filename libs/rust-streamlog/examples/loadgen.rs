@@ -5,23 +5,29 @@
 //! target**: the goal is per-(target × config) baselines, the throughput↔durability curve, and the
 //! bottleneck (CPU vs disk vs fsync vs network).
 //!
+//! **Ingest and drain run concurrently by default** (an export engine drains while producers
+//! append) — that is the standard operating profile of a running component and what these numbers
+//! reflect. Isolated pure-ingest is available via `--sink ingest-only` but only establishes a
+//! best-case ceiling, not a real-world figure.
+//!
 //! ```text
 //! cargo run --release --example loadgen -- \
 //!   --scenario S1 --payload 1024 --threads 4 --duration 10 \
-//!   --fsync PerBatch --segment-bytes 67108864 --on-full dropOldest --sink none \
+//!   --fsync PerBatch --segment-bytes 67108864 --on-full dropOldest --sink instant \
 //!   --path /mnt/data/ggsl-bench --target-name lab-5950x --git-sha $(git rev-parse --short HEAD)
 //! ```
 //!
 //! Flags: `--rate <r|unbounded>` `--payload <bytes>` `--threads <n>` `--duration <s>`
 //! `--count <n>` `--fsync <PerBatch|Interval|Always>` `--segment-bytes <n>` `--max-disk-bytes <n>`
-//! `--on-full <dropOldest|block|rejectNew>` `--sink <none|fake-rate:<r>|disconnect:<secs>|kinesis:<stream>|localstack:<stream>>`
+//! `--on-full <dropOldest|block|rejectNew>` `--sink <instant|ingest-only|fake-rate:<r>|disconnect:<secs>|kinesis:<stream>|localstack:<stream>>`
 //! `--scenario <S1..S8>` `--path <dir>` `--batch-records <n>` `--target-name <s>` `--git-sha <s>`
 //! `--results-dir <dir>` `--out <file>` `--drop-caches`.
 //!
-//! Sinks (offline/free unless `kinesis`): `none` = no export engine, so the **ingest/write path is
-//! measured in isolation** (S1/S2); `fake-rate:<r>` caps drain to model a slow sink (the drain
-//! isolator); `disconnect:<secs>` fails for N s then acks (backlog→drain); `kinesis:`/`localstack:`
-//! real `PutRecords` (needs the `kinesis` cargo feature).
+//! Sinks (offline/free unless `kinesis`): `instant` (default) = concurrent ingest+drain with an
+//! instant-ack sink (the real running-component path; bottleneck is disk + framing + the shared
+//! buffer lock); `ingest-only` = no export engine (best-case ceiling, isolated); `fake-rate:<r>`
+//! caps drain to model a slow sink; `disconnect:<secs>` fails for N s then acks (backlog drain);
+//! `kinesis:`/`localstack:` real `PutRecords` (needs the `kinesis` cargo feature).
 
 use std::collections::HashMap;
 use std::fs;
@@ -96,7 +102,10 @@ fn parse_on_full(s: &str) -> OnFull {
 
 /// Parsed `--sink` spec.
 enum SinkSpec {
-    None,
+    /// Concurrent ingest+drain with an instant-ack sink (default; the real running-component path).
+    Instant,
+    /// No export engine — pure ingest, the best-case ceiling (isolated, not real-world).
+    IngestOnly,
     FakeRate(f64),
     Disconnect(Duration),
     #[allow(dead_code)]
@@ -106,6 +115,7 @@ enum SinkSpec {
 fn parse_sink(s: &str) -> SinkSpec {
     let (kind, arg) = s.split_once(':').unwrap_or((s, ""));
     match kind.to_ascii_lowercase().as_str() {
+        "ingest-only" => SinkSpec::IngestOnly,
         "fake-rate" => SinkSpec::FakeRate(arg.parse().unwrap_or(10_000.0)),
         "disconnect" => SinkSpec::Disconnect(Duration::from_secs_f64(arg.parse().unwrap_or(5.0))),
         "kinesis" => SinkSpec::Kinesis { stream: arg.to_string(), endpoint: None },
@@ -113,12 +123,26 @@ fn parse_sink(s: &str) -> SinkSpec {
             stream: arg.to_string(),
             endpoint: Some("http://localhost:4566".to_string()),
         },
-        _ => SinkSpec::None,
+        // "instant" / "none" / anything else → concurrent instant-drain.
+        _ => SinkSpec::Instant,
     }
 }
 
 // ============================ perf sinks ============================
 // Lightweight counting sinks (do NOT store payloads — perf runs push millions of records).
+
+/// Instant-ack sink: drains as fast as the engine can read, so the sink is never the bottleneck.
+/// Used for the realistic **concurrent ingest+drain** path (the default; what a running component
+/// actually does) — the measured cost is disk + framing + the shared buffer lock, not the network.
+struct InstantSink {
+    delivered: Arc<AtomicU64>,
+}
+impl Sink for InstantSink {
+    fn send(&mut self, batch: &[ExportRecord<'_>]) -> SendOutcome {
+        self.delivered.fetch_add(batch.len() as u64, Ordering::Relaxed);
+        SendOutcome::AllAcked
+    }
+}
 
 /// Rate-limited sink: caps drain to ~`rate` records/s to model a slow/limited downstream.
 struct RateLimitedSink {
@@ -158,10 +182,10 @@ impl Sink for DisconnectSink {
 
 fn build_sink(spec: &SinkSpec, delivered: Arc<AtomicU64>) -> Option<Box<dyn Sink>> {
     match spec {
-        // `none` => no export engine at all, so the ingest path is measured in isolation (S1/S2).
-        // (An instant in-process drain would otherwise contend for the buffer lock and re-read the
-        // active segment each poll, polluting the pure-ingest numbers.)
-        SinkSpec::None => None,
+        // Concurrent instant drain (default) — the realistic running-component path.
+        SinkSpec::Instant => Some(Box::new(InstantSink { delivered })),
+        // No engine: pure-ingest ceiling (isolated, explicitly opt-in via --sink ingest-only).
+        SinkSpec::IngestOnly => None,
         SinkSpec::FakeRate(r) => {
             Some(Box::new(RateLimitedSink { rate: *r, delivered, start: Instant::now(), sent: 0 }))
         }
@@ -517,7 +541,7 @@ fn main() {
     let segment_bytes = args.u64("segment-bytes", 64 * 1024 * 1024);
     let max_disk_bytes = args.u64("max-disk-bytes", 1024 * 1024 * 1024);
     let on_full = parse_on_full(&args.str("on-full", "dropOldest"));
-    let sink_str = args.str("sink", "none");
+    let sink_str = args.str("sink", "instant");
     let sink_spec = parse_sink(&sink_str);
     let batch_records = args.usize("batch-records", 500);
     let drop_caches = args.flag("drop-caches");

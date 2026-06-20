@@ -27,17 +27,25 @@ regression detection.
 --target-name <s>       --git-sha <s>            --results-dir <dir> | --out <file> | --keep
 ```
 
-**Sinks.** `none` = no export engine, so the **ingest/write path is measured in isolation**
-(S1/S2). `fake-rate:<r>` caps drain to model a slow sink (the drain isolator). `disconnect:<secs>`
-fails for N s then acks (backlog → drain). `kinesis:`/`localstack:` is real `PutRecords` (needs the
-`kinesis` cargo feature; `localstack:` points at `http://localhost:4566` for floci/LocalStack).
+**Sinks.** `instant` (default) = **concurrent ingest+drain** with an instant-ack sink — the standard
+operating profile of a running component (producers append while an export engine drains; the
+bottleneck is disk + framing + the shared buffer lock, not the network). `ingest-only` = no export
+engine — a best-case ceiling only (isolated, not real-world). `fake-rate:<r>` caps drain to model a
+slow sink. `disconnect:<secs>` fails for N s then acks (backlog → drain). `kinesis:`/`localstack:` is
+real `PutRecords` (needs the `kinesis` cargo feature; `localstack:` points at `http://localhost:4566`
+for floci/LocalStack).
+
+> **Always report the concurrent number as the real-world figure.** The ingest-only ceiling is just
+> the upper bound; the gap between them is the cost of draining concurrently (lock contention +
+> per-batch checkpoint fsync). Decoupling the writer/checkpoint from the append lock is the deferred
+> perf pass (spec §5/§15).
 
 ## Scenarios (§15.6)
 
 | # | Scenario | Sink | Notes |
 |---|----------|------|-------|
-| S1 | Ingest throughput sweep | `none` | pure ingest; sweep payload × fsync × segment × threads |
-| S2 | Append latency under load | `none` | add `--rate` for a fixed sustainable rate |
+| S1 | Ingest throughput sweep | `instant` (+`ingest-only` ceiling) | concurrent ingest+drain; sweep payload × fsync × segment × threads |
+| S2 | Append latency under load | `instant` | add `--rate` for a fixed sustainable rate |
 | S3 | Recovery time | n/a | `--count` sets log size; `--drop-caches` for a cold number (Linux, root) |
 | S4 | Backpressure | `fake-rate` | small `--max-disk-bytes`; check `dropped_total`/`rejected_total` + bounded RSS |
 | S5 | Soak / endurance | `fake-rate`/`kinesis` | long `--duration`; watch `rss_peak_bytes`, `disk_bytes_final` |

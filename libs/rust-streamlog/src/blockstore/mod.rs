@@ -48,7 +48,10 @@ pub trait BlockStore: Send {
     fn sync(&mut self) -> Result<()>;
 
     /// Read records starting at `from` (inclusive), bounded by `max_records`/`max_bytes`.
-    fn read_from(&self, from: u64, max_records: usize, max_bytes: usize) -> Result<Vec<OwnedRecord>>;
+    ///
+    /// Takes `&mut self` so the implementation may build/cache a byte-offset index on demand
+    /// (the export read path must seek, not rescan, to keep ingest+drain concurrent).
+    fn read_from(&mut self, from: u64, max_records: usize, max_bytes: usize) -> Result<Vec<OwnedRecord>>;
 
     /// Delete segments entirely below `offset`; returns bytes reclaimed.
     fn truncate_below(&mut self, offset: u64) -> Result<u64>;

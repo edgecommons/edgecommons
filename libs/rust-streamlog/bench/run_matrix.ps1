@@ -17,18 +17,23 @@ function Run([string]$Label, [string[]]$Args) {
     --path $BufPath --target-name $Target --git-sha $Sha --results-dir $Results @Args
 }
 
-# S1 — ingest throughput curve: payload × fsync, at N(cores) threads, pure ingest.
+# S1 — ingest throughput curve: payload × fsync, at N(cores) threads.
+# Default = concurrent ingest+drain (the real running-component profile); plus an ingest-only
+# ceiling per payload so the gap (lock contention + per-batch checkpoint fsync) is visible.
 foreach ($payload in 256, 1024, 4096, 65536) {
   foreach ($fsync in "PerBatch", "Interval", "Always") {
-    Run "S1 p=$payload fsync=$fsync" @(
+    Run "S1 concurrent p=$payload fsync=$fsync" @(
       "--scenario", "S1", "--count", "1000000", "--payload", "$payload",
-      "--threads", "$Cores", "--fsync", "$fsync", "--segment-bytes", "67108864", "--sink", "none")
+      "--threads", "$Cores", "--fsync", "$fsync", "--segment-bytes", "67108864", "--sink", "instant")
   }
+  Run "S1 ceiling p=$payload (ingest-only)" @(
+    "--scenario", "S1", "--count", "1000000", "--payload", "$payload",
+    "--threads", "$Cores", "--fsync", "PerBatch", "--segment-bytes", "67108864", "--sink", "ingest-only")
 }
 
-# S2 — append latency at a fixed sustainable rate (single thread).
+# S2 — append latency at a fixed sustainable rate (single thread), concurrent drain.
 Run "S2 latency" @("--scenario", "S2", "--rate", "50000", "--duration", "20",
-  "--payload", "1024", "--threads", "1", "--sink", "none")
+  "--payload", "1024", "--threads", "1", "--sink", "instant")
 
 # S3 — recovery time vs log size (warm cache on Windows; drop_caches is Linux-only).
 foreach ($n in 1000000, 10000000) {

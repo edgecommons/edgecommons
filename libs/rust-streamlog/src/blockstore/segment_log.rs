@@ -3,7 +3,7 @@
 //! active (last) segment, validates the tail, and truncates a torn record.
 
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufWriter, Write};
+use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use super::checkpoint::{self, Checkpoint};
@@ -13,9 +13,16 @@ use crate::record::{self, Decoded};
 
 struct SegMeta {
     path: PathBuf,
+    /// First offset held by this segment (inclusive).
+    base: u64,
     byte_len: u64,
     /// Exclusive max offset held by this segment.
     end: u64,
+    /// Byte offset of each record within the file, indexed by `offset - base`. Lets the export
+    /// reader seek directly to a record instead of rescanning the whole segment. Built live on
+    /// append (and during tail recovery) for the active segment; built lazily on first read for
+    /// older segments. A cache — always rebuildable from the `.seg` file.
+    index: Vec<u64>,
 }
 
 /// A segmented, append-only durable log.
@@ -70,15 +77,16 @@ impl SegmentLog {
             let path = dir.join(seg_name(base));
             let is_last = i == bases.len() - 1;
             if is_last {
-                let (end, byte_len, was_torn) = scan_tail(&path, base)?;
+                let (end, byte_len, was_torn, index) = scan_tail(&path, base)?;
                 next_offset = end;
                 torn = was_torn;
-                segs.push(SegMeta { path, byte_len, end });
+                segs.push(SegMeta { path, base, byte_len, end, index });
             } else {
-                // Trust non-tail segments; their range ends where the next segment begins.
+                // Trust non-tail segments; their range ends where the next segment begins. Their
+                // index is built lazily on first read (avoids scanning every segment at open).
                 let byte_len = fs::metadata(&path)?.len();
                 let end = bases[i + 1];
-                segs.push(SegMeta { path, byte_len, end });
+                segs.push(SegMeta { path, base, byte_len, end, index: Vec::new() });
             }
         }
 
@@ -117,22 +125,43 @@ impl SegmentLog {
         let path = self.dir.join(seg_name(base));
         let f = OpenOptions::new().create(true).write(true).truncate(true).open(&path)?;
         self.writer = Some(BufWriter::new(f));
-        self.segs.push(SegMeta { path, byte_len: 0, end: base });
+        self.segs.push(SegMeta { path, base, byte_len: 0, end: base, index: Vec::new() });
+        Ok(())
+    }
+
+    /// Ensure `segs[i]` has its byte-offset index built (lazy for older segments), by scanning the
+    /// file once and caching. No-op for an already-indexed or empty segment.
+    fn ensure_index(&mut self, i: usize) -> Result<()> {
+        let seg = &self.segs[i];
+        if !seg.index.is_empty() || seg.end <= seg.base {
+            return Ok(());
+        }
+        let bytes = fs::read(&seg.path)?;
+        let mut index = Vec::with_capacity((seg.end - seg.base) as usize);
+        let mut pos = 0usize;
+        while let Decoded::Complete(f) = record::decode_frame(&bytes[pos..]) {
+            index.push(pos as u64);
+            pos += f.consumed;
+        }
+        self.segs[i].index = index;
         Ok(())
     }
 }
 
-/// Scan a segment from its start, returning `(next_offset, valid_byte_len, torn)` and
-/// truncating any torn/partial tail record on disk.
-fn scan_tail(path: &Path, base: u64) -> Result<(u64, u64, bool)> {
+/// Scan a segment from its start, returning `(next_offset, valid_byte_len, torn, index)` and
+/// truncating any torn/partial tail record on disk. `index[k]` is the byte offset of the record
+/// at `base + k` (so the reopened active segment has a live index without a second scan).
+fn scan_tail(path: &Path, base: u64) -> Result<(u64, u64, bool, Vec<u64>)> {
     let bytes = fs::read(path)?;
     let mut pos = 0usize;
     let mut expected = base;
+    let mut index = Vec::new();
     // Exits on Incomplete/Corrupt (torn tail); the inner break handles an offset gap.
     while let Decoded::Complete(f) = record::decode_frame(&bytes[pos..]) {
         if f.offset != expected {
             break; // offset gap → treat as torn boundary
         }
+        index.push(pos as u64);
         pos += f.consumed;
         expected += 1;
     }
@@ -143,7 +172,7 @@ fn scan_tail(path: &Path, base: u64) -> Result<(u64, u64, bool)> {
         f.set_len(pos as u64)?;
         f.sync_all()?;
     }
-    Ok((expected, pos as u64, torn))
+    Ok((expected, pos as u64, torn, index))
 }
 
 impl BlockStore for SegmentLog {
@@ -176,6 +205,7 @@ impl BlockStore for SegmentLog {
         self.writer.as_mut().expect("active writer").write_all(&buf)?;
 
         let active = self.segs.last_mut().expect("active segment");
+        active.index.push(active.byte_len); // byte offset of this record within the file
         active.byte_len += size;
         self.next_offset = offset + 1;
         active.end = self.next_offset;
@@ -197,37 +227,81 @@ impl BlockStore for SegmentLog {
         Ok(())
     }
 
-    fn read_from(&self, from: u64, max_records: usize, max_bytes: usize) -> Result<Vec<OwnedRecord>> {
+    fn read_from(&mut self, from: u64, max_records: usize, max_bytes: usize) -> Result<Vec<OwnedRecord>> {
         let mut out = Vec::new();
         if from >= self.next_offset || max_records == 0 {
             return Ok(out);
         }
-        let mut total_bytes = 0usize;
         let start = self.segs.iter().position(|s| from < s.end).unwrap_or(self.segs.len());
-        'segs: for seg in &self.segs[start..] {
-            let bytes = fs::read(&seg.path)?;
+        let mut total_bytes = 0usize;
+        let mut want = from;
+
+        for i in start..self.segs.len() {
+            if out.len() >= max_records || total_bytes >= max_bytes {
+                break;
+            }
+            self.ensure_index(i)?;
+            let seg = &self.segs[i];
+            if want >= seg.end {
+                continue;
+            }
+            // If `from` predates this segment's base (older data was reclaimed by retention),
+            // begin at the oldest surviving record rather than skipping the segment.
+            let effective = want.max(seg.base);
+            let local_start = (effective - seg.base) as usize;
+            let nrec = seg.index.len();
+
+            // Decide how many records to take from this segment (bounded by the caller's limits),
+            // using the index so we read only the exact byte range — no full-segment rescan.
+            let mut take = 0usize;
+            let mut take_bytes = 0usize;
+            while local_start + take < nrec
+                && out.len() + take < max_records
+                && total_bytes + take_bytes < max_bytes
+            {
+                let rec_start = seg.index[local_start + take];
+                let rec_end = seg
+                    .index
+                    .get(local_start + take + 1)
+                    .copied()
+                    .unwrap_or(seg.byte_len);
+                take_bytes += (rec_end - rec_start) as usize;
+                take += 1;
+            }
+            if take == 0 {
+                continue;
+            }
+
+            let byte_start = seg.index[local_start];
+            let byte_end = seg
+                .index
+                .get(local_start + take)
+                .copied()
+                .unwrap_or(seg.byte_len);
+
+            // Read exactly [byte_start, byte_end) and decode the `take` complete frames in it.
+            let mut buf = vec![0u8; (byte_end - byte_start) as usize];
+            let mut f = File::open(&seg.path)?;
+            f.seek(SeekFrom::Start(byte_start))?;
+            f.read_exact(&mut buf)?;
+
             let mut pos = 0usize;
-            while pos < bytes.len() {
-                match record::decode_frame(&bytes[pos..]) {
-                    Decoded::Complete(f) => {
-                        pos += f.consumed;
-                        if f.offset < from {
-                            continue;
-                        }
-                        total_bytes += f.payload.len();
+            while pos < buf.len() {
+                match record::decode_frame(&buf[pos..]) {
+                    Decoded::Complete(fr) => {
+                        pos += fr.consumed;
+                        total_bytes += fr.payload.len();
                         out.push(OwnedRecord {
-                            offset: f.offset,
-                            ts_ms: f.ts_ms,
-                            partition_key: f.partition_key.to_vec(),
-                            payload: f.payload.to_vec(),
+                            offset: fr.offset,
+                            ts_ms: fr.ts_ms,
+                            partition_key: fr.partition_key.to_vec(),
+                            payload: fr.payload.to_vec(),
                         });
-                        if out.len() >= max_records || total_bytes >= max_bytes {
-                            break 'segs;
-                        }
                     }
-                    Decoded::Incomplete | Decoded::Corrupt => continue 'segs,
+                    Decoded::Incomplete | Decoded::Corrupt => break,
                 }
             }
+            want = seg.base + (local_start + take) as u64;
         }
         Ok(out)
     }

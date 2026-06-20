@@ -19,17 +19,22 @@ run() { # run <label> -- <loadgen args...>
     --path "$BUFPATH" --target-name "$TARGET" --git-sha "$SHA" --results-dir "$RESULTS" "$@"
 }
 
-# S1 — ingest throughput curve: payload × fsync, at N(cores) threads, pure ingest.
+# S1 — ingest throughput curve: payload × fsync, at N(cores) threads.
+# Default = concurrent ingest+drain (the real running-component profile); plus an ingest-only
+# ceiling per payload so the gap (lock contention + per-batch checkpoint fsync) is visible.
 for payload in 256 1024 4096 65536; do
   for fsync in PerBatch Interval Always; do
-    run "S1 p=$payload fsync=$fsync" -- \
+    run "S1 concurrent p=$payload fsync=$fsync" -- \
       --scenario S1 --count 1000000 --payload "$payload" --threads "$CORES" \
-      --fsync "$fsync" --segment-bytes 67108864 --sink none
+      --fsync "$fsync" --segment-bytes 67108864 --sink instant
   done
+  run "S1 ceiling p=$payload (ingest-only)" -- \
+    --scenario S1 --count 1000000 --payload "$payload" --threads "$CORES" \
+    --fsync PerBatch --segment-bytes 67108864 --sink ingest-only
 done
 
-# S2 — append latency at a fixed sustainable rate (single thread).
-run "S2 latency" -- --scenario S2 --rate 50000 --duration 20 --payload 1024 --threads 1 --sink none
+# S2 — append latency at a fixed sustainable rate (single thread), concurrent drain.
+run "S2 latency" -- --scenario S2 --rate 50000 --duration 20 --payload 1024 --threads 1 --sink instant
 
 # S3 — recovery time vs log size (cold cache where possible; needs root for --drop-caches).
 for n in 1000000 10000000; do

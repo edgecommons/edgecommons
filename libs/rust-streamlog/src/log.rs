@@ -183,7 +183,7 @@ impl EmbeddedLog {
 
     /// Read up to `max_records`/`max_bytes` un-delivered records (from the `acked` cursor).
     pub fn read_batch(&self, max_records: usize, max_bytes: usize) -> Result<Vec<OwnedRecord>> {
-        let g = self.shared.0.lock().unwrap();
+        let mut g = self.shared.0.lock().unwrap();
         let from = g.acked;
         g.store.read_from(from, max_records, max_bytes)
     }
