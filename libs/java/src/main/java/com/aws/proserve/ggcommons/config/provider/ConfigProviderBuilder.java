@@ -28,7 +28,12 @@ public class ConfigProviderBuilder {
             }
             case "SHADOW" -> {
                 LOGGER.debug("Using Shadow com.aws.proseve.ggcommons.config provider");
-                String shadowName = configArgs.length > 1 ? configArgs[1] : componentName;
+                // Explicit name verbatim; the component-name default is sanitized to a
+                // valid AWS IoT shadow name ([A-Za-z0-9:_-]) — component names contain
+                // dots, which AWS shadow names reject. Identical across all libraries.
+                String shadowName = configArgs.length > 1
+                        ? configArgs[1]
+                        : componentName.replaceAll("[^A-Za-z0-9:_-]", "_");
                 if (messagingClient == null) {
                     throw new IllegalStateException("MessagingClient required for SHADOW config provider but not available during initialization");
                 }

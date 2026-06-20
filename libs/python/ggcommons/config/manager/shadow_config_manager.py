@@ -1,10 +1,20 @@
 import json
 import logging
+import re
 
 from awsiot.greengrasscoreipc.model import ReceiveMode, SubscriptionResponseMessage
 from ggcommons.config.manager.config_manager import ConfigManager
 
 logger = logging.getLogger("ShadowConfigManager")
+
+
+def _sanitize_shadow_name(name: str) -> str:
+    """Sanitize a default shadow name to AWS IoT's allowed set (``[A-Za-z0-9:_-]``);
+    any other character (notably the ``.`` in a component name) becomes ``_``.
+    Identical across the Java/Python/Rust/TS libraries so they agree on the same
+    shadow. Applied only to the component-name default; an explicit name is verbatim.
+    """
+    return re.sub(r"[^A-Za-z0-9:_-]", "_", name)
 
 
 class ShadowConfigManager(ConfigManager):
@@ -19,7 +29,9 @@ class ShadowConfigManager(ConfigManager):
 
     def __init__(self, thing_name: str, component_name: str, shadow_name: str):
         super().__init__(component_name, thing_name)
-        self._shadow_name = shadow_name if shadow_name is not None else component_name
+        self._shadow_name = (
+            shadow_name if shadow_name is not None else _sanitize_shadow_name(component_name)
+        )
         self._config_source = f"Named Shadow (shadow name: {self._shadow_name})"
         from ggcommons import MessagingClient
 
@@ -27,7 +39,7 @@ class ShadowConfigManager(ConfigManager):
             MessagingClient.get_native_client()
         )  # GreengrassCoreIPCClientV2()
         self._shadow_topic_prefix = ShadowConfigManager._SHADOW_TOPIC_TEMPLATE.format(
-            self.get_thing_name(), shadow_name
+            self.get_thing_name(), self._shadow_name
         )
         self._subscribe_to_shadow_topics()
         self.init()

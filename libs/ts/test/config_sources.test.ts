@@ -217,8 +217,9 @@ describe("ShadowConfigSource", () => {
     expect(client.shadowUpdates).toHaveLength(1);
     const reported = JSON.parse(client.shadowUpdates[0].payload.toString("utf8"));
     expect(reported.state.reported.ComponentConfig).toBe(cfgStr);
-    // Shadow name defaults to the component name.
-    expect(client.shadowUpdates[0].shadowName).toBe("com.example.C");
+    // Shadow name defaults to the component name, sanitized to AWS IoT's allowed
+    // set (dots -> underscores).
+    expect(client.shadowUpdates[0].shadowName).toBe("com_example_C");
   });
 
   it("load() falls back to a default config when the shadow is missing", async () => {

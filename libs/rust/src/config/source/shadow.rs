@@ -57,13 +57,24 @@ pub struct ShadowConfigSource {
 
 impl ShadowConfigSource {
     /// Create a source for the given named shadow. When `name` is `None`, the shadow
-    /// name defaults to the component name (matching Java/Python).
+    /// name defaults to the component name (matching Java/Python/TS), sanitized to
+    /// AWS IoT's allowed set (`[A-Za-z0-9:_-]`) — component names contain dots, which
+    /// AWS shadow names reject. An explicit `name` is used verbatim.
     pub fn new(name: Option<String>, thing_name: &str, component_name: &str) -> Self {
         Self {
             thing_name: thing_name.to_string(),
-            shadow_name: name.unwrap_or_else(|| component_name.to_string()),
+            shadow_name: name.unwrap_or_else(|| sanitize_shadow_name(component_name)),
         }
     }
+}
+
+/// Sanitize a default shadow name to AWS IoT's allowed character set
+/// (`[A-Za-z0-9:_-]`); any other character (notably `.`) becomes `_`. Identical
+/// across the Java/Python/Rust/TS libraries so they agree on the same shadow.
+fn sanitize_shadow_name(name: &str) -> String {
+    name.chars()
+        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, ':' | '_' | '-') { c } else { '_' })
+        .collect()
 }
 
 /// The default configuration written when no shadow exists yet (mirrors the
@@ -243,5 +254,17 @@ mod tests {
         let s = default_config_str();
         let v: Value = serde_json::from_str(&s).expect("default config is valid JSON");
         assert!(v.get("component").is_some());
+    }
+
+    #[test]
+    fn sanitizes_dotted_component_name_default() {
+        assert_eq!(sanitize_shadow_name("com.example.MyComponent"), "com_example_MyComponent");
+        assert_eq!(sanitize_shadow_name("a.b/c+d#e f"), "a_b_c_d_e_f");
+        assert_eq!(sanitize_shadow_name("My-Shadow_1:v2"), "My-Shadow_1:v2");
+        // No explicit name -> sanitized component name; explicit name -> verbatim.
+        let s = ShadowConfigSource::new(None, "thing-1", "com.example.MyComponent");
+        assert_eq!(s.shadow_name, "com_example_MyComponent");
+        let s2 = ShadowConfigSource::new(Some("my.explicit".to_string()), "thing-1", "com.example.MyComponent");
+        assert_eq!(s2.shadow_name, "my.explicit");
     }
 }

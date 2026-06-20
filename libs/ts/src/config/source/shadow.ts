@@ -22,7 +22,9 @@
  *   On `update/delta` it applies the new config and reports it back; on `get/rejected`
  *   it reports a default config. Reacting to the *delta* (not *accepted*) is loop-safe.
  * - The shadow name defaults to the component name when `-c SHADOW` is given with no
- *   name (matching the other libraries).
+ *   name (matching the other libraries), sanitized to AWS IoT's allowed set
+ *   (`[A-Za-z0-9:_-]`) since component names contain dots, which AWS shadow names
+ *   reject. An explicit name is used verbatim.
  *
  * Parity note: `extractConfigStr` returns the `ComponentConfig` string **verbatim**
  * (no re-serialization) so the reported value byte-matches `desired` and the delta
@@ -37,6 +39,17 @@ import { ConfigSource, ConfigWatch } from "./index";
  * The default configuration written when no shadow exists yet (mirrors the
  * Java/Python `getDefaultConfig` / `_DEFAULT_CONFIGURATION` and Rust `default_config`).
  */
+/**
+ * Sanitize a default shadow name to AWS IoT's allowed set (`[A-Za-z0-9:_-]`):
+ * any other character (notably the `.` in a component name like
+ * `com.example.Foo`) becomes `_`. Applied only to the component-name default — an
+ * explicit `-c SHADOW <name>` is left verbatim. Identical across the Java/Python/
+ * Rust/TS libraries so they agree on the same shadow.
+ */
+export function sanitizeShadowName(name: string): string {
+  return name.replace(/[^A-Za-z0-9:_-]/g, "_");
+}
+
 function defaultConfig(): unknown {
   return {
     logging: {},
@@ -91,7 +104,9 @@ export class ShadowConfigSource implements ConfigSource {
     componentName: string,
   ) {
     this.thingName = thingName;
-    this.shadowName = name ?? componentName;
+    // Explicit name verbatim; the component-name default is sanitized to a valid
+    // AWS IoT shadow name (component names contain dots, which AWS rejects).
+    this.shadowName = name ?? sanitizeShadowName(componentName);
   }
 
   /**
