@@ -4,8 +4,15 @@
  */
 package com.aws.proserve.ggcommons.streaming;
 
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
+import java.util.ArrayList;
+import java.util.List;
 
 import static java.lang.foreign.ValueLayout.ADDRESS;
 import static java.lang.foreign.ValueLayout.JAVA_LONG;
@@ -106,6 +113,30 @@ public final class StreamService implements AutoCloseable {
     /** The config document this service was opened with. */
     public String configJson() {
         return configJson;
+    }
+
+    /** The stream names declared in a {@code streaming} config document (empty if none/invalid). */
+    public static List<String> streamNames(String configJson) {
+        List<String> names = new ArrayList<>();
+        try {
+            JsonElement root = JsonParser.parseString(configJson);
+            if (!root.isJsonObject()) {
+                return names;
+            }
+            JsonObject obj = root.getAsJsonObject();
+            if (!obj.has("streams") || !obj.get("streams").isJsonArray()) {
+                return names;
+            }
+            JsonArray streams = obj.getAsJsonArray("streams");
+            for (JsonElement e : streams) {
+                if (e.isJsonObject() && e.getAsJsonObject().has("name")) {
+                    names.add(e.getAsJsonObject().get("name").getAsString());
+                }
+            }
+        } catch (RuntimeException ignore) {
+            // Malformed config → no names; StreamService.open will surface the real error.
+        }
+        return names;
     }
 
     private MemorySegment requireOpen() {

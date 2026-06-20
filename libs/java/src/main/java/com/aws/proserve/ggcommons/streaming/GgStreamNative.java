@@ -4,6 +4,7 @@
  */
 package com.aws.proserve.ggcommons.streaming;
 
+import java.io.InputStream;
 import java.lang.foreign.Arena;
 import java.lang.foreign.FunctionDescriptor;
 import java.lang.foreign.Linker;
@@ -12,6 +13,8 @@ import java.lang.foreign.SymbolLookup;
 import java.lang.invoke.MethodHandle;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.util.Locale;
 
 import static java.lang.foreign.ValueLayout.ADDRESS;
 import static java.lang.foreign.ValueLayout.JAVA_INT;
@@ -41,6 +44,7 @@ final class GgStreamNative {
     private final MethodHandle stats;
     private final MethodHandle shutdown;
     private final MethodHandle strFree;
+    private final MethodHandle setLogCallback;
 
     private GgStreamNative(Path libPath) {
         // Process-lifetime arena keeps the library mapped.
@@ -57,6 +61,11 @@ final class GgStreamNative {
         stats = down(lookup, "ggsl_stats", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
         shutdown = down(lookup, "ggsl_shutdown", FunctionDescriptor.ofVoid(ADDRESS));
         strFree = down(lookup, "ggsl_str_free", FunctionDescriptor.ofVoid(ADDRESS));
+        setLogCallback = down(lookup, "ggsl_set_log_callback",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+
+        // Route the core's log events into the host logger (log4j2) for the rest of the process.
+        NativeLogBridge.install(this);
     }
 
     private static MethodHandle down(SymbolLookup lookup, String name, FunctionDescriptor fd) {
@@ -95,9 +104,45 @@ final class GgStreamNative {
                 return candidate;
             }
         }
+        // Bundled in the jar at /native/<os>-<arch>/<mapped> → extract to a temp file.
+        Path extracted = extractBundled(mapped);
+        if (extracted != null) {
+            return extracted;
+        }
         throw new IllegalStateException(
                 "ggstreamlog native library not found. Set -Dggstreamlog.library.path=<path to "
-                        + mapped + "> or put it on java.library.path.");
+                        + mapped + ">, put it on java.library.path, or bundle it at "
+                        + "/native/" + osArch() + "/" + mapped + " on the classpath.");
+    }
+
+    /** Extract the platform library from the classpath ({@code /native/<os>-<arch>/<name>}) if present. */
+    private static Path extractBundled(String mapped) {
+        String resource = "/native/" + osArch() + "/" + mapped;
+        try (InputStream in = GgStreamNative.class.getResourceAsStream(resource)) {
+            if (in == null) {
+                return null;
+            }
+            String suffix = mapped.contains(".") ? mapped.substring(mapped.lastIndexOf('.')) : ".bin";
+            Path tmp = Files.createTempFile("ggstreamlog", suffix);
+            Files.copy(in, tmp, StandardCopyOption.REPLACE_EXISTING);
+            tmp.toFile().deleteOnExit();
+            return tmp;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** Platform tag for the bundled-resource path, e.g. {@code linux-x86_64}, {@code windows-x86_64}. */
+    private static String osArch() {
+        String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
+        String arch = System.getProperty("os.arch", "").toLowerCase(Locale.ROOT);
+        String osTag = os.contains("win") ? "windows" : os.contains("mac") || os.contains("darwin") ? "darwin" : "linux";
+        String archTag = switch (arch) {
+            case "amd64", "x86_64" -> "x86_64";
+            case "aarch64", "arm64" -> "aarch64";
+            default -> arch;
+        };
+        return osTag + "-" + archTag;
     }
 
     // ---- typed downcall wrappers (Throwable from invokeExact wrapped as unchecked) ----
@@ -154,6 +199,14 @@ final class GgStreamNative {
     void shutdown(MemorySegment service) {
         try {
             shutdown.invokeExact(service);
+        } catch (Throwable t) {
+            throw sneaky(t);
+        }
+    }
+
+    int setLogCallback(MemorySegment cb, MemorySegment userData) {
+        try {
+            return (int) setLogCallback.invokeExact(cb, userData);
         } catch (Throwable t) {
             throw sneaky(t);
         }

@@ -12,9 +12,14 @@ import com.aws.proserve.ggcommons.messaging.MessagingClient;
 import com.aws.proserve.ggcommons.messaging.MessagingClientBuilder;
 import com.aws.proserve.ggcommons.metrics.MetricEmitter;
 import com.aws.proserve.ggcommons.metrics.MetricEmitterBuilder;
+import com.aws.proserve.ggcommons.streaming.StreamMetricsBridge;
+import com.aws.proserve.ggcommons.streaming.StreamService;
+import com.google.gson.JsonObject;
 import org.apache.commons.cli.*;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+
+import java.util.List;
 
 
 public class GGCommons
@@ -25,6 +30,9 @@ public class GGCommons
     protected MessagingClient messagingClient;
     protected MetricEmitter metricEmitter;
     protected Heartbeat heartbeat;
+    /** Telemetry streaming (the native ggstreamlog binding). Null when no {@code streaming} config. */
+    protected StreamService streams;
+    protected StreamMetricsBridge streamMetricsBridge;
 
     /**
      * Constructs a new GGCommons instance with the given component name and command line arguments.
@@ -108,6 +116,10 @@ public class GGCommons
                     .withMetricService(metricEmitter)
                     .build();
 
+            // Telemetry streaming: only when a `streaming` config section is present (so components
+            // that don't use it never load the native library).
+            initStreaming();
+
             // Complete initialization - this must be the very last step
             // After this point, configuration changes will trigger listener notifications
             configManager.completeInitialization();
@@ -148,11 +160,53 @@ public class GGCommons
     }
 
     /**
+     * Returns the telemetry streaming service for this component, or {@code null} if the component
+     * configuration has no {@code streaming} section. Obtain a stream with
+     * {@link StreamService#stream(String)} and append durable records to it.
+     *
+     * @return the native-backed {@link StreamService}, or {@code null} if streaming is not configured
+     */
+    public StreamService getStreams()
+    {
+        return streams;
+    }
+
+    /**
+     * Opens telemetry streams from the {@code streaming} config section (if any), resolving config
+     * templates, and starts the stats-to-metrics bridge. No-op when the section is absent.
+     */
+    private void initStreaming()
+    {
+        JsonObject full = configManager.getFullConfig();
+        if (full == null || !full.has("streaming") || !full.get("streaming").isJsonObject())
+        {
+            return;
+        }
+        // Resolve {ThingName} etc. across the streaming section (buffer paths, Kinesis stream names).
+        String streamingJson = configManager.resolveTemplate(full.getAsJsonObject("streaming").toString());
+        streams = StreamService.open(streamingJson);
+        List<String> names = StreamService.streamNames(streamingJson);
+        if (!names.isEmpty())
+        {
+            streamMetricsBridge = new StreamMetricsBridge(configManager, metricEmitter, streams, names);
+        }
+        LOGGER.info("Telemetry streaming initialized with {} stream(s)", names.size());
+    }
+
+    /**
      * Shuts down this GGCommons instance, releasing background timers, threads and connections
      * held by the heartbeat, metric, messaging and configuration subsystems.
      */
     public void shutdown()
     {
+        if (streamMetricsBridge != null)
+        {
+            streamMetricsBridge.close();
+        }
+        if (streams != null)
+        {
+            streams.close();
+        }
         if (heartbeat != null)
         {
             heartbeat.close();
