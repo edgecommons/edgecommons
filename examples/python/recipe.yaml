@@ -1,0 +1,76 @@
+---
+RecipeFormatVersion: "2020-01-25"
+ComponentName: "{COMPONENT_NAME}"
+ComponentVersion: "{COMPONENT_VERSION}"
+ComponentDescription: "This is a skeleton python component supporting standardized configuration, logging, messaging and heartbeats."
+ComponentPublisher: "{COMPONENT_AUTHOR}"
+ComponentConfiguration:
+  DefaultConfiguration:
+    ComponentConfig:
+      logging:
+        level: "INFO"
+        format: "%(asctime)s [%(levelname)s] %(filename)s %(funcName)s(%(lineno)d) [%(threadName)s]: %(message)s"
+      heartbeat:
+        intervalSecs: 5
+        targets:
+          - type: "messaging"
+            config:
+              destination: "ipc"
+              topic: "heartbeat/{ThingName}/{ComponentName}"
+        measures:
+          cpu: true
+          memory: true
+          disk: false
+      metricEmission:
+        target: "cloudwatch"
+        namespace: "ggcommons"
+        targetConfig:
+          intervalSecs: 10
+      tags:
+        appId: "Test"
+        site: "Chantilly"
+        shop: "test_shop"
+        line: "test_line"
+      component:
+        global:
+          'publish_interval': 3
+        instances: []
+    accessControl:
+      aws.greengrass.ipc.pubsub:
+        "aws.proserve.greengrass.PythonComponentSkeleton:pubsub:1":
+          policyDescription: Allows access to publish/subscribe to all topics.
+          operations:
+            - "aws.greengrass#PublishToTopic"
+            - "aws.greengrass#SubscribeToTopic"
+          resources:
+            - "*"
+      aws.greengrass.ipc.mqttproxy:
+        "aws.proserve.greengrass.JavaComponentSkeleton:iotcore:1":
+          policyDescription: Allows access to publish/subscribe to all topics on IoT Core.
+          operations:
+            - "aws.greengrass#PublishToIoTCore"
+            - "aws.greengrass#SubscribeToIoTCore"
+          resources:
+            - "*"
+      aws.greengrass.ShadowManager:
+        "aws.proserve.greengrass.PythonComponentSkeleton:shadow:1":
+          policyDescription: Allows access to shadows.
+          operations:
+            - 'aws.greengrass#GetThingShadow'
+            - 'aws.greengrass#UpdateThingShadow'
+            - 'aws.greengrass#DeleteThingShadow'
+          resources:
+            - "*"
+Manifests:
+  - Platform:
+      os: all
+    Artifacts:
+      - URI: "s3://BUCKET_NAME/COMPONENT_NAME/COMPONENT_VERSION/python-component-skeleton.zip"
+        Unarchive: ZIP
+    Lifecycle:
+      Install:
+        Script: |-
+          pip3 install --user -r {artifacts:decompressedPath}/python-component-skeleton/requirements.txt
+      Run:
+        Script: |-
+          python3 -u {artifacts:decompressedPath}/python-component-skeleton/main.py
