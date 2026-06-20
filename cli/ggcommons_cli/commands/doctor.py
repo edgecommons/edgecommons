@@ -10,6 +10,8 @@ CHECKS = [
     ("cargo", ["cargo"], "build Rust components"),
     ("mvn", ["mvn"], "build Java components"),
     ("python3", ["python3", "python"], "run/build Python components"),
+    ("node", ["node"], "run/build TypeScript components"),
+    ("npm", ["npm"], "install TypeScript dependencies"),
     ("aws", ["aws"], "publish to AWS / deploy"),
 ]
 

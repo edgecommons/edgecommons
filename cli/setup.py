@@ -10,7 +10,7 @@ from setuptools.command.build_py import build_py
 _CLI_DIR = os.path.dirname(os.path.abspath(__file__))
 # In the monorepo the templates live one level up, at <root>/templates.
 _TEMPLATES_SRC = os.path.join(os.path.dirname(_CLI_DIR), "templates")
-_LANGS = ("java", "python", "rust")
+_LANGS = ("java", "python", "rust", "typescript")
 _IGNORE = shutil.ignore_patterns(".git", ".idea", "__pycache__", "target", "out", "*.pyc")
 
 

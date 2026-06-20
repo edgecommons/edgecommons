@@ -1,0 +1,71 @@
+---
+RecipeFormatVersion: "2020-01-25"
+ComponentName: "<<COMPONENTFULLNAME>>"
+ComponentVersion: "1.0.0"
+ComponentDescription: "<<DESCRIPTION>>"
+ComponentPublisher: "<<AUTHOR>>"
+ComponentConfiguration:
+  DefaultConfiguration:
+    ComponentConfig:
+      logging:
+        level: "INFO"
+      heartbeat:
+        intervalSecs: 5
+        targets:
+          - type: "metric"
+        measures:
+          cpu: true
+          memory: true
+          disk: false
+      metricEmission:
+        target: "log"
+        namespace: "ggcommons"
+        # Component work dir — writable by a non-root (ggc_user) component.
+        targetConfig:
+          logFileName: "/greengrass/v2/work/{ComponentFullName}/metric.log"
+      tags:
+        appId: "Test"
+        site: "Chantilly"
+      component:
+        global:
+          publish_interval: 3
+        instances: []
+    accessControl:
+      aws.greengrass.ipc.pubsub:
+        "<<COMPONENTFULLNAME>>:pubsub:1":
+          policyDescription: Allows access to publish/subscribe to all local topics.
+          operations:
+            - "aws.greengrass#PublishToTopic"
+            - "aws.greengrass#SubscribeToTopic"
+          resources:
+            - "*"
+      aws.greengrass.ipc.mqttproxy:
+        "<<COMPONENTFULLNAME>>:iotcore:1":
+          policyDescription: Allows access to publish/subscribe to all topics on IoT Core.
+          operations:
+            - "aws.greengrass#PublishToIoTCore"
+            - "aws.greengrass#SubscribeToIoTCore"
+          resources:
+            - "*"
+      aws.greengrass.ShadowManager:
+        "<<COMPONENTFULLNAME>>:shadow:1":
+          policyDescription: Allows access to thing shadows.
+          operations:
+            - "aws.greengrass#GetThingShadow"
+            - "aws.greengrass#UpdateThingShadow"
+            - "aws.greengrass#DeleteThingShadow"
+          resources:
+            - "*"
+Manifests:
+  - Platform:
+      os: linux
+    Artifacts:
+      - URI: "s3://BUCKET_NAME/COMPONENT_NAME/COMPONENT_VERSION/<<COMPONENTNAME>>.zip"
+        Unarchive: ZIP
+    Lifecycle:
+      # The ZIP bundles dist/, node_modules/ and package.json, so the component runs
+      # the prebuilt JS directly (no install step on-device). Runs in GREENGRASS mode
+      # (default), reading config from the deployment (GG_CONFIG).
+      Run:
+        RequiresPrivilege: true
+        Script: "node {artifacts:decompressedPath}/<<COMPONENTNAME>>/dist/main.js -c GG_CONFIG"

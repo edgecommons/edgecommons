@@ -24,6 +24,6 @@ def test_templates_are_bundled_into_the_wheel(tmp_path):
     wheels = list(out.glob("ggcommons_cli-*.whl"))
     assert wheels, "no wheel produced"
     names = set(zipfile.ZipFile(wheels[0]).namelist())
-    for lang in ("java", "python", "rust"):
+    for lang in ("java", "python", "rust", "typescript"):
         manifest = f"ggcommons_cli/templates/{lang}/ggcommons-template.json"
         assert manifest in names, f"{lang} template (manifest) not bundled: {manifest}"

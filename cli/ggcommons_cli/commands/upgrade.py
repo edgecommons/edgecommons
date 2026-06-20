@@ -1,3 +1,4 @@
+import json
 import os
 import re
 from typing import Dict, Any, List
@@ -9,9 +10,10 @@ class Upgrade(CommandBase):
     """Bump a generated component's ggcommons dependency to a specific version.
 
     Updates whichever dependency manifest is present:
-      - Java:   pom.xml             (<artifactId>ggcommons</artifactId> version)
-      - Python: requirements.txt    (greengrass-commons pin)
-      - Rust:   Cargo.toml          (ggcommons version dependency; path deps are left as-is)
+      - Java:       pom.xml             (<artifactId>ggcommons</artifactId> version)
+      - Python:     requirements.txt    (greengrass-commons pin)
+      - Rust:       Cargo.toml          (ggcommons version dependency; path deps are left as-is)
+      - TypeScript: package.json        (ggcommons dependency; `file:` path deps are left as-is)
     """
 
     @classmethod
@@ -50,6 +52,7 @@ class Upgrade(CommandBase):
         changes += self._bump_pom(os.path.join(path, "pom.xml"), version)
         changes += self._bump_requirements(os.path.join(path, "requirements.txt"), version)
         changes += self._bump_cargo(os.path.join(path, "Cargo.toml"), version)
+        changes += self._bump_package_json(os.path.join(path, "package.json"), version)
 
         if not changes:
             print("No ggcommons dependency found to upgrade.")
@@ -107,3 +110,27 @@ class Upgrade(CommandBase):
         with open(cargo, 'w', encoding='utf-8') as fh:
             fh.write(new)
         return [f"Cargo.toml: ggcommons -> {version}"]
+
+    @staticmethod
+    def _bump_package_json(pkg: str, version: str) -> List[str]:
+        if not os.path.isfile(pkg):
+            return []
+        with open(pkg, 'r', encoding='utf-8') as fh:
+            data = json.load(fh)
+        updated = False
+        for section in ("dependencies", "devDependencies"):
+            deps = data.get(section)
+            if not isinstance(deps, dict) or "ggcommons" not in deps:
+                continue
+            current = deps["ggcommons"]
+            # Leave `file:`/`link:` path dependencies as-is (mirrors Cargo path deps).
+            if isinstance(current, str) and (current.startswith("file:") or current.startswith("link:")):
+                return ["package.json: ggcommons is a path dependency; nothing to version-bump."]
+            deps["ggcommons"] = version
+            updated = True
+        if not updated:
+            return ["package.json: no ggcommons dependency found."]
+        with open(pkg, 'w', encoding='utf-8') as fh:
+            json.dump(data, fh, indent=2)
+            fh.write("\n")
+        return [f"package.json: ggcommons -> {version}"]

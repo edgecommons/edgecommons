@@ -46,6 +46,15 @@ DEFAULT_TEMPLATE_SOURCES = {
     "JAVA": _default_template_source("java"),
     "PYTHON": _default_template_source("python"),
     "RUST": _default_template_source("rust"),
+    "TYPESCRIPT": _default_template_source("typescript"),
+}
+
+# Languages whose components depend on the ggcommons library via a path dependency
+# (Cargo path dep for Rust, npm `file:` dep for TypeScript). These require a valid
+# --ggcommons-path and a language-specific default (libs/<lang> in this monorepo).
+_GGCOMMONS_PATH_DEFAULTS = {
+    "RUST": ("libs", "rust"),
+    "TYPESCRIPT": ("libs", "ts"),
 }
 
 
@@ -70,10 +79,18 @@ class CreateComponent(CommandBase):
         self.force = False
 
     @classmethod
+    def _default_ggcommons_path(cls, language: Optional[str]) -> str:
+        """Default ggcommons library path for a path-dependency language: libs/<lang>
+        in this monorepo, as an absolute, forward-slash path (Cargo/npm-friendly).
+        Falls back to libs/rust when the language is unknown (e.g. argparse default)."""
+        parts = _GGCOMMONS_PATH_DEFAULTS.get(language or "", ("libs", "rust"))
+        return os.path.join(_REPO_ROOT, *parts).replace("\\", "/")
+
+    @classmethod
     def get_json_configuration(cls):
-        # Default ggcommons (Rust) library path: libs/rust in this monorepo, as an
-        # absolute, forward-slash path (TOML/Cargo-friendly).
-        default_ggcommons_path = os.path.join(_REPO_ROOT, "libs", "rust").replace("\\", "/")
+        # Static default for argparse (language not yet known): libs/rust. The real
+        # default is re-resolved per language in execute_command (see _default_ggcommons_path).
+        default_ggcommons_path = cls._default_ggcommons_path(None)
         return {
             "name": "create-component",
             "description": "Create a new component that uses ggcommons",
@@ -143,8 +160,8 @@ class CreateComponent(CommandBase):
                 {
                     "name": "ggcommons-path",
                     "short": "g",
-                    "description": "Absolute path to the ggcommons Rust library "
-                                   "(RUST only; becomes the Cargo path dependency)",
+                    "description": "Absolute path to the ggcommons library (RUST/TYPESCRIPT "
+                                   "only; becomes the Cargo / npm `file:` path dependency)",
                     "type": "string",
                     "required": False,
                     "default": default_ggcommons_path
@@ -190,6 +207,13 @@ class CreateComponent(CommandBase):
         self.region = args.get('region')
         # argparse maps --ggcommons-path / --template-url to underscore dest names.
         self.ggcommons_path = args.get('ggcommons_path')
+        # The argparse default is the static libs/rust path (language isn't known when
+        # the parser is built). When the user accepted that default but chose a
+        # path-dependency language with a different default (e.g. TYPESCRIPT -> libs/ts),
+        # re-resolve to the language-specific default.
+        static_default = self._default_ggcommons_path(None)
+        if self.ggcommons_path == static_default and self.component_language in _GGCOMMONS_PATH_DEFAULTS:
+            self.ggcommons_path = self._default_ggcommons_path(self.component_language)
         self.template_url = args.get('template_url')
         self.template_ref = args.get('template_ref')
         self.force = bool(args.get('force'))
@@ -249,13 +273,15 @@ class CreateComponent(CommandBase):
         """Validate inputs before touching the filesystem."""
         if not self.component_full_name or self.component_full_name == "ComponentSkeleton":
             raise ValueError("A component name is required (-n/--name).")
-        if self.component_language == "RUST" and (
-            not self.ggcommons_path or not os.path.isdir(self.ggcommons_path)
-        ):
-            raise ValueError(
-                f"RUST components need a valid ggcommons library path, but "
-                f"'{self.ggcommons_path}' does not exist. Pass --ggcommons-path <abs path>."
-            )
+        if self.component_language in _GGCOMMONS_PATH_DEFAULTS:
+            if not self.ggcommons_path or not os.path.isdir(self.ggcommons_path):
+                raise ValueError(
+                    f"{self.component_language} components need a valid ggcommons library "
+                    f"path, but '{self.ggcommons_path}' does not exist. "
+                    f"Pass --ggcommons-path <abs path>."
+                )
+            # Normalize to forward slashes (Cargo/npm `file:` deps accept them on all OSes).
+            self.ggcommons_path = self.ggcommons_path.replace("\\", "/")
 
     def _guard_target_dir(self, target_dir: str):
         """Refuse to write into a non-empty existing directory unless --force."""
