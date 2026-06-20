@@ -128,17 +128,13 @@ fn scan_tail(path: &Path, base: u64) -> Result<(u64, u64, bool)> {
     let bytes = fs::read(path)?;
     let mut pos = 0usize;
     let mut expected = base;
-    loop {
-        match record::decode_frame(&bytes[pos..]) {
-            Decoded::Complete(f) => {
-                if f.offset != expected {
-                    break; // offset gap → treat as torn boundary
-                }
-                pos += f.consumed;
-                expected += 1;
-            }
-            Decoded::Incomplete | Decoded::Corrupt => break,
+    // Exits on Incomplete/Corrupt (torn tail); the inner break handles an offset gap.
+    while let Decoded::Complete(f) = record::decode_frame(&bytes[pos..]) {
+        if f.offset != expected {
+            break; // offset gap → treat as torn boundary
         }
+        pos += f.consumed;
+        expected += 1;
     }
     let torn = pos < bytes.len();
     if torn {

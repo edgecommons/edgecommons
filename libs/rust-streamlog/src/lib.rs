@@ -7,15 +7,19 @@
 //! - [`record`] — record model + on-disk frame format.
 //! - [`blockstore`] — the durability seam ([`blockstore::segment_log::SegmentLog`]).
 //! - [`log`] — the embedded buffer (retention, backpressure, fsync, export cursor).
-//! - (next) `export` — the export engine + sinks.
+//! - [`export`] — the export engine + the [`export::Sink`] seam.
 
 pub mod blockstore;
 pub mod config;
 pub mod error;
+pub mod export;
 pub mod log;
 pub mod record;
 
-pub use config::{BufferConfig, FsyncPolicy, OnFull};
+pub use config::{BatchConfig, BufferConfig, Compression, DeliveryConfig, FsyncPolicy, OnFull};
 pub use error::{GgStreamError, Result};
+pub use export::{
+    EngineStats, ExportEngine, ExportRecord, FakeSink, FakeSinkHandle, SendOutcome, Sink,
+};
 pub use log::{EmbeddedLog, LogStats};
 pub use record::Record;
