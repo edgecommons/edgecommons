@@ -1,8 +1,8 @@
 """Cross-language interoperability test for the ggcommons libraries.
 
 Runs a request/reply round-trip over the shared local MQTT broker for every
-ordered pair of languages (python, java, rust) using the per-language "interop
-node" programs in this directory. A passing pair proves the message envelope and
+ordered pair of languages (python, java, rust, ts) using the per-language "interop
+node" programs (the ts node is compiled inside libs/ts to dist/interop_node.js). A passing pair proves the message envelope and
 the request/reply (reply_to + correlation_id) convention are mutually intelligible
 in BOTH directions between those two libraries (request serialized by one,
 deserialized + replied by the other, reply deserialized back by the first).
@@ -13,6 +13,7 @@ Prereqs (each self-skips if missing):
 - java:  a built shaded jar in ggcommons-java-lib/target + a JDK (JAVA_HOME or
          C:/Users/breis/tools/jdk), compiled by this module's fixture
 - rust:  cargo available; the rust_node is built by this module's fixture
+- ts:    node + npm available; libs/ts is npm-installed + tsc-built by this fixture
 
 Run:  python -m pytest interop/test_interop.py -v
 """
@@ -36,7 +37,7 @@ RUN_DIR = Path(tempfile.mkdtemp(prefix="ggc-interop-"))
 WORKSPACE = HERE.parent.parent  # .../source/ggcommons
 HOST = os.environ.get("GGCOMMONS_IT_MQTT_HOST", "localhost")
 PORT = int(os.environ.get("GGCOMMONS_IT_MQTT_PORT", "1883"))
-LANGS = ["python", "java", "rust"]
+LANGS = ["python", "java", "rust", "ts"]
 
 
 def _broker_up():
@@ -103,6 +104,23 @@ def commands():
                                          else "interop-rust-node")
         if exe.exists():
             cmd["rust"] = lambda *a, _e=str(exe): [_e, *a]
+
+    # TypeScript: npm install + tsc build the libs/ts spike, which compiles the
+    # interop node to dist/interop_node.js. (Absent node/npm -> skip; a build
+    # *failure* raises so a broken node surfaces loudly instead of skipping.)
+    node, npm = shutil.which("node"), shutil.which("npm")
+    if node and npm:
+        ts = WORKSPACE / "libs" / "ts"
+        npm_cmd = npm  # npm is a .cmd shim on Windows; run via shell there.
+        r = subprocess.run(f'"{npm}" install', cwd=ts, capture_output=True, text=True,
+                           timeout=600, shell=True)
+        assert r.returncode == 0, f"ts npm install failed:\n{r.stderr}"
+        r = subprocess.run(f'"{npm}" run build', cwd=ts, capture_output=True, text=True,
+                           timeout=300, shell=True)
+        assert r.returncode == 0, f"ts build failed:\n{r.stderr}\n{r.stdout}"
+        node_js = ts / "dist" / "interop_node.js"
+        if node_js.exists():
+            cmd["ts"] = lambda *a, _n=node, _js=str(node_js): [_n, _js, *a]
 
     # Java: compile the node against the shaded jar.
     java, javac = _find_java()

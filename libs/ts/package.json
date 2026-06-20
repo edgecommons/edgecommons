@@ -1,0 +1,23 @@
+{
+  "name": "ggcommons",
+  "version": "0.1.0",
+  "description": "GGCommons TypeScript library (spike): STANDALONE MQTT messaging + the cross-language message envelope for AWS IoT Greengrass v2 components.",
+  "license": "Apache-2.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\""
+  },
+  "dependencies": {
+    "mqtt": "^5"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "typescript": "^5"
+  }
+}
