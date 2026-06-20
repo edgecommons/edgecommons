@@ -18,9 +18,9 @@
         <!--      <java.version>8</java.version>-->
         <CI_API_V4_URL>https://gitlab.aws.dev/api/v4</CI_API_V4_URL>
         <CI_PROJECT_ID>83110</CI_PROJECT_ID>
-        <!-- Language level: Java 25 (LTS). The Foreign Function & Memory API (Panama,
+        <!-- Language level: Java 25 (LTS). The Foreign Function and Memory API (Panama,
              JEP 454) is stable as of Java 22, so the native ggstreamlog binding needs
-             no --enable-preview. Built + deployed on JDK 25 (lab-5950x runs 25). -->
+             no preview flag. Built and deployed on JDK 25 (lab-5950x runs 25). -->
         <maven.compiler.release>25</maven.compiler.release>
     </properties>
     <dependencyManagement>
