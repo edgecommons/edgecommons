@@ -9,7 +9,10 @@ from ggcommons.config.manager.config_manager import ConfigManager
 from ggcommons.config.manager.environment_config_manager import EnvironmentConfigManager
 from ggcommons.config.manager.file_config_manager import FileConfigManager
 from ggcommons.config.manager.greengrass_config_manager import GreengrassConfigManager
-from ggcommons.config.manager.shadow_config_manager import ShadowConfigManager
+from ggcommons.config.manager.shadow_config_manager import (
+    ShadowConfigManager,
+    _sanitize_shadow_name,
+)
 
 logger = logging.getLogger("ConfigManagerBuilder")
 
@@ -43,7 +46,12 @@ class ConfigManagerBuilder:
             )
         elif config_args[0].upper() == "SHADOW":
             logger.info("SHADOW specified. Using ShadowConfigManager")
-            shadow_name = config_args[1] if len(config_args) > 1 else component_name
+            # Explicit name verbatim; the component-name default is sanitized to a
+            # valid AWS IoT shadow name ([A-Za-z0-9:_-]) — component names contain
+            # dots, which AWS shadow names reject. Mirrors Java/Rust/TS.
+            shadow_name = (
+                config_args[1] if len(config_args) > 1 else _sanitize_shadow_name(component_name)
+            )
             config_manager = ShadowConfigManager(
                 thing_name, component_name, shadow_name
             )
