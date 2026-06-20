@@ -67,6 +67,10 @@ pub enum GgError {
     #[error("Greengrass IPC error: {0}")]
     Ipc(String),
 
+    /// Telemetry-streaming error (the `streaming` feature).
+    #[error("streaming error: {0}")]
+    Streaming(String),
+
     /// Underlying I/O error.
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),

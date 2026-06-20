@@ -108,7 +108,7 @@ impl Default for DeliveryConfig {
 
 /// Where a stream's export engine delivers. Phase 1 ships `Kinesis`; Kafka/SiteWise are later.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
+#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum SinkConfig {
     Kinesis {
         stream_name: String,

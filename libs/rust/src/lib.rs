@@ -37,6 +37,8 @@ pub mod ipc;
 pub mod logging;
 pub mod messaging;
 pub mod metrics;
+#[cfg(feature = "streaming")]
+pub mod streaming;
 
 #[cfg(test)]
 mod testutil;
@@ -65,6 +67,13 @@ pub struct GgCommons {
     config: Arc<ArcSwap<Config>>,
     messaging: Option<Arc<dyn messaging::MessagingService>>,
     metrics: Arc<dyn metrics::MetricService>,
+    /// Telemetry streams (the `streaming` feature). Always present when the feature is on;
+    /// empty if no `streaming` config section was provided.
+    #[cfg(feature = "streaming")]
+    streams: Arc<dyn streaming::StreamService>,
+    /// Owns the streaming stats→metrics task; dropping `GgCommons` stops it (RAII).
+    #[cfg(feature = "streaming")]
+    _stream_metrics: Option<streaming::StreamMetricsBridge>,
     /// Config-change listeners notified on hot reload.
     listeners: ConfigListeners,
     /// Owns the heartbeat task; dropping `GgCommons` stops it (RAII).
@@ -127,6 +136,16 @@ impl GgCommons {
     /// The metric service for this component (the testable seam).
     pub fn metrics(&self) -> Arc<dyn metrics::MetricService> {
         self.metrics.clone()
+    }
+
+    /// The telemetry-streaming service for this component (the `streaming` feature).
+    ///
+    /// Returns the wired [`streaming::StreamService`]; obtain a stream with
+    /// [`streaming::StreamService::stream`]. The service is empty (no streams) unless the
+    /// component config has a `streaming` section.
+    #[cfg(feature = "streaming")]
+    pub fn streams(&self) -> Arc<dyn streaming::StreamService> {
+        self.streams.clone()
     }
 
     /// Register a listener invoked after the configuration is hot-reloaded.
@@ -246,6 +265,16 @@ impl GgCommonsBuilder {
         let metrics: Arc<dyn metrics::MetricService> = emitter.clone();
         let heartbeat = heartbeat::Heartbeat::start(config.clone(), metrics.clone(), messaging.clone());
 
+        // Telemetry streaming (feature-gated): open/recover configured streams and bridge their
+        // stats into the metric targets. Empty + no bridge when no `streaming` section exists.
+        #[cfg(feature = "streaming")]
+        let (streams, stream_metrics) = {
+            let svc: Arc<dyn streaming::StreamService> =
+                Arc::new(streaming::DefaultStreamService::open(snapshot.as_ref())?);
+            let bridge = streaming::StreamMetricsBridge::start(svc.clone(), metrics.clone());
+            (svc, bridge)
+        };
+
         // Internal listeners reconfigure the metric target and logging on hot reload.
         let listeners: ConfigListeners = Arc::new(std::sync::Mutex::new(Vec::new()));
         if let Ok(mut l) = listeners.lock() {
@@ -269,6 +298,10 @@ impl GgCommonsBuilder {
             config,
             messaging,
             metrics,
+            #[cfg(feature = "streaming")]
+            streams,
+            #[cfg(feature = "streaming")]
+            _stream_metrics: stream_metrics,
             listeners,
             _heartbeat: heartbeat,
             _reload_task: reload_task,
@@ -380,5 +413,7 @@ pub mod prelude {
         message_handler, MessageHandler, MessagingService, Qos, ReplyFuture,
     };
     pub use crate::metrics::{Measure, Metric, MetricBuilder, MetricService};
+    #[cfg(feature = "streaming")]
+    pub use crate::streaming::{StreamHandle, StreamRecord, StreamService, Stats as StreamStats};
     pub use crate::{GgCommons, GgCommonsBuilder, GgError, Result};
 }

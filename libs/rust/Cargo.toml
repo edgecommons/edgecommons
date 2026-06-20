@@ -20,6 +20,10 @@ standalone = ["dep:rumqttc"]
 greengrass = ["dep:aws-greengrass-component-sdk"]
 # CloudWatch metric target via the AWS SDK (heavy deps; off by default).
 cloudwatch = ["dep:aws-config", "dep:aws-sdk-cloudwatch"]
+# Telemetry streaming: durable store-and-forward streams + export engine (ggstreamlog core).
+# `streaming` alone is buffer-only (no AWS); `streaming-kinesis` adds the real Kinesis sink.
+streaming = ["dep:ggstreamlog"]
+streaming-kinesis = ["streaming", "ggstreamlog/kinesis"]
 
 [dependencies]
 thiserror = "2"
@@ -44,6 +48,10 @@ rumqttc = { version = "0.25", optional = true }
 # cloudwatch metric target (feature = "cloudwatch").
 aws-config = { version = "1", optional = true }
 aws-sdk-cloudwatch = { version = "1", optional = true }
+
+# Telemetry-streaming core (feature = "streaming"); the Kinesis sink adds the AWS SDK
+# (feature = "streaming-kinesis"). Pure-Rust core builds everywhere.
+ggstreamlog = { path = "../rust-streamlog", optional = true }
 
 # GREENGRASS-only. Native AWS Greengrass IPC SDK (lib name `gg_sdk`).
 # Linux-only C-FFI crate (bindgen + cc); only built when the `greengrass` feature is
@@ -70,3 +78,5 @@ tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
 anyhow = "1"
 # Integration-test logging to a file (in addition to the console).
 tracing-appender = "0.2"
+# Temp dirs for streaming tests (RAII cleanup).
+tempfile = "3"
