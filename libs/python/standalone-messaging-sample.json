@@ -1,0 +1,20 @@
+{
+  "messaging": {
+    "local": {
+      "type": "mqtt",
+      "host": "localhost",
+      "port": 1883,
+      "clientId": "my-component-local"
+    },
+    "iotCore": {
+      "endpoint": "a2djc899idbttw-ats.iot.us-east-1.amazonaws.com",
+      "port": 8883,
+      "clientId": "ggcommons-test-2",
+      "credentials": {
+        "certPath": "c:/Users/breis/source/ggcommons/ggcommons-python-lib/creds/ggcommons-test-2.cert.pem",
+        "keyPath": "c:/Users/breis/source/ggcommons/ggcommons-python-lib/creds/ggcommons-test-2.private.key",
+        "caPath": "c:/Users/breis/source/ggcommons/ggcommons-python-lib/creds/root-CA.crt"
+      }
+    }
+  }
+}
