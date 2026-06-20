@@ -1,0 +1,63 @@
+---
+RecipeFormatVersion: "2020-01-25"
+ComponentName: "com.ggcommons.TsGgVerify"
+ComponentVersion: "1.0.1"
+ComponentDescription: "On-device GREENGRASS-mode lifecycle verification for the ggcommons TypeScript library (GG_CONFIG load + hot-reload, heartbeat-over-IPC, metrics, request/reply, raw, IoT Core bridge)."
+ComponentPublisher: "ggcommons"
+ComponentDependencies:
+  aws.greengrass.TokenExchangeService:
+    VersionRequirement: ">=2.0.0"
+    DependencyType: "HARD"
+ComponentConfiguration:
+  DefaultConfiguration:
+    ComponentConfig:
+      logging:
+        level: "INFO"
+      heartbeat:
+        intervalSecs: 3
+        measures:
+          cpu: true
+          memory: true
+        targets:
+          - type: "messaging"
+            config:
+              destination: "ipc"
+      metricEmission:
+        target: "log"
+        namespace: "ggcommons"
+        targetConfig:
+          logFileName: "/tmp/ts_gg_metric.log"
+      tags:
+        site: "verify-site"
+        appId: "ts-gg"
+      component:
+        global:
+          publish_interval: 7
+        instances: []
+    accessControl:
+      aws.greengrass.ipc.pubsub:
+        "com.ggcommons.TsGgVerify:pubsub:1":
+          policyDescription: "Allow pub/sub on all local IPC topics."
+          operations:
+            - "aws.greengrass#PublishToTopic"
+            - "aws.greengrass#SubscribeToTopic"
+          resources:
+            - "*"
+      aws.greengrass.ipc.mqttproxy:
+        "com.ggcommons.TsGgVerify:mqttproxy:1":
+          policyDescription: "Allow pub/sub on all IoT Core topics."
+          operations:
+            - "aws.greengrass#PublishToIoTCore"
+            - "aws.greengrass#SubscribeToIoTCore"
+          resources:
+            - "*"
+Manifests:
+  - Platform:
+      os: linux
+    Artifacts:
+      - URI: "s3://BUCKET/com.ggcommons.TsGgVerify/1.0.1/tsverify.zip"
+        Unarchive: ZIP
+    Lifecycle:
+      Run:
+        RequiresPrivilege: true
+        Script: "node {artifacts:decompressedPath}/tsverify/dist/gg_verify.js -c GG_CONFIG"
