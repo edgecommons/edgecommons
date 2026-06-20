@@ -214,6 +214,18 @@ export class MessageBuilder {
     return this;
   }
 
+  /**
+   * Populate the thing name and tags from a config snapshot (mirrors the
+   * Java/Python/Rust `from_config`). Typed structurally to avoid a config import.
+   */
+  withConfig(config: { thingName: string; parsed: { tags: Record<string, unknown> } }): this {
+    this.thingName = config.thingName;
+    for (const [k, v] of Object.entries(config.parsed.tags)) {
+      this.extra[k] = v;
+    }
+    return this;
+  }
+
   /** Override the correlation id (e.g. to correlate a reply with its request). */
   withCorrelationId(id: string): this {
     this.header.correlation_id = id;

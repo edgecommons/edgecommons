@@ -1,0 +1,156 @@
+/**
+ * Metrics — service (TypeScript).
+ *
+ * {@link MetricEmitter} routes metric emissions to the configured {@link MetricTarget},
+ * the default {@link MetricService} implementation. Mirrors the Rust `MetricEmitter`:
+ *  - `create` (Rust's `new`) selects the target via {@link buildTarget} from
+ *    `config.parsed.metricEmission.target()`.
+ *  - `defineMetric`/`isMetricDefined` back a name→{@link Metric} registry.
+ *  - `emitMetric`/`emitMetricNow` look the metric up by name; an undefined metric is
+ *    a warn-and-ignore no-op (not an error), matching Rust.
+ *  - `flushMetrics`/`shutdown` delegate to the current target.
+ *  - As a {@link ConfigurationChangeListener}, `onConfigurationChange` rebuilds the
+ *    target (keeping the previous one on error), so the target is swappable.
+ */
+import type { MetricService, MeasureValues } from "./types";
+import type { MetricTarget } from "./types";
+import { Metric } from "./metric";
+import { LogTarget } from "./target/log";
+import { MessagingMetricTarget } from "./target/messaging";
+import { CloudWatchComponentTarget } from "./target/cloudwatch_component";
+import { CloudWatchTarget } from "./target/cloudwatch";
+import { Config } from "../config/model";
+import { resolve } from "../config/template";
+import type { ConfigurationChangeListener } from "../config";
+import type { IMessagingService } from "../messaging/types";
+import { GgError } from "../errors";
+
+/** Require a messaging service for targets that need one. Matches Rust `require_messaging`. */
+function requireMessaging(
+  messaging: IMessagingService | undefined,
+  target: string,
+): IMessagingService {
+  if (messaging === undefined) {
+    throw GgError.metrics(`metric target '${target}' requires a messaging service`);
+  }
+  return messaging;
+}
+
+/**
+ * Build the configured metric target. Mirrors Rust `build_target`: selects by
+ * `metricEmission.target()` (lower-cased); unknown targets warn and default to log.
+ */
+async function buildTarget(config: Config, messaging: IMessagingService | undefined): Promise<MetricTarget> {
+  const mc = config.parsed.metricEmission;
+  const namespace = mc.namespace();
+  const largeFleet = mc.largeFleetWorkaround;
+  const targetName = mc.target().toLowerCase();
+
+  const logTarget = (): MetricTarget =>
+    new LogTarget(resolve(config, mc.logFileName()), namespace, largeFleet, mc.maxFileSize());
+
+  switch (targetName) {
+    case "log":
+      return logTarget();
+    case "messaging": {
+      const svc = requireMessaging(messaging, "messaging");
+      const topic = resolve(config, mc.topic());
+      // Canonical "iot_core" (schema) plus legacy "iotcore" both select IoT Core;
+      // everything else (e.g. "ipc"/"local") is the local transport.
+      const dest = mc.destination().toLowerCase();
+      const iotCore = dest === "iot_core" || dest === "iotcore";
+      return new MessagingMetricTarget(
+        svc,
+        topic,
+        iotCore,
+        namespace,
+        largeFleet,
+        config.thingName,
+        config.parsed.tags,
+      );
+    }
+    case "cloudwatchcomponent": {
+      const svc = requireMessaging(messaging, "cloudwatchcomponent");
+      const topic = resolve(config, mc.topic());
+      return new CloudWatchComponentTarget(svc, topic, namespace);
+    }
+    case "cloudwatch":
+      return CloudWatchTarget.create(namespace, largeFleet, mc.intervalSecs());
+    default:
+      // eslint-disable-next-line no-console
+      console.warn(`unknown metric target '${targetName}'; defaulting to 'log'`);
+      return logTarget();
+  }
+}
+
+/** Routes metric emissions to the configured {@link MetricTarget}. */
+export class MetricEmitter implements MetricService, ConfigurationChangeListener {
+  private target: MetricTarget;
+  private readonly metrics = new Map<string, Metric>();
+  /** Retained so the target can be rebuilt on config hot-reload. */
+  private readonly messaging?: IMessagingService;
+
+  private constructor(target: MetricTarget, messaging: IMessagingService | undefined) {
+    this.target = target;
+    this.messaging = messaging;
+  }
+
+  /**
+   * Build an emitter from configuration, selecting the target (Rust's `new`).
+   * `messaging` is required by the `messaging`/`cloudwatchcomponent` targets and is
+   * retained so the target can be rebuilt on config change.
+   */
+  static async create(config: Config, messaging?: IMessagingService): Promise<MetricEmitter> {
+    const target = await buildTarget(config, messaging);
+    return new MetricEmitter(target, messaging);
+  }
+
+  defineMetric(metric: Metric): void {
+    this.metrics.set(metric.getName(), metric);
+  }
+
+  isMetricDefined(name: string): boolean {
+    return this.metrics.has(name);
+  }
+
+  async emitMetric(name: string, values: MeasureValues): Promise<void> {
+    const metric = this.metrics.get(name);
+    if (metric === undefined) {
+      // eslint-disable-next-line no-console
+      console.warn(`metric '${name}' is not defined; ignoring emit`);
+      return;
+    }
+    await this.target.emit(metric, values);
+  }
+
+  async emitMetricNow(name: string, values: MeasureValues): Promise<void> {
+    const metric = this.metrics.get(name);
+    if (metric === undefined) {
+      // eslint-disable-next-line no-console
+      console.warn(`metric '${name}' is not defined; ignoring emit`);
+      return;
+    }
+    await this.target.emitNow(metric, values);
+  }
+
+  async flushMetrics(): Promise<void> {
+    await this.target.flush();
+  }
+
+  async shutdown(): Promise<void> {
+    await this.target.shutdown();
+  }
+
+  /** Rebuild the metric target from the new config (keeping the previous one on error). */
+  async onConfigurationChange(config: Config): Promise<boolean> {
+    try {
+      const target = await buildTarget(config, this.messaging);
+      this.target = target;
+      return true;
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn(`failed to rebuild metric target on config change; keeping previous: ${String(e)}`);
+      return false;
+    }
+  }
+}
