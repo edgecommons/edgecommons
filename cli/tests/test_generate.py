@@ -8,11 +8,11 @@ from ggcommons_cli.recipe_lint import lint_recipe_file
 # Templates live as siblings of the CLI repo in the ggcommons workspace.
 WORKSPACE = pathlib.Path(__file__).resolve().parents[2]
 TEMPLATES = {
-    "RUST": WORKSPACE / "rust-component-template",
-    "JAVA": WORKSPACE / "java-componen-template",
-    "PYTHON": WORKSPACE / "python-component-template",
+    "RUST": WORKSPACE / "templates" / "rust",
+    "JAVA": WORKSPACE / "templates" / "java",
+    "PYTHON": WORKSPACE / "templates" / "python",
 }
-GG_LIB = WORKSPACE / "ggcommons-rust-lib"
+GG_LIB = WORKSPACE / "libs" / "rust"
 
 
 def _args(language, out_dir, template):

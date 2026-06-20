@@ -1,0 +1,23 @@
+name: java
+on:
+  push:
+    paths: ["libs/java/**", ".github/workflows/java.yml"]
+  pull_request:
+    paths: ["libs/java/**", ".github/workflows/java.yml"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: libs/java
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+      # The broker-backed TLS/dual-broker tests self-skip (JUnit assumptions) without
+      # GGCOMMONS_TLS_CERTS_DIR; the in-process Moquette + unit tests run + coverage gate.
+      - run: mvn -B -ntp clean verify

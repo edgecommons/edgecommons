@@ -1,0 +1,21 @@
+name: python
+on:
+  push:
+    paths: ["libs/python/**", ".github/workflows/python.yml"]
+  pull_request:
+    paths: ["libs/python/**", ".github/workflows/python.yml"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: libs/python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e . && pip install -r requirements-test.txt
+      # The default local gate (broker-free); broker-backed tests run in the interop job.
+      - run: python -m pytest -m "not slow and not integration and not aws"

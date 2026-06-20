@@ -64,8 +64,14 @@ def _find_java():
 
 
 def _shaded_jar():
-    jars = sorted((WORKSPACE / "ggcommons-java-lib" / "target").glob("ggcommons-*-shaded.jar"))
-    return str(jars[-1]) if jars else None
+    # `mvn package` shades into the MAIN jar (replace mode: `original-*.jar` is the
+    # pre-shade thin jar). Select the dependency-bearing jar, preferring an explicit
+    # `-shaded` classifier if a build ever attaches one.
+    target = WORKSPACE / "libs" / "java" / "target"
+    jars = [j for j in target.glob("ggcommons-*.jar")
+            if not j.name.startswith("original-")
+            and not j.name.endswith(("-sources.jar", "-javadoc.jar", "-shaded.jar"))]
+    return str(sorted(jars)[-1]) if jars else None
 
 
 # Built once and reused; populated by the session fixtures below.

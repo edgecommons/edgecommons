@@ -13,12 +13,18 @@ from typing import Dict, Any, Optional
 # changes needed to add a language). See _apply_manifest for the schema.
 MANIFEST_NAME = "ggcommons-template.json"
 
+# Monorepo root, resolved relative to this file (cli/ggcommons_cli/commands -> repo root).
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+
 # Default template sources per language. Override any with --template-url. A source
 # may be a git URL (cloned) or a local directory (copied) — see _fetch_template.
+# In this monorepo the templates ship under templates/, so the defaults point at the
+# in-repo template directories (works from a checkout, no network). For a *published*
+# CLI, override with --template-url or package the templates (see the repo README).
 DEFAULT_TEMPLATE_SOURCES = {
-    "JAVA": "git@ssh.gitlab.aws.dev:greengrass-commons/component-templates/java-component-template.git",
-    "PYTHON": "git@ssh.gitlab.aws.dev:greengrass-commons/component-templates/python-component-template.git",
-    "RUST": "git@ssh.gitlab.aws.dev:greengrass-commons/component-templates/rust-component-template.git",
+    "JAVA": os.path.join(_REPO_ROOT, "templates", "java"),
+    "PYTHON": os.path.join(_REPO_ROOT, "templates", "python"),
+    "RUST": os.path.join(_REPO_ROOT, "templates", "rust"),
 }
 
 
@@ -44,12 +50,9 @@ class CreateComponent(CommandBase):
 
     @classmethod
     def get_json_configuration(cls):
-        # Default ggcommons (Rust) library path: the sibling ggcommons-rust-lib in the
-        # workspace (../../../ from this file: commands -> ggcommons_cli -> ggcommons-cli
-        # -> workspace), as an absolute, forward-slash path (TOML/Cargo-friendly).
-        default_ggcommons_path = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "..", "ggcommons-rust-lib")
-        ).replace("\\", "/")
+        # Default ggcommons (Rust) library path: libs/rust in this monorepo, as an
+        # absolute, forward-slash path (TOML/Cargo-friendly).
+        default_ggcommons_path = os.path.join(_REPO_ROOT, "libs", "rust").replace("\\", "/")
         return {
             "name": "create-component",
             "description": "Create a new component that uses ggcommons",

@@ -1,0 +1,28 @@
+name: release
+# Independent, per-artifact releases via path-scoped tags, e.g.:
+#   git tag python-lib/v0.3.0 && git push origin python-lib/v0.3.0
+# Each tag prefix selects which package to build + publish. Fill in the publish
+# steps + registry credentials (Maven Central/CodeArtifact, PyPI, crates.io) for
+# your environment; this is a scaffold.
+on:
+  push:
+    tags:
+      - "java-lib/v*"
+      - "python-lib/v*"
+      - "rust-lib/v*"
+      - "cli/v*"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Identify the artifact from the tag
+        id: which
+        run: echo "artifact=${GITHUB_REF_NAME%%/*}" >> "$GITHUB_OUTPUT"
+      # --- Wire up per-artifact publish below (guarded on steps.which.outputs.artifact) ---
+      # java-lib   -> (cd libs/java   && mvn -B -ntp deploy)        # needs Maven settings/creds
+      # python-lib -> (cd libs/python && python -m build && twine upload dist/*)
+      # rust-lib   -> (cd libs/rust   && cargo publish)             # needs CARGO_REGISTRY_TOKEN
+      # cli        -> (cd cli         && python -m build && twine upload dist/*)
+      - run: echo "Release ${{ github.ref_name }} (artifact=${{ steps.which.outputs.artifact }}) — wire up publish steps."

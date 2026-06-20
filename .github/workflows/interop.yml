@@ -1,0 +1,55 @@
+name: interop
+# The cross-language parity guarantee: a component in each language exchanging MQTT
+# messages. Runs whenever any library or the test infra changes.
+on:
+  push:
+    paths: ["libs/**", "test-infra/**", ".github/workflows/interop.yml"]
+  pull_request:
+    paths: ["libs/**", "test-infra/**", ".github/workflows/interop.yml"]
+
+jobs:
+  interop:
+    runs-on: ubuntu-latest
+    services:
+      emqx:
+        image: emqx/emqx:5
+        ports:
+          - 1883:1883
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: test-infra/interop/rust_node
+
+      - name: Wait for the MQTT broker
+        run: |
+          python - <<'PY'
+          import socket, time
+          for _ in range(60):
+              try:
+                  with socket.create_connection(("localhost", 1883), 1):
+                      print("broker up"); break
+              except OSError:
+                  time.sleep(1)
+          else:
+              raise SystemExit("broker never came up")
+          PY
+
+      - name: Build the Java shaded jar (the interop test compiles against it)
+        run: mvn -B -ntp -DskipTests package
+        working-directory: libs/java
+
+      - name: Install the Python library (importable by the python interop node)
+        run: pip install -e libs/python
+
+      - name: Run the cross-language interop matrix (request/reply + raw)
+        run: python -m pytest test-infra/interop/test_interop.py -v

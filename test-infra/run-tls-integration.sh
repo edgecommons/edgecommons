@@ -41,9 +41,9 @@ done
 rc=0
 run() { echo; echo "===== $1 ====="; shift; ( "$@" ); local r=$?; [ $r -ne 0 ] && rc=1; return 0; }
 
-run "Python" bash -c "cd '$LIBS/ggcommons-python-lib' && python -m pytest -m integration tests/test_tls_integration.py -v -rs"
-run "Rust"   bash -c "cd '$LIBS/ggcommons-rust-lib' && cargo test --test tls_mqtt -- --nocapture"
-run "Java"   bash -c "cd '$LIBS/ggcommons-java-lib' && mvn -q -Dtest=StandaloneTlsIntegrationTest -DfailIfNoTests=false test"
+run "Python" bash -c "cd '$LIBS/libs/python' && python -m pytest -m integration tests/test_tls_integration.py -v -rs"
+run "Rust"   bash -c "cd '$LIBS/libs/rust' && cargo test --test tls_mqtt -- --nocapture"
+run "Java"   bash -c "cd '$LIBS/libs/java' && mvn -q -Dtest=StandaloneTlsIntegrationTest -DfailIfNoTests=false test"
 
 echo; echo "===== done (broker left running; 'docker compose -f $HERE/compose.yaml down' to stop) ====="
 exit $rc
