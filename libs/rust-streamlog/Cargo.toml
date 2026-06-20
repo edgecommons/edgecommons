@@ -1,0 +1,29 @@
+[package]
+name = "ggstreamlog"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "Apache-2.0"
+description = "Durable, store-and-forward telemetry log + export engine for ggcommons (Phase 1 core)."
+publish = false
+
+[features]
+default = []
+# KinesisSink (AWS SDK; heavy). Off by default so the core builds without AWS deps.
+kinesis = ["dep:aws-config", "dep:aws-sdk-kinesis", "dep:tokio"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+crc32c = "0.6"
+thiserror = "2"
+tracing = "0.1"
+
+# Export engine async runtime + KinesisSink (feature = "kinesis").
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"], optional = true }
+aws-config = { version = "1", optional = true }
+aws-sdk-kinesis = { version = "1", optional = true }
+
+[dev-dependencies]
+proptest = "1"
+tempfile = "3"
