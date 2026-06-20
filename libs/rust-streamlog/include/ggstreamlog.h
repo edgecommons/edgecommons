@@ -135,6 +135,23 @@ int ggsl_stats(ggsl_service* service, const char* name, ggsl_stats_t* out);
 /* Free a heap string returned via an `err` out-parameter. NULL is a no-op. */
 void ggsl_str_free(char* s);
 
+/* ---- Log forwarding -------------------------------------------------------- */
+
+/*
+ * Host log callback: receives the core's log events so the host logger (log4j2 / Python logging /
+ * Node) can emit them. `level` is 1=ERROR, 2=WARN, 3=INFO, 4=DEBUG, 5=TRACE. `target` is the source
+ * module; `message` the formatted text. Both strings are valid ONLY for the duration of the call
+ * (copy them if retained). The callback may be invoked from background threads (export/maintenance),
+ * so it must be thread-safe and must NOT call back into ggstreamlog. `user_data` is passed verbatim.
+ */
+typedef void (*ggsl_log_cb)(void* user_data, int level, const char* target, const char* message);
+
+/*
+ * Register (or clear, with cb = NULL) the host log callback. Idempotent; the forwarding subscriber
+ * is installed on first registration. The host applies its own level filtering. Returns GGSL_OK.
+ */
+int ggsl_set_log_callback(ggsl_log_cb cb, void* user_data);
+
 /* ---- Phase-3: pluggable credential callback (Kafka SASL/OAuth, mTLS) ----- */
 
 /*

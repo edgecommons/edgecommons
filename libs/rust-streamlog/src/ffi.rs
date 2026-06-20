@@ -6,9 +6,9 @@
 //! heap-allocated and freed with [`ggsl_str_free`]; `ggsl_service`/`ggsl_stream` are heap handles
 //! freed with [`ggsl_shutdown`]/[`ggsl_stream_free`]. `ggsl_append`/`ggsl_flush` are thread-safe.
 
-use std::ffi::{c_char, c_int, CStr, CString};
+use std::ffi::{c_char, c_int, c_void, CStr, CString};
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, Once};
 
 use crate::config::StreamingConfig;
 use crate::error::GgStreamError;
@@ -313,4 +313,105 @@ pub unsafe extern "C" fn ggsl_str_free(s: *mut c_char) {
     if !s.is_null() {
         drop(unsafe { CString::from_raw(s) });
     }
+}
+
+// ----- log forwarding: core `tracing` events -> host logger (log4j2 / logging / Node) -----
+
+/// Host log callback: `(user_data, level, target, message)`. Level: 1=ERROR..5=TRACE. The string
+/// pointers are valid only for the duration of the call.
+type GgslLogCb = extern "C" fn(*mut c_void, c_int, *const c_char, *const c_char);
+
+struct LogSink {
+    cb: GgslLogCb,
+    /// Host pointer, stored as `usize` so the global is `Send`/`Sync`; cast back when invoking.
+    user_data: usize,
+}
+
+static LOG_SINK: Mutex<Option<LogSink>> = Mutex::new(None);
+static LOG_INIT: Once = Once::new();
+
+fn level_to_int(level: &tracing::Level) -> c_int {
+    match *level {
+        tracing::Level::ERROR => 1,
+        tracing::Level::WARN => 2,
+        tracing::Level::INFO => 3,
+        tracing::Level::DEBUG => 4,
+        tracing::Level::TRACE => 5,
+    }
+}
+
+/// Collects an event's `message` + remaining fields into a single string.
+#[derive(Default)]
+struct MsgVisitor {
+    message: String,
+    fields: String,
+}
+
+impl tracing::field::Visit for MsgVisitor {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        use std::fmt::Write;
+        if field.name() == "message" {
+            let _ = write!(self.message, "{value:?}");
+        } else {
+            let _ = write!(self.fields, " {}={:?}", field.name(), value);
+        }
+    }
+}
+
+/// A `tracing` layer that forwards each event to the registered host callback.
+struct CallbackLayer;
+
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for CallbackLayer {
+    fn on_event(
+        &self,
+        event: &tracing::Event<'_>,
+        _ctx: tracing_subscriber::layer::Context<'_, S>,
+    ) {
+        // Copy the callback out, then release the lock before the upcall into the host.
+        let cbud = match LOG_SINK.lock() {
+            Ok(g) => g.as_ref().map(|s| (s.cb, s.user_data)),
+            Err(_) => return,
+        };
+        let Some((cb, ud)) = cbud else { return };
+
+        let meta = event.metadata();
+        let mut v = MsgVisitor::default();
+        event.record(&mut v);
+        let full = if v.fields.is_empty() { v.message } else { format!("{}{}", v.message, v.fields) };
+        let target = CString::new(meta.target().replace('\0', " ")).unwrap_or_default();
+        let msg = CString::new(full.replace('\0', " ")).unwrap_or_default();
+        cb(ud as *mut c_void, level_to_int(meta.level()), target.as_ptr(), msg.as_ptr());
+    }
+}
+
+/// Register (or clear, with `cb = NULL`) a callback that receives the core's log events, so the host
+/// logger emits them. Idempotent; the forwarding subscriber is installed on first registration.
+///
+/// # Safety
+/// `cb` must be a valid function pointer (or null); `user_data` is passed back verbatim and must
+/// remain valid for as long as a callback is registered.
+#[no_mangle]
+pub unsafe extern "C" fn ggsl_set_log_callback(cb: Option<GgslLogCb>, user_data: *mut c_void) -> c_int {
+    guard(std::ptr::null_mut(), || {
+        match cb {
+            Some(cb) => {
+                if let Ok(mut g) = LOG_SINK.lock() {
+                    *g = Some(LogSink { cb, user_data: user_data as usize });
+                }
+                LOG_INIT.call_once(|| {
+                    use tracing_subscriber::layer::SubscriberExt;
+                    use tracing_subscriber::util::SubscriberInitExt;
+                    // Forward everything; the host logger applies its own level filter. Ignore the
+                    // error if a global subscriber is already installed (e.g. in-process Rust host).
+                    let _ = tracing_subscriber::registry().with(CallbackLayer).try_init();
+                });
+            }
+            None => {
+                if let Ok(mut g) = LOG_SINK.lock() {
+                    *g = None;
+                }
+            }
+        }
+        GGSL_OK
+    })
 }

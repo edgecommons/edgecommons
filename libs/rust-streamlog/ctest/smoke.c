@@ -12,7 +12,22 @@
 
 #define N 1000
 
+static int g_log_count = 0;
+
+static void on_log(void *user_data, int level, const char *target, const char *message) {
+    (void)user_data;
+    g_log_count++;
+    if (g_log_count <= 4) {
+        fprintf(stderr, "[ggstreamlog L%d %s] %s\n", level, target, message);
+    }
+}
+
 int main(void) {
+    /* Register the log callback before open so the buffer-only warning is forwarded. */
+    if (ggsl_set_log_callback(on_log, NULL) != GGSL_OK) {
+        fprintf(stderr, "FAIL: ggsl_set_log_callback\n");
+        return 1;
+    }
     const char *cfg =
         "{\"streams\":[{"
         "\"name\":\"telemetry\","
@@ -99,6 +114,13 @@ int main(void) {
     ggsl_stream_free(s);
     ggsl_shutdown(svc);
 
-    printf("C smoke test PASSED (%d records appended, buffered, stats read back)\n", N);
+    /* The core should have forwarded at least one log event (e.g. the buffer-only warning). */
+    if (g_log_count == 0) {
+        fprintf(stderr, "FAIL: no log events were forwarded to the callback\n");
+        return 1;
+    }
+
+    printf("C smoke test PASSED (%d records appended, buffered, stats read back; %d log events)\n",
+           N, g_log_count);
     return 0;
 }
