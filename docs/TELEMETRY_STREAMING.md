@@ -1,7 +1,7 @@
 # Telemetry Streaming — design
 
 High-throughput, store-and-forward telemetry egress for ggcommons: a pluggable model
-for **Kinesis Data Streams**, **Apache Kafka**, and **AWS IoT SiteWise**, with a
+for **Kinesis Data Streams** and **Apache Kafka** (SiteWise a likely later sink), with a
 **portable, embedded, persistent buffer we own** for disconnected industrial use. Works
 in both STANDALONE and GREENGRASS modes. New subsystem, peer to
 `messaging`/`metrics`/`heartbeat`; opt-in; does not change existing APIs.
@@ -18,10 +18,19 @@ in both STANDALONE and GREENGRASS modes. New subsystem, peer to
    only — **no Kafka**; ≥70 MB RAM; requires a HARD component dependency.)
 3. **No fixed throughput ceiling.** Peak records/s is a function of hardware + config.
    **Disk budget, segment size, and fsync policy are configurable** per stream.
-4. **First sinks: Kinesis, Kafka, SiteWise.**
+4. **First sinks: Kinesis, Kafka.** (SiteWise deferred — its model is asset/property
+   *topic mapping*, not a `partitionKey`; revisit as a separate sink later.)
 5. **Backpressure default: `dropOldest`** (telemetry-typical; never silent — always metered).
 6. **Secrets refresh is ours, not the GG Secret Manager component** (which only refreshes
    on deployment). See §7.
+7. **One shared core in Rust, shipped as native artifacts** (no per-language
+   reimplementation of the log). Bound into Java/Python/Node; native in Rust. See §5.
+8. **`BlockStore` is pluggable, but v1 ships only the hand-rolled segment log.** RocksDB/LMDB
+   backends can be added later behind the same interface.
+9. **Sinks + the export engine live in the core too** (one implementation of
+   batching/retry/checkpoint/Kafka/Kinesis/credentials), with a **host-language sink override
+   hook**. Kafka uses **librdkafka** (via `rdkafka`) in the core; Java may override with the
+   official `kafka-clients`. See §6.
 
 ## 2. Non-goals
 
@@ -32,25 +41,26 @@ in both STANDALONE and GREENGRASS modes. New subsystem, peer to
 
 ## 3. Architecture
 
-Three layers, mirroring the existing provider/service split. Buffer is **embedded in every
-mode**; the sink is pluggable; nothing is delegated to a black box.
+The buffer **and** the export engine + sinks live in **one shared Rust core**
+(`ggstreamlog`); each language ships a thin binding. Nothing is delegated to a black box,
+and there is one implementation of the hard parts.
 
 ```
-   append(record)  (non-blocking)                  pull committed batch / ack
- producer ───────────────────►  StreamService  ───────────────────────────────►  Sink
- (your component)              (per-stream API)         ▲                        (Kinesis | Kafka | SiteWise)
-                                     │                  │ checkpoint(offset)
-                                     ▼                  │
-                                EmbeddedLog  ───────────┘
-                         (durable, ordered, FIFO; §4 core)
+ ┌─ host language (thin binding) ─┐   ┌──────────── ggstreamlog core (Rust, native) ───────────┐
+ │  append(record) (non-blocking) │──►│  StreamService → EmbeddedLog → ExportEngine → Sink ─────┼──► Kinesis | Kafka
+ │  flush / stats / lifecycle     │   │   (§4 durable FIFO)   (batch/retry)  ▲   (rdkafka/aws-sdk)│
+ └────────────────────────────────┘   │                       checkpoint ───┘                    │
+        ▲ optional sink-override (e.g. Java kafka-clients)  + CredentialProvider (§7) ────────────┘
 ```
 
 - **`IStreamService`** (DI seam, like `IMessagingService`): `append`, `appendBatch`,
-  `flush`, plus stream lifecycle + stats. Obtained via `gg.streams()`.
-- **`EmbeddedLog`**: the durable, ordered, at-least-once buffer (§4). The same core in all
-  four languages (§5).
-- **`Sink`**: pulls committed batches, sends, and on broker-ack tells the log to advance its
-  checkpoint. Pluggable: `KinesisSink`, `KafkaSink`, `SiteWiseSink` (§6).
+  `flush`, plus stream lifecycle + stats. Obtained via `gg.streams()`. A thin wrapper over
+  the core (config marshaling + `append` + stats).
+- **`EmbeddedLog`** (in core): the durable, ordered, at-least-once buffer (§4).
+- **`ExportEngine` + `Sink`** (in core by default): the export loop pulls committed batches,
+  sends via `KinesisSink`/`KafkaSink`, and on broker-ack advances the checkpoint. A
+  **host-language sink override hook** lets a binding supply its own sink (e.g. Java with
+  `kafka-clients`, or a custom destination) instead of the in-core one.
 
 A `StreamRecord` = `{ payload: bytes, partitionKey: string, timestampMs: u64, headers?: map }`.
 Built via `StreamRecordBuilder`. `partitionKey` drives ordering + downstream sharding
@@ -76,9 +86,9 @@ with `dropOldest`, crash-safe recovery, cross-language. Candidates:
 segmented append-log inside a single Rust core we fuzz/crash-test.** A FIFO store-and-forward
 buffer is much simpler than a general KV — the proven engines are heavier than the problem,
 and shipping RocksDB/LMDB native libs into four language packages is *more* packaging pain
-than shipping one small Rust core. Keep a **pluggable `BlockStore`** so a deployment that
-mandates a named engine can back the log with RocksDB or LMDB without changing the upper
-layers.
+than shipping one small Rust core. The `BlockStore` is a **pluggable interface**, but **v1
+ships only the hand-rolled segment store**; RocksDB/LMDB backends can be added later behind
+the same interface without changing the upper layers.
 
 > Note: ggcommons **already ships native code** (`awscrt` under the Python/TS AWS SDKs, the
 > `gg_sdk` C-FFI crate in Rust). A shared Rust core is consistent with that reality, not a
@@ -146,7 +156,7 @@ network/sink when connected. Operators tune:
 
 ## 5. One core, four languages
 
-### 5.1 Recommended: a single Rust core exposed via a C ABI
+### 5.1 A single Rust core exposed via a C ABI (the decision)
 
 Write `ggstreamlog` **once in Rust** (the safe language for a hand-rolled durable log),
 compile to a C-ABI `cdylib`, and bind it into the other three. One implementation =
@@ -165,13 +175,12 @@ Bindings per language (all mainstream, distinct from the painful GG SDK FFI):
 Packaging cost is real (per-platform native artifacts: linux x64/arm64, win, mac) but
 bounded, and the stack already carries native deps.
 
-### 5.2 Alternative: per-language implementations of the spec
+### 5.2 Rejected alternative: per-language reimplementation
 
-If FFI/native packaging is rejected, each lib implements §4.2's format in pure language
-code, governed by a shared **on-disk-format spec + a cross-language conformance & crash-test
-suite** (so a buffer written by one lib is readable by another, and recovery is verified).
-More surface to maintain; zero native artifacts. Recommend the Rust-core path; keep this as
-the fallback.
+Reimplementing §4.2's log in each language (pure code, no native artifact) was considered
+and **rejected**: it multiplies the crash-recovery/fsync correctness surface by four and
+invites on-disk-format drift, for the sole benefit of avoiding native packaging — which the
+stack already does (`awscrt`, `gg_sdk`). The shared Rust core is the chosen path.
 
 ### 5.3 C ABI surface (sketch)
 
@@ -214,27 +223,39 @@ gg.streams().stream("telemetry")
 
 ## 6. Sinks
 
-All sinks pull committed batches from the log and `commit()` only on broker-ack
-(at-least-once). Partial-batch failures re-enqueue only the failed records. Exponential
-backoff + jitter on throttling. Records carry `(partitionKey, sequence)` for downstream dedup.
+Sinks live **in the core** by default (one implementation for Rust/Python/Node). The export
+engine pulls committed batches and `commit()`s only on broker-ack (at-least-once);
+partial-batch failures re-enqueue only the failed records; exponential backoff + jitter on
+throttling; records carry `(partitionKey, sequence)` for downstream dedup. A **host-language
+sink override hook** lets a binding supply its own implementation (e.g. Java with
+`kafka-clients`, or a custom destination).
 
-- **KinesisSink** — `PutRecords` (≤ **500 records / 5 MiB** per call → bounds `batch.*`);
-  partition key from the record; per-record `FailedRecordCount` handling; creds via the AWS
-  SDK provider chain (TES role in GG, standard chain in STANDALONE). Mind shard hot-keys
-  (partition-key cardinality).
-- **KafkaSink** — idempotent producer (`enable.idempotence=true`, `acks=all`) for no-dup
-  within a session; `linger.ms`/`batch.size`/compression (lz4/zstd) aligned to `batch.*`;
-  topic + partition from `partitionKey`; security `SASL_SSL`/mTLS with creds from the
-  **CredentialProvider** (§7), **not** the GG Secret Manager component.
-- **SiteWiseSink** — `BatchPutAssetPropertyValue` (industrial-native; up to 10
-  entries/request, time-ordered values per property); map `partitionKey`→asset/property +
-  `timestampMs`; TES role creds. Good default for OPC-UA-style equipment telemetry.
+- **KinesisSink** (core, `aws-sdk` for Rust) — `PutRecords` (≤ **500 records / 5 MiB** per
+  call → bounds `batch.*`); partition key from the record; per-record `FailedRecordCount`
+  handling; creds via the AWS SDK provider chain (TES role in GG, standard chain in
+  STANDALONE). Mind shard hot-keys (partition-key cardinality).
+- **KafkaSink** (core, **`rdkafka`/librdkafka**) — idempotent producer
+  (`enable.idempotence=true`, `acks=all`) for no-dup within a session;
+  `linger.ms`/`batch.size`/compression (lz4/zstd) aligned to `batch.*`; topic + partition
+  from `partitionKey`; security `SASL_SSL`/mTLS with creds from the **CredentialProvider**
+  (§7), **not** the GG Secret Manager component.
+
+### Kafka client choice
+
+| Lang | Client | Why |
+|------|--------|-----|
+| **Core (Rust/Python/Node)** | **librdkafka** via `rdkafka` | one high-perf C core shared by the non-JVM trio; full features (idempotence, SASL incl. OAUTHBEARER, compression). Pure clients (`kafkajs`, `kafka-python`) lag on throughput/features. |
+| **Java (optional override)** | official `kafka-clients` | canonical, best-in-class on the JVM; pure Java. Use via the sink-override hook if a JVM shop requires it. |
+
+> Deferred: **SiteWise** as a sink. Its model is asset/property *topic mapping*, not a
+> `partitionKey`, so it needs its own mapping config and is out of scope for v1.
 
 ## 7. Credentials & secrets refresh (fixes the Secret Manager flaw)
 
 The GG **Secret Manager component refreshes secrets only on deployment** — unusable for
 rotating Kafka SASL/TLS creds. We provide a pluggable **`ICredentialProvider`** with **live
-refresh**:
+refresh**, running **in the core** (uniform across languages; no per-lib secrets code), with
+a `CallbackCredentialProvider` escape hatch that FFIs back to the host for custom cases:
 
 - **Interface**: `get(scope) -> Credential` (cached), TTL-based refresh-ahead, and
   **refresh-on-failure** (a sink auth error triggers re-fetch + reconnect). Optional
@@ -251,7 +272,7 @@ refresh**:
   - `CallbackCredentialProvider` — caller-supplied.
 - **Sink integration**: Kafka uses the client's credential callback where available (e.g.
   SASL/OAUTHBEARER token refresh) and otherwise **rebuilds the producer** on rotation (drain
-  in-flight → swap), reconnecting with new creds. AWS sinks (Kinesis/SiteWise) rely on the
+  in-flight → swap), reconnecting with new creds. AWS sinks (Kinesis) rely on the
   SDK's auto-refreshing role-credential provider via TES.
 
 ## 8. Config schema + builder API (cross-language parity)
@@ -263,7 +284,7 @@ sizes, retention, priority, backpressure can change live via the existing reload
 streaming:
   streams:
     - name: "telemetry"
-      sink: "kinesis"                       # kinesis | kafka | sitewise
+      sink: "kinesis"                       # kinesis | kafka
       buffer:
         path: "/var/lib/ggcommons/streams/{ComponentName}/telemetry"
         segmentBytes: 67108864              # 64 MiB
@@ -278,7 +299,6 @@ streaming:
       # kafka:    { bootstrapServers, topic, acks: all, idempotent: true,
       #             security: { protocol: SASL_SSL, mechanism: SCRAM-SHA-512,
       #                         credentials: { provider: secretsmanager, secretId: "...", ttlSecs: 600 } } }
-      # sitewise: { partitionKeyToAsset: "...", region: "us-east-1" }
 ```
 
 `IStreamService` joins the DI registry next to `IMessagingService`/`IMetricService`; defined
@@ -290,7 +310,7 @@ Both modes run the **same EmbeddedLog + sinks**. Differences are only environmen
 
 | Concern | STANDALONE | GREENGRASS |
 |---------|-----------|-----------|
-| AWS creds (Kinesis/SiteWise) | standard SDK provider chain | device role via **TES** |
+| AWS creds (Kinesis) | standard SDK provider chain | device role via **TES** |
 | Kafka secrets | File/Env/SecretsManager provider | SecretsManager-via-SDK (TES) or File provider — **not** GG Secret Manager |
 | On-device fan-in | n/a | components publish to one streaming component over **local pub/sub IPC**; it owns the buffer + connections |
 | Buffer location | configurable path | component work dir / a writable volume |
@@ -311,15 +331,25 @@ Both modes run the **same EmbeddedLog + sinks**. Differences are only environmen
    `dropOldest`) + fuzz/crash tests + bench; `KinesisSink`; STANDALONE; metrics. Pure-Rust
    first proves the core before bindings.
 2. Bindings (napi-rs / PyO3 / Panama) + `IStreamService` in TS/Python/Java.
-3. `KafkaSink` + `ICredentialProvider` (File + SecretsManager-via-SDK refresh).
-4. `SiteWiseSink`; stream priorities; compression; GREENGRASS fan-in + TES creds.
+3. `KafkaSink` (core, librdkafka) + `ICredentialProvider` (File + SecretsManager-via-SDK
+   refresh) + the host-language sink-override hook (enables Java `kafka-clients`).
+4. Stream priorities; compression; GREENGRASS fan-in (local pub/sub) + TES creds.
+5. (Later) additional `BlockStore` backends (RocksDB/LMDB); SiteWise sink with its own
+   topic→asset/property mapping.
 
-## 12. Open questions / risks
+## 12. Settled / open
 
-- **Native packaging** for the shared core (per-OS/arch artifacts in maven/wheel/npm). Accept
-  the Rust-core path, or take the pure-per-lib fallback (§5.2)?
-- **Pluggable `BlockStore`** (RocksDB/LMDB option) in v1, or hand-rolled segment log only?
-- **SiteWise modeling**: how `partitionKey` maps to asset/property (per-deployment) — needs a
-  mapping config or a callback.
-- **Kafka client** per language (rdkafka/librdkafka is native and shared-ish; pure-JS/Java
-  clients differ) — confirms the native-deps-already-exist point but adds per-lang choices.
+**Settled (this review):**
+- Native packaging of the shared Rust core — **accepted** (per-lib reimplementation rejected, §5.2).
+- `BlockStore` pluggable interface, **hand-rolled segment store only in v1**.
+- Sinks (Kinesis/Kafka) + export engine **in the core**; Kafka via **librdkafka**; Java may
+  override with `kafka-clients` via the sink hook.
+- **SiteWise deferred** (topic-style asset/property mapping, not a partition key).
+
+**Open / risks:**
+- Per-platform native artifact matrix (linux x64/arm64, win, mac) + CI to build/publish them
+  into maven (Panama), the wheel (PyO3/maturin), and npm (napi-rs prebuilds).
+- Core size: log + `rdkafka` (librdkafka) + AWS SDK in one cdylib — keep an eye on footprint
+  for constrained edge devices.
+- Sink-override hook ergonomics across Panama/PyO3/napi-rs (FFI callback for a host-supplied sink).
+- `CredentialProvider` callback FFI for the `CallbackCredentialProvider` case (host-supplied creds).
