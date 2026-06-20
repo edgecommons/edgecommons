@@ -8,19 +8,25 @@
 //! - [`blockstore`] — the durability seam ([`blockstore::segment_log::SegmentLog`]).
 //! - [`log`] — the embedded buffer (retention, backpressure, fsync, export cursor).
 //! - [`export`] — the export engine + the [`export::Sink`] seam.
+//! - [`service`] — [`service::StreamService`], the config-driven orchestration shared by the Rust
+//!   lib, the C-ABI bindings, and tests.
 //!
-//! The C ABI for Phase-2 language bindings is finalized (design only) in
-//! `include/ggstreamlog.h`; the Rust implementation lands in Phase 2.
+//! The C ABI for the Phase-2 language bindings lives in [`ffi`] (feature `cabi`, building a
+//! `cdylib`); its header is `include/ggstreamlog.h`.
 
 pub mod blockstore;
 pub mod config;
 pub mod error;
 pub mod export;
+#[cfg(feature = "cabi")]
+pub mod ffi;
 pub mod log;
 pub mod record;
+pub mod service;
 
 pub use config::{
     BatchConfig, BufferConfig, Compression, DeliveryConfig, FsyncPolicy, OnFull, SinkConfig,
+    StreamConfig, StreamingConfig,
 };
 pub use error::{GgStreamError, Result};
 pub use export::{
@@ -30,3 +36,4 @@ pub use export::{
 pub use export::KinesisSink;
 pub use log::{EmbeddedLog, LogStats};
 pub use record::Record;
+pub use service::{ServiceStats, SinkFactory, StreamService};

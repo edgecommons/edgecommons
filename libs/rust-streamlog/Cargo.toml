@@ -11,6 +11,14 @@ publish = false
 default = []
 # KinesisSink (AWS SDK; heavy). Off by default so the core builds without AWS deps.
 kinesis = ["dep:aws-config", "dep:aws-sdk-kinesis", "dep:tokio"]
+# C ABI (src/ffi.rs) for the language bindings (Java/Panama, Python, Node). Build a cdylib with
+# this feature; pair with `kinesis` to get the real export sink in the shared library.
+cabi = []
+
+# Build an rlib (for the Rust consumers: libs/rust, benches, tests) AND a cdylib (the C-ABI shared
+# library for the bindings, when built with --features cabi).
+[lib]
+crate-type = ["rlib", "cdylib"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

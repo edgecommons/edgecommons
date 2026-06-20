@@ -124,6 +124,27 @@ pub enum SinkConfig {
     },
 }
 
+/// One configured stream: a name, its export sink, durable buffer, and batching/delivery tuning.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StreamConfig {
+    pub name: String,
+    pub sink: SinkConfig,
+    pub buffer: BufferConfig,
+    #[serde(default)]
+    pub batch: BatchConfig,
+    #[serde(default)]
+    pub delivery: DeliveryConfig,
+}
+
+/// The `streaming` config section: a set of named streams. This is what the C-ABI `ggsl_open`
+/// receives as JSON, and what the language libs build (after template substitution).
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct StreamingConfig {
+    pub streams: Vec<StreamConfig>,
+}
+
 impl BufferConfig {
     pub fn validate(&self) -> Result<()> {
         if self.path.is_empty() {

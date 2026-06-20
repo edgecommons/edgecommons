@@ -15,8 +15,10 @@
  * MEMORY & OWNERSHIP
  *   - Inputs (pointers/buffers) are BORROWED for the duration of the call; the caller retains
  *     ownership and may free them after the call returns.
- *   - `ggsl_service*` and `ggsl_stream*` are opaque handles owned by the core. A `ggsl_stream*`
- *     is valid until its owning service is shut down; do not use a stream after ggsl_shutdown.
+ *   - `ggsl_service*` is an opaque handle owned by the core; free it with ggsl_shutdown.
+ *   - `ggsl_stream*` is a caller-owned handle (an internal ref-count to the stream); free it with
+ *     ggsl_stream_free. It remains valid for append/flush even after ggsl_shutdown (export stops,
+ *     but the durable buffer stays usable), so handle/service teardown order does not matter.
  *   - On error, `*err` is set to a heap-allocated, NUL-terminated UTF-8 string the caller MUST
  *     release with ggsl_str_free. On success `*err` is left unchanged (set it to NULL first).
  *   - `ggsl_stats` writes into a caller-provided struct (no allocation).
@@ -93,10 +95,13 @@ typedef struct ggsl_stats_t {
 int ggsl_open(const char* config_json, ggsl_service** out, char** err);
 
 /*
- * Look up a configured stream by name. The returned `*out` is borrowed from the service and is
- * valid until ggsl_shutdown; do not free it directly.
+ * Look up a configured stream by name. `*out` receives a caller-owned handle; release it with
+ * ggsl_stream_free (it stays valid for append/flush even after ggsl_shutdown).
  */
 int ggsl_stream_get(ggsl_service* service, const char* name, ggsl_stream** out, char** err);
+
+/* Release a stream handle obtained from ggsl_stream_get. NULL is a no-op. */
+void ggsl_stream_free(ggsl_stream* stream);
 
 /* Flush in-memory buffers durably to disk + stop all export engines + free the service. */
 void ggsl_shutdown(ggsl_service* service);
@@ -118,8 +123,12 @@ int ggsl_append(ggsl_stream* stream,
 /* Force this stream's buffer durably to disk. Does NOT wait for export to the sink. */
 int ggsl_flush(ggsl_stream* stream, char** err);
 
-/* Write a stats snapshot into the caller-provided struct. Returns GGSL_ERR_INVALID_ARG on NULL. */
-int ggsl_stats(ggsl_stream* stream, ggsl_stats_t* out);
+/*
+ * Write a stats snapshot for the named stream into the caller-provided struct. Takes the service
+ * (not a stream handle) because export counters live with the engine the service owns. Returns
+ * GGSL_ERR_UNKNOWN_STREAM if `name` is not configured, GGSL_ERR_INVALID_ARG on NULL.
+ */
+int ggsl_stats(ggsl_service* service, const char* name, ggsl_stats_t* out);
 
 /* ---- Memory ------------------------------------------------------------- */
 
