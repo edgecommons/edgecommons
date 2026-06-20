@@ -106,6 +106,20 @@ impl Default for DeliveryConfig {
     }
 }
 
+/// Where a stream's export engine delivers. Phase 1 ships `Kinesis`; Kafka/SiteWise are later.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum SinkConfig {
+    Kinesis {
+        stream_name: String,
+        #[serde(default)]
+        region: Option<String>,
+        /// Override the Kinesis endpoint (LocalStack / VPC endpoint / testing). Default chain otherwise.
+        #[serde(default)]
+        endpoint_url: Option<String>,
+    },
+}
+
 impl BufferConfig {
     pub fn validate(&self) -> Result<()> {
         if self.path.is_empty() {

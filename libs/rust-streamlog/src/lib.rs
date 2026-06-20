@@ -16,10 +16,14 @@ pub mod export;
 pub mod log;
 pub mod record;
 
-pub use config::{BatchConfig, BufferConfig, Compression, DeliveryConfig, FsyncPolicy, OnFull};
+pub use config::{
+    BatchConfig, BufferConfig, Compression, DeliveryConfig, FsyncPolicy, OnFull, SinkConfig,
+};
 pub use error::{GgStreamError, Result};
 pub use export::{
     EngineStats, ExportEngine, ExportRecord, FakeSink, FakeSinkHandle, SendOutcome, Sink,
 };
+#[cfg(feature = "kinesis")]
+pub use export::KinesisSink;
 pub use log::{EmbeddedLog, LogStats};
 pub use record::Record;

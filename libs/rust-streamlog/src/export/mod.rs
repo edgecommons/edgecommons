@@ -16,6 +16,11 @@ use crate::blockstore::OwnedRecord;
 use crate::config::{BatchConfig, DeliveryConfig};
 use crate::log::EmbeddedLog;
 
+#[cfg(feature = "kinesis")]
+pub mod kinesis;
+#[cfg(feature = "kinesis")]
+pub use kinesis::KinesisSink;
+
 /// One record handed to a sink (borrows from the read batch).
 pub struct ExportRecord<'a> {
     pub offset: u64,
