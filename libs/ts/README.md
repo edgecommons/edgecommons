@@ -42,6 +42,27 @@ IPC env (`SVCUID`, the domain-socket path) and the recipe must grant
 `aws.greengrass.ipc.pubsub` (and, for the bridge, `aws.greengrass.ipc.mqttproxy`)
 `accessControl` for the topics used. `mqtt.js` (STANDALONE) needs none of this.
 
+### Validated on a live Greengrass core (2026-06-19)
+
+Deployed `IpcProvider` as a component (`deploy/com.ggcommons.TsIpcVerify-1.0.1.yaml`,
+artifact = `src/ipc_verify.ts`) on a real AWS IoT Greengrass v2 nucleus (Ubuntu
+`lab-5950x`, run-as root). All checks passed against the live nucleus:
+
+- **`connected: true`** — the JS SDK's eventstream-RPC IPC client connected over
+  the domain socket.
+- **request/reply over IPC** — `correlation_match: true`, the responder echoed the
+  request body (full request/reply traversed the nucleus).
+- **raw publish/ingest over IPC** — a non-envelope payload arrived as `is_raw`.
+- **cross-language Java → TS** — subscribed to
+  `ggcommons/lab-5950x/JavaComponentSkeleton/heartbeat` and decoded the heartbeat
+  **envelope published over IPC by the already-deployed Java ggcommons component**
+  (`header.name="heartbeat"`, `thing="lab-5950x"`, tags `appId/line/shop/site/thing`,
+  body `cpu/memory/files`) with the shared TS `Message` model.
+
+This confirms the TS IPC binding interoperates with the other libraries over
+Greengrass IPC, not just on the shared MQTT wire. See `deploy/README.md` to
+reproduce.
+
 ## Interop
 
 This library is exercised by the shared cross-language suite:
