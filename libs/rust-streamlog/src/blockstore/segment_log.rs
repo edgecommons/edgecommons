@@ -100,6 +100,16 @@ impl SegmentLog {
         self.recovery
     }
 
+    /// Exclusive max offset of the oldest retained segment (for retention accounting).
+    pub fn oldest_end(&self) -> Option<u64> {
+        self.segs.first().map(|s| s.end)
+    }
+
+    /// Number of segments currently on disk.
+    pub fn segment_count(&self) -> usize {
+        self.segs.len()
+    }
+
     fn start_segment(&mut self, base: u64) -> Result<()> {
         if let Some(w) = self.writer.as_mut() {
             w.flush()?;
