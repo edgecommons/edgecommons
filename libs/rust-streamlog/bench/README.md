@@ -36,12 +36,14 @@ real `PutRecords` (needs the `kinesis` cargo feature; `localstack:` points at `h
 for floci/LocalStack).
 
 > **Always report the concurrent number as the real-world figure.** The ingest-only ceiling is just
-> the upper bound. After decoupling the checkpoint and the export read I/O from the append lock
-> (`commit` is now update+notify; the checkpoint fsync and segment reads run off the lock),
-> concurrent ingest+drain runs within ~10–15% of the ceiling on this Windows box (e.g. ~175k vs
-> ~200k rps @4 threads/1 KiB), with append p99 ~150µs (was ~4 ms). The remaining gap is the single
-> export thread sharing CPU + the OS write-back path. A writer-thread + bounded ingest queue is the
-> next available perf pass (spec §5/§15).
+> the upper bound. After (a) decoupling the checkpoint + export read I/O from the append lock and
+> (b) adding the bounded ingest queue with leader/follower **group commit**, concurrent ingest+drain
+> now *exceeds* the old single-thread ceiling and scales with producer count on this Windows box:
+> ~223k (1 thread) / ~227k (4) / ~264k (8) rps @1 KiB, append p50 ~2µs. Group commit batches many
+> concurrent producers' records into one `flush_os` + one fsync; a lone producer leads every time
+> and writes directly (no hand-off), so there is no low-concurrency regression. `Always` fsync is
+> still fsync-bound on NTFS but amortizes across concurrent producers (much better on ext4/NVMe —
+> i.e. lab-5950x / Pi-SSD).
 
 ## Scenarios (§15.6)
 

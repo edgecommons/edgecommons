@@ -47,6 +47,9 @@ pub struct BufferConfig {
     pub fsync: FsyncPolicy,
     /// Cadence for the background fsync timer (PerBatch/Interval).
     pub fsync_interval_ms: u64,
+    /// Bound on the in-memory ingest queue (records awaiting the writer thread). The memory
+    /// backpressure point: when full, producers block (or `RejectNew` returns `BufferFull`).
+    pub max_buffered_records: usize,
 }
 
 impl Default for BufferConfig {
@@ -59,6 +62,7 @@ impl Default for BufferConfig {
             on_full: OnFull::default(),
             fsync: FsyncPolicy::default(),
             fsync_interval_ms: 1000,
+            max_buffered_records: 10_000,
         }
     }
 }
