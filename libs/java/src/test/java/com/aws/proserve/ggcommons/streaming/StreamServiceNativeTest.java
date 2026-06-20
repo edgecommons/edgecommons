@@ -38,9 +38,13 @@ class StreamServiceNativeTest {
 
     @BeforeAll
     static void requireNativeLib() {
-        String p = System.getProperty("ggstreamlog.library.path");
-        assumeTrue(p != null && !p.isBlank() && Files.exists(Path.of(p)),
-                "set -Dggstreamlog.library.path to run the native streaming test");
+        // Loads via -Dggstreamlog.library.path, java.library.path, or the cdylib bundled in the jar
+        // (/native/<os>-<arch>/). Skip the suite only if it can't be found anywhere.
+        try {
+            GgStreamNative.instance();
+        } catch (Throwable t) {
+            assumeTrue(false, "ggstreamlog native library not available: " + t.getMessage());
+        }
     }
 
     private static String config(Path bufferDir) {

@@ -22,6 +22,11 @@
              JEP 454) is stable as of Java 22, so the native ggstreamlog binding needs
              no preview flag. Built and deployed on JDK 25 (lab-5950x runs 25). -->
         <maven.compiler.release>25</maven.compiler.release>
+        <!-- Directory holding the built ggstreamlog cdylib (from a release cargo build with the
+             cabi feature, plus kinesis for export). Packaged into the jar under /native/os-arch/
+             so the streaming binding loads with no ggstreamlog.library.path system property.
+             Override for a custom build location. -->
+        <ggstreamlog.lib.dir>${project.basedir}/../rust-streamlog/target/release</ggstreamlog.lib.dir>
     </properties>
     <dependencyManagement>
         <dependencies>
@@ -173,11 +178,46 @@
                     <release>${maven.compiler.release}</release>
                 </configuration>
             </plugin>
+            <!-- Copy the platform ggstreamlog cdylib into the jar (/native/<os>-<arch>/<lib>) so the
+                 streaming binding loads with no -D flag. No-op (quiet) if the lib isn't built, so a
+                 Java-only build still succeeds; CI builds the cdylib per-platform first. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <version>3.1.0</version>
+                <executions>
+                    <execution>
+                        <id>bundle-native-lib</id>
+                        <phase>process-classes</phase>
+                        <goals><goal>run</goal></goals>
+                        <configuration>
+                            <target>
+                                <condition property="nlib.os" value="windows"><os family="windows"/></condition>
+                                <condition property="nlib.os" value="darwin"><os family="mac"/></condition>
+                                <property name="nlib.os" value="linux"/>
+                                <condition property="nlib.arch" value="x86_64"><os arch="amd64"/></condition>
+                                <condition property="nlib.arch" value="aarch64"><or><os arch="aarch64"/><os arch="arm64"/></or></condition>
+                                <property name="nlib.arch" value="${os.arch}"/>
+                                <condition property="nlib.name" value="ggstreamlog.dll"><os family="windows"/></condition>
+                                <condition property="nlib.name" value="libggstreamlog.dylib"><os family="mac"/></condition>
+                                <property name="nlib.name" value="libggstreamlog.so"/>
+                                <copy file="${ggstreamlog.lib.dir}/${nlib.name}"
+                                      todir="${project.build.outputDirectory}/native/${nlib.os}-${nlib.arch}"
+                                      failonerror="false" quiet="true"/>
+                                <echo message="ggstreamlog native: ${ggstreamlog.lib.dir}/${nlib.name} -> native/${nlib.os}-${nlib.arch}/ (skipped if absent)"/>
+                            </target>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.5.2</version>
                 <configuration>
+                    <!-- @{argLine} keeps the JaCoCo agent; enable-native-access avoids the FFM
+                         restricted-method warnings (Panama) from the streaming binding. -->
+                    <argLine>@{argLine} --enable-native-access=ALL-UNNAMED</argLine>
                     <!-- These require live infrastructure (a real broker / IoT Core for the
                          STANDALONE GGCommonsTest, and a Greengrass Nucleus for MessagingClientTest)
                          and are run manually, not in the self-contained unit/integration suite. -->
@@ -200,6 +240,9 @@
                         <exclude>com/aws/proserve/ggcommons/config/provider/GreengrassConfigProvider*</exclude>
                         <exclude>com/aws/proserve/ggcommons/config/provider/ShadowConfigProvider*</exclude>
                         <exclude>com/aws/proserve/ggcommons/config/provider/ConfigComponentProvider*</exclude>
+                        <!-- Native FFI glue (Panama): only executes with the ggstreamlog cdylib
+                             present; validated by the gated native test + the Rust C smoke test. -->
+                        <exclude>com/aws/proserve/ggcommons/streaming/**</exclude>
                     </excludes>
                 </configuration>
                 <executions>
