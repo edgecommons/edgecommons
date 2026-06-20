@@ -77,7 +77,17 @@ impl EmbeddedLog {
             let stop = Arc::clone(&stop);
             let interval = cfg.fsync_interval_ms.max(1);
             Some(std::thread::spawn(move || loop {
-                std::thread::sleep(Duration::from_millis(interval));
+                // Sleep the interval in small chunks so Drop (which sets `stop`) wakes us promptly
+                // instead of blocking up to a full interval on shutdown.
+                let mut slept = 0u64;
+                while slept < interval {
+                    if stop.load(Ordering::Acquire) {
+                        return;
+                    }
+                    let chunk = (interval - slept).min(50);
+                    std::thread::sleep(Duration::from_millis(chunk));
+                    slept += chunk;
+                }
                 if stop.load(Ordering::Acquire) {
                     break;
                 }

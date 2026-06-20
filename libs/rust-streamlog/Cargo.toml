@@ -27,3 +27,13 @@ aws-sdk-kinesis = { version = "1", optional = true }
 [dev-dependencies]
 proptest = "1"
 tempfile = "3"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+# Micro-benchmarks (§15.5): append latency/throughput, recovery time vs log size.
+[[bench]]
+name = "append"
+harness = false
+
+[[bench]]
+name = "recovery"
+harness = false
