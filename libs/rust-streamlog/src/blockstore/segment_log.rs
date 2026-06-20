@@ -146,6 +146,117 @@ impl SegmentLog {
         self.segs[i].index = index;
         Ok(())
     }
+
+    /// Plan a read of up to `max_records`/`max_bytes` from `from` (inclusive): the exact file byte
+    /// ranges to read, computed from the in-memory index with **no record file I/O** (only a lazy
+    /// index build for a not-yet-indexed older segment touches disk). The caller reads the returned
+    /// chunks with [`read_chunks`] — off the buffer lock.
+    pub(crate) fn plan_read(
+        &mut self,
+        from: u64,
+        max_records: usize,
+        max_bytes: usize,
+    ) -> Result<Vec<ReadChunk>> {
+        let mut chunks = Vec::new();
+        if from >= self.next_offset || max_records == 0 {
+            return Ok(chunks);
+        }
+        let start = self.segs.iter().position(|s| from < s.end).unwrap_or(self.segs.len());
+        let mut total_records = 0usize;
+        let mut total_bytes = 0usize;
+        let mut want = from;
+
+        for i in start..self.segs.len() {
+            if total_records >= max_records || total_bytes >= max_bytes {
+                break;
+            }
+            self.ensure_index(i)?;
+            let seg = &self.segs[i];
+            if want >= seg.end {
+                continue;
+            }
+            // If `from` predates this segment's base (older data reclaimed by retention), begin at
+            // the oldest surviving record rather than skipping the segment.
+            let effective = want.max(seg.base);
+            let local_start = (effective - seg.base) as usize;
+            let nrec = seg.index.len();
+
+            let mut take = 0usize;
+            let mut take_bytes = 0usize;
+            while local_start + take < nrec
+                && total_records + take < max_records
+                && total_bytes + take_bytes < max_bytes
+            {
+                let rec_start = seg.index[local_start + take];
+                let rec_end =
+                    seg.index.get(local_start + take + 1).copied().unwrap_or(seg.byte_len);
+                take_bytes += (rec_end - rec_start) as usize;
+                take += 1;
+            }
+            if take == 0 {
+                continue;
+            }
+
+            let byte_start = seg.index[local_start];
+            let byte_end = seg.index.get(local_start + take).copied().unwrap_or(seg.byte_len);
+            chunks.push(ReadChunk {
+                path: seg.path.clone(),
+                byte_start,
+                byte_len: byte_end - byte_start,
+            });
+            total_records += take;
+            total_bytes += take_bytes;
+            want = seg.base + (local_start + take) as u64;
+        }
+        Ok(chunks)
+    }
+}
+
+/// A contiguous byte range to read from one segment file (the output of [`SegmentLog::plan_read`]).
+pub(crate) struct ReadChunk {
+    pub path: PathBuf,
+    pub byte_start: u64,
+    pub byte_len: u64,
+}
+
+/// Read + decode the planned chunks **off the buffer lock**.
+///
+/// Tolerant of a chunk's segment having been reclaimed by `DropOldest` between planning and reading
+/// (a benign race under disk pressure): on a missing/short file it returns the records gathered so
+/// far and stops — the dropped records are gone by design, and the exporter re-reads from the
+/// advanced cursor on its next poll.
+pub(crate) fn read_chunks(chunks: &[ReadChunk]) -> Result<Vec<OwnedRecord>> {
+    let mut out = Vec::new();
+    for c in chunks {
+        let mut f = match File::open(&c.path) {
+            Ok(f) => f,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => break, // reclaimed mid-read
+            Err(e) => return Err(e.into()),
+        };
+        if f.seek(SeekFrom::Start(c.byte_start)).is_err() {
+            break;
+        }
+        let mut buf = vec![0u8; c.byte_len as usize];
+        if f.read_exact(&mut buf).is_err() {
+            break; // file shorter than planned (reclaimed/truncated) — stop with what we have
+        }
+        let mut pos = 0usize;
+        while pos < buf.len() {
+            match record::decode_frame(&buf[pos..]) {
+                Decoded::Complete(fr) => {
+                    pos += fr.consumed;
+                    out.push(OwnedRecord {
+                        offset: fr.offset,
+                        ts_ms: fr.ts_ms,
+                        partition_key: fr.partition_key.to_vec(),
+                        payload: fr.payload.to_vec(),
+                    });
+                }
+                Decoded::Incomplete | Decoded::Corrupt => break,
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// Scan a segment from its start, returning `(next_offset, valid_byte_len, torn, index)` and
@@ -228,82 +339,11 @@ impl BlockStore for SegmentLog {
     }
 
     fn read_from(&mut self, from: u64, max_records: usize, max_bytes: usize) -> Result<Vec<OwnedRecord>> {
-        let mut out = Vec::new();
-        if from >= self.next_offset || max_records == 0 {
-            return Ok(out);
-        }
-        let start = self.segs.iter().position(|s| from < s.end).unwrap_or(self.segs.len());
-        let mut total_bytes = 0usize;
-        let mut want = from;
-
-        for i in start..self.segs.len() {
-            if out.len() >= max_records || total_bytes >= max_bytes {
-                break;
-            }
-            self.ensure_index(i)?;
-            let seg = &self.segs[i];
-            if want >= seg.end {
-                continue;
-            }
-            // If `from` predates this segment's base (older data was reclaimed by retention),
-            // begin at the oldest surviving record rather than skipping the segment.
-            let effective = want.max(seg.base);
-            let local_start = (effective - seg.base) as usize;
-            let nrec = seg.index.len();
-
-            // Decide how many records to take from this segment (bounded by the caller's limits),
-            // using the index so we read only the exact byte range — no full-segment rescan.
-            let mut take = 0usize;
-            let mut take_bytes = 0usize;
-            while local_start + take < nrec
-                && out.len() + take < max_records
-                && total_bytes + take_bytes < max_bytes
-            {
-                let rec_start = seg.index[local_start + take];
-                let rec_end = seg
-                    .index
-                    .get(local_start + take + 1)
-                    .copied()
-                    .unwrap_or(seg.byte_len);
-                take_bytes += (rec_end - rec_start) as usize;
-                take += 1;
-            }
-            if take == 0 {
-                continue;
-            }
-
-            let byte_start = seg.index[local_start];
-            let byte_end = seg
-                .index
-                .get(local_start + take)
-                .copied()
-                .unwrap_or(seg.byte_len);
-
-            // Read exactly [byte_start, byte_end) and decode the `take` complete frames in it.
-            let mut buf = vec![0u8; (byte_end - byte_start) as usize];
-            let mut f = File::open(&seg.path)?;
-            f.seek(SeekFrom::Start(byte_start))?;
-            f.read_exact(&mut buf)?;
-
-            let mut pos = 0usize;
-            while pos < buf.len() {
-                match record::decode_frame(&buf[pos..]) {
-                    Decoded::Complete(fr) => {
-                        pos += fr.consumed;
-                        total_bytes += fr.payload.len();
-                        out.push(OwnedRecord {
-                            offset: fr.offset,
-                            ts_ms: fr.ts_ms,
-                            partition_key: fr.partition_key.to_vec(),
-                            payload: fr.payload.to_vec(),
-                        });
-                    }
-                    Decoded::Incomplete | Decoded::Corrupt => break,
-                }
-            }
-            want = seg.base + (local_start + take) as u64;
-        }
-        Ok(out)
+        // Plan (uses the in-memory index) then read the files. The plan/read split lets the upper
+        // layer hold the buffer lock only for planning and do the file I/O off-lock; this trait
+        // entry point does both for direct callers/tests.
+        let plan = self.plan_read(from, max_records, max_bytes)?;
+        read_chunks(&plan)
     }
 
     fn truncate_below(&mut self, offset: u64) -> Result<u64> {

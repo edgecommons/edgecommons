@@ -40,6 +40,52 @@ fn wait_until(timeout: Duration, mut f: impl FnMut() -> bool) -> bool {
 }
 
 #[test]
+fn concurrent_append_and_export_no_loss() {
+    // Many producers appending while the export engine drains concurrently (the real running-
+    // component profile, and the path where reads/checkpoint run off the append lock). Every
+    // record must be delivered exactly once with no loss — exercises the off-lock plan/read split
+    // under contention.
+    let dir = tempfile::tempdir().unwrap();
+    let log = Arc::new(EmbeddedLog::open(buf_cfg(dir.path())).unwrap());
+    let threads = 4usize;
+    let per_thread = 5_000u64;
+    let total = threads as u64 * per_thread;
+
+    let sink = FakeSink::new();
+    let handle = sink.handle();
+    let engine = ExportEngine::start(
+        Arc::clone(&log),
+        Box::new(sink),
+        BatchConfig { max_records: 256, ..Default::default() },
+        fast_delivery(),
+    );
+
+    std::thread::scope(|scope| {
+        for _ in 0..threads {
+            let log = Arc::clone(&log);
+            scope.spawn(move || {
+                for i in 0..per_thread {
+                    log.append(&rec("pk", format!("v{i}").as_bytes())).unwrap();
+                }
+            });
+        }
+    });
+
+    assert!(
+        wait_until(Duration::from_secs(20), || log.acked() == total),
+        "engine should drain all {total}, acked={}",
+        log.acked()
+    );
+    let mut offsets = handle.delivered_offsets();
+    offsets.sort_unstable();
+    // No concurrent crash → exactly-once: every offset 0..total delivered once, in contiguous order.
+    assert_eq!(offsets.len() as u64, total, "no duplicates or loss");
+    assert_eq!(offsets, (0..total).collect::<Vec<_>>(), "every offset delivered exactly once");
+    assert_eq!(engine.stats().exported_total, total);
+    engine.stop();
+}
+
+#[test]
 fn engine_delivers_all_in_order() {
     let dir = tempfile::tempdir().unwrap();
     let log = Arc::new(EmbeddedLog::open(buf_cfg(dir.path())).unwrap());

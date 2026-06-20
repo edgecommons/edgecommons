@@ -36,9 +36,12 @@ real `PutRecords` (needs the `kinesis` cargo feature; `localstack:` points at `h
 for floci/LocalStack).
 
 > **Always report the concurrent number as the real-world figure.** The ingest-only ceiling is just
-> the upper bound; the gap between them is the cost of draining concurrently (lock contention +
-> per-batch checkpoint fsync). Decoupling the writer/checkpoint from the append lock is the deferred
-> perf pass (spec §5/§15).
+> the upper bound. After decoupling the checkpoint and the export read I/O from the append lock
+> (`commit` is now update+notify; the checkpoint fsync and segment reads run off the lock),
+> concurrent ingest+drain runs within ~10–15% of the ceiling on this Windows box (e.g. ~175k vs
+> ~200k rps @4 threads/1 KiB), with append p99 ~150µs (was ~4 ms). The remaining gap is the single
+> export thread sharing CPU + the OS write-back path. A writer-thread + bounded ingest queue is the
+> next available perf pass (spec §5/§15).
 
 ## Scenarios (§15.6)
 
