@@ -1,0 +1,686 @@
+//! # Heartbeat
+//!
+//! **One-liner purpose**: Periodically sample system health and publish it to the
+//! metric and/or messaging targets, mirroring the Java/Python heartbeat.
+//!
+//! ## Overview
+//! A background `tokio` task ticks at `heartbeat.intervalSecs` and, for each
+//! configured target, either emits the `heartbeat` metric (target `metric`) or
+//! publishes a `heartbeat` message (target `messaging`). Stats are collected by
+//! [`HeartbeatMonitor`] for the enabled `heartbeat.measures`.
+//!
+//! ## Semantics & Architecture
+//! - The tick body is wrapped so a transient failure logs and the next tick still
+//!   fires — the heartbeat can't be permanently killed by one error (unlike the
+//!   Java `Timer`-based version), and a missing target `config` is handled.
+//! - Stats shape matches Java/Python: a nested object `{ cpu: {cpu_usage}, memory:
+//!   {memory_usage}, disk: {disk_total,disk_used,disk_free}, threads: {threads},
+//!   files: {files}, fds: {fds} }`. The metric target flattens it to measure→value;
+//!   the messaging target sends it as the message payload.
+//! - **Measure sources**: cpu/memory/disk via `sysinfo` (all platforms);
+//!   threads/fds/files via Linux `/proc` and Windows `windows-sys`
+//!   (`GetProcessHandleCount` for fds/files — total handles, as psutil uses
+//!   `num_handles`; thread count via a Toolhelp snapshot). On unsupported platforms
+//!   an enabled-but-unavailable measure reports `0`.
+//! - Reacting to runtime config changes is wired in the config hot-reload increment
+//!   (the heartbeat currently uses the snapshot taken at start).
+//! - Error handling: per-tick failures are logged, never a panic.
+//!
+//! ## Usage Example
+//! ```no_run
+//! # async fn demo(gg: &ggcommons::GgCommons) {
+//! // GgCommons starts the heartbeat automatically; it stops when GgCommons is dropped.
+//! let _ = gg;
+//! # }
+//! ```
+//!
+//! ## Safety & Panics
+//! The Windows measure helpers use `unsafe` FFI (`windows-sys`); failures return
+//! `None` rather than panicking.
+//!
+//! ## Related Modules
+//! - [`crate::metrics`], [`crate::messaging`].
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use arc_swap::ArcSwap;
+use serde_json::{json, Map, Value};
+use tokio::task::JoinHandle;
+
+use crate::config::model::{Config, Measures};
+use crate::config::template::resolve;
+use crate::messaging::message::MessageBuilder;
+use crate::messaging::{MessagingService, Qos};
+use crate::metrics::{MetricBuilder, MetricService};
+
+const MESSAGE_NAME: &str = "heartbeat";
+const MESSAGE_VERSION: &str = "1.0.0";
+const DEFAULT_INTERVAL_SECS: u64 = 5;
+const DEFAULT_TOPIC: &str = "ggcommons/{ThingName}/{ComponentName}/heartbeat";
+const DEFAULT_DESTINATION: &str = "ipc";
+
+/// Owns the heartbeat background task. Dropping it stops the heartbeat (RAII).
+pub struct Heartbeat {
+    task: Option<JoinHandle<()>>,
+}
+
+impl Heartbeat {
+    /// Define the `heartbeat` metric and start the periodic publishing task.
+    ///
+    /// # Semantics & Syntax
+    /// - **Signature**: `pub fn start(config: Arc<ArcSwap<Config>>, metrics: Arc<dyn MetricService>, messaging: Option<Arc<dyn MessagingService>>) -> Heartbeat`
+    /// - Takes the live config handle so it reacts to hot reloads: each tick re-reads
+    ///   the current snapshot (measures, targets, topic), and the tick interval is
+    ///   rebuilt when `intervalSecs` changes.
+    /// - `messaging` is required only by the `messaging` target; a `messaging`
+    ///   target with no service logs a warning and is skipped.
+    ///
+    /// # Post-conditions
+    /// The `heartbeat` metric is defined and a background task is running.
+    pub fn start(
+        config: Arc<ArcSwap<Config>>,
+        metrics: Arc<dyn MetricService>,
+        messaging: Option<Arc<dyn MessagingService>>,
+    ) -> Heartbeat {
+        let initial = config.load_full();
+        let interval = heartbeat_interval(&initial);
+
+        // Define the heartbeat metric (all measures, like the Java/Python libs).
+        let storage_resolution = if interval < 60 { 1 } else { 60 };
+        let metric = MetricBuilder::create("heartbeat")
+            .with_config(initial.as_ref())
+            .add_measure("disk_total", "Gigabytes", storage_resolution)
+            .add_measure("disk_used", "Gigabytes", storage_resolution)
+            .add_measure("disk_free", "Gigabytes", storage_resolution)
+            .add_measure("cpu_usage", "Percent", storage_resolution)
+            .add_measure("memory_usage", "Megabytes", storage_resolution)
+            .add_measure("threads", "Count", storage_resolution)
+            .add_measure("files", "Count", storage_resolution)
+            .add_measure("fds", "Count", storage_resolution)
+            .build();
+        metrics.define_metric(metric);
+
+        let task = tokio::spawn(async move {
+            let mut monitor = HeartbeatMonitor::new(initial.parsed.heartbeat.measures.clone());
+            let mut current_interval = interval;
+            let mut ticker = tokio::time::interval(Duration::from_secs(current_interval));
+            loop {
+                ticker.tick().await;
+                let cfg = config.load_full();
+
+                // React to an interval change by rebuilding the ticker.
+                let new_interval = heartbeat_interval(&cfg);
+                if new_interval != current_interval {
+                    current_interval = new_interval;
+                    ticker = tokio::time::interval(Duration::from_secs(current_interval));
+                    ticker.tick().await; // consume the immediate first tick
+                }
+
+                monitor.set_measures(cfg.parsed.heartbeat.measures.clone());
+                let stats = monitor.get_stats();
+                publish(&cfg, &metrics, &messaging, &stats).await;
+            }
+        });
+
+        tracing::info!(interval_secs = interval, "heartbeat started");
+        Heartbeat { task: Some(task) }
+    }
+}
+
+/// The configured heartbeat interval in seconds (default 5, minimum 1).
+fn heartbeat_interval(config: &Config) -> u64 {
+    config
+        .parsed
+        .heartbeat
+        .interval_secs
+        .unwrap_or(DEFAULT_INTERVAL_SECS)
+        .max(1)
+}
+
+impl Drop for Heartbeat {
+    fn drop(&mut self) {
+        if let Some(task) = self.task.take() {
+            task.abort();
+        }
+    }
+}
+
+/// Publish `stats` to each configured heartbeat target (best-effort; logs failures).
+async fn publish(
+    config: &Config,
+    metrics: &Arc<dyn MetricService>,
+    messaging: &Option<Arc<dyn MessagingService>>,
+    stats: &Value,
+) {
+    for target in &config.parsed.heartbeat.targets {
+        match target.target_type.to_ascii_lowercase().as_str() {
+            "metric" => {
+                let values = flatten(stats);
+                if let Err(e) = metrics.emit_metric_now("heartbeat", values).await {
+                    tracing::warn!(error = %e, "heartbeat metric emit failed");
+                }
+            }
+            "messaging" => {
+                let Some(messaging) = messaging else {
+                    tracing::warn!("heartbeat messaging target configured but no messaging service");
+                    continue;
+                };
+                let cfg = target.config.as_ref();
+                let topic_template = cfg
+                    .and_then(|c| c.get("topic"))
+                    .and_then(Value::as_str)
+                    .unwrap_or(DEFAULT_TOPIC);
+                let topic = resolve(config, topic_template);
+                let destination = cfg
+                    .and_then(|c| c.get("destination"))
+                    .and_then(Value::as_str)
+                    .unwrap_or(DEFAULT_DESTINATION);
+
+                let message = MessageBuilder::new(MESSAGE_NAME, MESSAGE_VERSION)
+                    .payload(stats.clone())
+                    .from_config(config)
+                    .build();
+
+                let result = if destination.eq_ignore_ascii_case("iot_core")
+                    || destination.eq_ignore_ascii_case("iotcore")
+                {
+                    messaging
+                        .publish_to_iot_core(&topic, &message, Qos::AtLeastOnce)
+                        .await
+                } else if destination.eq_ignore_ascii_case("ipc")
+                    || destination.eq_ignore_ascii_case("local")
+                {
+                    messaging.publish(&topic, &message).await
+                } else {
+                    tracing::warn!(destination, "unrecognized heartbeat messaging destination");
+                    continue;
+                };
+                if let Err(e) = result {
+                    tracing::warn!(error = %e, "heartbeat publish failed");
+                }
+            }
+            other => tracing::warn!(target = %other, "unknown heartbeat target type"),
+        }
+    }
+}
+
+/// Flatten the nested stats object into a flat `measure -> value` map.
+fn flatten(stats: &Value) -> std::collections::HashMap<String, f64> {
+    let mut out = std::collections::HashMap::new();
+    if let Some(categories) = stats.as_object() {
+        for category in categories.values() {
+            if let Some(measures) = category.as_object() {
+                for (name, value) in measures {
+                    if let Some(n) = value.as_f64() {
+                        out.insert(name.clone(), n);
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Collects system health statistics for the enabled measures.
+///
+/// CPU usage is measured as a delta between consecutive [`get_stats`](Self::get_stats)
+/// calls, so the value is meaningful only when the calls are spaced by a real
+/// interval (the heartbeat period). The first sample has no baseline and therefore
+/// reports `0.0`, matching psutil's first `cpu_percent()` call. The reported value
+/// follows the sysinfo convention where `100%` is one fully-used core (it can exceed
+/// 100% for a multi-threaded process).
+pub struct HeartbeatMonitor {
+    system: sysinfo::System,
+    pid: Option<sysinfo::Pid>,
+    measures: Measures,
+    /// False until the first sample establishes a CPU baseline.
+    primed: bool,
+}
+
+impl HeartbeatMonitor {
+    /// Create a monitor. The first [`get_stats`](Self::get_stats) call establishes the
+    /// CPU baseline (and reports CPU as `0.0`); later calls measure over the interval.
+    pub fn new(measures: Measures) -> Self {
+        Self {
+            system: sysinfo::System::new(),
+            pid: sysinfo::get_current_pid().ok(),
+            measures,
+            primed: false,
+        }
+    }
+
+    /// Update which measures are collected (used when config is hot-reloaded).
+    pub fn set_measures(&mut self, measures: Measures) {
+        self.measures = measures;
+    }
+
+    /// Collect the enabled measures as a nested JSON object.
+    pub fn get_stats(&mut self) -> Value {
+        if let Some(pid) = self.pid {
+            self.system
+                .refresh_processes(sysinfo::ProcessesToUpdate::Some(&[pid]), true);
+        }
+        // The first refresh has no prior sample, so its CPU delta is meaningless.
+        let was_primed = self.primed;
+        self.primed = true;
+
+        let (cpu_usage, memory_mb) = match self.pid.and_then(|pid| self.system.process(pid)) {
+            Some(process) => (
+                process.cpu_usage() as f64,
+                process.memory() as f64 / 1_000_000.0,
+            ),
+            None => (0.0, 0.0),
+        };
+
+        let mut data = Map::new();
+        if self.measures.cpu {
+            let cpu = if was_primed { cpu_usage } else { 0.0 };
+            data.insert("cpu".to_string(), json!({ "cpu_usage": cpu }));
+        }
+        if self.measures.memory {
+            data.insert("memory".to_string(), json!({ "memory_usage": memory_mb }));
+        }
+        if self.measures.disk {
+            let (total, used, free) = disk_usage_gb();
+            data.insert(
+                "disk".to_string(),
+                json!({ "disk_total": total, "disk_used": used, "disk_free": free }),
+            );
+        }
+        if self.measures.threads {
+            data.insert(
+                "threads".to_string(),
+                json!({ "threads": thread_count().unwrap_or(0) }),
+            );
+        }
+        if self.measures.files {
+            data.insert(
+                "files".to_string(),
+                json!({ "files": open_file_count().unwrap_or(0) }),
+            );
+        }
+        if self.measures.fds {
+            data.insert("fds".to_string(), json!({ "fds": fd_count().unwrap_or(0) }));
+        }
+        Value::Object(data)
+    }
+}
+
+/// Disk total/used/free in gigabytes for the filesystem holding the current dir.
+fn disk_usage_gb() -> (f64, f64, f64) {
+    let disks = sysinfo::Disks::new_with_refreshed_list();
+    let cwd = std::env::current_dir().unwrap_or_default();
+
+    // Prefer the disk whose mount point is the longest prefix of the current dir.
+    let by_mount = disks
+        .list()
+        .iter()
+        .filter(|d| cwd.starts_with(d.mount_point()))
+        .max_by_key(|d| d.mount_point().as_os_str().len());
+    let disk = by_mount.or_else(|| disks.list().iter().max_by_key(|d| d.total_space()));
+
+    match disk {
+        Some(d) => {
+            let total = d.total_space() as f64;
+            let avail = d.available_space() as f64;
+            (total / 1e9, (total - avail) / 1e9, avail / 1e9)
+        }
+        None => (0.0, 0.0, 0.0),
+    }
+}
+
+// ----- Platform-specific process counters -----
+
+#[cfg(target_os = "linux")]
+fn thread_count() -> Option<u64> {
+    std::fs::read_dir("/proc/self/task")
+        .ok()
+        .map(|entries| entries.flatten().count() as u64)
+}
+
+#[cfg(target_os = "linux")]
+fn fd_count() -> Option<u64> {
+    std::fs::read_dir("/proc/self/fd")
+        .ok()
+        .map(|entries| entries.flatten().count() as u64)
+}
+
+#[cfg(target_os = "linux")]
+fn open_file_count() -> Option<u64> {
+    let entries = std::fs::read_dir("/proc/self/fd").ok()?;
+    let mut count = 0;
+    for entry in entries.flatten() {
+        if let Ok(target) = std::fs::read_link(entry.path()) {
+            if target.is_file() {
+                count += 1;
+            }
+        }
+    }
+    Some(count)
+}
+
+#[cfg(windows)]
+fn thread_count() -> Option<u64> {
+    windows_counters::thread_count()
+}
+
+#[cfg(windows)]
+fn fd_count() -> Option<u64> {
+    windows_counters::handle_count()
+}
+
+#[cfg(windows)]
+fn open_file_count() -> Option<u64> {
+    // Windows has no cheap "open regular files" count; report total handles
+    // (matches psutil using num_handles for the fds measure).
+    windows_counters::handle_count()
+}
+
+#[cfg(not(any(target_os = "linux", windows)))]
+fn thread_count() -> Option<u64> {
+    None
+}
+#[cfg(not(any(target_os = "linux", windows)))]
+fn fd_count() -> Option<u64> {
+    None
+}
+#[cfg(not(any(target_os = "linux", windows)))]
+fn open_file_count() -> Option<u64> {
+    None
+}
+
+#[cfg(windows)]
+mod windows_counters {
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
+    };
+    use windows_sys::Win32::System::Threading::{
+        GetCurrentProcess, GetCurrentProcessId, GetProcessHandleCount,
+    };
+
+    /// Number of open handles for the current process (used for fds/files).
+    pub fn handle_count() -> Option<u64> {
+        // SAFETY: GetProcessHandleCount writes a u32 through the out-pointer; the
+        // pseudo-handle from GetCurrentProcess needs no closing.
+        unsafe {
+            let mut count: u32 = 0;
+            if GetProcessHandleCount(GetCurrentProcess(), &mut count) != 0 {
+                Some(count as u64)
+            } else {
+                None
+            }
+        }
+    }
+
+    /// Number of threads owned by the current process (via a Toolhelp snapshot).
+    pub fn thread_count() -> Option<u64> {
+        // SAFETY: snapshot is validated against INVALID_HANDLE_VALUE and closed;
+        // the THREADENTRY32 is zero-initialized with dwSize set as the API requires.
+        unsafe {
+            let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+            if snapshot == INVALID_HANDLE_VALUE {
+                return None;
+            }
+            let pid = GetCurrentProcessId();
+            let mut entry: THREADENTRY32 = std::mem::zeroed();
+            entry.dwSize = std::mem::size_of::<THREADENTRY32>() as u32;
+
+            let mut count: u64 = 0;
+            if Thread32First(snapshot, &mut entry) != 0 {
+                loop {
+                    if entry.th32OwnerProcessID == pid {
+                        count += 1;
+                    }
+                    if Thread32Next(snapshot, &mut entry) == 0 {
+                        break;
+                    }
+                }
+            }
+            CloseHandle(snapshot);
+            Some(count)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn all_measures() -> Measures {
+        Measures {
+            cpu: true,
+            memory: true,
+            disk: true,
+            threads: true,
+            files: true,
+            fds: true,
+        }
+    }
+
+    #[test]
+    fn monitor_collects_enabled_measures() {
+        let mut monitor = HeartbeatMonitor::new(all_measures());
+        let stats = monitor.get_stats();
+
+        // Memory should be a positive number of MB for this live process.
+        assert!(stats["memory"]["memory_usage"].as_f64().unwrap() > 0.0);
+        assert!(stats["cpu"]["cpu_usage"].is_number());
+        assert!(stats["disk"]["disk_total"].as_f64().unwrap() >= 0.0);
+        // threads/fds are platform-backed on Linux and Windows.
+        #[cfg(any(target_os = "linux", windows))]
+        {
+            assert!(stats["threads"]["threads"].as_u64().unwrap() >= 1);
+            assert!(stats["fds"]["fds"].as_u64().unwrap() >= 1);
+        }
+    }
+
+    #[test]
+    fn disabled_measures_are_omitted() {
+        let measures = Measures {
+            cpu: true,
+            memory: false,
+            disk: false,
+            threads: false,
+            files: false,
+            fds: false,
+        };
+        let mut monitor = HeartbeatMonitor::new(measures);
+        let stats = monitor.get_stats();
+        assert!(stats.get("cpu").is_some());
+        assert!(stats.get("memory").is_none());
+        assert!(stats.get("disk").is_none());
+    }
+
+    #[test]
+    fn flatten_collapses_nested_stats() {
+        let stats = json!({
+            "cpu": { "cpu_usage": 1.5 },
+            "memory": { "memory_usage": 10.0 },
+            "disk": { "disk_total": 100.0, "disk_used": 40.0, "disk_free": 60.0 }
+        });
+        let flat = flatten(&stats);
+        assert_eq!(flat.get("cpu_usage"), Some(&1.5));
+        assert_eq!(flat.get("memory_usage"), Some(&10.0));
+        assert_eq!(flat.get("disk_free"), Some(&60.0));
+        assert_eq!(flat.len(), 5);
+    }
+
+    fn config_with_target(measures: Value, target: Value) -> Config {
+        let raw = json!({
+            "heartbeat": { "intervalSecs": 1, "measures": measures, "targets": [ target ] }
+        });
+        Config::from_value("com.example.C", "thing-1", raw).unwrap()
+    }
+
+    /// The messaging target publishes a heartbeat whose body carries EVERY enabled
+    /// measure category — the gap the integration test (cpu/memory only) left open.
+    #[tokio::test]
+    async fn messaging_target_publishes_all_measures() {
+        let config = config_with_target(
+            json!({ "cpu": true, "memory": true, "disk": true, "threads": true, "files": true, "fds": true }),
+            json!({ "type": "messaging", "config": { "topic": "hb/{ThingName}", "destination": "ipc" } }),
+        );
+        let recorder = crate::testutil::RecordingMessaging::new();
+        let metrics: Arc<dyn MetricService> = crate::testutil::RecordingMetrics::new();
+        let messaging: Option<Arc<dyn MessagingService>> = Some(recorder.clone());
+
+        let mut monitor = HeartbeatMonitor::new(config.parsed.heartbeat.measures.clone());
+        let stats = monitor.get_stats();
+        publish(&config, &metrics, &messaging, &stats).await;
+
+        let local = recorder.local();
+        assert_eq!(local.len(), 1, "one heartbeat published locally");
+        let (topic, msg) = &local[0];
+        assert_eq!(topic, "hb/thing-1", "topic template resolved");
+        assert_eq!(msg.header.name, "heartbeat");
+        assert_eq!(msg.header.version, "1.0.0");
+        for category in ["cpu", "memory", "disk", "threads", "files", "fds"] {
+            assert!(
+                msg.body.get(category).is_some(),
+                "heartbeat body should include the '{category}' measure"
+            );
+        }
+        assert!(recorder.iot().is_empty(), "ipc destination must not hit IoT Core");
+    }
+
+    /// The `iotcore` destination routes the heartbeat to the IoT Core publish path.
+    #[tokio::test]
+    async fn messaging_target_iot_core_destination() {
+        let config = config_with_target(
+            json!({ "cpu": true, "memory": true }),
+            json!({ "type": "messaging", "config": { "topic": "hb/core", "destination": "iotcore" } }),
+        );
+        let recorder = crate::testutil::RecordingMessaging::new();
+        let metrics: Arc<dyn MetricService> = crate::testutil::RecordingMetrics::new();
+        let messaging: Option<Arc<dyn MessagingService>> = Some(recorder.clone());
+
+        let stats = HeartbeatMonitor::new(config.parsed.heartbeat.measures.clone()).get_stats();
+        publish(&config, &metrics, &messaging, &stats).await;
+
+        assert!(recorder.local().is_empty(), "iotcore must not publish locally");
+        let iot = recorder.iot();
+        assert_eq!(iot.len(), 1);
+        assert_eq!(iot[0].0, "hb/core");
+    }
+
+    /// The `metric` target flattens the stats and emits them through the metric service.
+    #[tokio::test]
+    async fn metric_target_emits_flattened_measures() {
+        let config = config_with_target(
+            json!({ "cpu": true, "memory": true, "disk": true }),
+            json!({ "type": "metric" }),
+        );
+        let recorder = crate::testutil::RecordingMetrics::new();
+        let metrics: Arc<dyn MetricService> = recorder.clone();
+        let messaging: Option<Arc<dyn MessagingService>> = None;
+
+        let stats = HeartbeatMonitor::new(config.parsed.heartbeat.measures.clone()).get_stats();
+        publish(&config, &metrics, &messaging, &stats).await;
+
+        let emissions = recorder.emissions();
+        assert_eq!(emissions.len(), 1);
+        let (name, values) = &emissions[0];
+        assert_eq!(name, "heartbeat");
+        // Flattened: disk contributes three measures, plus cpu_usage + memory_usage.
+        assert!(values.contains_key("cpu_usage"));
+        assert!(values.contains_key("memory_usage"));
+        assert!(values.contains_key("disk_total"));
+    }
+
+    /// A messaging target configured without a messaging service is skipped (warned),
+    /// not a panic — and nothing is published.
+    #[tokio::test]
+    async fn messaging_target_without_service_is_skipped() {
+        let config = config_with_target(
+            json!({ "cpu": true }),
+            json!({ "type": "messaging", "config": { "topic": "hb", "destination": "ipc" } }),
+        );
+        let metrics: Arc<dyn MetricService> = crate::testutil::RecordingMetrics::new();
+        let messaging: Option<Arc<dyn MessagingService>> = None;
+        let stats = HeartbeatMonitor::new(config.parsed.heartbeat.measures.clone()).get_stats();
+        // Must not panic.
+        publish(&config, &metrics, &messaging, &stats).await;
+    }
+
+    /// The running heartbeat fires on its configured interval: the gap between
+    /// consecutive published heartbeats is ~`intervalSecs` (within tolerance).
+    #[tokio::test]
+    async fn heartbeat_fires_on_its_interval() {
+        let raw = json!({
+            "heartbeat": {
+                "intervalSecs": 1,
+                "measures": { "cpu": true, "memory": true },
+                "targets": [ { "type": "messaging", "config": { "topic": "hb", "destination": "ipc" } } ]
+            }
+        });
+        let config = Config::from_value("com.example.C", "thing-1", raw).unwrap();
+        let recorder = crate::testutil::RecordingMessaging::new();
+        let metrics: Arc<dyn MetricService> = crate::testutil::RecordingMetrics::new();
+        let config_handle = Arc::new(ArcSwap::from_pointee(config));
+
+        let _hb = Heartbeat::start(config_handle, metrics, Some(recorder.clone()));
+
+        // Collect at least 3 heartbeats (t≈0, ≈1s, ≈2s).
+        for _ in 0..40 {
+            if recorder.times().len() >= 3 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        let times = recorder.times();
+        assert!(times.len() >= 3, "expected >=3 heartbeats, got {}", times.len());
+
+        // Gap between the 2nd and 3rd heartbeat should be ~1s (avoid the first,
+        // which fires immediately on interval start).
+        let gap = times[2].duration_since(times[1]).as_secs_f64();
+        assert!(
+            (0.6..=1.6).contains(&gap),
+            "interval gap should be ~1s, measured {gap:.3}s"
+        );
+    }
+
+    /// Raising `intervalSecs` via hot-reload rebuilds the ticker so later heartbeats
+    /// are spaced by the new interval.
+    #[tokio::test]
+    async fn heartbeat_reacts_to_interval_change() {
+        let raw = json!({
+            "heartbeat": {
+                "intervalSecs": 1,
+                "measures": { "cpu": true },
+                "targets": [ { "type": "messaging", "config": { "topic": "hb", "destination": "ipc" } } ]
+            }
+        });
+        let config = Config::from_value("com.example.C", "thing-1", raw).unwrap();
+        let recorder = crate::testutil::RecordingMessaging::new();
+        let metrics: Arc<dyn MetricService> = crate::testutil::RecordingMetrics::new();
+        let handle = Arc::new(ArcSwap::from_pointee(config));
+
+        let _hb = Heartbeat::start(handle.clone(), metrics, Some(recorder.clone()));
+
+        // Let a couple of 1s ticks happen, then widen the interval to 3s.
+        for _ in 0..25 {
+            if recorder.times().len() >= 2 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        let raw2 = json!({
+            "heartbeat": {
+                "intervalSecs": 3,
+                "measures": { "cpu": true },
+                "targets": [ { "type": "messaging", "config": { "topic": "hb", "destination": "ipc" } } ]
+            }
+        });
+        handle.store(Arc::new(
+            Config::from_value("com.example.C", "thing-1", raw2).unwrap(),
+        ));
+        let before = recorder.times().len();
+        // Within ~1.5s the old 1s cadence would have added multiple heartbeats; the
+        // new 3s cadence should add at most one.
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        let added = recorder.times().len() - before;
+        assert!(added <= 1, "after widening to 3s, expected <=1 new heartbeat in 1.5s, got {added}");
+    }
+}

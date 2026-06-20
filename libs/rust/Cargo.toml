@@ -1,0 +1,72 @@
+[package]
+name = "ggcommons"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0"
+description = "Greengrass Commons — Rust library for building AWS IoT Greengrass v2 components"
+readme = "README.md"
+
+# Coexists with the Java (canonical) and Python implementations; tracks the same
+# config schema and CLI contract. See ../GGCOMMONS_RUST_PORT.md for the full plan.
+
+[features]
+default = ["standalone"]
+# STANDALONE runtime mode: dual-broker MQTT (local + AWS IoT Core).
+standalone = ["dep:rumqttc"]
+# GREENGRASS runtime mode: IPC via aws-greengrass-component-sdk.
+# NOTE: the SDK is a Linux-only C-FFI crate (bindgen + cc, GNU/Linux flags, UDS IPC);
+# it will not build on Windows/MSVC. Only enable this feature on a Linux toolchain.
+greengrass = ["dep:aws-greengrass-component-sdk"]
+# CloudWatch metric target via the AWS SDK (heavy deps; off by default).
+cloudwatch = ["dep:aws-config", "dep:aws-sdk-cloudwatch"]
+
+[dependencies]
+thiserror = "2"
+clap = "4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+jsonschema = "0.46"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "fs"] }
+async-trait = "0.1"
+arc-swap = "1"
+sysinfo = "0.39"
+notify = "8"
+# Message wire-format parity with Java/Python: UUID correlation ids + RFC3339 timestamps.
+uuid = { version = "1", features = ["v4"] }
+time = { version = "0.3", features = ["formatting"] }
+
+# STANDALONE-only. Pure-Rust async MQTT — no C toolchain, clean ARM/musl cross-compile.
+rumqttc = { version = "0.25", optional = true }
+
+# cloudwatch metric target (feature = "cloudwatch").
+aws-config = { version = "1", optional = true }
+aws-sdk-cloudwatch = { version = "1", optional = true }
+
+# GREENGRASS-only. Native AWS Greengrass IPC SDK (lib name `gg_sdk`).
+# Linux-only C-FFI crate (bindgen + cc); only built when the `greengrass` feature is
+# enabled, which must only be done on a Linux toolchain.
+aws-greengrass-component-sdk = { version = "1.0.4", optional = true }
+
+# logging.fileLogging (size-rotated file output) is implemented self-contained in
+# src/logging.rs (std::fs only) — no tracing-appender needed (it only does
+# time-based rotation; we match the Python library's size-based maxFileSize/backupCount).
+# notify drives FILE config hot-reload (src/config/source/file.rs); local + IoT Core
+# TLS (incl. mutual) is provided by rumqttc's rustls. The cloudwatch metric target
+# (aws-config / aws-sdk-cloudwatch) is gated behind the optional `cloudwatch` feature.
+
+# Windows: per-process thread + handle counts for the heartbeat (sysinfo lacks these).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+    "Win32_System_Diagnostics_ToolHelp",
+] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
+anyhow = "1"
+# Integration-test logging to a file (in addition to the console).
+tracing-appender = "0.2"
