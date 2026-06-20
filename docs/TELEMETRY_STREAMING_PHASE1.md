@@ -317,3 +317,107 @@ never crosses the boundary (returns an error instead). Bindings: Panama (Java 21
 - Risks: getting crash-recovery + torn-tail truncation provably correct (mitigated by the
   crash-injection + fuzz + golden suites — the bulk of milestone 1); `aws-sdk-kinesis` adds weight to
   the core cdylib (watch footprint for constrained edge devices).
+
+## 15. Performance testing (local persistence + draining)
+
+Per the decisions, there is **no fixed throughput target** — peak rate is a function of hardware +
+config. So the goal of perf testing is to **establish per-(target × config) baselines, characterize
+the throughput↔durability curve, find the bottleneck (CPU vs disk vs network vs fsync), and catch
+regressions** — not to pass an absolute number.
+
+### 15.1 The two halves to measure separately
+
+- **Local persistence (ingest path)** — `append` → in-memory queue → writer thread → segment +
+  fsync. Bottleneck is usually **disk + fsync**. Isolate it with a no-op/instant sink so the network
+  is out of the picture. Also covers **recovery time** and **dropOldest under disk pressure**.
+- **Draining (export path)** — ExportEngine → batch → sink → checkpoint. Bottleneck is the **sink +
+  network** (or, for backlog catch-up, disk read + sink). Measured with a rate-limited FakeSink (to
+  isolate the engine) and with the real `KinesisSink`/LocalStack (to measure true drain).
+
+### 15.2 Metrics captured (per run)
+
+Throughput (records/s, MB/s); **append latency** p50/p99/p999; **end-to-end latency** (append→acked);
+CPU%; RSS (leak watch); disk write bandwidth + IOPS + fsync/s; **recovery wall-clock**; `dropped_total`;
+**export lag** (oldest-unacked age); drain rate + time-to-catch-up after reconnect. Plus the env block
+(§15.7).
+
+### 15.3 Parameter matrix (swept)
+
+| Dimension | Values |
+|-----------|--------|
+| Payload size | 256 B, 1 KiB, 4 KiB, 64 KiB |
+| fsync policy | `PerBatch`, `Interval(1000ms)`, `Always` |
+| Segment size | 16 MiB, 64 MiB, 256 MiB |
+| Appender threads | 1, 4, N(cores) |
+| `on_full` | `dropOldest`, `block` |
+| Sink | `none` (instant), `fake-rate` (capped), `kinesis`/`localstack` |
+| Storage (Pi) | microSD, USB3-SSD, NVMe-HAT |
+
+### 15.4 Test targets
+
+| Target | Role | CPU / arch | RAM | Storage | FS | What it validates |
+|--------|------|-----------|-----|---------|----|-------------------|
+| **Windows dev box** (this machine) | dev + cross-platform correctness + upper bound | x86_64, many cores | high | NVMe | NTFS | the **Windows durability path**: `FlushFileBuffers` as fsync, atomic `rename()` over an open dir, file-locking; not a deployment target |
+| **lab-5950x** | **primary Linux perf** + powerful-gateway profile + later GG integration | Ryzen 5950X (16c/32t), x86_64 | high | NVMe | ext4 | headline throughput, soak/endurance, real Kinesis drain |
+| **Raspberry Pi 5** | **constrained-edge reality check** + aarch64 | Cortex-A76 4-core, arm64 | 4/8/16 GB | **microSD (worst case)** and/or USB3-SSD / NVMe-HAT | ext4 / f2fs | the real edge limits: fsync latency on flash, memory pressure, `dropOldest` under a slow disk, the **aarch64 build** |
+
+**Storage dominates the local-persistence numbers — call it out explicitly.** A microSD card has poor
+random-write + very high `fsync` latency and periodic wear-leveling stalls; it's the meaningful *floor*
+for an edge device, so test on it — but also test the Pi with a **USB3-SSD/NVMe-HAT** to show the
+achievable range, and recommend SSD for real high-rate workloads. On flash, also try **f2fs** vs ext4
+(f2fs is flash-friendly) and note SD endurance/wear in soak runs. `Always` fsync on microSD will be
+dramatically slower than `PerBatch` — this is exactly the knob the matrix exposes.
+
+### 15.5 Harness
+
+- **Micro (criterion)** — `benches/append.rs`, `benches/recovery.rs`: append latency/throughput per
+  config; recovery time vs log size. Stable, in-process, for the throughput↔fsync curve.
+- **Load generator** — a `loadgen` example binary driving end-to-end scenarios:
+  `--rate <r|unbounded> --payload <bytes> --threads <n> --duration <s> --fsync <policy>
+   --segment-bytes <n> --on-full <p> --sink <none|fake-rate:<r>|kinesis|localstack> --scenario <S1..S8>`.
+  Emits one **JSON results record** per run (→ baseline matrix + regression diff, §15.8).
+- **FakeSink modes**: `none` (instant ack — isolates disk), `fake-rate:<r/s>` (caps drain to model a
+  slow/limited sink), `disconnect(T)-then-ack` (for backlog + drain). Keeps perf runs offline + free.
+
+### 15.6 Scenarios
+
+| # | Scenario | Measures | Sink |
+|---|----------|----------|------|
+| **S1** | Ingest throughput sweep | max append rate per fsync × payload × segment (disk-bound) | `none` |
+| **S2** | Append latency under load | p50/p99/p999 append latency at a fixed sustainable rate | `none` |
+| **S3** | Recovery time | `open()`/recover wall-clock vs log size (1e6 / 1e7 / 1e8 records); correctness | n/a |
+| **S4** | Backpressure | `dropOldest`/`block`/`rejectNew` behavior + `dropped_total` + bounded RSS when producer > disk | `fake-rate` |
+| **S5** | Soak / endurance | hours at a fixed rate: RSS (no leak), disk steady-state (retention), SD latency drift/wear | `fake-rate` / `kinesis` |
+| **S6** | Disconnected backlog → drain | accumulate backlog B over outage T, reconnect, measure **drain rate + time-to-catch-up**, no loss, order preserved | `disconnect-then-ack` / `kinesis` |
+| **S7** | Real-sink drain | export throughput vs shard count, PutRecords batch efficiency, throttling/backoff | `kinesis` / `localstack` |
+| **S8** | Crash during drain | kill mid-drain → restart time + resume-from-checkpoint correctness (at-least-once) | `fake-rate` |
+
+### 15.7 Methodology
+
+- **Run on the device under test** (don't extrapolate across arch/disk). Put the buffer dir on the
+  target's real volume; record `path`'s fs + mount opts.
+- **Warm-up** then a steady-state measurement window; **≥5 repeats**, report **median + p99**.
+- **Recovery (S3)**: drop the page cache before each measurement (`echo 3 >
+  /proc/sys/vm/drop_caches` on Linux) so you measure disk, not cache.
+- **Isolate**: dedicated path/partition if possible; no competing load; for the Pi, watch thermals
+  (throttling) and power (a weak PSU throttles the A76).
+- **Env block** captured into each result: CPU model, disk model (`lsblk`/`smartctl`/`wmic`), fs +
+  mount opts, kernel, `rustc` version, build profile (`release` + `lto`), and the config used.
+
+### 15.8 Baselines & regression tracking
+
+No absolute pass/fail. Each run writes `bench/results/<target>/<git-sha>.json`; a small comparator
+flags any metric that regresses **> 10%** vs the recorded baseline for the **same target + config**
+(throughput down, latency/recovery/RSS up). Publish a per-target baseline matrix in the docs so the
+achievable envelope on Windows / 5950X / Pi-5 (SD vs SSD) is visible. Treat the Pi-on-microSD numbers
+as the conservative edge floor and the 5950X/NVMe numbers as the high end.
+
+### 15.9 Building/running on each target
+
+- **Windows** — native `cargo build --release` + `cargo bench`; run `loadgen` against an NTFS path.
+- **lab-5950x** — build in WSL (cargo at `~/.cargo/bin`) or natively on the box; copy the `loadgen`
+  binary + run against an ext4 path; LocalStack/real Kinesis for S6/S7.
+- **Raspberry Pi 5 (aarch64)** — cross-compile (`cross`, `cargo-zigbuild`, or a WSL `aarch64-unknown-
+  linux-gnu` target) **or** build natively on the Pi; run `loadgen` against microSD **and** a
+  USB3-SSD/NVMe-HAT path to capture both ends of the storage range. (Confirms the aarch64 build, which
+  the future bindings + cross-compile work will also need.)
