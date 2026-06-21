@@ -247,6 +247,11 @@ fn resolve_sink(config: &Config, sink: SinkConfig) -> SinkConfig {
             region,
             endpoint_url,
         },
+        SinkConfig::Kafka { bootstrap_servers, topic, properties } => SinkConfig::Kafka {
+            bootstrap_servers: resolve(config, &bootstrap_servers),
+            topic: resolve(config, &topic),
+            properties,
+        },
     }
 }
 
@@ -269,6 +274,18 @@ fn default_sink_factory(name: &str, sink: &SinkConfig) -> Result<Option<Box<dyn 
             #[cfg(not(feature = "streaming-kinesis"))]
             {
                 Ok(None) // buffer-only without the AWS sink feature
+            }
+        }
+        SinkConfig::Kafka { bootstrap_servers, topic, properties } => {
+            #[cfg(feature = "streaming-kafka")]
+            {
+                let s = ggstreamlog::KafkaSink::new(bootstrap_servers, topic, properties)
+                    .map_err(map_err)?;
+                Ok(Some(Box::new(s)))
+            }
+            #[cfg(not(feature = "streaming-kafka"))]
+            {
+                Ok(None) // buffer-only without the Kafka sink feature
             }
         }
     }
@@ -311,6 +328,7 @@ mod tests {
         assert_eq!(parsed.streams[0].batch.max_records, 50);
         match &parsed.streams[0].sink {
             SinkConfig::Kinesis { stream_name, .. } => assert_eq!(stream_name, "ts-{ThingName}"),
+            other => panic!("expected Kinesis sink, got {other:?}"),
         }
     }
 

@@ -24,6 +24,7 @@ cloudwatch = ["dep:aws-config", "dep:aws-sdk-cloudwatch"]
 # `streaming` alone is buffer-only (no AWS); `streaming-kinesis` adds the real Kinesis sink.
 streaming = ["dep:ggstreamlog"]
 streaming-kinesis = ["streaming", "ggstreamlog/kinesis"]
+streaming-kafka = ["streaming", "ggstreamlog/kafka"]
 
 [dependencies]
 thiserror = "2"

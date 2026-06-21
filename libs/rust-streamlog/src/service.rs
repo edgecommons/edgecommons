@@ -125,7 +125,8 @@ impl StreamService {
     }
 }
 
-/// The production sink factory: build a [`crate::KinesisSink`] (feature `kinesis`), else buffer-only.
+/// The production sink factory: build a [`crate::KinesisSink`] (feature `kinesis`) or
+/// [`crate::KafkaSink`] (feature `kafka`), else buffer-only.
 #[allow(unused_variables)]
 fn default_sink_factory(name: &str, sink: &SinkConfig) -> Result<Option<Box<dyn Sink>>> {
     match sink {
@@ -143,6 +144,18 @@ fn default_sink_factory(name: &str, sink: &SinkConfig) -> Result<Option<Box<dyn 
             #[cfg(not(feature = "kinesis"))]
             {
                 let _ = (stream_name, region, endpoint_url);
+                Ok(None)
+            }
+        }
+        SinkConfig::Kafka { bootstrap_servers, topic, properties } => {
+            #[cfg(feature = "kafka")]
+            {
+                let s = crate::KafkaSink::new(bootstrap_servers, topic, properties)?;
+                Ok(Some(Box::new(s)))
+            }
+            #[cfg(not(feature = "kafka"))]
+            {
+                let _ = (bootstrap_servers, topic, properties);
                 Ok(None)
             }
         }

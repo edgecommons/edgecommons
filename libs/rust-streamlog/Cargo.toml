@@ -11,6 +11,8 @@ publish = false
 default = []
 # KinesisSink (AWS SDK; heavy). Off by default so the core builds without AWS deps.
 kinesis = ["dep:aws-config", "dep:aws-sdk-kinesis", "dep:tokio"]
+# KafkaSink (rdkafka / librdkafka, built via cmake). Off by default.
+kafka = ["dep:rdkafka", "dep:tokio"]
 # C ABI (src/ffi.rs) for the language bindings (Java/Panama, Python, Node). Build a cdylib with
 # this feature; pair with `kinesis` to get the real export sink in the shared library.
 cabi = ["dep:tracing-subscriber"]
@@ -33,6 +35,10 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["r
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"], optional = true }
 aws-config = { version = "1", optional = true }
 aws-sdk-kinesis = { version = "1", optional = true }
+
+# KafkaSink (feature = "kafka"). cmake-build vendors + builds librdkafka (needs cmake + a C
+# compiler); no system librdkafka required.
+rdkafka = { version = "0.36", features = ["cmake-build"], optional = true }
 
 [dev-dependencies]
 proptest = "1"

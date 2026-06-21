@@ -21,6 +21,11 @@ pub mod kinesis;
 #[cfg(feature = "kinesis")]
 pub use kinesis::KinesisSink;
 
+#[cfg(feature = "kafka")]
+pub mod kafka;
+#[cfg(feature = "kafka")]
+pub use kafka::KafkaSink;
+
 /// One record handed to a sink (borrows from the read batch).
 pub struct ExportRecord<'a> {
     pub offset: u64,

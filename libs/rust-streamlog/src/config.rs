@@ -110,7 +110,7 @@ impl Default for DeliveryConfig {
     }
 }
 
-/// Where a stream's export engine delivers. Phase 1 ships `Kinesis`; Kafka/SiteWise are later.
+/// Where a stream's export engine delivers (`{"type": "kinesis", ...}` / `{"type": "kafka", ...}`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum SinkConfig {
@@ -121,6 +121,14 @@ pub enum SinkConfig {
         /// Override the Kinesis endpoint (LocalStack / VPC endpoint / testing). Default chain otherwise.
         #[serde(default)]
         endpoint_url: Option<String>,
+    },
+    Kafka {
+        /// `host:port[,host:port...]` broker list (`bootstrap.servers`).
+        bootstrap_servers: String,
+        topic: String,
+        /// Extra librdkafka producer properties (e.g. security/SASL). Applied verbatim.
+        #[serde(default)]
+        properties: std::collections::BTreeMap<String, String>,
     },
 }
 

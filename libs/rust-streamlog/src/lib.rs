@@ -34,6 +34,8 @@ pub use export::{
 };
 #[cfg(feature = "kinesis")]
 pub use export::KinesisSink;
+#[cfg(feature = "kafka")]
+pub use export::KafkaSink;
 pub use log::{EmbeddedLog, LogStats};
 pub use record::Record;
 pub use service::{ServiceStats, SinkFactory, StreamService};
