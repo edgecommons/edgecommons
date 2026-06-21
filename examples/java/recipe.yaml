@@ -35,6 +35,16 @@ ComponentConfiguration:
         target: "cloudwatch"
         targetConfig:
           intervalSecs: 5
+      # Credentials / encrypted local vault. The library opens the vault at startup; the component
+      # reads its secrets via gg.getCredentials(). Paths live under the component work dir (writable
+      # by ggc_user). For central sync from AWS Secrets Manager over TES, add a `central` block here
+      # (type: awsSecretsManager, region, sync.secrets: [...]).
+      credentials:
+        vault:
+          path: "/greengrass/v2/work/{ComponentFullName}/vault"
+          keyProvider:
+            type: "file"
+            keyPath: "/greengrass/v2/work/{ComponentFullName}/vault.key"
       component:
         global:
           'publish_interval': 3

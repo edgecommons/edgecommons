@@ -39,6 +39,12 @@
       "logFileName": "/greengrass/v2/logs/{ComponentName}.metric.log"
     }
   },
+  "credentials": {
+    "vault": {
+      "path": "./.vault/vault",
+      "keyProvider": { "type": "file", "keyPath": "./.vault/vault.key" }
+    }
+  },
   "component": {
     "global": {
       "publish_interval": 1,

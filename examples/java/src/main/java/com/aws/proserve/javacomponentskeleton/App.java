@@ -4,6 +4,10 @@ import com.aws.proserve.ggcommons.GGCommons;
 import com.aws.proserve.ggcommons.GGCommonsBuilder;
 import com.aws.proserve.ggcommons.config.ConfigManager;
 import com.aws.proserve.ggcommons.config.ConfigurationChangeListener;
+import com.aws.proserve.ggcommons.credentials.BasicAuth;
+import com.aws.proserve.ggcommons.credentials.CredentialService;
+import com.aws.proserve.ggcommons.credentials.PutOptions;
+import com.aws.proserve.ggcommons.credentials.Secret;
 import com.aws.proserve.ggcommons.messaging.MessagingClient;
 import com.aws.proserve.ggcommons.metrics.MetricEmitter;
 import com.aws.proserve.ggcommons.messaging.Message;
@@ -21,6 +25,7 @@ import software.amazon.awssdk.aws.greengrass.model.QOS;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
@@ -37,6 +42,8 @@ public class App implements ConfigurationChangeListener
     private final ConfigManager configService;
     private final MessagingClient messagingService;
     private final MetricEmitter metricService;
+    /** Initialized runtime, used to reach optional subsystems (e.g. credentials) at startup. */
+    private final GGCommons ggCommons;
     /** Durable {@code telemetry} stream handle, or {@code null} if the config has no streaming section. */
     private final StreamHandle stream;
     /** Whether the IoT Core command subscription was established (so shutdown only unsubscribes it then). */
@@ -44,6 +51,11 @@ public class App implements ConfigurationChangeListener
 
     private static final String PUB_TOPIC = "ggcommons/test/java/hello_world";
     private static final String REQ_TOPIC = "ggcommons/test/java/request";
+
+    /** Config key (under {@code component.global}) naming the secret the component reads. */
+    private static final String DEMO_SECRET_KEY = "demo_secret";
+    /** Default secret name when {@code component.global.demo_secret} is absent. */
+    private static final String DEFAULT_DEMO_SECRET = "skeleton/demo-secret";
 
     private volatile long publishInterval;
     private volatile boolean running = true;
@@ -149,10 +161,10 @@ public class App implements ConfigurationChangeListener
         LOGGER.info("Initializing Java Component Skeleton...");
         
         // Initialize GGCommons with component name and arguments using builder
-        GGCommons ggCommons = GGCommonsBuilder.create("aws.proserve.greengrass.JavaComponentSkeleton")
+        ggCommons = GGCommonsBuilder.create("aws.proserve.greengrass.JavaComponentSkeleton")
                                               .withArgs(args)
                                               .build();
-        
+
         // Get services through dependency injection
         configService = ggCommons.getConfigManager();
         messagingService = ggCommons.getMessaging();
@@ -261,7 +273,10 @@ public class App implements ConfigurationChangeListener
     
     public void run() {
         LOGGER.info("Starting component execution...");
-        
+
+        // Demonstrate encrypted-vault secret access once at startup (non-fatal).
+        demonstrateCredentials(ggCommons);
+
         // Demonstrate request-reply pattern
         demonstrateRequestReply();
         
@@ -287,6 +302,61 @@ public class App implements ConfigurationChangeListener
         LOGGER.info("Component execution completed");
     }
     
+    /**
+     * Demonstrate encrypted-vault secret access via {@link GGCommons#getCredentials()}.
+     *
+     * <p>Shows the credential-service usage every real component needs: read a named secret from the
+     * encrypted local vault and use it — without ever logging the value. Runs once at startup.
+     *
+     * <p>In production the secret arrives via central sync (AWS Secrets Manager over TES, with a
+     * {@code credentials.central} config) or out-of-band provisioning; here, so the example is
+     * self-contained, we seed a demo value locally on first run if it is absent.
+     *
+     * <p>Non-fatal: any vault error is logged and swallowed so the demo never takes the component down.
+     */
+    private void demonstrateCredentials(GGCommons gg) {
+        try {
+            CredentialService creds = gg.getCredentials();
+            if (creds == null) {
+                LOGGER.info("no credentials config section; secret access demo disabled");
+                return;
+            }
+
+            JsonObject globalConfig = configService.getGlobalConfig();
+            String name = globalConfig.has(DEMO_SECRET_KEY)
+                ? globalConfig.get(DEMO_SECRET_KEY).getAsString()
+                : DEFAULT_DEMO_SECRET;
+
+            // Seed a demo secret on first run (in production this comes from central sync/provisioning).
+            if (!creds.exists(name)) {
+                JsonObject demo = new JsonObject();
+                demo.addProperty("username", "svc-account");
+                demo.addProperty("password", "demo-secret-value");
+                byte[] bytes = demo.toString().getBytes(StandardCharsets.UTF_8);
+                String version = creds.put(name, bytes, PutOptions.defaults());
+                LOGGER.info("seeded demo secret (production: provided via central sync / provisioning) "
+                    + "[secret={}, version={}]", name, version);
+            }
+
+            // Read it back and use it — logging only non-sensitive facts, never the value.
+            Optional<Secret> secret = creds.get(name);
+            if (secret.isPresent()) {
+                Secret s = secret.get();
+                LOGGER.info("credential access OK (value redacted) [secret={}, bytes={}, source={}]",
+                    name, s.bytes().length, s.source());
+                // A real component would now use the secret (e.g. authenticate a downstream client).
+                // Demonstrate a typed view; log only the non-secret username.
+                Optional<BasicAuth> basicAuth = creds.getBasicAuth(name);
+                basicAuth.ifPresent(ba -> LOGGER.info(
+                    "parsed basic-auth view (password redacted) [secret={}, username={}]", name, ba.username()));
+            } else {
+                LOGGER.warn("secret not found after seeding (unexpected) [secret={}]", name);
+            }
+        } catch (Exception e) {
+            LOGGER.warn("secret access demo failed (non-fatal): {}", e.getMessage());
+        }
+    }
+
     private void demonstrateRequestReply() {
         LOGGER.info("Demonstrating request-reply pattern...");
         publishRequest("demo_1", 0);
