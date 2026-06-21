@@ -1,7 +1,7 @@
 """Credential service (the public seam) + Secret / SecretMeta value types."""
 import json
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Dict, List, Optional
 
 from .errors import CredentialError
@@ -74,6 +74,10 @@ class CredentialService:
     def delete(self, name: str) -> bool:
         raise NotImplementedError
 
+    def refresh(self) -> None:
+        """Force an immediate pull from the central source (no-op without central sync)."""
+        return None
+
     # convenience views
     def get_bytes(self, name: str) -> Optional[bytes]:
         s = self.get(name)
@@ -89,43 +93,67 @@ class CredentialService:
 
 
 class DefaultCredentialService(CredentialService):
-    """A :class:`~ggcommons.credentials.vault.LocalVault` behind a lock; refreshes on read."""
+    """A :class:`~ggcommons.credentials.vault.LocalVault` behind a lock; refreshes on read.
 
-    def __init__(self, vault):
+    ``namespace`` (``<thingName>/<componentName>``) is transparently prepended to every key and
+    stripped from returned names, so a shared device vault can't collide across components.
+    """
+
+    def __init__(self, vault, namespace: str = "", sync=None, lock: Optional[threading.Lock] = None):
         self._vault = vault
-        self._lock = threading.Lock()
+        self._lock = lock if lock is not None else threading.Lock()
+        self._namespace = namespace
+        self._sync = sync
+
+    def _full(self, name: str) -> str:
+        return f"{self._namespace}/{name}" if self._namespace else name
+
+    def _rel(self, full: str) -> str:
+        prefix = self._namespace + "/"
+        return full[len(prefix):] if self._namespace and full.startswith(prefix) else full
 
     def get(self, name: str) -> Optional[Secret]:
         with self._lock:
             self._vault.reload_if_changed()
-            return self._vault.get(name)
+            s = self._vault.get(self._full(name))
+        if s is not None:
+            s.name = self._rel(s.name)
+        return s
 
     def get_version(self, name: str, version: str) -> Optional[Secret]:
         with self._lock:
             self._vault.reload_if_changed()
-            return self._vault.get_version(name, version)
+            s = self._vault.get_version(self._full(name), version)
+        if s is not None:
+            s.name = self._rel(s.name)
+        return s
 
     def exists(self, name: str) -> bool:
         with self._lock:
             self._vault.reload_if_changed()
-            return self._vault.exists(name)
+            return self._vault.exists(self._full(name))
 
     def list(self, prefix: str = "") -> List[SecretMeta]:
         with self._lock:
             self._vault.reload_if_changed()
-            return self._vault.list(prefix)
+            metas = self._vault.list(self._full(prefix))
+        return [replace(m, name=self._rel(m.name)) for m in metas]
 
     def versions(self, name: str) -> List[str]:
         with self._lock:
             self._vault.reload_if_changed()
-            return self._vault.versions(name)
+            return self._vault.versions(self._full(name))
 
     def put(self, name: str, value: bytes, **opts) -> str:
         with self._lock:
             self._vault.reload_if_changed()
-            return self._vault.put(name, value, **opts)
+            return self._vault.put(self._full(name), value, **opts)
 
     def delete(self, name: str) -> bool:
         with self._lock:
             self._vault.reload_if_changed()
-            return self._vault.delete(name)
+            return self._vault.delete(self._full(name))
+
+    def refresh(self) -> None:
+        if self._sync is not None:
+            self._sync.sync_now()

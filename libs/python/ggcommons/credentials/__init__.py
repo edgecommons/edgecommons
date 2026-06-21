@@ -12,10 +12,12 @@ Example::
     creds.put("db/password", b"s3cr3t")
     pw = creds.get_string("db/password")
 """
+from .central import AwsSecretsManagerSource, CentralSecret, CentralVaultSource
 from .config import open_from_config
 from .errors import CredentialError
 from .keyprovider import FileKeyProvider, KeyProvider
 from .service import CredentialService, DefaultCredentialService, Secret, SecretMeta
+from .sync import SyncEngine
 from .vault import LocalVault
 
 __all__ = [
@@ -28,4 +30,8 @@ __all__ = [
     "Secret",
     "SecretMeta",
     "LocalVault",
+    "CentralVaultSource",
+    "CentralSecret",
+    "AwsSecretsManagerSource",
+    "SyncEngine",
 ]

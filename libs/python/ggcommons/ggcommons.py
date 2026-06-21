@@ -266,7 +266,10 @@ class GGCommons:
 
         # Resolve {ThingName}/{ComponentFullName} in the vault path(s) before opening.
         resolved = _json.loads(self._config_manager.resolve_template(_json.dumps(credentials)))
-        self._credentials = open_from_config(resolved)
+        # Transparently namespace every key by <thingName>/<componentName> (collision-free across
+        # components/devices).
+        namespace = f"{self._config_manager.get_thing_name()}/{self._config_manager.get_component_full_name()}"
+        self._credentials = open_from_config(resolved, namespace)
         logger.info("Credentials vault initialized")
 
     def get_credentials(self):

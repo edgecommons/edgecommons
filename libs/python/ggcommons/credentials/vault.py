@@ -106,6 +106,13 @@ class LocalVault:
         entry = self._secrets.get(name)
         return [v["version"] for v in entry["versions"]] if entry else []
 
+    def latest_central_version_id(self, name: str) -> Optional[str]:
+        """The upstream version id of the latest version of ``name`` (for sync change detection)."""
+        entry = self._secrets.get(name)
+        if entry and entry["versions"]:
+            return entry["versions"][-1].get("centralVersionId")
+        return None
+
     # ----- writes -----
     def put(self, name: str, plaintext: bytes, ttl_secs=None, labels=None,
             content_type=None, source=None, central_version_id=None) -> str:

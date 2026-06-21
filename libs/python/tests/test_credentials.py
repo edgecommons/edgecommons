@@ -11,6 +11,7 @@ from ggcommons.credentials import (
     DefaultCredentialService,
     FileKeyProvider,
     LocalVault,
+    open_from_config,
 )
 from ggcommons.credentials import crypto, format as fmt
 
@@ -65,6 +66,59 @@ def test_tamper_detected(tmp_path):
     path.write_text(json.dumps(vf))
     with pytest.raises(CredentialError):
         LocalVault.open(str(path), FileKeyProvider(bytes([7] * 32)), 2)
+
+
+def test_namespacing_isolates_components(tmp_path):
+    from ggcommons.credentials import DefaultCredentialService
+
+    path = str(tmp_path / "vault")
+    kek = bytes([5] * 32)
+    c1 = DefaultCredentialService(LocalVault.open(path, FileKeyProvider(kek), 2), namespace="thing-1/CompA")
+    c2 = DefaultCredentialService(LocalVault.open(path, FileKeyProvider(kek), 2), namespace="thing-1/CompB")
+    c1.put("db/password", b"a-secret")
+    c2.put("db/password", b"b-secret")
+    # Same caller-facing key, no collision in the shared vault.
+    assert c1.get_string("db/password") == "a-secret"
+    assert c2.get_string("db/password") == "b-secret"
+    assert [m.name for m in c1.list("")] == ["db/password"]
+    raw = (tmp_path / "vault").read_text()
+    assert "thing-1/CompA/db/password" in raw
+    assert "thing-1/CompB/db/password" in raw
+
+
+@pytest.mark.skipif(os.environ.get("GGCOMMONS_IT_SM") != "1", reason="needs floci secretsmanager (GGCOMMONS_IT_SM=1)")
+def test_central_sync_from_secrets_manager(tmp_path):
+    import uuid
+
+    import boto3
+
+    os.environ.setdefault("AWS_ACCESS_KEY_ID", "test")
+    os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "test")
+    os.environ.setdefault("AWS_REGION", "us-east-1")
+    sm = boto3.client("secretsmanager", region_name="us-east-1", endpoint_url="http://localhost:4566")
+    name = f"ggcommons-py-cred-{uuid.uuid4()}"
+    sm.create_secret(Name=name, SecretString="v1")
+    try:
+        cfg = {
+            "vault": {"path": str(tmp_path / "vault"), "keyProvider": {"type": "file", "keyPath": str(tmp_path / "vault.key")}},
+            "central": {
+                "type": "awsSecretsManager", "region": "us-east-1", "endpointUrl": "http://localhost:4566",
+                "bootstrapOnStart": True, "refreshIntervalSecs": 0, "sync": {"secrets": [name]},
+            },
+        }
+        creds = open_from_config(cfg)  # namespace "" → central id == local key == name
+        assert creds.get_string(name) == "v1"
+
+        sm.put_secret_value(SecretId=name, SecretString="v2")
+        creds.refresh()
+        assert creds.get_string(name) == "v2"
+        assert len(creds.versions(name)) >= 2  # previous version retained (rotation grace)
+
+        before = len(creds.versions(name))
+        creds.refresh()
+        assert len(creds.versions(name)) == before  # no churn when unchanged
+    finally:
+        sm.delete_secret(SecretId=name, ForceDeleteWithoutRecovery=True)
 
 
 @pytest.mark.skipif(not (VECTORS_DIR / "vault.json").exists(), reason="vault-test-vectors not present")
