@@ -8,9 +8,11 @@
 export { openFromConfig, CredentialsConfig } from "./config";
 export { CredentialError } from "./errors";
 export { CredentialService, DefaultCredentialService } from "./service";
-export { FileKeyProvider, KeyProvider } from "./keyprovider";
+export { FileKeyProvider, KeyProvider, KmsKeyProvider, PrewrappedKeyProvider } from "./keyprovider";
 export { LocalVault, PutOptions } from "./vault";
-export { Secret, SecretMeta } from "./types";
+export { CredentialStats, Secret, SecretMeta } from "./types";
 export { AwsSecretsManagerSource, CentralSecret, CentralVaultSource } from "./central";
-export { SyncEngine, SyncSecret } from "./sync";
+export { SyncEngine, SyncSecret, SyncStats } from "./sync";
 export { AwsCredentials, BasicAuth, KafkaSasl, TlsBundle } from "./views";
+export { resolveSecretRefs } from "./secretref";
+export { CredentialMetricsBridge } from "./bridge";

@@ -2,7 +2,7 @@
 import { CredentialError } from "./errors";
 import { SyncEngine } from "./sync";
 import { LocalVault, PutOptions } from "./vault";
-import { Secret, SecretMeta } from "./types";
+import { CredentialStats, Secret, SecretMeta } from "./types";
 import { AwsCredentials, BasicAuth, KafkaSasl, TlsBundle } from "./views";
 
 /** The public credential interface (depend on this). Obtained via `gg.credentials()`. */
@@ -16,6 +16,8 @@ export interface CredentialService {
   delete(name: string): boolean;
   /** Force an immediate pull from the central source (no-op without central sync). */
   refresh(): Promise<void>;
+  /** Non-sensitive stats for observability (never includes values). */
+  stats(): CredentialStats;
 
   getBytes(name: string): Buffer | undefined;
   getString(name: string): string | undefined;
@@ -93,6 +95,20 @@ export class DefaultCredentialService implements CredentialService {
 
   async refresh(): Promise<void> {
     if (this.sync) await this.sync.syncNow();
+  }
+
+  stats(): CredentialStats {
+    const secretCount = this.list("").length;
+    if (!this.sync) {
+      return { secretCount, syncFailures: 0, rotations: 0 };
+    }
+    const s = this.sync.stats();
+    return {
+      secretCount,
+      lastSyncAgeMs: s.lastSuccessMs !== undefined ? Math.max(0, Date.now() - s.lastSuccessMs) : undefined,
+      syncFailures: s.failures,
+      rotations: s.rotations,
+    };
   }
 
   getBytes(name: string): Buffer | undefined {

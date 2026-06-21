@@ -4,20 +4,23 @@
  * `namespace` (`<thingName>/<componentName>`) is applied transparently to every key. Async because
  * the AWS SDK (and thus bootstrap) is promise-based.
  */
-import { existsSync, mkdirSync } from "fs";
+import { existsSync, mkdirSync, readFileSync } from "fs";
 import { dirname } from "path";
+import { randomUUID } from "crypto";
 
+import { KEY_LEN, random } from "./crypto";
 import { CredentialError } from "./errors";
-import { FileKeyProvider } from "./keyprovider";
+import { FileKeyProvider, KeyProvider, KmsKeyProvider, PrewrappedKeyProvider } from "./keyprovider";
 import { DefaultCredentialService } from "./service";
 import { SyncEngine, SyncSecret } from "./sync";
 import { LocalVault } from "./vault";
+import { VaultFile } from "./format";
 
 export interface CredentialsConfig {
   vault?: {
     path?: string;
     keepVersions?: number;
-    keyProvider?: { type?: string; keyPath?: string; kmsKeyId?: string; region?: string };
+    keyProvider?: { type?: string; keyPath?: string; kmsKeyId?: string; region?: string; endpointUrl?: string };
   };
   central?: {
     type?: string;
@@ -38,6 +41,55 @@ function syncSecrets(central: NonNullable<CredentialsConfig["central"]>): SyncSe
   return out;
 }
 
+/**
+ * Open (or create) the local vault under the configured key provider. `file` wraps the DEK under a
+ * local key file; `kms`/`greengrass` wrap it via an AWS KMS CMK. The KMS round trip is performed
+ * eagerly here (async) and handed to `LocalVault.open` through a {@link PrewrappedKeyProvider}, since
+ * `LocalVault.open` calls `wrapDek`/`unwrapDek` synchronously. The on-disk format is unchanged.
+ */
+async function openVault(
+  kind: string,
+  path: string,
+  keep: number,
+  kp: NonNullable<NonNullable<CredentialsConfig["vault"]>["keyProvider"]>,
+): Promise<LocalVault> {
+  if (kind === "file") {
+    const keyPath = kp.keyPath ?? `${path}.key`;
+    const dir = dirname(keyPath);
+    if (dir) mkdirSync(dir, { recursive: true });
+    const provider: KeyProvider = existsSync(keyPath)
+      ? FileKeyProvider.fromKeyFile(keyPath)
+      : FileKeyProvider.generateKeyFile(keyPath);
+    return LocalVault.open(path, provider, keep);
+  }
+
+  if (kind === "kms" || kind === "greengrass") {
+    if (!kp.kmsKeyId) {
+      throw new CredentialError("kms key provider requires keyProvider.kmsKeyId");
+    }
+    const kms = await KmsKeyProvider.create(kp.kmsKeyId, kp.region, kp.endpointUrl);
+    if (existsSync(path)) {
+      // Existing vault: read its KEK + vaultId and KMS-decrypt the DEK eagerly.
+      const dir = dirname(path);
+      if (dir) mkdirSync(dir, { recursive: true });
+      const vf = JSON.parse(readFileSync(path, "utf8")) as VaultFile;
+      const dek = await kms.unwrapDek(vf.vaultId, vf.kek);
+      const shim = new PrewrappedKeyProvider("kms", vf.kek, dek);
+      return LocalVault.open(path, shim, keep);
+    }
+    // New vault: generate the id + DEK here, KMS-wrap eagerly, then hand both to LocalVault.open.
+    const vaultId = randomUUID();
+    const dek = random(KEY_LEN);
+    const kek = await kms.wrapDek(vaultId, dek);
+    const shim = new PrewrappedKeyProvider("kms", kek, dek);
+    return LocalVault.open(path, shim, keep, vaultId, dek);
+  }
+
+  throw new CredentialError(
+    `key provider '${kind}' is not supported (supported: 'file', 'kms'/'greengrass')`,
+  );
+}
+
 /** Open the vault and return the default credential service from a `credentials` config object. */
 export async function openFromConfig(
   cfg: CredentialsConfig = {},
@@ -47,17 +99,8 @@ export async function openFromConfig(
   const path = vaultCfg.path ?? "vault";
   const keep = vaultCfg.keepVersions ?? 2;
   const kind = vaultCfg.keyProvider?.type ?? "file";
-  if (kind !== "file") {
-    throw new CredentialError(`key provider '${kind}' is not implemented yet (phase 1 supports 'file')`);
-  }
-  const keyPath = vaultCfg.keyProvider?.keyPath ?? `${path}.key`;
-  const dir = dirname(keyPath);
-  if (dir) mkdirSync(dir, { recursive: true });
-  const provider = existsSync(keyPath)
-    ? FileKeyProvider.fromKeyFile(keyPath)
-    : FileKeyProvider.generateKeyFile(keyPath);
 
-  const vault = LocalVault.open(path, provider, keep);
+  const vault = await openVault(kind, path, keep, vaultCfg.keyProvider ?? {});
 
   const central = cfg.central;
   const ctype = central?.type ?? "none";

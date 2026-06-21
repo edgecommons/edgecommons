@@ -58,7 +58,18 @@ export class LocalVault {
     void this.keyProvider;
   }
 
-  static open(path: string, keyProvider: KeyProvider, keepVersions = 2): LocalVault {
+  /**
+   * Open (or create) the vault. `newVaultId`/`newDek` let a caller supply the vault id and DEK for a
+   * brand-new vault (used by the async KMS key provider, which must pre-wrap the DEK out of band);
+   * they are ignored for an existing vault and default to fresh random values.
+   */
+  static open(
+    path: string,
+    keyProvider: KeyProvider,
+    keepVersions = 2,
+    newVaultId?: string,
+    newDek?: Buffer,
+  ): LocalVault {
     const keep = Math.max(1, keepVersions);
     if (existsSync(path)) {
       const vf = readFile(path);
@@ -73,8 +84,8 @@ export class LocalVault {
     if (dir) {
       mkdirSync(dir, { recursive: true });
     }
-    const vaultId = randomUUID();
-    const dek = random(KEY_LEN);
+    const vaultId = newVaultId ?? randomUUID();
+    const dek = newDek ?? random(KEY_LEN);
     const kek = keyProvider.wrapDek(vaultId, dek);
     const v = new LocalVault(path, vaultId, dek, keyProvider, kek, {}, keep, null);
     v.save();

@@ -10,6 +10,7 @@ import * as fmt from "../src/credentials/format";
 import { CredentialError } from "../src/credentials/errors";
 import { FileKeyProvider } from "../src/credentials/keyprovider";
 import { DefaultCredentialService } from "../src/credentials/service";
+import { resolveSecretRefs } from "../src/credentials/secretref";
 import { LocalVault } from "../src/credentials/vault";
 import type { SecretEntry } from "../src/credentials/format";
 
@@ -89,6 +90,53 @@ describe("local vault", () => {
     vf.secrets.k.versions[0].ciphertext = ct.toString("base64");
     writeFileSync(path, JSON.stringify(vf));
     expect(() => LocalVault.open(path, new FileKeyProvider(Buffer.alloc(32, 7)), 2)).toThrow(CredentialError);
+  });
+});
+
+describe("secretRef resolution", () => {
+  it("replaces $secret (whole value and JSON field) and leaves the input unmutated", () => {
+    const c = svc();
+    c.put("db/url", Buffer.from("postgres://host/db"));
+    c.put("aws", Buffer.from('{"accessKeyId":"AKIA","secretAccessKey":"sk"}'));
+
+    const input = {
+      sink: { url: { $secret: "db/url" }, key: { $secret: "aws", field: "accessKeyId" } },
+      list: [{ $secret: "db/url" }, "literal"],
+      n: 7,
+    };
+    const snapshot = JSON.stringify(input);
+    const out = resolveSecretRefs(input, c) as {
+      sink: { url: string; key: string };
+      list: unknown[];
+      n: number;
+    };
+
+    expect(out.sink.url).toBe("postgres://host/db");
+    expect(out.sink.key).toBe("AKIA");
+    expect(out.list).toEqual(["postgres://host/db", "literal"]);
+    expect(out.n).toBe(7);
+    expect(JSON.stringify(input)).toBe(snapshot); // input not mutated (deep clone)
+  });
+
+  it("throws on a missing secret or missing field", () => {
+    const c = svc();
+    c.put("aws", Buffer.from('{"accessKeyId":"AKIA"}'));
+    expect(() => resolveSecretRefs({ x: { $secret: "nope" } }, c)).toThrow(CredentialError);
+    expect(() => resolveSecretRefs({ x: { $secret: "aws", field: "missing" } }, c)).toThrow(CredentialError);
+  });
+});
+
+describe("credential stats", () => {
+  it("reports secretCount and no central sync", () => {
+    const c = svc();
+    expect(c.stats()).toEqual({ secretCount: 0, syncFailures: 0, rotations: 0 });
+    c.put("a", Buffer.from("1"));
+    c.put("b", Buffer.from("2"));
+    const s = c.stats();
+    expect(s.secretCount).toBe(2);
+    expect(s.lastSyncAgeMs).toBeUndefined();
+    expect(s.syncFailures).toBe(0);
+    expect(s.rotations).toBe(0);
   });
 });
 

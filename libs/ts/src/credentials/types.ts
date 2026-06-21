@@ -1,6 +1,15 @@
 /** Secret / SecretMeta value types. */
 import { CredentialError } from "./errors";
 
+/** Non-sensitive credential-subsystem stats (for the metrics bridge). Never includes values. */
+export interface CredentialStats {
+  secretCount: number;
+  /** Age of the last successful central sync, ms (undefined if no central sync / never synced). */
+  lastSyncAgeMs?: number;
+  syncFailures: number;
+  rotations: number;
+}
+
 /** Metadata for a secret version — safe to log/list (no value). */
 export interface SecretMeta {
   name: string;

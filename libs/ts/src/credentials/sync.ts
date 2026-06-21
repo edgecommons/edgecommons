@@ -7,9 +7,22 @@ import { LocalVault } from "./vault";
 /** `[callerName, centralIdOverride]`. */
 export type SyncSecret = [string, string | undefined];
 
+/** A snapshot of the sync engine's observability counters (read by the credential metrics bridge). */
+export interface SyncStats {
+  /** Epoch-ms of the last fully-successful pass, or `undefined` if it never completed one. */
+  lastSuccessMs?: number;
+  /** Number of central-fetch failures. */
+  failures: number;
+  /** Number of secrets written/rotated from central. */
+  rotations: number;
+}
+
 export class SyncEngine {
   private timer?: NodeJS.Timeout;
   private running = false;
+  private lastSuccessMs?: number;
+  private failures = 0;
+  private rotations = 0;
 
   private constructor(
     private readonly vault: LocalVault,
@@ -46,6 +59,7 @@ export class SyncEngine {
   async syncNow(): Promise<void> {
     if (this.running) return;
     this.running = true;
+    let anySuccess = false;
     try {
       for (const [name, override] of this.secrets) {
         const localKey = this.localKey(name);
@@ -55,9 +69,12 @@ export class SyncEngine {
         try {
           cs = await this.source.fetch(centralId);
         } catch (e) {
+          // Offline-first: keep the cached value, surface the staleness.
+          this.failures += 1;
           logger.warn(`central fetch failed for '${centralId}'; using cached value: ${String(e)}`);
           continue;
         }
+        anySuccess = true;
         if (!cs) continue;
         this.vault.reloadIfChanged();
         if (this.vault.latestCentralVersionId(localKey) === cs.centralVersionId) continue;
@@ -66,11 +83,18 @@ export class SyncEngine {
           centralVersionId: cs.centralVersionId,
           labels: cs.labels,
         });
+        this.rotations += 1;
         logger.info(`secret '${localKey}' synced from central (${centralId})`);
       }
     } finally {
+      if (anySuccess) this.lastSuccessMs = Date.now();
       this.running = false;
     }
+  }
+
+  /** A snapshot of the sync counters (for the credential metrics bridge). */
+  stats(): SyncStats {
+    return { lastSuccessMs: this.lastSuccessMs, failures: this.failures, rotations: this.rotations };
   }
 
   close(): void {

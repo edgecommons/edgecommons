@@ -26,7 +26,7 @@ import { loadMessagingConfig } from "./messaging/config";
 import { MetricEmitter } from "./metrics/service";
 import { MetricService } from "./metrics/types";
 import type { StreamMetricsBridge, StreamService } from "./streaming";
-import type { CredentialService } from "./credentials";
+import type { CredentialMetricsBridge, CredentialService } from "./credentials";
 
 /** Default thing name when none is supplied and not running under Greengrass. */
 const DEFAULT_THING_NAME = "NOT_GREENGRASS";
@@ -50,6 +50,7 @@ export class GGCommons {
   private streamsService?: StreamService;
   private streamMetrics?: StreamMetricsBridge;
   private credentialsService?: CredentialService;
+  private credentialMetrics?: CredentialMetricsBridge;
 
   /** @internal Attach the config-watch handle after construction. */
   _setWatch(watch: ConfigWatch | undefined): void {
@@ -74,6 +75,11 @@ export class GGCommons {
   /** @internal Attach the credential service after construction. */
   _setCredentials(service: CredentialService | undefined): void {
     this.credentialsService = service;
+  }
+
+  /** @internal Attach the credential metrics bridge after construction. */
+  _setCredentialMetrics(bridge: CredentialMetricsBridge | undefined): void {
+    this.credentialMetrics = bridge;
   }
 
   /**
@@ -125,6 +131,7 @@ export class GGCommons {
 
   /** Release resources: stop the heartbeat + config watch and disconnect messaging. */
   async close(): Promise<void> {
+    this.credentialMetrics?.close();
     this.streamMetrics?.close();
     this.streamsService?.close();
     this.heartbeat.stop();
@@ -243,12 +250,36 @@ export class GGCommonsBuilder {
       heartbeat,
       source,
     );
+    // Credentials / local vault (only when a `credentials` config section is present). Loaded
+    // dynamically so components that don't use it pay nothing. Opened BEFORE streaming so the vault
+    // is available to resolve `$secret` references in the streaming config (mirrors Rust lib.rs).
+    let credentialService: CredentialService | undefined;
+    let credentialsApi: typeof import("./credentials") | undefined;
+    const credentialsRaw = current.raw["credentials"];
+    if (credentialsRaw && typeof credentialsRaw === "object") {
+      credentialsApi = await import("./credentials");
+      const resolved = JSON.parse(resolve(current, JSON.stringify(credentialsRaw)));
+      // Transparently namespace every key by <thingName>/<componentName> (collision-free).
+      const namespace = `${current.thingName}/${this.componentNameValue}`;
+      credentialService = await credentialsApi.openFromConfig(resolved, namespace);
+      runtime._setCredentials(credentialService);
+      const credentialMetrics = new credentialsApi.CredentialMetricsBridge(current, metrics, credentialService);
+      runtime._setCredentialMetrics(credentialMetrics);
+      logger.info("Credentials vault initialized");
+    }
+
     // Telemetry streaming (only when a `streaming` config section is present, so components that
     // don't use it never load the native addon). Loaded dynamically for the same reason.
     const streamingRaw = current.raw["streaming"];
     if (streamingRaw && typeof streamingRaw === "object") {
       const streaming = await import("./streaming");
-      const streamingJson = resolve(current, JSON.stringify(streamingRaw));
+      // Resolve `$secret` references against the vault before streaming consumes its config, so
+      // secrets never land in the templated/logged config snapshot (mirrors Rust §7).
+      let streamingValue = JSON.parse(resolve(current, JSON.stringify(streamingRaw)));
+      if (credentialService && credentialsApi) {
+        streamingValue = credentialsApi.resolveSecretRefs(streamingValue, credentialService);
+      }
+      const streamingJson = JSON.stringify(streamingValue);
       const svc = streaming.StreamService.open(streamingJson);
       const names = streaming.StreamService.streamNames(streamingJson);
       const bridge = names.length
@@ -256,18 +287,6 @@ export class GGCommonsBuilder {
         : undefined;
       runtime._setStreaming(svc, bridge);
       logger.info(`Telemetry streaming initialized with ${names.length} stream(s)`);
-    }
-
-    // Credentials / local vault (only when a `credentials` config section is present). Loaded
-    // dynamically so components that don't use it pay nothing.
-    const credentialsRaw = current.raw["credentials"];
-    if (credentialsRaw && typeof credentialsRaw === "object") {
-      const credentials = await import("./credentials");
-      const resolved = JSON.parse(resolve(current, JSON.stringify(credentialsRaw)));
-      // Transparently namespace every key by <thingName>/<componentName> (collision-free).
-      const namespace = `${current.thingName}/${this.componentNameValue}`;
-      runtime._setCredentials(await credentials.openFromConfig(resolved, namespace));
-      logger.info("Credentials vault initialized");
     }
 
     // Attach the watch only after the runtime exists, so a reload that fires during
