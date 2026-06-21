@@ -1,8 +1,10 @@
 import logging
 import json
+import time
 from typing import Callable
 from ggcommons.messaging.messaging_client import MessagingProvider
 from ggcommons.messaging.message import Message
+import awsiot.greengrasscoreipc
 from awsiot.greengrasscoreipc.clientv2 import GreengrassCoreIPCClientV2
 from awsiot.greengrasscoreipc.model import (
     PublishMessage,
@@ -33,7 +35,31 @@ class GreengrassIpcProvider(MessagingProvider):
         self._receive_mode = "RECEIVE_MESSAGES_FROM_OTHERS"
         if receive_own_messages:
             self._receive_mode = "RECEIVE_ALL_MESSAGES"
-        self._ipc_client = GreengrassCoreIPCClientV2()
+        self._ipc_client = self._connect_with_retry()
+
+    @staticmethod
+    def _connect_with_retry(attempts: int = 5, connect_timeout: float = 30.0):
+        """Open the Greengrass IPC client, retrying on transient connect failures.
+
+        A bare ``GreengrassCoreIPCClientV2()`` makes a single connect with a short (~10s) timeout
+        and no retry, so a slow/cold SDK init or a momentarily busy nucleus aborts component
+        startup. Build the underlying connection with a generous timeout and retry with backoff so
+        the component comes up reliably.
+        """
+        last_err = None
+        for attempt in range(1, attempts + 1):
+            try:
+                connection = awsiot.greengrasscoreipc.connect(timeout=connect_timeout)
+                return GreengrassCoreIPCClientV2(connection)
+            except Exception as e:  # noqa: BLE001 - surface the last error after exhausting retries
+                last_err = e
+                logger.warning(
+                    f"Greengrass IPC connect attempt {attempt}/{attempts} failed: {e}"
+                    + (f"; retrying in {attempt}s" if attempt < attempts else "")
+                )
+                if attempt < attempts:
+                    time.sleep(attempt)
+        raise RuntimeError(f"Greengrass IPC connect failed after {attempts} attempts: {last_err}")
 
     def disconnect(self):
         # The handler maps are keyed by topic filter, so iterate the keys directly
