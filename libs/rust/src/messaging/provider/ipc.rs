@@ -23,6 +23,15 @@
 //! Implemented and **validated on a live Greengrass core** (non-root): local pub/sub
 //! with inbound delivery, request/reply, and the IoT Core bridge in both directions.
 //!
+//! ## Robustness
+//! Inbound message delivery happens in SDK-internal callback threads (see
+//! [`crate::ipc`]). Those callbacks are panic-contained so a panicking conversion or
+//! delivery on one message can never poison an SDK thread and wedge the single
+//! Greengrass IPC event loop — mirroring the Java `SubscriptionHandler` `try/catch`
+//! fix. Late/duplicate replies are dropped via
+//! [`crate::messaging::request_reply::try_deliver_reply`] rather than panicking,
+//! mirroring the Java reply-future null-guard.
+//!
 //! ## Related Modules
 //! - [`crate::ipc`], [`super::mqtt`], [`crate::messaging::service`].
 

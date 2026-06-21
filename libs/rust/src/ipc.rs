@@ -442,24 +442,55 @@ fn worker(rx: StdReceiver<Command>, internal_tx: StdSender<Command>) {
     }
 }
 
+/// Run an SDK-callback body with panic containment.
+///
+/// SDK subscription callbacks fire on SDK-internal (C-FFI) threads. A panic
+/// unwinding across that boundary is undefined behavior and, in practice, can wedge
+/// the single Greengrass IPC event loop — the Rust analog of the Java
+/// `SubscriptionHandler` worker dying on an uncaught callback exception. Containing
+/// the panic here guarantees one bad message can never take down the subscription or
+/// destabilize core IPC.
+fn contain_callback(topic: &str, body: impl FnOnce()) {
+    // `AssertUnwindSafe`: the only state the body touches across the catch boundary is
+    // the delivery channel (internally consistent under a panic) and freshly-owned
+    // locals; a panic leaves no broken shared invariant. SDK payload types do not
+    // implement `UnwindSafe`, so assert it here rather than constrain the caller.
+    if std::panic::catch_unwind(std::panic::AssertUnwindSafe(body)).is_err() {
+        tracing::error!(
+            topic = %topic,
+            "IPC subscription callback panicked; suppressed so it cannot wedge the IPC event loop"
+        );
+    }
+}
+
 /// Start a local pub/sub subscription, returning the type-erased SDK subscription.
 ///
 /// The callback is `Box::leak`ed to satisfy the SDK's `'static` borrow; the returned
-/// `Subscription` keeps the broker subscription open until it is dropped.
+/// `Subscription` keeps the broker subscription open until it is dropped. The
+/// delivery body is panic-contained (it runs on an SDK thread) and late/duplicate
+/// replies are dropped, not panicked on.
 fn start_local_sub(sdk: &gg_sdk::Sdk, filter: &str, out: Delivery) -> Result<Box<dyn Any>> {
     use gg_sdk::SubscribeToTopicPayload as P;
     let cb: &'static _ = Box::leak(Box::new(move |topic: &str, payload: P| {
-        let bytes = match payload {
-            P::Json(map) => serde_json::to_vec(&map_to_value(map)).unwrap_or_default(),
-            P::Binary(b) => b.to_vec(),
-        };
-        let _ = out.try_send((topic.to_string(), bytes));
+        let topic_owned = topic.to_string();
+        contain_callback(topic, || {
+            let bytes = match payload {
+                P::Json(map) => serde_json::to_vec(&map_to_value(map)).unwrap_or_default(),
+                P::Binary(b) => b.to_vec(),
+            };
+            // Best-effort, non-blocking delivery; a stray/late reply (closed or full
+            // channel) is dropped and logged, never a panic.
+            crate::messaging::request_reply::try_deliver_reply(&out, topic_owned, bytes);
+        });
     }));
     let sub = sdk.subscribe_to_topic(filter, cb).map_err(ipc_err)?;
     Ok(Box::new(sub))
 }
 
 /// Start an IoT Core subscription, returning the type-erased SDK subscription.
+///
+/// As with [`start_local_sub`], the delivery body runs on an SDK thread and is
+/// panic-contained, and late/duplicate replies are dropped rather than panicked on.
 fn start_iot_sub(
     sdk: &gg_sdk::Sdk,
     filter: &str,
@@ -467,7 +498,14 @@ fn start_iot_sub(
     out: Delivery,
 ) -> Result<Box<dyn Any>> {
     let cb: &'static _ = Box::leak(Box::new(move |topic: &str, payload: &[u8]| {
-        let _ = out.try_send((topic.to_string(), payload.to_vec()));
+        let topic_owned = topic.to_string();
+        contain_callback(topic, || {
+            crate::messaging::request_reply::try_deliver_reply(
+                &out,
+                topic_owned,
+                payload.to_vec(),
+            );
+        });
     }));
     let sub = sdk
         .subscribe_to_iot_core(filter, sdk_qos(qos), cb)
