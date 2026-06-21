@@ -8,7 +8,13 @@
 export { openFromConfig, CredentialsConfig } from "./config";
 export { CredentialError } from "./errors";
 export { CredentialService, DefaultCredentialService } from "./service";
-export { FileKeyProvider, KeyProvider, KmsKeyProvider, PrewrappedKeyProvider } from "./keyprovider";
+export {
+  FileKeyProvider,
+  KeyProvider,
+  KmsKeyProvider,
+  Pkcs11KeyProvider,
+  PrewrappedKeyProvider,
+} from "./keyprovider";
 export { LocalVault, PutOptions } from "./vault";
 export { CredentialStats, Secret, SecretMeta } from "./types";
 export { AwsSecretsManagerSource, CentralSecret, CentralVaultSource } from "./central";

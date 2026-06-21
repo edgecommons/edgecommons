@@ -10,7 +10,13 @@ import { randomUUID } from "crypto";
 
 import { KEY_LEN, random } from "./crypto";
 import { CredentialError } from "./errors";
-import { FileKeyProvider, KeyProvider, KmsKeyProvider, PrewrappedKeyProvider } from "./keyprovider";
+import {
+  FileKeyProvider,
+  KeyProvider,
+  KmsKeyProvider,
+  Pkcs11KeyProvider,
+  PrewrappedKeyProvider,
+} from "./keyprovider";
 import { DefaultCredentialService } from "./service";
 import { SyncEngine, SyncSecret } from "./sync";
 import { LocalVault } from "./vault";
@@ -20,7 +26,18 @@ export interface CredentialsConfig {
   vault?: {
     path?: string;
     keepVersions?: number;
-    keyProvider?: { type?: string; keyPath?: string; kmsKeyId?: string; region?: string; endpointUrl?: string };
+    keyProvider?: {
+      type?: string;
+      keyPath?: string;
+      kmsKeyId?: string;
+      region?: string;
+      endpointUrl?: string;
+      modulePath?: string;
+      tokenLabel?: string;
+      keyLabel?: string;
+      pinEnv?: string;
+      pin?: string;
+    };
   };
   central?: {
     type?: string;
@@ -85,8 +102,26 @@ async function openVault(
     return LocalVault.open(path, shim, keep, vaultId, dek);
   }
 
+  if (kind === "pkcs11") {
+    if (!kp.modulePath) throw new CredentialError("pkcs11 key provider requires keyProvider.modulePath");
+    if (!kp.keyLabel) throw new CredentialError("pkcs11 key provider requires keyProvider.keyLabel");
+    let pin: string;
+    if (kp.pinEnv) {
+      const v = process.env[kp.pinEnv];
+      if (v === undefined) throw new CredentialError(`pkcs11 keyProvider.pinEnv '${kp.pinEnv}' is not set`);
+      pin = v;
+    } else if (kp.pin !== undefined) {
+      pin = kp.pin;
+    } else {
+      throw new CredentialError("pkcs11 key provider requires keyProvider.pinEnv or keyProvider.pin");
+    }
+    // graphene-pk11 is synchronous, so the provider plugs straight into the sync LocalVault.open.
+    const provider = await Pkcs11KeyProvider.create(kp.modulePath, kp.tokenLabel ?? "", kp.keyLabel, pin);
+    return LocalVault.open(path, provider, keep);
+  }
+
   throw new CredentialError(
-    `key provider '${kind}' is not supported (supported: 'file', 'kms'/'greengrass')`,
+    `key provider '${kind}' is not supported (supported: 'file', 'kms'/'greengrass', 'pkcs11')`,
   );
 }
 
