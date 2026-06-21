@@ -39,6 +39,11 @@ public interface CredentialService {
     default void refresh() {
     }
 
+    /** Non-sensitive stats for observability (default: just the secret count). */
+    default CredentialStats stats() {
+        return new CredentialStats(list("").size(), null, 0, 0);
+    }
+
     default String put(String name, byte[] value) {
         return put(name, value, PutOptions.defaults());
     }

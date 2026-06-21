@@ -14,8 +14,11 @@ import com.aws.proserve.ggcommons.metrics.MetricEmitter;
 import com.aws.proserve.ggcommons.metrics.MetricEmitterBuilder;
 import com.aws.proserve.ggcommons.streaming.StreamMetricsBridge;
 import com.aws.proserve.ggcommons.streaming.StreamService;
+import com.aws.proserve.ggcommons.credentials.CredentialMetricsBridge;
 import com.aws.proserve.ggcommons.credentials.CredentialService;
 import com.aws.proserve.ggcommons.credentials.Credentials;
+import com.aws.proserve.ggcommons.credentials.SecretRefs;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonObject;
 import org.apache.commons.cli.*;
@@ -37,6 +40,7 @@ public class GGCommons
     protected StreamService streams;
     protected CredentialService credentials;
     protected StreamMetricsBridge streamMetricsBridge;
+    protected CredentialMetricsBridge credentialMetricsBridge;
 
     /**
      * Constructs a new GGCommons instance with the given component name and command line arguments.
@@ -120,10 +124,12 @@ public class GGCommons
                     .withMetricService(metricEmitter)
                     .build();
 
+            // Credentials / local vault first (mirrors Rust lib.rs): the vault must be open before
+            // streaming consumes its config, so `$secret` refs in the streaming config resolve.
+            initCredentials();
             // Telemetry streaming: only when a `streaming` config section is present (so components
             // that don't use it never load the native library).
             initStreaming();
-            initCredentials();
 
             // Complete initialization - this must be the very last step
             // After this point, configuration changes will trigger listener notifications
@@ -189,6 +195,13 @@ public class GGCommons
         }
         // Resolve {ThingName} etc. across the streaming section (buffer paths, Kinesis stream names).
         String streamingJson = configManager.resolveTemplate(full.getAsJsonObject("streaming").toString());
+        // Resolve {"$secret": ...} refs from the vault (closes TELEMETRY_STREAMING.md §7) without
+        // mutating the public config snapshot. Only when a credentials vault is open.
+        if (credentials != null)
+        {
+            JsonElement resolved = SecretRefs.resolve(JsonParser.parseString(streamingJson), credentials);
+            streamingJson = resolved.toString();
+        }
         streams = StreamService.open(streamingJson);
         List<String> names = StreamService.streamNames(streamingJson);
         if (!names.isEmpty())
@@ -226,6 +239,8 @@ public class GGCommons
         // Transparently namespace every key by <thingName>/<componentName> (collision-free).
         String namespace = configManager.getThingName() + "/" + configManager.getComponentFullName();
         credentials = Credentials.open(JsonParser.parseString(credentialsJson).getAsJsonObject(), namespace);
+        // Bridge non-sensitive credential stats into the configured metric target.
+        credentialMetricsBridge = new CredentialMetricsBridge(configManager, metricEmitter, credentials);
         LOGGER.info("Credentials vault initialized");
     }
 
@@ -235,6 +250,10 @@ public class GGCommons
      */
     public void shutdown()
     {
+        if (credentialMetricsBridge != null)
+        {
+            credentialMetricsBridge.close();
+        }
         if (streamMetricsBridge != null)
         {
             streamMetricsBridge.close();

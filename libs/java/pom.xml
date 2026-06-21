@@ -89,6 +89,14 @@
             <version>2.26.25</version>
             <optional>true</optional>
         </dependency>
+        <!-- KMS-via-TES key provider (KEK custodian). Optional: only components that use the
+             'kms'/'greengrass' vault key provider need it on the runtime classpath. -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>kms</artifactId>
+            <version>2.26.25</version>
+            <optional>true</optional>
+        </dependency>
         <dependency>
             <groupId>org.eclipse.paho</groupId>
             <artifactId>org.eclipse.paho.client.mqttv3</artifactId>

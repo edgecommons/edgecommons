@@ -107,4 +107,15 @@ public final class DefaultCredentialService implements CredentialService {
             sync.syncNow();
         }
     }
+
+    @Override
+    public CredentialStats stats() {
+        long secretCount = list("").size();
+        if (sync == null) {
+            return new CredentialStats(secretCount, null, 0, 0);
+        }
+        SyncEngine.SyncStats s = sync.stats();
+        Long ageMs = s.lastSuccessMs() == null ? null : Math.max(0, System.currentTimeMillis() - s.lastSuccessMs());
+        return new CredentialStats(secretCount, ageMs, s.failures(), s.rotations());
+    }
 }

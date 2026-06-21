@@ -31,21 +31,33 @@ public final class Credentials {
 
         JsonObject kp = vaultCfg.has("keyProvider") ? vaultCfg.getAsJsonObject("keyProvider") : new JsonObject();
         String kind = kp.has("type") ? kp.get("type").getAsString() : "file";
-        if (!"file".equals(kind)) {
-            throw new CredentialException("key provider '" + kind + "' is not implemented yet (supported: 'file')");
-        }
-        String keyPath = kp.has("keyPath") ? kp.get("keyPath").getAsString() : path + ".key";
-        Path keyFile = Paths.get(keyPath);
-        try {
-            if (keyFile.getParent() != null) {
-                Files.createDirectories(keyFile.getParent());
+        KeyProvider provider = switch (kind) {
+            case "file" -> {
+                String keyPath = kp.has("keyPath") ? kp.get("keyPath").getAsString() : path + ".key";
+                Path keyFile = Paths.get(keyPath);
+                try {
+                    if (keyFile.getParent() != null) {
+                        Files.createDirectories(keyFile.getParent());
+                    }
+                } catch (IOException e) {
+                    throw new CredentialException("create key dir: " + e.getMessage(), e);
+                }
+                yield Files.exists(keyFile)
+                        ? FileKeyProvider.fromKeyFile(keyFile)
+                        : FileKeyProvider.generateKeyFile(keyFile);
             }
-        } catch (IOException e) {
-            throw new CredentialException("create key dir: " + e.getMessage(), e);
-        }
-        KeyProvider provider = Files.exists(keyFile)
-                ? FileKeyProvider.fromKeyFile(keyFile)
-                : FileKeyProvider.generateKeyFile(keyFile);
+            case "kms", "greengrass" -> {
+                if (!kp.has("kmsKeyId")) {
+                    throw new CredentialException("kms key provider requires keyProvider.kmsKeyId");
+                }
+                String keyId = kp.get("kmsKeyId").getAsString();
+                String kmsRegion = kp.has("region") ? kp.get("region").getAsString() : null;
+                String kmsEndpoint = kp.has("endpointUrl") ? kp.get("endpointUrl").getAsString() : null;
+                yield new KmsKeyProvider(keyId, kmsRegion, kmsEndpoint);
+            }
+            default -> throw new CredentialException(
+                    "key provider '" + kind + "' is not supported (supported: 'file', 'kms'/'greengrass')");
+        };
 
         LocalVault vault = LocalVault.open(Paths.get(path), provider, keep);
         Object lock = new Object();
