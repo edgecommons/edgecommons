@@ -69,3 +69,30 @@ normal build.
   cert (mutual), so server-only clients are rejected — which is the intended check.
 - These certs are for local testing only and expire in 10 years; re-run
   `gen-tls-certs.sh` to regenerate.
+
+## Deployed-component integration test (`test_deployed_component.py`)
+
+Closes the coverage gap that let several deploy-path bugs through: the per-language
+suites run STANDALONE/MQTT with the `log` metric target and never exercise GREENGRASS
+IPC, the deployed-config flow, the CloudWatch target, or the vault under the GG work
+dir. This test runs **on a Greengrass core device** against a live nucleus and asserts
+each deployed ggcommons component:
+
+- reached `State: RUNNING` (the deploy resolved — artifact staged, recipe valid, config
+  schema-accepted, IPC connected as `ggc_user`, no crash-loop), and
+- shows **ongoing GG IPC messaging** in its current log, plus **encrypted-vault
+  credential access** (`credential access OK`) across retained logs.
+
+It would have failed on every bug from this work (BROKEN component from the metric
+crash / messaging NPE / vault PermissionError / IPC connect timeout, or a `ggc_user`
+component that only ran with `RequiresPrivilege`).
+
+```bash
+# On the core device (uses the local greengrass-cli + /greengrass/v2/logs; needs sudo).
+GGCOMMONS_IT_GG=1 python3 test_deployed_component.py
+# or via pytest (skips unless GGCOMMONS_IT_GG=1):
+GGCOMMONS_IT_GG=1 python3 -m pytest test_deployed_component.py -v
+# Override the component set (default = the four skeleton examples):
+GGCOMMONS_IT_COMPONENTS="com.a,com.b" GGCOMMONS_IT_GG=1 python3 test_deployed_component.py
+```
+Verified 2026-06-21 against the lab nucleus (lab-5950x): 4/4 skeletons healthy.
