@@ -33,6 +33,10 @@ credentials = [
 ]
 # Central sync from AWS Secrets Manager + KMS-wrapped DEK (adds the AWS SDK; off by default).
 credentials-aws = ["credentials", "dep:aws-config", "dep:aws-sdk-secretsmanager", "dep:aws-sdk-kms"]
+# PKCS#11 KEK custodian: wrap the DEK with a non-extractable AES key on an HSM/TPM/SoftHSM.
+# `cryptoki` dlopens the module at runtime (no link-time C dep), so this compiles everywhere;
+# it only needs a real PKCS#11 module present at runtime.
+credentials-pkcs11 = ["credentials", "dep:cryptoki"]
 
 [dependencies]
 thiserror = "2"
@@ -78,6 +82,8 @@ fs4 = { version = "0.13", optional = true, features = ["sync"] }
 # (aws-config is already an optional dep above for the cloudwatch feature).
 aws-sdk-secretsmanager = { version = "1", optional = true }
 aws-sdk-kms = { version = "1", optional = true }
+# PKCS#11 KEK custodian (feature = "credentials-pkcs11"). Runtime-loads the module via libloading.
+cryptoki = { version = "0.8", optional = true }
 
 # GREENGRASS-only. Native AWS Greengrass IPC SDK (lib name `gg_sdk`).
 # Linux-only C-FFI crate (bindgen + cc); only built when the `greengrass` feature is

@@ -122,8 +122,139 @@ impl KeyProvider for FileKeyProvider {
     }
 }
 
+#[cfg(feature = "credentials-pkcs11")]
+pub use pkcs11::Pkcs11KeyProvider;
+
 #[cfg(feature = "credentials-aws")]
 pub use kms::KmsKeyProvider;
+
+#[cfg(feature = "credentials-pkcs11")]
+mod pkcs11 {
+    //! PKCS#11 (HSM/TPM/SoftHSM) DEK custodian. A non-extractable AES-256 key on the token is the
+    //! KEK; the DEK is wrapped with AES-256-GCM **inside** the token (`C_Encrypt`/`C_Decrypt`), so
+    //! the KEK never leaves hardware. The GCM AAD binds the wrapped DEK to the vault id (anti-swap).
+    //!
+    //! The PKCS#11 module is dlopen'd at runtime; the context is created once and shared (it is
+    //! `Send + Sync`). Each wrap/unwrap opens a fresh read-only session, logs in, finds the key by
+    //! label, and runs the op — cheap for the once-per-startup unwrap, and keeps no session state.
+    use std::sync::Arc;
+
+    use base64::engine::general_purpose::STANDARD as B64;
+    use base64::Engine as _;
+    use cryptoki::context::{CInitializeArgs, Pkcs11};
+    use cryptoki::mechanism::aead::GcmParams;
+    use cryptoki::mechanism::Mechanism;
+    use cryptoki::object::{Attribute, ObjectClass, ObjectHandle};
+    use cryptoki::session::{Session, UserType};
+    use cryptoki::slot::Slot;
+    use cryptoki::types::AuthPin;
+    use zeroize::Zeroizing;
+
+    use super::super::crypto::{self, KEY_LEN, NONCE_LEN};
+    use super::super::format::{dek_wrap_aad, KekInfo};
+    use super::KeyProvider;
+    use crate::error::GgError;
+    use crate::Result;
+
+    const TAG_BITS: u64 = 128;
+
+    /// A KEK held as a non-extractable AES key on a PKCS#11 token.
+    pub struct Pkcs11KeyProvider {
+        ctx: Arc<Pkcs11>,
+        slot: Slot,
+        key_label: String,
+        pin: AuthPin,
+    }
+
+    impl Pkcs11KeyProvider {
+        /// Open `module_path`, select the slot whose token has label `token_label`, and bind to the
+        /// AES key labelled `key_label`. `pin` is the User PIN.
+        pub fn new(module_path: &str, token_label: &str, key_label: String, pin: String) -> Result<Self> {
+            let ctx = Pkcs11::new(module_path)
+                .map_err(|e| GgError::Credentials(format!("pkcs11 load module '{module_path}': {e}")))?;
+            ctx.initialize(CInitializeArgs::OsThreads)
+                .map_err(|e| GgError::Credentials(format!("pkcs11 initialize: {e}")))?;
+            let slot = ctx
+                .get_slots_with_token()
+                .map_err(|e| GgError::Credentials(format!("pkcs11 get slots: {e}")))?
+                .into_iter()
+                .find(|s| {
+                    ctx.get_token_info(*s)
+                        .map(|t| t.label().trim_end() == token_label)
+                        .unwrap_or(false)
+                })
+                .ok_or_else(|| GgError::Credentials(format!("pkcs11: no token labelled '{token_label}'")))?;
+            Ok(Self { ctx: Arc::new(ctx), slot, key_label, pin: AuthPin::new(pin) })
+        }
+
+        /// Open a logged-in session and resolve the AES key handle by label.
+        fn session_with_key(&self) -> Result<(Session, ObjectHandle)> {
+            let session = self
+                .ctx
+                .open_ro_session(self.slot)
+                .map_err(|e| GgError::Credentials(format!("pkcs11 open session: {e}")))?;
+            session
+                .login(UserType::User, Some(&self.pin))
+                .map_err(|e| GgError::Credentials(format!("pkcs11 login: {e}")))?;
+            let key = session
+                .find_objects(&[
+                    Attribute::Class(ObjectClass::SECRET_KEY),
+                    Attribute::Label(self.key_label.as_bytes().to_vec()),
+                ])
+                .map_err(|e| GgError::Credentials(format!("pkcs11 find key: {e}")))?
+                .into_iter()
+                .next()
+                .ok_or_else(|| GgError::Credentials(format!("pkcs11: no key labelled '{}'", self.key_label)))?;
+            Ok((session, key))
+        }
+    }
+
+    impl KeyProvider for Pkcs11KeyProvider {
+        fn provider_id(&self) -> &str {
+            "pkcs11"
+        }
+
+        fn wrap_dek(&self, vault_id: &str, dek: &[u8; KEY_LEN]) -> Result<KekInfo> {
+            let (session, key) = self.session_with_key()?;
+            let iv: [u8; NONCE_LEN] = crypto::random();
+            let aad = dek_wrap_aad(vault_id);
+            let params = GcmParams::new(&iv, &aad, TAG_BITS.into());
+            let ct = session
+                .encrypt(&Mechanism::AesGcm(params), key, dek)
+                .map_err(|e| GgError::Credentials(format!("pkcs11 wrap (encrypt): {e}")))?;
+            Ok(KekInfo {
+                provider: "pkcs11".to_string(),
+                alg: "AES-256-GCM".to_string(),
+                wrap_nonce: Some(B64.encode(iv)),
+                wrapped_dek: B64.encode(ct),
+                kms_key_id: None,
+            })
+        }
+
+        fn unwrap_dek(&self, vault_id: &str, kek: &KekInfo) -> Result<Zeroizing<[u8; KEY_LEN]>> {
+            let iv: [u8; NONCE_LEN] = kek
+                .wrap_nonce
+                .as_ref()
+                .and_then(|s| B64.decode(s).ok())
+                .and_then(|v| v.try_into().ok())
+                .ok_or_else(|| GgError::Credentials("pkcs11 KEK: bad/missing wrapNonce".into()))?;
+            let ct = B64
+                .decode(&kek.wrapped_dek)
+                .map_err(|_| GgError::Credentials("pkcs11 KEK: bad wrappedDek".into()))?;
+            let aad = dek_wrap_aad(vault_id);
+            let (session, key) = self.session_with_key()?;
+            let params = GcmParams::new(&iv, &aad, TAG_BITS.into());
+            let pt = session
+                .decrypt(&Mechanism::AesGcm(params), key, &ct)
+                .map_err(|e| GgError::Credentials(format!("pkcs11 unwrap (decrypt): {e}")))?;
+            let arr: [u8; KEY_LEN] = pt
+                .as_slice()
+                .try_into()
+                .map_err(|_| GgError::Credentials("pkcs11: unwrapped DEK wrong length".into()))?;
+            Ok(Zeroizing::new(arr))
+        }
+    }
+}
 
 #[cfg(feature = "credentials-aws")]
 mod kms {

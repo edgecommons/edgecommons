@@ -75,11 +75,33 @@ pub struct KeyProviderConfig {
     pub region: Option<String>,
     /// Override the KMS endpoint (floci/LocalStack/VPC endpoint).
     pub endpoint_url: Option<String>,
+    // ----- pkcs11 (HSM/TPM/SoftHSM) custodian -----
+    /// Path to the PKCS#11 module (e.g. `/usr/lib/softhsm/libsofthsm2.so`).
+    pub module_path: Option<String>,
+    /// Token label to select the slot.
+    pub token_label: Option<String>,
+    /// Label of the AES KEK object on the token.
+    pub key_label: Option<String>,
+    /// Env var holding the User PIN (preferred over an inline `pin`).
+    pub pin_env: Option<String>,
+    /// Inline User PIN (discouraged — prefer `pinEnv`).
+    pub pin: Option<String>,
 }
 
 impl Default for KeyProviderConfig {
     fn default() -> Self {
-        Self { kind: "file".to_string(), key_path: None, kms_key_id: None, region: None, endpoint_url: None }
+        Self {
+            kind: "file".to_string(),
+            key_path: None,
+            kms_key_id: None,
+            region: None,
+            endpoint_url: None,
+            module_path: None,
+            token_label: None,
+            key_label: None,
+            pin_env: None,
+            pin: None,
+        }
     }
 }
 
@@ -185,9 +207,39 @@ pub fn open_namespaced(config: &CredentialsConfig, namespace: &str) -> Result<De
             )?;
             std::sync::Arc::new(kp) as std::sync::Arc<dyn super::keyprovider::KeyProvider>
         }
+        #[cfg(feature = "credentials-pkcs11")]
+        "pkcs11" => {
+            let kp = &config.vault.key_provider;
+            let module_path = kp
+                .module_path
+                .clone()
+                .ok_or_else(|| GgError::Credentials("pkcs11 key provider requires keyProvider.modulePath".into()))?;
+            let token_label = kp
+                .token_label
+                .clone()
+                .ok_or_else(|| GgError::Credentials("pkcs11 key provider requires keyProvider.tokenLabel".into()))?;
+            let key_label = kp
+                .key_label
+                .clone()
+                .ok_or_else(|| GgError::Credentials("pkcs11 key provider requires keyProvider.keyLabel".into()))?;
+            let pin = match (&kp.pin_env, &kp.pin) {
+                (Some(env), _) => std::env::var(env).map_err(|_| {
+                    GgError::Credentials(format!("pkcs11 keyProvider.pinEnv '{env}' is not set"))
+                })?,
+                (None, Some(p)) => p.clone(),
+                (None, None) => {
+                    return Err(GgError::Credentials(
+                        "pkcs11 key provider requires keyProvider.pinEnv or keyProvider.pin".into(),
+                    ))
+                }
+            };
+            let provider =
+                super::keyprovider::Pkcs11KeyProvider::new(&module_path, &token_label, key_label, pin)?;
+            std::sync::Arc::new(provider) as std::sync::Arc<dyn super::keyprovider::KeyProvider>
+        }
         other => {
             return Err(GgError::Credentials(format!(
-                "key provider '{other}' is not available (supported: 'file'; 'kms'/'greengrass' need the credentials-aws feature)"
+                "key provider '{other}' is not available (supported: 'file'; 'kms'/'greengrass' need the credentials-aws feature; 'pkcs11' needs the credentials-pkcs11 feature)"
             )))
         }
     };
