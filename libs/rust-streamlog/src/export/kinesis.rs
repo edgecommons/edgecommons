@@ -46,17 +46,30 @@ impl KinesisSink {
             .build()
             .map_err(|e| GgStreamError::Sink(format!("tokio runtime: {e}")))?;
 
-        let client = rt.block_on(async move {
-            let mut loader = aws_config::defaults(aws_config::BehaviorVersion::latest());
-            if let Some(r) = region {
-                loader = loader.region(aws_sdk_kinesis::config::Region::new(r));
-            }
-            if let Some(url) = endpoint_url {
-                loader = loader.endpoint_url(url);
-            }
-            let conf = loader.load().await;
-            Client::new(&conf)
-        });
+        // Loading the AWS config is async, so it needs `block_on`. But `KinesisSink::new` may be
+        // called from inside a tokio runtime (the library opens streams during its async
+        // `build()`), and `block_on` on a thread already driving a runtime panics with "Cannot
+        // start a runtime from within a runtime". Do the one-time client load on a dedicated OS
+        // thread, which carries no ambient runtime. (The per-batch `send()` path block_on's
+        // directly — it runs on the tokio-free export engine thread, so it never hits this.)
+        let client = std::thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    rt.block_on(async {
+                        let mut loader = aws_config::defaults(aws_config::BehaviorVersion::latest());
+                        if let Some(r) = region {
+                            loader = loader.region(aws_sdk_kinesis::config::Region::new(r));
+                        }
+                        if let Some(url) = endpoint_url {
+                            loader = loader.endpoint_url(url);
+                        }
+                        let conf = loader.load().await;
+                        Client::new(&conf)
+                    })
+                })
+                .join()
+                .map_err(|_| GgStreamError::Sink("kinesis client init thread panicked".into()))
+        })?;
 
         Ok(Self { rt, client, stream_name: stream_name.into() })
     }
