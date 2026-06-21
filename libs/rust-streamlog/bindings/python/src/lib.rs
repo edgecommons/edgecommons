@@ -78,10 +78,14 @@ struct StreamService {
 impl StreamService {
     /// Open every stream in `config_json` (the `streaming` section; templates pre-resolved).
     #[staticmethod]
-    fn open(config_json: &str) -> PyResult<Self> {
+    fn open(py: Python<'_>, config_json: &str) -> PyResult<Self> {
         let cfg: StreamingConfig =
             serde_json::from_str(config_json).map_err(|e| err(1, format!("config: {e}")))?;
-        let svc = CoreService::open(cfg).map_err(to_pyerr)?;
+        // Release the GIL while opening: building the Kinesis sink loads the AWS config and the
+        // export engine thread starts, both of which emit tracing events. Those are forwarded to
+        // Python logging by PyLogLayer via `Python::attach`, which needs the GIL — holding it here
+        // would deadlock the moment a background thread logs during open.
+        let svc = py.detach(move || CoreService::open(cfg)).map_err(to_pyerr)?;
         Ok(Self { inner: Some(svc) })
     }
 

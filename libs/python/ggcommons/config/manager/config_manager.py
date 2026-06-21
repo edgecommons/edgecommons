@@ -42,6 +42,7 @@ class ConfigManager:
         self._metric_config = None
         self._component_config = None
         self._logging_config = None
+        self._streaming_config = None
         self._global_config = {}
         self._instances = {}
         self._change_listeners = []
@@ -97,6 +98,11 @@ class ConfigManager:
         self._component_config = config.get("component", {"global": {}, "instances": []})
         self._global_config = self._component_config.get("global", {})
         self._gen_instances_map()
+
+        # Retain the raw `streaming` section verbatim (no typed parsing in Python — the native
+        # ggstreamlog core owns the streaming schema). Kept so get_full_config() exposes it to
+        # GGCommons._init_streaming(); without this the section is dropped and streaming never opens.
+        self._streaming_config = config.get("streaming")
 
     def _gen_instances_map(self):
         # Rebuild from scratch so a hot reload that removes an instance does not
@@ -248,13 +254,17 @@ class ConfigManager:
             
     def get_full_config(self) -> Dict[str, Any]:
         """Returns the complete configuration object."""
-        return {
+        full = {
             'component': self._component_config,
             'tags': self._tag_config.to_dict() if self._tag_config else {},
             'heartbeat': self._heartbeat_config.to_dict() if self._heartbeat_config else {},
             'metricEmission': self._metric_config.to_dict() if self._metric_config else {},
             'logging': self._logging_config.to_dict() if self._logging_config else {}
         }
+        # Surface the raw streaming section (if any) so GGCommons._init_streaming() can find it.
+        if self._streaming_config is not None:
+            full['streaming'] = self._streaming_config
+        return full
         
     def is_validation_enabled(self) -> bool:
         """Returns whether configuration validation is enabled."""
