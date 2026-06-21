@@ -11,11 +11,14 @@ import com.aws.proserve.ggcommons.messaging.MessageBuilder;
 import com.aws.proserve.ggcommons.messaging.MessageHandler;
 import com.aws.proserve.ggcommons.metrics.Metric;
 import com.aws.proserve.ggcommons.metrics.MetricBuilder;
+import com.aws.proserve.ggcommons.streaming.StreamHandle;
+import com.aws.proserve.ggcommons.streaming.StreamService;
 import com.google.gson.JsonObject;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import software.amazon.awssdk.aws.greengrass.model.QOS;
 
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -34,7 +37,11 @@ public class App implements ConfigurationChangeListener
     private final ConfigManager configService;
     private final MessagingClient messagingService;
     private final MetricEmitter metricService;
-    
+    /** Durable {@code telemetry} stream handle, or {@code null} if the config has no streaming section. */
+    private final StreamHandle stream;
+    /** Whether the IoT Core command subscription was established (so shutdown only unsubscribes it then). */
+    private volatile boolean iotCoreSubscribed = false;
+
     private static final String PUB_TOPIC = "ggcommons/test/java/hello_world";
     private static final String REQ_TOPIC = "ggcommons/test/java/request";
 
@@ -150,7 +157,22 @@ public class App implements ConfigurationChangeListener
         configService = ggCommons.getConfigManager();
         messagingService = ggCommons.getMessaging();
         metricService = ggCommons.getMetrics();
-        
+
+        // Durable telemetry stream (null unless the config has a `streaming` section with a stream
+        // named "telemetry"). The publish loop appends each message; the library's export engine
+        // drains it to the configured sink (Kinesis) independently.
+        StreamHandle telemetryStream = null;
+        StreamService streamService = ggCommons.getStreams();
+        if (streamService != null) {
+            try {
+                telemetryStream = streamService.stream("telemetry");
+                LOGGER.info("Telemetry streaming enabled (stream 'telemetry')");
+            } catch (Exception e) {
+                LOGGER.warn("stream 'telemetry' unavailable; streaming disabled: {}", e.getMessage());
+            }
+        }
+        stream = telemetryStream;
+
         // Initialize message handlers after services are available
         ipcHelloWorldHandler = (topic, message) -> {
             JsonObject body = (JsonObject) message.getBody();
@@ -224,9 +246,16 @@ public class App implements ConfigurationChangeListener
         messagingService.subscribe(REQ_TOPIC, requestHandler, 1);
         LOGGER.info("Subscribed to request topic: {}", REQ_TOPIC);
         
-        // Subscribe to hello world topic on both local and IoT Core
+        // Subscribe to hello world topic on both local and IoT Core. The IoT Core subscribe is
+        // non-fatal: builds/modes without an IoT Core transport (e.g. local-only STANDALONE) skip
+        // the bridge instead of failing component startup.
         messagingService.subscribe(PUB_TOPIC, ipcHelloWorldHandler, 3);
-        messagingService.subscribeToIoTCore(PUB_TOPIC, iotCoreHelloWorldHandler, QOS.AT_LEAST_ONCE, 2);
+        try {
+            messagingService.subscribeToIoTCore(PUB_TOPIC, iotCoreHelloWorldHandler, QOS.AT_LEAST_ONCE, 2);
+            iotCoreSubscribed = true;
+        } catch (Exception e) {
+            LOGGER.warn("IoT Core unavailable; skipping IoT Core subscribe: {}", e.getMessage());
+        }
         LOGGER.info("Subscribed to hello world topic: {}", PUB_TOPIC);
     }
     
@@ -284,19 +313,42 @@ public class App implements ConfigurationChangeListener
             .withConfig(configService)
             .build();
         
-        // Publish to both local and IoT Core to demonstrate dual connectivity
+        // Publish to both local and IoT Core to demonstrate dual connectivity (IoT Core non-fatal).
         messagingService.publish(PUB_TOPIC, msg);
-        messagingService.publishToIotCore(PUB_TOPIC, msg, QOS.AT_LEAST_ONCE);
-        
+        try {
+            messagingService.publishToIotCore(PUB_TOPIC, msg, QOS.AT_LEAST_ONCE);
+        } catch (Exception e) {
+            LOGGER.warn("failed to publish to IoT Core: {}", e.getMessage());
+        }
+
+        // Append the data point to the durable telemetry stream (partitioned by Thing). Append
+        // returns once committed to the local buffer; the export engine drains it to the sink.
+        if (stream != null) {
+            try {
+                String thing = configService.getThingName();
+                JsonObject streamPayload = new JsonObject();
+                streamPayload.addProperty("id", messageId);
+                streamPayload.addProperty("thing", thing);
+                stream.append(thing, System.currentTimeMillis(),
+                              streamPayload.toString().getBytes(StandardCharsets.UTF_8));
+            } catch (Exception e) {
+                LOGGER.warn("failed to append to telemetry stream: {}", e.getMessage());
+            }
+        }
+
         LOGGER.debug("Published hello world message {} to both local and IoT Core", messageId);
     }
     
     private void measureRequestReplyLatency(int messageId) {
         // Measure LOCAL broker latency
         measureLatency("latency_test_local_" + messageId, "LOCAL");
-        
-        // Measure IOT_CORE broker latency  
-        measureLatency("latency_test_iotcore_" + messageId, "IOT_CORE");
+
+        // Measure IOT_CORE broker latency only when IoT Core is available (skipped in
+        // local-only STANDALONE; otherwise requestFromIoTCore throws synchronously and would
+        // bubble to the main loop before the interval sleep, busy-spinning the publisher).
+        if (iotCoreSubscribed) {
+            measureLatency("latency_test_iotcore_" + messageId, "IOT_CORE");
+        }
     }
     
     private void measureLatency(String requestId, String brokerType) {
@@ -313,14 +365,20 @@ public class App implements ConfigurationChangeListener
             .withConfig(configService)
             .build();
         
-        // Use different request methods for different brokers
+        // Use different request methods for different brokers. Guard against a synchronous
+        // throw (e.g. IoT Core not connected) so it never escapes to the main publish loop.
         CompletableFuture<Message> requestFuture;
-        if ("LOCAL".equals(brokerType)) {
-            requestFuture = messagingService.request(REQ_TOPIC, request);
-        } else {
-            requestFuture = messagingService.requestFromIoTCore(REQ_TOPIC, request);
+        try {
+            if ("LOCAL".equals(brokerType)) {
+                requestFuture = messagingService.request(REQ_TOPIC, request);
+            } else {
+                requestFuture = messagingService.requestFromIoTCore(REQ_TOPIC, request);
+            }
+        } catch (Exception e) {
+            LOGGER.warn("latency request dispatch failed for {} broker: {}", brokerType, e.getMessage());
+            return;
         }
-        
+
         requestFuture
             .orTimeout(5, TimeUnit.SECONDS)
             .thenAccept(reply -> {
@@ -356,10 +414,12 @@ public class App implements ConfigurationChangeListener
         running = false;
         
         try {
-            // Unsubscribe from topics
+            // Unsubscribe from topics (only unsubscribe IoT Core if we subscribed).
             messagingService.unsubscribe(PUB_TOPIC);
             messagingService.unsubscribe(REQ_TOPIC);
-            messagingService.unsubscribeFromIoTCore(PUB_TOPIC);
+            if (iotCoreSubscribed) {
+                messagingService.unsubscribeFromIoTCore(PUB_TOPIC);
+            }
             LOGGER.info("Unsubscribed from all topics");
         } catch (Exception e) {
             LOGGER.error("Error during shutdown", e);

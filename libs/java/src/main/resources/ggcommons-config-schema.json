@@ -245,6 +245,11 @@
       },
       "required": ["global"],
       "additionalProperties": false
+    },
+    "streaming": {
+      "type": "object",
+      "description": "Telemetry streaming configuration (durable store-and-forward). The detailed schema (streams, sinks, buffers) is owned and validated by the native ggstreamlog core; permit the section here so it is not rejected as an unknown property.",
+      "additionalProperties": true
     }
   },
   "required": ["component"],
