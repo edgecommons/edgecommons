@@ -11,6 +11,7 @@ import { readFileSync } from "fs";
 import mqtt, { MqttClient } from "mqtt";
 
 import { GgError } from "../errors";
+import { logger } from "../logging";
 import { BrokerConfig, MessagingConfig, resolvedHost } from "./config";
 import { Destination, MessagingProvider, Qos, RawSubscription } from "./types";
 
@@ -41,7 +42,16 @@ class BrokerChannel {
   constructor(readonly client: MqttClient) {
     client.on("message", (topic: string, payload: Buffer) => {
       for (const sub of this.subs) {
-        if (topicMatches(sub.filter, topic)) sub.onMessage(topic, payload);
+        if (topicMatches(sub.filter, topic)) {
+          // Contain a throwing subscriber: mqtt.js delivers all matching subs on
+          // one `message` event, so an uncaught throw would abort the loop and
+          // starve the remaining subscribers (parity with the GG IPC fix).
+          try {
+            sub.onMessage(topic, payload);
+          } catch (e) {
+            logger.warn(`ggcommons: MQTT message handler threw for ${topic}: ${String(e)}`);
+          }
+        }
       }
     });
   }

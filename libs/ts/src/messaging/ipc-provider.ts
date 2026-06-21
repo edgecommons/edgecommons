@@ -15,9 +15,32 @@
 import { greengrasscoreipc, eventstream_rpc } from "aws-iot-device-sdk-v2";
 
 import { GgError } from "../errors";
+import { logger } from "../logging";
 import { Destination, MessagingProvider, Qos, RawSubscription } from "./types";
 
 import model = greengrasscoreipc.model;
+
+/**
+ * Invoke an inbound-message callback with the callback's failures contained.
+ *
+ * Greengrass delivers IPC stream events on a single shared event-stream RPC worker
+ * thread/loop; if a user (or downstream dispatch) callback throws synchronously, or
+ * returns a rejected promise, the failure escapes into that worker. Under nucleus
+ * crash/restart churn that has been observed to WEDGE the eventstream loop (mirrors
+ * the Java fix in 6ed774c). We therefore wrap every dispatch in try/catch, attach a
+ * `.catch` to any returned promise, and log + suppress so one bad message can never
+ * break the subscription or surface as an unhandledRejection.
+ */
+function safeDispatch(topic: string, fn: () => unknown): void {
+  try {
+    const result = fn();
+    if (result instanceof Promise) {
+      result.catch((e) => logger.warn(`ggcommons: IPC message handler rejected for ${topic}: ${String(e)}`));
+    }
+  } catch (e) {
+    logger.warn(`ggcommons: IPC message handler threw for ${topic}: ${String(e)}`);
+  }
+}
 
 /** Connection options for {@link IpcMessagingProvider.connect}. */
 export interface IpcOptions {
@@ -102,10 +125,10 @@ export class IpcMessagingProvider implements MessagingProvider {
       if (event.binaryMessage) {
         const topic = event.binaryMessage.context?.topic ?? filter;
         const payload = event.binaryMessage.message;
-        if (payload !== undefined) onMessage(topic, toBuffer(payload));
+        if (payload !== undefined) safeDispatch(topic, () => onMessage(topic, toBuffer(payload)));
       } else if (event.jsonMessage) {
         const topic = event.jsonMessage.context?.topic ?? filter;
-        onMessage(topic, Buffer.from(JSON.stringify(event.jsonMessage.message ?? null), "utf8"));
+        safeDispatch(topic, () => onMessage(topic, Buffer.from(JSON.stringify(event.jsonMessage!.message ?? null), "utf8")));
       }
     });
     op.on("streamError", () => true);
@@ -122,7 +145,7 @@ export class IpcMessagingProvider implements MessagingProvider {
     op.on("message", (event: model.IoTCoreMessage) => {
       const payload = event.message?.payload;
       const topic = event.message?.topicName ?? filter;
-      if (payload !== undefined) onMessage(topic, toBuffer(payload));
+      if (payload !== undefined) safeDispatch(topic, () => onMessage(topic, toBuffer(payload)));
     });
     op.on("streamError", () => true);
     await op.activate();
@@ -157,7 +180,7 @@ export class IpcMessagingProvider implements MessagingProvider {
     onChange: () => void,
   ): Promise<RawSubscription> {
     const op = this.client.subscribeToConfigurationUpdate({ keyPath, componentName });
-    op.on("message", () => onChange());
+    op.on("message", () => safeDispatch(keyPath.join("/"), () => onChange()));
     op.on("streamError", () => true);
     await op.activate();
     return this.track(op);
