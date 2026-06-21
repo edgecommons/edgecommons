@@ -18,6 +18,12 @@ from ggcommons.messaging.messaging_client import MessagingClient
 
 logger = logging.getLogger("GreengrassApp")
 
+# Config key (under component.global) naming the secret the component reads; the default is a
+# self-seeded demo secret so the example runs with no external provisioning.
+DEMO_SECRET_KEY = "demo_secret"
+# Default secret name when component.global.demo_secret is absent.
+DEFAULT_DEMO_SECRET = "skeleton/demo-secret"
+
 
 # This sample application subscribes to messages on the topic "hello/world" and
 # then publishes a message every n seconds on that topic, where "n" comes from the
@@ -48,6 +54,56 @@ class GreengrassApp(ConfigurationChangeListener, ABC):
             except Exception as e:
                 logger.warning(f"stream 'telemetry' unavailable; streaming disabled: {e}")
         self.define_metric()
+
+    @staticmethod
+    def demonstrate_credentials(gg):
+        """Demonstrate encrypted-vault secret access via ``gg.get_credentials()``.
+
+        Reads a named secret from the encrypted local vault and uses it -- without ever logging
+        the value. Runs once at startup. In production the secret arrives via central sync (AWS
+        Secrets Manager over TES, with a ``credentials.central`` config) or out-of-band
+        provisioning; here, so the example is self-contained, we seed a demo value locally on
+        first run if it is absent. Any vault error is logged and swallowed (non-fatal).
+        """
+        try:
+            creds = gg.get_credentials()
+            if creds is None:
+                logger.info("no `credentials` config section; secret access demo disabled")
+                return
+
+            global_config = gg.get_config_manager().get_global_config()
+            name = global_config.get(DEMO_SECRET_KEY, DEFAULT_DEMO_SECRET)
+
+            # Seed a demo secret on first run (in production: central sync / provisioning).
+            if not creds.exists(name):
+                demo = json.dumps(
+                    {"username": "svc-account", "password": "demo-secret-value"}
+                ).encode("utf-8")
+                version = creds.put(name, demo)
+                logger.info(
+                    "seeded demo secret (production: provided via central sync / "
+                    f"provisioning) secret={name} version={version}"
+                )
+
+            # Read it back and use it -- logging only non-sensitive facts, never the value.
+            s = creds.get(name)
+            if s is None:
+                logger.warning(f"secret not found after seeding (unexpected) secret={name}")
+                return
+            logger.info(
+                f"credential access OK (value redacted) secret={name} "
+                f"bytes={len(s.bytes())} source={s.source}"
+            )
+
+            # Demonstrate a typed view; log only the non-secret username.
+            ba = creds.get_basic_auth(name)
+            if ba is not None:
+                logger.info(
+                    f"parsed basic-auth view (password redacted) secret={name} "
+                    f"username={ba.username}"
+                )
+        except Exception as e:
+            logger.warning(f"vault error; skipping secret demo: {e}")
 
     def ipc_hello_world_handler(self, topic: str, msg: Message):
         logger.info(

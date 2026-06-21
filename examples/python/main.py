@@ -27,6 +27,8 @@ def main():
     # Telemetry streaming service (None unless the config has a `streaming` section); the app
     # appends durable records to it and the library's export engine drains them to the sink.
     streams = gg.get_streams()
+    # Demonstrate encrypted-vault secret access once at startup (non-fatal).
+    GreengrassApp.demonstrate_credentials(gg)
     app = GreengrassApp(config_manager=config_manager, streams=streams)
     try:
         app.run()

@@ -3,6 +3,12 @@
     "level": "INFO",
     "format": "%(asctime)s [%(levelname)s] %(filename)s %(funcName)s(%(lineno)d) [%(threadName)s]: %(message)s"
   },
+  "credentials": {
+    "vault": {
+      "path": "./.vault/vault",
+      "keyProvider": { "type": "file", "keyPath": "./.vault/vault.key" }
+    }
+  },
   "component": {
     "global": {
       "publish_interval": 3

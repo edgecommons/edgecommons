@@ -26,6 +26,17 @@ ComponentConfiguration:
         namespace: "ggcommons"
         targetConfig:
           intervalSecs: 10
+      # Credentials / encrypted local vault (read only when a `credentials` section is present;
+      # inert otherwise). The library opens the vault at startup; the component reads its secrets
+      # via gg.get_credentials(). Paths live under the component work dir (writable by ggc_user).
+      # For central sync from AWS Secrets Manager over TES, add a `central` block here
+      # (type: awsSecretsManager, region, sync.secrets: [...]).
+      credentials:
+        vault:
+          path: "/greengrass/v2/work/{ComponentFullName}/vault"
+          keyProvider:
+            type: "file"
+            keyPath: "/greengrass/v2/work/{ComponentFullName}/vault.key"
       tags:
         appId: "Test"
         site: "Chantilly"
