@@ -8,6 +8,7 @@
 export { openFromConfig, CredentialsConfig } from "./config";
 export { CredentialError } from "./errors";
 export { CredentialService, DefaultCredentialService } from "./service";
+export { AuditEvent, AuditSink, LogAuditSink, logSink } from "./audit";
 export {
   FileKeyProvider,
   KeyProvider,

@@ -1,4 +1,5 @@
 /** Credential service (the public seam) + the default LocalVault-backed implementation. */
+import { AuditSink } from "./audit";
 import { CredentialError } from "./errors";
 import { SyncEngine } from "./sync";
 import { LocalVault, PutOptions } from "./vault";
@@ -41,7 +42,21 @@ export class DefaultCredentialService implements CredentialService {
     private readonly vault: LocalVault,
     private readonly namespace = "",
     private readonly sync?: SyncEngine,
+    /** Audit sink for access events (`undefined` = auditing off). Set via {@link withAudit};
+     * the config path enables it (`credentials.audit.enabled`) with the default logging sink. */
+    private auditSink?: AuditSink,
   ) {}
+
+  /** Attach (or clear) the audit sink — access events are emitted to it. Fluent; returns `this`. */
+  withAudit(sink: AuditSink | undefined): this {
+    this.auditSink = sink;
+    return this;
+  }
+
+  /** Emit an audit event if an audit sink is configured (no-op otherwise). Never the value. */
+  private audit(op: string, name: string, version: string, source: string, outcome: string): void {
+    this.auditSink?.record({ op, name, version, source, outcome });
+  }
 
   private full(name: string): string {
     return this.namespace ? `${this.namespace}/${name}` : name;
@@ -58,14 +73,20 @@ export class DefaultCredentialService implements CredentialService {
 
   get(name: string): Secret | undefined {
     this.vault.reloadIfChanged();
-    const s = this.vault.get(this.full(name));
-    return s ? this.relName(s) : undefined;
+    const raw = this.vault.get(this.full(name));
+    const s = raw ? this.relName(raw) : undefined;
+    if (s) this.audit("get", name, s.version, s.source, "hit");
+    else this.audit("get", name, "-", "-", "miss");
+    return s;
   }
 
   getVersion(name: string, version: string): Secret | undefined {
     this.vault.reloadIfChanged();
-    const s = this.vault.getVersion(this.full(name), version);
-    return s ? this.relName(s) : undefined;
+    const raw = this.vault.getVersion(this.full(name), version);
+    const s = raw ? this.relName(raw) : undefined;
+    if (s) this.audit("get", name, s.version, s.source, "hit");
+    else this.audit("get", name, version, "-", "miss");
+    return s;
   }
 
   exists(name: string): boolean {
@@ -85,12 +106,16 @@ export class DefaultCredentialService implements CredentialService {
 
   put(name: string, value: Buffer, opts: PutOptions = {}): string {
     this.vault.reloadIfChanged();
-    return this.vault.put(this.full(name), value, opts);
+    const version = this.vault.put(this.full(name), value, opts);
+    this.audit("put", name, version, "local", "ok");
+    return version;
   }
 
   delete(name: string): boolean {
     this.vault.reloadIfChanged();
-    return this.vault.delete(this.full(name));
+    const deleted = this.vault.delete(this.full(name));
+    this.audit("delete", name, "-", "-", deleted ? "ok" : "miss");
+    return deleted;
   }
 
   async refresh(): Promise<void> {

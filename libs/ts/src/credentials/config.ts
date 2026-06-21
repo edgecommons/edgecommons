@@ -17,6 +17,7 @@ import {
   Pkcs11KeyProvider,
   PrewrappedKeyProvider,
 } from "./keyprovider";
+import { logSink } from "./audit";
 import { DefaultCredentialService } from "./service";
 import { SyncEngine, SyncSecret } from "./sync";
 import { LocalVault } from "./vault";
@@ -47,6 +48,10 @@ export interface CredentialsConfig {
     bootstrapOnStart?: boolean;
     sync?: { secrets?: (string | { name: string; from?: string })[] };
   };
+  /** Access-audit settings. Emit access events (op/name/version/source/outcome, never the value)
+   * to the audit log. On by default — a secrets subsystem should record access; set `false` to
+   * silence it. */
+  audit?: { enabled?: boolean };
 }
 
 function syncSecrets(central: NonNullable<CredentialsConfig["central"]>): SyncSecret[] {
@@ -137,10 +142,14 @@ export async function openFromConfig(
 
   const vault = await openVault(kind, path, keep, vaultCfg.keyProvider ?? {});
 
+  // Access auditing on by default (config can disable) — logs op/name/version/source/outcome,
+  // never the value.
+  const audit = cfg.audit?.enabled === false ? undefined : logSink();
+
   const central = cfg.central;
   const ctype = central?.type ?? "none";
   if (ctype === "none") {
-    return new DefaultCredentialService(vault, namespace);
+    return new DefaultCredentialService(vault, namespace, undefined, audit);
   }
   if (ctype !== "awsSecretsManager") {
     throw new CredentialError(`central source '${ctype}' is not supported`);
@@ -156,5 +165,5 @@ export async function openFromConfig(
     central!.refreshIntervalSecs ?? 300,
     central!.bootstrapOnStart ?? true,
   );
-  return new DefaultCredentialService(vault, namespace, engine);
+  return new DefaultCredentialService(vault, namespace, engine, audit);
 }

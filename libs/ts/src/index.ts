@@ -103,5 +103,7 @@ export {
   FileKeyProvider,
   LocalVault,
   Secret,
+  LogAuditSink,
+  logSink,
 } from "./credentials";
-export type { CredentialService, CredentialsConfig, KeyProvider, PutOptions, SecretMeta } from "./credentials";
+export type { CredentialService, CredentialsConfig, KeyProvider, PutOptions, SecretMeta, AuditEvent, AuditSink } from "./credentials";
