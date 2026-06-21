@@ -45,7 +45,6 @@ one consumer of it (this is what fixes `TELEMETRY_STREAMING.md` §7).
 ## 2. Non-goals (v1)
 
 - Not a general KV/feature-flag store — secrets only (small, sensitive, versioned).
-- Not an HSM/TPM-backed keystore in v1 (OS-keyring/TPM `KeyProvider` is a later add).
 - No interactive passphrase prompts (components are non-interactive).
 - No central **write** (push) — central is read-upstream only in v1.
 - Not a replacement for IAM/least-privilege at the cloud edge — it *complements* it
@@ -54,26 +53,45 @@ one consumer of it (this is what fixes `TELEMETRY_STREAMING.md` §7).
 ## 3. Architecture
 
 ```
-component code ──> ICredentialService (gg.credentials())
-                        │
-                        ├── LocalVault  (encrypted-at-rest store; the read path)
-                        │     ├── AEAD records (per secret/version)         §4
-                        │     ├── DEK (wrapped) ── KeyProvider (KEK)        §5
-                        │     └── change notifications (rotation hot-reload)
-                        │
-                        └── SyncEngine  (background; offline-first)         §6
-                              └── CentralVaultSource  (pluggable)
-                                    ├── AwsSecretsManagerSource  (primary)
-                                    ├── AwsSsmParameterStoreSource
-                                    └── (HashiCorp / Azure KV — later)
+        ┌─ component A ─┐   ┌─ component B ─┐        (all on one device)
+        │ gg.credentials()  │ gg.credentials()       readers, open RO
+        └──────┬────────┘   └──────┬────────┘
+               └──────────┬─────────┘
+                          ▼
+        Shared device vault  (one encrypted file; §4)
+          ├── AEAD records per secret/version
+          ├── DEK (wrapped) ── KeyProvider/custodian (device-level KEK)   §5
+          └── cross-process change-watch (rotation hot-reload)
+                          ▲  writes
+                          │
+        SyncEngine (the vault OWNER — a credentials-manager component, or a
+        self-managing single component)                                   §6
+          └── CentralVaultSource (built-in SDK source, default; pluggable)
+                ├── AwsSecretsManagerSource  (primary)
+                ├── AwsSsmParameterStoreSource
+                └── host-callback / HashiCorp / Azure KV  (extension seam)
 ```
 
-- **Reads** are served entirely from the LocalVault (decrypt in memory; never block on cloud).
-- **SyncEngine** runs in the background: bootstrap at startup, periodic refresh, on-demand
-  `refresh()`, and rotation handling. It writes new versions into the LocalVault and fires
-  change listeners.
-- One vault instance per component by default (isolation; lives in the component work dir).
-  A **shared device vault** (fixed path + shared KEK) is opt-in for cross-component secrets.
+- **One shared vault per device** (the confirmed default): a single encrypted file at a fixed
+  device path, unlocked by a **device-level KEK custodian** (HSM/TPM/KMS) — which is a clean
+  fit, since one device has one hardware key and one vault. Any component on the device reads
+  it via `gg.credentials()`. (A component may still point at a private vault path for isolation,
+  but shared-device is the default.)
+- **Reads** are served entirely from the local vault (decrypt in memory; never block on cloud),
+  opened **read-only** by consumer components.
+- **One writer/sync owner.** To avoid N components all syncing the same secrets (races,
+  duplicate central calls, IAM noise), the **SyncEngine has a single owner** that writes the
+  shared vault: either a dedicated lightweight **credentials-manager component**, or, on a
+  single-component device, that component itself. Ownership is enforced by an advisory file
+  lock + a `lastSyncMs` stamp (lock-holder syncs; others skip). Readers never need the lock.
+- **Cross-process consistency.** Writers update via atomic temp→rename; readers detect changes
+  by watching the vault file (mtime/inotify) and re-load, then fire change listeners — the same
+  hot-reload contract as `config` file watching, but across processes.
+- **Trust boundary = the device.** A shared vault means every component on the device that can
+  unlock it can read every secret in it. On Greengrass all components already run as `ggc_user`,
+  so OS perms can't separate them anyway — so least-privilege moves to **(a) the sync side**
+  (the device only pulls the secrets it is entitled to, gated by central IAM / the TES role /
+  the KMS key policy) and **(b) optional logical namespaces** (§10).
 
 ## 4. The local vault (normative — identical across all bindings)
 
@@ -185,8 +203,15 @@ list(prefix | tagFilter) -> [SecretMeta]
   standalone.
 - **AwsSsmParameterStoreSource**: `SecureString` parameters by path (cheaper alternative).
 - **HashiCorpVaultSource / AzureKeyVaultSource**: later, same trait.
-- **Host-SDK callback option**: a binding may supply its own fetch callback so a component
-  reuses the host's AWS SDK / credentials config instead of the built-in source.
+
+**Default = built-in per-language SDK source (confirmed); host callback = extension seam.**
+A component gets working central sync by declaring `central.type: awsSecretsManager` — no
+fetch glue, in any language. The built-in source also lets the *library* own the parts that
+are easy to get wrong: version-id change detection, retry/backoff, rotation→listener wiring,
+and staleness metrics, identically across langs. To avoid forcing the AWS SDK onto components
+that don't use central sync, each source is an **optional, feature-gated module** (mirrors
+`streaming-kinesis`). The `CentralVaultSource` interface stays public so a host can register a
+**custom fetch callback** for an unsupported backend — supported, but not the primary path.
 
 ### 6.2 Sync engine behavior
 
@@ -237,12 +262,20 @@ getKafkaSasl(name)      -> {mechanism, username, password}   // or OAUTHBEARER t
 ```yaml
 credentials:
   vault:
-    path: "/greengrass/v2/work/{ComponentFullName}/vault"     # local store (template-resolved)
+    # Shared device vault (default): a fixed device path, NOT the component work dir, so every
+    # component on the device opens the same store. Must be readable by the run-as user(s).
+    path: "/var/lib/ggcommons/vault"                          # shared device store
     keyProvider:
-      type: "greengrass"        # greengrass | kms | file | env
+      type: "greengrass"        # pkcs11 | greengrass | kms | file | env
+      # pkcs11 (HSM/TPM/secure element):
+      pkcs11:
+        module: "/usr/lib/softhsm/libsofthsm2.so"             # PKCS#11 .so
+        slot: 0
+        keyLabel: "ggcommons-vault-kek"
+        pinEnv: "GGCOMMONS_PKCS11_PIN"                         # PIN from env, never inline
       kmsKeyId: "arn:aws:kms:us-east-1:…:key/…"               # kms/greengrass
       region: "us-east-1"
-      keyPath: "/etc/ggcommons/vault.key"                      # file
+      keyPath: "/etc/ggcommons/vault.key"                      # file (offline fallback)
     keepVersions: 2
     cacheTtlSecs: 300
   central:
@@ -255,11 +288,16 @@ credentials:
     refreshIntervalSecs: 300
     rotationGraceSecs: 600
     bootstrapOnStart: true
+    syncOwner: true             # this component owns sync/writes the shared vault (lock-guarded);
+                                # readers set false (or omit `central`) and open the vault RO
 ```
 
-`central.type: none` → standalone local-only vault. Every numeric field uses the same
-**lenient (float-tolerant) parsing** the streaming config now uses, since Greengrass delivers
-config numbers as doubles.
+- `central.type: none` (or `syncOwner: false`) → the component is a **read-only** vault client.
+  A dedicated credentials-manager component (or the one self-managing component) sets
+  `syncOwner: true`. The advisory lock makes this safe even if more than one declares ownership.
+- `central.type: none` with no owner anywhere → standalone local-only vault (secrets via `put`).
+- Every numeric field uses the same **lenient (float-tolerant) parsing** the streaming config
+  now uses, since Greengrass delivers config numbers as doubles.
 
 ## 9. Integration with existing subsystems
 
@@ -282,23 +320,37 @@ config numbers as doubles.
   AAD binds ciphertext to name+version+vaultId; vault MAC + monotonic versions resist
   record-swap and rollback.
 - **In memory**: zeroized buffers, optional `mlock`, never logged/serialized.
-- **Access control**: vault file `0600`, in the component work dir (ggc_user on GG). Cloud
-  side: SM resource policy + the TES role + KMS key policy constrain which secrets a device
-  can read and decrypt — selective sync is defense in depth.
-- **Fail-closed**: KEK/KMS unavailable → vault stays locked, reads fail loudly (never fall
-  back to plaintext). Corrupt vault / MAC mismatch → fail closed + alarm; optional re-bootstrap
-  from central.
+- **Access control (shared device vault).** The vault file is `0640` owned by the run-as user/
+  group (ggc_user on GG, where all components already share that identity), so OS perms do
+  **not** separate components — **the device is the trust boundary**: any on-device component
+  that can unlock the vault can read any secret in it. Least-privilege therefore lives on the
+  **sync side** (the device only pulls what it's entitled to — SM resource policy + TES role +
+  KMS/PKCS#11 key access), backed by **selective sync**. This is the accepted trade for a shared
+  device vault; isolation-sensitive secrets can use a private vault path or a future namespace
+  ACL (below).
+- **Namespaces (optional, defense-in-depth).** Secrets may be grouped by name prefix
+  (`compA/…`, `shared/…`); a later enhancement can gate namespaces behind separate sub-DEKs so
+  a component is handed only the sub-keys for its namespaces. v1 ships flat (device trust
+  boundary); the format reserves room for per-namespace keys.
+- **Fail-closed**: KEK custodian (PKCS#11/KMS) unavailable → vault stays locked, reads fail
+  loudly (never fall back to plaintext). Corrupt vault / MAC mismatch → fail closed + alarm;
+  optional re-bootstrap from central.
 - **Audit**: access events (name + version + timestamp, **not value**) to the log/metric pipeline.
-- **Blast radius**: per-component vaults + least-privilege sync mean a compromised component
-  exposes only its own secrets.
+- **Blast radius**: a shared vault widens it to the device — contained by least-privilege sync
+  (small synced set) + hardware-held KEK (a stolen disk image is useless without the HSM/TPM).
 
 ## 11. Settled / open
 
 **Settled (confirmed):** generic opaque secrets; offline-first; pull-only v1;
 **per-language + normative format + cross-language test vectors (no native core)**; envelope
-encryption with a pluggable `KeyProvider` that treats **HSM/TPM as a first-class custodian**;
-KEK default on Greengrass = **KMS-via-TES with a keyfile fallback, HSM/TPM preferred when
-present**; `gg.credentials()` interface; AWS Secrets Manager as the first central source.
+encryption with a pluggable `KeyProvider` that treats **HSM/TPM as a first-class custodian via
+PKCS#11** (the single hardware abstraction — covers HSMs, TPM 2.0 through a PKCS#11 shim, and
+many secure elements); KEK default on Greengrass = **KMS-via-TES with a keyfile fallback,
+HSM/TPM preferred when present**; **one shared device vault (default)** with a single
+sync/write owner (a credentials-manager component or self-managing component) and read-only
+clients; **built-in per-language SDK central source as the default** (feature-gated), with the
+`CentralVaultSource` host callback as the extension seam; `gg.credentials()` interface; AWS
+Secrets Manager as the first central source.
 
 **Rejected — shared native core (`ggvault` cdylib).** Tempting for one audited crypto impl
 and an identical byte format, and it would reuse the streaming binding/packaging machinery.
@@ -309,25 +361,27 @@ spec + cross-language test vectors get the same byte-compatibility with lighter 
 (Revisit only if test-vector drift proves unmanageable.)
 
 **Open / to confirm:**
-- **Per-component vs shared device vault** as the default (recommend per-component; shared
-  opt-in).
-- **HSM/TPM interface**: standardize on **PKCS#11** as the one hardware abstraction (covers
-  most HSMs, TPM 2.0 via a PKCS#11 shim, and many secure elements), vs adding a native TPM2
-  path. Recommend PKCS#11-only to start. Confirm the target devices' hardware so phase 2 picks
-  the right module.
-- **Built-in per-language SDK central source vs a host-supplied fetch callback** as the default.
-- Whether `config.secretRef` indirection is in scope early (keeps secrets out of logs/shadow)
-  or deferred to phase 4.
+- **Target devices' PKCS#11 module(s)** — which HSM/TPM the fleet actually exposes, so phase 2
+  tests against the right module(s) (and SoftHSM for CI). The abstraction is settled (PKCS#11);
+  only the concrete backend list is open.
+- **Namespace ACLs** (per-namespace sub-DEKs) — ship v1 flat (device trust boundary) and add
+  later, or design the sub-DEK split into the phase-1 format now? (Lean: reserve format room
+  now, implement later.)
+- Whether **`config.secretRef`** indirection is in scope early (keeps secrets out of
+  logs/shadow) or deferred to phase 4.
 
 ## 12. Phasing
 
-1. **Local vault core** (per language, against the §4 spec + test vectors): AEAD store,
+1. **Shared local vault core** (per language, against the §4 spec + test vectors): AEAD store,
    `FileKeyProvider`, get/put/list/delete/versions, change listeners, `gg.credentials()` +
-   `ICredentialService` in all four libs. Standalone, local-only.
-2. **AWS Secrets Manager central source + sync engine**: bootstrap, periodic + on-demand
-   refresh, rotation grace, selective sync; **`KmsKeyProvider` / greengrass (TES)** envelope
-   **and the `Pkcs11KeyProvider` (HSM/TPM)** — both land here so the hardware path is proven
-   alongside KMS, not bolted on later. Offline-first + staleness metrics.
+   `ICredentialService` in all four libs. Includes the **shared-device concurrency** from the
+   start — advisory file lock, atomic temp→rename writes, cross-process change-watch (re-load +
+   notify) — since shared-by-default is meaningless without it. Standalone, local-only.
+2. **AWS Secrets Manager central source + sync engine** (with the single **sync-owner** model +
+   read-only clients): bootstrap, periodic + on-demand refresh, rotation grace, selective sync;
+   **`KmsKeyProvider` / greengrass (TES)** envelope **and the `Pkcs11KeyProvider` (HSM/TPM,
+   SoftHSM in CI)** — both land here so the hardware path is proven alongside KMS, not bolted on
+   later. Offline-first + staleness metrics.
 3. **Typed credential views** (AWS creds, basic-auth, TLS bundle, Kafka SASL) and **wire
    streaming + messaging to consume them** — closes `TELEMETRY_STREAMING.md` §7. Validate on
    the lab Nucleus with **real Secrets Manager + TES** (the leg streaming never exercised).
