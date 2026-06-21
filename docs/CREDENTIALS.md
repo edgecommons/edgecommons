@@ -351,7 +351,10 @@ credentials:
 - **Fail-closed**: KEK custodian (PKCS#11/KMS) unavailable → vault stays locked, reads fail
   loudly (never fall back to plaintext). Corrupt vault / MAC mismatch → fail closed + alarm;
   optional re-bootstrap from central.
-- **Audit**: access events (name + version + timestamp, **not value**) to the log/metric pipeline.
+- **Audit** *(implemented, all 4 langs)*: each `get`/`get_version`/`put`/`delete` emits an
+  `AuditEvent` (op + name + version + source + outcome + timestamp, **never the value**) to a
+  pluggable `AuditSink`; the default sink logs a structured record on a dedicated logger/target
+  so the trail routes independently. Toggle via `credentials.audit.enabled` (default on).
 - **Blast radius**: a shared vault widens it to the device — contained by least-privilege sync
   (small synced set) + hardware-held KEK (a stolen disk image is useless without the HSM/TPM).
 
@@ -388,13 +391,17 @@ spec + cross-language test vectors get the same byte-compatibility with lighter 
 
 ## 12. Phasing
 
-> **Status (2026-06-21):** Phases 1 and 2 are **complete and at parity across all four
-> languages** (Rust, Python, Java, TS), plus the phase-3 typed views, `config.secretRef`
-> resolution, and the credential→metrics bridge. Central sync + KMS-via-TES are verified
-> against the floci emulator; the `Pkcs11KeyProvider` is verified on-device against SoftHSM2 in
-> every language (Java via JDK-native SunPKCS11; Python via `python-pkcs11`; TS via
-> `graphene-pk11`). The remaining phase-3 work is **real-AWS lab validation** (Secrets Manager +
-> KMS via TES on the Nucleus, not floci), then phase-4 breadth.
+> **Status (2026-06-21):** Phases 1–3 are **complete and at parity across all four languages**
+> (Rust, Python, Java, TS): vault core, central sync, auto-namespacing, typed views,
+> `config.secretRef`, KMS-via-TES, PKCS#11, the credential→metrics bridge, and **real-AWS lab
+> validation** (Secrets Manager over real TES on the Nucleus). KMS-via-TES verified vs floci;
+> `Pkcs11KeyProvider` verified on-device vs SoftHSM2 (Java via JDK-native SunPKCS11; Python via
+> `python-pkcs11`; TS via `graphene-pk11`). All four skeletons run as deployed GG components
+> (unprivileged `ggc_user`), covered by `test-infra/test_deployed_component.py`.
+> **Phase 4 in progress:** the **access audit log** is done in all four languages (pluggable
+> `AuditSink`; default logs op/name/version/source/outcome — never the value — on a dedicated
+> logger; `credentials.audit.enabled`, default on). Remaining phase-4 breadth: SSM Parameter
+> Store + HashiCorp/Azure sources, OS-keyring `KeyProvider`, optional push/bidirectional sync.
 
 1. **Shared local vault core** (per language, against the §4 spec + test vectors): AEAD store,
    `FileKeyProvider`, get/put/list/delete/versions, change listeners, `gg.credentials()` +
