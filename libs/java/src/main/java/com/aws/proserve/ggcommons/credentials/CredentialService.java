@@ -35,6 +35,10 @@ public interface CredentialService {
     /** Remove a secret entirely. */
     boolean delete(String name);
 
+    /** Force an immediate pull from the central source (no-op without central sync). */
+    default void refresh() {
+    }
+
     default String put(String name, byte[] value) {
         return put(name, value, PutOptions.defaults());
     }

@@ -223,7 +223,9 @@ public class GGCommons
         }
         // Resolve {ThingName}/{ComponentFullName} in the vault path(s) before opening.
         String credentialsJson = configManager.resolveTemplate(full.getAsJsonObject("credentials").toString());
-        credentials = Credentials.open(JsonParser.parseString(credentialsJson).getAsJsonObject());
+        // Transparently namespace every key by <thingName>/<componentName> (collision-free).
+        String namespace = configManager.getThingName() + "/" + configManager.getComponentFullName();
+        credentials = Credentials.open(JsonParser.parseString(credentialsJson).getAsJsonObject(), namespace);
         LOGGER.info("Credentials vault initialized");
     }
 

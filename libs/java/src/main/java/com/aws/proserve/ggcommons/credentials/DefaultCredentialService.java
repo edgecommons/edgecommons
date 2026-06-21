@@ -2,24 +2,51 @@ package com.aws.proserve.ggcommons.credentials;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 /**
  * The default {@link CredentialService}: a {@link LocalVault} guarded by a lock. Each read first
  * picks up any cross-process change (the shared device vault may be written by another component).
+ *
+ * <p>{@code namespace} (<thingName>/<componentName>) is prepended transparently to every key and
+ * stripped from returned names, so a shared device vault can't collide across components.
  */
 public final class DefaultCredentialService implements CredentialService {
     private final LocalVault vault;
-    private final Object lock = new Object();
+    private final Object lock;
+    private final String namespace;
+    private final SyncEngine sync;
 
     public DefaultCredentialService(LocalVault vault) {
+        this(vault, "", new Object(), null);
+    }
+
+    public DefaultCredentialService(LocalVault vault, String namespace, Object lock, SyncEngine sync) {
         this.vault = vault;
+        this.namespace = namespace == null ? "" : namespace;
+        this.lock = lock;
+        this.sync = sync;
+    }
+
+    private String full(String name) {
+        return namespace.isEmpty() ? name : namespace + "/" + name;
+    }
+
+    private String rel(String full) {
+        String prefix = namespace + "/";
+        return (!namespace.isEmpty() && full.startsWith(prefix)) ? full.substring(prefix.length()) : full;
+    }
+
+    private Secret relName(Secret s) {
+        return new Secret(rel(s.name()), s.version(), s.bytes(), s.labels(), s.createdMs(), s.source(), s.contentType());
     }
 
     @Override
     public Optional<Secret> get(String name) {
         synchronized (lock) {
             vault.reloadIfChanged();
-            return Optional.ofNullable(vault.get(name));
+            Secret s = vault.get(full(name));
+            return s == null ? Optional.empty() : Optional.of(relName(s));
         }
     }
 
@@ -27,7 +54,8 @@ public final class DefaultCredentialService implements CredentialService {
     public Optional<Secret> getVersion(String name, String version) {
         synchronized (lock) {
             vault.reloadIfChanged();
-            return Optional.ofNullable(vault.getVersion(name, version));
+            Secret s = vault.getVersion(full(name), version);
+            return s == null ? Optional.empty() : Optional.of(relName(s));
         }
     }
 
@@ -35,7 +63,7 @@ public final class DefaultCredentialService implements CredentialService {
     public boolean exists(String name) {
         synchronized (lock) {
             vault.reloadIfChanged();
-            return vault.exists(name);
+            return vault.exists(full(name));
         }
     }
 
@@ -43,7 +71,9 @@ public final class DefaultCredentialService implements CredentialService {
     public List<SecretMeta> list(String prefix) {
         synchronized (lock) {
             vault.reloadIfChanged();
-            return vault.list(prefix);
+            return vault.list(full(prefix)).stream()
+                    .map(m -> new SecretMeta(rel(m.name()), m.version(), m.createdMs(), m.ttlSecs(), m.source(), m.labels()))
+                    .collect(Collectors.toList());
         }
     }
 
@@ -51,7 +81,7 @@ public final class DefaultCredentialService implements CredentialService {
     public List<String> versions(String name) {
         synchronized (lock) {
             vault.reloadIfChanged();
-            return vault.versions(name);
+            return vault.versions(full(name));
         }
     }
 
@@ -59,7 +89,7 @@ public final class DefaultCredentialService implements CredentialService {
     public String put(String name, byte[] value, PutOptions opts) {
         synchronized (lock) {
             vault.reloadIfChanged();
-            return vault.put(name, value, opts);
+            return vault.put(full(name), value, opts);
         }
     }
 
@@ -67,7 +97,14 @@ public final class DefaultCredentialService implements CredentialService {
     public boolean delete(String name) {
         synchronized (lock) {
             vault.reloadIfChanged();
-            return vault.delete(name);
+            return vault.delete(full(name));
+        }
+    }
+
+    @Override
+    public void refresh() {
+        if (sync != null) {
+            sync.syncNow();
         }
     }
 }

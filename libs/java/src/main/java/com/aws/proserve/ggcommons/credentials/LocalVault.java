@@ -140,6 +140,15 @@ public final class LocalVault {
         return out;
     }
 
+    /** Upstream version id of the latest version of {@code name} (for sync change detection). */
+    public String latestCentralVersionId(String name) {
+        SecretEntry e = secrets.get(name);
+        if (e != null && !e.versions.isEmpty()) {
+            return e.versions.get(e.versions.size() - 1).centralVersionId;
+        }
+        return null;
+    }
+
     public String put(String name, byte[] plaintext, PutOptions opts) {
         if (opts == null) {
             opts = PutOptions.defaults();
