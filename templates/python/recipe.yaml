@@ -67,8 +67,9 @@ Manifests:
       - URI: "s3://BUCKET_NAME/COMPONENT_NAME/COMPONENT_VERSION/<<COMPONENTNAME>>.zip"
         Unarchive: ZIP
     Lifecycle:
+      # Installs into a venv under the (ggc_user-owned) work dir, so no elevated privilege is
+      # needed — neither here nor at Run. Add RequiresPrivilege only if your component truly needs root.
       install:
-        RequiresPrivilege: true
         Script: |-
           set -e
           COMPONENT_DIR="{work:path}"

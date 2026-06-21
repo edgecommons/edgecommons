@@ -67,9 +67,11 @@ Manifests:
     Artifacts:
       - URI: "s3://BUCKET_NAME/COMPONENT_NAME/COMPONENT_VERSION/<<JARNAME>>-1.0.0.jar"
     Lifecycle:
+      # Runs as the default component user (ggc_user) — no elevated privilege needed (GG IPC,
+      # TES-backed AWS, and the work dir are all accessible unprivileged). Add RequiresPrivilege
+      # only if your component genuinely requires root.
       Run:
         Setenv:
           CONFIG: "{configuration:/ComponentConfig}"
-        RequiresPrivilege: true
         Script:
           "java -cp {artifacts:path}/<<JARNAME>>-1.0.0.jar <<MAINCLASSNAME>>"
