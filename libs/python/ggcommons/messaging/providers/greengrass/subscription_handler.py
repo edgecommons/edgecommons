@@ -23,6 +23,19 @@ class SubscriptionHandler(metaclass=abc.ABCMeta):
         self._max_concurrency = max_concurrency
         Thread(target=self._process_queue).start()
 
+    def _invoke_callback(self, topic: str, msg: Message) -> None:
+        # Wrap the user/lib callback so an exception it throws can never escape the
+        # worker thread. An uncaught callback error on this thread would otherwise
+        # surface in the eventstream RPC layer and can wedge the nucleus's single IPC
+        # event-loop thread under crash/restart churn. Log and suppress instead.
+        try:
+            self._callback_func(topic, msg)
+        except Exception as error:  # noqa: BLE001 - never let a bad message kill the worker
+            logger.error(
+                f"Exception {error} in subscription callback for topic '{topic}'"
+                f" (filter '{self._topic_filter}'); suppressing to keep the worker alive"
+            )
+
     def get_topic_filter(self):
         return self._topic_filter
 
@@ -76,7 +89,7 @@ class SubscriptionHandler(metaclass=abc.ABCMeta):
                         break
                     topic = queue_obj[0]
                     msg = Message.from_object(queue_obj[1])
-                    executor.submit(self._callback_func, topic, msg)
+                    executor.submit(self._invoke_callback, topic, msg)
                 except Exception as e:
                     logger.warning(
                         f"Exception while processing message from subscription to '{self._topic_filter}': {e}"

@@ -197,18 +197,20 @@ class GreengrassIpcProvider(MessagingProvider):
         self.publish(request.get_header().get_reply_to(), reply)
 
     def _on_reply_received(self, topic: str, reply: Message) -> None:
-        if topic in self._response_ious:
+        # Null-guard against a late/duplicate reply: the Iou may already have been
+        # completed and removed by an earlier reply on the same topic. Use pop() so the
+        # lookup-and-remove is idempotent and never raises a KeyError, then clean up.
+        iou = self._response_ious.pop(topic, None)
+        if iou is not None:
             logger.debug(f"Received reply message on topic: {topic}")
-            iou = self._response_ious[topic]
-            del self._response_ious[topic]
             self.unsubscribe(topic)
             iou.set_result(reply)
 
     def _on_iot_core_reply_received(self, topic: str, reply: Message) -> None:
-        if topic in self._response_ious:
+        # Null-guard against a late/duplicate reply (see _on_reply_received).
+        iou = self._response_ious.pop(topic, None)
+        if iou is not None:
             logger.debug(f"Received IoT Core reply message on topic: {topic}")
-            iou = self._response_ious[topic]
-            del self._response_ious[topic]
             self.unsubscribe_from_iot_core(topic)
             iou.set_result(reply)
 
