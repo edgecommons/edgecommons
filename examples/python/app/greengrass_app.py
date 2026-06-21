@@ -225,7 +225,9 @@ class GreengrassApp(ConfigurationChangeListener, ABC):
                         self._stream.append(thing, int(time.time() * 1000), payload)
                     except Exception as e:
                         logger.warning(f"failed to append to telemetry stream: {e}")
-                measure_values["replyLatency"] = random() * 100
+                # Use the measure name defined on the metric ("latency"); a mismatch would have the
+                # metric target skip the data point (see CloudWatch target's defensive guard).
+                measure_values["latency"] = random() * 100
                 MetricEmitter.emit_metric("performance", measure_values)
 
                 i += 1

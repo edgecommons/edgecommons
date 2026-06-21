@@ -245,3 +245,36 @@ def test_metric_emission_timestamp_format(ggcommons_metric_messaging):
     # Verify timestamp is in milliseconds and within expected range
     assert isinstance(timestamp, (int, float)), "Timestamp should be numeric"
     assert start_time <= timestamp <= end_time, "Timestamp should be within emission time range"
+
+def test_cloudwatch_target_skips_undefined_measure():
+    """Regression: emitting a measure name the metric never defined must NOT crash.
+
+    Previously CloudWatch._prepare_metric_data did metric.get_measure(name).get_unit(), raising
+    AttributeError on None when the emit named an undefined measure (e.g. a component emitting
+    'replyLatency' against a metric that only defined 'latency'). That propagated out of
+    emit_metric and crashed the whole component. The target must skip the unknown data point.
+    """
+    import logging
+    from unittest.mock import MagicMock
+
+    from ggcommons.metrics.targets.cloudwatch import CloudWatch
+
+    metric = (
+        MetricBuilder.create("performance")
+        .with_thing_name("thing")
+        .with_component_name("comp")
+        .add_measure("latency", "Milliseconds", 1)
+        .build()
+    )
+
+    # Exercise the pure data-prep path without the boto3 client created in __init__.
+    target = CloudWatch.__new__(CloudWatch)
+    target.logger = logging.getLogger("test-cw")
+    target.metric_config = MagicMock()
+    target.metric_config.get_large_fleet_workaround.return_value = False
+
+    data = target._prepare_metric_data(metric, {"latency": 12.5, "replyLatency": 99.0})
+
+    names = [d["MetricName"] for d in data]
+    assert names == ["latency"], "unknown measure 'replyLatency' must be skipped, not crash"
+    assert data[0]["Unit"] == "Milliseconds"

@@ -151,15 +151,23 @@ class CloudWatch(MetricTarget):
     def _prepare_metric_data(self, metric, measure_values):
         metric_data = []
         for measure_name, value in measure_values.items():
+            measure = metric.get_measure(measure_name)
+            if measure is None:
+                # Defensive: an emit naming a measure the metric never defined must not crash the
+                # component — it only affects this one data point. Skip it with a warning.
+                # (Previously this raised AttributeError on None.get_unit(), which propagated out of
+                # emit_metric and took the whole component down.)
+                self.logger.warning(
+                    f"metric '{metric.get_name()}' has no measure '{measure_name}'; skipping data point"
+                )
+                continue
             data_point = {
                 "MetricName": measure_name,
                 "Dimensions": metric.dimensions_as_collection(False),
                 "Timestamp": time.time(),
                 "Value": value,
-                "Unit": metric.get_measure(measure_name).get_unit(),
-                "StorageResolution": metric.get_measure(
-                    measure_name
-                ).get_storage_resolution(),
+                "Unit": measure.get_unit(),
+                "StorageResolution": measure.get_storage_resolution(),
             }
             metric_data.append(data_point)
             if self.metric_config.get_large_fleet_workaround():
@@ -168,10 +176,8 @@ class CloudWatch(MetricTarget):
                     "Dimensions": metric.dimensions_as_collection(True),
                     "Timestamp": time.time(),
                     "Value": value,
-                    "Unit": metric.get_measure(measure_name).get_unit(),
-                    "StorageResolution": metric.get_measure(
-                        measure_name
-                    ).get_storage_resolution(),
+                    "Unit": measure.get_unit(),
+                    "StorageResolution": measure.get_storage_resolution(),
                 }
                 metric_data.append(data_point)
         return metric_data
