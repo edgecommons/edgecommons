@@ -5,6 +5,7 @@ from dataclasses import dataclass, field, replace
 from typing import Dict, List, Optional
 
 from .errors import CredentialError
+from .views import AwsCredentials, BasicAuth, KafkaSasl, TlsBundle, _require
 
 
 class Secret:
@@ -90,6 +91,38 @@ class CredentialService:
     def get_json(self, name: str):
         s = self.get(name)
         return s.as_json() if s else None
+
+    # ----- typed views (thin parses over the opaque secret) -----
+    def get_aws_credentials(self, name: str):
+        s = self.get(name)
+        if s is None:
+            return None
+        d = s.as_json()
+        return AwsCredentials(_require(d, "accessKeyId", "AWS credentials"),
+                              _require(d, "secretAccessKey", "AWS credentials"),
+                              d.get("sessionToken"), d.get("expiry"))
+
+    def get_basic_auth(self, name: str):
+        s = self.get(name)
+        if s is None:
+            return None
+        d = s.as_json()
+        return BasicAuth(_require(d, "username", "basic auth"), _require(d, "password", "basic auth"))
+
+    def get_tls_bundle(self, name: str):
+        s = self.get(name)
+        if s is None:
+            return None
+        d = s.as_json()
+        return TlsBundle(_require(d, "certPem", "a TLS bundle"), _require(d, "keyPem", "a TLS bundle"), d.get("caPem"))
+
+    def get_kafka_sasl(self, name: str):
+        s = self.get(name)
+        if s is None:
+            return None
+        d = s.as_json()
+        return KafkaSasl(_require(d, "username", "Kafka SASL"), _require(d, "password", "Kafka SASL"),
+                         d.get("mechanism", "PLAIN"))
 
 
 class DefaultCredentialService(CredentialService):

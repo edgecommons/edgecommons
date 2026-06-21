@@ -13,3 +13,4 @@ export { LocalVault, PutOptions } from "./vault";
 export { Secret, SecretMeta } from "./types";
 export { AwsSecretsManagerSource, CentralSecret, CentralVaultSource } from "./central";
 export { SyncEngine, SyncSecret } from "./sync";
+export { AwsCredentials, BasicAuth, KafkaSasl, TlsBundle } from "./views";

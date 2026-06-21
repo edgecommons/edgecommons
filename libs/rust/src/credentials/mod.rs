@@ -42,6 +42,7 @@ pub mod keyprovider;
 pub mod service;
 pub mod sync;
 pub mod vault;
+pub mod views;
 
 pub use central::{CentralSecret, CentralVaultSource};
 pub use config::{open, open_namespaced, CentralConfig, CredentialsConfig, KeyProviderConfig, SyncEntry, SyncSelect, VaultConfig};
@@ -49,6 +50,7 @@ pub use keyprovider::{FileKeyProvider, KeyProvider};
 pub use service::{CredentialService, DefaultCredentialService, Secret, SecretMeta};
 pub use sync::SyncEngine;
 pub use vault::{LocalVault, PutOptions};
+pub use views::{AwsCredentials, BasicAuth, KafkaSasl, TlsBundle};
 
 #[cfg(feature = "credentials-aws")]
 pub use central::AwsSecretsManagerSource;
@@ -78,6 +80,28 @@ mod tests {
 
         let names: Vec<_> = c.list("").unwrap().into_iter().map(|m| m.name).collect();
         assert_eq!(names, vec!["db/password", "svc/config"]);
+    }
+
+    #[test]
+    fn typed_views_parse() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = file_vault(dir.path());
+        c.put("aws", br#"{"accessKeyId":"AKIA","secretAccessKey":"sk","sessionToken":"tok"}"#, PutOptions::default()).unwrap();
+        c.put("basic", br#"{"username":"u","password":"p"}"#, PutOptions::default()).unwrap();
+        c.put("tls", br#"{"certPem":"C","keyPem":"K"}"#, PutOptions::default()).unwrap();
+        c.put("kafka", br#"{"username":"ku","password":"kp"}"#, PutOptions::default()).unwrap();
+
+        let aws = c.get_aws_credentials("aws").unwrap().unwrap();
+        assert_eq!(aws.access_key_id, "AKIA");
+        assert_eq!(aws.session_token.as_deref(), Some("tok"));
+        assert_eq!(c.get_basic_auth("basic").unwrap().unwrap().username, "u");
+        assert_eq!(c.get_tls_bundle("tls").unwrap().unwrap().cert_pem, "C");
+        let k = c.get_kafka_sasl("kafka").unwrap().unwrap();
+        assert_eq!(k.username, "ku");
+        assert_eq!(k.mechanism, "PLAIN"); // default
+        // Wrong shape is a typed error, not a silent None.
+        assert!(c.get_aws_credentials("basic").is_err());
+        assert!(c.get_basic_auth("missing").unwrap().is_none());
     }
 
     #[test]

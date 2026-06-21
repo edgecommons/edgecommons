@@ -1,7 +1,9 @@
 /** Credential service (the public seam) + the default LocalVault-backed implementation. */
+import { CredentialError } from "./errors";
 import { SyncEngine } from "./sync";
 import { LocalVault, PutOptions } from "./vault";
 import { Secret, SecretMeta } from "./types";
+import { AwsCredentials, BasicAuth, KafkaSasl, TlsBundle } from "./views";
 
 /** The public credential interface (depend on this). Obtained via `gg.credentials()`. */
 export interface CredentialService {
@@ -18,6 +20,12 @@ export interface CredentialService {
   getBytes(name: string): Buffer | undefined;
   getString(name: string): string | undefined;
   getJson(name: string): unknown | undefined;
+
+  // typed views
+  getAwsCredentials(name: string): AwsCredentials | undefined;
+  getBasicAuth(name: string): BasicAuth | undefined;
+  getTlsBundle(name: string): TlsBundle | undefined;
+  getKafkaSasl(name: string): KafkaSasl | undefined;
 }
 
 /**
@@ -96,6 +104,49 @@ export class DefaultCredentialService implements CredentialService {
   }
 
   getJson(name: string): unknown | undefined {
+    return this.get(name)?.asJson();
+  }
+
+  // ----- typed views (thin parses over the opaque secret; canonical camelCase JSON) -----
+
+  getAwsCredentials(name: string): AwsCredentials | undefined {
+    const j = this.viewJson(name);
+    if (!j) return undefined;
+    if (typeof j.accessKeyId !== "string" || typeof j.secretAccessKey !== "string") {
+      throw new CredentialError(`secret '${name}' is not AWS credentials (missing fields)`);
+    }
+    return { accessKeyId: j.accessKeyId, secretAccessKey: j.secretAccessKey, sessionToken: j.sessionToken, expiry: j.expiry };
+  }
+
+  getBasicAuth(name: string): BasicAuth | undefined {
+    const j = this.viewJson(name);
+    if (!j) return undefined;
+    if (typeof j.username !== "string" || typeof j.password !== "string") {
+      throw new CredentialError(`secret '${name}' is not basic auth (missing fields)`);
+    }
+    return { username: j.username, password: j.password };
+  }
+
+  getTlsBundle(name: string): TlsBundle | undefined {
+    const j = this.viewJson(name);
+    if (!j) return undefined;
+    if (typeof j.certPem !== "string" || typeof j.keyPem !== "string") {
+      throw new CredentialError(`secret '${name}' is not a TLS bundle (missing fields)`);
+    }
+    return { certPem: j.certPem, keyPem: j.keyPem, caPem: j.caPem };
+  }
+
+  getKafkaSasl(name: string): KafkaSasl | undefined {
+    const j = this.viewJson(name);
+    if (!j) return undefined;
+    if (typeof j.username !== "string" || typeof j.password !== "string") {
+      throw new CredentialError(`secret '${name}' is not Kafka SASL (missing fields)`);
+    }
+    return { mechanism: typeof j.mechanism === "string" ? j.mechanism : "PLAIN", username: j.username, password: j.password };
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private viewJson(name: string): any | undefined {
     return this.get(name)?.asJson();
   }
 }

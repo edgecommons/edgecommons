@@ -19,6 +19,7 @@ from .keyprovider import FileKeyProvider, KeyProvider
 from .service import CredentialService, DefaultCredentialService, Secret, SecretMeta
 from .sync import SyncEngine
 from .vault import LocalVault
+from .views import AwsCredentials, BasicAuth, KafkaSasl, TlsBundle
 
 __all__ = [
     "open_from_config",
@@ -34,4 +35,8 @@ __all__ = [
     "CentralSecret",
     "AwsSecretsManagerSource",
     "SyncEngine",
+    "AwsCredentials",
+    "BasicAuth",
+    "TlsBundle",
+    "KafkaSasl",
 ]

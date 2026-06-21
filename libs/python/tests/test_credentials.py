@@ -68,6 +68,22 @@ def test_tamper_detected(tmp_path):
         LocalVault.open(str(path), FileKeyProvider(bytes([7] * 32)), 2)
 
 
+def test_typed_views(tmp_path):
+    c = _svc(tmp_path)
+    c.put("aws", b'{"accessKeyId":"AKIA","secretAccessKey":"sk","sessionToken":"tok"}')
+    c.put("basic", b'{"username":"u","password":"p"}')
+    c.put("tls", b'{"certPem":"C","keyPem":"K"}')
+    c.put("kafka", b'{"username":"ku","password":"kp"}')
+    assert c.get_aws_credentials("aws").access_key_id == "AKIA"
+    assert c.get_aws_credentials("aws").session_token == "tok"
+    assert c.get_basic_auth("basic").username == "u"
+    assert c.get_tls_bundle("tls").cert_pem == "C"
+    assert c.get_kafka_sasl("kafka").mechanism == "PLAIN"
+    with pytest.raises(CredentialError):
+        c.get_aws_credentials("basic")  # wrong shape
+    assert c.get_basic_auth("missing") is None
+
+
 def test_namespacing_isolates_components(tmp_path):
     from ggcommons.credentials import DefaultCredentialService
 

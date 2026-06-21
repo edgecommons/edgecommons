@@ -48,6 +48,21 @@ class VaultTest {
     }
 
     @Test
+    void typedViews(@TempDir Path dir) {
+        CredentialService c = svc(dir);
+        c.put("aws", "{\"accessKeyId\":\"AKIA\",\"secretAccessKey\":\"sk\",\"sessionToken\":\"tok\"}".getBytes(StandardCharsets.UTF_8));
+        c.put("basic", "{\"username\":\"u\",\"password\":\"p\"}".getBytes(StandardCharsets.UTF_8));
+        c.put("tls", "{\"certPem\":\"C\",\"keyPem\":\"K\"}".getBytes(StandardCharsets.UTF_8));
+        c.put("kafka", "{\"username\":\"ku\",\"password\":\"kp\"}".getBytes(StandardCharsets.UTF_8));
+        assertEquals("AKIA", c.getAwsCredentials("aws").orElseThrow().accessKeyId());
+        assertEquals("tok", c.getAwsCredentials("aws").orElseThrow().sessionToken());
+        assertEquals("u", c.getBasicAuth("basic").orElseThrow().username());
+        assertEquals("C", c.getTlsBundle("tls").orElseThrow().certPem());
+        assertEquals("PLAIN", c.getKafkaSasl("kafka").orElseThrow().mechanism()); // default
+        assertThrows(CredentialException.class, () -> c.getAwsCredentials("basic")); // wrong shape
+    }
+
+    @Test
     void versionsMonotonicAndPruned(@TempDir Path dir) {
         CredentialService c = svc(dir); // keep_versions = 2
         c.put("k", "v1".getBytes());

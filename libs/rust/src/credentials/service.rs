@@ -111,6 +111,37 @@ pub trait CredentialService: Send + Sync {
             None => Ok(None),
         }
     }
+
+    // ----- typed views (thin parses over the opaque secret; see `views`) -----
+
+    /// AWS credentials stored at `name`.
+    fn get_aws_credentials(&self, name: &str) -> Result<Option<super::views::AwsCredentials>> {
+        match self.get(name)? {
+            Some(s) => Ok(Some(super::views::parse(&s, "AWS credentials")?)),
+            None => Ok(None),
+        }
+    }
+    /// HTTP basic-auth credentials stored at `name`.
+    fn get_basic_auth(&self, name: &str) -> Result<Option<super::views::BasicAuth>> {
+        match self.get(name)? {
+            Some(s) => Ok(Some(super::views::parse(&s, "basic auth")?)),
+            None => Ok(None),
+        }
+    }
+    /// A TLS bundle stored at `name`.
+    fn get_tls_bundle(&self, name: &str) -> Result<Option<super::views::TlsBundle>> {
+        match self.get(name)? {
+            Some(s) => Ok(Some(super::views::parse(&s, "a TLS bundle")?)),
+            None => Ok(None),
+        }
+    }
+    /// Kafka SASL credentials stored at `name`.
+    fn get_kafka_sasl(&self, name: &str) -> Result<Option<super::views::KafkaSasl>> {
+        match self.get(name)? {
+            Some(s) => Ok(Some(super::views::parse(&s, "Kafka SASL")?)),
+            None => Ok(None),
+        }
+    }
 }
 
 /// The default [`CredentialService`]: a [`LocalVault`] behind a mutex. Each read first picks up any

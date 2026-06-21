@@ -33,6 +33,21 @@ describe("local vault", () => {
     expect(c.list("").map((m) => m.name)).toEqual(["db/password", "svc/config"]);
   });
 
+  it("typed views", () => {
+    const c = svc();
+    c.put("aws", Buffer.from('{"accessKeyId":"AKIA","secretAccessKey":"sk","sessionToken":"tok"}'));
+    c.put("basic", Buffer.from('{"username":"u","password":"p"}'));
+    c.put("tls", Buffer.from('{"certPem":"C","keyPem":"K"}'));
+    c.put("kafka", Buffer.from('{"username":"ku","password":"kp"}'));
+    expect(c.getAwsCredentials("aws")!.accessKeyId).toBe("AKIA");
+    expect(c.getAwsCredentials("aws")!.sessionToken).toBe("tok");
+    expect(c.getBasicAuth("basic")!.username).toBe("u");
+    expect(c.getTlsBundle("tls")!.certPem).toBe("C");
+    expect(c.getKafkaSasl("kafka")!.mechanism).toBe("PLAIN");
+    expect(() => c.getAwsCredentials("basic")).toThrow(CredentialError);
+    expect(c.getBasicAuth("missing")).toBeUndefined();
+  });
+
   it("versions are monotonic and pruned", () => {
     const c = svc(); // keep_versions = 2
     c.put("k", Buffer.from("v1"));
