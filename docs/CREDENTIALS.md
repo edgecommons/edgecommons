@@ -388,6 +388,14 @@ spec + cross-language test vectors get the same byte-compatibility with lighter 
 
 ## 12. Phasing
 
+> **Status (2026-06-21):** Phases 1 and 2 are **complete and at parity across all four
+> languages** (Rust, Python, Java, TS), plus the phase-3 typed views, `config.secretRef`
+> resolution, and the credential→metrics bridge. Central sync + KMS-via-TES are verified
+> against the floci emulator; the `Pkcs11KeyProvider` is verified on-device against SoftHSM2 in
+> every language (Java via JDK-native SunPKCS11; Python via `python-pkcs11`; TS via
+> `graphene-pk11`). The remaining phase-3 work is **real-AWS lab validation** (Secrets Manager +
+> KMS via TES on the Nucleus, not floci), then phase-4 breadth.
+
 1. **Shared local vault core** (per language, against the §4 spec + test vectors): AEAD store,
    `FileKeyProvider`, get/put/list/delete/versions, change listeners, `gg.credentials()` +
    `ICredentialService` in all four libs. Includes the **shared-device concurrency** from the
