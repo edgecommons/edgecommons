@@ -55,6 +55,17 @@ ComponentConfiguration:
               onFull: "dropOldest"
             delivery:
               pollIntervalMs: 1000
+      # Credentials / encrypted local vault (read only by builds that include the `credentials`
+      # feature; inert otherwise). The library opens the vault at startup; the component reads its
+      # secrets via gg.credentials(). Paths live under the component work dir (writable by ggc_user).
+      # For central sync from AWS Secrets Manager over TES, build with `credentials-aws` and add a
+      # `central` block here (type: awsSecretsManager, region, sync.secrets: [...]).
+      credentials:
+        vault:
+          path: "/greengrass/v2/work/{ComponentFullName}/vault"
+          keyProvider:
+            type: "file"
+            keyPath: "/greengrass/v2/work/{ComponentFullName}/vault.key"
       tags:
         appId: "Test"
         site: "Chantilly"

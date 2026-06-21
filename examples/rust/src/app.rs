@@ -56,7 +56,20 @@ pub struct SkeletonApp {
     /// (Kinesis on-device via TES). Cheap to clone; shared across threads.
     #[cfg(feature = "streaming")]
     stream: Option<StreamHandle>,
+    /// The credential service when the `credentials` feature is built and a `credentials` config
+    /// section is present; `None` otherwise. Demonstrates encrypted-vault secret access (and, with
+    /// `credentials-aws` + a `central` config, sync from AWS Secrets Manager over TES).
+    #[cfg(feature = "credentials")]
+    credentials: Option<Arc<dyn ggcommons::credentials::CredentialService>>,
 }
+
+/// Config key (under `component.global`) naming the secret the component reads; the default is a
+/// self-seeded demo secret so the example runs with no external provisioning.
+#[cfg(feature = "credentials")]
+const DEMO_SECRET_KEY: &str = "demo_secret";
+/// Default secret name when `component.global.demo_secret` is absent.
+#[cfg(feature = "credentials")]
+const DEFAULT_DEMO_SECRET: &str = "skeleton/demo-secret";
 
 /// The publish interval (seconds) from `component.global.publish_interval`,
 /// falling back to [`DEFAULT_PUBLISH_INTERVAL_SECS`].
@@ -148,7 +161,81 @@ impl SkeletonApp {
             publish_interval,
             #[cfg(feature = "streaming")]
             stream,
+            #[cfg(feature = "credentials")]
+            credentials: gg.credentials(),
         })
+    }
+
+    /// Demonstrate encrypted-vault secret access via `gg.credentials()`.
+    ///
+    /// # Purpose
+    /// Show the credential-service usage every real component needs: read a named secret from the
+    /// encrypted local vault and use it — without ever logging the value. Runs once at startup.
+    ///
+    /// In production the secret arrives via central sync (AWS Secrets Manager over TES, with a
+    /// `credentials.central` config) or out-of-band provisioning; here, so the example is
+    /// self-contained, we seed a demo value locally on first run if it is absent.
+    ///
+    /// # Errors
+    /// Non-fatal: any vault error is logged and swallowed so the demo never takes the component down.
+    #[cfg(feature = "credentials")]
+    fn demonstrate_credentials(&self) {
+        use ggcommons::credentials::PutOptions;
+
+        let Some(creds) = &self.credentials else {
+            tracing::info!("no `credentials` config section; secret access demo disabled");
+            return;
+        };
+        let name = self
+            .config
+            .global()
+            .get(DEMO_SECRET_KEY)
+            .and_then(|v| v.as_str())
+            .unwrap_or(DEFAULT_DEMO_SECRET)
+            .to_string();
+
+        // Seed a demo secret on first run (in production this comes from central sync/provisioning).
+        match creds.exists(&name) {
+            Ok(false) => {
+                let demo = serde_json::json!({ "username": "svc-account", "password": "demo-secret-value" });
+                let bytes = serde_json::to_vec(&demo).unwrap_or_default();
+                match creds.put(&name, &bytes, PutOptions::default()) {
+                    Ok(version) => tracing::info!(secret = %name, version = %version,
+                        "seeded demo secret (production: provided via central sync / provisioning)"),
+                    Err(e) => {
+                        tracing::warn!(error = %e, secret = %name, "failed to seed demo secret");
+                        return;
+                    }
+                }
+            }
+            Ok(true) => {}
+            Err(e) => {
+                tracing::warn!(error = %e, secret = %name, "vault unavailable; skipping secret demo");
+                return;
+            }
+        }
+
+        // Read it back and use it — logging only non-sensitive facts, never the value.
+        match creds.get(&name) {
+            Ok(Some(secret)) => {
+                tracing::info!(
+                    secret = %name,
+                    bytes = secret.bytes().len(),
+                    source = %secret.source,
+                    "credential access OK (value redacted)"
+                );
+                // A real component would now use the secret (e.g. authenticate a downstream client).
+                // Demonstrate a typed view; log only the non-secret username.
+                match creds.get_basic_auth(&name) {
+                    Ok(Some(ba)) => tracing::info!(secret = %name, username = %ba.username,
+                        "parsed basic-auth view (password redacted)"),
+                    Ok(None) => {}
+                    Err(e) => tracing::debug!(error = %e, "secret is not a basic-auth JSON shape"),
+                }
+            }
+            Ok(None) => tracing::warn!(secret = %name, "secret not found after seeding (unexpected)"),
+            Err(e) => tracing::warn!(error = %e, secret = %name, "failed to read secret"),
+        }
     }
 
     /// Run the component until a shutdown signal is received.
@@ -164,6 +251,10 @@ impl SkeletonApp {
     /// Propagates failures from subscribing, publishing, or signal handling.
     pub async fn run(&self) -> anyhow::Result<()> {
         let thing = &self.config.thing_name;
+
+        // Demonstrate encrypted-vault secret access once at startup (feature-gated, non-fatal).
+        #[cfg(feature = "credentials")]
+        self.demonstrate_credentials();
 
         let Some(messaging) = self.messaging.clone() else {
             tracing::warn!(

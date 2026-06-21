@@ -31,6 +31,11 @@ streaming = ["ggcommons/streaming"]
 # Enable the example crate's own `streaming` cfg too (not just the library's), so the
 # app.rs streaming code is compiled in — mirrors the library's feature chaining.
 streaming-kinesis = ["streaming", "ggcommons/streaming-kinesis"]
+# Credentials / local encrypted vault (gg.credentials()). The `credentials` config section in
+# recipe.yaml is inert unless this is built in. `credentials-aws` adds central sync from AWS
+# Secrets Manager + the KMS-via-TES key provider (on-device it authenticates via TES).
+credentials = ["ggcommons/credentials"]
+credentials-aws = ["credentials", "ggcommons/credentials-aws"]
 
 [dependencies]
 # Local path dependency on the ggcommons Rust library (sibling project in the monorepo).
