@@ -264,7 +264,9 @@ export class GGCommonsBuilder {
     if (credentialsRaw && typeof credentialsRaw === "object") {
       const credentials = await import("./credentials");
       const resolved = JSON.parse(resolve(current, JSON.stringify(credentialsRaw)));
-      runtime._setCredentials(credentials.openFromConfig(resolved));
+      // Transparently namespace every key by <thingName>/<componentName> (collision-free).
+      const namespace = `${current.thingName}/${this.componentNameValue}`;
+      runtime._setCredentials(await credentials.openFromConfig(resolved, namespace));
       logger.info("Credentials vault initialized");
     }
 

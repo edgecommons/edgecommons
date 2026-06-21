@@ -11,3 +11,5 @@ export { CredentialService, DefaultCredentialService } from "./service";
 export { FileKeyProvider, KeyProvider } from "./keyprovider";
 export { LocalVault, PutOptions } from "./vault";
 export { Secret, SecretMeta } from "./types";
+export { AwsSecretsManagerSource, CentralSecret, CentralVaultSource } from "./central";
+export { SyncEngine, SyncSecret } from "./sync";

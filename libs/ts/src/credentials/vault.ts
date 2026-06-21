@@ -124,6 +124,11 @@ export class LocalVault {
     return (this.secrets[name]?.versions ?? []).map((v) => v.version);
   }
 
+  /** Upstream version id of the latest version of `name` (for sync change detection). */
+  latestCentralVersionId(name: string): string | undefined {
+    return this.secrets[name]?.versions.at(-1)?.centralVersionId;
+  }
+
   put(name: string, plaintext: Buffer, opts: PutOptions = {}): string {
     const version = this.nextVersion(name);
     const nonce = random(NONCE_LEN);

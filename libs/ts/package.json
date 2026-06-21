@@ -21,8 +21,12 @@
     "ggstreamlog-node": "file:../rust-streamlog/bindings/node",
     "mqtt": "^5"
   },
+  "optionalDependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.1073.0"
+  },
   "devDependencies": {
     "@aws-sdk/client-cloudwatch": "^3.1073.0",
+    "@aws-sdk/client-secrets-manager": "^3.1073.0",
     "@napi-rs/cli": "^3.7.2",
     "@types/node": "^20",
     "@vitest/coverage-v8": "^4.1.9",
