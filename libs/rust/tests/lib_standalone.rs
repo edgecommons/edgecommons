@@ -50,6 +50,14 @@ async fn standalone_runtime_exposes_all_services_and_accessors() {
             "logging": { "level": "DEBUG" },
             "metricEmission": { "target": "log", "targetConfig": { "logFileName": metric_log.to_string_lossy() } },
             "heartbeat": { "intervalSecs": 1, "measures": { "cpu": true }, "targets": [ { "type": "metric" } ] },
+            // Streaming section: buffer-only here (no streaming-kinesis), exercised below only when
+            // the `streaming` feature is built. The buffer path uses a {ThingName} template.
+            "streaming": { "streams": [ {
+                "name": "telemetry",
+                "sink": { "type": "kinesis", "streamName": "ts-{ThingName}" },
+                "buffer": { "path": dir.join("stream-{ThingName}").to_string_lossy(),
+                            "segmentBytes": 65536, "maxDiskBytes": 1048576, "onFull": "block" }
+            } ] },
             "component": { "global": { "publish_interval": 2 } }
         })
         .to_string(),
@@ -99,6 +107,24 @@ async fn standalone_runtime_exposes_all_services_and_accessors() {
         .payload(serde_json::json!({ "ok": true }))
         .build();
     messaging.publish("lib-it/ping", &msg).await.expect("publish");
+
+    // Telemetry streaming is wired into build() under the `streaming` feature: gg.streams() is
+    // populated from the config's `streaming` section (templates resolved) and ready to append.
+    #[cfg(feature = "streaming")]
+    {
+        let streams = gg.streams();
+        assert_eq!(streams.stream_names(), vec!["telemetry"]);
+        let h = streams.stream("telemetry").expect("configured stream");
+        for i in 0..5u64 {
+            h.append(ggcommons::streaming::StreamRecord::new("k", 1000 + i, b"v")).unwrap();
+        }
+        h.flush().unwrap();
+        let s = streams.stats("telemetry").expect("stats");
+        assert_eq!(s.appended_total, 5);
+        assert_eq!(s.next_offset, 5);
+        // {ThingName} in the buffer path was resolved during build().
+        assert!(dir.join("stream-lib-thing").is_dir(), "buffer path template resolved");
+    }
 
     // Listener add/remove (identity-based remove).
     let listener: Arc<dyn ConfigurationChangeListener> = Arc::new(NoopListener);
