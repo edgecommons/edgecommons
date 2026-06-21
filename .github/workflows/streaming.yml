@@ -1,0 +1,118 @@
+name: streaming
+# Builds + tests the ggstreamlog core and the three native bindings (Java/Panama, Python/PyO3,
+# Node/napi-rs) across platforms. Buffer-only tests need no cloud; Kinesis/Kafka integration tests
+# are #[ignore] and run only in the dedicated steps with a broker/emulator.
+on:
+  push:
+    paths:
+      - "libs/rust-streamlog/**"
+      - "libs/python/ggcommons/streaming/**"
+      - "libs/ts/src/streaming/**"
+      - "libs/java/src/main/java/com/aws/proserve/ggcommons/streaming/**"
+      - ".github/workflows/streaming.yml"
+  pull_request:
+    paths:
+      - "libs/rust-streamlog/**"
+      - "libs/python/ggcommons/streaming/**"
+      - "libs/ts/src/streaming/**"
+      - "libs/java/src/main/java/com/aws/proserve/ggcommons/streaming/**"
+      - ".github/workflows/streaming.yml"
+
+jobs:
+  core:
+    name: core (ggstreamlog)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: libs/rust-streamlog
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: libs/rust-streamlog
+      - run: cargo test
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo build --features cabi --release
+      - run: cargo clippy --features cabi,kinesis --all-targets -- -D warnings
+      # C ABI smoke test against the built cdylib.
+      - run: bash ctest/run_smoke.sh
+      # Kafka: librdkafka build deps + a broker for the integration test.
+      - name: Install librdkafka build deps
+        run: sudo apt-get update && sudo apt-get install -y cmake libcurl4-openssl-dev libssl-dev
+      - name: Start Redpanda
+        run: |
+          docker run -d --name redpanda -p 9092:9092 redpandadata/redpanda:latest \
+            redpanda start --smp 1 --memory 512M --reserve-memory 0M --node-id 0 --check=false \
+            --kafka-addr PLAINTEXT://0.0.0.0:9092 --advertise-kafka-addr PLAINTEXT://127.0.0.1:9092
+          for i in $(seq 1 30); do
+            docker logs redpanda 2>&1 | grep -q "Successfully started Redpanda" && break || sleep 1
+          done
+      - run: cargo test --features kafka --test kafka_redpanda -- --ignored --nocapture
+
+  python:
+    name: python wheel (PyO3)
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - run: pip install maturin pytest
+      - name: Build + install the native wheel
+        run: |
+          maturin build --release --manifest-path libs/rust-streamlog/bindings/python/Cargo.toml --out dist
+          pip install --find-links dist ggstreamlog-native
+      - name: Install the Python lib + run streaming tests
+        run: |
+          pip install -e libs/python
+          python -m pytest libs/python/tests/test_streaming_native.py -q
+        shell: bash
+
+  node:
+    name: node addon (napi-rs)
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build the native addon
+        run: npm install && npm run build
+        working-directory: libs/rust-streamlog/bindings/node
+      - name: Build the TS lib + run streaming tests
+        run: |
+          npm install
+          npm run build
+          npx vitest run test/streaming.test.ts
+        working-directory: libs/ts
+
+  java:
+    name: java (Panama)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build the cdylib (cabi + kinesis)
+        run: cargo build --features cabi,kinesis --release
+        working-directory: libs/rust-streamlog
+      - name: Run the Java streaming binding test (loads the bundled cdylib)
+        run: mvn -B -ntp test -Dtest=StreamServiceNativeTest -Dsurefire.failIfNoSpecifiedTests=false
+        working-directory: libs/java
