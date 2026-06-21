@@ -39,6 +39,7 @@ pub mod config;
 mod crypto;
 pub mod format;
 pub mod keyprovider;
+pub mod secretref;
 pub mod service;
 pub mod sync;
 pub mod vault;
@@ -47,6 +48,7 @@ pub mod views;
 pub use central::{CentralSecret, CentralVaultSource};
 pub use config::{open, open_namespaced, CentralConfig, CredentialsConfig, KeyProviderConfig, SyncEntry, SyncSelect, VaultConfig};
 pub use keyprovider::{FileKeyProvider, KeyProvider};
+pub use secretref::resolve_secret_refs;
 pub use service::{CredentialService, DefaultCredentialService, Secret, SecretMeta};
 pub use sync::SyncEngine;
 pub use vault::{LocalVault, PutOptions};
@@ -116,6 +118,29 @@ mod tests {
         assert_eq!(c.get("k").unwrap().unwrap().as_str().unwrap(), "v3");
         assert_eq!(c.get_version("k", "00000002").unwrap().unwrap().as_str().unwrap(), "v2");
         assert!(c.get_version("k", "00000001").unwrap().is_none());
+    }
+
+    #[test]
+    fn secret_refs_resolve_from_vault() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = file_vault(dir.path());
+        c.put("kafka/pw", b"s3cr3t", PutOptions::default()).unwrap();
+        c.put("kafka/sasl", br#"{"username":"u","password":"p"}"#, PutOptions::default()).unwrap();
+
+        let mut cfg = serde_json::json!({
+            "sink": { "type": "kafka", "properties": {
+                "sasl.password": { "$secret": "kafka/pw" },
+                "sasl.username": { "$secret": "kafka/sasl", "field": "username" }
+            }},
+            "plain": "untouched"
+        });
+        super::resolve_secret_refs(&mut cfg, &c).unwrap();
+        assert_eq!(cfg["sink"]["properties"]["sasl.password"], "s3cr3t");
+        assert_eq!(cfg["sink"]["properties"]["sasl.username"], "u");
+        assert_eq!(cfg["plain"], "untouched");
+
+        let mut missing = serde_json::json!({ "x": { "$secret": "nope" } });
+        assert!(super::resolve_secret_refs(&mut missing, &c).is_err());
     }
 
     #[test]

@@ -279,19 +279,10 @@ impl GgCommonsBuilder {
         let metrics: Arc<dyn metrics::MetricService> = emitter.clone();
         let heartbeat = heartbeat::Heartbeat::start(config.clone(), metrics.clone(), messaging.clone());
 
-        // Telemetry streaming (feature-gated): open/recover configured streams and bridge their
-        // stats into the metric targets. Empty + no bridge when no `streaming` section exists.
-        #[cfg(feature = "streaming")]
-        let (streams, stream_metrics) = {
-            let svc: Arc<dyn streaming::StreamService> =
-                Arc::new(streaming::DefaultStreamService::open(snapshot.as_ref())?);
-            let bridge = streaming::StreamMetricsBridge::start(svc.clone(), metrics.clone());
-            (svc, bridge)
-        };
-
         // Credentials / local vault (feature-gated): open the shared vault when the config has a
         // `credentials` section, resolving path templates ({ThingName}/{ComponentFullName}) first.
-        // `None` when no section is present.
+        // Opened before streaming so the streaming config can reference vault secrets. `None` when
+        // no section is present.
         #[cfg(feature = "credentials")]
         let credentials: Option<Arc<dyn credentials::CredentialService>> =
             match snapshot.raw.get("credentials") {
@@ -309,6 +300,34 @@ impl GgCommonsBuilder {
                     Some(Arc::new(svc) as Arc<dyn credentials::CredentialService>)
                 }
             };
+
+        // Telemetry streaming (feature-gated): open/recover configured streams and bridge their
+        // stats into the metric targets. Empty + no bridge when no `streaming` section exists.
+        // `{"$secret": ...}` refs in the streaming config are resolved from the vault first (closes
+        // TELEMETRY_STREAMING.md §7) without mutating the public config snapshot.
+        #[cfg(feature = "streaming")]
+        let (streams, stream_metrics) = {
+            #[cfg(feature = "credentials")]
+            let resolved_cfg: Option<Config> = match (&credentials, snapshot.raw.get("streaming")) {
+                (Some(creds), Some(_)) => {
+                    let mut c = (*snapshot).clone();
+                    if let Some(s) = c.raw.get_mut("streaming") {
+                        credentials::resolve_secret_refs(s, creds.as_ref())?;
+                    }
+                    Some(c)
+                }
+                _ => None,
+            };
+            #[cfg(feature = "credentials")]
+            let cfg_ref: &Config = resolved_cfg.as_ref().unwrap_or_else(|| snapshot.as_ref());
+            #[cfg(not(feature = "credentials"))]
+            let cfg_ref: &Config = snapshot.as_ref();
+
+            let svc: Arc<dyn streaming::StreamService> =
+                Arc::new(streaming::DefaultStreamService::open(cfg_ref)?);
+            let bridge = streaming::StreamMetricsBridge::start(svc.clone(), metrics.clone());
+            (svc, bridge)
+        };
 
         // Internal listeners reconfigure the metric target and logging on hot reload.
         let listeners: ConfigListeners = Arc::new(std::sync::Mutex::new(Vec::new()));
