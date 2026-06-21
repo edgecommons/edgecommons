@@ -27,13 +27,10 @@
 //! ## Related Modules
 //! - [`crate::metrics`] (the stats bridge target), [`ggstreamlog`] (the core).
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
-use serde::Deserialize;
-
-use ggstreamlog::config::{BatchConfig, BufferConfig, DeliveryConfig, SinkConfig};
-use ggstreamlog::{EmbeddedLog, ExportEngine, Record, Sink};
+use ggstreamlog::config::SinkConfig;
+use ggstreamlog::{EmbeddedLog, Record};
 
 use crate::config::model::Config;
 use crate::config::template::resolve;
@@ -42,40 +39,23 @@ use crate::error::{GgError, Result};
 mod bridge;
 pub use bridge::StreamMetricsBridge;
 
-pub use ggstreamlog::{LogStats, Record as StreamRecord};
+// The config schema + the core orchestration live in `ggstreamlog`; this module is a thin
+// libs-side wrapper (template resolution against the component `Config` + the metrics bridge).
+pub use ggstreamlog::{
+    LogStats, Record as StreamRecord, ServiceStats, Sink, SinkFactory, StreamConfig, StreamingConfig,
+};
 
 /// Map a core streaming error into the library error type.
 fn map_err(e: ggstreamlog::GgStreamError) -> GgError {
     GgError::Streaming(e.to_string())
 }
 
-/// `streaming` config section: a set of named streams.
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
-pub struct StreamingConfig {
-    pub streams: Vec<StreamConfig>,
-}
-
-/// One configured stream (name + buffer + export sink + batching/delivery tuning).
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct StreamConfig {
-    pub name: String,
-    pub sink: SinkConfig,
-    pub buffer: BufferConfig,
-    #[serde(default)]
-    pub batch: BatchConfig,
-    #[serde(default)]
-    pub delivery: DeliveryConfig,
-}
-
-impl StreamingConfig {
-    /// Parse the `streaming` section out of a component [`Config`] (empty if absent).
-    pub fn from_config(config: &Config) -> Result<Self> {
-        match config.raw.get("streaming") {
-            None => Ok(Self::default()),
-            Some(value) => serde_json::from_value(value.clone()).map_err(GgError::from),
-        }
+/// Parse the `streaming` section out of a component [`Config`] (empty if absent), **without**
+/// template resolution.
+pub fn streaming_config(config: &Config) -> Result<StreamingConfig> {
+    match config.raw.get("streaming") {
+        None => Ok(StreamingConfig::default()),
+        Some(value) => serde_json::from_value(value.clone()).map_err(GgError::from),
     }
 }
 
@@ -137,109 +117,74 @@ pub trait StreamService: Send + Sync {
     fn stats(&self, name: &str) -> Option<Stats>;
 }
 
-/// A builder for a stream's export [`Sink`]; lets tests inject a fake sink. Returns `Ok(None)`
-/// for buffer-only mode (no sink available).
-pub type SinkFactory = dyn Fn(&str, &SinkConfig) -> Result<Option<Box<dyn Sink>>> + Send + Sync;
-
-struct StreamEntry {
-    log: Arc<EmbeddedLog>,
-    /// Kept alive so the background export loop keeps running; stopped on drop (RAII). Also
-    /// read for export counters via [`ExportEngine::stats`].
-    engine: Option<ExportEngine>,
-}
-
-/// The default [`StreamService`]: one [`EmbeddedLog`] (+ optional [`ExportEngine`]) per stream.
+/// The default [`StreamService`]: a thin wrapper over [`ggstreamlog::StreamService`], adding the
+/// component-facing handle/stats types and config-template resolution. The orchestration (opening
+/// buffers, building sinks, running export engines) lives in the core and is shared with the
+/// other-language bindings.
 pub struct DefaultStreamService {
-    streams: HashMap<String, StreamEntry>,
+    inner: ggstreamlog::StreamService,
 }
 
 impl DefaultStreamService {
-    /// Open + recover every configured stream, building the production sink for each.
+    /// Open + recover every configured stream, building the production sink for each (Kinesis under
+    /// `streaming-kinesis`, Kafka under `streaming-kafka`, else buffer-only).
     ///
-    /// `buffer.path` and the Kinesis `streamName` are template-substituted against `config`.
+    /// `buffer.path` and the sink's stream name / brokers are template-substituted against `config`.
     pub fn open(config: &Config) -> Result<Self> {
-        Self::open_with(config, &default_sink_factory)
+        let inner = ggstreamlog::StreamService::open(resolved_config(config)?).map_err(map_err)?;
+        Ok(Self { inner })
     }
 
-    /// Like [`open`](Self::open) but with a custom [`SinkFactory`] (used by tests to inject a
-    /// fake sink without AWS dependencies).
+    /// Like [`open`](Self::open) but with a custom [`SinkFactory`] (used by tests to inject a fake
+    /// sink without AWS/Kafka dependencies).
     pub fn open_with(config: &Config, sink_factory: &SinkFactory) -> Result<Self> {
-        let streaming = StreamingConfig::from_config(config)?;
-        let mut streams = HashMap::new();
-
-        for mut sc in streaming.streams {
-            // Resolve templates in the buffer path and (for Kinesis) the destination stream name.
-            sc.buffer.path = resolve(config, &sc.buffer.path);
-            let sink_cfg = resolve_sink(config, sc.sink.clone());
-            sc.buffer.validate().map_err(map_err)?;
-
-            let log = Arc::new(EmbeddedLog::open(sc.buffer.clone()).map_err(map_err)?);
-
-            let engine = match sink_factory(&sc.name, &sink_cfg)? {
-                Some(sink) => Some(ExportEngine::start(
-                    Arc::clone(&log),
-                    sink,
-                    sc.batch.clone(),
-                    sc.delivery.clone(),
-                )),
-                None => {
-                    tracing::warn!(
-                        stream = %sc.name,
-                        "no export sink available (enable the 'streaming-kinesis' feature); \
-                         stream is buffer-only — records persist but will not be exported"
-                    );
-                    None
-                }
-            };
-
-            tracing::info!(stream = %sc.name, path = %sc.buffer.path, exporting = engine.is_some(),
-                "telemetry stream opened");
-            streams.insert(sc.name.clone(), StreamEntry { log, engine });
-        }
-
-        Ok(Self { streams })
+        let inner = ggstreamlog::StreamService::open_with(resolved_config(config)?, sink_factory)
+            .map_err(map_err)?;
+        Ok(Self { inner })
     }
 }
 
 impl StreamService for DefaultStreamService {
     fn stream(&self, name: &str) -> Result<StreamHandle> {
-        self.streams
-            .get(name)
-            .map(|e| StreamHandle { name: name.to_string(), log: Arc::clone(&e.log) })
+        self.inner
+            .stream(name)
+            .map(|log| StreamHandle { name: name.to_string(), log })
             .ok_or_else(|| GgError::Streaming(format!("stream '{name}' is not configured")))
     }
 
     fn stream_names(&self) -> Vec<String> {
-        let mut names: Vec<String> = self.streams.keys().cloned().collect();
-        names.sort();
-        names
+        self.inner.stream_names()
     }
 
     fn stats(&self, name: &str) -> Option<Stats> {
-        let entry = self.streams.get(name)?;
-        let ls: LogStats = entry.log.stats();
-        let mut stats = Stats {
-            appended_total: ls.appended_total,
-            dropped_total: ls.dropped_total,
-            backlog: ls.backlog,
-            disk_bytes: ls.disk_bytes,
-            acked_offset: ls.acked,
-            next_offset: ls.next_offset,
-            oldest_unacked_age_ms: ls.oldest_unacked_age_ms,
-            ..Default::default()
-        };
-        if let Some(engine) = &entry.engine {
-            let e = engine.stats();
-            stats.exported_total = e.exported_total;
-            stats.retries_total = e.retries_total;
-            stats.failed_total = e.failed_total;
-            stats.last_export_error = e.last_error;
-        }
-        Some(stats)
+        self.inner.stats(name).map(|s: ServiceStats| Stats {
+            appended_total: s.appended_total,
+            exported_total: s.exported_total,
+            dropped_total: s.dropped_total,
+            retries_total: s.retries_total,
+            failed_total: s.failed_total,
+            backlog: s.backlog,
+            disk_bytes: s.disk_bytes,
+            acked_offset: s.acked_offset,
+            next_offset: s.next_offset,
+            oldest_unacked_age_ms: s.oldest_unacked_age_ms,
+            last_export_error: None,
+        })
     }
 }
 
-/// Substitute config templates inside a [`SinkConfig`] (e.g. `{ThingName}` in a Kinesis stream name).
+/// Parse + template-resolve the `streaming` section (buffer paths + sink stream names / brokers).
+fn resolved_config(config: &Config) -> Result<StreamingConfig> {
+    let mut cfg = streaming_config(config)?;
+    for sc in &mut cfg.streams {
+        sc.buffer.path = resolve(config, &sc.buffer.path);
+        sc.sink = resolve_sink(config, sc.sink.clone());
+    }
+    Ok(cfg)
+}
+
+/// Substitute config templates inside a [`SinkConfig`] (e.g. `{ThingName}` in a Kinesis stream
+/// name or a Kafka topic/broker list).
 fn resolve_sink(config: &Config, sink: SinkConfig) -> SinkConfig {
     match sink {
         SinkConfig::Kinesis { stream_name, region, endpoint_url } => SinkConfig::Kinesis {
@@ -252,42 +197,6 @@ fn resolve_sink(config: &Config, sink: SinkConfig) -> SinkConfig {
             topic: resolve(config, &topic),
             properties,
         },
-    }
-}
-
-/// The production sink factory: build a [`ggstreamlog::KinesisSink`] (feature `streaming-kinesis`),
-/// else buffer-only.
-#[allow(unused_variables)]
-fn default_sink_factory(name: &str, sink: &SinkConfig) -> Result<Option<Box<dyn Sink>>> {
-    match sink {
-        SinkConfig::Kinesis { stream_name, region, endpoint_url } => {
-            #[cfg(feature = "streaming-kinesis")]
-            {
-                let s = ggstreamlog::KinesisSink::new(
-                    stream_name.clone(),
-                    region.clone(),
-                    endpoint_url.clone(),
-                )
-                .map_err(map_err)?;
-                Ok(Some(Box::new(s)))
-            }
-            #[cfg(not(feature = "streaming-kinesis"))]
-            {
-                Ok(None) // buffer-only without the AWS sink feature
-            }
-        }
-        SinkConfig::Kafka { bootstrap_servers, topic, properties } => {
-            #[cfg(feature = "streaming-kafka")]
-            {
-                let s = ggstreamlog::KafkaSink::new(bootstrap_servers, topic, properties)
-                    .map_err(map_err)?;
-                Ok(Some(Box::new(s)))
-            }
-            #[cfg(not(feature = "streaming-kafka"))]
-            {
-                Ok(None) // buffer-only without the Kafka sink feature
-            }
-        }
     }
 }
 
@@ -322,7 +231,7 @@ mod tests {
     fn parses_streaming_config_section() {
         let dir = tempfile::tempdir().unwrap();
         let cfg = config_with_streams(dir.path());
-        let parsed = StreamingConfig::from_config(&cfg).unwrap();
+        let parsed = streaming_config(&cfg).unwrap();
         assert_eq!(parsed.streams.len(), 1);
         assert_eq!(parsed.streams[0].name, "telemetry");
         assert_eq!(parsed.streams[0].batch.max_records, 50);
@@ -384,8 +293,9 @@ mod tests {
     fn injected_sink_drains_and_stats_reflect_export() {
         let dir = tempfile::tempdir().unwrap();
         let cfg = config_with_streams(dir.path());
-        // Inject a FakeSink instead of Kinesis so the engine drains without AWS.
-        let factory = |_name: &str, _sink: &SinkConfig| -> Result<Option<Box<dyn Sink>>> {
+        // Inject a FakeSink instead of Kinesis so the engine drains without AWS. The factory
+        // returns the core's Result type (ggstreamlog::StreamService::open_with's contract).
+        let factory = |_name: &str, _sink: &SinkConfig| -> ggstreamlog::Result<Option<Box<dyn Sink>>> {
             Ok(Some(Box::new(FakeSink::new())))
         };
         let svc = DefaultStreamService::open_with(&cfg, &factory).unwrap();
