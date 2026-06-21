@@ -1,0 +1,23 @@
+[package]
+name = "ggstreamlog-native"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "Apache-2.0"
+description = "PyO3 native module for the ggcommons telemetry-streaming core (ggstreamlog)."
+publish = false
+
+[lib]
+name = "ggstreamlog_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+ggstreamlog = { path = "../.." }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }
+pyo3 = { version = "0.26", features = ["extension-module", "abi3-py39"] }
+
+[features]
+# Real Kinesis export in the wheel (heavy: AWS SDK + tokio). Off by default for a light dev build.
+kinesis = ["ggstreamlog/kinesis"]

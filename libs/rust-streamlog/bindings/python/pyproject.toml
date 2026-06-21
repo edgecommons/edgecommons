@@ -1,0 +1,14 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "ggstreamlog-native"
+description = "PyO3 native module for the ggcommons telemetry-streaming core."
+requires-python = ">=3.9"
+classifiers = ["Programming Language :: Rust"]
+dynamic = ["version"]
+
+[tool.maturin]
+module-name = "ggstreamlog_native"
+features = ["pyo3/extension-module"]

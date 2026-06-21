@@ -1,34 +1,18 @@
 """
-Native streaming binding tests (ctypes over the ggstreamlog cdylib). Skipped if the cdylib isn't
-built. Buffer-only — no AWS needed. Mirrors the Java/Rust streaming tests.
+Native streaming binding tests (PyO3 module ``ggstreamlog_native``). Skipped if the wheel isn't
+installed (build it: ``maturin build --release`` in libs/rust-streamlog/bindings/python, then
+``pip install`` the wheel). Buffer-only — no AWS needed. Mirrors the Java/Rust streaming tests.
 """
 import json
-import os
-import platform
 import time
-from pathlib import Path
 
 import pytest
 
+pytest.importorskip("ggstreamlog_native", reason="ggstreamlog_native wheel not installed")
 
-def _lib_filename():
-    system = platform.system().lower()
-    if system.startswith("win"):
-        return "ggstreamlog.dll"
-    if system == "darwin":
-        return "libggstreamlog.dylib"
-    return "libggstreamlog.so"
-
-
-_LIB = Path(__file__).resolve().parents[2] / "rust-streamlog" / "target" / "release" / _lib_filename()
-
-pytestmark = pytest.mark.skipif(not _LIB.exists(), reason=f"ggstreamlog cdylib not built at {_LIB}")
-
-
-@pytest.fixture(scope="module", autouse=True)
-def _point_at_built_lib():
-    os.environ["GGSTREAMLOG_LIBRARY_PATH"] = str(_LIB)
-    yield
+# ggsl_status codes.
+ERR_CONFIG = 1
+ERR_UNKNOWN_STREAM = 5
 
 
 def _config(tmp_path):
@@ -60,21 +44,19 @@ def test_open_append_flush_stats(tmp_path):
 
 def test_unknown_stream(tmp_path):
     from ggcommons.streaming import GgStreamError, StreamService
-    from ggcommons.streaming import _native
 
     with StreamService.open(_config(tmp_path)) as svc:
         with pytest.raises(GgStreamError) as ei:
             svc.stats("does-not-exist")
-        assert ei.value.code == _native.ERR_UNKNOWN_STREAM
+        assert ei.value.code == ERR_UNKNOWN_STREAM
 
 
 def test_bad_config():
     from ggcommons.streaming import GgStreamError, StreamService
-    from ggcommons.streaming import _native
 
     with pytest.raises(GgStreamError) as ei:
         StreamService.open("{ not valid json")
-    assert ei.value.code == _native.ERR_CONFIG
+    assert ei.value.code == ERR_CONFIG
 
 
 def test_stream_names(tmp_path):
