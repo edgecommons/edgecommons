@@ -22,6 +22,24 @@ def lint_recipe_text(recipe: str) -> List[str]:
     return problems
 
 
+def lint_least_privilege(recipe: str) -> List[str]:
+    """Advisory checks separate from the hard `gdk publish` blockers in lint_recipe_text.
+
+    `RequiresPrivilege: true` runs a component as root. It is occasionally legitimate (a
+    component that truly needs root), so this is NOT a hard error — but example/template
+    recipes should model least privilege (GG IPC, TES-backed AWS, and the ggc_user-owned work
+    dir all work unprivileged). Used to keep the shipped examples/templates root-free.
+    """
+    problems = []
+    if re.search(r'^\s*RequiresPrivilege:\s*true\b', recipe, re.MULTILINE):
+        problems.append(
+            "RequiresPrivilege: true runs the component as root. It is rarely needed (GG IPC, "
+            "TES, and the ggc_user work dir all work unprivileged); prefer least privilege and "
+            "only set it when a component genuinely requires root."
+        )
+    return problems
+
+
 def lint_recipe_file(recipe_path: str) -> List[str]:
     """Lint a recipe file; raises FileNotFoundError if it does not exist."""
     if not os.path.isfile(recipe_path):
