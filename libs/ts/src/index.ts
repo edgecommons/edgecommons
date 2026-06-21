@@ -94,3 +94,14 @@ export { logger, initLogging, reconfigureLogging, LoggingReconfigurer, Logger } 
 // Telemetry streaming
 export { StreamService, StreamHandle, GgStreamError, StreamMetricsBridge } from "./streaming";
 export type { StreamStats } from "./streaming";
+
+// Credentials / local vault
+export {
+  openFromConfig as openCredentials,
+  CredentialError,
+  DefaultCredentialService,
+  FileKeyProvider,
+  LocalVault,
+  Secret,
+} from "./credentials";
+export type { CredentialService, CredentialsConfig, KeyProvider, PutOptions, SecretMeta } from "./credentials";
