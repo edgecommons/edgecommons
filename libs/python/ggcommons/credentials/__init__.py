@@ -16,7 +16,7 @@ from .bridge import CredentialMetricsBridge
 from .central import AwsSecretsManagerSource, CentralSecret, CentralVaultSource
 from .config import open_from_config
 from .errors import CredentialError
-from .keyprovider import FileKeyProvider, KeyProvider, KmsKeyProvider
+from .keyprovider import FileKeyProvider, KeyProvider, KmsKeyProvider, Pkcs11KeyProvider
 from .secretref import resolve_secret_refs
 from .service import CredentialService, CredentialStats, DefaultCredentialService, Secret, SecretMeta
 from .sync import SyncEngine
@@ -29,6 +29,7 @@ __all__ = [
     "KeyProvider",
     "FileKeyProvider",
     "KmsKeyProvider",
+    "Pkcs11KeyProvider",
     "CredentialService",
     "CredentialStats",
     "DefaultCredentialService",

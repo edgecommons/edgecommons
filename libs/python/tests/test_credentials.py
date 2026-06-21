@@ -219,6 +219,31 @@ def test_kms_key_provider_roundtrip(tmp_path):
     assert creds2.get_string("db/password") == "s3cr3t"
 
 
+@pytest.mark.skipif(os.environ.get("GGCOMMONS_IT_PKCS11") != "1", reason="needs a PKCS#11 token (GGCOMMONS_IT_PKCS11=1)")
+def test_pkcs11_key_provider_roundtrip(tmp_path):
+    """PKCS#11 round-trip against a real token (e.g. SoftHSM2). Env: PKCS11_MODULE/TOKEN/KEY/PIN."""
+    from ggcommons.credentials import open_from_config
+
+    cfg = {
+        "vault": {
+            "path": str(tmp_path / "vault"),
+            "keyProvider": {
+                "type": "pkcs11",
+                "modulePath": os.environ["PKCS11_MODULE"],
+                "tokenLabel": os.environ["PKCS11_TOKEN"],
+                "keyLabel": os.environ["PKCS11_KEY"],
+                "pin": os.environ["PKCS11_PIN"],
+            },
+        },
+    }
+    creds = open_from_config(cfg)
+    creds.put("db/password", b"s3cr3t")
+
+    # Reopen from disk — forces a fresh HSM unwrap of the DEK (fail-closed otherwise).
+    creds2 = open_from_config(cfg)
+    assert creds2.get_string("db/password") == "s3cr3t"
+
+
 @pytest.mark.skipif(not (VECTORS_DIR / "vault.json").exists(), reason="vault-test-vectors not present")
 def test_cross_language_conformance():
     """Decrypt the canonical vault and reproduce ciphertext/wrappedDek/MAC from the fixed inputs."""

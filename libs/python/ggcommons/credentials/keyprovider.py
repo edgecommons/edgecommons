@@ -132,3 +132,78 @@ class KmsKeyProvider(KeyProvider):
         if pt is None:
             raise CredentialError("kms decrypt: no plaintext")
         return bytes(pt)
+
+
+class Pkcs11KeyProvider(KeyProvider):
+    """PKCS#11 (HSM/TPM/SoftHSM) DEK custodian — mirrors the Rust ``Pkcs11KeyProvider``. A
+    non-extractable AES-256 key on the token is the KEK; the DEK is wrapped with AES-256-GCM
+    *inside* the token, so the KEK never leaves hardware. The GCM AAD binds the wrapped DEK to the
+    vault id (anti-swap) — same on-disk ``kek`` shape as :class:`FileKeyProvider` (provider
+    ``pkcs11``, alg ``AES-256-GCM``, wrapNonce + wrappedDek).
+
+    Uses ``python-pkcs11`` (imported lazily so non-HSM components don't require it). Selected via
+    ``keyProvider.type = "pkcs11"`` with ``modulePath`` / ``tokenLabel`` / ``keyLabel`` and
+    ``pinEnv`` (preferred) or ``pin``.
+    """
+
+    def __init__(self, module_path: str, token_label: str, key_label: str, pin: str):
+        import pkcs11  # imported lazily so non-HSM components don't require it at import time
+
+        self._key_label = key_label
+        self._pin = pin
+        try:
+            self._lib = pkcs11.lib(module_path)
+            self._token = self._lib.get_token(token_label=token_label)
+        except Exception as e:
+            raise CredentialError(f"pkcs11 load module/token '{token_label}': {e}") from None
+
+    @property
+    def provider_id(self) -> str:
+        return "pkcs11"
+
+    def _key(self, session):
+        from pkcs11 import ObjectClass
+
+        try:
+            return session.get_key(object_class=ObjectClass.SECRET_KEY, label=self._key_label)
+        except Exception as e:
+            raise CredentialError(f"pkcs11 find key '{self._key_label}': {e}") from None
+
+    def wrap_dek(self, vault_id: str, dek: bytes) -> dict:
+        from pkcs11 import GCMParams, Mechanism
+
+        iv = crypto.random(crypto.NONCE_LEN)
+        aad = dek_wrap_aad(vault_id)
+        try:
+            with self._token.open(user_pin=self._pin) as session:
+                key = self._key(session)
+                ct = key.encrypt(dek, mechanism=Mechanism.AES_GCM, mechanism_param=GCMParams(iv, aad, 128))
+        except CredentialError:
+            raise
+        except Exception as e:
+            raise CredentialError(f"pkcs11 wrap: {e}") from None
+        return {
+            "provider": "pkcs11",
+            "alg": "AES-256-GCM",
+            "wrapNonce": base64.b64encode(iv).decode("ascii"),
+            "wrappedDek": base64.b64encode(bytes(ct)).decode("ascii"),
+        }
+
+    def unwrap_dek(self, vault_id: str, kek: dict) -> bytes:
+        from pkcs11 import GCMParams, Mechanism
+
+        nonce_b = kek.get("wrapNonce")
+        if not nonce_b:
+            raise CredentialError("pkcs11 KEK: missing wrapNonce")
+        iv = base64.b64decode(nonce_b)
+        ct = base64.b64decode(kek["wrappedDek"])
+        aad = dek_wrap_aad(vault_id)
+        try:
+            with self._token.open(user_pin=self._pin) as session:
+                key = self._key(session)
+                pt = key.decrypt(ct, mechanism=Mechanism.AES_GCM, mechanism_param=GCMParams(iv, aad, 128))
+        except CredentialError:
+            raise
+        except Exception as e:
+            raise CredentialError(f"pkcs11 unwrap: {e}") from None
+        return bytes(pt)

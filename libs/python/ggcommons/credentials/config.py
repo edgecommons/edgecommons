@@ -7,7 +7,7 @@ import os
 import threading
 
 from .errors import CredentialError
-from .keyprovider import FileKeyProvider, KmsKeyProvider
+from .keyprovider import FileKeyProvider, KmsKeyProvider, Pkcs11KeyProvider
 from .service import DefaultCredentialService
 from .vault import LocalVault
 
@@ -46,9 +46,26 @@ def open_from_config(credentials_cfg: dict, namespace: str = "") -> DefaultCrede
         if not key_id:
             raise CredentialError("kms key provider requires keyProvider.kmsKeyId")
         provider = KmsKeyProvider(key_id, region=kp.get("region"), endpoint_url=kp.get("endpointUrl"))
+    elif kind == "pkcs11":
+        module_path = kp.get("modulePath")
+        if not module_path:
+            raise CredentialError("pkcs11 key provider requires keyProvider.modulePath")
+        key_label = kp.get("keyLabel")
+        if not key_label:
+            raise CredentialError("pkcs11 key provider requires keyProvider.keyLabel")
+        pin_env = kp.get("pinEnv")
+        if pin_env:
+            pin = os.environ.get(pin_env)
+            if pin is None:
+                raise CredentialError(f"pkcs11 keyProvider.pinEnv '{pin_env}' is not set")
+        elif kp.get("pin") is not None:
+            pin = kp.get("pin")
+        else:
+            raise CredentialError("pkcs11 key provider requires keyProvider.pinEnv or keyProvider.pin")
+        provider = Pkcs11KeyProvider(module_path, kp.get("tokenLabel", ""), key_label, pin)
     else:
         raise CredentialError(
-            f"key provider '{kind}' is not supported (supported: 'file', 'kms'/'greengrass')"
+            f"key provider '{kind}' is not supported (supported: 'file', 'kms'/'greengrass', 'pkcs11')"
         )
 
     vault = LocalVault.open(path, provider, keep_versions)

@@ -33,7 +33,8 @@ REQUIRED = [
 
 # What packages are optional?
 EXTRAS = {
-    # 'fancy feature': ['django'],
+    # PKCS#11 (HSM/TPM/SoftHSM) KEK custodian for the credentials vault.
+    "hsm": ["python-pkcs11>=0.7"],
 }
 
 # The rest you shouldn't have to touch too much :)
