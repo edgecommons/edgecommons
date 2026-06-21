@@ -61,6 +61,16 @@ impl std::fmt::Debug for Secret {
     }
 }
 
+/// Non-sensitive credential-subsystem stats (for the metrics bridge). Never includes values.
+#[derive(Debug, Clone, Default)]
+pub struct CredentialStats {
+    pub secret_count: u64,
+    /// Age of the last successful central sync, ms (None if no central sync / never synced).
+    pub last_sync_age_ms: Option<u64>,
+    pub sync_failures: u64,
+    pub rotations: u64,
+}
+
 /// Metadata for a secret version — safe to log/list (no value).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SecretMeta {
@@ -91,6 +101,14 @@ pub trait CredentialService: Send + Sync {
     /// Force an immediate pull from the central source (no-op when no central sync is configured).
     fn refresh(&self) -> Result<()> {
         Ok(())
+    }
+
+    /// Non-sensitive stats for observability (default: just the secret count).
+    fn stats(&self) -> CredentialStats {
+        CredentialStats {
+            secret_count: self.list("").map(|v| v.len() as u64).unwrap_or(0),
+            ..CredentialStats::default()
+        }
     }
 
     /// The value as bytes (convenience).
@@ -250,4 +268,23 @@ impl CredentialService for DefaultCredentialService {
         }
         Ok(())
     }
+
+    fn stats(&self) -> CredentialStats {
+        let secret_count = self.list("").map(|v| v.len() as u64).unwrap_or(0);
+        let (last_sync_age_ms, sync_failures, rotations) = match &self._sync {
+            Some(s) => {
+                let (last_ok, failures, rotations) = s.stats();
+                (last_ok.map(|ms| now_ms_service().saturating_sub(ms)), failures, rotations)
+            }
+            None => (None, 0, 0),
+        };
+        CredentialStats { secret_count, last_sync_age_ms, sync_failures, rotations }
+    }
+}
+
+fn now_ms_service() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }

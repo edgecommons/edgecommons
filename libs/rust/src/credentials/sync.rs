@@ -34,7 +34,15 @@ struct SyncInner {
     secrets: Vec<(String, Option<String>)>,
     namespace: String,
     stop: AtomicBool,
+    /// Observability counters (read by the credential metrics bridge).
+    last_success_ms: std::sync::atomic::AtomicU64,
+    failures: std::sync::atomic::AtomicU64,
+    rotations: std::sync::atomic::AtomicU64,
 }
+
+/// A snapshot of the sync engine's counters: (last successful sync ms or None, fetch failures,
+/// secrets written/rotated).
+pub(crate) type SyncStats = (Option<u64>, u64, u64);
 
 impl SyncEngine {
     /// Start syncing `secrets` from `source` into `vault` under `namespace`. Runs an immediate
@@ -48,7 +56,16 @@ impl SyncEngine {
         interval_secs: u64,
         bootstrap: bool,
     ) -> Self {
-        let inner = Arc::new(SyncInner { vault, source, secrets, namespace, stop: AtomicBool::new(false) });
+        let inner = Arc::new(SyncInner {
+            vault,
+            source,
+            secrets,
+            namespace,
+            stop: AtomicBool::new(false),
+            last_success_ms: std::sync::atomic::AtomicU64::new(0),
+            failures: std::sync::atomic::AtomicU64::new(0),
+            rotations: std::sync::atomic::AtomicU64::new(0),
+        });
         if bootstrap {
             inner.sync_once();
         }
@@ -79,6 +96,16 @@ impl SyncEngine {
     pub fn sync_now(&self) {
         self.inner.sync_once();
     }
+
+    /// A snapshot of the sync counters (for the credential metrics bridge).
+    pub(crate) fn stats(&self) -> SyncStats {
+        let ls = self.inner.last_success_ms.load(Ordering::Relaxed);
+        (
+            if ls == 0 { None } else { Some(ls) },
+            self.inner.failures.load(Ordering::Relaxed),
+            self.inner.rotations.load(Ordering::Relaxed),
+        )
+    }
 }
 
 impl SyncInner {
@@ -92,6 +119,7 @@ impl SyncInner {
     }
 
     fn sync_once(&self) {
+        let mut any_success = false;
         for (name, from) in &self.secrets {
             let local_key = self.local_key(name);
             // Central id defaults to the namespaced path (per-device); `from` overrides it to a
@@ -99,6 +127,7 @@ impl SyncInner {
             let central_id = from.clone().unwrap_or_else(|| local_key.clone());
             match self.source.fetch(&central_id) {
                 Ok(Some(cs)) => {
+                    any_success = true;
                     let mut v = match self.vault.lock() {
                         Ok(g) => g,
                         Err(p) => p.into_inner(),
@@ -117,19 +146,32 @@ impl SyncInner {
                     if let Err(e) = v.put(&local_key, &cs.bytes, opts) {
                         tracing::warn!(secret = %local_key, error = %e, "failed to write synced secret");
                     } else {
+                        self.rotations.fetch_add(1, Ordering::Relaxed);
                         tracing::info!(secret = %local_key, central_id = %central_id, "secret synced from central");
                     }
                 }
                 Ok(None) => {
+                    any_success = true;
                     tracing::debug!(central_id = %central_id, "not present in central source; keeping local");
                 }
                 Err(e) => {
                     // Offline-first: keep the cached value, surface the staleness.
+                    self.failures.fetch_add(1, Ordering::Relaxed);
                     tracing::warn!(central_id = %central_id, error = %e, "central fetch failed; using cached value");
                 }
             }
         }
+        if any_success {
+            self.last_success_ms.store(now_ms(), Ordering::Relaxed);
+        }
     }
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 impl Drop for SyncEngine {

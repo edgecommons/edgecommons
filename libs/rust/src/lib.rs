@@ -80,6 +80,9 @@ pub struct GgCommons {
     /// `credentials` section.
     #[cfg(feature = "credentials")]
     credentials: Option<Arc<dyn credentials::CredentialService>>,
+    /// Owns the credential stats→metrics task; dropping `GgCommons` stops it (RAII).
+    #[cfg(feature = "credentials")]
+    _credential_metrics: Option<credentials::CredentialMetricsBridge>,
     /// Config-change listeners notified on hot reload.
     listeners: ConfigListeners,
     /// Owns the heartbeat task; dropping `GgCommons` stops it (RAII).
@@ -284,8 +287,8 @@ impl GgCommonsBuilder {
         // Opened before streaming so the streaming config can reference vault secrets. `None` when
         // no section is present.
         #[cfg(feature = "credentials")]
-        let credentials: Option<Arc<dyn credentials::CredentialService>> =
-            match snapshot.raw.get("credentials") {
+        let (credentials, credential_metrics) = {
+            let creds: Option<Arc<dyn credentials::CredentialService>> = match snapshot.raw.get("credentials") {
                 None => None,
                 Some(value) => {
                     let mut cfg: credentials::CredentialsConfig = serde_json::from_value(value.clone())?;
@@ -300,6 +303,12 @@ impl GgCommonsBuilder {
                     Some(Arc::new(svc) as Arc<dyn credentials::CredentialService>)
                 }
             };
+            // Bridge non-sensitive credential stats into the metric targets (RAII; aborts on drop).
+            let bridge = creds
+                .as_ref()
+                .map(|c| credentials::CredentialMetricsBridge::start(c.clone(), metrics.clone()));
+            (creds, bridge)
+        };
 
         // Telemetry streaming (feature-gated): open/recover configured streams and bridge their
         // stats into the metric targets. Empty + no bridge when no `streaming` section exists.
@@ -358,6 +367,8 @@ impl GgCommonsBuilder {
             _stream_metrics: stream_metrics,
             #[cfg(feature = "credentials")]
             credentials,
+            #[cfg(feature = "credentials")]
+            _credential_metrics: credential_metrics,
             listeners,
             _heartbeat: heartbeat,
             _reload_task: reload_task,

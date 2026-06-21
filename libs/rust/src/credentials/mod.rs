@@ -34,6 +34,7 @@
 //! Design: `docs/CREDENTIALS.md`. Streaming sinks will consume this in phase 3 (closes that
 //! design's §7).
 
+pub mod bridge;
 pub mod central;
 pub mod config;
 mod crypto;
@@ -49,7 +50,8 @@ pub use central::{CentralSecret, CentralVaultSource};
 pub use config::{open, open_namespaced, CentralConfig, CredentialsConfig, KeyProviderConfig, SyncEntry, SyncSelect, VaultConfig};
 pub use keyprovider::{FileKeyProvider, KeyProvider};
 pub use secretref::resolve_secret_refs;
-pub use service::{CredentialService, DefaultCredentialService, Secret, SecretMeta};
+pub use bridge::CredentialMetricsBridge;
+pub use service::{CredentialService, CredentialStats, DefaultCredentialService, Secret, SecretMeta};
 pub use sync::SyncEngine;
 pub use vault::{LocalVault, PutOptions};
 pub use views::{AwsCredentials, BasicAuth, KafkaSasl, TlsBundle};
@@ -120,6 +122,19 @@ mod tests {
         assert_eq!(c.get("k").unwrap().unwrap().as_str().unwrap(), "v3");
         assert_eq!(c.get_version("k", "00000002").unwrap().unwrap().as_str().unwrap(), "v2");
         assert!(c.get_version("k", "00000001").unwrap().is_none());
+    }
+
+    #[test]
+    fn stats_reports_secret_count() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = file_vault(dir.path());
+        c.put("a", b"1", PutOptions::default()).unwrap();
+        c.put("b", b"2", PutOptions::default()).unwrap();
+        let s = c.stats();
+        assert_eq!(s.secret_count, 2);
+        assert_eq!(s.sync_failures, 0);
+        assert_eq!(s.rotations, 0);
+        assert!(s.last_sync_age_ms.is_none()); // no central sync configured
     }
 
     #[test]
