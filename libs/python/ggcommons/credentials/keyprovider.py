@@ -74,3 +74,61 @@ class FileKeyProvider(KeyProvider):
         nonce = base64.b64decode(nonce_b)
         wrapped = base64.b64decode(kek["wrappedDek"])
         return crypto.open_(self._kek, nonce, dek_wrap_aad(vault_id), wrapped)
+
+
+class KmsKeyProvider(KeyProvider):
+    """KMS-wrapped DEK custodian: the DEK is encrypted by an AWS KMS CMK (the KEK never leaves KMS)
+    and unwrapped via ``kms:Decrypt`` — using AWS creds / TES on Greengrass. The encryption context
+    binds the wrapped DEK to the vault id (anti-swap). Mirrors the Rust ``mod kms``.
+
+    ``boto3`` is imported lazily so non-KMS components don't require it at import time.
+    """
+
+    def __init__(self, key_id: str, region: str = None, endpoint_url: str = None):
+        import boto3  # imported lazily so non-KMS components don't require it at import time
+
+        if not key_id:
+            raise CredentialError("kms key provider requires keyProvider.kmsKeyId")
+        self._key_id = key_id
+        self._client = boto3.client("kms", region_name=region, endpoint_url=endpoint_url)
+
+    @property
+    def provider_id(self) -> str:
+        return "kms"
+
+    def wrap_dek(self, vault_id: str, dek: bytes) -> dict:
+        try:
+            resp = self._client.encrypt(
+                KeyId=self._key_id,
+                Plaintext=dek,
+                EncryptionContext={"vaultId": vault_id},
+            )
+        except Exception as e:
+            raise CredentialError(f"kms encrypt: {e}") from None
+        ct = resp.get("CiphertextBlob")
+        if ct is None:
+            raise CredentialError("kms encrypt: no ciphertext")
+        return {
+            "provider": "kms",
+            "alg": "aws-kms",
+            "wrappedDek": base64.b64encode(bytes(ct)).decode("ascii"),
+            "kmsKeyId": self._key_id,
+        }
+
+    def unwrap_dek(self, vault_id: str, kek: dict) -> bytes:
+        try:
+            ct = base64.b64decode(kek["wrappedDek"])
+        except Exception:
+            raise CredentialError("kms: bad wrappedDek") from None
+        try:
+            resp = self._client.decrypt(
+                CiphertextBlob=ct,
+                KeyId=self._key_id,
+                EncryptionContext={"vaultId": vault_id},
+            )
+        except Exception as e:
+            raise CredentialError(f"kms decrypt: {e}") from None
+        pt = resp.get("Plaintext")
+        if pt is None:
+            raise CredentialError("kms decrypt: no plaintext")
+        return bytes(pt)

@@ -12,11 +12,13 @@ Example::
     creds.put("db/password", b"s3cr3t")
     pw = creds.get_string("db/password")
 """
+from .bridge import CredentialMetricsBridge
 from .central import AwsSecretsManagerSource, CentralSecret, CentralVaultSource
 from .config import open_from_config
 from .errors import CredentialError
-from .keyprovider import FileKeyProvider, KeyProvider
-from .service import CredentialService, DefaultCredentialService, Secret, SecretMeta
+from .keyprovider import FileKeyProvider, KeyProvider, KmsKeyProvider
+from .secretref import resolve_secret_refs
+from .service import CredentialService, CredentialStats, DefaultCredentialService, Secret, SecretMeta
 from .sync import SyncEngine
 from .vault import LocalVault
 from .views import AwsCredentials, BasicAuth, KafkaSasl, TlsBundle
@@ -26,7 +28,9 @@ __all__ = [
     "CredentialError",
     "KeyProvider",
     "FileKeyProvider",
+    "KmsKeyProvider",
     "CredentialService",
+    "CredentialStats",
     "DefaultCredentialService",
     "Secret",
     "SecretMeta",
@@ -35,6 +39,8 @@ __all__ = [
     "CentralSecret",
     "AwsSecretsManagerSource",
     "SyncEngine",
+    "CredentialMetricsBridge",
+    "resolve_secret_refs",
     "AwsCredentials",
     "BasicAuth",
     "TlsBundle",

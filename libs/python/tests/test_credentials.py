@@ -137,6 +137,88 @@ def test_central_sync_from_secrets_manager(tmp_path):
         sm.delete_secret(SecretId=name, ForceDeleteWithoutRecovery=True)
 
 
+def test_resolve_secret_refs(tmp_path):
+    from ggcommons.credentials import resolve_secret_refs
+
+    c = _svc(tmp_path)
+    c.put("kinesis/name", b"my-stream")
+    c.put("aws/creds", b'{"accessKeyId":"AKIA","secretAccessKey":"sk"}')
+
+    cfg = {
+        "streams": [
+            {"name": {"$secret": "kinesis/name"}, "region": "us-east-1"},
+        ],
+        "auth": {"key": {"$secret": "aws/creds", "field": "accessKeyId"}},
+        "plain": "unchanged",
+    }
+    resolve_secret_refs(cfg, c)
+    assert cfg["streams"][0]["name"] == "my-stream"
+    assert cfg["streams"][0]["region"] == "us-east-1"
+    assert cfg["auth"]["key"] == "AKIA"
+    assert cfg["plain"] == "unchanged"
+
+    # Missing secret -> error (fail-closed).
+    with pytest.raises(CredentialError):
+        resolve_secret_refs({"x": {"$secret": "does/not/exist"}}, c)
+    # Missing field -> error.
+    with pytest.raises(CredentialError):
+        resolve_secret_refs({"x": {"$secret": "aws/creds", "field": "nope"}}, c)
+
+
+def test_stats_and_credential_stats(tmp_path):
+    from ggcommons.credentials import CredentialStats
+
+    c = _svc(tmp_path)
+    s = c.stats()
+    assert isinstance(s, CredentialStats)
+    assert s.secret_count == 0
+    assert s.last_sync_age_ms is None
+    assert s.sync_failures == 0
+    assert s.rotations == 0
+
+    c.put("a", b"1")
+    c.put("b", b"2")
+    c.put("c", b"3")
+    s = c.stats()
+    assert s.secret_count == 3
+    # No central sync configured → no sync age / failures / rotations.
+    assert s.last_sync_age_ms is None
+    assert s.sync_failures == 0
+    assert s.rotations == 0
+
+
+@pytest.mark.skipif(os.environ.get("GGCOMMONS_IT_KMS") != "1", reason="needs floci KMS (GGCOMMONS_IT_KMS=1)")
+def test_kms_key_provider_roundtrip(tmp_path):
+    import boto3
+
+    from ggcommons.credentials import open_from_config
+
+    os.environ.setdefault("AWS_ACCESS_KEY_ID", "test")
+    os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "test")
+    os.environ.setdefault("AWS_REGION", "us-east-1")
+
+    kms = boto3.client("kms", region_name="us-east-1", endpoint_url="http://localhost:4566")
+    key_id = kms.create_key()["KeyMetadata"]["KeyId"]
+
+    cfg = {
+        "vault": {
+            "path": str(tmp_path / "vault"),
+            "keyProvider": {
+                "type": "kms",
+                "kmsKeyId": key_id,
+                "region": "us-east-1",
+                "endpointUrl": "http://localhost:4566",
+            },
+        },
+    }
+    creds = open_from_config(cfg)
+    creds.put("db/password", b"s3cr3t")
+
+    # Reopen from disk — forces a fresh kms:Decrypt to unwrap the DEK.
+    creds2 = open_from_config(cfg)
+    assert creds2.get_string("db/password") == "s3cr3t"
+
+
 @pytest.mark.skipif(not (VECTORS_DIR / "vault.json").exists(), reason="vault-test-vectors not present")
 def test_cross_language_conformance():
     """Decrypt the canonical vault and reproduce ciphertext/wrappedDek/MAC from the fixed inputs."""

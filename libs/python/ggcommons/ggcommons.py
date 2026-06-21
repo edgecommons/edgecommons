@@ -65,6 +65,7 @@ class GGCommons:
         self._streams = None
         self._stream_metrics = None
         self._credentials = None
+        self._credential_metrics = None
 
         try:
             # Process command line arguments
@@ -84,12 +85,14 @@ class GGCommons:
             # Initialize heartbeat
             self._init_heartbeat()
 
-            # Telemetry streaming (only when a `streaming` config section is present, so components
-            # that don't use it never load the native library).
-            self._init_streaming()
-
             # Credentials / local vault (only when a `credentials` config section is present).
+            # Opened BEFORE streaming so the streaming config can reference vault secrets via
+            # {"$secret": ...}, mirroring the Rust build() order.
             self._init_credentials()
+
+            # Telemetry streaming (only when a `streaming` config section is present, so components
+            # that don't use it never load the native library). Resolves $secret refs first.
+            self._init_streaming()
 
             # Complete initialization
             if hasattr(self._config_manager, 'complete_initialization'):
@@ -238,6 +241,17 @@ class GGCommons:
 
         # Resolve {ThingName} etc. across the streaming section (buffer paths, Kinesis stream names).
         streaming_json = self._config_manager.resolve_template(_json.dumps(streaming))
+
+        # Resolve {"$secret": ...} refs from the vault BEFORE opening streaming (closes
+        # TELEMETRY_STREAMING.md §7), on a COPY so the public config snapshot is never mutated and
+        # the secret never lands in the logged/templated config. Mirrors the Rust build() order.
+        if self._credentials is not None:
+            from ggcommons.credentials import resolve_secret_refs
+
+            streaming_dict = _json.loads(streaming_json)
+            resolve_secret_refs(streaming_dict, self._credentials)
+            streaming_json = _json.dumps(streaming_dict)
+
         self._streams = StreamService.open(streaming_json)
         names = StreamService.stream_names(streaming_json)
         if names:
@@ -262,7 +276,7 @@ class GGCommons:
         if not isinstance(credentials, dict):
             return
 
-        from ggcommons.credentials import open_from_config
+        from ggcommons.credentials import CredentialMetricsBridge, open_from_config
 
         # Resolve {ThingName}/{ComponentFullName} in the vault path(s) before opening.
         resolved = _json.loads(self._config_manager.resolve_template(_json.dumps(credentials)))
@@ -270,6 +284,8 @@ class GGCommons:
         # components/devices).
         namespace = f"{self._config_manager.get_thing_name()}/{self._config_manager.get_component_full_name()}"
         self._credentials = open_from_config(resolved, namespace)
+        # Bridge non-sensitive credential stats into the metric targets (never emits secret values).
+        self._credential_metrics = CredentialMetricsBridge(self._credentials)
         logger.info("Credentials vault initialized")
 
     def get_credentials(self):
@@ -347,6 +363,18 @@ class GGCommons:
                 self._streams.close()
         except Exception as e:
             logger.error(f"Error closing streams during shutdown: {e}")
+
+        try:
+            # Stop the credential stats bridge + the central sync thread (if any).
+            if self._credential_metrics is not None:
+                self._credential_metrics.close()
+        except Exception as e:
+            logger.error(f"Error stopping credential metrics during shutdown: {e}")
+        try:
+            if self._credentials is not None and getattr(self._credentials, "_sync", None) is not None:
+                self._credentials._sync.close()
+        except Exception as e:
+            logger.error(f"Error closing credential sync during shutdown: {e}")
 
         try:
             # Stop the heartbeat first so it stops publishing/emitting.

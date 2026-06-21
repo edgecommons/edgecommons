@@ -1,6 +1,7 @@
 """Credential service (the public seam) + Secret / SecretMeta value types."""
 import json
 import threading
+import time
 from dataclasses import dataclass, field, replace
 from typing import Dict, List, Optional
 
@@ -38,6 +39,16 @@ class Secret:
 
     def __repr__(self) -> str:
         return f"Secret(name={self.name!r}, version={self.version!r}, bytes=<{len(self._bytes)} redacted>)"
+
+
+@dataclass
+class CredentialStats:
+    """Non-sensitive credential-subsystem stats (for the metrics bridge). Never includes values."""
+    secret_count: int = 0
+    # Age of the last successful central sync, ms (None if no central sync / never synced).
+    last_sync_age_ms: Optional[int] = None
+    sync_failures: int = 0
+    rotations: int = 0
 
 
 @dataclass(frozen=True)
@@ -78,6 +89,14 @@ class CredentialService:
     def refresh(self) -> None:
         """Force an immediate pull from the central source (no-op without central sync)."""
         return None
+
+    def stats(self) -> CredentialStats:
+        """Non-sensitive stats for observability (default: just the secret count)."""
+        try:
+            count = len(self.list(""))
+        except Exception:
+            count = 0
+        return CredentialStats(secret_count=count)
 
     # convenience views
     def get_bytes(self, name: str) -> Optional[bytes]:
@@ -190,3 +209,22 @@ class DefaultCredentialService(CredentialService):
     def refresh(self) -> None:
         if self._sync is not None:
             self._sync.sync_now()
+
+    def stats(self) -> CredentialStats:
+        try:
+            secret_count = len(self.list(""))
+        except Exception:
+            secret_count = 0
+        last_sync_age_ms: Optional[int] = None
+        sync_failures = 0
+        rotations = 0
+        if self._sync is not None:
+            last_ok, sync_failures, rotations = self._sync.stats()
+            if last_ok is not None:
+                last_sync_age_ms = max(0, int(time.time() * 1000) - last_ok)
+        return CredentialStats(
+            secret_count=secret_count,
+            last_sync_age_ms=last_sync_age_ms,
+            sync_failures=sync_failures,
+            rotations=rotations,
+        )

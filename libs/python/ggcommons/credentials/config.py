@@ -7,7 +7,7 @@ import os
 import threading
 
 from .errors import CredentialError
-from .keyprovider import FileKeyProvider
+from .keyprovider import FileKeyProvider, KmsKeyProvider
 from .service import DefaultCredentialService
 from .vault import LocalVault
 
@@ -34,15 +34,22 @@ def open_from_config(credentials_cfg: dict, namespace: str = "") -> DefaultCrede
     keep_versions = int(vault_cfg.get("keepVersions", 2))
     kp = vault_cfg.get("keyProvider", {}) or {}
     kind = kp.get("type", "file")
-    if kind != "file":
-        raise CredentialError(f"key provider '{kind}' is not implemented yet (phase 1 supports 'file')")
-
-    key_path = kp.get("keyPath") or f"{path}.key"
-    parent = os.path.dirname(os.path.abspath(key_path))
-    os.makedirs(parent, exist_ok=True)
-    provider = (FileKeyProvider.from_keyfile(key_path)
-                if os.path.exists(key_path)
-                else FileKeyProvider.generate_keyfile(key_path))
+    if kind == "file":
+        key_path = kp.get("keyPath") or f"{path}.key"
+        parent = os.path.dirname(os.path.abspath(key_path))
+        os.makedirs(parent, exist_ok=True)
+        provider = (FileKeyProvider.from_keyfile(key_path)
+                    if os.path.exists(key_path)
+                    else FileKeyProvider.generate_keyfile(key_path))
+    elif kind in ("kms", "greengrass"):
+        key_id = kp.get("kmsKeyId")
+        if not key_id:
+            raise CredentialError("kms key provider requires keyProvider.kmsKeyId")
+        provider = KmsKeyProvider(key_id, region=kp.get("region"), endpoint_url=kp.get("endpointUrl"))
+    else:
+        raise CredentialError(
+            f"key provider '{kind}' is not supported (supported: 'file', 'kms'/'greengrass')"
+        )
 
     vault = LocalVault.open(path, provider, keep_versions)
     lock = threading.Lock()
