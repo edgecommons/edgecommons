@@ -56,6 +56,8 @@ pub use views::{AwsCredentials, BasicAuth, KafkaSasl, TlsBundle};
 
 #[cfg(feature = "credentials-aws")]
 pub use central::AwsSecretsManagerSource;
+#[cfg(feature = "credentials-aws")]
+pub use keyprovider::KmsKeyProvider;
 
 #[cfg(test)]
 mod tests {

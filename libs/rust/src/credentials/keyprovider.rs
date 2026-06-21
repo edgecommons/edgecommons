@@ -121,3 +121,118 @@ impl KeyProvider for FileKeyProvider {
         Ok(Zeroizing::new(arr))
     }
 }
+
+#[cfg(feature = "credentials-aws")]
+pub use kms::KmsKeyProvider;
+
+#[cfg(feature = "credentials-aws")]
+mod kms {
+    //! KMS-wrapped DEK custodian: the DEK is encrypted by an AWS KMS CMK (the KEK never leaves
+    //! KMS) and unwrapped via `kms:Decrypt` — using AWS creds / TES on Greengrass. The encryption
+    //! context binds the wrapped DEK to the vault id (anti-swap). The client is loaded on a
+    //! dedicated thread so construction is safe inside the library's async `build()`.
+    use base64::engine::general_purpose::STANDARD as B64;
+    use base64::Engine as _;
+    use aws_sdk_kms::error::DisplayErrorContext;
+    use aws_sdk_kms::primitives::Blob;
+    use aws_sdk_kms::Client;
+    use tokio::runtime::Runtime;
+    use zeroize::Zeroizing;
+
+    use super::super::crypto::KEY_LEN;
+    use super::super::format::KekInfo;
+    use super::KeyProvider;
+    use crate::error::GgError;
+    use crate::Result;
+
+    pub struct KmsKeyProvider {
+        rt: Runtime,
+        client: Client,
+        key_id: String,
+    }
+
+    impl KmsKeyProvider {
+        pub fn new(key_id: String, region: Option<String>, endpoint_url: Option<String>) -> Result<Self> {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .thread_name("ggcommons-kms")
+                .build()
+                .map_err(|e| GgError::Credentials(format!("tokio runtime: {e}")))?;
+            let client = std::thread::scope(|scope| {
+                scope
+                    .spawn(|| {
+                        rt.block_on(async {
+                            let mut loader = aws_config::defaults(aws_config::BehaviorVersion::latest());
+                            if let Some(r) = region {
+                                loader = loader.region(aws_sdk_kms::config::Region::new(r));
+                            }
+                            if let Some(url) = endpoint_url {
+                                loader = loader.endpoint_url(url);
+                            }
+                            Client::new(&loader.load().await)
+                        })
+                    })
+                    .join()
+                    .map_err(|_| GgError::Credentials("kms client init thread panicked".into()))
+            })?;
+            Ok(Self { rt, client, key_id })
+        }
+    }
+
+    impl KeyProvider for KmsKeyProvider {
+        fn provider_id(&self) -> &str {
+            "kms"
+        }
+
+        fn wrap_dek(&self, vault_id: &str, dek: &[u8; KEY_LEN]) -> Result<KekInfo> {
+            let resp = self
+                .rt
+                .block_on(
+                    self.client
+                        .encrypt()
+                        .key_id(&self.key_id)
+                        .plaintext(Blob::new(dek.to_vec()))
+                        .encryption_context("vaultId", vault_id)
+                        .send(),
+                )
+                .map_err(|e| GgError::Credentials(format!("kms encrypt: {}", DisplayErrorContext(&e))))?;
+            let ct = resp
+                .ciphertext_blob()
+                .ok_or_else(|| GgError::Credentials("kms encrypt: no ciphertext".into()))?
+                .as_ref()
+                .to_vec();
+            Ok(KekInfo {
+                provider: "kms".to_string(),
+                alg: "aws-kms".to_string(),
+                wrap_nonce: None,
+                wrapped_dek: B64.encode(ct),
+                kms_key_id: Some(self.key_id.clone()),
+            })
+        }
+
+        fn unwrap_dek(&self, vault_id: &str, kek: &KekInfo) -> Result<Zeroizing<[u8; KEY_LEN]>> {
+            let ct = B64
+                .decode(&kek.wrapped_dek)
+                .map_err(|_| GgError::Credentials("kms: bad wrappedDek".into()))?;
+            let resp = self
+                .rt
+                .block_on(
+                    self.client
+                        .decrypt()
+                        .ciphertext_blob(Blob::new(ct))
+                        .key_id(&self.key_id)
+                        .encryption_context("vaultId", vault_id)
+                        .send(),
+                )
+                .map_err(|e| GgError::Credentials(format!("kms decrypt: {}", DisplayErrorContext(&e))))?;
+            let pt = resp
+                .plaintext()
+                .ok_or_else(|| GgError::Credentials("kms decrypt: no plaintext".into()))?;
+            let arr: [u8; KEY_LEN] = pt
+                .as_ref()
+                .try_into()
+                .map_err(|_| GgError::Credentials("kms: unwrapped DEK wrong length".into()))?;
+            Ok(Zeroizing::new(arr))
+        }
+    }
+}

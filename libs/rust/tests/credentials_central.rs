@@ -85,3 +85,58 @@ fn bootstrap_refresh_and_rotation_from_secrets_manager() {
     let _ = std::fs::remove_dir_all(&dir);
     sm("secretsmanager.DeleteSecret", &format!(r#"{{"SecretId":"{name}","ForceDeleteWithoutRecovery":true}}"#));
 }
+
+/// POST to floci and return the response body.
+fn floci_out(target: &str, body: &str) -> String {
+    let out = std::process::Command::new("curl")
+        .args([
+            "-s", "-m", "10", "-X", "POST", "http://localhost:4566/",
+            "-H", &format!("X-Amz-Target: {target}"),
+            "-H", "Content-Type:application/x-amz-json-1.1",
+            "-H", "Authorization: x", "-d", body,
+        ])
+        .output()
+        .expect("curl available");
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+#[test]
+fn kms_key_provider_round_trip() {
+    if std::env::var("GGCOMMONS_IT_SM").is_err() {
+        eprintln!("skipping KMS key-provider test (set GGCOMMONS_IT_SM=1 + run floci)");
+        return;
+    }
+    unsafe {
+        std::env::set_var("AWS_ACCESS_KEY_ID", "test");
+        std::env::set_var("AWS_SECRET_ACCESS_KEY", "test");
+        std::env::set_var("AWS_REGION", "us-east-1");
+    }
+    // Create a CMK in floci (KMS service target prefix is "TrentService").
+    let created = floci_out("TrentService.CreateKey", "{}");
+    let v: serde_json::Value = serde_json::from_str(&created).expect("CreateKey JSON");
+    let key_id = v["KeyMetadata"]["KeyId"].as_str().expect("KeyId").to_string();
+
+    let dir = std::env::temp_dir().join(format!("ggcred-kms-{}", uuid::Uuid::new_v4()));
+    let cfg: CredentialsConfig = serde_json::from_value(serde_json::json!({
+        "vault": {
+            "path": dir.join("vault").to_string_lossy(),
+            "keyProvider": {
+                "type": "kms", "kmsKeyId": key_id, "region": "us-east-1",
+                "endpointUrl": "http://localhost:4566"
+            }
+        }
+    }))
+    .unwrap();
+
+    // Open with the KMS-wrapped DEK, write a secret, then reopen — proving the DEK round-trips
+    // through KMS encrypt/decrypt.
+    {
+        let creds = credentials::open(&cfg).expect("open KMS-backed vault");
+        creds.put("k", b"v", Default::default()).unwrap();
+        assert_eq!(creds.get_string("k").unwrap().unwrap(), "v");
+    }
+    let creds2 = credentials::open(&cfg).expect("reopen KMS-backed vault");
+    assert_eq!(creds2.get_string("k").unwrap().unwrap(), "v");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

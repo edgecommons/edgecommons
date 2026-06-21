@@ -73,11 +73,13 @@ pub struct KeyProviderConfig {
     pub key_path: Option<String>,
     pub kms_key_id: Option<String>,
     pub region: Option<String>,
+    /// Override the KMS endpoint (floci/LocalStack/VPC endpoint).
+    pub endpoint_url: Option<String>,
 }
 
 impl Default for KeyProviderConfig {
     fn default() -> Self {
-        Self { kind: "file".to_string(), key_path: None, kms_key_id: None, region: None }
+        Self { kind: "file".to_string(), key_path: None, kms_key_id: None, region: None, endpoint_url: None }
     }
 }
 
@@ -171,9 +173,21 @@ pub fn open_namespaced(config: &CredentialsConfig, namespace: &str) -> Result<De
             };
             std::sync::Arc::new(fp) as std::sync::Arc<dyn super::keyprovider::KeyProvider>
         }
+        #[cfg(feature = "credentials-aws")]
+        "kms" | "greengrass" => {
+            let key_id = config.vault.key_provider.kms_key_id.clone().ok_or_else(|| {
+                GgError::Credentials("kms key provider requires keyProvider.kmsKeyId".to_string())
+            })?;
+            let kp = super::keyprovider::KmsKeyProvider::new(
+                key_id,
+                config.vault.key_provider.region.clone(),
+                config.vault.key_provider.endpoint_url.clone(),
+            )?;
+            std::sync::Arc::new(kp) as std::sync::Arc<dyn super::keyprovider::KeyProvider>
+        }
         other => {
             return Err(GgError::Credentials(format!(
-                "key provider '{other}' is not implemented yet (supported: 'file')"
+                "key provider '{other}' is not available (supported: 'file'; 'kms'/'greengrass' need the credentials-aws feature)"
             )))
         }
     };
