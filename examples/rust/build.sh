@@ -19,6 +19,10 @@ COMPONENT_VERSION="1.0.0"
 BIN_NAME="rust-component-skeleton"
 
 # Device artifact uses the Greengrass IPC feature (Linux-only; needs libclang).
+# To also ship durable telemetry streaming to Kinesis (recipe `streaming` section),
+# build with the streaming sink feature, e.g.:
+#   GGCOMMONS_FEATURES="greengrass,streaming-kinesis" ./build.sh
+# (Requires the target Kinesis stream to exist + TES role kinesis:PutRecords.)
 FEATURES="${GGCOMMONS_FEATURES:-greengrass}"
 TARGET="${GGCOMMONS_TARGET:-}"
 TARGET_DIR="${CARGO_TARGET_DIR:-target}"

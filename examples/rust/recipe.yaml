@@ -4,6 +4,14 @@ ComponentName: "aws.proserve.greengrass.RustComponentSkeleton"
 ComponentVersion: "1.0.0"
 ComponentDescription: "Skeleton Rust component built on the ggcommons Rust library: standardized configuration, logging, messaging, metrics, and heartbeats."
 ComponentPublisher: "Marc Breissinger"
+# Declaring the TokenExchangeService dependency is what makes the Nucleus inject
+# AWS_CONTAINER_CREDENTIALS_FULL_URI into the component env, so the AWS SDK default
+# credential chain (used by the Kinesis streaming sink) resolves the device role.
+# Only needed for builds that include `streaming-kinesis` (or `cloudwatch`).
+ComponentDependencies:
+  aws.greengrass.TokenExchangeService:
+    VersionRequirement: ">=0.0.0"
+    DependencyType: HARD
 ComponentConfiguration:
   DefaultConfiguration:
     ComponentConfig:
@@ -25,6 +33,28 @@ ComponentConfiguration:
         # Component work dir — writable by a non-root (ggc_user) component.
         targetConfig:
           logFileName: "/greengrass/v2/work/{ComponentFullName}/metric.log"
+      # Telemetry streaming (read only by builds that include the `streaming`/`streaming-kinesis`
+      # feature; inert otherwise). The library opens + recovers this stream at startup and runs an
+      # export engine that drains the durable buffer to Kinesis using TES creds. Stats for the
+      # stream are auto-bridged to the metric target above (metric name `stream:telemetry`).
+      streaming:
+        streams:
+          - name: "telemetry"
+            sink:
+              type: "kinesis"
+              # The Kinesis data stream must already exist in this region, and the device's TES
+              # IAM role must allow kinesis:PutRecords on it. {ThingName} templates per device.
+              streamName: "ggcommons-skeleton-telemetry"
+              region: "us-east-1"
+            buffer:
+              path: "/greengrass/v2/work/{ComponentFullName}/stream-telemetry"
+              segmentBytes: 1048576
+              maxDiskBytes: 67108864
+              # dropOldest keeps the component alive (and the publish loop unblocked) if the disk
+              # budget fills during a long sink outage; dropped records show up in `droppedTotal`.
+              onFull: "dropOldest"
+            delivery:
+              pollIntervalMs: 1000
       tags:
         appId: "Test"
         site: "Chantilly"

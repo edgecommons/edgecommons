@@ -50,6 +50,12 @@ pub struct SkeletonApp {
     /// Live publish interval (seconds), updated by [`IntervalListener`] on config
     /// hot-reload so the running loops pick up changes without a restart.
     publish_interval: Arc<AtomicU64>,
+    /// Handle to the `telemetry` durable stream when the `streaming` feature is built and a
+    /// `streaming` config section is present; `None` otherwise. The publish loop appends each
+    /// data point here, and the library's export engine drains it to the configured sink
+    /// (Kinesis on-device via TES). Cheap to clone; shared across threads.
+    #[cfg(feature = "streaming")]
+    stream: Option<StreamHandle>,
 }
 
 /// The publish interval (seconds) from `component.global.publish_interval`,
@@ -111,11 +117,37 @@ impl SkeletonApp {
             publish_interval: publish_interval.clone(),
         }));
 
+        // Telemetry streaming (feature-gated): grab a handle to the `telemetry` stream the
+        // library opened from the config's `streaming` section. Absent section -> no streams ->
+        // run without streaming (the data is still published over MQTT as before).
+        #[cfg(feature = "streaming")]
+        let stream = {
+            let streams = gg.streams();
+            match streams.stream_names().is_empty() {
+                true => {
+                    tracing::info!("no `streaming` config section; telemetry streaming disabled");
+                    None
+                }
+                false => match streams.stream("telemetry") {
+                    Ok(handle) => {
+                        tracing::info!(streams = ?streams.stream_names(), "telemetry streaming enabled");
+                        Some(handle)
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "stream 'telemetry' not configured; streaming disabled");
+                        None
+                    }
+                },
+            }
+        };
+
         Ok(Self {
             config,
             metrics,
             messaging: gg.messaging().ok(),
             publish_interval,
+            #[cfg(feature = "streaming")]
+            stream,
         })
     }
 
@@ -281,6 +313,22 @@ impl SkeletonApp {
             }
             tracing::info!(topic = %topic, seq, "published data message");
 
+            // Also append the data point to the durable telemetry stream (feature-gated). The
+            // library's export engine drains it to the configured sink (Kinesis via TES on-device)
+            // independently — append returns once the record is committed to the local buffer, so a
+            // sink/network outage never blocks the publish loop. Partition by Thing for ordered
+            // per-device delivery downstream.
+            #[cfg(feature = "streaming")]
+            if let Some(stream) = &self.stream {
+                let payload = serde_json::to_vec(&json!({ "seq": seq, "thing": self.config.thing_name }))
+                    .unwrap_or_default();
+                let record = StreamRecord::new(self.config.thing_name.clone(), now_ms(), payload);
+                match stream.append(record) {
+                    Ok(()) => tracing::debug!(seq, "appended record to telemetry stream"),
+                    Err(e) => tracing::warn!(error = %e, "failed to append to telemetry stream"),
+                }
+            }
+
             let mut values = std::collections::HashMap::new();
             values.insert("count".to_string(), 1.0);
             if let Err(e) = self.metrics.emit_metric(PUBLISH_METRIC, values).await {
@@ -294,6 +342,16 @@ impl SkeletonApp {
     fn publish_interval(&self) -> u64 {
         self.publish_interval.load(Ordering::Relaxed).max(1)
     }
+}
+
+/// Current Unix time in milliseconds, used as the telemetry record timestamp. Falls back to
+/// `0` if the system clock is before the epoch (which would also break TLS, so never in practice).
+#[cfg(feature = "streaming")]
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 /// Resolve when the process should shut down: Ctrl-C on all platforms, plus SIGTERM

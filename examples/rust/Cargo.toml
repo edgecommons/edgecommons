@@ -24,10 +24,15 @@ greengrass = ["ggcommons/greengrass"]
 # Direct CloudWatch metric target (AWS SDK PutMetricData). Pulls in aws-config +
 # aws-sdk-cloudwatch; combine with `greengrass` for on-device use.
 cloudwatch = ["ggcommons/cloudwatch"]
+# Telemetry streaming (ggstreamlog core). `streaming` is buffer-only; `streaming-kinesis`
+# adds the real Kinesis sink (AWS SDK; on-device it authenticates via TES). The streaming
+# config section in recipe.yaml is inert unless one of these is built in.
+streaming = ["ggcommons/streaming"]
+streaming-kinesis = ["ggcommons/streaming-kinesis"]
 
 [dependencies]
-# Local path dependency on the ggcommons Rust library (sibling project).
-ggcommons = { path = "../ggcommons-rust-lib", default-features = false }
+# Local path dependency on the ggcommons Rust library (sibling project in the monorepo).
+ggcommons = { path = "../../libs/rust", default-features = false }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
 serde_json = "1"
 tracing = "0.1"
