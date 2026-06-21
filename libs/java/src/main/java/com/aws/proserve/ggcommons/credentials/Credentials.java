@@ -86,10 +86,16 @@ public final class Credentials {
         LocalVault vault = LocalVault.open(Paths.get(path), provider, keep);
         Object lock = new Object();
 
+        // Access auditing on by default (config can disable) — logs op/name/version/source/outcome,
+        // never the value.
+        JsonObject auditCfg = cfg.has("audit") ? cfg.getAsJsonObject("audit") : new JsonObject();
+        boolean auditEnabled = !auditCfg.has("enabled") || auditCfg.get("enabled").getAsBoolean();
+        AuditSink audit = auditEnabled ? new LogAuditSink() : null;
+
         JsonObject central = cfg.has("central") ? cfg.getAsJsonObject("central") : new JsonObject();
         String ctype = central.has("type") ? central.get("type").getAsString() : "none";
         if ("none".equals(ctype)) {
-            return new DefaultCredentialService(vault, namespace, lock, null);
+            return new DefaultCredentialService(vault, namespace, lock, null).withAudit(audit);
         }
         if (!"awsSecretsManager".equals(ctype)) {
             throw new CredentialException("central source '" + ctype + "' is not supported");
@@ -102,7 +108,7 @@ public final class Credentials {
 
         AwsSecretsManagerSource source = new AwsSecretsManagerSource(region, endpoint);
         SyncEngine sync = new SyncEngine(vault, lock, source, namespace, syncSecrets(central), interval, bootstrap);
-        return new DefaultCredentialService(vault, namespace, lock, sync);
+        return new DefaultCredentialService(vault, namespace, lock, sync).withAudit(audit);
     }
 
     /** Parse {@code central.sync.secrets} — each entry a bare string or {@code {name, from}}. */

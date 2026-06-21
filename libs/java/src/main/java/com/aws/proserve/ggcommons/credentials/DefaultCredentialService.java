@@ -17,6 +17,12 @@ public final class DefaultCredentialService implements CredentialService {
     private final String namespace;
     private final SyncEngine sync;
 
+    /**
+     * Audit sink for access events ({@code null} = auditing off). Set via {@link #withAudit(AuditSink)};
+     * the config path enables it ({@code credentials.audit.enabled}) with the default logging sink.
+     */
+    private AuditSink audit;
+
     public DefaultCredentialService(LocalVault vault) {
         this(vault, "", new Object(), null);
     }
@@ -26,6 +32,20 @@ public final class DefaultCredentialService implements CredentialService {
         this.namespace = namespace == null ? "" : namespace;
         this.lock = lock;
         this.sync = sync;
+    }
+
+    /** Attach (or clear) the audit sink — access events are emitted to it. Fluent; returns {@code this}. */
+    public DefaultCredentialService withAudit(AuditSink sink) {
+        this.audit = sink;
+        return this;
+    }
+
+    /** Emit an audit event if an audit sink is configured (no-op otherwise). Never includes the value. */
+    private void audit(String op, String name, String version, String source, String outcome) {
+        AuditSink sink = this.audit;
+        if (sink != null) {
+            sink.record(new AuditEvent(op, name, version, source, outcome));
+        }
     }
 
     private String full(String name) {
@@ -43,20 +63,34 @@ public final class DefaultCredentialService implements CredentialService {
 
     @Override
     public Optional<Secret> get(String name) {
+        Secret result;
         synchronized (lock) {
             vault.reloadIfChanged();
             Secret s = vault.get(full(name));
-            return s == null ? Optional.empty() : Optional.of(relName(s));
+            result = s == null ? null : relName(s);
         }
+        if (result != null) {
+            audit("get", name, result.version(), result.source(), "hit");
+        } else {
+            audit("get", name, "-", "-", "miss");
+        }
+        return Optional.ofNullable(result);
     }
 
     @Override
     public Optional<Secret> getVersion(String name, String version) {
+        Secret result;
         synchronized (lock) {
             vault.reloadIfChanged();
             Secret s = vault.getVersion(full(name), version);
-            return s == null ? Optional.empty() : Optional.of(relName(s));
+            result = s == null ? null : relName(s);
         }
+        if (result != null) {
+            audit("get", name, result.version(), result.source(), "hit");
+        } else {
+            audit("get", name, version, "-", "miss");
+        }
+        return Optional.ofNullable(result);
     }
 
     @Override
@@ -87,18 +121,24 @@ public final class DefaultCredentialService implements CredentialService {
 
     @Override
     public String put(String name, byte[] value, PutOptions opts) {
+        String version;
         synchronized (lock) {
             vault.reloadIfChanged();
-            return vault.put(full(name), value, opts);
+            version = vault.put(full(name), value, opts);
         }
+        audit("put", name, version, "local", "ok");
+        return version;
     }
 
     @Override
     public boolean delete(String name) {
+        boolean deleted;
         synchronized (lock) {
             vault.reloadIfChanged();
-            return vault.delete(full(name));
+            deleted = vault.delete(full(name));
         }
+        audit("delete", name, "-", "-", deleted ? "ok" : "miss");
+        return deleted;
     }
 
     @Override
