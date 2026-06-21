@@ -11,6 +11,7 @@
  */
 import { parseArgs, ParsedArgs, RuntimeMode } from "./cli";
 import { Config } from "./config/model";
+import { resolve } from "./config/template";
 import { validate } from "./config/validation";
 import { buildConfigSource, ConfigSource, ConfigWatch } from "./config/source";
 import { ConfigurationChangeListener } from "./config";
@@ -24,6 +25,7 @@ import { IpcMessagingProvider } from "./messaging/ipc-provider";
 import { loadMessagingConfig } from "./messaging/config";
 import { MetricEmitter } from "./metrics/service";
 import { MetricService } from "./metrics/types";
+import type { StreamMetricsBridge, StreamService } from "./streaming";
 
 /** Default thing name when none is supplied and not running under Greengrass. */
 const DEFAULT_THING_NAME = "NOT_GREENGRASS";
@@ -44,10 +46,27 @@ export class GGCommons {
   ) {}
 
   private configWatch?: ConfigWatch;
+  private streamsService?: StreamService;
+  private streamMetrics?: StreamMetricsBridge;
 
   /** @internal Attach the config-watch handle after construction. */
   _setWatch(watch: ConfigWatch | undefined): void {
     this.configWatch = watch;
+  }
+
+  /** @internal Attach the streaming service + metrics bridge after construction. */
+  _setStreaming(service: StreamService | undefined, bridge: StreamMetricsBridge | undefined): void {
+    this.streamsService = service;
+    this.streamMetrics = bridge;
+  }
+
+  /**
+   * The telemetry streaming service, or `undefined` if the component config has no `streaming`
+   * section. Obtain a stream with `service.stream(name)` and append durable records. Mirrors the
+   * Rust/Java/Python `gg.streams()`.
+   */
+  streams(): StreamService | undefined {
+    return this.streamsService;
   }
 
   /** The component's full name. */
@@ -91,6 +110,8 @@ export class GGCommons {
 
   /** Release resources: stop the heartbeat + config watch and disconnect messaging. */
   async close(): Promise<void> {
+    this.streamMetrics?.close();
+    this.streamsService?.close();
     this.heartbeat.stop();
     if (this.configWatch) await this.configWatch.close().catch(() => undefined);
     await this.metricsService.shutdown().catch(() => undefined);
@@ -207,6 +228,21 @@ export class GGCommonsBuilder {
       heartbeat,
       source,
     );
+    // Telemetry streaming (only when a `streaming` config section is present, so components that
+    // don't use it never load the native addon). Loaded dynamically for the same reason.
+    const streamingRaw = current.raw["streaming"];
+    if (streamingRaw && typeof streamingRaw === "object") {
+      const streaming = await import("./streaming");
+      const streamingJson = resolve(current, JSON.stringify(streamingRaw));
+      const svc = streaming.StreamService.open(streamingJson);
+      const names = streaming.StreamService.streamNames(streamingJson);
+      const bridge = names.length
+        ? new streaming.StreamMetricsBridge(current, metrics, svc, names)
+        : undefined;
+      runtime._setStreaming(svc, bridge);
+      logger.info(`Telemetry streaming initialized with ${names.length} stream(s)`);
+    }
+
     // Attach the watch only after the runtime exists, so a reload that fires during
     // subscription setup has a valid runtime to update.
     runtime._setWatch(await source.watch(onUpdate));

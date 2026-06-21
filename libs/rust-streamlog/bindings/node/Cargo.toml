@@ -1,0 +1,29 @@
+[package]
+name = "ggstreamlog-node"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+license = "Apache-2.0"
+description = "napi-rs native addon for the ggcommons telemetry-streaming core (ggstreamlog)."
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+ggstreamlog = { path = "../.." }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }
+napi = { version = "3", default-features = false, features = ["napi8"] }
+napi-derive = "3"
+
+[build-dependencies]
+napi-build = "2"
+
+[features]
+# Real Kinesis export in the addon (heavy: AWS SDK + tokio). Off by default for a light dev build.
+kinesis = ["ggstreamlog/kinesis"]
+
+[profile.release]
+lto = true
