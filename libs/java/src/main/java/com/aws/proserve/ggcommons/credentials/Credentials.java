@@ -55,8 +55,32 @@ public final class Credentials {
                 String kmsEndpoint = kp.has("endpointUrl") ? kp.get("endpointUrl").getAsString() : null;
                 yield new KmsKeyProvider(keyId, kmsRegion, kmsEndpoint);
             }
+            case "pkcs11" -> {
+                if (!kp.has("modulePath")) {
+                    throw new CredentialException("pkcs11 key provider requires keyProvider.modulePath");
+                }
+                if (!kp.has("keyLabel")) {
+                    throw new CredentialException("pkcs11 key provider requires keyProvider.keyLabel");
+                }
+                String modulePath = kp.get("modulePath").getAsString();
+                String tokenLabel = kp.has("tokenLabel") ? kp.get("tokenLabel").getAsString() : "";
+                String keyLabel = kp.get("keyLabel").getAsString();
+                String pin;
+                if (kp.has("pinEnv")) {
+                    pin = System.getenv(kp.get("pinEnv").getAsString());
+                    if (pin == null) {
+                        throw new CredentialException(
+                                "pkcs11 keyProvider.pinEnv '" + kp.get("pinEnv").getAsString() + "' is not set");
+                    }
+                } else if (kp.has("pin")) {
+                    pin = kp.get("pin").getAsString();
+                } else {
+                    throw new CredentialException("pkcs11 key provider requires keyProvider.pinEnv or keyProvider.pin");
+                }
+                yield Pkcs11KeyProvider.create(modulePath, tokenLabel, keyLabel, pin);
+            }
             default -> throw new CredentialException(
-                    "key provider '" + kind + "' is not supported (supported: 'file', 'kms'/'greengrass')");
+                    "key provider '" + kind + "' is not supported (supported: 'file', 'kms'/'greengrass', 'pkcs11')");
         };
 
         LocalVault vault = LocalVault.open(Paths.get(path), provider, keep);
