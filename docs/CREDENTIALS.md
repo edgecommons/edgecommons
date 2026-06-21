@@ -87,11 +87,24 @@ one consumer of it (this is what fixes `TELEMETRY_STREAMING.md` §7).
 - **Cross-process consistency.** Writers update via atomic temp→rename; readers detect changes
   by watching the vault file (mtime/inotify) and re-load, then fire change listeners — the same
   hot-reload contract as `config` file watching, but across processes.
+- **Automatic key namespacing (transparent).** The runtime prepends
+  **`<thingName>/<componentName>/`** to every key before it hits the vault, and strips it from
+  returned names — so a component calls `get("db/password")` while the stored key is
+  `lab-5950x/MyComponent/db/password`. This guarantees no collisions in multi-component (shared
+  device vault) **and** multi-device (shared central store) deployments, and gives a soft
+  API-level read scoping (a component can't reach another's secret through the normal API — it
+  isn't a security boundary; see §10). Standalone use of the library without a runtime can pass an
+  empty namespace.
+- **Central ids: per-device by default, shared by opt-in.** A synced secret's central id defaults
+  to the same namespaced path (a per-device secret). To share one fleet-wide secret across devices
+  and/or components, a `sync` entry sets `from: <central id>` to point at an explicit, un-namespaced
+  Secrets Manager id (§8) — avoiding a per-device provisioning explosion for shared credentials.
 - **Trust boundary = the device.** A shared vault means every component on the device that can
   unlock it can read every secret in it. On Greengrass all components already run as `ggc_user`,
   so OS perms can't separate them anyway — so least-privilege moves to **(a) the sync side**
   (the device only pulls the secrets it is entitled to, gated by central IAM / the TES role /
-  the KMS key policy) and **(b) optional logical namespaces** (§10).
+  the KMS key policy) and **(b)** the auto-namespacing above (logical scoping; hard per-namespace
+  read isolation via sub-DEKs is the deferred enhancement in §10).
 
 ## 4. The local vault (normative — identical across all bindings)
 
@@ -282,9 +295,12 @@ credentials:
     type: "awsSecretsManager"   # awsSecretsManager | awsSsm | none
     region: "us-east-1"
     sync:
-      secrets:  ["prod/db/password", "prod/kafka/sasl"]        # explicit, or…
-      prefixes: ["myapp/"]                                      # …by prefix, or…
-      tags:     { app: "myapp" }                                # …by tag filter
+      # Each entry is a bare name (its central id defaults to the auto-namespaced path
+      # <thingName>/<componentName>/<name> — a per-device secret) …
+      secrets:
+        - "telemetry/kinesis"
+        # … or an object pointing at a SHARED/fleet secret id that bypasses the namespace:
+        - { name: "db/password", from: "myapp/shared/db-password" }
     refreshIntervalSecs: 300
     rotationGraceSecs: 600
     bootstrapOnStart: true

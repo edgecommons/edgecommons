@@ -302,7 +302,11 @@ impl GgCommonsBuilder {
                     if let Some(kp) = cfg.vault.key_provider.key_path.as_mut() {
                         *kp = config::template::resolve(&snapshot, kp);
                     }
-                    Some(Arc::new(credentials::open(&cfg)?) as Arc<dyn credentials::CredentialService>)
+                    // Transparently namespace every key by <thingName>/<componentName> so a shared
+                    // device vault / fleet central store can't collide across components or devices.
+                    let namespace = format!("{}/{}", snapshot.thing_name, self.component_name);
+                    let svc = credentials::open_namespaced(&cfg, &namespace)?;
+                    Some(Arc::new(svc) as Arc<dyn credentials::CredentialService>)
                 }
             };
 

@@ -110,15 +110,49 @@ impl Default for CentralConfig {
     }
 }
 
-/// Which secrets to sync (v1: explicit names — selective sync / least privilege).
+/// Which secrets to sync (explicit names — selective sync / least privilege).
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 pub struct SyncSelect {
-    pub secrets: Vec<String>,
+    pub secrets: Vec<SyncEntry>,
 }
 
-/// Open a vault and build the default credential service from a parsed config.
+/// One secret to sync. Accepts a bare string (the caller-facing name; its central id defaults to
+/// the namespaced path — a per-device secret) or `{ "name": ..., "from": <central id> }` to point
+/// at a shared/fleet secret id that bypasses the auto-namespace.
+#[derive(Debug, Clone)]
+pub struct SyncEntry {
+    pub name: String,
+    pub from: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for SyncEntry {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Raw {
+            Str(String),
+            Obj {
+                name: String,
+                #[serde(default)]
+                from: Option<String>,
+            },
+        }
+        Ok(match Raw::deserialize(d)? {
+            Raw::Str(name) => SyncEntry { name, from: None },
+            Raw::Obj { name, from } => SyncEntry { name, from },
+        })
+    }
+}
+
+/// Open a vault and build the default credential service from a parsed config (no namespacing).
 pub fn open(config: &CredentialsConfig) -> Result<DefaultCredentialService> {
+    open_namespaced(config, "")
+}
+
+/// As [`open`], but transparently namespacing every key under `namespace` (typically
+/// `<thingName>/<componentName>`) so a shared device vault / fleet central store can't collide.
+pub fn open_namespaced(config: &CredentialsConfig, namespace: &str) -> Result<DefaultCredentialService> {
     let provider = match config.vault.key_provider.kind.as_str() {
         "file" => {
             let key_path = config
@@ -147,14 +181,17 @@ pub fn open(config: &CredentialsConfig) -> Result<DefaultCredentialService> {
     let vault = LocalVault::open(&config.vault.path, provider, config.vault.keep_versions)?;
 
     match config.central.kind.as_str() {
-        "none" => Ok(DefaultCredentialService::new(vault)),
-        "awsSecretsManager" => open_central(vault, &config.central),
+        "none" => {
+            let shared = std::sync::Arc::new(std::sync::Mutex::new(vault));
+            Ok(DefaultCredentialService::with_sync(shared, None, namespace.to_string()))
+        }
+        "awsSecretsManager" => open_central(vault, &config.central, namespace),
         other => Err(GgError::Credentials(format!("central source '{other}' is not supported"))),
     }
 }
 
 #[cfg(feature = "credentials-aws")]
-fn open_central(vault: LocalVault, central: &CentralConfig) -> Result<DefaultCredentialService> {
+fn open_central(vault: LocalVault, central: &CentralConfig, namespace: &str) -> Result<DefaultCredentialService> {
     use super::central::{AwsSecretsManagerSource, CentralVaultSource};
     use super::sync::SyncEngine;
     use std::sync::{Arc, Mutex};
@@ -162,18 +199,21 @@ fn open_central(vault: LocalVault, central: &CentralConfig) -> Result<DefaultCre
     let source: Arc<dyn CentralVaultSource> =
         Arc::new(AwsSecretsManagerSource::new(central.region.clone(), central.endpoint_url.clone())?);
     let vault = Arc::new(Mutex::new(vault));
+    let secrets: Vec<(String, Option<String>)> =
+        central.sync.secrets.iter().map(|e| (e.name.clone(), e.from.clone())).collect();
     let sync = SyncEngine::start(
         vault.clone(),
         source,
-        central.sync.secrets.clone(),
+        namespace.to_string(),
+        secrets,
         central.refresh_interval_secs,
         central.bootstrap_on_start,
     );
-    Ok(DefaultCredentialService::with_sync(vault, sync))
+    Ok(DefaultCredentialService::with_sync(vault, Some(sync), namespace.to_string()))
 }
 
 #[cfg(not(feature = "credentials-aws"))]
-fn open_central(_vault: LocalVault, _central: &CentralConfig) -> Result<DefaultCredentialService> {
+fn open_central(_vault: LocalVault, _central: &CentralConfig, _namespace: &str) -> Result<DefaultCredentialService> {
     Err(GgError::Credentials(
         "central source 'awsSecretsManager' requires the 'credentials-aws' feature".to_string(),
     ))

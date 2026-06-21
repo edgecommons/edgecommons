@@ -119,17 +119,21 @@ pub struct DefaultCredentialService {
     vault: Arc<Mutex<LocalVault>>,
     /// Owns the central sync background thread (RAII); `None` for a standalone local vault.
     _sync: Option<SyncEngine>,
+    /// Transparent key namespace (`<thingName>/<componentName>`), or empty for no namespacing.
+    /// Prepended to every key so a shared device vault (and a fleet's central store) can't collide
+    /// across components/devices; stripped from returned names so callers see their own keys.
+    namespace: String,
 }
 
 impl DefaultCredentialService {
-    /// Wrap an opened [`LocalVault`] (standalone, no central sync).
+    /// Wrap an opened [`LocalVault`] (standalone, no central sync, no namespacing).
     pub fn new(vault: LocalVault) -> Self {
-        Self { vault: Arc::new(Mutex::new(vault)), _sync: None }
+        Self { vault: Arc::new(Mutex::new(vault)), _sync: None, namespace: String::new() }
     }
 
-    /// Wrap a shared vault that a [`SyncEngine`] also writes to.
-    pub fn with_sync(vault: Arc<Mutex<LocalVault>>, sync: SyncEngine) -> Self {
-        Self { vault, _sync: Some(sync) }
+    /// Wrap a shared vault that a [`SyncEngine`] also writes to, with the given key namespace.
+    pub fn with_sync(vault: Arc<Mutex<LocalVault>>, sync: Option<SyncEngine>, namespace: String) -> Self {
+        Self { vault, _sync: sync, namespace }
     }
 
     /// The shared vault handle (so a [`SyncEngine`] can be constructed against the same store).
@@ -140,43 +144,74 @@ impl DefaultCredentialService {
     fn locked(&self) -> std::sync::MutexGuard<'_, LocalVault> {
         self.vault.lock().unwrap_or_else(|p| p.into_inner())
     }
+
+    /// Map a caller-facing key to its namespaced storage key.
+    fn full(&self, name: &str) -> String {
+        if self.namespace.is_empty() {
+            name.to_string()
+        } else {
+            format!("{}/{}", self.namespace, name)
+        }
+    }
+
+    /// Strip the namespace from a storage key for the caller.
+    fn rel(&self, full: &str) -> String {
+        if self.namespace.is_empty() {
+            full.to_string()
+        } else {
+            full.strip_prefix(&format!("{}/", self.namespace)).unwrap_or(full).to_string()
+        }
+    }
 }
 
 impl CredentialService for DefaultCredentialService {
     fn get(&self, name: &str) -> Result<Option<Secret>> {
         let mut v = self.locked();
         v.reload_if_changed()?;
-        v.get(name)
+        Ok(v.get(&self.full(name))?.map(|mut s| {
+            s.name = self.rel(&s.name);
+            s
+        }))
     }
     fn get_version(&self, name: &str, version: &str) -> Result<Option<Secret>> {
         let mut v = self.locked();
         v.reload_if_changed()?;
-        v.get_version(name, version)
+        Ok(v.get_version(&self.full(name), version)?.map(|mut s| {
+            s.name = self.rel(&s.name);
+            s
+        }))
     }
     fn exists(&self, name: &str) -> Result<bool> {
         let mut v = self.locked();
         v.reload_if_changed()?;
-        Ok(v.exists(name))
+        Ok(v.exists(&self.full(name)))
     }
     fn list(&self, prefix: &str) -> Result<Vec<SecretMeta>> {
         let mut v = self.locked();
         v.reload_if_changed()?;
-        Ok(v.list(prefix))
+        // List within this component's namespace and strip it from the returned names.
+        Ok(v.list(&self.full(prefix))
+            .into_iter()
+            .map(|mut m| {
+                m.name = self.rel(&m.name);
+                m
+            })
+            .collect())
     }
     fn versions(&self, name: &str) -> Result<Vec<String>> {
         let mut v = self.locked();
         v.reload_if_changed()?;
-        Ok(v.versions(name))
+        Ok(v.versions(&self.full(name)))
     }
     fn put(&self, name: &str, value: &[u8], opts: PutOptions) -> Result<String> {
         let mut v = self.locked();
         v.reload_if_changed()?;
-        v.put(name, value, opts)
+        v.put(&self.full(name), value, opts)
     }
     fn delete(&self, name: &str) -> Result<bool> {
         let mut v = self.locked();
         v.reload_if_changed()?;
-        v.delete(name)
+        v.delete(&self.full(name))
     }
     fn refresh(&self) -> Result<()> {
         if let Some(sync) = &self._sync {

@@ -28,21 +28,27 @@ pub struct SyncEngine {
 struct SyncInner {
     vault: Arc<Mutex<LocalVault>>,
     source: Arc<dyn CentralVaultSource>,
-    names: Vec<String>,
+    /// `(caller_name, central_id_override)`. The local key is the caller name under the namespace;
+    /// the central id defaults to that same namespaced path (per-device) unless overridden (a
+    /// shared/fleet secret).
+    secrets: Vec<(String, Option<String>)>,
+    namespace: String,
     stop: AtomicBool,
 }
 
 impl SyncEngine {
-    /// Start syncing `names` from `source` into `vault`. Runs an immediate bootstrap pass when
-    /// `bootstrap` is set, then refreshes every `interval_secs` (0 disables the background thread).
+    /// Start syncing `secrets` from `source` into `vault` under `namespace`. Runs an immediate
+    /// bootstrap pass when `bootstrap` is set, then refreshes every `interval_secs` (0 disables the
+    /// background thread).
     pub fn start(
         vault: Arc<Mutex<LocalVault>>,
         source: Arc<dyn CentralVaultSource>,
-        names: Vec<String>,
+        namespace: String,
+        secrets: Vec<(String, Option<String>)>,
         interval_secs: u64,
         bootstrap: bool,
     ) -> Self {
-        let inner = Arc::new(SyncInner { vault, source, names, stop: AtomicBool::new(false) });
+        let inner = Arc::new(SyncInner { vault, source, secrets, namespace, stop: AtomicBool::new(false) });
         if bootstrap {
             inner.sync_once();
         }
@@ -76,9 +82,22 @@ impl SyncEngine {
 }
 
 impl SyncInner {
+    /// The namespaced local key for a caller-facing name.
+    fn local_key(&self, name: &str) -> String {
+        if self.namespace.is_empty() {
+            name.to_string()
+        } else {
+            format!("{}/{}", self.namespace, name)
+        }
+    }
+
     fn sync_once(&self) {
-        for name in &self.names {
-            match self.source.fetch(name) {
+        for (name, from) in &self.secrets {
+            let local_key = self.local_key(name);
+            // Central id defaults to the namespaced path (per-device); `from` overrides it to a
+            // shared/fleet secret id.
+            let central_id = from.clone().unwrap_or_else(|| local_key.clone());
+            match self.source.fetch(&central_id) {
                 Ok(Some(cs)) => {
                     let mut v = match self.vault.lock() {
                         Ok(g) => g,
@@ -86,7 +105,7 @@ impl SyncInner {
                     };
                     let _ = v.reload_if_changed();
                     // Skip if the latest local version already reflects this upstream version.
-                    if v.latest_central_version_id(name).as_deref() == Some(cs.central_version_id.as_str()) {
+                    if v.latest_central_version_id(&local_key).as_deref() == Some(cs.central_version_id.as_str()) {
                         continue;
                     }
                     let opts = PutOptions {
@@ -95,18 +114,18 @@ impl SyncInner {
                         labels: cs.labels,
                         ..PutOptions::default()
                     };
-                    if let Err(e) = v.put(name, &cs.bytes, opts) {
-                        tracing::warn!(secret = %name, error = %e, "failed to write synced secret");
+                    if let Err(e) = v.put(&local_key, &cs.bytes, opts) {
+                        tracing::warn!(secret = %local_key, error = %e, "failed to write synced secret");
                     } else {
-                        tracing::info!(secret = %name, "secret synced from central");
+                        tracing::info!(secret = %local_key, central_id = %central_id, "secret synced from central");
                     }
                 }
                 Ok(None) => {
-                    tracing::debug!(secret = %name, "not present in central source; keeping local");
+                    tracing::debug!(central_id = %central_id, "not present in central source; keeping local");
                 }
                 Err(e) => {
                     // Offline-first: keep the cached value, surface the staleness.
-                    tracing::warn!(secret = %name, error = %e, "central fetch failed; using cached value");
+                    tracing::warn!(central_id = %central_id, error = %e, "central fetch failed; using cached value");
                 }
             }
         }

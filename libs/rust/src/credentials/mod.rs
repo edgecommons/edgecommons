@@ -44,7 +44,7 @@ pub mod sync;
 pub mod vault;
 
 pub use central::{CentralSecret, CentralVaultSource};
-pub use config::{open, CentralConfig, CredentialsConfig, KeyProviderConfig, VaultConfig};
+pub use config::{open, open_namespaced, CentralConfig, CredentialsConfig, KeyProviderConfig, SyncEntry, SyncSelect, VaultConfig};
 pub use keyprovider::{FileKeyProvider, KeyProvider};
 pub use service::{CredentialService, DefaultCredentialService, Secret, SecretMeta};
 pub use sync::SyncEngine;
@@ -92,6 +92,35 @@ mod tests {
         assert_eq!(c.get("k").unwrap().unwrap().as_str().unwrap(), "v3");
         assert_eq!(c.get_version("k", "00000002").unwrap().unwrap().as_str().unwrap(), "v2");
         assert!(c.get_version("k", "00000001").unwrap().is_none());
+    }
+
+    #[test]
+    fn namespacing_isolates_components_in_a_shared_vault() {
+        use std::sync::Mutex;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vault");
+        let kek = [5u8; 32];
+        let open = || {
+            let p = Arc::new(FileKeyProvider::from_bytes(kek)) as Arc<dyn KeyProvider>;
+            Arc::new(Mutex::new(LocalVault::open(&path, p, 2).unwrap()))
+        };
+        // Two components, one shared device vault, transparent namespaces.
+        let comp1 = DefaultCredentialService::with_sync(open(), None, "thing-1/CompA".to_string());
+        let comp2 = DefaultCredentialService::with_sync(open(), None, "thing-1/CompB".to_string());
+
+        comp1.put("db/password", b"a-secret", PutOptions::default()).unwrap();
+        comp2.put("db/password", b"b-secret", PutOptions::default()).unwrap();
+
+        // Same caller-facing key, no collision: each sees only its own value.
+        assert_eq!(comp1.get_string("db/password").unwrap().unwrap(), "a-secret");
+        assert_eq!(comp2.get_string("db/password").unwrap().unwrap(), "b-secret");
+        // list() is scoped to the component's namespace and returns the relative name.
+        assert_eq!(comp1.list("").unwrap().iter().map(|m| m.name.clone()).collect::<Vec<_>>(), vec!["db/password"]);
+
+        // On disk both are present under distinct namespaced keys.
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(raw.contains("thing-1/CompA/db/password"));
+        assert!(raw.contains("thing-1/CompB/db/password"));
     }
 
     #[test]
