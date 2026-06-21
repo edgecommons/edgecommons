@@ -19,6 +19,7 @@
 import {
   Config,
   ConfigurationChangeListener,
+  CredentialService,
   GGCommons,
   IMessagingService,
   MessageBuilder,
@@ -31,6 +32,10 @@ import {
 
 /** Default publish interval (seconds) when `component.global.publish_interval` is absent. */
 const DEFAULT_PUBLISH_INTERVAL_SECS = 3;
+/** Config key (under `component.global`) naming the secret the component reads. */
+const DEMO_SECRET_KEY = "demo_secret";
+/** Default secret name when `component.global.demo_secret` is absent. */
+const DEFAULT_DEMO_SECRET = "skeleton/demo-secret";
 /** Subscription queue depth for the request topic. */
 const REQUEST_QUEUE_SIZE = 16;
 /** Handler concurrency for the request topic (`1` = serial, ordered). */
@@ -64,6 +69,12 @@ export class SkeletonApp {
   private publishInterval: number;
   /** Durable `telemetry` stream handle, or `undefined` if the config has no `streaming` section. */
   private readonly stream?: StreamHandle;
+  /**
+   * The credential service, or `undefined` if the config has no `credentials` section.
+   * Demonstrates encrypted-vault secret access (and, with a `central` config, sync from
+   * AWS Secrets Manager over TES). Mirrors the Rust skeleton's `credentials` field.
+   */
+  private readonly credentials?: CredentialService;
 
   private requestTopic?: string;
   private cmdTopic?: string;
@@ -115,6 +126,73 @@ export class SkeletonApp {
         logger.warn(`stream 'telemetry' unavailable; streaming disabled: ${String(e)}`);
       }
     }
+
+    // Credential service (undefined unless the config has a `credentials` section). Used by
+    // demonstrateCredentials() once at startup; mirrors the Rust skeleton's gg.credentials().
+    this.credentials = gg.credentials();
+  }
+
+  /**
+   * Demonstrate encrypted-vault secret access via `gg.credentials()`.
+   *
+   * Show the credential-service usage every real component needs: read a named secret from the
+   * encrypted local vault and use it — without ever logging the value. Runs once at startup.
+   *
+   * In production the secret arrives via central sync (AWS Secrets Manager over TES, with a
+   * `credentials.central` config) or out-of-band provisioning; here, so the example is
+   * self-contained, we seed a demo value locally on first run if it is absent.
+   *
+   * Non-fatal: any vault error is logged and swallowed so the demo never takes the component down.
+   */
+  private demonstrateCredentials(): void {
+    const creds = this.credentials;
+    if (!creds) {
+      logger.info("no `credentials` config section; secret access demo disabled");
+      return;
+    }
+
+    try {
+      // Secret name from `component.global.demo_secret`, defaulting to a self-seeded demo secret.
+      const global = this.config.global();
+      let name = DEFAULT_DEMO_SECRET;
+      if (global && typeof global === "object") {
+        const value = (global as Record<string, unknown>)[DEMO_SECRET_KEY];
+        if (typeof value === "string" && value.length > 0) {
+          name = value;
+        }
+      }
+
+      // Seed a demo secret on first run (in production this comes from central sync/provisioning).
+      if (!creds.exists(name)) {
+        const demo = Buffer.from(
+          JSON.stringify({ username: "svc-account", password: "demo-secret-value" }),
+          "utf-8",
+        );
+        const version = creds.put(name, demo);
+        logger.info(
+          `seeded demo secret (production: provided via central sync / provisioning): ${name} version=${version}`,
+        );
+      }
+
+      // Read it back and use it — logging only non-sensitive facts, never the value.
+      const s = creds.get(name);
+      if (!s) {
+        logger.warn(`secret not found after seeding (unexpected): ${name}`);
+        return;
+      }
+      logger.info(
+        `credential access OK (value redacted): ${name} bytes=${s.bytes().length} source=${s.source}`,
+      );
+
+      // A real component would now use the secret (e.g. authenticate a downstream client).
+      // Demonstrate a typed view; log only the non-secret username.
+      const ba = creds.getBasicAuth(name);
+      if (ba) {
+        logger.info(`parsed basic-auth view (password redacted): ${name} username=${ba.username}`);
+      }
+    } catch (e) {
+      logger.warn(`credential demo failed (non-fatal): ${String(e)}`);
+    }
   }
 
   /**
@@ -126,6 +204,9 @@ export class SkeletonApp {
   async run(): Promise<void> {
     this.running = true;
     const thing = this.config.thingName;
+
+    // Demonstrate encrypted-vault secret access once at startup (non-fatal).
+    this.demonstrateCredentials();
 
     const messaging = this.messaging;
     if (!messaging) {
