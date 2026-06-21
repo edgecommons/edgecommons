@@ -90,3 +90,7 @@ export type { ConfigProvider } from "./heartbeat";
 
 // Logging
 export { logger, initLogging, reconfigureLogging, LoggingReconfigurer, Logger } from "./logging";
+
+// Telemetry streaming
+export { StreamService, StreamHandle, GgStreamError, StreamMetricsBridge } from "./streaming";
+export type { StreamStats } from "./streaming";

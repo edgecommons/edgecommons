@@ -25,6 +25,7 @@ import {
   MetricBuilder,
   MetricService,
   Qos,
+  StreamHandle,
   logger,
 } from "ggcommons";
 
@@ -61,9 +62,12 @@ export class SkeletonApp {
   private readonly messaging?: IMessagingService;
   /** Live publish interval (seconds), updated by the config-change listener on reload. */
   private publishInterval: number;
+  /** Durable `telemetry` stream handle, or `undefined` if the config has no `streaming` section. */
+  private readonly stream?: StreamHandle;
 
   private requestTopic?: string;
   private cmdTopic?: string;
+  private cmdSubscribed = false;
   private publishTimer?: NodeJS.Timeout;
   private seq = 0;
   private running = false;
@@ -97,6 +101,19 @@ export class SkeletonApp {
       this.messaging = gg.messaging();
     } catch {
       this.messaging = undefined;
+    }
+
+    // Durable telemetry stream (undefined unless the config has a `streaming` section with a
+    // stream named "telemetry"). The publish loop appends each data point; the library's export
+    // engine drains it to the configured sink (Kinesis) independently.
+    const streams = gg.streams();
+    if (streams) {
+      try {
+        this.stream = streams.stream("telemetry");
+        logger.info("telemetry streaming enabled (stream 'telemetry')");
+      } catch (e) {
+        logger.warn(`stream 'telemetry' unavailable; streaming disabled: ${String(e)}`);
+      }
     }
   }
 
@@ -142,26 +159,33 @@ export class SkeletonApp {
     logger.info(`subscribed for requests on ${this.requestTopic}`);
 
     // 2. Subscribe to commands from AWS IoT Core (the IoT Core bridge); ack each one
-    //    back to IoT Core (exercises subscribeToIotCore + publishToIotCore).
-    await messaging.subscribeToIotCore(
-      this.cmdTopic,
-      async (topic, msg) => {
-        logger.info(`received IoT Core command on ${topic}`);
-        const ack = MessageBuilder.create("CmdAck", "1.0")
-          .withConfig(this.config)
-          .withPayload({ ack: msg.getBody() })
-          .build();
-        try {
-          await messaging.publishToIotCore(telemetryTopic, ack, Qos.AtLeastOnce);
-        } catch (e) {
-          logger.warn(`failed to ack IoT Core command: ${String(e)}`);
-        }
-      },
-      Qos.AtLeastOnce,
-      REQUEST_QUEUE_SIZE,
-      REQUEST_CONCURRENCY,
-    );
-    logger.info(`subscribed to IoT Core commands on ${this.cmdTopic}`);
+    //    back to IoT Core (exercises subscribeToIotCore + publishToIotCore). Non-fatal:
+    //    builds/modes without an IoT Core transport (e.g. local-only STANDALONE) skip the
+    //    bridge instead of failing the whole component.
+    try {
+      await messaging.subscribeToIotCore(
+        this.cmdTopic,
+        async (topic, msg) => {
+          logger.info(`received IoT Core command on ${topic}`);
+          const ack = MessageBuilder.create("CmdAck", "1.0")
+            .withConfig(this.config)
+            .withPayload({ ack: msg.getBody() })
+            .build();
+          try {
+            await messaging.publishToIotCore(telemetryTopic, ack, Qos.AtLeastOnce);
+          } catch (e) {
+            logger.warn(`failed to ack IoT Core command: ${String(e)}`);
+          }
+        },
+        Qos.AtLeastOnce,
+        REQUEST_QUEUE_SIZE,
+        REQUEST_CONCURRENCY,
+      );
+      this.cmdSubscribed = true;
+      logger.info(`subscribed to IoT Core commands on ${this.cmdTopic}`);
+    } catch (e) {
+      logger.warn(`IoT Core unavailable; skipping command bridge: ${String(e)}`);
+    }
 
     // 3. Start the periodic publisher. It reschedules itself each tick from the live
     //    publish interval, so a config hot-reload takes effect on the next tick.
@@ -197,6 +221,17 @@ export class SkeletonApp {
       } catch (e) {
         logger.warn(`failed to publish telemetry to IoT Core: ${String(e)}`);
       }
+      // Append the data point to the durable telemetry stream (partitioned by Thing). Append
+      // returns once committed to the local buffer; the export engine drains to the sink.
+      if (this.stream) {
+        try {
+          const thing = this.config.thingName;
+          const payload = Buffer.from(JSON.stringify({ seq: this.seq, thing }), "utf-8");
+          this.stream.append(thing, Date.now(), payload);
+        } catch (e) {
+          logger.warn(`failed to append to telemetry stream: ${String(e)}`);
+        }
+      }
       logger.info(`published data message on ${dataTopic} (seq=${this.seq})`);
       await this.metrics.emitMetric(PUBLISH_METRIC, { count: 1 });
     } catch (e) {
@@ -215,7 +250,7 @@ export class SkeletonApp {
     if (!messaging) return;
     try {
       if (this.requestTopic) await messaging.unsubscribe(this.requestTopic);
-      if (this.cmdTopic) await messaging.unsubscribeFromIotCore(this.cmdTopic);
+      if (this.cmdTopic && this.cmdSubscribed) await messaging.unsubscribeFromIotCore(this.cmdTopic);
     } catch (e) {
       logger.warn(`error while unsubscribing: ${String(e)}`);
     }
