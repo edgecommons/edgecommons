@@ -113,6 +113,15 @@ public abstract class SubscriptionHandler<T> implements Runnable, StreamResponse
                         LOGGER.trace("Invoking callback for topic '{}'", entry.topic);
                         callback.accept(entry.topic, entry.message);
                     }
+                    catch (Throwable t)
+                    {
+                        // A subscription callback must never throw out of this task: an uncaught
+                        // exception here kills the worker thread and (under crash/restart churn) can
+                        // surface in the eventstream RPC layer and destabilize nucleus IPC. Contain
+                        // and log it so one bad message can't take down the subscription or the core.
+                        LOGGER.error("Subscription callback for topic '{}' threw; suppressed: {}",
+                                entry.topic, t.toString(), t);
+                    }
                     finally
                     {
                         if (concurrencyLimit != null)

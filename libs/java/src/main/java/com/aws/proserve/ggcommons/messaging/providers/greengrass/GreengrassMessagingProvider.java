@@ -208,7 +208,11 @@ public final class GreengrassMessagingProvider extends MessagingProvider
         responseFutures.put(replyTo, future);
         subscribe(replyTo, (t, m) -> {
             ReplyFuture f = responseFutures.get(t);
-            f.complete(m);
+            // A late or duplicate reply can arrive after the future was completed + removed;
+            // guard against the NPE (f.complete on null) — it must never escape this callback.
+            if (f != null) {
+                f.complete(m);
+            }
             unsubscribe(t);
             responseFutures.remove(t);
         }, 1);
@@ -239,7 +243,10 @@ public final class GreengrassMessagingProvider extends MessagingProvider
         responseFutures.put(replyTo, future);
         subscribeToIoTCore(replyTo, (t, m) -> {
             ReplyFuture f = responseFutures.get(t);
-            f.complete(m);
+            // Guard against a late/duplicate reply after the future was completed + removed.
+            if (f != null) {
+                f.complete(m);
+            }
             unsubscribeFromIoTCore(t);
             responseFutures.remove(t);
         }, QOS.AT_MOST_ONCE, 1);

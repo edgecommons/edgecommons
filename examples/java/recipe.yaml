@@ -86,7 +86,10 @@ Manifests:
     Artifacts:
       - URI: "s3://BUCKET_NAME/COMPONENT_NAME/COMPONENT_VERSION/java-component-skeleton-1.0.0.jar"
     Lifecycle:
+      # Runs as the default Greengrass component user (ggc_user) — no elevated privilege needed:
+      # GG IPC, TES-backed CloudWatch, and the vault under the ggc_user-owned work dir all work
+      # unprivileged. (Root is a least-privilege violation; only add RequiresPrivilege if a
+      # component genuinely needs it.)
       Run:
-        RequiresPrivilege: true
         Script:
           "java -jar {artifacts:path}/java-component-skeleton-1.0.0.jar"
