@@ -6,6 +6,7 @@ Phase 1: ``file`` key provider + local vault. Phase 2: ``awsSecretsManager`` cen
 import os
 import threading
 
+from .audit import log_sink
 from .errors import CredentialError
 from .keyprovider import FileKeyProvider, KmsKeyProvider, Pkcs11KeyProvider
 from .service import DefaultCredentialService
@@ -71,10 +72,15 @@ def open_from_config(credentials_cfg: dict, namespace: str = "") -> DefaultCrede
     vault = LocalVault.open(path, provider, keep_versions)
     lock = threading.Lock()
 
+    # Access auditing on by default (config can disable) — logs op/name/version/source/outcome,
+    # never the value.
+    audit_cfg = cfg.get("audit", {}) or {}
+    audit = log_sink() if audit_cfg.get("enabled", True) else None
+
     central = cfg.get("central", {}) or {}
     ctype = central.get("type", "none")
     if ctype == "none":
-        return DefaultCredentialService(vault, namespace=namespace, lock=lock)
+        return DefaultCredentialService(vault, namespace=namespace, lock=lock, audit=audit)
     if ctype != "awsSecretsManager":
         raise CredentialError(f"central source '{ctype}' is not supported")
 
@@ -88,4 +94,4 @@ def open_from_config(credentials_cfg: dict, namespace: str = "") -> DefaultCrede
         int(central.get("refreshIntervalSecs", 300)),
         bool(central.get("bootstrapOnStart", True)),
     )
-    return DefaultCredentialService(vault, namespace=namespace, sync=engine, lock=lock)
+    return DefaultCredentialService(vault, namespace=namespace, sync=engine, lock=lock, audit=audit)

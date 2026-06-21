@@ -12,6 +12,7 @@ Example::
     creds.put("db/password", b"s3cr3t")
     pw = creds.get_string("db/password")
 """
+from .audit import AuditEvent, AuditSink, LogAuditSink
 from .bridge import CredentialMetricsBridge
 from .central import AwsSecretsManagerSource, CentralSecret, CentralVaultSource
 from .config import open_from_config
@@ -46,4 +47,7 @@ __all__ = [
     "BasicAuth",
     "TlsBundle",
     "KafkaSasl",
+    "AuditEvent",
+    "AuditSink",
+    "LogAuditSink",
 ]

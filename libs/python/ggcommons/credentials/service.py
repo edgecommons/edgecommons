@@ -151,11 +151,26 @@ class DefaultCredentialService(CredentialService):
     stripped from returned names, so a shared device vault can't collide across components.
     """
 
-    def __init__(self, vault, namespace: str = "", sync=None, lock: Optional[threading.Lock] = None):
+    def __init__(self, vault, namespace: str = "", sync=None, lock: Optional[threading.Lock] = None,
+                 audit=None):
         self._vault = vault
         self._lock = lock if lock is not None else threading.Lock()
         self._namespace = namespace
         self._sync = sync
+        # Audit sink for access events (None = auditing off). The config path enables it
+        # (credentials.audit.enabled) with the default logging sink.
+        self._audit = audit
+
+    def with_audit(self, sink) -> "DefaultCredentialService":
+        """Attach (or clear) the audit sink — access events are emitted to it. Fluent; returns self."""
+        self._audit = sink
+        return self
+
+    def _emit_audit(self, op: str, name: str, version: str, source: str, outcome: str) -> None:
+        """Emit an audit event if an audit sink is configured (no-op otherwise)."""
+        if self._audit is not None:
+            from .audit import AuditEvent
+            self._audit.record(AuditEvent(op=op, name=name, version=version, source=source, outcome=outcome))
 
     def _full(self, name: str) -> str:
         return f"{self._namespace}/{name}" if self._namespace else name
@@ -170,6 +185,9 @@ class DefaultCredentialService(CredentialService):
             s = self._vault.get(self._full(name))
         if s is not None:
             s.name = self._rel(s.name)
+            self._emit_audit("get", name, s.version, s.source, "hit")
+        else:
+            self._emit_audit("get", name, "-", "-", "miss")
         return s
 
     def get_version(self, name: str, version: str) -> Optional[Secret]:
@@ -178,6 +196,9 @@ class DefaultCredentialService(CredentialService):
             s = self._vault.get_version(self._full(name), version)
         if s is not None:
             s.name = self._rel(s.name)
+            self._emit_audit("get", name, s.version, s.source, "hit")
+        else:
+            self._emit_audit("get", name, version, "-", "miss")
         return s
 
     def exists(self, name: str) -> bool:
@@ -199,12 +220,16 @@ class DefaultCredentialService(CredentialService):
     def put(self, name: str, value: bytes, **opts) -> str:
         with self._lock:
             self._vault.reload_if_changed()
-            return self._vault.put(self._full(name), value, **opts)
+            version = self._vault.put(self._full(name), value, **opts)
+        self._emit_audit("put", name, version, "local", "ok")
+        return version
 
     def delete(self, name: str) -> bool:
         with self._lock:
             self._vault.reload_if_changed()
-            return self._vault.delete(self._full(name))
+            deleted = self._vault.delete(self._full(name))
+        self._emit_audit("delete", name, "-", "-", "ok" if deleted else "miss")
+        return deleted
 
     def refresh(self) -> None:
         if self._sync is not None:
