@@ -16,8 +16,12 @@ def main():
 
     # Construct the framework via the fluent builder. (The pre-rearch
     # ggcommons.init(...) entry point has been replaced by GGCommonsBuilder.)
+    # Use the FULL component name (matches the recipe ComponentName + the Rust/Java/TS skeletons),
+    # so {ComponentFullName} in config templates resolves to the Greengrass-managed, ggc_user-owned
+    # work dir (/greengrass/v2/work/<full-name>). A short name resolves to a path under the
+    # root-owned /greengrass/v2/work that the component can't create (vault/stream dirs then fail).
     gg = (
-        GGCommonsBuilder.create("PythonComponentSkeleton")
+        GGCommonsBuilder.create("aws.proserve.greengrass.PythonComponentSkeleton")
         .with_args(sys.argv[1:])
         .with_app_options(arg_parser)
         .receive_own_messages(True)
