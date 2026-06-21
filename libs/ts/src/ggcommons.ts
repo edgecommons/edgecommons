@@ -26,6 +26,7 @@ import { loadMessagingConfig } from "./messaging/config";
 import { MetricEmitter } from "./metrics/service";
 import { MetricService } from "./metrics/types";
 import type { StreamMetricsBridge, StreamService } from "./streaming";
+import type { CredentialService } from "./credentials";
 
 /** Default thing name when none is supplied and not running under Greengrass. */
 const DEFAULT_THING_NAME = "NOT_GREENGRASS";
@@ -48,6 +49,7 @@ export class GGCommons {
   private configWatch?: ConfigWatch;
   private streamsService?: StreamService;
   private streamMetrics?: StreamMetricsBridge;
+  private credentialsService?: CredentialService;
 
   /** @internal Attach the config-watch handle after construction. */
   _setWatch(watch: ConfigWatch | undefined): void {
@@ -67,6 +69,19 @@ export class GGCommons {
    */
   streams(): StreamService | undefined {
     return this.streamsService;
+  }
+
+  /** @internal Attach the credential service after construction. */
+  _setCredentials(service: CredentialService | undefined): void {
+    this.credentialsService = service;
+  }
+
+  /**
+   * The credential service, or `undefined` if the component config has no `credentials` section.
+   * Mirrors the Rust `gg.credentials()` / Java/Python `getCredentials()`/`get_credentials()`.
+   */
+  credentials(): CredentialService | undefined {
+    return this.credentialsService;
   }
 
   /** The component's full name. */
@@ -241,6 +256,16 @@ export class GGCommonsBuilder {
         : undefined;
       runtime._setStreaming(svc, bridge);
       logger.info(`Telemetry streaming initialized with ${names.length} stream(s)`);
+    }
+
+    // Credentials / local vault (only when a `credentials` config section is present). Loaded
+    // dynamically so components that don't use it pay nothing.
+    const credentialsRaw = current.raw["credentials"];
+    if (credentialsRaw && typeof credentialsRaw === "object") {
+      const credentials = await import("./credentials");
+      const resolved = JSON.parse(resolve(current, JSON.stringify(credentialsRaw)));
+      runtime._setCredentials(credentials.openFromConfig(resolved));
+      logger.info("Credentials vault initialized");
     }
 
     // Attach the watch only after the runtime exists, so a reload that fires during

@@ -58,6 +58,12 @@ async fn standalone_runtime_exposes_all_services_and_accessors() {
                 "buffer": { "path": dir.join("stream-{ThingName}").to_string_lossy(),
                             "segmentBytes": 65536, "maxDiskBytes": 1048576, "onFull": "block" }
             } ] },
+            // Credentials section: a file-key-provider local vault, exercised below only when the
+            // `credentials` feature is built. The vault path uses a {ThingName} template.
+            "credentials": { "vault": {
+                "path": dir.join("vault-{ThingName}").to_string_lossy(),
+                "keyProvider": { "type": "file" }
+            } },
             "component": { "global": { "publish_interval": 2 } }
         })
         .to_string(),
@@ -124,6 +130,19 @@ async fn standalone_runtime_exposes_all_services_and_accessors() {
         assert_eq!(s.next_offset, 5);
         // {ThingName} in the buffer path was resolved during build().
         assert!(dir.join("stream-lib-thing").is_dir(), "buffer path template resolved");
+    }
+
+    // Credentials are wired into build() under the `credentials` feature: gg.credentials() is the
+    // local vault opened from the config's `credentials` section (path templates resolved).
+    #[cfg(feature = "credentials")]
+    {
+        let creds = gg.credentials().expect("credentials configured");
+        creds
+            .put("db/password", b"s3cr3t", ggcommons::credentials::PutOptions::default())
+            .unwrap();
+        assert_eq!(creds.get_string("db/password").unwrap().unwrap(), "s3cr3t");
+        // {ThingName} in the vault path was resolved during build().
+        assert!(dir.join("vault-lib-thing").exists(), "vault path template resolved");
     }
 
     // Listener add/remove (identity-based remove).

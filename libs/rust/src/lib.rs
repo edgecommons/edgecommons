@@ -76,6 +76,10 @@ pub struct GgCommons {
     /// Owns the streaming stats→metrics task; dropping `GgCommons` stops it (RAII).
     #[cfg(feature = "streaming")]
     _stream_metrics: Option<streaming::StreamMetricsBridge>,
+    /// Credential service (the `credentials` feature). `None` when the component config has no
+    /// `credentials` section.
+    #[cfg(feature = "credentials")]
+    credentials: Option<Arc<dyn credentials::CredentialService>>,
     /// Config-change listeners notified on hot reload.
     listeners: ConfigListeners,
     /// Owns the heartbeat task; dropping `GgCommons` stops it (RAII).
@@ -148,6 +152,14 @@ impl GgCommons {
     #[cfg(feature = "streaming")]
     pub fn streams(&self) -> Arc<dyn streaming::StreamService> {
         self.streams.clone()
+    }
+
+    /// The credential service for this component (the `credentials` feature), or `None` when the
+    /// config has no `credentials` section. Mirrors Java/TS `getCredentials()` / Python
+    /// `get_credentials()`.
+    #[cfg(feature = "credentials")]
+    pub fn credentials(&self) -> Option<Arc<dyn credentials::CredentialService>> {
+        self.credentials.clone()
     }
 
     /// Register a listener invoked after the configuration is hot-reloaded.
@@ -277,6 +289,23 @@ impl GgCommonsBuilder {
             (svc, bridge)
         };
 
+        // Credentials / local vault (feature-gated): open the shared vault when the config has a
+        // `credentials` section, resolving path templates ({ThingName}/{ComponentFullName}) first.
+        // `None` when no section is present.
+        #[cfg(feature = "credentials")]
+        let credentials: Option<Arc<dyn credentials::CredentialService>> =
+            match snapshot.raw.get("credentials") {
+                None => None,
+                Some(value) => {
+                    let mut cfg: credentials::CredentialsConfig = serde_json::from_value(value.clone())?;
+                    cfg.vault.path = config::template::resolve(&snapshot, &cfg.vault.path);
+                    if let Some(kp) = cfg.vault.key_provider.key_path.as_mut() {
+                        *kp = config::template::resolve(&snapshot, kp);
+                    }
+                    Some(Arc::new(credentials::open(&cfg)?) as Arc<dyn credentials::CredentialService>)
+                }
+            };
+
         // Internal listeners reconfigure the metric target and logging on hot reload.
         let listeners: ConfigListeners = Arc::new(std::sync::Mutex::new(Vec::new()));
         if let Ok(mut l) = listeners.lock() {
@@ -304,6 +333,8 @@ impl GgCommonsBuilder {
             streams,
             #[cfg(feature = "streaming")]
             _stream_metrics: stream_metrics,
+            #[cfg(feature = "credentials")]
+            credentials,
             listeners,
             _heartbeat: heartbeat,
             _reload_task: reload_task,

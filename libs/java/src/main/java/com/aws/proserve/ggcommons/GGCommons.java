@@ -14,6 +14,9 @@ import com.aws.proserve.ggcommons.metrics.MetricEmitter;
 import com.aws.proserve.ggcommons.metrics.MetricEmitterBuilder;
 import com.aws.proserve.ggcommons.streaming.StreamMetricsBridge;
 import com.aws.proserve.ggcommons.streaming.StreamService;
+import com.aws.proserve.ggcommons.credentials.CredentialService;
+import com.aws.proserve.ggcommons.credentials.Credentials;
+import com.google.gson.JsonParser;
 import com.google.gson.JsonObject;
 import org.apache.commons.cli.*;
 import org.apache.logging.log4j.LogManager;
@@ -32,6 +35,7 @@ public class GGCommons
     protected Heartbeat heartbeat;
     /** Telemetry streaming (the native ggstreamlog binding). Null when no {@code streaming} config. */
     protected StreamService streams;
+    protected CredentialService credentials;
     protected StreamMetricsBridge streamMetricsBridge;
 
     /**
@@ -119,6 +123,7 @@ public class GGCommons
             // Telemetry streaming: only when a `streaming` config section is present (so components
             // that don't use it never load the native library).
             initStreaming();
+            initCredentials();
 
             // Complete initialization - this must be the very last step
             // After this point, configuration changes will trigger listener notifications
@@ -191,6 +196,35 @@ public class GGCommons
             streamMetricsBridge = new StreamMetricsBridge(configManager, metricEmitter, streams, names);
         }
         LOGGER.info("Telemetry streaming initialized with {} stream(s)", names.size());
+    }
+
+    /**
+     * Returns the credential service for this component, or {@code null} if the component
+     * configuration has no {@code credentials} section. Mirrors Rust {@code gg.credentials()} /
+     * Python {@code get_credentials()}.
+     *
+     * @return the {@link CredentialService}, or {@code null} if credentials are not configured
+     */
+    public CredentialService getCredentials()
+    {
+        return credentials;
+    }
+
+    /**
+     * Opens the local vault from the {@code credentials} config section (if any), resolving path
+     * templates. No-op when the section is absent.
+     */
+    private void initCredentials()
+    {
+        JsonObject full = configManager.getFullConfig();
+        if (full == null || !full.has("credentials") || !full.get("credentials").isJsonObject())
+        {
+            return;
+        }
+        // Resolve {ThingName}/{ComponentFullName} in the vault path(s) before opening.
+        String credentialsJson = configManager.resolveTemplate(full.getAsJsonObject("credentials").toString());
+        credentials = Credentials.open(JsonParser.parseString(credentialsJson).getAsJsonObject());
+        LOGGER.info("Credentials vault initialized");
     }
 
     /**

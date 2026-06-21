@@ -43,6 +43,7 @@ class ConfigManager:
         self._component_config = None
         self._logging_config = None
         self._streaming_config = None
+        self._credentials_config = None
         self._global_config = {}
         self._instances = {}
         self._change_listeners = []
@@ -103,6 +104,8 @@ class ConfigManager:
         # ggstreamlog core owns the streaming schema). Kept so get_full_config() exposes it to
         # GGCommons._init_streaming(); without this the section is dropped and streaming never opens.
         self._streaming_config = config.get("streaming")
+        # Likewise retain the raw `credentials` section so GGCommons._init_credentials() can find it.
+        self._credentials_config = config.get("credentials")
 
     def _gen_instances_map(self):
         # Rebuild from scratch so a hot reload that removes an instance does not
@@ -264,6 +267,8 @@ class ConfigManager:
         # Surface the raw streaming section (if any) so GGCommons._init_streaming() can find it.
         if self._streaming_config is not None:
             full['streaming'] = self._streaming_config
+        if self._credentials_config is not None:
+            full['credentials'] = self._credentials_config
         return full
         
     def is_validation_enabled(self) -> bool:

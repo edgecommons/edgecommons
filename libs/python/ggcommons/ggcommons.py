@@ -64,6 +64,7 @@ class GGCommons:
         self._heartbeat = None
         self._streams = None
         self._stream_metrics = None
+        self._credentials = None
 
         try:
             # Process command line arguments
@@ -86,6 +87,9 @@ class GGCommons:
             # Telemetry streaming (only when a `streaming` config section is present, so components
             # that don't use it never load the native library).
             self._init_streaming()
+
+            # Credentials / local vault (only when a `credentials` config section is present).
+            self._init_credentials()
 
             # Complete initialization
             if hasattr(self._config_manager, 'complete_initialization'):
@@ -247,6 +251,30 @@ class GGCommons:
         records. Mirrors Java's getStreams() / Rust's gg.streams().
         """
         return self._streams
+
+    def _init_credentials(self) -> None:
+        """Open the local vault from the ``credentials`` config section (if any), resolving path
+        templates. No-op when the section is absent."""
+        import json as _json
+
+        full_config = self._config_manager.get_full_config()
+        credentials = full_config.get("credentials") if isinstance(full_config, dict) else None
+        if not isinstance(credentials, dict):
+            return
+
+        from ggcommons.credentials import open_from_config
+
+        # Resolve {ThingName}/{ComponentFullName} in the vault path(s) before opening.
+        resolved = _json.loads(self._config_manager.resolve_template(_json.dumps(credentials)))
+        self._credentials = open_from_config(resolved)
+        logger.info("Credentials vault initialized")
+
+    def get_credentials(self):
+        """
+        Get the credential service, or ``None`` if the component config has no ``credentials``
+        section. Mirrors Java/TS getCredentials() / Rust's gg.credentials().
+        """
+        return self._credentials
 
     def __enter__(self) -> "GGCommons":
         """Support `with GGCommonsBuilder...build() as gg:` so callers get
