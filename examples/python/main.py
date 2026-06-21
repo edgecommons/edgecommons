@@ -24,7 +24,10 @@ def main():
         .build()
     )
     config_manager = gg.get_config_manager()
-    app = GreengrassApp(config_manager=config_manager)
+    # Telemetry streaming service (None unless the config has a `streaming` section); the app
+    # appends durable records to it and the library's export engine drains them to the sink.
+    streams = gg.get_streams()
+    app = GreengrassApp(config_manager=config_manager, streams=streams)
     try:
         app.run()
     finally:

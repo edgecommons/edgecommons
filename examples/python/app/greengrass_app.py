@@ -1,3 +1,4 @@
+import json
 import logging
 import time
 from abc import ABC
@@ -26,7 +27,7 @@ logger = logging.getLogger("GreengrassApp")
 
 
 class GreengrassApp(ConfigurationChangeListener, ABC):
-    def __init__(self, config_manager: ConfigManager):
+    def __init__(self, config_manager: ConfigManager, streams=None):
         super().__init__()
         self._config_manager = config_manager
         self._config_manager.add_config_change_listener(self)
@@ -36,6 +37,16 @@ class GreengrassApp(ConfigurationChangeListener, ABC):
             if "publish_interval" in global_config
             else 5
         )
+        # Durable telemetry stream handle (None unless the config has a `streaming` section and
+        # a stream named "telemetry"). The publish loop appends each message here; the library's
+        # export engine drains it to the configured sink (Kinesis) independently.
+        self._stream = None
+        if streams is not None:
+            try:
+                self._stream = streams.stream("telemetry")
+                logger.info("Telemetry streaming enabled (stream 'telemetry')")
+            except Exception as e:
+                logger.warning(f"stream 'telemetry' unavailable; streaming disabled: {e}")
         self.define_metric()
 
     def ipc_hello_world_handler(self, topic: str, msg: Message):
@@ -110,11 +121,16 @@ class GreengrassApp(ConfigurationChangeListener, ABC):
             MessagingClient.subscribe(
                 "ggcommons/test/python/hello_world", self.ipc_hello_world_handler, True
             )
-            MessagingClient.subscribe_to_iot_core(
-                "ggcommons/test/python/hello_world",
-                self.iot_core_hello_world_handler,
-                QOS.AT_LEAST_ONCE,
-            )
+            # Non-fatal: builds/modes without an IoT Core transport (e.g. local-only STANDALONE)
+            # skip the IoT Core bridge instead of failing the whole component.
+            try:
+                MessagingClient.subscribe_to_iot_core(
+                    "ggcommons/test/python/hello_world",
+                    self.iot_core_hello_world_handler,
+                    QOS.AT_LEAST_ONCE,
+                )
+            except Exception as e:
+                logger.warning(f"IoT Core unavailable; skipping IoT Core subscribe: {e}")
             MessagingClient.subscribe(
                 "ggcommons/test/python/request", self.request_callback
             )
@@ -139,9 +155,20 @@ class GreengrassApp(ConfigurationChangeListener, ABC):
                     "ggcommons/test/python/hello_world", test_message
                 )
                 logger.info(f"Publishing message {i} to iot core")
-                MessagingClient.publish_to_iot_core(
-                    "ggcommons/test/python/hello_world", test_message, QOS.AT_LEAST_ONCE
-                )
+                try:
+                    MessagingClient.publish_to_iot_core(
+                        "ggcommons/test/python/hello_world", test_message, QOS.AT_LEAST_ONCE
+                    )
+                except Exception as e:
+                    logger.warning(f"failed to publish to IoT Core: {e}")
+                # Append the data point to the durable telemetry stream (partitioned by Thing).
+                if self._stream is not None:
+                    thing = self._config_manager.get_thing_name()
+                    payload = json.dumps({"msg_id": i, "thing": thing}).encode("utf-8")
+                    try:
+                        self._stream.append(thing, int(time.time() * 1000), payload)
+                    except Exception as e:
+                        logger.warning(f"failed to append to telemetry stream: {e}")
                 measure_values["replyLatency"] = random() * 100
                 MetricEmitter.emit_metric("performance", measure_values)
 
