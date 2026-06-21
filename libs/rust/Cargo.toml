@@ -25,6 +25,12 @@ cloudwatch = ["dep:aws-config", "dep:aws-sdk-cloudwatch"]
 streaming = ["dep:ggstreamlog"]
 streaming-kinesis = ["streaming", "ggstreamlog/kinesis"]
 streaming-kafka = ["streaming", "ggstreamlog/kafka"]
+# Credentials / local vault: encrypted-at-rest secret store + FileKeyProvider (pure-Rust crypto,
+# builds everywhere). The AWS Secrets Manager central source is a later, separately-gated add.
+credentials = [
+    "dep:aes-gcm", "dep:hmac", "dep:sha2", "dep:hkdf",
+    "dep:zeroize", "dep:getrandom", "dep:base64", "dep:fs4",
+]
 
 [dependencies]
 thiserror = "2"
@@ -53,6 +59,19 @@ aws-sdk-cloudwatch = { version = "1", optional = true }
 # Telemetry-streaming core (feature = "streaming"); the Kinesis sink adds the AWS SDK
 # (feature = "streaming-kinesis"). Pure-Rust core builds everywhere.
 ggstreamlog = { path = "../rust-streamlog", optional = true }
+
+# Credentials / local vault (feature = "credentials"). Universal, cross-language-portable
+# primitives (AES-256-GCM, HMAC-SHA256, HKDF-SHA256) so the on-disk vault format is identical
+# across the Java/Python/TS ports; zeroize wipes key material; fs4 is the cross-platform
+# advisory file lock for the shared device vault's single-writer model.
+aes-gcm = { version = "0.10", optional = true }
+hmac = { version = "0.12", optional = true }
+sha2 = { version = "0.10", optional = true }
+hkdf = { version = "0.12", optional = true }
+zeroize = { version = "1", optional = true }
+getrandom = { version = "0.2", optional = true }
+base64 = { version = "0.22", optional = true }
+fs4 = { version = "0.13", optional = true, features = ["sync"] }
 
 # GREENGRASS-only. Native AWS Greengrass IPC SDK (lib name `gg_sdk`).
 # Linux-only C-FFI crate (bindgen + cc); only built when the `greengrass` feature is

@@ -37,6 +37,8 @@ pub mod ipc;
 pub mod logging;
 pub mod messaging;
 pub mod metrics;
+#[cfg(feature = "credentials")]
+pub mod credentials;
 #[cfg(feature = "streaming")]
 pub mod streaming;
 

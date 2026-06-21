@@ -1,0 +1,37 @@
+{
+  "format": 1,
+  "vaultId": "00000000-0000-4000-8000-000000000001",
+  "kek": {
+    "provider": "file",
+    "alg": "AES-256-GCM",
+    "wrapNonce": "oKGio6Slpqeoqaqr",
+    "wrappedDek": "plk+bgGORPgqLM2YSzeOkSD9C0PG4hQ7xFd83SP2K14LigoLIHz/qr0Q+el+YrQf"
+  },
+  "secrets": {
+    "alpha": {
+      "versions": [
+        {
+          "version": "00000001",
+          "createdMs": 1700000000000,
+          "source": "local",
+          "contentType": "application/octet-stream",
+          "nonce": "sLGys7S1tre4ubq7",
+          "ciphertext": "a2Xs6a5pHlBhj2eIvZgP58yVHUvX"
+        }
+      ]
+    },
+    "beta": {
+      "versions": [
+        {
+          "version": "00000001",
+          "createdMs": 1700000000000,
+          "source": "local",
+          "contentType": "application/octet-stream",
+          "nonce": "wMHCw8TFxsfIycrL",
+          "ciphertext": "JGZI7ECrQD/4R7LG1A3kwcVk2BdvEU8="
+        }
+      ]
+    }
+  },
+  "mac": "OcQBCWbZpaiO/oh5eBQFyVpMGZfMHOBVsc/1Kebr7DY="
+}

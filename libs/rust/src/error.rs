@@ -71,6 +71,10 @@ pub enum GgError {
     #[error("streaming error: {0}")]
     Streaming(String),
 
+    /// Credentials / local vault error (the `credentials` feature).
+    #[error("credentials error: {0}")]
+    Credentials(String),
+
     /// Underlying I/O error.
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
