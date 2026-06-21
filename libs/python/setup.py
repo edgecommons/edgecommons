@@ -29,6 +29,9 @@ REQUIRED = [
     "watchdog>=6.0.0",
     "boto3>=1.43.0",
     "jsonschema>=4.0.0",
+    # Credentials / encrypted local vault subsystem (always importable, like the other subsystems).
+    "cryptography>=43.0.0",
+    "filelock>=3.12.0",
 ]
 
 # What packages are optional?
