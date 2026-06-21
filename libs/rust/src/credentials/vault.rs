@@ -159,6 +159,14 @@ impl LocalVault {
             .unwrap_or_default()
     }
 
+    /// The upstream version id of the latest version of `name` (for sync change detection).
+    pub fn latest_central_version_id(&self, name: &str) -> Option<String> {
+        self.secrets
+            .get(name)
+            .and_then(|e| e.versions.last())
+            .and_then(|v| v.central_version_id.clone())
+    }
+
     /// Write a new version of `name` and persist. Prunes to `keep_versions`.
     pub fn put(&mut self, name: &str, plaintext: &[u8], opts: PutOptions) -> Result<String> {
         let next = self.next_version(name);

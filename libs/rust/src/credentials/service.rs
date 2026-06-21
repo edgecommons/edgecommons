@@ -11,10 +11,11 @@
 //! thin accessors over [`Secret`].
 
 use std::collections::BTreeMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use zeroize::Zeroizing;
 
+use super::sync::SyncEngine;
 use super::vault::{LocalVault, PutOptions};
 use crate::error::GgError;
 use crate::Result;
@@ -87,6 +88,10 @@ pub trait CredentialService: Send + Sync {
     fn put(&self, name: &str, value: &[u8], opts: PutOptions) -> Result<String>;
     /// Remove a secret entirely.
     fn delete(&self, name: &str) -> Result<bool>;
+    /// Force an immediate pull from the central source (no-op when no central sync is configured).
+    fn refresh(&self) -> Result<()> {
+        Ok(())
+    }
 
     /// The value as bytes (convenience).
     fn get_bytes(&self, name: &str) -> Result<Option<Zeroizing<Vec<u8>>>> {
@@ -111,13 +116,25 @@ pub trait CredentialService: Send + Sync {
 /// The default [`CredentialService`]: a [`LocalVault`] behind a mutex. Each read first picks up any
 /// cross-process change (the shared device vault may be written by another component).
 pub struct DefaultCredentialService {
-    vault: Mutex<LocalVault>,
+    vault: Arc<Mutex<LocalVault>>,
+    /// Owns the central sync background thread (RAII); `None` for a standalone local vault.
+    _sync: Option<SyncEngine>,
 }
 
 impl DefaultCredentialService {
-    /// Wrap an opened [`LocalVault`].
+    /// Wrap an opened [`LocalVault`] (standalone, no central sync).
     pub fn new(vault: LocalVault) -> Self {
-        Self { vault: Mutex::new(vault) }
+        Self { vault: Arc::new(Mutex::new(vault)), _sync: None }
+    }
+
+    /// Wrap a shared vault that a [`SyncEngine`] also writes to.
+    pub fn with_sync(vault: Arc<Mutex<LocalVault>>, sync: SyncEngine) -> Self {
+        Self { vault, _sync: Some(sync) }
+    }
+
+    /// The shared vault handle (so a [`SyncEngine`] can be constructed against the same store).
+    pub fn vault_arc(&self) -> Arc<Mutex<LocalVault>> {
+        self.vault.clone()
     }
 
     fn locked(&self) -> std::sync::MutexGuard<'_, LocalVault> {
@@ -160,5 +177,11 @@ impl CredentialService for DefaultCredentialService {
         let mut v = self.locked();
         v.reload_if_changed()?;
         v.delete(name)
+    }
+    fn refresh(&self) -> Result<()> {
+        if let Some(sync) = &self._sync {
+            sync.sync_now();
+        }
+        Ok(())
     }
 }

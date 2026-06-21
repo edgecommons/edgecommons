@@ -34,17 +34,24 @@
 //! Design: `docs/CREDENTIALS.md`. Streaming sinks will consume this in phase 3 (closes that
 //! design's §7).
 
+pub mod central;
 pub mod config;
 mod crypto;
 pub mod format;
 pub mod keyprovider;
 pub mod service;
+pub mod sync;
 pub mod vault;
 
+pub use central::{CentralSecret, CentralVaultSource};
 pub use config::{open, CentralConfig, CredentialsConfig, KeyProviderConfig, VaultConfig};
 pub use keyprovider::{FileKeyProvider, KeyProvider};
 pub use service::{CredentialService, DefaultCredentialService, Secret, SecretMeta};
+pub use sync::SyncEngine;
 pub use vault::{LocalVault, PutOptions};
+
+#[cfg(feature = "credentials-aws")]
+pub use central::AwsSecretsManagerSource;
 
 #[cfg(test)]
 mod tests {
