@@ -206,10 +206,13 @@ impl SkeletonApp {
 
         // 2. Subscribe to commands from AWS IoT Core (the IoT Core bridge); ack each
         //    one back to IoT Core (exercises subscribe_to_iot_core + publish_to_iot_core).
+        //    Non-fatal: builds/modes without an IoT Core transport (e.g. local-only STANDALONE)
+        //    simply skip the command bridge instead of failing the whole component — matching the
+        //    already-non-fatal publish_to_iot_core in the publish loop.
         let acker = messaging.clone();
         let ack_thing = thing.clone();
         let ack_topic = telemetry_topic.clone();
-        messaging
+        let iot_core_subscribed = messaging
             .subscribe_to_iot_core(
                 &cmd_topic,
                 message_handler(move |topic, msg| {
@@ -231,8 +234,15 @@ impl SkeletonApp {
                 REQUEST_QUEUE_SIZE,
                 REQUEST_CONCURRENCY,
             )
-            .await?;
-        tracing::info!(topic = %cmd_topic, "subscribed to IoT Core commands");
+            .await
+            .map(|()| true)
+            .unwrap_or_else(|e| {
+                tracing::warn!(error = %e, topic = %cmd_topic, "IoT Core unavailable; skipping command bridge");
+                false
+            });
+        if iot_core_subscribed {
+            tracing::info!(topic = %cmd_topic, "subscribed to IoT Core commands");
+        }
 
         // 3. Run the periodic publisher and the periodic self-requester until shutdown.
         tokio::select! {
@@ -241,9 +251,11 @@ impl SkeletonApp {
             _ = shutdown_signal() => tracing::info!("shutdown signal received"),
         }
 
-        // 4. Clean up subscriptions before the runtime drops.
+        // 4. Clean up subscriptions before the runtime drops (only the ones established).
         messaging.unsubscribe(&request_topic).await?;
-        messaging.unsubscribe_from_iot_core(&cmd_topic).await?;
+        if iot_core_subscribed {
+            messaging.unsubscribe_from_iot_core(&cmd_topic).await?;
+        }
         Ok(())
     }
 

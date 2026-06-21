@@ -28,7 +28,9 @@ cloudwatch = ["ggcommons/cloudwatch"]
 # adds the real Kinesis sink (AWS SDK; on-device it authenticates via TES). The streaming
 # config section in recipe.yaml is inert unless one of these is built in.
 streaming = ["ggcommons/streaming"]
-streaming-kinesis = ["ggcommons/streaming-kinesis"]
+# Enable the example crate's own `streaming` cfg too (not just the library's), so the
+# app.rs streaming code is compiled in — mirrors the library's feature chaining.
+streaming-kinesis = ["streaming", "ggcommons/streaming-kinesis"]
 
 [dependencies]
 # Local path dependency on the ggcommons Rust library (sibling project in the monorepo).
