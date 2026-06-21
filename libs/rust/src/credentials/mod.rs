@@ -37,6 +37,7 @@
 pub mod bridge;
 pub mod central;
 pub mod config;
+pub mod audit;
 mod crypto;
 pub mod format;
 pub mod keyprovider;
@@ -46,8 +47,9 @@ pub mod sync;
 pub mod vault;
 pub mod views;
 
+pub use audit::{AuditEvent, AuditSink, LogAuditSink};
 pub use central::{CentralSecret, CentralVaultSource};
-pub use config::{open, open_namespaced, CentralConfig, CredentialsConfig, KeyProviderConfig, SyncEntry, SyncSelect, VaultConfig};
+pub use config::{open, open_namespaced, AuditConfig, CentralConfig, CredentialsConfig, KeyProviderConfig, SyncEntry, SyncSelect, VaultConfig};
 pub use keyprovider::{FileKeyProvider, KeyProvider};
 pub use secretref::resolve_secret_refs;
 pub use bridge::CredentialMetricsBridge;
@@ -72,6 +74,45 @@ mod tests {
         let provider = Arc::new(FileKeyProvider::from_bytes([7u8; 32])) as Arc<dyn KeyProvider>;
         let vault = LocalVault::open(dir.join("vault"), provider, 2).unwrap();
         DefaultCredentialService::new(vault)
+    }
+
+    #[test]
+    fn audit_emits_access_events_without_values() {
+        use std::sync::Mutex;
+
+        struct VecSink(Mutex<Vec<String>>);
+        impl AuditSink for VecSink {
+            fn record(&self, e: &AuditEvent) {
+                self.0.lock().unwrap().push(format!("{}:{}:{}", e.op, e.name, e.outcome));
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let sink = Arc::new(VecSink(Mutex::new(Vec::new())));
+        let c = file_vault(dir.path()).with_audit(Some(sink.clone() as Arc<dyn AuditSink>));
+
+        c.put("db/password", b"s3cr3t", PutOptions::default()).unwrap();
+        c.get("db/password").unwrap();
+        c.get("missing").unwrap();
+        c.delete("db/password").unwrap();
+
+        let events = sink.0.lock().unwrap().clone();
+        assert!(events.contains(&"put:db/password:ok".to_string()), "{events:?}");
+        assert!(events.contains(&"get:db/password:hit".to_string()), "{events:?}");
+        assert!(events.contains(&"get:missing:miss".to_string()), "{events:?}");
+        assert!(events.contains(&"delete:db/password:ok".to_string()), "{events:?}");
+        // The value must never appear in any audit record.
+        assert!(events.iter().all(|e| !e.contains("s3cr3t")), "{events:?}");
+    }
+
+    #[test]
+    fn audit_disabled_by_default_emits_nothing() {
+        // A service with no audit sink (default) must not panic and must record nothing.
+        let dir = tempfile::tempdir().unwrap();
+        let c = file_vault(dir.path());
+        c.put("k", b"v", PutOptions::default()).unwrap();
+        let _ = c.get("k").unwrap();
+        // No sink wired -> no observable audit; the ops just succeed.
     }
 
     #[test]

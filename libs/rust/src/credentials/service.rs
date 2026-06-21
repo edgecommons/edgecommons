@@ -172,17 +172,39 @@ pub struct DefaultCredentialService {
     /// Prepended to every key so a shared device vault (and a fleet's central store) can't collide
     /// across components/devices; stripped from returned names so callers see their own keys.
     namespace: String,
+    /// Audit sink for access events (`None` = auditing off). Set via [`with_audit`](Self::with_audit);
+    /// the config path enables it (`credentials.audit.enabled`) with the default logging sink.
+    audit: Option<Arc<dyn super::audit::AuditSink>>,
 }
 
 impl DefaultCredentialService {
-    /// Wrap an opened [`LocalVault`] (standalone, no central sync, no namespacing).
+    /// Wrap an opened [`LocalVault`] (standalone, no central sync, no namespacing, no audit).
     pub fn new(vault: LocalVault) -> Self {
-        Self { vault: Arc::new(Mutex::new(vault)), _sync: None, namespace: String::new() }
+        Self { vault: Arc::new(Mutex::new(vault)), _sync: None, namespace: String::new(), audit: None }
     }
 
     /// Wrap a shared vault that a [`SyncEngine`] also writes to, with the given key namespace.
     pub fn with_sync(vault: Arc<Mutex<LocalVault>>, sync: Option<SyncEngine>, namespace: String) -> Self {
-        Self { vault, _sync: sync, namespace }
+        Self { vault, _sync: sync, namespace, audit: None }
+    }
+
+    /// Attach (or clear) the audit sink — access events are emitted to it. Fluent; returns `self`.
+    pub fn with_audit(mut self, sink: Option<Arc<dyn super::audit::AuditSink>>) -> Self {
+        self.audit = sink;
+        self
+    }
+
+    /// Emit an audit event if an audit sink is configured (no-op otherwise).
+    fn audit_event(&self, op: &'static str, name: &str, version: &str, source: &str, outcome: &'static str) {
+        if let Some(sink) = &self.audit {
+            sink.record(&super::audit::AuditEvent {
+                op,
+                name: name.to_string(),
+                version: version.to_string(),
+                source: source.to_string(),
+                outcome,
+            });
+        }
     }
 
     /// The shared vault handle (so a [`SyncEngine`] can be constructed against the same store).
@@ -215,20 +237,35 @@ impl DefaultCredentialService {
 
 impl CredentialService for DefaultCredentialService {
     fn get(&self, name: &str) -> Result<Option<Secret>> {
-        let mut v = self.locked();
-        v.reload_if_changed()?;
-        Ok(v.get(&self.full(name))?.map(|mut s| {
-            s.name = self.rel(&s.name);
-            s
-        }))
+        // Scope the vault lock so it's released before the audit sink is called.
+        let result = {
+            let mut v = self.locked();
+            v.reload_if_changed()?;
+            v.get(&self.full(name))?.map(|mut s| {
+                s.name = self.rel(&s.name);
+                s
+            })
+        };
+        match &result {
+            Some(s) => self.audit_event("get", name, &s.version, &s.source, "hit"),
+            None => self.audit_event("get", name, "-", "-", "miss"),
+        }
+        Ok(result)
     }
     fn get_version(&self, name: &str, version: &str) -> Result<Option<Secret>> {
-        let mut v = self.locked();
-        v.reload_if_changed()?;
-        Ok(v.get_version(&self.full(name), version)?.map(|mut s| {
-            s.name = self.rel(&s.name);
-            s
-        }))
+        let result = {
+            let mut v = self.locked();
+            v.reload_if_changed()?;
+            v.get_version(&self.full(name), version)?.map(|mut s| {
+                s.name = self.rel(&s.name);
+                s
+            })
+        };
+        match &result {
+            Some(s) => self.audit_event("get", name, &s.version, &s.source, "hit"),
+            None => self.audit_event("get", name, version, "-", "miss"),
+        }
+        Ok(result)
     }
     fn exists(&self, name: &str) -> Result<bool> {
         let mut v = self.locked();
@@ -253,14 +290,22 @@ impl CredentialService for DefaultCredentialService {
         Ok(v.versions(&self.full(name)))
     }
     fn put(&self, name: &str, value: &[u8], opts: PutOptions) -> Result<String> {
-        let mut v = self.locked();
-        v.reload_if_changed()?;
-        v.put(&self.full(name), value, opts)
+        let version = {
+            let mut v = self.locked();
+            v.reload_if_changed()?;
+            v.put(&self.full(name), value, opts)?
+        };
+        self.audit_event("put", name, &version, "local", "ok");
+        Ok(version)
     }
     fn delete(&self, name: &str) -> Result<bool> {
-        let mut v = self.locked();
-        v.reload_if_changed()?;
-        v.delete(&self.full(name))
+        let deleted = {
+            let mut v = self.locked();
+            v.reload_if_changed()?;
+            v.delete(&self.full(name))?
+        };
+        self.audit_event("delete", name, "-", "-", if deleted { "ok" } else { "miss" });
+        Ok(deleted)
     }
     fn refresh(&self) -> Result<()> {
         if let Some(sync) = &self._sync {

@@ -39,6 +39,22 @@ fn lenient_usize<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<usize, 
 pub struct CredentialsConfig {
     pub vault: VaultConfig,
     pub central: CentralConfig,
+    pub audit: AuditConfig,
+}
+
+/// Credential access-audit settings.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AuditConfig {
+    /// Emit access events (op/name/version/source/outcome, never the value) to the audit log.
+    /// On by default — a secrets subsystem should record access; set `false` to silence it.
+    pub enabled: bool,
+}
+
+impl Default for AuditConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
 }
 
 /// Local vault settings.
@@ -246,14 +262,19 @@ pub fn open_namespaced(config: &CredentialsConfig, namespace: &str) -> Result<De
 
     let vault = LocalVault::open(&config.vault.path, provider, config.vault.keep_versions)?;
 
-    match config.central.kind.as_str() {
+    let service = match config.central.kind.as_str() {
         "none" => {
             let shared = std::sync::Arc::new(std::sync::Mutex::new(vault));
-            Ok(DefaultCredentialService::with_sync(shared, None, namespace.to_string()))
+            DefaultCredentialService::with_sync(shared, None, namespace.to_string())
         }
-        "awsSecretsManager" => open_central(vault, &config.central, namespace),
-        other => Err(GgError::Credentials(format!("central source '{other}' is not supported"))),
-    }
+        "awsSecretsManager" => open_central(vault, &config.central, namespace)?,
+        other => return Err(GgError::Credentials(format!("central source '{other}' is not supported"))),
+    };
+
+    // Access auditing on by default (config can disable) — logs op/name/version/source/outcome,
+    // never the value.
+    let audit = config.audit.enabled.then(super::audit::log_sink);
+    Ok(service.with_audit(audit))
 }
 
 #[cfg(feature = "credentials-aws")]
