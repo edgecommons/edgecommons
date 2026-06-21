@@ -4,6 +4,11 @@ name: release
 # Each tag prefix selects which package to build + publish. Fill in the publish
 # steps + registry credentials (Maven Central/CodeArtifact, PyPI, crates.io) for
 # your environment; this is a scaffold.
+#
+# The `streaming/v*` prefix is wired below: it builds the three native streaming
+# artifacts (PyO3 wheel, napi-rs addon, native-bundled Java jar) per platform and
+# publishes them. Publish steps run only when the matching registry secret is set,
+# so a tag push without creds still builds + uploads the artifacts to the run.
 on:
   push:
     tags:
@@ -11,9 +16,12 @@ on:
       - "python-lib/v*"
       - "rust-lib/v*"
       - "cli/v*"
+      - "streaming/v*"
 
 jobs:
+  # --- Scaffold publish for the pure-source libs (skipped for streaming/* tags) ---
   release:
+    if: ${{ !startsWith(github.ref_name, 'streaming/') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,3 +34,153 @@ jobs:
       # rust-lib   -> (cd libs/rust   && cargo publish)             # needs CARGO_REGISTRY_TOKEN
       # cli        -> (cd cli         && python -m build && twine upload dist/*)
       - run: echo "Release ${{ github.ref_name }} (artifact=${{ steps.which.outputs.artifact }}) — wire up publish steps."
+
+  # --- streaming/v*: PyO3 wheel (maturin), per platform -------------------------
+  streaming-python:
+    if: ${{ startsWith(github.ref_name, 'streaming/') }}
+    name: streaming wheel (PyO3)
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - run: pip install maturin
+      - name: Build the abi3 wheel
+        run: maturin build --release --manifest-path libs/rust-streamlog/bindings/python/Cargo.toml --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: streaming-wheel-${{ matrix.os }}
+          path: dist/*.whl
+      # Publish only when a PyPI token is configured (maturin reads MATURIN_PYPI_TOKEN).
+      - name: Publish wheel to PyPI
+        if: ${{ env.MATURIN_PYPI_TOKEN != '' }}
+        env:
+          MATURIN_PYPI_TOKEN: ${{ secrets.MATURIN_PYPI_TOKEN }}
+        run: maturin upload --skip-existing dist/*.whl
+
+  # --- streaming/v*: napi-rs addon, per platform -------------------------------
+  streaming-node:
+    if: ${{ startsWith(github.ref_name, 'streaming/') }}
+    name: streaming addon (napi-rs)
+    strategy:
+      fail-fast: false
+      # Host-native targets only. The aarch64-unknown-linux-gnu target declared in
+      # package.json needs a cross toolchain (e.g. `napi build --use-cross`) and a
+      # runner/sysroot for it — wire that in when an arm64 Linux runner is available.
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: macos-latest
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: libs/rust-streamlog/bindings/node
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: npm install
+      - name: Build the platform addon
+        run: npx napi build --platform --release --target ${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: streaming-addon-${{ matrix.target }}
+          path: libs/rust-streamlog/bindings/node/*.node
+      # Publish the per-platform npm package only when an npm token is configured.
+      - name: Publish addon to npm
+        if: ${{ env.NODE_AUTH_TOKEN != '' }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          npx napi prepublish -t npm --skip-gh-release
+          npm publish --access public
+
+  # --- streaming/v*: native-bundled Java jar -----------------------------------
+  # Build the cdylib on each platform, then assemble ONE jar carrying every
+  # platform's native under /native/<os>-<arch>/ (the FFM loader picks the right
+  # one at runtime), and deploy it.
+  streaming-java-natives:
+    if: ${{ startsWith(github.ref_name, 'streaming/') }}
+    name: streaming cdylib (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build the cdylib (cabi + kinesis)
+        run: cargo build --features cabi,kinesis --release
+        working-directory: libs/rust-streamlog
+      - name: Stage the platform native under <os>-<arch>/
+        shell: bash
+        run: |
+          set -euo pipefail
+          src=libs/rust-streamlog/target/release
+          arch=$(uname -m)
+          case "${{ runner.os }}" in
+            Linux)   os=linux;   lib=libggstreamlog.so ;;
+            Windows) os=windows; lib=ggstreamlog.dll;   arch=amd64 ;;
+            macOS)   os=mac;     lib=libggstreamlog.dylib ;;
+          esac
+          dest="native/${os}-${arch}"
+          mkdir -p "$dest"
+          cp "$src/$lib" "$dest/"
+          echo "staged $lib -> $dest/"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: streaming-native-${{ matrix.os }}
+          path: native/
+
+  streaming-java-jar:
+    if: ${{ startsWith(github.ref_name, 'streaming/') }}
+    name: streaming jar (native-bundled)
+    needs: streaming-java-natives
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+      - name: Collect every platform's native into the resources tree
+        uses: actions/download-artifact@v4
+        with:
+          pattern: streaming-native-*
+          merge-multiple: true
+          path: libs/java/src/main/resources/native
+      - name: List bundled natives
+        run: find libs/java/src/main/resources/native -type f
+      # Package the jar with all platform natives embedded. Tests are skipped here
+      # (the gated native test runs in the streaming workflow); this job produces
+      # the release artifact. Deploy only when Maven creds are configured.
+      - name: Build the native-bundled jar
+        run: mvn -B -ntp -DskipTests package
+        working-directory: libs/java
+      - uses: actions/upload-artifact@v4
+        with:
+          name: streaming-java-jar
+          path: libs/java/target/*.jar
+      - name: Deploy to Maven registry
+        if: ${{ env.MAVEN_DEPLOY_TOKEN != '' }}
+        env:
+          MAVEN_DEPLOY_TOKEN: ${{ secrets.MAVEN_DEPLOY_TOKEN }}
+        run: mvn -B -ntp -DskipTests deploy
+        working-directory: libs/java
