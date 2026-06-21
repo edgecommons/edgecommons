@@ -250,6 +250,11 @@
       "type": "object",
       "description": "Telemetry streaming configuration (durable store-and-forward). The detailed schema (streams, sinks, buffers) is owned and validated by the native ggstreamlog core; permit the section here so it is not rejected as an unknown property.",
       "additionalProperties": true
+    },
+    "credentials": {
+      "type": "object",
+      "description": "Credentials / encrypted local vault configuration (local vault + optional central sync). The detailed schema (vault, keyProvider, central) is owned and validated by the credentials subsystem; permit the section here so it is not rejected as an unknown property.",
+      "additionalProperties": true
     }
   },
   "required": ["component"],
