@@ -39,6 +39,8 @@ pub mod messaging;
 pub mod metrics;
 #[cfg(feature = "credentials")]
 pub mod credentials;
+#[cfg(feature = "parameters")]
+pub mod parameters;
 #[cfg(feature = "streaming")]
 pub mod streaming;
 
@@ -83,6 +85,10 @@ pub struct GgCommons {
     /// Owns the credential stats→metrics task; dropping `GgCommons` stops it (RAII).
     #[cfg(feature = "credentials")]
     _credential_metrics: Option<credentials::CredentialMetricsBridge>,
+    /// Parameter service (the `parameters` feature). `None` when the component config has no
+    /// `parameters` section. Owns its background refresh thread; dropping `GgCommons` stops it.
+    #[cfg(feature = "parameters")]
+    parameters: Option<Arc<dyn parameters::ParameterService>>,
     /// Config-change listeners notified on hot reload.
     listeners: ConfigListeners,
     /// Owns the heartbeat task; dropping `GgCommons` stops it (RAII).
@@ -163,6 +169,14 @@ impl GgCommons {
     #[cfg(feature = "credentials")]
     pub fn credentials(&self) -> Option<Arc<dyn credentials::CredentialService>> {
         self.credentials.clone()
+    }
+
+    /// The parameter service for this component (the `parameters` feature), or `None` when the
+    /// config has no `parameters` section. Offline-first reads of externalized config from the
+    /// configured source (SSM, mounted dir, env, …). Sibling to [`Self::credentials`].
+    #[cfg(feature = "parameters")]
+    pub fn parameters(&self) -> Option<Arc<dyn parameters::ParameterService>> {
+        self.parameters.clone()
     }
 
     /// Register a listener invoked after the configuration is hot-reloaded.
@@ -310,6 +324,23 @@ impl GgCommonsBuilder {
             (creds, bridge)
         };
 
+        // Parameters (feature-gated): open the parameter service when the config has a `parameters`
+        // section. Sibling to credentials — externalized config from a pluggable source, offline-first.
+        // The persistent-cache path is templated ({ThingName}/{ComponentFullName}) like the vault.
+        #[cfg(feature = "parameters")]
+        let params: Option<Arc<dyn parameters::ParameterService>> = match snapshot.raw.get("parameters") {
+            None => None,
+            Some(value) => {
+                let mut cfg: parameters::ParametersConfig = serde_json::from_value(value.clone())?;
+                cfg.cache.path = config::template::resolve(&snapshot, &cfg.cache.path);
+                if let Some(kp) = cfg.cache.key_provider.key_path.as_mut() {
+                    *kp = config::template::resolve(&snapshot, kp);
+                }
+                let svc = parameters::open(&cfg)?;
+                Some(Arc::new(svc) as Arc<dyn parameters::ParameterService>)
+            }
+        };
+
         // Telemetry streaming (feature-gated): open/recover configured streams and bridge their
         // stats into the metric targets. Empty + no bridge when no `streaming` section exists.
         // `{"$secret": ...}` refs in the streaming config are resolved from the vault first (closes
@@ -369,6 +400,8 @@ impl GgCommonsBuilder {
             credentials,
             #[cfg(feature = "credentials")]
             _credential_metrics: credential_metrics,
+            #[cfg(feature = "parameters")]
+            parameters: params,
             listeners,
             _heartbeat: heartbeat,
             _reload_task: reload_task,

@@ -50,6 +50,7 @@ pub mod views;
 pub use audit::{AuditEvent, AuditSink, LogAuditSink};
 pub use central::{CentralSecret, CentralVaultSource};
 pub use config::{open, open_namespaced, AuditConfig, CentralConfig, CredentialsConfig, KeyProviderConfig, SyncEntry, SyncSelect, VaultConfig};
+pub(crate) use config::build_key_provider;
 pub use keyprovider::{FileKeyProvider, KeyProvider};
 pub use secretref::resolve_secret_refs;
 pub use bridge::CredentialMetricsBridge;

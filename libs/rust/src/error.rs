@@ -75,6 +75,10 @@ pub enum GgError {
     #[error("credentials error: {0}")]
     Credentials(String),
 
+    /// Parameter service error (the `parameters` feature).
+    #[error("parameters error: {0}")]
+    Parameters(String),
+
     /// Underlying I/O error.
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),

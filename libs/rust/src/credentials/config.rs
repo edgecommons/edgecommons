@@ -185,22 +185,15 @@ impl<'de> Deserialize<'de> for SyncEntry {
     }
 }
 
-/// Open a vault and build the default credential service from a parsed config (no namespacing).
-pub fn open(config: &CredentialsConfig) -> Result<DefaultCredentialService> {
-    open_namespaced(config, "")
-}
-
-/// As [`open`], but transparently namespacing every key under `namespace` (typically
-/// `<thingName>/<componentName>`) so a shared device vault / fleet central store can't collide.
-pub fn open_namespaced(config: &CredentialsConfig, namespace: &str) -> Result<DefaultCredentialService> {
-    let provider = match config.vault.key_provider.kind.as_str() {
+/// Build a KEK custodian from a [`KeyProviderConfig`] (shared by the vault and the parameter
+/// cache). `default_key_path` is used for the `file` provider when `keyPath` is absent.
+pub(crate) fn build_key_provider(
+    kp: &KeyProviderConfig,
+    default_key_path: &str,
+) -> Result<std::sync::Arc<dyn super::keyprovider::KeyProvider>> {
+    match kp.kind.as_str() {
         "file" => {
-            let key_path = config
-                .vault
-                .key_provider
-                .key_path
-                .clone()
-                .unwrap_or_else(|| format!("{}.key", config.vault.path));
+            let key_path = kp.key_path.clone().unwrap_or_else(|| default_key_path.to_string());
             if let Some(dir) = std::path::Path::new(&key_path).parent() {
                 let _ = std::fs::create_dir_all(dir);
             }
@@ -209,23 +202,19 @@ pub fn open_namespaced(config: &CredentialsConfig, namespace: &str) -> Result<De
             } else {
                 FileKeyProvider::generate_keyfile(&key_path)?
             };
-            std::sync::Arc::new(fp) as std::sync::Arc<dyn super::keyprovider::KeyProvider>
+            Ok(std::sync::Arc::new(fp))
         }
         #[cfg(feature = "credentials-aws")]
         "kms" | "greengrass" => {
-            let key_id = config.vault.key_provider.kms_key_id.clone().ok_or_else(|| {
-                GgError::Credentials("kms key provider requires keyProvider.kmsKeyId".to_string())
-            })?;
-            let kp = super::keyprovider::KmsKeyProvider::new(
-                key_id,
-                config.vault.key_provider.region.clone(),
-                config.vault.key_provider.endpoint_url.clone(),
-            )?;
-            std::sync::Arc::new(kp) as std::sync::Arc<dyn super::keyprovider::KeyProvider>
+            let key_id = kp
+                .kms_key_id
+                .clone()
+                .ok_or_else(|| GgError::Credentials("kms key provider requires keyProvider.kmsKeyId".to_string()))?;
+            let p = super::keyprovider::KmsKeyProvider::new(key_id, kp.region.clone(), kp.endpoint_url.clone())?;
+            Ok(std::sync::Arc::new(p))
         }
         #[cfg(feature = "credentials-pkcs11")]
         "pkcs11" => {
-            let kp = &config.vault.key_provider;
             let module_path = kp
                 .module_path
                 .clone()
@@ -239,9 +228,8 @@ pub fn open_namespaced(config: &CredentialsConfig, namespace: &str) -> Result<De
                 .clone()
                 .ok_or_else(|| GgError::Credentials("pkcs11 key provider requires keyProvider.keyLabel".into()))?;
             let pin = match (&kp.pin_env, &kp.pin) {
-                (Some(env), _) => std::env::var(env).map_err(|_| {
-                    GgError::Credentials(format!("pkcs11 keyProvider.pinEnv '{env}' is not set"))
-                })?,
+                (Some(env), _) => std::env::var(env)
+                    .map_err(|_| GgError::Credentials(format!("pkcs11 keyProvider.pinEnv '{env}' is not set")))?,
                 (None, Some(p)) => p.clone(),
                 (None, None) => {
                     return Err(GgError::Credentials(
@@ -249,16 +237,24 @@ pub fn open_namespaced(config: &CredentialsConfig, namespace: &str) -> Result<De
                     ))
                 }
             };
-            let provider =
-                super::keyprovider::Pkcs11KeyProvider::new(&module_path, &token_label, key_label, pin)?;
-            std::sync::Arc::new(provider) as std::sync::Arc<dyn super::keyprovider::KeyProvider>
+            let p = super::keyprovider::Pkcs11KeyProvider::new(&module_path, &token_label, key_label, pin)?;
+            Ok(std::sync::Arc::new(p))
         }
-        other => {
-            return Err(GgError::Credentials(format!(
-                "key provider '{other}' is not available (supported: 'file'; 'kms'/'greengrass' need the credentials-aws feature; 'pkcs11' needs the credentials-pkcs11 feature)"
-            )))
-        }
-    };
+        other => Err(GgError::Credentials(format!(
+            "key provider '{other}' is not available (supported: 'file'; 'kms'/'greengrass' need the credentials-aws feature; 'pkcs11' needs the credentials-pkcs11 feature)"
+        ))),
+    }
+}
+
+/// Open a vault and build the default credential service from a parsed config (no namespacing).
+pub fn open(config: &CredentialsConfig) -> Result<DefaultCredentialService> {
+    open_namespaced(config, "")
+}
+
+/// As [`open`], but transparently namespacing every key under `namespace` (typically
+/// `<thingName>/<componentName>`) so a shared device vault / fleet central store can't collide.
+pub fn open_namespaced(config: &CredentialsConfig, namespace: &str) -> Result<DefaultCredentialService> {
+    let provider = build_key_provider(&config.vault.key_provider, &format!("{}.key", config.vault.path))?;
 
     let vault = LocalVault::open(&config.vault.path, provider, config.vault.keep_versions)?;
 

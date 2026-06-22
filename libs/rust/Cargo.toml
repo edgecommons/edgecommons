@@ -37,6 +37,12 @@ credentials-aws = ["credentials", "dep:aws-config", "dep:aws-sdk-secretsmanager"
 # `cryptoki` dlopens the module at runtime (no link-time C dep), so this compiles everywhere;
 # it only needs a real PKCS#11 module present at runtime.
 credentials-pkcs11 = ["credentials", "dep:cryptoki"]
+# Parameters: pluggable parameter service (gg.parameters()) with an offline-first cache. Reuses
+# the credentials vault as the persistent encrypted cache store (same normative cross-language
+# format), so it depends on `credentials`. Built-in sources: env + mountedDir (K8s ConfigMap/
+# Secret volumes, Docker secrets) — no AWS. `parameters-aws` adds the SSM Parameter Store source.
+parameters = ["credentials"]
+parameters-aws = ["parameters", "dep:aws-config", "dep:aws-sdk-ssm"]
 
 [dependencies]
 thiserror = "2"
@@ -82,6 +88,8 @@ fs4 = { version = "0.13", optional = true, features = ["sync"] }
 # (aws-config is already an optional dep above for the cloudwatch feature).
 aws-sdk-secretsmanager = { version = "1", optional = true }
 aws-sdk-kms = { version = "1", optional = true }
+# Parameters source (feature = "parameters-aws"): AWS SSM Parameter Store via the AWS SDK.
+aws-sdk-ssm = { version = "1", optional = true }
 # PKCS#11 KEK custodian (feature = "credentials-pkcs11"). Runtime-loads the module via libloading.
 cryptoki = { version = "0.8", optional = true }
 
