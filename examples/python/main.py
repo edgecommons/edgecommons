@@ -33,6 +33,8 @@ def main():
     streams = gg.get_streams()
     # Demonstrate encrypted-vault secret access once at startup (non-fatal).
     GreengrassApp.demonstrate_credentials(gg)
+    # Demonstrate externalized-parameter access once at startup (non-fatal).
+    GreengrassApp.demonstrate_parameters(gg)
     app = GreengrassApp(config_manager=config_manager, streams=streams)
     try:
         app.run()

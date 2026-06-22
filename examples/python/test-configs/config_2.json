@@ -9,6 +9,11 @@
       "keyProvider": { "type": "file", "keyPath": "./.vault/vault.key" }
     }
   },
+  "parameters": {
+    "source": { "type": "env", "prefix": "GG_PARAM_" },
+    "refreshIntervalSecs": 300,
+    "sync": { "names": ["/skeleton/region", "/skeleton/poolSize"] }
+  },
   "component": {
     "global": {
       "publish_interval": 3

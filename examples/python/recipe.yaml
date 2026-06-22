@@ -37,6 +37,21 @@ ComponentConfiguration:
           keyProvider:
             type: "file"
             keyPath: "/greengrass/v2/work/{ComponentFullName}/vault.key"
+      # Externalized configuration parameters (read only when a `parameters` section is present;
+      # inert otherwise). The library opens the parameter service at startup; the component reads
+      # values via gg.get_parameters() from an offline-first local cache. Below uses the `env`
+      # source (no AWS): /skeleton/region maps to env var GG_PARAM_SKELETON_REGION, etc.
+      # For AWS SSM Parameter Store, set source.type: awsSsm (region, withDecryption) -- a remote
+      # source persists the cache encrypted under the component work dir so values survive offline.
+      parameters:
+        source:
+          type: "env"
+          prefix: "GG_PARAM_"
+        refreshIntervalSecs: 300
+        sync:
+          names:
+            - "/skeleton/region"
+            - "/skeleton/poolSize"
       tags:
         appId: "Test"
         site: "Chantilly"

@@ -323,3 +323,8 @@ logs/
 *.zip
 ### Do Not Ignore GG Zip File
 
+# Local credentials / runtime artifacts created by STANDALONE runs — never commit these
+.vault/
+# Per-instance local store dirs created by STANDALONE runs (e.g. <thing>-tcplocalhost1883/)
+*-tcplocalhost1883/
+

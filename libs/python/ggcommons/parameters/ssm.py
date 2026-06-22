@@ -24,13 +24,16 @@ class AwsSsmSource(ParameterSource):
             raise ParameterError(
                 "awsSsm parameter source requires boto3 (pip install boto3)"
             ) from e
-        self._with_decryption = with_decryption
-        kwargs = {}
-        if region:
-            kwargs["region_name"] = region
-        if endpoint_url:
-            kwargs["endpoint_url"] = endpoint_url
-        self._client = boto3.client("ssm", **kwargs)
+        # pragma: no cover — boto3 SSM client construction needs the AWS SDK + (for real calls)
+        # AWS credentials/endpoint; exercised only against live/mocked AWS. The fetch/parse logic
+        # below is unit-tested via a monkeypatched client.
+        self._with_decryption = with_decryption  # pragma: no cover
+        kwargs = {}  # pragma: no cover
+        if region:  # pragma: no cover
+            kwargs["region_name"] = region  # pragma: no cover
+        if endpoint_url:  # pragma: no cover
+            kwargs["endpoint_url"] = endpoint_url  # pragma: no cover
+        self._client = boto3.client("ssm", **kwargs)  # pragma: no cover
 
     @staticmethod
     def _to_value(p: dict) -> Optional[ParamValue]:

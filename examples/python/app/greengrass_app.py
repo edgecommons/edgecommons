@@ -105,6 +105,37 @@ class GreengrassApp(ConfigurationChangeListener, ABC):
         except Exception as e:
             logger.warning(f"vault error; skipping secret demo: {e}")
 
+    @staticmethod
+    def demonstrate_parameters(gg):
+        """Demonstrate externalized-parameter access via ``gg.get_parameters()``.
+
+        Reads a couple of non-secret configuration parameters from the offline-first parameter
+        cache and logs the resolved values. The example config uses the ``env`` source, so this
+        needs no AWS and no external provisioning -- the values come from environment variables
+        (e.g. ``GG_PARAM_SKELETON_REGION``). Runs once at startup. A secure parameter's value would
+        never be logged. Any parameter error is logged and swallowed (non-fatal).
+        """
+        try:
+            params = gg.get_parameters()
+            if params is None:
+                logger.info("no `parameters` config section; parameter access demo disabled")
+                return
+
+            # A plain string parameter.
+            region = params.get("/skeleton/region")
+            logger.info(f"parameter access OK /skeleton/region={region}")
+
+            # A typed (integer) parameter.
+            pool_size = params.get_int("/skeleton/poolSize")
+            logger.info(f"parameter access OK /skeleton/poolSize={pool_size}")
+
+            st = params.stats()
+            logger.info(
+                f"parameters steady-state source={st.source} count={st.parameter_count}"
+            )
+        except Exception as e:
+            logger.warning(f"parameter error; skipping parameter demo: {e}")
+
     def ipc_hello_world_handler(self, topic: str, msg: Message):
         logger.info(
             f"Received an ipc hello world message on topic {topic}: {msg.get_body()['msg_id']}"

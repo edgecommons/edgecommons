@@ -44,6 +44,7 @@ class ConfigManager:
         self._logging_config = None
         self._streaming_config = None
         self._credentials_config = None
+        self._parameters_config = None
         self._global_config = {}
         self._instances = {}
         self._change_listeners = []
@@ -106,6 +107,8 @@ class ConfigManager:
         self._streaming_config = config.get("streaming")
         # Likewise retain the raw `credentials` section so GGCommons._init_credentials() can find it.
         self._credentials_config = config.get("credentials")
+        # And the raw `parameters` section so GGCommons._init_parameters() can find it.
+        self._parameters_config = config.get("parameters")
 
     def _gen_instances_map(self):
         # Rebuild from scratch so a hot reload that removes an instance does not
@@ -269,6 +272,8 @@ class ConfigManager:
             full['streaming'] = self._streaming_config
         if self._credentials_config is not None:
             full['credentials'] = self._credentials_config
+        if self._parameters_config is not None:
+            full['parameters'] = self._parameters_config
         return full
         
     def is_validation_enabled(self) -> bool:
