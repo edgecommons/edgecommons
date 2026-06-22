@@ -72,14 +72,36 @@ class ConfigManagerApplyConfigTest {
         cm.addConfigChangeListener(() -> { notified[0] = true; return true; });
 
         // New config whose "component" has NO "global" -> exercises the empty-global else branch,
-        // and because initialization is complete, applyConfig notifies the listener.
+        // and because initialization is complete, applyConfig notifies the listener. (Must be
+        // schema-valid: hot reloads are now re-validated, so use instances:[] rather than an
+        // unknown "component" property.)
         JsonObject reload = JsonParser.parseString("""
-                {"component":{"other":{"x":2}}}""").getAsJsonObject();
+                {"component":{"instances":[]}}""").getAsJsonObject();
         cm.applyConfig(reload);
 
         assertTrue(notified[0], "applyConfig after init must notify configuration-change listeners");
         assertNotNull(cm.getGlobalConfig(), "missing global must yield an empty (non-null) global config");
         assertEquals(0, cm.getGlobalConfig().size(), "global config should be empty when absent");
+    }
+
+    @Test
+    void applyConfigRejectsInvalidHotReloadAndKeepsPrevious(@TempDir Path tempDir) throws IOException {
+        ConfigManager cm = createConfigManager(writeConfig(tempDir, INITIAL_CONFIG).getAbsolutePath());
+        cm.completeInitialization();
+
+        boolean[] notified = {false};
+        cm.addConfigChangeListener(() -> { notified[0] = true; return true; });
+
+        // Invalid hot reload (unknown top-level section under additionalProperties:false) must be
+        // rejected; the previous configuration is retained and listeners are NOT notified
+        // (parity with Python/Rust/TS).
+        JsonObject bad = JsonParser.parseString("""
+                {"component":{"global":{"v":1}},"bogusSection":true}""").getAsJsonObject();
+        cm.applyConfig(bad);
+
+        assertFalse(notified[0], "an invalid hot reload must not notify listeners");
+        assertEquals(1, cm.getGlobalConfig().get("v").getAsInt(),
+                "the previous global config must be retained after a rejected reload");
     }
 
     @Test

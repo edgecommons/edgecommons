@@ -92,6 +92,20 @@ public class ConfigManager
      */
     public void applyConfig(JsonObject config)
     {
+        // On a hot reload, re-validate against the schema and keep the previous configuration if
+        // the new document is invalid (parity with Python/Rust/TS, which all reject-and-keep on a
+        // bad reload). Startup config is already validated by ConfigManagerFactory before the first
+        // applyConfig (initializing == true), so we only re-validate subsequent reloads.
+        if (!initializing) {
+            try {
+                ConfigurationValidator.validate(config);
+            } catch (ConfigurationValidator.ConfigurationValidationException e) {
+                LOGGER.error("Rejected hot-reloaded configuration (keeping previous): {}",
+                        e.getMessage());
+                return;
+            }
+        }
+
         tagConfig = ConfigurationFactory.createTagConfiguration(config);
         loggingConfig = ConfigurationFactory.createLoggingConfiguration(config);
         heartbeatConfig = ConfigurationFactory.createHeartbeatConfiguration(config);
