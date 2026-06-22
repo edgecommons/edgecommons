@@ -73,6 +73,18 @@ describe("EMF", () => {
     expect(emf.coreName).toBe("ALL");
   });
 
+  it("enforces the 10-dimension CloudWatch cap at build (parity with Java/Python/Rust)", () => {
+    // 7 custom + injected category/coreName/component = 10 (the cap) — OK.
+    const atCap = MetricBuilder.create("m").withThingName("t").withComponentName("c");
+    for (let i = 0; i < 7; i++) atCap.addDimension(`d${i}`, `${i}`);
+    expect(atCap.build().getDimensions().size).toBe(10);
+
+    // One more custom dimension pushes it to 11 — build must throw.
+    const overCap = MetricBuilder.create("m").withThingName("t").withComponentName("c");
+    for (let i = 0; i < 8; i++) overCap.addDimension(`d${i}`, `${i}`);
+    expect(() => overCap.build()).toThrow(/at most 10/);
+  });
+
   it("buildEmfVariants returns 1 normally, 2 when largeFleet", () => {
     const metric = MetricBuilder.create("m")
       .withThingName("thing-1")

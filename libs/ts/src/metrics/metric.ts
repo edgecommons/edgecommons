@@ -24,6 +24,8 @@ export class Measure {
 
 /** A metric definition: name, namespace, measures, and string dimensions. */
 export class Metric {
+  /** CloudWatch allows at most 10 dimensions per metric (parity with Java/Python/Rust). */
+  static readonly MAX_DIMENSIONS = 10;
   readonly name: string;
   readonly namespace?: string;
   readonly measures: Map<string, Measure>;
@@ -127,6 +129,12 @@ export class MetricBuilder {
     dims.set("category", this.name);
     if (this.thingName_ !== undefined) dims.set("coreName", this.thingName_);
     if (this.componentName_ !== undefined) dims.set("component", this.componentName_);
+    if (dims.size > Metric.MAX_DIMENSIONS) {
+      throw new Error(
+        `metric '${this.name}' has ${dims.size} dimensions; CloudWatch allows at most ` +
+          `${Metric.MAX_DIMENSIONS} (including the injected category/coreName/component)`,
+      );
+    }
     return new Metric(this.name, this.namespace_, new Map(this.measures), dims);
   }
 }

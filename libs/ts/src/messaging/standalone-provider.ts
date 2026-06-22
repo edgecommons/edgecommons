@@ -17,6 +17,7 @@ import { Destination, MessagingProvider, Qos, RawSubscription } from "./types";
 
 interface Sub {
   filter: string;
+  qos: Qos;
   onMessage: (topic: string, payload: Buffer) => void;
 }
 
@@ -54,6 +55,16 @@ class BrokerChannel {
         }
       }
     });
+    // On every (re)connect, re-issue known subscriptions so a broker drop + auto-reconnect does
+    // not silently stop delivering (parity with Java/Python/Rust). The first connect's subs are
+    // issued by subscribeRaw; this fires meaningfully only on reconnects, when subs is populated.
+    client.on("connect", () => {
+      for (const sub of this.subs) {
+        client.subscribe(sub.filter, { qos: qosNum(sub.qos) }, (err) => {
+          if (err) logger.warn(`ggcommons: resubscribe to ${sub.filter} failed: ${String(err)}`);
+        });
+      }
+    });
   }
 }
 
@@ -66,7 +77,11 @@ export class StandaloneMqttProvider implements MessagingProvider {
 
   /** Connect the local broker (and IoT Core if configured), resolving when ready. */
   static async connect(config: MessagingConfig): Promise<StandaloneMqttProvider> {
-    const local = new BrokerChannel(await connectBroker(config.local, false));
+    // Local broker uses TLS when CA/cert material is configured (CA-only server TLS or mTLS),
+    // not just for IoT Core — previously the local broker was always plaintext.
+    const lc = config.local.credentials;
+    const localTls = !!(lc?.caPath || lc?.certPath);
+    const local = new BrokerChannel(await connectBroker(config.local, localTls));
     const iot = config.iotCore ? new BrokerChannel(await connectBroker(config.iotCore, true)) : undefined;
     return new StandaloneMqttProvider(local, iot);
   }
@@ -101,7 +116,7 @@ export class StandaloneMqttProvider implements MessagingProvider {
           reject(GgError.messaging(`subscribe to ${filter} failed: ${err}`));
           return;
         }
-        const sub: Sub = { filter, onMessage };
+        const sub: Sub = { filter, qos, onMessage };
         ch.subs.push(sub);
         resolve({
           unsubscribe: () =>
@@ -130,7 +145,9 @@ function connectBroker(broker: BrokerConfig, tls: boolean): Promise<MqttClient> 
   const url = `${tls ? "mqtts" : "mqtt"}://${host}:${broker.port}`;
   const options: mqtt.IClientOptions = {
     clientId: broker.clientId,
-    reconnectPeriod: 0,
+    // Auto-reconnect after a broker drop (BrokerChannel re-issues subscriptions on reconnect);
+    // previously 0 = disabled, leaving the component silently disconnected after any outage.
+    reconnectPeriod: 5_000,
     connectTimeout: 15_000,
   };
   const creds = broker.credentials;
@@ -144,6 +161,11 @@ function connectBroker(broker: BrokerConfig, tls: boolean): Promise<MqttClient> 
   return new Promise((resolve, reject) => {
     const client = mqtt.connect(url, options);
     client.once("connect", () => resolve(client));
-    client.once("error", (err) => reject(GgError.messaging(`connect to ${url} failed: ${err}`)));
+    client.once("error", (err) => {
+      // Initial connect failed: stop the client so auto-reconnect doesn't leak a background
+      // retry loop after we reject (reconnects after a successful connect are handled silently).
+      client.end(true, {}, () => {});
+      reject(GgError.messaging(`connect to ${url} failed: ${err}`));
+    });
   });
 }
