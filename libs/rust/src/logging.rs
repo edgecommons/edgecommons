@@ -23,9 +23,11 @@
 //!   file that cannot be opened is reported to stderr and file logging is skipped.
 //! - Limitation: the file layer is decided at [`init`] time only (tracing layers
 //!   cannot be added/removed after install), so a `fileLogging` change on hot
-//!   reload does not take effect until restart; the *level* still reconfigures
-//!   live for both sinks. Custom format strings and per-logger levels are parsed
-//!   from config but not yet applied.
+//!   reload does not take effect until restart; the *level* (root + per-logger
+//!   `logging.loggers` overrides) reconfigures live for both sinks. The custom
+//!   `logging.format` string is intentionally NOT applied here — a cross-language
+//!   format is being addressed via per-language format fields as part of the
+//!   shared-configuration work (see .validation/parity-remediation-plan.md #1).
 //!
 //! ## Usage Example
 //! ```
@@ -91,7 +93,9 @@ pub fn reconfigure(config: &Config) {
     }
 }
 
-/// Build an `EnvFilter` from the config's `logging.level` (default `info`).
+/// Build an `EnvFilter` from the config's `logging.level` (default `info`) plus any
+/// per-logger overrides in `logging.loggers` (each becomes a `target=level` directive),
+/// e.g. `info,my::module=debug`. Applied on init and on every hot-reload.
 fn level_filter(config: &Config) -> EnvFilter {
     let level = config
         .parsed
@@ -99,7 +103,14 @@ fn level_filter(config: &Config) -> EnvFilter {
         .level
         .clone()
         .unwrap_or_else(|| "INFO".to_string());
-    EnvFilter::try_new(level.to_ascii_lowercase()).unwrap_or_else(|_| EnvFilter::new("info"))
+    let mut directives = level.to_ascii_lowercase();
+    for (logger, lvl) in &config.parsed.logging.loggers {
+        directives.push_str(&format!(",{}={}", logger, lvl.to_ascii_lowercase()));
+    }
+    // Fall back to just the root level if a per-logger directive is malformed, then to info.
+    EnvFilter::try_new(&directives)
+        .or_else(|_| EnvFilter::try_new(level.to_ascii_lowercase()))
+        .unwrap_or_else(|_| EnvFilter::new("info"))
 }
 
 /// Build the rotating-file `MakeWriter` if file logging is enabled and the file

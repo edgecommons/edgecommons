@@ -20,8 +20,11 @@
  *   rotated (so a single oversized record still lands).
  * - `parseFileSize` matches the Python/Rust `_parse_file_size`: `B`/`KB`/`MB`/`GB`
  *   suffixes (case-insensitive, 1024-based); unparseable falls back to `10MB`.
- * - Custom format strings and per-logger levels are parsed from config but not
- *   applied (same limitation as Rust).
+ * - `logging.format` and `logging.loggers` (per-logger levels) are parsed but not yet applied:
+ *   a cross-language format (per-language format fields) is deferred to the shared-configuration
+ *   work, and per-logger levels require a named-logger API this single process-wide logger does
+ *   not yet expose. See .validation/parity-remediation-plan.md (#1/#2). Rust applies per-logger
+ *   levels via EnvFilter; TS does not have an equivalent target-routing mechanism here.
  * - Logging never throws (fail-soft): file errors are reported to stderr and file
  *   logging is skipped/aborted, never propagated.
  */
