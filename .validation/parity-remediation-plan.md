@@ -56,3 +56,27 @@ Designation 🟡 WAIVED (BUILD) unless we decide a default build must be source-
   shared schema + Rust/TS actually applying format + per-logger levels + reload rebuild).
 
 Verification gate per batch: that lib's full test suite green; cross-lang interop unaffected.
+
+## Remediation status (2026-06-22)
+
+FIXED + verified + committed:
+- #7 Python standalone reply-sub leak (880a1df, +regression test) · #16/#17/#18/#19/#22/#6 Python (880a1df)
+- #8 TS standalone reconnect+resubscribe · #11 TS local TLS · #20 TS dim cap (c4f7b0a, +test)
+- #5 Java re-validate on hot-reload (b8675d5, +test) · #6 Java fail-closed · #14 Java heartbeat
+  disk+fds · #21 Java @Deprecated Metric ctor (45fa716)
+- #9 Rust subscribe-blocks-until-SUBACK · #20 Rust dim cap (faf3033, +test, mqtt IT 5/5)
+- #2 Rust per-logger levels via EnvFilter (b9fbeb2)
+- #23/#24 doc corrections: root + python CLAUDE.md DI/interfaces/init claims fixed
+
+NO CHANGE NEEDED (audit imprecision):
+- #20 Java — already enforced at assembly (Metric.addDimension guard fires on category injection).
+
+WAIVED: #10 Rust receiveOwnMessages (SDK) · #13 built-in request timeout (IDIOM) · #15 TS
+heartbeat threads/files/fds on Win/mac (PLAT).
+
+DEFERRED → shared-configuration logging redesign (per user direction not to chase logging format now):
+- #1 cross-language logging.format (needs per-language format fields in the shared schema).
+- #2 TS per-logger levels (needs a named-logger / getLogger(name) API; Rust done via EnvFilter).
+- #4 logging hot-reload rebuild of format/file sink (Rust/TS; tracing-layer-analog limitation).
+- #3 logging.globalControl semantics (vestigial/inconsistent — decide or remove in the redesign).
+- #12 max_messages queue bound (Java/Python API addition) — leftover P2, revisit if needed.

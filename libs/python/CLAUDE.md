@@ -47,10 +47,15 @@ gg = GGCommonsBuilder.create("com.example.MyComponent").with_args(args).build()
 svc = gg.get_service(IMessagingService)
 ```
 
-### Dependency injection (`ggcommons/di/`)
-- `ServiceRegistry` — thread-safe type→instance map. The single source of wired services.
-- `ServiceFactory.register_default_services()` — registers the default implementations of the three core interfaces.
-- Three interfaces in `ggcommons/interfaces/`: `IConfigurationService`, `IMessagingService`, `IMetricService`. **Always depend on these interfaces, not concrete classes** — this is what makes components unit-testable with mocks (see `ggcommons/test/mock_services.py` and `testable_ggcommons.py`).
+### Dependency injection / service interfaces — NOT present in Python
+> **Correction (parity audit 2026-06-22):** earlier revisions of this file described a
+> `ggcommons/di/` `ServiceRegistry` and `ggcommons/interfaces/` (`IConfigurationService`,
+> `IMessagingService`, `IMetricService`) with `mock_services.py`/`testable_ggcommons.py`. **None of
+> these exist in the Python source.** The substitutable service-interface seam exists only in the
+> Rust and TS libraries (idiomatically); Java and Python do not have it (Java's was removed during
+> remediation). In Python, depend on the concrete services and the builders below; for tests, drive
+> the concretes / reset the process-global statics (`MessagingClient`, `MetricEmitter`). See the
+> cross-language register `.validation/parity-remediation-plan.md`.
 
 ### Builders
 Object construction goes through fluent builders, not raw constructors: `GGCommonsBuilder`, `ConfigManagerBuilder`, `MessageBuilder`, `MetricBuilder`. Note `MetricBuilder` exists specifically to avoid the deprecated direct `Metric` constructor — do not instantiate `Metric` directly.

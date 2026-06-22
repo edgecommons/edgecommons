@@ -29,7 +29,7 @@ Every component built with these libraries runs in one of two **runtime modes**,
 - `-m/--mode <MODE> [path]` — `GREENGRASS` (default) or `STANDALONE <messaging_config.json>`. STANDALONE without a path is a hard error.
 - `-t/--thing <name>` — IoT Thing name; must take the full string value (historical bug truncated it to one char).
 
-**Shared subsystems** (each library has parallel packages for these): `config/` (5 config-source managers + template-variable substitution, hot reload, multi-instance, JSON-schema validation), `messaging/` (IPC vs dual-MQTT providers behind one interface; connections/subscriptions block until confirmed), `metrics/` (pluggable targets: CloudWatch EMF, messaging, local log), `heartbeat/` (periodic system metrics via injected services), `di/` + `interfaces/` (service registry; depend on interfaces, not concretes), and fluent **builders** for object construction.
+**Shared subsystems** (each library has parallel packages for these): `config/` (5 config-source managers + template-variable substitution, hot reload, multi-instance, JSON-schema validation), `messaging/` (IPC vs dual-MQTT providers behind one interface; connections/subscriptions block until confirmed), `metrics/` (pluggable targets: CloudWatch EMF, messaging, local log), `heartbeat/` (periodic system metrics via injected services), a service-interface seam (idiomatic trait/`interface` injection in **Rust and TS only** — `di/`+`interfaces/` packages do **not** exist in Java or Python; see the parity register `.validation/parity-remediation-plan.md`), and fluent **builders** for object construction.
 
 ## Commands
 
@@ -79,8 +79,8 @@ Use an MQTT client (e.g. MQTTX) to subscribe to `heartbeat/+/+` to see component
 ## Conventions
 
 - **Maintain Java↔Python parity.** The two libraries mirror each other intentionally; the same config schema, CLI flags, and subsystem boundaries apply to both.
-- **Backward compatibility is preserved.** New patterns (builders, service interfaces, DI) coexist with the legacy `ggcommons.init(...)` / direct-constructor API. Don't break the old surface when adding the new one.
-- **Depend on interfaces, not concretes** (`IConfigurationService`, `IMessagingService`, `IMetricService`) — this is the testable seam. Prefer injecting mock services over driving the process-global static lifecycles (`MessagingClient`, `MetricEmitter`), whose state leaks across tests unless reset.
+- **Backward compatibility is preserved.** Builders are the construction path in all four libs. The legacy `ggcommons.init(...)` / direct-constructor API coexists **only in Java** (Rust/TS are builder-only greenfield; Python is builder/constructor-only with no `init()` facade). Don't break the old surface when adding the new one.
+- **Service-interface seam (Rust/TS).** Rust (`MessagingService`/`MetricService` traits + `Arc<dyn …>` injection) and TS (`IMessagingService`/`MetricService` interfaces + constructor injection) provide a substitutable seam; **Java and Python do not** have `IConfigurationService`/`IMessagingService`/`IMetricService` or a `ServiceRegistry` (Java's DI was removed during remediation; Python never shipped it despite older docs). In Java/Python, test against the concrete services / process-global statics (`MessagingClient`, `MetricEmitter`), whose state leaks across tests unless reset.
 - **Construct via builders**, not raw constructors (`GGCommonsBuilder`, `MessageBuilder`, `MetricBuilder`, etc.). `MetricBuilder` specifically replaces the deprecated direct `Metric` constructor.
 - Python tests are pytest-style (`Test*` classes, `test_*` functions) — the suite was migrated off `unittest`; don't add new `unittest.TestCase` subclasses.
 - Per-subsystem docs live under each library's `doc/` (architecture, messaging, configuration, metric-emission, heartbeat, logging, etc.). Update the relevant doc when changing a subsystem's public behavior.
