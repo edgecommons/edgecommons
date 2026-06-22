@@ -1,0 +1,1515 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GGCommons Developer Guide</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+<style>
+:root{
+  --ink:#232f3e; --ink2:#161e2d; --accent:#ec7211; --accent2:#ff9900;
+  --link:#0972d3; --link-h:#033160; --bg:#ffffff; --bg2:#f7f8fa; --bg3:#eef1f5;
+  --border:#d5dbdb; --border2:#e4e7eb; --text:#16191f; --muted:#5f6b7a;
+  --code-bg:#282c34; --green:#1a8754; --red:#d13212; --amber:#b7791f; --purple:#6f42c1; --teal:#0e7490;
+  --sidebar-w:280px; --header-h:56px; --maxw:920px;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  color:var(--text);background:var(--bg);font-size:16px;line-height:1.65;-webkit-font-smoothing:antialiased}
+a{color:var(--link);text-decoration:none}
+a:hover{color:var(--link-h);text-decoration:underline}
+code,pre,kbd{font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace}
+
+/* Header */
+header.top{position:fixed;top:0;left:0;right:0;height:var(--header-h);background:var(--ink);
+  display:flex;align-items:center;justify-content:space-between;padding:0 20px;z-index:100;color:#fff}
+header.top .brand{display:flex;align-items:center;gap:12px;font-weight:600;font-size:17px;color:#fff}
+header.top .brand .logo{width:30px;height:30px;border-radius:6px;background:linear-gradient(135deg,var(--accent2),var(--accent));
+  display:flex;align-items:center;justify-content:center;font-weight:800;color:var(--ink2);font-size:15px}
+header.top .brand small{font-weight:400;color:#aeb8c4;font-size:12px;margin-left:4px}
+.langswitch{display:flex;align-items:center;gap:6px}
+.langswitch .lbl{font-size:12px;color:#aeb8c4;margin-right:4px}
+.langswitch button{border:1px solid #3a4759;background:transparent;color:#cdd5df;padding:5px 11px;border-radius:16px;
+  font-size:13px;cursor:pointer;transition:all .12s}
+.langswitch button:hover{border-color:var(--accent2);color:#fff}
+.langswitch button.active{background:var(--accent2);border-color:var(--accent2);color:var(--ink2);font-weight:600}
+
+/* Layout */
+.layout{display:flex;padding-top:var(--header-h)}
+nav.side{position:fixed;top:var(--header-h);bottom:0;left:0;width:var(--sidebar-w);overflow-y:auto;
+  background:var(--bg2);border-right:1px solid var(--border);padding:18px 0 60px}
+nav.side .group{padding:4px 0}
+nav.side .group-title{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);
+  font-weight:700;padding:12px 22px 6px}
+nav.side a{display:block;padding:6px 22px;color:#3a4452;font-size:14px;border-left:3px solid transparent}
+nav.side a:hover{background:var(--bg3);text-decoration:none;color:var(--ink2)}
+nav.side a.active{border-left-color:var(--accent);color:var(--accent);background:#fff;font-weight:600}
+main{margin-left:var(--sidebar-w);flex:1;min-width:0;padding:34px 48px 120px;max-width:calc(var(--maxw) + 96px)}
+
+/* Typography */
+h1{font-size:32px;line-height:1.2;font-weight:700;margin:.2em 0 .4em}
+h2{font-size:24px;font-weight:700;margin:2.2em 0 .6em;padding-bottom:.3em;border-bottom:1px solid var(--border2)}
+h3{font-size:18px;font-weight:600;margin:1.8em 0 .5em}
+h4{font-size:15px;font-weight:700;margin:1.4em 0 .3em;color:var(--ink2)}
+p{margin:.7em 0}
+section{scroll-margin-top:72px}
+.lede{font-size:18px;color:var(--muted);max-width:46em}
+ul,ol{padding-left:1.4em}li{margin:.25em 0}
+hr{border:none;border-top:1px solid var(--border2);margin:2.4em 0}
+.muted{color:var(--muted)}
+strong{font-weight:600}
+
+/* Inline code */
+:not(pre)>code{background:var(--bg3);color:#b1361e;padding:.12em .4em;border-radius:4px;font-size:.88em;
+  border:1px solid var(--border2)}
+
+/* Tables */
+table{border-collapse:collapse;width:100%;margin:1.2em 0;font-size:14px}
+th,td{border:1px solid var(--border2);padding:9px 12px;text-align:left;vertical-align:top}
+th{background:var(--bg2);font-weight:600}
+tbody tr:nth-child(even){background:#fbfcfd}
+td code,th code{white-space:nowrap}
+
+/* Callouts */
+.callout{border:1px solid var(--border2);border-left-width:4px;border-radius:6px;padding:12px 16px;margin:1.2em 0;
+  background:var(--bg2);font-size:14.5px}
+.callout .ct{font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px;display:block}
+.callout.note{border-left-color:var(--link)}.callout.note .ct{color:var(--link)}
+.callout.tip{border-left-color:var(--green)}.callout.tip .ct{color:var(--green)}
+.callout.warn{border-left-color:var(--amber);background:#fffbf2}.callout.warn .ct{color:var(--amber)}
+.callout p{margin:.3em 0}.callout p:first-of-type{margin-top:0}.callout p:last-child{margin-bottom:0}
+
+/* Code blocks with tabs */
+.codeblock{margin:1.3em 0;border:1px solid #1c2027;border-radius:8px;overflow:hidden;background:var(--code-bg)}
+.codeblock .tabs{display:flex;background:#21252b;border-bottom:1px solid #11141a;flex-wrap:wrap}
+.codeblock .tabs button{background:transparent;border:none;border-bottom:2px solid transparent;color:#9aa4b1;
+  padding:8px 16px;font-size:13px;cursor:pointer;font-family:inherit;transition:all .1s}
+.codeblock .tabs button:hover{color:#e6e9ee}
+.codeblock .tabs button.active{color:#fff;border-bottom-color:var(--accent2);background:#282c34}
+.codeblock .tabs .spacer{flex:1}
+.codeblock .copybtn{background:transparent;border:none;color:#8b94a0;font-size:12px;cursor:pointer;padding:8px 12px}
+.codeblock .copybtn:hover{color:#fff}
+.codeblock pre{margin:0;padding:16px 18px;overflow-x:auto}
+.codeblock pre code{font-size:13.5px;line-height:1.6;background:none;border:none;padding:0;color:#abb2bf}
+.codeblock .pane{display:none}
+.codeblock .pane.active{display:block}
+.filetag{color:#6b7585;font-size:12px;padding:6px 18px 0}
+
+/* Diagrams */
+figure.diagram{margin:1.6em 0;border:1px solid var(--border2);border-radius:10px;background:var(--bg2);
+  padding:22px 18px 10px;text-align:center}
+figure.diagram svg{max-width:100%;height:auto}
+figure.diagram figcaption{font-size:13px;color:var(--muted);margin-top:10px;padding:0 10px 8px}
+
+/* SVG helpers */
+.d-box{fill:#fff;stroke:var(--ink);stroke-width:1.5}
+.d-box-ac{fill:#fff5ec;stroke:var(--accent);stroke-width:1.5}
+.d-box-bl{fill:#eef6fd;stroke:var(--link);stroke-width:1.5}
+.d-box-gr{fill:#eef8f2;stroke:var(--green);stroke-width:1.5}
+.d-box-pu{fill:#f3effb;stroke:var(--purple);stroke-width:1.5}
+.d-t{font:600 13px -apple-system,Segoe UI,sans-serif;fill:var(--ink2)}
+.d-st{font:400 11px -apple-system,Segoe UI,sans-serif;fill:var(--muted)}
+.d-lbl{font:500 11px -apple-system,Segoe UI,sans-serif;fill:var(--muted)}
+.d-line{stroke:#7a8694;stroke-width:1.6;fill:none}
+.d-line-d{stroke:#7a8694;stroke-width:1.6;fill:none;stroke-dasharray:5 4}
+
+/* Pills / badges */
+.badge{display:inline-block;font-size:11px;font-weight:600;padding:2px 8px;border-radius:11px;margin:0 3px 3px 0;
+  border:1px solid}
+.badge.java{color:#b07219;border-color:#e3c79a;background:#fdf6ea}
+.badge.py{color:#2b5b84;border-color:#a9cce6;background:#eef6fc}
+.badge.rust{color:#a33b1f;border-color:#e6b6a3;background:#fcefe9}
+.badge.ts{color:#235a97;border-color:#a9c7e8;background:#eef4fc}
+
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin:1.3em 0}
+.card{border:1px solid var(--border2);border-radius:8px;padding:14px 16px;background:#fff}
+.card h4{margin:.1em 0 .35em}.card p{margin:0;font-size:13.5px;color:var(--muted)}
+.card a.more{font-size:13px;font-weight:600}
+
+.toc-top{font-size:14px;color:var(--muted);margin:.5em 0 2em}
+
+@media (max-width:980px){
+  nav.side{transform:translateX(-100%);transition:transform .2s;z-index:90;box-shadow:2px 0 12px rgba(0,0,0,.15)}
+  nav.side.open{transform:none}
+  main{margin-left:0;padding:24px 20px 100px}
+  .menu-toggle{display:flex !important}
+}
+.menu-toggle{display:none;align-items:center;justify-content:center;width:34px;height:34px;border-radius:6px;
+  border:1px solid #3a4759;background:transparent;color:#fff;cursor:pointer;margin-right:6px}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="brand">
+    <button class="menu-toggle" id="menuToggle" aria-label="Toggle navigation">≡</button>
+    <span class="logo">GG</span>
+    <span>GGCommons <small>Developer Guide</small></span>
+  </div>
+  <div class="langswitch" id="globalLang" role="tablist" aria-label="Code language">
+    <span class="lbl">Code samples:</span>
+    <button data-lang="java" role="tab">Java</button>
+    <button data-lang="python" role="tab">Python</button>
+    <button data-lang="rust" role="tab">Rust</button>
+    <button data-lang="typescript" role="tab">TypeScript</button>
+  </div>
+</header>
+
+<div class="layout">
+<nav class="side" id="sidebar">
+  <div class="group">
+    <div class="group-title">Get started</div>
+    <a href="#overview">What is GGCommons</a>
+    <a href="#getting-started">Getting started</a>
+    <a href="#runtime-modes">Runtime modes</a>
+    <a href="#cli">Command-line contract</a>
+  </div>
+  <div class="group">
+    <div class="group-title">Building components</div>
+    <a href="#builders">Builders</a>
+    <a href="#configuration">Configuration</a>
+    <a href="#messaging">Messaging</a>
+    <a href="#metrics">Metrics</a>
+    <a href="#heartbeat">Heartbeat</a>
+    <a href="#logging">Logging</a>
+  </div>
+  <div class="group">
+    <div class="group-title">Edge services</div>
+    <a href="#credentials">Credentials &amp; vault</a>
+    <a href="#parameters">Parameters</a>
+    <a href="#streaming">Telemetry streaming</a>
+  </div>
+</nav>
+
+<main>
+<section id="overview">
+<h1>GGCommons Developer Guide</h1>
+<p class="lede">GGCommons is a set of libraries for building <strong>AWS IoT Greengrass v2</strong> components.
+It bundles the cross-cutting concerns every edge component needs — configuration, messaging, metrics,
+heartbeat, logging, credentials, parameters, and telemetry streaming — so you write only business logic.</p>
+
+<p>The same library ships in four languages — <span class="badge java">Java</span>
+<span class="badge py">Python</span> <span class="badge rust">Rust</span> <span class="badge ts">TypeScript</span> —
+as deliberate mirrors of one another: the same config schema, the same command-line contract, the same subsystem
+boundaries, and the same on-the-wire message format. Pick your language with the switcher in the top bar and every
+code sample on this page follows it.</p>
+
+<div class="callout note"><span class="ct">Who this guide is for</span>
+<p>Component developers building on top of GGCommons. It does not cover contributing to the libraries themselves —
+for that, see each library's own <code>README</code> and <code>CLAUDE.md</code>.</p></div>
+
+<h3>What the library gives you</h3>
+<div class="cards">
+  <div class="card"><h4>One runtime, two modes</h4><p>The same business logic runs under Greengrass IPC or as a standalone container against MQTT. Selected at startup.</p></div>
+  <div class="card"><h4>Unified messaging</h4><p>Publish/subscribe and request/reply over one interface, whether the transport is Greengrass IPC or dual MQTT.</p></div>
+  <div class="card"><h4>Config that resolves itself</h4><p>Five config sources, template variables, multi-instance, hot reload, and JSON-schema validation.</p></div>
+  <div class="card"><h4>Observability built in</h4><p>Metrics (CloudWatch EMF and more) and automatic heartbeats with no boilerplate.</p></div>
+  <div class="card"><h4>Edge-grade secrets</h4><p>An encrypted, offline-first local vault synced from AWS Secrets Manager.</p></div>
+  <div class="card"><h4>Durable telemetry egress</h4><p>Store-and-forward streaming to Kinesis and Kafka with an embedded persistent buffer.</p></div>
+</div>
+
+<figure class="diagram">
+<svg viewBox="0 0 760 250" role="img" aria-label="A component's business logic sits on top of GGCommons subsystems, which target Greengrass or standalone runtimes.">
+  <rect x="180" y="14" width="400" height="40" rx="7" class="d-box-ac"/>
+  <text x="380" y="33" text-anchor="middle" class="d-t">Your component (business logic)</text>
+  <text x="380" y="47" text-anchor="middle" class="d-st">publish · subscribe · read config · emit metrics</text>
+
+  <rect x="40" y="84" width="680" height="80" rx="8" class="d-box-bl"/>
+  <text x="56" y="103" class="d-lbl">GGCommons libraries (Java · Python · Rust · TypeScript)</text>
+  <g>
+    <rect x="56" y="112" width="100" height="42" rx="5" class="d-box"/><text x="106" y="137" text-anchor="middle" class="d-st">config</text>
+    <rect x="164" y="112" width="100" height="42" rx="5" class="d-box"/><text x="214" y="137" text-anchor="middle" class="d-st">messaging</text>
+    <rect x="272" y="112" width="92" height="42" rx="5" class="d-box"/><text x="318" y="137" text-anchor="middle" class="d-st">metrics</text>
+    <rect x="372" y="112" width="96" height="42" rx="5" class="d-box"/><text x="420" y="137" text-anchor="middle" class="d-st">heartbeat</text>
+    <rect x="476" y="112" width="96" height="42" rx="5" class="d-box"/><text x="524" y="137" text-anchor="middle" class="d-st">credentials</text>
+    <rect x="580" y="112" width="92" height="42" rx="5" class="d-box"/><text x="626" y="137" text-anchor="middle" class="d-st">streaming</text>
+  </g>
+
+  <rect x="120" y="196" width="240" height="42" rx="7" class="d-box-gr"/>
+  <text x="240" y="216" text-anchor="middle" class="d-t">GREENGRASS</text><text x="240" y="231" text-anchor="middle" class="d-st">IPC · Nucleus-managed</text>
+  <rect x="400" y="196" width="240" height="42" rx="7" class="d-box-pu"/>
+  <text x="520" y="216" text-anchor="middle" class="d-t">STANDALONE</text><text x="520" y="231" text-anchor="middle" class="d-st">dual MQTT · containers</text>
+
+  <line x1="380" y1="54" x2="380" y2="84" class="d-line"/>
+  <line x1="240" y1="164" x2="240" y2="196" class="d-line"/>
+  <line x1="520" y1="164" x2="520" y2="196" class="d-line"/>
+</svg>
+<figcaption>Your code talks to GGCommons; GGCommons abstracts away whether it is running under Greengrass or standalone.</figcaption>
+</figure>
+</section>
+
+<section id="getting-started">
+<h2>Getting started</h2>
+<p>The fastest path to a running component is to scaffold one with the <strong>GGCommons CLI</strong>, which copies a
+language template and substitutes your component name.</p>
+
+<h3>1. Install the CLI and scaffold a component</h3>
+<div class="codeblock"><div class="tabs"><button class="active">Shell</button><div class="spacer"></div></div>
+<div class="pane active"><pre><code class="language-bash">pipx install ./cli                      # or: python -m pip install ./cli
+ggcommons doctor                        # check prerequisites (git, gdk, mvn, cargo, python3, aws)
+
+# scaffold ./MyComponent for your chosen language
+ggcommons create-component -n com.example.MyComponent -l PYTHON   # JAVA | PYTHON | RUST | TYPESCRIPT</code></pre></div></div>
+
+<h3>2. Initialize the framework in your entry point</h3>
+<p>Every component constructs a GGCommons runtime from the command-line arguments using the fluent
+<a href="#builders">builder</a>, pulls the services it needs, runs, and shuts down cleanly.</p>
+
+<div class="code-sample" data-sample="bootstrap"></div>
+<script type="text/plain" class="src" data-sample="bootstrap" data-lang="java" data-file="App.java">
+import com.aws.proserve.ggcommons.GGCommons;
+import com.aws.proserve.ggcommons.GGCommonsBuilder;
+
+public class App {
+    public static void main(String[] args) {
+        // Use the FULL component name (matches recipe.yaml / gdk-config.json).
+        GGCommons gg = GGCommonsBuilder.create("aws.proserve.greengrass.JavaComponentSkeleton")
+                .withArgs(args)
+                .build();
+
+        var config    = gg.getConfigManager();
+        var messaging = gg.getMessaging();
+        var metrics   = gg.getMetrics();
+
+        Runtime.getRuntime().addShutdownHook(new Thread(gg::shutdown));
+
+        // ... your business logic ...
+    }
+}
+</script>
+<script type="text/plain" class="src" data-sample="bootstrap" data-lang="python" data-file="main.py">
+import sys, argparse
+from ggcommons import GGCommonsBuilder
+
+def main():
+    arg_parser = argparse.ArgumentParser(description="My component")
+    # add any component-specific arguments here
+
+    gg = (
+        GGCommonsBuilder.create("aws.proserve.greengrass.PythonComponentSkeleton")
+        .with_args(sys.argv[1:])
+        .with_app_options(arg_parser)
+        .receive_own_messages(True)
+        .build()
+    )
+    config = gg.get_config_manager()
+    try:
+        # ... your business logic ...
+        pass
+    finally:
+        gg.shutdown()
+
+if __name__ == "__main__":
+    main()
+</script>
+<script type="text/plain" class="src" data-sample="bootstrap" data-lang="rust" data-file="main.rs">
+use ggcommons::prelude::*;
+
+const COMPONENT_NAME: &str = "aws.proserve.greengrass.RustComponentSkeleton";
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let gg = GgCommonsBuilder::new(COMPONENT_NAME)
+        .args(std::env::args_os())
+        .build()
+        .await?;
+
+    tracing::info!(thing = %gg.config().thing_name, "starting");
+
+    // ... your business logic ...
+    // Dropping `gg` releases all resources (RAII).
+    Ok(())
+}
+</script>
+<script type="text/plain" class="src" data-sample="bootstrap" data-lang="typescript" data-file="main.ts">
+import { GGCommonsBuilder, logger } from "ggcommons";
+
+const COMPONENT_NAME = "aws.proserve.greengrass.TsComponentSkeleton";
+
+async function main(): Promise<void> {
+  const gg = await new GGCommonsBuilder(COMPONENT_NAME).args(process.argv.slice(2)).build();
+
+  logger.info(`starting: thing=${gg.config().thingName}`);
+
+  const shutdown = async (sig: string) => { await gg.close(); process.exit(0); };
+  process.on("SIGINT", () => void shutdown("SIGINT"));
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
+
+  // ... your business logic ...
+}
+main().catch((err) => { console.error("fatal:", err); process.exit(1); });
+</script>
+
+<h3>3. Run it locally</h3>
+<p>Bring up a local MQTT broker (standing in for Greengrass IPC), then run the component in <code>STANDALONE</code> mode:</p>
+<div class="codeblock"><div class="tabs"><button class="active">Shell</button><div class="spacer"></div></div>
+<div class="pane active"><pre><code class="language-bash"># start the shared broker (EMQX)
+docker compose -f test-infra/compose.yaml up -d
+
+# Python
+python3 main.py -m STANDALONE standalone-messaging.json -c FILE config.json -t my-thing
+# Java
+java -jar target/&lt;artifact&gt;.jar -m STANDALONE ./standalone-messaging.json -c FILE ./config.json -t my-thing
+# Rust
+cargo run -- -m STANDALONE ./standalone-messaging.json -c FILE ./config.json -t my-thing
+# TypeScript
+node dist/main.js -m STANDALONE ./standalone-messaging.json -c FILE ./config.json -t my-thing</code></pre></div></div>
+
+<div class="callout tip"><span class="ct">Tip</span>
+<p>Subscribe to <code>heartbeat/+/+</code> with an MQTT client (such as MQTTX) to watch your component's heartbeats
+as soon as it starts. Packaging and deployment to a real core use the GDK: <code>gdk component build</code> then
+<code>gdk component publish</code>.</p></div>
+</section>
+
+<section id="runtime-modes">
+<h2>Runtime modes</h2>
+<p>Every component runs in one of two modes, selected at startup with <code>-m/--mode</code>. Most of the architecture
+exists to abstract this difference away — the same business logic runs in both.</p>
+
+<table>
+<thead><tr><th>Mode</th><th>Transport</th><th>Config source</th><th>Best for</th></tr></thead>
+<tbody>
+<tr><td><code>GREENGRASS</code> <span class="muted">(default)</span></td><td>Greengrass <strong>IPC</strong></td><td>Greengrass deployment</td><td>On-device, Nucleus-managed production</td></tr>
+<tr><td><code>STANDALONE</code></td><td><strong>Dual MQTT</strong> (local broker + AWS IoT Core)</td><td>File / env / shadow</td><td>Kubernetes, Docker, bare hosts, local dev</td></tr>
+</tbody>
+</table>
+
+<figure class="diagram">
+<svg viewBox="0 0 740 240" role="img" aria-label="Greengrass mode uses IPC to the Nucleus; standalone mode uses two MQTT clients to a local broker and AWS IoT Core.">
+  <rect x="270" y="10" width="200" height="40" rx="7" class="d-box-ac"/>
+  <text x="370" y="30" text-anchor="middle" class="d-t">Component</text>
+  <text x="370" y="44" text-anchor="middle" class="d-st">one messaging interface</text>
+
+  <text x="150" y="80" text-anchor="middle" class="d-lbl">GREENGRASS mode</text>
+  <rect x="60" y="92" width="180" height="44" rx="7" class="d-box-gr"/>
+  <text x="150" y="112" text-anchor="middle" class="d-t">Greengrass IPC</text><text x="150" y="126" text-anchor="middle" class="d-st">Nucleus</text>
+  <rect x="60" y="156" width="180" height="40" rx="7" class="d-box"/>
+  <text x="150" y="180" text-anchor="middle" class="d-st">other GG components</text>
+
+  <text x="560" y="80" text-anchor="middle" class="d-lbl">STANDALONE mode</text>
+  <rect x="470" y="92" width="180" height="44" rx="7" class="d-box-pu"/>
+  <text x="560" y="112" text-anchor="middle" class="d-t">Dual-MQTT provider</text><text x="560" y="126" text-anchor="middle" class="d-st">two clients</text>
+  <rect x="430" y="160" width="130" height="40" rx="7" class="d-box"/>
+  <text x="495" y="184" text-anchor="middle" class="d-st">local broker</text>
+  <rect x="572" y="160" width="130" height="40" rx="7" class="d-box"/>
+  <text x="637" y="184" text-anchor="middle" class="d-st">AWS IoT Core</text>
+
+  <line x1="320" y1="50" x2="180" y2="92" class="d-line"/>
+  <line x1="420" y1="50" x2="540" y2="92" class="d-line"/>
+  <line x1="150" y1="136" x2="150" y2="156" class="d-line"/>
+  <line x1="540" y1="136" x2="495" y2="160" class="d-line-d"/>
+  <line x1="580" y1="136" x2="637" y2="160" class="d-line-d"/>
+</svg>
+<figcaption>The same component interface; only the provider behind it changes with the mode.</figcaption>
+</figure>
+
+<div class="callout warn"><span class="ct">Important</span>
+<p><code>STANDALONE</code> requires a messaging-config JSON path: <code>-m STANDALONE &lt;messaging_config.json&gt;</code>.
+Passing <code>STANDALONE</code> without a path is a hard error. See <a href="#messaging">Messaging</a> for the file format.</p></div>
+</section>
+
+<section id="cli">
+<h2>Command-line contract</h2>
+<p>All four languages accept the same three core options. Components may add their own options on top.</p>
+
+<table>
+<thead><tr><th>Option</th><th>Values</th><th>Default</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td><code>-c</code>, <code>--config</code></td>
+<td><code>FILE</code> · <code>ENV</code> · <code>GG_CONFIG</code> · <code>SHADOW</code> · <code>CONFIG_COMPONENT</code></td>
+<td><code>GG_CONFIG</code></td><td>Where configuration is loaded from</td></tr>
+<tr><td><code>-m</code>, <code>--mode</code></td>
+<td><code>GREENGRASS</code> · <code>STANDALONE &lt;path&gt;</code></td>
+<td><code>GREENGRASS</code></td><td>Runtime mode and messaging transport</td></tr>
+<tr><td><code>-t</code>, <code>--thing</code></td>
+<td>any IoT Thing name</td><td>—</td><td>The device identity this component runs as</td></tr>
+<tr><td><code>-h</code>, <code>--help</code></td><td>—</td><td>—</td><td>Print usage and exit</td></tr>
+</tbody>
+</table>
+
+<h3>Config-source arguments</h3>
+<p>The <code>-c</code> option takes a source keyword followed by optional positional arguments:</p>
+<div class="codeblock"><div class="tabs"><button class="active">Shell</button><div class="spacer"></div></div>
+<div class="pane active"><pre><code class="language-bash">-c FILE [file_path]                      # JSON file (default: ./ in the working dir)
+-c ENV [env_var_name]                    # JSON in an env var (default: GGCOMMONS_CONFIG)
+-c GG_CONFIG [component_name] [key]       # Greengrass deployment config (default; current component)
+-c SHADOW [shadow_name]                   # AWS IoT Device Shadow desired-state
+-c CONFIG_COMPONENT                       # a dedicated configuration-management component</code></pre></div></div>
+
+<div class="callout note"><span class="ct">Note</span>
+<p>Always pass the <strong>full</strong> component name to the builder (matching <code>recipe.yaml</code>). The
+<code>{ComponentFullName}</code> template then resolves to the Greengrass-managed work directory; a short name resolves
+to a path the component cannot create, and vault/stream directories will fail.</p></div>
+</section>
+
+<section id="builders">
+<h2>Builders</h2>
+<p>Objects in GGCommons are constructed with fluent <strong>builders</strong> rather than raw constructors. Builders
+validate required parameters, let you set only what you need, and stay backward-compatible as new options are added.
+The three you will use most are <code>GGCommonsBuilder</code> (the runtime), <code>MessageBuilder</code> (messages),
+and <code>MetricBuilder</code> (metrics).</p>
+
+<h3>GGCommonsBuilder</h3>
+<p>Creates and initializes the runtime. <code>create()</code>/<code>new</code> takes the full component name; the
+remaining methods are optional.</p>
+<div class="code-sample" data-sample="ggbuilder"></div>
+<script type="text/plain" class="src" data-sample="ggbuilder" data-lang="java">
+GGCommons gg = GGCommonsBuilder.create("com.example.MyComponent")
+    .withArgs(args)                 // command-line arguments
+    .withAppOptions(appOptions)     // optional: your own CLI options
+    .receiveOwnMessages(false)      // optional: drop messages this component published
+    .build();
+</script>
+<script type="text/plain" class="src" data-sample="ggbuilder" data-lang="python">
+gg = (
+    GGCommonsBuilder.create("com.example.MyComponent")
+    .with_args(sys.argv[1:])
+    .with_app_options(arg_parser)   # optional: an argparse.ArgumentParser
+    .receive_own_messages(False)    # optional
+    .build()
+)
+</script>
+<script type="text/plain" class="src" data-sample="ggbuilder" data-lang="rust">
+let gg = GgCommonsBuilder::new("com.example.MyComponent")
+    .args(std::env::args_os())
+    .build()
+    .await?;
+</script>
+<script type="text/plain" class="src" data-sample="ggbuilder" data-lang="typescript">
+const gg = await new GGCommonsBuilder("com.example.MyComponent")
+  .args(process.argv.slice(2))
+  .build();
+</script>
+
+<h3>MessageBuilder</h3>
+<p>Builds a message from a name, version, and payload. <code>withConfig</code> stamps the message with the tags and
+identity from your configuration.</p>
+<div class="code-sample" data-sample="msgbuilder"></div>
+<script type="text/plain" class="src" data-sample="msgbuilder" data-lang="java">
+Message msg = MessageBuilder.create("RequestTest", "1.0")
+    .withPayload(payload)
+    .withConfig(configService)
+    .withCorrelationId(correlationId)   // optional
+    .build();
+</script>
+<script type="text/plain" class="src" data-sample="msgbuilder" data-lang="python">
+msg = (
+    MessageBuilder.create("RequestTest", "1.0")
+    .with_payload(payload)
+    .with_config(config_manager)
+    .build()
+)
+</script>
+<script type="text/plain" class="src" data-sample="msgbuilder" data-lang="rust">
+let msg = MessageBuilder::create("RequestTest", "1.0")
+    .with_payload(payload)
+    .with_config(&config)
+    .build();
+</script>
+<script type="text/plain" class="src" data-sample="msgbuilder" data-lang="typescript">
+const msg = MessageBuilder.create("RequestTest", "1.0")
+  .withPayload(payload)
+  .withConfig(config)
+  .build();
+</script>
+
+<h3>MetricBuilder</h3>
+<p>Defines a metric with named measures (each with a unit and storage resolution) and dimensions. Component and Thing
+name dimensions are added automatically.</p>
+<div class="code-sample" data-sample="metricbuilder"></div>
+<script type="text/plain" class="src" data-sample="metricbuilder" data-lang="java">
+Metric perf = MetricBuilder.create("performance_local")
+    .withConfig(configService)
+    .addMeasure("replyLatency", "Milliseconds", 1)
+    .addMeasure("messageCount", "Count", 1)
+    .addDimension("broker", "LOCAL")
+    .build();
+metricService.defineMetric(perf);
+</script>
+<script type="text/plain" class="src" data-sample="metricbuilder" data-lang="python">
+perf = (
+    MetricBuilder.create("performance_local")
+    .with_config(config_manager)
+    .add_measure("replyLatency", "Milliseconds", 1)
+    .add_measure("messageCount", "Count", 1)
+    .add_dimension("broker", "LOCAL")
+    .build()
+)
+MetricEmitter.define_metric(perf)
+</script>
+<script type="text/plain" class="src" data-sample="metricbuilder" data-lang="rust">
+metrics.define_metric(
+    MetricBuilder::create("messages_published")
+        .add_measure("count", "Count", 60)
+        .build(),
+);
+</script>
+<script type="text/plain" class="src" data-sample="metricbuilder" data-lang="typescript">
+metrics.defineMetric(
+  MetricBuilder.create("messages_published").addMeasure("count", "Count", 60).build(),
+);
+</script>
+
+<div class="callout note"><span class="ct">Note</span>
+<p>In Java the legacy <code>new GGCommons(...)</code> / <code>new Metric(...)</code> constructors still work for
+backward compatibility but are deprecated in favor of the builders. Rust and TypeScript are builder-only.</p></div>
+</section>
+
+<section id="configuration">
+<h2>Configuration</h2>
+<p>The configuration subsystem loads your component's settings from one of several sources, resolves template
+variables, validates against a JSON schema, and notifies you when configuration changes at runtime.</p>
+
+<figure class="diagram">
+<svg viewBox="0 0 760 200" role="img" aria-label="Configuration flows from a source, through template resolution and schema validation, into framework and application sections your code reads.">
+  <rect x="20" y="70" width="150" height="58" rx="7" class="d-box-bl"/>
+  <text x="95" y="92" text-anchor="middle" class="d-t">Source</text>
+  <text x="95" y="108" text-anchor="middle" class="d-st">FILE · ENV · GG_CONFIG</text>
+  <text x="95" y="121" text-anchor="middle" class="d-st">SHADOW · COMPONENT</text>
+
+  <rect x="210" y="70" width="150" height="58" rx="7" class="d-box"/>
+  <text x="285" y="92" text-anchor="middle" class="d-t">Resolve</text>
+  <text x="285" y="108" text-anchor="middle" class="d-st">{ThingName} {site}</text>
+  <text x="285" y="121" text-anchor="middle" class="d-st">template variables</text>
+
+  <rect x="400" y="70" width="150" height="58" rx="7" class="d-box"/>
+  <text x="475" y="92" text-anchor="middle" class="d-t">Validate</text>
+  <text x="475" y="113" text-anchor="middle" class="d-st">JSON schema</text>
+
+  <rect x="590" y="36" width="150" height="54" rx="7" class="d-box-ac"/>
+  <text x="665" y="57" text-anchor="middle" class="d-t">Framework</text>
+  <text x="665" y="73" text-anchor="middle" class="d-st">logging · heartbeat ·</text>
+  <text x="665" y="85" text-anchor="middle" class="d-st">metricEmission · tags</text>
+
+  <rect x="590" y="108" width="150" height="54" rx="7" class="d-box-gr"/>
+  <text x="665" y="129" text-anchor="middle" class="d-t">Application</text>
+  <text x="665" y="145" text-anchor="middle" class="d-st">component.global</text>
+  <text x="665" y="157" text-anchor="middle" class="d-st">component.instances</text>
+
+  <line x1="170" y1="99" x2="210" y2="99" class="d-line"/>
+  <line x1="360" y1="99" x2="400" y2="99" class="d-line"/>
+  <line x1="550" y1="90" x2="590" y2="63" class="d-line"/>
+  <line x1="550" y1="108" x2="590" y2="132" class="d-line"/>
+</svg>
+<figcaption>One configuration document is split into framework sections (managed by GGCommons) and your application section.</figcaption>
+</figure>
+
+<h3>Structure</h3>
+<p>A configuration document has framework-managed sections and one application section:</p>
+<ul>
+<li><code>logging</code>, <code>heartbeat</code>, <code>metricEmission</code>, <code>tags</code> — consumed by the framework.</li>
+<li><code>component.global</code> — your settings, shared across all instances.</li>
+<li><code>component.instances</code> — an array of per-instance settings for multi-instance components.</li>
+</ul>
+
+<h3>Template variables</h3>
+<p>Any configuration string may reference variables that are resolved automatically:</p>
+<table>
+<thead><tr><th>Variable</th><th>Resolves to</th></tr></thead>
+<tbody>
+<tr><td><code>{ComponentName}</code></td><td>Short component name, e.g. <code>MyComponent</code></td></tr>
+<tr><td><code>{ComponentFullName}</code></td><td>Full name with version, e.g. <code>com.example.MyComponent-1.0.0</code></td></tr>
+<tr><td><code>{ThingName}</code></td><td>The IoT Thing name from <code>-t</code></td></tr>
+<tr><td><code>{InstanceId}</code></td><td>Current instance id (within <code>instances</code>)</td></tr>
+<tr><td><code>{anyTag}</code></td><td>Any key defined under <code>tags</code>, e.g. <code>{site}</code></td></tr>
+</tbody>
+</table>
+
+<h4>Example document</h4>
+<div class="codeblock"><div class="tabs"><button class="active">config.json</button><div class="spacer"></div></div>
+<div class="pane active"><pre><code class="language-json">{
+  "logging": { "level": "INFO" },
+  "heartbeat": { "intervalSecs": 30, "targets": [ { "type": "metric" } ] },
+  "tags": { "site": "factory-1", "region": "us-east-1" },
+  "component": {
+    "global": {
+      "serverUrl": "https://api.{region}.example.com",
+      "publish_interval": 5
+    },
+    "instances": [
+      {
+        "id": "line-1",
+        "publishTopic": "{ThingName}/{ComponentName}/{InstanceId}/data"
+      }
+    ]
+  }
+}</code></pre></div></div>
+
+<h3>Reading configuration in code</h3>
+<div class="code-sample" data-sample="readconfig"></div>
+<script type="text/plain" class="src" data-sample="readconfig" data-lang="java">
+ConfigManager config = gg.getConfigManager();
+
+// Global (shared) settings
+JsonObject global = config.getGlobalConfig();
+long interval = global.has("publish_interval")
+    ? global.get("publish_interval").getAsLong() : 5L;
+
+// Per-instance settings
+for (String id : config.getInstanceIds()) {
+    JsonObject inst = config.getInstanceConfig(id);
+}
+
+// Resolve templates on demand
+String path = config.resolveTemplate("/data/{ThingName}/{site}/logs");
+</script>
+<script type="text/plain" class="src" data-sample="readconfig" data-lang="python">
+config = gg.get_config_manager()
+
+# Global (shared) settings
+global_config = config.get_global_config()
+interval = global_config.get("publish_interval", 5)
+
+# Per-instance settings
+for instance_id in config.get_instance_ids():
+    inst = config.get_instance_config(instance_id)
+
+# Resolve templates on demand
+path = config.resolve_template("/data/{ThingName}/{site}/logs")
+</script>
+<script type="text/plain" class="src" data-sample="readconfig" data-lang="rust">
+let config = gg.config();
+
+// Global (shared) settings
+let interval = config
+    .global()
+    .get("publish_interval")
+    .and_then(|v| v.as_u64())
+    .unwrap_or(5);
+
+// Template variables in config values are resolved automatically; for ad-hoc resolution:
+let path = ggcommons::config::template::resolve(&config, "/data/{ThingName}/{site}/logs");
+</script>
+<script type="text/plain" class="src" data-sample="readconfig" data-lang="typescript">
+import { resolve } from "ggcommons";
+const config = gg.config();
+
+// Global (shared) settings
+const global = config.global() as Record<string, unknown>;
+const interval = (global.publish_interval as number) ?? 5;
+
+// Template variables in config values are resolved automatically; for ad-hoc resolution:
+const path = resolve(config, "/data/{ThingName}/{site}/logs");
+</script>
+
+<h3>Reacting to configuration changes</h3>
+<p>Register a change listener to reload settings without restarting the component (for example when a Greengrass
+deployment or shadow update arrives).</p>
+<div class="code-sample" data-sample="configlistener"></div>
+<script type="text/plain" class="src" data-sample="configlistener" data-lang="java">
+public class App implements ConfigurationChangeListener {
+    @Override
+    public boolean onConfigurationChanged() {
+        JsonObject global = configService.getGlobalConfig();
+        if (global.has("publish_interval")) {
+            publishInterval = global.get("publish_interval").getAsLong() * 1000L;
+        }
+        return true;  // handled successfully
+    }
+}
+// register
+configService.addConfigChangeListener(this);
+</script>
+<script type="text/plain" class="src" data-sample="configlistener" data-lang="python">
+class App(ConfigurationChangeListener):
+    def on_configuration_change(self, configuration) -> bool:
+        global_config = self._config_manager.get_global_config()
+        self._publish_interval = global_config.get("publish_interval", 5)
+        return True  # handled successfully
+
+# register
+config_manager.add_config_change_listener(app)
+</script>
+<script type="text/plain" class="src" data-sample="configlistener" data-lang="rust">
+struct IntervalListener { publish_interval: Arc<AtomicU64> }
+
+impl ConfigurationChangeListener for IntervalListener {
+    async fn on_configuration_change(&self, config: Arc<Config>) -> bool {
+        self.publish_interval.store(interval_from(&config), Ordering::Relaxed);
+        true
+    }
+}
+// registered on the runtime, not the config:
+gg.add_config_change_listener(Arc::new(listener));
+</script>
+<script type="text/plain" class="src" data-sample="configlistener" data-lang="typescript">
+const listener: ConfigurationChangeListener = {
+  onConfigurationChange: (config) => {
+    const global = config.global() as Record<string, unknown>;
+    this.publishInterval = (global.publish_interval as number) ?? 5;
+    return true; // handled successfully
+  },
+};
+gg.addConfigChangeListener(listener);   // registered on the runtime, not the config
+</script>
+
+<div class="callout tip"><span class="ct">Validation</span>
+<p>Configuration is validated against <code>ggcommons-config-schema.json</code> at startup. Point your editor at that
+schema for auto-complete and inline error highlighting while you write config files.</p></div>
+</section>
+
+<section id="messaging">
+<h2>Messaging</h2>
+<p>Messaging is one interface over two providers. In <code>GREENGRASS</code> mode it uses Greengrass IPC; in
+<code>STANDALONE</code> mode it uses a dual-MQTT provider that connects to a local broker and, optionally, AWS IoT Core
+at the same time. Connections and subscriptions block until confirmed, so once a call returns you know it is live.</p>
+
+<h3>Messages</h3>
+<p>A message has a <strong>header</strong> (name, version, correlation id, timestamp, reply-to), <strong>tags</strong>
+(contextual metadata from config or added at runtime), and a <strong>body</strong> (your payload). Build them with
+<a href="#builders"><code>MessageBuilder</code></a>.</p>
+
+<h3>Publish / subscribe</h3>
+<div class="code-sample" data-sample="pubsub"></div>
+<script type="text/plain" class="src" data-sample="pubsub" data-lang="java">
+MessagingClient messaging = gg.getMessaging();
+
+// Subscribe (third arg = max in-flight handlers for this subscription)
+messaging.subscribe("ggcommons/test/java/hello_world", (topic, message) -> {
+    JsonObject body = (JsonObject) message.getBody();
+    LOGGER.info("received on {}: {}", topic, body.get("id").getAsString());
+}, 3);
+
+// Publish
+Message msg = MessageBuilder.create("HelloWorld", "1.0")
+    .withPayload(payload).withConfig(config).build();
+messaging.publish("ggcommons/test/java/hello_world", msg);
+
+// Also bridge to AWS IoT Core (non-fatal if no IoT Core transport)
+messaging.subscribeToIoTCore(topic, handler, QOS.AT_LEAST_ONCE, 2);
+</script>
+<script type="text/plain" class="src" data-sample="pubsub" data-lang="python">
+# Python exposes the messaging client as static methods on MessagingClient.
+
+def handler(topic, message):
+    body = message.get_body()
+    logger.info(f"received on {topic}: {body['id']}")
+
+MessagingClient.subscribe("ggcommons/test/python/hello_world", handler, 3)
+
+msg = MessageBuilder.create("HelloWorld", "1.0").with_payload(payload).with_config(config).build()
+MessagingClient.publish("ggcommons/test/python/hello_world", msg)
+
+# Also bridge to AWS IoT Core
+MessagingClient.subscribe_to_iot_core(topic, handler, QOS.AT_LEAST_ONCE, 2)
+</script>
+<script type="text/plain" class="src" data-sample="pubsub" data-lang="rust">
+let messaging = gg.messaging()?;   // Result: errors if no transport is wired for the mode
+
+messaging.subscribe("ggcommons/test/rust/hello_world", move |topic, message| {
+    tracing::info!(%topic, "received");
+}, 3).await?;
+
+let msg = MessageBuilder::create("HelloWorld", "1.0")
+    .with_payload(payload).with_config(&config).build();
+messaging.publish("ggcommons/test/rust/hello_world", &msg).await?;
+</script>
+<script type="text/plain" class="src" data-sample="pubsub" data-lang="typescript">
+const messaging = gg.messaging();  // throws if no transport is wired for the mode
+
+await messaging.subscribe("ggcommons/test/ts/hello_world", async (topic, message) => {
+  logger.info(`received on ${topic}`);
+}, 3);
+
+const msg = MessageBuilder.create("HelloWorld", "1.0").withPayload(payload).withConfig(config).build();
+await messaging.publish("ggcommons/test/ts/hello_world", msg);
+</script>
+
+<h3>Request / reply</h3>
+<p>Request/reply uses correlation ids under the hood. The requester gets a future/promise that resolves with the reply;
+the responder calls <code>reply</code> with the original message.</p>
+<div class="code-sample" data-sample="reqreply"></div>
+<script type="text/plain" class="src" data-sample="reqreply" data-lang="java">
+// Requester
+ReplyFuture pending = messaging.request(REQ_TOPIC, request);
+pending.orTimeout(10, TimeUnit.SECONDS)
+    .thenAccept(reply -> {
+        JsonObject body = (JsonObject) reply.getBody();
+        LOGGER.info("processed in {}ms", body.get("processing_time_ms").getAsLong());
+    })
+    .exceptionally(t -> { messaging.cancelRequest(pending); return null; });
+
+// Responder
+Message reply = MessageBuilder.create("ReplyTest", "1.0")
+    .withPayload(replyPayload).withConfig(config).build();
+messaging.reply(requestMessage, reply);
+</script>
+<script type="text/plain" class="src" data-sample="reqreply" data-lang="python">
+# Requester -- request() returns an Iou (I-owe-you) future
+iou = MessagingClient.request("ggcommons/test/python/request", request)
+reply = iou.get(timeout=10)   # blocking; or register a callback
+
+# Responder
+reply = MessageBuilder.create("ReplyTest", "1.0").with_payload(payload).with_config(config).build()
+MessagingClient.reply(request, reply)
+</script>
+<script type="text/plain" class="src" data-sample="reqreply" data-lang="rust">
+// Requester
+match messaging.request(&request_topic, request).await {
+    Ok(reply) => tracing::info!("got reply"),
+    Err(e)    => tracing::warn!(error = %e, "request failed"),
+}
+
+// Responder
+responder.reply(&msg, reply).await?;
+</script>
+<script type="text/plain" class="src" data-sample="reqreply" data-lang="typescript">
+// Requester
+const reply = await messaging.request(requestTopic, request);
+
+// Responder
+await messaging.reply(msg, reply);
+</script>
+
+<h3>STANDALONE messaging configuration</h3>
+<p>In standalone mode, the file passed to <code>-m STANDALONE &lt;file&gt;</code> defines both MQTT connections. The
+local broker can use username/password or mutual TLS; IoT Core uses certificate-based auth.</p>
+<div class="codeblock"><div class="tabs"><button class="active">standalone-messaging.json</button><div class="spacer"></div></div>
+<div class="pane active"><pre><code class="language-json">{
+  "messaging": {
+    "local": {
+      "host": "mqtt-broker.local",
+      "port": 1883,
+      "clientId": "my-component-local",
+      "credentials": { "username": "mqtt-user", "password": "mqtt-password" }
+    },
+    "iotCore": {
+      "endpoint": "your-endpoint.iot.us-east-1.amazonaws.com",
+      "port": 8883,
+      "clientId": "my-component-iotcore",
+      "credentials": {
+        "certPath": "/certs/device-cert.pem",
+        "keyPath":  "/certs/private-key.pem",
+        "caPath":   "/certs/root-ca.pem"
+      }
+    }
+  }
+}</code></pre></div></div>
+
+<div class="callout note"><span class="ct">Same code, different deployment</span>
+<p>Your publish/subscribe/request/reply code is identical in both modes. Only the mode flag and this config change
+when you move a component between Greengrass and a container.</p></div>
+</section>
+
+<section id="metrics">
+<h2>Metrics</h2>
+<p>The metrics subsystem emits measurements in <strong>Embedded Metric Format (EMF)</strong> for CloudWatch
+compatibility. You <em>define</em> a metric once (its measures and dimensions), then <em>emit</em> values against it.
+Where those metrics go is chosen by configuration, not code.</p>
+
+<figure class="diagram">
+<svg viewBox="0 0 740 170" role="img" aria-label="Your code emits metrics to the emitter, which routes to one of four targets selected by configuration.">
+  <rect x="20" y="62" width="150" height="46" rx="7" class="d-box-ac"/>
+  <text x="95" y="82" text-anchor="middle" class="d-t">emitMetric()</text>
+  <text x="95" y="98" text-anchor="middle" class="d-st">your code</text>
+
+  <rect x="210" y="58" width="130" height="54" rx="7" class="d-box-bl"/>
+  <text x="275" y="80" text-anchor="middle" class="d-t">MetricEmitter</text>
+  <text x="275" y="96" text-anchor="middle" class="d-st">EMF format</text>
+
+  <rect x="400" y="8" width="320" height="32" rx="6" class="d-box"/><text x="560" y="28" text-anchor="middle" class="d-st">cloudwatch — direct to CloudWatch (batched)</text>
+  <rect x="400" y="48" width="320" height="32" rx="6" class="d-box"/><text x="560" y="68" text-anchor="middle" class="d-st">cloudwatchcomponent — via GG component</text>
+  <rect x="400" y="88" width="320" height="32" rx="6" class="d-box"/><text x="560" y="108" text-anchor="middle" class="d-st">messaging — publish EMF (IPC / IoT Core)</text>
+  <rect x="400" y="128" width="320" height="32" rx="6" class="d-box"/><text x="560" y="148" text-anchor="middle" class="d-st">log — local rotating file (EMF)</text>
+
+  <line x1="170" y1="85" x2="210" y2="85" class="d-line"/>
+  <line x1="340" y1="85" x2="400" y2="24" class="d-line-d"/>
+  <line x1="340" y1="85" x2="400" y2="64" class="d-line-d"/>
+  <line x1="340" y1="85" x2="400" y2="104" class="d-line-d"/>
+  <line x1="340" y1="85" x2="400" y2="144" class="d-line-d"/>
+</svg>
+<figcaption>One emit call; the configured target decides the destination. Dimensions for component and Thing name are added automatically.</figcaption>
+</figure>
+
+<h3>Define and emit</h3>
+<div class="code-sample" data-sample="emitmetric"></div>
+<script type="text/plain" class="src" data-sample="emitmetric" data-lang="java">
+MetricEmitter metrics = gg.getMetrics();
+
+// define once at startup
+metrics.defineMetric(MetricBuilder.create("performance")
+    .withConfig(config)
+    .addMeasure("replyLatency", "Milliseconds", 1)
+    .build());
+
+// emit values
+Map<String, Float> values = new HashMap<>();
+values.put("replyLatency", (float) processingTimeMs);
+metrics.emitMetric("performance", values);
+</script>
+<script type="text/plain" class="src" data-sample="emitmetric" data-lang="python">
+# define once at startup
+MetricEmitter.define_metric(
+    MetricBuilder.create("performance")
+    .with_config(config)
+    .add_measure("replyLatency", "Milliseconds", 1)
+    .build()
+)
+
+# emit values
+MetricEmitter.emit_metric("performance", {"replyLatency": processing_time_ms})
+</script>
+<script type="text/plain" class="src" data-sample="emitmetric" data-lang="rust">
+let metrics = gg.metrics();
+
+// define once at startup
+metrics.define_metric(
+    MetricBuilder::create("messages_published")
+        .add_measure("count", "Count", 60)
+        .build(),
+);
+
+// emit values
+let mut values = HashMap::new();
+values.insert("count".to_string(), 1.0_f32);
+metrics.emit_metric("messages_published", values).await?;
+</script>
+<script type="text/plain" class="src" data-sample="emitmetric" data-lang="typescript">
+const metrics = gg.metrics();
+
+// define once at startup
+metrics.defineMetric(
+  MetricBuilder.create("messages_published").addMeasure("count", "Count", 60).build(),
+);
+
+// emit values
+await metrics.emitMetric("messages_published", { count: 1 });
+</script>
+
+<h3>Targets</h3>
+<table>
+<thead><tr><th>Target</th><th>Behavior</th><th>Use when</th></tr></thead>
+<tbody>
+<tr><td><code>cloudwatch</code></td><td>Direct to CloudWatch, batched (≤20/call) on an interval</td><td>Low volume, or you need a custom batching interval</td></tr>
+<tr><td><code>cloudwatchcomponent</code></td><td>Via the Greengrass CloudWatch component over IPC</td><td>Legacy — no longer recommended</td></tr>
+<tr><td><code>log</code></td><td>Local rotating file in EMF</td><td>Local debugging, or paired with the LogManager component</td></tr>
+<tr><td><code>messaging</code></td><td>Publishes EMF over IPC or to IoT Core</td><td>Real-time monitoring or custom processing</td></tr>
+</tbody>
+</table>
+
+<h3>Configuration</h3>
+<div class="codeblock"><div class="tabs"><button class="active">metricEmission</button><div class="spacer"></div></div>
+<div class="pane active"><pre><code class="language-json">{
+  "metricEmission": {
+    "target": "cloudwatch",
+    "namespace": "Production/MyApp",
+    "targetConfig": { "intervalSecs": 30 },
+    "largeFleetWorkaround": true
+  }
+}</code></pre></div></div>
+<p class="muted">Set <code>largeFleetWorkaround: true</code> on large deployments to aggregate the <code>coreName</code>
+dimension into <code>ALL</code> and cut CloudWatch cost. The default <code>namespace</code> is <code>ggcommons</code>.</p>
+</section>
+
+<section id="heartbeat">
+<h2>Heartbeat</h2>
+<p>Heartbeats give you liveness and resource-utilization signals with zero code. They start automatically at
+initialization and emit on a schedule. You configure what they measure and where they go — everything else is handled
+for you.</p>
+
+<h3>What it measures</h3>
+<table>
+<thead><tr><th>Measure</th><th>Key</th><th>Default</th></tr></thead>
+<tbody>
+<tr><td>CPU usage (%)</td><td><code>cpu</code></td><td>on</td></tr>
+<tr><td>Memory usage (MB)</td><td><code>memory</code></td><td>on</td></tr>
+<tr><td>Disk usage (%)</td><td><code>disk</code></td><td>off</td></tr>
+<tr><td>Thread count</td><td><code>threads</code></td><td>off</td></tr>
+<tr><td>Open file count</td><td><code>files</code></td><td>off</td></tr>
+<tr><td>File descriptors</td><td><code>fds</code></td><td>off</td></tr>
+</tbody>
+</table>
+<p class="muted">Availability of individual measures varies by language and platform.</p>
+
+<h3>Targets</h3>
+<p>Heartbeats route through either the <strong>metric</strong> subsystem (no extra config) or the
+<strong>messaging</strong> subsystem (to a topic, IPC or cloud). You can list multiple targets.</p>
+
+<div class="codeblock"><div class="tabs"><button class="active">heartbeat</button><div class="spacer"></div></div>
+<div class="pane active"><pre><code class="language-json">{
+  "heartbeat": {
+    "intervalSecs": 30,
+    "measures": { "cpu": true, "memory": true, "threads": true, "files": false },
+    "targets": [
+      { "type": "metric" },
+      { "type": "messaging",
+        "config": { "destination": "ipc",
+                    "topic": "ggcommons/{ThingName}/{ComponentName}/heartbeat" } }
+    ]
+  }
+}</code></pre></div></div>
+
+<div class="callout tip"><span class="ct">Tip</span>
+<p>The default messaging topic is <code>ggcommons/{ThingName}/{ComponentName}/heartbeat</code>. Subscribe to
+<code>heartbeat/+/+</code> (or your custom topic) during local development to confirm the component is alive. The
+minimum interval is 1 second; the default is 5.</p></div>
+</section>
+
+<section id="logging">
+<h2>Logging</h2>
+<p>Logging is configured through the <code>logging</code> section — root level, message format, optional file output,
+and per-logger overrides. Log file paths support the same template variables as the rest of the system.</p>
+
+<h3>Options</h3>
+<table>
+<thead><tr><th>Key</th><th>Purpose</th><th>Default</th></tr></thead>
+<tbody>
+<tr><td><code>level</code></td><td>Root level: <code>TRACE</code>…<code>FATAL</code></td><td><code>INFO</code></td></tr>
+<tr><td><code>java_format</code> / <code>python_format</code> / <code>rust_format</code> / <code>ts_format</code></td><td>Per-language log message pattern (each library reads only its own key; the others ignore it)</td><td>timestamped pattern</td></tr>
+<tr><td><code>fileLogging</code></td><td>Enable file output</td><td><code>false</code></td></tr>
+<tr><td><code>logFilePath</code></td><td>File path (templated)</td><td>—</td></tr>
+<tr><td><code>loggers</code></td><td>Per-logger level overrides</td><td>—</td></tr>
+<tr><td><code>globalControl</code></td><td>Take full control of the logging system</td><td><code>false</code></td></tr>
+</tbody>
+</table>
+
+<div class="codeblock"><div class="tabs"><button class="active">logging</button><div class="spacer"></div></div>
+<div class="pane active"><pre><code class="language-json">{
+  "logging": {
+    "level": "INFO",
+    "fileLogging": true,
+    "logFilePath": "/greengrass/v2/logs/{ComponentName}-{ThingName}.log",
+    "loggers": {
+      "com.aws.proserve.ggcommons.messaging": "INFO",
+      "com.aws.proserve.ggcommons.metrics": "WARN"
+    }
+  }
+}</code></pre></div></div>
+
+<p>Once initialized, write logs with your language's normal logging facility — the framework configures the underlying
+logger for you.</p>
+<div class="code-sample" data-sample="logging"></div>
+<script type="text/plain" class="src" data-sample="logging" data-lang="java">
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
+private static final Logger LOGGER = LogManager.getLogger(App.class);
+LOGGER.info("publish interval set to {}ms", publishInterval);
+</script>
+<script type="text/plain" class="src" data-sample="logging" data-lang="python">
+import logging
+logger = logging.getLogger("GreengrassApp")
+logger.info("publish interval set to %ss", publish_interval)
+</script>
+<script type="text/plain" class="src" data-sample="logging" data-lang="rust">
+// the library initializes `tracing`
+tracing::info!(publish_interval = secs, "configuration changed");
+</script>
+<script type="text/plain" class="src" data-sample="logging" data-lang="typescript">
+import { logger } from "ggcommons";
+logger.info(`publish interval set to ${this.publishInterval}s`);
+</script>
+
+<div class="callout note"><span class="ct">Note</span>
+<p>Enable <code>globalControl</code> when you want GGCommons to own the logging configuration entirely (replacing any
+external config) and reconfigure it dynamically on config change. Leave it off to keep your existing logging setup and
+only apply component-specific levels.</p></div>
+</section>
+
+<section id="credentials">
+<h2>Credentials &amp; vault</h2>
+<p>The credentials subsystem is an encrypted, <strong>offline-first local vault</strong> on the device. It stores
+named, versioned secrets encrypted at rest and can be seeded and refreshed from a central source (AWS Secrets Manager
+first). Reads are served entirely from the local vault, so your component keeps working when the cloud is unreachable —
+essential at the edge.</p>
+
+<figure class="diagram">
+<svg viewBox="0 0 740 210" role="img" aria-label="Components read from a shared encrypted device vault; a single sync owner refreshes it from a central source.">
+  <rect x="40" y="16" width="150" height="40" rx="7" class="d-box-ac"/><text x="115" y="40" text-anchor="middle" class="d-st">component A · gg.credentials()</text>
+  <rect x="210" y="16" width="150" height="40" rx="7" class="d-box-ac"/><text x="285" y="40" text-anchor="middle" class="d-st">component B · gg.credentials()</text>
+
+  <rect x="100" y="96" width="210" height="58" rx="8" class="d-box-bl"/>
+  <text x="205" y="118" text-anchor="middle" class="d-t">Device vault (encrypted)</text>
+  <text x="205" y="134" text-anchor="middle" class="d-st">AEAD records · wrapped DEK</text>
+  <text x="205" y="147" text-anchor="middle" class="d-st">KeyProvider: KMS / TPM / file</text>
+
+  <rect x="430" y="96" width="150" height="58" rx="7" class="d-box-gr"/>
+  <text x="505" y="118" text-anchor="middle" class="d-t">SyncEngine</text>
+  <text x="505" y="137" text-anchor="middle" class="d-st">single owner · pull only</text>
+  <rect x="610" y="96" width="110" height="58" rx="7" class="d-box"/>
+  <text x="665" y="120" text-anchor="middle" class="d-st">AWS Secrets</text><text x="665" y="134" text-anchor="middle" class="d-st">Manager</text>
+
+  <line x1="115" y1="56" x2="180" y2="96" class="d-line"/>
+  <line x1="285" y1="56" x2="230" y2="96" class="d-line"/>
+  <line x1="430" y1="125" x2="310" y2="125" class="d-line"/>
+  <line x1="610" y1="125" x2="580" y2="125" class="d-line-d"/>
+  <text x="360" y="118" text-anchor="middle" class="d-lbl">writes</text>
+  <text x="150" y="86" text-anchor="middle" class="d-lbl">reads (RO)</text>
+</svg>
+<figcaption>One shared encrypted vault per device. Consumers open it read-only; one sync owner refreshes it from the cloud.</figcaption>
+</figure>
+
+<h3>Reading a secret</h3>
+<p>Obtain the service with <code>gg.credentials()</code> (it is <code>null</code>/<code>None</code>/<code>Option</code>
+when there is no <code>credentials</code> config section). Keys are automatically namespaced by Thing and component, so
+you reference short names. <strong>Never log a secret value.</strong></p>
+<div class="code-sample" data-sample="creds"></div>
+<script type="text/plain" class="src" data-sample="creds" data-lang="java">
+CredentialService creds = gg.getCredentials();
+if (creds == null) return;  // no credentials config section
+
+// Write a local-only secret (in production, central sync provides it)
+if (!creds.exists("skeleton/demo-secret")) {
+    byte[] bytes = "{\"username\":\"svc\",\"password\":\"...\"}".getBytes(StandardCharsets.UTF_8);
+    String version = creds.put("skeleton/demo-secret", bytes, PutOptions.defaults());
+}
+
+// Read it back — log only non-sensitive facts
+Optional<Secret> secret = creds.get("skeleton/demo-secret");
+secret.ifPresent(s -> LOGGER.info("ok (redacted) bytes={} source={}", s.bytes().length, s.source()));
+
+// Typed view: basic auth (username/password)
+Optional<BasicAuth> ba = creds.getBasicAuth("skeleton/demo-secret");
+ba.ifPresent(a -> LOGGER.info("username={}", a.username()));   // never log the password
+</script>
+<script type="text/plain" class="src" data-sample="creds" data-lang="python">
+creds = gg.get_credentials()
+if creds is None:
+    return  # no credentials config section
+
+# Write a local-only secret (in production, central sync provides it)
+if not creds.exists("skeleton/demo-secret"):
+    payload = json.dumps({"username": "svc", "password": "..."}).encode("utf-8")
+    version = creds.put("skeleton/demo-secret", payload)
+
+# Read it back -- log only non-sensitive facts
+s = creds.get("skeleton/demo-secret")
+if s is not None:
+    logger.info(f"ok (redacted) bytes={len(s.bytes())} source={s.source}")
+
+# Typed view: basic auth
+ba = creds.get_basic_auth("skeleton/demo-secret")
+if ba is not None:
+    logger.info(f"username={ba.username}")   # never log the password
+</script>
+<script type="text/plain" class="src" data-sample="creds" data-lang="rust">
+let Some(creds) = gg.credentials() else { return Ok(()); };  // no credentials config section
+
+// Read a secret -- log only non-sensitive facts
+if creds.exists("skeleton/demo-secret") {
+    match creds.get("skeleton/demo-secret") {
+        Ok(Some(secret)) => tracing::info!(bytes = secret.bytes().len(), "credential ok (redacted)"),
+        Ok(None)         => tracing::info!("secret not present"),
+        Err(e)           => tracing::warn!(error = %e, "vault error (non-fatal)"),
+    }
+}
+</script>
+<script type="text/plain" class="src" data-sample="creds" data-lang="typescript">
+const creds = gg.credentials();
+if (!creds) return;  // no credentials config section
+
+// Write a local-only secret (in production, central sync provides it)
+if (!creds.exists("skeleton/demo-secret")) {
+  const payload = Buffer.from(JSON.stringify({ username: "svc", password: "..." }), "utf-8");
+  const version = creds.put("skeleton/demo-secret", payload);
+}
+
+// Read it back -- log only non-sensitive facts
+const s = creds.get("skeleton/demo-secret");
+if (s) logger.info(`ok (redacted) bytes=${s.bytes().length} source=${s.source}`);
+</script>
+
+<div class="callout warn"><span class="ct">Edge security model</span>
+<p>A shared device vault means every component on the device that can unlock it can read every secret in it. Enforce
+least privilege on the <em>sync</em> side (the device only pulls the secrets its IAM/TES role entitles it to). Secret
+values are redacted in diagnostics and must never be written to logs.</p></div>
+</section>
+
+<section id="parameters">
+<h2>Parameters</h2>
+<p>Parameters give you offline-capable, <strong>source-agnostic</strong> access to externalized configuration —
+endpoints, feature flags, tuning values. It is a peer of credentials but aimed at configuration rather than secrets,
+and its signature operation is fetching a whole subtree by path.</p>
+
+<h3>Pluggable sources</h3>
+<table>
+<thead><tr><th>Source (<code>type</code>)</th><th>Backend</th><th>Typical mode</th></tr></thead>
+<tbody>
+<tr><td><code>awsSsm</code></td><td>AWS SSM Parameter Store (with decryption)</td><td>GREENGRASS (via TES)</td></tr>
+<tr><td><code>mountedDir</code></td><td>A directory tree — K8s ConfigMap/Secret mounts, Docker secrets</td><td>STANDALONE / Kubernetes</td></tr>
+<tr><td><code>env</code></td><td>Environment variables under a prefix</td><td>STANDALONE / containers</td></tr>
+<tr><td><code>custom</code></td><td>Your own <code>ParameterSource</code> (HashiCorp, Azure, …)</td><td>any</td></tr>
+</tbody>
+</table>
+
+<p>The service above the source is <strong>offline-first</strong>: reads always come from a cache and never make a
+network call; a failed background refresh keeps serving last-known values. For remote sources the cache is persisted
+and encrypted at rest (reusing the vault crypto); for already-local sources it stays in memory.</p>
+
+<h3>Reading parameters</h3>
+<div class="code-sample" data-sample="params"></div>
+<script type="text/plain" class="src" data-sample="params" data-lang="java">
+ParameterService params = gg.getParameters();
+if (params == null) return;  // no parameters config section
+
+// Plain string parameter
+Optional<String> region = params.get("/skeleton/region");
+region.ifPresent(r -> LOGGER.info("region={}", r));
+
+// Typed accessor
+Optional<Long> poolSize = params.getInt("/skeleton/poolSize");
+
+// Fetch a whole subtree, plus subsystem stats
+LOGGER.info("stats {}", params.stats());
+</script>
+<script type="text/plain" class="src" data-sample="params" data-lang="python">
+params = gg.get_parameters()
+if params is None:
+    return  # no parameters config section
+
+# Plain string parameter
+region = params.get("/skeleton/region")
+
+# Typed accessor
+pool_size = params.get_int("/skeleton/poolSize")
+
+# Subsystem stats
+st = params.stats()
+logger.info(f"source={st.source} count={st.parameter_count}")
+</script>
+<script type="text/plain" class="src" data-sample="params" data-lang="rust">
+let Some(params) = gg.parameters() else { return Ok(()); };  // no parameters config section
+
+// Plain string parameter
+match params.get("/skeleton/region") {
+    Some(region) => tracing::info!(%region, "parameter ok"),
+    None         => tracing::info!("/skeleton/region not set"),
+}
+</script>
+<script type="text/plain" class="src" data-sample="params" data-lang="typescript">
+const params = gg.parameters();
+if (!params) return;  // no parameters config section
+
+// Plain string parameter
+const region = params.get("/skeleton/region");
+
+// Typed accessors and stats are available too
+logger.info(`region=${region}`);
+</script>
+
+<h3>Configuration</h3>
+<div class="codeblock"><div class="tabs"><button class="active">parameters</button><div class="spacer"></div></div>
+<div class="pane active"><pre><code class="language-yaml">parameters:
+  source:
+    type: "awsSsm"          # awsSsm | mountedDir | env | custom
+    region: "us-east-1"
+    withDecryption: true
+    # mountedDir:  root: "/etc/config"   securePaths: [ "/etc/secrets" ]
+    # env:         prefix: "MYAPP_"
+  sync:
+    names: [ "/skeleton/region", "/skeleton/poolSize" ]   # selective bootstrap
+  refreshIntervalSecs: 300</code></pre></div></div>
+
+<div class="callout note"><span class="ct">Credentials vs parameters</span>
+<p>Use <code>gg.credentials()</code> for secrets that need rotation and vault-grade handling. Use
+<code>gg.parameters()</code> for configuration values (with secure values as one option). Components routinely use
+both at once.</p></div>
+</section>
+
+<section id="streaming">
+<h2>Telemetry streaming</h2>
+<p>Streaming is the high-throughput, <strong>store-and-forward</strong> data plane: one-way, high-rate, durable,
+batched egress to <strong>Kinesis</strong> and <strong>Kafka</strong>. It is built around a portable, embedded,
+persistent buffer so it keeps accepting records during disconnection. It is opt-in (active only when your config has a
+<code>streaming</code> section) and does not change any existing API.</p>
+
+<figure class="diagram">
+<svg viewBox="0 0 740 150" role="img" aria-label="Your code appends records to a durable local log; an export engine drains batches to Kinesis or Kafka and checkpoints on ack.">
+  <rect x="20" y="50" width="150" height="50" rx="7" class="d-box-ac"/>
+  <text x="95" y="71" text-anchor="middle" class="d-t">append(record)</text>
+  <text x="95" y="87" text-anchor="middle" class="d-st">non-blocking</text>
+
+  <rect x="210" y="46" width="150" height="58" rx="7" class="d-box-bl"/>
+  <text x="285" y="68" text-anchor="middle" class="d-t">EmbeddedLog</text>
+  <text x="285" y="84" text-anchor="middle" class="d-st">durable FIFO buffer</text>
+  <text x="285" y="97" text-anchor="middle" class="d-st">on disk</text>
+
+  <rect x="400" y="46" width="150" height="58" rx="7" class="d-box-gr"/>
+  <text x="475" y="68" text-anchor="middle" class="d-t">ExportEngine</text>
+  <text x="475" y="84" text-anchor="middle" class="d-st">batch · retry</text>
+  <text x="475" y="97" text-anchor="middle" class="d-st">checkpoint on ack</text>
+
+  <rect x="590" y="30" width="130" height="32" rx="6" class="d-box"/><text x="655" y="50" text-anchor="middle" class="d-st">Kinesis</text>
+  <rect x="590" y="88" width="130" height="32" rx="6" class="d-box"/><text x="655" y="108" text-anchor="middle" class="d-st">Kafka</text>
+
+  <line x1="170" y1="75" x2="210" y2="75" class="d-line"/>
+  <line x1="360" y1="75" x2="400" y2="75" class="d-line"/>
+  <line x1="550" y1="70" x2="590" y2="46" class="d-line-d"/>
+  <line x1="550" y1="80" x2="590" y2="104" class="d-line-d"/>
+</svg>
+<figcaption>Append returns once the record is committed to the local buffer, so a sink or network outage never blocks your loop.</figcaption>
+</figure>
+
+<h3>Appending records</h3>
+<p>Get a named stream from <code>gg.streams()</code> (in Java/Python/TS this is <code>null</code>/<code>None</code>/<code>undefined</code>
+when there is no <code>streaming</code> config; in Rust the service is always returned and <code>stream(name)</code>
+errors if that stream isn't configured). Append a payload with a <strong>partition key</strong> (drives ordering and
+downstream sharding — partition by Thing for ordered per-device delivery) and a timestamp.</p>
+<div class="code-sample" data-sample="streaming"></div>
+<script type="text/plain" class="src" data-sample="streaming" data-lang="java">
+StreamService streamService = gg.getStreams();
+StreamHandle stream = (streamService != null) ? streamService.stream("telemetry") : null;
+
+if (stream != null) {
+    String thing = config.getThingName();
+    byte[] payload = streamPayload.toString().getBytes(StandardCharsets.UTF_8);
+    // append(partitionKey, timestampMs, payload)
+    stream.append(thing, System.currentTimeMillis(), payload);
+}
+</script>
+<script type="text/plain" class="src" data-sample="streaming" data-lang="python">
+streams = gg.get_streams()
+stream = streams.stream("telemetry") if streams is not None else None
+
+if stream is not None:
+    thing = config.get_thing_name()
+    payload = json.dumps({"seq": seq, "thing": thing}).encode("utf-8")
+    # append(partition_key, timestamp_ms, payload)
+    stream.append(thing, int(time.time() * 1000), payload)
+</script>
+<script type="text/plain" class="src" data-sample="streaming" data-lang="rust">
+// gg.streams() always returns the service; stream(name) errors if that stream isn't configured.
+let streams = gg.streams();
+if let Ok(stream) = streams.stream("telemetry") {
+    let payload = serde_json::to_vec(&json!({ "seq": seq, "thing": thing }))?;
+    let record = StreamRecord::new(thing.clone(), now_ms(), payload);
+    match stream.append(record) {
+        Ok(()) => tracing::debug!("appended record"),
+        Err(e) => tracing::warn!(error = %e, "append failed"),
+    }
+}
+</script>
+<script type="text/plain" class="src" data-sample="streaming" data-lang="typescript">
+const streams = gg.streams();
+const stream = streams ? streams.stream("telemetry") : undefined;
+
+if (stream) {
+  const thing = gg.config().thingName;
+  const payload = Buffer.from(JSON.stringify({ seq, thing }), "utf-8");
+  // append(partitionKey, timestampMs, payload)
+  stream.append(thing, Date.now(), payload);
+}
+</script>
+
+<h3>Configuration</h3>
+<div class="codeblock"><div class="tabs"><button class="active">streaming</button><div class="spacer"></div></div>
+<div class="pane active"><pre><code class="language-yaml">streaming:
+  streams:
+    - name: "telemetry"
+      sink:
+        type: "kinesis"          # kinesis | kafka
+        streamName: "device-telemetry"
+        region: "us-east-1"
+      buffer:
+        # type defaults to "disk" (durable); use "memory" for a non-durable RAM buffer.
+        path: "/greengrass/v2/work/{ComponentFullName}/stream-telemetry"
+        segmentBytes: 1048576
+        maxDiskBytes: 67108864
+        onFull: "dropOldest"     # never silent -- always metered
+      delivery:
+        pollIntervalMs: 1000</code></pre></div></div>
+
+<div class="callout note"><span class="ct">Delivery semantics</span>
+<p>Streaming is <strong>at-least-once</strong>: records carry <code>(partitionKey, sequence)</code> so downstream
+consumers can de-duplicate. Ordering is preserved per partition key. The overflow (<code>onFull</code>) default,
+<code>dropOldest</code>, is telemetry-typical and always emits a metric when it drops — it is never silent. Streaming
+is not a replacement for <a href="#messaging">messaging</a>, which remains your control plane.</p></div>
+</section>
+
+<hr>
+<p class="muted" style="font-size:13px">GGCommons Developer Guide · the same library in Java, Python, Rust, and
+TypeScript. Per-subsystem reference docs live under each library's <code>doc/</code> directory.</p>
+</main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script>
+(function(){
+  var LANGS=["java","python","rust","typescript"];
+  var LABEL={java:"Java",python:"Python",rust:"Rust",typescript:"TypeScript"};
+  var HLJS={java:"java",python:"python",rust:"rust",typescript:"typescript"};
+  function esc(s){return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
+
+  // Build tabbed code blocks from the inline plain-text source templates
+  function buildBlocks(){
+    var srcs=document.querySelectorAll('script.src');
+    var groups={};var order=[];
+    srcs.forEach(function(s){
+      var id=s.getAttribute('data-sample');
+      if(!groups[id]){groups[id]={};order.push(id);}
+      groups[id][s.getAttribute('data-lang')]={code:s.textContent.replace(/^\n/,'').replace(/\s+$/,''),file:s.getAttribute('data-file')||''};
+    });
+    document.querySelectorAll('.code-sample').forEach(function(ph){
+      var id=ph.getAttribute('data-sample');var g=groups[id];if(!g)return;
+      var block=document.createElement('div');block.className='codeblock';
+      var tabs=document.createElement('div');tabs.className='tabs';
+      var panes=[];
+      LANGS.forEach(function(L){
+        if(!g[L])return;
+        var btn=document.createElement('button');btn.textContent=LABEL[L];btn.setAttribute('data-lang',L);
+        btn.addEventListener('click',function(){setLang(L);});
+        tabs.appendChild(btn);
+        var pane=document.createElement('div');pane.className='pane';pane.setAttribute('data-lang',L);
+        var ft=g[L].file?'<div class="filetag">'+esc(g[L].file)+'</div>':'';
+        pane.innerHTML=ft+'<pre><code class="language-'+HLJS[L]+'">'+esc(g[L].code)+'</code></pre>';
+        panes.push(pane);
+      });
+      var sp=document.createElement('div');sp.className='spacer';tabs.appendChild(sp);
+      var copy=document.createElement('button');copy.className='copybtn';copy.textContent='Copy';
+      copy.addEventListener('click',function(){
+        var active=block.querySelector('.pane.active code')||block.querySelector('.pane code');
+        navigator.clipboard.writeText(active.textContent).then(function(){copy.textContent='Copied';setTimeout(function(){copy.textContent='Copy';},1400);});
+      });
+      tabs.appendChild(copy);
+      block.appendChild(tabs);
+      panes.forEach(function(p){block.appendChild(p);});
+      ph.replaceWith(block);
+    });
+  }
+
+  function setLang(lang){
+    if(LANGS.indexOf(lang)<0)lang="java";
+    try{localStorage.setItem('gg-lang',lang);}catch(e){}
+    document.querySelectorAll('.codeblock').forEach(function(b){
+      var has=b.querySelector('.pane[data-lang="'+lang+'"]');
+      var use=has?lang:(b.querySelector('.pane')?b.querySelector('.pane').getAttribute('data-lang'):lang);
+      b.querySelectorAll('.pane').forEach(function(p){p.classList.toggle('active',p.getAttribute('data-lang')===use);});
+      b.querySelectorAll('.tabs button[data-lang]').forEach(function(t){t.classList.toggle('active',t.getAttribute('data-lang')===use);});
+    });
+    document.querySelectorAll('#globalLang button').forEach(function(t){t.classList.toggle('active',t.getAttribute('data-lang')===lang);});
+  }
+
+  // Scrollspy for sidebar
+  function scrollSpy(){
+    if(typeof IntersectionObserver==='undefined')return;
+    var secs=[].slice.call(document.querySelectorAll('main section[id]'));
+    var links={};document.querySelectorAll('nav.side a').forEach(function(a){links[a.getAttribute('href').slice(1)]=a;});
+    var obs=new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if(e.isIntersecting){
+          Object.values(links).forEach(function(a){a.classList.remove('active');});
+          if(links[e.target.id])links[e.target.id].classList.add('active');
+        }
+      });
+    },{rootMargin:"-72px 0px -70% 0px",threshold:0});
+    secs.forEach(function(s){obs.observe(s);});
+  }
+
+  document.addEventListener('DOMContentLoaded',function(){
+    buildBlocks();
+    if(window.hljs)document.querySelectorAll('.codeblock code').forEach(function(c){hljs.highlightElement(c);});
+    var saved="java";try{saved=localStorage.getItem('gg-lang')||"java";}catch(e){}
+    setLang(saved);
+    document.querySelectorAll('#globalLang button').forEach(function(b){
+      b.addEventListener('click',function(){setLang(b.getAttribute('data-lang'));});
+    });
+    scrollSpy();
+    var mt=document.getElementById('menuToggle'),sb=document.getElementById('sidebar');
+    if(mt)mt.addEventListener('click',function(){sb.classList.toggle('open');});
+    sb.querySelectorAll('a').forEach(function(a){a.addEventListener('click',function(){sb.classList.remove('open');});});
+  });
+})();
+</script>
+</body>
+</html>
