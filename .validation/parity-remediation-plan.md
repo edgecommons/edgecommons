@@ -74,9 +74,17 @@ NO CHANGE NEEDED (audit imprecision):
 WAIVED: #10 Rust receiveOwnMessages (SDK) · #13 built-in request timeout (IDIOM) · #15 TS
 heartbeat threads/files/fds on Win/mac (PLAT).
 
-DEFERRED → shared-configuration logging redesign (per user direction not to chase logging format now):
-- #1 cross-language logging.format (needs per-language format fields in the shared schema).
-- #2 TS per-logger levels (needs a named-logger / getLogger(name) API; Rust done via EnvFilter).
-- #4 logging hot-reload rebuild of format/file sink (Rust/TS; tracing-layer-analog limitation).
-- #3 logging.globalControl semantics (vestigial/inconsistent — decide or remove in the redesign).
+LOGGING IMPLEMENTED 2026-06-22 (commit e6310e9):
+- #1 DONE — replaced logging.format with per-language java_format/python_format/rust_format/
+  ts_format (schema + all libs + every in-repo config/recipe/fixture migrated). Java/Python apply
+  natively; Rust renders via a custom tracing TokenLayer ({timestamp}/{level}/{target}/{message});
+  TS renders a token template and re-applies it on reload.
+- #2 Rust DONE (EnvFilter per-logger directives). #4 TS DONE (format+file rebuilt on reload).
+
+Still DEFERRED → shared-configuration logging redesign:
+- #2 TS per-logger levels — needs a named-logger (getLogger(name)) API the single process-wide
+  logger doesn't expose; design with shared-config.
+- #4 Rust format/file hot-reload rebuild — WAIVED-runtime: tracing layers can't be swapped after
+  install (level still reloads live); revisit if we move off the global subscriber.
+- #3 logging.globalControl — semantics vestigial/inconsistent across libs; decide or remove.
 - #12 max_messages queue bound (Java/Python API addition) — leftover P2, revisit if needed.
