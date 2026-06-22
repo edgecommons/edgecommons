@@ -16,7 +16,7 @@ configuration, messaging, metrics, heartbeat, and logging behind service traits.
 - **STANDALONE**: dual-broker MQTT (local broker + AWS IoT Core), via `rumqttc`.
 - **GREENGRASS**: Greengrass IPC, behind the `greengrass` cargo feature (Linux-only).
 
-## CLI contract (shared across all three languages)
+## CLI contract (shared across all four languages)
 
 - `-c/--config <SOURCE> [args...]` — `FILE | ENV | GG_CONFIG (default) | SHADOW | CONFIG_COMPONENT`
 - `-m/--mode <MODE> [path]` — `GREENGRASS (default) | STANDALONE <messaging_config.json>`

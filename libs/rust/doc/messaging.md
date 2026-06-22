@@ -51,8 +51,8 @@ svc.publish("plant/line-a/data", &msg).await?;
 ### Wire format & parity
 
 Header keys are **snake_case** (`correlation_id`, `reply_to`) and request/reply uses
-the `ggcommons/reply-` topic prefix — both matching the Java/Python `MessageHeader`
-exactly so the three libraries interoperate on the same topics.
+the `ggcommons/reply-` topic prefix — both matching the Java/Python/TypeScript `MessageHeader`
+exactly so the four libraries interoperate on the same topics.
 
 A received payload that is **not an envelope** (no `header`/`tags`/`body`, or not even
 JSON) is delivered as a **raw** message rather than dropped: check `Message::is_raw()`
