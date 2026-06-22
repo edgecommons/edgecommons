@@ -66,6 +66,22 @@ ComponentConfiguration:
           keyProvider:
             type: "file"
             keyPath: "/greengrass/v2/work/{ComponentFullName}/vault.key"
+      # Parameters / externalized config (read only by builds that include the `parameters`
+      # feature; inert otherwise). The library reads the configured source into an offline-first
+      # cache; the component reads tunables via gg.parameters(). The `env` source below needs no
+      # AWS — set GG_PARAM_SKELETON_REGION / GG_PARAM_SKELETON_POOLSIZE in the component's
+      # environment to see them resolve. For SSM Parameter Store, build with `parameters-aws`,
+      # use source.type "awsSsm" (the cache then persists encrypted under the work dir) and grant
+      # ssm:GetParameter(s) on the device TES role.
+      parameters:
+        source:
+          type: "env"
+          prefix: "GG_PARAM_"
+        refreshIntervalSecs: 0
+        sync:
+          names:
+            - "/skeleton/region"
+            - "/skeleton/poolSize"
       tags:
         appId: "Test"
         site: "Chantilly"

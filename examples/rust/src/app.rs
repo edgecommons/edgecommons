@@ -61,6 +61,11 @@ pub struct SkeletonApp {
     /// `credentials-aws` + a `central` config, sync from AWS Secrets Manager over TES).
     #[cfg(feature = "credentials")]
     credentials: Option<Arc<dyn ggcommons::credentials::CredentialService>>,
+    /// The parameter service when the `parameters` feature is built and a `parameters` config
+    /// section is present; `None` otherwise. Demonstrates offline-first externalized-config access
+    /// (here from the `env` source, so the example needs no AWS; on-device it can read SSM via TES).
+    #[cfg(feature = "parameters")]
+    parameters: Option<Arc<dyn ggcommons::parameters::ParameterService>>,
 }
 
 /// Config key (under `component.global`) naming the secret the component reads; the default is a
@@ -163,6 +168,8 @@ impl SkeletonApp {
             stream,
             #[cfg(feature = "credentials")]
             credentials: gg.credentials(),
+            #[cfg(feature = "parameters")]
+            parameters: gg.parameters(),
         })
     }
 
@@ -238,6 +245,47 @@ impl SkeletonApp {
         }
     }
 
+    /// Demonstrate offline-first externalized-config access via `gg.parameters()`.
+    ///
+    /// # Purpose
+    /// Show the parameter-service usage a real component needs: read named config parameters from
+    /// the configured source (here `env`, so the example is self-contained and needs no AWS) through
+    /// the offline-first local cache, including a typed read. Runs once at startup. Sibling to
+    /// [`Self::demonstrate_credentials`]: secrets come from the vault, tunables come from here.
+    ///
+    /// On-device this can point at SSM Parameter Store (build with `parameters-aws`, source
+    /// `awsSsm`); the values are then cached encrypted and served offline.
+    ///
+    /// # Errors
+    /// Non-fatal: any error is logged and swallowed so the demo never takes the component down.
+    #[cfg(feature = "parameters")]
+    fn demonstrate_parameters(&self) {
+        let Some(params) = &self.parameters else {
+            tracing::info!("no `parameters` config section; parameter access demo disabled");
+            return;
+        };
+        // Read a string parameter and a typed (integer) one. With the `env` source configured in
+        // the recipe/config, these resolve from env vars (e.g. GG_PARAM_SKELETON_REGION) seeded by
+        // the deployment / the local shell.
+        match params.get("/skeleton/region") {
+            Ok(Some(region)) => tracing::info!(parameter = "/skeleton/region", value = %region,
+                "parameter access OK (offline-first, from local cache)"),
+            Ok(None) => tracing::info!(parameter = "/skeleton/region",
+                "parameter not set (set GG_PARAM_SKELETON_REGION to see it resolve)"),
+            Err(e) => tracing::warn!(error = %e, "failed to read parameter"),
+        }
+        match params.get_int("/skeleton/poolSize") {
+            Ok(Some(n)) => tracing::info!(parameter = "/skeleton/poolSize", value = n,
+                "typed parameter read OK"),
+            Ok(None) => {}
+            Err(e) => tracing::debug!(error = %e, "parameter is not an integer"),
+        }
+        // Non-secret stats for observability (never includes values).
+        let stats = params.stats();
+        tracing::info!(source = %stats.source, count = stats.parameter_count,
+            "parameter service stats");
+    }
+
     /// Run the component until a shutdown signal is received.
     ///
     /// # Purpose
@@ -255,6 +303,10 @@ impl SkeletonApp {
         // Demonstrate encrypted-vault secret access once at startup (feature-gated, non-fatal).
         #[cfg(feature = "credentials")]
         self.demonstrate_credentials();
+
+        // Demonstrate offline-first externalized-config access once at startup (feature-gated).
+        #[cfg(feature = "parameters")]
+        self.demonstrate_parameters();
 
         let Some(messaging) = self.messaging.clone() else {
             tracing::warn!(

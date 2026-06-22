@@ -36,6 +36,11 @@ streaming-kinesis = ["streaming", "ggcommons/streaming-kinesis"]
 # Secrets Manager + the KMS-via-TES key provider (on-device it authenticates via TES).
 credentials = ["ggcommons/credentials"]
 credentials-aws = ["credentials", "ggcommons/credentials-aws"]
+# Parameters / externalized config (gg.parameters()). The `parameters` config section in
+# recipe.yaml is inert unless this is built in. The `env`/`mountedDir` sources need no AWS;
+# `parameters-aws` adds the SSM Parameter Store source (on-device it authenticates via TES).
+parameters = ["ggcommons/parameters"]
+parameters-aws = ["parameters", "ggcommons/parameters-aws"]
 
 [dependencies]
 # Local path dependency on the ggcommons Rust library (sibling project in the monorepo).
