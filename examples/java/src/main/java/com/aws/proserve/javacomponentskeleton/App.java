@@ -10,6 +10,7 @@ import com.aws.proserve.ggcommons.credentials.PutOptions;
 import com.aws.proserve.ggcommons.credentials.Secret;
 import com.aws.proserve.ggcommons.messaging.MessagingClient;
 import com.aws.proserve.ggcommons.metrics.MetricEmitter;
+import com.aws.proserve.ggcommons.parameters.ParameterService;
 import com.aws.proserve.ggcommons.messaging.Message;
 import com.aws.proserve.ggcommons.messaging.MessageBuilder;
 import com.aws.proserve.ggcommons.messaging.MessageHandler;
@@ -277,6 +278,9 @@ public class App implements ConfigurationChangeListener
         // Demonstrate encrypted-vault secret access once at startup (non-fatal).
         demonstrateCredentials(ggCommons);
 
+        // Demonstrate offline-first parameter access once at startup (non-fatal).
+        demonstrateParameters(ggCommons);
+
         // Demonstrate request-reply pattern
         demonstrateRequestReply();
         
@@ -354,6 +358,45 @@ public class App implements ConfigurationChangeListener
             }
         } catch (Exception e) {
             LOGGER.warn("secret access demo failed (non-fatal): {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Demonstrate offline-first parameter access via {@link GGCommons#getParameters()}.
+     *
+     * <p>Mirrors {@link #demonstrateCredentials(GGCommons)} for configuration parameters: read a
+     * couple of declared parameters from the cache (populated at startup from the configured source)
+     * and use them. The example config wires the {@code env} source (no AWS, no provisioning), so the
+     * values come from environment variables (e.g. {@code GG_PARAM_SKELETON_REGION=us-east-1},
+     * {@code GG_PARAM_SKELETON_POOLSIZE=8}). Runs once at startup.
+     *
+     * <p>Only non-secret values are logged here; a real component must never log a value flagged
+     * {@code secure}. Non-fatal: any parameter error is logged and swallowed so the demo never takes
+     * the component down (offline-first — a missing/unreachable parameter is just empty).
+     */
+    private void demonstrateParameters(GGCommons gg) {
+        try {
+            ParameterService params = gg.getParameters();
+            if (params == null) {
+                LOGGER.info("no parameters config section; parameter access demo disabled");
+                return;
+            }
+
+            // A plain string parameter (non-secret) — safe to log.
+            Optional<String> region = params.get("/skeleton/region");
+            region.ifPresentOrElse(
+                r -> LOGGER.info("parameter access OK [param=/skeleton/region, value={}]", r),
+                () -> LOGGER.info("parameter /skeleton/region not set (set GG_PARAM_SKELETON_REGION to populate it)"));
+
+            // A typed (integer) parameter via getInt — non-secret tuning value, safe to log.
+            Optional<Long> poolSize = params.getInt("/skeleton/poolSize");
+            poolSize.ifPresentOrElse(
+                p -> LOGGER.info("parameter access OK [param=/skeleton/poolSize, value={}]", p),
+                () -> LOGGER.info("parameter /skeleton/poolSize not set (set GG_PARAM_SKELETON_POOLSIZE to populate it)"));
+
+            LOGGER.info("parameter subsystem stats [{}]", params.stats());
+        } catch (Exception e) {
+            LOGGER.warn("parameter access demo failed (non-fatal): {}", e.getMessage());
         }
     }
 

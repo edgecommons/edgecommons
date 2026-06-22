@@ -14,3 +14,6 @@ logs/
 *.pem
 *.key
 *.crt
+.vault/
+# Per-instance local store dirs created by STANDALONE runs (e.g. <thing>-tcplocalhost1883/)
+*-tcplocalhost1883/

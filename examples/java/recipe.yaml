@@ -45,6 +45,22 @@ ComponentConfiguration:
           keyProvider:
             type: "file"
             keyPath: "/greengrass/v2/work/{ComponentFullName}/vault.key"
+      # Parameters / offline-first configuration values. The library opens the parameter service at
+      # startup; the component reads values via gg.getParameters(). This example uses the `env` source
+      # (no AWS, no RBAC): a parameter "/skeleton/region" maps to env var GG_PARAM_SKELETON_REGION.
+      # `env`/`mountedDir` are already-local sources, so the cache is in-memory (no persisted copy).
+      # For AWS SSM Parameter Store, switch source.type to "awsSsm" (region + sync.paths) and add a
+      # `cache` block (persist: true, path, keyProvider) for offline resilience.
+      parameters:
+        source:
+          type: "env"
+          prefix: "GG_PARAM_"
+        refreshIntervalSecs: 300
+        bootstrapOnStart: true
+        sync:
+          names:
+            - "/skeleton/region"
+            - "/skeleton/poolSize"
       component:
         global:
           'publish_interval': 3

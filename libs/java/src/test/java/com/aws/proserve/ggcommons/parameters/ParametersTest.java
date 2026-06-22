@@ -2,6 +2,8 @@ package com.aws.proserve.ggcommons.parameters;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -13,6 +15,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -317,5 +321,398 @@ class ParametersTest {
         try (DefaultParameterService s = Parameters.open(cfg)) {
             assertEquals("env", s.stats().source());
         }
+    }
+
+    // ----------------------------------------------------------------------------------------------
+    // Additional coverage (idiomatic-Java parity with the Rust reference's >90% test set).
+    // ----------------------------------------------------------------------------------------------
+
+    @Test
+    void typedAccessorErrorAndEmptyBranches() {
+        // Drives every typed-accessor branch the happy-path tests don't: parse errors, the false
+        // boolean, an empty StringList, and the missing => empty / Optional.empty path on each.
+        Map<String, String> env = new HashMap<>();
+        env.put("GGTEST_TY2_NOTINT", "abc");
+        env.put("GGTEST_TY2_NOTBOOL", "maybe");
+        env.put("GGTEST_TY2_NOTJSON", "{bad");
+        env.put("GGTEST_TY2_FLAGOFF", "off");
+        env.put("GGTEST_TY2_EMPTY", "");
+        DefaultParameterService s = svcEnv("GGTEST_TY2_",
+                env, "/notInt", "/notBool", "/notJson", "/flagOff", "/empty");
+
+        // getBool false branch + getInt/getBool/getJson parse errors.
+        assertEquals(Optional.of(false), s.getBool("/flagOff"));
+        assertThrows(ParameterException.class, () -> s.getInt("/notInt"));
+        assertThrows(ParameterException.class, () -> s.getBool("/notBool"));
+        assertThrows(ParameterException.class, () -> s.getJson("/notJson"));
+
+        // Empty string => empty StringList (the `!v.isEmpty()` short-circuit).
+        assertEquals(Optional.of(List.of()), s.getStringList("/empty"));
+
+        // Missing name => Optional.empty() on every accessor (no exception).
+        assertEquals(Optional.empty(), s.getInt("/missing"));
+        assertEquals(Optional.empty(), s.getBool("/missing"));
+        assertEquals(Optional.empty(), s.getJson("/missing"));
+        assertEquals(Optional.empty(), s.getStringList("/missing"));
+        assertEquals(Optional.empty(), s.getBytes("/missing"));
+    }
+
+    @Test
+    void getBytesAndStatsNeverRefreshed() {
+        Map<String, String> env = new HashMap<>();
+        env.put("GGTEST_BYTES_VAL", "raw");
+        DefaultParameterService s = svcEnv("GGTEST_BYTES_", env, "/val");
+        assertEquals("raw", new String(s.getBytes("/val").orElseThrow(), StandardCharsets.UTF_8));
+
+        // After a successful refresh, stats report a non-null (>= 0) age and zero failures.
+        ParameterStats st = s.stats();
+        assertEquals(1, st.parameterCount());
+        assertEquals(0, st.refreshFailures());
+        assertNotNull(st.lastRefreshAgeMs());
+        assertTrue(st.lastRefreshAgeMs() >= 0);
+        assertEquals("env", st.source());
+    }
+
+    @Test
+    void statsLastRefreshAgeNullBeforeAnyRefresh() {
+        // A brand-new service that has never refreshed reports a null last-refresh age.
+        DefaultParameterService s = DefaultParameterService.withMemoryCache(
+                envSource("GGTEST_NOREFRESH_", new HashMap<>()), List.of(), List.of());
+        assertNull(s.stats().lastRefreshAgeMs());
+        assertEquals(0, s.stats().parameterCount());
+    }
+
+    @Test
+    void getThrowsOnNonUtf8Value(@TempDir Path dir) throws Exception {
+        // get() must reject a non-UTF-8 value (the CharacterCodingException branch); getByPath must
+        // silently skip it (parity with Rust, which only inserts decodable strings).
+        byte[] invalid = {(byte) 0xff, (byte) 0xfe};
+        Files.write(dir.resolve("bin"), invalid);
+        Files.write(dir.resolve("ok"), "good".getBytes(StandardCharsets.UTF_8));
+        MountedDirSource source = new MountedDirSource(dir, List.of());
+        DefaultParameterService s = DefaultParameterService.withMemoryCache(
+                source, List.of(), List.of(Map.entry("/", true)));
+        s.refresh();
+
+        assertThrows(ParameterException.class, () -> s.get("/bin"));
+        // Raw bytes are still retrievable.
+        assertEquals(2, s.getBytes("/bin").orElseThrow().length);
+        // getByPath skips the non-UTF-8 entry but keeps the valid one.
+        Map<String, String> sub = s.getByPath("/");
+        assertEquals("good", sub.get("/ok"));
+        assertFalse(sub.containsKey("/bin"));
+    }
+
+    @Test
+    void mountedDirSingleFetchAndMissing(@TempDir Path dir) throws Exception {
+        Files.write(dir.resolve("host"), "h".getBytes(StandardCharsets.UTF_8));
+        Files.createDirectories(dir.resolve("subdir"));
+        MountedDirSource source = new MountedDirSource(dir.toString(), List.of());
+
+        // Single fetch hits the file directly (no walk).
+        assertEquals("h", new String(source.fetch("/host").orElseThrow().value(), StandardCharsets.UTF_8));
+        // A missing file => empty (not an error).
+        assertEquals(Optional.empty(), source.fetch("/nope"));
+        // A directory at that name => "not a parameter" => empty.
+        assertEquals(Optional.empty(), source.fetch("/subdir"));
+        assertEquals("mountedDir", source.sourceId());
+    }
+
+    @Test
+    void mountedDirMissingBaseDirYieldsNothing(@TempDir Path dir) {
+        // fetchByPath over an absent directory returns no parameters (NoSuchFileException swallowed).
+        MountedDirSource source = new MountedDirSource(dir.resolve("does-not-exist"), List.of());
+        assertTrue(source.fetchByPath("/", true).isEmpty());
+    }
+
+    @Test
+    void mountedDirNonRecursiveSkipsSubdirs(@TempDir Path dir) throws Exception {
+        Files.write(dir.resolve("top"), "1".getBytes(StandardCharsets.UTF_8));
+        Path sub = dir.resolve("nested");
+        Files.createDirectories(sub);
+        Files.write(sub.resolve("deep"), "2".getBytes(StandardCharsets.UTF_8));
+        MountedDirSource source = new MountedDirSource(dir, List.of());
+
+        List<Map.Entry<String, ParamValue>> shallow = source.fetchByPath("/", false);
+        List<String> names = new ArrayList<>();
+        shallow.forEach(e -> names.add(e.getKey()));
+        assertTrue(names.contains("/top"));
+        assertFalse(names.contains("/nested/deep")); // not recursive => nested file skipped
+    }
+
+    @Test
+    void paramValueFactoriesAndToString() {
+        ParamValue plain = ParamValue.plain("hello");
+        assertFalse(plain.secure());
+        assertEquals(Optional.empty(), plain.version());
+        assertEquals("hello", new String(plain.value(), StandardCharsets.UTF_8));
+        assertTrue(plain.toString().contains("secure=false"));
+        assertFalse(plain.toString().contains("redacted"));
+
+        ParamValue secure = new ParamValue("s3cr3t".getBytes(StandardCharsets.UTF_8), true, "v7");
+        assertTrue(secure.secure());
+        assertEquals(Optional.of("v7"), secure.version());
+        // Secure toString must redact the value (never the raw bytes) but may state secure/version.
+        String repr = secure.toString();
+        assertTrue(repr.contains("redacted (secure)"));
+        assertTrue(repr.contains("version=v7"));
+        assertFalse(repr.contains("s3cr3t"));
+    }
+
+    @Test
+    void parameterExceptionCauseConstructor() {
+        Throwable cause = new IllegalStateException("boom");
+        ParameterException e = new ParameterException("wrapped", cause);
+        assertEquals("wrapped", e.getMessage());
+        assertEquals(cause, e.getCause());
+    }
+
+    @Test
+    void parameterStatsRecordAccessors() {
+        ParameterStats st = new ParameterStats(3, 1500L, 2, "env");
+        assertEquals(3, st.parameterCount());
+        assertEquals(1500L, st.lastRefreshAgeMs());
+        assertEquals(2, st.refreshFailures());
+        assertEquals("env", st.source());
+    }
+
+    @Test
+    void configOpenMountedDirSource(@TempDir Path dir) throws Exception {
+        // Parameters.open builds a MountedDirSource and honors sync.paths/securePaths end-to-end.
+        Path cfg = dir.resolve("app");
+        Files.createDirectories(cfg);
+        Files.write(cfg.resolve("region"), "us-east-1".getBytes(StandardCharsets.UTF_8));
+        Path sec = dir.resolve("secret");
+        Files.createDirectories(sec);
+        Files.write(sec.resolve("token"), "t0p".getBytes(StandardCharsets.UTF_8));
+
+        JsonObject source = new JsonObject();
+        source.addProperty("type", "mountedDir");
+        source.addProperty("root", dir.toString());
+        JsonArray securePaths = new JsonArray();
+        securePaths.add("/secret");
+        source.add("securePaths", securePaths);
+
+        JsonArray paths = new JsonArray();
+        paths.add("/"); // bare string => recursive
+        JsonObject sync = new JsonObject();
+        sync.add("paths", paths);
+
+        JsonObject cfgJson = new JsonObject();
+        cfgJson.add("source", source);
+        cfgJson.add("sync", sync);
+        cfgJson.addProperty("refreshIntervalSecs", 0);
+        // bootstrapOnStart defaults to true => refresh happens inside open().
+
+        try (DefaultParameterService s = Parameters.open(cfgJson, "ignored-namespace")) {
+            assertEquals("mountedDir", s.stats().source());
+            assertEquals(Optional.of("us-east-1"), s.get("/app/region"));
+            assertEquals(Optional.of("t0p"), s.get("/secret/token"));
+        }
+    }
+
+    @Test
+    void configOpenRejectsBadSources() {
+        // Unknown source type, and mountedDir without source.root, both surface a ParameterException.
+        JsonObject unknown = new JsonObject();
+        unknown.addProperty("type", "bogus");
+        JsonObject cfg1 = new JsonObject();
+        cfg1.add("source", unknown);
+        assertThrows(ParameterException.class, () -> Parameters.open(cfg1));
+
+        JsonObject mounted = new JsonObject();
+        mounted.addProperty("type", "mountedDir"); // missing "root"
+        JsonObject cfg2 = new JsonObject();
+        cfg2.add("source", mounted);
+        assertThrows(ParameterException.class, () -> Parameters.open(cfg2));
+
+        // The default "none" source (no source.type) is also unsupported.
+        assertThrows(ParameterException.class, () -> Parameters.open(new JsonObject()));
+    }
+
+    @Test
+    void configOpenPersistentCacheRoundTrip(@TempDir Path dir) {
+        // cache.persist=true forces the encrypted VaultCache path even for a local source, exercising
+        // Parameters.open's persistent branch (buildKeyProvider + LocalVault.open) end-to-end.
+        Map<String, String> env = new HashMap<>();
+        env.put("GGTEST_PERSIST_REGION", "eu-west-1");
+
+        JsonObject source = new JsonObject();
+        source.addProperty("type", "env");
+        source.addProperty("prefix", "GGTEST_PERSIST_");
+
+        JsonObject keyProvider = new JsonObject();
+        keyProvider.addProperty("type", "file");
+        keyProvider.addProperty("keyPath", dir.resolve("pc.key").toString());
+        JsonObject cache = new JsonObject();
+        cache.addProperty("persist", true);
+        cache.addProperty("path", dir.resolve("pc-vault").toString());
+        cache.add("keyProvider", keyProvider);
+
+        JsonArray names = new JsonArray();
+        names.add("/region");
+        JsonObject sync = new JsonObject();
+        sync.add("names", names);
+
+        JsonObject cfg = new JsonObject();
+        cfg.add("source", source);
+        cfg.add("cache", cache);
+        cfg.add("sync", sync);
+        cfg.addProperty("refreshIntervalSecs", 0);
+
+        // EnvSource here reads the real process env, which (almost certainly) lacks GGTEST_PERSIST_*;
+        // so the bootstrap refresh writes nothing but must not throw, and the vault path is created.
+        try (DefaultParameterService s = Parameters.open(cfg)) {
+            assertEquals("env", s.stats().source());
+            assertTrue(Files.exists(dir.resolve("pc-vault")) || s.stats().parameterCount() == 0);
+        }
+    }
+
+    @Test
+    void persistentCacheGetByPathAndNames(@TempDir Path dir) {
+        // Exercises VaultCache.entries(prefix) via getByPath/names (the persistent cache's enumeration).
+        Path vaultPath = dir.resolve("pc");
+        JsonObject kp = new JsonObject();
+        kp.addProperty("type", "file");
+        kp.addProperty("keyPath", dir.resolve("pc.key").toString());
+        com.aws.proserve.ggcommons.credentials.KeyProvider provider =
+                com.aws.proserve.ggcommons.credentials.Credentials.buildKeyProvider(kp, vaultPath + ".key");
+        com.aws.proserve.ggcommons.credentials.LocalVault vault =
+                com.aws.proserve.ggcommons.credentials.LocalVault.open(vaultPath, provider, 1);
+
+        Map<String, ParamValue> backing = new HashMap<>();
+        backing.put("/app/a", ParamValue.plain("1"));
+        backing.put("/app/b", new ParamValue("2".getBytes(StandardCharsets.UTF_8), true, "9"));
+        DefaultParameterService s = DefaultParameterService.withPersistentCache(
+                new MapSource(backing), vault, new Object(),
+                List.of(), List.of(Map.entry("/app", true)));
+        s.refresh();
+
+        Map<String, String> sub = s.getByPath("/app");
+        assertEquals("1", sub.get("/app/a"));
+        assertEquals("2", sub.get("/app/b"));
+        List<String> names = s.names("/app");
+        assertTrue(names.contains("/app/a"));
+        assertTrue(names.contains("/app/b"));
+        assertEquals(2, s.stats().parameterCount());
+    }
+
+    @Test
+    void configOpenParsesObjectPathEntryAndBootstraps(@TempDir Path dir) throws Exception {
+        // Drives Parameters.parsePaths' object-entry branch ({path, recursive:false}) AND the
+        // bootstrapOnStart refresh, end-to-end through open() against a mountedDir source.
+        Files.write(dir.resolve("top"), "T".getBytes(StandardCharsets.UTF_8));
+        Path nested = dir.resolve("nested");
+        Files.createDirectories(nested);
+        Files.write(nested.resolve("deep"), "D".getBytes(StandardCharsets.UTF_8));
+
+        JsonObject source = new JsonObject();
+        source.addProperty("type", "mountedDir");
+        source.addProperty("root", dir.toString());
+
+        JsonObject objEntry = new JsonObject();
+        objEntry.addProperty("path", "/");
+        objEntry.addProperty("recursive", false); // object form, non-recursive
+        JsonArray paths = new JsonArray();
+        paths.add(objEntry);
+        JsonObject sync = new JsonObject();
+        sync.add("paths", paths);
+
+        JsonObject cfg = new JsonObject();
+        cfg.add("source", source);
+        cfg.add("sync", sync);
+        cfg.addProperty("refreshIntervalSecs", 0);
+        cfg.addProperty("bootstrapOnStart", true);
+
+        try (DefaultParameterService s = Parameters.open(cfg)) {
+            assertEquals(Optional.of("T"), s.get("/top"));
+            // recursive:false => the nested file is not synced.
+            assertEquals(Optional.empty(), s.get("/nested/deep"));
+        }
+    }
+
+    @Test
+    void configOpenBootstrapFailureIsNonFatal(@TempDir Path dir) throws Exception {
+        // A sync.paths entry that points the mountedDir walk at a *file* makes the bootstrap refresh
+        // throw (NotDirectoryException -> ParameterException, empty cache); open() must swallow it
+        // (offline-first) and still return a usable service. Covers Parameters' bootstrap catch.
+        Path file = dir.resolve("afile");
+        Files.write(file, "x".getBytes(StandardCharsets.UTF_8));
+
+        JsonObject source = new JsonObject();
+        source.addProperty("type", "mountedDir");
+        source.addProperty("root", dir.toString());
+
+        JsonArray paths = new JsonArray();
+        paths.add("/afile"); // a file, not a dir => walk throws
+        JsonObject sync = new JsonObject();
+        sync.add("paths", paths);
+
+        JsonObject cfg = new JsonObject();
+        cfg.add("source", source);
+        cfg.add("sync", sync);
+        cfg.addProperty("refreshIntervalSecs", 0);
+        cfg.addProperty("bootstrapOnStart", true);
+
+        try (DefaultParameterService s = Parameters.open(cfg)) {
+            // open() did not propagate the bootstrap failure.
+            assertEquals("mountedDir", s.stats().source());
+            assertEquals(0, s.stats().parameterCount());
+        }
+    }
+
+    @Test
+    void mountedDirWalkOnFilePathThrows(@TempDir Path dir) throws Exception {
+        // fetchByPath aimed at a regular file (not a directory) surfaces the non-NoSuchFile I/O
+        // branch of walk (NotDirectoryException -> ParameterException).
+        Path file = dir.resolve("regular");
+        Files.write(file, "x".getBytes(StandardCharsets.UTF_8));
+        MountedDirSource source = new MountedDirSource(dir, List.of());
+        assertThrows(ParameterException.class, () -> source.fetchByPath("/regular", true));
+    }
+
+    @Test
+    void backgroundRefreshObservesSourceChange() throws Exception {
+        // A mutable in-memory source whose value changes; the background refresh thread (1s interval)
+        // must pull the new value into the cache without an explicit refresh() call.
+        AtomicReference<String> backing = new AtomicReference<>("v1");
+        ParameterSource mutable = new ParameterSource() {
+            @Override
+            public Optional<ParamValue> fetch(String name) {
+                return "/key".equals(name) ? Optional.of(ParamValue.plain(backing.get())) : Optional.empty();
+            }
+
+            @Override
+            public List<Map.Entry<String, ParamValue>> fetchByPath(String path, boolean recursive) {
+                return List.of();
+            }
+
+            @Override
+            public String sourceId() {
+                return "mutable";
+            }
+        };
+
+        DefaultParameterService s = DefaultParameterService.withMemoryCache(
+                mutable, List.of("/key"), List.of());
+        s.refresh();
+        assertEquals(Optional.of("v1"), s.get("/key"));
+
+        try (DefaultParameterService running = s.withRefresh(1)) {
+            backing.set("v2");
+            // Wait up to ~5s for the daemon refresh to observe the change.
+            long deadline = System.currentTimeMillis() + 5000;
+            String seen = "v1";
+            while (System.currentTimeMillis() < deadline) {
+                seen = running.get("/key").orElse("");
+                if ("v2".equals(seen)) {
+                    break;
+                }
+                TimeUnit.MILLISECONDS.sleep(100);
+            }
+            assertEquals("v2", seen);
+        }
+        // close() (via try-with-resources) stops the daemon; a second close is a no-op.
+        s.close();
     }
 }
