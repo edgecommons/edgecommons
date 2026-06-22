@@ -4,9 +4,12 @@
 //! trait later.
 
 pub mod checkpoint;
+pub mod memory;
 pub mod segment_log;
 
 pub use checkpoint::Checkpoint;
+pub use memory::MemoryBlockStore;
+pub use segment_log::SegmentLog;
 
 use crate::error::Result;
 
@@ -63,4 +66,96 @@ pub trait BlockStore: Send {
     fn disk_bytes(&self) -> u64;
     /// Timestamp of the oldest retained record, if any.
     fn oldest_ts_ms(&self) -> Option<u64>;
+
+    /// The offset to [`truncate_below`] to free the oldest reclaimable unit (a whole segment for
+    /// the disk store, a single record for the memory store), or `None` if nothing can be dropped
+    /// (disk: only the active segment remains; memory: empty). Drives `onFull: dropOldest`.
+    fn next_drop_boundary(&self) -> Option<u64>;
+}
+
+/// The configured backing store for one stream's buffer: durable [`SegmentLog`] (disk) or
+/// non-durable [`MemoryBlockStore`] (RAM). A single enum keeps the upper [`crate::log`] layer
+/// monomorphic while letting the disk path retain its specialized off-lock read planning.
+pub enum BackingStore {
+    Disk(SegmentLog),
+    Memory(MemoryBlockStore),
+}
+
+impl BlockStore for BackingStore {
+    fn next_offset(&self) -> u64 {
+        match self {
+            Self::Disk(s) => s.next_offset(),
+            Self::Memory(s) => s.next_offset(),
+        }
+    }
+
+    fn append(&mut self, offset: u64, ts_ms: u64, pk: &[u8], payload: &[u8]) -> Result<()> {
+        match self {
+            Self::Disk(s) => s.append(offset, ts_ms, pk, payload),
+            Self::Memory(s) => s.append(offset, ts_ms, pk, payload),
+        }
+    }
+
+    fn flush_os(&mut self) -> Result<()> {
+        match self {
+            Self::Disk(s) => s.flush_os(),
+            Self::Memory(s) => s.flush_os(),
+        }
+    }
+
+    fn sync(&mut self) -> Result<()> {
+        match self {
+            Self::Disk(s) => s.sync(),
+            Self::Memory(s) => s.sync(),
+        }
+    }
+
+    fn read_from(&mut self, from: u64, max_records: usize, max_bytes: usize) -> Result<Vec<OwnedRecord>> {
+        match self {
+            Self::Disk(s) => s.read_from(from, max_records, max_bytes),
+            Self::Memory(s) => s.read_from(from, max_records, max_bytes),
+        }
+    }
+
+    fn truncate_below(&mut self, offset: u64) -> Result<u64> {
+        match self {
+            Self::Disk(s) => s.truncate_below(offset),
+            Self::Memory(s) => s.truncate_below(offset),
+        }
+    }
+
+    fn load_checkpoint(&self) -> Result<Checkpoint> {
+        match self {
+            Self::Disk(s) => s.load_checkpoint(),
+            Self::Memory(s) => s.load_checkpoint(),
+        }
+    }
+
+    fn store_checkpoint(&mut self, cp: Checkpoint) -> Result<()> {
+        match self {
+            Self::Disk(s) => s.store_checkpoint(cp),
+            Self::Memory(s) => s.store_checkpoint(cp),
+        }
+    }
+
+    fn disk_bytes(&self) -> u64 {
+        match self {
+            Self::Disk(s) => s.disk_bytes(),
+            Self::Memory(s) => s.disk_bytes(),
+        }
+    }
+
+    fn oldest_ts_ms(&self) -> Option<u64> {
+        match self {
+            Self::Disk(s) => s.oldest_ts_ms(),
+            Self::Memory(s) => s.oldest_ts_ms(),
+        }
+    }
+
+    fn next_drop_boundary(&self) -> Option<u64> {
+        match self {
+            Self::Disk(s) => s.next_drop_boundary(),
+            Self::Memory(s) => s.next_drop_boundary(),
+        }
+    }
 }

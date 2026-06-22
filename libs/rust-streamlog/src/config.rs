@@ -71,11 +71,28 @@ pub enum FsyncPolicy {
     Always,
 }
 
-/// Local persistent buffer settings for one stream.
+/// Where a stream's buffer lives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum StoreType {
+    /// Durable file-backed segment log (default): survives restarts, recovered on open.
+    #[default]
+    Disk,
+    /// In-memory ring — **non-durable**: records are lost on component restart/crash and never
+    /// touch disk. For best-effort streams where durability / high QoS is unnecessary (cheap
+    /// telemetry, debug traces); no disk I/O, no recovery. Bounded by `maxDiskBytes` (interpreted
+    /// as the in-memory byte budget) with `onFull` applied on overflow.
+    Memory,
+}
+
+/// Local buffer settings for one stream (durable on disk, or in-memory per [`StoreType`]).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct BufferConfig {
-    /// Directory for this stream's segments + checkpoint.
+    /// Buffer backing store: `disk` (default, durable) or `memory` (non-durable).
+    #[serde(rename = "type")]
+    pub store_type: StoreType,
+    /// Directory for this stream's segments + checkpoint (required for `disk`; must be omitted for `memory`).
     pub path: String,
     /// Roll a new segment when adding a record would exceed this size.
     #[serde(deserialize_with = "lenient_u64")]
@@ -100,6 +117,7 @@ pub struct BufferConfig {
 impl Default for BufferConfig {
     fn default() -> Self {
         Self {
+            store_type: StoreType::Disk,
             path: String::new(),
             segment_bytes: 64 * 1024 * 1024,
             max_disk_bytes: 1024 * 1024 * 1024,
@@ -207,16 +225,33 @@ pub struct StreamingConfig {
 
 impl BufferConfig {
     pub fn validate(&self) -> Result<()> {
-        if self.path.is_empty() {
-            return Err(GgStreamError::Config("buffer.path is required".into()));
-        }
-        if self.segment_bytes == 0 {
-            return Err(GgStreamError::Config("buffer.segmentBytes must be > 0".into()));
-        }
-        if self.max_disk_bytes < self.segment_bytes {
-            return Err(GgStreamError::Config(
-                "buffer.maxDiskBytes must be >= segmentBytes".into(),
-            ));
+        match self.store_type {
+            StoreType::Memory => {
+                // In-memory: no path/segments; maxDiskBytes is the in-memory byte budget.
+                if !self.path.is_empty() {
+                    return Err(GgStreamError::Config(
+                        "buffer.path must be omitted for an in-memory buffer (type: memory)".into(),
+                    ));
+                }
+                if self.max_disk_bytes == 0 {
+                    return Err(GgStreamError::Config(
+                        "buffer.maxDiskBytes (the in-memory byte budget) must be > 0".into(),
+                    ));
+                }
+            }
+            StoreType::Disk => {
+                if self.path.is_empty() {
+                    return Err(GgStreamError::Config("buffer.path is required".into()));
+                }
+                if self.segment_bytes == 0 {
+                    return Err(GgStreamError::Config("buffer.segmentBytes must be > 0".into()));
+                }
+                if self.max_disk_bytes < self.segment_bytes {
+                    return Err(GgStreamError::Config(
+                        "buffer.maxDiskBytes must be >= segmentBytes".into(),
+                    ));
+                }
+            }
         }
         Ok(())
     }
@@ -255,5 +290,30 @@ mod tests {
             "buffer":{"path":"/tmp/x","segmentBytes":65536,"maxDiskBytes":1048576}}]}"#;
         let cfg: StreamingConfig = serde_json::from_str(json).expect("integers must parse");
         assert_eq!(cfg.streams[0].buffer.segment_bytes, 65536);
+    }
+
+    #[test]
+    fn memory_buffer_parses_and_validates() {
+        // type: memory, no path, maxDiskBytes = in-memory budget.
+        let json = r#"{"streams":[{"name":"m","sink":{"type":"kinesis","streamName":"x"},
+            "buffer":{"type":"memory","maxDiskBytes":65536}}]}"#;
+        let cfg: StreamingConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.streams[0].buffer.store_type, StoreType::Memory);
+        cfg.streams[0].buffer.validate().expect("valid memory buffer");
+
+        // A path on a memory buffer is rejected.
+        let mut bad = cfg.streams[0].buffer.clone();
+        bad.path = "/tmp/x".into();
+        assert!(bad.validate().is_err(), "memory buffer must reject a path");
+
+        // maxDiskBytes (the memory budget) must be > 0.
+        let mut zero = BufferConfig { store_type: StoreType::Memory, path: String::new(), max_disk_bytes: 0, ..Default::default() };
+        zero.max_disk_bytes = 0;
+        assert!(zero.validate().is_err(), "memory buffer must require a budget");
+
+        // Default (disk) still requires a path.
+        let disk = BufferConfig::default();
+        assert_eq!(disk.store_type, StoreType::Disk);
+        assert!(disk.validate().is_err(), "disk buffer still requires a path");
     }
 }

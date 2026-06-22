@@ -34,9 +34,9 @@ use std::thread::JoinHandle;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::blockstore::checkpoint;
-use crate::blockstore::segment_log::SegmentLog;
-use crate::blockstore::{BlockStore, Checkpoint, OwnedRecord};
-use crate::config::{BufferConfig, FsyncPolicy, OnFull};
+use crate::blockstore::segment_log::{ReadChunk, SegmentLog};
+use crate::blockstore::{BackingStore, BlockStore, Checkpoint, MemoryBlockStore, OwnedRecord};
+use crate::config::{BufferConfig, FsyncPolicy, OnFull, StoreType};
 use crate::error::{GgStreamError, Result};
 use crate::record::{self, Record};
 
@@ -58,7 +58,7 @@ pub struct LogStats {
 
 /// Segment store + delivery cursor + retention counters (the "inner" lock).
 struct Inner {
-    store: SegmentLog,
+    store: BackingStore,
     cfg: BufferConfig,
     drop_floor: u64,
     acked: u64,
@@ -114,6 +114,9 @@ pub struct EmbeddedLog {
     on_full: OnFull,
     fsync: FsyncPolicy,
     max_buffered_records: usize,
+    /// Whether the backing store is durable (disk). False for in-memory streams, which skip all
+    /// checkpoint file persistence (there is nothing to recover).
+    persistent: bool,
     stop: Arc<AtomicBool>,
     maintenance: Option<JoinHandle<()>>,
 }
@@ -126,7 +129,11 @@ impl EmbeddedLog {
     /// Open + recover the buffer at `cfg.path`.
     pub fn open(cfg: BufferConfig) -> Result<Self> {
         cfg.validate()?;
-        let store = SegmentLog::open(&cfg.path, cfg.segment_bytes)?;
+        let persistent = cfg.store_type == StoreType::Disk;
+        let store = match cfg.store_type {
+            StoreType::Disk => BackingStore::Disk(SegmentLog::open(&cfg.path, cfg.segment_bytes)?),
+            StoreType::Memory => BackingStore::Memory(MemoryBlockStore::new()),
+        };
         let cp = store.load_checkpoint()?;
         // A checkpoint can name an offset beyond what survived recovery (e.g. torn tail);
         // clamp the cursor to what's actually present.
@@ -178,7 +185,7 @@ impl EmbeddedLog {
                 if stop.load(Ordering::Acquire) {
                     break;
                 }
-                maintenance_tick(&inner, &checkpoint_lock, &dir, fsync_inline);
+                maintenance_tick(&inner, &checkpoint_lock, &dir, fsync_inline, persistent);
             }))
         };
 
@@ -190,6 +197,7 @@ impl EmbeddedLog {
             on_full: cfg.on_full,
             fsync: cfg.fsync,
             max_buffered_records: cfg.max_buffered_records.max(1),
+            persistent,
             stop,
             maintenance,
         })
@@ -367,12 +375,25 @@ impl EmbeddedLog {
     /// Plans the byte ranges under the inner lock (index lookups, no record file I/O) and then reads
     /// the segment files **off** the lock, so a draining exporter does not block writers on read I/O.
     pub fn read_batch(&self, max_records: usize, max_bytes: usize) -> Result<Vec<OwnedRecord>> {
-        let plan = {
+        // Plan/read under the inner lock; for the disk store, defer the segment file I/O until the
+        // lock is released (so a draining exporter doesn't block writers). The in-memory store has
+        // no file I/O, so its (cheap) read happens under the lock.
+        enum Planned {
+            DiskChunks(Vec<ReadChunk>),
+            Records(Vec<OwnedRecord>),
+        }
+        let planned = {
             let mut g = self.inner.0.lock().unwrap();
             let from = g.acked;
-            g.store.plan_read(from, max_records, max_bytes)?
+            match &mut g.store {
+                BackingStore::Disk(s) => Planned::DiskChunks(s.plan_read(from, max_records, max_bytes)?),
+                BackingStore::Memory(s) => Planned::Records(s.read_from(from, max_records, max_bytes)?),
+            }
         };
-        crate::blockstore::segment_log::read_chunks(&plan)
+        match planned {
+            Planned::DiskChunks(chunks) => crate::blockstore::segment_log::read_chunks(&chunks),
+            Planned::Records(records) => Ok(records),
+        }
     }
 
     /// Advance the delivery cursor past `through_offset` (inclusive) and wake any `Block`ed
@@ -407,6 +428,9 @@ impl EmbeddedLog {
     /// Snapshot `(acked, drop_floor)` and persist the checkpoint, doing the fsync **off** the inner
     /// lock. Serialized against the maintenance thread by `checkpoint_lock`.
     fn persist_checkpoint(&self) -> Result<()> {
+        if !self.persistent {
+            return Ok(()); // in-memory: nothing to persist
+        }
         let _cp = self.checkpoint_lock.lock().unwrap();
         let cp = {
             let g = self.inner.0.lock().unwrap();
@@ -465,10 +489,10 @@ fn ensure_room<'a>(
         }
         match g.cfg.on_full {
             OnFull::DropOldest => {
-                while g.store.disk_bytes() + size > g.cfg.max_disk_bytes
-                    && g.store.segment_count() > 1
-                {
-                    let Some(end) = g.store.oldest_end() else { break };
+                while g.store.disk_bytes() + size > g.cfg.max_disk_bytes {
+                    // Reclaim the oldest unit (a segment for disk, one record for memory). `None`
+                    // means nothing more is droppable (disk: only the active segment remains).
+                    let Some(end) = g.store.next_drop_boundary() else { break };
                     let _ = g.store.truncate_below(end);
                     let acked = g.acked;
                     if end > acked {
@@ -497,6 +521,7 @@ fn maintenance_tick(
     checkpoint_lock: &Mutex<()>,
     dir: &std::path::Path,
     fsync_inline: bool,
+    persistent: bool,
 ) {
     let cp = {
         let Ok(mut g) = inner.0.lock() else { return };
@@ -507,6 +532,9 @@ fn maintenance_tick(
         let _ = g.store.truncate_below(acked);
         Checkpoint { acked: g.acked, drop_floor: g.drop_floor }
     };
-    let _cp = checkpoint_lock.lock().unwrap();
-    let _ = checkpoint::store(dir, cp);
+    // In-memory streams have nothing to persist (and no dir).
+    if persistent {
+        let _cp = checkpoint_lock.lock().unwrap();
+        let _ = checkpoint::store(dir, cp);
+    }
 }

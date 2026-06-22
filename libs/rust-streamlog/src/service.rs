@@ -230,4 +230,62 @@ mod tests {
         assert_eq!(s.exported_total, 0);
         assert_eq!(s.backlog, 1);
     }
+
+    /// Build a single-stream config with an in-memory (non-durable) buffer.
+    fn mem_cfg(max_bytes: u64, on_full: OnFull, poll_ms: u64) -> StreamingConfig {
+        StreamingConfig {
+            streams: vec![crate::config::StreamConfig {
+                name: "mem".into(),
+                sink: SinkConfig::Kinesis { stream_name: "s".into(), region: None, endpoint_url: None },
+                buffer: BufferConfig {
+                    store_type: crate::config::StoreType::Memory,
+                    path: String::new(), // no disk
+                    max_disk_bytes: max_bytes,
+                    on_full,
+                    ..Default::default()
+                },
+                batch: Default::default(),
+                delivery: crate::config::DeliveryConfig { poll_interval_ms: poll_ms, ..Default::default() },
+            }],
+        }
+    }
+
+    #[test]
+    fn memory_buffer_appends_and_exports_without_disk() {
+        let factory = |_n: &str, _s: &SinkConfig| -> Result<Option<Box<dyn Sink>>> {
+            Ok(Some(Box::new(FakeSink::new())))
+        };
+        let svc = StreamService::open_with(mem_cfg(1 << 20, OnFull::DropOldest, 5), &factory).unwrap();
+        for i in 0..50u64 {
+            svc.stream("mem")
+                .unwrap()
+                .append(&Record::new("pk", 1000 + i, format!("v{i}").as_bytes()))
+                .unwrap();
+        }
+        let start = std::time::Instant::now();
+        while svc.stats("mem").unwrap().exported_total < 50 {
+            if start.elapsed() > std::time::Duration::from_secs(5) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let s = svc.stats("mem").unwrap();
+        assert_eq!(s.appended_total, 50);
+        assert_eq!(s.exported_total, 50);
+    }
+
+    #[test]
+    fn memory_buffer_drops_oldest_over_budget() {
+        // No sink => nothing drains; a tiny in-memory budget forces DropOldest, bounding RAM.
+        let factory = |_n: &str, _s: &SinkConfig| -> Result<Option<Box<dyn Sink>>> { Ok(None) };
+        let svc = StreamService::open_with(mem_cfg(512, OnFull::DropOldest, 1000), &factory).unwrap();
+        let log = svc.stream("mem").unwrap();
+        for i in 0..1000u64 {
+            log.append(&Record::new("pk", i, [b'x'; 64])).unwrap();
+        }
+        let s = svc.stats("mem").unwrap();
+        assert_eq!(s.appended_total, 1000);
+        assert!(s.dropped_total > 0, "a tiny budget must drop the oldest records");
+        assert!(s.disk_bytes <= 512, "in-memory bytes must stay within the budget, got {}", s.disk_bytes);
+    }
 }

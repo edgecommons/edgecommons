@@ -376,4 +376,13 @@ impl BlockStore for SegmentLog {
             _ => None,
         }
     }
+
+    /// Drop the oldest whole segment (its exclusive end offset), but never the active segment.
+    fn next_drop_boundary(&self) -> Option<u64> {
+        if self.segment_count() > 1 {
+            self.oldest_end()
+        } else {
+            None
+        }
+    }
 }
