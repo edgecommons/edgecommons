@@ -45,7 +45,7 @@
 //! ## Related Modules
 //! - [`crate::messaging`], [`crate::messaging::config`].
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -53,7 +53,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS, TlsConfiguration, Transport};
 use tokio::sync::mpsc::{self, error::TrySendError, Sender};
-use tokio::sync::watch;
+use tokio::sync::{oneshot, watch};
 use tokio::task::JoinHandle;
 
 use crate::error::{GgError, Result};
@@ -75,6 +75,12 @@ struct SubEntry {
 /// Shared subscription registry for a broker connection.
 type Registry = Arc<Mutex<HashMap<u64, SubEntry>>>;
 
+/// FIFO of one-shot waiters that `subscribe` blocks on until the matching `SUBACK` arrives.
+/// MQTT acks SUBSCRIBEs in order on a single connection, so the front waiter corresponds to the
+/// oldest outstanding subscribe. (Reconnect re-subscribes run in the event loop with no waiter
+/// pending, so their SUBACKs simply pop an empty queue.)
+type PendingSubacks = Arc<Mutex<VecDeque<oneshot::Sender<()>>>>;
+
 /// Removes a subscription's routing entry when the [`Subscription`] is dropped.
 struct SubGuard {
     registry: Registry,
@@ -93,6 +99,7 @@ impl Drop for SubGuard {
 struct BrokerConn {
     client: AsyncClient,
     registry: Registry,
+    pending_subacks: PendingSubacks,
     next_id: AtomicU64,
     task: JoinHandle<()>,
 }
@@ -203,10 +210,28 @@ impl MessagingProvider for MqttProvider {
             );
         }
 
+        // Register a SUBACK waiter before sending the SUBSCRIBE so the event loop can signal us.
+        let (ack_tx, ack_rx) = oneshot::channel();
+        {
+            let mut q = conn
+                .pending_subacks
+                .lock()
+                .map_err(|_| GgError::Messaging("suback queue poisoned".to_string()))?;
+            q.push_back(ack_tx);
+        }
+
         conn.client
             .subscribe(filter, rqos)
             .await
             .map_err(|e| GgError::Messaging(format!("subscribe to '{filter}' failed: {e}")))?;
+
+        // Block until the broker confirms the subscription (SUBACK), so a publish issued right
+        // after subscribe isn't lost — parity with Java/Python/TS. Fall back to proceeding (the
+        // entry is registered and will be re-subscribed on reconnect) if no SUBACK arrives in time.
+        match tokio::time::timeout(CONNECT_TIMEOUT, ack_rx).await {
+            Ok(Ok(())) => {}
+            _ => tracing::warn!(filter, "SUBACK not observed within timeout; proceeding"),
+        }
 
         let guard = SubGuard {
             registry: conn.registry.clone(),
@@ -250,9 +275,11 @@ async fn connect_broker(broker: &BrokerConfig, role: BrokerRole) -> Result<Broke
 
     let (client, mut eventloop) = AsyncClient::new(options, EVENTLOOP_CAP);
     let registry: Registry = Arc::new(Mutex::new(HashMap::new()));
+    let pending_subacks: PendingSubacks = Arc::new(Mutex::new(VecDeque::new()));
 
     let (connected_tx, connected_rx) = watch::channel(false);
     let registry_task = registry.clone();
+    let pending_task = pending_subacks.clone();
     let client_task = client.clone();
 
     let task = tokio::spawn(async move {
@@ -269,6 +296,14 @@ async fn connect_broker(broker: &BrokerConfig, role: BrokerRole) -> Result<Broke
                     }
                     let _ = connected_tx.send(true);
                     tracing::info!("MQTT broker connection established");
+                }
+                Ok(Event::Incoming(Packet::SubAck(_))) => {
+                    // Wake the oldest outstanding subscribe() (FIFO; SUBACKs are ordered).
+                    if let Ok(mut q) = pending_task.lock() {
+                        if let Some(tx) = q.pop_front() {
+                            let _ = tx.send(());
+                        }
+                    }
                 }
                 Ok(Event::Incoming(Packet::Publish(p))) => {
                     if let Ok(map) = registry_task.lock() {
@@ -306,6 +341,7 @@ async fn connect_broker(broker: &BrokerConfig, role: BrokerRole) -> Result<Broke
         Ok(Ok(_)) => Ok(BrokerConn {
             client,
             registry,
+            pending_subacks,
             next_id: AtomicU64::new(0),
             task,
         }),

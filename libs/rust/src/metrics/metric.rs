@@ -109,6 +109,9 @@ impl Metric {
     }
 }
 
+/// CloudWatch allows at most 10 dimensions per metric (parity with Java/Python/TS).
+const MAX_DIMENSIONS: usize = 10;
+
 /// Fluent builder for [`Metric`] (the supported construction path; mirrors the Java
 /// `MetricBuilder` / Python `MetricBuilder`).
 #[derive(Debug, Clone, Default)]
@@ -187,6 +190,31 @@ impl MetricBuilder {
             self.dimensions
                 .insert("component".to_string(), component.clone());
         }
+        // CloudWatch allows at most 10 dimensions; PutMetricData rejects a datum with more.
+        // Java/Python/TS reject at build, but Rust's `build() -> Metric` can't return an error
+        // without an API break, so it trims the excess custom dimensions (keeping the injected
+        // category/coreName/component) with a warning rather than emit an invalid metric.
+        if self.dimensions.len() > MAX_DIMENSIONS {
+            let injected = ["category", "coreName", "component"];
+            let mut removable: Vec<String> = self
+                .dimensions
+                .keys()
+                .filter(|k| !injected.contains(&k.as_str()))
+                .cloned()
+                .collect();
+            while self.dimensions.len() > MAX_DIMENSIONS {
+                match removable.pop() {
+                    Some(k) => {
+                        self.dimensions.remove(&k);
+                    }
+                    None => break,
+                }
+            }
+            tracing::warn!(
+                metric = %self.name,
+                "metric exceeded the {MAX_DIMENSIONS}-dimension CloudWatch limit; excess custom dimensions dropped"
+            );
+        }
         Metric {
             name: self.name,
             namespace: self.namespace,
@@ -234,5 +262,24 @@ mod tests {
         assert!(m.get_dimensions().get("coreName").is_none());
         assert!(m.get_dimensions().get("component").is_none());
         assert_eq!(m.get_dimensions().get("category").map(String::as_str), Some("m"));
+    }
+
+    #[test]
+    fn builder_caps_dimensions_at_ten() {
+        // 8 custom + injected category/coreName/component = 11 -> trimmed to the 10 cap, keeping
+        // the injected dimensions (parity with the Java/Python/TS enforcement).
+        let mut b = MetricBuilder::create("m")
+            .with_thing_name("t")
+            .with_component_name("c")
+            .add_measure("v", "None", 60);
+        for i in 0..8 {
+            b = b.add_dimension(format!("d{i}"), i.to_string());
+        }
+        let m = b.build();
+        assert_eq!(m.get_dimensions().len(), MAX_DIMENSIONS);
+        // The injected dimensions are always retained.
+        assert_eq!(m.get_dimensions().get("category").map(String::as_str), Some("m"));
+        assert_eq!(m.get_dimensions().get("coreName").map(String::as_str), Some("t"));
+        assert_eq!(m.get_dimensions().get("component").map(String::as_str), Some("c"));
     }
 }
