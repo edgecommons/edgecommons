@@ -105,21 +105,22 @@ def commands():
         if exe.exists():
             cmd["rust"] = lambda *a, _e=str(exe): [_e, *a]
 
-    # TypeScript: install the npm workspace from the repo root (so libs/ts's
-    # cross-package deps link cleanly), then build the ggcommons workspace, which
-    # compiles the interop node to dist/interop_node.js. (Absent node/npm -> skip;
-    # a build *failure* raises so a broken node surfaces loudly instead of skipping.)
+    # TypeScript: install the npm workspace from the repo root (so the ggcommons
+    # lib and the ts_node interop package link cleanly), then build the ggcommons
+    # lib (ts_node imports its public API) and the ts_node package itself. (Absent
+    # node/npm -> skip; a build *failure* raises so a broken node surfaces loudly
+    # instead of skipping.)
     node, npm = shutil.which("node"), shutil.which("npm")
     if node and npm:
-        ts = WORKSPACE / "libs" / "ts"
         # npm is a .cmd shim on Windows; run via shell there.
         r = subprocess.run(f'"{npm}" install', cwd=WORKSPACE, capture_output=True, text=True,
                            timeout=600, shell=True)
         assert r.returncode == 0, f"ts npm install failed:\n{r.stderr}"
-        r = subprocess.run(f'"{npm}" run build --workspace=ggcommons', cwd=WORKSPACE,
-                           capture_output=True, text=True, timeout=300, shell=True)
+        r = subprocess.run(
+            f'"{npm}" run build --workspace=ggcommons --workspace=ggcommons-interop-ts-node',
+            cwd=WORKSPACE, capture_output=True, text=True, timeout=300, shell=True)
         assert r.returncode == 0, f"ts build failed:\n{r.stderr}\n{r.stdout}"
-        node_js = ts / "dist" / "interop_node.js"
+        node_js = HERE / "ts_node" / "dist" / "interop_node.js"
         if node_js.exists():
             cmd["ts"] = lambda *a, _n=node, _js=str(node_js): [_n, _js, *a]
 

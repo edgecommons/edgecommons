@@ -6,6 +6,7 @@
   "workspaces": [
     "libs/rust-streamlog/bindings/node",
     "libs/ts",
-    "examples/ts"
+    "examples/ts",
+    "test-infra/interop/ts_node"
   ]
 }

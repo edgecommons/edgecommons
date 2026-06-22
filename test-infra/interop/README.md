@@ -21,13 +21,13 @@ round-trip for **every ordered pair** of the four languages (4×4×2 = 32 combos
 passing pair exercises serialization in *both* directions (request serialized by the
 requester + parsed/replied by the responder; reply parsed back by the requester).
 
-Nodes:
+Nodes (each consumes its library's public API, like a real component):
 - `python_node.py` — uses the installed `ggcommons` package.
 - `rust_node/` — a small cargo binary depending on `libs/rust` by path.
 - `java_node/InteropNode.java` — compiled against the java lib's shaded jar.
-- the **TypeScript** node lives in `libs/ts` (`src/interop_node.ts`) and is compiled to
-  `dist/interop_node.js` by the test fixture (`npm install` + `npm run build`) — that is
-  why there is no `ts_node/` directory here.
+- `ts_node/` — a small TypeScript package depending on `ggcommons` (the `libs/ts`
+  npm package); resolved through the repo npm workspace and compiled to
+  `ts_node/dist/interop_node.js` by the test fixture.
 
 ## Running
 

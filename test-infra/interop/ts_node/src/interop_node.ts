@@ -1,17 +1,16 @@
 /**
  * Cross-language interop node (TypeScript) for ggcommons. See python_node.py for
  * the shared CLI contract. STANDALONE local-only against localhost:1883, using the
- * refactored provider/service stack (StandaloneMqttProvider + DefaultMessagingService).
+ * public ggcommons API (StandaloneMqttProvider + DefaultMessagingService), exactly
+ * like the rust_node/java_node/python_node consume their libraries.
  *
  *   interop_node responder <request_topic>
  *   interop_node request   <request_topic> <token>
  *   interop_node raw-sub   <topic> <token>
  *   interop_node raw-pub   <topic> <token>
  */
-import { Message, MessageBuilder } from "./message";
-import { DefaultMessagingService } from "./messaging/service";
-import { StandaloneMqttProvider } from "./messaging/standalone-provider";
-import type { MessagingConfig } from "./messaging/config";
+import { Message, MessageBuilder, DefaultMessagingService, StandaloneMqttProvider } from "ggcommons";
+import type { MessagingConfig } from "ggcommons";
 
 const LANG = "ts";
 const HOST = process.env.GGCOMMONS_IT_MQTT_HOST ?? "localhost";

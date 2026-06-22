@@ -1,4 +1,6 @@
 java_node/out/
 rust_node/target/
 rust_node/Cargo.lock
+ts_node/dist/
+ts_node/node_modules/
 __pycache__/
