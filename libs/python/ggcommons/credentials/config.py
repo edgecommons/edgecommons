@@ -24,30 +24,28 @@ def _sync_entries(sync_cfg: dict):
     return out
 
 
-def open_from_config(credentials_cfg: dict, namespace: str = "") -> DefaultCredentialService:
-    """Open the vault and return the default credential service from a ``credentials`` config dict.
+def build_key_provider(kp: dict, default_key_path: str):
+    """Build a :class:`KeyProvider` from a ``keyProvider`` config dict.
 
-    ``namespace`` is prepended transparently to every key (typically ``<thing>/<component>``).
+    ``kp.type`` is one of ``file`` (default), ``kms``/``greengrass``, or ``pkcs11``. ``default_key_path``
+    is the file-key path used when the ``file`` provider does not set ``keyPath``. Shared by the
+    credentials vault and the parameters persistent cache so both honour the same key-provider config.
     """
-    cfg = credentials_cfg or {}
-    vault_cfg = cfg.get("vault", {})
-    path = vault_cfg.get("path", "vault")
-    keep_versions = int(vault_cfg.get("keepVersions", 2))
-    kp = vault_cfg.get("keyProvider", {}) or {}
+    kp = kp or {}
     kind = kp.get("type", "file")
     if kind == "file":
-        key_path = kp.get("keyPath") or f"{path}.key"
+        key_path = kp.get("keyPath") or default_key_path
         parent = os.path.dirname(os.path.abspath(key_path))
         os.makedirs(parent, exist_ok=True)
-        provider = (FileKeyProvider.from_keyfile(key_path)
-                    if os.path.exists(key_path)
-                    else FileKeyProvider.generate_keyfile(key_path))
-    elif kind in ("kms", "greengrass"):
+        return (FileKeyProvider.from_keyfile(key_path)
+                if os.path.exists(key_path)
+                else FileKeyProvider.generate_keyfile(key_path))
+    if kind in ("kms", "greengrass"):
         key_id = kp.get("kmsKeyId")
         if not key_id:
             raise CredentialError("kms key provider requires keyProvider.kmsKeyId")
-        provider = KmsKeyProvider(key_id, region=kp.get("region"), endpoint_url=kp.get("endpointUrl"))
-    elif kind == "pkcs11":
+        return KmsKeyProvider(key_id, region=kp.get("region"), endpoint_url=kp.get("endpointUrl"))
+    if kind == "pkcs11":
         module_path = kp.get("modulePath")
         if not module_path:
             raise CredentialError("pkcs11 key provider requires keyProvider.modulePath")
@@ -63,11 +61,22 @@ def open_from_config(credentials_cfg: dict, namespace: str = "") -> DefaultCrede
             pin = kp.get("pin")
         else:
             raise CredentialError("pkcs11 key provider requires keyProvider.pinEnv or keyProvider.pin")
-        provider = Pkcs11KeyProvider(module_path, kp.get("tokenLabel", ""), key_label, pin)
-    else:
-        raise CredentialError(
-            f"key provider '{kind}' is not supported (supported: 'file', 'kms'/'greengrass', 'pkcs11')"
-        )
+        return Pkcs11KeyProvider(module_path, kp.get("tokenLabel", ""), key_label, pin)
+    raise CredentialError(
+        f"key provider '{kind}' is not supported (supported: 'file', 'kms'/'greengrass', 'pkcs11')"
+    )
+
+
+def open_from_config(credentials_cfg: dict, namespace: str = "") -> DefaultCredentialService:
+    """Open the vault and return the default credential service from a ``credentials`` config dict.
+
+    ``namespace`` is prepended transparently to every key (typically ``<thing>/<component>``).
+    """
+    cfg = credentials_cfg or {}
+    vault_cfg = cfg.get("vault", {})
+    path = vault_cfg.get("path", "vault")
+    keep_versions = int(vault_cfg.get("keepVersions", 2))
+    provider = build_key_provider(vault_cfg.get("keyProvider", {}) or {}, f"{path}.key")
 
     vault = LocalVault.open(path, provider, keep_versions)
     lock = threading.Lock()

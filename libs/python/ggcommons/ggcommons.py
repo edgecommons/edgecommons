@@ -66,6 +66,7 @@ class GGCommons:
         self._stream_metrics = None
         self._credentials = None
         self._credential_metrics = None
+        self._parameters = None
 
         try:
             # Process command line arguments
@@ -89,6 +90,10 @@ class GGCommons:
             # Opened BEFORE streaming so the streaming config can reference vault secrets via
             # {"$secret": ...}, mirroring the Rust build() order.
             self._init_credentials()
+
+            # Parameters (only when a `parameters` config section is present) — externalized config
+            # parameters from SSM / a mounted dir / env, offline-first cache. Sibling of credentials.
+            self._init_parameters()
 
             # Telemetry streaming (only when a `streaming` config section is present, so components
             # that don't use it never load the native library). Resolves $secret refs first.
@@ -295,6 +300,31 @@ class GGCommons:
         """
         return self._credentials
 
+    def _init_parameters(self) -> None:
+        """Open the parameter service from the ``parameters`` config section (if any), resolving path
+        templates. No-op when the section is absent."""
+        import json as _json
+
+        full_config = self._config_manager.get_full_config()
+        parameters = full_config.get("parameters") if isinstance(full_config, dict) else None
+        if not isinstance(parameters, dict):
+            return
+
+        from ggcommons.parameters import open_from_config
+
+        # Resolve {ThingName}/{ComponentFullName} in the cache path(s) before opening. Parameter
+        # keys are NOT namespaced (the cache path is already per-component templated), matching Rust.
+        resolved = _json.loads(self._config_manager.resolve_template(_json.dumps(parameters)))
+        self._parameters = open_from_config(resolved)
+        logger.info("Parameters service initialized")
+
+    def get_parameters(self):
+        """
+        Get the parameter service, or ``None`` if the component config has no ``parameters``
+        section. Mirrors Java/TS getParameters() / Rust's gg.parameters().
+        """
+        return self._parameters
+
     def __enter__(self) -> "GGCommons":
         """Support `with GGCommonsBuilder...build() as gg:` so callers get
         deterministic shutdown without a manual try/finally."""
@@ -375,6 +405,13 @@ class GGCommons:
                 self._credentials._sync.close()
         except Exception as e:
             logger.error(f"Error closing credential sync during shutdown: {e}")
+
+        try:
+            # Stop the parameter background refresh thread (if any).
+            if self._parameters is not None and hasattr(self._parameters, "close"):
+                self._parameters.close()
+        except Exception as e:
+            logger.error(f"Error closing parameters during shutdown: {e}")
 
         try:
             # Stop the heartbeat first so it stops publishing/emitting.

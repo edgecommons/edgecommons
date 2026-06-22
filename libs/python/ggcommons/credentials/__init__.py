@@ -15,7 +15,7 @@ Example::
 from .audit import AuditEvent, AuditSink, LogAuditSink
 from .bridge import CredentialMetricsBridge
 from .central import AwsSecretsManagerSource, CentralSecret, CentralVaultSource
-from .config import open_from_config
+from .config import build_key_provider, open_from_config
 from .errors import CredentialError
 from .keyprovider import FileKeyProvider, KeyProvider, KmsKeyProvider, Pkcs11KeyProvider
 from .secretref import resolve_secret_refs
@@ -26,6 +26,7 @@ from .views import AwsCredentials, BasicAuth, KafkaSasl, TlsBundle
 
 __all__ = [
     "open_from_config",
+    "build_key_provider",
     "CredentialError",
     "KeyProvider",
     "FileKeyProvider",
