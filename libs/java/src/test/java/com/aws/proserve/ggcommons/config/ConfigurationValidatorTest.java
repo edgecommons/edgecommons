@@ -60,6 +60,17 @@ class ConfigurationValidatorTest {
     }
 
     @Test
+    void parametersSectionPasses() {
+        // The strict root schema (additionalProperties:false) must permit the "parameters" section
+        // (subsystem owns its inner schema), exactly as it permits "credentials"/"streaming".
+        JsonObject valid = obj("""
+                {"component":{"global":{}},\
+                "parameters":{"source":{"type":"env","prefix":"GG_PARAM_"},\
+                "sync":{"names":["/myapp/region"]}}}""");
+        assertDoesNotThrow(() -> ConfigurationValidator.validate(valid));
+    }
+
+    @Test
     void validationExceptionConstructorsAreUsable() {
         ConfigurationValidator.ConfigurationValidationException e1 =
                 new ConfigurationValidator.ConfigurationValidationException("msg");

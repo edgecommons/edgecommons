@@ -255,6 +255,11 @@
       "type": "object",
       "description": "Credentials / encrypted local vault configuration (local vault + optional central sync). The detailed schema (vault, keyProvider, central) is owned and validated by the credentials subsystem; permit the section here so it is not rejected as an unknown property.",
       "additionalProperties": true
+    },
+    "parameters": {
+      "type": "object",
+      "description": "Parameters / externalized configuration (offline-first, pluggable source: awsSsm, mountedDir, env). The detailed schema (source, cache, sync) is owned and validated by the parameters subsystem; permit the section here so it is not rejected as an unknown property.",
+      "additionalProperties": true
     }
   },
   "required": ["component"],
