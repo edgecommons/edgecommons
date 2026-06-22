@@ -212,4 +212,178 @@ mod tests {
             serde_json::from_value(serde_json::json!({ "refreshIntervalSecs": 300.0 })).unwrap();
         assert_eq!(cfg.refresh_interval_secs, 300);
     }
+
+    /// Persistent encrypted cache (the VaultCache path): a value cached from the source survives a
+    /// service restart even after the source stops providing it (offline survival), and the cache
+    /// is written to disk (the reused credentials vault).
+    #[test]
+    fn persistent_cache_survives_reopen_offline() {
+        let dir = std::env::temp_dir().join(format!("ggparam-persist-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let cache_path = dir.join("pcache");
+        unsafe { std::env::set_var("GGTEST_PERSIST_MYAPP_TOKEN", "v-cached") };
+        let raw = serde_json::json!({
+            "source": { "type": "env", "prefix": "GGTEST_PERSIST_" },
+            "cache": { "persist": true, "path": cache_path.to_string_lossy() },
+            "refreshIntervalSecs": 0,
+            "sync": { "names": ["/myapp/token"] }
+        });
+        let cfg: ParametersConfig = serde_json::from_value(raw).unwrap();
+        {
+            let s = open(&cfg).unwrap();
+            assert_eq!(s.get("/myapp/token").unwrap().as_deref(), Some("v-cached"));
+            assert_eq!(s.stats().parameter_count, 1);
+            assert_eq!(s.names("/myapp").unwrap(), vec!["/myapp/token".to_string()]);
+        }
+        // The on-disk encrypted vault was written.
+        assert!(cache_path.exists());
+        // Source no longer provides it; reopening still serves the persisted (encrypted) value.
+        unsafe { std::env::remove_var("GGTEST_PERSIST_MYAPP_TOKEN") };
+        let s2 = open(&cfg).unwrap();
+        assert_eq!(s2.get("/myapp/token").unwrap().as_deref(), Some("v-cached"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The persistent cache preserves the `secure` flag + upstream version through the vault labels.
+    #[test]
+    fn persistent_cache_round_trips_secure_and_version() {
+        let dir = std::env::temp_dir().join(format!("ggparam-sec-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let provider =
+            crate::credentials::config::build_key_provider(&Default::default(), &format!("{}.key", dir.join("v").display()))
+                .unwrap();
+        let vault = crate::credentials::LocalVault::open(dir.join("v"), provider, 1).unwrap();
+        let vault = Arc::new(std::sync::Mutex::new(vault));
+        // A source that yields a secure, versioned value.
+        struct SecretSource;
+        impl ParameterSource for SecretSource {
+            fn fetch(&self, _n: &str) -> crate::Result<Option<ParamValue>> {
+                Ok(Some(ParamValue { value: b"hunter2".to_vec(), secure: true, version: Some("7".into()) }))
+            }
+            fn fetch_by_path(&self, _p: &str, _r: bool) -> crate::Result<Vec<(String, ParamValue)>> {
+                Ok(vec![])
+            }
+            fn source_id(&self) -> &str {
+                "secret"
+            }
+        }
+        let s = DefaultParameterService::with_persistent_cache(
+            Arc::new(SecretSource),
+            vault,
+            vec!["/db/password".to_string()],
+            vec![],
+        );
+        s.refresh().unwrap();
+        assert_eq!(s.get("/db/password").unwrap().as_deref(), Some("hunter2"));
+        assert_eq!(s.stats().source, "secret");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The background refresh thread picks up source changes on its interval (and stops on drop).
+    #[test]
+    fn background_refresh_observes_changes() {
+        unsafe { std::env::set_var("GGTEST_BG_VAL", "1") };
+        let source = Arc::new(EnvSource::new("GGTEST_BG_"));
+        let s = DefaultParameterService::with_memory_cache(source, vec!["/val".to_string()], vec![])
+            .with_refresh(1);
+        s.refresh().unwrap();
+        assert_eq!(s.get("/val").unwrap().as_deref(), Some("1"));
+        unsafe { std::env::set_var("GGTEST_BG_VAL", "2") };
+        // Allow at least one background tick (interval is 1s, honored in 1s steps).
+        std::thread::sleep(std::time::Duration::from_millis(2300));
+        assert_eq!(s.get("/val").unwrap().as_deref(), Some("2"));
+        // Dropping `s` stops + joins the refresher thread (Refresher::drop).
+    }
+
+    #[test]
+    fn mounted_dir_fetch_single_and_non_utf8() {
+        let dir = std::env::temp_dir().join(format!("ggparam-fetch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("a")).unwrap();
+        std::fs::write(dir.join("a/b"), b"val").unwrap();
+        std::fs::write(dir.join("bin"), [0xff, 0xfe, 0x00]).unwrap();
+        let src = MountedDirSource::new(dir.clone(), vec![]);
+        assert_eq!(src.fetch("/a/b").unwrap().unwrap().value, b"val");
+        assert!(src.fetch("/missing").unwrap().is_none());
+
+        // Non-UTF-8 value: get_bytes returns it, get_by_path skips it, get() errors.
+        let s = DefaultParameterService::with_memory_cache(
+            Arc::new(MountedDirSource::new(dir.clone(), vec![])),
+            vec![],
+            vec![("/".to_string(), true)],
+        );
+        s.refresh().unwrap();
+        assert!(s.get_bytes("/bin").unwrap().is_some());
+        assert!(!s.get_by_path("/").unwrap().contains_key("/bin"));
+        assert!(s.get("/bin").is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn config_open_rejects_bad_source() {
+        let cfg: ParametersConfig =
+            serde_json::from_value(serde_json::json!({ "source": { "type": "bogus" } })).unwrap();
+        assert!(open(&cfg).is_err());
+        // mountedDir without a root is a config error.
+        let cfg: ParametersConfig =
+            serde_json::from_value(serde_json::json!({ "source": { "type": "mountedDir" } })).unwrap();
+        assert!(open(&cfg).is_err());
+    }
+
+    #[test]
+    fn config_open_mounted_dir_source() {
+        let dir = std::env::temp_dir().join(format!("ggparam-cfgmnt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("svc")).unwrap();
+        std::fs::write(dir.join("svc/url"), b"https://x").unwrap();
+        let raw = serde_json::json!({
+            "source": { "type": "mountedDir", "root": dir.to_string_lossy(), "securePaths": ["/svc/secret"] },
+            "refreshIntervalSecs": 0,
+            "sync": { "paths": ["/"] }
+        });
+        let cfg: ParametersConfig = serde_json::from_value(raw).unwrap();
+        let s = open(&cfg).unwrap();
+        assert_eq!(s.get("/svc/url").unwrap().as_deref(), Some("https://x"));
+        assert_eq!(s.stats().source, "mountedDir");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn mounted_dir_missing_base_is_empty() {
+        let src = MountedDirSource::new(std::env::temp_dir().join("ggparam-does-not-exist-xyz"), vec![]);
+        assert!(src.fetch_by_path("/", true).unwrap().is_empty());
+    }
+
+    #[test]
+    fn non_numeric_refresh_interval_is_rejected() {
+        // lenient_u64 rejects a non-number.
+        let r: std::result::Result<ParametersConfig, _> =
+            serde_json::from_value(serde_json::json!({ "refreshIntervalSecs": "soon" }));
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn path_entry_object_defaults_recursive_true() {
+        let cfg: ParametersConfig =
+            serde_json::from_value(serde_json::json!({ "sync": { "paths": [{ "path": "/p" }] } })).unwrap();
+        assert!(cfg.sync.paths[0].recursive);
+    }
+
+    #[test]
+    fn typed_accessor_extra_branches() {
+        unsafe { std::env::set_var("GGTEST_TB_OFF", "off") };
+        unsafe { std::env::set_var("GGTEST_TB_EMPTY", "") };
+        unsafe { std::env::set_var("GGTEST_TB_BAD", "notanint") };
+        let s = svc_env("GGTEST_TB_", &["/off", "/empty", "/bad"]);
+        assert_eq!(s.get_bool("/off").unwrap(), Some(false));
+        assert_eq!(s.get_string_list("/empty").unwrap(), Some(vec![]));
+        assert!(s.get_int("/bad").unwrap_err().to_string().contains("not an integer"));
+        // Missing names => None across typed accessors.
+        assert_eq!(s.get_int("/nope").unwrap(), None);
+        assert_eq!(s.get_bool("/nope").unwrap(), None);
+        assert_eq!(s.get_json("/nope").unwrap(), None);
+        assert_eq!(s.get_string_list("/nope").unwrap(), None);
+    }
 }
