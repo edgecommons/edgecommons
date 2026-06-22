@@ -97,6 +97,15 @@
             <version>2.26.25</version>
             <optional>true</optional>
         </dependency>
+        <!-- Parameters 'awsSsm' source (AWS SSM Parameter Store). Optional: only components that use
+             the SSM parameter source need it on the runtime classpath (the env/mountedDir sources
+             have no AWS dependency). -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>ssm</artifactId>
+            <version>2.26.25</version>
+            <optional>true</optional>
+        </dependency>
         <dependency>
             <groupId>org.eclipse.paho</groupId>
             <artifactId>org.eclipse.paho.client.mqttv3</artifactId>

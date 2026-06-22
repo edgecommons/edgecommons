@@ -18,6 +18,9 @@ import com.aws.proserve.ggcommons.credentials.CredentialMetricsBridge;
 import com.aws.proserve.ggcommons.credentials.CredentialService;
 import com.aws.proserve.ggcommons.credentials.Credentials;
 import com.aws.proserve.ggcommons.credentials.SecretRefs;
+import com.aws.proserve.ggcommons.parameters.DefaultParameterService;
+import com.aws.proserve.ggcommons.parameters.ParameterService;
+import com.aws.proserve.ggcommons.parameters.Parameters;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonObject;
@@ -39,6 +42,8 @@ public class GGCommons
     /** Telemetry streaming (the native ggstreamlog binding). Null when no {@code streaming} config. */
     protected StreamService streams;
     protected CredentialService credentials;
+    /** Externalized config parameters (offline-first). Null when no {@code parameters} config. */
+    protected ParameterService parameters;
     protected StreamMetricsBridge streamMetricsBridge;
     protected CredentialMetricsBridge credentialMetricsBridge;
 
@@ -127,6 +132,9 @@ public class GGCommons
             // Credentials / local vault first (mirrors Rust lib.rs): the vault must be open before
             // streaming consumes its config, so `$secret` refs in the streaming config resolve.
             initCredentials();
+            // Parameters (externalized config): independent offline-first service paralleling
+            // credentials. Opened after the vault so a remote source can reuse the same crypto.
+            initParameters();
             // Telemetry streaming: only when a `streaming` config section is present (so components
             // that don't use it never load the native library).
             initStreaming();
@@ -245,6 +253,37 @@ public class GGCommons
     }
 
     /**
+     * Returns the parameter service for this component, or {@code null} if the component
+     * configuration has no {@code parameters} section. Mirrors Rust {@code gg.parameters()} /
+     * Python {@code get_parameters()}.
+     *
+     * @return the {@link ParameterService}, or {@code null} if parameters are not configured
+     */
+    public ParameterService getParameters()
+    {
+        return parameters;
+    }
+
+    /**
+     * Opens the parameter service from the {@code parameters} config section (if any), resolving path
+     * templates in the persistent-cache path / key path. No-op when the section is absent. Parameter
+     * keys are not namespaced (matching the Rust port); per-component isolation comes from the
+     * templated {@code cache.path}.
+     */
+    private void initParameters()
+    {
+        JsonObject full = configManager.getFullConfig();
+        if (full == null || !full.has("parameters") || !full.get("parameters").isJsonObject())
+        {
+            return;
+        }
+        // Resolve {ThingName}/{ComponentFullName} in the cache path / key path before opening.
+        String parametersJson = configManager.resolveTemplate(full.getAsJsonObject("parameters").toString());
+        parameters = Parameters.open(JsonParser.parseString(parametersJson).getAsJsonObject());
+        LOGGER.info("Parameters service initialized");
+    }
+
+    /**
      * Shuts down this GGCommons instance, releasing background timers, threads and connections
      * held by the heartbeat, metric, messaging and configuration subsystems.
      */
@@ -253,6 +292,10 @@ public class GGCommons
         if (credentialMetricsBridge != null)
         {
             credentialMetricsBridge.close();
+        }
+        if (parameters instanceof DefaultParameterService dps)
+        {
+            dps.close();
         }
         if (streamMetricsBridge != null)
         {

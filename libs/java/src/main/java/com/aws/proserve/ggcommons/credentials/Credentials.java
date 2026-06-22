@@ -30,58 +30,7 @@ public final class Credentials {
         int keep = vaultCfg.has("keepVersions") ? vaultCfg.get("keepVersions").getAsInt() : 2;
 
         JsonObject kp = vaultCfg.has("keyProvider") ? vaultCfg.getAsJsonObject("keyProvider") : new JsonObject();
-        String kind = kp.has("type") ? kp.get("type").getAsString() : "file";
-        KeyProvider provider = switch (kind) {
-            case "file" -> {
-                String keyPath = kp.has("keyPath") ? kp.get("keyPath").getAsString() : path + ".key";
-                Path keyFile = Paths.get(keyPath);
-                try {
-                    if (keyFile.getParent() != null) {
-                        Files.createDirectories(keyFile.getParent());
-                    }
-                } catch (IOException e) {
-                    throw new CredentialException("create key dir: " + e.getMessage(), e);
-                }
-                yield Files.exists(keyFile)
-                        ? FileKeyProvider.fromKeyFile(keyFile)
-                        : FileKeyProvider.generateKeyFile(keyFile);
-            }
-            case "kms", "greengrass" -> {
-                if (!kp.has("kmsKeyId")) {
-                    throw new CredentialException("kms key provider requires keyProvider.kmsKeyId");
-                }
-                String keyId = kp.get("kmsKeyId").getAsString();
-                String kmsRegion = kp.has("region") ? kp.get("region").getAsString() : null;
-                String kmsEndpoint = kp.has("endpointUrl") ? kp.get("endpointUrl").getAsString() : null;
-                yield new KmsKeyProvider(keyId, kmsRegion, kmsEndpoint);
-            }
-            case "pkcs11" -> {
-                if (!kp.has("modulePath")) {
-                    throw new CredentialException("pkcs11 key provider requires keyProvider.modulePath");
-                }
-                if (!kp.has("keyLabel")) {
-                    throw new CredentialException("pkcs11 key provider requires keyProvider.keyLabel");
-                }
-                String modulePath = kp.get("modulePath").getAsString();
-                String tokenLabel = kp.has("tokenLabel") ? kp.get("tokenLabel").getAsString() : "";
-                String keyLabel = kp.get("keyLabel").getAsString();
-                String pin;
-                if (kp.has("pinEnv")) {
-                    pin = System.getenv(kp.get("pinEnv").getAsString());
-                    if (pin == null) {
-                        throw new CredentialException(
-                                "pkcs11 keyProvider.pinEnv '" + kp.get("pinEnv").getAsString() + "' is not set");
-                    }
-                } else if (kp.has("pin")) {
-                    pin = kp.get("pin").getAsString();
-                } else {
-                    throw new CredentialException("pkcs11 key provider requires keyProvider.pinEnv or keyProvider.pin");
-                }
-                yield Pkcs11KeyProvider.create(modulePath, tokenLabel, keyLabel, pin);
-            }
-            default -> throw new CredentialException(
-                    "key provider '" + kind + "' is not supported (supported: 'file', 'kms'/'greengrass', 'pkcs11')");
-        };
+        KeyProvider provider = buildKeyProvider(kp, path + ".key");
 
         LocalVault vault = LocalVault.open(Paths.get(path), provider, keep);
         Object lock = new Object();
@@ -109,6 +58,75 @@ public final class Credentials {
         AwsSecretsManagerSource source = new AwsSecretsManagerSource(region, endpoint);
         SyncEngine sync = new SyncEngine(vault, lock, source, namespace, syncSecrets(central), interval, bootstrap);
         return new DefaultCredentialService(vault, namespace, lock, sync).withAudit(audit);
+    }
+
+    /**
+     * Build a {@link KeyProvider} (the KEK custodian) from a {@code keyProvider} config object.
+     *
+     * <p>Supports {@code file} (default), {@code kms}/{@code greengrass} (KMS-via-TES) and
+     * {@code pkcs11} (HSM/TPM). Mirrors the Rust {@code build_key_provider}. Shared by the
+     * credentials vault and the {@code parameters} persistent cache so both apply identical
+     * key-provider semantics. Behavior is unchanged from the previous inline switch.
+     *
+     * @param kp             the {@code keyProvider} config object (may be empty → defaults to {@code file})
+     * @param defaultKeyPath the on-disk key path used by the {@code file} provider when
+     *                       {@code keyProvider.keyPath} is absent (e.g. {@code <vaultPath>.key})
+     * @return the constructed {@link KeyProvider}
+     */
+    public static KeyProvider buildKeyProvider(JsonObject kp, String defaultKeyPath) {
+        JsonObject cfg = kp != null ? kp : new JsonObject();
+        String kind = cfg.has("type") ? cfg.get("type").getAsString() : "file";
+        return switch (kind) {
+            case "file" -> {
+                String keyPath = cfg.has("keyPath") ? cfg.get("keyPath").getAsString() : defaultKeyPath;
+                Path keyFile = Paths.get(keyPath);
+                try {
+                    if (keyFile.getParent() != null) {
+                        Files.createDirectories(keyFile.getParent());
+                    }
+                } catch (IOException e) {
+                    throw new CredentialException("create key dir: " + e.getMessage(), e);
+                }
+                yield Files.exists(keyFile)
+                        ? FileKeyProvider.fromKeyFile(keyFile)
+                        : FileKeyProvider.generateKeyFile(keyFile);
+            }
+            case "kms", "greengrass" -> {
+                if (!cfg.has("kmsKeyId")) {
+                    throw new CredentialException("kms key provider requires keyProvider.kmsKeyId");
+                }
+                String keyId = cfg.get("kmsKeyId").getAsString();
+                String kmsRegion = cfg.has("region") ? cfg.get("region").getAsString() : null;
+                String kmsEndpoint = cfg.has("endpointUrl") ? cfg.get("endpointUrl").getAsString() : null;
+                yield new KmsKeyProvider(keyId, kmsRegion, kmsEndpoint);
+            }
+            case "pkcs11" -> {
+                if (!cfg.has("modulePath")) {
+                    throw new CredentialException("pkcs11 key provider requires keyProvider.modulePath");
+                }
+                if (!cfg.has("keyLabel")) {
+                    throw new CredentialException("pkcs11 key provider requires keyProvider.keyLabel");
+                }
+                String modulePath = cfg.get("modulePath").getAsString();
+                String tokenLabel = cfg.has("tokenLabel") ? cfg.get("tokenLabel").getAsString() : "";
+                String keyLabel = cfg.get("keyLabel").getAsString();
+                String pin;
+                if (cfg.has("pinEnv")) {
+                    pin = System.getenv(cfg.get("pinEnv").getAsString());
+                    if (pin == null) {
+                        throw new CredentialException(
+                                "pkcs11 keyProvider.pinEnv '" + cfg.get("pinEnv").getAsString() + "' is not set");
+                    }
+                } else if (cfg.has("pin")) {
+                    pin = cfg.get("pin").getAsString();
+                } else {
+                    throw new CredentialException("pkcs11 key provider requires keyProvider.pinEnv or keyProvider.pin");
+                }
+                yield Pkcs11KeyProvider.create(modulePath, tokenLabel, keyLabel, pin);
+            }
+            default -> throw new CredentialException(
+                    "key provider '" + kind + "' is not supported (supported: 'file', 'kms'/'greengrass', 'pkcs11')");
+        };
     }
 
     /** Parse {@code central.sync.secrets} — each entry a bare string or {@code {name, from}}. */
