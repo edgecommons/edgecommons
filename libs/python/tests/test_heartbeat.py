@@ -34,7 +34,7 @@ def heartbeat_messaging_config():
                 "memory": True,
                 "disk": False,
                 "threads": True,
-                "fileDescriptors": False
+                "fds": False
             },
             "targets": [{
                 "type": "messaging",
@@ -46,8 +46,10 @@ def heartbeat_messaging_config():
         },
         "metricEmission": {
             "target": "messaging",
-            "topic": "heartbeat/{ComponentName}/{ThingName}",
-            "destination": "local"
+            "targetConfig": {
+                "topic": "heartbeat/{ComponentName}/{ThingName}",
+                "destination": "local"
+            }
         },
         "component": {
             "global": {"test": "value"},

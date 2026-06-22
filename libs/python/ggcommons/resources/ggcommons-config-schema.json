@@ -1,278 +1,271 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://aws.com/schemas/ggcommons-config.json",
   "title": "GGCommons Configuration Schema",
-  "description": "JSON schema for validating GGCommons component configuration",
+  "description": "Canonical cross-language JSON Schema for AWS IoT Greengrass GGCommons library configuration. This is the SINGLE SOURCE OF TRUTH for all language libraries (java/python/rust/ts). Do not edit the per-library copies directly — edit this file and run schema/sync-schema.(ps1|sh) to propagate it. CI verifies the copies match (sync-schema --check).",
   "type": "object",
   "properties": {
     "logging": {
       "type": "object",
+      "description": "Logging configuration settings",
       "properties": {
         "level": {
           "type": "string",
-          "enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+          "enum": ["TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"],
+          "default": "INFO",
+          "description": "Root logger level"
         },
         "format": {
-          "type": "string"
+          "type": "string",
+          "default": "%d{yyyy-MM-dd HH:mm:ss} [%-5p] %-25.25c{1}(%4L): %m%n",
+          "description": "Log pattern format string (interpreted per language: Log4j2 in Java, logging format in Python, etc.)"
         },
         "fileLogging": {
           "type": "object",
+          "description": "File logging configuration",
           "properties": {
             "enabled": {
-              "type": "boolean"
+              "type": "boolean",
+              "default": false,
+              "description": "Enable file logging"
             },
             "filePath": {
-              "type": "string"
+              "type": "string",
+              "description": "Path to log file (supports template variables)"
             },
             "maxFileSize": {
               "type": "string",
-              "pattern": "^\\d+[KMGT]?B$"
+              "default": "10MB",
+              "description": "Maximum size before the log file is rotated (e.g. 10MB, 512KB, 1GB)"
             },
             "backupCount": {
               "type": "integer",
-              "minimum": 0
+              "minimum": 0,
+              "default": 5,
+              "description": "Number of rotated backup files to keep"
             }
-          }
+          },
+          "required": ["enabled"],
+          "additionalProperties": false
         },
         "loggers": {
           "type": "object",
+          "description": "Logger-specific level configuration",
           "patternProperties": {
-            ".*": {
-              "oneOf": [
-                {
-                  "type": "string",
-                  "enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
-                },
-                {
-                  "type": "object",
-                  "properties": {
-                    "level": {
-                      "type": "string",
-                      "enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
-                    }
-                  },
-                  "required": ["level"]
-                }
-              ]
+            "^[a-zA-Z0-9._-]+$": {
+              "type": "string",
+              "enum": ["TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"]
             }
-          }
+          },
+          "additionalProperties": false
         },
         "globalControl": {
-          "type": "boolean"
+          "type": "boolean",
+          "default": false,
+          "description": "Enable global logging control for entire application"
         }
-      }
+      },
+      "additionalProperties": false
+    },
+    "metricEmission": {
+      "type": "object",
+      "description": "Metric collection and emission configuration",
+      "properties": {
+        "target": {
+          "type": "string",
+          "enum": ["log", "messaging", "cloudwatch", "cloudwatchcomponent"],
+          "default": "log",
+          "description": "Target destination for metrics"
+        },
+        "namespace": {
+          "type": "string",
+          "default": "ggcommons",
+          "description": "CloudWatch namespace for metrics"
+        },
+        "largeFleetWorkaround": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable workaround for large fleet deployments"
+        },
+        "targetConfig": {
+          "type": "object",
+          "description": "Target-specific configuration",
+          "properties": {
+            "logFileName": {
+              "type": "string",
+              "description": "Log file path template (for log target)"
+            },
+            "maxFileSize": {
+              "type": "string",
+              "description": "Maximum log file size (for log target)"
+            },
+            "topic": {
+              "type": "string",
+              "description": "Topic template (for messaging/cloudwatch component targets)"
+            },
+            "destination": {
+              "type": "string",
+              "enum": ["ipc", "local", "iotcore", "iot_core"],
+              "description": "Messaging destination (for messaging target). 'ipc'/'local' are aliases for the local/IPC transport; 'iotcore'/'iot_core' are aliases for IoT Core."
+            },
+            "intervalSecs": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Emission interval in seconds (for cloudwatch target)"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
     },
     "heartbeat": {
       "type": "object",
+      "description": "Component heartbeat and health monitoring configuration",
       "properties": {
         "intervalSecs": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "default": 5,
+          "description": "Heartbeat interval in seconds"
         },
         "measures": {
           "type": "object",
+          "description": "System metrics to include in heartbeat (availability of individual measures varies by language/platform)",
           "properties": {
             "cpu": {
-              "type": "boolean"
+              "type": "boolean",
+              "default": true,
+              "description": "Include CPU usage metrics"
             },
             "memory": {
-              "type": "boolean"
+              "type": "boolean",
+              "default": true,
+              "description": "Include memory usage metrics"
             },
             "disk": {
-              "type": "boolean"
-            },
-            "files": {
-              "type": "boolean"
+              "type": "boolean",
+              "default": false,
+              "description": "Include disk usage metrics (not supported on all platforms/languages)"
             },
             "threads": {
-              "type": "boolean"
+              "type": "boolean",
+              "default": false,
+              "description": "Include thread count metrics"
+            },
+            "files": {
+              "type": "boolean",
+              "default": false,
+              "description": "Include open file count metrics"
             },
             "fds": {
-              "type": "boolean"
+              "type": "boolean",
+              "default": false,
+              "description": "Include file descriptor metrics (not supported on all platforms/languages)"
             }
-          }
+          },
+          "additionalProperties": false
         },
         "targets": {
           "type": "array",
+          "description": "Heartbeat publishing targets",
           "items": {
             "type": "object",
             "properties": {
               "type": {
                 "type": "string",
-                "enum": ["messaging", "metric"]
+                "enum": ["metric", "messaging"],
+                "description": "Target type for heartbeat data"
               },
               "config": {
                 "type": "object",
+                "description": "Target-specific configuration",
                 "properties": {
                   "destination": {
                     "type": "string",
-                    "enum": ["ipc", "iot_core"]
+                    "enum": ["ipc", "local", "iotcore", "iot_core"],
+                    "default": "ipc",
+                    "description": "Messaging destination (for messaging targets). 'ipc'/'local' are aliases for the local/IPC transport; 'iotcore'/'iot_core' are aliases for IoT Core."
                   },
                   "topic": {
-                    "type": "string"
+                    "type": "string",
+                    "default": "ggcommons/{ThingName}/{ComponentName}/heartbeat",
+                    "description": "Topic template (for messaging targets)"
                   }
-                }
+                },
+                "additionalProperties": false
+              },
+              "topic": {
+                "type": "string",
+                "description": "Topic template (alternative to config.topic)"
               }
             },
-            "required": ["type"]
-          }
+            "required": ["type"],
+            "additionalProperties": false
+          },
+          "default": [{"type": "metric"}]
         }
-      }
-    },
-    "metricEmission": {
-      "type": "object",
-      "properties": {
-        "target": {
-          "type": "string",
-          "enum": ["cloudwatch", "log", "messaging"]
-        },
-        "namespace": {
-          "type": "string"
-        },
-        "intervalSecs": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "largeFleetWorkaround": {
-          "type": "boolean"
-        },
-        "targetConfig": {
-          "type": "object",
-          "properties": {
-            "logFileName": {
-              "type": "string"
-            },
-            "topic": {
-              "type": "string"
-            },
-            "destination": {
-              "type": "string",
-              "enum": ["ipc", "iot_core"]
-            }
-          }
-        }
-      }
-    },
-    "messaging": {
-      "type": "object",
-      "properties": {
-        "mode": {
-          "type": "string",
-          "enum": ["IPC", "STANDALONE"]
-        },
-        "receiveOwnMessages": {
-          "type": "boolean"
-        },
-        "localBroker": {
-          "type": "object",
-          "properties": {
-            "host": {
-              "type": "string"
-            },
-            "port": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 65535
-            },
-            "useTls": {
-              "type": "boolean"
-            },
-            "caCertPath": {
-              "type": "string"
-            },
-            "certPath": {
-              "type": "string"
-            },
-            "keyPath": {
-              "type": "string"
-            },
-            "username": {
-              "type": "string"
-            },
-            "password": {
-              "type": "string"
-            },
-            "clientIdPrefix": {
-              "type": "string"
-            },
-            "keepAlive": {
-              "type": "integer",
-              "minimum": 1
-            },
-            "cleanSession": {
-              "type": "boolean"
-            }
-          }
-        },
-        "iotCoreBroker": {
-          "type": "object",
-          "properties": {
-            "host": {
-              "type": "string"
-            },
-            "port": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 65535
-            },
-            "useTls": {
-              "type": "boolean"
-            },
-            "caCertPath": {
-              "type": "string"
-            },
-            "certPath": {
-              "type": "string"
-            },
-            "keyPath": {
-              "type": "string"
-            },
-            "username": {
-              "type": "string"
-            },
-            "password": {
-              "type": "string"
-            },
-            "clientIdPrefix": {
-              "type": "string"
-            },
-            "keepAlive": {
-              "type": "integer",
-              "minimum": 1
-            },
-            "cleanSession": {
-              "type": "boolean"
-            }
-          }
-        }
-      }
+      },
+      "additionalProperties": false
     },
     "tags": {
       "type": "object",
+      "description": "Component tags for template variable substitution",
       "patternProperties": {
-        ".*": {
+        "^[a-zA-Z0-9_-]+$": {
           "type": "string"
         }
-      }
+      },
+      "additionalProperties": false
     },
     "component": {
       "type": "object",
+      "description": "Component-specific configuration",
       "properties": {
         "global": {
-          "type": "object"
+          "type": "object",
+          "description": "Global configuration applied to all instances",
+          "additionalProperties": true
         },
         "instances": {
           "type": "array",
+          "description": "Instance-specific configurations",
           "items": {
             "type": "object",
             "properties": {
               "id": {
-                "type": "string"
+                "type": "string",
+                "description": "Unique instance identifier"
               }
             },
-            "required": ["id"]
+            "required": ["id"],
+            "additionalProperties": true
           }
         }
-      }
+      },
+      "additionalProperties": false
+    },
+    "messaging": {
+      "type": "object",
+      "description": "Inline messaging configuration (mode + local/IoT Core brokers). The detailed schema is owned and validated by the messaging subsystem; permitted here so it is not rejected as an unknown property. Note: STANDALONE mode is typically configured via a separate messaging-config JSON file passed on the CLI.",
+      "additionalProperties": true
+    },
+    "streaming": {
+      "type": "object",
+      "description": "Telemetry streaming configuration (durable store-and-forward). The detailed schema (streams, sinks, buffers) is owned and validated by the streaming subsystem (native ggstreamlog core); permitted here so it is not rejected as an unknown property.",
+      "additionalProperties": true
+    },
+    "credentials": {
+      "type": "object",
+      "description": "Credentials / encrypted local vault configuration (local vault + optional central sync). The detailed schema (vault, keyProvider, central) is owned and validated by the credentials subsystem; permitted here so it is not rejected as an unknown property.",
+      "additionalProperties": true
+    },
+    "parameters": {
+      "type": "object",
+      "description": "Parameters / externalized configuration (offline-first, pluggable source: awsSsm, mountedDir, env). The detailed schema (source, cache, sync) is owned and validated by the parameters subsystem; permitted here so it is not rejected as an unknown property.",
+      "additionalProperties": true
     }
-  }
+  },
+  "required": ["component"],
+  "additionalProperties": false
 }

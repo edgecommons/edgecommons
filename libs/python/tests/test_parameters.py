@@ -730,12 +730,12 @@ def test_parameters_section_passes_config_validation():
         pytest.skip("jsonschema/schema not available")
 
     config = {
-        "component": {"name": "com.example.MyComp"},
+        "component": {"global": {"name": "com.example.MyComp"}},
         "parameters": {
             "source": {"type": "env", "prefix": "GG_PARAM_"},
             "sync": {"names": ["/myapp/region"], "paths": ["/myapp"]},
             "refreshIntervalSecs": 300,
         },
     }
-    # Permissive root: a parameters section is accepted just like a credentials section.
+    # A parameters section is accepted (it's a known top-level section, validated permissively).
     ConfigurationValidator.validate(config)

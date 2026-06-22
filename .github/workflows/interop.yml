@@ -3,11 +3,22 @@ name: interop
 # messages. Runs whenever any library or the test infra changes.
 on:
   push:
-    paths: ["libs/**", "test-infra/**", ".github/workflows/interop.yml"]
+    paths: ["libs/**", "schema/**", "test-infra/**", ".github/workflows/interop.yml"]
   pull_request:
-    paths: ["libs/**", "test-infra/**", ".github/workflows/interop.yml"]
+    paths: ["libs/**", "schema/**", "test-infra/**", ".github/workflows/interop.yml"]
 
 jobs:
+  # Guarantee every language library embeds the SAME config schema: each lib carries a
+  # copy of schema/ggcommons-config-schema.json (cargo include_str!, tsc import, Python
+  # package-data, Java classpath resource). This fails if any copy drifts from the
+  # canonical source — run ./schema/sync-schema.sh and commit to fix.
+  schema-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify per-lib config schema copies match the canonical source
+        run: bash schema/sync-schema.sh --check
+
   interop:
     runs-on: ubuntu-latest
     services:

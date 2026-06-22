@@ -45,7 +45,7 @@ describe("GGCommons STANDALONE lifecycle (live broker)", () => {
 
   it("exposes componentName/args/config/metrics and a working messaging round-trip", async (ctx) => {
     if (!up) ctx.skip();
-    const configPath = tmpFile("config", JSON.stringify({ logging: { level: "INFO" }, tags: { site: "f1" } }));
+    const configPath = tmpFile("config", JSON.stringify({ component: { global: {} }, logging: { level: "INFO" }, tags: { site: "f1" } }));
     const gg = await build(configPath);
     try {
       expect(gg.componentName()).toBe("com.example.It");
@@ -68,7 +68,7 @@ describe("GGCommons STANDALONE lifecycle (live broker)", () => {
 
   it("addConfigChangeListener fires on FILE hot reload and config() returns the new snapshot", async (ctx) => {
     if (!up) ctx.skip();
-    const configPath = tmpFile("config", JSON.stringify({ logging: { level: "INFO" }, tags: { v: "1" } }));
+    const configPath = tmpFile("config", JSON.stringify({ component: { global: {} }, logging: { level: "INFO" }, tags: { v: "1" } }));
     const gg = await build(configPath);
     try {
       const seen: Config[] = [];
@@ -80,7 +80,7 @@ describe("GGCommons STANDALONE lifecycle (live broker)", () => {
       };
       gg.addConfigChangeListener(listener);
 
-      await fsp.writeFile(configPath, JSON.stringify({ logging: { level: "DEBUG" }, tags: { v: "2" } }));
+      await fsp.writeFile(configPath, JSON.stringify({ component: { global: {} }, logging: { level: "DEBUG" }, tags: { v: "2" } }));
       for (let i = 0; i < 60 && seen.length === 0; i++) await tick(50);
       expect(seen.length).toBeGreaterThanOrEqual(1);
       expect(gg.config().parsed.tags).toEqual({ v: "2" });
@@ -88,7 +88,7 @@ describe("GGCommons STANDALONE lifecycle (live broker)", () => {
       // removeConfigChangeListener stops further notifications.
       gg.removeConfigChangeListener(listener);
       const countAfterRemove = seen.length;
-      await fsp.writeFile(configPath, JSON.stringify({ logging: { level: "INFO" }, tags: { v: "3" } }));
+      await fsp.writeFile(configPath, JSON.stringify({ component: { global: {} }, logging: { level: "INFO" }, tags: { v: "3" } }));
       for (let i = 0; i < 40 && gg.config().parsed.tags.v !== "3"; i++) await tick(50);
       expect(gg.config().parsed.tags).toEqual({ v: "3" });
       expect(seen.length).toBe(countAfterRemove);
@@ -99,7 +99,7 @@ describe("GGCommons STANDALONE lifecycle (live broker)", () => {
 
   it("a reload that fails validation keeps the previous snapshot; a throwing listener is caught", async (ctx) => {
     if (!up) ctx.skip();
-    const configPath = tmpFile("config", JSON.stringify({ tags: { v: "1" } }));
+    const configPath = tmpFile("config", JSON.stringify({ component: { global: {} }, tags: { v: "1" } }));
     const gg = await build(configPath);
     try {
       gg.addConfigChangeListener({
@@ -109,12 +109,12 @@ describe("GGCommons STANDALONE lifecycle (live broker)", () => {
         },
       });
       // Invalid against the schema (target enum) -> reload rejected, snapshot unchanged.
-      await fsp.writeFile(configPath, JSON.stringify({ metricEmission: { target: "not-a-real-target" } }));
+      await fsp.writeFile(configPath, JSON.stringify({ component: { global: {} }, metricEmission: { target: "not-a-real-target" } }));
       await tick(800);
       expect(gg.config().parsed.tags).toEqual({ v: "1" });
 
       // A valid reload triggers the throwing listener, which must be caught (no crash).
-      await fsp.writeFile(configPath, JSON.stringify({ tags: { v: "2" } }));
+      await fsp.writeFile(configPath, JSON.stringify({ component: { global: {} }, tags: { v: "2" } }));
       for (let i = 0; i < 40 && gg.config().parsed.tags.v !== "2"; i++) await tick(50);
       expect(gg.config().parsed.tags).toEqual({ v: "2" });
     } finally {
@@ -124,7 +124,7 @@ describe("GGCommons STANDALONE lifecycle (live broker)", () => {
 
   it("close() resolves cleanly", async (ctx) => {
     if (!up) ctx.skip();
-    const configPath = tmpFile("config", JSON.stringify({}));
+    const configPath = tmpFile("config", JSON.stringify({ component: { global: {} } }));
     const gg = await build(configPath);
     await expect(gg.close()).resolves.toBeUndefined();
   });

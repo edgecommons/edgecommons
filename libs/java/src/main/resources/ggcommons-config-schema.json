@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://aws.com/schemas/ggcommons-config.json",
   "title": "GGCommons Configuration Schema",
-  "description": "JSON Schema for AWS IoT Greengrass GGCommons library configuration",
+  "description": "Canonical cross-language JSON Schema for AWS IoT Greengrass GGCommons library configuration. This is the SINGLE SOURCE OF TRUTH for all language libraries (java/python/rust/ts). Do not edit the per-library copies directly — edit this file and run schema/sync-schema.(ps1|sh) to propagate it. CI verifies the copies match (sync-schema --check).",
   "type": "object",
   "properties": {
     "logging": {
@@ -18,7 +18,7 @@
         "format": {
           "type": "string",
           "default": "%d{yyyy-MM-dd HH:mm:ss} [%-5p] %-25.25c{1}(%4L): %m%n",
-          "description": "Log4j2 pattern format string"
+          "description": "Log pattern format string (interpreted per language: Log4j2 in Java, logging format in Python, etc.)"
         },
         "fileLogging": {
           "type": "object",
@@ -105,8 +105,8 @@
             },
             "destination": {
               "type": "string",
-              "enum": ["ipc", "iotcore"],
-              "description": "Messaging destination (for messaging target)"
+              "enum": ["ipc", "local", "iotcore", "iot_core"],
+              "description": "Messaging destination (for messaging target). 'ipc'/'local' are aliases for the local/IPC transport; 'iotcore'/'iot_core' are aliases for IoT Core."
             },
             "intervalSecs": {
               "type": "integer",
@@ -131,7 +131,7 @@
         },
         "measures": {
           "type": "object",
-          "description": "System metrics to include in heartbeat",
+          "description": "System metrics to include in heartbeat (availability of individual measures varies by language/platform)",
           "properties": {
             "cpu": {
               "type": "boolean",
@@ -146,7 +146,7 @@
             "disk": {
               "type": "boolean",
               "default": false,
-              "description": "Include disk usage metrics (not supported in Java)"
+              "description": "Include disk usage metrics (not supported on all platforms/languages)"
             },
             "threads": {
               "type": "boolean",
@@ -161,7 +161,7 @@
             "fds": {
               "type": "boolean",
               "default": false,
-              "description": "Include file descriptor metrics (not supported in Java)"
+              "description": "Include file descriptor metrics (not supported on all platforms/languages)"
             }
           },
           "additionalProperties": false
@@ -183,9 +183,9 @@
                 "properties": {
                   "destination": {
                     "type": "string",
-                    "enum": ["ipc", "iotcore"],
+                    "enum": ["ipc", "local", "iotcore", "iot_core"],
                     "default": "ipc",
-                    "description": "Messaging destination (for messaging targets)"
+                    "description": "Messaging destination (for messaging targets). 'ipc'/'local' are aliases for the local/IPC transport; 'iotcore'/'iot_core' are aliases for IoT Core."
                   },
                   "topic": {
                     "type": "string",
@@ -243,22 +243,26 @@
           }
         }
       },
-      "required": ["global"],
       "additionalProperties": false
+    },
+    "messaging": {
+      "type": "object",
+      "description": "Inline messaging configuration (mode + local/IoT Core brokers). The detailed schema is owned and validated by the messaging subsystem; permitted here so it is not rejected as an unknown property. Note: STANDALONE mode is typically configured via a separate messaging-config JSON file passed on the CLI.",
+      "additionalProperties": true
     },
     "streaming": {
       "type": "object",
-      "description": "Telemetry streaming configuration (durable store-and-forward). The detailed schema (streams, sinks, buffers) is owned and validated by the native ggstreamlog core; permit the section here so it is not rejected as an unknown property.",
+      "description": "Telemetry streaming configuration (durable store-and-forward). The detailed schema (streams, sinks, buffers) is owned and validated by the streaming subsystem (native ggstreamlog core); permitted here so it is not rejected as an unknown property.",
       "additionalProperties": true
     },
     "credentials": {
       "type": "object",
-      "description": "Credentials / encrypted local vault configuration (local vault + optional central sync). The detailed schema (vault, keyProvider, central) is owned and validated by the credentials subsystem; permit the section here so it is not rejected as an unknown property.",
+      "description": "Credentials / encrypted local vault configuration (local vault + optional central sync). The detailed schema (vault, keyProvider, central) is owned and validated by the credentials subsystem; permitted here so it is not rejected as an unknown property.",
       "additionalProperties": true
     },
     "parameters": {
       "type": "object",
-      "description": "Parameters / externalized configuration (offline-first, pluggable source: awsSsm, mountedDir, env). The detailed schema (source, cache, sync) is owned and validated by the parameters subsystem; permit the section here so it is not rejected as an unknown property.",
+      "description": "Parameters / externalized configuration (offline-first, pluggable source: awsSsm, mountedDir, env). The detailed schema (source, cache, sync) is owned and validated by the parameters subsystem; permitted here so it is not rejected as an unknown property.",
       "additionalProperties": true
     }
   },

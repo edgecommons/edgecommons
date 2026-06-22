@@ -7,6 +7,7 @@ describe("config validation", () => {
   it("accepts a valid document", () => {
     expect(() =>
       validate({
+        component: { global: {} },
         logging: { level: "INFO" },
         metricEmission: { target: "log", namespace: "ns" },
         heartbeat: { intervalSecs: 5, measures: { cpu: true } },
@@ -15,8 +16,15 @@ describe("config validation", () => {
     ).not.toThrow();
   });
 
-  it("accepts an empty document", () => {
-    expect(() => validate({})).not.toThrow();
+  it("rejects a document with no component section", () => {
+    // The canonical cross-language schema requires a top-level `component` section.
+    try {
+      validate({});
+      throw new Error("expected validation to throw");
+    } catch (e) {
+      expect(e).toBeInstanceOf(GgError);
+      expect((e as GgError).kind).toBe("Validation");
+    }
   });
 
   it("rejects an invalid metricEmission.target enum value", () => {

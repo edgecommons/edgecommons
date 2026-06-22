@@ -486,8 +486,9 @@ describe("openFromConfig source selection + errors", () => {
 
 describe("schema acceptance", () => {
   it("a config with a parameters section passes TS config validation", () => {
-    // Root schema is additionalProperties:true, so a parameters block is accepted (mirrors credentials).
+    // `parameters` is a known top-level section (validated permissively, like credentials).
     const cfg = {
+      component: { global: {} },
       parameters: {
         source: { type: "env", prefix: "GG_PARAM_" },
         refreshIntervalSecs: 300,
