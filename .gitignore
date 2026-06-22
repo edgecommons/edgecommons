@@ -1,0 +1,4 @@
+# npm workspace install output (root node_modules; per-package node_modules are
+# ignored by their own .gitignore files). The committed root package-lock.json is
+# the single lockfile for the JS/TS workspace.
+node_modules/

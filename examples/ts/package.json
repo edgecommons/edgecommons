@@ -10,7 +10,7 @@
     "start": "node dist/main.js"
   },
   "dependencies": {
-    "ggcommons": "file:../../libs/ts"
+    "ggcommons": "*"
   },
   "devDependencies": {
     "@types/node": "^20",

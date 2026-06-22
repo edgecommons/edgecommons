@@ -1,9 +1,9 @@
 name: ts
 on:
   push:
-    paths: ["libs/ts/**", ".github/workflows/ts.yml"]
+    paths: ["libs/ts/**", "libs/rust-streamlog/bindings/node/**", "package.json", "package-lock.json", ".github/workflows/ts.yml"]
   pull_request:
-    paths: ["libs/ts/**", ".github/workflows/ts.yml"]
+    paths: ["libs/ts/**", "libs/rust-streamlog/bindings/node/**", "package.json", "package-lock.json", ".github/workflows/ts.yml"]
 
 jobs:
   test:
@@ -15,16 +15,15 @@ jobs:
         image: emqx/emqx:5
         ports:
           - 1883:1883
-    defaults:
-      run:
-        working-directory: libs/ts
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+      # Install the whole npm workspace from the repo root (libs/ts, its native
+      # streaming binding, and the TS example) so cross-package deps link cleanly.
       - run: npm ci || npm install
-      - run: npm run build
+      - run: npm run build --workspace=ggcommons
       # `coverage` runs the full suite AND enforces the >=90% statements/lines gate
       # (thresholds in vitest.config.ts).
-      - run: npm run coverage
+      - run: npm run coverage --workspace=ggcommons
