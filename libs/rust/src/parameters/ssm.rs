@@ -109,3 +109,93 @@ impl ParameterSource for AwsSsmSource {
         "awsSsm"
     }
 }
+
+#[cfg(test)]
+mod floci_it {
+    //! End-to-end test of the real SSM client path against a local AWS emulator (floci or
+    //! LocalStack — both speak SSM on `:4566`). **Ignored by default** (needs the emulator).
+    //!
+    //! ```sh
+    //! curl -s localhost:4566/_floci/health    # confirm "ssm":"running"
+    //! cargo test -p ggcommons --features parameters-aws ssm::floci_it -- --ignored --nocapture
+    //! ```
+    //! Override the endpoint with `GGCOMMONS_SSM_ENDPOINT` (default `http://localhost:4566`).
+    use super::*;
+    use std::collections::HashMap;
+
+    fn endpoint() -> String {
+        std::env::var("GGCOMMONS_SSM_ENDPOINT").unwrap_or_else(|_| "http://localhost:4566".into())
+    }
+
+    #[test]
+    #[ignore = "requires a local AWS emulator (floci/LocalStack) with SSM on :4566"]
+    fn ssm_source_reads_string_secure_and_by_path() {
+        // Static creds + region via env so both the admin (seed) client and the AwsSsmSource
+        // under test resolve the same way they would against real AWS.
+        unsafe {
+            std::env::set_var("AWS_ACCESS_KEY_ID", "test");
+            std::env::set_var("AWS_SECRET_ACCESS_KEY", "test");
+            std::env::set_var("AWS_DEFAULT_REGION", "us-east-1");
+        }
+        let prefix = format!("/ggcommons-it-{}", std::process::id());
+
+        // --- seed floci via the SDK admin client (put String + SecureString + a 2-key tree) ---
+        let rt = Runtime::new().unwrap();
+        let admin = rt.block_on(async {
+            let conf = aws_config::defaults(aws_config::BehaviorVersion::latest())
+                .region(aws_sdk_ssm::config::Region::new("us-east-1"))
+                .endpoint_url(endpoint())
+                .load()
+                .await;
+            Client::new(&conf)
+        });
+        let put = |name: String, value: &'static str, ty: ParameterType| {
+            let admin = admin.clone();
+            rt.block_on(async move {
+                admin
+                    .put_parameter()
+                    .name(name)
+                    .value(value)
+                    .r#type(ty)
+                    .overwrite(true)
+                    .send()
+                    .await
+                    .expect("seed put_parameter");
+            });
+        };
+        put(format!("{prefix}/plain"), "us-east-1", ParameterType::String);
+        put(format!("{prefix}/secure"), "p@ss", ParameterType::SecureString);
+        put(format!("{prefix}/tree/a"), "1", ParameterType::String);
+        put(format!("{prefix}/tree/b"), "2", ParameterType::String);
+
+        // --- read back via the source under test (with_decryption = true) ---
+        let src = AwsSsmSource::new(Some("us-east-1".into()), Some(endpoint()), true).unwrap();
+
+        let plain = src.fetch(&format!("{prefix}/plain")).unwrap().expect("plain present");
+        assert_eq!(String::from_utf8(plain.value).unwrap(), "us-east-1");
+        assert!(!plain.secure, "String must not be flagged secure");
+        assert!(plain.version.is_some(), "version should be populated");
+
+        let secure = src.fetch(&format!("{prefix}/secure")).unwrap().expect("secure present");
+        assert_eq!(String::from_utf8(secure.value).unwrap(), "p@ss", "SecureString must decrypt");
+        assert!(secure.secure, "SecureString must be flagged secure");
+
+        assert!(src.fetch(&format!("{prefix}/missing")).unwrap().is_none(), "missing -> None");
+
+        let tree: HashMap<String, String> = src
+            .fetch_by_path(&format!("{prefix}/tree"), true)
+            .unwrap()
+            .into_iter()
+            .map(|(k, v)| (k, String::from_utf8(v.value).unwrap()))
+            .collect();
+        assert_eq!(tree.get(&format!("{prefix}/tree/a")).map(String::as_str), Some("1"));
+        assert_eq!(tree.get(&format!("{prefix}/tree/b")).map(String::as_str), Some("2"));
+
+        // cleanup (best-effort)
+        for suffix in ["/plain", "/secure", "/tree/a", "/tree/b"] {
+            let name = format!("{prefix}{suffix}");
+            let admin = admin.clone();
+            let _ = rt.block_on(async move { admin.delete_parameter().name(name).send().await });
+        }
+    }
+}

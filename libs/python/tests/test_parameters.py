@@ -739,3 +739,62 @@ def test_parameters_section_passes_config_validation():
     }
     # A parameters section is accepted (it's a known top-level section, validated permissively).
     ConfigurationValidator.validate(config)
+
+
+@pytest.mark.integration
+def test_awssm_source_against_floci_emulator():
+    """End-to-end awsSsm source vs a local AWS emulator (floci/LocalStack SSM on :4566).
+
+    Exercises the real boto3 client path (excluded from unit coverage): seed a String, a
+    SecureString and a 2-key tree, then read them back via the source under test and assert
+    values, the secure flag, version, missing->None, and get-by-path. Skips if no emulator.
+    Override the endpoint with GGCOMMONS_SSM_ENDPOINT (default http://localhost:4566).
+    """
+    boto3 = pytest.importorskip("boto3")
+    import socket
+    from botocore.config import Config
+    from ggcommons.parameters.ssm import AwsSsmSource
+
+    endpoint = os.environ.get("GGCOMMONS_SSM_ENDPOINT", "http://localhost:4566")
+    host, _, port = endpoint.split("//", 1)[-1].partition(":")
+    try:
+        with socket.create_connection((host, int(port or "4566")), timeout=2):
+            pass
+    except OSError:
+        pytest.skip(f"no AWS emulator at {endpoint}")
+
+    os.environ.setdefault("AWS_ACCESS_KEY_ID", "test")
+    os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "test")
+    os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
+
+    prefix = f"/ggcommons-it-py-{os.getpid()}"
+    admin = boto3.client(
+        "ssm", endpoint_url=endpoint, region_name="us-east-1",
+        config=Config(connect_timeout=4, read_timeout=8, retries={"max_attempts": 1}),
+    )
+    admin.put_parameter(Name=f"{prefix}/plain", Value="us-east-1", Type="String", Overwrite=True)
+    admin.put_parameter(Name=f"{prefix}/secure", Value="p@ss", Type="SecureString", Overwrite=True)
+    admin.put_parameter(Name=f"{prefix}/tree/a", Value="1", Type="String", Overwrite=True)
+    admin.put_parameter(Name=f"{prefix}/tree/b", Value="2", Type="String", Overwrite=True)
+    try:
+        src = AwsSsmSource(region="us-east-1", endpoint_url=endpoint, with_decryption=True)
+
+        plain = src.fetch(f"{prefix}/plain")
+        assert plain is not None and plain.value == b"us-east-1"
+        assert plain.secure is False and plain.version is not None
+
+        secure = src.fetch(f"{prefix}/secure")
+        assert secure is not None and secure.value == b"p@ss"  # decrypted
+        assert secure.secure is True
+
+        assert src.fetch(f"{prefix}/missing") is None
+
+        tree = {k: v.value for k, v in src.fetch_by_path(f"{prefix}/tree", True)}
+        assert tree.get(f"{prefix}/tree/a") == b"1"
+        assert tree.get(f"{prefix}/tree/b") == b"2"
+    finally:
+        for suffix in ("/plain", "/secure", "/tree/a", "/tree/b"):
+            try:
+                admin.delete_parameter(Name=f"{prefix}{suffix}")
+            except Exception:
+                pass

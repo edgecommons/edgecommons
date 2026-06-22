@@ -1,0 +1,90 @@
+name: parameters-ssm
+# Real awsSsm parameter-source integration tests for all four libs against a local AWS emulator
+# (LocalStack — SSM + KMS for SecureString). These exercise the SDK-bound source code that the
+# unit suites exclude. Mirrors how streaming.yml runs the Kinesis/Kafka integration tests.
+on:
+  push:
+    paths:
+      - "libs/rust/src/parameters/**"
+      - "libs/python/ggcommons/parameters/**"
+      - "libs/ts/src/parameters/**"
+      - "libs/java/src/main/java/com/aws/proserve/ggcommons/parameters/**"
+      - "libs/*/**/test*parameters*"
+      - ".github/workflows/parameters-ssm.yml"
+  pull_request:
+    paths:
+      - "libs/rust/src/parameters/**"
+      - "libs/python/ggcommons/parameters/**"
+      - "libs/ts/src/parameters/**"
+      - "libs/java/src/main/java/com/aws/proserve/ggcommons/parameters/**"
+      - "libs/*/**/test*parameters*"
+      - ".github/workflows/parameters-ssm.yml"
+
+jobs:
+  ssm-integration:
+    runs-on: ubuntu-latest
+    services:
+      # LocalStack speaks the SSM + KMS APIs on :4566 (same surface as floci used locally).
+      localstack:
+        image: localstack/localstack:3
+        ports:
+          - 4566:4566
+        env:
+          SERVICES: ssm,kms
+        options: >-
+          --health-cmd "curl -sf http://localhost:4566/_localstack/health || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      # Endpoint + static creds so every lib's default credential chain targets the emulator.
+      GGCOMMONS_SSM_ENDPOINT: http://localhost:4566
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_DEFAULT_REGION: us-east-1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: libs/rust
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Wait for the emulator
+        run: |
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:4566/_localstack/health && break || sleep 2
+          done
+
+      - name: Rust — awsSsm source vs emulator
+        run: cargo test --features parameters-aws --lib ssm::floci_it -- --ignored --nocapture
+        working-directory: libs/rust
+
+      - name: Python — awsSsm source vs emulator
+        run: |
+          pip install -e . boto3 pytest
+          python -m pytest tests/test_parameters.py -m integration -k awssm -q -o log_cli=false
+        working-directory: libs/python
+
+      - name: TS — awsSsm source vs emulator
+        run: |
+          npm install
+          npm install -D @aws-sdk/client-ssm@^3.1073.0
+          npx vitest run test/parameters_ssm_floci.test.ts
+        working-directory: libs/ts
+
+      - name: Java — awsSsm source vs emulator
+        run: mvn -B -ntp test -Dtest=AwsSsmSourceFlociTest -Dsurefire.failIfNoSpecifiedTests=false
+        working-directory: libs/java
+        env:
+          GGCOMMONS_IT_SSM: "1"
