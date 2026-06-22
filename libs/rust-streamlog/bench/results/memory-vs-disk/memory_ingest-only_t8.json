@@ -1,0 +1,52 @@
+{
+  "schema": "ggsl-loadgen/1",
+  "scenario": "S1",
+  "target_name": "local",
+  "git_sha": "dev",
+  "timestamp_unix_ms": 1782159680403,
+  "config": {
+    "payload_bytes": 1024,
+    "threads": 8,
+    "rate": null,
+    "duration_s": 8.0,
+    "count": null,
+    "fsync": "PerBatch",
+    "segment_bytes": 67108864,
+    "max_disk_bytes": 1073741824,
+    "on_full": "DropOldest",
+    "sink": "ingest-only",
+    "batch_records": 500,
+    "path": "C:/Users/breis/AppData/Local/Temp/ggsl-run-memory",
+    "store": "Memory"
+  },
+  "env": {
+    "os": "windows",
+    "arch": "x86_64",
+    "cpu_model": null,
+    "cpu_cores": 32,
+    "total_mem_bytes": null,
+    "kernel": null,
+    "fs_mount": null,
+    "build_profile": "release",
+    "page_cache_dropped": false
+  },
+  "metrics": {
+    "appended_total": 8508652,
+    "exported_total": 0,
+    "dropped_total": 7486041,
+    "rejected_total": 0,
+    "duration_s": 8.0234644,
+    "throughput_rps": 1060471.0852833097,
+    "throughput_mb_s": 1085.9223913301091,
+    "logical_write_mb_s": 1113.4946395474753,
+    "append_p50_ns": 5900,
+    "append_p99_ns": 28900,
+    "append_p999_ns": 57700,
+    "append_max_ns": 4308000,
+    "backlog_peak": 1022611,
+    "disk_bytes_final": 1073741550,
+    "rss_start_bytes": null,
+    "rss_peak_bytes": null,
+    "cpu_percent": null
+  }
+}

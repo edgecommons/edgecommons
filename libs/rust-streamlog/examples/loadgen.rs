@@ -38,7 +38,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 
-use ggstreamlog::config::{BatchConfig, BufferConfig, DeliveryConfig, FsyncPolicy, OnFull};
+use ggstreamlog::config::{BatchConfig, BufferConfig, DeliveryConfig, FsyncPolicy, OnFull, StoreType};
 use ggstreamlog::export::{ExportRecord, SendOutcome, Sink};
 use ggstreamlog::{EmbeddedLog, ExportEngine, Record};
 
@@ -414,6 +414,7 @@ struct ConfigBlock {
     sink: String,
     batch_records: usize,
     path: String,
+    store: String,
 }
 
 #[derive(Serialize, Default)]
@@ -546,9 +547,17 @@ fn main() {
     let batch_records = args.usize("batch-records", 500);
     let drop_caches = args.flag("drop-caches");
     let path = PathBuf::from(args.str("path", "./ggsl-loadgen"));
+    // `--store memory` exercises the non-durable RAM backing (MemoryBlockStore); `disk` (default)
+    // is the durable segment log. For memory there is no path/segment files, and max-disk-bytes is
+    // reinterpreted as the in-memory byte budget.
+    let store_type = match args.str("store", "disk").to_ascii_lowercase().as_str() {
+        "memory" | "mem" => StoreType::Memory,
+        _ => StoreType::Disk,
+    };
 
     let buffer = BufferConfig {
-        path: path.to_string_lossy().into_owned(),
+        store_type,
+        path: if store_type == StoreType::Memory { String::new() } else { path.to_string_lossy().into_owned() },
         segment_bytes,
         max_disk_bytes,
         on_full,
@@ -607,6 +616,7 @@ fn main() {
             sink: sink_str,
             batch_records,
             path: path.to_string_lossy().into_owned(),
+            store: format!("{store_type:?}"),
         },
         env,
         metrics,
