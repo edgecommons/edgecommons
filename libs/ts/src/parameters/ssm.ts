@@ -10,6 +10,16 @@
 import { ParameterError } from "./errors";
 import { ParamValue, ParameterSource } from "./source";
 
+/*
+ * v8 ignore start
+ *
+ * Coverage note: every line below makes (or wraps) a live AWS SSM call and requires the optional
+ * `@aws-sdk/client-ssm` package plus network/AWS credentials. It is validated out-of-band (against
+ * floci / real SSM), exactly as vitest.config.ts excludes the interop/ipc harnesses. The unit suite
+ * covers the rest of the parameters subsystem (config/service/source) past the 90% bar; this single
+ * SDK-bound source file is excepted rather than mocked, to avoid adding a heavy AWS-SDK test dep.
+ */
+
 /** AWS SSM Parameter Store {@link ParameterSource}. */
 export class AwsSsmSource implements ParameterSource {
   private constructor(
@@ -94,3 +104,4 @@ export class AwsSsmSource implements ParameterSource {
     return "awsSsm";
   }
 }
+/* v8 ignore stop */

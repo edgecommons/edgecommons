@@ -2,3 +2,4 @@
 /dist
 /greengrass-build
 *.metric.log
+/.vault

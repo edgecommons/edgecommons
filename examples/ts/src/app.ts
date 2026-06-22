@@ -25,6 +25,7 @@ import {
   MessageBuilder,
   MetricBuilder,
   MetricService,
+  ParameterService,
   Qos,
   StreamHandle,
   logger,
@@ -75,6 +76,12 @@ export class SkeletonApp {
    * AWS Secrets Manager over TES). Mirrors the Rust skeleton's `credentials` field.
    */
   private readonly credentials?: CredentialService;
+  /**
+   * The parameter service, or `undefined` if the config has no `parameters` section.
+   * Demonstrates offline-first externalized-config reads via `gg.parameters()` (here from an
+   * `env` source — no AWS). Mirrors the Rust skeleton's `parameters` field.
+   */
+  private readonly parameters?: ParameterService;
 
   private requestTopic?: string;
   private cmdTopic?: string;
@@ -130,6 +137,10 @@ export class SkeletonApp {
     // Credential service (undefined unless the config has a `credentials` section). Used by
     // demonstrateCredentials() once at startup; mirrors the Rust skeleton's gg.credentials().
     this.credentials = gg.credentials();
+
+    // Parameter service (undefined unless the config has a `parameters` section). Used by
+    // demonstrateParameters() once at startup; mirrors the Rust skeleton's gg.parameters().
+    this.parameters = gg.parameters();
   }
 
   /**
@@ -196,6 +207,48 @@ export class SkeletonApp {
   }
 
   /**
+   * Demonstrate externalized-config reads via `gg.parameters()`.
+   *
+   * Show the parameter-service usage a real component needs: read named parameters from the
+   * offline-first cache — including a typed (`getInt`) read. The example config wires an `env`
+   * source (no AWS, no provisioning), so the values come from environment variables
+   * (`GG_PARAM_SKELETON_REGION`, `GG_PARAM_SKELETON_POOLSIZE`). Runs once at startup.
+   *
+   * Logs only non-secret values; never logs a secure value. Non-fatal: any error is logged and
+   * swallowed so the demo never takes the component down.
+   */
+  private demonstrateParameters(): void {
+    const params = this.parameters;
+    if (!params) {
+      logger.info("no `parameters` config section; parameter access demo disabled");
+      return;
+    }
+
+    try {
+      // A plain string parameter (non-secret) — safe to log.
+      const region = params.get("/skeleton/region");
+      if (region !== undefined) {
+        logger.info(`parameter access OK: /skeleton/region=${region}`);
+      } else {
+        logger.info("parameter /skeleton/region not set (set GG_PARAM_SKELETON_REGION to demo it)");
+      }
+
+      // A typed integer parameter — getInt parses + validates.
+      const poolSize = params.getInt("/skeleton/poolSize");
+      if (poolSize !== undefined) {
+        logger.info(`parameter access OK (typed): /skeleton/poolSize=${poolSize}`);
+      } else {
+        logger.info("parameter /skeleton/poolSize not set (set GG_PARAM_SKELETON_POOLSIZE to demo it)");
+      }
+
+      const stats = params.stats();
+      logger.info(`parameter store: source=${stats.source} count=${stats.parameterCount}`);
+    } catch (e) {
+      logger.warn(`parameter demo failed (non-fatal): ${String(e)}`);
+    }
+  }
+
+  /**
    * Run the component until {@link stop} is called.
    *
    * Starts the request responder and the periodic publisher (when messaging is
@@ -207,6 +260,9 @@ export class SkeletonApp {
 
     // Demonstrate encrypted-vault secret access once at startup (non-fatal).
     this.demonstrateCredentials();
+
+    // Demonstrate externalized-config parameter access once at startup (non-fatal).
+    this.demonstrateParameters();
 
     const messaging = this.messaging;
     if (!messaging) {

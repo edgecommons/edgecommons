@@ -74,6 +74,7 @@ async function buildSource(source: NonNullable<ParametersConfig["source"]>): Pro
       return new MountedDirSource(source.root, source.securePaths ?? []);
     }
     case "awsSsm": {
+      /* v8 ignore next 3 -- the awsSsm branch needs @aws-sdk/client-ssm + AWS; covered out-of-band (see ssm.ts note) */
       const { AwsSsmSource } = await import("./ssm");
       return AwsSsmSource.create(source.region, source.endpointUrl, source.withDecryption ?? true);
     }
