@@ -5,7 +5,7 @@
  * phases) is seeded/refreshed from a central cloud vault. The on-disk format is byte-compatible
  * with the Rust/Python/Java ports (see `vault-test-vectors/` and `docs/CREDENTIALS.md`).
  */
-export { openFromConfig, CredentialsConfig } from "./config";
+export { openFromConfig, buildKeyProvider, CredentialsConfig, KeyProviderConfig, BuiltKeyProvider } from "./config";
 export { CredentialError } from "./errors";
 export { CredentialService, DefaultCredentialService } from "./service";
 export { AuditEvent, AuditSink, LogAuditSink, logSink } from "./audit";

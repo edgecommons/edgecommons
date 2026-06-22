@@ -27,6 +27,7 @@ import { MetricEmitter } from "./metrics/service";
 import { MetricService } from "./metrics/types";
 import type { StreamMetricsBridge, StreamService } from "./streaming";
 import type { CredentialMetricsBridge, CredentialService } from "./credentials";
+import type { ParameterService } from "./parameters";
 
 /** Default thing name when none is supplied and not running under Greengrass. */
 const DEFAULT_THING_NAME = "NOT_GREENGRASS";
@@ -51,6 +52,7 @@ export class GGCommons {
   private streamMetrics?: StreamMetricsBridge;
   private credentialsService?: CredentialService;
   private credentialMetrics?: CredentialMetricsBridge;
+  private parametersService?: ParameterService;
 
   /** @internal Attach the config-watch handle after construction. */
   _setWatch(watch: ConfigWatch | undefined): void {
@@ -88,6 +90,20 @@ export class GGCommons {
    */
   credentials(): CredentialService | undefined {
     return this.credentialsService;
+  }
+
+  /** @internal Attach the parameter service after construction. */
+  _setParameters(service: ParameterService | undefined): void {
+    this.parametersService = service;
+  }
+
+  /**
+   * The parameter service, or `undefined` if the component config has no `parameters` section.
+   * Offline-first reads of externalized config (`get`/`getByPath`/typed accessors). Mirrors the
+   * Rust `gg.parameters()`.
+   */
+  parameters(): ParameterService | undefined {
+    return this.parametersService;
   }
 
   /** The component's full name. */
@@ -131,6 +147,7 @@ export class GGCommons {
 
   /** Release resources: stop the heartbeat + config watch and disconnect messaging. */
   async close(): Promise<void> {
+    (this.parametersService as { close?: () => void } | undefined)?.close?.();
     this.credentialMetrics?.close();
     this.streamMetrics?.close();
     this.streamsService?.close();
@@ -266,6 +283,19 @@ export class GGCommonsBuilder {
       const credentialMetrics = new credentialsApi.CredentialMetricsBridge(current, metrics, credentialService);
       runtime._setCredentialMetrics(credentialMetrics);
       logger.info("Credentials vault initialized");
+    }
+
+    // Parameters (only when a `parameters` config section is present). Independent, offline-first
+    // service for externalized config — sibling of credentials. Loaded dynamically so components
+    // that don't use it pay nothing. No namespacing of parameter keys (matches the Rust port; the
+    // cache path is per-component templated below).
+    const parametersRaw = current.raw["parameters"];
+    if (parametersRaw && typeof parametersRaw === "object") {
+      const parametersApi = await import("./parameters");
+      const resolved = JSON.parse(resolve(current, JSON.stringify(parametersRaw)));
+      const parameterService = await parametersApi.openFromConfig(resolved);
+      runtime._setParameters(parameterService);
+      logger.info("Parameters service initialized");
     }
 
     // Telemetry streaming (only when a `streaming` config section is present, so components that

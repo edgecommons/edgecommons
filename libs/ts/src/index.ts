@@ -107,3 +107,21 @@ export {
   logSink,
 } from "./credentials";
 export type { CredentialService, CredentialsConfig, KeyProvider, PutOptions, SecretMeta, AuditEvent, AuditSink } from "./credentials";
+
+// Parameters (gg.parameters())
+export {
+  openFromConfig as openParameters,
+  ParameterError,
+  DefaultParameterService,
+  EnvSource,
+  MountedDirSource,
+  AwsSsmSource,
+} from "./parameters";
+export type {
+  ParameterService,
+  ParametersConfig,
+  ParameterStats,
+  ParamValue,
+  ParameterSource,
+  PathEntry,
+} from "./parameters";

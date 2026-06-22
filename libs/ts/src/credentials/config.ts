@@ -63,26 +63,45 @@ function syncSecrets(central: NonNullable<CredentialsConfig["central"]>): SyncSe
   return out;
 }
 
+/** Per-provider key-provider config shape (shared by the credentials vault and the parameter cache). */
+export type KeyProviderConfig = NonNullable<NonNullable<CredentialsConfig["vault"]>["keyProvider"]>;
+
 /**
- * Open (or create) the local vault under the configured key provider. `file` wraps the DEK under a
- * local key file; `kms`/`greengrass` wrap it via an AWS KMS CMK. The KMS round trip is performed
- * eagerly here (async) and handed to `LocalVault.open` through a {@link PrewrappedKeyProvider}, since
- * `LocalVault.open` calls `wrapDek`/`unwrapDek` synchronously. The on-disk format is unchanged.
+ * A KEK custodian ready to hand to {@link LocalVault.open}, with the optional brand-new vault
+ * id/DEK the async KMS path must supply out of band (ignored when the vault already exists).
  */
-async function openVault(
-  kind: string,
-  path: string,
-  keep: number,
-  kp: NonNullable<NonNullable<CredentialsConfig["vault"]>["keyProvider"]>,
-): Promise<LocalVault> {
+export interface BuiltKeyProvider {
+  provider: KeyProvider;
+  newVaultId?: string;
+  newDek?: Buffer;
+}
+
+/**
+ * Build a KEK custodian from a key-provider config (mirrors the Rust `build_key_provider`). Shared
+ * by the credentials vault ({@link openVault}) and the parameter cache. `file` wraps the DEK under a
+ * local key file; `kms`/`greengrass` wrap it via an AWS KMS CMK; `pkcs11` wraps it inside an HSM/TPM.
+ *
+ * Because `LocalVault.open` calls `wrapDek`/`unwrapDek` synchronously, the async KMS round trip is
+ * performed eagerly here and handed back as a {@link PrewrappedKeyProvider} (plus the brand-new
+ * vault id/DEK when creating a fresh KMS vault). The on-disk format is unchanged. `vaultPath` is the
+ * vault file (read to unwrap an existing KMS DEK); `defaultKeyPath` is the `file` provider's key file
+ * when `keyPath` is absent.
+ */
+export async function buildKeyProvider(
+  kp: KeyProviderConfig,
+  vaultPath: string,
+  defaultKeyPath: string,
+): Promise<BuiltKeyProvider> {
+  const kind = kp.type ?? "file";
+
   if (kind === "file") {
-    const keyPath = kp.keyPath ?? `${path}.key`;
+    const keyPath = kp.keyPath ?? defaultKeyPath;
     const dir = dirname(keyPath);
     if (dir) mkdirSync(dir, { recursive: true });
     const provider: KeyProvider = existsSync(keyPath)
       ? FileKeyProvider.fromKeyFile(keyPath)
       : FileKeyProvider.generateKeyFile(keyPath);
-    return LocalVault.open(path, provider, keep);
+    return { provider };
   }
 
   if (kind === "kms" || kind === "greengrass") {
@@ -90,21 +109,19 @@ async function openVault(
       throw new CredentialError("kms key provider requires keyProvider.kmsKeyId");
     }
     const kms = await KmsKeyProvider.create(kp.kmsKeyId, kp.region, kp.endpointUrl);
-    if (existsSync(path)) {
+    if (existsSync(vaultPath)) {
       // Existing vault: read its KEK + vaultId and KMS-decrypt the DEK eagerly.
-      const dir = dirname(path);
+      const dir = dirname(vaultPath);
       if (dir) mkdirSync(dir, { recursive: true });
-      const vf = JSON.parse(readFileSync(path, "utf8")) as VaultFile;
+      const vf = JSON.parse(readFileSync(vaultPath, "utf8")) as VaultFile;
       const dek = await kms.unwrapDek(vf.vaultId, vf.kek);
-      const shim = new PrewrappedKeyProvider("kms", vf.kek, dek);
-      return LocalVault.open(path, shim, keep);
+      return { provider: new PrewrappedKeyProvider("kms", vf.kek, dek) };
     }
     // New vault: generate the id + DEK here, KMS-wrap eagerly, then hand both to LocalVault.open.
     const vaultId = randomUUID();
     const dek = random(KEY_LEN);
     const kek = await kms.wrapDek(vaultId, dek);
-    const shim = new PrewrappedKeyProvider("kms", kek, dek);
-    return LocalVault.open(path, shim, keep, vaultId, dek);
+    return { provider: new PrewrappedKeyProvider("kms", kek, dek), newVaultId: vaultId, newDek: dek };
   }
 
   if (kind === "pkcs11") {
@@ -122,12 +139,25 @@ async function openVault(
     }
     // graphene-pk11 is synchronous, so the provider plugs straight into the sync LocalVault.open.
     const provider = await Pkcs11KeyProvider.create(kp.modulePath, kp.tokenLabel ?? "", kp.keyLabel, pin);
-    return LocalVault.open(path, provider, keep);
+    return { provider };
   }
 
   throw new CredentialError(
     `key provider '${kind}' is not supported (supported: 'file', 'kms'/'greengrass', 'pkcs11')`,
   );
+}
+
+/**
+ * Open (or create) the local vault under the configured key provider. Thin wrapper over
+ * {@link buildKeyProvider} + {@link LocalVault.open} (the latter is synchronous).
+ */
+async function openVault(
+  path: string,
+  keep: number,
+  kp: KeyProviderConfig,
+): Promise<LocalVault> {
+  const { provider, newVaultId, newDek } = await buildKeyProvider(kp, path, `${path}.key`);
+  return LocalVault.open(path, provider, keep, newVaultId, newDek);
 }
 
 /** Open the vault and return the default credential service from a `credentials` config object. */
@@ -138,9 +168,8 @@ export async function openFromConfig(
   const vaultCfg = cfg.vault ?? {};
   const path = vaultCfg.path ?? "vault";
   const keep = vaultCfg.keepVersions ?? 2;
-  const kind = vaultCfg.keyProvider?.type ?? "file";
 
-  const vault = await openVault(kind, path, keep, vaultCfg.keyProvider ?? {});
+  const vault = await openVault(path, keep, vaultCfg.keyProvider ?? {});
 
   // Access auditing on by default (config can disable) — logs op/name/version/source/outcome,
   // never the value.
