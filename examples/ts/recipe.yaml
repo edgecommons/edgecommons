@@ -9,6 +9,8 @@ ComponentConfiguration:
     ComponentConfig:
       logging:
         level: "INFO"
+        # Per-language log format (token template): {timestamp} {level} {logger} {message}.
+        ts_format: "{timestamp} [{level}] {logger}: {message}"
       heartbeat:
         intervalSecs: 5
         # Heartbeat publishes via the metric service. (A messaging-target heartbeat

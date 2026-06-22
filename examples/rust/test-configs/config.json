@@ -1,5 +1,5 @@
 {
-  "logging": { "level": "DEBUG" },
+  "logging": { "level": "DEBUG", "rust_format": "{timestamp} [{level}] {target} - {message}" },
   "heartbeat": {
     "intervalSecs": 5,
     "measures": { "cpu": true, "memory": true },

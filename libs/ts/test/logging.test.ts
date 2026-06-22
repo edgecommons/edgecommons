@@ -89,6 +89,33 @@ describe("logging level threshold", () => {
     expect(cap.out).toContain("INFO|again");
   });
 
+  it("applies per-logger levels from logging.loggers (hierarchical), reloadable", async () => {
+    const { getLogger } = await import("../src/logging");
+    initLogging(
+      Config.fromValue("c", "t", {
+        logging: { level: "INFO", loggers: { "app.db": "DEBUG", "app.noisy": "ERROR" } },
+      }),
+    );
+    // Exact + prefix match: app.db (and app.db.pool) => DEBUG; app.noisy => ERROR; other => root INFO.
+    let cap = captureStdio(() => {
+      getLogger("app.db").debug("db-dbg");
+      getLogger("app.db.pool").debug("pool-dbg");
+      getLogger("app.noisy").info("noisy-info-hidden");
+      getLogger("other").debug("other-dbg-hidden");
+      getLogger("other").info("other-info");
+    });
+    expect(cap.out).toContain("db-dbg");
+    expect(cap.out).toContain("pool-dbg");
+    expect(cap.out).not.toContain("noisy-info-hidden");
+    expect(cap.out).not.toContain("other-dbg-hidden");
+    expect(cap.out).toContain("other-info");
+
+    // A reload changes per-logger levels live.
+    reconfigureLogging(Config.fromValue("c", "t", { logging: { level: "INFO", loggers: { "app.db": "ERROR" } } }));
+    cap = captureStdio(() => getLogger("app.db").info("db-info-now-hidden"));
+    expect(cap.out).not.toContain("db-info-now-hidden");
+  });
+
   it("an unparseable level falls back to INFO", () => {
     initLogging(Config.fromValue("c", "t", { logging: { level: "GIBBERISH" } }));
     const cap = captureStdio(() => {

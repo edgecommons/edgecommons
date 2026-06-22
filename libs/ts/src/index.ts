@@ -89,7 +89,7 @@ export { Heartbeat, HeartbeatMonitor } from "./heartbeat";
 export type { ConfigProvider } from "./heartbeat";
 
 // Logging
-export { logger, initLogging, reconfigureLogging, LoggingReconfigurer, Logger } from "./logging";
+export { logger, getLogger, initLogging, reconfigureLogging, LoggingReconfigurer, Logger } from "./logging";
 
 // Telemetry streaming
 export { StreamService, StreamHandle, GgStreamError, StreamMetricsBridge } from "./streaming";

@@ -9,6 +9,8 @@ ComponentConfiguration:
     ComponentConfig:
       logging:
         level: "INFO"
+        # Per-language log format (token template): {timestamp} {level} {target} {message}.
+        rust_format: "{timestamp} [{level}] {target} - {message}"
       heartbeat:
         intervalSecs: 5
         targets:

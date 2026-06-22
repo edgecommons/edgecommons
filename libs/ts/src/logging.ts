@@ -21,10 +21,11 @@
  * - `parseFileSize` matches the Python/Rust `_parse_file_size`: `B`/`KB`/`MB`/`GB`
  *   suffixes (case-insensitive, 1024-based); unparseable falls back to `10MB`.
  * - `logging.ts_format` IS applied (token template: {timestamp}/{level}/{logger}/{message});
- *   it replaces the former language-agnostic `format`, and is re-applied on hot reload along with
- *   the level and file writer. `logging.loggers` (per-logger levels) is still NOT applied: this
- *   single process-wide logger has no named-logger (getLogger(name)) API to route target levels
- *   through (Rust does this via EnvFilter). See .validation/parity-remediation-plan.md (#2).
+ *   it replaces the former language-agnostic `format`, re-applied on hot reload with the level and
+ *   file writer.
+ * - `logging.loggers` (per-logger levels) IS applied: {@link getLogger} returns a named logger
+ *   whose level is the longest dotted-prefix match in `logging.loggers`, else the root level
+ *   (mirrors Python's logging hierarchy / Rust's EnvFilter targets).
  * - Logging never throws (fail-soft): file errors are reported to stderr and file
  *   logging is skipped/aborted, never propagated.
  */
@@ -248,21 +249,53 @@ function renderLine(format: string, level: Level, message: string, loggerName: s
     .replace(/\{message\}/g, message);
 }
 
+// ---- Module-wide logging state: root level, per-logger overrides, shared sinks. ----
+let rootLevel: Level = Level.INFO;
+let loggersConfig: Record<string, string> = {};
+let sharedFormat: string = DEFAULT_TS_FORMAT;
+let sharedFileWriter: RotatingFileWriter | undefined;
+const registry = new Map<string, Logger>();
+
 /**
- * A leveled logger. The level threshold is mutable (live reconfiguration); the
- * file writer is fixed at init time (matching Rust's tracing-layer limitation).
+ * Resolve a logger's effective level from `logging.loggers`: longest dotted-prefix match
+ * (so `a.b.c` is covered by an `a.b` entry), falling back to the root level. Mirrors Python's
+ * logging hierarchy and Rust's EnvFilter target directives.
+ */
+function effectiveLevel(name: string): Level {
+  if (name) {
+    const parts = name.split(".");
+    for (let i = parts.length; i > 0; i--) {
+      const key = parts.slice(0, i).join(".");
+      if (Object.prototype.hasOwnProperty.call(loggersConfig, key)) {
+        return parseLevel(loggersConfig[key]);
+      }
+    }
+  }
+  return rootLevel;
+}
+
+/**
+ * A leveled logger. Level (root + per-logger overrides), format, and the rotating file writer
+ * are all refreshed from config on init and hot reload.
  */
 export class Logger {
   private level: Level = Level.INFO;
   private fileWriter?: RotatingFileWriter;
   private format: string = DEFAULT_TS_FORMAT;
-  private readonly loggerName: string;
+  readonly loggerName: string;
 
   constructor(name = "ggcommons") {
     this.loggerName = name;
   }
 
-  /** Set the active level threshold. */
+  /** Recompute this logger's level (per-logger or root), format, and file sink from config. */
+  refresh(): void {
+    this.level = effectiveLevel(this.loggerName);
+    this.format = sharedFormat;
+    this.fileWriter = sharedFileWriter;
+  }
+
+  /** Set the active level threshold (overridden by the next config refresh). */
   setLevel(level: Level): void {
     this.level = level;
   }
@@ -311,28 +344,51 @@ export class Logger {
   }
 }
 
-/** The process-wide logger used across the library (default INFO). */
-export const logger = new Logger();
+/** The process-wide (root) logger used across the library (default INFO). */
+export const logger = new Logger("ggcommons");
+registry.set(logger.loggerName, logger);
 
 /**
- * Initialize the global logger from `config`: set the level from
- * `logging.level` (default INFO, case-insensitive) and, if
- * `logging.fileLogging.enabled`, install a size-rotating file writer. Fail-soft.
+ * Get (or create) a named logger. Its level is resolved from `logging.loggers` (per-logger
+ * overrides, hierarchical) falling back to the root `logging.level`; format and file sink are
+ * shared. The instance is stable across calls and stays in sync with config hot reloads.
  */
-export function initLogging(config: Config): void {
-  logger.setLevel(parseLevel(config.parsed.logging.level));
-  logger.setFormat(config.parsed.logging.tsFormat);
-  logger.setFileWriter(buildFileWriter(config));
+export function getLogger(name: string): Logger {
+  let existing = registry.get(name);
+  if (!existing) {
+    existing = new Logger(name);
+    registry.set(name, existing);
+    existing.refresh();
+  }
+  return existing;
+}
+
+/** Apply config to the module-wide state and refresh every live logger. */
+function applyLoggingConfig(config: Config): void {
+  rootLevel = parseLevel(config.parsed.logging.level);
+  loggersConfig = config.parsed.logging.loggers ?? {};
+  const fmt = config.parsed.logging.tsFormat;
+  sharedFormat = fmt && fmt.length > 0 ? fmt : DEFAULT_TS_FORMAT;
+  sharedFileWriter = buildFileWriter(config);
+  for (const l of registry.values()) {
+    l.refresh();
+  }
 }
 
 /**
- * Re-apply level, format, and the rotating file writer from `config` on hot reload.
+ * Initialize logging from `config`: root level (`logging.level`), per-logger overrides
+ * (`logging.loggers`), format (`logging.ts_format`), and the rotating file writer. Fail-soft.
+ */
+export function initLogging(config: Config): void {
+  applyLoggingConfig(config);
+}
+
+/**
+ * Re-apply level (root + per-logger), format, and the rotating file writer on hot reload.
  * (Node lets us rebuild the file writer live, unlike the Rust tracing-layer limitation.)
  */
 export function reconfigureLogging(config: Config): void {
-  logger.setLevel(parseLevel(config.parsed.logging.level));
-  logger.setFormat(config.parsed.logging.tsFormat);
-  logger.setFileWriter(buildFileWriter(config));
+  applyLoggingConfig(config);
 }
 
 /**
