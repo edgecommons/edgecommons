@@ -49,11 +49,29 @@ ComponentConfiguration:
               streamName: "ggcommons-skeleton-telemetry"
               region: "us-east-1"
             buffer:
+              # type defaults to "disk" — durable, file-backed, survives restarts.
               path: "/greengrass/v2/work/{ComponentFullName}/stream-telemetry"
               segmentBytes: 1048576
               maxDiskBytes: 67108864
               # dropOldest keeps the component alive (and the publish loop unblocked) if the disk
               # budget fills during a long sink outage; dropped records show up in `droppedTotal`.
+              onFull: "dropOldest"
+            delivery:
+              pollIntervalMs: 1000
+          # A second, IN-MEMORY (non-durable) stream for low-value debug traces: buffer lives only
+          # in RAM, no disk I/O, records dropped on overflow/restart. For best-effort streams where
+          # durability / high QoS is unnecessary. Reuses the same Kinesis target as a demo (needs no
+          # extra stream/IAM); in practice it would point at its own sink.
+          - name: "debug-trace"
+            sink:
+              type: "kinesis"
+              streamName: "ggcommons-skeleton-telemetry"
+              region: "us-east-1"
+            buffer:
+              type: "memory"
+              # No `path` for an in-memory buffer. maxDiskBytes is the in-memory byte budget;
+              # onFull applies when it's exceeded (oldest dropped).
+              maxDiskBytes: 1048576
               onFull: "dropOldest"
             delivery:
               pollIntervalMs: 1000

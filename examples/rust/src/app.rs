@@ -56,6 +56,11 @@ pub struct SkeletonApp {
     /// (Kinesis on-device via TES). Cheap to clone; shared across threads.
     #[cfg(feature = "streaming")]
     stream: Option<StreamHandle>,
+    /// Handle to the `debug-trace` **in-memory** stream (`buffer.type: "memory"`), demonstrating a
+    /// best-effort, non-durable stream alongside the durable `telemetry` one: no disk I/O, records
+    /// dropped on overflow/restart. `None` when not configured.
+    #[cfg(feature = "streaming")]
+    mem_stream: Option<StreamHandle>,
     /// The credential service when the `credentials` feature is built and a `credentials` config
     /// section is present; `None` otherwise. Demonstrates encrypted-vault secret access (and, with
     /// `credentials-aws` + a `central` config, sync from AWS Secrets Manager over TES).
@@ -159,6 +164,17 @@ impl SkeletonApp {
             }
         };
 
+        // Best-effort: a second, in-memory stream (buffer.type: "memory") for low-value debug
+        // traces — demonstrates a non-durable stream coexisting with the durable telemetry one.
+        #[cfg(feature = "streaming")]
+        let mem_stream = match gg.streams().stream("debug-trace") {
+            Ok(handle) => {
+                tracing::info!("in-memory 'debug-trace' stream enabled (non-durable)");
+                Some(handle)
+            }
+            Err(_) => None,
+        };
+
         Ok(Self {
             config,
             metrics,
@@ -166,6 +182,8 @@ impl SkeletonApp {
             publish_interval,
             #[cfg(feature = "streaming")]
             stream,
+            #[cfg(feature = "streaming")]
+            mem_stream,
             #[cfg(feature = "credentials")]
             credentials: gg.credentials(),
             #[cfg(feature = "parameters")]
@@ -481,6 +499,18 @@ impl SkeletonApp {
                 match stream.append(record) {
                     Ok(()) => tracing::debug!(seq, "appended record to telemetry stream"),
                     Err(e) => tracing::warn!(error = %e, "failed to append to telemetry stream"),
+                }
+            }
+
+            // Also append a low-value debug trace to the in-memory (non-durable) stream. Same API;
+            // its buffer lives only in RAM (dropped on overflow/restart) — best-effort by design.
+            #[cfg(feature = "streaming")]
+            if let Some(stream) = &self.mem_stream {
+                let payload = serde_json::to_vec(&json!({ "seq": seq, "trace": "publish-loop" }))
+                    .unwrap_or_default();
+                let record = StreamRecord::new(self.config.thing_name.clone(), now_ms(), payload);
+                if let Err(e) = stream.append(record) {
+                    tracing::warn!(error = %e, "failed to append to in-memory debug-trace stream");
                 }
             }
 
