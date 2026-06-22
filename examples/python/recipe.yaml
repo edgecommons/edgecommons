@@ -9,7 +9,7 @@ ComponentConfiguration:
     ComponentConfig:
       logging:
         level: "INFO"
-        format: "%(asctime)s [%(levelname)s] %(filename)s %(funcName)s(%(lineno)d) [%(threadName)s]: %(message)s"
+        python_format: "%(asctime)s [%(levelname)s] %(filename)s %(funcName)s(%(lineno)d) [%(threadName)s]: %(message)s"
       heartbeat:
         intervalSecs: 5
         targets:

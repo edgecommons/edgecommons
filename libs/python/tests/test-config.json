@@ -1,7 +1,7 @@
 {
   "logging": {
     "level": "DEBUG",
-    "format": "%(asctime)s [%(levelname)s] %(name)s %(lineno)d: %(message)s"
+    "python_format": "%(asctime)s [%(levelname)s] %(name)s %(lineno)d: %(message)s"
   },
   "heartbeat": {
     "intervalSecs": 2,

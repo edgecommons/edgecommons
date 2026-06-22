@@ -200,7 +200,7 @@ class ConfigManagerTest {
     void testLoggingConfiguration() throws IOException {
         String configJson = """
                 {
-                  "logging": {"level": "DEBUG", "format": "%d{yyyy-MM-dd HH:mm:ss} [%level] %logger{36} - %msg%n", "fileLogging": {"enabled": true, "filePath": "/var/log/{ComponentName}.log"}, "loggers": {"com.aws.proserve": "INFO", "org.apache.http": "WARN"}, "globalControl": true},
+                  "logging": {"level": "DEBUG", "java_format": "%d{yyyy-MM-dd HH:mm:ss} [%level] %logger{36} - %msg%n", "fileLogging": {"enabled": true, "filePath": "/var/log/{ComponentName}.log"}, "loggers": {"com.aws.proserve": "INFO", "org.apache.http": "WARN"}, "globalControl": true},
                   "metricEmission": {"target": "log"},
                   "heartbeat": {"intervalSecs": 30},
                   "tags": {},

@@ -21,13 +21,14 @@
 //!   … The same level filter gates both console and file output.
 //! - Error handling: infallible — an unparseable level falls back to `info`; a
 //!   file that cannot be opened is reported to stderr and file logging is skipped.
-//! - Limitation: the file layer is decided at [`init`] time only (tracing layers
-//!   cannot be added/removed after install), so a `fileLogging` change on hot
-//!   reload does not take effect until restart; the *level* (root + per-logger
-//!   `logging.loggers` overrides) reconfigures live for both sinks. The custom
-//!   `logging.format` string is intentionally NOT applied here — a cross-language
-//!   format is being addressed via per-language format fields as part of the
-//!   shared-configuration work (see .validation/parity-remediation-plan.md #1).
+//! - **Format**: `logging.rust_format` (token template `{timestamp}` `{level}`
+//!   `{target}` `{message}`) is rendered by a custom [`TokenLayer`] to console +
+//!   file when set; otherwise the default `fmt` layers are used. (Replaces the
+//!   former language-agnostic `format`.)
+//! - Limitation: the format and file layers are decided at [`init`] time only
+//!   (tracing layers cannot be added/removed after install), so a `rust_format` or
+//!   `fileLogging` change on hot reload does not take effect until restart; the
+//!   *level* (root + per-logger `logging.loggers` overrides) reconfigures live.
 //!
 //! ## Usage Example
 //! ```
@@ -52,8 +53,13 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use async_trait::async_trait;
+use tracing::field::{Field, Visit};
+use tracing::{Event, Subscriber};
+use tracing_subscriber::fmt::time::{FormatTime, SystemTime};
 use tracing_subscriber::fmt::MakeWriter;
+use tracing_subscriber::layer::Context;
 use tracing_subscriber::prelude::*;
+use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::{fmt, reload, EnvFilter};
 
 use crate::config::model::Config;
@@ -66,22 +72,92 @@ static RECONFIGURE: OnceLock<Box<dyn Fn(EnvFilter) + Send + Sync>> = OnceLock::n
 /// Initialize the global tracing subscriber with a reloadable level filter and,
 /// if `logging.fileLogging.enabled`, a size-rotated file layer.
 pub fn init(config: &Config) {
-    let (layer, handle) = reload::Layer::new(level_filter(config));
-    // Build the optional file layer inline so its type is inferred against the
-    // registry chain. `Option<Layer>` itself implements `Layer`, so a `None`
-    // simply adds nothing.
-    let file_layer = file_make_writer(config)
-        .map(|writer| fmt::layer().with_ansi(false).with_writer(writer));
-    let installed = tracing_subscriber::registry()
-        .with(layer)
-        .with(fmt::layer())
-        .with(file_layer)
-        .try_init()
-        .is_ok();
+    let (filter_layer, handle) = reload::Layer::new(level_filter(config));
+    let file_writer = file_make_writer(config);
+
+    // When `logging.rust_format` is set, render every event through the token template
+    // (console + file) via a custom layer; otherwise keep the default `fmt` layers. Two
+    // separate registry branches avoid boxing the heterogeneous layer types. The level
+    // filter (and its reload handle) is shared by both branches.
+    let installed = match config.parsed.logging.rust_format.clone() {
+        Some(template) => tracing_subscriber::registry()
+            .with(filter_layer)
+            .with(TokenLayer { template, file: file_writer })
+            .try_init()
+            .is_ok(),
+        None => {
+            let file_layer = file_writer
+                .map(|writer| fmt::layer().with_ansi(false).with_writer(writer));
+            tracing_subscriber::registry()
+                .with(filter_layer)
+                .with(fmt::layer())
+                .with(file_layer)
+                .try_init()
+                .is_ok()
+        }
+    };
     if installed {
         let _ = RECONFIGURE.set(Box::new(move |filter: EnvFilter| {
             let _ = handle.reload(filter);
         }));
+    }
+}
+
+/// A `tracing` layer that renders each event from a `rust_format` token template
+/// (`{timestamp}` `{level}` `{target}` `{message}`) to stdout and, optionally, a
+/// rotating file. Installed only when `logging.rust_format` is configured; the
+/// format is fixed at [`init`] (tracing layers cannot be swapped at runtime).
+struct TokenLayer {
+    template: String,
+    file: Option<RotatingFileMakeWriter>,
+}
+
+/// Render a `rust_format` token template. Unknown `{...}` tokens are left as-is.
+fn render_template(template: &str, timestamp: &str, level: &str, target: &str, message: &str) -> String {
+    template
+        .replace("{timestamp}", timestamp)
+        .replace("{level}", level)
+        .replace("{target}", target)
+        .replace("{message}", message)
+}
+
+/// Extracts the `message` field of an event into a string.
+struct MessageVisitor<'a>(&'a mut String);
+
+impl Visit for MessageVisitor<'_> {
+    fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+        if field.name() == "message" {
+            use std::fmt::Write as _;
+            let _ = write!(self.0, "{value:?}");
+        }
+    }
+}
+
+impl<S> tracing_subscriber::Layer<S> for TokenLayer
+where
+    S: Subscriber + for<'a> LookupSpan<'a>,
+{
+    fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
+        let meta = event.metadata();
+        let mut message = String::new();
+        event.record(&mut MessageVisitor(&mut message));
+
+        let mut timestamp = String::new();
+        let _ = SystemTime.format_time(&mut fmt::format::Writer::new(&mut timestamp));
+
+        let line = render_template(
+            &self.template,
+            timestamp.trim(),
+            meta.level().as_str(),
+            meta.target(),
+            &message,
+        );
+
+        let _ = writeln!(io::stdout(), "{line}");
+        if let Some(mw) = &self.file {
+            let mut w = mw.make_writer();
+            let _ = writeln!(w, "{line}");
+        }
     }
 }
 
@@ -321,6 +397,34 @@ mod tests {
 
     fn read(path: &Path) -> String {
         std::fs::read_to_string(path).unwrap_or_default()
+    }
+
+    #[test]
+    fn render_template_substitutes_tokens() {
+        let line = render_template(
+            "{timestamp} {level} {target}: {message}",
+            "2026-01-01T00:00:00Z",
+            "INFO",
+            "ggcommons::x",
+            "hello world",
+        );
+        assert_eq!(line, "2026-01-01T00:00:00Z INFO ggcommons::x: hello world");
+        // Unknown tokens are left as-is; a different layout is honored.
+        assert_eq!(
+            render_template("[{level}] {message} {nope}", "t", "WARN", "tgt", "m"),
+            "[WARN] m {nope}"
+        );
+    }
+
+    #[test]
+    fn config_parses_rust_format_key() {
+        let cfg = Config::from_value(
+            "c",
+            "t",
+            serde_json::json!({ "logging": { "rust_format": "{level}|{message}" } }),
+        )
+        .unwrap();
+        assert_eq!(cfg.parsed.logging.rust_format.as_deref(), Some("{level}|{message}"));
     }
 
     #[test]

@@ -38,7 +38,8 @@ class EnhancedLoggingConfiguration:
         """Parse the logging configuration dictionary."""
         # Basic logging settings
         self._level = self._parse_level(self._config.get('level', 'INFO'))
-        self._format = self._config.get('format', self.DEFAULT_FORMAT)
+        # Per-language format key (replaces the former language-agnostic `format`).
+        self._format = self._config.get('python_format', self.DEFAULT_FORMAT)
         
         # File logging settings
         file_cfg = self._config.get('fileLogging', {})
@@ -210,7 +211,7 @@ class EnhancedLoggingConfiguration:
         """
         return {
             'level': logging.getLevelName(self._level),
-            'format': self._format,
+            'python_format': self._format,
             'fileLogging': {
                 'enabled': self._file_logging_enabled,
                 'filePath': self._log_file_path,

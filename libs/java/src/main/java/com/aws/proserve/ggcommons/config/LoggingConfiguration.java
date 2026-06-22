@@ -57,8 +57,9 @@ public class LoggingConfiguration
             // Parse basic logging properties
             if (jsonConfig.has("level"))
                 level = jsonConfig.get("level").getAsString();
-            if (jsonConfig.has("format"))
-                format = jsonConfig.get("format").getAsString();
+            // Per-language format key (replaces the former language-agnostic `format`).
+            if (jsonConfig.has("java_format"))
+                format = jsonConfig.get("java_format").getAsString();
                 
             // Parse file logging configuration if present
             if (jsonConfig.has("fileLogging") && jsonConfig.get("fileLogging").isJsonObject()) {
@@ -102,7 +103,7 @@ public class LoggingConfiguration
     {
         JsonObject retVal = new JsonObject();
         retVal.addProperty("level", level);
-        retVal.addProperty("format", format);
+        retVal.addProperty("java_format", format);
         
         // Add file logging configuration if enabled
         if (fileLoggingEnabled) {

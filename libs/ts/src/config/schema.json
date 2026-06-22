@@ -15,10 +15,21 @@
           "default": "INFO",
           "description": "Root logger level"
         },
-        "format": {
+        "java_format": {
           "type": "string",
-          "default": "%d{yyyy-MM-dd HH:mm:ss} [%-5p] %-25.25c{1}(%4L): %m%n",
-          "description": "Log pattern format string (interpreted per language: Log4j2 in Java, logging format in Python, etc.)"
+          "description": "Java log format (Log4j2 PatternLayout), e.g. \"%d{yyyy-MM-dd HH:mm:ss} [%-5p] %c{1}: %m%n\". Applied only by the Java library; other libraries ignore it. Replaces the former language-agnostic `format`."
+        },
+        "python_format": {
+          "type": "string",
+          "description": "Python log format (logging.Formatter), e.g. \"%(asctime)s [%(levelname)s] %(name)s: %(message)s\". Applied only by the Python library; other libraries ignore it."
+        },
+        "rust_format": {
+          "type": "string",
+          "description": "Rust log format using tokens {timestamp} {level} {target} {message}, e.g. \"{timestamp} {level} {target}: {message}\". Applied only by the Rust library; other libraries ignore it."
+        },
+        "ts_format": {
+          "type": "string",
+          "description": "TypeScript log format using tokens {timestamp} {level} {logger} {message}, e.g. \"{timestamp} [{level}] {message}\". Applied only by the TS library; other libraries ignore it."
         },
         "fileLogging": {
           "type": "object",

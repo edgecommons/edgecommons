@@ -13,7 +13,7 @@ ComponentConfiguration:
     ComponentConfig:
       logging:
         level: "INFO"
-        format: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%-5p] %C{1} (%L) [%t] : %m%n"
+        java_format: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%-5p] %C{1} (%L) [%t] : %m%n"
       heartbeat:
         intervalSecs: 5
         targets:

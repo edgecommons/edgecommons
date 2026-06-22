@@ -20,11 +20,11 @@
  *   rotated (so a single oversized record still lands).
  * - `parseFileSize` matches the Python/Rust `_parse_file_size`: `B`/`KB`/`MB`/`GB`
  *   suffixes (case-insensitive, 1024-based); unparseable falls back to `10MB`.
- * - `logging.format` and `logging.loggers` (per-logger levels) are parsed but not yet applied:
- *   a cross-language format (per-language format fields) is deferred to the shared-configuration
- *   work, and per-logger levels require a named-logger API this single process-wide logger does
- *   not yet expose. See .validation/parity-remediation-plan.md (#1/#2). Rust applies per-logger
- *   levels via EnvFilter; TS does not have an equivalent target-routing mechanism here.
+ * - `logging.ts_format` IS applied (token template: {timestamp}/{level}/{logger}/{message});
+ *   it replaces the former language-agnostic `format`, and is re-applied on hot reload along with
+ *   the level and file writer. `logging.loggers` (per-logger levels) is still NOT applied: this
+ *   single process-wide logger has no named-logger (getLogger(name)) API to route target levels
+ *   through (Rust does this via EnvFilter). See .validation/parity-remediation-plan.md (#2).
  * - Logging never throws (fail-soft): file errors are reported to stderr and file
  *   logging is skipped/aborted, never propagated.
  */
@@ -232,9 +232,20 @@ function buildFileWriter(config: Config): RotatingFileWriter | undefined {
   }
 }
 
-/** ISO-8601 timestamp + `[LEVEL] message`, the line written to console/file. */
-function formatLine(level: Level, message: string): string {
-  return `${new Date().toISOString()} [${Level[level]}] ${message}`;
+/** Default `ts_format` when none is configured: ISO-8601 timestamp + `[LEVEL] message`. */
+const DEFAULT_TS_FORMAT = "{timestamp} [{level}] {message}";
+
+/**
+ * Render a log line from a `ts_format` token template. Supported tokens:
+ * `{timestamp}` (ISO-8601 UTC), `{level}`, `{logger}` (logger name), `{message}`.
+ * Unknown `{...}` tokens are left as-is.
+ */
+function renderLine(format: string, level: Level, message: string, loggerName: string): string {
+  return format
+    .replace(/\{timestamp\}/g, new Date().toISOString())
+    .replace(/\{level\}/g, Level[level])
+    .replace(/\{logger\}/g, loggerName)
+    .replace(/\{message\}/g, message);
 }
 
 /**
@@ -244,10 +255,21 @@ function formatLine(level: Level, message: string): string {
 export class Logger {
   private level: Level = Level.INFO;
   private fileWriter?: RotatingFileWriter;
+  private format: string = DEFAULT_TS_FORMAT;
+  private readonly loggerName: string;
+
+  constructor(name = "ggcommons") {
+    this.loggerName = name;
+  }
 
   /** Set the active level threshold. */
   setLevel(level: Level): void {
     this.level = level;
+  }
+
+  /** Set the `ts_format` token template (empty/undefined → the default format). */
+  setFormat(format: string | undefined): void {
+    this.format = format && format.length > 0 ? format : DEFAULT_TS_FORMAT;
   }
 
   /** Install (or clear) the size-rotating file writer. */
@@ -259,7 +281,7 @@ export class Logger {
     if (level < this.level) {
       return;
     }
-    const line = formatLine(level, message);
+    const line = renderLine(this.format, level, message, this.loggerName);
     try {
       // Console: warn/error to stderr, everything else to stdout.
       if (level >= Level.WARN) {
@@ -299,15 +321,18 @@ export const logger = new Logger();
  */
 export function initLogging(config: Config): void {
   logger.setLevel(parseLevel(config.parsed.logging.level));
+  logger.setFormat(config.parsed.logging.tsFormat);
   logger.setFileWriter(buildFileWriter(config));
 }
 
 /**
- * Re-apply the log level from `config` to the running logger. The file layer is
- * fixed at {@link initLogging} time (like Rust) and is not re-created here.
+ * Re-apply level, format, and the rotating file writer from `config` on hot reload.
+ * (Node lets us rebuild the file writer live, unlike the Rust tracing-layer limitation.)
  */
 export function reconfigureLogging(config: Config): void {
   logger.setLevel(parseLevel(config.parsed.logging.level));
+  logger.setFormat(config.parsed.logging.tsFormat);
+  logger.setFileWriter(buildFileWriter(config));
 }
 
 /**

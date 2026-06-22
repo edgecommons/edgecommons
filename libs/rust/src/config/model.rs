@@ -65,7 +65,10 @@ where
 #[serde(rename_all = "camelCase", default)]
 pub struct LoggingConfig {
     pub level: Option<String>,
-    pub format: Option<String>,
+    /// Rust log format using {timestamp}/{level}/{target}/{message} tokens (key `rust_format`,
+    /// not camelCased — replaces the former language-agnostic `format`).
+    #[serde(rename = "rust_format")]
+    pub rust_format: Option<String>,
     pub file_logging: Option<FileLogging>,
     pub loggers: BTreeMap<String, String>,
     pub global_control: bool,

@@ -50,14 +50,15 @@ export class FileLoggingConfig {
 /** `logging` section. */
 export class LoggingConfig {
   level?: string;
-  format?: string;
+  /** TS log format using {timestamp} {level} {logger} {message} tokens (key `ts_format`). */
+  tsFormat?: string;
   fileLogging?: FileLoggingConfig;
   loggers: Record<string, string>;
   globalControl: boolean;
 
   constructor(raw: Record<string, unknown>) {
     this.level = typeof raw.level === "string" ? raw.level : undefined;
-    this.format = typeof raw.format === "string" ? raw.format : undefined;
+    this.tsFormat = typeof raw.ts_format === "string" ? raw.ts_format : undefined;
     this.fileLogging = raw.fileLogging ? new FileLoggingConfig(obj(raw.fileLogging)) : undefined;
     this.loggers = {};
     for (const [k, v] of Object.entries(obj(raw.loggers))) {

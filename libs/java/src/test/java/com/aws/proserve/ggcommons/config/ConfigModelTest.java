@@ -40,10 +40,10 @@ class ConfigModelTest {
         assertTrue(cfg.getLoggerLevels().isEmpty());
         assertFalse(cfg.isGlobalControlEnabled());
 
-        // toDict on defaults: only level + format, no optional blocks.
+        // toDict on defaults: only level + java_format, no optional blocks.
         JsonObject dict = cfg.toDict();
         assertEquals("INFO", dict.get("level").getAsString());
-        assertEquals(LoggingConfiguration.DEFAULT_FORMAT, dict.get("format").getAsString());
+        assertEquals(LoggingConfiguration.DEFAULT_FORMAT, dict.get("java_format").getAsString());
         assertFalse(dict.has("fileLogging"));
         assertFalse(dict.has("loggers"));
         assertFalse(dict.has("globalControl"));
@@ -52,7 +52,7 @@ class ConfigModelTest {
     @Test
     void loggingConfigurationFullyPopulatedAndToString() {
         LoggingConfiguration cfg = new LoggingConfiguration(obj("""
-                {"level":"DEBUG","format":"%m%n",\
+                {"level":"DEBUG","java_format":"%m%n",\
                 "fileLogging":{"enabled":true,"filePath":"/tmp/app.log"},\
                 "loggers":{"com.aws.proserve":"warn"},\
                 "globalControl":true}"""));
@@ -226,9 +226,9 @@ class ConfigModelTest {
         assertEquals(15, cfg.getIntervalSecs());
         assertFalse(cfg.includeCpu());
         assertTrue(cfg.includeMemory());
-        // disk/fds are warned & ignored in java -> remain default false.
-        assertFalse(cfg.includeDisk());
-        assertFalse(cfg.includeFds());
+        // disk/fds are now honored in Java (collected via File + Unix OS MXBean).
+        assertTrue(cfg.includeDisk());
+        assertTrue(cfg.includeFds());
         assertTrue(cfg.includeThreads());
         assertTrue(cfg.includeFiles());
 

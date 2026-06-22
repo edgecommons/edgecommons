@@ -71,6 +71,24 @@ describe("logging level threshold", () => {
     expect(cap.err).toContain("an-error");
   });
 
+  it("applies a custom ts_format token template (and re-applies on reload)", () => {
+    initLogging(
+      Config.fromValue("c", "t", {
+        logging: { level: "INFO", ts_format: "LVL={level} MSG={message}" },
+      }),
+    );
+    let cap = captureStdio(() => logger.info("hello"));
+    expect(cap.out).toContain("LVL=INFO MSG=hello");
+    expect(cap.out).not.toContain("[INFO]"); // default format not used
+
+    // A reload with a different format takes effect immediately.
+    reconfigureLogging(
+      Config.fromValue("c", "t", { logging: { level: "INFO", ts_format: "{level}|{message}" } }),
+    );
+    cap = captureStdio(() => logger.info("again"));
+    expect(cap.out).toContain("INFO|again");
+  });
+
   it("an unparseable level falls back to INFO", () => {
     initLogging(Config.fromValue("c", "t", { logging: { level: "GIBBERISH" } }));
     const cap = captureStdio(() => {
