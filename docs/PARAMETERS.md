@@ -1,6 +1,13 @@
 # Parameters — design (pluggable parameter service)
 
-**Status: DESIGN (for review). Not yet implemented.**
+**Status: Phase 1 (Core) SHIPPED in all 4 languages (Rust reference, then Python/Java/TS).**
+Pluggable `ParameterSource` (`env` + `mountedDir` + `awsSsm`), source-aware offline-first cache
+(persistent-encrypted via the credentials `LocalVault` for remote sources, in-memory for local),
+selective bootstrap + background refresh, typed accessors, and the `gg.parameters()` accessor are
+all wired and tested. Open questions §9 were resolved as the recommended defaults (own
+`cache.keyProvider`; encrypt the persistent cache uniformly; `gg.parameters()`; ship all three
+sources in phase 1; `securePaths` list for `mountedDir` secret marking). Phase 2 (audit+metrics
+bridge) and Phase 3 (write-back, K8s-API watch, more cloud sources) remain.
 
 A new, **independent** ggcommons subsystem — a peer of `config` / `messaging` / `metrics` /
 `credentials` — giving components offline-capable, **source-agnostic** access to externalized
