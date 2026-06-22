@@ -14,6 +14,7 @@ import com.aws.proserve.ggcommons.parameters.ParameterService;
 import com.aws.proserve.ggcommons.messaging.Message;
 import com.aws.proserve.ggcommons.messaging.MessageBuilder;
 import com.aws.proserve.ggcommons.messaging.MessageHandler;
+import com.aws.proserve.ggcommons.messaging.ReplyFuture;
 import com.aws.proserve.ggcommons.metrics.Metric;
 import com.aws.proserve.ggcommons.metrics.MetricBuilder;
 import com.aws.proserve.ggcommons.streaming.StreamHandle;
@@ -91,14 +92,15 @@ public class App implements ConfigurationChangeListener
             .withConfig(configService)
             .build();
         
-        messagingService.request(REQ_TOPIC, request)
+        final ReplyFuture pending = messagingService.request(REQ_TOPIC, request);
+        pending
             .orTimeout(10, TimeUnit.SECONDS)
             .thenAccept(reply -> {
                 JsonObject replyBody = (JsonObject) reply.getBody();
                 String originalId = replyBody.get("original_id").getAsString();
                 long processingTime = replyBody.get("processing_time_ms").getAsLong();
                 LOGGER.info("Received reply for {}: processed in {}ms", originalId, processingTime);
-                
+
                 // Emit latency metric
                 Map<String, Float> metrics = new HashMap<>();
                 metrics.put("replyLatency", (float) processingTime);
@@ -106,6 +108,8 @@ public class App implements ConfigurationChangeListener
             })
             .exceptionally(throwable -> {
                 LOGGER.error("Request {} failed or timed out: {}", id, throwable.getMessage());
+                // Release the reply subscription on timeout (no reply auto-unsubscribe path fires).
+                messagingService.cancelRequest(pending);
                 return null;
             });
     }
@@ -480,7 +484,7 @@ public class App implements ConfigurationChangeListener
         
         // Use different request methods for different brokers. Guard against a synchronous
         // throw (e.g. IoT Core not connected) so it never escapes to the main publish loop.
-        CompletableFuture<Message> requestFuture;
+        ReplyFuture requestFuture;
         try {
             if ("LOCAL".equals(brokerType)) {
                 requestFuture = messagingService.request(REQ_TOPIC, request);
@@ -492,6 +496,8 @@ public class App implements ConfigurationChangeListener
             return;
         }
 
+        // Effectively-final handle so the timeout path below can release the reply subscription.
+        final ReplyFuture pending = requestFuture;
         requestFuture
             .orTimeout(5, TimeUnit.SECONDS)
             .thenAccept(reply -> {
@@ -509,8 +515,18 @@ public class App implements ConfigurationChangeListener
                 LOGGER.debug("Measured {} latency: {}ms for request {}", brokerType, latency, requestId);
             })
             .exceptionally(throwable -> {
-                LOGGER.warn("Latency measurement failed for {} broker, request {}: {}", 
+                LOGGER.warn("Latency measurement failed for {} broker, request {}: {}",
                            brokerType, requestId, throwable.getMessage());
+                // No reply arrived (e.g. IoT Core not connected): the library only auto-unsubscribes
+                // the reply topic on a *received* reply, so a timed-out request must be cancelled
+                // explicitly. Without this the orphaned ggcommons/reply-<uuid> subscription (and its
+                // pending-future entry) accumulate every cycle and eventually exhaust the IPC
+                // subscription quota. Mirrors the Python skeleton's cancel-on-timeout.
+                if ("LOCAL".equals(brokerType)) {
+                    messagingService.cancelRequest(pending);
+                } else {
+                    messagingService.cancelRequestFromIoTCore(pending);
+                }
                 emitErrorMetric();
                 return null;
             });
