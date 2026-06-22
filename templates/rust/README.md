@@ -1,8 +1,8 @@
 # <<COMPONENTNAME>>
 
 An AWS IoT Greengrass v2 component (`<<COMPONENTFULLNAME>>`) written in Rust on top
-of the [`ggcommons`](https://example.com/ggcommons-rust-lib) Rust library, generated
-from `rust-component-template` by the `ggcommons-cli`. It gives you the library's
+of the `ggcommons` Rust library, generated from the GGCommons Rust component template
+by the `ggcommons` CLI. It gives you the library's
 standard CLI contract, configuration, logging, messaging, metrics, and heartbeat —
 so you write only business logic in [`src/app.rs`](src/app.rs).
 

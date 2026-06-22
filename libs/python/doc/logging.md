@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-The logging system in ggcommons-python-lib provides comprehensive logging capabilities built on Python's standard logging framework. It supports both component-specific logging and global application logging control, with configurable output formats, levels, and destinations. The system is designed to provide:
+The logging system in GGCommons Python library provides comprehensive logging capabilities built on Python's standard logging framework. It supports both component-specific logging and global application logging control, with configurable output formats, levels, and destinations. The system is designed to provide:
 
 - Centralized logging configuration management
 - Dynamic log level adjustment

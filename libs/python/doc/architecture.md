@@ -1,108 +1,74 @@
 # GGCommons Python Architecture
 
-This document describes the enhanced architecture of the ggcommons Python library, focusing on the dependency injection system, service interfaces, and builder patterns introduced in the realignment with the Java version.
+This document describes the architecture of the GGCommons Python library: how `GGCommons` is
+constructed, how the subsystems fit together, and the conventions to follow when extending it. It is
+one of four parallel implementations (Java is canonical); see the monorepo root `README.md` and this
+library's `CLAUDE.md`.
 
-## Overview
+> **No dependency injection / service interfaces.** Earlier revisions of these docs described a
+> `ggcommons/di/` `ServiceRegistry`, `ggcommons/interfaces/` (`IConfigurationService`,
+> `IMessagingService`, `IMetricService`), a `ServiceFactory`, and `get_service()` / `register_service()`.
+> **None of that exists in the Python source.** Depend on the concrete services via the accessors
+> below. (The substitutable service-interface seam exists only in the Rust and TS libraries.)
 
-The enhanced ggcommons architecture is built around three core principles:
+## Construction
 
-1. **Dependency Injection**: Services are injected rather than directly instantiated
-2. **Interface Abstraction**: Core functionality is accessed through well-defined interfaces
-3. **Builder Patterns**: Complex objects are constructed using fluent builder APIs
-
-## Core Components
-
-### Service Registry
-
-The `ServiceRegistry` is a simple dependency injection container that manages service instances:
+Always construct via the builder, never the raw constructor:
 
 ```python
-from ggcommons.di import ServiceRegistry
-from ggcommons.interfaces import IMessagingService
+from ggcommons import GGCommonsBuilder
 
-registry = ServiceRegistry()
-registry.register(IMessagingService, messaging_service_impl)
-service = registry.get(IMessagingService)
+gg = GGCommonsBuilder.create("com.example.MyComponent").with_args(args).build()
 ```
 
-**Key Features:**
-- Thread-safe operations
-- Type-safe service registration and retrieval
-- Support for service lifecycle management
+`GGCommons.__init__` (`ggcommons/ggcommons.py`) is the orchestrator and runs a fixed sequence:
 
-### Service Interfaces
+1. **Argument processing** — parse the standard `-c/-m/-t` contract (plus any app parser).
+2. **Configuration** — `ConfigManagerBuilder.build()` selects the config-source manager and loads +
+   validates the config.
+3. **Messaging** — `MessagingClient.init()` selects the provider for the runtime mode.
+4. **Metrics** — `MetricEmitter.init()` wires the configured metric target(s).
+5. **Heartbeat** — `EnhancedHeartbeat` starts (with messaging + metric services passed in).
+6. **Opt-in subsystems** — credentials / parameters / streaming initialize **only if** their config
+   section is present.
+7. **`complete_initialization()`** — enables configuration-change notifications.
 
-Three core service interfaces define the contracts for ggcommons functionality:
+## Accessing subsystems
 
-#### IConfigurationService
-Provides access to component configuration and change notifications:
-- Global and instance-specific configuration access
-- Template variable resolution
-- Configuration change listener management
-
-#### IMessagingService
-Abstracts messaging operations across different providers:
-- IPC and IoT Core messaging
-- Request-response patterns
-- Topic subscription and publishing
-
-#### IMetricService
-Handles metric definition and emission:
-- Metric definition registration
-- Batched and immediate metric emission
-- Multiple target support (CloudWatch, logs, messaging)
-
-### Service Factory
-
-The `ServiceFactory` creates and registers default service implementations:
+Read the concrete services off the `GGCommons` instance:
 
 ```python
-from ggcommons.di import ServiceFactory
-
-ServiceFactory.register_default_services(registry, config_manager)
+config     = gg.get_config_manager()   # ConfigManager
+messaging  = gg.get_messaging()        # MessagingClient
+metrics    = gg.get_metrics()          # MetricEmitter
+creds      = gg.get_credentials()      # CredentialService or None
+params     = gg.get_parameters()       # ParameterService or None
+streams    = gg.get_streams()          # StreamService or None
 ```
 
-## Enhanced GGCommons Class
+The three newest accessors return `None` unless their config section exists.
 
-The main `GGCommons` class now provides:
+## Subsystems
 
-### Dependency Injection Support
-```python
-ggcommons = GGCommons("com.example.Component", args)
-messaging_service = ggcommons.get_service(IMessagingService)
-```
+### Configuration (`ggcommons/config/`)
+`ConfigManagerBuilder.build()` dispatches on the `-c/--config` source to one of five managers, all
+subclassing `ConfigManager`:
 
-### Service Registration
-```python
-ggcommons.register_service(IMessagingService, custom_messaging_service)
-```
+| Source | Manager |
+|--------|---------|
+| `FILE` | `FileConfigManager` |
+| `ENV` | `EnvironmentConfigManager` |
+| `GG_CONFIG` (default) | `GreengrassConfigManager` |
+| `SHADOW` | `ShadowConfigManager` |
+| `CONFIG_COMPONENT` | `ConfigComponentManager` |
 
-### Builder Pattern Integration
-```python
-from ggcommons.builders import GGCommonsBuilder
-
-ggcommons = GGCommonsBuilder.create("com.example.Component") \
-    .with_args(args) \
-    .receive_own_messages(False) \
-    .build()
-```
-
-## Configuration System
-
-### Enhanced Configuration Manager
-
-The `EnhancedConfigManager` extends the base `ConfigManager` with:
-
-- **JSON Schema Validation**: Automatic validation of configuration against schema
-- **Improved Error Handling**: Better error reporting and recovery
-- **Lifecycle Management**: Proper initialization and change notification sequencing
-
-### Configuration Validation
-
-Configuration validation is performed using JSON Schema:
+Config supports template-variable substitution (component / thing / custom tags), hot reload via
+`ConfigurationChangeListener`, multi-instance components (global + per-instance config), and
+JSON-schema validation. The schema is the single-source `schema/ggcommons-config-schema.json` at the
+monorepo root (synced into `ggcommons/resources/`).
 
 ```python
-from ggcommons.validation import ConfigurationValidator
+from ggcommons.validation import ConfigurationValidator, ConfigurationValidationException
 
 try:
     ConfigurationValidator.validate(config)
@@ -110,74 +76,50 @@ except ConfigurationValidationException as e:
     print(f"Validation failed: {e}")
 ```
 
-**Validation Features:**
-- Comprehensive schema covering all configuration sections
-- Detailed error reporting with path information
-- Optional validation (can be disabled for flexibility)
+### Messaging (`ggcommons/messaging/`)
+`MessagingClient.init()` picks the provider based on mode: `GreengrassIpcProvider` (IPC) or
+`StandaloneProvider` (dual local-MQTT + IoT Core). Both implement `MessagingProvider`. Connections
+and subscriptions are **blocking** — they wait for confirmation (e.g. SUBACK) before proceeding, to
+avoid IoT Core connection races. Supports request/reply with correlation; the on-wire envelope is
+identical across all four languages.
 
-## Builder Patterns
+### Metrics (`ggcommons/metrics/`)
+`MetricEmitter` (static `init`) emits to pluggable `MetricTarget`s under `targets/`: `cloudwatch`
+(EMF), `cloudwatch_component`, `messaging`, and `metric_log`. Targets and component/thing dimensions
+are configured, not hardcoded.
 
-### GGCommons Builder
+### Heartbeat (`ggcommons/heartbeat/`)
+`EnhancedHeartbeat` periodically emits system metrics (CPU/memory/disk/threads/FDs via `psutil`). It
+has its messaging + metric services passed in (not reached for via globals) and can route health data
+through either the metric or messaging target.
+
+### Logging (`ggcommons/logging/`)
+Built on Python's standard `logging`, with file rotation, per-logger levels, and a `python_format`
+token; reconfigures on config reload.
+
+### Credentials / Parameters / Streaming
+Opt-in subsystems (see `docs/CREDENTIALS.md`, `docs/PARAMETERS.md`, `docs/TELEMETRY_STREAMING.md`):
+an encrypted local vault (`get_credentials()`), offline-first externalized config
+(`get_parameters()`), and high-rate telemetry streaming to Kinesis/Kafka via the shared `ggstreamlog`
+core through a PyO3 binding (`get_streams()`).
+
+## Builders
+
+Object construction goes through fluent builders, not raw constructors: `GGCommonsBuilder`,
+`ConfigManagerBuilder`, `MessageBuilder`, `MetricBuilder`. `MetricBuilder` exists specifically to
+avoid the deprecated direct `Metric` constructor — do not instantiate `Metric` directly.
+
 ```python
-ggcommons = GGCommonsBuilder.create("component.name") \
-    .with_args(["--config", "FILE", "config.json"]) \
-    .with_app_options(custom_parser) \
-    .receive_own_messages(False) \
-    .build()
+message = (MessageBuilder.create("heartbeat", "1.0")
+           .with_payload(data).with_config(config_manager).with_correlation_id("12345").build())
+
+metric = (MetricBuilder.create("cpu_usage")
+          .with_namespace("MyApp/Metrics").add_measure("usage", "Percent", 1).build())
 ```
 
-### Message Builder
-```python
-message = MessageBuilder.create("heartbeat", "1.0") \
-    .with_payload(data) \
-    .with_config(config_manager) \
-    .with_correlation_id("12345") \
-    .build()
-```
+## Static-lifecycle caveat (testing)
 
-### Metric Builder
-```python
-metric = MetricBuilder.create("cpu_usage") \
-    .with_namespace("MyApp/Metrics") \
-    .add_measure("usage", "Percent", 1) \
-    .add_dimension("instance", "main") \
-    .build()
-```
-
-## Initialization Sequence
-
-1. **Argument Processing**: Command line arguments are parsed
-2. **Configuration Loading**: Configuration is loaded and validated
-3. **Service Registry Setup**: Default services are registered
-4. **Component Initialization**: Messaging, metrics, and heartbeat are initialized
-5. **Service Injection**: Services are injected into components that support it
-6. **Initialization Completion**: Configuration change notifications are enabled
-
-## Thread Safety
-
-- **ServiceRegistry**: All operations are thread-safe
-- **Configuration Services**: Read operations are thread-safe
-- **Messaging Services**: All operations are thread-safe
-- **Metric Services**: All operations are thread-safe
-
-## Backward Compatibility
-
-The enhanced architecture maintains full backward compatibility:
-
-- Existing APIs continue to work unchanged
-- Deprecation warnings guide migration to new patterns
-- Old and new patterns can be mixed during transition
-
-## Testing Support
-
-The architecture enables comprehensive testing through:
-
-- **Mock Services**: Easy injection of mock implementations
-- **Service Isolation**: Components can be tested in isolation
-- **Configuration Validation**: Schema validation catches configuration errors early
-
-## Performance Considerations
-
-- **Lazy Initialization**: Services are created only when needed
-- **Efficient Lookups**: Service registry uses efficient hash-based lookups
-- **Minimal Overhead**: Dependency injection adds minimal runtime overhead
+`MessagingClient` and `MetricEmitter` use class-level static state (`init`/`shutdown`). This is
+process-global, so it **leaks across tests unless reset**. There is no DI/mock-service seam in
+Python — test against the concrete services and reset these statics between tests. Tests are
+pytest-style; don't add `unittest.TestCase` subclasses.

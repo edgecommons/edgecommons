@@ -1,7 +1,7 @@
 {
   "name": "ggcommons",
   "version": "0.1.0",
-  "description": "GGCommons TypeScript library (spike): STANDALONE MQTT messaging + the cross-language message envelope for AWS IoT Greengrass v2 components.",
+  "description": "GGCommons TypeScript library for AWS IoT Greengrass v2 components: configuration, messaging (GREENGRASS IPC + STANDALONE dual-MQTT), metrics, heartbeat, logging, credentials, parameters, and telemetry streaming — at parity with the Java/Python/Rust implementations.",
   "license": "Apache-2.0",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

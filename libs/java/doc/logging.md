@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-The logging system in ggcommons-java-lib provides comprehensive logging capabilities built on Apache Log4j2. It supports both component-specific logging and global application logging control, with configurable output formats, levels, and destinations. The system is designed to provide:
+The logging system in GGCommons Java library provides comprehensive logging capabilities built on Apache Log4j2. It supports both component-specific logging and global application logging control, with configurable output formats, levels, and destinations. The system is designed to provide:
 
 - Centralized logging configuration management
 - Dynamic log level adjustment

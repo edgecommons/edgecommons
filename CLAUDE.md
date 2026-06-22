@@ -1,39 +1,92 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code (claude.ai/code) and other AI coding agents when
+working in this repository.
 
 ## What this is
 
-`ggcommons` is the **Greengrass Commons** ecosystem: a set of libraries, a scaffolding CLI, and component templates for building AWS IoT Greengrass v2 components. The libraries bundle the cross-cutting concerns every component needs — configuration, messaging, metrics, heartbeat, logging — behind service interfaces so component authors write only business logic.
+`ggcommons` is the **Greengrass Commons** ecosystem: libraries, a scaffolding CLI, and component
+templates for building **AWS IoT Greengrass v2** components. The libraries bundle the cross-cutting
+concerns every edge component needs — configuration, messaging, metrics, heartbeat, logging,
+credentials, parameters, and telemetry streaming — behind clean interfaces so component authors
+write only business logic.
 
-This directory is a **workspace of independent projects**, not a single buildable repo (the workspace root is not a git repo; some subprojects are). Each subproject has its own build system, CI, and (for the Python library) its own detailed `CLAUDE.md`.
+This is a **single monorepo** (one git repo at the root). The same library is implemented in
+**four languages** — Java, Python, Rust, TypeScript — as deliberate mirrors of each other: the same
+config schema, the same CLI contract, the same subsystem boundaries, and the same on-wire message
+envelope. **Java is the canonical reference.**
 
-| Directory | What it is | Stack |
-|-----------|-----------|-------|
-| `ggcommons-java-lib/` | The Java library (canonical, most complete). PyPI/Maven artifact `com.aws.proserve:ggcommons`. | Java 25 (LTS), Maven |
-| `ggcommons-python-lib/` | The Python port (PyPI `greengrass-commons`), being brought to feature parity with Java. **Has its own `CLAUDE.md` — read it before working here.** | Python 3.8+, setuptools |
-| `ggcommons-cli/` | Scaffolding CLI that generates new components from templates. | Python |
-| `java-component-skeleton/`, `python-component-skeleton/` | Worked example components ("best practices demos") using the libraries. | Java / Python |
-| `java-componen-template/`, `python-component-template/` | Minimal starting templates the CLI copies (note the typo in the Java template dir name). | Java / Python |
+| Path | What it is | Stack |
+|------|-----------|-------|
+| `libs/java/` | The canonical, most complete library. Maven artifact `com.aws.proserve:ggcommons`. | Java 25 (LTS), Maven |
+| `libs/python/` | The Python port (PyPI `greengrass-commons`). **Has its own `CLAUDE.md` — read it before working here.** | Python 3.9+, setuptools |
+| `libs/rust/` | The Rust port (crate `ggcommons`). | Rust (edition 2024, MSRV 1.85), Cargo |
+| `libs/ts/` | The TypeScript port (npm `ggcommons`). | TypeScript 5 / Node 18+ |
+| `libs/rust-streamlog/` | Shared `ggstreamlog` core: the embedded telemetry-streaming engine. All four languages use it via native bindings (Java/Panama, Python/PyO3, Node/napi-rs); Rust uses it directly. | Rust (edition 2021), Cargo |
+| `cli/` | Scaffolding CLI (`ggcommons` / `ggcommons-cli`): generate, validate, build, publish, deploy, upgrade components. | Python |
+| `examples/{java,python,rust,ts}/` | Worked "best-practice" example components (skeletons) that demonstrate each library. | per language |
+| `templates/{java,python,rust,typescript}/` | Minimal manifest-driven starting templates the CLI copies. | per language |
+| `schema/` | **Single source of truth** for the config JSON schema (`ggcommons-config-schema.json`) + sync scripts. | JSON |
+| `test-infra/` | Shared integration-test infra: EMQX broker (`compose.yaml`), TLS cert generation, and the cross-language **interop** harness (`interop/`). | Docker + Python |
+| `vault-test-vectors/` | Shared credentials/vault encryption conformance vectors used by all four languages. | JSON |
+| `docs/` | Cross-language design docs (`CREDENTIALS.md`, `PARAMETERS.md`, `TELEMETRY_STREAMING*.md`, `GGCOMMONS_RUST_PORT.md`). | Markdown |
+| `.github/workflows/` | Per-language CI + `interop`, `streaming`, `parameters-ssm`, `release`. | GitHub Actions |
 
-The Java and Python libraries are deliberate mirrors of each other (same subsystems, same CLI contract, same config schema). When changing public behavior in one, check whether the other needs the matching change to preserve parity.
+**Maintain four-way parity.** The libraries mirror each other intentionally. When changing public
+behavior in one, check whether the others need the matching change. See `.validation/` for the
+parity register when present.
 
-## Core concepts (shared across all subprojects)
+## Core concepts (shared across all four languages)
 
-Every component built with these libraries runs in one of two **runtime modes**, selected at startup via `-m/--mode`. Most of the architecture exists to abstract this difference away:
-- **GREENGRASS** (default): uses Greengrass IPC for messaging; reads config from the Greengrass deployment.
-- **STANDALONE**: for Kubernetes/Docker/bare containers. Uses a dual-MQTT provider that connects simultaneously to a local broker and to AWS IoT Core. Requires a separate messaging-config JSON file (e.g. `standalone-messaging-sample.json`).
+Every component runs in one of two **runtime modes**, selected at startup via `-m/--mode`. Most of
+the architecture exists to abstract this difference away so the same business logic runs in both:
+- **GREENGRASS** (default): uses Greengrass IPC for messaging; reads config from the Greengrass
+  deployment (`GG_CONFIG`). The on-device, Nucleus-managed path.
+- **STANDALONE**: for Kubernetes / Docker / bare hosts. Uses a dual-MQTT provider that connects
+  simultaneously to a local broker and to AWS IoT Core. Requires a separate messaging-config JSON
+  (`-m STANDALONE <messaging_config.json>`); STANDALONE without a path is a hard error.
 
-**Standard CLI contract** (same in both languages — keep them aligned):
+**Standard CLI contract** (identical across all four languages — keep them aligned):
 - `-c/--config <SOURCE> [args...]` — one of `FILE`, `ENV`, `GG_CONFIG` (default), `SHADOW`, `CONFIG_COMPONENT`.
-- `-m/--mode <MODE> [path]` — `GREENGRASS` (default) or `STANDALONE <messaging_config.json>`. STANDALONE without a path is a hard error.
-- `-t/--thing <name>` — IoT Thing name; must take the full string value (historical bug truncated it to one char).
+- `-m/--mode <MODE> [path]` — `GREENGRASS` (default) or `STANDALONE <messaging_config.json>`.
+- `-t/--thing <name>` — IoT Thing name; must take the full string value (a historical bug truncated it to one char).
 
-**Shared subsystems** (each library has parallel packages for these): `config/` (5 config-source managers + template-variable substitution, hot reload, multi-instance, JSON-schema validation), `messaging/` (IPC vs dual-MQTT providers behind one interface; connections/subscriptions block until confirmed), `metrics/` (pluggable targets: CloudWatch EMF, messaging, local log), `heartbeat/` (periodic system metrics via injected services), a service-interface seam (idiomatic trait/`interface` injection in **Rust and TS only** — `di/`+`interfaces/` packages do **not** exist in Java or Python; see the parity register `.validation/parity-remediation-plan.md`), and fluent **builders** for object construction.
+**Shared subsystems** (each library has parallel packages/modules for these):
+- **config** — five config-source managers (`FILE`/`ENV`/`GG_CONFIG`/`SHADOW`/`CONFIG_COMPONENT`),
+  template-variable substitution (`{ComponentName}`, `{ThingName}`, custom tags) with sanitization,
+  hot reload, multi-instance config, and JSON-schema validation against the canonical `schema/`.
+- **messaging** — one interface over two providers (Greengrass IPC vs STANDALONE dual-MQTT);
+  connections/subscriptions block until confirmed; request/reply with correlation; per-subscription
+  concurrency cap; the message envelope is identical across languages.
+- **metrics** — pluggable targets: CloudWatch EMF, cloudwatch-component, messaging, local log.
+- **heartbeat** — periodic system metrics (CPU/memory/disk/threads/FDs) via the metric or messaging subsystem.
+- **logging** — console + optional size-rotated file logging; per-language format token (`logging.<lang>_format`).
+- **credentials** — `gg.credentials()`: an encrypted local vault (envelope encryption) with optional
+  central sync from AWS Secrets Manager over TES. Conformance vectors in `vault-test-vectors/`; design in `docs/CREDENTIALS.md`.
+- **parameters** — `gg.parameters()`: offline-first externalized config (env / mountedDir / AWS SSM),
+  reusing the credentials vault as an encrypted cache. Design in `docs/PARAMETERS.md`.
+- **streaming** — `gg.streams()`: high-rate telemetry streaming with an embedded durable (or in-memory)
+  buffer that drains to Kinesis/Kafka. Backed by the shared `ggstreamlog` core. Design in `docs/TELEMETRY_STREAMING.md`.
+
+The newer subsystems (credentials, parameters, streaming) are **opt-in**: the accessor returns
+null/None/an empty service unless the matching config section is present (and, in Rust, the matching
+cargo feature is enabled).
 
 ## Commands
 
-### Python library (`ggcommons-python-lib/`)
+### Java library (`libs/java/`)
+```bash
+mvn clean package            # build + test → shaded self-contained JAR (JaCoCo enforces 90% coverage)
+mvn clean package -DskipTests
+mvn test -Dtest=ClassName#methodName   # single test
+mvn clean install            # install to local ~/.m2
+```
+Compiles to Java 25; the Shade plugin produces a self-contained JAR for Greengrass deployment. The
+streaming subsystem uses the Java FFM (Panama) binding to `ggstreamlog` — run with
+`--enable-native-access=ALL-UNNAMED`. Live-infra tests (`GGCommonsTest`, `MessagingClientTest`) are
+manual, not in the CI gate.
+
+### Python library (`libs/python/`) — also see `libs/python/CLAUDE.md`
 ```bash
 pip install -r requirements.txt -r requirements-test.txt && pip install -e .
 python -m pytest                                  # all tests (config in pytest.ini; very verbose, log_cli=DEBUG)
@@ -41,199 +94,137 @@ python -m pytest tests/test_builders.py::TestMessageBuilder::test_build -v   # s
 python run_pytest.py --coverage                   # convenience wrapper (coverage, file/function selection)
 python -m pytest -m "not slow and not integration and not aws"   # skip slow/AWS-dependent
 ```
-`ruff` and `black` (target py39–py311) are configured but **not enforced in CI** (the lint steps in `.gitlab-ci.yml` are commented out) — match that formatting manually. CI only builds the wheel and publishes to the GitLab PyPI registry. See `ggcommons-python-lib/CLAUDE.md` for the full architecture.
+`ruff`/`black` are configured but not enforced in CI — match the formatting manually.
 
-### Java library (`ggcommons-java-lib/`)
+### Rust library (`libs/rust/`) and streaming core (`libs/rust-streamlog/`)
 ```bash
-mvn clean package            # build + test → shaded self-contained JAR
-mvn clean package -DskipTests
-mvn test -Dtest=ClassName#methodName   # single test
-mvn clean install            # install to local ~/.m2
+cargo test                                         # default (standalone) build/tests — runs on any OS
+cargo build --features greengrass                  # Greengrass IPC — LINUX/WSL ONLY (the native SDK won't build on Windows)
+cargo clippy --all-targets
 ```
-The Shade plugin produces a self-contained JAR suitable for Greengrass deployment. CI (`.gitlab-ci.yml`) builds with `maven:3.9-amazoncorretto-11` and **skips tests** (`-Dmaven.test.skip=true`), deploying artifacts only from the default branch.
+Off-by-default cargo features (compose as needed): `greengrass`, `cloudwatch`, `streaming` /
+`streaming-kinesis` / `streaming-kafka`, `credentials` / `credentials-aws` / `credentials-pkcs11`,
+`parameters` / `parameters-aws`. Building the `greengrass` feature requires Linux/WSL — see
+`docs/GGCOMMONS_RUST_PORT.md` and the [[rust-greengrass-build-wsl]] note. `libs/rust-streamlog`
+features: `kinesis`, `kafka`, `cabi` (C-ABI cdylib for the Java/Panama binding). Its `bench/` holds
+the perf harness (`examples/loadgen.rs`, Criterion benches) — see `libs/rust-streamlog/bench/README.md`.
+
+### TypeScript library (`libs/ts/`)
+```bash
+npm install
+npm run build        # tsc → dist/
+npm test             # vitest run
+npm run coverage     # vitest run --coverage
+```
+
+### Scaffolding CLI (`cli/`)
+```bash
+pipx install ./cli           # or: python -m pip install ./cli  → gives `ggcommons` / `ggcommons-cli`
+ggcommons doctor             # check prerequisites (git, gdk, cargo, mvn, python3, aws)
+ggcommons create-component -n com.example.MyComponent -l PYTHON   # JAVA|PYTHON|RUST|TYPESCRIPT
+ggcommons list-templates | validate | deploy | upgrade
+```
+Templates are **manifest-driven**: each ships a `ggcommons-template.json` declaring placeholder
+substitutions and file renames, so adding a language needs a template, not CLI code.
+
+### Config schema (single source — `schema/`)
+The canonical config schema lives **only** in `schema/ggcommons-config-schema.json`. After editing
+it, run the sync script to copy it into each library; CI fails on drift.
+```bash
+./schema/sync-schema.sh           # (or schema/sync-schema.ps1) → copies into libs/{java,python,rust,ts}
+./schema/sync-schema.sh --check   # the drift gate CI runs (in .github/workflows/interop.yml)
+```
+Top level is strict (`additionalProperties:false`, `required:[component]`); subsystem sections are permissive.
 
 ### Components (skeletons & templates)
-Components are packaged/deployed with the **GDK (Greengrass Development Kit)**, configured per-component in `gdk-config.json` (`build_system`: `maven` for Java, `zip` for Python) and `recipe.yaml` (the Greengrass component recipe — declares default config and IPC `accessControl`). Typical flow: `gdk component build` then `gdk component publish`. Run a built component locally:
+Components are packaged/deployed with the **GDK (Greengrass Development Kit)** per `gdk-config.json`
+and `recipe.yaml`. Typical flow: `gdk component build` then `gdk component publish`. Run locally:
 ```bash
-# Python skeleton
+# Python example
 python3 main.py -m STANDALONE standalone-messaging.json -c FILE config.json -t my-thing
-# Java skeleton
-java -jar target/<artifact>.jar -m STANDALONE ./standalone-messaging.json -c FILE ./test-configs/config_2.json -t my-thing
+# Java example
+java --enable-native-access=ALL-UNNAMED -jar target/<artifact>.jar -m STANDALONE ./standalone-messaging.json -c FILE ./test-configs/config_2.json -t my-thing
 ```
 
-### CLI (`ggcommons-cli/`)
-```bash
-pip install -r requirements.txt
-./scripts/ggcommons-cli.sh create_component --name MyNewComponent   # or .cmd / .ps1 on Windows
-```
-The CLI auto-discovers commands by scanning `commands/*.py` for classes implementing `execute_command` + `get_json_configuration` (see `ggcommons_cli.py`). To add a command, drop a new module in `commands/` following that contract.
-
-## Local development with MQTT
-
+### Local development with MQTT
 STANDALONE mode and local testing use a local MQTT broker standing in for Greengrass IPC:
 ```bash
-docker run -d --name emqx -p 1883:1883 -p 8083:8083 -p 8883:8883 -p 18083:18083 emqx/emqx:latest
+docker compose -f test-infra/compose.yaml up -d   # EMQX (plaintext 1883 + mutual-TLS 8883)
 ```
-Use an MQTT client (e.g. MQTTX) to subscribe to `heartbeat/+/+` to see component heartbeats and to drive request/response topics. If a component hard-depends on other components, run those locally too.
+Subscribe to `heartbeat/+/+` (e.g. with MQTTX) to see component heartbeats and to drive request/response topics.
 
 ## Conventions
 
-- **Maintain Java↔Python parity.** The two libraries mirror each other intentionally; the same config schema, CLI flags, and subsystem boundaries apply to both.
-- **Backward compatibility is preserved.** Builders are the construction path in all four libs. The legacy `ggcommons.init(...)` / direct-constructor API coexists **only in Java** (Rust/TS are builder-only greenfield; Python is builder/constructor-only with no `init()` facade). Don't break the old surface when adding the new one.
-- **Service-interface seam (Rust/TS).** Rust (`MessagingService`/`MetricService` traits + `Arc<dyn …>` injection) and TS (`IMessagingService`/`MetricService` interfaces + constructor injection) provide a substitutable seam; **Java and Python do not** have `IConfigurationService`/`IMessagingService`/`IMetricService` or a `ServiceRegistry` (Java's DI was removed during remediation; Python never shipped it despite older docs). In Java/Python, test against the concrete services / process-global statics (`MessagingClient`, `MetricEmitter`), whose state leaks across tests unless reset.
-- **Construct via builders**, not raw constructors (`GGCommonsBuilder`, `MessageBuilder`, `MetricBuilder`, etc.). `MetricBuilder` specifically replaces the deprecated direct `Metric` constructor.
-- Python tests are pytest-style (`Test*` classes, `test_*` functions) — the suite was migrated off `unittest`; don't add new `unittest.TestCase` subclasses.
-- Per-subsystem docs live under each library's `doc/` (architecture, messaging, configuration, metric-emission, heartbeat, logging, etc.). Update the relevant doc when changing a subsystem's public behavior.
+- **Maintain four-way parity.** The same config schema, CLI flags, subsystem boundaries, and message
+  wire format apply to all four libraries. Java is canonical. Don't diverge an API in one language
+  without the matching change (or an explicit decision) in the others.
+- **Construct via builders**, not raw constructors (`GGCommonsBuilder` / `GgCommonsBuilder`,
+  `MessageBuilder`, `MetricBuilder`, …). `MetricBuilder` replaces the deprecated direct `Metric` constructor.
+- **Backward compatibility.** Builders are the construction path in all four libs. Legacy direct
+  constructors coexist **only in Java** (deprecated, still functional); **there is no `init()`
+  facade in any language**. Python is builder/constructor-only; Rust/TS are builder-only greenfield.
+  Don't break the old surface when adding the new one.
+- **Service-interface seam (Rust/TS only).** Rust (`MessagingService`/`MetricService` traits +
+  `Arc<dyn …>` injection) and TS (`IMessagingService`/`MetricService` interfaces + constructor
+  injection) provide a substitutable seam. **Java and Python do not** have service interfaces or a
+  `ServiceRegistry` — test against the concrete services / process-global statics
+  (`MessagingClient`, `MetricEmitter`), whose state can leak across tests unless reset. (Older
+  Python docs describing `ggcommons/di/` + `ggcommons/interfaces/` are wrong — those never shipped.)
+- **Edit the schema in one place.** Change `schema/ggcommons-config-schema.json`, then run
+  `schema/sync-schema.sh`. Never hand-edit the per-library copies.
+- **Python tests are pytest-style** (`Test*` classes, `test_*` functions) — the suite was migrated
+  off `unittest`; don't add new `unittest.TestCase` subclasses.
+- **Per-subsystem docs** live under each library's `doc/` and the cross-language design docs under
+  `docs/`. Update the relevant doc when changing a subsystem's public behavior.
+- **Runtime artifacts never get committed** (`.vault`, local parameter caches, generated streams,
+  TLS certs, build output).
 
-This file defines strict behavioral rules for all AI coding agents (Junie, Claude Code, Cursor, Grok, etc.) working in this project. Agents **must** follow these rules at all times.
+---
+
+This file defines strict behavioral rules for all AI coding agents (Claude Code, Junie, Cursor,
+etc.) working in this project. Agents **must** follow these rules at all times.
 
 ## Karpathy's Core Recommendations (Adapted)
-Derived from Andrej Karpathy's observations on LLM/agent coding pitfalls and best practices for agentic engineering.
 
-1. **Think Before Coding**
-    - Do not assume. State your assumptions explicitly.
-    - Do not hide confusion. Surface uncertainties, tradeoffs, and potential issues immediately.
-    - If anything is unclear, ask one clarifying question and wait for confirmation before proceeding.
-    - Prefer simpler solutions and push back on over-engineering.
+1. **Think before coding.** Don't assume — state assumptions explicitly. Don't hide confusion —
+   surface uncertainties and tradeoffs immediately. If something is unclear, ask one clarifying
+   question and wait. Prefer simpler solutions; push back on over-engineering.
+2. **Simplicity first.** Implement the minimum code that solves the exact problem. Avoid speculative
+   features, unnecessary abstractions, and premature optimization. If it can be done in 50 lines,
+   don't write 200.
+3. **Surgical changes.** Touch only the files necessary for the task. Never refactor, reformat, or
+   "improve" unrelated code unless asked. Every changed line must trace back to the request.
+4. **Goal-driven execution.** Restate the task as verifiable success criteria, work in iterative
+   loops until all are met, and prioritize high-leverage changes.
 
-2. **Simplicity First**
-    - Implement the minimum code that solves the exact problem requested.
-    - Avoid speculative features, unnecessary abstractions, premature optimization, or "flexibility" that wasn't asked for.
-    - If a task can be done in 50 lines, do not write 200.
+## Mandatory verification & quality workflow
 
-3. **Surgical Changes**
-    - Touch only the code/files necessary for the requested task.
-    - Never refactor, reformat, or "improve" adjacent/unrelated code unless explicitly asked.
-    - Every changed line in a diff must directly trace back to the user's request.
+Follow this for **every** code change, in the language(s) you touched:
 
-4. **Goal-Driven Execution**
-    - Explicitly restate the task as verifiable success criteria.
-    - Work in clear, iterative loops until all criteria are met.
-    - Prioritize macro actions and high-leverage changes.
+1. **API verification.** Before using a library/function/external API, verify its current behavior,
+   parameters, and version compatibility (official docs, `cargo doc`, `mvn dependency:tree`, type
+   defs, or a quick test).
+2. **Build after every update.** Run the language's build/typecheck and fix all errors before
+   proceeding — never leave broken code:
+   - Java: `mvn -q -DskipTests compile` · Python: import / `python -m pyflakes` (or run tests) ·
+     Rust: `cargo check` (`--features …` as relevant) · TS: `npm run build` (tsc).
+3. **Full testing.** Write/extend unit tests (and integration tests where applicable) covering happy
+   paths, edge cases, and error conditions; run the suite and fix failures:
+   - Java `mvn test` · Python `python -m pytest` · Rust `cargo test` · TS `npm test`.
+   Include the relevant test output in your response.
+4. **Parity check.** If the change alters public behavior, the config schema, the CLI contract, or
+   the message envelope, note whether the other three languages need the matching change.
 
-## Mandatory Verification & Quality Workflow
-In addition to Karpathy's principles, follow this rigorous process for **every** code change:
+## Documentation standards
 
-1. **API Verification**
-    - Before using any crate, function, or external API, verify its current behavior, parameters, and best practices (e.g., via official docs, `cargo doc --open`, or quick tests).
-    - Confirm compatibility with the project's Rust version and dependencies.
+Keep docs accurate and up to date with every change; document structs/classes/traits/enums, public
+functions, and important constants. Update the relevant `doc/`/`docs/` page when changing a
+subsystem's public behavior, and re-run `schema/sync-schema.sh` after any schema edit.
 
-2. **Compile After Every Update**
-    - After any code modification, immediately run `cargo check` or `cargo build`.
-    - Fix all compilation errors before proceeding.
-    - Do not leave broken code.
+**Rust** additionally follows rustdoc conventions: `//!` module-level docs and `///` item docs on
+every public module/function/type, covering purpose, parameters/return, pre/post-conditions, errors,
+and a usage example where it helps. Generate/verify with `cargo doc` when appropriate. Prefer
+idiomatic, safe Rust (ownership/borrowing; errors via `anyhow`/`thiserror`; async via Tokio) and
+match the existing module structure.
 
-3. **Full Testing**
-    - For every new or modified feature/function:
-        - Write comprehensive **unit tests** (using Rust's built-in `#[test]` framework).
-        - Write relevant **integration tests** (in `tests/` directory if applicable).
-        - Run the full test suite with `cargo test` (or `cargo nextest` if available).
-    - Tests must cover happy paths, edge cases, and error conditions.
-    - Fix failing tests and re-run until everything passes.
-    - Provide the test output in your response.
-
-## Rust Documentation Requirements
-**All agents must follow these documentation standards strictly for every public API and module.**
-
-### Module-Level Documentation
-Every module (`mod.rs`, `lib.rs`, or any `mod` declaration) must include comprehensive module-level documentation at the top using the following template:
-
-```rust
-//! # Module Name
-//!
-//! **One-liner purpose**: High-level description of what this module does.
-//!
-//! ## Overview
-//! Detailed explanation of the module's responsibilities, design decisions,
-//! and how it fits into the larger system.
-//!
-//! ## Semantics & Architecture
-//! - Core invariants maintained by this module
-//! - Thread-safety guarantees
-//! - Async vs sync usage expectations
-//! - Error handling strategy (e.g., `anyhow`, `thiserror`, custom errors)
-//!
-//! ## Usage Example
-//! ```rust
-//! use crate::this_module;
-//!
-//! # tokio_test::main;
-//! async fn example() -> anyhow::Result<()> {
-//!     // ...
-//!     Ok(())
-//! }
-//! ```
-//!
-//! ## Algorithmic / Design Choices
-//! - Why this approach was chosen over alternatives
-//! - Trade-offs considered (performance vs simplicity, etc.)
-//!
-//! ## Safety & Panics
-//! Any conditions that may cause panics (should be rare in safe Rust).
-//!
-//! ## Related Modules
-//! Links or references to closely related modules.
-```
-
-### Function-Level Documentation
-Every public function (and significant private ones) must be documented using this exact template:
-```rust
-/// Brief one-line purpose of the function.
-///
-/// # Purpose
-/// More detailed explanation of *what* the function accomplishes and *why* it exists.
-///
-/// # Semantics & Syntax
-/// - **Signature**: `pub async fn function_name(param1: Type1, param2: Type2) -> Result<ReturnType, ErrorType>`
-/// - Detailed description of parameters, return value, and behavior.
-/// - Ownership semantics (takes ownership, borrows, etc.).
-///
-/// # Pre-conditions
-/// - List all assumptions that must be true before calling this function.
-/// - Examples: valid paths, initialized state, non-empty collections, permissions, etc.
-///
-/// # Post-conditions
-/// - Guaranteed outcomes if pre-conditions are met and no error is returned.
-/// - State changes, invariants preserved, etc.
-///
-/// # Algorithmic Choices
-/// - High-level description of the algorithm/approach used.
-/// - Why this algorithm was selected (e.g., "WAL mode chosen for better concurrency").
-/// - Time/space complexity (if relevant).
-/// - Any notable optimizations or simplifications.
-///
-/// # Errors
-/// | Error Variant | Condition | Recovery Suggestion |
-/// |---------------|---------|---------------------|
-/// | `Error::Io`   | File system permission denied or disk full | Check permissions and disk space |
-/// | `Error::Sqlx` | Database constraint violation | Validate input before calling |
-/// | ...           | ...     | ... |
-///
-/// # Examples
-/// ```rust
-/// # use anyhow::Result;
-/// # async fn demo() -> Result<()> {
-/// let result = function_name("valid_input").await?;
-/// # Ok(())
-/// # }
-/// ```
-///
-/// # Panics
-/// (Rare) Conditions under which this function may panic.
-```
-
-### Additional Documentation Rules
-
-Always use rustdoc compatible syntax (/// for items, //! for modules).
-Keep documentation accurate and up-to-date with every change.
-Generate and verify docs with cargo doc --open when appropriate.
-Document structs, traits, enums, and important constants using similar detail where relevant.
-
-# General Rules
-
-Always prefer idiomatic, safe Rust (ownership, borrowing, error handling with anyhow/thiserror, etc.).
-Maintain consistency with existing code style and architecture (e.g., sqlx + Tokio patterns).
-Document key decisions and tradeoffs.
-
-Follow these rules strictly to produce reliable, maintainable, production-grade, well-documented code.
-
+Follow these rules strictly to produce reliable, maintainable, well-documented code.

@@ -1,7 +1,7 @@
-# ggcommons-test-infra
+# GGCommons test-infra
 
 Shared integration-test infrastructure for the GGCommons libraries
-(`ggcommons-java-lib`, `ggcommons-python-lib`, `ggcommons-rust-lib`). It provides a
+(`libs/java`, `libs/python`, `libs/rust`, `libs/ts`). It provides a
 local MQTT broker (EMQX) — plaintext **and** TLS — so each library's standalone /
 secure-connection integration tests run against the same broker setup.
 
@@ -31,7 +31,7 @@ and `FAIL_IF_NO_PEER_CERT` lines in `compose.yaml`.
 Integration tests locate the certs via the **`GGCOMMONS_TLS_CERTS_DIR`** environment
 variable (absolute path to this repo's `tls-certs/`). Example (Python):
 ```bash
-GGCOMMONS_TLS_CERTS_DIR=/abs/path/to/ggcommons-test-infra/tls-certs \
+GGCOMMONS_TLS_CERTS_DIR=/abs/path/to/test-infra/tls-certs \
   python -m pytest -m integration tests/test_tls_integration.py
 ```
 If the variable is unset, a library may fall back to a local `tests/tls-certs/`
@@ -39,7 +39,7 @@ directory; tests skip cleanly when no certs / no broker are available.
 
 ## Running the libraries' secure-connection tests
 
-One command (brings up the broker, generates certs if needed, runs all three):
+One command (brings up the broker, generates certs if needed, runs every library):
 ```bash
 bash run-tls-integration.sh
 ```
@@ -48,19 +48,19 @@ Or per library (broker up + `GGCOMMONS_TLS_CERTS_DIR` exported first):
 ```bash
 # Python — locates certs via GGCOMMONS_TLS_CERTS_DIR
 GGCOMMONS_TLS_CERTS_DIR=$PWD/tls-certs \
-  python -m pytest -m integration tests/test_tls_integration.py -v        # in ggcommons-python-lib
+  python -m pytest -m integration tests/test_tls_integration.py -v        # in libs/python
 
 # Java — same env var; self-skips (mvn verify stays green) when it is unset
 GGCOMMONS_TLS_CERTS_DIR=$PWD/tls-certs \
-  mvn -Dtest=StandaloneTlsIntegrationTest -DfailIfNoTests=false test       # in ggcommons-java-lib
+  mvn -Dtest=StandaloneTlsIntegrationTest -DfailIfNoTests=false test       # in libs/java
 
 # Rust — gated on GGCOMMONS_IT_MQTT=1 + per-file cert vars
 GGCOMMONS_IT_MQTT=1 GGCOMMONS_IT_MQTT_CA=$PWD/tls-certs/ca.crt \
   GGCOMMONS_IT_MQTT_CERT=$PWD/tls-certs/client.crt \
   GGCOMMONS_IT_MQTT_KEY=$PWD/tls-certs/client.key \
-  cargo test --test tls_mqtt -- --nocapture                               # in ggcommons-rust-lib
+  cargo test --test tls_mqtt -- --nocapture                               # in libs/rust
 ```
-All three skip cleanly when the broker/certs are absent, so they never break a
+They skip cleanly when the broker/certs are absent, so they never break a
 normal build.
 
 ## Convention

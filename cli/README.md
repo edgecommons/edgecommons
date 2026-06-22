@@ -1,8 +1,8 @@
 # GGCommons CLI
 
 A scaffolding command-line tool for building **AWS IoT Greengrass v2** components on top of
-the `ggcommons` libraries (Java, Python, Rust). It generates new component projects from
-language templates and helps validate, build, publish, deploy, and upgrade them.
+the `ggcommons` libraries (Java, Python, Rust, TypeScript). It generates new component projects
+from language templates and helps validate, build, publish, deploy, and upgrade them.
 
 Once installed it provides two equivalent commands: **`ggcommons`** and **`ggcommons-cli`**.
 
@@ -60,14 +60,14 @@ prints `Done. Component generated at: <dir>`.
 | Flag | Required | Default | Description |
 |------|----------|---------|-------------|
 | `-n`, `--name` | **yes** | – | Fully-qualified component name (e.g. `com.example.MyComponent`). The generated directory and recipe `ComponentName` use the last segment. |
-| `-l`, `--language` | **yes** | – | One of `JAVA`, `PYTHON`, `RUST`. |
+| `-l`, `--language` | **yes** | – | One of `JAVA`, `PYTHON`, `RUST`, `TYPESCRIPT`. |
 | `-d`, `--description` | no | `This is a Greengrass v2 component` | Short description embedded in the recipe. |
 | `-p`, `--path` | no | `.` | Directory to create the component in (the project is created at `<path>/<ComponentName>`). |
 | `-j`, `--jar` | no | the component name | Jar file name (Java only). |
 | `-a`, `--author` | no | `Amazon Web Services` | Component author. |
 | `-b`, `--bucket` | no | `greengrass-component-artifacts-us-east-1` | S3 bucket recorded in `gdk-config.json`. |
 | `-r`, `--region` | no | `us-east-1` | AWS region recorded in `gdk-config.json`. |
-| `-g`, `--ggcommons-path` | no | the sibling `ggcommons-rust-lib` in the workspace | **Rust only** — absolute path to the ggcommons Rust library; becomes the Cargo **path** dependency. Must exist for `RUST`. |
+| `-g`, `--ggcommons-path` | no | the in-repo `libs/rust` (or `libs/ts` for TypeScript) | **Rust/TypeScript only** — absolute path to the ggcommons library; becomes the Cargo **path** dependency (Rust) or npm `file:` dependency (TypeScript). Must exist for `RUST`/`TYPESCRIPT`. |
 | `-u`, `--template-url` | no | the built-in source for the language | Override the template source: a **git URL** (cloned) **or** a **local directory** (copied). |
 | `--template-ref` | no | the repo's default branch | Git branch or tag to clone (ignored when `--template-url` is a local directory). |
 | `-f`, `--force` | no | off | Overwrite the target directory if it already exists and is non-empty. |
@@ -77,9 +77,9 @@ prints `Done. Component generated at: <dir>`.
 ```bash
 ggcommons create-component -n com.example.MyComponent -l RUST
 ```
-Creates `./MyComponent/` from the Rust template, wiring the Cargo dependency to the local
-`ggcommons-rust-lib`, with the default author/bucket/region. Result: a ready-to-build Rust
-Greengrass component project.
+Creates `./MyComponent/` from the Rust template, wiring the Cargo dependency to the in-repo
+`libs/rust`, with the default author/bucket/region. Result: a ready-to-build Rust Greengrass
+component project.
 
 ```bash
 ggcommons create-component -n com.example.MyComponent -l JAVA -j my-component
@@ -97,7 +97,7 @@ the given author and an S3 bucket/region of `my-artifacts-bucket` / `us-west-2` 
 
 ```bash
 ggcommons create-component -n com.example.MyComponent -l PYTHON \
-  -u ../python-component-template
+  -u ./templates/python
 ```
 Generates from a **local** template directory instead of cloning the default git source —
 useful for a forked/offline template.
@@ -114,9 +114,10 @@ URL) for each, e.g.:
 ```
 Available templates (override any source with --template-url):
 
-  JAVA    git@…/java-component-template.git
-  PYTHON  git@…/python-component-template.git
-  RUST    git@…/rust-component-template.git
+  JAVA        git@…/java-component-template.git
+  PYTHON      git@…/python-component-template.git
+  RUST        git@…/rust-component-template.git
+  TYPESCRIPT  git@…/typescript-component-template.git
 ```
 
 ```bash

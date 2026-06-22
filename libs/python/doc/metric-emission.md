@@ -1,6 +1,6 @@
 # Metric Emission Configuration Guide
 
-This document provides detailed information about the metric emission targets and their configuration options in the ggcommons-python-lib.
+This document provides detailed information about the metric emission targets and their configuration options in the GGCommons Python library.
 
 The metric emission system supports multiple targets for sending metrics, each with specific behaviors and configuration options. Metrics are formatted using the Embedded Metric Format (EMF) for CloudWatch compatibility.
 

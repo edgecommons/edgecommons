@@ -23,14 +23,14 @@ by the requester).
 
 Nodes:
 - `python_node.py` — uses the installed `ggcommons` package.
-- `rust_node/` — a small cargo binary depending on `ggcommons-rust-lib` by path.
+- `rust_node/` — a small cargo binary depending on `libs/rust` by path.
 - `java_node/InteropNode.java` — compiled against the java lib's shaded jar.
 
 ## Running
 
 ```bash
 docker start ggcommons-emqx           # local broker on :1883
-# build the java shaded jar once: (in ggcommons-java-lib) mvn -DskipTests package
+# build the java shaded jar once: (in libs/java) mvn -DskipTests package
 python -m pytest interop/test_interop.py -v
 ```
 

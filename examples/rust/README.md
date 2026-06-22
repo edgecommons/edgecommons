@@ -1,8 +1,8 @@
 # Rust Component Skeleton
 
 A worked-example AWS IoT Greengrass v2 component written in Rust on top of the
-[`ggcommons`](../ggcommons-rust-lib) Rust library. It is the Rust counterpart of
-`java-component-skeleton` and `python-component-skeleton`, demonstrating the
+[`ggcommons`](../../libs/rust) Rust library. It is the Rust counterpart of
+`examples/java` and `examples/python`, demonstrating the
 library's standard CLI contract, configuration, logging, messaging
 (publish + request/reply), metrics, and heartbeat — so a component author writes
 only business logic.

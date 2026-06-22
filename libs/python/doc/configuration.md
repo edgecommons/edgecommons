@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-The configuration system in ggcommons-python-lib provides a flexible, multi-source configuration management framework for Greengrass components. It supports loading configuration from various sources, template variable substitution, and runtime configuration changes. The system is designed to handle both ggcommons framework settings and application-specific configuration through a unified interface.
+The configuration system in GGCommons Python library provides a flexible, multi-source configuration management framework for Greengrass components. It supports loading configuration from various sources, template variable substitution, and runtime configuration changes. The system is designed to handle both ggcommons framework settings and application-specific configuration through a unified interface.
 
 Key features include:
 - Multiple configuration sources (file, environment, Greengrass deployment, IoT Shadow)

@@ -1,6 +1,11 @@
 # GGCommons Java Library
 
-A comprehensive Java library for building AWS IoT Greengrass components with built-in configuration management, messaging, metrics, heartbeat monitoring, and logging capabilities.
+The **canonical** implementation of the Greengrass Commons library (Maven artifact
+`com.aws.proserve:ggcommons`) for building AWS IoT Greengrass v2 components with built-in
+configuration management, messaging, metrics, heartbeat, logging, credentials (encrypted vault),
+parameters (externalized config), and telemetry streaming. It is one of four parallel
+implementations (Java, Python, Rust, TypeScript); Java is the reference the others mirror. See the
+monorepo root `README.md` for the ecosystem overview.
 
 ## Purpose
 
@@ -61,7 +66,7 @@ Add the GGCommons library to your Maven project:
 <dependency>
     <groupId>com.aws.proserve</groupId>
     <artifactId>ggcommons</artifactId>
-    <version>1.2.1-SNAPSHOT</version>
+    <version>1.3.2-SNAPSHOT</version>
 </dependency>
 ```
 
@@ -77,10 +82,17 @@ public class MyComponent {
     }
     
     public void run(String[] args) {
-        // Initialize GGCommons with component name and arguments
-        ggCommons = new GGCommons("com.example.MyComponent", args);
+        // Construct via the builder (direct constructors are deprecated).
+        ggCommons = GGCommonsBuilder.create("com.example.MyComponent").withArgs(args).build();
         configManager = ggCommons.getConfigManager();
-        
+
+        // Subsystem accessors (the newer ones return null unless their config section is present):
+        var messaging   = ggCommons.getMessaging();      // MessagingClient
+        var metrics     = ggCommons.getMetrics();        // MetricEmitter
+        var credentials = ggCommons.getCredentials();    // CredentialService or null
+        var parameters  = ggCommons.getParameters();     // ParameterService or null
+        var streams     = ggCommons.getStreams();        // StreamService or null
+
         // Your component logic here
         startApplication();
     }
@@ -217,10 +229,11 @@ Message response = MessagingClient.request("requests/process", request)
 ### Custom Metrics
 
 ```java
-// Define a custom metric
-Metric metric = new Metric("data_processed");
-metric.addMeasure(new Measure("count", "Count", 1));
-metric.addMeasure(new Measure("size_bytes", "Bytes", 1));
+// Define a custom metric (use MetricBuilder; the direct Metric constructor is deprecated)
+Metric metric = MetricBuilder.create("data_processed")
+    .addMeasure("count", "Count", 1)
+    .addMeasure("size_bytes", "Bytes", 1)
+    .build();
 MetricEmitter.defineMetric(metric);
 
 // Emit metric values
@@ -247,28 +260,14 @@ public class MyConfigListener implements ConfigurationChangeListener {
 configManager.addConfigChangeListener(new MyConfigListener());
 ```
 
-## Example Components
+## Example Component
 
-Learn from these real-world examples:
-
-### 1. Java Component Skeleton
-**Location**: `c:\users\mbreissi\src\java\java-component-skeleton`
-
-A simple sample component demonstrating basic GGCommons usage patterns:
-- Basic configuration management
-- Simple messaging patterns
-- Metric emission examples
-- Standard component lifecycle
-
-### 2. GGOpcUaBridge
-**Location**: `c:\users\mbreissi\src\java\GGOpcUaBridge`
-
-A production-grade component for connecting to OPC-UA servers:
-- Multi-instance configuration for multiple OPC-UA servers
-- Complex subscription management
-- Advanced error handling and reconnection logic
-- Performance monitoring and metrics
-- Security configuration examples
+A worked, runnable example component built on this library lives at
+[`examples/java/`](../../examples/java) in this monorepo (the Java counterpart of the Python, Rust,
+and TypeScript skeletons). It demonstrates configuration management, messaging (publish +
+request/reply), metric emission, heartbeat, and the standard component lifecycle. Use the
+`ggcommons` CLI (`ggcommons create-component -l JAVA …`) to scaffold a new component from the Java
+template.
 
 ## Building and Packaging
 
@@ -303,7 +302,8 @@ The library uses Maven Shade Plugin to create a self-contained JAR with all depe
 
 ## Requirements
 
-- **Java**: 11 or higher
+- **Java**: 25 (the library compiles to Java 25; the streaming subsystem uses the FFM/Panama
+  native binding — run components with `--enable-native-access=ALL-UNNAMED`)
 - **AWS IoT Greengrass**: 2.0 or higher (for Greengrass mode)
 - **MQTT Broker**: Any MQTT 3.1.1 compatible broker (for STANDALONE mode)
 - **Maven**: 3.6 or higher (for building)

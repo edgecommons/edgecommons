@@ -1,6 +1,6 @@
 # GGCommons Java Library - API Reference
 
-This document provides a complete reference for the public API of the ggcommons-java-lib.
+This document provides a complete reference for the public API of the GGCommons Java library.
 
 ## Table of Contents
 
