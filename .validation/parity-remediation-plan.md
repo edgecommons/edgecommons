@@ -81,10 +81,13 @@ LOGGING IMPLEMENTED 2026-06-22 (commit e6310e9):
   TS renders a token template and re-applies it on reload.
 - #2 Rust DONE (EnvFilter per-logger directives). #4 TS DONE (format+file rebuilt on reload).
 
-Still DEFERRED → shared-configuration logging redesign:
-- #2 TS per-logger levels — needs a named-logger (getLogger(name)) API the single process-wide
-  logger doesn't expose; design with shared-config.
+#2 DONE — TS per-logger levels via getLogger(name) (hierarchical longest-prefix match on
+logging.loggers, refreshed on reload; exported from the index). Rust already done via EnvFilter.
+#12 DONE — per-subscription max_messages queue bound + drop-on-overflow added to Java and Python
+(both transports), parity with Rust/TS; maxConcurrency unchanged; default 10000, <=0 = unbounded.
+Also added rust_format/ts_format to the Rust+TS example recipes/test-configs/CLI templates.
+
+Still DEFERRED → shared-configuration logging redesign (only logging-format-runtime items remain):
 - #4 Rust format/file hot-reload rebuild — WAIVED-runtime: tracing layers can't be swapped after
-  install (level still reloads live); revisit if we move off the global subscriber.
+  install (level + per-logger reload live); revisit if we move off the global subscriber.
 - #3 logging.globalControl — semantics vestigial/inconsistent across libs; decide or remove.
-- #12 max_messages queue bound (Java/Python API addition) — leftover P2, revisit if needed.
