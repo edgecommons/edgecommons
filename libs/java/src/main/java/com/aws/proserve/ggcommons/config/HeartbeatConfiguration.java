@@ -95,13 +95,13 @@ public class HeartbeatConfiguration
                 if (metricObj.has("memory"))
                     includeMemory =  metricObj.get("memory").getAsBoolean();
                 if (metricObj.has("disk"))
-                    LOGGER.warn("Reporting of disk space not supported in ggcommons-java. Ignoring");
+                    includeDisk =  metricObj.get("disk").getAsBoolean();
                 if (metricObj.has("threads"))
                     includeThreads =  metricObj.get("threads").getAsBoolean();
                 if (metricObj.has("files"))
                     includeFiles =  metricObj.get("files").getAsBoolean();
                 if (metricObj.has("fds"))
-                    LOGGER.warn("Reporting of allocated file descriptors (fds) not supported in ggcommons-java. Ignoring");
+                    includeFds =  metricObj.get("fds").getAsBoolean();
             }
             if (jsonConfig.has("targets"))
             {

@@ -31,7 +31,10 @@ public class Metric
      * @param namespace The metric namespace
      * @param measures The map of measure definitions
      * @param dimensions The map of dimension key-values
+     * @deprecated Construct metrics via {@link MetricBuilder} instead of this constructor
+     *     (parity with the Python/TS libraries, which deprecate / hide direct construction).
      */
+    @Deprecated
     public Metric(String name, String namespace, Map<String, Measure> measures, Map<String, String> dimensions)
     {
         if (measures == null) {

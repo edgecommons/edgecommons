@@ -124,6 +124,7 @@ public class MetricBuilder {
      * Assembles the Metric, injecting the standard {@code coreName} (thing name) and
      * {@code component} (component name) dimensions when known.
      */
+    @SuppressWarnings("deprecation") // MetricBuilder is the sanctioned path to the Metric ctor.
     private Metric assemble() {
         if (thingName != null) {
             dimensions.put("coreName", thingName);

@@ -65,6 +65,10 @@ public class HeartbeatMonitor
         if (fileData != null)
             data.add("files", fileData);
 
+        JsonObject fdData = getFdCount();
+        if (fdData != null)
+            data.add("fds", fdData);
+
         return data;
     }
 
@@ -100,6 +104,35 @@ public class HeartbeatMonitor
         if (heartbeatConfiguration.includeDisk())
         {
             retVal = new JsonObject();
+            // Mirror the Python/Rust libs: report the filesystem holding the parent of the working
+            // dir, in Gigabytes (decimal, /1e9). used = total - free.
+            java.io.File dir = new java.io.File("..");
+            long total = dir.getTotalSpace();
+            long free = dir.getFreeSpace();
+            long used = total - free;
+            retVal.addProperty("disk_total", total / 1.0e9);
+            retVal.addProperty("disk_used", used / 1.0e9);
+            retVal.addProperty("disk_free", free / 1.0e9);
+        }
+        return retVal;
+    }
+
+    private JsonObject getFdCount()
+    {
+        JsonObject retVal = null;
+        if (heartbeatConfiguration.includeFds())
+        {
+            retVal = new JsonObject();
+            // Open file descriptors via the Unix OS MXBean (Linux/macOS — the deploy target);
+            // absent on Windows, where -1 signals "unavailable" rather than a bogus count.
+            long fds = -1L;
+            java.lang.management.OperatingSystemMXBean os =
+                    java.lang.management.ManagementFactory.getOperatingSystemMXBean();
+            if (os instanceof com.sun.management.UnixOperatingSystemMXBean unix)
+            {
+                fds = unix.getOpenFileDescriptorCount();
+            }
+            retVal.addProperty("fds", fds);
         }
         return retVal;
     }

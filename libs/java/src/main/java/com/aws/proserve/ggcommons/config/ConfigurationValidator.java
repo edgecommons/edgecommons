@@ -24,19 +24,22 @@ public class ConfigurationValidator {
     private static final Logger LOGGER = LogManager.getLogger(ConfigurationValidator.class);
     private static final String SCHEMA_RESOURCE = "/ggcommons-config-schema.json";
     private static JsonSchema schema;
-    
+    private static String schemaLoadError;
+
     static {
         try {
             InputStream schemaStream = ConfigurationValidator.class.getResourceAsStream(SCHEMA_RESOURCE);
             if (schemaStream == null) {
-                LOGGER.warn("Configuration schema not found at {}, validation disabled", SCHEMA_RESOURCE);
+                schemaLoadError = "schema resource " + SCHEMA_RESOURCE + " not found on the classpath";
+                LOGGER.error("Configuration schema not found at {}", SCHEMA_RESOURCE);
             } else {
                 JsonSchemaFactory factory = JsonSchemaFactory.getInstance(SpecVersion.VersionFlag.V7);
                 schema = factory.getSchema(schemaStream);
                 LOGGER.debug("Configuration schema loaded successfully");
             }
         } catch (Exception e) {
-            LOGGER.warn("Failed to load configuration schema: {}, validation disabled", e.getMessage());
+            schemaLoadError = "failed to load schema: " + e.getMessage();
+            LOGGER.error("Failed to load configuration schema: {}", e.getMessage());
         }
     }
     
@@ -48,8 +51,12 @@ public class ConfigurationValidator {
      */
     public static void validate(JsonObject config) throws ConfigurationValidationException {
         if (schema == null) {
-            LOGGER.debug("Schema validation skipped - schema not available");
-            return;
+            // Fail closed: the schema is a packaged classpath resource and the cross-language
+            // parity contract. A missing schema is a packaging fault, not a reason to silently
+            // skip validation (Rust/TS embed the schema and structurally cannot self-disable).
+            throw new ConfigurationValidationException(
+                    "Configuration validation cannot run: " + schemaLoadError
+                    + ". Ensure ggcommons-config-schema.json is packaged on the classpath.");
         }
         
         try {
