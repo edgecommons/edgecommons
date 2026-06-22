@@ -13,8 +13,9 @@ class IpcSubscriptionHandler(SubscriptionHandler):
         topic_filter,
         callback: Callable[[str, Message], None],
         max_concurrency: int = None,
+        max_messages: int = None,
     ):
-        super().__init__(topic_filter, callback, max_concurrency)
+        super().__init__(topic_filter, callback, max_concurrency, max_messages)
 
     def parse_raw_payload(self, event: SubscriptionResponseMessage) -> (str, dict):
         if event.binary_message is None:

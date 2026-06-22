@@ -33,16 +33,21 @@ public abstract class SubscriptionHandler<T> implements Runnable, StreamResponse
     protected String topicFilter;
     protected BiConsumer<String, Message> callback;
     protected int maxConcurrency;
-    LinkedBlockingQueue<QueueEntry> queue = new LinkedBlockingQueue<>();
+    protected int maxMessages;
+    LinkedBlockingQueue<QueueEntry> queue;
     ExecutorService executor;
     private final Semaphore concurrencyLimit;
     private volatile boolean shutdown = false;
 
-    public SubscriptionHandler(String topicFilter, BiConsumer<String, Message> callback, int maxConcurrency)
+    public SubscriptionHandler(String topicFilter, BiConsumer<String, Message> callback, int maxConcurrency, int maxMessages)
     {
         this.topicFilter = topicFilter;
         this.callback = callback;
         this.maxConcurrency = maxConcurrency;
+        this.maxMessages = maxMessages;
+        // Bounded queue (drop on overflow) when maxMessages > 0, else unbounded — parity with
+        // the Rust (bounded mpsc) / TS (drop-on-overflow) providers.
+        this.queue = maxMessages > 0 ? new LinkedBlockingQueue<>(maxMessages) : new LinkedBlockingQueue<>();
         // One virtual thread per callback (callbacks block on IPC / IoT Core / CloudWatch
         // I/O). A positive maxConcurrency is enforced with a Semaphore, preserving the
         // bounded-concurrency contract without a fixed platform-thread pool.
@@ -73,7 +78,13 @@ public abstract class SubscriptionHandler<T> implements Runnable, StreamResponse
         Pair<String, Message> parsedMessage = parseRawPayload(rawMessage);
         if (parsedMessage != null)
         {
-            queue.add(new QueueEntry(parsedMessage.getA(), parsedMessage.getB()));
+            // Non-blocking enqueue: a full bounded queue drops the message with a warning rather
+            // than blocking the IPC stream thread (parity with Rust/TS).
+            if (!queue.offer(new QueueEntry(parsedMessage.getA(), parsedMessage.getB())))
+            {
+                LOGGER.warn("Subscription queue full (maxMessages={}) for '{}'; dropping message on {}",
+                        maxMessages, topicFilter, parsedMessage.getA());
+            }
         }
     }
 

@@ -5,6 +5,7 @@ import queue
 from threading import Thread
 from typing import Callable
 from ggcommons.messaging.message import Message
+from ggcommons.messaging.messaging_provider import DEFAULT_MAX_MESSAGES
 
 
 logger = logging.getLogger("SubscriptionHandler")
@@ -16,10 +17,18 @@ class SubscriptionHandler(metaclass=abc.ABCMeta):
         topic_filter,
         callback: Callable[[str, Message], None],
         max_concurrency: int = None,
+        max_messages: int = None,
     ):
         self._topic_filter = topic_filter
         self._callback_func = callback
-        self._queue = queue.Queue()
+        # Bounded queue (drop on overflow) when max_messages > 0, else unbounded — parity with
+        # the Rust (bounded mpsc) / TS (drop-on-overflow) providers.
+        self._max_messages = max_messages if max_messages is not None else DEFAULT_MAX_MESSAGES
+        self._queue = (
+            queue.Queue(maxsize=self._max_messages)
+            if self._max_messages and self._max_messages > 0
+            else queue.Queue()
+        )
         self._max_concurrency = max_concurrency
         Thread(target=self._process_queue).start()
 
@@ -63,7 +72,15 @@ class SubscriptionHandler(metaclass=abc.ABCMeta):
         try:
             topic, received_payload = self.parse_raw_payload(event)
             topic_payload_tuple = (topic, received_payload)
-            self._queue.put(topic_payload_tuple)
+            # Non-blocking enqueue: a full bounded queue drops the message with a warning rather
+            # than blocking the IPC stream thread (parity with Rust/TS).
+            try:
+                self._queue.put_nowait(topic_payload_tuple)
+            except queue.Full:
+                logger.warning(
+                    f"subscription queue full (max_messages={self._max_messages}) for filter "
+                    f"'{self._topic_filter}'; dropping message on {topic}"
+                )
             logger.debug(
                 f"IPC: common: PubSubDataHandler: on_stream_event: subscribed message: {received_payload}"
             )

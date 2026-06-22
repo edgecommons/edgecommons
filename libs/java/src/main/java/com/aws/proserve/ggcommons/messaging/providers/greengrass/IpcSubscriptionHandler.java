@@ -23,9 +23,9 @@ public class IpcSubscriptionHandler extends SubscriptionHandler<SubscriptionResp
 {
     protected static final Logger LOGGER = LogManager.getLogger(IpcSubscriptionHandler.class);
 
-    public IpcSubscriptionHandler(String topicFilter, BiConsumer<String, Message> callback, int maxConcurrency)
+    public IpcSubscriptionHandler(String topicFilter, BiConsumer<String, Message> callback, int maxConcurrency, int maxMessages)
     {
-        super(topicFilter, callback, maxConcurrency);
+        super(topicFilter, callback, maxConcurrency, maxMessages);
     }
 
     @Override

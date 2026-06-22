@@ -24,9 +24,21 @@ public abstract class MessagingProvider
     public abstract void publishToIoTCoreRaw(String topic, JsonObject payload, QOS qos);
 
     public abstract void subscribe(String topicFilter, BiConsumer<String, Message> callback,
-                                   int maxConcurrency);
+                                   int maxConcurrency, int maxMessages);
     public abstract void subscribeToIoTCore(String topicFilter, BiConsumer<String, Message> callback, QOS qos,
-                                            int maxConcurrency);
+                                            int maxConcurrency, int maxMessages);
+
+    /** Backward-compatible overload: uses the default per-subscription queue bound. */
+    public void subscribe(String topicFilter, BiConsumer<String, Message> callback, int maxConcurrency)
+    {
+        subscribe(topicFilter, callback, maxConcurrency, MessagingClient.DEFAULT_MAX_MESSAGES);
+    }
+
+    /** Backward-compatible overload: uses the default per-subscription queue bound. */
+    public void subscribeToIoTCore(String topicFilter, BiConsumer<String, Message> callback, QOS qos, int maxConcurrency)
+    {
+        subscribeToIoTCore(topicFilter, callback, qos, maxConcurrency, MessagingClient.DEFAULT_MAX_MESSAGES);
+    }
     public abstract void unsubscribe(String topicFilter);
 
     public abstract void unsubscribeFromIoTCore(String topicFilter);

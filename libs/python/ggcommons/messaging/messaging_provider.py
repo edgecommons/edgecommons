@@ -5,6 +5,9 @@ from ggcommons.messaging.message import Message
 from ggcommons.utils.iou import Iou
 from awsiot.greengrasscoreipc.model import QOS
 
+# Default per-subscription queue bound (drop on overflow) when a caller doesn't specify one.
+DEFAULT_MAX_MESSAGES = 10000
+
 
 class MessagingProvider(metaclass=abc.ABCMeta):
     def __init__(self):
@@ -36,6 +39,7 @@ class MessagingProvider(metaclass=abc.ABCMeta):
         topic: str,
         callback: Callable[[str, Message], None],
         max_concurrency: int = None,
+        max_messages: int = None,
     ):
         pass
 
@@ -46,6 +50,7 @@ class MessagingProvider(metaclass=abc.ABCMeta):
         callback: Callable[[str, Message], None],
         qos: QOS,
         max_concurrency: int = None,
+        max_messages: int = None,
     ):
         pass
 

@@ -23,6 +23,9 @@ public class MessagingClient
 {
     protected static final Logger LOGGER = LogManager.getLogger(MessagingClient.class);
 
+    /** Default per-subscription queue bound when a caller does not specify one (drop-oldest on overflow). */
+    public static final int DEFAULT_MAX_MESSAGES = 10_000;
+
     private MessagingProvider messagingProvider;
 
     /**
@@ -114,10 +117,20 @@ public class MessagingClient
     {
         subscribe(topicFilter, callback, -1);
     }
-    
+
     public void subscribe(String topicFilter, BiConsumer<String, Message> callback, int maxConcurrency)
     {
-        messagingProvider.subscribe(topicFilter, callback, maxConcurrency);
+        subscribe(topicFilter, callback, maxConcurrency, DEFAULT_MAX_MESSAGES);
+    }
+
+    /**
+     * @param maxMessages per-subscription queue bound; when the buffer is full the oldest pending
+     *     message is dropped with a warning (parity with the Rust/TS providers). {@code <= 0} =
+     *     unbounded. Omitting it uses {@link #DEFAULT_MAX_MESSAGES}.
+     */
+    public void subscribe(String topicFilter, BiConsumer<String, Message> callback, int maxConcurrency, int maxMessages)
+    {
+        messagingProvider.subscribe(topicFilter, callback, maxConcurrency, maxMessages);
         LOGGER.debug("Subscribed to IPC messages on topic filter {}", topicFilter);
     }
 
@@ -135,7 +148,13 @@ public class MessagingClient
 
     public void subscribeToIoTCore(String topicFilter, BiConsumer<String, Message> callback, QOS qos, int maxConcurrency)
     {
-        messagingProvider.subscribeToIoTCore(topicFilter, callback, qos, maxConcurrency);
+        subscribeToIoTCore(topicFilter, callback, qos, maxConcurrency, DEFAULT_MAX_MESSAGES);
+    }
+
+    /** @param maxMessages per-subscription queue bound (drop-oldest + warn on overflow); {@code <= 0} = unbounded. */
+    public void subscribeToIoTCore(String topicFilter, BiConsumer<String, Message> callback, QOS qos, int maxConcurrency, int maxMessages)
+    {
+        messagingProvider.subscribeToIoTCore(topicFilter, callback, qos, maxConcurrency, maxMessages);
         LOGGER.debug("Subscribed to IoT Core messages on topic filter {}", topicFilter);
     }
 

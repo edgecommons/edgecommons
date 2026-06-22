@@ -56,18 +56,22 @@ public final class StandaloneMessagingProvider extends MessagingProvider
         public String topicFilter;
         public BiConsumer<String, Message> callback;
         public int maxConcurrency;
+        public int maxMessages;
         public int qos;
         public LinkedBlockingQueue<QueueEntry> queue;
         ExecutorService executor;
         private final Semaphore concurrencyLimit;
 
-        SubscriptionProcessor(String topicFilter, BiConsumer<String, Message> callback, int maxConcurrency)
+        SubscriptionProcessor(String topicFilter, BiConsumer<String, Message> callback, int maxConcurrency, int maxMessages)
         {
             super();
             this.topicFilter = topicFilter;
             this.callback = callback;
             this.maxConcurrency = maxConcurrency;
-            this.queue = new LinkedBlockingQueue<>();
+            this.maxMessages = maxMessages;
+            // Bounded queue (drop on overflow) when maxMessages > 0, else unbounded — parity with
+            // the Rust (bounded mpsc) / TS (drop-on-overflow) providers.
+            this.queue = maxMessages > 0 ? new LinkedBlockingQueue<>(maxMessages) : new LinkedBlockingQueue<>();
             // One virtual thread per callback (callbacks block on MQTT / IoT Core I/O).
             // A positive maxConcurrency is enforced with a Semaphore, preserving the
             // bounded-concurrency contract without a fixed platform-thread pool.
@@ -203,7 +207,12 @@ public final class StandaloneMessagingProvider extends MessagingProvider
                 }
             }
             if (subscriptionProcessor != null) {
-                subscriptionProcessor.queue.add(new QueueEntry(topic, msg));
+                // Non-blocking enqueue: a full bounded queue drops the message with a warning
+                // rather than blocking the MQTT callback thread (parity with Rust/TS).
+                if (!subscriptionProcessor.queue.offer(new QueueEntry(topic, msg))) {
+                    LOGGER.warn("Subscription queue full (maxMessages={}) for '{}'; dropping message on {}",
+                            subscriptionProcessor.maxMessages, subscriptionProcessor.topicFilter, topic);
+                }
             } else {
                 LOGGER.warn("No callback registered for topic '{}'. Ignoring message.", topic);
             }
@@ -476,9 +485,9 @@ public final class StandaloneMessagingProvider extends MessagingProvider
         }
     }
 
-    private void internalSubscribe(MqttClient client, String topicFilter, BiConsumer<String, Message> callback, QOS qos, int maxConcurrency, ConcurrentHashMap<String,SubscriptionProcessor> subscriptionMap)
+    private void internalSubscribe(MqttClient client, String topicFilter, BiConsumer<String, Message> callback, QOS qos, int maxConcurrency, int maxMessages, ConcurrentHashMap<String,SubscriptionProcessor> subscriptionMap)
     {
-        SubscriptionProcessor subProcessor = new SubscriptionProcessor(topicFilter, callback, maxConcurrency);
+        SubscriptionProcessor subProcessor = new SubscriptionProcessor(topicFilter, callback, maxConcurrency, maxMessages);
         subProcessor.qos = qos.ordinal();
         subscriptionMap.put(topicFilter, subProcessor);
         try
@@ -491,16 +500,16 @@ public final class StandaloneMessagingProvider extends MessagingProvider
         }
     }
 
-    public void subscribe(String topicFilter, BiConsumer<String, Message> callback, int maxConcurrency)
+    public void subscribe(String topicFilter, BiConsumer<String, Message> callback, int maxConcurrency, int maxMessages)
     {
-        internalSubscribe(localMqttClient, topicFilter, callback, QOS.AT_LEAST_ONCE, maxConcurrency, localSubscriptionProcessors);
+        internalSubscribe(localMqttClient, topicFilter, callback, QOS.AT_LEAST_ONCE, maxConcurrency, maxMessages, localSubscriptionProcessors);
     }
 
     @Override
     public void subscribeToIoTCore(String topicFilter, BiConsumer<String, Message> callback, QOS qos,
-                                   int maxConcurrency)
+                                   int maxConcurrency, int maxMessages)
     {
-        internalSubscribe(requireIotCore(), topicFilter, callback, qos, maxConcurrency, iotCoreSubscriptionProcessors);
+        internalSubscribe(requireIotCore(), topicFilter, callback, qos, maxConcurrency, maxMessages, iotCoreSubscriptionProcessors);
     }
 
     private void internalUnsubscribe(MqttClient client, String topicFilter, ConcurrentHashMap<String,SubscriptionProcessor> subscriptionMap)
@@ -539,7 +548,7 @@ public final class StandaloneMessagingProvider extends MessagingProvider
         String replyTo = message.makeRequest();
         ReplyFuture future = new ReplyFuture(replyTo);
         responseFutures.put(replyTo, future);
-        subscribe(replyTo, null, 1);
+        subscribe(replyTo, null, 1, -1); // one-shot reply sub: unbounded is fine
         publish(topic, message);
         return future;
     }
@@ -565,7 +574,7 @@ public final class StandaloneMessagingProvider extends MessagingProvider
         String replyTo = message.makeRequest();
         ReplyFuture future = new ReplyFuture(replyTo);
         responseFutures.put(replyTo, future);
-        internalSubscribe(requireIotCore(), replyTo, null, QOS.AT_MOST_ONCE, 1, iotCoreSubscriptionProcessors);
+        internalSubscribe(requireIotCore(), replyTo, null, QOS.AT_MOST_ONCE, 1, -1, iotCoreSubscriptionProcessors);
         publishToIoTCore(topic, message, QOS.AT_MOST_ONCE);
         return future;
     }

@@ -137,14 +137,14 @@ public final class GreengrassMessagingProvider extends MessagingProvider
 
 
     @Override
-    public void subscribe(String topicFilter, BiConsumer<String, Message> callback, int maxConcurrency)
+    public void subscribe(String topicFilter, BiConsumer<String, Message> callback, int maxConcurrency, int maxMessages)
     {
         try
         {
             SubscribeToTopicRequest subRequest = new SubscribeToTopicRequest().withTopic(topicFilter).withReceiveMode(receiveMode);
             GreengrassCoreIPCClientV2.StreamingResponse<SubscribeToTopicResponse,
                     SubscribeToTopicResponseHandler> response =
-                    ipcClient.subscribeToTopic(subRequest, new IpcSubscriptionHandler(topicFilter, callback, maxConcurrency));
+                    ipcClient.subscribeToTopic(subRequest, new IpcSubscriptionHandler(topicFilter, callback, maxConcurrency, maxMessages));
             ipcSubscriptionStreams.put(topicFilter, response.getHandler());
         }
         catch (Exception e)
@@ -154,7 +154,7 @@ public final class GreengrassMessagingProvider extends MessagingProvider
     }
 
     public void subscribeToIoTCore(String topicFilter, BiConsumer<String, Message> callback, QOS qos,
-                                   int maxConcurrency)
+                                   int maxConcurrency, int maxMessages)
     {
         try
         {
@@ -163,7 +163,7 @@ public final class GreengrassMessagingProvider extends MessagingProvider
                     .withQos(qos);
             GreengrassCoreIPCClientV2.StreamingResponse<SubscribeToIoTCoreResponse,
                     SubscribeToIoTCoreResponseHandler> response =
-                    ipcClient.subscribeToIoTCore(subRequest, new IotCoreSubscriptionHandler(topicFilter, callback, maxConcurrency));
+                    ipcClient.subscribeToIoTCore(subRequest, new IotCoreSubscriptionHandler(topicFilter, callback, maxConcurrency, maxMessages));
             iotCoreSubscriptionStreams.put(topicFilter, response.getHandler());
         }
         catch (InterruptedException e) // import java.lang.InterruptedException
@@ -215,7 +215,7 @@ public final class GreengrassMessagingProvider extends MessagingProvider
             }
             unsubscribe(t);
             responseFutures.remove(t);
-        }, 1);
+        }, 1, -1); // one-shot reply sub: unbounded is fine (exactly one reply, then unsubscribe)
         publish(topic, message);
         return future;
     }
@@ -249,7 +249,7 @@ public final class GreengrassMessagingProvider extends MessagingProvider
             }
             unsubscribeFromIoTCore(t);
             responseFutures.remove(t);
-        }, QOS.AT_MOST_ONCE, 1);
+        }, QOS.AT_MOST_ONCE, 1, -1); // one-shot reply sub: unbounded is fine
         publishToIoTCore(topic, request, QOS.AT_MOST_ONCE);
         return future;
     }

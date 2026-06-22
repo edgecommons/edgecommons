@@ -24,7 +24,7 @@ import paho.mqtt.client as mqtt
 from awsiot.greengrasscoreipc.model import QOS
 
 from ggcommons.messaging.message import Message
-from ggcommons.messaging.messaging_provider import MessagingProvider
+from ggcommons.messaging.messaging_provider import MessagingProvider, DEFAULT_MAX_MESSAGES
 from ggcommons.messaging.messaging_config import MessagingConfiguration
 from ggcommons.utils.iou import Iou
 
@@ -273,13 +273,21 @@ class StandaloneProvider(MessagingProvider):
         return None
 
     @staticmethod
-    def _run_capped_callback(semaphore, callback, topic, msg):
-        """Run a subscription callback while holding a concurrency permit."""
-        semaphore.acquire()
+    def _run_message(permits, semaphore, callback, topic, msg):
+        """Run a subscription callback, honoring the maxConcurrency cap (semaphore) and releasing
+        the per-subscription queue permit (max_messages bound) when done."""
         try:
-            callback(topic, msg)
+            if semaphore is not None:
+                semaphore.acquire()
+                try:
+                    callback(topic, msg)
+                finally:
+                    semaphore.release()
+            else:
+                callback(topic, msg)
         finally:
-            semaphore.release()
+            if permits is not None:
+                permits.release()
 
     def _process_message(self, message: mqtt.MQTTMessage, channel: _BrokerChannel):
         """Process a received MQTT message for a channel."""
@@ -315,15 +323,19 @@ class StandaloneProvider(MessagingProvider):
                 if self.topic_matches_sub(topic_filter, topic):
                     callback = sub_info['callback']
                     if callback:
-                        logger.debug(f"Dispatching {channel.name} message on {topic} (filter: {topic_filter})")
-                        semaphore = sub_info.get('semaphore')
-                        if semaphore is not None:
-                            # Enforce the per-subscription maxConcurrency cap.
-                            self._executor.submit(
-                                self._run_capped_callback, semaphore, callback, topic, msg
+                        # Per-subscription queue bound (max_messages): drop on overflow rather than
+                        # letting the shared executor's backlog grow unbounded (parity with Rust/TS).
+                        permits = sub_info.get('queue_permits')
+                        if permits is not None and not permits.acquire(blocking=False):
+                            logger.warning(
+                                f"subscription queue full (max_messages={sub_info.get('max_messages')}) "
+                                f"for filter '{topic_filter}'; dropping message on {topic}"
                             )
                         else:
-                            self._executor.submit(callback, topic, msg)
+                            logger.debug(f"Dispatching {channel.name} message on {topic} (filter: {topic_filter})")
+                            self._executor.submit(
+                                self._run_message, permits, sub_info.get('semaphore'), callback, topic, msg
+                            )
                     return
 
             logger.debug(f"No subscription found for {channel.name} topic: {topic}")
@@ -373,7 +385,7 @@ class StandaloneProvider(MessagingProvider):
 
     def _subscribe(self, channel: _BrokerChannel, topic: str,
                    callback: Optional[Callable[[str, Message], None]],
-                   mqtt_qos: int, max_concurrency):
+                   mqtt_qos: int, max_concurrency, max_messages=None):
         client = self._require_client(channel)
         logger.debug(f"Subscribing to {channel.name} broker topic: {topic} (QoS: {mqtt_qos})")
         try:
@@ -401,10 +413,14 @@ class StandaloneProvider(MessagingProvider):
                 )
 
             # Confirmed: store it (qos retained for re-subscribe on reconnect).
+            effective_max = max_messages if max_messages is not None else DEFAULT_MAX_MESSAGES
             channel.subscriptions[topic] = {
                 'callback': callback,
                 'max_concurrency': max_concurrency,
                 'semaphore': self._make_semaphore(max_concurrency),
+                'max_messages': effective_max,
+                # Bounded permit (drop on overflow) when > 0, else None (unbounded).
+                'queue_permits': threading.Semaphore(effective_max) if effective_max and effective_max > 0 else None,
                 'qos': mqtt_qos,
             }
             logger.debug(f"Successfully subscribed to {channel.name} broker topic: {topic}")
@@ -455,9 +471,10 @@ class StandaloneProvider(MessagingProvider):
         """Publish message to local broker."""
         self._publish(self._local, topic, msg, 0)
 
-    def subscribe(self, topic: str, callback: Callable[[str, Message], None], max_concurrency: int = None):
+    def subscribe(self, topic: str, callback: Callable[[str, Message], None], max_concurrency: int = None,
+                  max_messages: int = None):
         """Subscribe to topic on local broker and wait for confirmation."""
-        self._subscribe(self._local, topic, callback, 0, max_concurrency)
+        self._subscribe(self._local, topic, callback, 0, max_concurrency, max_messages)
 
     def request(self, topic: str, msg: Message) -> Iou:
         """Send request to local broker and wait for response."""
@@ -486,9 +503,9 @@ class StandaloneProvider(MessagingProvider):
         self._publish(self._iot_core, topic, msg, self._mqtt_qos(qos))
 
     def subscribe_to_iot_core(self, topic: str, callback: Callable[[str, Message], None],
-                              qos: QOS, max_concurrency: int = None):
+                              qos: QOS, max_concurrency: int = None, max_messages: int = None):
         """Subscribe to topic on IoT Core broker and wait for confirmation."""
-        self._subscribe(self._iot_core, topic, callback, self._mqtt_qos(qos), max_concurrency)
+        self._subscribe(self._iot_core, topic, callback, self._mqtt_qos(qos), max_concurrency, max_messages)
 
     def request_from_iot_core(self, topic: str, msg: Message) -> Iou:
         """Send request to IoT Core broker and wait for response."""

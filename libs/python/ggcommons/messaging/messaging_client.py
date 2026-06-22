@@ -110,9 +110,10 @@ class MessagingClient:
         topic: str,
         callback: Callable[[str, Message], None],
         max_concurrency: int = None,
+        max_messages: int = None,
     ):
-        logger.debug(f"Subscribing to topic: {topic}, max_concurrency: {max_concurrency}")
-        MessagingClient._messaging_provider.subscribe(topic, callback, max_concurrency)
+        logger.debug(f"Subscribing to topic: {topic}, max_concurrency: {max_concurrency}, max_messages: {max_messages}")
+        MessagingClient._messaging_provider.subscribe(topic, callback, max_concurrency, max_messages)
 
     @staticmethod
     def subscribe_to_iot_core(
@@ -120,10 +121,11 @@ class MessagingClient:
         callback: Callable[[str, Message], None],
         qos: QOS,
         max_concurrency: int = None,
+        max_messages: int = None,
     ):
-        logger.debug(f"Subscribing to IoT Core topic: {topic}, QoS: {qos}, max_concurrency: {max_concurrency}")
+        logger.debug(f"Subscribing to IoT Core topic: {topic}, QoS: {qos}, max_concurrency: {max_concurrency}, max_messages: {max_messages}")
         MessagingClient._messaging_provider.subscribe_to_iot_core(
-            topic, callback, qos, max_concurrency
+            topic, callback, qos, max_concurrency, max_messages
         )
 
     @staticmethod
