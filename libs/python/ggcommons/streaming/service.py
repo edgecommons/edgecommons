@@ -12,9 +12,30 @@ import json
 from dataclasses import dataclass
 from typing import List, Optional
 
-import ggstreamlog_native as _native
+# The native core (built out-of-band via maturin from libs/rust-streamlog) is an OPTIONAL
+# runtime dependency: importing ggcommons.streaming must not hard-fail a component that doesn't
+# use streaming. Defer the failure to first use, with an actionable message (parity with the
+# TS optional-addon / Rust feature-gate posture).
+try:
+    import ggstreamlog_native as _native
+    _NATIVE_IMPORT_ERROR: Optional[ImportError] = None
+except ImportError as _e:  # pragma: no cover - exercised only when the wheel is absent
+    _native = None
+    _NATIVE_IMPORT_ERROR = _e
 
 __all__ = ["StreamService", "StreamHandle", "StreamStats", "GgStreamError"]
+
+
+def _require_native():
+    """Return the native module or raise a clear error if the wheel was never installed."""
+    if _native is None:
+        raise GgStreamError(
+            -1,
+            "telemetry streaming requires the 'ggstreamlog-native' wheel (build it from "
+            "libs/rust-streamlog via maturin and pip install it); native module not importable"
+            + (f": {_NATIVE_IMPORT_ERROR}" if _NATIVE_IMPORT_ERROR else ""),
+        )
+    return _native
 
 
 class GgStreamError(Exception):
@@ -31,6 +52,11 @@ def _translate(exc: BaseException) -> GgStreamError:
     code = args[0] if len(args) >= 1 and isinstance(args[0], int) else -1
     message = args[1] if len(args) >= 2 else None
     return GgStreamError(code, message)
+
+
+# Native error type(s) for `except` clauses. When the native module is absent this is an empty
+# tuple (catches nothing), so the actionable _require_native() error from open() propagates.
+_NativeError = (_native.GgStreamError,) if _native is not None else ()
 
 
 @dataclass(frozen=True)
@@ -59,14 +85,14 @@ class StreamHandle:
         """Append one record; returns once durable per the stream's fsync policy."""
         try:
             self._h.append(partition_key, int(timestamp_ms), payload if payload else b"")
-        except _native.GgStreamError as e:
+        except _NativeError as e:
             raise _translate(e) from None
 
     def flush(self) -> None:
         """Force this stream's buffer durably to disk (does not wait for export)."""
         try:
             self._h.flush()
-        except _native.GgStreamError as e:
+        except _NativeError as e:
             raise _translate(e) from None
 
     def close(self) -> None:
@@ -91,22 +117,22 @@ class StreamService:
     def open(config_json: str) -> "StreamService":
         """Open every stream in ``config_json`` (the ``streaming`` section; templates pre-resolved)."""
         try:
-            return StreamService(_native.StreamService.open(config_json))
-        except _native.GgStreamError as e:
+            return StreamService(_require_native().StreamService.open(config_json))
+        except _NativeError as e:
             raise _translate(e) from None
 
     def stream(self, name: str) -> StreamHandle:
         """A handle to the named stream (raises ``GgStreamError`` ERR_UNKNOWN_STREAM if absent)."""
         try:
             return StreamHandle(self._svc.stream(name))
-        except _native.GgStreamError as e:
+        except _NativeError as e:
             raise _translate(e) from None
 
     def stats(self, name: str) -> StreamStats:
         """A stats snapshot for the named stream (raises ERR_UNKNOWN_STREAM if absent)."""
         try:
             s = self._svc.stats(name)
-        except _native.GgStreamError as e:
+        except _NativeError as e:
             raise _translate(e) from None
         return StreamStats(
             s.appended_total, s.exported_total, s.dropped_total, s.retries_total,

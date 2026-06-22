@@ -115,9 +115,22 @@ class ConfigurationValidator:
             
         schema = cls._load_schema()
         if schema is None:
-            logger.debug("Schema validation skipped - schema not available")
-            return
-            
+            # Fail closed: validation was requested but jsonschema or the packaged schema is
+            # missing. Silently skipping would let a packaging mistake disable the cross-language
+            # parity contract (Rust/TS embed the schema and structurally cannot self-disable).
+            # 'jsonschema' is a declared dependency, so this only fires on a real packaging fault.
+            reason = (
+                "the 'jsonschema' library is not installed"
+                if not JSONSCHEMA_AVAILABLE
+                else "the packaged ggcommons config schema could not be found"
+            )
+            raise ConfigurationValidationException(
+                f"Configuration validation was requested but cannot run: {reason}. "
+                "Install dependencies and ship the schema resource, or construct the config "
+                "manager with validate_config=False to explicitly opt out of validation."
+            )
+
+
         try:
             validate(instance=config, schema=schema)
             logger.debug("Configuration validation passed")

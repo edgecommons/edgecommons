@@ -13,7 +13,13 @@ class CloudWatch(MetricTarget):
         super().__init__(config_manager)
         self.logger.info("Initializing CloudWatch metric target")
         
-        self._cloudwatch_client = boto3.client("cloudwatch", region_name="us-east-1")
+        # Resolve the region from the standard AWS chain (env/config/IMDS/TES) like the
+        # Java/Rust/TS targets do, instead of hardcoding us-east-1. Fall back to us-east-1
+        # only if no region is resolvable, preserving the previous behavior.
+        try:
+            self._cloudwatch_client = boto3.client("cloudwatch")
+        except Exception:
+            self._cloudwatch_client = boto3.client("cloudwatch", region_name="us-east-1")
         self._pending_metrics = {}
         # Guards _pending_metrics against the flush thread's read-modify-write
         # racing with concurrent emit_metric() appends.
@@ -23,7 +29,9 @@ class CloudWatch(MetricTarget):
         self._flush_thread = None
         self._terminate_thread = False
         
-        self.logger.info("CloudWatch client initialized for region: us-east-1")
+        self.logger.info(
+            f"CloudWatch client initialized for region: {self._cloudwatch_client.meta.region_name}"
+        )
         self._start_periodic_flush()
 
     def _start_periodic_flush(self):

@@ -300,10 +300,15 @@ class StandaloneProvider(MessagingProvider):
 
             # Resolve a pending request/reply first.
             with self._lock:
-                if topic in self._response_ious:
-                    logger.debug(f"Message from {channel.name} broker matches pending request on {topic}")
-                    self._response_ious.pop(topic).set_result(msg)
-                    return
+                pending = self._response_ious.pop(topic, None)
+            if pending is not None:
+                logger.debug(f"Message from {channel.name} broker matches pending request on {topic}")
+                # Tear down the one-shot reply subscription so it does not leak on the broker
+                # (mirrors the IPC path and _cancel_request); otherwise every timed-out-or-served
+                # request orphans a subscription and eventually trips the broker's sub quota.
+                self._unsubscribe(channel, topic)
+                pending.set_result(msg)
+                return
 
             # Otherwise dispatch to the first matching subscription.
             for topic_filter, sub_info in channel.subscriptions.items():

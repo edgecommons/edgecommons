@@ -114,7 +114,7 @@ class EnhancedHeartbeat(ConfigurationChangeListener):
             # Start heartbeat timer
             self._start_heartbeat_timer()
             
-            interval = heartbeat_config.get_interval_secs() if heartbeat_config else 30
+            interval = heartbeat_config.get_interval_secs() if heartbeat_config else 5
             logger.info(f"Enhanced heartbeat initialized with {interval}s interval")
             logger.debug(f"Messaging service available: {self._messaging_service is not None}")
             logger.debug(f"Metric service available: {self._metric_service is not None}")
@@ -148,12 +148,19 @@ class EnhancedHeartbeat(ConfigurationChangeListener):
             
             # Get configuration for metric definition
             heartbeat_config = self._get_heartbeat_config()
-            interval_secs = heartbeat_config.get_interval_secs() if heartbeat_config else 30
+            interval_secs = heartbeat_config.get_interval_secs() if heartbeat_config else 5
             storage_resolution = 1 if interval_secs < 60 else 60
             
+            # Use the configured metricEmission namespace (parity with Java/Rust/TS), falling
+            # back to the historical default only if no metric config is available.
+            try:
+                namespace = self._config_service.get_metric_config().get_namespace()
+            except Exception:
+                namespace = "GGCommons/Heartbeat"
+
             # Build heartbeat metric
             metric = MetricBuilder.create("heartbeat") \
-                .with_namespace("GGCommons/Heartbeat") \
+                .with_namespace(namespace) \
                 .with_thing_name(self._config_service.get_thing_name()) \
                 .with_component_name(self._config_service.get_component_name()) \
                 .add_measure("disk_total", "Gigabytes", storage_resolution) \
@@ -175,7 +182,7 @@ class EnhancedHeartbeat(ConfigurationChangeListener):
     def _get_interval_secs(self) -> float:
         """Resolve the heartbeat interval (seconds), defaulting to 30."""
         heartbeat_config = self._get_heartbeat_config()
-        return heartbeat_config.get_interval_secs() if heartbeat_config else 30
+        return heartbeat_config.get_interval_secs() if heartbeat_config else 5
 
     def _start_heartbeat_timer(self) -> None:
         """Start the heartbeat loop thread with proper synchronization."""
