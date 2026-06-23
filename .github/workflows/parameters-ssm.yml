@@ -1,6 +1,6 @@
 name: parameters-ssm
 # Real awsSsm parameter-source integration tests for all four libs against a local AWS emulator
-# (LocalStack — SSM + KMS for SecureString). These exercise the SDK-bound source code that the
+# (floci — SSM + KMS for SecureString). These exercise the SDK-bound source code that the
 # unit suites exclude. Mirrors how streaming.yml runs the Kinesis/Kafka integration tests.
 on:
   workflow_dispatch:
@@ -30,18 +30,14 @@ jobs:
   ssm-integration:
     runs-on: ubuntu-latest
     services:
-      # LocalStack speaks the SSM + KMS APIs on :4566 (same surface as floci used locally).
-      localstack:
-        image: localstack/localstack:3
+      # floci serves the SSM + KMS AWS APIs on :4566 (replaced LocalStack, which now has
+      # license restrictions). Same emulator used locally. Readiness is polled from the
+      # runner in the "Wait for the emulator" step below (no in-container health-cmd, so
+      # we don't assume the floci image ships curl).
+      floci:
+        image: floci/floci:latest
         ports:
           - 4566:4566
-        env:
-          SERVICES: ssm,kms
-        options: >-
-          --health-cmd "curl -sf http://localhost:4566/_localstack/health || exit 1"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 30
     env:
       # Endpoint + static creds so every lib's default credential chain targets the emulator.
       GGCOMMONS_SSM_ENDPOINT: http://localhost:4566
@@ -69,7 +65,7 @@ jobs:
       - name: Wait for the emulator
         run: |
           for i in $(seq 1 60); do
-            curl -sf http://localhost:4566/_localstack/health && break || sleep 2
+            curl -sf http://localhost:4566/_floci/health && break || sleep 2
           done
 
       - name: Rust — awsSsm source vs emulator
