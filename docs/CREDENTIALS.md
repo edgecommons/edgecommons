@@ -72,11 +72,20 @@ one consumer of it (this is what fixes `TELEMETRY_STREAMING.md` §7).
                 └── host-callback / HashiCorp / Azure KV  (extension seam)
 ```
 
-- **One shared vault per device** (the confirmed default): a single encrypted file at a fixed
-  device path, unlocked by a **device-level KEK custodian** (HSM/TPM/KMS) — which is a clean
-  fit, since one device has one hardware key and one vault. Any component on the device reads
-  it via `gg.credentials()`. (A component may still point at a private vault path for isolation,
-  but shared-device is the default.)
+- **One shared vault per device** is the **design target**: a single encrypted file at a fixed
+  device path, unlocked by a **device-level KEK custodian** (HSM/TPM/KMS) — a clean fit, since one
+  device has one hardware key and one vault. Any component on the device would read it via
+  `gg.credentials()`.
+
+  > **Status — not yet realized (the shipped default is per-component).** The library's default
+  > vault path is the relative `vault` and **every example recipe points at
+  > `/greengrass/v2/work/{ComponentFullName}/vault`** — i.e. each component gets its own vault in
+  > its own work dir. A true shared vault needs a single **device-wide location writable by
+  > `ggc_user`** and addressable identically across all config providers and runtime modes
+  > (GREENGRASS / STANDALONE / K8S). That is the **same unsolved problem** as a shared parameter
+  > cache and shared config, so the three are being designed together — see
+  > [`SHARED_CONFIG.md`](SHARED_CONFIG.md). The collision-avoidance **key namespacing** below is
+  > already shipped, so moving to a shared path is a configuration change, not a rewrite.
 - **Reads** are served entirely from the local vault (decrypt in memory; never block on cloud),
   opened **read-only** by consumer components.
 - **One writer/sync owner.** To avoid N components all syncing the same secrets (races,
