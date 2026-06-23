@@ -53,8 +53,9 @@ jobs:
           docker run -d --name redpanda -p 9092:9092 redpandadata/redpanda:latest \
             redpanda start --smp 1 --memory 512M --reserve-memory 0M --node-id 0 --check=false \
             --kafka-addr PLAINTEXT://0.0.0.0:9092 --advertise-kafka-addr PLAINTEXT://127.0.0.1:9092
-          for i in $(seq 1 30); do
-            docker logs redpanda 2>&1 | grep -q "Successfully started Redpanda" && break || sleep 1
+          for _ in $(seq 1 30); do
+            if docker logs redpanda 2>&1 | grep -q "Successfully started Redpanda"; then break; fi
+            sleep 1
           done
       - run: cargo test --features kafka --test kafka_redpanda -- --ignored --nocapture
 
