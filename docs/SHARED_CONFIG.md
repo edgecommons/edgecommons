@@ -60,9 +60,9 @@ the two on-disk files (§9).
 | D8 | GG_CONFIG base | **dedicated shared-config component** · nucleus-level config | ✅ shared-config component, read via `GetConfiguration` (same path as `CONFIG_COMPONENT`) |
 | D9 | SHADOW base | **shared named shadow** (`ggcommons-shared`) · classic shadow | ✅ shared named shadow on the same Thing |
 | D10 | Cross-provider mixing (base from a different provider than component) | allow · **disallow v1** | ✅ disallow v1 (base uses the same provider family); revisit later |
-| D11 | Device-wide path (GG) | shared component work dir · dedicated `/var/lib/ggcommons` chowned ggc_user · keep per-component | ✅ **`/var/lib/ggcommons` (provisioned `ggc_user:ggc_group` 0750 in the owner's Install)** for lifecycle durability. Cross-read from the shared-component work dir is now **verified to work** (§9.1) and is a valid zero-provision fallback, but couples the vault to that component's work-dir lifecycle. |
+| D11 | **How to share secrets/params across components** (reframed from "device-wide path") | shared on-disk file (work-dir / shared-group) · served manager · per-component vault + shared central | ✅ **per-component vault + shared *central* (option 3) near-term**; **served manager (option 2) for robust on-device sharing later** (§9). A shared on-disk vault **file is REJECTED as the primary** — it assumes all components share one OS user; lab cross-read worked only by that coincidence (verified) and breaks under `runWith`/multi-user. |
 | D12 | Vault/cache path source | hardcode · **shared-config value** | ✅ shared-config value (the A↔B/C unification) |
-| D13 | Sync/write owner | every component · **one owner** (advisory-lock + `syncOwner`) | ✅ one owner (already designed in `CREDENTIALS.md`) — the shared-config/credentials-manager component |
+| D13 | Write owner (only where a shared store exists) | every component · one owner | ✅ one owner for the shared-file/served-manager options (1/2); **N/A for option (3)** — each component owns its own vault/cache and writes only its own |
 
 ---
 
@@ -111,9 +111,13 @@ flowchart TB
     cache --- kek
 ```
 
-Key points: components are **readers**; the owner is the single **writer**; the base layer is just a
-config document the owner exposes through whatever provider the device uses (§6); the KEK custodian
-unlocks the shared DEK once per process.
+Key points: the **base config layer** is just a document the owner exposes through whatever provider
+the device uses (§6) and each component merges in-process — this part has no filesystem-sharing
+concern. The **shared vault/cache** shown here is *conceptual*: a single on-disk shared file (drawn
+above) is **rejected** because it assumes all components share one OS user (§9). The actual sharing
+mechanism is **option (3)** (per-component vault + shared central) or **option (2)** (a served
+credentials manager) — see §9; the diagram's "shared vault" should be read as "shared *secret*", not
+necessarily a shared file.
 
 ---
 
@@ -325,74 +329,96 @@ Per-language seam (from §8): Rust `config::source::build` / `lib.rs build()`; J
 
 ## 9. Shared vault + parameter cache (B & C)
 
-Both are encrypted *files*. The **only genuinely new problem** is a device-wide, runtime-user-writable
-location; everything else (collision-safe `<thing>/<component>/` namespacing, advisory file lock,
-atomic temp→rename, reload-on-change, single sync owner, KEK custodian) **already exists** in the
-credentials subsystem (verified — see `CREDENTIALS.md` and the vault map). The vault/cache **path is
-set by the shared config base layer** (D12), so flipping from per-component to shared is a config change.
+Unlike shared *config* (a document delivered via the provider and merged in-process — no filesystem
+sharing), the vault and cache are encrypted **files**, and **sharing a file inherently depends on the
+OS user/group model**. A robust library **cannot assume all components run as one user**: Greengrass
+`runWith` (and K8s `securityContext`, and any hardened deployment) can put each component under a
+**different** OS user, which makes an owner-only file unreadable across components.
 
-### 9.1 Device-wide location per mode (D11)
+> **Lab verification (2026-06-22) — and why it does NOT settle the design.** On the lab,
+> `/greengrass/v2/work` is `drwxr-xr-x`, component work dirs are mode `0700` owned by `ggc_user`, and
+> every component runs as that one `ggc_user` (uid 994) — so cross-component read *worked* (proven by
+> reading a skeleton's `metric.log` + `vault` as `ggc_user`). **But that works only because of the
+> shared uid.** Under per-component users it breaks. So a shared on-disk vault **file is rejected as
+> the primary design** — it would silently fail on hardened/multi-user deployments.
 
-| Mode | Shared location (✅ recommended) | Notes |
-|------|----------------------------------|-------|
-| GREENGRASS | **`/var/lib/ggcommons/{vault,paramcache}`** (provisioned `ggc_user:ggc_group` 0750 in the owner's `Install` lifecycle). Zero-provision fallback: the shared-config component's work dir `/greengrass/v2/work/<SharedComponent>/vault`. | **Verified on the lab nucleus (2026-06-22):** `/greengrass/v2/work` is `drwxr-xr-x` (world-traversable); component work dirs are mode 0700 owned by `ggc_user`; all components run as that one `ggc_user` (uid 994), so a component *can* read another's work-dir files (proven by reading one skeleton's `metric.log`+`vault` as `ggc_user`). **Caveats:** (1) holds only under the default single-`ggc_user` model — `runWith` multi-user deployments need a `ggc_group`-readable `0750` dir; (2) a vault in a component's work dir is tied to that component's lifecycle (GG may clean it on remove/redeploy). Both push toward `/var/lib/ggcommons` for production. |
-| STANDALONE | a shared host path / mounted volume, e.g. `/etc/ggcommons` (config) + `/var/lib/ggcommons` (vault/cache) | Shared across the co-located containers. |
-| K8S | shared **ConfigMap** (config) + **Secret** (vault seed) projected into pods; shared **PVC** if the cache must persist | Sync owner = a sidecar/Deployment. |
+### 9.1 The three user-isolation-agnostic options
 
-### 9.2 Single-writer model (D13) — already designed
-One **sync owner** (the shared-config / credentials-manager component, `syncOwner: true`) holds the
-advisory `.lock` during writes; all other components open the vault **read-only** and pick up changes
-via `reload_if_changed()` (mtime/size stamp + MAC verify). Readers never take the lock.
+| Option | How "sharing" happens | OS-user-safe? | Trade-offs |
+|--------|----------------------|---------------|-----------|
+| **(1) Shared-group file** | one vault file `0640` owned `<owner>:ggcommons`; every consumer's `runWith` user joins group `ggcommons` (incl. a group-readable KEK) | only if the operator provisions every component's user into the shared group | fragile on GG (per-user group provisioning; group-readable KEK weakens the custodian); maps cleanly to **K8s `fsGroup` + shared volume** though |
+| **(2) Served manager** ✅ *(robust on-device sharing)* | a **credentials-manager component owns the vault and serves secrets over the ggcommons messaging seam** — GG **IPC** on-device, local MQTT in STANDALONE/K8s; consumers fetch via `gg.credentials()` and keep a local per-component cache | **yes** — transport is nucleus/broker-mediated, not the filesystem | biggest build (a request/reply secrets protocol + manager component + consumer fetch path); adds a runtime dependency + first-fetch latency. **Only option that also gives per-component least-privilege** (GG recipe `accessControl` / MQTT topic ACLs decide who may fetch what) — strictly better than "device = trust boundary". This is what `aws.greengrass.SecretManager` does. |
+| **(3) Per-component vault + shared *central* source** ✅ *(near-term default)* | keep today's per-component vault; sharing happens at the **central store** — all components pull the same Secrets Manager id via the existing `from` override | **yes** — no shared on-device file at all | already built; cost is N× central fetches (bounded by per-component cache + refresh interval); "define once" lives in the cloud, not the device. Offline-first per component. |
 
-### 9.3 Sequence — two components sharing one vault
+### 9.2 Recommendation
+- **Shared config** → build the layering engine (§4–§8); robust regardless of OS user model.
+- **Shared secrets/params, near-term → option (3)**: per-component vault, shared *centrally* via
+  `from`. It's done, robust, offline-first, and needs no shared file. The "shared" benefit (define the
+  secret once) is realized in Secrets Manager; on-device each component still names what it needs.
+- **Shared secrets/params, the "right" on-device answer → option (2)** (served manager over the
+  messaging seam) as a **later phase** — it's user-isolation-agnostic *and* adds real per-component
+  authorization, which a shared file can never provide.
+- **Drop the shared on-disk vault file** (work-dir or shared-group) as the primary path. Keep
+  shared-group/`fsGroup` only as a K8s-specific convenience if a deployment specifically wants it.
+
+### 9.3 Sequence — option (3): per-component vault, shared via central (near-term)
 
 ```mermaid
 sequenceDiagram
-    participant OWN as Owner (SyncEngine)
-    participant V as Shared vault file (+.lock)
-    participant SM as Secrets Manager
-    participant A as Component A (RO)
-    participant B as Component B (RO)
-
-    Note over OWN,B: startup — path comes from shared config base layer
-    OWN->>V: open (create if absent), unwrap DEK via KEK custodian
-    A->>V: open RO, unwrap DEK
-    B->>V: open RO, unwrap DEK
-
-    Note over OWN: periodic / bootstrap sync (owner only)
-    OWN->>SM: GetSecretValue (selective: declared names, `from` overrides)
-    SM-->>OWN: secret + VersionId
-    OWN->>V: lock → put new version (temp→rename) → unlock
-    A->>V: get("db/password") → reload_if_changed() sees new mtime → re-read
-    A-->>A: namespaced full()/rel(): reads <thing>/<comp>/db/password
-    B->>V: get(...) → reload_if_changed() → fresh value
+    participant A as Component A (own vault, user a)
+    participant B as Component B (own vault, user b)
+    participant SM as Secrets Manager (central)
+    Note over A,B: each declares sync.secrets: [{name:"db/pw", from:"site/shared/db-pw"}]
+    A->>SM: GetSecretValue("site/shared/db-pw")
+    SM-->>A: value + VersionId  → A caches in its OWN vault
+    B->>SM: GetSecretValue("site/shared/db-pw")
+    SM-->>B: value + VersionId  → B caches in its OWN vault
+    Note over A,B: no shared file; offline-first from each local cache; same value because same central id
 ```
 
-### 9.4 Code structure (vault) — what changes
-Almost nothing in code; the change is **configuration + a provisioning step**:
-- Base layer sets `credentials.vault.path` / `parameters.cache.path` to the §9.1 device-wide location
-  (instead of `{ComponentFullName}/…`).
-- One component is marked `syncOwner: true` (new boolean already anticipated in `CREDENTIALS.md`);
-  consumers open read-only.
-- A provisioning step (recipe `Install` lifecycle or container init) ensures the shared dir exists and
-  is `ggc_user`-writable.
-- The existing `open_namespaced()` / `LocalVault::open()` / `SyncEngine` / `KeyProvider` paths are
-  unchanged — they already lock, namespace, reload, and wrap the DEK.
+### 9.4 Sequence — option (2): served credentials manager (robust, later)
 
-### 9.5 Security
-Shared vault ⇒ **the device is the trust boundary**: any component that can unlock it reads every
-secret. On GG all components are `ggc_user` anyway, so OS perms can't separate them — least privilege
-moves to **(a) selective sync** (the owner pulls only declared secrets) and **(b) central IAM/TES**
-(the device role bounds what *can* be fetched). Per-namespace sub-DEK hard isolation remains reserved
-in the format for later. Values are never logged; `Secret` is zeroizing + Debug-redacted (existing).
+```mermaid
+sequenceDiagram
+    participant C as Consumer (any OS user)
+    participant MSG as Messaging seam (IPC / local MQTT)
+    participant MGR as Credentials-manager component (owns vault)
+    participant SM as Secrets Manager
+    Note over MGR: owns ONE vault in ITS OWN dir (no cross-user file access)
+    MGR->>SM: selective sync → MGR vault (single writer)
+    C->>MSG: get("db/password") request
+    MSG->>MGR: deliver (GG accessControl / topic ACL authorizes THIS component)
+    MGR-->>MSG: secret value (local transport only; never IoT Core)
+    MSG-->>C: value → C keeps a small per-component local cache (offline-first)
+```
+
+### 9.5 Security / least-privilege comparison
+- **Shared file (1):** device (or group) = trust boundary; anyone who can unlock reads everything.
+- **Central-shared (3):** each component's reach is bounded by what it *declares* + central IAM/TES;
+  no on-device cross-component exposure.
+- **Served manager (2):** *best* — the manager enforces **per-component** access (GG `accessControl`
+  on the IPC operation / per-component MQTT topic ACLs), so a component can fetch only its authorized
+  secrets even though they live in one vault. Secrets travel only over the **local** transport (IPC or
+  local broker), never IoT Core. Values never logged; `Secret` stays zeroizing + Debug-redacted.
+
+### 9.6 What changes in code
+- **Option (3):** essentially nothing new — the per-component vault + `SyncEngine` + `from` override
+  already exist; this is a configuration/usage pattern (set the same `from` in each component's base
+  layer via shared config). The base layer can carry the shared `from` mappings so they're defined once.
+- **Option (2):** new — a `credentials-manager` component + a request/reply secrets protocol over the
+  messaging seam, and a `RemoteCredentialService` (consumer side) that fetches + caches, behind the
+  same `gg.credentials()` interface. Mirrors the streaming "owner + consumers" split. Deferred to a
+  later phase.
 
 ---
 
 ## 10. Shared parameter cache (C)
-Identical pattern to the vault: the cache is an encrypted file (it reuses the vault crypto for remote
-sources). The base layer sets `parameters.cache.path` to the shared location and the `parameters.source`
-(provider) once; each component still declares its own `sync.names/paths` (which params it needs). One
-owner refreshes; consumers read offline-first. No new mechanism beyond §9.
+Same constraint and the same three options as the vault (§9) — parameters reuse the vault crypto for
+remote sources, so the file-sharing problem is identical. Near-term default = **option (3)**:
+per-component cache, with the **shared `parameters.source` (provider) defined once in the base
+config layer** so every component reads the same SSM/mountedDir/env source (each still declaring its
+own `sync.names/paths`). A served parameter manager is the option-(2) analogue for a later phase. No
+shared on-disk cache file is required.
 
 ---
 
@@ -407,12 +433,13 @@ owner refreshes; consumers read offline-first. No new mechanism beyond §9.
 ## 12. Phasing
 1. **Merge engine + opt-out + post-merge validation** in all four libs, base passed in (no sourcing). + vectors.
 2. **Base resolvers**: `FILE`/`ENV` first (covers STANDALONE/K8S), then `GG_CONFIG` shared component, then `SHADOW`.
-3. **Shared vault + cache**: point paths at the device-wide location via the base layer; solve the GG `ggc_user` shared dir + `syncOwner` wiring; validate on lab.
+3. **Shared secrets/params (option 3)**: define the shared `from` mappings / `parameters.source` once in the base layer; each component keeps its own vault/cache and pulls the shared central id. Validate a 2-component "shared central secret" case on the lab. (No shared on-disk file.)
 4. **Conformance + docs**: merge vectors, multi-component on-device, update recipes/READMEs.
+5. **(Later) Served manager (option 2)**: credentials/parameter manager component + request/reply over the messaging seam + `RemoteCredentialService` consumer, with per-component `accessControl`/topic-ACL authorization — the robust on-device-sharing path.
 
 ## 13. Open questions (please confirm)
 1. **D7/D8/D9** base-location mechanisms — accept the recommended defaults?
-2. ~~**D11** — verify GG cross-component work-dir readability on the lab.~~ **DONE (2026-06-22):** cross-read works under the shared `ggc_user` model; recommendation settled on `/var/lib/ggcommons` for lifecycle durability with the work dir as a zero-provision fallback (see D11 / §9.1).
+2. **D11 (reframed)** — verified cross-read works *only* under the single-`ggc_user` model, so a shared on-disk vault file is rejected as primary (§9). Confirm the path: **option (3)** per-component vault + shared central as the near-term default, and **option (2)** served manager as the robust later phase? (And: is per-component duplicate central fetching acceptable near-term, or do you want option (2) sooner?)
 3. **D4** opt-out knob naming (`sharedConfig` / `--no-shared-config`) acceptable?
 4. **D2** arrays replace (not concat) — OK for `heartbeat.targets` etc.?
 5. Naming of the shared-config component (`aws.proserve.greengrass.GGCommonsSharedConfig`) and whether it doubles as the credentials sync owner.
