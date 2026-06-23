@@ -111,9 +111,13 @@ flowchart TB
     cache --- kek
 ```
 
-Key points: the **base config layer** is just a document the owner exposes through whatever provider
-the device uses (§6) and each component merges in-process — this part has no filesystem-sharing
-concern. The **shared vault/cache** shown here is *conceptual*: a single on-disk shared file (drawn
+Key points: the **base config layer** is a document each component merges in-process. With the
+**IPC/injected** providers (`GG_CONFIG`/`SHADOW` over IPC, `ENV`, `CONFIG_COMPONENT`) there is no
+filesystem sharing at all. With a **`FILE` base** it *is* a shared file subject to OS permissions —
+but config is **not secret**, so it's simply made world-readable (`0644`, in a `0755`-traversable
+dir) and is written at deploy time, which sidesteps the confidentiality + runtime-writer tensions
+that make the *vault* hard (§6, §9). The **shared vault/cache** shown here is *conceptual*: a single
+on-disk shared file (drawn
 above) is **rejected** because it assumes all components share one OS user (§9). The actual sharing
 mechanism is **option (3)** (per-component vault + shared central) or **option (2)** (a served
 credentials manager) — see §9; the diagram's "shared vault" should be read as "shared *secret*", not
@@ -190,8 +194,16 @@ mechanism per provider:
 | `SHADOW` | A shared **named shadow** `ggcommons-shared` on the same Thing (D9) | Read with `GetThingShadow(thing, "ggcommons-shared")`, watch its delta. |
 | `CONFIG_COMPONENT` | The config component serves a base + per-component overlay (it is already the "shared" model) | The client requests the reserved base id, then its own; or the component returns `{base, overlay}`. |
 
-**Per mode**, the provider in play and the device-wide file location (§9) follow from the deployment:
-GREENGRASS→`GG_CONFIG`/`SHADOW`; STANDALONE→`FILE`/`ENV`; K8S→`ENV`/`FILE` via ConfigMaps.
+**Per mode**, the provider in play follows the deployment: GREENGRASS→`GG_CONFIG`/`SHADOW`;
+STANDALONE→`FILE`/`ENV`; K8S→`ENV`/`FILE` via ConfigMaps.
+
+**`FILE` base = a shared *file* (OS-permission note).** Reading a `FILE` base across components is a
+filesystem op with the same OS-user exposure as the vault — *but* config is **not secret**, so the
+shared file is simply made **world-readable (`0644`) in a `0755`-traversable dir** and is **written at
+deploy time** (the operator / provisioning step), so neither the confidentiality nor the
+runtime-cross-user-writer problem applies (contrast the vault, §9). In **GREENGRASS** prefer the
+`GG_CONFIG` base (a shared component over IPC — zero filesystem); reserve `FILE`/`ENV` bases for
+STANDALONE/K8s, where a shared volume or projected ConfigMap delivers the file to every container.
 
 ### 6.1 Sequence — startup load + merge + validate (FILE / STANDALONE shown)
 
@@ -329,11 +341,18 @@ Per-language seam (from §8): Rust `config::source::build` / `lib.rs build()`; J
 
 ## 9. Shared vault + parameter cache (B & C)
 
-Unlike shared *config* (a document delivered via the provider and merged in-process — no filesystem
-sharing), the vault and cache are encrypted **files**, and **sharing a file inherently depends on the
-OS user/group model**. A robust library **cannot assume all components run as one user**: Greengrass
+The vault and cache are encrypted **files**, and **sharing a file inherently depends on the OS
+user/group model**. A robust library **cannot assume all components run as one user**: Greengrass
 `runWith` (and K8s `securityContext`, and any hardened deployment) can put each component under a
 **different** OS user, which makes an owner-only file unreadable across components.
+
+> **Why this is harder than a shared config *file*.** A `FILE`-sourced base config (§6) is *also*
+> a shared file with the same OS-permission exposure — but config is **not secret**, so it is simply
+> made world-readable (`0644`) and is written at deploy time, which removes both the confidentiality
+> tension and the runtime cross-user-writer problem. The vault has neither escape hatch: its contents
+> are secret (so "just make it readable" defeats the purpose, and sharing it means sharing the KEK →
+> the device becomes the trust boundary) and it needs a *live* writer (the sync owner). That is why
+> the vault — not the config file — is the genuinely hard case.
 
 > **Lab verification (2026-06-22) — and why it does NOT settle the design.** On the lab,
 > `/greengrass/v2/work` is `drwxr-xr-x`, component work dirs are mode `0700` owned by `ggc_user`, and
