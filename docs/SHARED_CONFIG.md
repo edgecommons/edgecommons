@@ -60,7 +60,7 @@ the two on-disk files (§9).
 | D8 | GG_CONFIG base | **dedicated shared-config component** · nucleus-level config | ✅ shared-config component, read via `GetConfiguration` (same path as `CONFIG_COMPONENT`) |
 | D9 | SHADOW base | **shared named shadow** (`ggcommons-shared`) · classic shadow | ✅ shared named shadow on the same Thing |
 | D10 | Cross-provider mixing (base from a different provider than component) | allow · **disallow v1** | ✅ disallow v1 (base uses the same provider family); revisit later |
-| D11 | Device-wide path (GG) | shared component work dir · **dedicated `/var/lib/ggcommons` chowned ggc_user** · keep per-component | ✅ shared-component work dir if cross-read verified, else `/var/lib/ggcommons` provisioned in Install (§9) |
+| D11 | Device-wide path (GG) | shared component work dir · dedicated `/var/lib/ggcommons` chowned ggc_user · keep per-component | ✅ **`/var/lib/ggcommons` (provisioned `ggc_user:ggc_group` 0750 in the owner's Install)** for lifecycle durability. Cross-read from the shared-component work dir is now **verified to work** (§9.1) and is a valid zero-provision fallback, but couples the vault to that component's work-dir lifecycle. |
 | D12 | Vault/cache path source | hardcode · **shared-config value** | ✅ shared-config value (the A↔B/C unification) |
 | D13 | Sync/write owner | every component · **one owner** (advisory-lock + `syncOwner`) | ✅ one owner (already designed in `CREDENTIALS.md`) — the shared-config/credentials-manager component |
 
@@ -335,7 +335,7 @@ set by the shared config base layer** (D12), so flipping from per-component to s
 
 | Mode | Shared location (✅ recommended) | Notes |
 |------|----------------------------------|-------|
-| GREENGRASS | the **shared-config component's work dir** `/greengrass/v2/work/<SharedComponent>/vault` (and `/paramcache`) | All components run as `ggc_user`; another component (same uid) can read it **iff** GG work-dir perms allow cross-read — **verify on target nucleus**. If not, fall back to a dedicated `/var/lib/ggcommons/{vault,paramcache}` chowned `ggc_user` in the shared component's `Install` lifecycle. |
+| GREENGRASS | **`/var/lib/ggcommons/{vault,paramcache}`** (provisioned `ggc_user:ggc_group` 0750 in the owner's `Install` lifecycle). Zero-provision fallback: the shared-config component's work dir `/greengrass/v2/work/<SharedComponent>/vault`. | **Verified on the lab nucleus (2026-06-22):** `/greengrass/v2/work` is `drwxr-xr-x` (world-traversable); component work dirs are mode 0700 owned by `ggc_user`; all components run as that one `ggc_user` (uid 994), so a component *can* read another's work-dir files (proven by reading one skeleton's `metric.log`+`vault` as `ggc_user`). **Caveats:** (1) holds only under the default single-`ggc_user` model — `runWith` multi-user deployments need a `ggc_group`-readable `0750` dir; (2) a vault in a component's work dir is tied to that component's lifecycle (GG may clean it on remove/redeploy). Both push toward `/var/lib/ggcommons` for production. |
 | STANDALONE | a shared host path / mounted volume, e.g. `/etc/ggcommons` (config) + `/var/lib/ggcommons` (vault/cache) | Shared across the co-located containers. |
 | K8S | shared **ConfigMap** (config) + **Secret** (vault seed) projected into pods; shared **PVC** if the cache must persist | Sync owner = a sidecar/Deployment. |
 
@@ -412,7 +412,7 @@ owner refreshes; consumers read offline-first. No new mechanism beyond §9.
 
 ## 13. Open questions (please confirm)
 1. **D7/D8/D9** base-location mechanisms — accept the recommended defaults?
-2. **D11** — may I verify GG cross-component work-dir readability on the lab, which decides shared-dir vs `/var/lib/ggcommons`?
+2. ~~**D11** — verify GG cross-component work-dir readability on the lab.~~ **DONE (2026-06-22):** cross-read works under the shared `ggc_user` model; recommendation settled on `/var/lib/ggcommons` for lifecycle durability with the work dir as a zero-provision fallback (see D11 / §9.1).
 3. **D4** opt-out knob naming (`sharedConfig` / `--no-shared-config`) acceptable?
 4. **D2** arrays replace (not concat) — OK for `heartbeat.targets` etc.?
 5. Naming of the shared-config component (`aws.proserve.greengrass.GGCommonsSharedConfig`) and whether it doubles as the credentials sync owner.
