@@ -1,154 +1,418 @@
-# Shared / Layered Configuration — design (PROPOSED, not built)
+# Shared / Layered Configuration & Shared Vault — Detailed Design (PROPOSED)
 
-> Status: **design only.** Nothing here is implemented yet. This folds three deferred "shared"
-> needs — shared config, shared credentials vault, shared parameter cache — into one effort,
-> because they share one core problem. Java is the canonical reference; any build must land in all
-> four libraries (Java/Python/Rust/TS) identically.
+> **Status: design only — nothing here is implemented.** This is a review document: where a
+> decision is open, the **Recommended** option is marked ✅ and the alternatives are listed so you
+> can choose. Java is the canonical reference; any build lands in all four libraries
+> (Java / Python / Rust / TS) with identical semantics. Companion docs: `CREDENTIALS.md`,
+> `PARAMETERS.md`. Supersedes the earlier high-level sketch of this file.
 
-## 1. Motivation
+---
 
-In industrial deployments, components are not deployed in isolation: many run together on one
-device / line and **must share identical configuration**. The canonical example is the tag set
-`appId` / `site` / `shop` / `line` — every component on a line must carry the same values. Today
-that config is **replicated per-component** in every recipe/config file. Goal: **define shared
-values once**, and have components inherit them.
+## 1. Problem & scope
 
-This is not just tags. The framework/infrastructure sections are the shared candidates, and in a
-real deployment most of them would be shared:
+In industrial deployments many components run together on one device/line and **must share
+identical configuration** (e.g. `tags.appId/site/shop/line`, the `logging` format, `heartbeat` and
+`metricEmission` targets, and the *source/provider* of `parameters`/`credentials`). Today that
+config is **replicated per component**, and — critically — the credentials **vault** and the
+parameters **cache** are also **per component** (every recipe points them at
+`{ComponentFullName}/…`), so nothing is actually shared even though `CREDENTIALS.md` envisions a
+shared device vault.
 
-- `tags`
-- `logging` (the site-wide format; levels are often shared with per-component overrides)
-- `heartbeat` (targets, measures, interval)
-- `metricEmission` (target, namespace)
-- the **source/provider** config for `parameters` and `credentials` — i.e. *where* params/secrets
-  come from is shared; *which specific* params/secrets each component needs stays component-specific.
+This spec unifies three deferred needs:
 
-Component-specific = `component.global` / `component.instances` (business logic) and each
-component's own param/secret selections.
+| # | Need | What it is |
+|---|------|-----------|
+| A | **Shared config** | A base config *document* each component deep-merges under its own. |
+| B | **Shared vault** | One encrypted credentials *file* all components read; one owner writes. |
+| C | **Shared parameter cache** | One encrypted cache *file*, offline-first, refreshed by one owner. |
 
-## 2. The three needs are one problem
+**Unifying insight:** A is the primary mechanism; B and C reduce to **(A) shared-config values**
+(their `path` / provider / sync settings, set once in the base layer) **plus (D) one device-wide,
+runtime-user-writable filesystem location**. So the real work is: a **layered-config engine**
+(§4–§7), a **per-provider base-layer resolver** (§6), and a **device-wide location** convention for
+the two on-disk files (§9).
 
-| Need | What it is | Reduces to |
-|------|-----------|-----------|
-| **Shared config** | A base config *document* every component deep-merges under its own. | A base-document **source** + a **merge** rule. |
-| **Shared vault** | One encrypted *file* all components read, one owner writes. | A **device-wide file location** + the path/sync config carried by **shared config**. |
-| **Shared parameter cache** | One encrypted cache *file*, offline-first, refreshed. | Same as the vault: a device-wide file location + config carried by shared config. |
+### Goals
+- Define shared framework config once; components inherit it and override per-key.
+- Work across **all** config providers (`FILE`/`ENV`/`GG_CONFIG`/`SHADOW`/`CONFIG_COMPONENT`) and
+  **all** modes (GREENGRASS / STANDALONE / future K8S).
+- Identical merge + resolution semantics across the four languages.
+- Make a true shared vault/cache possible with **no rewrite** — only config + a shared path.
 
-Key insight: **shared config is the primary mechanism.** Once a base layer exists, the shared vault
-and shared cache fall out of it — the base layer simply sets `credentials.vault.path` and
-`parameters.cache.path` (plus their providers and the single-writer/sync-owner flags) to a common
-**device-wide location**, so every component inherits the same paths and therefore the same physical
-files. What remains genuinely separate is **(B) the device-wide filesystem location** for those two
-files (a real OS/permissions problem), versus **(A) sourcing + merging the config document**.
+### Non-goals (v1)
+- Not a secrets-distribution channel (secret *values* still flow through the vault/central sync).
+- Not multi-level site/line hierarchy yet (designed-for, not built — §5.3).
+- No server-side merging in `CONFIG_COMPONENT` beyond what §6 specifies.
 
-So this design has two parts: **(A) layered config** (§4–§6) and **(B) the shared on-disk location**
-for vault/cache (§7). (A) is the bulk; (B) is small but is the thing that was punted (every example
-recipe uses the per-component `{ComponentFullName}` work dir — see `CREDENTIALS.md` status note).
+---
 
-## 3. Decisions already locked in (from review)
+## 2. Decisions register (review these)
 
-1. **Granularity: per-key override.** Not whole-section. Canonical case: device-wide default log
-   level `INFO`, but bump one misbehaving component to `DEBUG` **while keeping the shared
-   `logging.<lang>_format`**. Override `logging.level` only; inherit the format.
-2. **Merge: field-level deep merge**, component layer wins over the base layer.
-3. **Base layer is sourced via the same `-c` provider**, and must work across **all** sources
-   (`FILE`, `ENV`, `GG_CONFIG`, `SHADOW`, `CONFIG_COMPONENT`) and **all modes** (GREENGRASS,
-   STANDALONE, future K8S). Not a special case bolted onto one provider.
-4. **Opt-in by default, explicit opt-out.** Layering is on by default (a component merges the
-   shared base when one resolves); a component can explicitly opt out and use only its own config.
-   *(Re-confirm the exact knob: a config key like `sharedConfig: false` and/or a `--no-shared-config`
-   CLI flag.)*
+| # | Question | Options | Recommended |
+|---|----------|---------|-------------|
+| D1 | Merge granularity | whole-section replace · **per-key deep merge** | ✅ per-key deep merge (locked in) |
+| D2 | Array merge | **replace** · concatenate · keyed-merge | ✅ replace (component array wins); add `$mergeArrays` directive later |
+| D3 | Layer count v1 | **2 (base⊕component)** · N (device<site<line<component) | ✅ 2 now; resolver returns an *ordered list* so N is additive later |
+| D4 | Opt-out mechanism | config key · CLI flag · **both** | ✅ both: `sharedConfig:false` (component layer) **and** `--no-shared-config`; flag wins |
+| D5 | Default | **layering ON** · off | ✅ ON when a base resolves; silently no-op if none |
+| D6 | Validation timing | per-layer · **after merge only** | ✅ after merge only (layers are partial fragments) |
+| D7 | FILE base location | env var · conventional path · `extends` key · **all three** | ✅ all three, in precedence: `extends` > `$GGCOMMONS_SHARED_CONFIG` > `/etc/ggcommons/shared.json` |
+| D8 | GG_CONFIG base | **dedicated shared-config component** · nucleus-level config | ✅ shared-config component, read via `GetConfiguration` (same path as `CONFIG_COMPONENT`) |
+| D9 | SHADOW base | **shared named shadow** (`ggcommons-shared`) · classic shadow | ✅ shared named shadow on the same Thing |
+| D10 | Cross-provider mixing (base from a different provider than component) | allow · **disallow v1** | ✅ disallow v1 (base uses the same provider family); revisit later |
+| D11 | Device-wide path (GG) | shared component work dir · **dedicated `/var/lib/ggcommons` chowned ggc_user** · keep per-component | ✅ shared-component work dir if cross-read verified, else `/var/lib/ggcommons` provisioned in Install (§9) |
+| D12 | Vault/cache path source | hardcode · **shared-config value** | ✅ shared-config value (the A↔B/C unification) |
+| D13 | Sync/write owner | every component · **one owner** (advisory-lock + `syncOwner`) | ✅ one owner (already designed in `CREDENTIALS.md`) — the shared-config/credentials-manager component |
 
-## 4. The core question — where does the base layer live, per provider?
+---
 
-This is the crux (everything else hangs off it). For each `-c` source, the base layer is resolved
-**the same way the component config is**, from a device/line/site-wide location:
+## 3. Component architecture
 
-| `-c` provider | Component layer (today) | **Base (shared) layer** |
-|---------------|-------------------------|--------------------------|
-| `FILE` | a JSON file path | a device-wide shared file: `$GGCOMMONS_SHARED_CONFIG` or a conventional path (e.g. `/etc/ggcommons/shared.json`); or an `extends` reference inside the component file. |
-| `ENV` | JSON in `GGCOMMONS_CONFIG` | JSON in a separate `GGCOMMONS_SHARED_CONFIG` env var (in K8s, projected from a **shared ConfigMap** into every pod). |
-| `GG_CONFIG` | this component's `ComponentConfig` (IPC `GetConfiguration` self) | the `ComponentConfig` of a **dedicated shared-config component** (e.g. `aws.proserve.greengrass.SharedConfig`), read via `GetConfiguration` for that name — the same cross-component IPC read that `CONFIG_COMPONENT` already uses. One shared-config component per line deployment. |
-| `SHADOW` | this component's named shadow | a shared **device-level named shadow** (e.g. `ggcommons-shared`) every component reads. |
-| `CONFIG_COMPONENT` | a config-management component serves this component's config | already the shared model in spirit — that component serves a shared base + per-component overlays (keyed by component name). |
+How the pieces fit at runtime on one device. The **shared-config component** (also the vault sync
+owner) publishes the base layer and owns the shared on-disk files; every other component merges the
+base under its own config and reads the shared vault/cache read-only.
 
-**Per mode** mostly selects which provider is in play; it also fixes the device-wide *file* location
-for §7. The unifying abstraction: a small **base-layer resolver per provider** that returns the base
-document (or "none"); the merge engine (§5) is provider-agnostic and identical across libraries.
+```mermaid
+flowchart TB
+    subgraph device["One device / line"]
+        subgraph owner["Shared-config + credentials-manager component (the OWNER)"]
+            base["Base config layer<br/>(tags, logging, heartbeat,<br/>metric, param/secret providers)"]
+            sync["SyncEngine (vault writer)"]
+        end
+
+        subgraph compA["Component A"]
+            laA["Layered config:<br/>deepMerge(base, A)"]
+            credA["gg.credentials() (RO)"]
+            parA["gg.parameters() (RO cache)"]
+        end
+        subgraph compB["Component B"]
+            laB["Layered config:<br/>deepMerge(base, B)"]
+            credB["gg.credentials() (RO)"]
+            parB["gg.parameters() (RO cache)"]
+        end
+
+        vault[("Shared device vault<br/>(encrypted file + .lock)")]
+        cache[("Shared param cache<br/>(encrypted file)")]
+        kek{{"Device KEK custodian<br/>file / KMS-via-TES / TPM"}}
+    end
+
+    central[("AWS Secrets Manager /<br/>SSM Parameter Store")]
+
+    base -. "base layer (read)" .-> laA
+    base -. "base layer (read)" .-> laB
+    sync -- "writes (lock)" --> vault
+    sync -- "writes" --> cache
+    sync -- "pull (selective)" --> central
+    credA -- "read + reload-on-change" --> vault
+    credB -- "read + reload-on-change" --> vault
+    parA --> cache
+    parB --> cache
+    vault --- kek
+    cache --- kek
+```
+
+Key points: components are **readers**; the owner is the single **writer**; the base layer is just a
+config document the owner exposes through whatever provider the device uses (§6); the KEK custodian
+unlocks the shared DEK once per process.
+
+---
+
+## 4. Layered-config engine — overview
+
+The engine is a **pure, provider-agnostic** function plus a per-provider **base resolver**. It slots
+into the existing load pipeline between *source.load()* and *validate()/snapshot* (verified seam —
+see the per-language map in §8).
+
+```mermaid
+flowchart LR
+    A["CLI -c spec"] --> B["resolve component layer<br/>(existing ConfigSource.load)"]
+    A --> C["resolve BASE layer<br/>(new BaseLayerResolver per provider)"]
+    B --> M["deepMerge(layers)<br/>base ⊕ component"]
+    C --> M
+    M --> V["validate(merged)<br/>(existing schema validator)"]
+    V --> S["Config snapshot<br/>(existing model)"]
+    S --> L["fire ConfigurationChangeListener"]
+    style C fill:#fff5ec,stroke:#ec7211
+    style M fill:#fff5ec,stroke:#ec7211
+```
+
+Only the two orange boxes are new. Everything else already exists.
+
+---
 
 ## 5. Merge semantics
 
-- **Recursive field-level merge**, component-over-base. Objects merge key-by-key; **scalars and
-  arrays are replaced** by the component value (arrays are not concatenated — a component that sets
-  `heartbeat.targets` replaces the shared list; this keeps behavior predictable).
-- Result: `effective = deepMerge(base, component)`.
-- **Validation happens after merge**, against the canonical `schema/ggcommons-config-schema.json`.
-  Individual layers are partial fragments (the base legitimately omits `component`; a component
-  overlay may omit framework sections), so layers must **not** be validated as complete configs —
-  only the merged result is. Top-level `additionalProperties:false` / `required:[component]` apply
-  post-merge.
-- **Hot reload:** a change to *either* layer re-runs the merge and fires the existing
-  `ConfigurationChangeListener` path. (Base-layer watching uses each provider's existing
-  change mechanism — file watch, shadow delta, GG config-update subscription.)
+### 5.1 Algorithm (normative — identical in all four libs)
+`effective = deepMerge([... ordered layers ..., component])` where later layers win:
 
-## 6. Opt-out
+- **object ⊕ object** → recursive key-by-key merge.
+- **scalar / array / null** in a later layer → **replaces** the earlier value (D2). Arrays are *not*
+  concatenated (a component setting `heartbeat.targets` fully replaces the shared list — predictable).
+- A key present only in the base is inherited; a key present in the component overrides just that key
+  (this is what enables "device-wide `logging.level=INFO`, override one component to `DEBUG` while
+  keeping the shared `logging.<lang>_format`").
+- Type conflict (base object vs component scalar at the same key) → component wins, with a `WARN`.
 
-Default ON. A component opts out with a config key (proposed `sharedConfig: false`, read from the
-*component* layer before merge) and/or a CLI flag (`--no-shared-config`). Opted-out → effective
-config is the component layer alone.
+### 5.2 Validation timing (D6)
+Validate **only the merged result** against `schema/ggcommons-config-schema.json`. Individual layers
+are legitimate *partial fragments* (the base omits `component`; an overlay may omit framework
+sections), so per-layer validation would false-fail. Top-level `additionalProperties:false` /
+`required:[component]` apply post-merge. (The schema is now fully specified per section, so the merged
+doc is meaningfully validated.)
 
-## 7. The device-wide location for shared vault + cache (part B)
+### 5.3 Precedence & future hierarchy (D3)
+v1 has two layers. The engine takes an **ordered list** `[base, component]`; a later release can
+populate `[device, site, line, component]` (e.g. base itself carries an `extends` chain) with **zero
+algorithm change**.
 
-Independent of §4 (those are *files*, not config documents), but their **paths are set via the
-shared config layer** so all components agree. The open problem is a single location that is
-writable by the runtime user and addressable across modes:
+### 5.4 Opt-out (D4/D5)
+Default ON. Resolution order:
+1. `--no-shared-config` CLI flag → skip base entirely (operator override, wins).
+2. `sharedConfig: false` at the top of the *component* layer (read pre-merge) → skip base.
+3. Else, if a base resolves for the provider, merge it; if none resolves, no-op.
 
-- **GREENGRASS:** all components run as `ggc_user`, and a component's work dir is
-  `ggc_user`-owned — so **the shared-config component's work dir is a viable shared location**:
-  `/greengrass/v2/work/<SharedComponent>/vault` and `.../paramcache`, readable+writable by every
-  component (same uid). (Verify cross-component work-dir perms on the target nucleus; if too tight,
-  provision a dedicated `/var/lib/ggcommons` chowned to `ggc_user` in the shared component's
-  `Install` lifecycle.) The single **sync owner** (already designed in `CREDENTIALS.md`) is
-  naturally the shared-config / credentials-manager component.
-- **STANDALONE / containers:** a shared host path or mounted volume (e.g. `/etc/ggcommons` or a
-  named Docker volume) shared across the co-located containers.
-- **K8S:** shared **ConfigMap** (shared config + non-secret values) and **Secret** (vault seed)
-  projected into every pod; a shared **PVC** if the cache must persist across restarts.
+---
 
-The collision-avoidance `<thingName>/<componentName>/` **key namespacing is already shipped**
-(see `CREDENTIALS.md`), so pointing components at one shared vault path is a config change, not a
-rewrite. Same for the parameter cache.
+## 6. The core question — base-layer resolution per provider (D7–D10)
 
-## 8. Parity & non-goals
+Each provider gets a `BaseLayerResolver` that returns the base document (or "none"). Recommended
+mechanism per provider:
 
-- The **merge algorithm** and the **per-provider base resolver** must be byte-for-byte equivalent
-  across Java/Python/Rust/TS (add to the cross-language interop/conformance coverage).
-- **v1 = two layers** (base ⊕ component). Multi-level (device < site < line < component) is a future
-  extension via a composable/`extends`-able base — designed for, not built.
-- Not a secrets-distribution mechanism: shared config carries the *source/provider* for secrets, not
-  secret values (those still flow through the vault/central sync).
+| `-c` provider | Base layer source (✅ recommended) | Notes / alternatives |
+|---------------|-----------------------------------|----------------------|
+| `FILE` | `extends` key in component file → path; else `$GGCOMMONS_SHARED_CONFIG`; else `/etc/ggcommons/shared.json` (D7) | All three supported; first hit wins. `extends` may be relative to the component file. |
+| `ENV` | `$GGCOMMONS_SHARED_CONFIG` = JSON (or `@/path`) | Containers/K8s project a shared ConfigMap into this var. |
+| `GG_CONFIG` | `GetConfiguration` on a **shared-config component** (D8), name from `$GGCOMMONS_SHARED_COMPONENT` (default `aws.proserve.greengrass.GGCommonsSharedConfig`) | Reuses the cross-component IPC read that `CONFIG_COMPONENT` already does. Alt: nucleus-level config (rejected — fights the per-component deploy model). |
+| `SHADOW` | A shared **named shadow** `ggcommons-shared` on the same Thing (D9) | Read with `GetThingShadow(thing, "ggcommons-shared")`, watch its delta. |
+| `CONFIG_COMPONENT` | The config component serves a base + per-component overlay (it is already the "shared" model) | The client requests the reserved base id, then its own; or the component returns `{base, overlay}`. |
 
-## 9. Open questions
+**Per mode**, the provider in play and the device-wide file location (§9) follow from the deployment:
+GREENGRASS→`GG_CONFIG`/`SHADOW`; STANDALONE→`FILE`/`ENV`; K8S→`ENV`/`FILE` via ConfigMaps.
 
-1. Confirm the opt-out knob (config key vs CLI flag vs both) and re-confirm the default per §3.4.
-2. `FILE`/`ENV`: settle on an explicit base reference (`extends`) **vs** a conventional path/env
-   var **vs** both. Lean: support an explicit reference, default to a conventional device path.
-3. `GG_CONFIG`: is the base a dedicated **shared-config component** (preferred — works with the
-   existing per-component deploy model) or **nucleus-level** deployment config? Confirm the IPC read
-   path matches `CONFIG_COMPONENT`'s.
-4. Verify GREENGRASS cross-component work-dir readability on the target nucleus (decides §7 GG path).
-5. Array semantics — confirm "replace, not concatenate" is acceptable for `heartbeat.targets` and
-   any other shared list.
-6. Precedence/source mixing — can the base come from a *different* provider than the component
-   (e.g. component `FILE`, base `GG_CONFIG`)? Lean: no in v1 — base uses the same provider family.
+### 6.1 Sequence — startup load + merge + validate (FILE / STANDALONE shown)
 
-## 10. Phasing (proposed)
+```mermaid
+sequenceDiagram
+    participant App as Component (build())
+    participant SRC as ConfigSource (component)
+    participant BR as BaseLayerResolver
+    participant MRG as deepMerge
+    participant VAL as schema validate
+    participant SNAP as Config snapshot
 
-1. **Merge engine + opt-out** (provider-agnostic, pure, identical in 4 libs) + post-merge validation
-   + tests. No new sourcing yet (base passed in).
-2. **Base resolvers per provider** (§4), starting with `FILE`/`ENV` (easiest, covers STANDALONE/K8S),
-   then `GG_CONFIG` shared-config component, then `SHADOW`.
-3. **Shared vault + cache location** (§7): point the example recipes' `credentials.vault.path` /
-   `parameters.cache.path` at the device-wide shared location via the base layer; solve the GG
-   `ggc_user` shared-dir + single-writer wiring; validate on the lab nucleus.
-4. **Conformance**: cross-language merge test vectors; multi-component on-device validation.
+    App->>SRC: load() component config
+    SRC-->>App: rawComponent (JSON)
+    App->>BR: resolve(provider, ctx)
+    Note over BR: FILE → extends / $GGCOMMONS_SHARED_CONFIG / /etc/ggcommons/shared.json
+    BR-->>App: rawBase (JSON) | none
+    alt opted out (--no-shared-config or sharedConfig:false) or no base
+        App->>MRG: [component]
+    else layering on
+        App->>MRG: [base, component]
+    end
+    MRG-->>App: merged JSON
+    App->>VAL: validate(merged)
+    VAL-->>App: ok | fail-closed error
+    App->>SNAP: construct snapshot(merged)
+    SNAP-->>App: Config (Arc/immutable)
+```
+
+### 6.2 Sequence — hot reload when EITHER layer changes
+
+Both the component source's existing watch and a new base watch feed one reload path; on any change,
+re-resolve → re-merge → validate → atomic swap → fire listeners.
+
+```mermaid
+sequenceDiagram
+    participant BW as Base watcher (file/shadow/GG update)
+    participant CW as Component watcher (existing)
+    participant RL as reload task
+    participant MRG as deepMerge
+    participant VAL as validate
+    participant SNAP as snapshot (ArcSwap)
+    participant LST as ConfigurationChangeListener
+
+    par base changed
+        BW-->>RL: new base
+    and component changed
+        CW-->>RL: new component
+    end
+    RL->>MRG: re-merge(latest base, latest component)
+    MRG-->>RL: merged
+    RL->>VAL: validate(merged)
+    VAL-->>RL: ok (else keep previous + WARN)
+    RL->>SNAP: atomic swap
+    RL->>LST: on_configuration_change(snapshot)
+```
+
+---
+
+## 7. Code structure (config) — where the new pieces live
+
+Minimal, additive. New modules in orange; existing seams reused. Rust shown (canonical); the other
+three mirror it at the same seams (per-language seam map in §8).
+
+```mermaid
+classDiagram
+    class GgCommonsBuilder {
+        +build() async
+    }
+    class config_source_build {
+        <<existing dispatch>>
+        +build(spec, msg, thing, comp) Box~ConfigSource~
+    }
+    class ConfigSource {
+        <<existing trait>>
+        +load() Value
+        +watch() Receiver
+    }
+    class BaseLayerResolver {
+        <<NEW trait>>
+        +resolve(ctx) Option~Value~
+        +watch() Option~Receiver~
+    }
+    class FileBaseResolver
+    class EnvBaseResolver
+    class GgConfigBaseResolver
+    class ShadowBaseResolver
+    class merge {
+        <<NEW pure fn>>
+        +deep_merge(layers) Value
+    }
+    class validation {
+        <<existing>>
+        +validate(Value)
+    }
+    class Config {
+        <<existing snapshot>>
+    }
+
+    GgCommonsBuilder --> config_source_build
+    GgCommonsBuilder --> BaseLayerResolver : NEW call
+    GgCommonsBuilder --> merge : NEW call
+    GgCommonsBuilder --> validation
+    GgCommonsBuilder --> Config
+    config_source_build --> ConfigSource
+    BaseLayerResolver <|.. FileBaseResolver
+    BaseLayerResolver <|.. EnvBaseResolver
+    BaseLayerResolver <|.. GgConfigBaseResolver
+    BaseLayerResolver <|.. ShadowBaseResolver
+```
+
+New files (Rust; mirror in each lib):
+- `config/merge.rs` — `deep_merge(layers: &[Value]) -> Value` (pure; the cross-language conformance target).
+- `config/base/mod.rs` — `BaseLayerResolver` trait + `resolve_base(spec, ctx) -> Result<Option<(Value, Option<Watch>)>>` dispatch (sibling to `source::build`).
+- `config/base/{file,env,greengrass,shadow,config_component}.rs` — per-provider resolvers, each reusing the matching source's transport.
+- Build-path change in `lib.rs` (and `ConfigManagerFactory`/`ConfigManagerBuilder`/`GgCommons.build`): insert resolve-base + merge between load and validate; subscribe the base watch into the existing reload task.
+
+Per-language seam (from §8): Rust `config::source::build` / `lib.rs build()`; Java
+`ConfigProviderBuilder.build` + `ConfigManagerFactory.create`; Python `ConfigManagerBuilder.build`
+(+ `ConfigManager._apply_config`); TS `buildConfigSource` + `GgCommons.build`.
+
+---
+
+## 8. Per-language seam summary (verified against current code)
+
+| Concern | Rust | Java | Python | TS |
+|---------|------|------|--------|----|
+| Source dispatch | `config::source::build()` | `ConfigProviderBuilder.build()` | `ConfigManagerBuilder.build()` | `buildConfigSource()` |
+| Merge insert point | `lib.rs build()` after `source.load()` before `validation::validate()` | `ConfigManagerFactory.create()` after `loadConfiguration()` before `ConfigurationValidator.validate()` | `ConfigManagerBuilder.build()` before `init()/_apply_config()` | `GgCommons.build()` after `source.load()` before `validate()` |
+| Snapshot | `Config` + `ArcSwap` | `ConfigManager.applyConfig()` | `ConfigManager._apply_config()` | `Config.fromValue()` + ref swap |
+| Listener sig | `async on_configuration_change(Arc<Config>)->bool` | `onConfigurationChanged()->boolean` | `on_configuration_change(cfg)->bool` | `onConfigurationChange(Config)->bool` |
+| Validation | `config::validation::validate` (jsonschema) | `ConfigurationValidator` (networknt) | `ConfigurationValidator` (jsonschema) | `validate` (ajv) |
+
+---
+
+## 9. Shared vault + parameter cache (B & C)
+
+Both are encrypted *files*. The **only genuinely new problem** is a device-wide, runtime-user-writable
+location; everything else (collision-safe `<thing>/<component>/` namespacing, advisory file lock,
+atomic temp→rename, reload-on-change, single sync owner, KEK custodian) **already exists** in the
+credentials subsystem (verified — see `CREDENTIALS.md` and the vault map). The vault/cache **path is
+set by the shared config base layer** (D12), so flipping from per-component to shared is a config change.
+
+### 9.1 Device-wide location per mode (D11)
+
+| Mode | Shared location (✅ recommended) | Notes |
+|------|----------------------------------|-------|
+| GREENGRASS | the **shared-config component's work dir** `/greengrass/v2/work/<SharedComponent>/vault` (and `/paramcache`) | All components run as `ggc_user`; another component (same uid) can read it **iff** GG work-dir perms allow cross-read — **verify on target nucleus**. If not, fall back to a dedicated `/var/lib/ggcommons/{vault,paramcache}` chowned `ggc_user` in the shared component's `Install` lifecycle. |
+| STANDALONE | a shared host path / mounted volume, e.g. `/etc/ggcommons` (config) + `/var/lib/ggcommons` (vault/cache) | Shared across the co-located containers. |
+| K8S | shared **ConfigMap** (config) + **Secret** (vault seed) projected into pods; shared **PVC** if the cache must persist | Sync owner = a sidecar/Deployment. |
+
+### 9.2 Single-writer model (D13) — already designed
+One **sync owner** (the shared-config / credentials-manager component, `syncOwner: true`) holds the
+advisory `.lock` during writes; all other components open the vault **read-only** and pick up changes
+via `reload_if_changed()` (mtime/size stamp + MAC verify). Readers never take the lock.
+
+### 9.3 Sequence — two components sharing one vault
+
+```mermaid
+sequenceDiagram
+    participant OWN as Owner (SyncEngine)
+    participant V as Shared vault file (+.lock)
+    participant SM as Secrets Manager
+    participant A as Component A (RO)
+    participant B as Component B (RO)
+
+    Note over OWN,B: startup — path comes from shared config base layer
+    OWN->>V: open (create if absent), unwrap DEK via KEK custodian
+    A->>V: open RO, unwrap DEK
+    B->>V: open RO, unwrap DEK
+
+    Note over OWN: periodic / bootstrap sync (owner only)
+    OWN->>SM: GetSecretValue (selective: declared names, `from` overrides)
+    SM-->>OWN: secret + VersionId
+    OWN->>V: lock → put new version (temp→rename) → unlock
+    A->>V: get("db/password") → reload_if_changed() sees new mtime → re-read
+    A-->>A: namespaced full()/rel(): reads <thing>/<comp>/db/password
+    B->>V: get(...) → reload_if_changed() → fresh value
+```
+
+### 9.4 Code structure (vault) — what changes
+Almost nothing in code; the change is **configuration + a provisioning step**:
+- Base layer sets `credentials.vault.path` / `parameters.cache.path` to the §9.1 device-wide location
+  (instead of `{ComponentFullName}/…`).
+- One component is marked `syncOwner: true` (new boolean already anticipated in `CREDENTIALS.md`);
+  consumers open read-only.
+- A provisioning step (recipe `Install` lifecycle or container init) ensures the shared dir exists and
+  is `ggc_user`-writable.
+- The existing `open_namespaced()` / `LocalVault::open()` / `SyncEngine` / `KeyProvider` paths are
+  unchanged — they already lock, namespace, reload, and wrap the DEK.
+
+### 9.5 Security
+Shared vault ⇒ **the device is the trust boundary**: any component that can unlock it reads every
+secret. On GG all components are `ggc_user` anyway, so OS perms can't separate them — least privilege
+moves to **(a) selective sync** (the owner pulls only declared secrets) and **(b) central IAM/TES**
+(the device role bounds what *can* be fetched). Per-namespace sub-DEK hard isolation remains reserved
+in the format for later. Values are never logged; `Secret` is zeroizing + Debug-redacted (existing).
+
+---
+
+## 10. Shared parameter cache (C)
+Identical pattern to the vault: the cache is an encrypted file (it reuses the vault crypto for remote
+sources). The base layer sets `parameters.cache.path` to the shared location and the `parameters.source`
+(provider) once; each component still declares its own `sync.names/paths` (which params it needs). One
+owner refreshes; consumers read offline-first. No new mechanism beyond §9.
+
+---
+
+## 11. Parity & testing
+- `deep_merge` is the cross-language conformance target: a shared **merge test-vector suite**
+  (`{layers[], expected}`) run in all four libs (like the vault vectors).
+- Per-provider base resolvers get unit tests + the existing interop harness gains a multi-component
+  "shared base + two overlays" case.
+- On-device: a 2-component GG deployment sharing one vault + one base config, validated on the lab
+  nucleus (extends `test_deployed_component.py`).
+
+## 12. Phasing
+1. **Merge engine + opt-out + post-merge validation** in all four libs, base passed in (no sourcing). + vectors.
+2. **Base resolvers**: `FILE`/`ENV` first (covers STANDALONE/K8S), then `GG_CONFIG` shared component, then `SHADOW`.
+3. **Shared vault + cache**: point paths at the device-wide location via the base layer; solve the GG `ggc_user` shared dir + `syncOwner` wiring; validate on lab.
+4. **Conformance + docs**: merge vectors, multi-component on-device, update recipes/READMEs.
+
+## 13. Open questions (please confirm)
+1. **D7/D8/D9** base-location mechanisms — accept the recommended defaults?
+2. **D11** — may I verify GG cross-component work-dir readability on the lab, which decides shared-dir vs `/var/lib/ggcommons`?
+3. **D4** opt-out knob naming (`sharedConfig` / `--no-shared-config`) acceptable?
+4. **D2** arrays replace (not concat) — OK for `heartbeat.targets` etc.?
+5. Naming of the shared-config component (`aws.proserve.greengrass.GGCommonsSharedConfig`) and whether it doubles as the credentials sync owner.
