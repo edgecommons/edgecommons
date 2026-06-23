@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://aws.com/schemas/ggcommons-config.json",
   "title": "GGCommons Configuration Schema",
-  "description": "Canonical cross-language JSON Schema for AWS IoT Greengrass GGCommons library configuration. This is the SINGLE SOURCE OF TRUTH for all language libraries (java/python/rust/ts). Do not edit the per-library copies directly — edit this file and run schema/sync-schema.(ps1|sh) to propagate it. CI verifies the copies match (sync-schema --check).",
+  "description": "Canonical cross-language JSON Schema for AWS IoT Greengrass GGCommons library configuration. This is the SINGLE SOURCE OF TRUTH for all language libraries (java/python/rust/ts). Do not edit the per-library copies directly — edit this file and run schema/sync-schema.(ps1|sh) to propagate it. CI verifies the copies match (sync-schema --check). NOTE: numeric fields use type 'number' (not 'integer') on purpose — Greengrass delivers config numbers as doubles (e.g. 300.0) and the libraries parse them leniently, so the schema must accept integer-valued floats.",
   "type": "object",
   "properties": {
     "logging": {
@@ -258,25 +258,319 @@
     },
     "messaging": {
       "type": "object",
-      "description": "Inline messaging configuration (mode + local/IoT Core brokers). The detailed schema is owned and validated by the messaging subsystem; permitted here so it is not rejected as an unknown property. Note: STANDALONE mode is typically configured via a separate messaging-config JSON file passed on the CLI.",
-      "additionalProperties": true
+      "description": "STANDALONE dual-MQTT broker configuration (local broker + optional AWS IoT Core). The same shape is used as the separate messaging-config JSON file passed via `-m STANDALONE <file>`. In GREENGRASS mode messaging uses IPC and this section is typically absent.",
+      "properties": {
+        "local": {
+          "$ref": "#/definitions/mqttBroker",
+          "description": "The local MQTT broker connection (required for STANDALONE)."
+        },
+        "iotCore": {
+          "$ref": "#/definitions/mqttBroker",
+          "description": "The optional AWS IoT Core connection (mutual-TLS)."
+        }
+      },
+      "additionalProperties": false
     },
     "streaming": {
       "type": "object",
-      "description": "Telemetry streaming configuration (durable store-and-forward). The detailed schema (streams, sinks, buffers) is owned and validated by the streaming subsystem (native ggstreamlog core); permitted here so it is not rejected as an unknown property.",
-      "additionalProperties": true
+      "description": "Telemetry streaming configuration (durable/in-memory store-and-forward to Kinesis/Kafka via the shared ggstreamlog core).",
+      "properties": {
+        "streams": {
+          "type": "array",
+          "description": "The set of named streams to open.",
+          "items": { "$ref": "#/definitions/stream" }
+        }
+      },
+      "additionalProperties": false
     },
     "credentials": {
       "type": "object",
-      "description": "Credentials / encrypted local vault configuration (local vault + optional central sync). The detailed schema (vault, keyProvider, central) is owned and validated by the credentials subsystem; permitted here so it is not rejected as an unknown property.",
-      "additionalProperties": true
+      "description": "Credentials / encrypted local vault configuration (local vault + optional central sync from AWS Secrets Manager).",
+      "properties": {
+        "vault": { "$ref": "#/definitions/credentialsVault" },
+        "central": { "$ref": "#/definitions/credentialsCentral" },
+        "audit": {
+          "type": "object",
+          "description": "Access-audit logging (on by default; never logs secret values).",
+          "properties": {
+            "enabled": { "type": "boolean", "default": true }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
     },
     "parameters": {
       "type": "object",
-      "description": "Parameters / externalized configuration (offline-first, pluggable source: awsSsm, mountedDir, env). The detailed schema (source, cache, sync) is owned and validated by the parameters subsystem; permitted here so it is not rejected as an unknown property.",
-      "additionalProperties": true
+      "description": "Parameters / externalized configuration (offline-first; pluggable source: env, mountedDir, awsSsm).",
+      "properties": {
+        "source": { "$ref": "#/definitions/paramSource" },
+        "cache": { "$ref": "#/definitions/paramCache" },
+        "refreshIntervalSecs": {
+          "type": "number",
+          "minimum": 0,
+          "default": 300,
+          "description": "Background refresh interval in seconds (0 = no periodic refresh)."
+        },
+        "bootstrapOnStart": {
+          "type": "boolean",
+          "default": true,
+          "description": "Pull the declared sync names/paths into the cache at startup (non-fatal on failure)."
+        },
+        "sync": { "$ref": "#/definitions/paramSync" }
+      },
+      "additionalProperties": false
     }
   },
   "required": ["component"],
-  "additionalProperties": false
+  "additionalProperties": false,
+  "definitions": {
+    "mqttBroker": {
+      "type": "object",
+      "description": "A single MQTT broker connection.",
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Broker type tag (e.g. \"mqtt\"); set by the Java/Python samples, ignored by Rust/TS."
+        },
+        "host": {
+          "type": "string",
+          "description": "Broker host (used by the local broker)."
+        },
+        "endpoint": {
+          "type": "string",
+          "description": "Broker endpoint FQDN (used by the iotCore broker)."
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "Broker port (e.g. 1883 plaintext, 8883 TLS)."
+        },
+        "clientId": {
+          "type": "string",
+          "description": "MQTT client id."
+        },
+        "credentials": { "$ref": "#/definitions/mqttCredentials" }
+      },
+      "additionalProperties": false
+    },
+    "mqttCredentials": {
+      "type": "object",
+      "description": "Broker auth: username/password for the local broker, or certPath/keyPath/caPath for TLS (mutual TLS / IoT Core).",
+      "properties": {
+        "username": { "type": "string" },
+        "password": { "type": "string" },
+        "certPath": { "type": "string" },
+        "keyPath": { "type": "string" },
+        "caPath": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "stream": {
+      "type": "object",
+      "description": "A single telemetry stream.",
+      "properties": {
+        "name": { "type": "string", "description": "Stream identifier." },
+        "sink": { "$ref": "#/definitions/streamSink" },
+        "buffer": { "$ref": "#/definitions/streamBuffer" },
+        "batch": { "$ref": "#/definitions/streamBatch" },
+        "delivery": { "$ref": "#/definitions/streamDelivery" }
+      },
+      "required": ["name", "sink"],
+      "additionalProperties": false
+    },
+    "streamSink": {
+      "description": "Export sink — a tagged union on `type` (kinesis | kafka).",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": { "const": "kinesis" },
+            "streamName": { "type": "string", "description": "Kinesis data stream name (supports template vars)." },
+            "region": { "type": ["string", "null"] },
+            "endpointUrl": { "type": ["string", "null"], "description": "Override endpoint (e.g. LocalStack/floci/VPC)." }
+          },
+          "required": ["type", "streamName"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": { "const": "kafka" },
+            "bootstrapServers": { "type": "string" },
+            "topic": { "type": "string" },
+            "properties": {
+              "type": "object",
+              "description": "Extra librdkafka producer properties (open map).",
+              "additionalProperties": { "type": "string" }
+            }
+          },
+          "required": ["type", "bootstrapServers", "topic"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "streamBuffer": {
+      "type": "object",
+      "description": "Embedded buffer. type=disk is durable/file-backed (needs `path`); type=memory is a non-durable RAM ring (no `path`; maxDiskBytes is the byte budget).",
+      "properties": {
+        "type": { "enum": ["disk", "memory"], "default": "disk" },
+        "path": { "type": "string" },
+        "segmentBytes": { "type": "number", "minimum": 0, "default": 67108864 },
+        "maxDiskBytes": { "type": "number", "minimum": 0, "default": 1073741824 },
+        "maxAgeSecs": { "type": ["number", "null"], "minimum": 0 },
+        "onFull": { "enum": ["dropOldest", "block", "rejectNew"], "default": "dropOldest" },
+        "fsync": { "enum": ["always", "perBatch", "interval"], "default": "perBatch" },
+        "fsyncIntervalMs": { "type": "number", "minimum": 0, "default": 1000 },
+        "maxBufferedRecords": { "type": "number", "minimum": 0, "default": 10000 }
+      },
+      "additionalProperties": false
+    },
+    "streamBatch": {
+      "type": "object",
+      "description": "Export batching tuning.",
+      "properties": {
+        "maxRecords": { "type": "number", "minimum": 0, "default": 500 },
+        "maxBytes": { "type": "number", "minimum": 0, "default": 4194304 },
+        "maxLatencyMs": { "type": "number", "minimum": 0, "default": 1000 },
+        "compression": { "enum": ["none", "zstd"], "default": "none" }
+      },
+      "additionalProperties": false
+    },
+    "streamDelivery": {
+      "type": "object",
+      "description": "Export retry/polling behavior.",
+      "properties": {
+        "maxRetries": { "type": "number", "description": "-1 = retry forever." },
+        "backoffBaseMs": { "type": "number", "minimum": 0, "default": 50 },
+        "backoffMaxMs": { "type": "number", "minimum": 0, "default": 30000 },
+        "pollIntervalMs": { "type": "number", "minimum": 0, "default": 100 }
+      },
+      "additionalProperties": false
+    },
+    "keyProvider": {
+      "type": "object",
+      "description": "Envelope-encryption KEK custodian. Tagged by `type`: file (local keyfile), kms/greengrass (AWS KMS via TES), pkcs11 (HSM/TPM). Fields not used by the selected type are ignored.",
+      "properties": {
+        "type": { "enum": ["file", "kms", "greengrass", "pkcs11"], "default": "file" },
+        "keyPath": { "type": ["string", "null"], "description": "file: path to the keyfile." },
+        "kmsKeyId": { "type": ["string", "null"], "description": "kms/greengrass: KMS key id/ARN." },
+        "region": { "type": ["string", "null"] },
+        "endpointUrl": { "type": ["string", "null"] },
+        "modulePath": { "type": ["string", "null"], "description": "pkcs11: PKCS#11 module .so/.dll path." },
+        "tokenLabel": { "type": ["string", "null"] },
+        "keyLabel": { "type": ["string", "null"] },
+        "pinEnv": { "type": ["string", "null"], "description": "pkcs11: env var holding the PIN (preferred over inline `pin`)." },
+        "pin": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "credentialsVault": {
+      "type": "object",
+      "description": "Local encrypted vault settings.",
+      "properties": {
+        "path": { "type": "string", "default": "vault", "description": "Vault directory (supports template vars)." },
+        "keyProvider": { "$ref": "#/definitions/keyProvider" },
+        "keepVersions": { "type": "number", "minimum": 0, "default": 2 },
+        "cacheTtlSecs": { "type": "number", "minimum": 0, "default": 300 }
+      },
+      "additionalProperties": false
+    },
+    "credentialsCentral": {
+      "type": "object",
+      "description": "Optional central sync. type=none (default, local-only) or awsSecretsManager.",
+      "properties": {
+        "type": { "enum": ["none", "awsSecretsManager"], "default": "none" },
+        "region": { "type": ["string", "null"] },
+        "endpointUrl": { "type": ["string", "null"] },
+        "refreshIntervalSecs": { "type": "number", "minimum": 0, "default": 300 },
+        "bootstrapOnStart": { "type": "boolean", "default": true },
+        "sync": {
+          "type": "object",
+          "description": "Selective sync: which secrets this device pulls.",
+          "properties": {
+            "secrets": {
+              "type": "array",
+              "description": "Each entry is a bare name (central id = namespaced path) or {name, from} where `from` is an explicit/shared central id.",
+              "items": {
+                "oneOf": [
+                  { "type": "string" },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "name": { "type": "string" },
+                      "from": { "type": ["string", "null"] }
+                    },
+                    "required": ["name"],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "paramSource": {
+      "type": "object",
+      "description": "Parameter source. Tagged by `type`: env (prefix), mountedDir (root/securePaths), awsSsm (region/withDecryption/endpointUrl), none. Fields not used by the selected type are ignored.",
+      "properties": {
+        "type": { "enum": ["none", "env", "mountedDir", "awsSsm"], "default": "none" },
+        "prefix": { "type": "string", "description": "env: variable name prefix (e.g. GG_PARAM_)." },
+        "root": { "type": "string", "description": "mountedDir: root directory of the mounted tree." },
+        "securePaths": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "mountedDir: path prefixes whose values are sensitive."
+        },
+        "region": { "type": ["string", "null"], "description": "awsSsm: AWS region." },
+        "endpointUrl": { "type": ["string", "null"], "description": "awsSsm: override SSM endpoint." },
+        "withDecryption": { "type": "boolean", "default": true, "description": "awsSsm: decrypt SecureString parameters." }
+      },
+      "additionalProperties": false
+    },
+    "paramCache": {
+      "type": "object",
+      "description": "Offline-first cache. Source-aware persistence by default (remote sources persist encrypted; local sources stay in memory).",
+      "properties": {
+        "persist": { "type": ["boolean", "null"], "description": "Override source-aware default." },
+        "path": { "type": "string", "default": "param-cache" },
+        "keyProvider": { "$ref": "#/definitions/keyProvider" }
+      },
+      "additionalProperties": false
+    },
+    "paramSync": {
+      "type": "object",
+      "description": "Selective bootstrap/refresh — which parameters to pull.",
+      "properties": {
+        "names": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Explicit parameter names to sync."
+        },
+        "paths": {
+          "type": "array",
+          "description": "Path prefixes to sync; each entry is a bare string (recursive) or {path, recursive}.",
+          "items": {
+            "oneOf": [
+              { "type": "string" },
+              {
+                "type": "object",
+                "properties": {
+                  "path": { "type": "string" },
+                  "recursive": { "type": "boolean" }
+                },
+                "required": ["path"],
+                "additionalProperties": false
+              }
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
 }
