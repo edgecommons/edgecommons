@@ -368,12 +368,12 @@ sequenceDiagram
     participant A as Component A (own vault, user a)
     participant B as Component B (own vault, user b)
     participant SM as Secrets Manager (central)
-    Note over A,B: each declares the same shared secret via a 'from' override
+    Note over A,B: each declares the same shared secret via a from override
     A->>SM: GetSecretValue site/shared/db-pw
     SM-->>A: value + VersionId → A caches in its OWN vault
     B->>SM: GetSecretValue site/shared/db-pw
     SM-->>B: value + VersionId → B caches in its OWN vault
-    Note over A,B: no shared file; offline-first per local cache; same value via same central id
+    Note over A,B: no shared file, offline-first per local cache, same value via same central id
 ```
 
 ### 9.4 Sequence — option (2): served credentials manager (robust, later)
@@ -388,7 +388,7 @@ sequenceDiagram
     MGR->>SM: selective sync → MGR vault (single writer)
     C->>MSG: get db/password request
     MSG->>MGR: deliver (GG accessControl / topic ACL authorizes THIS component)
-    MGR-->>MSG: secret value (local transport only; never IoT Core)
+    MGR-->>MSG: secret value (local transport only, never IoT Core)
     MSG-->>C: value → C keeps a small per-component local cache (offline-first)
 ```
 
