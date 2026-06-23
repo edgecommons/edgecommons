@@ -2,3 +2,8 @@
 # ignored by their own .gitignore files). The committed root package-lock.json is
 # the single lockfile for the JS/TS workspace.
 node_modules/
+
+# Runtime credentials-vault artifacts written by components at run time (e.g. the
+# example skeletons when run locally) — encrypted-at-rest, never committed.
+.vault/
+*.vault.key
