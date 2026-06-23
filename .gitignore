@@ -7,3 +7,9 @@ node_modules/
 # example skeletons when run locally) — encrypted-at-rest, never committed.
 .vault/
 *.vault.key
+
+# Local IoT device test certificates / private keys (used only for manual live
+# STANDALONE MQTT testing against AWS IoT Core) — never commit real key material.
+creds/
+**/creds/
+*.private.key
