@@ -18,6 +18,11 @@ on:
       - "cli/v*"
       - "streaming/v*"
 
+# Serialize runs for the same tag, but never cancel an in-flight publish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   # --- Scaffold publish for the pure-source libs (skipped for streaming/* tags) ---
   release:

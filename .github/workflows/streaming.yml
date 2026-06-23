@@ -3,7 +3,9 @@ name: streaming
 # Node/napi-rs) across platforms. Buffer-only tests need no cloud; Kinesis/Kafka integration tests
 # are #[ignore] and run only in the dedicated steps with a broker/emulator.
 on:
+  workflow_dispatch:
   push:
+    branches: ["main"]
     paths:
       - "libs/rust-streamlog/**"
       - "libs/python/ggcommons/streaming/**"
@@ -17,6 +19,10 @@ on:
       - "libs/ts/src/streaming/**"
       - "libs/java/src/main/java/com/aws/proserve/ggcommons/streaming/**"
       - ".github/workflows/streaming.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   core:
@@ -57,7 +63,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # Linux only on push/PR (Actions-minutes budget: macOS=10x, Windows=2x).
+        # Run the full cross-platform matrix on demand via "Run workflow".
+        os: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["ubuntu-latest","windows-latest","macos-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -81,7 +89,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # Linux only on push/PR (Actions-minutes budget: macOS=10x, Windows=2x).
+        # Run the full cross-platform matrix on demand via "Run workflow".
+        os: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["ubuntu-latest","windows-latest","macos-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

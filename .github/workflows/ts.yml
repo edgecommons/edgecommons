@@ -1,9 +1,15 @@
 name: ts
 on:
+  workflow_dispatch:
   push:
+    branches: ["main"]
     paths: ["libs/ts/**", "libs/rust-streamlog/bindings/node/**", "package.json", "package-lock.json", ".github/workflows/ts.yml"]
   pull_request:
     paths: ["libs/ts/**", "libs/rust-streamlog/bindings/node/**", "package.json", "package-lock.json", ".github/workflows/ts.yml"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:

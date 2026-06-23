@@ -1,9 +1,15 @@
 name: python
 on:
+  workflow_dispatch:
   push:
+    branches: ["main"]
     paths: ["libs/python/**", ".github/workflows/python.yml"]
   pull_request:
     paths: ["libs/python/**", ".github/workflows/python.yml"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:

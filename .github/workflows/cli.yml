@@ -1,9 +1,15 @@
 name: cli
 on:
+  workflow_dispatch:
   push:
+    branches: ["main"]
     paths: ["cli/**", "templates/**", ".github/workflows/cli.yml"]
   pull_request:
     paths: ["cli/**", "templates/**", ".github/workflows/cli.yml"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:

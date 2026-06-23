@@ -3,7 +3,9 @@ name: parameters-ssm
 # (LocalStack — SSM + KMS for SecureString). These exercise the SDK-bound source code that the
 # unit suites exclude. Mirrors how streaming.yml runs the Kinesis/Kafka integration tests.
 on:
+  workflow_dispatch:
   push:
+    branches: ["main"]
     paths:
       - "libs/rust/src/parameters/**"
       - "libs/python/ggcommons/parameters/**"
@@ -19,6 +21,10 @@ on:
       - "libs/java/src/main/java/com/aws/proserve/ggcommons/parameters/**"
       - "libs/*/**/test*parameters*"
       - ".github/workflows/parameters-ssm.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   ssm-integration:

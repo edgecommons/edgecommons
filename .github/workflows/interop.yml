@@ -2,10 +2,16 @@ name: interop
 # The cross-language parity guarantee: a component in each language exchanging MQTT
 # messages. Runs whenever any library or the test infra changes.
 on:
+  workflow_dispatch:
   push:
+    branches: ["main"]
     paths: ["libs/**", "schema/**", "test-infra/**", ".github/workflows/interop.yml"]
   pull_request:
     paths: ["libs/**", "schema/**", "test-infra/**", ".github/workflows/interop.yml"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   # Guarantee every language library embeds the SAME config schema: each lib carries a

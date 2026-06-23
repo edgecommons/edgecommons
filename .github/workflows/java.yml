@@ -1,9 +1,15 @@
 name: java
 on:
+  workflow_dispatch:
   push:
+    branches: ["main"]
     paths: ["libs/java/**", ".github/workflows/java.yml"]
   pull_request:
     paths: ["libs/java/**", ".github/workflows/java.yml"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
