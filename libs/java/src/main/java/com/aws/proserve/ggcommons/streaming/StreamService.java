@@ -110,6 +110,39 @@ public final class StreamService implements AutoCloseable {
         }
     }
 
+    /**
+     * Register the host {@link SinkFunction} that drains {@code callback}-type streams (the
+     * "bring-your-own-sink" extension; CloudWatch's durable buffer is the first in-tree consumer).
+     * Must be called <em>before</em> {@link #open} — the core binds the callback per stream at open
+     * time, so a callback stream opened with no sink registered stays buffer-only (records persist
+     * but are not exported) until reopened. Installs the native upcall on first use; the function
+     * itself may be replaced freely. Run with {@code --enable-native-access=ALL-UNNAMED}.
+     *
+     * @param sink the host sink invoked per export batch on the engine thread (thread-safe, prompt)
+     */
+    public static void registerSink(SinkFunction sink) {
+        SinkBridge.setSink(sink);
+    }
+
+    /** Clear the registered sink — subsequent batches become retryable failures (held on disk). */
+    public static void unregisterSink() {
+        SinkBridge.clearSink();
+    }
+
+    /**
+     * Whether the native {@code ggstreamlog} library can be loaded (so durable streaming is
+     * available). Returns {@code false} instead of throwing if the cdylib is missing — callers can
+     * fall back to a non-durable path. Mainly for tests / capability probes.
+     */
+    public static boolean nativeAvailable() {
+        try {
+            GgStreamNative.instance();
+            return true;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
     /** The config document this service was opened with. */
     public String configJson() {
         return configJson;

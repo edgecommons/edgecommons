@@ -197,6 +197,59 @@ impl MetricConfig {
             .filter(|&n| n >= 1)
             .unwrap_or(5)
     }
+
+    /// `targetConfig.buffer` object for the cloudwatch target (`None` if absent).
+    fn buffer(&self) -> Option<&Value> {
+        self.target_config.as_ref()?.get("buffer")
+    }
+
+    /// `targetConfig.buffer.type` (cloudwatch target); default `durable` per the design.
+    /// Returns the lowercased string (`durable` | `memory`).
+    pub fn buffer_type(&self) -> String {
+        self.buffer()
+            .and_then(|b| b.get("type"))
+            .and_then(Value::as_str)
+            .map(|s| s.to_ascii_lowercase())
+            .unwrap_or_else(|| "durable".to_string())
+    }
+
+    /// `targetConfig.buffer.path` (durable cloudwatch buffer directory; supports templates).
+    /// Default mirrors the design doc's per-component path.
+    pub fn buffer_path(&self) -> String {
+        self.buffer()
+            .and_then(|b| b.get("path"))
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .unwrap_or_else(|| {
+                "/var/lib/ggcommons/metrics/{ComponentName}/cw".to_string()
+            })
+    }
+
+    /// `targetConfig.buffer.maxDiskBytes`; default ~128 MiB.
+    pub fn buffer_max_disk_bytes(&self) -> u64 {
+        self.buffer()
+            .and_then(|b| b.get("maxDiskBytes"))
+            .and_then(value_as_u64)
+            .unwrap_or(134_217_728)
+    }
+
+    /// `targetConfig.buffer.onFull`; default `dropOldest` (lowercased string).
+    pub fn buffer_on_full(&self) -> String {
+        self.buffer()
+            .and_then(|b| b.get("onFull"))
+            .and_then(Value::as_str)
+            .map(|s| s.to_ascii_lowercase())
+            .unwrap_or_else(|| "dropoldest".to_string())
+    }
+
+    /// `targetConfig.buffer.fsync`; default `perBatch` (lowercased string).
+    pub fn buffer_fsync(&self) -> String {
+        self.buffer()
+            .and_then(|b| b.get("fsync"))
+            .and_then(Value::as_str)
+            .map(|s| s.to_ascii_lowercase())
+            .unwrap_or_else(|| "perbatch".to_string())
+    }
 }
 
 /// `component` section.
@@ -355,6 +408,37 @@ mod tests {
         assert_eq!(m.topic(), "my/topic");
         assert_eq!(m.destination(), "iotcore");
         assert_eq!(m.interval_secs(), 10);
+    }
+
+    #[test]
+    fn cloudwatch_buffer_defaults_to_durable_when_absent() {
+        let cfg = Config::from_value("c", "t", json!({ "metricEmission": { "target": "cloudwatch" } }))
+            .unwrap();
+        let m = &cfg.parsed.metric_emission;
+        assert_eq!(m.buffer_type(), "durable", "default buffer is durable");
+        assert_eq!(m.buffer_max_disk_bytes(), 134_217_728);
+        assert_eq!(m.buffer_on_full(), "dropoldest");
+        assert_eq!(m.buffer_fsync(), "perbatch");
+        assert_eq!(m.buffer_path(), "/var/lib/ggcommons/metrics/{ComponentName}/cw");
+    }
+
+    #[test]
+    fn cloudwatch_buffer_reads_explicit_values() {
+        let cfg = Config::from_value(
+            "c",
+            "t",
+            json!({ "metricEmission": { "target": "cloudwatch", "targetConfig": { "buffer": {
+                "type": "memory", "path": "/data/cw", "maxDiskBytes": 65536.0,
+                "onFull": "block", "fsync": "always"
+            } } } }),
+        )
+        .unwrap();
+        let m = &cfg.parsed.metric_emission;
+        assert_eq!(m.buffer_type(), "memory");
+        assert_eq!(m.buffer_path(), "/data/cw");
+        assert_eq!(m.buffer_max_disk_bytes(), 65536); // float-from-Greengrass accepted
+        assert_eq!(m.buffer_on_full(), "block");
+        assert_eq!(m.buffer_fsync(), "always");
     }
 
     #[test]

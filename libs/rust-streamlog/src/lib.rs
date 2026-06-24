@@ -30,7 +30,8 @@ pub use config::{
 };
 pub use error::{GgStreamError, Result};
 pub use export::{
-    EngineStats, ExportEngine, ExportRecord, FakeSink, FakeSinkHandle, SendOutcome, Sink,
+    CallbackSink, EngineStats, ExportEngine, ExportRecord, FakeSink, FakeSinkHandle, SendOutcome,
+    Sink, SinkCallback,
 };
 #[cfg(feature = "kinesis")]
 pub use export::KinesisSink;

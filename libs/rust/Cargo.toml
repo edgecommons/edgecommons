@@ -20,6 +20,13 @@ standalone = ["dep:rumqttc"]
 greengrass = ["dep:aws-greengrass-component-sdk"]
 # CloudWatch metric target via the AWS SDK (heavy deps; off by default).
 cloudwatch = ["dep:aws-config", "dep:aws-sdk-cloudwatch"]
+# Durable CloudWatch metric buffer: store-and-forward `PutMetricData` over the ggstreamlog
+# embedded disk buffer + export engine (a `CloudWatchSink` impl'ing the core `Sink` trait).
+# This feature alone pulls in ONLY the lightweight streaming core, so the buffer/serialize/
+# stale-drop/chunk logic + its unit tests build everywhere without the heavy AWS SDK. The real
+# `PutMetricData` send (AwsPutMetricDataSender) and production wiring additionally need the
+# `cloudwatch` feature; combine `metrics-cloudwatch-durable` + `cloudwatch` for the full target.
+metrics-cloudwatch-durable = ["streaming"]
 # Telemetry streaming: durable store-and-forward streams + export engine (ggstreamlog core).
 # `streaming` alone is buffer-only (no AWS); `streaming-kinesis` adds the real Kinesis sink.
 streaming = ["dep:ggstreamlog"]

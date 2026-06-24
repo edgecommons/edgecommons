@@ -6,10 +6,15 @@
 
 use std::sync::{Arc, Once};
 
-use ggstreamlog::{EmbeddedLog, Record, ServiceStats, StreamService as CoreService, StreamingConfig};
+use ggstreamlog::export::{CallbackSink, ExportRecord, SendOutcome};
+use ggstreamlog::{
+    EmbeddedLog, Record, ServiceStats, Sink, SinkConfig, StreamService as CoreService,
+    StreamingConfig,
+};
 use pyo3::create_exception;
 use pyo3::exceptions::PyException;
 use pyo3::prelude::*;
+use pyo3::types::{PyBytes, PyList, PyTuple};
 
 create_exception!(ggstreamlog_native, GgStreamError, PyException);
 
@@ -89,6 +94,49 @@ impl StreamService {
         Ok(Self { inner: Some(svc) })
     }
 
+    /// Open every stream in `config_json`, binding a Python callable as the export sink for every
+    /// stream whose sink is `{"type":"callback"}` (the durable CloudWatch metrics drain /
+    /// bring-your-own-sink). All other sink kinds (kinesis/kafka) are built natively as in
+    /// [`open`](Self::open).
+    ///
+    /// The export engine invokes `callback(records)` on its background thread (one call per batch);
+    /// this binding reacquires the GIL inside that call via PyO3, so the engine thread blocks until
+    /// the Python callback returns. `records` is a list of
+    /// `(offset:int, partition_key:bytes, timestamp_ms:int, payload:bytes)` tuples.
+    ///
+    /// The callback's return value is mapped to the core `SendOutcome`:
+    ///   * `None` (or any falsy non-list)  -> `AllAcked` (whole batch committed)
+    ///   * a list/tuple of int offsets     -> `Partial` (those offsets failed, retried; rest acked)
+    ///   * the tuple `("failed", error_str)` (or a bare non-empty `str`) -> `Failed` (retry whole batch)
+    /// A callback that raises is treated as `Failed{retryable:true}` (the batch is retried; no commit).
+    #[staticmethod]
+    fn open_with_callback(py: Python<'_>, config_json: &str, callback: Py<PyAny>) -> PyResult<Self> {
+        let cfg: StreamingConfig =
+            serde_json::from_str(config_json).map_err(|e| err(1, format!("config: {e}")))?;
+        // The Python callable is shared by every callback stream's sink. `Py<PyAny>` is Send+Sync;
+        // wrapping in Arc lets the `Fn` factory hand each CallbackSink its own cheap clone without
+        // needing a GIL token (the factory runs under `py.detach`, GIL released).
+        let cb = Arc::new(callback);
+        let factory =
+            move |_name: &str, sc: &SinkConfig| -> ggstreamlog::Result<Option<Box<dyn Sink>>> {
+                match sc {
+                    SinkConfig::Callback { .. } => {
+                        let cb = Arc::clone(&cb);
+                        let sink =
+                            CallbackSink::new(Box::new(move |batch: &[ExportRecord<'_>]| {
+                                invoke_py_callback(&cb, batch)
+                            }));
+                        Ok(Some(Box::new(sink)))
+                    }
+                    _ => ggstreamlog::service::default_sink_factory_pub_py(sc),
+                }
+            };
+        let svc = py
+            .detach(move || CoreService::open_with(cfg, &factory))
+            .map_err(to_pyerr)?;
+        Ok(Self { inner: Some(svc) })
+    }
+
     /// A handle to the named stream (raises ERR_UNKNOWN_STREAM if not configured).
     fn stream(&self, name: &str) -> PyResult<StreamHandle> {
         let svc = self.inner.as_ref().ok_or_else(|| err(5, "service is closed"))?;
@@ -119,6 +167,82 @@ impl StreamService {
     fn close(&mut self) {
         self.inner = None;
     }
+}
+
+// ----- host-callback sink: invoke the Python callable on the export thread -----
+
+/// Invoke the host Python callback for one export batch, reacquiring the GIL. Runs on the core
+/// export engine thread (which blocks here until Python returns), so it must never panic across the
+/// FFI boundary: a Python exception or an unexpected return type is mapped to a retryable `Failed`
+/// (the batch is re-delivered, never committed/lost). Return-value mapping is documented on
+/// [`StreamService::open_with_callback`].
+fn invoke_py_callback(cb: &Py<PyAny>, batch: &[ExportRecord<'_>]) -> SendOutcome {
+    Python::attach(|py| {
+        // Build the records list: [(offset, partition_key: bytes, ts_ms, payload: bytes), ...].
+        let items: Vec<Bound<'_, PyAny>> = batch
+            .iter()
+            .map(|r| {
+                let tup = PyTuple::new(
+                    py,
+                    [
+                        r.offset.into_pyobject(py).unwrap().into_any(),
+                        PyBytes::new(py, r.partition_key).into_any(),
+                        r.ts_ms.into_pyobject(py).unwrap().into_any(),
+                        PyBytes::new(py, r.payload).into_any(),
+                    ],
+                )
+                .unwrap();
+                tup.into_any()
+            })
+            .collect();
+        let records = match PyList::new(py, items) {
+            Ok(l) => l,
+            Err(e) => {
+                return SendOutcome::Failed {
+                    retryable: true,
+                    error: format!("failed to marshal export batch to Python: {e}"),
+                }
+            }
+        };
+        match cb.call1(py, (records,)) {
+            Ok(ret) => map_callback_result(py, ret.bind(py)),
+            Err(e) => SendOutcome::Failed {
+                retryable: true,
+                error: format!("host metrics callback raised: {e}"),
+            },
+        }
+    })
+}
+
+/// Map a Python callback return value to a [`SendOutcome`] (see `open_with_callback` docs).
+fn map_callback_result(py: Python<'_>, ret: &Bound<'_, PyAny>) -> SendOutcome {
+    // `("failed", error_str)` (or a bare str) -> retry the whole batch.
+    if let Ok(s) = ret.extract::<String>() {
+        return SendOutcome::Failed { retryable: true, error: s };
+    }
+    if let Ok(tup) = ret.downcast::<PyTuple>() {
+        if tup.len() == 2 {
+            if let Ok(tag) = tup.get_item(0).and_then(|t| t.extract::<String>()) {
+                if tag == "failed" {
+                    let msg = tup
+                        .get_item(1)
+                        .and_then(|m| m.extract::<String>())
+                        .unwrap_or_else(|_| "host sink reported failure".into());
+                    return SendOutcome::Failed { retryable: true, error: msg };
+                }
+            }
+        }
+    }
+    // A list/tuple of int offsets -> Partial (those failed; the rest acked).
+    if let Ok(offsets) = ret.extract::<Vec<u64>>() {
+        if offsets.is_empty() {
+            return SendOutcome::AllAcked;
+        }
+        return SendOutcome::Partial { failed_offsets: offsets };
+    }
+    // None / anything falsy / unrecognized -> AllAcked (whole batch committed).
+    let _ = py;
+    SendOutcome::AllAcked
 }
 
 // ----- log forwarding: core tracing -> Python logging -----

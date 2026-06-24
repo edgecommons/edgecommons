@@ -123,6 +123,38 @@
               "type": "integer",
               "minimum": 1,
               "description": "Emission interval in seconds (for cloudwatch target)"
+            },
+            "buffer": {
+              "type": "object",
+              "description": "Durable store-and-forward buffer for the cloudwatch target. When type=durable, metrics are appended to an embedded ggstreamlog disk buffer and drained to PutMetricData via a host-callback sink — surviving lengthy cloud disconnects with flat memory and a disk-bounded backlog; datums older than CloudWatch's accept window are dropped on drain. type=memory keeps today's in-memory batching.",
+              "properties": {
+                "type": {
+                  "enum": ["durable", "memory"],
+                  "default": "durable",
+                  "description": "durable = ggstreamlog disk buffer + callback drain; memory = in-memory batching."
+                },
+                "path": {
+                  "type": "string",
+                  "description": "Buffer directory (durable only; supports template variables)."
+                },
+                "maxDiskBytes": {
+                  "type": "number",
+                  "minimum": 0,
+                  "default": 134217728,
+                  "description": "Maximum on-disk backlog in bytes (default ~128 MiB)."
+                },
+                "onFull": {
+                  "enum": ["dropOldest", "block", "rejectNew"],
+                  "default": "dropOldest",
+                  "description": "Behavior when the buffer reaches maxDiskBytes."
+                },
+                "fsync": {
+                  "enum": ["perBatch", "interval", "always"],
+                  "default": "perBatch",
+                  "description": "Durability flush policy for the disk buffer."
+                }
+              },
+              "additionalProperties": false
             }
           },
           "additionalProperties": false

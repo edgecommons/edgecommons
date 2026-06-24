@@ -18,8 +18,9 @@
 //! use ggcommons::config::validation::validate;
 //! use serde_json::json;
 //!
-//! assert!(validate(&json!({ "logging": { "level": "INFO" } })).is_ok());
-//! assert!(validate(&json!({ "metricEmission": { "target": "nope" } })).is_err());
+//! // A valid document must include the required top-level `component` object.
+//! assert!(validate(&json!({ "component": {}, "logging": { "level": "INFO" } })).is_ok());
+//! assert!(validate(&json!({ "component": {}, "metricEmission": { "target": "nope" } })).is_err());
 //! ```
 //!
 //! ## Design Choices

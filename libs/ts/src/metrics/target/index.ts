@@ -9,3 +9,4 @@ export { LogTarget } from "./log";
 export { MessagingMetricTarget } from "./messaging";
 export { CloudWatchComponentTarget } from "./cloudwatch_component";
 export { CloudWatchTarget } from "./cloudwatch";
+export { DurableCloudWatchTarget } from "./cloudwatch_durable";

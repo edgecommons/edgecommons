@@ -182,7 +182,8 @@ async fn build_target(
             ))
         }
         "cloudwatch" => {
-            build_cloudwatch_target(&namespace, large_fleet, metric_config.interval_secs()).await?
+            build_cloudwatch_target(config, &namespace, large_fleet, metric_config.interval_secs())
+                .await?
         }
         other => {
             tracing::warn!(target = %other, "unknown metric target; defaulting to 'log'");
@@ -204,13 +205,35 @@ fn require_messaging(
     })
 }
 
-/// Construct the CloudWatch SDK target (feature `cloudwatch`), or error if disabled.
+/// Construct the CloudWatch target (feature `cloudwatch`), or error if disabled.
+///
+/// With `metrics-cloudwatch-durable` enabled and `targetConfig.cloudwatch.buffer.type == "durable"`
+/// (the default), this builds the disk-backed store-and-forward
+/// [`target::cloudwatch_durable::CloudWatchDurableTarget`]; otherwise (`type: memory`, or the
+/// durable feature off) it builds the in-memory [`target::cloudwatch::CloudWatchTarget`].
 #[allow(unused_variables)]
 async fn build_cloudwatch_target(
+    config: &Config,
     namespace: &str,
     large_fleet_workaround: bool,
     interval_secs: u64,
 ) -> Result<Arc<dyn MetricTarget>> {
+    #[cfg(all(feature = "metrics-cloudwatch-durable", feature = "cloudwatch"))]
+    {
+        if config.parsed.metric_emission.buffer_type() == "durable" {
+            return build_durable_cloudwatch_target(config, namespace, large_fleet_workaround);
+        }
+    }
+    #[cfg(all(feature = "metrics-cloudwatch-durable", not(feature = "cloudwatch")))]
+    {
+        if config.parsed.metric_emission.buffer_type() == "durable" {
+            return Err(GgError::Metrics(
+                "durable CloudWatch buffer requires the 'cloudwatch' cargo feature (for \
+                 PutMetricData); enable both 'metrics-cloudwatch-durable' and 'cloudwatch'"
+                    .to_string(),
+            ));
+        }
+    }
     #[cfg(feature = "cloudwatch")]
     {
         Ok(Arc::new(
@@ -224,6 +247,46 @@ async fn build_cloudwatch_target(
             "metric target 'cloudwatch' requires the 'cloudwatch' cargo feature".to_string(),
         ))
     }
+}
+
+/// Build the durable (disk-backed store-and-forward) CloudWatch target: resolve the buffer path
+/// template, map the `onFull`/`fsync` policies, and open the ggstreamlog buffer draining to a real
+/// AWS `PutMetricData` sender.
+#[cfg(all(feature = "metrics-cloudwatch-durable", feature = "cloudwatch"))]
+fn build_durable_cloudwatch_target(
+    config: &Config,
+    namespace: &str,
+    large_fleet_workaround: bool,
+) -> Result<Arc<dyn MetricTarget>> {
+    use ggstreamlog::config::{FsyncPolicy, OnFull};
+    use target::cloudwatch_durable::{
+        AwsPutMetricDataSender, CloudWatchDurableTarget, DurableBufferSettings,
+    };
+
+    let mc = &config.parsed.metric_emission;
+    let on_full = match mc.buffer_on_full().as_str() {
+        "block" => OnFull::Block,
+        "rejectnew" | "reject_new" => OnFull::RejectNew,
+        _ => OnFull::DropOldest,
+    };
+    let fsync = match mc.buffer_fsync().as_str() {
+        "interval" => FsyncPolicy::Interval,
+        "always" => FsyncPolicy::Always,
+        _ => FsyncPolicy::PerBatch,
+    };
+    let settings = DurableBufferSettings {
+        path: resolve(config, &mc.buffer_path()),
+        max_disk_bytes: mc.buffer_max_disk_bytes(),
+        on_full,
+        fsync,
+    };
+    let target = CloudWatchDurableTarget::open(
+        namespace,
+        large_fleet_workaround,
+        settings,
+        AwsPutMetricDataSender::new,
+    )?;
+    Ok(Arc::new(target))
 }
 
 #[async_trait]

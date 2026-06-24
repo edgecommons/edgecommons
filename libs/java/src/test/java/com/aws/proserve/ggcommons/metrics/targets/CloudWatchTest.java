@@ -70,7 +70,7 @@ class CloudWatchTest {
 
     @Test
     void periodicFlushSendsQueuedMetrics() {
-        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":1}}");
+        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":1,\"buffer\":{\"type\":\"memory\"}}}");
         CloudWatchClient client = mock(CloudWatchClient.class);
         cloudWatch = new CloudWatch(config, client);
 
@@ -84,7 +84,7 @@ class CloudWatchTest {
 
     @Test
     void configurationChangeReschedulesFlush() {
-        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":1}}");
+        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":1,\"buffer\":{\"type\":\"memory\"}}}");
         CloudWatchClient client = mock(CloudWatchClient.class);
         cloudWatch = new CloudWatch(config, client);
 
@@ -100,7 +100,7 @@ class CloudWatchTest {
 
     @Test
     void emitMetricNowSendsToCloudWatchImmediately() {
-        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600}}");
+        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600,\"buffer\":{\"type\":\"memory\"}}}");
         CloudWatchClient client = mock(CloudWatchClient.class);
         cloudWatch = new CloudWatch(config, client);
 
@@ -113,7 +113,7 @@ class CloudWatchTest {
 
     @Test
     void emitMetricNowSwallowsCloudWatchException() {
-        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600}}");
+        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600,\"buffer\":{\"type\":\"memory\"}}}");
         CloudWatchClient client = mock(CloudWatchClient.class);
         when(client.putMetricData(any(PutMetricDataRequest.class)))
                 .thenThrow(CloudWatchException.builder().message("boom").build());
@@ -128,7 +128,7 @@ class CloudWatchTest {
 
     @Test
     void emitMetricBuffersUntilFlush() {
-        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600}}");
+        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600,\"buffer\":{\"type\":\"memory\"}}}");
         CloudWatchClient client = mock(CloudWatchClient.class);
         cloudWatch = new CloudWatch(config, client);
 
@@ -144,7 +144,7 @@ class CloudWatchTest {
 
     @Test
     void flushChunksWhenExceeding1000Datums() {
-        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600}}");
+        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600,\"buffer\":{\"type\":\"memory\"}}}");
         CloudWatchClient client = mock(CloudWatchClient.class);
         cloudWatch = new CloudWatch(config, client);
 
@@ -168,7 +168,7 @@ class CloudWatchTest {
 
     @Test
     void flushIsolatesFailuresPerNamespace() {
-        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600}}");
+        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600,\"buffer\":{\"type\":\"memory\"}}}");
         CloudWatchClient client = mock(CloudWatchClient.class);
         when(client.putMetricData(any(PutMetricDataRequest.class)))
                 .thenThrow(new RuntimeException("network down"));
@@ -186,7 +186,7 @@ class CloudWatchTest {
 
     @Test
     void largeFleetWorkaroundDoublesDatums() {
-        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"largeFleetWorkaround\":true,\"targetConfig\":{\"intervalSecs\":3600}}");
+        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"largeFleetWorkaround\":true,\"targetConfig\":{\"intervalSecs\":3600,\"buffer\":{\"type\":\"memory\"}}}");
         CloudWatchClient client = mock(CloudWatchClient.class);
         cloudWatch = new CloudWatch(config, client);
 
@@ -200,7 +200,7 @@ class CloudWatchTest {
 
     @Test
     void onConfigurationChangedReinitializesTimer() {
-        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600}}");
+        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600,\"buffer\":{\"type\":\"memory\"}}}");
         CloudWatchClient client = mock(CloudWatchClient.class);
         cloudWatch = new CloudWatch(config, client);
 
@@ -209,7 +209,7 @@ class CloudWatchTest {
 
     @Test
     void closeCancelsTimerAndClosesClient() {
-        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600}}");
+        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600,\"buffer\":{\"type\":\"memory\"}}}");
         CloudWatchClient client = mock(CloudWatchClient.class);
         var cw = new CloudWatch(config, client);
 
@@ -221,7 +221,7 @@ class CloudWatchTest {
 
     @Test
     void closeSwallowsClientCloseException() {
-        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600}}");
+        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600,\"buffer\":{\"type\":\"memory\"}}}");
         CloudWatchClient client = mock(CloudWatchClient.class);
         doThrow(new RuntimeException("close failed")).when(client).close();
         var cw = new CloudWatch(config, client);

@@ -200,6 +200,16 @@ pub enum SinkConfig {
         #[serde(default)]
         properties: std::collections::BTreeMap<String, String>,
     },
+    /// A host-provided sink (the CloudWatch metrics drain, or a caller's "bring-your-own-sink").
+    /// The send logic lives in the host; the engine drives it through a
+    /// [`crate::export::CallbackSink`]. The actual callback is bound at `open_with` time (Rust lib)
+    /// or via the C-ABI sink-callback registration (language bindings). The default sink factory has
+    /// no callback, so a `callback` stream opened via [`crate::StreamService::open`] is buffer-only.
+    Callback {
+        /// Optional id, to route to a specific host callback when several callback streams exist.
+        #[serde(default)]
+        id: Option<String>,
+    },
 }
 
 /// One configured stream: a name, its export sink, durable buffer, and batching/delivery tuning.
@@ -315,5 +325,20 @@ mod tests {
         let disk = BufferConfig::default();
         assert_eq!(disk.store_type, StoreType::Disk);
         assert!(disk.validate().is_err(), "disk buffer still requires a path");
+    }
+
+    #[test]
+    fn parses_callback_sink() {
+        // Bare callback sink (single host callback).
+        let json = r#"{"streams":[{"name":"cw","sink":{"type":"callback"},
+            "buffer":{"path":"/tmp/x","segmentBytes":65536,"maxDiskBytes":1048576}}]}"#;
+        let cfg: StreamingConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.streams[0].sink, SinkConfig::Callback { id: None });
+
+        // With an explicit id for routing among several callback streams.
+        let json = r#"{"streams":[{"name":"cw","sink":{"type":"callback","id":"metrics-cw"},
+            "buffer":{"path":"/tmp/x","segmentBytes":65536,"maxDiskBytes":1048576}}]}"#;
+        let cfg: StreamingConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.streams[0].sink, SinkConfig::Callback { id: Some("metrics-cw".into()) });
     }
 }

@@ -589,4 +589,6 @@ if (!nativeBinding) {
 module.exports = nativeBinding
 module.exports.StreamHandle = nativeBinding.StreamHandle
 module.exports.StreamService = nativeBinding.StreamService
+module.exports.registerSinkCallback = nativeBinding.registerSinkCallback
+module.exports.resolveOutcome = nativeBinding.resolveOutcome
 module.exports.setLogCallback = nativeBinding.setLogCallback

@@ -19,6 +19,7 @@ import { LogTarget } from "./target/log";
 import { MessagingMetricTarget } from "./target/messaging";
 import { CloudWatchComponentTarget } from "./target/cloudwatch_component";
 import { CloudWatchTarget } from "./target/cloudwatch";
+import { DurableCloudWatchTarget } from "./target/cloudwatch_durable";
 import { Config } from "../config/model";
 import { resolve } from "../config/template";
 import type { ConfigurationChangeListener } from "../config";
@@ -74,8 +75,28 @@ async function buildTarget(config: Config, messaging: IMessagingService | undefi
       const topic = resolve(config, mc.topic());
       return new CloudWatchComponentTarget(svc, topic, namespace);
     }
-    case "cloudwatch":
-      return CloudWatchTarget.create(namespace, largeFleet, mc.intervalSecs());
+    case "cloudwatch": {
+      // The cloudwatch target defaults to a durable (disk-backed) store-and-forward buffer that
+      // survives lengthy cloud disconnects; `targetConfig.cloudwatch.buffer.type: memory` opts back
+      // into the legacy in-memory batching target.
+      const buffer = mc.cloudwatchBuffer();
+      if (buffer !== undefined && buffer.type === "memory") {
+        return CloudWatchTarget.create(namespace, largeFleet, mc.intervalSecs());
+      }
+      const buf = buffer ?? {
+        type: "durable" as const,
+        path: "/var/lib/ggcommons/metrics/{ComponentName}/cw",
+        maxDiskBytes: 128 * 1024 * 1024,
+        onFull: "dropOldest" as const,
+        fsync: "perBatch" as const,
+      };
+      return DurableCloudWatchTarget.create(namespace, largeFleet, mc.intervalSecs(), {
+        path: resolve(config, buf.path),
+        maxDiskBytes: buf.maxDiskBytes,
+        onFull: buf.onFull,
+        fsync: buf.fsync,
+      });
+    }
     default:
       // eslint-disable-next-line no-console
       console.warn(`unknown metric target '${targetName}'; defaulting to 'log'`);
