@@ -68,8 +68,8 @@ jobs:
         run: mvn -B -ntp -DskipTests package
         working-directory: libs/java
 
-      - name: Install the Python library (importable by the python interop node)
-        run: pip install -e libs/python
+      - name: Install the Python library + pytest (the interop matrix runner)
+        run: pip install pytest -e libs/python
 
       - name: Run the cross-language interop matrix (request/reply + raw)
         run: python -m pytest test-infra/interop/test_interop.py -v
