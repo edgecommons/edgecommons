@@ -18,7 +18,7 @@ jobs:
     # self-skip without one, which would let coverage fall below the threshold).
     services:
       emqx:
-        image: emqx/emqx:5
+        image: emqx/emqx:latest
         ports:
           - 1883:1883
     steps:

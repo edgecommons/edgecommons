@@ -22,7 +22,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "21"
+          java-version: "25"
           cache: maven
       # The broker-backed TLS/dual-broker tests self-skip (JUnit assumptions) without
       # GGCOMMONS_TLS_CERTS_DIR; the in-process Moquette + unit tests run + coverage gate.
