@@ -4,9 +4,9 @@
     "java_format": "%d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %-5level %logger{36} - %msg%n",
     "globalControl": true,
     "loggers": {
-      "com.aws.proserve.javacomponentskeleton": "DEBUG",
-      "com.aws.proserve.ggcommons": "DEBUG",
-      "com.aws.proserve.ggcommons.messaging": "INFO",
+      "com.breissinger.javacomponentskeleton": "DEBUG",
+      "com.breissinger.ggcommons": "DEBUG",
+      "com.breissinger.ggcommons.messaging": "INFO",
       "org.apache.http": "WARN"
     }
   },

@@ -258,8 +258,8 @@ ggcommons create-component -n com.example.MyComponent -l PYTHON   # JAVA | PYTHO
 
 <div class="code-sample" data-sample="bootstrap"></div>
 <script type="text/plain" class="src" data-sample="bootstrap" data-lang="java" data-file="App.java">
-import com.aws.proserve.ggcommons.GGCommons;
-import com.aws.proserve.ggcommons.GGCommonsBuilder;
+import com.breissinger.ggcommons.GGCommons;
+import com.breissinger.ggcommons.GGCommonsBuilder;
 
 public class App {
     public static void main(String[] args) {
@@ -1071,8 +1071,8 @@ and per-logger overrides. Log file paths support the same template variables as 
     "fileLogging": true,
     "logFilePath": "/greengrass/v2/logs/{ComponentName}-{ThingName}.log",
     "loggers": {
-      "com.aws.proserve.ggcommons.messaging": "INFO",
-      "com.aws.proserve.ggcommons.metrics": "WARN"
+      "com.breissinger.ggcommons.messaging": "INFO",
+      "com.breissinger.ggcommons.metrics": "WARN"
     }
   }
 }</code></pre></div></div>

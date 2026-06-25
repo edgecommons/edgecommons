@@ -8,8 +8,8 @@
       "filePath": "/var/log/{ComponentName}-{ThingName}.log"
     },
     "loggers": {
-      "com.aws.proserve.ggcommons": "DEBUG",
-      "com.aws.proserve.ggcommons.messaging": "TRACE",
+      "com.breissinger.ggcommons": "DEBUG",
+      "com.breissinger.ggcommons.messaging": "TRACE",
       "org.apache.http": "WARN"
     }
   },

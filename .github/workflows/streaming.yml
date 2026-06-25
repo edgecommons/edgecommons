@@ -10,14 +10,14 @@ on:
       - "libs/rust-streamlog/**"
       - "libs/python/ggcommons/streaming/**"
       - "libs/ts/src/streaming/**"
-      - "libs/java/src/main/java/com/aws/proserve/ggcommons/streaming/**"
+      - "libs/java/src/main/java/com/breissinger/ggcommons/streaming/**"
       - ".github/workflows/streaming.yml"
   pull_request:
     paths:
       - "libs/rust-streamlog/**"
       - "libs/python/ggcommons/streaming/**"
       - "libs/ts/src/streaming/**"
-      - "libs/java/src/main/java/com/aws/proserve/ggcommons/streaming/**"
+      - "libs/java/src/main/java/com/breissinger/ggcommons/streaming/**"
       - ".github/workflows/streaming.yml"
 
 concurrency:

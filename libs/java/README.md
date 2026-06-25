@@ -1,7 +1,7 @@
 # GGCommons Java Library
 
 The **canonical** implementation of the Greengrass Commons library (Maven artifact
-`com.aws.proserve:ggcommons`) for building AWS IoT Greengrass v2 components with built-in
+`com.breissinger:ggcommons`) for building AWS IoT Greengrass v2 components with built-in
 configuration management, messaging, metrics, heartbeat, logging, credentials (encrypted vault),
 parameters (externalized config), and telemetry streaming. It is one of four parallel
 implementations (Java, Python, Rust, TypeScript); Java is the reference the others mirror. See the
@@ -64,7 +64,7 @@ Add the GGCommons library to your Maven project:
 
 ```xml
 <dependency>
-    <groupId>com.aws.proserve</groupId>
+    <groupId>com.breissinger</groupId>
     <artifactId>ggcommons</artifactId>
     <version>1.3.2-SNAPSHOT</version>
 </dependency>

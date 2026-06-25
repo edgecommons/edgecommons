@@ -90,9 +90,9 @@ This configuration enables both console and file logging with DEBUG level, using
     "fileLogging": true,
     "logFilePath": "/greengrass/v2/logs/{ComponentFullName}.log",
     "loggers": {
-      "com.aws.proserve.ggcommons.metrics": "DEBUG",
-      "com.aws.proserve.ggcommons.messaging": "INFO",
-      "com.aws.proserve.ggcommons.heartbeat": "WARN"
+      "com.breissinger.ggcommons.metrics": "DEBUG",
+      "com.breissinger.ggcommons.messaging": "INFO",
+      "com.breissinger.ggcommons.heartbeat": "WARN"
     }
   }
 }
@@ -110,7 +110,7 @@ This configuration demonstrates global control with different log levels for spe
     "logFilePath": "./logs/debug-{ComponentName}.log",
     "loggers": {
       "root": "DEBUG",
-      "com.aws.proserve.ggcommons": "TRACE",
+      "com.breissinger.ggcommons": "TRACE",
       "software.amazon.awssdk": "WARN",
       "org.eclipse.paho": "ERROR"
     }
@@ -129,9 +129,9 @@ This configuration is optimized for development with detailed logging for ggcomm
     "fileLogging": true,
     "logFilePath": "/greengrass/v2/logs/{ComponentName}.log",
     "loggers": {
-      "com.aws.proserve.ggcommons.metrics": "WARN",
-      "com.aws.proserve.ggcommons.messaging": "INFO",
-      "com.aws.proserve.ggcommons.config": "WARN"
+      "com.breissinger.ggcommons.metrics": "WARN",
+      "com.breissinger.ggcommons.messaging": "INFO",
+      "com.breissinger.ggcommons.config": "WARN"
     }
   }
 }
@@ -186,6 +186,6 @@ Log file paths and other configuration strings support the same template variabl
 - **Configuration not applied**: Ensure globalControl is enabled for full control
 
 ### Debugging Configuration
-- Enable DEBUG level for `com.aws.proserve.ggcommons.config` to see configuration loading
+- Enable DEBUG level for `com.breissinger.ggcommons.config` to see configuration loading
 - Check for configuration validation errors in startup logs
 - Verify template variable resolution in resolved file paths

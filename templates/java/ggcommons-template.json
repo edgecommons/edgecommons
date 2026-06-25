@@ -5,10 +5,10 @@
     "recipe.yaml": ["DESCRIPTION", "COMPONENTFULLNAME", "AUTHOR", "JARNAME", "MAINCLASSNAME"],
     "gdk-config.json": ["COMPONENTFULLNAME", "AUTHOR", "BUCKET", "REGION"],
     "pom.xml": ["PACKAGE", "JARNAME", "COMPONENTNAME"],
-    "src/main/java/com/aws/proserve/testcomponent/App.java": ["PACKAGE", "COMPONENTNAME", "COMPONENTFULLNAME"]
+    "src/main/java/com/breissinger/testcomponent/App.java": ["PACKAGE", "COMPONENTNAME", "COMPONENTFULLNAME"]
   },
   "renames": [
-    {"from": "src/main/java/com/aws/proserve/testcomponent", "to": "src/main/java/{PACKAGEPATH}"},
+    {"from": "src/main/java/com/breissinger/testcomponent", "to": "src/main/java/{PACKAGEPATH}"},
     {"from": "src/main/java/{PACKAGEPATH}/App.java", "to": "src/main/java/{PACKAGEPATH}/{COMPONENTNAME}.java"},
     {"from": "test-configs/TestComponent.json", "to": "test-configs/{COMPONENTNAME}.json"}
   ]

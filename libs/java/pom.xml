@@ -2,7 +2,7 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>com.aws.proserve</groupId>
+    <groupId>com.breissinger</groupId>
     <artifactId>ggcommons</artifactId>
     <version>1.3.2-SNAPSHOT</version>
     <packaging>jar</packaging>
@@ -261,13 +261,13 @@
                          validated on-device and by the manual GGCommonsTest integration test,
                          so they are excluded from the in-process coverage gate. -->
                     <excludes>
-                        <exclude>com/aws/proserve/ggcommons/messaging/providers/greengrass/**</exclude>
-                        <exclude>com/aws/proserve/ggcommons/config/provider/GreengrassConfigProvider*</exclude>
-                        <exclude>com/aws/proserve/ggcommons/config/provider/ShadowConfigProvider*</exclude>
-                        <exclude>com/aws/proserve/ggcommons/config/provider/ConfigComponentProvider*</exclude>
+                        <exclude>com/breissinger/ggcommons/messaging/providers/greengrass/**</exclude>
+                        <exclude>com/breissinger/ggcommons/config/provider/GreengrassConfigProvider*</exclude>
+                        <exclude>com/breissinger/ggcommons/config/provider/ShadowConfigProvider*</exclude>
+                        <exclude>com/breissinger/ggcommons/config/provider/ConfigComponentProvider*</exclude>
                         <!-- Native FFI glue (Panama): only executes with the ggstreamlog cdylib
                              present; validated by the gated native test + the Rust C smoke test. -->
-                        <exclude>com/aws/proserve/ggcommons/streaming/**</exclude>
+                        <exclude>com/breissinger/ggcommons/streaming/**</exclude>
                     </excludes>
                 </configuration>
                 <executions>

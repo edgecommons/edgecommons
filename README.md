@@ -36,7 +36,7 @@ The standard CLI contract is identical across all four languages:
 
 | Path | What it is | Stack |
 |------|-----------|-------|
-| `libs/java/` | The **canonical**, most complete library. Maven artifact `com.aws.proserve:ggcommons`. | Java 25, Maven |
+| `libs/java/` | The **canonical**, most complete library. Maven artifact `com.breissinger:ggcommons`. | Java 25, Maven |
 | `libs/python/` | The Python port (PyPI `greengrass-commons`). | Python 3.9+, setuptools |
 | `libs/rust/` | The Rust port (crate `ggcommons`). | Rust (edition 2024), Cargo |
 | `libs/ts/` | The TypeScript port (npm `ggcommons`). | TypeScript 5 / Node 18+ |

@@ -1,8 +1,8 @@
-import com.aws.proserve.ggcommons.config.ConfigManager;
-import com.aws.proserve.ggcommons.messaging.Message;
-import com.aws.proserve.ggcommons.messaging.MessageBuilder;
-import com.aws.proserve.ggcommons.messaging.MessagingConfiguration;
-import com.aws.proserve.ggcommons.messaging.providers.standalone.StandaloneMessagingProvider;
+import com.breissinger.ggcommons.config.ConfigManager;
+import com.breissinger.ggcommons.messaging.Message;
+import com.breissinger.ggcommons.messaging.MessageBuilder;
+import com.breissinger.ggcommons.messaging.MessagingConfiguration;
+import com.breissinger.ggcommons.messaging.providers.standalone.StandaloneMessagingProvider;
 import com.google.gson.Gson;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
