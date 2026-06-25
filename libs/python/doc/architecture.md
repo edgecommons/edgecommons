@@ -23,10 +23,11 @@ gg = GGCommonsBuilder.create("com.example.MyComponent").with_args(args).build()
 
 `GGCommons.__init__` (`ggcommons/ggcommons.py`) is the orchestrator and runs a fixed sequence:
 
-1. **Argument processing** — parse the standard `-c/-m/-t` contract (plus any app parser).
+1. **Argument processing** — parse the standard `-c` / `--platform` / `--transport` / `-t` contract
+   (plus any app parser).
 2. **Configuration** — `ConfigManagerBuilder.build()` selects the config-source manager and loads +
    validates the config.
-3. **Messaging** — `MessagingClient.init()` selects the provider for the runtime mode.
+3. **Messaging** — `MessagingClient.init()` selects the provider for the resolved transport.
 4. **Metrics** — `MetricEmitter.init()` wires the configured metric target(s).
 5. **Heartbeat** — `EnhancedHeartbeat` starts (with messaging + metric services passed in).
 6. **Opt-in subsystems** — credentials / parameters / streaming initialize **only if** their config
@@ -77,8 +78,9 @@ except ConfigurationValidationException as e:
 ```
 
 ### Messaging (`ggcommons/messaging/`)
-`MessagingClient.init()` picks the provider based on mode: `GreengrassIpcProvider` (IPC) or
-`StandaloneProvider` (dual local-MQTT + IoT Core). Both implement `MessagingProvider`. Connections
+`MessagingClient.init()` picks the provider based on the resolved transport: `GreengrassIpcProvider`
+(`IPC` transport) or `StandaloneProvider` (`MQTT` transport — dual local-MQTT + IoT Core). Both
+implement `MessagingProvider`. Connections
 and subscriptions are **blocking** — they wait for confirmation (e.g. SUBACK) before proceeding, to
 avoid IoT Core connection races. Supports request/reply with correlation; the on-wire envelope is
 identical across all four languages.

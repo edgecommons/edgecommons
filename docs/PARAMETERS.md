@@ -14,8 +14,8 @@ A new, **independent** ggcommons subsystem — a peer of `config` / `messaging` 
 parameters/config. Exposed as `gg.parameters()` → `IParameterService`.
 
 The **source is pluggable** (`ParameterSource`): AWS SSM Parameter Store is the default cloud
-source, and Kubernetes / Docker / env / file sources cover STANDALONE deployments. The service
-(cache, refresh, typed reads, offline-first) is identical regardless of source.
+source, and Kubernetes / Docker / env / file sources cover HOST and KUBERNETES deployments. The
+service (cache, refresh, typed reads, offline-first) is identical regardless of source.
 
 ## 1. Why a separate, source-pluggable service
 
@@ -30,9 +30,9 @@ routinely use **both at the same time**:
 
 Folding SSM into `credentials` as a `CentralVaultSource` was rejected (wrong abstraction —
 forces config-grade params through the secrets-vault model, conflates two concerns). And the
-source must be **pluggable**, because ggcommons runs in two worlds (per the project's runtime
-modes): GREENGRASS (AWS-native → SSM via TES) and **STANDALONE for Kubernetes/Docker/bare
-containers**, where the equivalent is K8s ConfigMaps/Secrets, Docker secrets, or env — not SSM.
+source must be **pluggable**, because ggcommons runs across multiple platforms: `GREENGRASS`
+(AWS-native → SSM via TES) and **`HOST` / `KUBERNETES` for Docker/bare containers/k8s**, where the
+equivalent is K8s ConfigMaps/Secrets, Docker secrets, or env — not SSM.
 
 ## 2. Pluggable parameter sources
 
@@ -46,11 +46,11 @@ ParamValue { value: bytes/str, secure: bool, version: Option<String> }
 
 Built-in implementations (selected by `parameters.source.type`):
 
-| Source | `type` | Backend | Typical mode |
+| Source | `type` | Backend | Typical platform |
 |--------|--------|---------|--------------|
 | **AWS SSM Parameter Store** | `awsSsm` | `GetParameter(s)` / `GetParametersByPath`, `WithDecryption=true` | GREENGRASS (TES) / EC2 / any AWS |
-| **Mounted directory** | `mountedDir` | a directory tree of files — **K8s ConfigMap/Secret volume mounts**, **Docker secrets (`/run/secrets`)**, bare config dirs. Subdirs → paths, files → params; configured subpaths flagged `secure`. | STANDALONE / Kubernetes / Docker |
-| **Environment** | `env` | env vars under a prefix (`MYAPP_*` → `/myapp/*`) | STANDALONE / containers |
+| **Mounted directory** | `mountedDir` | a directory tree of files — **K8s ConfigMap/Secret volume mounts**, **Docker secrets (`/run/secrets`)**, bare config dirs. Subdirs → paths, files → params; configured subpaths flagged `secure`. | HOST / KUBERNETES / Docker |
+| **Environment** | `env` | env vars under a prefix (`MYAPP_*` → `/myapp/*`) | HOST / containers |
 | *custom* | `custom` | host-supplied `ParameterSource` instance (HashiCorp, Azure App Config, GCP, K8s API client, …) | any |
 
 The `mountedDir` source is the idiomatic K8s/Docker mechanism (config/secrets projected as

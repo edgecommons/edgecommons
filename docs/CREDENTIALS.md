@@ -81,8 +81,8 @@ one consumer of it (this is what fixes `TELEMETRY_STREAMING.md` §7).
   > vault path is the relative `vault` and **every example recipe points at
   > `/greengrass/v2/work/{ComponentFullName}/vault`** — i.e. each component gets its own vault in
   > its own work dir. A true shared vault needs a single **device-wide location writable by
-  > `ggc_user`** and addressable identically across all config providers and runtime modes
-  > (GREENGRASS / STANDALONE / K8S). That is the **same unsolved problem** as a shared parameter
+  > `ggc_user`** and addressable identically across all config providers and platforms
+  > (GREENGRASS / HOST / KUBERNETES). That is the **same unsolved problem** as a shared parameter
   > cache and shared config, so the three are being designed together — see
   > [`SHARED_CONFIG.md`](SHARED_CONFIG.md). The collision-avoidance **key namespacing** below is
   > already shipped, so moving to a shared path is a configuration change, not a rewrite.
@@ -199,9 +199,9 @@ is identical across all of them (only the `kek.provider` field differs).
 | **env** | KEK (base64) from an env var | local AES-Key-Wrap | ✅ | dev / k8s secret-as-env |
 
 **Default selection (confirmed):**
-- GREENGRASS: **HSM/TPM if the device exposes one**, else **KMS-via-TES with a `file` keyfile
-  fallback** (so a cold boot with no cloud can still unlock).
-- STANDALONE: **hsm/tpm if present**, else **file**.
+- `--platform GREENGRASS`: **HSM/TPM if the device exposes one**, else **KMS-via-TES with a `file`
+  keyfile fallback** (so a cold boot with no cloud can still unlock).
+- `--platform HOST`: **hsm/tpm if present**, else **file**.
 
 The HSM/TPM provider is treated as a first-class custodian from the start (not a "later"
 add-on): the `KeyProvider` interface and the on-disk envelope are designed so a PKCS#11
@@ -329,7 +329,7 @@ credentials:
 - **Streaming (fixes §7).** `KinesisSink`/`KafkaSink` stop owning credential logic; they
   request `getAwsCredentials(...)` / `getKafkaSasl(...)` from the credential service and
   re-fetch on a rotation listener. The streaming sink-credential config becomes a `secretRef`.
-- **Messaging.** STANDALONE mTLS to IoT Core can pull its cert/key/CA via `getTlsBundle(...)`
+- **Messaging.** The MQTT transport's mTLS to IoT Core can pull its cert/key/CA via `getTlsBundle(...)`
   instead of plaintext file paths in the messaging config.
 - **Config `secretRef` indirection (later).** A config value may be `{ "$secret": "name" }`,
   resolved **lazily at use-time** by the lib — so the secret is never substituted into the

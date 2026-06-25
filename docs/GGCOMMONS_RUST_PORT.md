@@ -1,6 +1,6 @@
 # GGCommons — Rust Port: Design & Implementation Plan
 
-Status: **Complete — all phases delivered and validated on-device** (STANDALONE runtime, cross-language parity, and Greengrass IPC incl. `GG_CONFIG`/`SHADOW`/`CONFIG_COMPONENT` and the real-time device-shadow round-trip, validated against a live Greengrass core, non-root) · Target: feature parity with `ggcommons-java-lib`
+Status: **Complete — all phases delivered and validated on-device** (HOST platform, cross-language parity, and Greengrass IPC incl. `GG_CONFIG`/`SHADOW`/`CONFIG_COMPONENT` and the real-time device-shadow round-trip, validated against a live Greengrass core, non-root) · Target: feature parity with `ggcommons-java-lib`
 
 > The "Phases 0–3" framing and the dated **Decisions (2026-06-15)** below are the original plan, preserved as a historical record. Phase-by-phase results (including Phase 2's on-device validation) are captured in the implementation sections later in this document.
 
@@ -8,7 +8,7 @@ This document is the full design and delivery plan for a Rust implementation of 
 
 ### Decisions (2026-06-15)
 - **Coexistence, not replacement.** The Rust library is a **third implementation** alongside Java and Python — it replaces neither. It must track the same config schema and CLI contract so all three stay at cross-language parity. This is a three-way parity commitment, with its maintenance cost accepted.
-- **Standalone MVP ships first.** The committed near-term deliverable is the **standalone-mode MVP (Phases 0–1)** — useful for Kubernetes/Docker/container deployments without a Greengrass core. Greengrass IPC parity (Phases 2–3) is planned follow-on, not part of the first ship.
+- **HOST-platform MVP ships first.** The committed near-term deliverable is the **HOST-platform MVP (Phases 0–1)** — useful for Kubernetes/Docker/container deployments without a Greengrass core. Greengrass IPC parity (Phases 2–3) is planned follow-on, not part of the first ship.
 - Remaining open items (MQTT stack, publishing target, logging parity bar) are in §18.
 
 ---
@@ -20,7 +20,7 @@ Produce a Rust library, crate name **`ggcommons`** (published as `greengrass-com
 The Rust port targets **feature parity with the Java library** (the canonical reference), not the Python subset.
 
 ### Goals
-- Functional parity with the Java library's public behavior: the standard CLI contract, two runtime modes (GREENGRASS / STANDALONE), all five config sources, all four metric targets, request/reply messaging, heartbeat, JSON-schema config validation.
+- Functional parity with the Java library's public behavior: the standard CLI contract, the platform×transport model (GREENGRASS / HOST platforms; IPC / MQTT transports), all five config sources, all four metric targets, request/reply messaging, heartbeat, JSON-schema config validation.
 - Idiomatic, async, `tokio`-based Rust with a small dependency surface and small runtime footprint.
 - A library that is **correct by construction** — using ownership, RAII, and typed errors to structurally avoid the defect classes found in the Java code review (see §11).
 - Small static binaries that cross-compile to edge targets (`aarch64`/`armv7`, musl).
@@ -34,14 +34,23 @@ The Rust port targets **feature parity with the Java library** (the canonical re
 
 ## 2. Background: what must be preserved
 
-**Runtime modes** (selected at startup via `-m/--mode`):
-- **GREENGRASS** (default): Greengrass IPC for messaging; config from the Greengrass deployment.
-- **STANDALONE**: dual-MQTT (local broker + AWS IoT Core) for K8s/Docker/bare containers; requires a separate messaging-config JSON file.
+**Platform × transport** (two independent axes selected at startup):
+- **`--platform`** `GREENGRASS | HOST | KUBERNETES | auto` (default `auto`, auto-detected).
+  **GREENGRASS** uses Greengrass IPC for messaging and reads config from the Greengrass deployment;
+  **HOST** uses dual-MQTT (local broker + AWS IoT Core) for Docker/bare containers; **KUBERNETES** is
+  declared but not yet wired (Phase 1 of the platform model).
+- **`--transport`** `IPC | MQTT [messaging_config.json]` — default derived from the platform
+  (GREENGRASS ⇒ IPC, HOST/KUBERNETES ⇒ MQTT); **IPC is valid only on GREENGRASS**. The MQTT transport
+  takes an optional messaging-config JSON path.
 
 **Standard CLI contract** (must match Java/Python exactly):
 - `-c/--config <SOURCE> [args...]` — `FILE | ENV | GG_CONFIG (default) | SHADOW | CONFIG_COMPONENT`
-- `-m/--mode <MODE> [path]` — `GREENGRASS (default) | STANDALONE <messaging_config.json>` (STANDALONE without a path is a hard error)
+- `--platform <PLATFORM>` — `GREENGRASS | HOST | KUBERNETES | auto` (default `auto`)
+- `--transport <TRANSPORT> [path]` — `IPC | MQTT [messaging_config.json]` (IPC only valid on GREENGRASS)
 - `-t/--thing <name>` — IoT Thing name; must take the **full** string value
+
+> The legacy `-m/--mode` flag has been **removed**: `-m GREENGRASS` → `--platform GREENGRASS`;
+> `-m STANDALONE <path>` → `--platform HOST --transport MQTT <path>`. It now errors with this guidance.
 
 **Config schema** (carried over verbatim — see §13).
 
@@ -103,7 +112,7 @@ ggcommons/
   src/
     lib.rs              # public API: GgCommons, GgCommonsBuilder, prelude
     error.rs            # GgError (thiserror), Result alias
-    cli.rs              # clap parser -> ParsedArgs { mode, config_source, thing }
+    cli.rs              # clap parser -> ParsedArgs { platform, transport, config_source, thing }
     config/
       mod.rs            # ConfigService trait, Config snapshot, ConfigHandle
       model.rs          # serde structs (Logging/Heartbeat/Metric/Tag/Component)
@@ -396,19 +405,19 @@ Sequencing puts all **device-free** work first; the only Greengrass-core-depende
 
 ### Phase 0 — Foundations (1–2 wks)
 - Crate scaffold, `Cargo.toml` features, CI.
-- `error.rs` (`GgError`); `cli.rs` (clap, full `-c`/`-m`/`-t` contract incl. STANDALONE-needs-path hard error and full-string `-t`).
+- `error.rs` (`GgError`); `cli.rs` (clap, full `-c`/`--platform`/`--transport`/`-t` contract incl. IPC-only-on-GREENGRASS validation and full-string `-t`).
 - Config model (`serde`), embedded JSON schema + `jsonschema` validation, template substitution.
 - `tracing` logging baseline.
 - **Deliverable:** parses args, loads + validates a FILE/ENV config, logs. Unit-tested.
 
-### Phase 1 — Standalone mode, end-to-end (3–5 wks)
+### Phase 1 — HOST platform, end-to-end (3–5 wks)
 - ✅ `MessagingProvider` trait + `MqttProvider` (dual broker: local + IoT Core, reconnect/re-subscribe).
 - ✅ `MessagingService` + `Message`/builders + explicit `…ToIoTCore` pairs + raw publish/QoS + **request/reply (`ReplyFuture`) with timeout/cancel** — tested over the local EMQX broker.
 - ✅ **Increment 1:** all four metric targets + EMF (`cloudwatch` behind a feature).
 - ✅ **Increment 2:** heartbeat via `sysinfo` (+ Linux `/proc` / Windows `windows-sys` for threads/fds/files).
 - ✅ **Increment 3:** FILE config hot-reload (`notify`) → validate → atomic `ArcSwap` swap → `ConfigChangeListener` notification; heartbeat reacts to reloads.
 - ✅ **Increment 4:** IoT Core mutual TLS (and local TLS) via `rustls` — `caPath`/`certPath`/`keyPath` from the messaging config; no insecure fallback. Verified live over EMQX `8883`.
-- **Deliverable (complete):** a STANDALONE component that connects to the local broker **and AWS IoT Core (mTLS)**, does pub/sub **and request/reply**, emits metrics, heartbeats, and hot-reloads config — runnable on a laptop with zero Greengrass.
+- **Deliverable (complete):** a HOST-platform component that connects to the local broker **and AWS IoT Core (mTLS)**, does pub/sub **and request/reply**, emits metrics, heartbeats, and hot-reloads config — runnable on a laptop with zero Greengrass.
 
 ### Phase 2 — Greengrass IPC (validated on real hardware)
 The SDK (`aws-greengrass-component-sdk`, lib `gg_sdk`, v1.0.4) turned out to be a
@@ -450,7 +459,7 @@ The speculative `GetConfiguration` whole-config + Rust-side key extraction chang
 
 **`SHADOW` config source — validated end-to-end (2026-06-16):** deployed AWS `ShadowManager` (2.3.14) with classic-shadow sync; set the device shadow's `state.desired` to a full ggcommons config; ran the skeleton with `-c SHADOW`. It started `config_source="SHADOW"` and applied the shadow's values (the `publish_interval: 8` from the shadow drove an 8s publish cadence — distinct from the GG_CONFIG defaults), confirming `ShadowConfigSource` → IPC `GetThingShadow` → extract `state.desired` → validate → `Config`. **Real-time updates also confirmed:** changing the cloud shadow's `desired.publish_interval` (8→3) on the running component triggered the `update/delta` subscription → re-fetch → atomic reload → `ConfigurationChangeListener`, and the publish cadence shifted to 3s with no restart (seq counter unbroken).
 
-**Phase 2 on-device validation: complete.** Every GREENGRASS-mode capability has been exercised against a live Nucleus, non-root, except `CONFIG_COMPONENT` (messaging-based request/reply to a dedicated config component) — its mechanism is covered by the validated local request/reply path, but it was not stood up with a peer config component on-device.
+**Phase 2 on-device validation: complete.** Every GREENGRASS-platform capability has been exercised against a live Nucleus, non-root, except `CONFIG_COMPONENT` (messaging-based request/reply to a dedicated config component) — its mechanism is covered by the validated local request/reply path, but it was not stood up with a peer config component on-device.
 
 ### Phase 3 — Parity & hardening (2–3 wks)
 - ✅ Config snapshot edge cases, **multi-instance** (`instance_ids()`/`instance(id)`, verified end-to-end through `GgCommons`), logging runtime reconfiguration parity.

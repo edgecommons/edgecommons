@@ -35,7 +35,7 @@ the two on-disk files (§9).
 ### Goals
 - Define shared framework config once; components inherit it and override per-key.
 - Work across **all** config providers (`FILE`/`ENV`/`GG_CONFIG`/`SHADOW`/`CONFIG_COMPONENT`) and
-  **all** modes (GREENGRASS / STANDALONE / future K8S).
+  **all** platforms (GREENGRASS / HOST / future KUBERNETES).
 - Identical merge + resolution semantics across the four languages.
 - Make a true shared vault/cache possible with **no rewrite** — only config + a shared path.
 
@@ -194,8 +194,8 @@ mechanism per provider:
 | `SHADOW` | A shared **named shadow** `ggcommons-shared` on the same Thing (D9) | Read with `GetThingShadow(thing, "ggcommons-shared")`, watch its delta. |
 | `CONFIG_COMPONENT` | The config component serves a base + per-component overlay (it is already the "shared" model) | The client requests the reserved base id, then its own; or the component returns `{base, overlay}`. |
 
-**Per mode**, the provider in play follows the deployment: GREENGRASS→`GG_CONFIG`/`SHADOW`;
-STANDALONE→`FILE`/`ENV`; K8S→`ENV`/`FILE` via ConfigMaps.
+**Per platform**, the provider in play follows the deployment: GREENGRASS→`GG_CONFIG`/`SHADOW`;
+HOST→`FILE`/`ENV`; KUBERNETES→`ENV`/`FILE` via ConfigMaps.
 
 **`FILE` base = a shared *file* (OS-permission note).** Reading a `FILE` base across components is a
 filesystem op with the same OS-user exposure as the vault — *but* config is **not secret**, so the
@@ -203,9 +203,9 @@ shared file is simply made **world-readable (`0644`) in a `0755`-traversable dir
 deploy time** (the operator / provisioning step), so neither the confidentiality nor the
 runtime-cross-user-writer problem applies (contrast the vault, §9). In **GREENGRASS** prefer the
 `GG_CONFIG` base (a shared component over IPC — zero filesystem); reserve `FILE`/`ENV` bases for
-STANDALONE/K8s, where a shared volume or projected ConfigMap delivers the file to every container.
+HOST/KUBERNETES, where a shared volume or projected ConfigMap delivers the file to every container.
 
-### 6.1 Sequence — startup load + merge + validate (FILE / STANDALONE shown)
+### 6.1 Sequence — startup load + merge + validate (FILE / HOST shown)
 
 ```mermaid
 sequenceDiagram
@@ -366,7 +366,7 @@ user/group model**. A robust library **cannot assume all components run as one u
 | Option | How "sharing" happens | OS-user-safe? | Trade-offs |
 |--------|----------------------|---------------|-----------|
 | **(1) Shared-group file** | one vault file `0640` owned `<owner>:ggcommons`; every consumer's `runWith` user joins group `ggcommons` (incl. a group-readable KEK) | only if the operator provisions every component's user into the shared group | fragile on GG (per-user group provisioning; group-readable KEK weakens the custodian); maps cleanly to **K8s `fsGroup` + shared volume** though |
-| **(2) Served manager** ✅ *(robust on-device sharing)* | a **credentials-manager component owns the vault and serves secrets over the ggcommons messaging seam** — GG **IPC** on-device, local MQTT in STANDALONE/K8s; consumers fetch via `gg.credentials()` and keep a local per-component cache | **yes** — transport is nucleus/broker-mediated, not the filesystem | biggest build (a request/reply secrets protocol + manager component + consumer fetch path); adds a runtime dependency + first-fetch latency. **Only option that also gives per-component least-privilege** (GG recipe `accessControl` / MQTT topic ACLs decide who may fetch what) — strictly better than "device = trust boundary". This is what `aws.greengrass.SecretManager` does. |
+| **(2) Served manager** ✅ *(robust on-device sharing)* | a **credentials-manager component owns the vault and serves secrets over the ggcommons messaging seam** — GG **IPC** on-device, local MQTT on HOST/KUBERNETES; consumers fetch via `gg.credentials()` and keep a local per-component cache | **yes** — transport is nucleus/broker-mediated, not the filesystem | biggest build (a request/reply secrets protocol + manager component + consumer fetch path); adds a runtime dependency + first-fetch latency. **Only option that also gives per-component least-privilege** (GG recipe `accessControl` / MQTT topic ACLs decide who may fetch what) — strictly better than "device = trust boundary". This is what `aws.greengrass.SecretManager` does. |
 | **(3) Per-component vault + shared *central* source** ✅ *(near-term default)* | keep today's per-component vault; sharing happens at the **central store** — all components pull the same Secrets Manager id via the existing `from` override | **yes** — no shared on-device file at all | already built; cost is N× central fetches (bounded by per-component cache + refresh interval); "define once" lives in the cloud, not the device. Offline-first per component. |
 
 ### 9.2 Recommendation
@@ -451,7 +451,7 @@ shared on-disk cache file is required.
 
 ## 12. Phasing
 1. **Merge engine + opt-out + post-merge validation** in all four libs, base passed in (no sourcing). + vectors.
-2. **Base resolvers**: `FILE`/`ENV` first (covers STANDALONE/K8S), then `GG_CONFIG` shared component, then `SHADOW`.
+2. **Base resolvers**: `FILE`/`ENV` first (covers HOST/KUBERNETES), then `GG_CONFIG` shared component, then `SHADOW`.
 3. **Shared secrets/params (option 3)**: define the shared `from` mappings / `parameters.source` once in the base layer; each component keeps its own vault/cache and pulls the shared central id. Validate a 2-component "shared central secret" case on the lab. (No shared on-disk file.)
 4. **Conformance + docs**: merge vectors, multi-component on-device, update recipes/READMEs.
 5. **(Later) Served manager (option 2)**: credentials/parameter manager component + request/reply over the messaging seam + `RemoteCredentialService` consumer, with per-component `accessControl`/topic-ACL authorization — the robust on-device-sharing path.

@@ -6,9 +6,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `ggcommons` (PyPI package `greengrass-commons`) is a library for building AWS IoT Greengrass v2 components. It bundles the cross-cutting concerns every component needs — configuration, messaging, metrics, heartbeat, logging — behind service interfaces so component authors write only business logic. A key goal of the current work (`major-rearch` branch) is bringing the Python library to feature parity with the Java version, which is why dependency injection, builders, and JSON-schema config validation were introduced.
 
-Components built with this library run in two distinct **runtime modes**, selected at startup, and most of the architecture exists to abstract that difference away:
-- **GREENGRASS** (default): uses Greengrass IPC for messaging, reads config from the Greengrass deployment.
-- **STANDALONE**: for Kubernetes/Docker/bare containers. Uses a dual-MQTT provider that connects simultaneously to a local broker and to AWS IoT Core. Requires a separate messaging-config JSON file.
+Components built with this library are configured along two axes — a **platform** and a **transport** — selected at startup, and most of the architecture exists to abstract that difference away:
+- **`--platform`** (`GREENGRASS` | `HOST` | `KUBERNETES` | `auto`, default `auto` which auto-detects): `GREENGRASS` uses Greengrass IPC for messaging and reads config from the Greengrass deployment; `HOST` is a plain host / container without a Nucleus; `KUBERNETES` is declared but not yet wired (Phase 1).
+- **`--transport`** (`IPC` | `MQTT [messaging_config.json]`, default derived from the platform — `GREENGRASS` ⇒ `IPC`, `HOST`/`KUBERNETES` ⇒ `MQTT`): `IPC` is native Greengrass Nucleus IPC (valid **only** on `--platform GREENGRASS`); `MQTT` uses a dual-MQTT provider that connects simultaneously to a local broker and to AWS IoT Core, and requires a separate messaging-config JSON file.
+
+The legacy `-m/--mode` flag has been removed: the old `-m GREENGRASS` is now `--platform GREENGRASS` and the old `-m STANDALONE <path>` is now `--platform HOST --transport MQTT <path>`.
 
 ## Commands
 
@@ -66,7 +68,7 @@ Object construction goes through fluent builders, not raw constructors: `GGCommo
 Config supports template-variable substitution (component/thing/custom tags), hot reload via `ConfigurationChangeListener`, multi-instance components (global + per-instance config), and JSON-schema validation (`ggcommons/validation/configuration_validator.py`).
 
 ### Messaging (`ggcommons/messaging/`)
-`MessagingClient.init()` picks the provider based on mode: `GreengrassIpcProvider` (IPC) or `StandaloneProvider` (dual local-MQTT + IoT Core). Both implement `MessagingProvider`. Connections and subscriptions are **blocking** — they wait for confirmation (e.g. SUBACK) before proceeding, to avoid IoT Core connection race conditions. Standalone MQTT lives under `providers/`, Greengrass IPC/IoT-Core subscription handling under `providers/greengrass/`.
+`MessagingClient.init()` picks the provider based on the resolved transport: `GreengrassIpcProvider` (`IPC` transport) or `StandaloneProvider` (`MQTT` transport — dual local-MQTT + IoT Core). Both implement `MessagingProvider`. Connections and subscriptions are **blocking** — they wait for confirmation (e.g. SUBACK) before proceeding, to avoid IoT Core connection race conditions. Standalone MQTT lives under `providers/`, Greengrass IPC/IoT-Core subscription handling under `providers/greengrass/`.
 
 ### Metrics (`ggcommons/metrics/`)
 `MetricEmitter` (static `init`) emits to pluggable `MetricTarget`s under `targets/`: `cloudwatch` (EMF format via `emf_helper`), `cloudwatch_component`, `messaging`, `metric_log`. Targets and component/thing dimensions are configured, not hardcoded.
@@ -79,10 +81,13 @@ Config supports template-variable substitution (component/thing/custom tags), ho
 
 ## CLI contract
 
-Components accept three standard arguments (custom `argparse` parsers can be merged in via the builder):
+Components accept these standard arguments (custom `argparse` parsers can be merged in via the builder):
 - `-c/--config <SOURCE> [args...]` — one of `FILE`, `ENV`, `GG_CONFIG`, `SHADOW`, `CONFIG_COMPONENT` (default `GG_CONFIG`).
-- `-m/--mode <MODE> [path]` — `GREENGRASS` (default) or `STANDALONE <messaging_config.json>`. STANDALONE without a path is a hard error.
+- `--platform <PLATFORM>` — `GREENGRASS` | `HOST` | `KUBERNETES` | `auto` (default `auto`, which auto-detects from the environment). `KUBERNETES` is declared but not yet wired (Phase 1) and fails fast if selected.
+- `--transport <TRANSPORT> [path]` — `IPC` | `MQTT [messaging_config.json]` (default derived from the resolved platform: `GREENGRASS` ⇒ `IPC`, `HOST`/`KUBERNETES` ⇒ `MQTT`). `IPC` is valid **only** on `--platform GREENGRASS`. The `MQTT` messaging-config path is required when the MQTT provider is actually built.
 - `-t/--thing <name>` — IoT Thing name. Note the historical bug where this was truncated to one character; `-t`/`--thing` must take a full string value.
+
+The legacy `-m/--mode` flag has been removed and now errors with guidance to the new flags: `-m GREENGRASS` → `--platform GREENGRASS`; `-m STANDALONE <path>` → `--platform HOST --transport MQTT <path>`.
 
 ## Conventions
 

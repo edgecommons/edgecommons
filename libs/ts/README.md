@@ -14,7 +14,7 @@ same CLI contract, the same subsystem boundaries, the same on-wire message envel
 | Area | Module | Notes |
 |------|--------|-------|
 | Lifecycle | `src/ggcommons.ts` | `GGCommonsBuilder` / `GGCommons` — parse args, init messaging, load+validate config, init logging/metrics/heartbeat, wire hot-reload. `close()` releases resources (TS has no RAII). |
-| CLI contract | `src/cli.ts` | `-c/--config` (FILE/ENV/GG_CONFIG/SHADOW/CONFIG_COMPONENT), `-m/--mode` (GREENGRASS/STANDALONE), `-t/--thing`. |
+| CLI contract | `src/cli.ts` | `-c/--config` (FILE/ENV/GG_CONFIG/SHADOW/CONFIG_COMPONENT), `--platform` (GREENGRASS/HOST/KUBERNETES/auto), `--transport` (IPC/MQTT), `-t/--thing`. |
 | Config | `src/config/` | Typed model + defaulting accessors, template substitution (sanitized), embedded JSON schema + `ajv` validation, all 5 sources, hot reload. |
 | Messaging | `src/messaging/` | Transport/service split: `MessagingProvider` (`StandaloneMqttProvider` dual-broker, `IpcMessagingProvider` Greengrass IPC) + `DefaultMessagingService` (envelope, dispatch, request/reply). |
 | Metrics | `src/metrics/` | `Metric`/`MetricBuilder`, EMF (ms timestamps), targets (log w/ rotation, messaging, cloudwatchcomponent, cloudwatch via optional `@aws-sdk/client-cloudwatch`), `MetricEmitter`. |
@@ -61,24 +61,31 @@ npm run build      # tsc -> dist/
 npm test           # vitest unit tests (cli, config, message, metrics, messaging, heartbeat)
 ```
 
-## Runtime modes
+## Runtime model — platform × transport
 
-- **STANDALONE** — dual-broker MQTT over [`mqtt.js`](https://github.com/mqttjs/MQTT.js):
-  a local broker plus an optional AWS IoT Core leg (mutual-TLS). Needs a
-  `-m STANDALONE <messaging_config.json>` file (`messaging.local` required,
-  `messaging.iotCore` optional). No native build.
-- **GREENGRASS** — Greengrass IPC over `aws-iot-device-sdk-v2`'s `greengrasscoreipc`
-  client (the **V1** IPC surface — `subscribeToTopic(...).on('message', …)` +
-  `.activate()`; the simplified clientV2 is Java/Python-only). Local pub/sub + the
-  IoT Core bridge + config (`GG_CONFIG`) + device shadow (`SHADOW`). Requires a
-  running nucleus: a deployed component supplies the IPC env (`SVCUID`, the
-  domain-socket path) and the recipe must grant `aws.greengrass.ipc.pubsub` (and,
-  for the bridge/shadow, `aws.greengrass.ipc.mqttproxy` / `aws.greengrass.ShadowManager`)
-  `accessControl`.
+A component is described by two orthogonal axes: `--platform` (`GREENGRASS | HOST |
+KUBERNETES | auto`, default `auto`, which auto-detects from the environment) and
+`--transport` (`IPC | MQTT`, default derived from the platform). The legacy single
+`-m/--mode` axis has been removed.
+
+- **`--platform HOST`** (transport defaults to `MQTT`) — dual-broker MQTT over
+  [`mqtt.js`](https://github.com/mqttjs/MQTT.js): a local broker plus an optional AWS
+  IoT Core leg (mutual-TLS). Needs a `--transport MQTT <messaging_config.json>` file
+  (`messaging.local` required, `messaging.iotCore` optional). No native build.
+- **`--platform GREENGRASS`** (transport defaults to `IPC`) — Greengrass IPC over
+  `aws-iot-device-sdk-v2`'s `greengrasscoreipc` client (the **V1** IPC surface —
+  `subscribeToTopic(...).on('message', …)` + `.activate()`; the simplified clientV2 is
+  Java/Python-only). Local pub/sub + the IoT Core bridge + config (`GG_CONFIG`) + device
+  shadow (`SHADOW`). Requires a running nucleus: a deployed component supplies the IPC
+  env (`SVCUID`, the domain-socket path) and the recipe must grant
+  `aws.greengrass.ipc.pubsub` (and, for the bridge/shadow,
+  `aws.greengrass.ipc.mqttproxy` / `aws.greengrass.ShadowManager`) `accessControl`.
+  `IPC` is valid only on `--platform GREENGRASS`.
+- **`--platform KUBERNETES`** — declared but not wired until Phase 1.
 
 ## Interoperability — validated
 
-- **Cross-language wire (STANDALONE/MQTT):** joins the shared suite in
+- **Cross-language wire (HOST/MQTT):** joins the shared suite in
   `test-infra/interop/` as the `ts` node. The full matrix is 4×4×2 = **32 combos,
   all passing** (request/reply + raw publish/ingest, every ordered pair across
   python/java/rust/ts, both directions).

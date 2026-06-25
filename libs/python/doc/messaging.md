@@ -1,9 +1,11 @@
 # GGCommons Messaging Documentation
 
 ## Overview
-The GGCommons library provides a unified messaging abstraction layer that supports multiple runtime environments:
-- **Greengrass Mode**: Native AWS Greengrass IPC communication
-- **STANDALONE Mode**: Dual MQTT clients for non-Greengrass environments (Kubernetes, Docker, etc.)
+The GGCommons library provides a unified messaging abstraction layer whose behavior is driven by the
+`--transport` axis (derived from `--platform`):
+- **`IPC` transport** (the `GREENGRASS` platform): Native AWS Greengrass IPC communication
+- **`MQTT` transport** (the `HOST` platform, dual-MQTT): Dual MQTT clients for non-Greengrass
+  environments (Kubernetes, Docker, etc.)
 
 This documentation explains the key components, message structure, and usage patterns of the messaging system across all supported runtimes.
 
@@ -134,17 +136,17 @@ message = MessageBuilder.from_object(existing_data).build()
 
 ## Runtime Environment Options
 
-### Greengrass Mode (Traditional)
+### GREENGRASS platform / IPC transport (Traditional)
 ```bash
-python3 main.py -m GREENGRASS -c GG_CONFIG -t thing-name
+python3 main.py --platform GREENGRASS -c GG_CONFIG -t thing-name
 ```
 - Native Greengrass v2 IPC communication
 - Automatic device provisioning
 - Managed by Greengrass runtime
 
-### STANDALONE Mode (Container-Ready)
+### HOST platform / dual-MQTT transport (Container-Ready)
 ```bash
-python3 main.py -m STANDALONE ./messaging-config.json -c FILE ./config.json -t thing-name
+python3 main.py --platform HOST --transport MQTT ./messaging-config.json -c FILE ./config.json -t thing-name
 ```
 - **Kubernetes**: Deploy as pods with dual connectivity
 - **Docker**: Run in containers with external MQTT broker
@@ -152,20 +154,23 @@ python3 main.py -m STANDALONE ./messaging-config.json -c FILE ./config.json -t t
 - **Development**: Local testing without Greengrass
 - **Hybrid Architectures**: Mix Greengrass and container deployments
 
+> The legacy `-m/--mode` flag has been removed: `-m GREENGRASS` → `--platform GREENGRASS`;
+> `-m STANDALONE <path>` → `--platform HOST --transport MQTT <path>`.
+
 ### Code Compatibility
-- **Same application code** works across all modes
+- **Same application code** works across every platform/transport combination
 - **Only configuration changes** between environments
 - **Seamless migration** from Greengrass to containers or vice versa
 
 ## Common Use Cases
 
-### Greengrass Mode
+### GREENGRASS platform (IPC transport)
 1. **Inter-Component Communication**
    - Native Greengrass component messaging
    - Managed device deployments
    - Edge computing with AWS management
 
-### STANDALONE Mode
+### HOST platform (dual-MQTT transport)
 1. **Kubernetes Deployments**
    - Microservices architecture with dual connectivity
    - ConfigMaps for configuration, Secrets for certificates
@@ -186,7 +191,7 @@ python3 main.py -m STANDALONE ./messaging-config.json -c FILE ./config.json -t t
    - CI/CD pipelines with containerized testing
    - Easier debugging with standard MQTT tools
 
-### Universal Use Cases (All Modes)
+### Universal Use Cases (any platform / transport)
 1. **Request-Response Workflows**
    - Service invocation patterns
    - Blocking and non-blocking requests
@@ -213,9 +218,9 @@ component_name = message_tags.get_component_name()
 thing_name = message_tags.get_thing_name()
 ```
 
-## STANDALONE Mode Configuration
+## MQTT transport configuration
 
-STANDALONE mode requires a messaging configuration file that defines both local and IoT Core MQTT connections:
+The `MQTT` transport (e.g. the `HOST` platform) requires a messaging configuration file that defines both local and IoT Core MQTT connections:
 
 ```json
 {

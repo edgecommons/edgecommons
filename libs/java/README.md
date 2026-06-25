@@ -11,7 +11,7 @@ monorepo root `README.md` for the ecosystem overview.
 
 GGCommons simplifies the development of AWS IoT Greengrass components by providing a unified framework that handles common operational concerns, allowing developers to focus on their core business logic. The library abstracts away the complexity of Greengrass integration while providing enterprise-grade features for monitoring, configuration management, and inter-component communication.
 
-**🚀 NEW: STANDALONE Mode** - Run components outside of Greengrass with nearly full functionality! Perfect for Kubernetes, Docker, or any container runtime environment. Maintains dual connectivity to both local MQTT brokers and AWS IoT Core.
+**🚀 Run outside Greengrass** - With `--platform HOST` (or `KUBERNETES`) and `--transport MQTT`, run components outside of Greengrass with nearly full functionality! Perfect for Kubernetes, Docker, or any container runtime environment. Maintains dual connectivity to both local MQTT brokers and AWS IoT Core.
 
 ## Key Capabilities
 
@@ -24,8 +24,8 @@ GGCommons simplifies the development of AWS IoT Greengrass components by providi
 [📖 Configuration Documentation](doc/configuration.md)
 
 ### 📨 Messaging System
-- **Multi-Runtime Support**: Native Greengrass IPC or STANDALONE mode with dual MQTT clients
-- **Dual MQTT Connectivity**: Simultaneous local broker and AWS IoT Core connections in STANDALONE mode
+- **Multi-Runtime Support**: Native Greengrass IPC (`--transport IPC`) or dual MQTT clients (`--transport MQTT`)
+- **Dual MQTT Connectivity**: Simultaneous local broker and AWS IoT Core connections under `--platform HOST`/`KUBERNETES`
 - **Request-Response Pattern**: Built-in support for synchronous communication
 - **Topic Filtering**: Advanced subscription patterns with wildcards
 - **Message Serialization**: Automatic JSON serialization with metadata headers
@@ -154,16 +154,16 @@ Create a configuration file (e.g., `config.json`):
 ### 4. Run Your Component
 
 ```bash
-# Greengrass mode (default) - for AWS IoT Greengrass runtime
+# Greengrass platform (default - auto-detected) - for AWS IoT Greengrass runtime
 java -jar mycomponent.jar -c GG_CONFIG -t my-thing-name
 
-# STANDALONE mode - for Kubernetes, Docker, or any container runtime
-java -jar mycomponent.jar -m STANDALONE ./standalone-messaging.json -c FILE ./config.json -t my-thing-name
+# HOST platform - for Kubernetes, Docker, or any container runtime
+java -jar mycomponent.jar --platform HOST --transport MQTT ./standalone-messaging.json -c FILE ./config.json -t my-thing-name
 ```
 
-### 5. STANDALONE Mode Configuration
+### 5. HOST Platform Messaging Configuration
 
-Create a `standalone-messaging.json` file for non-Greengrass deployments:
+Create a `standalone-messaging.json` file (the `--transport MQTT` payload) for non-Greengrass deployments:
 
 ```json
 {
@@ -202,12 +202,22 @@ GGCommons supports several command line options for configuration and messaging:
 - `SHADOW [name]` - Load from IoT Device Shadow
 - `CONFIG_COMPONENT` - Load from configuration management component
 
-### Runtime Mode (`-m, --mode`)
-- `GREENGRASS` - Use Greengrass IPC (default)
-- `STANDALONE <config_file_path>` - **NEW!** Use dual MQTT clients for non-Greengrass environments
+### Platform (`--platform`)
+- `GREENGRASS` - Greengrass runtime; uses Greengrass IPC by default
+- `HOST` - bare host / Docker; uses MQTT by default
+- `KUBERNETES` - Kubernetes; uses MQTT by default (declared now; full wiring lands in a later phase)
+- `auto` - auto-detect the platform (default)
+
+### Transport (`--transport`)
+- `IPC` - Greengrass IPC (only valid on `--platform GREENGRASS`)
+- `MQTT [config_file_path]` - dual MQTT clients (local broker + AWS IoT Core) for non-Greengrass environments
   - Enables deployment to Kubernetes, Docker, or any container runtime
   - Maintains connectivity to both local MQTT broker and AWS IoT Core
   - Nearly full functionality outside of Greengrass
+- The default transport is derived from the platform (`GREENGRASS`⇒`IPC`, `HOST`/`KUBERNETES`⇒`MQTT`)
+
+> **Migration:** the legacy `-m/--mode` flag has been removed. Use `-m GREENGRASS` → `--platform GREENGRASS`,
+> and `-m STANDALONE <path>` → `--platform HOST --transport MQTT <path>`.
 
 ### Thing Name (`-t, --thing`)
 - Specify the AWS IoT Thing name (optional, auto-detected in Greengrass)
@@ -293,7 +303,7 @@ The library uses Maven Shade Plugin to create a self-contained JAR with all depe
 - Uses Greengrass IPC for inter-component communication
 - Automatic device provisioning and management
 
-### STANDALONE Mode (NEW!)
+### HOST / KUBERNETES Platform
 - **Kubernetes**: Deploy as pods with ConfigMaps and Secrets
 - **Docker**: Run in containers with volume mounts for configuration
 - **Container Runtimes**: ECS, EKS, AKS, GKE, or any container platform
@@ -304,8 +314,8 @@ The library uses Maven Shade Plugin to create a self-contained JAR with all depe
 
 - **Java**: 25 (the library compiles to Java 25; the streaming subsystem uses the FFM/Panama
   native binding — run components with `--enable-native-access=ALL-UNNAMED`)
-- **AWS IoT Greengrass**: 2.0 or higher (for Greengrass mode)
-- **MQTT Broker**: Any MQTT 3.1.1 compatible broker (for STANDALONE mode)
+- **AWS IoT Greengrass**: 2.0 or higher (for the GREENGRASS platform)
+- **MQTT Broker**: Any MQTT 3.1.1 compatible broker (for the HOST/KUBERNETES platforms / `--transport MQTT`)
 - **Maven**: 3.6 or higher (for building)
 
 ## Dependencies
@@ -335,13 +345,13 @@ Key dependencies included:
 ### Best Practices
 
 #### Configuration
-- **Greengrass Mode**: Use Greengrass deployment configuration for production
-- **STANDALONE Mode**: Use file-based configuration with ConfigMaps/Secrets in K8s
+- **GREENGRASS platform**: Use Greengrass deployment configuration for production
+- **HOST/KUBERNETES platform**: Use file-based configuration with ConfigMaps/Secrets in K8s
 - Implement configuration change listeners for dynamic updates
 - Leverage template variables for environment-specific configuration
 
 #### Messaging
-- **Dual Subscriptions**: In STANDALONE mode, you can subscribe to the same topic on both local and IoT Core
+- **Dual Subscriptions**: Under `--transport MQTT`, you can subscribe to the same topic on both local and IoT Core
 - **Authentication**: Use certificates for production, username/password for development
 - **Topic Design**: Design topics to work across both Greengrass IPC and MQTT
 
@@ -351,9 +361,9 @@ Key dependencies included:
 - Configure metrics emission for your target environment (CloudWatch, local logs, etc.)
 
 #### Deployment
-- **Development**: Use STANDALONE mode with local MQTT broker
-- **Production**: Choose between Greengrass or STANDALONE based on your infrastructure
-- **Hybrid**: Run some components in Greengrass, others in K8s with STANDALONE mode
+- **Development**: Use `--platform HOST --transport MQTT` with a local MQTT broker
+- **Production**: Choose between the GREENGRASS and HOST/KUBERNETES platforms based on your infrastructure
+- **Hybrid**: Run some components on Greengrass, others in K8s with `--platform KUBERNETES`/`HOST`
 
 ## License
 

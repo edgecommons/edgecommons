@@ -14,21 +14,32 @@ on-wire message envelope. **Java is the canonical reference.**
 > streaming core, the CLI, templates, the canonical config schema, and shared test infrastructure
 > in one tree. Each subproject still has its own build system and CI.
 
-## Core concept: two runtime modes
+## Core concept: platform × transport
 
-Every component built with these libraries runs in one of two modes, selected at startup via
-`-m/--mode`. Most of the architecture exists to abstract this difference away so the same business
-logic runs in both:
+Every component built with these libraries is configured along **two independent axes**, selected at
+startup. Most of the architecture exists to abstract these differences away so the same business
+logic runs unchanged across deployment targets:
 
-- **GREENGRASS** (default) — uses Greengrass **IPC** for messaging and reads configuration from the
-  Greengrass deployment (`GG_CONFIG`). The on-device, Nucleus-managed path.
-- **STANDALONE** — for containers / Kubernetes / bare hosts. Uses a **dual-MQTT** provider that
-  connects to a **local broker** and, optionally, **AWS IoT Core** at the same time, behind the same
-  messaging interface. Requires a separate messaging-config JSON (`-m STANDALONE <messaging_config.json>`).
+- **`--platform <PLATFORM>`** — `GREENGRASS` | `HOST` | `KUBERNETES` | `auto` (default `auto`, which
+  auto-detects the platform).
+  - **GREENGRASS** — the on-device, Nucleus-managed path: reads configuration from the Greengrass
+    deployment (`GG_CONFIG`) and defaults to the **IPC** transport.
+  - **HOST** — a bare host / Docker container / VM. Defaults to the **MQTT** transport.
+  - **KUBERNETES** — declared for first-class Kubernetes support; the wiring lands in a later phase.
+- **`--transport <TRANSPORT> [path]`** — `IPC` | `MQTT [messaging_config.json]`. The default is
+  derived from the platform (GREENGRASS ⇒ IPC, HOST/KUBERNETES ⇒ MQTT); **IPC is valid only on
+  GREENGRASS**. The **MQTT** transport is a **dual-MQTT** provider that connects to a **local broker**
+  and, optionally, **AWS IoT Core** at the same time, behind the same messaging interface, and takes
+  an optional messaging-config JSON path (`--transport MQTT <messaging_config.json>`).
 
 The standard CLI contract is identical across all four languages:
 `-c/--config <SOURCE> [args]` (one of `FILE`, `ENV`, `GG_CONFIG` (default), `SHADOW`,
-`CONFIG_COMPONENT`), `-m/--mode <GREENGRASS|STANDALONE [path]>`, and `-t/--thing <name>`.
+`CONFIG_COMPONENT`), `--platform <PLATFORM>`, `--transport <TRANSPORT> [path]`, and
+`-t/--thing <name>`.
+
+> **Migrating from the old `-m/--mode` flag (removed).** `-m GREENGRASS` → `--platform GREENGRASS`;
+> `-m STANDALONE <messaging_config.json>` → `--platform HOST --transport MQTT <messaging_config.json>`.
+> The legacy `-m/--mode` flag has been **removed** and now errors with migration guidance.
 
 ## Repository map
 
@@ -83,12 +94,12 @@ ggcommons doctor                             # check prerequisites (git, gdk, ca
 ggcommons create-component -n com.example.MyComponent -l PYTHON   # JAVA|PYTHON|RUST|TYPESCRIPT
 ```
 
-Run a component locally in STANDALONE mode against a local MQTT broker:
+Run a component locally on a bare **HOST** against a local MQTT broker:
 
 ```bash
 docker compose -f test-infra/compose.yaml up -d      # bring up the shared EMQX broker
-python3 main.py -m STANDALONE standalone-messaging.json -c FILE config.json -t my-thing
-java --enable-native-access=ALL-UNNAMED -jar target/<artifact>.jar -m STANDALONE ./standalone-messaging.json -c FILE ./config.json -t my-thing
+python3 main.py --platform HOST --transport MQTT standalone-messaging.json -c FILE config.json -t my-thing
+java --enable-native-access=ALL-UNNAMED -jar target/<artifact>.jar --platform HOST --transport MQTT ./standalone-messaging.json -c FILE ./config.json -t my-thing
 ```
 
 Components are packaged and deployed with the **GDK (Greengrass Development Kit)** —
@@ -100,7 +111,7 @@ and `recipe.yaml`.
 - **config** — five config-source managers (`FILE`, `ENV`, `GG_CONFIG`, `SHADOW`, `CONFIG_COMPONENT`),
   template-variable substitution (`{ComponentName}`, `{ThingName}`, custom tags) with sanitization,
   hot reload, multi-instance config, and JSON-schema validation against the canonical `schema/`.
-- **messaging** — one interface over two providers: Greengrass **IPC** and STANDALONE **dual-MQTT**
+- **messaging** — one interface over two transports: Greengrass **IPC** and **dual-MQTT**
   (local + IoT Core). Connections/subscriptions block until confirmed; request/reply with
   correlation; a per-subscription concurrency cap; TLS (server-only or mutual). Identical envelope across languages.
 - **metrics** — pluggable targets: CloudWatch (EMF), cloudwatch-component, messaging, local log.

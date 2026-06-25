@@ -26,28 +26,44 @@ This document describes the available command line options provided by the AWS P
   * `CONFIG_COMPONENT` - Load configuration from a configuration component
 * **Effect**: Determines how the component obtains its configuration settings
 
-### -m, --mode
-* **Description**: Specifies the runtime mode and messaging system for component communication
-* **Usage**: `-m <system> [args]` or `--messaging <system> [args]`
-* **Required**: No (defaults to "GREENGRASS" if not specified)
+### --platform
+* **Description**: Selects the runtime platform the component runs on
+* **Usage**: `--platform <PLATFORM>`
+* **Required**: No (defaults to `auto`, which auto-detects the platform)
 * **Dependencies**: None
 * **Values**: One of:
-  * `GREENGRASS` - Use native Greengrass IPC for messaging (default)
-  * `STANDALONE <config_file_path>` - **NEW!** Use dual MQTT clients for non-Greengrass environments
-* **Effect**: Determines the runtime environment and messaging architecture
+  * `GREENGRASS` - AWS IoT Greengrass runtime (default transport: `IPC`)
+  * `HOST` - bare host / Docker / container runtime (default transport: `MQTT`)
+  * `KUBERNETES` - Kubernetes (default transport: `MQTT`; declared now, full wiring lands in a later phase)
+  * `auto` - auto-detect the platform (default)
+* **Effect**: Determines the runtime environment and the default transport
 
-#### GREENGRASS Mode
+### --transport
+* **Description**: Selects the messaging transport for component communication
+* **Usage**: `--transport <TRANSPORT> [config_file_path]`
+* **Required**: No (defaults to the transport derived from `--platform`)
+* **Dependencies**: `IPC` is only valid on `--platform GREENGRASS`
+* **Values**: One of:
+  * `IPC` - native Greengrass IPC (only valid on `--platform GREENGRASS`)
+  * `MQTT <config_file_path>` - dual MQTT clients for non-Greengrass environments
+* **Effect**: Determines the messaging architecture
+
+> **Migration from `-m/--mode`:** the legacy `-m/--mode` flag has been **removed** and now errors with
+> guidance. Translate `-m GREENGRASS` → `--platform GREENGRASS`, and
+> `-m STANDALONE <path>` → `--platform HOST --transport MQTT <path>`.
+
+#### GREENGRASS platform (transport: IPC)
 - Uses native Greengrass v2 IPC communication
 - Managed by Greengrass runtime
 - Single messaging channel for inter-component communication
 - Automatic device provisioning and management
 
-#### STANDALONE Mode (Container-Ready)
+#### HOST / KUBERNETES platform (transport: MQTT, Container-Ready)
 - **Dual MQTT clients**: Local broker + AWS IoT Core connectivity
 - **Container deployment**: Perfect for Kubernetes, Docker, ECS, etc.
 - **Independent subscriptions**: Subscribe to same topic on both clients
 - **Flexible authentication**: Certificate-based and username/password
-- **Configuration file required**: JSON file defining both MQTT connections
+- **Configuration file required**: `--transport MQTT <messaging_config.json>` defining both MQTT connections
 
 ### -t, --thing
 * **Description**: Specifies the AWS IoT thing name for the component
@@ -79,7 +95,7 @@ The library supports adding custom application-specific options through these co
 1. Command line arguments are parsed using Apache Commons CLI
 2. Help is displayed if -h/--help option is present
 3. Configuration source is determined (default or from -c option)
-4. Messaging system is initialized (default or from -m option)
+4. Platform and transport are resolved (defaults or from --platform/--transport), then messaging is initialized
 5. Configuration manager is created and initialized
 6. Metric emitter and heartbeat services are started
 

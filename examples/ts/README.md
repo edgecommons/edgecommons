@@ -17,8 +17,8 @@ heartbeat — so a component author writes only business logic.
 - **Heartbeat** — periodic CPU/memory system metrics (configured in `recipe.yaml` / `config.json`).
 - **Graceful shutdown** — runs until SIGINT / SIGTERM, unsubscribes, and awaits `gg.close()`.
 
-> The messaging features above work in both **STANDALONE** mode (against an MQTT
-> broker) and **GREENGRASS** mode (Greengrass IPC).
+> The messaging features above work on both the **HOST** platform (MQTT transport,
+> against an MQTT broker) and the **GREENGRASS** platform (IPC transport, Greengrass IPC).
 
 ## Project layout
 

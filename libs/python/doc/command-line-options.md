@@ -78,7 +78,7 @@ This document describes the available command line options provided by the AWS P
 
 ## Usage Examples
 
-### Basic Greengrass Mode
+### Basic GREENGRASS platform (IPC transport, auto-derived)
 ```bash
 python3 main.py -c GG_CONFIG -t my-thing-name
 ```
@@ -94,7 +94,7 @@ export GGCOMMONS_CONFIG='{"logging": {"level": "DEBUG"}}'
 python3 main.py -c ENV -t my-thing-name
 ```
 
-### STANDALONE Mode with Dual MQTT
+### HOST platform with Dual MQTT
 ```bash
 python3 main.py --platform HOST --transport MQTT messaging-config.json -c FILE config.json -t my-thing-name
 ```
@@ -154,9 +154,9 @@ def main():
 6. **Configuration Manager**: Configuration manager is created and initialized
 7. **Framework Services**: Metric emitter and heartbeat services are started
 
-## STANDALONE Mode Configuration
+## MQTT transport configuration
 
-When using STANDALONE mode, you must provide a separate messaging configuration file:
+When using the `MQTT` transport (e.g. the `HOST` platform), you must provide a separate messaging configuration file:
 
 ### Dual MQTT Configuration
 ```json
@@ -260,11 +260,11 @@ python3 main.py --platform HOST --transport MQTT /config/messaging.json -c FILE 
 - Use environment variables for containerized deployments
 - Consider IoT Shadow configuration for remote configuration updates
 
-### Messaging Mode Selection
-- **GREENGRASS mode**: Use for traditional Greengrass deployments
-- **STANDALONE mode**: Use for Kubernetes, Docker, or any container runtime
-- Test both modes during development to ensure compatibility
-- Document the deployment mode requirements for your component
+### Platform / Transport Selection
+- **`--platform GREENGRASS` (IPC transport)**: Use for traditional Greengrass deployments
+- **`--platform HOST` (dual-MQTT transport)**: Use for Kubernetes, Docker, or any container runtime
+- Test both combinations during development to ensure compatibility
+- Document the platform/transport requirements for your component
 
 ### Security Considerations
 - Protect configuration files containing sensitive information
@@ -276,7 +276,7 @@ python3 main.py --platform HOST --transport MQTT /config/messaging.json -c FILE 
 
 ### Common Command Line Errors
 - **Invalid configuration source**: Check source name spelling and availability
-- **Missing STANDALONE config file**: Ensure messaging configuration file exists and is readable
+- **Missing MQTT messaging-config file**: Ensure the messaging configuration file exists and is readable
 - **Invalid thing name**: Verify thing name follows AWS IoT naming conventions
 - **Permission errors**: Check file permissions for configuration and certificate files
 

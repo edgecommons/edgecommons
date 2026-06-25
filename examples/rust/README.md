@@ -16,9 +16,9 @@ only business logic.
 - **Graceful shutdown** — runs until Ctrl-C / SIGTERM, unsubscribes, and drops the
   runtime cleanly (RAII).
 
-> The messaging features above work in both **STANDALONE** mode (against an MQTT
-> broker) and **GREENGRASS** mode (Greengrass IPC, built with the `greengrass`
-> feature) — both validated against a live Greengrass core.
+> The messaging features above work on both the **HOST** platform (MQTT transport,
+> against an MQTT broker) and the **GREENGRASS** platform (IPC transport, Greengrass
+> IPC, built with the `greengrass` feature) — both validated against a live Greengrass core.
 
 ## Run locally (HOST platform, MQTT transport)
 

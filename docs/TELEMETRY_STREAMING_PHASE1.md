@@ -1,7 +1,7 @@
 # Telemetry Streaming — Phase 1 implementation spec (`ggstreamlog` core)
 
 Implementation-ready spec for **Phase 1** of [TELEMETRY_STREAMING.md](./TELEMETRY_STREAMING.md):
-the Rust `ggstreamlog` core + `KinesisSink`, STANDALONE, wired into the Rust ggcommons lib,
+the Rust `ggstreamlog` core + `KinesisSink`, HOST, wired into the Rust ggcommons lib,
 with crash/fuzz/bench tests. **Pure Rust first** — language bindings, Kafka, SiteWise,
 RocksDB/LMDB backends, and GREENGRASS fan-in are later phases.
 
@@ -221,7 +221,7 @@ per-entry `ErrorCode` → `Partial{failed_offsets}`; classify `ProvisionedThroug
 
 Only AWS creds for Kinesis. `AwsDefaultCredentials` uses `aws-config`'s default provider chain, which
 already covers env, profile, IMDS, and the **GG TES** container-credentials endpoint
-(`AWS_CONTAINER_CREDENTIALS_FULL_URI`) — so STANDALONE and (future) GREENGRASS both work with no
+(`AWS_CONTAINER_CREDENTIALS_FULL_URI`) — so HOST and (future) GREENGRASS both work with no
 special code. `region` from config or the chain. The `CredentialProvider` trait exists for Phase-3
 Kafka secrets but isn't otherwise implemented in P1.
 
