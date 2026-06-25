@@ -7,7 +7,7 @@ MQTT: the message envelope and the request/reply convention (`reply_to` topic +
 ## How it works
 
 Each language ships a small dual-role **interop node** that talks to the shared
-local MQTT broker in STANDALONE local-only mode:
+local MQTT broker over a local-only MQTT transport:
 
 - `responder <topic>` — subscribe to `<topic>`; reply to each request with
   `{"echo": <request body>, "responder": "<lang>"}` (the lib copies the

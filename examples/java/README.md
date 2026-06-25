@@ -9,26 +9,26 @@ A sample Java component demonstrating best practices for using the GGCommons lib
 - **Request-Reply Pattern**: Demonstrates synchronous communication patterns
 - **Metrics Emission**: Performance and error metrics collection
 - **Graceful Shutdown**: Proper resource cleanup and subscription management
-- **STANDALONE Mode**: Run outside Greengrass in Kubernetes, Docker, or any container runtime
+- **HOST Platform**: Run outside Greengrass in Docker or any container runtime (MQTT transport)
 
 ## Running the Component
 
-### Greengrass Mode (Traditional)
+### GREENGRASS Platform (Traditional)
 ```bash
 # Build the component
 mvn clean package
 
-# Run in Greengrass mode
-java -jar target/java-component-skeleton-1.0.0.jar -c FILE ./test-configs/config_2.json -t my-thing-name
+# Run on the GREENGRASS platform (IPC transport)
+java -jar target/java-component-skeleton-1.0.0.jar --platform GREENGRASS -c FILE ./test-configs/config_2.json -t my-thing-name
 ```
 
-### STANDALONE Mode (Container-Ready)
+### HOST Platform (Container-Ready)
 ```bash
 # Build the component
 mvn clean package
 
-# Run in STANDALONE mode with dual MQTT connectivity
-java -jar target/java-component-skeleton-1.0.0.jar -m STANDALONE ./standalone-messaging.json -c FILE ./test-configs/config_2.json -t my-thing-name
+# Run on the HOST platform with the MQTT transport (dual MQTT connectivity)
+java -jar target/java-component-skeleton-1.0.0.jar --platform HOST --transport MQTT ./standalone-messaging.json -c FILE ./test-configs/config_2.json -t my-thing-name
 ```
 
 ## Configuration
@@ -40,7 +40,7 @@ The component uses a JSON configuration file that includes:
 - Metric emission configuration
 - Component-specific settings (publish interval, etc.)
 
-### STANDALONE Mode Configuration (`standalone-messaging.json`)
+### MQTT Transport Configuration (`standalone-messaging.json`)
 For non-Greengrass deployments, create a messaging configuration file:
 ```json
 {
@@ -103,7 +103,7 @@ spec:
       containers:
       - name: component
         image: java-component-skeleton:latest
-        args: ["-m", "STANDALONE", "/config/messaging.json", "-c", "FILE", "/config/config.json", "-t", "my-thing"]
+        args: ["--platform", "HOST", "--transport", "MQTT", "/config/messaging.json", "-c", "FILE", "/config/config.json", "-t", "my-thing"]
         volumeMounts:
         - name: config
           mountPath: /config
@@ -126,7 +126,7 @@ docker build -t java-component-skeleton .
 # Run with volume mounts for configuration
 docker run -v $(pwd)/config:/config -v $(pwd)/certs:/certs \
   java-component-skeleton \
-  -m STANDALONE /config/messaging.json -c FILE /config/config.json -t my-thing
+  --platform HOST --transport MQTT /config/messaging.json -c FILE /config/config.json -t my-thing
 ```
 
 ## Development
@@ -139,7 +139,7 @@ mvn clean package
 ### Testing Locally
 1. Start a local MQTT broker (e.g., Mosquitto)
 2. Update `standalone-messaging.json` with local broker details
-3. Run in STANDALONE mode
+3. Run on the HOST platform with the MQTT transport
 
 ### Monitoring
 - Check logs for component activity

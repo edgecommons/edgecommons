@@ -1,4 +1,4 @@
-"""Local STANDALONE integration test for the Python component skeleton.
+"""Local HOST-platform (MQTT transport) integration test for the Python component skeleton.
 
 Exercises the ggcommons consumer API the skeleton relies on -- config access +
 template substitution, messaging publish/subscribe round-trip, the GreengrassApp
@@ -45,7 +45,7 @@ def gg():
 
     args = [
         "-c", "FILE", COMPONENT_CONFIG,
-        "-m", "STANDALONE", MESSAGING_CONFIG,
+        "--platform", "HOST", "--transport", "MQTT", MESSAGING_CONFIG,
         "-t", THING,
     ]
     instance = GGCommonsBuilder.create(COMPONENT).with_args(args).build()

@@ -12,8 +12,8 @@ use ggcommons::prelude::*;
 pub struct App {
     config: Arc<Config>,
     metrics: Arc<dyn MetricService>,
-    /// `Some` when a messaging transport is available for the runtime mode
-    /// (STANDALONE always; GREENGRASS with the `greengrass` feature).
+    /// `Some` when a messaging transport is available for the resolved platform
+    /// (HOST/MQTT always; GREENGRASS/IPC with the `greengrass` feature).
     messaging: Option<Arc<dyn MessagingService>>,
 }
 

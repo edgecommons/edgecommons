@@ -9,14 +9,14 @@ author writes only business logic (in [`app/greengrass_app.py`](app/greengrass_a
 The component is `com.breissinger.greengrass.PythonComponentSkeleton` and is bootstrapped via
 `GGCommonsBuilder.create(...)` in [`main.py`](main.py).
 
-## Run locally (STANDALONE mode)
+## Run locally (HOST platform, MQTT transport)
 
 Bring up a local MQTT broker, then run the component against it:
 
 ```bash
 docker compose -f ../../test-infra/compose.yaml up -d        # EMQX broker on :1883
 pip install -r requirements.txt
-python3 main.py -m STANDALONE test-configs/standalone-local.json -c FILE test-configs/config_2.json -t my-thing-name
+python3 main.py --platform HOST --transport MQTT test-configs/standalone-local.json -c FILE test-configs/config_2.json -t my-thing-name
 ```
 
 Subscribe to `heartbeat/+/+` (e.g. with MQTTX) to see the component's heartbeats, and to its
@@ -24,10 +24,10 @@ request/response topics to drive it.
 
 ## Run under Greengrass
 
-In GREENGRASS mode (the default) the component reads its config from the deployment:
+On the GREENGRASS platform the component reads its config from the deployment:
 
 ```bash
-python3 main.py -c GG_CONFIG -t my-thing-name
+python3 main.py --platform GREENGRASS -c GG_CONFIG -t my-thing-name
 ```
 
 Package and deploy with the **GDK** using the bundled `gdk-config.json` and `recipe.yaml`:
@@ -40,7 +40,8 @@ gdk component publish
 ## CLI contract
 
 - `-c/--config <SOURCE> [args]` — `FILE`, `ENV`, `GG_CONFIG` (default), `SHADOW`, `CONFIG_COMPONENT`.
-- `-m/--mode <MODE> [path]` — `GREENGRASS` (default) or `STANDALONE <messaging_config.json>`.
+- `--platform <PLATFORM>` — `GREENGRASS`, `HOST`, `KUBERNETES`, or `auto` (default `auto`).
+- `--transport <TRANSPORT> [path]` — `IPC` or `MQTT [messaging_config.json]` (default: from the platform; IPC only valid on GREENGRASS).
 - `-t/--thing <name>` — IoT Thing name.
 
 ## Layout
@@ -49,7 +50,7 @@ gdk component publish
 |------|-----------|
 | `main.py` | Entry point — builds `GGCommons` and starts the app. |
 | `app/greengrass_app.py` | The business logic (config, messaging, metrics, heartbeat). |
-| `test-configs/` | Sample config files (`config_*.json`) + the STANDALONE messaging config (`standalone-local.json`). |
+| `test-configs/` | Sample config files (`config_*.json`) + the MQTT messaging config (`standalone-local.json`). |
 | `recipe.yaml`, `gdk-config.json` | Greengrass component recipe + GDK build/publish config. |
 | `tests/` | Local tests for the example. |
 

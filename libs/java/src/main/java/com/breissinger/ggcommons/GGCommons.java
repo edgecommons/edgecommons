@@ -21,6 +21,10 @@ import com.breissinger.ggcommons.credentials.SecretRefs;
 import com.breissinger.ggcommons.parameters.DefaultParameterService;
 import com.breissinger.ggcommons.parameters.ParameterService;
 import com.breissinger.ggcommons.parameters.Parameters;
+import com.breissinger.ggcommons.platform.Platform;
+import com.breissinger.ggcommons.platform.PlatformResolver;
+import com.breissinger.ggcommons.platform.ResolvedProfile;
+import com.breissinger.ggcommons.platform.Transport;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonObject;
@@ -332,6 +336,11 @@ public class GGCommons
      * @return A ParsedCommandLine object containing the processed arguments
      */
     public static ParsedCommandLine processArgs(String componentName, String[] args, Options appOptions) {
+        // The legacy single-axis -m/--mode token is removed (DESIGN-core §6.1 / FR-RT-1). Reject it
+        // explicitly with guidance to the new flags rather than letting it fall through as an
+        // unrecognized option (which would be silently swallowed below).
+        rejectLegacyModeFlag(args);
+
         ParsedCommandLine retVal = new ParsedCommandLine();
         CommandLineParser parser = new DefaultParser();
         Options options = appOptions == null ? new Options() : appOptions;
@@ -345,12 +354,18 @@ public class GGCommons
                                             "'SHADOW <optional: shadow_name>', " +
                                             "'GG_CONFIG <optional: component_name> <optional: config_key>', " +
                                             "'CONFIG_COMPONENT'\n" +
-                                            "Default: GG_CONFIG")
+                                            "Default: from the resolved platform profile (GG_CONFIG)")
                                     .build();
-        Option modeOption = Option.builder("m")
-                                       .longOpt("mode")
+        Option platformOption = Option.builder()
+                                       .longOpt("platform")
+                                       .hasArg()
+                                       .desc("Deployment platform - 'GREENGRASS', 'HOST', 'KUBERNETES' or 'auto' (default auto)")
+                                       .build();
+        Option transportOption = Option.builder()
+                                       .longOpt("transport")
                                        .hasArgs()
-                                       .desc("Runtime mode - 'GREENGRASS' (default) or 'STANDALONE <config_file_path>'")
+                                       .desc("Messaging transport - 'IPC' or 'MQTT <messaging_config_path>' "
+                                               + "(default: derived from the platform)")
                                        .build();
         Option thingOption = Option.builder("t")
                                     .longOpt("thing")
@@ -359,9 +374,11 @@ public class GGCommons
                                     .build();
         options.addOption(helpOption);
         options.addOption(configOption);
-        options.addOption(modeOption);
+        options.addOption(platformOption);
+        options.addOption(transportOption);
         options.addOption(thingOption);
 
+        PlatformResolver.ResolverInputs inputs;
         try {
             // parse the command line arguments
             CommandLine line = parser.parse(options, args);
@@ -372,46 +389,90 @@ public class GGCommons
             }
             retVal.commandLine = line;
 
-            String[] configArgs;
-            if (line.hasOption("c")) {
-                configArgs = line.getOptionValues("config");
-            } else {
-                LOGGER.info("No configuration source specified. Assuming GG_CONFIG");
-                configArgs = new String[]{"GG_CONFIG"};
-            }
-            retVal.configArgs = configArgs;
+            // Explicit -c/--config args, or null (the resolver fills the platform-profile default).
+            String[] configArgs = line.hasOption("c") ? line.getOptionValues("config") : null;
 
-            String[] modeArgs;
-            if (line.hasOption("m")) {
-                modeArgs = line.getOptionValues("mode");
-            } else {
-                LOGGER.info("No mode specified. Assuming GREENGRASS");
-                modeArgs = new String[] {"GREENGRASS"};
-            }
-            
-            switch (modeArgs[0].toUpperCase()) {
-                case "STANDALONE" -> {
-                    retVal.mode = ParsedCommandLine.Mode.STANDALONE;
-                    if (modeArgs.length > 1) {
-                        retVal.standaloneConfigPath = modeArgs[1];
-                    } else {
-                        LOGGER.error("STANDALONE mode requires config file path");
-                        throw new IllegalArgumentException("STANDALONE mode requires a config file path");
-                    }
-                }
-                case "GREENGRASS" -> retVal.mode = ParsedCommandLine.Mode.GREENGRASS;
-                default -> throw new IllegalArgumentException("Unknown mode '" + modeArgs[0]
-                        + "'. Valid modes: GREENGRASS (default), STANDALONE <config_file_path>.");
-            }
+            Platform platformFlag = parsePlatform(line);
+            Transport transportFlag = parseTransport(line, retVal);
+            String thingFlag = line.hasOption("t") ? line.getOptionValue("thing") : null;
 
-            if (line.hasOption("t")) {
-                retVal.thingName = line.getOptionValue("thing");
-            }
+            inputs = new PlatformResolver.ResolverInputs(platformFlag, transportFlag, configArgs, thingFlag);
         }
         catch (ParseException exp) {
             LOGGER.error("Unexpected exception parsing command line options: {}", exp.getMessage());
+            return retVal;
         }
 
+        // Resolve the two runtime axes + the default config provider + identity from parse-time
+        // inputs only (DESIGN-core §4 / §4.2). Validation failures (e.g. the IPC lock) propagate.
+        ResolvedProfile resolved = PlatformResolver.resolveProfile(inputs, System.getenv());
+        retVal.platform = resolved.platform();
+        retVal.transport = resolved.transport();
+        retVal.configArgs = resolved.configSource();
+        retVal.thingName = resolved.identity();
+
+        // Note: a missing MQTT messaging-config path is enforced when the MQTT provider is actually
+        // built (MessagingClient), mirroring how the IPC provider only fails against a live Nucleus.
+        // Parsing alone must not require it, so collaborators that inject a mock messaging client
+        // (e.g. tests) can resolve args without supplying a broker config.
+
         return retVal;
+    }
+
+    /**
+     * Rejects the removed {@code -m}/{@code --mode} flag with guidance to the new axes.
+     */
+    private static void rejectLegacyModeFlag(String[] args) {
+        if (args == null) {
+            return;
+        }
+        for (String arg : args) {
+            if ("-m".equals(arg) || "--mode".equals(arg)) {
+                throw new IllegalArgumentException("The -m/--mode flag has been removed. Use "
+                        + "--platform GREENGRASS|HOST|KUBERNETES and --transport IPC|MQTT instead "
+                        + "(e.g. '-m STANDALONE <path>' becomes '--platform HOST --transport MQTT <path>').");
+            }
+        }
+    }
+
+    /**
+     * Parses {@code --platform}; {@code auto} (or absent) yields {@code null} so the resolver
+     * auto-detects.
+     */
+    private static Platform parsePlatform(CommandLine line) {
+        if (!line.hasOption("platform")) {
+            return null;
+        }
+        String raw = line.getOptionValue("platform").trim();
+        if (raw.equalsIgnoreCase("auto")) {
+            return null;
+        }
+        try {
+            return Platform.valueOf(raw.toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("Unknown platform '" + raw
+                    + "'. Valid: GREENGRASS, HOST, KUBERNETES, auto.");
+        }
+    }
+
+    /**
+     * Parses {@code --transport [IPC|MQTT] <optional messaging-config path>}; absent yields
+     * {@code null} so the resolver derives the transport from the platform. The optional second
+     * value (the MQTT messaging-config path) is stashed on the {@link ParsedCommandLine}.
+     */
+    private static Transport parseTransport(CommandLine line, ParsedCommandLine retVal) {
+        if (!line.hasOption("transport")) {
+            return null;
+        }
+        String[] transportArgs = line.getOptionValues("transport");
+        if (transportArgs.length > 1) {
+            retVal.standaloneConfigPath = transportArgs[1];
+        }
+        try {
+            return Transport.valueOf(transportArgs[0].toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("Unknown transport '" + transportArgs[0]
+                    + "'. Valid: IPC, MQTT.");
+        }
     }
 }

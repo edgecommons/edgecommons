@@ -33,7 +33,7 @@ heartbeat — so a component author writes only business logic.
 | `build.sh` | Installs deps, compiles, and stages a ZIP artifact (`dist/` + `node_modules/`) for the GDK. |
 | `test-configs/` | Sample `config.json` + `standalone-messaging.json` for local runs. |
 
-## Develop & run locally (STANDALONE mode)
+## Develop & run locally (HOST platform, MQTT transport)
 
 Install dependencies and build, then start a local MQTT broker (see the workspace
 `CLAUDE.md`) and run:
@@ -42,7 +42,7 @@ Install dependencies and build, then start a local MQTT broker (see the workspac
 npm install
 npm run build
 node dist/main.js \
-  -m STANDALONE ./test-configs/standalone-messaging.json \
+  --platform HOST --transport MQTT ./test-configs/standalone-messaging.json \
   -c FILE ./test-configs/config.json \
   -t my-thing
 ```
@@ -56,7 +56,8 @@ request/reply.
 Same as the Java/Python/Rust skeletons:
 
 - `-c/--config <SOURCE> [args...]` — `FILE | ENV | GG_CONFIG (default) | SHADOW | CONFIG_COMPONENT`
-- `-m/--mode <MODE> [path]` — `GREENGRASS (default) | STANDALONE <messaging_config.json>`
+- `--platform <PLATFORM>` — `GREENGRASS | HOST | KUBERNETES | auto` (default `auto`)
+- `--transport <TRANSPORT> [path]` — `IPC | MQTT [messaging_config.json]` (default: from the platform; IPC only valid on GREENGRASS)
 - `-t/--thing <name>` — IoT Thing name
 
 ## Build & publish with the GDK
@@ -71,8 +72,8 @@ gdk component build
 gdk component publish
 ```
 
-The recipe declares a `linux` platform and runs the prebuilt JS in GREENGRASS mode
-(`node {artifacts:decompressedPath}/ts-component-skeleton/dist/main.js -c GG_CONFIG`),
+The recipe declares a `linux` platform and runs the prebuilt JS on the GREENGRASS platform
+(`node {artifacts:decompressedPath}/ts-component-skeleton/dist/main.js --platform GREENGRASS -c GG_CONFIG`),
 reading its configuration from the deployment (`GG_CONFIG`).
 
 ## The ggcommons dependency

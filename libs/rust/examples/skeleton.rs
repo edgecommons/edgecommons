@@ -1,12 +1,12 @@
 //! Minimal example component.
 //!
-//! Initializes GGCommons from the standard CLI args, then (in STANDALONE mode)
+//! Initializes GGCommons from the standard CLI args, then (on the MQTT transport)
 //! publishes one demo message through the messaging service.
 //!
 //! Run against the local broker:
 //! ```bash
 //! cargo run --example skeleton -- \
-//!   -m STANDALONE ./test-configs/messaging.json \
+//!   --platform HOST --transport MQTT ./test-configs/messaging.json \
 //!   -c FILE ./test-configs/config.json \
 //!   -t my-thing
 //! ```
@@ -25,10 +25,11 @@ async fn main() -> anyhow::Result<()> {
     let cfg = gg.config();
     println!("component:   {}", gg.component_name());
     println!("thing:       {}", cfg.thing_name);
-    println!("mode:        {:?}", gg.args().mode);
+    println!("platform:    {:?}", gg.args().platform);
+    println!("transport:   {:?}", gg.args().transport);
     println!("instances:   {:?}", cfg.instance_ids());
 
-    // In STANDALONE mode the messaging service is available; publish a demo message.
+    // On the MQTT transport the messaging service is available; publish a demo message.
     if let Ok(messaging) = gg.messaging() {
         let topic = format!("demo/{}/hello", cfg.thing_name);
         let msg = MessageBuilder::new("Hello", "1.0")

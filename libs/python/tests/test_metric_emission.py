@@ -58,7 +58,7 @@ def ggcommons_metric_messaging(metric_messaging_config):
         ggcommons = GGCommonsBuilder.create("metric_test") \
             .with_args([
                 '-c', 'FILE', metric_messaging_config,
-                '-m', 'STANDALONE', MESSAGING_CONFIG_PATH,
+                '--platform', 'HOST', '--transport', 'MQTT', MESSAGING_CONFIG_PATH,
                 '-t', 'metric-test-thing'
             ]) \
             .build()

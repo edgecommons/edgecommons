@@ -4,6 +4,8 @@
  */
 package com.breissinger.ggcommons;
 
+import com.breissinger.ggcommons.platform.Platform;
+import com.breissinger.ggcommons.platform.Transport;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -11,8 +13,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 /**
- * Unit tests for the {@link ParsedCommandLine} data holder and its {@link
- * ParsedCommandLine.Mode} enum.
+ * Unit tests for the {@link ParsedCommandLine} data holder, now carrying the resolved
+ * platform/transport axes (DESIGN-core §4).
  */
 class ParsedCommandLineTest {
 
@@ -21,7 +23,8 @@ class ParsedCommandLineTest {
         ParsedCommandLine pcl = new ParsedCommandLine();
         assertNull(pcl.commandLine);
         assertNull(pcl.configArgs);
-        assertNull(pcl.mode);
+        assertNull(pcl.platform);
+        assertNull(pcl.transport);
         assertNull(pcl.standaloneConfigPath);
         assertNull(pcl.thingName);
     }
@@ -32,12 +35,14 @@ class ParsedCommandLineTest {
         String[] configArgs = {"FILE", "./config.json"};
 
         pcl.configArgs = configArgs;
-        pcl.mode = ParsedCommandLine.Mode.STANDALONE;
+        pcl.platform = Platform.HOST;
+        pcl.transport = Transport.MQTT;
         pcl.standaloneConfigPath = "./standalone-messaging.json";
         pcl.thingName = "my-thing";
 
         assertArrayEquals(configArgs, pcl.configArgs);
-        assertEquals(ParsedCommandLine.Mode.STANDALONE, pcl.mode);
+        assertEquals(Platform.HOST, pcl.platform);
+        assertEquals(Transport.MQTT, pcl.transport);
         assertEquals("./standalone-messaging.json", pcl.standaloneConfigPath);
         assertEquals("my-thing", pcl.thingName);
     }
@@ -48,12 +53,5 @@ class ParsedCommandLineTest {
         ParsedCommandLine pcl = new ParsedCommandLine();
         pcl.thingName = "full-thing-name-value";
         assertEquals("full-thing-name-value", pcl.thingName);
-    }
-
-    @Test
-    void modeEnumHasGreengrassAndStandalone() {
-        assertEquals(2, ParsedCommandLine.Mode.values().length);
-        assertEquals(ParsedCommandLine.Mode.GREENGRASS, ParsedCommandLine.Mode.valueOf("GREENGRASS"));
-        assertEquals(ParsedCommandLine.Mode.STANDALONE, ParsedCommandLine.Mode.valueOf("STANDALONE"));
     }
 }

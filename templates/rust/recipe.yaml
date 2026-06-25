@@ -69,6 +69,6 @@ Manifests:
       # for non-root run-as users and local `greengrass-cli` deployments alike.
       Install:
         Script: "chmod +x {artifacts:path}/<<BINNAME>>"
-      # Runs in GREENGRASS mode (default), reading config from the deployment (GG_CONFIG).
+      # Runs on the GREENGRASS platform (IPC transport), reading config from the deployment (GG_CONFIG).
       Run:
-        Script: "{artifacts:path}/<<BINNAME>> -c GG_CONFIG"
+        Script: "{artifacts:path}/<<BINNAME>> --platform GREENGRASS -c GG_CONFIG"

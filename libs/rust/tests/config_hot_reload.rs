@@ -1,13 +1,20 @@
-//! Integration test for FILE config hot reload (no broker required).
+//! Integration test for FILE config hot reload through the full runtime.
 //!
-//! Builds GgCommons against a FILE config source in GREENGRASS mode (so no MQTT
-//! broker is needed), registers a config-change listener, modifies the file, and
-//! asserts the snapshot updates and the listener fires.
+//! Builds GgCommons against a FILE config source, registers a config-change
+//! listener, modifies the file, and asserts the snapshot updates and the listener
+//! fires.
 //!
-//! Skipped under the `greengrass` feature: there, GREENGRASS mode performs a real
-//! IPC `connect()` to the nucleus, which is unavailable in a unit-test environment.
-//! The config-reload logic exercised here is feature-independent and is covered by
-//! the default (standalone) build.
+//! Phase 0 note: the two-axis runtime model has no "no transport" option — a built
+//! runtime always selects a concrete transport (DESIGN-core §4). On a non-Greengrass
+//! build the only transport is MQTT, which needs a broker. (The old brokerless path —
+//! GREENGRASS mode without the `greengrass` feature yielding `messaging = None` — was
+//! the silent `Ok(None)` no-op that the §12 #4 fail-fast decision deliberately
+//! removes.) These tests therefore connect HOST/MQTT and are gated: no-op unless
+//! `GGCOMMONS_IT_MQTT=1` is set (a broker must be reachable). The config-reload
+//! pipeline itself is also covered, broker-free, by the source-level unit tests.
+//!
+//! Skipped under the `greengrass` feature: there, IPC transport performs a real
+//! `connect()` to the nucleus, which is unavailable in a unit-test environment.
 #![cfg(not(feature = "greengrass"))]
 
 use std::collections::HashMap;
@@ -17,6 +24,52 @@ use std::time::Duration;
 
 use ggcommons::config::Config;
 use ggcommons::prelude::*;
+
+fn skipped() -> bool {
+    if std::env::var("GGCOMMONS_IT_MQTT").is_ok() {
+        return false;
+    }
+    eprintln!("skipping config-hot-reload runtime test (set GGCOMMONS_IT_MQTT=1 to enable)");
+    true
+}
+
+/// Write a messaging-config file for the local broker and return its path.
+fn write_messaging_config(dir: &std::path::Path) -> std::path::PathBuf {
+    let host = std::env::var("GGCOMMONS_IT_MQTT_HOST").unwrap_or_else(|_| "localhost".to_string());
+    let port = std::env::var("GGCOMMONS_IT_MQTT_PORT").unwrap_or_else(|_| "1883".to_string());
+    let path = dir.join("messaging.json");
+    std::fs::write(
+        &path,
+        format!(
+            r#"{{ "messaging": {{ "local": {{ "host": "{host}", "port": {port}, "clientId": "reload-it-{}" }} }} }}"#,
+            uuid::Uuid::new_v4()
+        ),
+    )
+    .unwrap();
+    path
+}
+
+/// Build a HOST/MQTT runtime with a FILE config source (broker required).
+async fn build_runtime(component: &str, dir: &std::path::Path, config_path: &std::path::Path) -> GgCommons {
+    let messaging_path = write_messaging_config(dir);
+    GgCommonsBuilder::new(component.to_string())
+        .args([
+            "prog".to_string(),
+            "--platform".to_string(),
+            "HOST".to_string(),
+            "--transport".to_string(),
+            "MQTT".to_string(),
+            messaging_path.to_string_lossy().into_owned(),
+            "-c".to_string(),
+            "FILE".to_string(),
+            config_path.to_string_lossy().into_owned(),
+            "-t".to_string(),
+            "thing-1".to_string(),
+        ])
+        .build()
+        .await
+        .expect("build")
+}
 
 /// A listener that records the latest `component.global.v` and how many times it fired.
 struct RecordingListener {
@@ -44,25 +97,16 @@ fn write_config(path: &std::path::Path, log_path: &std::path::Path, v: i64) {
 
 #[tokio::test]
 async fn file_config_hot_reloads_and_notifies_listeners() {
+    if skipped() {
+        return;
+    }
     let dir = std::env::temp_dir().join(format!("ggcommons-reload-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     let config_path = dir.join("config.json");
     let log_path = dir.join("metric.log");
     write_config(&config_path, &log_path, 1);
 
-    // GREENGRASS mode (default) => no broker needed; FILE config source.
-    let gg = GgCommonsBuilder::new("com.example.ReloadTest")
-        .args([
-            "prog".to_string(),
-            "-c".to_string(),
-            "FILE".to_string(),
-            config_path.to_string_lossy().into_owned(),
-            "-t".to_string(),
-            "thing-1".to_string(),
-        ])
-        .build()
-        .await
-        .expect("build");
+    let gg = build_runtime("com.example.ReloadTest", &dir, &config_path).await;
 
     assert_eq!(gg.config().global()["v"], 1);
 
@@ -94,6 +138,9 @@ async fn file_config_hot_reloads_and_notifies_listeners() {
 
 #[tokio::test]
 async fn multi_instance_config_is_exposed_through_the_runtime() {
+    if skipped() {
+        return;
+    }
     let dir = std::env::temp_dir().join(format!("ggcommons-multi-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     let config_path = dir.join("config.json");
@@ -110,18 +157,7 @@ async fn multi_instance_config_is_exposed_through_the_runtime() {
     });
     std::fs::write(&config_path, serde_json::to_vec_pretty(&contents).unwrap()).unwrap();
 
-    let gg = GgCommonsBuilder::new("com.example.MultiInstance")
-        .args([
-            "prog".to_string(),
-            "-c".to_string(),
-            "FILE".to_string(),
-            config_path.to_string_lossy().into_owned(),
-            "-t".to_string(),
-            "thing-1".to_string(),
-        ])
-        .build()
-        .await
-        .expect("build");
+    let gg = build_runtime("com.example.MultiInstance", &dir, &config_path).await;
 
     let cfg = gg.config();
     assert_eq!(cfg.instance_ids(), vec!["lineA", "lineB"]);
@@ -137,6 +173,9 @@ async fn multi_instance_config_is_exposed_through_the_runtime() {
 
 #[tokio::test]
 async fn metric_target_reconfigures_on_reload() {
+    if skipped() {
+        return;
+    }
     let dir = std::env::temp_dir().join(format!("ggcommons-mreload-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     let config_path = dir.join("config.json");
@@ -144,18 +183,7 @@ async fn metric_target_reconfigures_on_reload() {
     let log_b = dir.join("b.log");
     write_config(&config_path, &log_a, 1);
 
-    let gg = GgCommonsBuilder::new("com.example.MetricReload")
-        .args([
-            "prog".to_string(),
-            "-c".to_string(),
-            "FILE".to_string(),
-            config_path.to_string_lossy().into_owned(),
-            "-t".to_string(),
-            "thing-1".to_string(),
-        ])
-        .build()
-        .await
-        .expect("build");
+    let gg = build_runtime("com.example.MetricReload", &dir, &config_path).await;
 
     let metrics = gg.metrics();
     metrics.define_metric(MetricBuilder::create("m").add_measure("count", "Count", 60).build());

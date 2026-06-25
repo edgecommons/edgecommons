@@ -194,7 +194,7 @@ def ggcommons_heartbeat_messaging(heartbeat_messaging_config):
         ggcommons = GGCommonsBuilder.create("heartbeat_test") \
             .with_args([
                 '-c', 'FILE', heartbeat_messaging_config,
-                '-m', 'STANDALONE', MESSAGING_CONFIG_PATH,
+                '--platform', 'HOST', '--transport', 'MQTT', MESSAGING_CONFIG_PATH,
                 '-t', 'heartbeat-test-thing'
             ]) \
             .build()
@@ -219,7 +219,7 @@ def ggcommons_heartbeat_metric(heartbeat_metric_config):
         ggcommons = GGCommonsBuilder.create("heartbeat_test") \
             .with_args([
                 '-c', 'FILE', heartbeat_metric_config,
-                '-m', 'STANDALONE', MESSAGING_CONFIG_PATH,
+                '--platform', 'HOST', '--transport', 'MQTT', MESSAGING_CONFIG_PATH,
                 '-t', 'heartbeat-test-thing'
             ]) \
             .build()
@@ -244,7 +244,7 @@ def ggcommons_heartbeat_iotcore(heartbeat_iotcore_config):
         ggcommons = GGCommonsBuilder.create("heartbeat_test") \
             .with_args([
                 '-c', 'FILE', heartbeat_iotcore_config,
-                '-m', 'STANDALONE', MESSAGING_CONFIG_PATH,
+                '--platform', 'HOST', '--transport', 'MQTT', MESSAGING_CONFIG_PATH,
                 '-t', 'heartbeat-test-thing'
             ]) \
             .build()
@@ -269,7 +269,7 @@ def ggcommons_heartbeat_dual(heartbeat_dual_config):
         ggcommons = GGCommonsBuilder.create("heartbeat_test") \
             .with_args([
                 '-c', 'FILE', heartbeat_dual_config,
-                '-m', 'STANDALONE', MESSAGING_CONFIG_PATH,
+                '--platform', 'HOST', '--transport', 'MQTT', MESSAGING_CONFIG_PATH,
                 '-t', 'heartbeat-test-thing'
             ]) \
             .build()
@@ -446,7 +446,7 @@ def test_heartbeat_configuration_validation(heartbeat_messaging_config):
         ggcommons = GGCommonsBuilder.create("heartbeat_config_test") \
             .with_args([
                 '-c', 'FILE', heartbeat_messaging_config,
-                '-m', 'STANDALONE', MESSAGING_CONFIG_PATH,
+                '--platform', 'HOST', '--transport', 'MQTT', MESSAGING_CONFIG_PATH,
                 '-t', 'config-test-thing'
             ]) \
             .build()

@@ -74,4 +74,4 @@ Manifests:
         Setenv:
           CONFIG: "{configuration:/ComponentConfig}"
         Script:
-          "java -cp {artifacts:path}/<<JARNAME>>-1.0.0.jar <<MAINCLASSNAME>>"
+          "java -cp {artifacts:path}/<<JARNAME>>-1.0.0.jar <<MAINCLASSNAME>> --platform GREENGRASS"

@@ -36,16 +36,18 @@ public class MessagingClient
     }
 
     /**
-     * Package-private constructor for builder pattern.
+     * Package-private constructor for builder pattern. Branches on the resolved
+     * {@link com.breissinger.ggcommons.platform.Transport} (DESIGN-core §4.2 transport-injection
+     * site), not on a legacy mode enum.
      */
     MessagingClient(ParsedCommandLine cmdLine, boolean receiveOwnMessages) {
-        switch (cmdLine.mode) {
-            case GREENGRASS:
-                LOGGER.info("GREENGRASS mode specified. Using Greengrass IPC.");
+        switch (cmdLine.transport) {
+            case IPC:
+                LOGGER.info("IPC transport selected. Using Greengrass IPC.");
                 this.messagingProvider = new GreengrassMessagingProvider(receiveOwnMessages);
                 break;
-            case STANDALONE:
-                LOGGER.info("STANDALONE mode specified. Using dual MQTT clients.");
+            case MQTT:
+                LOGGER.info("MQTT transport selected. Using dual MQTT clients.");
                 try {
                     MessagingConfiguration config = MessagingConfiguration.loadFromFile(cmdLine.standaloneConfigPath);
                     this.messagingProvider = new StandaloneMessagingProvider(config, cmdLine.thingName);
@@ -55,8 +57,8 @@ public class MessagingClient
                 }
                 break;
             default:
-                LOGGER.fatal("Invalid mode specified: {}", cmdLine.mode);
-                throw new RuntimeException("Invalid mode specified: " + cmdLine.mode);
+                LOGGER.fatal("Invalid transport specified: {}", cmdLine.transport);
+                throw new RuntimeException("Invalid transport specified: " + cmdLine.transport);
         }
     }
 

@@ -62,7 +62,7 @@ class GGCommonsFacadeUnitTest {
     void deprecatedTwoArgConstructorWrapsInitFailure() {
         // No Greengrass IPC environment available -> init() must fail and rethrow as RuntimeException.
         RuntimeException ex = assertThrows(RuntimeException.class,
-                () -> new GGCommons("com.test.Dep2", new String[]{"-m", "GREENGRASS"}));
+                () -> new GGCommons("com.test.Dep2", new String[]{"--platform", "GREENGRASS"}));
         assertTrue(ex.getMessage().contains("Failed to initialize GGCommons"));
     }
 
@@ -71,7 +71,7 @@ class GGCommonsFacadeUnitTest {
     void deprecatedThreeArgConstructorWrapsInitFailure() {
         org.apache.commons.cli.Options opts = new org.apache.commons.cli.Options();
         assertThrows(RuntimeException.class,
-                () -> new GGCommons("com.test.Dep3", new String[]{"-m", "GREENGRASS"}, opts));
+                () -> new GGCommons("com.test.Dep3", new String[]{"--platform", "GREENGRASS"}, opts));
     }
 
     @SuppressWarnings("deprecation")
@@ -79,7 +79,7 @@ class GGCommonsFacadeUnitTest {
     void deprecatedFourArgConstructorWrapsInitFailure() {
         org.apache.commons.cli.Options opts = new org.apache.commons.cli.Options();
         assertThrows(RuntimeException.class,
-                () -> new GGCommons("com.test.Dep4", new String[]{"-m", "GREENGRASS"}, opts, false));
+                () -> new GGCommons("com.test.Dep4", new String[]{"--platform", "GREENGRASS"}, opts, false));
     }
 
     // ----- initStreaming early-return guard -----
@@ -161,13 +161,14 @@ class GGCommonsFacadeUnitTest {
     @Test
     void processArgsSwallowsParseExceptionForUnknownOption() {
         // An unrecognized option triggers commons-cli ParseException, which processArgs
-        // catches and logs; it returns a ParsedCommandLine with mode/config unset (null).
+        // catches and logs; it returns a ParsedCommandLine with the resolved axes unset (null).
         ParsedCommandLine pcl = GGCommons.processArgs(
                 "com.test.Comp", new String[]{"-zzz", "boom"}, null);
 
         assertNotNull(pcl);
-        // The parse failed before mode/config were assigned.
-        assertNull(pcl.mode);
+        // The parse failed before the resolver ran, so platform/transport/config stay null.
+        assertNull(pcl.platform);
+        assertNull(pcl.transport);
         assertNull(pcl.configArgs);
         assertNull(pcl.commandLine);
     }

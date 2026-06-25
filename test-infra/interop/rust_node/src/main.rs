@@ -2,7 +2,7 @@
 //! shared CLI contract:
 //!   interop-rust-node responder <request_topic>
 //!   interop-rust-node request   <request_topic> <token>
-//! STANDALONE local-only against localhost:1883.
+//! Local-only MQTT transport against localhost:1883.
 
 use std::sync::Arc;
 use std::time::Duration;

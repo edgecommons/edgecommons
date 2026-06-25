@@ -9,6 +9,7 @@ from ggcommons.messaging.providers.greengrass.greengrass_ipc import (
     GreengrassIpcProvider,
 )
 from ggcommons.messaging.providers.standalone_provider import StandaloneProvider
+from ggcommons.platform import Transport
 from ggcommons.utils.iou import Iou
 from awsiot.greengrasscoreipc.model import QOS
 
@@ -20,33 +21,40 @@ class MessagingClient:
 
     @staticmethod
     def init(args: Namespace, standalone_config_path: str = None, receive_own_messages=False) -> MessagingProvider:
-        """Initialize messaging client based on mode and configuration."""
-        mode = getattr(args, 'mode', None)
+        """Initialize the messaging client based on the resolved transport.
+
+        Branches on the resolved :class:`~ggcommons.platform.transport.Transport`
+        (DESIGN-core sec 4.2 transport-injection site), not on a legacy mode token.
+        """
+        transport = getattr(args, 'transport', None)
         thing_name = getattr(args, 'thing', None)
-        
-        logger.info(f"Initializing MessagingClient - mode: {mode}, thing_name: {thing_name}, receive_own_messages: {receive_own_messages}")
-        
-        # Determine messaging mode
-        if mode and len(mode) > 0 and mode[0].upper() == 'STANDALONE':
-            logger.info(f"Configuring STANDALONE mode with dual broker support - config file: {standalone_config_path}")
+
+        logger.info(f"Initializing MessagingClient - transport: {transport}, thing_name: {thing_name}, receive_own_messages: {receive_own_messages}")
+
+        if transport == Transport.MQTT:
+            logger.info(f"MQTT transport selected - dual broker support, config file: {standalone_config_path}")
+            # The messaging-config path is required only when the MQTT provider is actually built,
+            # mirroring how the IPC provider only fails against a live Nucleus.
             if not standalone_config_path:
-                logger.error("STANDALONE mode specified but no config file path provided")
-                raise RuntimeError("STANDALONE mode requires standalone config file path")
-            
+                logger.error("MQTT transport specified but no messaging config file path provided")
+                raise RuntimeError("MQTT transport requires a messaging config file path")
+
             logger.debug(f"Loading messaging configuration from: {standalone_config_path}")
             messaging_config = MessagingClient._get_messaging_config(standalone_config_path)
-            
+
             logger.info("Creating StandaloneProvider for dual broker messaging")
             MessagingClient._messaging_provider = StandaloneProvider(messaging_config, thing_name)
-            logger.info("STANDALONE mode messaging provider initialized successfully")
-        else:
-            # Default to IPC mode
-            logger.info(f"Configuring Greengrass IPC mode - receive_own_messages: {receive_own_messages}")
+            logger.info("MQTT transport messaging provider initialized successfully")
+        elif transport == Transport.IPC:
+            logger.info(f"IPC transport selected - Greengrass IPC, receive_own_messages: {receive_own_messages}")
             MessagingClient._messaging_provider = GreengrassIpcProvider(
                 receive_own_messages
             )
             logger.info("Greengrass IPC messaging provider initialized successfully")
-        
+        else:
+            logger.error(f"Invalid transport specified: {transport}")
+            raise RuntimeError(f"Invalid transport specified: {transport}")
+
         if MessagingClient._messaging_provider is None:
             logger.error("Failed to create messaging provider - provider is None")
             raise RuntimeError("Failed to initialize messaging provider")

@@ -7,7 +7,7 @@
  * providers, the metric emitter, the heartbeat, and the dynamically-imported opt-in
  * subsystem barrels (credentials / parameters / streaming) so we can deterministically
  * exercise:
- *   - both runtime modes (STANDALONE config load + GREENGRASS IPC init),
+ *   - both transports (MQTT messaging-config load + IPC init),
  *   - every accessor (config/args/componentName/messaging/metrics) and the
  *     `messaging()` throw when no service is wired,
  *   - the opt-in subsystems wiring (and their accessors returning `undefined` when the
@@ -104,7 +104,7 @@ afterEach(() => {
 /** Build a GGCommons with the given config object (written nowhere — we mock ENV source). */
 async function buildWith(
   cfg: Record<string, unknown>,
-  extraArgs: string[] = ["-m", "STANDALONE", "messaging.json"],
+  extraArgs: string[] = ["--platform", "HOST", "--transport", "MQTT", "messaging.json"],
 ): Promise<GGCommons> {
   process.env.GGC_LIFECYCLE_CFG = JSON.stringify(cfg);
   const gg = await new GGCommonsBuilder("com.example.Lc")
@@ -115,7 +115,7 @@ async function buildWith(
 }
 
 describe("GGCommons lifecycle (mocked)", () => {
-  it("STANDALONE: loads messaging config, exposes accessors, opt-in subsystems undefined when absent", async () => {
+  it("MQTT: loads messaging config, exposes accessors, opt-in subsystems undefined when absent", async () => {
     const gg = await buildWith(BASE);
     try {
       expect(loadMessagingConfigMock).toHaveBeenCalledWith("messaging.json");
@@ -137,10 +137,10 @@ describe("GGCommons lifecycle (mocked)", () => {
     }
   });
 
-  it("GREENGRASS: initializes IPC messaging (no messaging-config file) honoring receiveOwnMessages", async () => {
+  it("IPC: initializes IPC messaging (no messaging-config file) honoring receiveOwnMessages", async () => {
     process.env.GGC_GG_CFG = JSON.stringify(BASE);
     const built = await new GGCommonsBuilder("com.example.Lc")
-      .args(["-m", "GREENGRASS", "-c", "ENV", "GGC_GG_CFG", "-t", "gg-thing"])
+      .args(["--platform", "GREENGRASS", "-c", "ENV", "GGC_GG_CFG", "-t", "gg-thing"])
       .receiveOwnMessages(true)
       .build();
     delete process.env.GGC_GG_CFG;
@@ -153,11 +153,24 @@ describe("GGCommons lifecycle (mocked)", () => {
     }
   });
 
-  it("GREENGRASS: defaults thing name from AWS_IOT_THING_NAME / NOT_GREENGRASS when -t absent", async () => {
+  it("IPC: receiveOwnMessages defaults to true (Java-canonical convergence)", async () => {
+    process.env.GGC_GG_CFG_DEF = JSON.stringify(BASE);
+    const built = await new GGCommonsBuilder("com.example.Lc")
+      .args(["--platform", "GREENGRASS", "-c", "ENV", "GGC_GG_CFG_DEF", "-t", "gg-thing"])
+      .build();
+    delete process.env.GGC_GG_CFG_DEF;
+    try {
+      expect(ipcConnect).toHaveBeenCalledWith({ receiveOwnMessages: true });
+    } finally {
+      await built.close();
+    }
+  });
+
+  it("IPC: defaults thing name from AWS_IOT_THING_NAME / NOT_GREENGRASS when -t absent", async () => {
     process.env.GGC_GG_CFG2 = JSON.stringify(BASE);
     delete process.env.AWS_IOT_THING_NAME;
     const built = await new GGCommonsBuilder("com.example.Lc")
-      .args(["-m", "GREENGRASS", "-c", "ENV", "GGC_GG_CFG2"])
+      .args(["--platform", "GREENGRASS", "-c", "ENV", "GGC_GG_CFG2"])
       .build();
     delete process.env.GGC_GG_CFG2;
     try {

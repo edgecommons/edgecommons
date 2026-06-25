@@ -4,40 +4,75 @@
  */
 package com.breissinger.ggcommons;
 
+import com.breissinger.ggcommons.platform.Platform;
+import com.breissinger.ggcommons.platform.Transport;
 import org.apache.commons.cli.Options;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Unit tests for the static {@link GGCommons#processArgs(String, String[], Options)}
- * argument parser. Covers defaults, the explicit thing/mode flags, STANDALONE with a
- * path, and the IllegalArgumentException error branches. The --help/-h branch is
- * deliberately NOT exercised because it calls {@code System.exit(0)}.
+ * Unit tests for the static {@link GGCommons#processArgs(String, String[], Options)} argument
+ * parser, re-pointed from the removed {@code -m/--mode} flag to the two-axis
+ * {@code --platform}/{@code --transport} contract (DESIGN-core §6.1). Covers profile defaults, the
+ * explicit flags, the MQTT messaging-config path, the IPC-lock guard and the legacy-flag rejection.
+ * The {@code --help}/{@code -h} branch is deliberately NOT exercised because it calls
+ * {@code System.exit(0)}.
  */
 class GGCommonsProcessArgsTest {
 
     private static final String COMPONENT = "com.example.TestComponent";
 
     @Test
-    void defaultsWhenNoConfigOrModeSpecified() {
-        ParsedCommandLine pcl = GGCommons.processArgs(COMPONENT, new String[]{}, null);
+    void defaultConfigSourceIsGgConfigRegardlessOfDetectedPlatform() {
+        // -c absent -> default comes from the resolved platform profile, which is GG_CONFIG for
+        // both Phase-0 platforms.
+        ParsedCommandLine pcl = GGCommons.processArgs(
+                COMPONENT, new String[]{"--platform", "HOST", "--transport", "MQTT", "./msg.json"}, null);
 
-        assertNotNull(pcl);
-        // -c absent -> default GG_CONFIG
         assertArrayEquals(new String[]{"GG_CONFIG"}, pcl.configArgs);
-        // -m absent -> default GREENGRASS
-        assertEquals(ParsedCommandLine.Mode.GREENGRASS, pcl.mode);
-        assertNull(pcl.standaloneConfigPath);
-        assertNull(pcl.thingName);
         assertNotNull(pcl.commandLine);
+    }
+
+    @Test
+    void greengrassPlatformDerivesIpcTransport() {
+        ParsedCommandLine pcl = GGCommons.processArgs(
+                COMPONENT, new String[]{"--platform", "GREENGRASS"}, null);
+
+        assertEquals(Platform.GREENGRASS, pcl.platform);
+        assertEquals(Transport.IPC, pcl.transport);
+        assertNull(pcl.standaloneConfigPath);
+    }
+
+    @Test
+    void hostPlatformWithMqttTransportTakesMessagingConfigPath() {
+        ParsedCommandLine pcl = GGCommons.processArgs(
+                COMPONENT,
+                new String[]{"--platform", "HOST", "--transport", "MQTT", "./standalone-messaging.json"},
+                null);
+
+        assertEquals(Platform.HOST, pcl.platform);
+        assertEquals(Transport.MQTT, pcl.transport);
+        assertEquals("./standalone-messaging.json", pcl.standaloneConfigPath);
+    }
+
+    @Test
+    void transportTokenIsCaseInsensitive() {
+        ParsedCommandLine pcl = GGCommons.processArgs(
+                COMPONENT,
+                new String[]{"--platform", "host", "--transport", "mqtt", "./msg.json"},
+                null);
+
+        assertEquals(Platform.HOST, pcl.platform);
+        assertEquals(Transport.MQTT, pcl.transport);
+        assertEquals("./msg.json", pcl.standaloneConfigPath);
     }
 
     @Test
     void explicitThingTakesFullStringValue() {
         // Guards against the historical bug that truncated the thing name to one char.
         ParsedCommandLine pcl = GGCommons.processArgs(
-                COMPONENT, new String[]{"-t", "my-full-thing-name"}, null);
+                COMPONENT, new String[]{"--platform", "GREENGRASS", "-t", "my-full-thing-name"}, null);
 
         assertEquals("my-full-thing-name", pcl.thingName);
     }
@@ -45,7 +80,7 @@ class GGCommonsProcessArgsTest {
     @Test
     void longThingOptionTakesFullStringValue() {
         ParsedCommandLine pcl = GGCommons.processArgs(
-                COMPONENT, new String[]{"--thing", "another-full-thing"}, null);
+                COMPONENT, new String[]{"--platform", "GREENGRASS", "--thing", "another-full-thing"}, null);
 
         assertEquals("another-full-thing", pcl.thingName);
     }
@@ -53,54 +88,71 @@ class GGCommonsProcessArgsTest {
     @Test
     void explicitConfigSourceWithArgs() {
         ParsedCommandLine pcl = GGCommons.processArgs(
-                COMPONENT, new String[]{"-c", "FILE", "./config.json"}, null);
+                COMPONENT, new String[]{"--platform", "GREENGRASS", "-c", "FILE", "./config.json"}, null);
 
         assertArrayEquals(new String[]{"FILE", "./config.json"}, pcl.configArgs);
-        // mode still defaults to GREENGRASS
-        assertEquals(ParsedCommandLine.Mode.GREENGRASS, pcl.mode);
+        assertEquals(Transport.IPC, pcl.transport);
     }
 
     @Test
-    void greengrassModeExplicit() {
+    void mqttTransportWithoutPathParsesButLeavesPathNull() {
+        // Parsing must not require the messaging-config path; the requirement is enforced later when
+        // the MQTT provider is actually built (MessagingClient), so mock-messaging collaborators can
+        // still resolve args.
         ParsedCommandLine pcl = GGCommons.processArgs(
-                COMPONENT, new String[]{"-m", "GREENGRASS"}, null);
-
-        assertEquals(ParsedCommandLine.Mode.GREENGRASS, pcl.mode);
+                COMPONENT, new String[]{"--platform", "HOST", "--transport", "MQTT"}, null);
+        assertEquals(Transport.MQTT, pcl.transport);
         assertNull(pcl.standaloneConfigPath);
     }
 
     @Test
-    void standaloneModeWithPathSetsStandaloneConfigPath() {
-        ParsedCommandLine pcl = GGCommons.processArgs(
-                COMPONENT,
-                new String[]{"-m", "STANDALONE", "./standalone-messaging.json"},
-                null);
-
-        assertEquals(ParsedCommandLine.Mode.STANDALONE, pcl.mode);
-        assertEquals("./standalone-messaging.json", pcl.standaloneConfigPath);
+    void ipcOnHostFailsTheIpcLock() {
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () ->
+                GGCommons.processArgs(COMPONENT, new String[]{"--platform", "HOST", "--transport", "IPC"}, null));
+        assertTrue(ex.getMessage().contains("IPC transport requires --platform GREENGRASS"));
     }
 
     @Test
-    void standaloneModeIsCaseInsensitive() {
-        ParsedCommandLine pcl = GGCommons.processArgs(
-                COMPONENT,
-                new String[]{"-m", "standalone", "./msg.json"},
-                null);
+    void unknownPlatformThrows() {
+        assertThrows(IllegalArgumentException.class, () ->
+                GGCommons.processArgs(COMPONENT, new String[]{"--platform", "BOGUS"}, null));
+    }
 
-        assertEquals(ParsedCommandLine.Mode.STANDALONE, pcl.mode);
+    @Test
+    void unknownTransportThrows() {
+        assertThrows(IllegalArgumentException.class, () ->
+                GGCommons.processArgs(COMPONENT, new String[]{"--platform", "HOST", "--transport", "BOGUS"}, null));
+    }
+
+    @Test
+    void legacyShortModeFlagIsRejectedWithGuidance() {
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () ->
+                GGCommons.processArgs(COMPONENT, new String[]{"-m", "STANDALONE", "./msg.json"}, null));
+        assertTrue(ex.getMessage().contains("--platform"));
+        assertTrue(ex.getMessage().contains("--transport"));
+    }
+
+    @Test
+    void legacyLongModeFlagIsRejectedWithGuidance() {
+        assertThrows(IllegalArgumentException.class, () ->
+                GGCommons.processArgs(COMPONENT, new String[]{"--mode", "GREENGRASS"}, null));
+    }
+
+    @Test
+    void kubernetesPlatformFailsFastInPhase0() {
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () ->
+                GGCommons.processArgs(COMPONENT, new String[]{"--platform", "KUBERNETES"}, null));
+        assertTrue(ex.getMessage().contains("KUBERNETES"));
+    }
+
+    @Test
+    void autoPlatformIsAcceptedAsAlias() {
+        // 'auto' (explicit) behaves like omitting --platform: detection runs. On the test host with
+        // no Nucleus signals this resolves to HOST, so a messaging-config path is required.
+        ParsedCommandLine pcl = GGCommons.processArgs(
+                COMPONENT, new String[]{"--platform", "auto", "--transport", "MQTT", "./msg.json"}, null);
+        assertEquals(Transport.MQTT, pcl.transport);
         assertEquals("./msg.json", pcl.standaloneConfigPath);
-    }
-
-    @Test
-    void standaloneWithoutPathThrows() {
-        assertThrows(IllegalArgumentException.class, () ->
-                GGCommons.processArgs(COMPONENT, new String[]{"-m", "STANDALONE"}, null));
-    }
-
-    @Test
-    void unknownModeThrows() {
-        assertThrows(IllegalArgumentException.class, () ->
-                GGCommons.processArgs(COMPONENT, new String[]{"-m", "BOGUS_MODE"}, null));
     }
 
     @Test
@@ -112,14 +164,16 @@ class GGCommonsProcessArgsTest {
                 COMPONENT,
                 new String[]{
                         "-t", "thing-7",
-                        "-m", "STANDALONE", "./sa.json",
+                        "--platform", "HOST",
+                        "--transport", "MQTT", "./sa.json",
                         "-c", "ENV", "MY_CONFIG_VAR",
                         "-x", "appvalue"
                 },
                 appOptions);
 
         assertEquals("thing-7", pcl.thingName);
-        assertEquals(ParsedCommandLine.Mode.STANDALONE, pcl.mode);
+        assertEquals(Platform.HOST, pcl.platform);
+        assertEquals(Transport.MQTT, pcl.transport);
         assertEquals("./sa.json", pcl.standaloneConfigPath);
         assertArrayEquals(new String[]{"ENV", "MY_CONFIG_VAR"}, pcl.configArgs);
         // The custom app option is parsed into the same CommandLine.

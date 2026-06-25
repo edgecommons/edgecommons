@@ -18,14 +18,14 @@ so you write only business logic in [`src/app.rs`](src/app.rs).
 | `build.sh` | Builds the release binary (with the `greengrass` feature) and stages it for the GDK. |
 | `test-configs/` | Sample `config.json` + `standalone-messaging.json` for local runs. |
 
-## Develop & run locally (STANDALONE mode)
+## Develop & run locally (HOST platform, MQTT transport)
 
-Local development uses STANDALONE mode (dual-broker MQTT) — no Greengrass core or
-Linux/`libclang` toolchain needed. Start a local MQTT broker, then:
+Local development runs on the HOST platform with the MQTT transport (dual-broker MQTT) — no
+Greengrass core or Linux/`libclang` toolchain needed. Start a local MQTT broker, then:
 
 ```bash
 cargo run -- \
-  -m STANDALONE ./test-configs/standalone-messaging.json \
+  --platform HOST --transport MQTT ./test-configs/standalone-messaging.json \
   -c FILE ./test-configs/config.json \
   -t my-thing
 ```
@@ -33,7 +33,8 @@ cargo run -- \
 ## CLI contract
 
 - `-c/--config <SOURCE> [args...]` — `FILE | ENV | GG_CONFIG (default) | SHADOW | CONFIG_COMPONENT`
-- `-m/--mode <MODE> [path]` — `GREENGRASS (default) | STANDALONE <messaging_config.json>`
+- `--platform <PLATFORM>` — `GREENGRASS | HOST | KUBERNETES | auto` (default `auto`)
+- `--transport <TRANSPORT> [path]` — `IPC | MQTT [messaging_config.json]` (default: from the platform; IPC only valid on GREENGRASS)
 - `-t/--thing <name>` — IoT Thing name
 
 ## Build & publish with the GDK (on-device)

@@ -73,7 +73,7 @@ normal build.
 ## Deployed-component integration test (`test_deployed_component.py`)
 
 Closes the coverage gap that let several deploy-path bugs through: the per-language
-suites run STANDALONE/MQTT with the `log` metric target and never exercise GREENGRASS
+suites run on the HOST platform (MQTT) with the `log` metric target and never exercise GREENGRASS
 IPC, the deployed-config flow, the CloudWatch target, or the vault under the GG work
 dir. This test runs **on a Greengrass core device** against a live nucleus and asserts
 each deployed ggcommons component:

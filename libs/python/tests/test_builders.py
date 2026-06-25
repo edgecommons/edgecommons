@@ -36,7 +36,7 @@ def test_ggcommons_builder_create_none_name():
 def test_ggcommons_builder_with_args():
     """Test with_args method."""
     builder = GGCommonsBuilder.create("com.test.Component")
-    args = ["-c", "FILE", "test-config.json", "-m", "STANDALONE", "test-messaging-config.json"]
+    args = ["-c", "FILE", "test-config.json", "--platform", "HOST", "--transport", "MQTT", "test-messaging-config.json"]
     
     result = builder.with_args(args)
     
@@ -68,12 +68,12 @@ def test_ggcommons_builder_receive_own_messages():
 def test_ggcommons_builder_build():
     """Test build method creates builder with correct parameters."""
     builder = GGCommonsBuilder.create("com.test.Component") \
-        .with_args(["-c", "FILE", "test-config.json", "-m", "STANDALONE", "test-messaging-config.json", "-t", "test-thing"]) \
+        .with_args(["-c", "FILE", "test-config.json", "--platform", "HOST", "--transport", "MQTT", "test-messaging-config.json", "-t", "test-thing"]) \
         .receive_own_messages(False)
     
     # Test that builder has correct internal state before build
     assert builder._component_name == "com.test.Component"
-    assert builder._args == ["-c", "FILE", "test-config.json", "-m", "STANDALONE", "test-messaging-config.json", "-t", "test-thing"]
+    assert builder._args == ["-c", "FILE", "test-config.json", "--platform", "HOST", "--transport", "MQTT", "test-messaging-config.json", "-t", "test-thing"]
     assert builder._receive_own_messages is False
     assert builder._app_options is None
 

@@ -37,6 +37,7 @@ pub mod ipc;
 pub mod logging;
 pub mod messaging;
 pub mod metrics;
+pub mod platform;
 #[cfg(feature = "credentials")]
 pub mod credentials;
 #[cfg(feature = "parameters")]
@@ -56,11 +57,7 @@ use arc_swap::ArcSwap;
 
 use crate::cli::ParsedArgs;
 use crate::config::model::Config;
-
-/// Default thing name when none is supplied and not running under Greengrass.
-const DEFAULT_THING_NAME: &str = "NOT_GREENGRASS";
-/// Greengrass-injected environment variable for the core's thing name.
-const THING_NAME_ENV: &str = "AWS_IOT_THING_NAME";
+use crate::platform::Transport;
 
 /// The initialized component runtime. Holds the wired services and the current
 /// configuration snapshot. Dropping it releases owned resources (RAII) — there is
@@ -137,12 +134,16 @@ impl GgCommons {
     /// # Errors
     /// | Error Variant | Condition | Recovery |
     /// |---------------|-----------|----------|
-    /// | `GgError::Messaging` | No messaging service was wired (GREENGRASS mode without the `greengrass` feature) | Enable the `greengrass` feature, or run in STANDALONE mode |
+    /// | `GgError::Messaging` | No messaging service was wired | Select a transport (`--transport IPC|MQTT`) and enable the matching cargo feature |
+    ///
+    /// Note: since Phase 0, an unsupported transport/feature combination fails fast during
+    /// `build()` (e.g. `--platform GREENGRASS` without the `greengrass` feature), so a wired
+    /// runtime normally always has a messaging service.
     pub fn messaging(&self) -> Result<Arc<dyn messaging::MessagingService>> {
         self.messaging.clone().ok_or_else(|| {
             GgError::Messaging(
-                "messaging is not available: GREENGRASS mode requires the 'greengrass' feature, \
-                 or use STANDALONE mode"
+                "messaging is not available: select --transport IPC (requires the 'greengrass' \
+                 feature) or --transport MQTT (requires the 'standalone' feature)"
                     .to_string(),
             )
         })
@@ -251,14 +252,21 @@ impl GgCommonsBuilder {
             None => cli::parse_from(std::env::args_os())?,
         };
 
-        let thing_name = parsed.thing.clone().unwrap_or_else(|| {
-            std::env::var(THING_NAME_ENV).unwrap_or_else(|_| DEFAULT_THING_NAME.to_string())
-        });
+        // Identity (thing name) was resolved by the platform resolver during arg parse
+        // (explicit -t ▸ AWS_IOT_THING_NAME env probe ▸ library fallback, DESIGN-core §6.2).
+        let thing_name = parsed.identity.clone();
 
-        // Messaging is initialized first: it depends only on the runtime mode (the
-        // `-m` messaging config / IPC), not on the component config — and the
-        // CONFIG_COMPONENT source needs a messaging handle to fetch the config.
-        let messaging = init_messaging(&parsed.mode).await?;
+        // Messaging is initialized first: it depends only on the resolved transport (the
+        // MQTT messaging config / IPC socket), not on the component config — and the
+        // CONFIG_COMPONENT source needs a messaging handle to fetch the config. The
+        // transport-injection site (DESIGN-core §4.2) branches on the resolved Transport,
+        // not a legacy mode enum.
+        let messaging = init_messaging(
+            parsed.transport,
+            parsed.messaging_config_path.as_deref(),
+            self.receive_own_messages,
+        )
+        .await?;
 
         let source = config::source::build(
             &parsed.config,
@@ -271,17 +279,6 @@ impl GgCommonsBuilder {
         let cfg = Config::from_value(self.component_name.clone(), thing_name.clone(), raw)?;
 
         logging::init(&cfg);
-
-        // Option C: the SDK exposes no IPC ReceiveMode, so `receiveOwnMessages=false`
-        // is a documented no-op rather than a silently-broken or memory-unbounded
-        // client-side filter. Warn so the developer is not surprised.
-        if !self.receive_own_messages {
-            tracing::warn!(
-                "receiveOwnMessages=false is not supported by the Greengrass Rust SDK \
-                 (no IPC ReceiveMode); proceeding as if true — the component WILL receive \
-                 its own messages on subscribed topics"
-            );
-        }
 
         tracing::info!(
             component = %self.component_name,
@@ -443,35 +440,49 @@ fn spawn_config_reload(
     }))
 }
 
-/// Initialize the messaging service for the selected runtime mode.
+/// Initialize the messaging service for the resolved [`Transport`] (DESIGN-core §4.2 — the
+/// transport-injection site).
 ///
 /// # Purpose
-/// In STANDALONE mode, load the messaging config and connect the dual-broker MQTT
-/// provider; in GREENGRASS mode, connect the Greengrass IPC provider (requires the
-/// `greengrass` feature; returns `None` only if that feature is disabled).
+/// For [`Transport::Mqtt`], load the messaging config and connect the dual-broker MQTT
+/// provider; for [`Transport::Ipc`], connect the Greengrass IPC provider.
 ///
-/// # Semantics & Syntax
-/// - **Signature**: `async fn init_messaging(mode: &RuntimeMode) -> Result<Option<Arc<dyn MessagingService>>>`
+/// # Semantics
+/// - The IPC lock (DESIGN-core §4.1) is enforced earlier by the resolver, so `Transport::Ipc`
+///   reaching here implies `platform == GREENGRASS`.
+/// - **Compile-time capability (Rust-specific fail-fast, DECISION §12 #4):** if
+///   `Transport::Ipc` is selected but the binary was built without the `greengrass` cargo
+///   feature, this **fails fast** naming the missing feature — replacing the historical
+///   silent `Ok(None)` no-op.
+/// - `receive_own_messages` is honored only on the IPC transport (matching the Java
+///   `receiveOwnMessages` contract, which "applies only when messaging target is IPC").
 ///
 /// # Errors
 /// | Error Variant | Condition | Recovery |
 /// |---------------|-----------|----------|
-/// | `GgError::Io` / `GgError::Json` | Messaging config file missing or malformed | Check the `-m STANDALONE <path>` file |
-/// | `GgError::Messaging` | Broker connection failed, or `standalone` feature disabled | Verify the broker; enable the feature |
+/// | `GgError::Io` / `GgError::Json` | Messaging config file missing or malformed | Check the `--transport MQTT <path>` file |
+/// | `GgError::Messaging` | Broker/IPC connection failed; MQTT path missing; or the required cargo feature is disabled | Verify the broker/Nucleus; supply the path; enable the feature |
 async fn init_messaging(
-    mode: &cli::RuntimeMode,
+    transport: Transport,
+    messaging_config_path: Option<&std::path::Path>,
+    receive_own_messages: bool,
 ) -> Result<Option<Arc<dyn messaging::MessagingService>>> {
-    match mode {
-        cli::RuntimeMode::Standalone {
-            messaging_config_path,
-        } => {
+    match transport {
+        Transport::Mqtt => {
             #[cfg(feature = "standalone")]
             {
                 use crate::messaging::config::MessagingConfig;
                 use crate::messaging::provider::mqtt::MqttProvider;
                 use crate::messaging::service::DefaultMessagingService;
 
-                let mc = MessagingConfig::load(messaging_config_path).await?;
+                let path = messaging_config_path.ok_or_else(|| {
+                    GgError::Cli(
+                        "MQTT transport requires a messaging config path: \
+                         --transport MQTT <messaging_config.json>"
+                            .to_string(),
+                    )
+                })?;
+                let mc = MessagingConfig::load(path).await?;
                 let provider = Arc::new(MqttProvider::connect(&mc).await?);
                 let service: Arc<dyn messaging::MessagingService> =
                     Arc::new(DefaultMessagingService::new(provider));
@@ -481,16 +492,27 @@ async fn init_messaging(
             {
                 let _ = messaging_config_path;
                 Err(GgError::Messaging(
-                    "STANDALONE messaging requires the 'standalone' cargo feature".to_string(),
+                    "MQTT transport requires the 'standalone' cargo feature".to_string(),
                 ))
             }
         }
-        cli::RuntimeMode::Greengrass => {
+        Transport::Ipc => {
             #[cfg(feature = "greengrass")]
             {
                 use crate::messaging::provider::ipc::IpcProvider;
                 use crate::messaging::service::DefaultMessagingService;
 
+                // The Greengrass Rust SDK exposes no IPC ReceiveMode, so own-message
+                // suppression cannot be performed natively. `receiveOwnMessages=false` is a
+                // documented no-op on IPC; warn so the developer is not surprised. (Honoring
+                // the flag awaits an upstream SDK ReceiveMode addition.)
+                if !receive_own_messages {
+                    tracing::warn!(
+                        "receiveOwnMessages=false is not supported by the Greengrass Rust SDK \
+                         (no IPC ReceiveMode); proceeding as if true — the component WILL \
+                         receive its own messages on subscribed topics"
+                    );
+                }
                 let provider = Arc::new(IpcProvider::connect().await?);
                 let service: Arc<dyn messaging::MessagingService> =
                     Arc::new(DefaultMessagingService::new(provider));
@@ -498,7 +520,17 @@ async fn init_messaging(
             }
             #[cfg(not(feature = "greengrass"))]
             {
-                Ok(None) // Greengrass IPC messaging requires the 'greengrass' feature.
+                let _ = receive_own_messages;
+                // Fail fast (DECISION §12 #4): GREENGRASS/IPC was selected (explicitly or by
+                // auto-detection) but this binary lacks the `greengrass` cargo feature.
+                // Replaces the historical silent `Ok(None)`.
+                Err(GgError::Messaging(
+                    "IPC transport (platform=GREENGRASS) requires the 'greengrass' cargo \
+                     feature, which is absent from this build. Rebuild with \
+                     --features greengrass (Linux/WSL only), or run with \
+                     --platform HOST --transport MQTT <messaging_config.json>."
+                        .to_string(),
+                ))
             }
         }
     }
@@ -506,9 +538,10 @@ async fn init_messaging(
 
 /// Common imports for component authors.
 pub mod prelude {
-    pub use crate::cli::{ConfigSourceSpec, ParsedArgs, RuntimeMode};
+    pub use crate::cli::{ConfigSourceSpec, ParsedArgs};
     pub use crate::config::model::Config;
     pub use crate::config::ConfigurationChangeListener;
+    pub use crate::platform::{Platform, Transport};
     pub use crate::messaging::{
         message_handler, MessageHandler, MessagingService, Qos, ReplyFuture,
     };

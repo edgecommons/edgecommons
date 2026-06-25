@@ -10,19 +10,19 @@ MetricEmitter directly.
 
 import argparse
 import logging
+import os
 from enum import Enum
 from typing import Optional, List
 from ggcommons.config.manager.config_manager import ConfigManager
 from ggcommons.config.manager.config_manager_builder import ConfigManagerBuilder
+from ggcommons.platform import (
+    Platform,
+    Transport,
+    ResolverInputs,
+    resolve_profile,
+)
 
 logger = logging.getLogger(__name__)
-
-
-class RuntimeMode(str, Enum):
-    """Runtime mode passed via -m/--mode (str-valued so it compares to the raw
-    uppercased CLI token)."""
-    GREENGRASS = "GREENGRASS"
-    STANDALONE = "STANDALONE"
 
 
 class ConfigSource(str, Enum):
@@ -129,49 +129,63 @@ class GGCommons:
         Returns:
             Parsed arguments namespace
         """
+        # The legacy single-axis -m/--mode token is removed (DESIGN-core sec 6.1 / FR-RT-1).
+        # Reject it explicitly with guidance to the new flags rather than letting argparse
+        # swallow it as an unrecognized option.
+        self._reject_legacy_mode_flag(args)
+
         parser = app_options or argparse.ArgumentParser()
-        
-        # Add standard ggcommons arguments
+
+        # Add standard ggcommons arguments. -c/--config defaults to None so the resolver can
+        # tell "omitted" (use the platform-profile default) from an explicit value.
         parser.add_argument(
             '-c', '--config',
             nargs='*',
             type=str,
-            default=[ConfigSource.GG_CONFIG.value],
-            help='Configuration source. One of: ENV, GG_CONFIG, FILE, SHADOW, CONFIG_COMPONENT'
+            default=None,
+            help='Configuration source. One of: ENV, GG_CONFIG, FILE, SHADOW, CONFIG_COMPONENT. '
+                 'Default: from the resolved platform profile (GG_CONFIG)'
         )
         parser.add_argument(
-            '-m', '--mode',
+            '--platform',
+            type=str,
+            default=None,
+            help="Deployment platform - 'GREENGRASS', 'HOST', 'KUBERNETES' or 'auto' (default auto)"
+        )
+        parser.add_argument(
+            '--transport',
             nargs='*',
             type=str,
-            help='Runtime mode - GREENGRASS (default) or STANDALONE <config_file_path>'
+            default=None,
+            help="Messaging transport - 'IPC' or 'MQTT <messaging_config_path>' "
+                 "(default: derived from the platform)"
         )
         parser.add_argument(
             '-t', '--thing',
             type=str,
             help='Thing name to use (optional)'
         )
-        
+
         parsed = parser.parse_args(args)
-        
-        # Process mode argument to match Java behavior
-        if not hasattr(parsed, 'mode') or not parsed.mode:
-            parsed.mode = [RuntimeMode.GREENGRASS.value]
 
-        mode_name = parsed.mode[0].upper()
-        # Validate STANDALONE mode has config path
-        if mode_name == RuntimeMode.STANDALONE:
-            if len(parsed.mode) < 2:
-                logger.error("STANDALONE mode requires config file path")
-                raise ValueError("STANDALONE mode requires config file path")
-        elif mode_name != RuntimeMode.GREENGRASS:
-            # Reject unknown modes instead of silently treating them as GREENGRASS.
-            logger.error(f"Unknown mode '{parsed.mode[0]}'")
-            raise ValueError(
-                f"Unknown mode '{parsed.mode[0]}'. Valid values are "
-                f"{' and '.join(repr(m.value) for m in RuntimeMode)}"
-            )
+        # Parse the two new runtime axes into resolver inputs (parse-time inputs only).
+        platform_flag = self._parse_platform(getattr(parsed, 'platform', None))
+        transport_flag = self._parse_transport(parsed)
+        config_args = parsed.config if parsed.config else None
+        thing_flag = getattr(parsed, 'thing', None)
 
-        # Validate the config source token up front rather than failing later.
+        # Resolve the platform/transport/config-source/identity from flags > env > profile
+        # defaults (DESIGN-core sec 4). KUBERNETES and an illegal IPC combo fail fast here.
+        resolved = resolve_profile(
+            ResolverInputs(platform_flag, transport_flag, config_args, thing_flag),
+            os.environ,
+        )
+        parsed.platform = resolved.platform
+        parsed.transport = resolved.transport
+        parsed.config = list(resolved.config_source)
+        parsed.identity = resolved.identity
+
+        # Validate the resolved config source token up front rather than failing later.
         valid_sources = {s.value for s in ConfigSource}
         if parsed.config and parsed.config[0].upper() not in valid_sources:
             logger.error(f"Unrecognized config source '{parsed.config[0]}'")
@@ -181,6 +195,55 @@ class GGCommons:
             )
 
         return parsed
+
+    @staticmethod
+    def _reject_legacy_mode_flag(args: Optional[List[str]]) -> None:
+        """Reject the removed -m/--mode flag with guidance to the new axes (DESIGN-core sec 6.1)."""
+        if not args:
+            return
+        for arg in args:
+            if arg in ("-m", "--mode"):
+                raise ValueError(
+                    "The -m/--mode flag has been removed. Use --platform GREENGRASS|HOST|KUBERNETES "
+                    "and --transport IPC|MQTT instead (e.g. '-m STANDALONE <path>' becomes "
+                    "'--platform HOST --transport MQTT <path>')."
+                )
+
+    @staticmethod
+    def _parse_platform(raw: Optional[str]) -> Optional[Platform]:
+        """Parse --platform; 'auto' (or absent) yields None so the resolver auto-detects."""
+        if raw is None:
+            return None
+        token = raw.strip()
+        if token.lower() == "auto":
+            return None
+        try:
+            return Platform(token.upper())
+        except ValueError:
+            raise ValueError(
+                f"Unknown platform '{raw}'. Valid: GREENGRASS, HOST, KUBERNETES, auto."
+            )
+
+    @staticmethod
+    def _parse_transport(parsed: argparse.Namespace) -> Optional[Transport]:
+        """Parse --transport [IPC|MQTT] <optional messaging-config path>.
+
+        Absent yields None so the resolver derives the transport from the platform. The optional
+        second value (the MQTT messaging-config path) is stashed on the namespace as
+        ``standalone_config_path``.
+        """
+        parsed.standalone_config_path = None
+        transport_args = getattr(parsed, 'transport', None)
+        if not transport_args:
+            return None
+        if len(transport_args) > 1:
+            parsed.standalone_config_path = transport_args[1]
+        try:
+            return Transport(transport_args[0].upper())
+        except ValueError:
+            raise ValueError(
+                f"Unknown transport '{transport_args[0]}'. Valid: IPC, MQTT."
+            )
         
     def _init_config_manager(self, component_name: str, parsed_args: argparse.Namespace) -> None:
         """
@@ -203,13 +266,11 @@ class GGCommons:
         """
         # Import here to avoid circular imports
         from ggcommons.messaging.messaging_client import MessagingClient
-        
-        # Determine standalone config path
-        standalone_config_path = None
-        if hasattr(parsed_args, 'mode') and parsed_args.mode:
-            if len(parsed_args.mode) > 1 and parsed_args.mode[0].upper() == RuntimeMode.STANDALONE:
-                standalone_config_path = parsed_args.mode[1]
-        
+
+        # The MQTT messaging-config path was stashed on the namespace during transport parsing
+        # (--transport MQTT <path>); the IPC transport ignores it.
+        standalone_config_path = getattr(parsed_args, 'standalone_config_path', None)
+
         MessagingClient.init(parsed_args, standalone_config_path, receive_own_messages)
         
     def _init_metrics(self) -> None:

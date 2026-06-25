@@ -1,7 +1,7 @@
 """Cross-language interop node (Python) for ggcommons.
 
-Two roles, talking to the shared local MQTT broker (localhost:1883) in STANDALONE
-local-only mode:
+Two roles, talking to the shared local MQTT broker (localhost:1883) over a
+local-only MQTT transport:
 
   python_node.py responder <request_topic>
       Subscribe to <request_topic>; reply to each request with

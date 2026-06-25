@@ -24,23 +24,43 @@ This document describes the available command line options provided by the AWS P
   * `CONFIG_COMPONENT` - Load configuration from a configuration component
 * **Effect**: Determines how the component obtains its configuration settings
 
-### -m, --mode
-* **Description**: Specifies the runtime mode and messaging system for component communication
-* **Usage**: `-m <mode> [args]` or `--mode <mode> [args]`
-* **Required**: No (defaults to "GREENGRASS" if not specified)
+### --platform
+* **Description**: Selects the deployment platform — the primary runtime axis (DESIGN-core §2/§3).
+  A platform is a named profile (a table of per-subsystem defaults).
+* **Usage**: `--platform <platform>`
+* **Required**: No (defaults to `auto`, which auto-detects from the environment)
 * **Dependencies**: None
 * **Values**: One of:
-  * `GREENGRASS` - Use native Greengrass IPC for messaging (default)
-  * `STANDALONE <config_file_path>` - **NEW!** Use dual MQTT clients for non-Greengrass environments
-* **Effect**: Determines the runtime environment and messaging architecture
+  * `GREENGRASS` - on an AWS IoT Greengrass v2 Nucleus (derives the `IPC` transport)
+  * `HOST` - a plain host / container without a Nucleus (derives the `MQTT` transport)
+  * `KUBERNETES` - declared but not yet wired (Phase 1); selecting it fails fast
+  * `auto` (default) - detect from environment: Nucleus env signals → GREENGRASS;
+    projected service-account token / `KUBERNETES_SERVICE_HOST` → KUBERNETES; else HOST
+* **Effect**: Picks the per-subsystem defaults (including the default config source and transport)
 
-#### GREENGRASS Mode
+### --transport
+* **Description**: Selects the messaging transport — the secondary runtime axis (DESIGN-core §2).
+* **Usage**: `--transport <transport> [messaging_config_path]`
+* **Required**: No (defaults to the value derived from the resolved platform)
+* **Dependencies**: `IPC` is valid **only** with `--platform GREENGRASS` (the IPC lock); any other
+  combination is rejected at startup.
+* **Values**: One of:
+  * `IPC` - native Greengrass Nucleus IPC
+  * `MQTT <messaging_config_path>` - dual MQTT clients (local broker + AWS IoT Core); the JSON
+    messaging-config path is required when the MQTT provider is actually built
+* **Effect**: Determines the messaging architecture
+
+> **Removed:** the legacy `-m/--mode` flag is gone. `-m GREENGRASS` becomes `--platform GREENGRASS`;
+> the old `-m STANDALONE <path>` becomes `--platform HOST --transport MQTT <path>`. Passing
+> `-m`/`--mode` now errors with guidance to the new flags.
+
+#### GREENGRASS platform (IPC transport)
 - Uses native Greengrass v2 IPC communication
 - Managed by Greengrass runtime
 - Single messaging channel for inter-component communication
 - Automatic device provisioning and management
 
-#### STANDALONE Mode (Container-Ready)
+#### HOST platform with MQTT transport (Container-Ready)
 - **Dual MQTT clients**: Local broker + AWS IoT Core connectivity
 - **Container deployment**: Perfect for Kubernetes, Docker, ECS, etc.
 - **Independent subscriptions**: Subscribe to same topic on both clients
@@ -76,7 +96,7 @@ python3 main.py -c ENV -t my-thing-name
 
 ### STANDALONE Mode with Dual MQTT
 ```bash
-python3 main.py -m STANDALONE messaging-config.json -c FILE config.json -t my-thing-name
+python3 main.py --platform HOST --transport MQTT messaging-config.json -c FILE config.json -t my-thing-name
 ```
 
 ### IoT Shadow Configuration
@@ -129,7 +149,7 @@ def main():
 1. **Argument Parsing**: Command line arguments are parsed using Python's argparse
 2. **Help Display**: Help is displayed if -h/--help option is present
 3. **Configuration Source**: Configuration source is determined (default or from -c option)
-4. **Messaging System**: Messaging system is initialized (default or from -m option)
+4. **Platform/Transport Resolution**: The platform and transport are resolved (from `--platform`/`--transport`, else env auto-detection, else profile defaults), then messaging is initialized on the resolved transport
 5. **Service Registry**: Dependency injection container is created and populated
 6. **Configuration Manager**: Configuration manager is created and initialized
 7. **Framework Services**: Metric emitter and heartbeat services are started
@@ -223,7 +243,7 @@ python3 main.py -c FILE staging-config.json -t staging-device
 python3 main.py -c GG_CONFIG -t prod-device
 
 # Production (Kubernetes)
-python3 main.py -m STANDALONE /config/messaging.json -c FILE /config/app-config.json -t prod-device
+python3 main.py --platform HOST --transport MQTT /config/messaging.json -c FILE /config/app-config.json -t prod-device
 ```
 
 ## Best Practices
@@ -283,12 +303,12 @@ The Python command line interface is designed to be identical to the Java versio
 
 ### Java Command
 ```bash
-java -jar component.jar -m STANDALONE messaging.json -c FILE config.json -t my-device
+java -jar component.jar --platform HOST --transport MQTT messaging.json -c FILE config.json -t my-device
 ```
 
 ### Python Equivalent
 ```bash
-python3 main.py -m STANDALONE messaging.json -c FILE config.json -t my-device
+python3 main.py --platform HOST --transport MQTT messaging.json -c FILE config.json -t my-device
 ```
 
 This ensures seamless migration between Java and Python implementations with identical deployment scripts and configuration management.

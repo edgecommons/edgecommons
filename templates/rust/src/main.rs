@@ -1,15 +1,15 @@
 //! # <<COMPONENTNAME>> — entry point
 //!
 //! An AWS IoT Greengrass v2 component built on the `ggcommons` Rust library.
-//! Initializes the runtime from the standard CLI contract (`-c`/`-m`/`-t`), then
-//! hands control to [`app::App`]. The component runs until a shutdown signal
+//! Initializes the runtime from the standard CLI contract (`-c`/`--platform`/`--transport`/`-t`),
+//! then hands control to [`app::App`]. The component runs until a shutdown signal
 //! (Ctrl-C / SIGTERM); dropping the [`ggcommons::GgCommons`] runtime then releases
 //! all resources (RAII).
 //!
-//! ## Running locally (STANDALONE mode, against a local MQTT broker)
+//! ## Running locally (HOST platform, MQTT transport, against a local MQTT broker)
 //! ```bash
 //! cargo run -- \
-//!   -m STANDALONE ./test-configs/standalone-messaging.json \
+//!   --platform HOST --transport MQTT ./test-configs/standalone-messaging.json \
 //!   -c FILE ./test-configs/config.json \
 //!   -t my-thing
 //! ```

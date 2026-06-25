@@ -93,7 +93,7 @@ class GGCommonsStandaloneIntegrationTest {
 
         String[] args = {
                 "-t", "test-thing",
-                "-m", "STANDALONE", msgCfg.getAbsolutePath(),
+                "--platform", "HOST", "--transport", "MQTT", msgCfg.getAbsolutePath(),
                 "-c", "FILE", appCfg.getAbsolutePath()
         };
         gg = GGCommonsBuilder.create("com.test.StandaloneComponent").withArgs(args).build();
@@ -196,7 +196,8 @@ class GGCommonsStandaloneIntegrationTest {
     void deprecatedConstructorBringsUpStandalone() {
         String[] args = {
                 "-t", "legacy-thing",
-                "-m", "STANDALONE", new File(workDir, "standalone-messaging-legacy.json").getAbsolutePath(),
+                "--platform", "HOST", "--transport", "MQTT",
+                new File(workDir, "standalone-messaging-legacy.json").getAbsolutePath(),
                 "-c", "FILE", new File(workDir, "config.json").getAbsolutePath()
         };
         GGCommons legacy = new GGCommons("com.test.LegacyComponent", args);

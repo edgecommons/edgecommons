@@ -19,16 +19,16 @@ heartbeat — so you write only business logic in [`src/app.ts`](src/app.ts).
 | `build.sh` | Installs deps, compiles, and stages a ZIP artifact (`dist/` + `node_modules/`) for the GDK. |
 | `test-configs/` | Sample `config.json` + `standalone-messaging.json` for local runs. |
 
-## Develop & run locally (STANDALONE mode)
+## Develop & run locally (HOST platform, MQTT transport)
 
-Local development uses STANDALONE mode (dual-broker MQTT) — no Greengrass core
-needed. Install dependencies, build, start a local MQTT broker, then:
+Local development runs on the HOST platform with the MQTT transport (dual-broker MQTT) — no
+Greengrass core needed. Install dependencies, build, start a local MQTT broker, then:
 
 ```bash
 npm install
 npm run build
 node dist/main.js \
-  -m STANDALONE ./test-configs/standalone-messaging.json \
+  --platform HOST --transport MQTT ./test-configs/standalone-messaging.json \
   -c FILE ./test-configs/config.json \
   -t my-thing
 ```
@@ -36,7 +36,8 @@ node dist/main.js \
 ## CLI contract
 
 - `-c/--config <SOURCE> [args...]` — `FILE | ENV | GG_CONFIG (default) | SHADOW | CONFIG_COMPONENT`
-- `-m/--mode <MODE> [path]` — `GREENGRASS (default) | STANDALONE <messaging_config.json>`
+- `--platform <PLATFORM>` — `GREENGRASS | HOST | KUBERNETES | auto` (default `auto`)
+- `--transport <TRANSPORT> [path]` — `IPC | MQTT [messaging_config.json]` (default: from the platform; IPC only valid on GREENGRASS)
 - `-t/--thing <name>` — IoT Thing name
 
 ## Build & publish with the GDK (on-device)
@@ -51,8 +52,8 @@ gdk component build
 gdk component publish
 ```
 
-The recipe declares a `linux` platform and runs the prebuilt JS in GREENGRASS mode
-(`node {artifacts:decompressedPath}/<<COMPONENTNAME>>/dist/main.js -c GG_CONFIG`),
+The recipe declares a `linux` platform and runs the prebuilt JS on the GREENGRASS platform
+(`node {artifacts:decompressedPath}/<<COMPONENTNAME>>/dist/main.js --platform GREENGRASS -c GG_CONFIG`),
 reading its configuration from the deployment (`GG_CONFIG`).
 
 ## The ggcommons dependency

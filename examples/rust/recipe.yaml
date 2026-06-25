@@ -147,6 +147,6 @@ Manifests:
       # CreateComponentVersion; chmod is robust for non-root and local deploys).
       Install:
         Script: "chmod +x {artifacts:path}/rust-component-skeleton"
-      # Runs in GREENGRASS mode (default) reading config from the deployment (GG_CONFIG).
+      # Runs on the GREENGRASS platform (IPC transport) reading config from the deployment (GG_CONFIG).
       Run:
-        Script: "{artifacts:path}/rust-component-skeleton -c GG_CONFIG"
+        Script: "{artifacts:path}/rust-component-skeleton --platform GREENGRASS -c GG_CONFIG"
