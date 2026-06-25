@@ -10,7 +10,7 @@
     "start": "node dist/main.js"
   },
   "dependencies": {
-    "ggcommons": "file:<<GGCOMMONS_PATH>>"
+    "@breissinger/ggcommons": "file:<<GGCOMMONS_PATH>>"
   },
   "devDependencies": {
     "@types/node": "^20",

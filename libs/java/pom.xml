@@ -16,8 +16,6 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <!--      <maven.compiler.release>19</maven.compiler.release>-->
         <!--      <java.version>8</java.version>-->
-        <CI_API_V4_URL>https://gitlab.aws.dev/api/v4</CI_API_V4_URL>
-        <CI_PROJECT_ID>83110</CI_PROJECT_ID>
         <!-- Language level: Java 25 (LTS). The Foreign Function and Memory API (Panama,
              JEP 454) is stable as of Java 22, so the native ggstreamlog binding needs
              no preview flag. Built and deployed on JDK 25 (lab-5950x runs 25). -->
@@ -308,20 +306,20 @@
             </plugin>
         </plugins>
     </build>
-    <repositories>
-        <repository>
-            <id>gitlab-maven</id>
-            <url>${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/maven</url>
-        </repository>
-    </repositories>
     <distributionManagement>
+        <!-- GitHub Packages (private; same URL for releases + snapshots). CI authenticates with the
+             built-in GITHUB_TOKEN — setup-java writes the matching <server id="github"> credentials.
+             Dependencies still resolve from Maven Central (no custom <repositories> needed). Switch to
+             Maven Central once the breissinger.com namespace is verified and artifact signing is set up. -->
         <repository>
-            <id>gitlab-maven</id>
-            <url>${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/maven</url>
+            <id>github</id>
+            <name>GitHub Packages</name>
+            <url>https://maven.pkg.github.com/mbreissi/ggcommons</url>
         </repository>
         <snapshotRepository>
-            <id>gitlab-maven</id>
-            <url>${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/maven</url>
+            <id>github</id>
+            <name>GitHub Packages</name>
+            <url>https://maven.pkg.github.com/mbreissi/ggcommons</url>
         </snapshotRepository>
     </distributionManagement>
 </project>

@@ -9,8 +9,8 @@
  *   interop_node raw-sub   <topic> <token>
  *   interop_node raw-pub   <topic> <token>
  */
-import { Message, MessageBuilder, DefaultMessagingService, StandaloneMqttProvider } from "ggcommons";
-import type { MessagingConfig } from "ggcommons";
+import { Message, MessageBuilder, DefaultMessagingService, StandaloneMqttProvider } from "@breissinger/ggcommons";
+import type { MessagingConfig } from "@breissinger/ggcommons";
 
 const LANG = "ts";
 const HOST = process.env.GGCOMMONS_IT_MQTT_HOST ?? "localhost";

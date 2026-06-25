@@ -1,5 +1,5 @@
 {
-  "name": "ggstreamlog-node",
+  "name": "@breissinger/ggstreamlog-node",
   "version": "0.1.0",
   "description": "napi-rs native addon for the ggcommons telemetry-streaming core.",
   "main": "index.js",
