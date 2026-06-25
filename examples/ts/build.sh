@@ -15,7 +15,7 @@
 set -euo pipefail
 
 # Keep these in sync with gdk-config.json / recipe.yaml.
-COMPONENT_NAME="aws.proserve.greengrass.TsComponentSkeleton"
+COMPONENT_NAME="com.breissinger.greengrass.TsComponentSkeleton"
 COMPONENT_VERSION="1.0.0"
 ARTIFACT_BASE="ts-component-skeleton"
 

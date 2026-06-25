@@ -1,6 +1,6 @@
 {
   "component": {
-    "aws.proserve.greengrass.TsComponentSkeleton": {
+    "com.breissinger.greengrass.TsComponentSkeleton": {
       "author": "Marc Breissinger",
       "version": "NEXT_PATCH",
       "build": {

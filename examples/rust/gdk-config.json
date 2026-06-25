@@ -1,6 +1,6 @@
 {
   "component": {
-    "aws.proserve.greengrass.RustComponentSkeleton": {
+    "com.breissinger.greengrass.RustComponentSkeleton": {
       "author": "Marc Breissinger",
       "version": "NEXT_PATCH",
       "build": {

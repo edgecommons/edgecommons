@@ -264,7 +264,7 @@ import com.breissinger.ggcommons.GGCommonsBuilder;
 public class App {
     public static void main(String[] args) {
         // Use the FULL component name (matches recipe.yaml / gdk-config.json).
-        GGCommons gg = GGCommonsBuilder.create("aws.proserve.greengrass.JavaComponentSkeleton")
+        GGCommons gg = GGCommonsBuilder.create("com.breissinger.greengrass.JavaComponentSkeleton")
                 .withArgs(args)
                 .build();
 
@@ -287,7 +287,7 @@ def main():
     # add any component-specific arguments here
 
     gg = (
-        GGCommonsBuilder.create("aws.proserve.greengrass.PythonComponentSkeleton")
+        GGCommonsBuilder.create("com.breissinger.greengrass.PythonComponentSkeleton")
         .with_args(sys.argv[1:])
         .with_app_options(arg_parser)
         .receive_own_messages(True)
@@ -306,7 +306,7 @@ if __name__ == "__main__":
 <script type="text/plain" class="src" data-sample="bootstrap" data-lang="rust" data-file="main.rs">
 use ggcommons::prelude::*;
 
-const COMPONENT_NAME: &str = "aws.proserve.greengrass.RustComponentSkeleton";
+const COMPONENT_NAME: &str = "com.breissinger.greengrass.RustComponentSkeleton";
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -325,7 +325,7 @@ async fn main() -> anyhow::Result<()> {
 <script type="text/plain" class="src" data-sample="bootstrap" data-lang="typescript" data-file="main.ts">
 import { GGCommonsBuilder, logger } from "ggcommons";
 
-const COMPONENT_NAME = "aws.proserve.greengrass.TsComponentSkeleton";
+const COMPONENT_NAME = "com.breissinger.greengrass.TsComponentSkeleton";
 
 async function main(): Promise<void> {
   const gg = await new GGCommonsBuilder(COMPONENT_NAME).args(process.argv.slice(2)).build();

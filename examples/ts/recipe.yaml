@@ -1,6 +1,6 @@
 ---
 RecipeFormatVersion: "2020-01-25"
-ComponentName: "aws.proserve.greengrass.TsComponentSkeleton"
+ComponentName: "com.breissinger.greengrass.TsComponentSkeleton"
 ComponentVersion: "1.0.0"
 ComponentDescription: "Skeleton TypeScript component built on the ggcommons TypeScript library: standardized configuration, logging, messaging, metrics, and heartbeats."
 ComponentPublisher: "Marc Breissinger"
@@ -63,7 +63,7 @@ ComponentConfiguration:
         instances: []
     accessControl:
       aws.greengrass.ipc.pubsub:
-        "aws.proserve.greengrass.TsComponentSkeleton:pubsub:1":
+        "com.breissinger.greengrass.TsComponentSkeleton:pubsub:1":
           policyDescription: Allows access to publish/subscribe to all topics.
           operations:
             - "aws.greengrass#PublishToTopic"
@@ -71,7 +71,7 @@ ComponentConfiguration:
           resources:
             - "*"
       aws.greengrass.ipc.mqttproxy:
-        "aws.proserve.greengrass.TsComponentSkeleton:iotcore:1":
+        "com.breissinger.greengrass.TsComponentSkeleton:iotcore:1":
           policyDescription: Allows access to publish/subscribe to all topics on IoT Core.
           operations:
             - "aws.greengrass#PublishToIoTCore"
@@ -79,7 +79,7 @@ ComponentConfiguration:
           resources:
             - "*"
       aws.greengrass.ShadowManager:
-        "aws.proserve.greengrass.TsComponentSkeleton:shadow:1":
+        "com.breissinger.greengrass.TsComponentSkeleton:shadow:1":
           policyDescription: Allows access to shadows.
           operations:
             - 'aws.greengrass#GetThingShadow'

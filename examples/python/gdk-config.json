@@ -1,6 +1,6 @@
 {
   "component": {
-    "aws.proserve.greengrass.PythonComponentSkeleton": {
+    "com.breissinger.greengrass.PythonComponentSkeleton": {
       "author": "Marc Breissinger",
       "version": "NEXT_PATCH",
       "build": {

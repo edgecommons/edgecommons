@@ -1,6 +1,6 @@
 {
   "component": {
-    "aws.proserve.greengrass.JavaComponentSkeleton": {
+    "com.breissinger.greengrass.JavaComponentSkeleton": {
       "author": "Marc Breissinger",
       "version": "NEXT_PATCH",
       "build": {

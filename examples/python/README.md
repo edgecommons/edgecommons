@@ -6,7 +6,7 @@ A worked-example AWS IoT Greengrass v2 component written in Python on top of the
 configuration, logging, messaging (publish + request/reply), metrics, and heartbeat — so a component
 author writes only business logic (in [`app/greengrass_app.py`](app/greengrass_app.py)).
 
-The component is `aws.proserve.greengrass.PythonComponentSkeleton` and is bootstrapped via
+The component is `com.breissinger.greengrass.PythonComponentSkeleton` and is bootstrapped via
 `GGCommonsBuilder.create(...)` in [`main.py`](main.py).
 
 ## Run locally (STANDALONE mode)

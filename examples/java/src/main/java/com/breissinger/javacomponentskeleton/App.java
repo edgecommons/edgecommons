@@ -166,7 +166,7 @@ public class App implements ConfigurationChangeListener
         LOGGER.info("Initializing Java Component Skeleton...");
         
         // Initialize GGCommons with component name and arguments using builder
-        ggCommons = GGCommonsBuilder.create("aws.proserve.greengrass.JavaComponentSkeleton")
+        ggCommons = GGCommonsBuilder.create("com.breissinger.greengrass.JavaComponentSkeleton")
                                               .withArgs(args)
                                               .build();
 
