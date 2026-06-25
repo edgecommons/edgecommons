@@ -45,14 +45,13 @@ How each language consumes the set:
 | Artifact | Built with | Includes |
 |----------|-----------|----------|
 | Java cdylib | `cabi,kinesis,kafka` | durable buffer + callback sink, Kinesis sink, Kafka sink |
-| Python wheel | `kinesis` | durable buffer + callback sink, Kinesis sink |
-| Node addon | `kinesis` | durable buffer + callback sink, Kinesis sink |
+| Python wheel | `kinesis,kafka` | durable buffer + callback sink, Kinesis sink, Kafka sink |
+| Node addon | `kinesis,kafka` | durable buffer + callback sink, Kinesis sink, Kafka sink |
 
-> **Kafka via Python/Node is not yet exposed.** Those bindings declare only a `kinesis` passthrough
-> feature. To ship Kafka through them, add `kafka = ["ggstreamlog/kafka"]` to
-> `libs/rust-streamlog/bindings/{python,node}/Cargo.toml` and build with `--features kinesis,kafka`
-> (Kafka then needs `cmake` + a C compiler on the build host — see §3.B). Left opt-in so wheels/addons
-> don't silently grow the librdkafka build.
+> All four channels now ship the full sink set. The Python/Node bindings expose `kinesis` and
+> `kafka` passthrough features (`libs/rust-streamlog/bindings/{python,node}/Cargo.toml`); the release
+> CI builds them `--features kinesis,kafka`. Kafka builds librdkafka via cmake (vendored, no system
+> librdkafka at runtime), so the build host needs `cmake` + a C compiler — see §3.B.
 
 ---
 
@@ -66,7 +65,7 @@ and librdkafka (`kafka`). The **durable CloudWatch metrics buffer uses the in-co
 |-----------|------------------------|---------------------|----------|
 | Durable CloudWatch metrics only | `cabi` | base wheel/addon (no `kinesis`) | nothing heavy |
 | `gg.streams()` → Kinesis | `cabi,kinesis` | `--features kinesis` | AWS SDK |
-| `gg.streams()` → Kafka | `cabi,kafka` | `--features kafka` (see note above) | librdkafka (cmake) |
+| `gg.streams()` → Kafka | `cabi,kafka` | `--features kafka` | librdkafka (cmake) |
 | Everything | `cabi,kinesis,kafka` | `--features kinesis,kafka` | AWS SDK + librdkafka |
 | No streaming/durable at all | *(don't build/bundle)* | *(don't install)* | nothing |
 
@@ -142,17 +141,28 @@ or the durable CloudWatch buffer:
 
 ---
 
-## 4. If the core is missing at runtime
+## 4. If the core is missing at runtime — fail-fast
 
-The durable CloudWatch buffer is the **default** for the `cloudwatch` target. If the native core
-isn't present/loadable for the running platform, the target logs a `WARN` and falls back to in-memory
-batching — which means **you silently lose the disconnect-tolerance you configured**.
+The durable CloudWatch buffer is the **default** for the `cloudwatch` target, and the native core is
+bundled by design (§1). So the libraries **fail fast on an absent core**: when the durable buffer is
+selected (the default, or an explicit `buffer.type: durable`) and the native core can't be loaded,
+the `cloudwatch` target raises at startup instead of silently degrading — silent degradation would
+lose the disconnect-tolerance you rely on. The error names the missing core and points here, so an
+operator on an unshipped target (musl, exotic arch) knows to build per §3 (or set
+`buffer.type: memory`) rather than discover the gap through missing metrics.
 
-When you commit to the "always present" model (the prebuilt set above), prefer **fail-fast**: treat
-an absent core as a startup error for an *explicit* `buffer.type: durable`, and reserve the soft
-fallback for the implicit default. Either way, the warning/error names the platform and points here —
-so an operator on an unshipped target (musl, exotic arch) knows to build per §3 rather than discover
-the gap through missing metrics.
+Behavior matrix when the durable buffer is selected:
+
+| Condition | Java / Python | TypeScript / Rust |
+|-----------|---------------|-------------------|
+| native core absent / not loadable | **fail fast** (clear, actionable error) | **fail fast** |
+| core present, buffer can't open (e.g. unwritable path) | soft fallback to in-memory (`WARN`) | **fail fast** |
+| `buffer.type: memory` | in-memory (no core needed) | in-memory (no core needed) |
+
+One intentional asymmetry: Java and Python degrade to in-memory if the core is present but the buffer
+path can't be opened (a recoverable ops error), whereas the greenfield TypeScript and Rust targets
+are strict and fail on any durable-init failure. Rust durability is additionally a compile-time
+feature — enable `metrics-cloudwatch-durable`; an open failure then propagates as an error.
 
 ---
 

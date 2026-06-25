@@ -8,11 +8,13 @@ import com.aws.proserve.ggcommons.config.MetricConfiguration;
 import com.aws.proserve.ggcommons.config.ConfigurationFactory;
 import com.aws.proserve.ggcommons.metrics.Metric;
 import com.aws.proserve.ggcommons.metrics.MetricBuilder;
+import com.aws.proserve.ggcommons.streaming.StreamService;
 import com.aws.proserve.ggcommons.test.MockConfigurationService;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.MockedStatic;
 import software.amazon.awssdk.services.cloudwatch.CloudWatchClient;
 import software.amazon.awssdk.services.cloudwatch.model.CloudWatchException;
 import software.amazon.awssdk.services.cloudwatch.model.PutMetricDataRequest;
@@ -80,6 +82,25 @@ class CloudWatchTest {
 
         // The 1s scheduled flush must send the queued metric within a few seconds.
         verify(client, timeout(4000).atLeastOnce()).putMetricData(any(PutMetricDataRequest.class));
+    }
+
+    @Test
+    void durableWithAbsentNativeCoreFailsFast() {
+        // A durable cloudwatch config, but the ggstreamlog native core is unavailable -> construction
+        // must FAIL FAST rather than silently fall back to in-memory: durable is the default and is
+        // bundled by design, so a missing core is a deployment error (silent degradation would lose
+        // metrics across a disconnect). A bad PATH with the core present still falls back (see
+        // CloudWatchDurableTest#durableInitFailureFallsBackToMemory).
+        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\","
+                + "\"targetConfig\":{\"buffer\":{\"type\":\"durable\",\"path\":\"build/ggsl-absent\"}}}");
+        CloudWatchClient client = mock(CloudWatchClient.class);
+        try (MockedStatic<StreamService> ss = mockStatic(StreamService.class)) {
+            ss.when(StreamService::nativeAvailable).thenReturn(false);
+            IllegalStateException ex = assertThrows(IllegalStateException.class,
+                    () -> new CloudWatch(config, client));
+            assertTrue(ex.getMessage().contains("native core"),
+                    "error should name the absent native core: " + ex.getMessage());
+        }
     }
 
     @Test

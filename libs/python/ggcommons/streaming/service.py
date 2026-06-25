@@ -31,6 +31,7 @@ __all__ = [
     "ExportRecord",
     "SinkCallback",
     "SinkOutcome",
+    "native_available",
 ]
 
 # One record handed to a host sink callback: (offset, partition_key, timestamp_ms, payload).
@@ -41,6 +42,14 @@ ExportRecord = Tuple[int, bytes, int, bytes]
 #   * ``("failed", error)`` / str -> the whole batch failed (retried; nothing committed).
 SinkOutcome = Union[None, Sequence[int], Tuple[str, str], str]
 SinkCallback = Callable[[List[ExportRecord]], SinkOutcome]
+
+
+def native_available() -> bool:
+    """``True`` if the ``ggstreamlog-native`` wheel is importable — i.e. telemetry streaming and the
+    durable CloudWatch buffer are usable on this platform. ``False`` when the wheel was never
+    installed; callers that require durability (the default cloudwatch buffer) fail fast on ``False``
+    rather than silently degrading."""
+    return _native is not None
 
 
 def _require_native():

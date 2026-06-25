@@ -24,6 +24,9 @@ napi-build = "2"
 [features]
 # Real Kinesis export in the addon (heavy: AWS SDK + tokio). Off by default for a light dev build.
 kinesis = ["ggstreamlog/kinesis"]
+# Real Kafka export in the addon. Builds librdkafka via cmake (needs cmake + a C compiler at build
+# time; vendored, so no system librdkafka at runtime). Off by default for a light dev build.
+kafka = ["ggstreamlog/kafka"]
 
 [profile.release]
 lto = true

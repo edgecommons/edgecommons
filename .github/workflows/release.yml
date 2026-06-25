@@ -76,14 +76,18 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      # `kinesis` = the real AWS Kinesis sink (the durable buffer + callback sink are always in).
-      # manylinux_2_28 only applies to the Linux targets; it's ignored on windows/macos.
+      # `kinesis` + `kafka` = the real AWS Kinesis sink + the Kafka sink (the durable buffer +
+      # callback sink are always in). manylinux_2_28 only applies to the Linux targets (ignored on
+      # windows/macos). Kafka builds librdkafka via cmake, so install cmake inside the manylinux
+      # container; the windows/macos runners already ship cmake.
       - uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
           manylinux: "2_28"
+          before-script-linux: |
+            command -v cmake >/dev/null 2>&1 || dnf install -y cmake || yum install -y cmake
           args: >-
-            --release --out dist --features kinesis
+            --release --out dist --features kinesis,kafka
             --manifest-path libs/rust-streamlog/bindings/python/Cargo.toml
       - uses: actions/upload-artifact@v4
         with:
@@ -126,8 +130,9 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       - run: npm install
+      # kafka builds librdkafka via cmake — preinstalled on the GitHub-hosted runners.
       - name: Build the platform addon
-        run: npx napi build --platform --release --target ${{ matrix.target }} --features kinesis
+        run: npx napi build --platform --release --target ${{ matrix.target }} --features kinesis,kafka
       - uses: actions/upload-artifact@v4
         with:
           name: streaming-addon-${{ matrix.target }}

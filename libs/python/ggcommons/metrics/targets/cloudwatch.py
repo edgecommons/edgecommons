@@ -55,11 +55,23 @@ class CloudWatch(MetricTarget):
         if buffer is None:
             buffer = {}
         if str(buffer.get("type", "durable")).lower() == "durable":
+            from ggcommons.streaming.service import native_available
+
+            if not native_available():
+                # Fail fast on an ABSENT native core. Durable is the default and is bundled by
+                # design, so a missing core is a deployment error — silently degrading would lose
+                # metrics across a cloud disconnect. Opt out explicitly with buffer.type=memory.
+                raise RuntimeError(
+                    "Durable CloudWatch buffer (the default) requires the ggstreamlog native core, "
+                    "which is not installed for this platform. Install the 'ggstreamlog-native' "
+                    "wheel (or build per docs/NATIVE_CORE_DELIVERY.md), or set "
+                    "metricEmission.targetConfig.cloudwatch.buffer.type='memory'."
+                )
             try:
                 self._init_durable(buffer)
             except Exception as e:
-                # Native streaming core unavailable (or buffer open failed) -> safe fallback to the
-                # in-memory batching path, mirroring the Java target's graceful degradation.
+                # Core is PRESENT but the buffer couldn't open (e.g. path/IO error) -> degrade to
+                # in-memory batching. (An absent core already failed fast above.)
                 self.logger.warning(
                     "Durable CloudWatch buffer unavailable (%s); falling back to in-memory batching",
                     e,

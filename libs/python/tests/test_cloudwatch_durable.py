@@ -570,21 +570,24 @@ class TestCloudWatchTargetMemoryPathUnaffected:
 
 class TestCloudWatchTargetDefaultsToDurable:
     """The cloudwatch target defaults to the durable buffer when no buffer block is configured —
-    parity with the Java/TS targets and the schema default — and degrades gracefully to in-memory
-    batching when the durable buffer cannot be opened (e.g. the native streaming core is absent)."""
+    parity with the Java/TS targets and the schema default. An ABSENT native core fails fast (the
+    core is bundled by design); a buffer-OPEN failure when the core IS present (e.g. a bad path)
+    degrades gracefully to in-memory batching."""
 
     def test_no_buffer_section_defaults_to_durable(self, monkeypatch):
         import ggcommons.metrics.targets.cloudwatch as cw
+        import ggcommons.streaming.service as svc
 
-        # Mock the durable init so the test is hermetic (no native core / no disk needed) and
-        # asserts only the selection: an absent buffer block must request the durable path with the
-        # durable defaults (an empty buffer dict).
+        # Mock the durable init so the test is hermetic (no disk needed) and force the native core
+        # "present" so the absent-core guard passes; asserts only the selection: an absent buffer
+        # block must request the durable path with the durable defaults (an empty buffer dict).
         seen = {}
 
         def fake_init_durable(self, buffer):
             seen["buffer"] = buffer
             self._durable = True
 
+        monkeypatch.setattr(svc, "native_available", lambda: True)
         monkeypatch.setattr(cw.CloudWatch, "_init_durable", fake_init_durable)
         monkeypatch.setattr(cw.boto3, "client", lambda *a, **k: FakeCloudWatchClient())
 
@@ -593,19 +596,33 @@ class TestCloudWatchTargetDefaultsToDurable:
         assert target._durable is True
         assert target._flush_thread is None  # no in-memory flush thread on the durable path
 
-    def test_durable_init_failure_falls_back_to_inmemory(self, monkeypatch):
+    def test_absent_native_core_fails_fast(self, monkeypatch):
         import ggcommons.metrics.targets.cloudwatch as cw
+        import ggcommons.streaming.service as svc
 
+        # Native core not installed for this platform -> durable can't be honored -> fail fast
+        # (rather than silently degrading and losing metrics across a disconnect).
+        monkeypatch.setattr(svc, "native_available", lambda: False)
+        monkeypatch.setattr(cw.boto3, "client", lambda *a, **k: FakeCloudWatchClient())
+
+        with pytest.raises(RuntimeError, match="native core"):
+            cw.CloudWatch(_FakeConfigManager(None))
+
+    def test_open_failure_with_core_present_falls_back_to_inmemory(self, monkeypatch):
+        import ggcommons.metrics.targets.cloudwatch as cw
+        import ggcommons.streaming.service as svc
+
+        # Core IS present, but opening the buffer fails (e.g. an unwritable path) -> graceful
+        # fallback to in-memory batching (the absent-core case fails fast; this one does not).
         def boom(self, buffer):
-            # Simulate the native streaming core being unavailable.
             self._stream_service = None
-            raise RuntimeError("ggstreamlog native core not installed")
+            raise RuntimeError("buffer path is not a directory")
 
+        monkeypatch.setattr(svc, "native_available", lambda: True)
         monkeypatch.setattr(cw.CloudWatch, "_init_durable", boom)
         monkeypatch.setattr(cw.boto3, "client", lambda *a, **k: FakeCloudWatchClient())
 
         target = cw.CloudWatch(_FakeConfigManager(None))
-        # Graceful fallback: in-memory batching is active and the durable surface is inert.
         assert target._durable is False
         assert target._flush_thread is not None
         assert target.get_durable_stats() is None

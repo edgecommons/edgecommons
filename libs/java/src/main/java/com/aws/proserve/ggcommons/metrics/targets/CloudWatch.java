@@ -67,8 +67,20 @@ public final class CloudWatch extends MetricTarget
         CloudWatchDrain d = null;
         if (wantDurable)
         {
+            if (!StreamService.nativeAvailable())
+            {
+                // Fail fast on an ABSENT native core. Durable is the default and is bundled by
+                // design, so a missing core is a deployment error — silently degrading would lose
+                // metrics across a cloud disconnect. Opt out explicitly with buffer.type=memory.
+                throw new IllegalStateException(
+                        "Durable CloudWatch buffer (the default) requires the ggstreamlog native "
+                        + "core, which is not bundled/loadable for this platform. Bundle it (see "
+                        + "docs/NATIVE_CORE_DELIVERY.md) or set "
+                        + "metricEmission.targetConfig.cloudwatch.buffer.type=memory.");
+            }
             // The drain owns the namespace grouping / stale-drop / chunk / outcome logic; the sink
-            // forwards each PutMetricData chunk through the injected client.
+            // forwards each PutMetricData chunk through the injected client. A core that is present
+            // but whose buffer cannot open (e.g. a bad path) still degrades to in-memory below.
             d = new CloudWatchDrain(this::putChunk);
             durableUp = startDurable(buffer, d);
         }
