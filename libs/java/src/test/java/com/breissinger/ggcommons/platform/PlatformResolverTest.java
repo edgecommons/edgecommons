@@ -195,6 +195,14 @@ class PlatformResolverTest {
     }
 
     @Test
+    void resolveIdentityTreatsEmptyEnvAsAbsent() {
+        // Cross-language parity (DESIGN-core §12 #2): a present-but-empty AWS_IOT_THING_NAME
+        // is treated as absent and falls through to the default, matching Python/Rust/TS.
+        assertEquals(PlatformResolver.DEFAULT_IDENTITY, PlatformResolver.resolveIdentity(
+                null, Platform.HOST, Map.of(PlatformResolver.ENV_THING_NAME, "")));
+    }
+
+    @Test
     void resolveIdentityHandlesNullEnv() {
         assertEquals(PlatformResolver.DEFAULT_IDENTITY,
                 PlatformResolver.resolveIdentity(null, Platform.HOST, null));

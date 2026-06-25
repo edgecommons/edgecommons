@@ -137,6 +137,29 @@ describe("GGCommons lifecycle (mocked)", () => {
     }
   });
 
+  it("MQTT transport without a messaging-config path throws a messaging GgError at build", async () => {
+    process.env.GGC_NO_MC = JSON.stringify(BASE);
+    try {
+      let err: unknown;
+      try {
+        await new GGCommonsBuilder("com.example.Lc")
+          .args(["--platform", "HOST", "--transport", "MQTT", "-c", "ENV", "GGC_NO_MC", "-t", "lc-thing"])
+          .build();
+        throw new Error("expected build to throw");
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(GgError);
+      expect((err as GgError).kind).toBe("Messaging");
+      expect((err as GgError).message).toContain("MQTT transport requires a messaging-config path");
+      // The path is enforced before we touch the messaging config / provider.
+      expect(loadMessagingConfigMock).not.toHaveBeenCalled();
+      expect(standaloneConnect).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.GGC_NO_MC;
+    }
+  });
+
   it("IPC: initializes IPC messaging (no messaging-config file) honoring receiveOwnMessages", async () => {
     process.env.GGC_GG_CFG = JSON.stringify(BASE);
     const built = await new GGCommonsBuilder("com.example.Lc")

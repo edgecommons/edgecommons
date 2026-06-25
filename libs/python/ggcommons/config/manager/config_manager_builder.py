@@ -1,6 +1,5 @@
 import logging
 import os
-import uuid
 from argparse import Namespace
 from typing import List
 
@@ -13,6 +12,7 @@ from ggcommons.config.manager.shadow_config_manager import (
     ShadowConfigManager,
     _sanitize_shadow_name,
 )
+from ggcommons.platform.resolver import resolve_identity
 
 logger = logging.getLogger("ConfigManagerBuilder")
 
@@ -21,12 +21,12 @@ class ConfigManagerBuilder:
     @staticmethod
     def build(args: Namespace, component_name: str) -> ConfigManager:
         config_args = args.config
-        if "AWS_IOT_THING_NAME" in os.environ:
-            thing_name = os.environ["AWS_IOT_THING_NAME"]
-        elif args.thing is not None:
-            thing_name = args.thing
-        else:
-            thing_name = str(uuid.uuid4())
+        # Use the identity already resolved by the platform resolver (canonical
+        # precedence: -t > AWS_IOT_THING_NAME > NOT_GREENGRASS). Fall back to the
+        # resolver for callers that construct args without going through it.
+        thing_name = getattr(args, "identity", None)
+        if thing_name is None:
+            thing_name = resolve_identity(getattr(args, "thing", None), None, os.environ)
         if config_args[0].upper() == "FILE":
             logger.info("Config file specified. Using FileConfigManager")
             config_file = config_args[1] if len(config_args) > 1 else "config.json"

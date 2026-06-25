@@ -171,7 +171,7 @@ public final class PlatformResolver {
             return thing;
         }
         String fromEnv = env == null ? null : env.get(ENV_THING_NAME);
-        if (fromEnv != null) {
+        if (fromEnv != null && !fromEnv.isEmpty()) {  // empty AWS_IOT_THING_NAME treated as absent
             return fromEnv;
         }
         return DEFAULT_IDENTITY;

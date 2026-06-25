@@ -187,7 +187,7 @@ def resolve_identity(
     if thing is not None:
         return thing
     from_env = None if env is None else env.get(ENV_THING_NAME)
-    if from_env is not None:
+    if from_env:  # present and non-empty (an empty AWS_IOT_THING_NAME is treated as absent)
         return from_env
     return DEFAULT_IDENTITY
 

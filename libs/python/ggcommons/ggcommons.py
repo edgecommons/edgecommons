@@ -202,7 +202,7 @@ class GGCommons:
         if not args:
             return
         for arg in args:
-            if arg in ("-m", "--mode"):
+            if arg == "--mode" or arg.startswith("--mode=") or arg.startswith("-m"):
                 raise ValueError(
                     "The -m/--mode flag has been removed. Use --platform GREENGRASS|HOST|KUBERNETES "
                     "and --transport IPC|MQTT instead (e.g. '-m STANDALONE <path>' becomes "

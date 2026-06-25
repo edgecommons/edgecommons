@@ -27,7 +27,10 @@ class MessagingClient:
         (DESIGN-core sec 4.2 transport-injection site), not on a legacy mode token.
         """
         transport = getattr(args, 'transport', None)
-        thing_name = getattr(args, 'thing', None)
+        # Use the identity resolved by the platform resolver (canonical precedence
+        # -t > AWS_IOT_THING_NAME > NOT_GREENGRASS), not the raw -t flag. Fall back to
+        # the raw flag only for callers that bypass the resolver.
+        thing_name = getattr(args, 'identity', None) or getattr(args, 'thing', None)
 
         logger.info(f"Initializing MessagingClient - transport: {transport}, thing_name: {thing_name}, receive_own_messages: {receive_own_messages}")
 

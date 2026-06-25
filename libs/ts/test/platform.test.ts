@@ -163,6 +163,16 @@ describe("resolveIdentity", () => {
     expect(resolveIdentity(undefined, Platform.HOST, {})).toBe(DEFAULT_IDENTITY);
   });
 
+  it("treats a present-but-empty AWS_IOT_THING_NAME as absent -> NOT_GREENGRASS (cross-language parity)", () => {
+    expect(resolveIdentity(undefined, Platform.HOST, { [ENV_THING_NAME]: "" })).toBe(
+      DEFAULT_IDENTITY,
+    );
+  });
+
+  it("explicit thing still wins over a present-but-empty env value", () => {
+    expect(resolveIdentity("t1", Platform.HOST, { [ENV_THING_NAME]: "" })).toBe("t1");
+  });
+
   it("handles an undefined env", () => {
     expect(resolveIdentity(undefined, Platform.HOST, undefined)).toBe(DEFAULT_IDENTITY);
   });

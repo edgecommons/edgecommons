@@ -201,7 +201,9 @@ export function resolveIdentity(
     return thing;
   }
   const fromEnv = env ? env[ENV_THING_NAME] : undefined;
-  if (fromEnv !== undefined) {
+  // Treat a present-but-empty env value as absent (cross-language parity with the
+  // canonical Java/Python/Rust resolvers, which only honor a non-empty thing name).
+  if (fromEnv !== undefined && fromEnv !== "") {
     return fromEnv;
   }
   return DEFAULT_IDENTITY;

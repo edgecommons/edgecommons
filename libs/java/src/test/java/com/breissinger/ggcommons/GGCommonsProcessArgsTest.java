@@ -139,6 +139,18 @@ class GGCommonsProcessArgsTest {
     }
 
     @Test
+    void legacyAttachedModeFlagsAreRejectedNotNpe() {
+        // Attached forms (--mode=X, -mX) must hit the legacy-flag guard with guidance,
+        // not slip past into a half-parsed state / NPE (DESIGN-core §12 #3).
+        for (String bad : new String[]{"--mode=GREENGRASS", "-mSTANDALONE"}) {
+            IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () ->
+                    GGCommons.processArgs(COMPONENT, new String[]{bad}, null),
+                    "expected rejection for " + bad);
+            assertTrue(ex.getMessage().contains("--platform"));
+        }
+    }
+
+    @Test
     void kubernetesPlatformFailsFastInPhase0() {
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () ->
                 GGCommons.processArgs(COMPONENT, new String[]{"--platform", "KUBERNETES"}, null));

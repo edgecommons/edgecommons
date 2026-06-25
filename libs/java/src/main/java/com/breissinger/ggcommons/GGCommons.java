@@ -427,7 +427,9 @@ public class GGCommons
             return;
         }
         for (String arg : args) {
-            if ("-m".equals(arg) || "--mode".equals(arg)) {
+            // Catch attached forms too (--mode=X, -mX), which would otherwise slip past as an
+            // unrecognized option and surface as a confusing half-parsed state / NPE.
+            if (arg != null && ("--mode".equals(arg) || arg.startsWith("--mode=") || arg.startsWith("-m"))) {
                 throw new IllegalArgumentException("The -m/--mode flag has been removed. Use "
                         + "--platform GREENGRASS|HOST|KUBERNETES and --transport IPC|MQTT instead "
                         + "(e.g. '-m STANDALONE <path>' becomes '--platform HOST --transport MQTT <path>').");
