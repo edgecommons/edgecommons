@@ -163,6 +163,18 @@ docker compose -f test-infra/compose.yaml up -d   # EMQX (plaintext 1883 + mutua
 ```
 Subscribe to `heartbeat/+/+` (e.g. with MQTTX) to see component heartbeats and to drive request/response topics.
 
+### Testing & validation matrix (where each path is exercised)
+All of these run from the dev machine — none is "manual / can't automate":
+
+| Path | Where | Infra |
+|------|-------|-------|
+| Per-language unit/integration suites | this machine | Java (`mvn verify`, JaCoCo 90%), Python (`pytest`), Rust (`cargo test`, standalone — **no `greengrass` feature on Windows**), TS (`vitest` + coverage). Java toolchain is at `C:\Users\breis\tools\{jdk,maven}` (not on PATH). |
+| **`--platform HOST`** (dual-MQTT) end-to-end | this machine | EMQX `localhost:1883` (plaintext) / `8883` (mTLS) + floci `localhost:4566`, both in Docker (`ggcommons-emqx`, `ggstreamlog-floci`). Restart them before a HOST smoke — they crash under heavy parallel-build load. |
+| Rust **`greengrass` feature** build/tests (Linux-only) | **WSL** (Ubuntu, `cargo`+`cmake`+`cc`) | `wsl.exe bash -lc`, `CARGO_TARGET_DIR=/tmp`; the native GG SDK can't compile on Windows. |
+| **`--platform GREENGRASS`** (IPC) on-device | **lab-5950x** (`ssh marc@192.168.1.229`, passwordless sudo; thing `lab-5950x`, us-east-1) | real Greengrass nucleus + `greengrass-cli` 2.17.0, Java 25. `gdk` is **not** installed → build the jar here, copy over, deploy with `greengrass-cli deployment create --recipeDir … --artifactDir … --merge "<Comp>=<ver>"` (`--remove` to tear down). Cloud deployments via `aws greengrassv2` (account 162499689067). |
+
+Always unsubscribe + handle SIGTERM before exit, or a run leaks subscriptions/threads and trips the shared-connection quota.
+
 ## Conventions
 
 - **Maintain four-way parity.** The same config schema, CLI flags, subsystem boundaries, and message

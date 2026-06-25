@@ -70,7 +70,7 @@ final class ShadowConfigProvider extends ConfigProvider implements  StreamRespon
         JsonObject stateDoc = new JsonObject();
         JsonObject reportedDoc = new JsonObject();
 
-        LOGGER.trace("Updating com.aws.proseve.ggcommons.config to:{}", componentConfig);
+        LOGGER.trace("Updating com.breissinger.ggcommons.config to:{}", componentConfig);
         reportedDoc.addProperty("ComponentConfig", componentConfig);
         stateDoc.add("reported", reportedDoc);
         shadowDoc.add("state", stateDoc);
@@ -234,7 +234,7 @@ final class ShadowConfigProvider extends ConfigProvider implements  StreamRespon
 
     protected void configurationChanged(JsonObject newConfig)
     {
-        LOGGER.info("configurationChanged: Applying new com.aws.proseve.ggcommons.config: {}", newConfig);
+        LOGGER.info("configurationChanged: Applying new com.breissinger.ggcommons.config: {}", newConfig);
         parentConfigManager.applyConfig(newConfig);
     }
 
