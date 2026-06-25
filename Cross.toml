@@ -1,0 +1,11 @@
+# cross-rs config for true-cross-compiling the aarch64-linux native artifacts on x86_64 runners,
+# so the ggstreamlog prebuilds work on a free private plan with no arm64 hosted runners. The
+# aarch64-linux build ships `kinesis` (the durable buffer + Kinesis sink) — NOT `kafka`:
+# librdkafka is a large C library and cross-compiling it to arm64 is impractical (slow under QEMU,
+# fragile to true-cross), so Kafka on arm64 is a documented source build (docs/NATIVE_CORE_DELIVERY.md).
+#
+# The AWS SDK crypto (aws-lc-sys, pulled by `kinesis`) cross-build needs cmake + Go in the cross image.
+[target.aarch64-unknown-linux-gnu]
+pre-build = [
+    "apt-get update && apt-get install -y --no-install-recommends cmake golang-go",
+]

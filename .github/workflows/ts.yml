@@ -18,7 +18,7 @@ jobs:
     # self-skip without one, which would let coverage fall below the threshold).
     services:
       emqx:
-        image: emqx/emqx:5
+        image: emqx/emqx:latest
         ports:
           - 1883:1883
     steps:
@@ -26,6 +26,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+      # The durable-CloudWatch + streaming tests load the native ggstreamlog node addon,
+      # so build it before the suite (mirrors the streaming workflow's node job).
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build the native node addon
+        run: npm install && npm run build
+        working-directory: libs/rust-streamlog/bindings/node
       # Install the whole npm workspace from the repo root (libs/ts, its native
       # streaming binding, and the TS example) so cross-package deps link cleanly.
       - run: npm ci || npm install

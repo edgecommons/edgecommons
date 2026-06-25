@@ -8,11 +8,13 @@ import com.aws.proserve.ggcommons.config.MetricConfiguration;
 import com.aws.proserve.ggcommons.config.ConfigurationFactory;
 import com.aws.proserve.ggcommons.metrics.Metric;
 import com.aws.proserve.ggcommons.metrics.MetricBuilder;
+import com.aws.proserve.ggcommons.streaming.StreamService;
 import com.aws.proserve.ggcommons.test.MockConfigurationService;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.MockedStatic;
 import software.amazon.awssdk.services.cloudwatch.CloudWatchClient;
 import software.amazon.awssdk.services.cloudwatch.model.CloudWatchException;
 import software.amazon.awssdk.services.cloudwatch.model.PutMetricDataRequest;
@@ -70,7 +72,7 @@ class CloudWatchTest {
 
     @Test
     void periodicFlushSendsQueuedMetrics() {
-        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":1}}");
+        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":1,\"buffer\":{\"type\":\"memory\"}}}");
         CloudWatchClient client = mock(CloudWatchClient.class);
         cloudWatch = new CloudWatch(config, client);
 
@@ -83,8 +85,27 @@ class CloudWatchTest {
     }
 
     @Test
+    void durableWithAbsentNativeCoreFailsFast() {
+        // A durable cloudwatch config, but the ggstreamlog native core is unavailable -> construction
+        // must FAIL FAST rather than silently fall back to in-memory: durable is the default and is
+        // bundled by design, so a missing core is a deployment error (silent degradation would lose
+        // metrics across a disconnect). A bad PATH with the core present still falls back (see
+        // CloudWatchDurableTest#durableInitFailureFallsBackToMemory).
+        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\","
+                + "\"targetConfig\":{\"buffer\":{\"type\":\"durable\",\"path\":\"build/ggsl-absent\"}}}");
+        CloudWatchClient client = mock(CloudWatchClient.class);
+        try (MockedStatic<StreamService> ss = mockStatic(StreamService.class)) {
+            ss.when(StreamService::nativeAvailable).thenReturn(false);
+            IllegalStateException ex = assertThrows(IllegalStateException.class,
+                    () -> new CloudWatch(config, client));
+            assertTrue(ex.getMessage().contains("native core"),
+                    "error should name the absent native core: " + ex.getMessage());
+        }
+    }
+
+    @Test
     void configurationChangeReschedulesFlush() {
-        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":1}}");
+        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":1,\"buffer\":{\"type\":\"memory\"}}}");
         CloudWatchClient client = mock(CloudWatchClient.class);
         cloudWatch = new CloudWatch(config, client);
 
@@ -100,7 +121,7 @@ class CloudWatchTest {
 
     @Test
     void emitMetricNowSendsToCloudWatchImmediately() {
-        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600}}");
+        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600,\"buffer\":{\"type\":\"memory\"}}}");
         CloudWatchClient client = mock(CloudWatchClient.class);
         cloudWatch = new CloudWatch(config, client);
 
@@ -113,7 +134,7 @@ class CloudWatchTest {
 
     @Test
     void emitMetricNowSwallowsCloudWatchException() {
-        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600}}");
+        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600,\"buffer\":{\"type\":\"memory\"}}}");
         CloudWatchClient client = mock(CloudWatchClient.class);
         when(client.putMetricData(any(PutMetricDataRequest.class)))
                 .thenThrow(CloudWatchException.builder().message("boom").build());
@@ -128,7 +149,7 @@ class CloudWatchTest {
 
     @Test
     void emitMetricBuffersUntilFlush() {
-        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600}}");
+        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600,\"buffer\":{\"type\":\"memory\"}}}");
         CloudWatchClient client = mock(CloudWatchClient.class);
         cloudWatch = new CloudWatch(config, client);
 
@@ -144,7 +165,7 @@ class CloudWatchTest {
 
     @Test
     void flushChunksWhenExceeding1000Datums() {
-        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600}}");
+        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600,\"buffer\":{\"type\":\"memory\"}}}");
         CloudWatchClient client = mock(CloudWatchClient.class);
         cloudWatch = new CloudWatch(config, client);
 
@@ -168,7 +189,7 @@ class CloudWatchTest {
 
     @Test
     void flushIsolatesFailuresPerNamespace() {
-        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600}}");
+        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600,\"buffer\":{\"type\":\"memory\"}}}");
         CloudWatchClient client = mock(CloudWatchClient.class);
         when(client.putMetricData(any(PutMetricDataRequest.class)))
                 .thenThrow(new RuntimeException("network down"));
@@ -186,7 +207,7 @@ class CloudWatchTest {
 
     @Test
     void largeFleetWorkaroundDoublesDatums() {
-        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"largeFleetWorkaround\":true,\"targetConfig\":{\"intervalSecs\":3600}}");
+        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"largeFleetWorkaround\":true,\"targetConfig\":{\"intervalSecs\":3600,\"buffer\":{\"type\":\"memory\"}}}");
         CloudWatchClient client = mock(CloudWatchClient.class);
         cloudWatch = new CloudWatch(config, client);
 
@@ -200,7 +221,7 @@ class CloudWatchTest {
 
     @Test
     void onConfigurationChangedReinitializesTimer() {
-        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600}}");
+        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600,\"buffer\":{\"type\":\"memory\"}}}");
         CloudWatchClient client = mock(CloudWatchClient.class);
         cloudWatch = new CloudWatch(config, client);
 
@@ -209,7 +230,7 @@ class CloudWatchTest {
 
     @Test
     void closeCancelsTimerAndClosesClient() {
-        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600}}");
+        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600,\"buffer\":{\"type\":\"memory\"}}}");
         CloudWatchClient client = mock(CloudWatchClient.class);
         var cw = new CloudWatch(config, client);
 
@@ -221,7 +242,7 @@ class CloudWatchTest {
 
     @Test
     void closeSwallowsClientCloseException() {
-        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600}}");
+        var config = new CwConfig("{\"target\":\"cloudwatch\",\"namespace\":\"ns1\",\"targetConfig\":{\"intervalSecs\":3600,\"buffer\":{\"type\":\"memory\"}}}");
         CloudWatchClient client = mock(CloudWatchClient.class);
         doThrow(new RuntimeException("close failed")).when(client).close();
         var cw = new CloudWatch(config, client);

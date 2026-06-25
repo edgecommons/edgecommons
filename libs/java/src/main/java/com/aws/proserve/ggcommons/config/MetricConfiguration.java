@@ -31,6 +31,7 @@ public class MetricConfiguration
     private String destination = DEFAULT_MESSAGING_DESTINATION;
     private boolean largeFleetWorkaround = false;
     private String maxFileSize = DEFAULT_MAX_FILE_SIZE;
+    private BufferConfiguration bufferConfig = BufferConfiguration.memory();
 
     /**
      * Creates a new metric configuration from a JSON configuration object.
@@ -83,6 +84,7 @@ public class MetricConfiguration
             }
 
             if (target.equalsIgnoreCase("cloudwatch")) {
+                JsonObject bufferJson = null;
                 if (jsonConfig.has("targetConfig"))
                 {
                     JsonObject targetConfig = jsonConfig.get("targetConfig").getAsJsonObject();
@@ -90,7 +92,12 @@ public class MetricConfiguration
                         intervalSecs = (targetConfig.get("intervalSecs").getAsBigDecimal()).intValue();
                     if (intervalSecs < 1)
                         intervalSecs = DEFAULT_INTERVAL_SECS;
+                    if (targetConfig.has("buffer") && targetConfig.get("buffer").isJsonObject())
+                        bufferJson = targetConfig.getAsJsonObject("buffer");
                 }
+                // Default for the cloudwatch target is a durable, disk-backed store-and-forward
+                // buffer (survives lengthy disconnects); type=memory keeps the in-memory batching.
+                bufferConfig = BufferConfiguration.fromJson(bufferJson);
             }
             LOGGER.debug("Metric configuration: target={}, namespace={}, logFileName={}, topic={}, intervalSecs={}",
                     target, namespace, logFileNameTemplate, topic, intervalSecs);
@@ -151,4 +158,7 @@ public class MetricConfiguration
     public boolean getLargeFleetWorkaround() { return largeFleetWorkaround; }
 
     public String getMaxFileSize() { return maxFileSize; }
+
+    /** The cloudwatch durable/in-memory buffer settings (memory by default for non-cloudwatch targets). */
+    public BufferConfiguration getBufferConfig() { return bufferConfig; }
 }

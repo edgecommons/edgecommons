@@ -3,7 +3,9 @@
  * Gives Node components the same durable store-and-forward streaming + config schema as the Rust,
  * Java, and Python libraries. Mirrors `gg.streams()`.
  */
-import { addon, ensureLogForwarding, GgStreamError, translate } from "./native";
+import type * as Addon from "ggstreamlog-node";
+
+import { getAddon, ensureLogForwarding, GgStreamError, translate } from "./native";
 
 /** A snapshot of one stream's buffer + export progress (mirrors `ggsl_stats_t`). */
 export interface StreamStats {
@@ -22,7 +24,7 @@ export interface StreamStats {
 /** A producer handle to one telemetry stream. */
 export class StreamHandle {
   constructor(
-    private inner: addon.StreamHandle | null,
+    private inner: Addon.StreamHandle | null,
     readonly name: string,
   ) {}
 
@@ -55,13 +57,13 @@ export class StreamHandle {
 
 /** Owns the native streaming service: opens streams from config, runs export, hands out handles. */
 export class StreamService {
-  constructor(private inner: addon.StreamService | null) {}
+  constructor(private inner: Addon.StreamService | null) {}
 
   /** Open every stream in `configJson` (the `streaming` section; templates pre-resolved). */
   static open(configJson: string): StreamService {
     ensureLogForwarding();
     try {
-      return new StreamService(addon.StreamService.open(configJson));
+      return new StreamService(getAddon().StreamService.open(configJson));
     } catch (e) {
       throw translate(e);
     }
@@ -104,7 +106,7 @@ export class StreamService {
     }
   }
 
-  private require(): addon.StreamService {
+  private require(): Addon.StreamService {
     if (!this.inner) throw new Error("StreamService is closed");
     return this.inner;
   }

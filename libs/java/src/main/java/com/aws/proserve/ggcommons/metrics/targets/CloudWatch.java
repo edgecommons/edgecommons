@@ -4,15 +4,19 @@
  */
 package com.aws.proserve.ggcommons.metrics.targets;
 
+import com.aws.proserve.ggcommons.config.BufferConfiguration;
 import com.aws.proserve.ggcommons.config.ConfigManager;
 import com.aws.proserve.ggcommons.metrics.Metric;
+import com.aws.proserve.ggcommons.streaming.StreamHandle;
+import com.aws.proserve.ggcommons.streaming.StreamService;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
 import software.amazon.awssdk.services.cloudwatch.CloudWatchClient;
 import software.amazon.awssdk.services.cloudwatch.model.CloudWatchException;
 import software.amazon.awssdk.services.cloudwatch.model.Dimension;
 import software.amazon.awssdk.services.cloudwatch.model.MetricDatum;
 import software.amazon.awssdk.services.cloudwatch.model.PutMetricDataRequest;
 
-import java.io.IOException;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -24,6 +28,9 @@ import java.util.concurrent.TimeUnit;
 
 public final class CloudWatch extends MetricTarget
 {
+
+    /** The single callback stream name for the durable CloudWatch buffer. */
+    static final String DURABLE_STREAM = "metrics-cw";
 
     private final CloudWatchClient cwClient;
 
@@ -37,6 +44,12 @@ public final class CloudWatch extends MetricTarget
             });
     private ScheduledFuture<?> emitTask;
 
+    // ----- durable store-and-forward buffer (ggstreamlog Callback stream) -----
+    private final boolean durable;
+    private final CloudWatchDrain drain;     // null in memory mode
+    private StreamService streamService;     // null in memory mode (or if durable init failed)
+    private StreamHandle streamHandle;       // null in memory mode (or if durable init failed)
+
     public CloudWatch(ConfigManager configManager)
     {
         this(configManager, CloudWatchClient.builder().build());
@@ -47,7 +60,95 @@ public final class CloudWatch extends MetricTarget
     {
         super(configManager);
         this.cwClient = cwClient;
-        scheduleEmit();
+
+        BufferConfiguration buffer = metricConfig.getBufferConfig();
+        boolean wantDurable = buffer != null && buffer.isDurable();
+        boolean durableUp = false;
+        CloudWatchDrain d = null;
+        if (wantDurable)
+        {
+            if (!StreamService.nativeAvailable())
+            {
+                // Fail fast on an ABSENT native core. Durable is the default and is bundled by
+                // design, so a missing core is a deployment error — silently degrading would lose
+                // metrics across a cloud disconnect. Opt out explicitly with buffer.type=memory.
+                throw new IllegalStateException(
+                        "Durable CloudWatch buffer (the default) requires the ggstreamlog native "
+                        + "core, which is not bundled/loadable for this platform. Bundle it (see "
+                        + "docs/NATIVE_CORE_DELIVERY.md) or set "
+                        + "metricEmission.targetConfig.cloudwatch.buffer.type=memory.");
+            }
+            // The drain owns the namespace grouping / stale-drop / chunk / outcome logic; the sink
+            // forwards each PutMetricData chunk through the injected client. A core that is present
+            // but whose buffer cannot open (e.g. a bad path) still degrades to in-memory below.
+            d = new CloudWatchDrain(this::putChunk);
+            durableUp = startDurable(buffer, d);
+        }
+        this.durable = durableUp;
+        this.drain = durableUp ? d : null;
+
+        if (!this.durable)
+        {
+            // In-memory path (explicit type=memory, or durable init failed → safe fallback).
+            scheduleEmit();
+        }
+    }
+
+    /**
+     * Open the durable buffer: register the drain as the host sink, then open a single Callback
+     * stream backed by a disk buffer at the (template-resolved) configured path. Returns false (and
+     * the target falls back to in-memory batching) if the native streaming core is unavailable.
+     */
+    private boolean startDurable(BufferConfiguration buffer, CloudWatchDrain d)
+    {
+        try
+        {
+            // Resolve {ComponentName}/{ThingName} in the buffer path BEFORE opening — this also
+            // closes the known Java streaming template-resolution gap for this path.
+            String resolvedPath = configManager.resolveTemplate(buffer.getPath());
+            String configJson = buildStreamConfig(resolvedPath, buffer);
+
+            // Register the sink BEFORE open (the core binds it per stream at open time).
+            StreamService.registerSink(batch -> d.drain(batch));
+            this.streamService = StreamService.open(configJson);
+            this.streamHandle = streamService.stream(DURABLE_STREAM);
+            LOGGER.info("CloudWatch durable buffer open at {} (maxDiskBytes={}, onFull={}, fsync={})",
+                    resolvedPath, buffer.getMaxDiskBytes(), buffer.getOnFull(), buffer.getFsync());
+            return true;
+        }
+        catch (Throwable t)
+        {
+            LOGGER.warn("Durable CloudWatch buffer unavailable ({}); falling back to in-memory batching",
+                    t.getMessage());
+            closeDurable();
+            return false;
+        }
+    }
+
+    /** Build the single-stream {@code streaming} config JSON for the durable CloudWatch buffer. */
+    private static String buildStreamConfig(String resolvedPath, BufferConfiguration buffer)
+    {
+        JsonObject sink = new JsonObject();
+        sink.addProperty("type", "callback");
+        sink.addProperty("id", DURABLE_STREAM);
+
+        JsonObject buf = new JsonObject();
+        buf.addProperty("type", "disk");
+        buf.addProperty("path", resolvedPath);
+        buf.addProperty("maxDiskBytes", buffer.getMaxDiskBytes());
+        buf.addProperty("onFull", buffer.getOnFull());
+        buf.addProperty("fsync", buffer.getFsync());
+
+        JsonObject stream = new JsonObject();
+        stream.addProperty("name", DURABLE_STREAM);
+        stream.add("sink", sink);
+        stream.add("buffer", buf);
+
+        JsonArray streams = new JsonArray();
+        streams.add(stream);
+        JsonObject root = new JsonObject();
+        root.add("streams", streams);
+        return root.toString();
     }
 
     private void scheduleEmit()
@@ -67,6 +168,11 @@ public final class CloudWatch extends MetricTarget
     @Override
     public void emitMetric(Metric metric, Map<String, Float> measureValues)
     {
+        if (durable)
+        {
+            appendDurable(new PendingMetric(metric, measureValues));
+            return;
+        }
         // need to maintain a hashmap by namespace as we can only submit
         // from a single namespace at a time
         pendingMetrics.computeIfAbsent(metric.getNamespace(), k -> new ConcurrentLinkedQueue<>())
@@ -78,6 +184,12 @@ public final class CloudWatch extends MetricTarget
     @Override
     public void emitMetricNow(Metric metric, Map<String, Float> measureValues)
     {
+        if (durable)
+        {
+            // Durable mode: still goes through the buffer (always-buffer) — the engine drains it.
+            appendDurable(new PendingMetric(metric, measureValues));
+            return;
+        }
         try
         {
             var data = new ArrayList<MetricDatum>();
@@ -95,29 +207,78 @@ public final class CloudWatch extends MetricTarget
         LOGGER.trace("Successfully sent {} metric to CloudWatch", metric.getName());
     }
 
+    /** Serialize a pending metric's datums to {@code {namespace, datum}} records and append them. */
+    private void appendDurable(PendingMetric pendingMetric)
+    {
+        var data = new ArrayList<MetricDatum>();
+        appendToPutMetricDataRequest(pendingMetric, data);
+        String namespace = pendingMetric.getMetric().getNamespace();
+        for (MetricDatum datum : data)
+        {
+            try
+            {
+                byte[] payload = CloudWatchRecord.serialize(namespace, datum);
+                // Partition key = namespace (so the drain can group by it).
+                streamHandle.append(namespace, pendingMetric.getTimestamp().toEpochMilli(), payload);
+            }
+            catch (RuntimeException e)
+            {
+                LOGGER.error("Failed to append CloudWatch metric to durable buffer: {}", e.getMessage());
+            }
+        }
+    }
+
     @Override
     public boolean onConfigurationChanged()
     {
         LOGGER.info("Configuration changed. Reconfiguring CloudWatch batch interval");
-        scheduleEmit();
-
+        if (!durable)
+        {
+            scheduleEmit();
+        }
         return true;
     }
 
     @Override
     public void flush()
     {
+        if (durable)
+        {
+            // Force the buffer durably to disk (the background engine handles the actual drain).
+            try
+            {
+                if (streamHandle != null)
+                {
+                    streamHandle.flush();
+                }
+            }
+            catch (RuntimeException e)
+            {
+                LOGGER.warn("Error flushing durable CloudWatch buffer: {}", e.getMessage());
+            }
+            return;
+        }
         flushMetrics();
     }
 
     @Override
     public void close()
     {
-        if (emitTask != null)
+        if (durable)
         {
-            emitTask.cancel(false);
+            // Flush to disk + stop the engine; do NOT drain to cloud (backlog persists for restart).
+            flush();
+            closeDurable();
+            StreamService.unregisterSink();
         }
-        scheduler.shutdownNow();
+        else
+        {
+            if (emitTask != null)
+            {
+                emitTask.cancel(false);
+            }
+            scheduler.shutdownNow();
+        }
         try
         {
             cwClient.close();
@@ -126,6 +287,46 @@ public final class CloudWatch extends MetricTarget
         {
             LOGGER.warn("Error closing CloudWatch client: {}", e.getMessage());
         }
+    }
+
+    private void closeDurable()
+    {
+        try
+        {
+            if (streamHandle != null)
+            {
+                streamHandle.close();
+                streamHandle = null;
+            }
+        }
+        catch (RuntimeException e)
+        {
+            LOGGER.warn("Error closing durable CloudWatch stream handle: {}", e.getMessage());
+        }
+        try
+        {
+            if (streamService != null)
+            {
+                streamService.close();
+                streamService = null;
+            }
+        }
+        catch (RuntimeException e)
+        {
+            LOGGER.warn("Error closing durable CloudWatch stream service: {}", e.getMessage());
+        }
+    }
+
+    /** Datums dropped on drain for being outside CloudWatch's accept window (durable mode only). */
+    public long getDroppedStale()
+    {
+        return drain == null ? 0L : drain.droppedStale();
+    }
+
+    /** The {@link CloudWatchSender} the durable drain calls — wraps the injected client. */
+    private void putChunk(String namespace, List<MetricDatum> chunk)
+    {
+        sendBatch(namespace, chunk);
     }
 
     // CloudWatch PutMetricData accepts at most 1000 metric data items per request.

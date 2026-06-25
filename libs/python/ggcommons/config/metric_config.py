@@ -31,6 +31,9 @@ class MetricConfiguration:
         self._large_fleet_workaround = self.DEFAULT_LARGE_FLEET_WORKAROUND
         self._max_file_size = self.DEFAULT_METRIC_MAX_FILE_SIZE
         self._backup_count = self.DEFAULT_METRIC_BACKUP_COUNT
+        # Raw `buffer` object from the cloudwatch targetConfig (durable store-and-forward buffer for
+        # the direct CloudWatch target). None => no buffer section => in-memory batching path.
+        self._cloudwatch_buffer = None
 
         if json_config:
             self._target = json_config.get("target", self._target)
@@ -60,11 +63,15 @@ class MetricConfiguration:
                 self._topic = target_config.get("topic", self._topic)
 
             if target == "cloudwatch":
+                cw_config = target_config.get("cloudwatch", target_config)
                 self._interval_secs = int(
-                    target_config.get("intervalSecs", self._interval_secs)
+                    cw_config.get("intervalSecs", self._interval_secs)
                 )
                 if self._interval_secs < 1:
                     self._interval_secs = self.DEFAULT_INTERVAL_SECS
+                buffer = cw_config.get("buffer")
+                if isinstance(buffer, dict):
+                    self._cloudwatch_buffer = buffer
 
             self.logger.debug(
                 f"Metric configuration: target={self._target}, namespace={self._namespace}, logFileName={self._log_file_name_template}, topic={self._topic}, intervalSecs={self._interval_secs}"
@@ -104,6 +111,15 @@ class MetricConfiguration:
 
     def get_interval_secs(self) -> int:
         return self._interval_secs
+
+    def get_cloudwatch_buffer(self):
+        """Raw `buffer` object from the cloudwatch targetConfig, or None when absent.
+
+        Present => the durable store-and-forward buffer is configured for the direct CloudWatch
+        target (`type: durable|memory`, `path`, `maxDiskBytes`, `onFull`, `fsync`). Absent => the
+        legacy in-memory batching path.
+        """
+        return self._cloudwatch_buffer
 
     def get_destination(self) -> str:
         return self._destination

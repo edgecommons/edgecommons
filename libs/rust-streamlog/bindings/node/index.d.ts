@@ -10,7 +10,13 @@ export declare class StreamHandle {
 
 /** Owns the native streaming service. */
 export declare class StreamService {
-  /** Open every stream in `configJson` (the `streaming` section; templates pre-resolved). */
+  /**
+   * Open every stream in `configJson` (the `streaming` section; templates pre-resolved).
+   *
+   * A `callback`-sink stream is wired to a host JS sink **iff** a callback was registered for its
+   * name via [`register_sink_callback`] before this call; otherwise it stays buffer-only (parity
+   * with the core's default factory). Native Kinesis/Kafka sinks are unaffected.
+   */
   static open(configJson: string): StreamService
   /** A handle to the named stream (throws ERR_UNKNOWN_STREAM if not configured). */
   stream(name: string): StreamHandle
@@ -28,10 +34,36 @@ export interface LogEvent {
 }
 
 /**
+ * Register the JS sink callback for a `callback`-sink stream. Must be called **before**
+ * `StreamService.open` so the bridge wires the host sink into that stream's export engine.
+ * The callback receives `(batchId, records)` and must eventually call `resolveOutcome(batchId, ...)`.
+ * Idempotent per stream name (last registration wins).
+ */
+export declare function registerSinkCallback(streamName: string, callback: SinkTsfn): void
+
+/**
+ * Signal the export engine that batch `batch_id` finished. `code`: 0 AllAcked, 1 Partial (the
+ * `failed_offsets` were not stored → retried), 2 Failed (retryable; whole batch re-delivered).
+ * Unblocks the export thread waiting on this batch. Unknown/duplicate ids are ignored.
+ */
+export declare function resolveOutcome(batchId: number, code: number, failedOffsets?: Array<number> | undefined | null): void
+
+/**
  * Register a callback that receives core log events `{ level, target, message }`. Idempotent;
  * installs the forwarding subscriber on first call.
  */
 export declare function setLogCallback(callback: ((err: Error | null, arg: LogEvent) => void)): void
+
+/** One record handed to the JS sink (a plain napi object — the batch is `Vec<SinkRecord>`). */
+export interface SinkRecord {
+  /** Log offset (opaque; echo it back in `resolveOutcome`'s failedOffsets to mark it un-acked). */
+  offset: number
+  /** Partition key (for CloudWatch: the namespace). */
+  partitionKey: string
+  timestampMs: number
+  /** The serialized record payload (the compact `{namespace,datum}` JSON for CloudWatch). */
+  payload: Buffer
+}
 
 /** A snapshot of one stream's buffer + export progress (mirrors `ggsl_stats_t`). */
 export interface StreamStats {

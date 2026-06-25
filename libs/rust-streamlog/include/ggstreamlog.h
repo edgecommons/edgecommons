@@ -152,6 +152,69 @@ typedef void (*ggsl_log_cb)(void* user_data, int level, const char* target, cons
  */
 int ggsl_set_log_callback(ggsl_log_cb cb, void* user_data);
 
+/* ---- Host sink callback (CloudWatch metrics drain / bring-your-own-sink) ----- */
+
+/*
+ * Outcome status the host writes into ggsl_sink_outcome_t.status. DISTINCT from ggsl_status above:
+ * these describe a sink send, not an API call.
+ */
+typedef enum ggsl_sink_status {
+    GGSL_SINK_ALL_ACKED        = 0, /* every record stored; advance the checkpoint past the batch */
+    GGSL_SINK_PARTIAL          = 1, /* only failed_offsets[0..failed_count] failed; retry just those */
+    GGSL_SINK_FAILED_RETRYABLE = 2, /* whole batch failed, may succeed later (disconnect/throttle/5xx) */
+    GGSL_SINK_FAILED_PERMANENT = 3  /* whole batch failed permanently (host should have dropped it) */
+} ggsl_sink_status;
+
+/*
+ * One record handed to the host sink callback. All pointers BORROW the export batch and are valid
+ * ONLY for the duration of the call (copy anything you retain). `pk`/`payload` may be NULL iff the
+ * matching length is 0. For the CloudWatch drain, `pk` is the namespace and `payload` is the compact
+ * {namespace, datum} JSON.
+ */
+typedef struct ggsl_sink_record_t {
+    uint64_t       offset;       /* log offset (use it to populate failed_offsets for a partial) */
+    uint64_t       ts_ms;        /* record timestamp (epoch millis) */
+    const uint8_t* pk;           /* partition key bytes (UTF-8) */
+    size_t         pk_len;
+    const uint8_t* payload;      /* record payload bytes */
+    size_t         payload_len;
+} ggsl_sink_record_t;
+
+/*
+ * The host fills this to report a batch's outcome. The core supplies `failed_offsets` pre-allocated
+ * with room for `failed_cap` entries (== the batch length). For GGSL_SINK_PARTIAL the host writes the
+ * offsets that were NOT stored into that buffer and sets `failed_count` (<= failed_cap); for any other
+ * status `failed_count` is ignored. `status` defaults to GGSL_SINK_FAILED_RETRYABLE, so a batch the
+ * host leaves untouched is retried, never silently acked.
+ */
+typedef struct ggsl_sink_outcome_t {
+    int       status;            /* a ggsl_sink_status value */
+    uint64_t* failed_offsets;    /* core-owned, host-written-into (capacity = failed_cap) */
+    size_t    failed_cap;        /* number of slots in failed_offsets (== batch length) */
+    size_t    failed_count;      /* host writes the number of failed offsets here (PARTIAL only) */
+} ggsl_sink_outcome_t;
+
+/*
+ * Host sink callback: invoked on the export engine thread with a BORROWED batch of `n` records. The
+ * host performs the send (e.g. CloudWatch PutMetricData) and writes the result into `*outcome`, then
+ * returns GGSL_OK. A non-zero return is treated as a retryable failure. The callback must be
+ * thread-safe and return promptly — it blocks that stream's drain — and must NOT call back into
+ * ggstreamlog. `user_data` is passed verbatim. A panic/exception that crosses the boundary is caught
+ * and treated as a retryable failure (the batch is held, not lost).
+ */
+typedef int (*ggsl_sink_cb)(void* user_data,
+                            const ggsl_sink_record_t* records, size_t n,
+                            ggsl_sink_outcome_t* outcome);
+
+/*
+ * Register (or clear, with cb = NULL) the host sink callback used to drain streams whose sink is
+ * { "type": "callback" }. Call this BEFORE ggsl_open: the binding is captured per stream at open
+ * time, so a callback stream opened before registration is buffer-only (it persists but does not
+ * export) until the service is reopened. `user_data` must remain valid until the callback is cleared
+ * or the service is shut down. Returns GGSL_OK.
+ */
+int ggsl_set_sink_callback(ggsl_sink_cb cb, void* user_data);
+
 /* ---- Phase-3: pluggable credential callback (Kafka SASL/OAuth, mTLS) ----- */
 
 /*

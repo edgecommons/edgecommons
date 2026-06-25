@@ -36,7 +36,7 @@ class FileLoggingRotationTest {
         String configJson = "{" +
                 "\"logging\": {" +
                 "\"level\": \"INFO\"," +
-                "\"format\": \"%m%n\"," +
+                "\"java_format\": \"%m%n\"," +
                 "\"fileLogging\": {\"enabled\": true, \"filePath\": \"" + logFilePath + "\", " +
                 "\"maxFileSize\": \"1KB\", \"backupCount\": 2}" +
                 "}," +

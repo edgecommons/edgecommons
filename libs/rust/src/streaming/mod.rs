@@ -197,6 +197,8 @@ fn resolve_sink(config: &Config, sink: SinkConfig) -> SinkConfig {
             topic: resolve(config, &topic),
             properties,
         },
+        // A host-callback sink has no templated fields; pass it through unchanged.
+        SinkConfig::Callback { id } => SinkConfig::Callback { id },
     }
 }
 

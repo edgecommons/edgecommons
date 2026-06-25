@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Callable, List, Optional, Sequence, Tuple, Union
 
 # The native core (built out-of-band via maturin from libs/rust-streamlog) is an OPTIONAL
 # runtime dependency: importing ggcommons.streaming must not hard-fail a component that doesn't
@@ -23,7 +23,33 @@ except ImportError as _e:  # pragma: no cover - exercised only when the wheel is
     _native = None
     _NATIVE_IMPORT_ERROR = _e
 
-__all__ = ["StreamService", "StreamHandle", "StreamStats", "GgStreamError"]
+__all__ = [
+    "StreamService",
+    "StreamHandle",
+    "StreamStats",
+    "GgStreamError",
+    "ExportRecord",
+    "SinkCallback",
+    "SinkOutcome",
+    "native_available",
+]
+
+# One record handed to a host sink callback: (offset, partition_key, timestamp_ms, payload).
+ExportRecord = Tuple[int, bytes, int, bytes]
+# A host sink callback's return value (see ``StreamService.open_with_callback``):
+#   * ``None`` / falsy            -> the whole batch was accepted (committed).
+#   * a list of int offsets       -> those offsets failed (retried); the rest were accepted.
+#   * ``("failed", error)`` / str -> the whole batch failed (retried; nothing committed).
+SinkOutcome = Union[None, Sequence[int], Tuple[str, str], str]
+SinkCallback = Callable[[List[ExportRecord]], SinkOutcome]
+
+
+def native_available() -> bool:
+    """``True`` if the ``ggstreamlog-native`` wheel is importable — i.e. telemetry streaming and the
+    durable CloudWatch buffer are usable on this platform. ``False`` when the wheel was never
+    installed; callers that require durability (the default cloudwatch buffer) fail fast on ``False``
+    rather than silently degrading."""
+    return _native is not None
 
 
 def _require_native():
@@ -118,6 +144,26 @@ class StreamService:
         """Open every stream in ``config_json`` (the ``streaming`` section; templates pre-resolved)."""
         try:
             return StreamService(_require_native().StreamService.open(config_json))
+        except _NativeError as e:
+            raise _translate(e) from None
+
+    @staticmethod
+    def open_with_callback(config_json: str, callback: SinkCallback) -> "StreamService":
+        """Open every stream in ``config_json``, binding ``callback`` as the export sink for every
+        stream whose sink is ``{"type": "callback"}`` (the durable CloudWatch metrics drain / a
+        caller's bring-your-own-sink). Kinesis/Kafka streams are built natively as in :meth:`open`.
+
+        The native export engine invokes ``callback(records)`` on its background thread — one call
+        per batch — reacquiring the GIL for the duration of the call (the engine thread blocks on
+        the result). ``records`` is a list of :data:`ExportRecord` tuples
+        ``(offset, partition_key, timestamp_ms, payload)``; the return value is a
+        :data:`SinkOutcome`. A callback that raises is treated as a retryable failure (the batch is
+        re-delivered, never committed), so a transient cloud outage cannot lose buffered data.
+        """
+        try:
+            return StreamService(
+                _require_native().StreamService.open_with_callback(config_json, callback)
+            )
         except _NativeError as e:
             raise _translate(e) from None
 

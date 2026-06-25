@@ -5,9 +5,15 @@
 //! the status code). Core `tracing` logs are forwarded to a JS callback registered via
 //! `setLogCallback`.
 
-use std::sync::{Arc, OnceLock};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
+use std::sync::{Arc, Mutex, OnceLock};
 
-use ggstreamlog::{EmbeddedLog, Record, ServiceStats, StreamService as CoreService, StreamingConfig};
+use ggstreamlog::{
+    CallbackSink, EmbeddedLog, ExportRecord, Record, SendOutcome, ServiceStats, Sink,
+    SinkConfig, StreamService as CoreService, StreamingConfig,
+};
 use napi::bindgen_prelude::*;
 use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
@@ -95,11 +101,26 @@ pub struct StreamService {
 #[napi]
 impl StreamService {
     /// Open every stream in `configJson` (the `streaming` section; templates pre-resolved).
+    ///
+    /// A `callback`-sink stream is wired to a host JS sink **iff** a callback was registered for its
+    /// name via [`register_sink_callback`] before this call; otherwise it stays buffer-only (parity
+    /// with the core's default factory). Native Kinesis/Kafka sinks are unaffected.
     #[napi(factory)]
     pub fn open(config_json: String) -> Result<StreamService> {
         let cfg: StreamingConfig =
             serde_json::from_str(&config_json).map_err(|e| err(1, format!("config: {e}")))?;
-        let svc = CoreService::open(cfg).map_err(map_err)?;
+        let factory = |name: &str, sink: &SinkConfig| -> ggstreamlog::Result<Option<Box<dyn Sink>>> {
+            if let SinkConfig::Callback { .. } = sink {
+                if let Some(cb) = sink_callback_for(name) {
+                    return Ok(Some(Box::new(cb)));
+                }
+            }
+            // Defer to the core's default sink construction for everything else (native
+            // Kinesis/Kafka where those features are enabled, else buffer-only — including a
+            // `callback` stream with no registered host sink).
+            CoreService::default_sink(name, sink)
+        };
+        let svc = CoreService::open_with(cfg, &factory).map_err(map_err)?;
         Ok(StreamService { inner: Some(svc) })
     }
 
@@ -126,6 +147,123 @@ impl StreamService {
     pub fn close(&mut self) {
         self.inner = None;
     }
+}
+
+// ----- host-callback sink bridge: core export thread <-> async JS drain -----
+//
+// The export engine drives a [`Sink`] *synchronously* on its background thread; the JS sink drains
+// via the (async) AWS SDK. The bridge (validated by the §9 spike in docs/CLOUDWATCH_DURABLE_METRICS.md):
+//   1. the core `CallbackSink` closure (on the export thread) hands the batch to JS through a
+//      `ThreadsafeFunction` (NonBlocking) tagged with a unique batch id, then blocks on a
+//      `sync_channel` receiver keyed by that id;
+//   2. the async JS sink does its `PutMetricData` work and calls `resolveOutcome(id, code, failedOffsets)`;
+//   3. `resolveOutcome` sends the decoded `SendOutcome` over the channel, unblocking the export thread.
+// The JS event loop never blocks (the tsfn call is non-blocking); only the native export thread waits.
+
+/// One record handed to the JS sink (a plain napi object — the batch is `Vec<SinkRecord>`).
+#[napi(object)]
+pub struct SinkRecord {
+    /// Log offset (opaque; echo it back in `resolveOutcome`'s failedOffsets to mark it un-acked).
+    pub offset: f64,
+    /// Partition key (for CloudWatch: the namespace).
+    pub partition_key: String,
+    pub timestamp_ms: f64,
+    /// The serialized record payload (the compact `{namespace,datum}` JSON for CloudWatch).
+    pub payload: Buffer,
+}
+
+/// Outcome codes returned by JS via `resolveOutcome` (mirrors the core `SendOutcome`).
+/// 0 = AllAcked, 1 = Partial (use `failedOffsets`), 2 = Failed (retryable).
+const OUTCOME_ALL_ACKED: i32 = 0;
+const OUTCOME_PARTIAL: i32 = 1;
+const OUTCOME_FAILED: i32 = 2;
+
+type SinkTsfn = ThreadsafeFunction<(f64, Vec<SinkRecord>), ()>;
+
+struct SinkBridge {
+    /// stream name -> the JS sink callback (tsfn).
+    callbacks: HashMap<String, Arc<SinkTsfn>>,
+    /// batch id -> the one-shot sender the blocked export thread is waiting on.
+    pending: HashMap<u64, SyncSender<SendOutcome>>,
+}
+
+static SINK_BRIDGE: OnceLock<Mutex<SinkBridge>> = OnceLock::new();
+static BATCH_SEQ: AtomicU64 = AtomicU64::new(1);
+
+fn bridge() -> &'static Mutex<SinkBridge> {
+    SINK_BRIDGE.get_or_init(|| {
+        Mutex::new(SinkBridge { callbacks: HashMap::new(), pending: HashMap::new() })
+    })
+}
+
+/// Build a core [`CallbackSink`] for `stream_name` if a JS callback is registered for it. The
+/// returned sink, when sent a batch by the export engine, marshals it to JS and blocks on the
+/// per-batch channel until `resolveOutcome` signals.
+fn sink_callback_for(stream_name: &str) -> Option<CallbackSink> {
+    let tsfn = bridge().lock().unwrap().callbacks.get(stream_name).cloned()?;
+    Some(CallbackSink::new(Box::new(move |batch: &[ExportRecord<'_>]| {
+        let id = BATCH_SEQ.fetch_add(1, Ordering::Relaxed);
+        // Rendezvous channel (capacity 1): resolveOutcome hands back exactly one outcome.
+        let (tx, rx): (SyncSender<SendOutcome>, Receiver<SendOutcome>) = sync_channel(1);
+        bridge().lock().unwrap().pending.insert(id, tx);
+
+        let records: Vec<SinkRecord> = batch
+            .iter()
+            .map(|r| SinkRecord {
+                offset: r.offset as f64,
+                partition_key: String::from_utf8_lossy(r.partition_key).into_owned(),
+                timestamp_ms: r.ts_ms as f64,
+                payload: Buffer::from(r.payload.to_vec()),
+            })
+            .collect();
+
+        tsfn.call(Ok((id as f64, records)), ThreadsafeFunctionCallMode::NonBlocking);
+
+        // Block this export thread until JS resolves (or the channel is dropped → treat as a
+        // retryable failure so the batch is re-delivered, never silently committed).
+        match rx.recv() {
+            Ok(outcome) => outcome,
+            Err(_) => {
+                bridge().lock().unwrap().pending.remove(&id);
+                SendOutcome::Failed { retryable: true, error: "sink callback channel closed".into() }
+            }
+        }
+    })))
+}
+
+/// Register the JS sink callback for a `callback`-sink stream. Must be called **before**
+/// `StreamService.open` so the bridge wires the host sink into that stream's export engine.
+/// The callback receives `(batchId, records)` and must eventually call `resolveOutcome(batchId, ...)`.
+/// Idempotent per stream name (last registration wins).
+#[napi]
+pub fn register_sink_callback(stream_name: String, callback: SinkTsfn) {
+    bridge().lock().unwrap().callbacks.insert(stream_name, Arc::new(callback));
+}
+
+/// Signal the export engine that batch `batch_id` finished. `code`: 0 AllAcked, 1 Partial (the
+/// `failed_offsets` were not stored → retried), 2 Failed (retryable; whole batch re-delivered).
+/// Unblocks the export thread waiting on this batch. Unknown/duplicate ids are ignored.
+#[napi]
+pub fn resolve_outcome(batch_id: f64, code: i32, failed_offsets: Option<Vec<f64>>) {
+    let id = batch_id as u64;
+    let tx = bridge().lock().unwrap().pending.remove(&id);
+    let Some(tx) = tx else { return };
+    let outcome = match code {
+        OUTCOME_PARTIAL => SendOutcome::Partial {
+            failed_offsets: failed_offsets
+                .unwrap_or_default()
+                .into_iter()
+                .map(|o| o as u64)
+                .collect(),
+        },
+        OUTCOME_FAILED => SendOutcome::Failed { retryable: true, error: "host sink failed".into() },
+        // Treat any other code (including OUTCOME_ALL_ACKED) as a full ack.
+        _ => {
+            let _ = OUTCOME_ALL_ACKED;
+            SendOutcome::AllAcked
+        }
+    };
+    let _ = tx.send(outcome);
 }
 
 // ----- log forwarding: core tracing -> a JS callback -----

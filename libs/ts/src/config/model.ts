@@ -174,6 +174,39 @@ export class MetricConfig {
     const n = asInt(this.targetConfig?.intervalSecs);
     return n !== undefined && n >= 1 ? n : 5;
   }
+
+  /**
+   * The `cloudwatch` target's optional durable-buffer settings (`targetConfig.buffer`, per the
+   * canonical schema). When `type` is `durable` (the default), the cloudwatch target
+   * stores-and-forwards metrics through a disk-backed ggstreamlog buffer; `memory` selects the
+   * legacy in-memory batching target. Returns `undefined` only if no `buffer` object is present
+   * (caller then defaults to durable).
+   */
+  cloudwatchBuffer(): CloudWatchBufferConfig | undefined {
+    if (this.targetConfig?.buffer === undefined) return undefined;
+    const buf = obj(this.targetConfig.buffer);
+    const typeRaw = typeof buf.type === "string" ? buf.type.toLowerCase() : undefined;
+    return {
+      type: typeRaw === "memory" ? "memory" : "durable",
+      path:
+        typeof buf.path === "string"
+          ? buf.path
+          : "/var/lib/ggcommons/metrics/{ComponentName}/cw",
+      maxDiskBytes: asInt(buf.maxDiskBytes) ?? 128 * 1024 * 1024,
+      onFull:
+        buf.onFull === "block" || buf.onFull === "rejectNew" ? buf.onFull : "dropOldest",
+      fsync: buf.fsync === "interval" || buf.fsync === "always" ? buf.fsync : "perBatch",
+    };
+  }
+}
+
+/** Resolved `targetConfig.cloudwatch.buffer` settings for the durable CloudWatch target. */
+export interface CloudWatchBufferConfig {
+  type: "durable" | "memory";
+  path: string;
+  maxDiskBytes: number;
+  onFull: "dropOldest" | "block" | "rejectNew";
+  fsync: "perBatch" | "interval" | "always";
 }
 
 /** `component` section. */

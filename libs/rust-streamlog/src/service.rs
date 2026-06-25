@@ -118,11 +118,39 @@ impl StreamService {
         Some(s)
     }
 
+    /// Build the production sink for one `(name, sink)` config using the default factory
+    /// (native Kinesis/Kafka where their features are enabled, else buffer-only). Exposed so a
+    /// callback-aware [`SinkFactory`] (e.g. the language bindings' host-sink bridge) can override
+    /// only the [`SinkConfig::Callback`] arm and delegate every other variant here without
+    /// re-implementing it.
+    pub fn default_sink(name: &str, sink: &SinkConfig) -> Result<Option<Box<dyn Sink>>> {
+        default_sink_factory(name, sink)
+    }
+
     /// Stop all export engines and flush every buffer to disk (also done on drop).
     pub fn shutdown(self) {
         // Dropping each entry stops its engine (RAII) and flushes the log on Drop.
         drop(self);
     }
+}
+
+/// Crate-internal accessor so the C-ABI factory can reuse the native Kinesis/Kafka sink
+/// construction without duplicating it (it overrides only the `Callback` arm).
+#[cfg(feature = "cabi")]
+pub(crate) fn default_sink_factory_pub(
+    name: &str,
+    sink: &SinkConfig,
+) -> Result<Option<Box<dyn Sink>>> {
+    default_sink_factory(name, sink)
+}
+
+/// Public accessor so a host-callback factory (the PyO3 / napi bindings) can reuse the native
+/// Kinesis/Kafka sink construction for non-`Callback` streams while overriding only the `Callback`
+/// arm with a host callback. For a bare `Callback` config this returns the same buffer-only
+/// `Ok(None)` the default factory would; the binding handles `Callback` itself, so this is only
+/// reached for the native sink kinds.
+pub fn default_sink_factory_pub_py(sink: &SinkConfig) -> Result<Option<Box<dyn Sink>>> {
+    default_sink_factory("", sink)
 }
 
 /// The production sink factory: build a [`crate::KinesisSink`] (feature `kinesis`) or
@@ -159,6 +187,13 @@ fn default_sink_factory(name: &str, sink: &SinkConfig) -> Result<Option<Box<dyn 
                 Ok(None)
             }
         }
+        SinkConfig::Callback { id } => {
+            // The default factory has no host callback bound; a callback stream is buffer-only
+            // unless opened via `open_with` with a callback-aware factory (the metrics layer) or the
+            // C-ABI sink-callback registration (the language bindings).
+            let _ = id;
+            Ok(None)
+        }
     }
 }
 
@@ -166,7 +201,7 @@ fn default_sink_factory(name: &str, sink: &SinkConfig) -> Result<Option<Box<dyn 
 mod tests {
     use super::*;
     use crate::config::{BufferConfig, OnFull, SinkConfig};
-    use crate::{FakeSink, Record};
+    use crate::{FakeSink, Record, SendOutcome};
 
     fn cfg(dir: &std::path::Path) -> StreamingConfig {
         StreamingConfig {
@@ -214,6 +249,65 @@ mod tests {
         assert_eq!(s.appended_total, 100);
         assert_eq!(s.exported_total, 100);
         assert!(svc.stats("missing").is_none());
+    }
+
+    #[test]
+    fn callback_sink_drains_via_open_with() {
+        // The metrics-layer pattern: open_with a factory that builds a CallbackSink for the
+        // `Callback` config variant. Proves the export engine drives a host callback end-to-end.
+        let dir = tempfile::tempdir().unwrap();
+        let delivered = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u64>::new()));
+        let delivered2 = std::sync::Arc::clone(&delivered);
+        let factory = move |_n: &str, sc: &SinkConfig| -> Result<Option<Box<dyn Sink>>> {
+            match sc {
+                SinkConfig::Callback { .. } => {
+                    let d = std::sync::Arc::clone(&delivered2);
+                    let cb = crate::export::CallbackSink::new(Box::new(
+                        move |batch: &[crate::export::ExportRecord<'_>]| {
+                            let mut v = d.lock().unwrap();
+                            for r in batch {
+                                v.push(r.offset);
+                            }
+                            SendOutcome::AllAcked
+                        },
+                    ));
+                    Ok(Some(Box::new(cb)))
+                }
+                _ => Ok(None),
+            }
+        };
+        let mut c = cfg(dir.path());
+        c.streams[0].sink = SinkConfig::Callback { id: None };
+        let svc = StreamService::open_with(c, &factory).unwrap();
+        let log = svc.stream("telemetry").unwrap();
+        for i in 0..50u64 {
+            log.append(&Record::new("ns", 1000 + i, format!("v{i}").as_bytes())).unwrap();
+        }
+        let start = std::time::Instant::now();
+        while svc.stats("telemetry").unwrap().exported_total < 50 {
+            if start.elapsed() > std::time::Duration::from_secs(5) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert_eq!(svc.stats("telemetry").unwrap().exported_total, 50);
+        assert_eq!(delivered.lock().unwrap().len(), 50);
+    }
+
+    #[test]
+    fn callback_sink_buffer_only_under_default_factory() {
+        // Without a bound callback, a `Callback` stream opened via the default `open` is buffer-only.
+        let dir = tempfile::tempdir().unwrap();
+        let mut c = cfg(dir.path());
+        c.streams[0].sink = SinkConfig::Callback { id: None };
+        let svc = StreamService::open(c).unwrap();
+        let log = svc.stream("telemetry").unwrap();
+        log.append(&Record::new("ns", 1, b"x")).unwrap();
+        log.flush().unwrap();
+        let s = svc.stats("telemetry").unwrap();
+        assert_eq!(s.appended_total, 1);
+        assert_eq!(s.exported_total, 0);
+        assert_eq!(s.backlog, 1);
     }
 
     #[test]

@@ -5,11 +5,15 @@ name: release
 # steps + registry credentials (Maven Central/CodeArtifact, PyPI, crates.io) for
 # your environment; this is a scaffold.
 #
-# The `streaming/v*` prefix is wired below: it builds the three native streaming
-# artifacts (PyO3 wheel, napi-rs addon, native-bundled Java jar) per platform and
-# publishes them. Publish steps run only when the matching registry secret is set,
-# so a tag push without creds still builds + uploads the artifacts to the run.
+# The `streaming/v*` prefix is wired below: it builds the prebuilt native streaming
+# artifacts (PyO3 wheel, napi-rs addon, native-bundled Java jar) across the four
+# supported targets and publishes them. See docs/NATIVE_CORE_DELIVERY.md.
+# Publish steps run only when the matching registry secret is set, so a tag push
+# (or a manual workflow_dispatch) without creds still builds + uploads the artifacts.
 on:
+  # Manual prebuild runs: builds + uploads the native artifacts to the run for inspection.
+  # Publish steps stay gated on registry secrets, so dispatch never publishes by itself.
+  workflow_dispatch:
   push:
     tags:
       - "java-lib/v*"
@@ -24,9 +28,9 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # --- Scaffold publish for the pure-source libs (skipped for streaming/* tags) ---
+  # --- Scaffold publish for the pure-source libs (tag push only; not streaming/*) ---
   release:
-    if: ${{ !startsWith(github.ref_name, 'streaming/') }}
+    if: ${{ github.event_name == 'push' && !startsWith(github.ref_name, 'streaming/') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -40,56 +44,93 @@ jobs:
       # cli        -> (cd cli         && python -m build && twine upload dist/*)
       - run: echo "Release ${{ github.ref_name }} (artifact=${{ steps.which.outputs.artifact }}) — wire up publish steps."
 
-  # --- streaming/v*: PyO3 wheel (maturin), per platform -------------------------
+  # ===========================================================================
+  # streaming/v* (or manual dispatch): prebuilt native core across four targets
+  #   linux x86_64 (glibc) · linux aarch64 (glibc) · windows x64 · macOS arm64
+  # All are non-musl / glibc(+MSVC/Apple). For musl/Alpine or a reduced feature
+  # set, build from source per docs/NATIVE_CORE_DELIVERY.md.
+  #
+  # The aarch64-linux artifacts are TRUE-CROSS-COMPILED on x86_64 `ubuntu-latest`
+  # (cross-rs for the cdylib/addon, maturin-action for the wheel) so this works on
+  # a free private plan with no arm64 hosted runners. aarch64-linux ships `kinesis`
+  # only (durable buffer + Kinesis) — Kafka's librdkafka(C) cross to arm64 is
+  # impractical, so Kafka on arm64 is a documented source build. The other three
+  # targets build natively with the full kinesis+kafka set. See Cross.toml.
+  # ===========================================================================
+
+  # --- PyO3 wheel (maturin), one abi3 wheel per platform (Python 3.9+) ----------
   streaming-python:
-    if: ${{ startsWith(github.ref_name, 'streaming/') }}
-    name: streaming wheel (PyO3)
+    if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref_name, 'streaming/') }}
+    name: streaming wheel (PyO3 ${{ matrix.target }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-latest      # linux x86_64 (glibc)
+            target: x86_64-unknown-linux-gnu
+            features: kinesis,kafka
+          - os: ubuntu-latest      # linux aarch64 (glibc) — cross-built; no kafka (librdkafka C)
+            target: aarch64-unknown-linux-gnu
+            features: kinesis
+          - os: windows-latest     # windows x64 (dev)
+            target: x86_64-pc-windows-msvc
+            features: kinesis,kafka
+          - os: macos-14           # macOS arm64 (dev)
+            target: aarch64-apple-darwin
+            features: kinesis,kafka
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      # The durable buffer + callback sink are always in; kinesis/kafka add the real sinks.
+      # aarch64-linux ships kinesis only — librdkafka(C) cross to arm64 is impractical (build from
+      # source for Kafka on arm64; see docs/NATIVE_CORE_DELIVERY.md). The before-script installs deps
+      # for whichever package manager the (cross) image uses: dnf = manylinux (kafka: libcurl/zlib),
+      # apt = the aarch64 cross image (aws-lc crypto: cmake + Go).
+      - uses: PyO3/maturin-action@v1
         with:
-          python-version: "3.12"
-      - uses: dtolnay/rust-toolchain@stable
-      - run: pip install maturin
-      - name: Build the abi3 wheel
-        run: maturin build --release --manifest-path libs/rust-streamlog/bindings/python/Cargo.toml --out dist
+          target: ${{ matrix.target }}
+          manylinux: "2_28"
+          before-script-linux: |
+            if command -v dnf >/dev/null 2>&1; then dnf install -y cmake libcurl-devel zlib-devel; fi
+            if command -v apt-get >/dev/null 2>&1; then apt-get update && apt-get install -y --no-install-recommends cmake golang-go libcurl4-openssl-dev zlib1g-dev; fi
+          args: >-
+            --release --out dist --features ${{ matrix.features }}
+            --manifest-path libs/rust-streamlog/bindings/python/Cargo.toml
       - uses: actions/upload-artifact@v4
         with:
-          name: streaming-wheel-${{ matrix.os }}
+          name: streaming-wheel-${{ matrix.target }}
           path: dist/*.whl
       # Publish only when a PyPI token is configured (maturin reads MATURIN_PYPI_TOKEN).
       - name: Publish wheel to PyPI
         if: ${{ env.MATURIN_PYPI_TOKEN != '' }}
         env:
           MATURIN_PYPI_TOKEN: ${{ secrets.MATURIN_PYPI_TOKEN }}
-        run: maturin upload --skip-existing dist/*.whl
+        run: pipx run maturin upload --skip-existing dist/*.whl
 
-  # --- streaming/v*: napi-rs addon, per platform -------------------------------
+  # --- napi-rs addon, one prebuild per platform --------------------------------
+  # aarch64-linux is true-cross-compiled (cross-rs, --cross-compile) with kinesis only;
+  # other targets build natively with the full kinesis+kafka set.
   streaming-node:
-    if: ${{ startsWith(github.ref_name, 'streaming/') }}
-    name: streaming addon (napi-rs)
+    if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref_name, 'streaming/') }}
+    name: streaming addon (napi-rs ${{ matrix.target }})
     strategy:
       fail-fast: false
-      # Host-native targets only. The aarch64-unknown-linux-gnu target declared in
-      # package.json needs a cross toolchain (e.g. `napi build --use-cross`) and a
-      # runner/sysroot for it — wire that in when an arm64 Linux runner is available.
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-latest      # linux x86_64 (glibc)
             target: x86_64-unknown-linux-gnu
-          - os: windows-latest
+            features: kinesis,kafka
+          - os: ubuntu-latest      # linux aarch64 (glibc) — true cross via cross-rs; no kafka
+            target: aarch64-unknown-linux-gnu
+            features: kinesis
+            cross: true
+          - os: windows-latest     # windows x64 (dev)
             target: x86_64-pc-windows-msvc
-          - os: macos-latest
+            features: kinesis,kafka
+          - os: macos-14           # macOS arm64 (dev)
             target: aarch64-apple-darwin
+            features: kinesis,kafka
     runs-on: ${{ matrix.os }}
-    defaults:
-      run:
-        working-directory: libs/rust-streamlog/bindings/node
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -99,9 +140,27 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      - run: npm install
+      # kafka builds librdkafka via cmake (libcurl/zlib dev headers on the native Linux runner).
+      - name: Install librdkafka build deps (Linux native)
+        if: ${{ runner.os == 'Linux' && !matrix.cross }}
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake libcurl4-openssl-dev zlib1g-dev
+      - name: Install cross (aarch64 true cross-compile)
+        if: ${{ matrix.cross }}
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
       - name: Build the platform addon
-        run: npx napi build --platform --release --target ${{ matrix.target }}
+        working-directory: libs/rust-streamlog/bindings/node
+        shell: bash
+        env:
+          CROSS_CONFIG: ${{ github.workspace }}/Cross.toml
+        run: |
+          npm install
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            npx napi build --platform --release --target ${{ matrix.target }} --features ${{ matrix.features }} --use-cross
+          else
+            npx napi build --platform --release --target ${{ matrix.target }} --features ${{ matrix.features }}
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: streaming-addon-${{ matrix.target }}
@@ -111,38 +170,78 @@ jobs:
         if: ${{ env.NODE_AUTH_TOKEN != '' }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        working-directory: libs/rust-streamlog/bindings/node
         run: |
           npx napi prepublish -t npm --skip-gh-release
           npm publish --access public
 
-  # --- streaming/v*: native-bundled Java jar -----------------------------------
-  # Build the cdylib on each platform, then assemble ONE jar carrying every
-  # platform's native under /native/<os>-<arch>/ (the FFM loader picks the right
-  # one at runtime), and deploy it.
+  # --- native-bundled Java jar: build the cdylib per platform, then assemble ----
+  # ONE jar carrying every platform's native under /native/<os>-<arch>/ (the FFM
+  # loader picks the right one at runtime). All features: cabi + kinesis + kafka
+  # (kafka builds librdkafka via cmake — preinstalled on the GitHub runners).
   streaming-java-natives:
-    if: ${{ startsWith(github.ref_name, 'streaming/') }}
-    name: streaming cdylib (${{ matrix.os }})
+    if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref_name, 'streaming/') }}
+    name: streaming cdylib (${{ matrix.target }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-latest          # linux x86_64 (glibc)
+            target: x86_64-unknown-linux-gnu
+            features: cabi,kinesis,kafka
+          - os: ubuntu-latest          # linux aarch64 (glibc) — true cross via cross-rs; no kafka
+            target: aarch64-unknown-linux-gnu
+            features: cabi,kinesis
+            cross: true
+          - os: windows-latest         # windows x64 (dev)
+            target: x86_64-pc-windows-msvc
+            features: cabi,kinesis,kafka
+          - os: macos-14               # macOS arm64 (dev)
+            target: aarch64-apple-darwin
+            features: cabi,kinesis,kafka
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Build the cdylib (cabi + kinesis)
-        run: cargo build --features cabi,kinesis --release
+      # kafka builds librdkafka via cmake (libcurl/zlib dev headers on the native Linux runner).
+      - name: Install librdkafka build deps (Linux native)
+        if: ${{ runner.os == 'Linux' && !matrix.cross }}
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake libcurl4-openssl-dev zlib1g-dev
+      - name: Install cross (aarch64 true cross-compile)
+        if: ${{ matrix.cross }}
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+      - name: Build the cdylib
         working-directory: libs/rust-streamlog
-      - name: Stage the platform native under <os>-<arch>/
+        shell: bash
+        env:
+          CROSS_CONFIG: ${{ github.workspace }}/Cross.toml
+        run: |
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            cross build --release --features ${{ matrix.features }} --target ${{ matrix.target }}
+          else
+            cargo build --release --features ${{ matrix.features }}
+          fi
+      - name: Stage the platform native under <os>-<arch>/ (matching GgStreamNative.osArch)
         shell: bash
         run: |
           set -euo pipefail
-          src=libs/rust-streamlog/target/release
-          arch=$(uname -m)
-          case "${{ runner.os }}" in
-            Linux)   os=linux;   lib=libggstreamlog.so ;;
-            Windows) os=windows; lib=ggstreamlog.dll;   arch=amd64 ;;
-            macOS)   os=mac;     lib=libggstreamlog.dylib ;;
+          # cross outputs to target/<triple>/release; native cargo to target/release.
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            src="libs/rust-streamlog/target/${{ matrix.target }}/release"
+          else
+            src="libs/rust-streamlog/target/release"
+          fi
+          case "${{ matrix.target }}" in
+            *windows*) os=windows; lib=ggstreamlog.dll ;;
+            *apple*)   os=darwin;  lib=libggstreamlog.dylib ;;
+            *)         os=linux;   lib=libggstreamlog.so ;;
+          esac
+          case "${{ matrix.target }}" in
+            x86_64*)  arch=x86_64 ;;
+            aarch64*) arch=aarch64 ;;
+            *)        arch=unknown ;;
           esac
           dest="native/${os}-${arch}"
           mkdir -p "$dest"
@@ -150,11 +249,11 @@ jobs:
           echo "staged $lib -> $dest/"
       - uses: actions/upload-artifact@v4
         with:
-          name: streaming-native-${{ matrix.os }}
+          name: streaming-native-${{ matrix.target }}
           path: native/
 
   streaming-java-jar:
-    if: ${{ startsWith(github.ref_name, 'streaming/') }}
+    if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref_name, 'streaming/') }}
     name: streaming jar (native-bundled)
     needs: streaming-java-natives
     runs-on: ubuntu-latest

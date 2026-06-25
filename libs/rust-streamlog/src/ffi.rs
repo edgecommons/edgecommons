@@ -10,8 +10,9 @@ use std::ffi::{c_char, c_int, c_void, CStr, CString};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Arc, Mutex, Once};
 
-use crate::config::StreamingConfig;
-use crate::error::GgStreamError;
+use crate::config::{SinkConfig, StreamingConfig};
+use crate::error::{GgStreamError, Result};
+use crate::export::{CallbackSink, ExportRecord, SendOutcome, Sink};
 use crate::log::EmbeddedLog;
 use crate::record::Record;
 use crate::service::StreamService;
@@ -41,16 +42,16 @@ pub struct GgslStream {
 /// Numeric stats struct — must match `ggsl_stats_t` field order/types in ggstreamlog.h.
 #[repr(C)]
 pub struct GgslStats {
-    appended_total: u64,
-    exported_total: u64,
-    dropped_total: u64,
-    retries_total: u64,
-    failed_total: u64,
-    backlog: u64,
-    disk_bytes: u64,
-    acked_offset: u64,
-    next_offset: u64,
-    oldest_unacked_age_ms: u64,
+    pub appended_total: u64,
+    pub exported_total: u64,
+    pub dropped_total: u64,
+    pub retries_total: u64,
+    pub failed_total: u64,
+    pub backlog: u64,
+    pub disk_bytes: u64,
+    pub acked_offset: u64,
+    pub next_offset: u64,
+    pub oldest_unacked_age_ms: u64,
 }
 
 fn status_of(e: &GgStreamError) -> c_int {
@@ -114,7 +115,7 @@ pub unsafe extern "C" fn ggsl_open(
                 return GGSL_ERR_CONFIG;
             }
         };
-        match StreamService::open(cfg) {
+        match StreamService::open_with(cfg, &cabi_sink_factory) {
             Ok(svc) => {
                 unsafe { *out = Box::into_raw(Box::new(GgslService { svc })) };
                 GGSL_OK
@@ -125,6 +126,39 @@ pub unsafe extern "C" fn ggsl_open(
             }
         }
     })
+}
+
+/// The C-ABI sink factory: like the in-core default factory for Kinesis/Kafka, but additionally
+/// binds a [`CallbackSink`] to the registered host sink callback for `SinkConfig::Callback` streams.
+/// If no host callback is registered, a callback stream is buffer-only (a clear warning is logged by
+/// the service). Kinesis/Kafka selection is delegated to the in-core default factory.
+fn cabi_sink_factory(name: &str, sink: &SinkConfig) -> Result<Option<Box<dyn Sink>>> {
+    match sink {
+        SinkConfig::Callback { id } => {
+            // Bind to the registered host sink callback, if any.
+            let bound = match SINK_CB.lock() {
+                Ok(g) => g.is_some(),
+                Err(_) => false,
+            };
+            if !bound {
+                tracing::warn!(
+                    stream = %name,
+                    "no host sink callback registered (call ggsl_set_sink_callback before \
+                     ggsl_open); callback stream is buffer-only — records persist but will not \
+                     be exported"
+                );
+                return Ok(None);
+            }
+            let id = id.clone();
+            let stream = name.to_string();
+            let cb = CallbackSink::new(Box::new(move |batch: &[ExportRecord<'_>]| {
+                invoke_host_sink(&stream, id.as_deref(), batch)
+            }));
+            Ok(Some(Box::new(cb)))
+        }
+        // Kinesis / Kafka: identical to the in-core default factory.
+        other => crate::service::default_sink_factory_pub(name, other),
+    }
 }
 
 /// Get a handle to the named stream. `*out` is caller-owned; free with [`ggsl_stream_free`].
@@ -408,6 +442,177 @@ pub unsafe extern "C" fn ggsl_set_log_callback(cb: Option<GgslLogCb>, user_data:
             }
             None => {
                 if let Ok(mut g) = LOG_SINK.lock() {
+                    *g = None;
+                }
+            }
+        }
+        GGSL_OK
+    })
+}
+
+// ----- host sink callback: the export engine drains a Callback stream through the host -----
+
+// Outcome status codes the host writes into `GgslSinkOutcome.status` (distinct from `ggsl_status`).
+/// Every record in the batch was stored.
+const GGSL_SINK_ALL_ACKED: c_int = 0;
+/// Some records (listed in `failed_offsets`) were not stored; retry just those.
+const GGSL_SINK_PARTIAL: c_int = 1;
+/// The whole batch failed but may succeed later (disconnected / throttled / 5xx). Retried.
+const GGSL_SINK_FAILED_RETRYABLE: c_int = 2;
+/// The whole batch failed and will not succeed on retry; the engine still re-delivers it on the
+/// next loop (it cannot know it is permanent), but the host should have dropped/logged it.
+const GGSL_SINK_FAILED_PERMANENT: c_int = 3;
+
+/// One record passed to the host sink callback. All pointers borrow the export batch and are valid
+/// ONLY for the duration of the call. Mirrors `ggsl_sink_record_t` in ggstreamlog.h.
+#[repr(C)]
+pub struct GgslSinkRecord {
+    /// Log offset of this record (use it to populate `failed_offsets` for a partial outcome).
+    pub offset: u64,
+    /// Record timestamp (epoch millis) as supplied to `ggsl_append`.
+    pub ts_ms: u64,
+    /// Partition key bytes (UTF-8; the metrics layer uses the namespace). May be null iff `pk_len`==0.
+    pub pk: *const u8,
+    pub pk_len: usize,
+    /// Record payload bytes (the compact `{namespace, datum}` JSON for CloudWatch). May be null iff 0.
+    pub payload: *const u8,
+    pub payload_len: usize,
+}
+
+/// The host fills this to report a batch's [`SendOutcome`]. Mirrors `ggsl_sink_outcome_t`.
+///
+/// The core supplies `failed_offsets` pre-allocated with room for `failed_cap` entries (== the batch
+/// length). For a `GGSL_SINK_PARTIAL` outcome the host writes the offsets that were NOT stored into
+/// that buffer and sets `failed_count`; for any other status `failed_count` is ignored.
+#[repr(C)]
+pub struct GgslSinkOutcome {
+    /// One of the `GGSL_SINK_*` constants. Defaults to `GGSL_SINK_FAILED_RETRYABLE` if the host
+    /// leaves it untouched (so an unwritten outcome is retried, never silently acked).
+    pub status: c_int,
+    /// Core-owned, host-written-into array for partial failures (capacity == batch length).
+    pub failed_offsets: *mut u64,
+    /// Capacity of `failed_offsets` (number of u64 slots).
+    pub failed_cap: usize,
+    /// Host writes the number of failed offsets here (only read for `GGSL_SINK_PARTIAL`).
+    pub failed_count: usize,
+}
+
+/// Host sink callback: `(user_data, records, n, *mut outcome) -> int`. Invoked on the export thread
+/// with a borrowed batch; the host writes the outcome and returns `GGSL_OK` (non-zero is treated as
+/// a retryable failure). Must be thread-safe and return promptly (it blocks that stream's drain).
+type GgslSinkCb =
+    extern "C" fn(*mut c_void, *const GgslSinkRecord, usize, *mut GgslSinkOutcome) -> c_int;
+
+struct SinkCbReg {
+    cb: GgslSinkCb,
+    /// Host pointer as `usize` so the global is `Send`/`Sync`; cast back when invoking.
+    user_data: usize,
+}
+
+static SINK_CB: Mutex<Option<SinkCbReg>> = Mutex::new(None);
+
+/// Marshal one export batch across the boundary into the registered host sink and map the host's
+/// `GgslSinkOutcome` back onto a [`SendOutcome`]. Runs on the export engine thread.
+///
+/// If no callback is registered (cleared after `ggsl_open`), the batch is reported as a retryable
+/// failure so the engine holds it (at-least-once) rather than dropping it.
+fn invoke_host_sink(stream: &str, _id: Option<&str>, batch: &[ExportRecord<'_>]) -> SendOutcome {
+    let reg = match SINK_CB.lock() {
+        Ok(g) => g.as_ref().map(|r| (r.cb, r.user_data)),
+        Err(_) => None,
+    };
+    let Some((cb, ud)) = reg else {
+        return SendOutcome::Failed {
+            retryable: true,
+            error: format!("no host sink callback registered for stream '{stream}'"),
+        };
+    };
+
+    // Build the borrowed C view of the batch (pointers valid only for this call).
+    let recs: Vec<GgslSinkRecord> = batch
+        .iter()
+        .map(|r| GgslSinkRecord {
+            offset: r.offset,
+            ts_ms: r.ts_ms,
+            pk: r.partition_key.as_ptr(),
+            pk_len: r.partition_key.len(),
+            payload: r.payload.as_ptr(),
+            payload_len: r.payload.len(),
+        })
+        .collect();
+
+    // Core-owned scratch for partial failed offsets (capacity == batch length).
+    let mut failed: Vec<u64> = vec![0; batch.len()];
+    let mut outcome = GgslSinkOutcome {
+        status: GGSL_SINK_FAILED_RETRYABLE, // default: retried if the host leaves it untouched
+        failed_offsets: failed.as_mut_ptr(),
+        failed_cap: failed.len(),
+        failed_count: 0,
+    };
+
+    // The host callback may itself panic across the boundary; contain it.
+    let rc = catch_unwind(AssertUnwindSafe(|| {
+        cb(ud as *mut c_void, recs.as_ptr(), recs.len(), &mut outcome as *mut GgslSinkOutcome)
+    }));
+    let rc = match rc {
+        Ok(rc) => rc,
+        Err(_) => {
+            return SendOutcome::Failed {
+                retryable: true,
+                error: format!("host sink callback panicked for stream '{stream}'"),
+            };
+        }
+    };
+    if rc != GGSL_OK {
+        return SendOutcome::Failed {
+            retryable: true,
+            error: format!("host sink callback returned status {rc} for stream '{stream}'"),
+        };
+    }
+
+    match outcome.status {
+        GGSL_SINK_ALL_ACKED => SendOutcome::AllAcked,
+        GGSL_SINK_PARTIAL => {
+            let n = outcome.failed_count.min(failed.len());
+            let failed_offsets = failed[..n].to_vec();
+            if failed_offsets.is_empty() {
+                // Host reported partial with zero failures — treat as fully acked.
+                SendOutcome::AllAcked
+            } else {
+                SendOutcome::Partial { failed_offsets }
+            }
+        }
+        GGSL_SINK_FAILED_PERMANENT => {
+            SendOutcome::Failed { retryable: false, error: "host sink: permanent failure".into() }
+        }
+        // GGSL_SINK_FAILED_RETRYABLE and any unrecognized status -> retryable failure.
+        _ => SendOutcome::Failed { retryable: true, error: "host sink: retryable failure".into() },
+    }
+}
+
+/// Register (or clear, with `cb = NULL`) the host sink callback that drains `callback`-type streams.
+/// Call this BEFORE [`ggsl_open`]: the binding is captured per stream at open time, so a stream
+/// opened with no callback registered is buffer-only until reopened. `user_data` is passed back
+/// verbatim and must outlive the service.
+///
+/// # Safety
+/// `cb` must be a valid function pointer (or null); `user_data` is passed back verbatim and must
+/// remain valid for as long as a callback is registered (i.e. until the service is shut down or the
+/// callback is cleared).
+#[no_mangle]
+pub unsafe extern "C" fn ggsl_set_sink_callback(
+    cb: Option<GgslSinkCb>,
+    user_data: *mut c_void,
+) -> c_int {
+    guard(std::ptr::null_mut(), || {
+        match cb {
+            Some(cb) => {
+                if let Ok(mut g) = SINK_CB.lock() {
+                    *g = Some(SinkCbReg { cb, user_data: user_data as usize });
+                }
+            }
+            None => {
+                if let Ok(mut g) = SINK_CB.lock() {
                     *g = None;
                 }
             }

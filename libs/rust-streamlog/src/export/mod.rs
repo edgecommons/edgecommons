@@ -138,6 +138,36 @@ impl Sink for FakeSink {
     }
 }
 
+// ----- CallbackSink: a host-provided sink (CloudWatch metrics drain / bring-your-own-sink) -----
+
+/// A host-provided send function. Invoked by the export engine on its background thread with a
+/// borrowed batch; returns the [`SendOutcome`]. Must be `Send` (it runs on the engine thread) and
+/// should return promptly (it blocks that stream's drain). For the language bindings this closure
+/// marshals the batch across the FFI boundary and blocks on the host's (async) result; for the Rust
+/// lib it is a direct in-process sink (e.g. CloudWatch `PutMetricData`).
+pub type SinkCallback = Box<dyn FnMut(&[ExportRecord<'_>]) -> SendOutcome + Send>;
+
+/// A [`Sink`] backed by a host-provided [`SinkCallback`]. Reuses the durable buffer + the
+/// at-least-once export loop while the actual send logic lives in the host (the metrics layer for
+/// CloudWatch, or a caller-supplied destination — "bring your own sink"). Native sinks
+/// (Kinesis/Kafka) stay in-core; this is the additive third sink kind.
+pub struct CallbackSink {
+    callback: SinkCallback,
+}
+
+impl CallbackSink {
+    /// Wrap a host send function as a [`Sink`].
+    pub fn new(callback: SinkCallback) -> Self {
+        Self { callback }
+    }
+}
+
+impl Sink for CallbackSink {
+    fn send(&mut self, batch: &[ExportRecord<'_>]) -> SendOutcome {
+        (self.callback)(batch)
+    }
+}
+
 // ----- ExportEngine -----
 
 #[derive(Debug, Clone)]
@@ -325,4 +355,53 @@ fn sleep_chunked(dur: Duration, stop: &AtomicBool) {
 
 fn now_nanos() -> u128 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rec(offset: u64, payload: &[u8]) -> ExportRecord<'_> {
+        ExportRecord { offset, partition_key: b"ns", ts_ms: 1, payload }
+    }
+
+    #[test]
+    fn callback_sink_forwards_batch_and_acks() {
+        let seen = Arc::new(Mutex::new(Vec::<(u64, Vec<u8>)>::new()));
+        let seen2 = Arc::clone(&seen);
+        let mut sink = CallbackSink::new(Box::new(move |batch: &[ExportRecord<'_>]| {
+            let mut s = seen2.lock().unwrap();
+            for r in batch {
+                s.push((r.offset, r.payload.to_vec()));
+            }
+            SendOutcome::AllAcked
+        }));
+        assert!(matches!(sink.send(&[rec(0, b"a"), rec(1, b"b")]), SendOutcome::AllAcked));
+        assert_eq!(*seen.lock().unwrap(), vec![(0, b"a".to_vec()), (1, b"b".to_vec())]);
+    }
+
+    #[test]
+    fn callback_sink_propagates_partial() {
+        let mut sink = CallbackSink::new(Box::new(|_b: &[ExportRecord<'_>]| {
+            SendOutcome::Partial { failed_offsets: vec![2, 3] }
+        }));
+        match sink.send(&[rec(2, b"x")]) {
+            SendOutcome::Partial { failed_offsets } => assert_eq!(failed_offsets, vec![2, 3]),
+            _ => panic!("expected Partial"),
+        }
+    }
+
+    #[test]
+    fn callback_sink_propagates_failed() {
+        let mut sink = CallbackSink::new(Box::new(|_b: &[ExportRecord<'_>]| {
+            SendOutcome::Failed { retryable: true, error: "boom".into() }
+        }));
+        match sink.send(&[]) {
+            SendOutcome::Failed { retryable, error } => {
+                assert!(retryable);
+                assert_eq!(error, "boom");
+            }
+            _ => panic!("expected Failed"),
+        }
+    }
 }

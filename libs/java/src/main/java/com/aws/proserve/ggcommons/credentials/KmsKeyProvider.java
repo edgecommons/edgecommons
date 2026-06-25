@@ -43,6 +43,12 @@ public final class KmsKeyProvider implements KeyProvider {
         this.client = b.build();
     }
 
+    /** Package-private seam for unit tests: inject a (mocked) {@link KmsClient}. */
+    KmsKeyProvider(KmsClient client, String keyId) {
+        this.client = client;
+        this.keyId = keyId;
+    }
+
     @Override
     public String providerId() {
         return "kms";

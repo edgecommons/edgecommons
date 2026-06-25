@@ -45,6 +45,7 @@ final class GgStreamNative {
     private final MethodHandle shutdown;
     private final MethodHandle strFree;
     private final MethodHandle setLogCallback;
+    private final MethodHandle setSinkCallback;
 
     private GgStreamNative(Path libPath) {
         // Process-lifetime arena keeps the library mapped.
@@ -62,6 +63,8 @@ final class GgStreamNative {
         shutdown = down(lookup, "ggsl_shutdown", FunctionDescriptor.ofVoid(ADDRESS));
         strFree = down(lookup, "ggsl_str_free", FunctionDescriptor.ofVoid(ADDRESS));
         setLogCallback = down(lookup, "ggsl_set_log_callback",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+        setSinkCallback = down(lookup, "ggsl_set_sink_callback",
                 FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
 
         // Route the core's log events into the host logger (log4j2) for the rest of the process.
@@ -210,6 +213,19 @@ final class GgStreamNative {
         } catch (Throwable t) {
             throw sneaky(t);
         }
+    }
+
+    int setSinkCallback(MemorySegment cb, MemorySegment userData) {
+        try {
+            return (int) setSinkCallback.invokeExact(cb, userData);
+        } catch (Throwable t) {
+            throw sneaky(t);
+        }
+    }
+
+    /** The shared native linker, for building upcall stubs in {@link SinkBridge}. */
+    static Linker linker() {
+        return LINKER;
     }
 
     /** Read + free a heap error string written to an {@code err} out-slot ({@code null} if unset). */

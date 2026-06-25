@@ -21,3 +21,6 @@ pyo3 = { version = "0.26", features = ["extension-module", "abi3-py39"] }
 [features]
 # Real Kinesis export in the wheel (heavy: AWS SDK + tokio). Off by default for a light dev build.
 kinesis = ["ggstreamlog/kinesis"]
+# Real Kafka export in the wheel. Builds librdkafka via cmake (needs cmake + a C compiler at build
+# time; vendored, so no system librdkafka at runtime). Off by default for a light dev build.
+kafka = ["ggstreamlog/kafka"]

@@ -368,11 +368,24 @@ public final class StandaloneMessagingProvider extends MessagingProvider
             {
                 client.disconnect();
             }
-            client.close();
         }
         catch (MqttException e)
         {
             LOGGER.warn("Error disconnecting MQTT client: {}", e.toString());
+        }
+        finally
+        {
+            // Always close, even if disconnect() threw: close() releases the Paho file-persistence
+            // lock and tears down the automaticReconnect thread. Skipping it leaks a lingering
+            // client that can reconnect to a later test's broker on a reused port.
+            try
+            {
+                client.close();
+            }
+            catch (MqttException e)
+            {
+                LOGGER.warn("Error closing MQTT client: {}", e.toString());
+            }
         }
     }
 

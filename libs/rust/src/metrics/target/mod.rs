@@ -33,6 +33,9 @@ pub mod messaging;
 #[cfg(feature = "cloudwatch")]
 pub mod cloudwatch;
 
+#[cfg(feature = "metrics-cloudwatch-durable")]
+pub mod cloudwatch_durable;
+
 /// A destination for emitted metrics.
 #[async_trait]
 pub trait MetricTarget: Send + Sync {

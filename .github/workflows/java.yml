@@ -22,8 +22,18 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "21"
+          java-version: "25"
           cache: maven
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: libs/rust-streamlog
+      # The ggstreamlog cdylib is bundled into the jar and loaded by the streaming Panama
+      # binding test + the durable-CloudWatch metric tests; build it before mvn, else those
+      # tests self-skip and the JaCoCo bundle coverage dips below the 90% gate.
+      - name: Build the ggstreamlog cdylib
+        run: cargo build --release --features cabi,kinesis
+        working-directory: libs/rust-streamlog
       # The broker-backed TLS/dual-broker tests self-skip (JUnit assumptions) without
       # GGCOMMONS_TLS_CERTS_DIR; the in-process Moquette + unit tests run + coverage gate.
       - run: mvn -B -ntp clean verify

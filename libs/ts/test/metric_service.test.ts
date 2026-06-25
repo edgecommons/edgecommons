@@ -24,6 +24,7 @@ vi.mock("@aws-sdk/client-cloudwatch", () => {
   return { CloudWatchClient, PutMetricDataCommand };
 });
 import { CloudWatchTarget } from "../src/metrics/target/cloudwatch";
+import { DurableCloudWatchTarget } from "../src/metrics/target/cloudwatch_durable";
 
 const tmp: string[] = [];
 function tmpLog(): string {
@@ -31,10 +32,15 @@ function tmpLog(): string {
   tmp.push(p);
   return p;
 }
+function tmpBufPath(): string {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "ggc-svc-cw-"));
+  tmp.push(d);
+  return path.join(d, "cw").split(path.sep).join("/");
+}
 afterEach(() => {
   for (const f of tmp.splice(0)) {
     try {
-      fs.rmSync(f, { force: true });
+      fs.rmSync(f, { force: true, recursive: true });
     } catch {
       /* ignore */
     }
@@ -69,8 +75,19 @@ describe("MetricEmitter.buildTarget selection", () => {
     expect(targetOf(e)).toBeInstanceOf(CloudWatchComponentTarget);
   });
 
-  it("selects CloudWatchTarget for 'cloudwatch' (mocked SDK present)", async () => {
-    const e = await MetricEmitter.create(cfg({ target: "cloudwatch" }));
+  it("selects the durable CloudWatch target by default for 'cloudwatch' (mocked SDK present)", async () => {
+    // Per the design (Q3), the cloudwatch target now defaults to the disk-backed durable buffer.
+    const e = await MetricEmitter.create(
+      cfg({ target: "cloudwatch", targetConfig: { buffer: { path: tmpBufPath() } } }),
+    );
+    expect(targetOf(e)).toBeInstanceOf(DurableCloudWatchTarget);
+    await e.shutdown();
+  });
+
+  it("selects the legacy in-memory CloudWatchTarget when buffer.type is 'memory'", async () => {
+    const e = await MetricEmitter.create(
+      cfg({ target: "cloudwatch", targetConfig: { buffer: { type: "memory" } } }),
+    );
     expect(targetOf(e)).toBeInstanceOf(CloudWatchTarget);
     await e.shutdown();
   });
