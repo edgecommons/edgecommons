@@ -9,6 +9,10 @@ vault
 vault.lock
 *.vault
 
+# Per-platform native cdylibs staged into the jar by the release CI (or a local fat-jar
+# build) under /native/<os>-<arch>/. Built artifacts — never commit. See docs/NATIVE_CORE_DELIVERY.md.
+src/main/resources/native/
+
 # Compiled class files
 *.class
 
