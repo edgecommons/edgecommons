@@ -50,12 +50,12 @@ jobs:
   # All are non-musl / glibc(+MSVC/Apple). For musl/Alpine or a reduced feature
   # set, build from source per docs/NATIVE_CORE_DELIVERY.md.
   #
-  # The aarch64-linux artifacts are CROSS-BUILT on x86_64 `ubuntu-latest` so this
-  # works on a free private plan (no arm64 hosted runners): maturin-action builds
-  # the wheel via its QEMU/manylinux cross flow, and the node addon + Java cdylib
-  # build inside an emulated arm64 container (QEMU), so the librdkafka/cmake build
-  # and the path-dep workspace resolve as if native. Slower than native, but the
-  # release workflow is infrequent.
+  # The aarch64-linux artifacts are TRUE-CROSS-COMPILED on x86_64 `ubuntu-latest`
+  # (cross-rs for the cdylib/addon, maturin-action for the wheel) so this works on
+  # a free private plan with no arm64 hosted runners. aarch64-linux ships `kinesis`
+  # only (durable buffer + Kinesis) — Kafka's librdkafka(C) cross to arm64 is
+  # impractical, so Kafka on arm64 is a documented source build. The other three
+  # targets build natively with the full kinesis+kafka set. See Cross.toml.
   # ===========================================================================
 
   # --- PyO3 wheel (maturin), one abi3 wheel per platform (Python 3.9+) ----------
@@ -68,28 +68,33 @@ jobs:
         include:
           - os: ubuntu-latest      # linux x86_64 (glibc)
             target: x86_64-unknown-linux-gnu
-          - os: ubuntu-latest      # linux aarch64 (glibc) — maturin-action cross-builds (QEMU)
+            features: kinesis,kafka
+          - os: ubuntu-latest      # linux aarch64 (glibc) — cross-built; no kafka (librdkafka C)
             target: aarch64-unknown-linux-gnu
+            features: kinesis
           - os: windows-latest     # windows x64 (dev)
             target: x86_64-pc-windows-msvc
+            features: kinesis,kafka
           - os: macos-14           # macOS arm64 (dev)
             target: aarch64-apple-darwin
+            features: kinesis,kafka
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      # `kinesis` + `kafka` = the real AWS Kinesis sink + the Kafka sink (the durable buffer +
-      # callback sink are always in). manylinux_2_28 only applies to the Linux targets (ignored on
-      # windows/macos). Kafka builds librdkafka via cmake, so install cmake inside the manylinux
-      # container; the windows/macos runners already ship cmake.
+      # The durable buffer + callback sink are always in; kinesis/kafka add the real sinks.
+      # aarch64-linux ships kinesis only — librdkafka(C) cross to arm64 is impractical (build from
+      # source for Kafka on arm64; see docs/NATIVE_CORE_DELIVERY.md). The before-script installs deps
+      # for whichever package manager the (cross) image uses: dnf = manylinux (kafka: libcurl/zlib),
+      # apt = the aarch64 cross image (aws-lc crypto: cmake + Go).
       - uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
           manylinux: "2_28"
           before-script-linux: |
-            (command -v cmake >/dev/null 2>&1 || dnf install -y cmake || yum install -y cmake)
-            dnf install -y libcurl-devel zlib-devel || yum install -y libcurl-devel zlib-devel
+            if command -v dnf >/dev/null 2>&1; then dnf install -y cmake libcurl-devel zlib-devel; fi
+            if command -v apt-get >/dev/null 2>&1; then apt-get update && apt-get install -y --no-install-recommends cmake golang-go libcurl4-openssl-dev zlib1g-dev; fi
           args: >-
-            --release --out dist --features kinesis,kafka
+            --release --out dist --features ${{ matrix.features }}
             --manifest-path libs/rust-streamlog/bindings/python/Cargo.toml
       - uses: actions/upload-artifact@v4
         with:
@@ -103,9 +108,8 @@ jobs:
         run: pipx run maturin upload --skip-existing dist/*.whl
 
   # --- napi-rs addon, one prebuild per platform --------------------------------
-  # aarch64-linux builds inside an emulated arm64 container (QEMU) so it works on a
-  # free private plan without arm64 runners; librdkafka/cmake + the path-dep crate
-  # resolve as if native. Other targets build natively on their runner.
+  # aarch64-linux is true-cross-compiled (cross-rs, --cross-compile) with kinesis only;
+  # other targets build natively with the full kinesis+kafka set.
   streaming-node:
     if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref_name, 'streaming/') }}
     name: streaming addon (napi-rs ${{ matrix.target }})
@@ -115,58 +119,55 @@ jobs:
         include:
           - os: ubuntu-latest      # linux x86_64 (glibc)
             target: x86_64-unknown-linux-gnu
-          - os: ubuntu-latest      # linux aarch64 (glibc) — emulated arm64 container
+            features: kinesis,kafka
+          - os: ubuntu-latest      # linux aarch64 (glibc) — true cross via cross-rs; no kafka
             target: aarch64-unknown-linux-gnu
-            emulate: true
+            features: kinesis
+            cross: true
           - os: windows-latest     # windows x64 (dev)
             target: x86_64-pc-windows-msvc
+            features: kinesis,kafka
           - os: macos-14           # macOS arm64 (dev)
             target: aarch64-apple-darwin
+            features: kinesis,kafka
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      # ---- native build (linux x86_64 / windows / macOS) ----
       - uses: actions/setup-node@v4
-        if: ${{ !matrix.emulate }}
         with:
           node-version: "20"
           registry-url: "https://registry.npmjs.org"
       - uses: dtolnay/rust-toolchain@stable
-        if: ${{ !matrix.emulate }}
         with:
           targets: ${{ matrix.target }}
+      # kafka builds librdkafka via cmake (libcurl/zlib dev headers on the native Linux runner).
       - name: Install librdkafka build deps (Linux native)
-        if: ${{ !matrix.emulate && runner.os == 'Linux' }}
+        if: ${{ runner.os == 'Linux' && !matrix.cross }}
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake libcurl4-openssl-dev zlib1g-dev
-      # kafka builds librdkafka via cmake (needs libcurl/zlib dev headers on Linux; macOS has them).
-      - name: Build the platform addon (native)
-        if: ${{ !matrix.emulate }}
+      - name: Install cross (aarch64 true cross-compile)
+        if: ${{ matrix.cross }}
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+      - name: Build the platform addon
         working-directory: libs/rust-streamlog/bindings/node
+        shell: bash
+        env:
+          CROSS_CONFIG: ${{ github.workspace }}/Cross.toml
         run: |
           npm install
-          npx napi build --platform --release --target ${{ matrix.target }} --features kinesis,kafka
-      # ---- aarch64-linux: build inside an emulated arm64 container (cmake/gcc/rust native) ----
-      - uses: docker/setup-qemu-action@v3
-        if: ${{ matrix.emulate }}
-      - name: Build the platform addon (emulated aarch64)
-        if: ${{ matrix.emulate }}
-        run: |
-          docker run --rm --platform linux/arm64 -v "$PWD":/w \
-            -w /w/libs/rust-streamlog/bindings/node node:20-bookworm bash -c '
-              set -e
-              apt-get update && apt-get install -y --no-install-recommends cmake curl build-essential libcurl4-openssl-dev zlib1g-dev
-              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-              . "$HOME/.cargo/env"
-              npm install
-              npx napi build --platform --release --features kinesis,kafka'
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            npx napi build --platform --release --target ${{ matrix.target }} --features ${{ matrix.features }} --cross-compile
+          else
+            npx napi build --platform --release --target ${{ matrix.target }} --features ${{ matrix.features }}
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: streaming-addon-${{ matrix.target }}
           path: libs/rust-streamlog/bindings/node/*.node
-      # Publish the per-platform npm package only when an npm token is configured (native runners;
-      # the emulated arm64 .node is uploaded as an artifact for assembly/inspection).
+      # Publish the per-platform npm package only when an npm token is configured.
       - name: Publish addon to npm
-        if: ${{ !matrix.emulate && env.NODE_AUTH_TOKEN != '' }}
+        if: ${{ env.NODE_AUTH_TOKEN != '' }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         working-directory: libs/rust-streamlog/bindings/node
@@ -187,43 +188,51 @@ jobs:
         include:
           - os: ubuntu-latest          # linux x86_64 (glibc)
             target: x86_64-unknown-linux-gnu
-          - os: ubuntu-latest          # linux aarch64 (glibc) — emulated arm64 container
+            features: cabi,kinesis,kafka
+          - os: ubuntu-latest          # linux aarch64 (glibc) — true cross via cross-rs; no kafka
             target: aarch64-unknown-linux-gnu
-            emulate: true
+            features: cabi,kinesis
+            cross: true
           - os: windows-latest         # windows x64 (dev)
             target: x86_64-pc-windows-msvc
+            features: cabi,kinesis,kafka
           - os: macos-14               # macOS arm64 (dev)
             target: aarch64-apple-darwin
+            features: cabi,kinesis,kafka
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      # ---- native build ----
       - uses: dtolnay/rust-toolchain@stable
-        if: ${{ !matrix.emulate }}
+      # kafka builds librdkafka via cmake (libcurl/zlib dev headers on the native Linux runner).
       - name: Install librdkafka build deps (Linux native)
-        if: ${{ !matrix.emulate && runner.os == 'Linux' }}
+        if: ${{ runner.os == 'Linux' && !matrix.cross }}
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake libcurl4-openssl-dev zlib1g-dev
-      - name: Build the cdylib (native — cabi + kinesis + kafka)
-        if: ${{ !matrix.emulate }}
-        run: cargo build --release --features cabi,kinesis,kafka
+      - name: Install cross (aarch64 true cross-compile)
+        if: ${{ matrix.cross }}
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+      - name: Build the cdylib
         working-directory: libs/rust-streamlog
-      # ---- aarch64-linux: build inside an emulated arm64 container (cmake/gcc/rust native) ----
-      - uses: docker/setup-qemu-action@v3
-        if: ${{ matrix.emulate }}
-      - name: Build the cdylib (emulated aarch64 — cabi + kinesis + kafka)
-        if: ${{ matrix.emulate }}
+        shell: bash
+        env:
+          CROSS_CONFIG: ${{ github.workspace }}/Cross.toml
         run: |
-          docker run --rm --platform linux/arm64 -v "$PWD":/w -w /w/libs/rust-streamlog \
-            rust:1-bookworm bash -c '
-              set -e
-              apt-get update && apt-get install -y --no-install-recommends cmake libcurl4-openssl-dev zlib1g-dev
-              cargo build --release --features cabi,kinesis,kafka'
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            cross build --release --features ${{ matrix.features }} --target ${{ matrix.target }}
+          else
+            cargo build --release --features ${{ matrix.features }}
+          fi
       - name: Stage the platform native under <os>-<arch>/ (matching GgStreamNative.osArch)
         shell: bash
         run: |
           set -euo pipefail
-          # Both native and emulated builds output to target/release (no per-triple subdir).
-          src=libs/rust-streamlog/target/release
+          # cross outputs to target/<triple>/release; native cargo to target/release.
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            src="libs/rust-streamlog/target/${{ matrix.target }}/release"
+          else
+            src="libs/rust-streamlog/target/release"
+          fi
           case "${{ matrix.target }}" in
             *windows*) os=windows; lib=ggstreamlog.dll ;;
             *apple*)   os=darwin;  lib=libggstreamlog.dylib ;;

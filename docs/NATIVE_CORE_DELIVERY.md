@@ -48,10 +48,15 @@ How each language consumes the set:
 | Python wheel | `kinesis,kafka` | durable buffer + callback sink, Kinesis sink, Kafka sink |
 | Node addon | `kinesis,kafka` | durable buffer + callback sink, Kinesis sink, Kafka sink |
 
-> All four channels now ship the full sink set. The Python/Node bindings expose `kinesis` and
-> `kafka` passthrough features (`libs/rust-streamlog/bindings/{python,node}/Cargo.toml`); the release
-> CI builds them `--features kinesis,kafka`. Kafka builds librdkafka via cmake (vendored, no system
-> librdkafka at runtime), so the build host needs `cmake` + a C compiler — see §3.B.
+> The Python/Node bindings expose `kinesis` and `kafka` passthrough features
+> (`libs/rust-streamlog/bindings/{python,node}/Cargo.toml`); the release CI builds them
+> `--features kinesis,kafka`. Kafka builds librdkafka via cmake (vendored, no system librdkafka at
+> runtime), so the build host needs `cmake` + a C compiler — see §3.B.
+>
+> **Per-platform exception:** the **aarch64-linux** prebuilt ships `kinesis` only (durable buffer +
+> Kinesis, no Kafka). Cross-compiling `librdkafka` (a large C library) to arm64 is impractical
+> (slow under emulation, fragile to true-cross), so Kafka on arm64-linux is a **source build** (§3).
+> x86_64-linux, Windows, and macOS-arm64 ship the full kinesis+kafka set.
 
 ---
 
@@ -189,10 +194,10 @@ Publish steps are gated on the matching registry secret, so a tag push (or a man
 `workflow_dispatch`) without credentials still **builds + uploads the artifacts to the run** for
 inspection.
 
-> **aarch64-Linux is cross-built — no arm64 runner needed.** To keep the repo private on a free
-> plan, the aarch64-linux artifacts are produced on x86_64 `ubuntu-latest`: `PyO3/maturin-action`
-> cross-builds the wheel via its QEMU/manylinux flow, and the node addon + Java cdylib build inside
-> an **emulated arm64 container** (`docker run --platform linux/arm64`) so librdkafka/cmake and the
-> path-dep workspace resolve as if native. It's slower than a native arm64 runner but needs no paid
-> plan. (If you later make the repo public or move to a Team/Enterprise plan, swap those matrix
-> entries back to the native `ubuntu-24.04-arm` runner for speed.)
+> **aarch64-Linux is true-cross-compiled — no arm64 runner needed.** To keep the repo private on a
+> free plan, the aarch64-linux artifacts are produced on x86_64 `ubuntu-latest`: `PyO3/maturin-action`
+> cross-builds the wheel, and the node addon + Java cdylib use `cross-rs` (`--cross-compile` /
+> `cross build`, configured by `Cross.toml`, which installs cmake + Go for the AWS-SDK crypto
+> cross-build). aarch64-linux ships `kinesis` only — dropping Kafka removes `librdkafka`, the one
+> dependency that made arm64 cross impractical. (If you later make the repo public or move to a
+> Team/Enterprise plan, you can add a native `ubuntu-24.04-arm` runner to also ship Kafka on arm64.)
