@@ -256,7 +256,7 @@ and §5 detector. Unit-test the resolver and detector in isolation. *No call sit
   does *not* flip the default to FILE (verified: the default is `GG_CONFIG` even under STANDALONE,
   `GGCommons.java:380`), so to preserve behavior the HOST profile
   must keep `GG_CONFIG` as the default config source in Phase 0. (Changing it to FILE is a *behavior
-  change* and is therefore explicitly out of Phase 0; revisit as a separate, announced decision.)
+  change*, so it is out of Phase 0; **decided for Phase 1** as a labeled change — see §10 / §12 #1.)
 
   > This is the subtle correctness point of Phase 0: profiles must reproduce *current* defaults, even
   > the surprising ones, or the suites move. Improvements to defaults are deferred to a later, labeled
@@ -284,6 +284,12 @@ new flags reproduce the old selections.
 loudly instead of opaquely. For GREENGRASS/HOST defaults this is a no-op (the combinations they produce
 are already valid), so behavior is unchanged.
 
+**P0.5b — Parity fixes that ride along (decided §12).** Converge `receiveOwnMessages` to the
+Java-canonical `true` in all four languages (TS `false`→`true`) and fix the Rust `false`-is-a-no-op so
+the flag is honored. This is an accepted pre-1.0 behavior change for TS; it lands in Phase 0 alongside the
+CLI rewrite so the suites move once. (The HOST `GG_CONFIG`→`FILE` default flip is **not** here — it is a
+Phase-1 labeled change, §10 / §12 #1.)
+
 **P0.6 — Rewrite tests + scaffolding to the new CLI.** The `schema-and-scaffold` inventory lists every
 artifact that types the old contract: the four CLI parsers and their mode tests
 (`cli.rs:218-268`, `cli.test.ts`, Python mode tests, Java mode parsing), the example `-m STANDALONE`
@@ -309,7 +315,9 @@ shutdown; Downward-API identity; PVC-aware streaming + StatefulSet guidance; Con
 MQTT config (dual-MQTT default for edge-with-cloud-cooperation); the `env` KeyProvider; `--platform
 auto` detection enabled by default; the Helm chart ([DESIGN-packaging.md](DESIGN-packaging.md)).
 Cross-cutting: **disconnect tolerance** (NFR-DISCONNECT-1) verified by fault-injection across the
-cloud-dependent subsystems.
+cloud-dependent subsystems. Phase 1 also lands the decided **HOST default config-source flip
+`GG_CONFIG`→`FILE`** (§12 #1) — a labeled behavior change, announced and distinct from the Kubernetes
+facilities above.
 
 ## 11. Phase 2+ — additive platforms
 
@@ -317,15 +325,23 @@ New deployment substrates (ECS, Nomad, systemd, bare-metal fleets) become additi
 entries + detectors, with no change to the resolver, the CLI contract, or the subsystem seams. This
 is the payoff of naming the platform axis: growth is additive data, not new branches × four languages.
 
-## 12. Open questions (carried into review)
+## 12. Decisions (resolved 2026-06-25)
 
-1. **HOST default config source** — Phase 0 keeps `GG_CONFIG` to preserve behavior; should a later
-   labeled change flip HOST's default to `FILE` (arguably more correct)? Decide separately.
-2. **`receiveOwnMessages` parity** — TS defaults `false`, others `true` (`ggcommons.ts:171` vs
-   `GGCommonsBuilder.java:12`), and Rust treats `false` as a no-op. **Recommendation (the breaking change
-   is already accepted): converge to the Java-canonical `true` in Phase 0** and fix the Rust no-op, rather
-   than carry it as a perpetual open item; track as a parity item if deferred.
-3. **Advisory `transport`/`platform` config key** — confirm it stays validation-only (§7), or invest in
-   a two-pass init to make it authoritative (heavier; not recommended).
-4. **Rust compile-time vs runtime platform** — confirm the resolver's fail-fast when `platform=GREENGRASS`
-   on a `greengrass`-feature-less build (vs today's silent no-op messaging).
+These were the four open questions; all are now decided (recorded here; the affected sections above are
+updated to match).
+
+1. **HOST default config source → `FILE`.** The §3 target stands: HOST defaults to `FILE`, not
+   `GG_CONFIG`. `GG_CONFIG` requires the Nucleus IPC that HOST lacks, so today's default is a latent
+   footgun. **Phasing:** Phase 0 keeps `GG_CONFIG` (P0.2) so its behavior-preserving oracle stays clean;
+   the flip to `FILE` lands as a **labeled behavior change in Phase 1** (§10).
+2. **`receiveOwnMessages` → converge to `true` (Java-canonical), in Phase 0.** All four libraries default
+   `true`; TS changes `false`→`true`; the Rust `false`-is-a-no-op is fixed so the flag is honored.
+   Resolved now rather than carried as parity debt (the breaking change is already accepted). Lands in
+   Phase 0 (P0.5b).
+3. **Advisory `transport`/`platform` config key → validation-only.** A `platform`/`transport` key inside
+   the component config is a **sanity-check only**: selection uses parse-time inputs (flags ▸ env ▸
+   messaging-config payload, §7), and a mismatch between that key and the resolved value is a startup
+   error. No two-pass init (avoids the R5 init-order circularity).
+4. **Rust compile-time vs runtime platform → fail-fast.** When `platform=GREENGRASS` on a binary built
+   without the `greengrass` cargo feature, the resolver **errors at startup** naming the missing feature
+   (§4.1), instead of today's silent `Ok(None)` no-op messaging.

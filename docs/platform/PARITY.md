@@ -82,14 +82,14 @@ open `trait`/`interface` seams in Rust/TS — a compile error if forgotten (safe
   `config_provider.ts`) — the canonical pattern the other three mirror for FR-HB-2.
 - No official Prometheus client → use `prom-client` (community, ships TS types); a **documented, accepted
   divergence** (same situation as other Node ecosystem libs).
-- **`receiveOwnMessages` defaults `false`** here vs `true` in Java/Python/Rust (`ggcommons.ts:171`) — a
-  pre-existing divergence to resolve or explicitly carve out (DESIGN-core §12).
+- **`receiveOwnMessages` defaults `false`** here vs `true` in Java/Python/Rust (`ggcommons.ts:171`) —
+  **resolved**: converge to the Java-canonical `true` in Phase 0 (DESIGN-core §12 #2).
 
 ## 4. Pre-existing parity gaps this effort touches (track, don't silently fix)
 
 | Gap | Where | Handling |
 |---|---|---|
-| `receiveOwnMessages` default (TS `false` vs others `true`); Rust treats `false` as no-op | messaging | resolve or carve out (DESIGN-core §12) |
+| `receiveOwnMessages` default (TS `false` vs others `true`); Rust treats `false` as no-op | messaging | **resolved**: converge to Java-canonical `true` + fix Rust no-op, in Phase 0 (DESIGN-core §12 #2) |
 | Java streaming config not template-resolved (Rust is) | streaming | close as part of k8s `buffer.path` templating |
 | Logging: facade/`globalControl`/isolated configurator are **Java-only**; stdout-JSON sink greenfield in all four | logging | add sink in lockstep; no shared sink seam → highest drift risk |
 | Rust tracing can't reconfigure after install | logging | document; sink fixed at install |
