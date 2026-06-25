@@ -47,9 +47,25 @@ class CloudWatch(MetricTarget):
             f"CloudWatch client initialized for region: {self._cloudwatch_client.meta.region_name}"
         )
 
+        # The cloudwatch target defaults to a durable, disk-backed store-and-forward buffer that
+        # survives lengthy cloud disconnects (parity with the Java/TS targets + the schema default):
+        # an absent buffer block uses the durable defaults, and buffer.type=memory opts back into the
+        # legacy in-memory batching.
         buffer = self.metric_config.get_cloudwatch_buffer()
-        if isinstance(buffer, dict) and str(buffer.get("type", "durable")).lower() == "durable":
-            self._init_durable(buffer)
+        if buffer is None:
+            buffer = {}
+        if str(buffer.get("type", "durable")).lower() == "durable":
+            try:
+                self._init_durable(buffer)
+            except Exception as e:
+                # Native streaming core unavailable (or buffer open failed) -> safe fallback to the
+                # in-memory batching path, mirroring the Java target's graceful degradation.
+                self.logger.warning(
+                    "Durable CloudWatch buffer unavailable (%s); falling back to in-memory batching",
+                    e,
+                )
+                self._close_durable_quietly()
+                self._start_periodic_flush()
         else:
             self._start_periodic_flush()
 
@@ -98,6 +114,19 @@ class CloudWatch(MetricTarget):
         self._stream_handle = self._stream_service.stream(_DEFAULT_STREAM_NAME)
         self._durable = True
         self.logger.info("Durable CloudWatch buffer active (stream '%s')", _DEFAULT_STREAM_NAME)
+
+    def _close_durable_quietly(self) -> None:
+        """Best-effort teardown of a partially-opened durable buffer before falling back to
+        in-memory batching (the durable init raised). Never throws."""
+        self._durable = False
+        if self._stream_service is not None:
+            try:
+                self._stream_service.close()
+            except Exception:
+                pass
+        self._stream_service = None
+        self._stream_handle = None
+        self._drain = None
 
     def _append_durable(self, namespace: str, metric_data: list) -> None:
         ts_ms = int(time.time() * 1000)
