@@ -157,7 +157,7 @@ jobs:
         run: |
           npm install
           if [ "${{ matrix.cross }}" = "true" ]; then
-            npx napi build --platform --release --target ${{ matrix.target }} --features ${{ matrix.features }} --cross-compile
+            npx napi build --platform --release --target ${{ matrix.target }} --features ${{ matrix.features }} --use-cross
           else
             npx napi build --platform --release --target ${{ matrix.target }} --features ${{ matrix.features }}
           fi
