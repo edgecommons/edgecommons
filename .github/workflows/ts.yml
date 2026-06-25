@@ -35,7 +35,7 @@ jobs:
       # Install the whole npm workspace from the repo root (libs/ts, its native
       # streaming binding, and the TS example) so cross-package deps link cleanly.
       - run: npm ci || npm install
-      - run: npm run build --workspace=ggcommons
+      - run: npm run build --workspace=@breissinger/ggcommons
       # `coverage` runs the full suite AND enforces the >=90% statements/lines gate
       # (thresholds in vitest.config.ts).
-      - run: npm run coverage --workspace=ggcommons
+      - run: npm run coverage --workspace=@breissinger/ggcommons
