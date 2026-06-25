@@ -86,7 +86,8 @@ jobs:
           target: ${{ matrix.target }}
           manylinux: "2_28"
           before-script-linux: |
-            command -v cmake >/dev/null 2>&1 || dnf install -y cmake || yum install -y cmake
+            (command -v cmake >/dev/null 2>&1 || dnf install -y cmake || yum install -y cmake)
+            dnf install -y libcurl-devel zlib-devel || yum install -y libcurl-devel zlib-devel
           args: >-
             --release --out dist --features kinesis,kafka
             --manifest-path libs/rust-streamlog/bindings/python/Cargo.toml
@@ -134,7 +135,10 @@ jobs:
         if: ${{ !matrix.emulate }}
         with:
           targets: ${{ matrix.target }}
-      # kafka builds librdkafka via cmake — preinstalled on the GitHub-hosted runners.
+      - name: Install librdkafka build deps (Linux native)
+        if: ${{ !matrix.emulate && runner.os == 'Linux' }}
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake libcurl4-openssl-dev zlib1g-dev
+      # kafka builds librdkafka via cmake (needs libcurl/zlib dev headers on Linux; macOS has them).
       - name: Build the platform addon (native)
         if: ${{ !matrix.emulate }}
         working-directory: libs/rust-streamlog/bindings/node
@@ -150,7 +154,7 @@ jobs:
           docker run --rm --platform linux/arm64 -v "$PWD":/w \
             -w /w/libs/rust-streamlog/bindings/node node:20-bookworm bash -c '
               set -e
-              apt-get update && apt-get install -y --no-install-recommends cmake curl build-essential
+              apt-get update && apt-get install -y --no-install-recommends cmake curl build-essential libcurl4-openssl-dev zlib1g-dev
               curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
               . "$HOME/.cargo/env"
               npm install
@@ -196,6 +200,9 @@ jobs:
       # ---- native build ----
       - uses: dtolnay/rust-toolchain@stable
         if: ${{ !matrix.emulate }}
+      - name: Install librdkafka build deps (Linux native)
+        if: ${{ !matrix.emulate && runner.os == 'Linux' }}
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake libcurl4-openssl-dev zlib1g-dev
       - name: Build the cdylib (native — cabi + kinesis + kafka)
         if: ${{ !matrix.emulate }}
         run: cargo build --release --features cabi,kinesis,kafka
@@ -209,7 +216,7 @@ jobs:
           docker run --rm --platform linux/arm64 -v "$PWD":/w -w /w/libs/rust-streamlog \
             rust:1-bookworm bash -c '
               set -e
-              apt-get update && apt-get install -y --no-install-recommends cmake
+              apt-get update && apt-get install -y --no-install-recommends cmake libcurl4-openssl-dev zlib1g-dev
               cargo build --release --features cabi,kinesis,kafka'
       - name: Stage the platform native under <os>-<arch>/ (matching GgStreamNative.osArch)
         shell: bash
