@@ -19,7 +19,6 @@ import { LogTarget } from "./target/log";
 import { MessagingMetricTarget } from "./target/messaging";
 import { CloudWatchComponentTarget } from "./target/cloudwatch_component";
 import { CloudWatchTarget } from "./target/cloudwatch";
-import { DurableCloudWatchTarget } from "./target/cloudwatch_durable";
 import { Config } from "../config/model";
 import { resolve } from "../config/template";
 import type { ConfigurationChangeListener } from "../config";
@@ -90,6 +89,9 @@ async function buildTarget(config: Config, messaging: IMessagingService | undefi
         onFull: "dropOldest" as const,
         fsync: "perBatch" as const,
       };
+      // Lazy-load the durable target so merely importing the metrics service never pulls in the
+      // native ggstreamlog addon (CLAUDE.md: load the native library only when streaming is used).
+      const { DurableCloudWatchTarget } = await import("./target/cloudwatch_durable");
       return DurableCloudWatchTarget.create(namespace, largeFleet, mc.intervalSecs(), {
         path: resolve(config, buf.path),
         maxDiskBytes: buf.maxDiskBytes,

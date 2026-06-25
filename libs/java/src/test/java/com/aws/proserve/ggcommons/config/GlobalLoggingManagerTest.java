@@ -76,7 +76,7 @@ class GlobalLoggingManagerTest {
     private static String loggingConfigJson(boolean globalControl, boolean fileLogging, boolean withLoggers) {
         StringBuilder logging = new StringBuilder();
         logging.append("\"level\": \"INFO\",");
-        logging.append("\"format\": \"%d [%level] %logger - %msg%n\",");
+        logging.append("\"java_format\": \"%d [%level] %logger - %msg%n\",");
         logging.append("\"fileLogging\": {\"enabled\": ").append(fileLogging).append("},");
         if (withLoggers) {
             logging.append("\"loggers\": {\"com.aws.proserve\": \"DEBUG\", \"org.apache\": \"WARN\"},");
@@ -96,7 +96,7 @@ class GlobalLoggingManagerTest {
         return "{" +
                 "\"logging\": {" +
                 "\"level\": \"DEBUG\"," +
-                "\"format\": \"%d [%level] %logger - %msg%n\"," +
+                "\"java_format\": \"%d [%level] %logger - %msg%n\"," +
                 "\"fileLogging\": {\"enabled\": true, \"filePath\": \"" + logFilePath + "\"}," +
                 "\"loggers\": {\"com.aws.proserve\": \"INFO\"}," +
                 "\"globalControl\": true" +

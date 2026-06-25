@@ -2,11 +2,24 @@
  * Bridges the `ggstreamlog-node` napi addon (the shared Rust core, built as a native Node addon)
  * into the library: error translation + forwarding core log events into the library logger.
  */
-import * as addon from "ggstreamlog-node";
+import type * as Addon from "ggstreamlog-node";
 
 import { logger } from "../logging";
 
-export { addon };
+/** The native addon's types (type-only; erased at runtime). */
+export type { Addon };
+
+let cachedAddon: typeof Addon | undefined;
+
+/**
+ * Lazily load the native `ggstreamlog-node` addon. Importing this module does **not** load the native
+ * library — it is required only on first actual use, so a component that imports ggcommons but never
+ * uses streaming (e.g. a messaging-only component, or the interop node) never needs the addon present
+ * (CLAUDE.md: "components that don't use it never load the native library").
+ */
+export function getAddon(): typeof Addon {
+  return (cachedAddon ??= require("ggstreamlog-node") as typeof Addon);
+}
 
 /**
  * One record handed to a host sink callback (mirrors the native `SinkRecord`).
@@ -42,8 +55,6 @@ interface SinkBridge {
   resolveOutcome(batchId: number, code: number, failedOffsets?: number[] | null): void;
 }
 
-const bridge = addon as unknown as SinkBridge;
-
 /**
  * Register the host JS sink callback for the named `callback`-sink stream. Must be called **before**
  * {@link StreamService.open}. The callback receives `(err, [batchId, records])` and must call
@@ -53,6 +64,7 @@ export function registerSinkCallback(
   streamName: string,
   callback: (batchId: number, records: SinkRecord[]) => void,
 ): void {
+  const bridge = getAddon() as unknown as SinkBridge;
   bridge.registerSinkCallback(streamName, (_err, arg) => {
     // The Rust tuple `(f64, Vec<SinkRecord>)` arrives as a 2-element JS array.
     callback(arg[0], arg[1]);
@@ -61,7 +73,7 @@ export function registerSinkCallback(
 
 /** Signal the blocked export thread that batch `batchId` finished (see {@link SINK_OUTCOME}). */
 export function resolveSinkOutcome(batchId: number, code: number, failedOffsets?: number[]): void {
-  bridge.resolveOutcome(batchId, code, failedOffsets ?? null);
+  (getAddon() as unknown as SinkBridge).resolveOutcome(batchId, code, failedOffsets ?? null);
 }
 
 /** Error thrown when a native streaming call fails. `code` mirrors `ggsl_status`. */
@@ -98,7 +110,7 @@ export function ensureLogForwarding(): void {
   if (logForwardingInstalled) return;
   logForwardingInstalled = true;
   try {
-    addon.setLogCallback((_err: Error | null, ev: addon.LogEvent) => {
+    getAddon().setLogCallback((_err: Error | null, ev: Addon.LogEvent) => {
       try {
         logger[LEVELS[ev.level] ?? "debug"](`[${ev.target}] ${ev.message}`);
       } catch {

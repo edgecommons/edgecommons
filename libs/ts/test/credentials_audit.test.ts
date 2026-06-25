@@ -4,12 +4,13 @@ import { mkdtempSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { AuditEvent, AuditSink } from "../src/credentials/audit";
+import { AuditEvent, AuditSink, LogAuditSink, logSink } from "../src/credentials/audit";
 import { FileKeyProvider } from "../src/credentials/keyprovider";
 import { DefaultCredentialService } from "../src/credentials/service";
 import { LocalVault } from "../src/credentials/vault";
+import { logger } from "../src/logging";
 
 /** A collecting sink that records every event for assertions. */
 class CollectingSink implements AuditSink {
@@ -106,5 +107,62 @@ describe("credential access audit", () => {
     c.withAudit(undefined);
     c.put("b", Buffer.from(SECRET));
     expect(sink.events.length).toBe(1); // unchanged: sink cleared
+  });
+});
+
+describe("LogAuditSink", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("writes a structured single line via the library logger (never the value)", () => {
+    const spy = vi.spyOn(logger, "info").mockImplementation(() => {});
+    const sink = new LogAuditSink();
+    sink.record({ op: "get", name: "db/password", version: "v3", source: "local", outcome: "hit" });
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    const line = spy.mock.calls[0][0];
+    // All structured fields present in key=value form.
+    expect(line).toBe(
+      "credential access op=get secret=db/password version=v3 source=local outcome=hit",
+    );
+    expect(line).not.toContain(SECRET);
+  });
+
+  it("renders the sentinel/no-version fields verbatim for a miss", () => {
+    const spy = vi.spyOn(logger, "info").mockImplementation(() => {});
+    new LogAuditSink().record({ op: "delete", name: "missing", version: "-", source: "-", outcome: "miss" });
+
+    expect(spy).toHaveBeenCalledWith(
+      "credential access op=delete secret=missing version=- source=- outcome=miss",
+    );
+  });
+
+  it("logSink() returns a working LogAuditSink instance", () => {
+    const spy = vi.spyOn(logger, "info").mockImplementation(() => {});
+    const sink = logSink();
+    expect(sink).toBeInstanceOf(LogAuditSink);
+
+    sink.record({ op: "put", name: "k", version: "v1", source: "local", outcome: "ok" });
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0][0]).toContain("op=put secret=k version=v1 source=local outcome=ok");
+  });
+
+  it("DefaultCredentialService drives the LogAuditSink end-to-end", () => {
+    const spy = vi.spyOn(logger, "info").mockImplementation(() => {});
+    const c = svc(logSink());
+    const version = c.put("api/token", Buffer.from(SECRET));
+    c.getString("api/token");
+
+    // put + get => two audit lines through the real LogAuditSink.
+    const auditLines = spy.mock.calls.map((c) => c[0]).filter((l) => l.startsWith("credential access"));
+    expect(auditLines.length).toBe(2);
+    expect(auditLines[0]).toBe(
+      `credential access op=put secret=api/token version=${version} source=local outcome=ok`,
+    );
+    expect(auditLines[1]).toBe(
+      `credential access op=get secret=api/token version=${version} source=local outcome=hit`,
+    );
+    for (const l of auditLines) expect(l).not.toContain(SECRET);
   });
 });

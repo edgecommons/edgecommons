@@ -4,6 +4,11 @@ creds/
 *.key
 *.crt
 
+# Local credentials vault + lock written by the credentials tests at runtime (never commit).
+vault
+vault.lock
+*.vault
+
 # Compiled class files
 *.class
 

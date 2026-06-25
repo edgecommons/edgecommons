@@ -7,11 +7,17 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       include: ["src/**"],
-      // Only the two process-entry harnesses are excluded: they are thin runnable
-      // wrappers validated out-of-band (interop_node is the cross-language IPC interop
-      // driver; ipc_verify is the on-device nucleus smoke test). Everything else under
-      // src/** is covered by the suite.
-      exclude: ["src/interop_node.ts", "src/ipc_verify.ts"],
+      // Excluded from coverage — no testable logic, or validated out-of-band:
+      //  - runnable process-entry harnesses: interop_node (cross-language IPC driver) and the
+      //    *_verify smoke tests (gg/cw/ipc), exercised on real infra rather than unit tests;
+      //  - barrel re-export files (index.ts) and type-only declaration modules (types.ts).
+      exclude: [
+        "src/interop_node.ts",
+        "src/*_verify.ts",
+        "src/index.ts",
+        "src/**/index.ts",
+        "src/**/types.ts",
+      ],
       reporter: ["text"],
       thresholds: {
         statements: 90,

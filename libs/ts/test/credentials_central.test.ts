@@ -1,15 +1,40 @@
-/** TS credentials Phase 2: namespacing isolation + central sync vs floci secretsmanager. */
+/** TS credentials Phase 2: namespacing isolation + central sync vs floci secretsmanager,
+ * plus a mocked-SDK unit suite for {@link AwsSecretsManagerSource}. */
 import { randomUUID } from "crypto";
 import { mkdtempSync, readFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { openFromConfig } from "../src/credentials/config";
+import { CredentialError } from "../src/credentials/errors";
 import { FileKeyProvider } from "../src/credentials/keyprovider";
 import { DefaultCredentialService } from "../src/credentials/service";
 import { LocalVault } from "../src/credentials/vault";
+
+/**
+ * Mock of `@aws-sdk/client-secrets-manager`. `AwsSecretsManagerSource.create` dynamically imports
+ * this package, so a module-level `vi.mock` factory intercepts it without hitting AWS. The
+ * `GetSecretValueCommand` constructor just stashes its input so the mocked `send` can read `SecretId`.
+ */
+const sendMock = vi.fn();
+vi.mock("@aws-sdk/client-secrets-manager", () => ({
+  SecretsManagerClient: class {
+    public readonly config: unknown;
+    constructor(cfg: unknown) {
+      this.config = cfg;
+    }
+    send = sendMock;
+  },
+  GetSecretValueCommand: class {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    constructor(public readonly input: any) {}
+  },
+}));
+
+// Imported after the mock declaration; vitest hoists vi.mock above imports regardless.
+import { AwsSecretsManagerSource } from "../src/credentials/central";
 
 describe("namespacing", () => {
   it("isolates components in a shared vault", () => {
@@ -28,6 +53,69 @@ describe("namespacing", () => {
     const raw = readFileSync(path, "utf8");
     expect(raw).toContain("thing-1/CompA/db/password");
     expect(raw).toContain("thing-1/CompB/db/password");
+  });
+});
+
+describe("AwsSecretsManagerSource (mocked SDK)", () => {
+  beforeEach(() => sendMock.mockReset());
+  afterEach(() => vi.clearAllMocks());
+
+  it("fetches a string secret and maps SecretString + VersionId", async () => {
+    sendMock.mockResolvedValueOnce({ SecretString: "hello", VersionId: "v-abc" });
+    const src = await AwsSecretsManagerSource.create("us-east-1", "http://localhost:4566");
+    const r = await src.fetch("my/secret");
+    expect(r).toBeDefined();
+    expect(r!.bytes.toString("utf-8")).toBe("hello");
+    expect(r!.centralVersionId).toBe("v-abc");
+    expect(r!.labels).toEqual({});
+    // the GetSecretValueCommand carried the right SecretId
+    const cmd = sendMock.mock.calls[0][0] as { input: { SecretId: string } };
+    expect(cmd.input.SecretId).toBe("my/secret");
+  });
+
+  it("fetches a binary secret from SecretBinary", async () => {
+    const blob = new Uint8Array([1, 2, 3, 250]);
+    sendMock.mockResolvedValueOnce({ SecretBinary: blob, VersionId: "v-bin" });
+    const src = await AwsSecretsManagerSource.create();
+    const r = await src.fetch("bin");
+    expect(Array.from(r!.bytes)).toEqual([1, 2, 3, 250]);
+    expect(r!.centralVersionId).toBe("v-bin");
+  });
+
+  it("defaults centralVersionId to '' when VersionId is absent", async () => {
+    sendMock.mockResolvedValueOnce({ SecretString: "x" });
+    const src = await AwsSecretsManagerSource.create();
+    const r = await src.fetch("x");
+    expect(r!.centralVersionId).toBe("");
+  });
+
+  it("returns undefined when the response has neither SecretString nor SecretBinary", async () => {
+    sendMock.mockResolvedValueOnce({ VersionId: "v-empty" });
+    const src = await AwsSecretsManagerSource.create();
+    expect(await src.fetch("empty")).toBeUndefined();
+  });
+
+  it("returns undefined on ResourceNotFoundException (offline-first miss, not an error)", async () => {
+    sendMock.mockRejectedValueOnce(Object.assign(new Error("nope"), { name: "ResourceNotFoundException" }));
+    const src = await AwsSecretsManagerSource.create();
+    expect(await src.fetch("missing")).toBeUndefined();
+  });
+
+  it("wraps any other SDK error in a CredentialError including the secret name", async () => {
+    sendMock.mockRejectedValueOnce(Object.assign(new Error("access denied"), { name: "AccessDeniedException" }));
+    const src = await AwsSecretsManagerSource.create();
+    const err = await src.fetch("locked").catch((e) => e);
+    expect(err).toBeInstanceOf(CredentialError);
+    expect((err as Error).message).toMatch(/locked/);
+    expect((err as Error).message).toMatch(/access denied/);
+  });
+
+  it("handles a non-Error rejection by stringifying it", async () => {
+    sendMock.mockRejectedValueOnce("boom-string");
+    const src = await AwsSecretsManagerSource.create();
+    const err = await src.fetch("s").catch((e) => e);
+    expect(err).toBeInstanceOf(CredentialError);
+    expect((err as Error).message).toMatch(/boom-string/);
   });
 });
 

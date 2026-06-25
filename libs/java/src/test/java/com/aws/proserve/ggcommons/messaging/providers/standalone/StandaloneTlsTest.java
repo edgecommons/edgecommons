@@ -11,20 +11,36 @@ import org.junit.jupiter.api.Test;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLSocketFactory;
 import java.io.File;
+import java.net.URL;
 import java.security.PrivateKey;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Unit tests for the standalone TLS/credential plumbing: PKCS#1 and PKCS#8 private-key parsing
  * ({@link PrivateKeyReader} + DerParser/Asn1Object) and the SSL builders ({@code createSslContext},
- * {@code getSocketFactory}) for server-only and mutual TLS. Uses committed self-signed test fixtures.
+ * {@code getSocketFactory}) for server-only and mutual TLS.
+ *
+ * <p>Uses self-signed test fixtures under {@code src/test/resources/certs/} — throwaway
+ * RSA key material generated for this suite (never real IoT device credentials). If those
+ * resources are absent the tests <b>self-skip</b> (JUnit {@link org.junit.jupiter.api.Assumptions
+ * assumptions}) rather than error, so a checkout missing the fixtures still keeps
+ * {@code mvn verify} green.
  */
 class StandaloneTlsTest {
 
+    /**
+     * Resolves a classpath test resource to an absolute filesystem path, or {@code null} if the
+     * resource is not present (so callers can {@code assumeTrue} and skip cleanly).
+     */
     private String path(String resource) throws Exception {
-        return new File(getClass().getResource(resource).toURI()).getAbsolutePath();
+        URL url = getClass().getResource(resource);
+        if (url == null) {
+            return null;
+        }
+        return new File(url.toURI()).getAbsolutePath();
     }
 
     private MessagingConfiguration.CredentialsConfig creds(String ca, String cert, String key) {
@@ -41,7 +57,9 @@ class StandaloneTlsTest {
     @Test
     void readsPkcs1RsaPrivateKey() throws Exception {
         // PKCS#1 ("BEGIN RSA PRIVATE KEY") exercises the custom DerParser / Asn1Object path.
-        PrivateKey key = PrivateKeyReader.getPrivateKey(path("/certs/client.pkcs1.key"));
+        String keyPath = path("/certs/client.pkcs1.key");
+        assumeTrue(keyPath != null, "missing test fixture /certs/client.pkcs1.key");
+        PrivateKey key = PrivateKeyReader.getPrivateKey(keyPath);
         assertNotNull(key);
         assertEquals("RSA", key.getAlgorithm());
     }
@@ -49,15 +67,20 @@ class StandaloneTlsTest {
     @Test
     void readsPkcs8PrivateKey() throws Exception {
         // PKCS#8 ("BEGIN PRIVATE KEY") exercises the PKCS8EncodedKeySpec path.
-        PrivateKey key = PrivateKeyReader.getPrivateKey(path("/certs/client.pkcs8.key"));
+        String keyPath = path("/certs/client.pkcs8.key");
+        assumeTrue(keyPath != null, "missing test fixture /certs/client.pkcs8.key");
+        PrivateKey key = PrivateKeyReader.getPrivateKey(keyPath);
         assertNotNull(key);
         assertEquals("RSA", key.getAlgorithm());
     }
 
     @Test
     void createSslContextMutualTls() throws Exception {
-        SSLContext ctx = StandaloneMessagingProvider.createSslContext(
-                creds(path("/certs/ca.crt"), path("/certs/client.crt"), path("/certs/client.pkcs1.key")));
+        String ca = path("/certs/ca.crt");
+        String cert = path("/certs/client.crt");
+        String key = path("/certs/client.pkcs1.key");
+        assumeTrue(ca != null && cert != null && key != null, "missing mutual-TLS test fixtures under /certs");
+        SSLContext ctx = StandaloneMessagingProvider.createSslContext(creds(ca, cert, key));
         assertNotNull(ctx);
         assertNotNull(ctx.getSocketFactory());
     }
@@ -65,15 +88,20 @@ class StandaloneTlsTest {
     @Test
     void createSslContextServerOnlyTls() throws Exception {
         // CA only, no client cert/key => server-only TLS (no key managers).
-        SSLContext ctx = StandaloneMessagingProvider.createSslContext(creds(path("/certs/ca.crt"), null, null));
+        String ca = path("/certs/ca.crt");
+        assumeTrue(ca != null, "missing test fixture /certs/ca.crt");
+        SSLContext ctx = StandaloneMessagingProvider.createSslContext(creds(ca, null, null));
         assertNotNull(ctx);
         assertNotNull(ctx.getSocketFactory());
     }
 
     @Test
     void getSocketFactoryBuildsMutualTls() throws Exception {
-        SSLSocketFactory sf = StandaloneMessagingProvider.getSocketFactory(
-                path("/certs/ca.crt"), path("/certs/client.crt"), path("/certs/client.pkcs1.key"));
+        String ca = path("/certs/ca.crt");
+        String cert = path("/certs/client.crt");
+        String key = path("/certs/client.pkcs1.key");
+        assumeTrue(ca != null && cert != null && key != null, "missing mutual-TLS test fixtures under /certs");
+        SSLSocketFactory sf = StandaloneMessagingProvider.getSocketFactory(ca, cert, key);
         assertNotNull(sf);
     }
 }
