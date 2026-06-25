@@ -69,6 +69,15 @@ class GGCommonsStandaloneIntegrationTest {
                 { "messaging": { "local": {"host": "127.0.0.1", "port": %s, "clientId": "gg-local" } } }"""
                 .formatted(port).getBytes());
 
+        // A distinct clientId for the deprecated-constructor bring-up below. It connects to the same
+        // broker while this class's primary `gg` client is still live; reusing "gg-local" would put
+        // two clients on one clientId, and with automaticReconnect(true) the broker's duplicate-id
+        // takeover triggers a reconnect war that can fail the second connect under CI timing.
+        File legacyMsgCfg = new File(workDir, "standalone-messaging-legacy.json");
+        Files.write(legacyMsgCfg.toPath(), """
+                { "messaging": { "local": {"host": "127.0.0.1", "port": %s, "clientId": "gg-legacy" } } }"""
+                .formatted(port).getBytes());
+
         File appCfg = new File(workDir, "config.json");
         String metricLog = new File(workDir, "metric.log").getAbsolutePath().replace("\\", "/");
         Files.write(appCfg.toPath(), """
@@ -187,7 +196,7 @@ class GGCommonsStandaloneIntegrationTest {
     void deprecatedConstructorBringsUpStandalone() {
         String[] args = {
                 "-t", "legacy-thing",
-                "-m", "STANDALONE", new File(workDir, "standalone-messaging.json").getAbsolutePath(),
+                "-m", "STANDALONE", new File(workDir, "standalone-messaging-legacy.json").getAbsolutePath(),
                 "-c", "FILE", new File(workDir, "config.json").getAbsolutePath()
         };
         GGCommons legacy = new GGCommons("com.test.LegacyComponent", args);
