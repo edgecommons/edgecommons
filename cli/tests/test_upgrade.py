@@ -4,7 +4,7 @@ from ggcommons_cli.commands.upgrade import Upgrade
 def test_bump_pom(tmp_path):
     pom = tmp_path / "pom.xml"
     pom.write_text(
-        "<dependency><groupId>com.aws.proserve</groupId>"
+        "<dependency><groupId>com.breissinger</groupId>"
         "<artifactId>ggcommons</artifactId><version>1.1.9-SNAPSHOT</version></dependency>"
     )
     msgs = Upgrade._bump_pom(str(pom), "2.0.0")

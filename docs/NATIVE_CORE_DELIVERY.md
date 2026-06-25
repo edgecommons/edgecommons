@@ -9,7 +9,7 @@ platform-specific native artifact that each language loads at runtime:
 |----------|-----------------------|-------------------|
 | **Java** | A cdylib bundled in the jar at `/native/<os>-<arch>/`, located via `-Dggstreamlog.library.path`, `java.library.path`, or extracted from the jar. Needs FFM (`--enable-native-access=ALL-UNNAMED`, Java 22+). | `IllegalStateException` from `GgStreamNative` |
 | **Python** | `import ggstreamlog_native` — a maturin-built wheel (PyPI `ggstreamlog-native`). | `ImportError` → `GgStreamError` |
-| **Node** | `require("ggstreamlog-node")` — a napi-rs addon (lazy; importing the JS module does **not** load it). | `Error` from `require` |
+| **Node** | `require("@breissinger/ggstreamlog-node")` — a napi-rs addon (lazy; importing the JS module does **not** load it). | `Error` from `require` |
 | **Rust** | Compiled in, gated by cargo features (`streaming`, `metrics-cloudwatch-durable`, …). | feature simply not present |
 
 This doc describes **what we prebuild** (the batteries-included happy path) and **how to build the

@@ -17,12 +17,12 @@
  *   -t my-thing
  * ```
  */
-import { GGCommonsBuilder, logger } from "ggcommons";
+import { GGCommonsBuilder, logger } from "@breissinger/ggcommons";
 
 import { SkeletonApp } from "./app";
 
 /** The component's full name (matches `recipe.yaml` / `gdk-config.json`). */
-const COMPONENT_NAME = "aws.proserve.greengrass.TsComponentSkeleton";
+const COMPONENT_NAME = "com.breissinger.greengrass.TsComponentSkeleton";
 
 /** Boot the component: build the runtime from CLI args, run the app, shut down cleanly. */
 async function main(): Promise<void> {

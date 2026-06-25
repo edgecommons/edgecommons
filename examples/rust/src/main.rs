@@ -26,7 +26,7 @@ mod app;
 use ggcommons::prelude::*;
 
 /// The component's full name (matches `recipe.yaml` / `gdk-config.json`).
-const COMPONENT_NAME: &str = "aws.proserve.greengrass.RustComponentSkeleton";
+const COMPONENT_NAME: &str = "com.breissinger.greengrass.RustComponentSkeleton";
 
 /// Boot the component: build the runtime from CLI args, run the app, shut down cleanly.
 ///

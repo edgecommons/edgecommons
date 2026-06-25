@@ -3,7 +3,7 @@
  * Gives Node components the same durable store-and-forward streaming + config schema as the Rust,
  * Java, and Python libraries. Mirrors `gg.streams()`.
  */
-import type * as Addon from "ggstreamlog-node";
+import type * as Addon from "@breissinger/ggstreamlog-node";
 
 import { getAddon, ensureLogForwarding, GgStreamError, translate } from "./native";
 

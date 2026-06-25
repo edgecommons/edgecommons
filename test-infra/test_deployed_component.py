@@ -29,10 +29,10 @@ LOGS = f"{GG}/logs"
 SUDO = [] if os.geteuid() == 0 else ["sudo"]
 
 DEFAULT_COMPONENTS = [
-    "aws.proserve.greengrass.RustComponentSkeleton",
-    "aws.proserve.greengrass.JavaSkeletonCred",
-    "aws.proserve.greengrass.TsComponentSkeleton",
-    "aws.proserve.greengrass.PythonComponentSkeleton",
+    "com.breissinger.greengrass.RustComponentSkeleton",
+    "com.breissinger.greengrass.JavaSkeletonCred",
+    "com.breissinger.greengrass.TsComponentSkeleton",
+    "com.breissinger.greengrass.PythonComponentSkeleton",
 ]
 
 

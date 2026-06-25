@@ -72,7 +72,7 @@ ComponentConfiguration:
             instance_specific_tag: "dummy2"
     accessControl:
       aws.greengrass.ipc.pubsub:
-        "aws.proserve.greengrass.JavaComponentSkeleton:ipc:1":
+        "com.breissinger.greengrass.JavaComponentSkeleton:ipc:1":
           policyDescription: Allows access to publish/subscribe to all topics on IPC
           operations:
             - "aws.greengrass#PublishToTopic"
@@ -80,7 +80,7 @@ ComponentConfiguration:
           resources:
             - "*"
       aws.greengrass.ipc.mqttproxy:
-        "aws.proserve.greengrass.JavaComponentSkeleton:iotcore:1":
+        "com.breissinger.greengrass.JavaComponentSkeleton:iotcore:1":
           policyDescription: Allows access to publish/subscribe to all topics on IoT Core.
           operations:
             - "aws.greengrass#PublishToIoTCore"
@@ -88,7 +88,7 @@ ComponentConfiguration:
           resources:
             - "*"
       aws.greengrass.ShadowManager:
-        "aws.proserve.greengrass.JavaComponentSkeleton:shadow:1":
+        "com.breissinger.greengrass.JavaComponentSkeleton:shadow:1":
           policyDescription: Allows access to shadows.
           operations:
             - 'aws.greengrass#GetThingShadow'

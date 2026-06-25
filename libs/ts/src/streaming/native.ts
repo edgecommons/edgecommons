@@ -2,7 +2,7 @@
  * Bridges the `ggstreamlog-node` napi addon (the shared Rust core, built as a native Node addon)
  * into the library: error translation + forwarding core log events into the library logger.
  */
-import type * as Addon from "ggstreamlog-node";
+import type * as Addon from "@breissinger/ggstreamlog-node";
 
 import { logger } from "../logging";
 
@@ -18,7 +18,7 @@ let cachedAddon: typeof Addon | undefined;
  * (CLAUDE.md: "components that don't use it never load the native library").
  */
 export function getAddon(): typeof Addon {
-  return (cachedAddon ??= require("ggstreamlog-node") as typeof Addon);
+  return (cachedAddon ??= require("@breissinger/ggstreamlog-node") as typeof Addon);
 }
 
 /**

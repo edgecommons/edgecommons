@@ -1,6 +1,6 @@
 # Java on-device validation
 
-`shadow-verify/` (a small shaded Maven app depending on `com.aws.proserve:ggcommons`)
+`shadow-verify/` (a small shaded Maven app depending on `com.breissinger:ggcommons`)
 + `com.ggcommons.JavaShadowVerify-1.0.0.yaml` validate the **sanitized default SHADOW
 name** end-to-end on a live Greengrass nucleus: run as `java -jar shadow-verify.jar
 -c SHADOW` (no name), the SHADOW provider defaults the shadow name to the component
