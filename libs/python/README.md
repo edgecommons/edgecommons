@@ -7,22 +7,28 @@ and telemetry streaming — so component authors write only business logic. It i
 implementations (Java, Python, Rust, TypeScript); **Java is the canonical reference**. See the
 monorepo root `README.md` and this directory's `CLAUDE.md` for the full architecture.
 
-## Runtime modes
+## Platform and transport
 
-Every component runs in one of two modes, selected at startup via `-m/--mode`:
+Every component is configured along two axes, selected at startup via `--platform` and `--transport`:
 
-- **GREENGRASS** (default) — uses Greengrass IPC for messaging; reads config from the Greengrass
-  deployment (`GG_CONFIG`).
-- **STANDALONE** — for Kubernetes / Docker / bare hosts. Uses a dual-MQTT provider connecting
-  simultaneously to a local broker and AWS IoT Core. Requires a messaging-config JSON
-  (`-m STANDALONE <messaging_config.json>`).
+- **`--platform`** — `GREENGRASS` | `HOST` | `KUBERNETES` | `auto` (default `auto`, which
+  auto-detects from the environment). `GREENGRASS` runs on an AWS IoT Greengrass v2 Nucleus and
+  reads config from the deployment (`GG_CONFIG`); `HOST` is a plain host / container without a
+  Nucleus. `KUBERNETES` is declared but not yet wired (Phase 1).
+- **`--transport`** — `IPC` | `MQTT [messaging_config.json]` (default derived from the platform:
+  `GREENGRASS` → `IPC`, `HOST`/`KUBERNETES` → `MQTT`). `IPC` is native Greengrass Nucleus IPC and is
+  valid **only** on `--platform GREENGRASS`; `MQTT` uses a dual-MQTT provider connecting
+  simultaneously to a local broker and AWS IoT Core, and requires a messaging-config JSON.
+
+The old `-m STANDALONE` is now `--platform HOST` (dual-MQTT); the old `-m GREENGRASS` is now
+`--platform GREENGRASS` (IPC). The legacy `-m/--mode` flag has been removed.
 
 ## Subsystems
 
 - **Configuration** — five sources (`FILE`, `ENV`, `GG_CONFIG`, `SHADOW`, `CONFIG_COMPONENT`),
   template-variable substitution, hot reload, multi-instance config, and JSON-schema validation.
   [doc](doc/configuration.md)
-- **Messaging** — one interface over Greengrass IPC or STANDALONE dual-MQTT; request/reply with
+- **Messaging** — one interface over the `IPC` or `MQTT` (dual-MQTT) transport; request/reply with
   correlation; connections/subscriptions block until confirmed. [doc](doc/messaging.md)
 - **Metrics** — pluggable targets: CloudWatch (EMF), cloudwatch-component, messaging, local log.
   [doc](doc/metric-emission.md)
@@ -130,23 +136,28 @@ The config schema is the single-source `schema/ggcommons-config-schema.json` at 
 ## Run a component
 
 ```bash
-# GREENGRASS mode (default)
+# GREENGRASS platform (IPC transport — both auto-detected/derived)
 python3 main.py -c GG_CONFIG -t my-thing-name
-# STANDALONE mode
-python3 main.py -m STANDALONE ./standalone-messaging.json -c FILE ./config.json -t my-thing-name
+# HOST platform with dual-MQTT transport
+python3 main.py --platform HOST --transport MQTT ./standalone-messaging.json -c FILE ./config.json -t my-thing-name
 ```
 
 ### CLI contract
 
 - `-c/--config <SOURCE> [args]` — `FILE`, `ENV`, `GG_CONFIG` (default), `SHADOW`, `CONFIG_COMPONENT`.
-- `-m/--mode <MODE> [path]` — `GREENGRASS` (default) or `STANDALONE <messaging_config.json>`.
+- `--platform <PLATFORM>` — `GREENGRASS` | `HOST` | `KUBERNETES` | `auto` (default `auto`).
+- `--transport <TRANSPORT> [path]` — `IPC` | `MQTT [messaging_config.json]` (default derived from the
+  platform; `IPC` is valid only on `GREENGRASS`).
 - `-t/--thing <name>` — IoT Thing name (takes the full string).
+
+The legacy `-m/--mode` flag has been removed: `-m GREENGRASS` → `--platform GREENGRASS`,
+`-m STANDALONE <path>` → `--platform HOST --transport MQTT <path>`.
 
 ## Local development with MQTT
 
 ```bash
 docker compose -f ../../test-infra/compose.yaml up -d   # EMQX broker (or `docker run … emqx/emqx`)
-python3 main.py -m STANDALONE standalone-messaging.json -c FILE config.json -t my-device
+python3 main.py --platform HOST --transport MQTT standalone-messaging.json -c FILE config.json -t my-device
 ```
 Subscribe to `heartbeat/+/+` (e.g. with MQTTX) to see heartbeats; subscribe to the component's topics
 to see its messages and publish to drive request/response.
@@ -168,8 +179,8 @@ python -m pytest -m "not slow and not integration and not aws"   # skip slow/AWS
 ## Requirements
 
 - **Python** 3.9+
-- **AWS IoT Greengrass** 2.0+ (for GREENGRASS mode)
-- An MQTT 3.1.1 broker (for STANDALONE mode)
+- **AWS IoT Greengrass** 2.0+ (for the `GREENGRASS` platform / `IPC` transport)
+- An MQTT 3.1.1 broker (for the `MQTT` transport, e.g. the `HOST` platform)
 
 Key dependencies: `awsiotsdk`, `paho-mqtt`, `jsonschema`, `psutil`.
 

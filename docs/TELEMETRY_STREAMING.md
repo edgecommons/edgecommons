@@ -3,7 +3,7 @@
 High-throughput, store-and-forward telemetry egress for ggcommons: a pluggable model
 for **Kinesis Data Streams** and **Apache Kafka** (SiteWise a likely later sink), with a
 **portable, embedded, persistent buffer we own** for disconnected industrial use. Works
-in both STANDALONE and GREENGRASS modes. New subsystem, peer to
+on both the HOST and GREENGRASS platforms. New subsystem, peer to
 `messaging`/`metrics`/`heartbeat`; opt-in; does not change existing APIs.
 
 > Status: **design proposal**. Not yet implemented.
@@ -13,7 +13,7 @@ in both STANDALONE and GREENGRASS modes. New subsystem, peer to
 1. **Delivery: at-least-once + downstream dedup.** Records carry `(partitionKey, sequence)`
    so consumers can de-duplicate; we do not attempt cross-system exactly-once.
 2. **No Greengrass Stream Manager.** One portable EmbeddedLog **we control**, used
-   identically in both modes. (Verified reasons beyond the operator's experience: SDKs
+   identically on both platforms. (Verified reasons beyond the operator's experience: SDKs
    are Java/Node/Python only — **no Rust**; exports to Kinesis/SiteWise/IoT Analytics/S3
    only — **no Kafka**; ≥70 MB RAM; requires a HARD component dependency.)
 3. **No fixed throughput ceiling.** Peak records/s is a function of hardware + config.
@@ -239,8 +239,8 @@ sink override hook** lets a binding supply its own implementation (e.g. Java wit
 
 - **KinesisSink** (core, `aws-sdk` for Rust) — `PutRecords` (≤ **500 records / 5 MiB** per
   call → bounds `batch.*`); partition key from the record; per-record `FailedRecordCount`
-  handling; creds via the AWS SDK provider chain (TES role in GG, standard chain in
-  STANDALONE). Mind shard hot-keys (partition-key cardinality).
+  handling; creds via the AWS SDK provider chain (TES role in GG, standard chain on
+  HOST). Mind shard hot-keys (partition-key cardinality).
 - **KafkaSink** (core, **`rdkafka`/librdkafka**) — idempotent producer
   (`enable.idempotence=true`, `acks=all`) for no-dup within a session;
   `linger.ms`/`batch.size`/compression (lz4/zstd) aligned to `batch.*`; topic + partition
@@ -273,7 +273,7 @@ a `CallbackCredentialProvider` escape hatch that FFIs back to the host for custo
     watcher) → rotate by writing the file, **no redeploy**.
   - `SecretsManagerCredentialProvider` — calls **AWS Secrets Manager directly via the AWS
     SDK**, authenticating with the device role (**TES** in GG) or the standard chain
-    (STANDALONE), with a configurable **TTL + refresh-ahead**. This **bypasses the GG Secret
+    (HOST), with a configurable **TTL + refresh-ahead**. This **bypasses the GG Secret
     Manager component entirely**, so rotation is picked up on the TTL (e.g. 5–15 min) without
     a deployment.
   - `CallbackCredentialProvider` — caller-supplied.
@@ -311,11 +311,11 @@ streaming:
 `IStreamService` joins the DI registry next to `IMessagingService`/`IMetricService`; defined
 in all four libs; legacy users unaffected (opt-in). `StreamRecordBuilder` mirrors `MessageBuilder`.
 
-## 9. STANDALONE vs GREENGRASS
+## 9. HOST vs GREENGRASS
 
-Both modes run the **same EmbeddedLog + sinks**. Differences are only environmental:
+Both platforms run the **same EmbeddedLog + sinks**. Differences are only environmental:
 
-| Concern | STANDALONE | GREENGRASS |
+| Concern | HOST | GREENGRASS |
 |---------|-----------|-----------|
 | AWS creds (Kinesis) | standard SDK provider chain | device role via **TES** |
 | Kafka secrets | File/Env/SecretsManager provider | SecretsManager-via-SDK (TES) or File provider — **not** GG Secret Manager |
@@ -335,7 +335,7 @@ Both modes run the **same EmbeddedLog + sinks**. Differences are only environmen
 ## 11. Phasing
 
 1. **MVP**: Rust `ggstreamlog` core (append/read/commit/retention/recovery, fsync policies,
-   `dropOldest`) + fuzz/crash tests + bench; `KinesisSink`; STANDALONE; metrics. Pure-Rust
+   `dropOldest`) + fuzz/crash tests + bench; `KinesisSink`; HOST; metrics. Pure-Rust
    first proves the core before bindings.
    → **Implementation-ready spec: [TELEMETRY_STREAMING_PHASE1.md](./TELEMETRY_STREAMING_PHASE1.md).**
 2. Bindings (napi-rs / PyO3 / Panama) + `IStreamService` in TS/Python/Java.

@@ -5,13 +5,14 @@ library, which duplicated request/reply inside each provider and let them drift.
 
 - **Layer 1 — `MessagingProvider`** moves bytes on topics for a `Destination`
   (`Local` or `IotCore`) at a given `Qos`. Implementations: `MqttProvider`
-  (STANDALONE, dual broker) and `IpcProvider` (Greengrass IPC, `greengrass` feature).
+  (the MQTT transport, dual broker) and `IpcProvider` (the IPC transport — Greengrass
+  IPC, `greengrass` feature).
 - **Layer 2 — `MessagingService`** is transport-agnostic and built **once** over any
   provider. It owns message (de)serialization, the callback dispatch model, and
   request/reply correlation. This is the API component authors use.
 
-Obtain it from the runtime: `let svc = gg.messaging()?;` (returns `Err` only in
-GREENGRASS mode when the `greengrass` feature is disabled).
+Obtain it from the runtime: `let svc = gg.messaging()?;` (returns `Err` only on the
+IPC transport — i.e. `--platform GREENGRASS` — when the `greengrass` feature is disabled).
 
 ## Explicit local / IoT Core method pairs
 
@@ -121,9 +122,10 @@ svc.subscribe("svc/op", message_handler(move |_t, req| {
 Because correlation lives **above** the transport, it behaves identically over MQTT
 and Greengrass IPC, and is fully testable against a local broker.
 
-## STANDALONE messaging config
+## MQTT messaging config
 
-STANDALONE mode requires a messaging-config JSON file (passed after `-m STANDALONE`):
+The MQTT transport requires a messaging-config JSON file (passed after
+`--transport MQTT`, e.g. `--platform HOST --transport MQTT <messaging_config.json>`):
 
 ```json
 {

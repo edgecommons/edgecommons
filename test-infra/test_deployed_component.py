@@ -1,7 +1,7 @@
 """Deployed-component integration test — runs ON a Greengrass core device against a live nucleus.
 
 This is the coverage gap that let the deploy-path bugs through: the per-language unit/integration
-suites run STANDALONE (MQTT) with the `log` metric target and never exercise GREENGRASS IPC, the
+suites run on the HOST platform (MQTT) with the `log` metric target and never exercise GREENGRASS IPC, the
 deployed-config flow, the CloudWatch target, or the vault under the GG work dir. This test verifies
 a *deployed* ggcommons component on a real nucleus actually:
 

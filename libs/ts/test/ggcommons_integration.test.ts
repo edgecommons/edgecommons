@@ -39,7 +39,18 @@ describe("GGCommons STANDALONE lifecycle (live broker)", () => {
       JSON.stringify({ messaging: { local: { host: "127.0.0.1", port: 1883, clientId: `ggc-life-${Date.now()}-${Math.random()}` } } }),
     );
     return new GGCommonsBuilder("com.example.It")
-      .args(["-m", "STANDALONE", messagingPath, "-c", "FILE", configPath, "-t", "it-thing"])
+      .args([
+        "--platform",
+        "HOST",
+        "--transport",
+        "MQTT",
+        messagingPath,
+        "-c",
+        "FILE",
+        configPath,
+        "-t",
+        "it-thing",
+      ])
       .build();
   }
 

@@ -22,7 +22,7 @@ def ggcommons_instance():
         ggcommons = GGCommonsBuilder.create("ggcommons_python") \
             .with_args([
                 '-c', 'FILE', 'c:/Users/breis/source/ggcommons/ggcommons-python-lib/tests/test-config.json',
-                '-m', 'STANDALONE', 'c:/Users/breis/source/ggcommons/ggcommons-python-lib/tests/test-messaging-config.json',
+                '--platform', 'HOST', '--transport', 'MQTT', 'c:/Users/breis/source/ggcommons/ggcommons-python-lib/tests/test-messaging-config.json',
                 '-t', 'ggcommons-test-2'
             ]) \
             .build()

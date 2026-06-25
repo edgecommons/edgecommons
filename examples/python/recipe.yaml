@@ -99,4 +99,4 @@ Manifests:
           pip3 install --user -r {artifacts:decompressedPath}/python-component-skeleton/requirements.txt
       Run:
         Script: |-
-          python3 -u {artifacts:decompressedPath}/python-component-skeleton/main.py
+          python3 -u {artifacts:decompressedPath}/python-component-skeleton/main.py --platform GREENGRASS

@@ -6,17 +6,26 @@ and CLI contract so all three stay at cross-language parity. See
 [`../../GGCOMMONS_RUST_PORT.md`](../../GGCOMMONS_RUST_PORT.md) for the full design and
 phased plan.
 
-## Runtime modes
+## Platform × transport runtime model
 
-A component selects its runtime mode at startup with `-m/--mode`:
+A component is described by two orthogonal axes selected at startup (the legacy single
+`-m/--mode` axis has been removed): `--platform GREENGRASS|HOST|KUBERNETES|auto`
+(default `auto`) and `--transport IPC|MQTT` (default: derived from the platform).
 
-- **GREENGRASS** (default) — Greengrass IPC for messaging; config from the deployment.
-  IPC messaging and the Greengrass config sources (`GG_CONFIG`, `SHADOW`) are behind
-  the `greengrass` feature and are validated on a live Greengrass core.
-- **STANDALONE** — dual-broker MQTT (local broker + AWS IoT Core) for
-  Kubernetes/Docker/bare containers. Requires a messaging-config JSON file.
+- **`--platform GREENGRASS`** (transport defaults to `IPC`) — Greengrass IPC for
+  messaging; config from the deployment. IPC messaging and the Greengrass config
+  sources (`GG_CONFIG`, `SHADOW`) are behind the `greengrass` feature and are validated
+  on a live Greengrass core.
+- **`--platform HOST`** (transport defaults to `MQTT`) — dual-broker MQTT (local broker
+  + AWS IoT Core) for Docker/bare containers. The MQTT transport requires a
+  messaging-config JSON file (`--transport MQTT <messaging_config.json>`).
+- **`--platform KUBERNETES`** — declared for Phase 0; selecting it fails fast until its
+  profile ships in Phase 1.
 
-Both modes are implemented and functional.
+`IPC` is valid only on `--platform GREENGRASS` (the IPC lock). The former
+`-m STANDALONE <path>` is now `--platform HOST --transport MQTT <path>`, and
+`-m GREENGRASS` is `--platform GREENGRASS`. Both Phase-0 platforms are implemented and
+functional.
 
 ## The runtime object
 
@@ -35,7 +44,7 @@ async fn main() -> ggcommons::Result<()> {
 
     let cfg = gg.config();        // Arc<Config> snapshot
     let metrics = gg.metrics();   // Arc<dyn MetricService>
-    let messaging = gg.messaging()?; // Arc<dyn MessagingService> (Err in GREENGRASS mode for now)
+    let messaging = gg.messaging()?; // Arc<dyn MessagingService> (Err on the IPC transport without the `greengrass` feature)
     Ok(())
 }
 ```
@@ -73,7 +82,7 @@ their Rust resolutions.
 
 ## Cargo features
 
-- `standalone` (default) — STANDALONE MQTT messaging (`rumqttc`).
+- `standalone` (default) — the dual-broker MQTT transport (`rumqttc`).
 - `greengrass` — Greengrass IPC messaging + `GG_CONFIG`/`SHADOW` config sources
   (the SDK is a Linux-only C-FFI crate, so this feature builds only on Linux).
 - `cloudwatch` — the CloudWatch metric target via the AWS SDK (heavy; off by default).

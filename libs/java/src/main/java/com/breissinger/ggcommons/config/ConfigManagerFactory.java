@@ -79,16 +79,13 @@ public class ConfigManagerFactory {
     }
     
     /**
-     * Resolves the thing name from command line or environment.
+     * Resolves the thing name (identity) from the command line or environment, via the shared
+     * {@link com.breissinger.ggcommons.platform.PlatformResolver#resolveIdentity} (DESIGN-core §6.2
+     * identity-injection site). Behavior is unchanged for the Phase-0 platforms.
      */
     private static String resolveThingName(ParsedCommandLine cmdLine) {
-        if (cmdLine.thingName != null) {
-            return cmdLine.thingName;
-        }
-        if (System.getenv("AWS_IOT_THING_NAME") != null) {
-            return System.getenv("AWS_IOT_THING_NAME");
-        }
-        return "NOT_GREENGRASS";
+        return com.breissinger.ggcommons.platform.PlatformResolver.resolveIdentity(
+                cmdLine.thingName, cmdLine.platform, System.getenv());
     }
     
     /**

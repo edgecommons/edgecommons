@@ -66,8 +66,8 @@ Manifests:
         Unarchive: ZIP
     Lifecycle:
       # The ZIP bundles dist/, node_modules/ and package.json, so the component runs
-      # the prebuilt JS directly (no install step on-device). Runs in GREENGRASS mode
-      # (default), reading config from the deployment (GG_CONFIG), as the default component
+      # the prebuilt JS directly (no install step on-device). Runs on the GREENGRASS
+      # platform (IPC transport), reading config from the deployment (GG_CONFIG), as the default component
       # user (ggc_user) — no elevated privilege needed. Add RequiresPrivilege only if truly required.
       Run:
-        Script: "node {artifacts:decompressedPath}/<<COMPONENTNAME>>/dist/main.js -c GG_CONFIG"
+        Script: "node {artifacts:decompressedPath}/<<COMPONENTNAME>>/dist/main.js --platform GREENGRASS -c GG_CONFIG"

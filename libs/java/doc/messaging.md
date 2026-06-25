@@ -4,8 +4,8 @@ TODO: This file was GenAI generated and needs enriching/corrections
 
 ## Overview
 The GGCommons library provides a unified messaging abstraction layer that supports multiple runtime environments:
-- **Greengrass Mode**: Native AWS Greengrass IPC communication
-- **STANDALONE Mode**: Dual MQTT clients for non-Greengrass environments (Kubernetes, Docker, etc.)
+- **GREENGRASS platform (IPC transport)**: Native AWS Greengrass IPC communication
+- **HOST / KUBERNETES platform (MQTT transport)**: Dual MQTT clients for non-Greengrass environments (Kubernetes, Docker, etc.)
 
 This documentation explains the key components, message structure, and usage patterns of the messaging system across all supported runtimes.
 
@@ -114,17 +114,17 @@ Message msg = Message.build(messageContents);
 
 ## Runtime Environment Options
 
-### Greengrass Mode (Traditional)
+### GREENGRASS platform (Traditional)
 ```bash
-java -jar component.jar -m GREENGRASS -c GG_CONFIG -t thing-name
+java -jar component.jar --platform GREENGRASS -c GG_CONFIG -t thing-name
 ```
-- Native Greengrass v2 IPC communication
+- Native Greengrass v2 IPC communication (default transport `IPC`)
 - Automatic device provisioning
 - Managed by Greengrass runtime
 
-### STANDALONE Mode (Container-Ready)
+### HOST / KUBERNETES platform (Container-Ready)
 ```bash
-java -jar component.jar -m STANDALONE ./messaging-config.json -c FILE ./config.json -t thing-name
+java -jar component.jar --platform HOST --transport MQTT ./messaging-config.json -c FILE ./config.json -t thing-name
 ```
 - **Kubernetes**: Deploy as pods with dual connectivity
 - **Docker**: Run in containers with external MQTT broker
@@ -132,20 +132,23 @@ java -jar component.jar -m STANDALONE ./messaging-config.json -c FILE ./config.j
 - **Development**: Local testing without Greengrass
 - **Hybrid Architectures**: Mix Greengrass and container deployments
 
+> The legacy `-m/--mode` flag is removed: `-m GREENGRASS` → `--platform GREENGRASS`,
+> `-m STANDALONE <path>` → `--platform HOST --transport MQTT <path>`.
+
 ### Code Compatibility
-- **Same application code** works across all modes
+- **Same application code** works across all platforms
 - **Only configuration changes** between environments
 - **Seamless migration** from Greengrass to containers or vice versa
 
 ## Common Use Cases
 
-### Greengrass Mode
+### GREENGRASS platform
 1. **Inter-Component Communication**
    - Native Greengrass component messaging
    - Managed device deployments
    - Edge computing with AWS management
 
-### STANDALONE Mode
+### HOST / KUBERNETES platform
 1. **Kubernetes Deployments**
    - Microservices architecture with dual connectivity
    - ConfigMaps for configuration, Secrets for certificates
@@ -166,7 +169,7 @@ java -jar component.jar -m STANDALONE ./messaging-config.json -c FILE ./config.j
    - CI/CD pipelines with containerized testing
    - Easier debugging with standard MQTT tools
 
-### Universal Use Cases (All Modes)
+### Universal Use Cases (All Platforms)
 1. **Request-Response Workflows**
    - Service invocation patterns
    - Blocking and non-blocking requests
@@ -190,9 +193,10 @@ Tags can be:
 1. Loaded from configuration files
 2. Added programmatically using `injectTag()`
 
-## STANDALONE Mode Configuration
+## MQTT Transport Configuration (`--transport MQTT`)
 
-STANDALONE mode requires a messaging configuration file that defines both local and IoT Core MQTT connections:
+The MQTT transport (used by the `HOST` and `KUBERNETES` platforms) requires a messaging configuration file — the
+`--transport MQTT <messaging_config.json>` payload — that defines both local and IoT Core MQTT connections:
 
 ```json
 {

@@ -81,8 +81,10 @@ async fn standalone_runtime_exposes_all_services_and_accessors() {
     let gg = GgCommonsBuilder::new("com.example.LibIt")
         .args([
             "prog".to_string(),
-            "-m".to_string(),
-            "STANDALONE".to_string(),
+            "--platform".to_string(),
+            "HOST".to_string(),
+            "--transport".to_string(),
+            "MQTT".to_string(),
             messaging_path.to_string_lossy().into_owned(),
             "-c".to_string(),
             "FILE".to_string(),
@@ -96,7 +98,8 @@ async fn standalone_runtime_exposes_all_services_and_accessors() {
 
     // Identity + args accessors.
     assert_eq!(gg.component_name(), "com.example.LibIt");
-    assert!(matches!(gg.args().mode, RuntimeMode::Standalone { .. }));
+    assert_eq!(gg.args().platform, Platform::Host);
+    assert_eq!(gg.args().transport, Transport::Mqtt);
 
     // Config snapshot accessor.
     let cfg = gg.config();

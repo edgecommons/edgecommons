@@ -208,7 +208,7 @@ class GreengrassApp(ConfigurationChangeListener, ABC):
             MessagingClient.subscribe(
                 "ggcommons/test/python/hello_world", self.ipc_hello_world_handler, True
             )
-            # Non-fatal: builds/modes without an IoT Core transport (e.g. local-only STANDALONE)
+            # Non-fatal: setups without an IoT Core transport (e.g. a local-only MQTT broker)
             # skip the IoT Core bridge instead of failing the whole component.
             try:
                 MessagingClient.subscribe_to_iot_core(

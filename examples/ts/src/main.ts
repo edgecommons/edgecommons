@@ -3,16 +3,17 @@
  *
  * A worked-example AWS IoT Greengrass v2 component built on the `ggcommons`
  * TypeScript library, mirroring the Java, Python, and Rust skeletons. It
- * initializes the runtime from the standard CLI contract (`-c`/`-m`/`-t`), then
+ * initializes the runtime from the standard CLI contract
+ * (`-c`/`--platform`/`--transport`/`-t`), then
  * hands control to {@link SkeletonApp}, which demonstrates the library's
  * messaging, configuration, metrics, and heartbeat features. The component runs
  * until it receives a shutdown signal (SIGINT / SIGTERM), at which point it
  * awaits `gg.close()` so all resources are released (TypeScript has no RAII).
  *
- * ## Running locally (STANDALONE mode, against a local MQTT broker)
+ * ## Running locally (HOST platform, MQTT transport, against a local MQTT broker)
  * ```bash
  * node dist/main.js \
- *   -m STANDALONE ./test-configs/standalone-messaging.json \
+ *   --platform HOST --transport MQTT ./test-configs/standalone-messaging.json \
  *   -c FILE ./test-configs/config.json \
  *   -t my-thing
  * ```

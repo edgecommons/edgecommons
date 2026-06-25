@@ -9,7 +9,8 @@
  * TypeScript has no RAII/Drop, so resources are released by {@link GGCommons.close}
  * (stops the heartbeat + config watch and disconnects messaging) rather than on GC.
  */
-import { parseArgs, ParsedArgs, RuntimeMode } from "./cli";
+import { parseArgs, ParsedArgs } from "./cli";
+import { Transport } from "./platform";
 import { Config } from "./config/model";
 import { resolve } from "./config/template";
 import { validate } from "./config/validation";
@@ -28,11 +29,6 @@ import { MetricService } from "./metrics/types";
 import type { StreamMetricsBridge, StreamService } from "./streaming";
 import type { CredentialMetricsBridge, CredentialService } from "./credentials";
 import type { ParameterService } from "./parameters";
-
-/** Default thing name when none is supplied and not running under Greengrass. */
-const DEFAULT_THING_NAME = "NOT_GREENGRASS";
-/** Greengrass-injected environment variable for the core's thing name. */
-const THING_NAME_ENV = "AWS_IOT_THING_NAME";
 
 /** The initialized component runtime: wired services + the current config snapshot. */
 export class GGCommons {
@@ -121,7 +117,7 @@ export class GGCommons {
     return this.current;
   }
 
-  /** The messaging service, or throw if none was wired (GREENGRASS without IPC). */
+  /** The messaging service, or throw if none was wired. */
   messaging(): IMessagingService {
     if (!this.messagingService) {
       throw GgError.messaging("messaging is not available in this runtime mode");
@@ -168,7 +164,7 @@ export class GGCommons {
 /** Fluent builder for {@link GGCommons} (the supported construction path). */
 export class GGCommonsBuilder {
   private argv?: string[];
-  private receiveOwn = false;
+  private receiveOwn = true;
 
   constructor(private readonly componentNameValue: string) {}
 
@@ -183,9 +179,10 @@ export class GGCommonsBuilder {
 
   /**
    * Whether the component receives messages it itself published (mirrors the
-   * Java/Python/Rust `receiveOwnMessages` flag; default `false` =
-   * RECEIVE_MESSAGES_FROM_OTHERS). Honored in GREENGRASS mode (the IPC ReceiveMode);
-   * in STANDALONE mode the local broker delivers per its own semantics.
+   * Java/Python/Rust `receiveOwnMessages` flag; default `true` =
+   * RECEIVE_ALL_MESSAGES, the Java-canonical value — DESIGN-core §12 #2). Honored on the IPC
+   * transport (the IPC ReceiveMode); on the MQTT transport the local broker delivers per its own
+   * semantics.
    */
   receiveOwnMessages(value: boolean): this {
     this.receiveOwn = value;
@@ -195,11 +192,16 @@ export class GGCommonsBuilder {
   /** Parse args, load+validate config, init logging/messaging/metrics/heartbeat. */
   async build(): Promise<GGCommons> {
     const parsed = parseArgs(this.argv ?? process.argv.slice(2));
-    const thingName = parsed.thing ?? process.env[THING_NAME_ENV] ?? DEFAULT_THING_NAME;
+    // The resolver already applied the identity precedence (-t ▸ AWS_IOT_THING_NAME ▸ default).
+    const thingName = parsed.thing;
 
-    // Messaging is initialized first (it depends only on the runtime mode), and the
+    // Messaging is initialized first (it depends only on the resolved transport), and the
     // CONFIG_COMPONENT / GG_CONFIG / SHADOW sources need a handle to fetch config.
-    const { service: messaging, ipcProvider } = await initMessaging(parsed.mode, this.receiveOwn);
+    const { service: messaging, ipcProvider } = await initMessaging(
+      parsed.transport,
+      parsed.messagingConfigPath,
+      this.receiveOwn,
+    );
 
     const source = buildConfigSource(parsed.config, {
       messaging,
@@ -326,17 +328,26 @@ export class GGCommonsBuilder {
   }
 }
 
-/** Initialize the messaging service + IPC provider handle for the runtime mode. */
+/**
+ * Initialize the messaging service + IPC provider handle for the resolved transport (DESIGN-core
+ * §4.2 transport-injection site). Branches on the resolved {@link Transport}, not a legacy mode enum.
+ */
 async function initMessaging(
-  mode: RuntimeMode,
+  transport: Transport,
+  messagingConfigPath: string | undefined,
   receiveOwnMessages: boolean,
 ): Promise<{ service: IMessagingService | undefined; ipcProvider?: IpcMessagingProvider }> {
-  if (mode.kind === "STANDALONE") {
-    const mc = await loadMessagingConfig(mode.messagingConfigPath);
+  if (transport === Transport.MQTT) {
+    if (!messagingConfigPath) {
+      throw GgError.messaging(
+        "MQTT transport requires a messaging-config path (--transport MQTT <messaging_config.json>)",
+      );
+    }
+    const mc = await loadMessagingConfig(messagingConfigPath);
     const provider = await StandaloneMqttProvider.connect(mc);
     return { service: new DefaultMessagingService(provider) };
   }
-  // GREENGRASS
+  // IPC (GREENGRASS)
   const provider = await IpcMessagingProvider.connect({ receiveOwnMessages });
   return { service: new DefaultMessagingService(provider), ipcProvider: provider };
 }

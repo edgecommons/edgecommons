@@ -1,6 +1,6 @@
 /**
  * Cross-language interop node (TypeScript) for ggcommons. See python_node.py for
- * the shared CLI contract. STANDALONE local-only against localhost:1883, using the
+ * the shared CLI contract. Local-only MQTT transport against localhost:1883, using the
  * public ggcommons API (StandaloneMqttProvider + DefaultMessagingService), exactly
  * like the rust_node/java_node/python_node consume their libraries.
  *

@@ -218,7 +218,7 @@ class MessagingClientDelegationTest {
     @Test
     void standaloneConstructionWithBadPathThrowsRuntimeException() {
         ParsedCommandLine pcl = new ParsedCommandLine();
-        pcl.mode = ParsedCommandLine.Mode.STANDALONE;
+        pcl.transport = com.breissinger.ggcommons.platform.Transport.MQTT;
         pcl.standaloneConfigPath = "/definitely/not/a/real/path/standalone.json";
         pcl.thingName = "thing-1";
 

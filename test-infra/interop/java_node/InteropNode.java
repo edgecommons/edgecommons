@@ -14,7 +14,7 @@ import java.util.concurrent.TimeUnit;
  * Cross-language interop node (Java) for ggcommons. Shared CLI contract:
  *   InteropNode responder &lt;request_topic&gt;
  *   InteropNode request   &lt;request_topic&gt; &lt;token&gt;
- * STANDALONE local-only against localhost:1883.
+ * Local-only MQTT transport against localhost:1883.
  */
 public class InteropNode {
     static final String LANG = "java";

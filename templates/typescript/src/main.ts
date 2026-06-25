@@ -2,15 +2,15 @@
  * <<COMPONENTNAME>> — entry point.
  *
  * An AWS IoT Greengrass v2 component built on the `ggcommons` TypeScript library.
- * Initializes the runtime from the standard CLI contract (`-c`/`-m`/`-t`), then
- * hands control to {@link App}. The component runs until a shutdown signal
+ * Initializes the runtime from the standard CLI contract (`-c`/`--platform`/`--transport`/`-t`),
+ * then hands control to {@link App}. The component runs until a shutdown signal
  * (SIGINT / SIGTERM); it then awaits `gg.close()` to release all resources
  * (TypeScript has no RAII).
  *
- * ## Running locally (STANDALONE mode, against a local MQTT broker)
+ * ## Running locally (HOST platform, MQTT transport, against a local MQTT broker)
  * ```bash
  * node dist/main.js \
- *   -m STANDALONE ./test-configs/standalone-messaging.json \
+ *   --platform HOST --transport MQTT ./test-configs/standalone-messaging.json \
  *   -c FILE ./test-configs/config.json \
  *   -t my-thing
  * ```

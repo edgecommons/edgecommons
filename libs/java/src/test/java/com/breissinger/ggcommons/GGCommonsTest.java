@@ -45,7 +45,7 @@ class GGCommonsTest
     {
         String[] args = {
                 "-t", "test-thing",
-                "-m", "STANDALONE", "./standalone-messaging-sample.json",
+                "--platform", "HOST", "--transport", "MQTT", "./standalone-messaging-sample.json",
                 "-c", "FILE", "./config_2.json"
         };
         ggCommons = GGCommonsBuilder.create("com.breissinger.greengrass.IntegrationTests")

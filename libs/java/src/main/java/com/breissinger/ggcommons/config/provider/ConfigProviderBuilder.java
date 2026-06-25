@@ -17,17 +17,17 @@ public class ConfigProviderBuilder {
     public static ConfigProvider build(ConfigManager configManager, String componentName, String thingName, String[] configArgs, com.breissinger.ggcommons.messaging.MessagingClient messagingClient) {
         ConfigProvider configProvider = switch (configArgs[0].toUpperCase()) {
             case "FILE" -> {
-                LOGGER.debug("Using File com.aws.proseve.ggcommons.config provider");
-                String configFile = configArgs.length > 1 ? configArgs[1] : "com.aws.proseve.ggcommons.config.json";
+                LOGGER.debug("Using File com.breissinger.ggcommons.config provider");
+                String configFile = configArgs.length > 1 ? configArgs[1] : "com.breissinger.ggcommons.config.json";
                 yield new FileConfigProvider(configManager, configFile);
             }
             case "ENV" -> {
-                LOGGER.debug("Using Environment com.aws.proseve.ggcommons.config provider");
+                LOGGER.debug("Using Environment com.breissinger.ggcommons.config provider");
                 String envVarName = configArgs.length > 1 ? configArgs[1] : "CONFIG";
                 yield new EnvironmentConfigProvider(configManager, envVarName);
             }
             case "SHADOW" -> {
-                LOGGER.debug("Using Shadow com.aws.proseve.ggcommons.config provider");
+                LOGGER.debug("Using Shadow com.breissinger.ggcommons.config provider");
                 // Explicit name verbatim; the component-name default is sanitized to a
                 // valid AWS IoT shadow name ([A-Za-z0-9:_-]) — component names contain
                 // dots, which AWS shadow names reject. Identical across all libraries.
@@ -40,7 +40,7 @@ public class ConfigProviderBuilder {
                 yield new ShadowConfigProvider(configManager, thingName, shadowName, messagingClient);
             }
             case "GG_CONFIG" -> {
-                LOGGER.debug("Using Greengrass com.aws.proseve.ggcommons.config provider");
+                LOGGER.debug("Using Greengrass com.breissinger.ggcommons.config provider");
                 String configComponentName = configArgs.length > 1 ? configArgs[1] : null;
                 String configKey = configArgs.length > 2 ? configArgs[2] : null;
                 if (messagingClient == null) {
@@ -49,7 +49,7 @@ public class ConfigProviderBuilder {
                 yield new GreengrassConfigProvider(configManager, configComponentName, configKey, messagingClient);
             }
             case "CONFIG_COMPONENT" -> {
-                LOGGER.debug("Using Config com.aws.proseve.ggcommons.config provider");
+                LOGGER.debug("Using Config com.breissinger.ggcommons.config provider");
                 if (messagingClient == null) {
                     throw new IllegalStateException("MessagingClient required for CONFIG_COMPONENT config provider but not available during initialization");
                 }

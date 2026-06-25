@@ -23,7 +23,19 @@ export type { GgErrorKind } from "./errors";
 
 // CLI
 export { parseArgs } from "./cli";
-export type { ParsedArgs, RuntimeMode, ConfigSourceSpec } from "./cli";
+export type { ParsedArgs, ConfigSourceSpec } from "./cli";
+
+// Platform × transport runtime model
+export {
+  Platform,
+  Transport,
+  PROFILES,
+  resolveProfile,
+  detectPlatform,
+  validate as validatePlatformTransport,
+  resolveIdentity,
+} from "./platform";
+export type { PlatformProfile, ResolvedProfile, ResolverInputs } from "./platform";
 
 // Config
 export {

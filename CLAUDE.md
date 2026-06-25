@@ -38,24 +38,34 @@ parity register when present.
 
 ## Core concepts (shared across all four languages)
 
-Every component runs in one of two **runtime modes**, selected at startup via `-m/--mode`. Most of
-the architecture exists to abstract this difference away so the same business logic runs in both:
-- **GREENGRASS** (default): uses Greengrass IPC for messaging; reads config from the Greengrass
-  deployment (`GG_CONFIG`). The on-device, Nucleus-managed path.
-- **STANDALONE**: for Kubernetes / Docker / bare hosts. Uses a dual-MQTT provider that connects
-  simultaneously to a local broker and to AWS IoT Core. Requires a separate messaging-config JSON
-  (`-m STANDALONE <messaging_config.json>`); STANDALONE without a path is a hard error.
+Every component runs on a **platform** with a messaging **transport**, selected at startup via
+`--platform`/`--transport` (two orthogonal axes — see `docs/platform/`). Most of the architecture
+exists to abstract these differences away so the same business logic runs everywhere:
+- **GREENGRASS** (`--platform GREENGRASS`): uses Greengrass IPC for messaging (`--transport IPC`,
+  the default for this platform); reads config from the Greengrass deployment (`GG_CONFIG`). The
+  on-device, Nucleus-managed path.
+- **HOST** (`--platform HOST`): for Docker / bare hosts. Defaults to `--transport MQTT`, a dual-MQTT
+  provider that connects simultaneously to a local broker and to AWS IoT Core. The MQTT broker/TLS
+  config is supplied either as the `--transport MQTT <messaging_config.json>` payload or via the
+  active config source (`-c`).
+- **KUBERNETES** (`--platform KUBERNETES`): enum value declared in Phase 0 but not yet wired — the
+  Kubernetes profile and its native facilities land in Phase 1.
+- **`auto`** (the default): the platform is auto-detected from the environment (Nucleus signals →
+  k8s service-account token → HOST fallback); always overridable by an explicit `--platform`.
 
 **Standard CLI contract** (identical across all four languages — keep them aligned):
 - `-c/--config <SOURCE> [args...]` — one of `FILE`, `ENV`, `GG_CONFIG` (default), `SHADOW`, `CONFIG_COMPONENT`.
-- `-m/--mode <MODE> [path]` — `GREENGRASS` (default) or `STANDALONE <messaging_config.json>`.
+- `--platform <PLATFORM>` — `GREENGRASS`, `HOST`, `KUBERNETES`, or `auto` (default `auto`); the primary axis.
+- `--transport <TRANSPORT> [path]` — `IPC` or `MQTT [messaging_config.json]`; defaults from the
+  platform (GREENGRASS→IPC, HOST→MQTT) and is validated (IPC is only valid on GREENGRASS). The
+  legacy `-m/--mode` flag is removed and errors with guidance to `--platform`/`--transport`.
 - `-t/--thing <name>` — IoT Thing name; must take the full string value (a historical bug truncated it to one char).
 
 **Shared subsystems** (each library has parallel packages/modules for these):
 - **config** — five config-source managers (`FILE`/`ENV`/`GG_CONFIG`/`SHADOW`/`CONFIG_COMPONENT`),
   template-variable substitution (`{ComponentName}`, `{ThingName}`, custom tags) with sanitization,
   hot reload, multi-instance config, and JSON-schema validation against the canonical `schema/`.
-- **messaging** — one interface over two providers (Greengrass IPC vs STANDALONE dual-MQTT);
+- **messaging** — one interface over two transports (Greengrass IPC vs dual-MQTT);
   connections/subscriptions block until confirmed; request/reply with correlation; per-subscription
   concurrency cap; the message envelope is identical across languages.
 - **metrics** — pluggable targets: CloudWatch EMF, cloudwatch-component, messaging, local log.
@@ -141,17 +151,29 @@ Components are packaged/deployed with the **GDK (Greengrass Development Kit)** p
 and `recipe.yaml`. Typical flow: `gdk component build` then `gdk component publish`. Run locally:
 ```bash
 # Python example
-python3 main.py -m STANDALONE standalone-messaging.json -c FILE config.json -t my-thing
+python3 main.py --platform HOST --transport MQTT standalone-messaging.json -c FILE config.json -t my-thing
 # Java example
-java --enable-native-access=ALL-UNNAMED -jar target/<artifact>.jar -m STANDALONE ./standalone-messaging.json -c FILE ./test-configs/config_2.json -t my-thing
+java --enable-native-access=ALL-UNNAMED -jar target/<artifact>.jar --platform HOST --transport MQTT ./standalone-messaging.json -c FILE ./test-configs/config_2.json -t my-thing
 ```
 
 ### Local development with MQTT
-STANDALONE mode and local testing use a local MQTT broker standing in for Greengrass IPC:
+The HOST platform with the MQTT transport (and local testing) uses a local MQTT broker standing in for Greengrass IPC:
 ```bash
 docker compose -f test-infra/compose.yaml up -d   # EMQX (plaintext 1883 + mutual-TLS 8883)
 ```
 Subscribe to `heartbeat/+/+` (e.g. with MQTTX) to see component heartbeats and to drive request/response topics.
+
+### Testing & validation matrix (where each path is exercised)
+All of these run from the dev machine — none is "manual / can't automate":
+
+| Path | Where | Infra |
+|------|-------|-------|
+| Per-language unit/integration suites | this machine | Java (`mvn verify`, JaCoCo 90%), Python (`pytest`), Rust (`cargo test`, standalone — **no `greengrass` feature on Windows**), TS (`vitest` + coverage). Java toolchain is at `C:\Users\breis\tools\{jdk,maven}` (not on PATH). |
+| **`--platform HOST`** (dual-MQTT) end-to-end | this machine | EMQX `localhost:1883` (plaintext) / `8883` (mTLS) + floci `localhost:4566`, both in Docker (`ggcommons-emqx`, `ggstreamlog-floci`). Restart them before a HOST smoke — they crash under heavy parallel-build load. |
+| Rust **`greengrass` feature** build/tests (Linux-only) | **WSL** (Ubuntu, `cargo`+`cmake`+`cc`) | `wsl.exe bash -lc`, `CARGO_TARGET_DIR=/tmp`; the native GG SDK can't compile on Windows. |
+| **`--platform GREENGRASS`** (IPC) on-device | **lab-5950x** (`ssh marc@192.168.1.229`, passwordless sudo; thing `lab-5950x`, us-east-1) | real Greengrass nucleus + `greengrass-cli` 2.17.0, Java 25. `gdk` is **not** installed → build the jar here, copy over, deploy with `greengrass-cli deployment create --recipeDir … --artifactDir … --merge "<Comp>=<ver>"` (`--remove` to tear down). Cloud deployments via `aws greengrassv2` (account 162499689067). |
+
+Always unsubscribe + handle SIGTERM before exit, or a run leaks subscriptions/threads and trips the shared-connection quota.
 
 ## Conventions
 

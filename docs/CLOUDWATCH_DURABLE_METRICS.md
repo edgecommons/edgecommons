@@ -9,7 +9,7 @@
 > (`docs/k8s/`). It depends only on already-shipped pieces — the existing `cloudwatch` metric target and
 > the `ggstreamlog` core + bindings — and is **not** gated by the platform×transport rearch or any
 > KUBERNETES profile. Its driver is *intermittent cloud connectivity*, which already describes today's
-> **GREENGRASS edge** and **STANDALONE** deployments, so it improves the current product regardless of
+> **GREENGRASS edge** and **HOST** deployments, so it improves the current product regardless of
 > k8s. It was surfaced by the k8s metrics review (k8s requirement **FR-MET-5**) and can be sequenced
 > before, after, or in parallel with that effort.
 

@@ -13,8 +13,8 @@
 //! 4. **Graceful shutdown** — runs until Ctrl-C / SIGTERM, then unsubscribes and
 //!    returns so the [`ggcommons::GgCommons`] runtime can drop cleanly (RAII).
 //!
-//! Messaging is available in both STANDALONE and GREENGRASS mode (the latter with
-//! the `greengrass` feature). If a build omits a messaging transport, the app
+//! Messaging is available on both the HOST platform (MQTT) and the GREENGRASS platform
+//! (IPC, with the `greengrass` feature). If a build omits a messaging transport, the app
 //! degrades to heartbeat-only operation and simply waits for shutdown.
 //!
 //! ## Semantics & Architecture
@@ -119,8 +119,9 @@ impl SkeletonApp {
     /// needs, defining the metrics it will emit.
     ///
     /// # Post-conditions
-    /// The `messages_published` metric is registered; `messaging` is `Some` in
-    /// STANDALONE mode and `None` in GREENGRASS mode.
+    /// The `messages_published` metric is registered; `messaging` is `Some` on the
+    /// HOST platform (MQTT transport) and `None` when no transport is wired (a
+    /// `greengrass`-feature-less build).
     ///
     /// # Errors
     /// Currently infallible, but returns `Result` so future wiring can fail cleanly.

@@ -108,4 +108,4 @@ Manifests:
       # component genuinely needs it.)
       Run:
         Script:
-          "java -jar {artifacts:path}/java-component-skeleton-1.0.0.jar"
+          "java -jar {artifacts:path}/java-component-skeleton-1.0.0.jar --platform GREENGRASS"

@@ -75,6 +75,6 @@ public final class GreengrassConfigProvider extends ConfigProvider
     @Override
      public String getConfigSource()
     {
-        return String.format("Greengrass com.aws.proseve.ggcommons.config (component: %s; key: %s)", configComponentName, configKey);
+        return String.format("Greengrass com.breissinger.ggcommons.config (component: %s; key: %s)", configComponentName, configKey);
     }
 }

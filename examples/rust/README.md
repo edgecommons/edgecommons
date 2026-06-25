@@ -16,17 +16,17 @@ only business logic.
 - **Graceful shutdown** — runs until Ctrl-C / SIGTERM, unsubscribes, and drops the
   runtime cleanly (RAII).
 
-> The messaging features above work in both **STANDALONE** mode (against an MQTT
-> broker) and **GREENGRASS** mode (Greengrass IPC, built with the `greengrass`
-> feature) — both validated against a live Greengrass core.
+> The messaging features above work on both the **HOST** platform (MQTT transport,
+> against an MQTT broker) and the **GREENGRASS** platform (IPC transport, Greengrass
+> IPC, built with the `greengrass` feature) — both validated against a live Greengrass core.
 
-## Run locally (STANDALONE mode)
+## Run locally (HOST platform, MQTT transport)
 
 Start a local broker (see the workspace `CLAUDE.md`), then:
 
 ```bash
 cargo run -- \
-  -m STANDALONE ./test-configs/standalone-messaging.json \
+  --platform HOST --transport MQTT ./test-configs/standalone-messaging.json \
   -c FILE ./test-configs/config.json \
   -t my-thing
 ```
@@ -40,7 +40,8 @@ request/reply.
 Same as the Java/Python skeletons:
 
 - `-c/--config <SOURCE> [args...]` — `FILE | ENV | GG_CONFIG (default) | SHADOW | CONFIG_COMPONENT`
-- `-m/--mode <MODE> [path]` — `GREENGRASS (default) | STANDALONE <messaging_config.json>`
+- `--platform <PLATFORM>` — `GREENGRASS | HOST | KUBERNETES | auto` (default `auto`)
+- `--transport <TRANSPORT> [path]` — `IPC | MQTT [messaging_config.json]` (default: from the platform; IPC only valid on GREENGRASS)
 - `-t/--thing <name>` — IoT Thing name
 
 ## Build & publish with the GDK
@@ -62,5 +63,5 @@ or set a Linux target you have a toolchain for:
 GGCOMMONS_TARGET=x86_64-unknown-linux-gnu gdk component build
 ```
 
-The recipe declares a `linux` platform and runs the binary in GREENGRASS mode,
+The recipe declares a `linux` platform and runs the binary on the GREENGRASS platform,
 reading its configuration from the deployment (`GG_CONFIG`).

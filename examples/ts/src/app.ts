@@ -12,8 +12,8 @@
  * 5. **Graceful shutdown** — runs until SIGINT / SIGTERM, then unsubscribes and lets
  *    `gg.close()` (in `main.ts`) release the runtime.
  *
- * Messaging is available in both STANDALONE and GREENGRASS mode. If it is
- * unavailable for the runtime mode, `gg.messaging()` throws — the app catches that
+ * Messaging is available on both the HOST platform (MQTT) and the GREENGRASS platform (IPC).
+ * If it is unavailable for the resolved platform, `gg.messaging()` throws — the app catches that
  * and degrades to heartbeat-only operation, simply waiting for shutdown.
  */
 import {
@@ -113,7 +113,7 @@ export class SkeletonApp {
     };
     gg.addConfigChangeListener(listener);
 
-    // Messaging is available in STANDALONE mode (always) and GREENGRASS mode (IPC);
+    // Messaging is available on the HOST platform (MQTT, always) and GREENGRASS platform (IPC);
     // gg.messaging() throws if no transport is wired, so guard with try/catch.
     try {
       this.messaging = gg.messaging();

@@ -91,7 +91,7 @@ class GGCommonsLifecycleTest {
     private GGCommons bringUp(String component, String thing, File appCfg, File msgCfg) {
         String[] args = {
                 "-t", thing,
-                "-m", "STANDALONE", msgCfg.getAbsolutePath(),
+                "--platform", "HOST", "--transport", "MQTT", msgCfg.getAbsolutePath(),
                 "-c", "FILE", appCfg.getAbsolutePath()
         };
         return GGCommonsBuilder.create(component).withArgs(args).build();

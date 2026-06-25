@@ -4,16 +4,17 @@
 //! the `ggcommons` Rust library, mirroring the Java and Python skeletons.
 //!
 //! ## Overview
-//! Initializes [`ggcommons`] from the standard CLI contract (`-c`/`-m`/`-t`), then
+//! Initializes [`ggcommons`] from the standard CLI contract
+//! (`-c`/`--platform`/`--transport`/`-t`), then
 //! hands control to [`app::SkeletonApp`], which demonstrates the library's
 //! messaging, configuration, metrics, and heartbeat features. The component runs
 //! until it receives a shutdown signal (Ctrl-C / SIGTERM), at which point dropping
 //! the [`ggcommons::GgCommons`] runtime releases all resources (RAII).
 //!
-//! ## Running locally (STANDALONE mode, against a local MQTT broker)
+//! ## Running locally (HOST platform, MQTT transport, against a local MQTT broker)
 //! ```bash
 //! cargo run -- \
-//!   -m STANDALONE ./test-configs/standalone-messaging.json \
+//!   --platform HOST --transport MQTT ./test-configs/standalone-messaging.json \
 //!   -c FILE ./test-configs/config.json \
 //!   -t my-thing
 //! ```

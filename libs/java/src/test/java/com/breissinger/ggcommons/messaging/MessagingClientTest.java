@@ -21,9 +21,9 @@ class MessagingClientTest {
     
     @BeforeEach
     void setUp() {
-        // Create a test ParsedCommandLine for GREENGRASS mode
+        // Create a test ParsedCommandLine for IPC (GREENGRASS) transport
         ParsedCommandLine cmdLine = new ParsedCommandLine();
-        cmdLine.mode = ParsedCommandLine.Mode.GREENGRASS;
+        cmdLine.transport = com.breissinger.ggcommons.platform.Transport.IPC;
         
         // Create MessagingClient instance using builder
         messagingClient = MessagingClientBuilder.create(cmdLine)
