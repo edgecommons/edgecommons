@@ -189,11 +189,10 @@ Publish steps are gated on the matching registry secret, so a tag push (or a man
 `workflow_dispatch`) without credentials still **builds + uploads the artifacts to the run** for
 inspection.
 
-> **arm64-Linux runner caveat.** The aarch64-linux jobs use GitHub's native `ubuntu-24.04-arm`
-> hosted runners — free for **public** repos but requiring a **Team/Enterprise plan for private**
-> ones. This repo is currently private, so on a free plan those two jobs won't find a runner. The
-> fallback is to cross-compile on `ubuntu-latest`: `PyO3/maturin-action` already cross-builds the
-> aarch64 wheel with no arm runner; `napi build` adds `--use-napi-cross`; the Java cdylib uses
-> `cross` (Docker, carries the aarch64 C toolchain for the librdkafka/cmake build) or
-> `cargo-zigbuild`. Flip the `ubuntu-24.04-arm` matrix entries to `ubuntu-latest` + the cross flag
-> if you stay on a free private plan.
+> **aarch64-Linux is cross-built — no arm64 runner needed.** To keep the repo private on a free
+> plan, the aarch64-linux artifacts are produced on x86_64 `ubuntu-latest`: `PyO3/maturin-action`
+> cross-builds the wheel via its QEMU/manylinux flow, and the node addon + Java cdylib build inside
+> an **emulated arm64 container** (`docker run --platform linux/arm64`) so librdkafka/cmake and the
+> path-dep workspace resolve as if native. It's slower than a native arm64 runner but needs no paid
+> plan. (If you later make the repo public or move to a Team/Enterprise plan, swap those matrix
+> entries back to the native `ubuntu-24.04-arm` runner for speed.)

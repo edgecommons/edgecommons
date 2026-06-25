@@ -50,11 +50,12 @@ jobs:
   # All are non-musl / glibc(+MSVC/Apple). For musl/Alpine or a reduced feature
   # set, build from source per docs/NATIVE_CORE_DELIVERY.md.
   #
-  # NOTE: the aarch64-linux jobs run on `ubuntu-24.04-arm` (native arm64 hosted
-  # runners). These are free for PUBLIC repos but need a Team/Enterprise plan for
-  # PRIVATE repos. On a free private plan, switch those entries to cross-compile on
-  # ubuntu-latest: maturin-action cross-builds the wheel as-is; node adds
-  # `--use-napi-cross`; the Java cdylib uses `cross`/`cargo-zigbuild`. See the doc.
+  # The aarch64-linux artifacts are CROSS-BUILT on x86_64 `ubuntu-latest` so this
+  # works on a free private plan (no arm64 hosted runners): maturin-action builds
+  # the wheel via its QEMU/manylinux cross flow, and the node addon + Java cdylib
+  # build inside an emulated arm64 container (QEMU), so the librdkafka/cmake build
+  # and the path-dep workspace resolve as if native. Slower than native, but the
+  # release workflow is infrequent.
   # ===========================================================================
 
   # --- PyO3 wheel (maturin), one abi3 wheel per platform (Python 3.9+) ----------
@@ -67,7 +68,7 @@ jobs:
         include:
           - os: ubuntu-latest      # linux x86_64 (glibc)
             target: x86_64-unknown-linux-gnu
-          - os: ubuntu-24.04-arm   # linux aarch64 (glibc) — native arm64 runner
+          - os: ubuntu-latest      # linux aarch64 (glibc) — maturin-action cross-builds (QEMU)
             target: aarch64-unknown-linux-gnu
           - os: windows-latest     # windows x64 (dev)
             target: x86_64-pc-windows-msvc
@@ -101,6 +102,9 @@ jobs:
         run: pipx run maturin upload --skip-existing dist/*.whl
 
   # --- napi-rs addon, one prebuild per platform --------------------------------
+  # aarch64-linux builds inside an emulated arm64 container (QEMU) so it works on a
+  # free private plan without arm64 runners; librdkafka/cmake + the path-dep crate
+  # resolve as if native. Other targets build natively on their runner.
   streaming-node:
     if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref_name, 'streaming/') }}
     name: streaming addon (napi-rs ${{ matrix.target }})
@@ -110,38 +114,58 @@ jobs:
         include:
           - os: ubuntu-latest      # linux x86_64 (glibc)
             target: x86_64-unknown-linux-gnu
-          - os: ubuntu-24.04-arm   # linux aarch64 (glibc) — native arm64 runner
+          - os: ubuntu-latest      # linux aarch64 (glibc) — emulated arm64 container
             target: aarch64-unknown-linux-gnu
+            emulate: true
           - os: windows-latest     # windows x64 (dev)
             target: x86_64-pc-windows-msvc
           - os: macos-14           # macOS arm64 (dev)
             target: aarch64-apple-darwin
     runs-on: ${{ matrix.os }}
-    defaults:
-      run:
-        working-directory: libs/rust-streamlog/bindings/node
     steps:
       - uses: actions/checkout@v4
+      # ---- native build (linux x86_64 / windows / macOS) ----
       - uses: actions/setup-node@v4
+        if: ${{ !matrix.emulate }}
         with:
           node-version: "20"
           registry-url: "https://registry.npmjs.org"
       - uses: dtolnay/rust-toolchain@stable
+        if: ${{ !matrix.emulate }}
         with:
           targets: ${{ matrix.target }}
-      - run: npm install
       # kafka builds librdkafka via cmake — preinstalled on the GitHub-hosted runners.
-      - name: Build the platform addon
-        run: npx napi build --platform --release --target ${{ matrix.target }} --features kinesis,kafka
+      - name: Build the platform addon (native)
+        if: ${{ !matrix.emulate }}
+        working-directory: libs/rust-streamlog/bindings/node
+        run: |
+          npm install
+          npx napi build --platform --release --target ${{ matrix.target }} --features kinesis,kafka
+      # ---- aarch64-linux: build inside an emulated arm64 container (cmake/gcc/rust native) ----
+      - uses: docker/setup-qemu-action@v3
+        if: ${{ matrix.emulate }}
+      - name: Build the platform addon (emulated aarch64)
+        if: ${{ matrix.emulate }}
+        run: |
+          docker run --rm --platform linux/arm64 -v "$PWD":/w \
+            -w /w/libs/rust-streamlog/bindings/node node:20-bookworm bash -lc '
+              set -e
+              apt-get update && apt-get install -y --no-install-recommends cmake curl build-essential
+              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+              . "$HOME/.cargo/env"
+              npm install
+              npx napi build --platform --release --features kinesis,kafka'
       - uses: actions/upload-artifact@v4
         with:
           name: streaming-addon-${{ matrix.target }}
           path: libs/rust-streamlog/bindings/node/*.node
-      # Publish the per-platform npm package only when an npm token is configured.
+      # Publish the per-platform npm package only when an npm token is configured (native runners;
+      # the emulated arm64 .node is uploaded as an artifact for assembly/inspection).
       - name: Publish addon to npm
-        if: ${{ env.NODE_AUTH_TOKEN != '' }}
+        if: ${{ !matrix.emulate && env.NODE_AUTH_TOKEN != '' }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        working-directory: libs/rust-streamlog/bindings/node
         run: |
           npx napi prepublish -t npm --skip-gh-release
           npm publish --access public
@@ -152,32 +176,56 @@ jobs:
   # (kafka builds librdkafka via cmake — preinstalled on the GitHub runners).
   streaming-java-natives:
     if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref_name, 'streaming/') }}
-    name: streaming cdylib (${{ matrix.os }})
+    name: streaming cdylib (${{ matrix.target }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-14]
+        include:
+          - os: ubuntu-latest          # linux x86_64 (glibc)
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-latest          # linux aarch64 (glibc) — emulated arm64 container
+            target: aarch64-unknown-linux-gnu
+            emulate: true
+          - os: windows-latest         # windows x64 (dev)
+            target: x86_64-pc-windows-msvc
+          - os: macos-14               # macOS arm64 (dev)
+            target: aarch64-apple-darwin
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      # ---- native build ----
       - uses: dtolnay/rust-toolchain@stable
-      - name: Build the cdylib (cabi + kinesis + kafka)
+        if: ${{ !matrix.emulate }}
+      - name: Build the cdylib (native — cabi + kinesis + kafka)
+        if: ${{ !matrix.emulate }}
         run: cargo build --release --features cabi,kinesis,kafka
         working-directory: libs/rust-streamlog
+      # ---- aarch64-linux: build inside an emulated arm64 container (cmake/gcc/rust native) ----
+      - uses: docker/setup-qemu-action@v3
+        if: ${{ matrix.emulate }}
+      - name: Build the cdylib (emulated aarch64 — cabi + kinesis + kafka)
+        if: ${{ matrix.emulate }}
+        run: |
+          docker run --rm --platform linux/arm64 -v "$PWD":/w -w /w/libs/rust-streamlog \
+            rust:1-bookworm bash -lc '
+              set -e
+              apt-get update && apt-get install -y --no-install-recommends cmake
+              cargo build --release --features cabi,kinesis,kafka'
       - name: Stage the platform native under <os>-<arch>/ (matching GgStreamNative.osArch)
         shell: bash
         run: |
           set -euo pipefail
+          # Both native and emulated builds output to target/release (no per-triple subdir).
           src=libs/rust-streamlog/target/release
-          case "$(uname -m)" in
-            x86_64|amd64)   arch=x86_64 ;;
-            aarch64|arm64)  arch=aarch64 ;;
-            *)              arch="$(uname -m)" ;;
+          case "${{ matrix.target }}" in
+            *windows*) os=windows; lib=ggstreamlog.dll ;;
+            *apple*)   os=darwin;  lib=libggstreamlog.dylib ;;
+            *)         os=linux;   lib=libggstreamlog.so ;;
           esac
-          case "${{ runner.os }}" in
-            Linux)   os=linux;   lib=libggstreamlog.so ;;
-            Windows) os=windows; lib=ggstreamlog.dll ;;
-            macOS)   os=darwin;  lib=libggstreamlog.dylib ;;
+          case "${{ matrix.target }}" in
+            x86_64*)  arch=x86_64 ;;
+            aarch64*) arch=aarch64 ;;
+            *)        arch=unknown ;;
           esac
           dest="native/${os}-${arch}"
           mkdir -p "$dest"
@@ -185,7 +233,7 @@ jobs:
           echo "staged $lib -> $dest/"
       - uses: actions/upload-artifact@v4
         with:
-          name: streaming-native-${{ matrix.os }}
+          name: streaming-native-${{ matrix.target }}
           path: native/
 
   streaming-java-jar:
