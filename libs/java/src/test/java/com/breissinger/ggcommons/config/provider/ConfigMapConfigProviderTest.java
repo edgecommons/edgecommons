@@ -254,9 +254,13 @@ class ConfigMapConfigProviderTest {
             Files.move(mount.resolve("..data_tmp"), mount.resolve("..data"),
                     StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
 
-            ArgumentCaptor<JsonObject> captor = ArgumentCaptor.forClass(JsonObject.class);
-            verify(cm, timeout(15_000).atLeastOnce()).applyConfig(captor.capture());
-            assertEquals(2, captor.getValue().get("version").getAsInt());
+            // Wait until applyConfig is called WITH the post-swap version (2), rather than capturing
+            // "the last call within timeout": the watcher may legitimately fire an earlier reconcile
+            // read of the pre-swap version (1) before the kubelet swap propagates, and consecutive
+            // edits can coalesce — so asserting an exact call count / last-captured value is racy.
+            // Converging to version 2 is the behavior that matters (and what the kubelet guarantees).
+            verify(cm, timeout(15_000).atLeastOnce())
+                    .applyConfig(argThat(c -> c != null && c.has("version") && c.get("version").getAsInt() == 2));
         } finally {
             provider.close();
         }
