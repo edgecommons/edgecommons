@@ -127,9 +127,28 @@ def test_explicit_thing_overrides_env_probe():
 
 # ---------- resolve_profile: failures ----------
 
-def test_resolve_kubernetes_fails_fast_in_phase0():
+def test_resolve_kubernetes_explicit_gives_mqtt_and_configmap():
+    # Phase 1a: KUBERNETES now resolves cleanly (no fail-fast) to MQTT + the CONFIGMAP source.
     inputs = ResolverInputs(Platform.KUBERNETES, None, None, None)
-    with pytest.raises(ValueError, match="KUBERNETES"):
+    r = resolve_profile(inputs, {})
+    assert r.platform == Platform.KUBERNETES
+    assert r.transport == Transport.MQTT
+    assert r.config_source == ["CONFIGMAP"]
+
+
+def test_resolve_auto_with_service_account_token_detects_kubernetes():
+    # A SA-token pod auto-detects to KUBERNETES and gets MQTT + CONFIGMAP.
+    inputs = ResolverInputs(None, None, None, None)
+    r = resolve_profile(inputs, {ENV_K8S_SERVICE_HOST: "10.0.0.1"})
+    assert r.platform == Platform.KUBERNETES
+    assert r.transport == Transport.MQTT
+    assert r.config_source == ["CONFIGMAP"]
+
+
+def test_resolve_ipc_on_kubernetes_fails_the_ipc_lock():
+    # The IPC lock still holds on KUBERNETES (only the Nucleus provides the IPC socket).
+    inputs = ResolverInputs(Platform.KUBERNETES, Transport.IPC, None, None)
+    with pytest.raises(ValueError, match="IPC transport requires --platform GREENGRASS"):
         resolve_profile(inputs, {})
 
 
@@ -174,11 +193,17 @@ def test_resolve_identity_handles_none_env():
 
 # ---------- profiles + enums ----------
 
-def test_profiles_contain_only_greengrass_and_host_in_phase0():
-    assert len(PROFILES) == 2
+def test_profiles_contain_all_three_platforms():
+    assert len(PROFILES) == 3
     assert Platform.GREENGRASS in PROFILES
     assert Platform.HOST in PROFILES
-    assert Platform.KUBERNETES not in PROFILES
+    assert Platform.KUBERNETES in PROFILES
+
+
+def test_kubernetes_profile_exposes_mqtt_and_configmap():
+    p = PROFILES[Platform.KUBERNETES]
+    assert p.transport == Transport.MQTT
+    assert p.config_source == "CONFIGMAP"
 
 
 def test_enums_declare_expected_values():

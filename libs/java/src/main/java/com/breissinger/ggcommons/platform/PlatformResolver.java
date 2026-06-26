@@ -25,10 +25,15 @@ import java.util.function.Predicate;
  * <p>All methods are pure (no I/O beyond the explicitly-injected filesystem probe used for
  * Kubernetes detection), which keeps the resolver and detector unit-testable in isolation.
  *
- * <p><b>Phase 0:</b> only {@link Platform#GREENGRASS} and {@link Platform#HOST} have profiles, and
- * both default their config source to {@code GG_CONFIG} (a faithful re-expression of today's
- * behavior — HOST does <em>not</em> flip to {@code FILE} until Phase 1). Resolving to
- * {@link Platform#KUBERNETES} fails fast.
+ * <p><b>Phase 0:</b> {@link Platform#GREENGRASS} and {@link Platform#HOST} both default their config
+ * source to {@code GG_CONFIG} (a faithful re-expression of today's behavior — HOST does <em>not</em>
+ * flip to {@code FILE} until Phase 1).
+ *
+ * <p><b>Phase 1a:</b> {@link Platform#KUBERNETES} now has a profile (transport {@code MQTT}, config
+ * source {@code CONFIGMAP}) and resolves cleanly — a service-account-token pod auto-detects to it. The
+ * IPC&times;KUBERNETES rejection still holds (the IPC lock). Identity for KUBERNETES still uses the
+ * Phase-0 {@link #resolveIdentity} env probe; the Downward-API identity, the {@code prometheus} metrics
+ * target, stdout-JSON logging, and the HTTP health endpoint are deferred to later Phase-1 sub-phases.
  */
 public final class PlatformResolver {
 
@@ -49,13 +54,18 @@ public final class PlatformResolver {
     public static final String DEFAULT_IDENTITY = "NOT_GREENGRASS";
 
     /**
-     * The platform-profile table (DESIGN-core §3). Phase 0 populates only GREENGRASS and HOST; both
-     * deliberately default the config source to {@code GG_CONFIG} to preserve current behavior.
-     * KUBERNETES is intentionally absent (declared enum value, no profile yet).
+     * The platform-profile table (DESIGN-core §3). GREENGRASS and HOST deliberately default the config
+     * source to {@code GG_CONFIG} to preserve current behavior. KUBERNETES (Phase 1a) defaults to the
+     * {@code MQTT} transport and the k8s-native {@code CONFIGMAP} config source.
+     *
+     * <p>TODO (Phase 1b–1d): the KUBERNETES profile's metrics/logging/credentials/streaming/identity
+     * defaults (prometheus target, stdout-JSON sink, env KeyProvider, PVC buffer, Downward-API identity)
+     * are not yet modeled here — for Phase 1a those subsystems keep their current library defaults.
      */
     public static final Map<Platform, PlatformProfile> PROFILES = Map.of(
             Platform.GREENGRASS, new PlatformProfile(Transport.IPC, "GG_CONFIG"),
-            Platform.HOST, new PlatformProfile(Transport.MQTT, "GG_CONFIG"));
+            Platform.HOST, new PlatformProfile(Transport.MQTT, "GG_CONFIG"),
+            Platform.KUBERNETES, new PlatformProfile(Transport.MQTT, "CONFIGMAP"));
 
     private PlatformResolver() {
     }
@@ -89,7 +99,7 @@ public final class PlatformResolver {
         PlatformProfile profile = PROFILES.get(platform);
         if (profile == null) {
             throw new IllegalArgumentException("Platform " + platform + " is not supported in this build "
-                    + "(no profile). Valid platforms: GREENGRASS, HOST. (KUBERNETES ships in Phase 1.)");
+                    + "(no profile). Valid platforms: " + PROFILES.keySet() + ".");
         }
 
         Transport transport = inputs.transport() != null ? inputs.transport() : profile.transport();

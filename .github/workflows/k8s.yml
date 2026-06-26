@@ -1,0 +1,74 @@
+name: k8s
+# Phase-1a Kubernetes harness: stand up a kind cluster, build + load a component image,
+# helm-install the chart + in-cluster EMQX broker, and run the CONFIGMAP-source smoke
+# test (platform=KUBERNETES auto-detect, CONFIGMAP load, broker connect, ..data hot-reload).
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main"]
+    paths:
+      - "libs/**"
+      - "test-infra/k8s/**"
+      - ".github/workflows/k8s.yml"
+  pull_request:
+    paths:
+      - "libs/**"
+      - "test-infra/k8s/**"
+      - ".github/workflows/k8s.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Static validation of the Helm chart — fast, always runs.
+  helm-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+      - name: helm lint
+        run: helm lint test-infra/k8s/chart
+      - name: helm template
+        run: helm template ggc test-infra/k8s/chart > /dev/null
+
+  # Live smoke test on a single-node kind cluster.
+  kind-smoke:
+    runs-on: ubuntu-latest
+    needs: helm-lint
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the component image
+        run: docker build -f test-infra/k8s/Dockerfile -t ggcommons-component:ci .
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: ggcommons
+          config: test-infra/k8s/kind-config.yaml
+
+      - name: Load the component image into kind
+        run: kind load docker-image ggcommons-component:ci --name ggcommons
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+
+      - name: Run the smoke test (CONFIGMAP source + ..data hot-reload)
+        run: bash test-infra/k8s/smoke.sh
+        env:
+          IMAGE: ggcommons-component:ci
+          NAMESPACE: ggcommons
+          RELEASE: ggc
+          TIMEOUT: "240"
+          KEEP: "1"
+
+      - name: Diagnostics on failure
+        if: failure()
+        run: |
+          kubectl -n ggcommons get pods,svc,cm -o wide || true
+          kubectl -n ggcommons describe pods -l app.kubernetes.io/instance=ggc || true
+          kubectl -n ggcommons logs -l app.kubernetes.io/instance=ggc --tail=300 || true

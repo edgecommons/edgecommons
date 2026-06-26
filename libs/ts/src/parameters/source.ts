@@ -28,6 +28,20 @@ export function plainValue(value: Buffer): ParamValue {
   return { value, secure: false };
 }
 
+/**
+ * True for kubelet/Docker volume-projection artifacts and hidden entries — anything whose file name
+ * begins with `"."`. This is the single source of truth for the dotfile filter that skips the kubelet
+ * symlink farm (`..data`, `..2026_06_25_…` timestamped dirs, and the `..data_tmp` swap-staging entry).
+ * Reused by the `CONFIGMAP` config source so the filter stays identical across the parameters and
+ * config subsystems (FR-CFG-4).
+ *
+ * @param fileName the bare file name (not a path)
+ * @returns `true` if the entry is a projection artifact / hidden file to ignore
+ */
+export function isProjectionArtifact(fileName: string): boolean {
+  return fileName.startsWith(".");
+}
+
 /** The pluggable parameter backend. */
 export interface ParameterSource {
   /** Fetch one parameter by name, or `undefined` if it does not exist. */
@@ -127,7 +141,7 @@ export class MountedDirSource implements ParameterSource {
     }
     for (const entry of entries) {
       const fname = entry.name;
-      if (fname.startsWith(".")) {
+      if (isProjectionArtifact(fname)) {
         continue; // K8s internal (..data, ..2025_...) / hidden
       }
       const path = join(dir, fname);

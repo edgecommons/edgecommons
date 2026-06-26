@@ -11,9 +11,15 @@
  *   resolve(setting) = explicit flag ▸ platform-profile default ▸ library default
  * ```
  *
- * **Phase 0:** only {@link Platform.GREENGRASS} and {@link Platform.HOST} have profiles, and both
- * default their config source to `GG_CONFIG` (a faithful re-expression of today's behavior — HOST
- * does NOT flip to `FILE` until Phase 1). Resolving to {@link Platform.KUBERNETES} fails fast.
+ * **Phase 0:** {@link Platform.GREENGRASS} and {@link Platform.HOST} both default their config source
+ * to `GG_CONFIG` (a faithful re-expression of today's behavior — HOST does NOT flip to `FILE` until
+ * Phase 1).
+ *
+ * **Phase 1a:** {@link Platform.KUBERNETES} now has a profile (transport `MQTT`, config source
+ * `CONFIGMAP`) and resolves cleanly — a service-account-token pod auto-detects to it. The
+ * IPC×KUBERNETES rejection still holds (the IPC lock). Identity for KUBERNETES still uses the Phase-0
+ * {@link resolveIdentity} env probe; the Downward-API identity, the `prometheus` metrics target,
+ * stdout-JSON logging, and the HTTP health endpoint are deferred to later Phase-1 sub-phases.
  */
 import { existsSync } from "fs";
 
@@ -31,7 +37,7 @@ export enum Platform {
   GREENGRASS = "GREENGRASS",
   /** A plain host (Docker/bare host without a Nucleus): MQTT transport. */
   HOST = "HOST",
-  /** Kubernetes (declared for Phase 0; profile populated in Phase 1). */
+  /** Kubernetes: MQTT transport, ConfigMap-mounted config (Phase 1a). */
   KUBERNETES = "KUBERNETES",
 }
 
@@ -110,20 +116,25 @@ export const K8S_SA_TOKEN_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/
 export const DEFAULT_IDENTITY = "NOT_GREENGRASS";
 
 /**
- * The platform-profile table (DESIGN-core §3). Phase 0 populates only GREENGRASS and HOST; both
- * deliberately default the config source to `GG_CONFIG` to preserve current behavior. KUBERNETES is
- * intentionally absent (declared enum value, no profile yet).
+ * The platform-profile table (DESIGN-core §3). GREENGRASS and HOST deliberately default the config
+ * source to `GG_CONFIG` to preserve current behavior. KUBERNETES (Phase 1a) defaults to the `MQTT`
+ * transport and the k8s-native `CONFIGMAP` config source.
+ *
+ * TODO (Phase 1b–1d): the KUBERNETES profile's metrics/logging/credentials/streaming/identity
+ * defaults (prometheus target, stdout-JSON sink, env KeyProvider, PVC buffer, Downward-API identity)
+ * are not yet modeled here — for Phase 1a those subsystems keep their current library defaults.
  */
 export const PROFILES: ReadonlyMap<Platform, PlatformProfile> = new Map([
   [Platform.GREENGRASS, { transport: Transport.IPC, configSource: "GG_CONFIG" } as PlatformProfile],
   [Platform.HOST, { transport: Transport.MQTT, configSource: "GG_CONFIG" } as PlatformProfile],
+  [Platform.KUBERNETES, { transport: Transport.MQTT, configSource: "CONFIGMAP" } as PlatformProfile],
 ]);
 
 /**
  * Resolves the runtime profile from parse-time inputs and the environment (DESIGN-core §4).
  *
- * @throws {@link GgError} of kind `Cli` if the resolved platform has no Phase-0 profile (KUBERNETES),
- *         or the platform/transport combination is illegal (the IPC lock).
+ * @throws {@link GgError} of kind `Cli` if the resolved platform has no profile in this build, or the
+ *         platform/transport combination is illegal (the IPC lock).
  */
 export function resolveProfile(inputs: ResolverInputs, env: Env): ResolvedProfile {
   const autoDetected = inputs.platform === undefined;
@@ -134,7 +145,7 @@ export function resolveProfile(inputs: ResolverInputs, env: Env): ResolvedProfil
   if (!profile) {
     throw GgError.cli(
       `Platform ${platform} is not supported in this build (no profile). ` +
-        `Valid platforms: GREENGRASS, HOST. (KUBERNETES ships in Phase 1.)`,
+        `Valid platforms: ${[...PROFILES.keys()].join(", ")}.`,
     );
   }
 

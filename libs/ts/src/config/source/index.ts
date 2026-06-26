@@ -17,12 +17,14 @@ import { IMessagingService } from "../../messaging/types";
 import { IpcMessagingProvider } from "../../messaging/ipc-provider";
 
 import { FileConfigSource } from "./file";
+import { ConfigMapConfigSource } from "./configmap";
 import { EnvConfigSource } from "./env";
 import { GreengrassConfigSource } from "./greengrass";
 import { ShadowConfigSource } from "./shadow";
 import { ConfigComponentSource } from "./config_component";
 
 export { FileConfigSource } from "./file";
+export { ConfigMapConfigSource } from "./configmap";
 export { EnvConfigSource } from "./env";
 export { GreengrassConfigSource } from "./greengrass";
 export { ShadowConfigSource } from "./shadow";
@@ -71,6 +73,10 @@ export function buildConfigSource(spec: ConfigSourceSpec, opts: BuildConfigSourc
   switch (spec.kind) {
     case "FILE":
       return new FileConfigSource(spec.path);
+    case "CONFIGMAP":
+      // The k8s-native source (default on KUBERNETES). Defaults (/etc/ggcommons, config.json) are
+      // applied inside the source. Works in any transport, like FILE — needs no extra deps.
+      return new ConfigMapConfigSource(spec.mountDir, spec.key);
     case "ENV":
       return new EnvConfigSource(spec.var);
     case "CONFIG_COMPONENT": {

@@ -49,6 +49,7 @@ use crate::error::Result;
 use crate::messaging::MessagingService;
 
 pub mod config_component;
+pub mod configmap;
 pub mod env;
 pub mod file;
 #[cfg(feature = "greengrass")]
@@ -86,6 +87,9 @@ pub fn build(
 ) -> Result<Box<dyn ConfigSource>> {
     Ok(match spec {
         ConfigSourceSpec::File { path } => Box::new(file::FileConfigSource::new(path.clone())),
+        ConfigSourceSpec::ConfigMap { mount_dir, key } => {
+            Box::new(configmap::ConfigMapConfigSource::new(mount_dir.clone(), key.clone())?)
+        }
         ConfigSourceSpec::Env { var } => Box::new(env::EnvConfigSource::new(var.clone())),
         ConfigSourceSpec::ConfigComponent => {
             let messaging = messaging.ok_or_else(|| {

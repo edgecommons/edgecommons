@@ -89,6 +89,20 @@ describe("resolveProfile: profile defaults", () => {
     expect(r.platform).toBe(Platform.GREENGRASS);
     expect(r.transport).toBe(Transport.IPC);
   });
+
+  it("explicit KUBERNETES -> MQTT + CONFIGMAP (Phase 1a)", () => {
+    const r = resolveProfile({ platform: Platform.KUBERNETES }, {});
+    expect(r.platform).toBe(Platform.KUBERNETES);
+    expect(r.transport).toBe(Transport.MQTT);
+    expect(r.configSource).toEqual(["CONFIGMAP"]);
+  });
+
+  it("auto with a Kubernetes service-host env detects KUBERNETES -> MQTT + CONFIGMAP", () => {
+    const r = resolveProfile({}, { [ENV_K8S_SERVICE_HOST]: "10.0.0.1" });
+    expect(r.platform).toBe(Platform.KUBERNETES);
+    expect(r.transport).toBe(Transport.MQTT);
+    expect(r.configSource).toEqual(["CONFIGMAP"]);
+  });
 });
 
 describe("resolveProfile: explicit overrides", () => {
@@ -114,19 +128,21 @@ describe("resolveProfile: explicit overrides", () => {
 });
 
 describe("resolveProfile: failures", () => {
-  it("KUBERNETES fails fast in Phase 0", () => {
-    expect(() => resolveProfile({ platform: Platform.KUBERNETES }, {})).toThrow(/KUBERNETES/);
-  });
-
   it("IPC on HOST fails the IPC lock", () => {
     expect(() => resolveProfile({ platform: Platform.HOST, transport: Transport.IPC }, {})).toThrow(
       /IPC transport requires --platform GREENGRASS/,
     );
   });
 
+  it("IPC on KUBERNETES fails the IPC lock (the IPC×KUBERNETES rejection still holds)", () => {
+    expect(() =>
+      resolveProfile({ platform: Platform.KUBERNETES, transport: Transport.IPC }, {}),
+    ).toThrow(/IPC transport requires --platform GREENGRASS/);
+  });
+
   it("resolver failures are GgError of kind Cli", () => {
     try {
-      resolveProfile({ platform: Platform.KUBERNETES }, {});
+      resolveProfile({ platform: Platform.HOST, transport: Transport.IPC }, {});
       throw new Error("expected throw");
     } catch (e) {
       expect(e).toBeInstanceOf(GgError);
@@ -179,11 +195,17 @@ describe("resolveIdentity", () => {
 });
 
 describe("profiles + enums", () => {
-  it("PROFILES contains only GREENGRASS and HOST in Phase 0", () => {
-    expect(PROFILES.size).toBe(2);
+  it("PROFILES contains GREENGRASS, HOST, and KUBERNETES (Phase 1a)", () => {
+    expect(PROFILES.size).toBe(3);
     expect(PROFILES.has(Platform.GREENGRASS)).toBe(true);
     expect(PROFILES.has(Platform.HOST)).toBe(true);
-    expect(PROFILES.has(Platform.KUBERNETES)).toBe(false);
+    expect(PROFILES.has(Platform.KUBERNETES)).toBe(true);
+  });
+
+  it("the KUBERNETES profile is MQTT + CONFIGMAP", () => {
+    const p = PROFILES.get(Platform.KUBERNETES)!;
+    expect(p.transport).toBe(Transport.MQTT);
+    expect(p.configSource).toBe("CONFIGMAP");
   });
 
   it("enums declare the expected values", () => {

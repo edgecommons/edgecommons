@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+#
+# smoke.sh — Phase-1a Kubernetes smoke test for the ggcommons CONFIGMAP source.
+#
+# SCAFFOLD for the ORCHESTRATOR to run LIVE against a real cluster (kind or lab k3s).
+# It installs the in-cluster EMQX broker + the component chart, waits for Ready, then
+# asserts:
+#   1. the pod resolved platform=KUBERNETES (auto-detected from the SA token),
+#   2. it loaded config via the CONFIGMAP source,
+#   3. it connected to the in-cluster broker by Service DNS,
+#   4. a `kubectl patch` of the ConfigMap is HOT-RELOADED in-process (the ..data
+#      atomic-swap re-arm test) — no pod restart.
+#
+# This script does NOT build or load the image and is NOT run by the library unit
+# tests; the CI workflow (.github/workflows/k8s.yml) builds+loads the image first.
+#
+# Usage:
+#   IMAGE=ggcommons-component:ci NAMESPACE=ggcommons ./smoke.sh
+# Env knobs (all optional; defaults shown):
+#   IMAGE        component image ref (repo:tag) already loaded into the cluster
+#   NAMESPACE    namespace to deploy into                       (ggcommons)
+#   RELEASE      helm release name                              (ggc)
+#   TIMEOUT      per-wait timeout, seconds                      (180)
+#   KEEP         if "1", do not delete the namespace on exit    (unset)
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CHART_DIR="${SCRIPT_DIR}/chart"
+
+IMAGE="${IMAGE:-ggcommons-component:ci}"
+NAMESPACE="${NAMESPACE:-ggcommons}"
+RELEASE="${RELEASE:-ggc}"
+TIMEOUT="${TIMEOUT:-180}"
+HELM="${HELM:-helm}"
+KUBECTL="${KUBECTL:-kubectl}"
+
+IMAGE_REPO="${IMAGE%:*}"
+IMAGE_TAG="${IMAGE##*:}"
+SELECTOR="app.kubernetes.io/instance=${RELEASE}"
+
+log()  { printf '\n\033[1;34m==>\033[0m %s\n' "$*"; }
+ok()   { printf '\033[1;32m  ok:\033[0m %s\n' "$*"; }
+fail() { printf '\033[1;31mFAIL:\033[0m %s\n' "$*" >&2; exit 1; }
+
+cleanup() {
+  local rc=$?
+  if [[ $rc -ne 0 ]]; then
+    log "FAILED (rc=$rc) — dumping diagnostics"
+    "${KUBECTL}" -n "${NAMESPACE}" get pods,svc,cm 2>/dev/null || true
+    "${KUBECTL}" -n "${NAMESPACE}" logs -l "${SELECTOR}" --tail=200 2>/dev/null || true
+  fi
+  if [[ "${KEEP:-}" != "1" ]]; then
+    log "Cleaning up namespace ${NAMESPACE}"
+    "${HELM}" -n "${NAMESPACE}" uninstall "${RELEASE}" 2>/dev/null || true
+    "${KUBECTL}" delete -n "${NAMESPACE}" -f "${SCRIPT_DIR}/emqx.yaml" 2>/dev/null || true
+    "${KUBECTL}" delete namespace "${NAMESPACE}" --wait=false 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT
+
+# Wait until `kubectl logs` for the release contains $1 (extended regex), or fail.
+assert_log() {
+  local pattern="$1" desc="$2" deadline=$((SECONDS + TIMEOUT))
+  log "Asserting log: ${desc}"
+  while (( SECONDS < deadline )); do
+    if "${KUBECTL}" -n "${NAMESPACE}" logs -l "${SELECTOR}" --tail=-1 2>/dev/null \
+         | grep -Eiq -- "${pattern}"; then
+      ok "${desc}"
+      return 0
+    fi
+    sleep 3
+  done
+  fail "timed out waiting for log match: ${desc} (/${pattern}/)"
+}
+
+# ----------------------------------------------------------------------------------
+log "Namespace ${NAMESPACE}"
+"${KUBECTL}" create namespace "${NAMESPACE}" --dry-run=client -o yaml | "${KUBECTL}" apply -f -
+
+log "Deploying in-cluster EMQX broker"
+"${KUBECTL}" apply -n "${NAMESPACE}" -f "${SCRIPT_DIR}/emqx.yaml"
+"${KUBECTL}" -n "${NAMESPACE}" rollout status deploy/ggcommons-emqx --timeout="${TIMEOUT}s"
+
+log "Installing the component chart (image ${IMAGE})"
+"${HELM}" upgrade --install "${RELEASE}" "${CHART_DIR}" \
+  --namespace "${NAMESPACE}" \
+  --set image.repository="${IMAGE_REPO}" \
+  --set image.tag="${IMAGE_TAG}" \
+  --set image.pullPolicy=IfNotPresent \
+  --wait --timeout "${TIMEOUT}s"
+
+log "Waiting for the component rollout"
+"${KUBECTL}" -n "${NAMESPACE}" rollout status deploy/"${RELEASE}"-ggcommons-component --timeout="${TIMEOUT}s"
+
+# --- Core assertions: platform resolution + CONFIGMAP source + broker connect -------
+assert_log "Resolved platform=KUBERNETES|platform=KUBERNETES" "auto-detected platform=KUBERNETES"
+assert_log "CONFIGMAP|ConfigMap \(mountDir" "config loaded via the CONFIGMAP source"
+assert_log "connect|MQTT|broker|messaging" "messaging/broker connect"
+
+# --- Hot-reload (..data swap re-arm) test -------------------------------------------
+# Patch the ConfigMap's config.json in place (NOT helm upgrade) and assert the running
+# pod reloads in-process. We flip logging.level INFO->DEBUG as the observable change.
+log "Patching the ConfigMap to trigger the ..data hot-reload"
+CM_NAME="${RELEASE}-ggcommons-component-config"
+CURRENT_JSON="$("${KUBECTL}" -n "${NAMESPACE}" get configmap "${CM_NAME}" -o jsonpath='{.data.config\.json}')"
+NEW_JSON="$(printf '%s' "${CURRENT_JSON}" | sed 's/"level": *"INFO"/"level": "DEBUG"/')"
+if [[ "${NEW_JSON}" == "${CURRENT_JSON}" ]]; then
+  fail "could not mutate config.json (logging.level INFO not found) — check the rendered ConfigMap"
+fi
+# Replace the whole data key via a strategic-merge patch.
+"${KUBECTL}" -n "${NAMESPACE}" patch configmap "${CM_NAME}" --type merge \
+  -p "$(printf '{"data":{"config.json":%s}}' "$(printf '%s' "${NEW_JSON}" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')")"
+
+# kubelet propagation of a ConfigMap edit is ~60-90s at defaults; allow generous time.
+RELOAD_TIMEOUT="${RELOAD_TIMEOUT:-150}"
+TIMEOUT="${RELOAD_TIMEOUT}" assert_log \
+  "ConfigMap changed|configuration reloaded|reloaded config|config.*reload" \
+  "in-process hot-reload after the ..data swap (no restart)"
+
+# Confirm the pod did NOT restart (hot-reload, not a roll).
+RESTARTS="$("${KUBECTL}" -n "${NAMESPACE}" get pods -l "${SELECTOR}" \
+  -o jsonpath='{.items[*].status.containerStatuses[*].restartCount}')"
+for r in ${RESTARTS}; do
+  [[ "${r}" == "0" ]] || fail "pod restarted (restartCount=${r}) — expected in-process reload, not a roll"
+done
+ok "pod did not restart (restartCount=0) — reload was in-process"
+
+log "SMOKE TEST PASSED"

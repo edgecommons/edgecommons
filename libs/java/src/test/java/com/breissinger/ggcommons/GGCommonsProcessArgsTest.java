@@ -151,10 +151,22 @@ class GGCommonsProcessArgsTest {
     }
 
     @Test
-    void kubernetesPlatformFailsFastInPhase0() {
+    void kubernetesPlatformResolvesToMqttAndConfigMap() {
+        // Phase 1a: --platform KUBERNETES resolves cleanly (no fail-fast) to MQTT + the CONFIGMAP
+        // config source; no positional messaging-config path is required at parse time.
+        ParsedCommandLine pcl = GGCommons.processArgs(
+                COMPONENT, new String[]{"--platform", "KUBERNETES"}, null);
+        assertEquals(Platform.KUBERNETES, pcl.platform);
+        assertEquals(Transport.MQTT, pcl.transport);
+        assertArrayEquals(new String[]{"CONFIGMAP"}, pcl.configArgs);
+    }
+
+    @Test
+    void kubernetesPlatformRejectsIpcTransport() {
+        // The IPC lock still holds on KUBERNETES (only the Nucleus provides the IPC socket).
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () ->
-                GGCommons.processArgs(COMPONENT, new String[]{"--platform", "KUBERNETES"}, null));
-        assertTrue(ex.getMessage().contains("KUBERNETES"));
+                GGCommons.processArgs(COMPONENT, new String[]{"--platform", "KUBERNETES", "--transport", "IPC"}, null));
+        assertTrue(ex.getMessage().contains("IPC transport requires --platform GREENGRASS"));
     }
 
     @Test

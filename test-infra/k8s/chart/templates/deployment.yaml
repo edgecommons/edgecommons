@@ -1,0 +1,107 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ggcommons.fullname" . }}
+  labels:
+    {{- include "ggcommons.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicas }}
+  selector:
+    matchLabels:
+      {{- include "ggcommons.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ggcommons.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{/*
+        NOTE: intentionally NO ConfigMap checksum annotation. The whole point of the
+        CONFIGMAP source is IN-PROCESS hot-reload across the kubelet ..data swap — we
+        do NOT want a config edit to roll the pod. The smoke test edits the ConfigMap
+        with `kubectl patch` (not `helm upgrade`) and asserts the running pod reloads.
+      */}}
+    spec:
+      serviceAccountName: {{ include "ggcommons.serviceAccountName" . }}
+      # Keep the projected SA token mounted — it is the platform=KUBERNETES auto-detect signal.
+      automountServiceAccountToken: true
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: component
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.command }}
+          command:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.args }}
+          args:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            # Placeholder ports for sub-phase 1c (health endpoint + prometheus target).
+            - name: health
+              containerPort: {{ .Values.service.healthPort }}
+              protocol: TCP
+            - name: metrics
+              containerPort: {{ .Values.service.metricsPort }}
+              protocol: TCP
+          {{- if .Values.probes.enabled }}
+          # PLACEHOLDER probes (sub-phase 1c replaces with httpGet /livez,/readyz on
+          # the `health` port). Until the HTTP health server exists, a dependency-free
+          # exec probe asserts the ConfigMap mount is present and readable.
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "test -f {{ .Values.configMountPath }}/config.json"]
+            initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "test -f {{ .Values.configMountPath }}/config.json"]
+            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+          {{- end }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            # WHOLE volume, never subPath — subPath mounts never receive the kubelet
+            # ..data swap, so hot-reload would be silently dead (FR-CFG-3).
+            - name: ggcommons-config
+              mountPath: {{ .Values.configMountPath }}
+              readOnly: true
+            # Writable scratch for the log metric target (read-only root FS).
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: ggcommons-config
+          configMap:
+            name: {{ include "ggcommons.configMapName" . }}
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

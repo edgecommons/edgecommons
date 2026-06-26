@@ -34,6 +34,32 @@ class ConfigProviderBuilderTest {
     }
 
     @Test
+    void buildConfigMapProvider() {
+        ConfigProvider provider = ConfigProviderBuilder.build(
+                null, "com.test.Comp", "thing", new String[]{"CONFIGMAP", "/etc/ggcommons", "config.json"}, null);
+        try {
+            assertNotNull(provider);
+            assertTrue(provider.getConfigSource().contains("ConfigMap"));
+            assertTrue(provider.getConfigSource().contains("ggcommons"));
+        } finally {
+            provider.close();
+        }
+    }
+
+    @Test
+    void buildConfigMapProviderUsesDefaults() {
+        // No mount dir / key -> provider applies /etc/ggcommons + config.json defaults.
+        ConfigProvider provider = ConfigProviderBuilder.build(
+                null, "com.test.Comp", "thing", new String[]{"CONFIGMAP"}, null);
+        try {
+            assertNotNull(provider);
+            assertTrue(provider.getConfigSource().contains("config.json"));
+        } finally {
+            provider.close();
+        }
+    }
+
+    @Test
     void buildEnvProvider() {
         ConfigProvider provider = ConfigProviderBuilder.build(
                 null, "com.test.Comp", "thing", new String[]{"ENV", "MY_CONFIG_VAR"}, null);

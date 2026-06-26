@@ -1,0 +1,61 @@
+# In-cluster EMQX MQTT broker for the ggcommons Phase-1a smoke test.
+#
+# The in-cluster realization of test-infra/compose.yaml's EMQX (DESIGN-subsystems §2,
+# DESIGN-packaging §10). Components reach it by the Service DNS name `ggcommons-emqx`
+# (FQDN: ggcommons-emqx.<namespace>.svc.cluster.local) on plaintext port 1883.
+#
+# Apply into the same namespace as the component release, e.g.:
+#   kubectl apply -n ggcommons -f test-infra/k8s/emqx.yaml
+#   kubectl -n ggcommons rollout status deploy/ggcommons-emqx
+#
+# Plaintext 1883 only — sufficient for the local-broker smoke test. Mutual-TLS (8883)
+# is exercised by the existing test-infra/compose.yaml harness, not needed here.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ggcommons-emqx
+  labels:
+    app: ggcommons-emqx
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ggcommons-emqx
+  template:
+    metadata:
+      labels:
+        app: ggcommons-emqx
+    spec:
+      containers:
+        - name: emqx
+          image: emqx/emqx:latest
+          ports:
+            - { name: mqtt, containerPort: 1883 }
+            - { name: dashboard, containerPort: 18083 }
+          env:
+            # Allow anonymous connections (no auth) — matches the local compose broker.
+            - { name: EMQX_ALLOW_ANONYMOUS, value: "true" }
+          readinessProbe:
+            tcpSocket: { port: 1883 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket: { port: 1883 }
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits:   { cpu: "1",  memory: 512Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ggcommons-emqx
+  labels:
+    app: ggcommons-emqx
+spec:
+  type: ClusterIP
+  selector:
+    app: ggcommons-emqx
+  ports:
+    - { name: mqtt, port: 1883, targetPort: 1883, protocol: TCP }

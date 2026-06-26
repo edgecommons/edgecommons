@@ -13,11 +13,18 @@ All functions are pure (no I/O beyond the explicitly-injected filesystem probe
 used for Kubernetes detection), which keeps the resolver and detector
 unit-testable in isolation.
 
-**Phase 0:** only :attr:`~ggcommons.platform.platform.Platform.GREENGRASS` and
-:attr:`~ggcommons.platform.platform.Platform.HOST` have profiles, and both
-default their config source to ``GG_CONFIG`` (a faithful re-expression of
-today's behavior — HOST does *not* flip to ``FILE`` until Phase 1). Resolving to
-:attr:`~ggcommons.platform.platform.Platform.KUBERNETES` fails fast.
+**Phase 0:** :attr:`~ggcommons.platform.platform.Platform.GREENGRASS` and
+:attr:`~ggcommons.platform.platform.Platform.HOST` both default their config
+source to ``GG_CONFIG`` (a faithful re-expression of today's behavior — HOST
+does *not* flip to ``FILE`` until Phase 1).
+
+**Phase 1a:** :attr:`~ggcommons.platform.platform.Platform.KUBERNETES` now has a
+profile (transport ``MQTT``, config source ``CONFIGMAP``) and resolves cleanly —
+a service-account-token pod auto-detects to it. The IPC x KUBERNETES rejection
+still holds (the IPC lock). Identity for KUBERNETES still uses the Phase-0
+:func:`resolve_identity` env probe; the Downward-API identity, the ``prometheus``
+metrics target, stdout-JSON logging and the HTTP health endpoint are deferred to
+later Phase-1 sub-phases.
 """
 
 import logging
@@ -60,12 +67,17 @@ class PlatformProfile:
     config_source: str
 
 
-#: The platform-profile table (DESIGN-core sec 3). Phase 0 populates only GREENGRASS and HOST;
-#: both deliberately default the config source to ``GG_CONFIG`` to preserve current behavior.
-#: KUBERNETES is intentionally absent (declared enum value, no profile yet).
+#: The platform-profile table (DESIGN-core sec 3). GREENGRASS and HOST deliberately default the
+#: config source to ``GG_CONFIG`` to preserve current behavior. KUBERNETES (Phase 1a) defaults to the
+#: ``MQTT`` transport and the k8s-native ``CONFIGMAP`` config source.
+#:
+#: TODO (Phase 1b-1d): the KUBERNETES profile's metrics/logging/credentials/streaming/identity
+#: defaults (prometheus target, stdout-JSON sink, env KeyProvider, PVC buffer, Downward-API identity)
+#: are not yet modeled here — for Phase 1a those subsystems keep their current library defaults.
 PROFILES: Mapping[Platform, PlatformProfile] = {
     Platform.GREENGRASS: PlatformProfile(Transport.IPC, "GG_CONFIG"),
     Platform.HOST: PlatformProfile(Transport.MQTT, "GG_CONFIG"),
+    Platform.KUBERNETES: PlatformProfile(Transport.MQTT, "CONFIGMAP"),
 }
 
 
@@ -206,8 +218,8 @@ def resolve_profile(
         The fully resolved profile.
 
     Raises:
-        ValueError: if the resolved platform has no Phase-0 profile (KUBERNETES),
-            or the platform/transport combination is illegal (IPC lock).
+        ValueError: if the resolved platform has no profile in this build, or the
+            platform/transport combination is illegal (IPC lock).
     """
     auto_detected = inputs.platform is None
     platform = detect_platform(env) if auto_detected else inputs.platform
@@ -215,9 +227,10 @@ def resolve_profile(
 
     profile = PROFILES.get(platform)
     if profile is None:
+        valid = ", ".join(sorted(p.value for p in PROFILES))
         raise ValueError(
             f"Platform {platform.value} is not supported in this build (no profile). "
-            "Valid platforms: GREENGRASS, HOST. (KUBERNETES ships in Phase 1.)"
+            f"Valid platforms: {valid}."
         )
 
     transport = inputs.transport if inputs.transport is not None else profile.transport
