@@ -136,6 +136,50 @@ mod tests {
     }
 
     #[test]
+    fn accepts_kubernetes_service_dns_host() {
+        // FR-MSG-2: a k8s Service DNS name is an opaque host string — no special handling, no
+        // insecure behavior. It flows through verbatim as the broker host.
+        let json = r#"{ "messaging": { "local": {
+            "host": "emqx.mqtt.svc.cluster.local", "port": 1883, "clientId": "c" } } }"#;
+        let mc: MessagingConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            mc.messaging.local.resolved_host().unwrap(),
+            "emqx.mqtt.svc.cluster.local"
+        );
+        assert_eq!(mc.messaging.local.port, 1883);
+    }
+
+    #[test]
+    fn single_broker_topology_when_iotcore_absent() {
+        // FR-MSG-3: no `iotCore` section => single-broker (local only / air-gapped).
+        let json = r#"{ "messaging": { "local": {
+            "host": "emqx.mqtt.svc.cluster.local", "port": 1883, "clientId": "c" } } }"#;
+        let mc: MessagingConfig = serde_json::from_str(json).unwrap();
+        assert!(
+            mc.messaging.iot_core.is_none(),
+            "absent iotCore => single-broker topology"
+        );
+    }
+
+    #[test]
+    fn dual_broker_topology_when_iotcore_present() {
+        // FR-MSG-3: an `iotCore` section => dual-MQTT (local broker + AWS IoT Core).
+        let json = r#"{ "messaging": {
+            "local": { "host": "emqx.mqtt.svc.cluster.local", "port": 1883, "clientId": "l" },
+            "iotCore": { "endpoint": "x.iot.amazonaws.com", "port": 8883, "clientId": "i",
+                         "credentials": { "certPath": "c.pem", "keyPath": "k.pem", "caPath": "ca.pem" } } } }"#;
+        let mc: MessagingConfig = serde_json::from_str(json).unwrap();
+        assert!(
+            mc.messaging.iot_core.is_some(),
+            "present iotCore => dual-broker topology"
+        );
+        assert_eq!(
+            mc.messaging.iot_core.unwrap().resolved_host().unwrap(),
+            "x.iot.amazonaws.com"
+        );
+    }
+
+    #[test]
     fn parses_iotcore_endpoint_alias() {
         let json = r#"{ "messaging": {
             "local": { "host": "localhost", "port": 1883, "clientId": "l" },

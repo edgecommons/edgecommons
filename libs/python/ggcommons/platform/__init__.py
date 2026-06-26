@@ -13,7 +13,9 @@ from ggcommons.platform.resolver import (
     DEFAULT_IDENTITY,
     ENV_GG_IPC_SOCKET,
     ENV_GG_SVCUID,
+    ENV_K8S_POD_NAME,
     ENV_K8S_SERVICE_HOST,
+    ENV_K8S_THING_NAME,
     ENV_THING_NAME,
     K8S_SA_TOKEN_PATH,
     PROFILES,
@@ -42,5 +44,7 @@ __all__ = [
     "ENV_GG_SVCUID",
     "ENV_THING_NAME",
     "ENV_K8S_SERVICE_HOST",
+    "ENV_K8S_THING_NAME",
+    "ENV_K8S_POD_NAME",
     "K8S_SA_TOKEN_PATH",
 ]

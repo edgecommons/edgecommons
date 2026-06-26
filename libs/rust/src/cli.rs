@@ -79,7 +79,10 @@ pub struct ParsedArgs {
     pub thing: Option<String>,
     /// The resolved IoT Thing name / identity (explicit `-t` ▸ env probe ▸ library fallback).
     pub identity: String,
-    /// The MQTT messaging-config file path (the `--transport MQTT <path>` payload), if any.
+    /// The MQTT messaging-config file path. Either the explicit `--transport MQTT <path>`
+    /// payload, or — under CONFIGMAP + MQTT with no explicit path (FR-MSG-1) — the resolved
+    /// ConfigMap file (mount dir + key), so a single mounted `config.json` carrying a
+    /// `.messaging` section doubles as the messaging config and the component config.
     pub messaging_config_path: Option<PathBuf>,
 }
 
@@ -210,6 +213,20 @@ where
 
     let config = parse_config_source(&resolved.config_source)?;
 
+    // FR-MSG-1: under CONFIGMAP + MQTT with no explicit `--transport MQTT <path>`, the single
+    // mounted ConfigMap file doubles as the messaging config (it carries a `.messaging` section)
+    // and the component config. Default the messaging-config path to the resolved ConfigMap file
+    // (mount dir + key; default `/etc/ggcommons/config.json`) so messaging init gets `Some(path)`
+    // without a positional path. Computed from parse-time inputs only (the resolved transport +
+    // config source) — never by reading the ConfigMap via the config source first (that runs after
+    // messaging init). The explicit-path behavior is unchanged; HOST is unaffected (it defaults to
+    // GG_CONFIG, not CONFIGMAP, so no default is synthesized and MQTT still requires a path).
+    let messaging_config_path = default_messaging_config_path(
+        messaging_config_path,
+        resolved.transport,
+        &config,
+    );
+
     Ok(ParsedArgs {
         platform: resolved.platform,
         transport: resolved.transport,
@@ -218,6 +235,28 @@ where
         identity: resolved.identity,
         messaging_config_path,
     })
+}
+
+/// Apply the FR-MSG-1 default: when no explicit MQTT messaging-config path was given, the
+/// transport is MQTT, and the resolved config source is CONFIGMAP, default the path to the
+/// resolved ConfigMap file (the same mount dir + key the CONFIGMAP source resolves from).
+/// Otherwise the explicit value (or `None`) passes through unchanged.
+fn default_messaging_config_path(
+    explicit: Option<PathBuf>,
+    transport: Transport,
+    config: &ConfigSourceSpec,
+) -> Option<PathBuf> {
+    use crate::config::source::configmap::{DEFAULT_KEY, DEFAULT_MOUNT_DIR};
+    match (explicit, transport, config) {
+        (None, Transport::Mqtt, ConfigSourceSpec::ConfigMap { mount_dir, key }) => {
+            let dir = mount_dir
+                .clone()
+                .unwrap_or_else(|| PathBuf::from(DEFAULT_MOUNT_DIR));
+            let file = key.clone().unwrap_or_else(|| DEFAULT_KEY.to_string());
+            Some(dir.join(file))
+        }
+        (explicit, _, _) => explicit,
+    }
 }
 
 /// Rejects the removed `-m`/`--mode` flag with guidance to the new axes (DESIGN-core §6.1).
@@ -318,6 +357,70 @@ mod tests {
         let a = parse(&["--platform", "HOST", "--transport", "MQTT", "msg.json"]).unwrap();
         assert_eq!(a.transport, Transport::Mqtt);
         assert_eq!(a.messaging_config_path, Some(PathBuf::from("msg.json")));
+    }
+
+    // ---------- FR-MSG-1: default messaging-config path from CONFIGMAP ----------
+
+    #[test]
+    fn configmap_mqtt_defaults_messaging_path_to_configmap_file() {
+        // KUBERNETES defaults to CONFIGMAP + MQTT; with no positional `--transport MQTT <path>`
+        // the messaging-config path defaults to the resolved ConfigMap file (/etc/ggcommons/config.json).
+        let a = parse(&["--platform", "KUBERNETES"]).unwrap();
+        assert_eq!(a.transport, Transport::Mqtt);
+        assert_eq!(a.config, ConfigSourceSpec::ConfigMap { mount_dir: None, key: None });
+        assert_eq!(
+            a.messaging_config_path,
+            Some(PathBuf::from("/etc/ggcommons").join("config.json"))
+        );
+    }
+
+    #[test]
+    fn configmap_mqtt_default_path_uses_custom_dir_and_key() {
+        // The default tracks the SAME (dir, key) the CONFIGMAP source resolved from `-c CONFIGMAP`.
+        let a = parse(&["--platform", "KUBERNETES", "-c", "CONFIGMAP", "/mnt/cfg", "app.json"]).unwrap();
+        assert_eq!(
+            a.messaging_config_path,
+            Some(PathBuf::from("/mnt/cfg").join("app.json"))
+        );
+    }
+
+    #[test]
+    fn configmap_mqtt_no_explicit_path_needed() {
+        // The point of FR-MSG-1: parsing succeeds under CONFIGMAP+MQTT with NO positional path,
+        // and a path is nonetheless available for messaging init.
+        let a = parse(&["--platform", "KUBERNETES"]).unwrap();
+        assert!(a.messaging_config_path.is_some());
+    }
+
+    #[test]
+    fn configmap_mqtt_explicit_path_still_wins() {
+        // The old explicit-path behavior is unchanged: an explicit `--transport MQTT <path>`
+        // overrides the CONFIGMAP default.
+        let a = parse(&[
+            "--platform", "KUBERNETES", "--transport", "MQTT", "explicit.json",
+        ])
+        .unwrap();
+        assert_eq!(a.messaging_config_path, Some(PathBuf::from("explicit.json")));
+    }
+
+    #[test]
+    fn host_mqtt_does_not_synthesize_a_messaging_path() {
+        // HOST defaults to GG_CONFIG (not CONFIGMAP), so no default messaging path is synthesized;
+        // HOST+MQTT still requires an explicit path (enforced later, at messaging init).
+        let a = parse(&["--platform", "HOST"]).unwrap();
+        assert_eq!(a.transport, Transport::Mqtt);
+        assert_eq!(a.messaging_config_path, None);
+    }
+
+    #[test]
+    fn file_source_mqtt_does_not_synthesize_a_messaging_path() {
+        // Only CONFIGMAP triggers the default; an explicit FILE source under MQTT does not.
+        let a = parse(&["--platform", "HOST", "--transport", "MQTT", "-c", "FILE", "config.json"]);
+        // Note: order — the positional path is consumed by --transport; here we give none, so
+        // FILE has its own path and messaging stays None.
+        let a = a.unwrap();
+        assert_eq!(a.config, ConfigSourceSpec::File { path: PathBuf::from("config.json") });
+        assert_eq!(a.messaging_config_path, None);
     }
 
     #[test]

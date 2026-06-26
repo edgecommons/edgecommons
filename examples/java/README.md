@@ -85,6 +85,14 @@ For non-Greengrass deployments, create a messaging configuration file:
 - Managed by Greengrass runtime
 
 ### Kubernetes
+
+On the `KUBERNETES` platform the transport defaults to `MQTT` and the config source to `CONFIGMAP`
+(mount dir `/etc/ggcommons`, key `config.json`). A single mounted ConfigMap file then doubles as
+**both** the messaging config (its `messaging` section) **and** the component config — so you pass
+**no** positional `--transport MQTT <path>` and **no** `-c` flag. Identity comes from the Downward
+API: set `GGCOMMONS_THING_NAME` (from the `ggcommons.io/thing-name` pod annotation or an explicit
+value) or fall back to `POD_NAME` (`metadata.name`).
+
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
@@ -103,19 +111,30 @@ spec:
       containers:
       - name: component
         image: java-component-skeleton:latest
-        args: ["--platform", "HOST", "--transport", "MQTT", "/config/messaging.json", "-c", "FILE", "/config/config.json", "-t", "my-thing"]
+        # KUBERNETES => MQTT + CONFIGMAP by default; the messaging-config path defaults to the
+        # mounted ConfigMap file (/etc/ggcommons/config.json), so no positional path is needed.
+        args: ["--platform", "KUBERNETES"]
+        env:
+        - name: GGCOMMONS_THING_NAME           # identity from the Downward API (FR-RT-7)
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.annotations['ggcommons.io/thing-name']
+        - name: POD_NAME                        # fallback identity
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
         volumeMounts:
         - name: config
-          mountPath: /config
+          mountPath: /etc/ggcommons             # ConfigMap mounted as a whole volume (NOT subPath)
         - name: certs
           mountPath: /certs
       volumes:
       - name: config
         configMap:
-          name: component-config
+          name: component-config                # must contain a 'config.json' key
       - name: certs
         secret:
-          name: iot-certificates
+          name: iot-certificates                # only needed for the dual-MQTT (IoT Core) topology
 ```
 
 ### Docker

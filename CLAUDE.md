@@ -48,8 +48,12 @@ exists to abstract these differences away so the same business logic runs everyw
   provider that connects simultaneously to a local broker and to AWS IoT Core. The MQTT broker/TLS
   config is supplied either as the `--transport MQTT <messaging_config.json>` payload or via the
   active config source (`-c`).
-- **KUBERNETES** (`--platform KUBERNETES`): enum value declared in Phase 0 but not yet wired — the
-  Kubernetes profile and its native facilities land in Phase 1.
+- **KUBERNETES** (`--platform KUBERNETES`): defaults to `--transport MQTT` and the `CONFIGMAP` config
+  source (reads the component config from a mounted ConfigMap directory, with `..data`-swap hot-reload).
+  The MQTT broker config is sourced from that same ConfigMap (no positional `--transport MQTT <path>`
+  needed), and identity resolves from the Downward API (`GGCOMMONS_THING_NAME` ▸ `POD_NAME`) when
+  `-t/--thing` is absent. Phase 1a/1b shipped; the remaining k8s-native facilities (prometheus metrics,
+  stdout-JSON logging, HTTP health endpoint, PVC streaming, `env` KeyProvider) land in Phase 1c/1d.
 - **`auto`** (the default): the platform is auto-detected from the environment (Nucleus signals →
   k8s service-account token → HOST fallback); always overridable by an explicit `--platform`.
 

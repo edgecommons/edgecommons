@@ -18,23 +18,31 @@ image:
 command: []
 
 # -- Component args. Platform would also auto-detect to KUBERNETES (from the projected
-# ServiceAccount token); we pass it explicitly for clarity. KUBERNETES derives
-# transport=MQTT, and the StandaloneProvider needs its broker config at messaging-init
-# time — which runs BEFORE config load — so we MUST pass --transport MQTT <messaging-config>.
-# config.json carries an injected `messaging.local` block (see configmap.yaml) pointing at
-# the in-cluster broker, so it doubles as the messaging-config file. -c CONFIGMAP (also the
-# KUBERNETES profile default) reads the component config from the mounted ConfigMap directory.
-#   --transport MQTT <messaging-config-file>  ;  -c CONFIGMAP <mountDir> <key>
+# ServiceAccount token); we pass it explicitly for clarity. The KUBERNETES profile derives
+# transport=MQTT, so --transport is omitted. Phase 1b (FR-MSG-1): with the CONFIGMAP source +
+# MQTT, the messaging-config path now DEFAULTS to the mounted ConfigMap file (mountDir/key) — no
+# positional `--transport MQTT <path>` is needed. config.json carries an injected `messaging.local`
+# block (see configmap.yaml) pointing at the in-cluster broker, so it doubles as the messaging-config
+# file. No -t/--thing is passed, so identity comes from the Downward-API env (FR-RT-7): POD_NAME
+# (or GGCOMMONS_THING_NAME if `thingName` is set below).
+#   -c CONFIGMAP <mountDir> <key>
 args:
   - "--platform"
   - "KUBERNETES"
-  - "--transport"
-  - "MQTT"
-  - "/etc/ggcommons/config.json"
   - "-c"
   - "CONFIGMAP"
   - "/etc/ggcommons"
   - "config.json"
+
+# -- Component identity (thing name). When set, the chart exposes it as the GGCOMMONS_THING_NAME
+# Downward-API env var (the highest of the KUBERNETES identity tier; conceptually the
+# `ggcommons.io/thing-name` annotation). Leave empty to let identity fall through to POD_NAME
+# (the pod's metadata.name) — which is what the smoke test asserts (FR-RT-7).
+thingName: ""
+
+# -- Extra environment variables appended verbatim to the container (e.g. additional
+# Downward-API fieldRefs or AWS_REGION). Each item is a standard corev1.EnvVar.
+extraEnv: []
 
 # -- Directory the ConfigMap volume is mounted at. MUST match the CONFIGMAP source
 # mount dir above. Mounted as a WHOLE VOLUME (never subPath) so the kubelet's atomic

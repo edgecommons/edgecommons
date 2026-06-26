@@ -4,8 +4,10 @@
  */
 package com.breissinger.ggcommons.platform;
 
+import com.breissinger.ggcommons.config.ConfigManager;
 import org.junit.jupiter.api.Test;
 
+import java.nio.file.Path;
 import java.util.Map;
 import java.util.function.Predicate;
 
@@ -229,6 +231,175 @@ class PlatformResolverTest {
     void resolveIdentityHandlesNullEnv() {
         assertEquals(PlatformResolver.DEFAULT_IDENTITY,
                 PlatformResolver.resolveIdentity(null, Platform.HOST, null));
+    }
+
+    // ---------- resolveIdentity: KUBERNETES Downward-API tier (FR-RT-7) ----------
+
+    @Test
+    void k8sIdentityFromGgcommonsThingNameEnv() {
+        // GGCOMMONS_THING_NAME (the chart-mapped annotation) is the top of the KUBERNETES tier.
+        assertEquals("annotated-thing", PlatformResolver.resolveIdentity(
+                null, Platform.KUBERNETES, Map.of(PlatformResolver.ENV_K8S_THING_NAME, "annotated-thing")));
+    }
+
+    @Test
+    void k8sIdentityFromPodNameWhenNoAnnotation() {
+        // With no GGCOMMONS_THING_NAME, the Downward-API POD_NAME (metadata.name) is used.
+        assertEquals("my-pod-abc123", PlatformResolver.resolveIdentity(
+                null, Platform.KUBERNETES, Map.of(PlatformResolver.ENV_K8S_POD_NAME, "my-pod-abc123")));
+    }
+
+    @Test
+    void k8sAnnotationPrecedesPodName() {
+        assertEquals("annotated", PlatformResolver.resolveIdentity(null, Platform.KUBERNETES, Map.of(
+                PlatformResolver.ENV_K8S_THING_NAME, "annotated",
+                PlatformResolver.ENV_K8S_POD_NAME, "pod-xyz")));
+    }
+
+    @Test
+    void k8sTierPrecedesAwsIotThingNameOnKubernetes() {
+        // On KUBERNETES the Downward-API tier wins over the generic AWS_IOT_THING_NAME probe.
+        assertEquals("pod-1", PlatformResolver.resolveIdentity(null, Platform.KUBERNETES, Map.of(
+                PlatformResolver.ENV_K8S_POD_NAME, "pod-1",
+                PlatformResolver.ENV_THING_NAME, "iot-thing")));
+    }
+
+    @Test
+    void k8sTierIsIgnoredOnNonKubernetesPlatforms() {
+        // The k8s env vars must NOT affect identity on HOST/GREENGRASS — the generic probe wins.
+        Map<String, String> env = Map.of(
+                PlatformResolver.ENV_K8S_THING_NAME, "annotated",
+                PlatformResolver.ENV_K8S_POD_NAME, "pod-1",
+                PlatformResolver.ENV_THING_NAME, "iot-thing");
+        assertEquals("iot-thing", PlatformResolver.resolveIdentity(null, Platform.HOST, env));
+        assertEquals("iot-thing", PlatformResolver.resolveIdentity(null, Platform.GREENGRASS, env));
+    }
+
+    @Test
+    void k8sFallsThroughToGenericProbeWhenTierAbsent() {
+        // No GGCOMMONS_THING_NAME / POD_NAME on k8s -> the generic AWS_IOT_THING_NAME probe applies.
+        assertEquals("iot-thing", PlatformResolver.resolveIdentity(
+                null, Platform.KUBERNETES, Map.of(PlatformResolver.ENV_THING_NAME, "iot-thing")));
+    }
+
+    @Test
+    void k8sTreatsEmptyTierValuesAsAbsent() {
+        // Empty GGCOMMONS_THING_NAME and POD_NAME are ignored; falls through to the default.
+        Map<String, String> env = Map.of(
+                PlatformResolver.ENV_K8S_THING_NAME, "",
+                PlatformResolver.ENV_K8S_POD_NAME, "");
+        assertEquals(PlatformResolver.DEFAULT_IDENTITY,
+                PlatformResolver.resolveIdentity(null, Platform.KUBERNETES, env));
+    }
+
+    @Test
+    void explicitThingOverridesK8sTier() {
+        // -t/--thing is the highest precedence even on KUBERNETES.
+        assertEquals("explicit", PlatformResolver.resolveIdentity("explicit", Platform.KUBERNETES, Map.of(
+                PlatformResolver.ENV_K8S_THING_NAME, "annotated",
+                PlatformResolver.ENV_K8S_POD_NAME, "pod-1")));
+    }
+
+    @Test
+    void resolvedK8sIdentityIsRawAndSanitizedWhenInterpolated() {
+        // FR-RT-7: the resolver returns the raw value (no mangling), but a hostile pod name MUST still
+        // pass the existing template-variable sanitization wherever it is interpolated into a path/topic
+        // (no path traversal, no MQTT wildcards). Mirrors the Rust/TS parity test.
+        String identity = PlatformResolver.resolveIdentity(
+                null, Platform.KUBERNETES, Map.of(PlatformResolver.ENV_K8S_POD_NAME, "../../etc/passwd"));
+        assertEquals("../../etc/passwd", identity, "resolver returns the raw value");
+
+        // Downstream: the identity is sanitized by ConfigManager.resolveTemplate when interpolated.
+        ConfigManager cm = new ConfigManager() {
+            @Override
+            public String getThingName() {
+                return identity;
+            }
+        };
+        assertEquals("/logs/____etc_passwd.log", cm.resolveTemplate("/logs/{ThingName}.log"));
+    }
+
+    // ---------- resolveMessagingConfigPath (FR-MSG-1) ----------
+
+    @Test
+    void messagingPathExplicitAlwaysWins() {
+        // An explicit --transport MQTT <path> is honored unchanged, even under CONFIGMAP+MQTT.
+        assertEquals("/custom/msg.json", PlatformResolver.resolveMessagingConfigPath(
+                "/custom/msg.json", Transport.MQTT, new String[]{"CONFIGMAP"}));
+    }
+
+    @Test
+    void messagingPathDefaultsToConfigMapFileUnderConfigMapMqtt() {
+        // No explicit path + MQTT + CONFIGMAP -> the resolved ConfigMap file (default dir/key).
+        assertEquals(Path.of(PlatformResolver.CONFIGMAP_DEFAULT_MOUNT_DIR)
+                        .resolve(PlatformResolver.CONFIGMAP_DEFAULT_KEY).toString(),
+                PlatformResolver.resolveMessagingConfigPath(null, Transport.MQTT, new String[]{"CONFIGMAP"}));
+    }
+
+    @Test
+    void messagingPathUsesCustomConfigMapDirAndKey() {
+        assertEquals(Path.of("/mnt/cfg").resolve("app.json").toString(),
+                PlatformResolver.resolveMessagingConfigPath(
+                        null, Transport.MQTT, new String[]{"CONFIGMAP", "/mnt/cfg", "app.json"}));
+    }
+
+    @Test
+    void messagingPathUsesCustomConfigMapDirWithDefaultKey() {
+        assertEquals(Path.of("/mnt/cfg").resolve(PlatformResolver.CONFIGMAP_DEFAULT_KEY).toString(),
+                PlatformResolver.resolveMessagingConfigPath(
+                        null, Transport.MQTT, new String[]{"CONFIGMAP", "/mnt/cfg"}));
+    }
+
+    @Test
+    void messagingPathConfigMapTokenIsCaseInsensitive() {
+        assertEquals(Path.of(PlatformResolver.CONFIGMAP_DEFAULT_MOUNT_DIR)
+                        .resolve(PlatformResolver.CONFIGMAP_DEFAULT_KEY).toString(),
+                PlatformResolver.resolveMessagingConfigPath(null, Transport.MQTT, new String[]{"configmap"}));
+    }
+
+    @Test
+    void messagingPathNullForMqttWithNonConfigMapSource() {
+        // HOST defaults to GG_CONFIG (not CONFIGMAP) -> no default synthesized; MQTT still needs a path.
+        assertNull(PlatformResolver.resolveMessagingConfigPath(null, Transport.MQTT, new String[]{"GG_CONFIG"}));
+        assertNull(PlatformResolver.resolveMessagingConfigPath(null, Transport.MQTT, new String[]{"FILE", "c.json"}));
+    }
+
+    @Test
+    void messagingPathNullForNonMqttTransport() {
+        // IPC never carries a messaging-config path, even with a CONFIGMAP source.
+        assertNull(PlatformResolver.resolveMessagingConfigPath(null, Transport.IPC, new String[]{"CONFIGMAP"}));
+    }
+
+    @Test
+    void messagingPathNullForEmptyConfigSource() {
+        assertNull(PlatformResolver.resolveMessagingConfigPath(null, Transport.MQTT, new String[]{}));
+        assertNull(PlatformResolver.resolveMessagingConfigPath(null, Transport.MQTT, null));
+    }
+
+    // ---------- resolveProfile: messaging-config path end-to-end (FR-MSG-1) ----------
+
+    @Test
+    void resolveKubernetesDefaultsMessagingPathToConfigMapFile() {
+        var inputs = new PlatformResolver.ResolverInputs(Platform.KUBERNETES, null, null, null);
+        ResolvedProfile r = PlatformResolver.resolveProfile(inputs, Map.of());
+        assertEquals(Path.of(PlatformResolver.CONFIGMAP_DEFAULT_MOUNT_DIR)
+                .resolve(PlatformResolver.CONFIGMAP_DEFAULT_KEY).toString(), r.messagingConfigPath());
+    }
+
+    @Test
+    void resolveKubernetesHonorsExplicitMessagingPath() {
+        var inputs = new PlatformResolver.ResolverInputs(
+                Platform.KUBERNETES, Transport.MQTT, null, null, "/explicit/msg.json");
+        ResolvedProfile r = PlatformResolver.resolveProfile(inputs, Map.of());
+        assertEquals("/explicit/msg.json", r.messagingConfigPath());
+    }
+
+    @Test
+    void resolveHostLeavesMessagingPathNullWhenAbsent() {
+        // HOST+MQTT with no explicit path -> null (HOST still requires an explicit path; FR-MSG-1).
+        var inputs = new PlatformResolver.ResolverInputs(Platform.HOST, null, null, null);
+        ResolvedProfile r = PlatformResolver.resolveProfile(inputs, Map.of());
+        assertNull(r.messagingConfigPath());
     }
 
     // ---------- profiles + enums ----------

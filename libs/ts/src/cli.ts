@@ -14,6 +14,8 @@
  * resolved axes plus the resolved config source and identity. Parse failures surface as {@link GgError}
  * of kind `Cli`.
  */
+import { join } from "path";
+
 import { GgError } from "./errors";
 import {
   Env,
@@ -22,6 +24,7 @@ import {
   Transport,
   resolveProfile,
 } from "./platform";
+import { ConfigMapConfigSource } from "./config/source/configmap";
 
 /** Configuration source selected by `-c/--config`. */
 export type ConfigSourceSpec =
@@ -102,11 +105,32 @@ export function parseArgs(argv: string[], env: Env = process.env): ParsedArgs {
     thing,
   };
   const resolved = resolveProfile(inputs, env);
+  const config = parseConfigSource(resolved.configSource);
+
+  // FR-MSG-1: under CONFIGMAP + MQTT with no explicit `--transport MQTT <path>`, default the
+  // messaging-config path to the resolved ConfigMap file (mount dir + key; default
+  // /etc/ggcommons/config.json — the SAME dir/key the CONFIGMAP config source resolves from
+  // `-c CONFIGMAP [dir] [key]` or its profile default). A single mounted ConfigMap file then carries
+  // BOTH the `messaging` section (read by the messaging loader at init) AND the component config
+  // (loaded + validated afterwards by the CONFIGMAP source). Resolved here from parse-time inputs
+  // only, before messaging init — we never read the ConfigMap via the config source first. HOST is
+  // unaffected: it defaults to GG_CONFIG (not CONFIGMAP), so HOST+MQTT still requires an explicit
+  // path. An explicit path is always honored unchanged (the `=== undefined` guard).
+  if (
+    resolved.transport === Transport.MQTT &&
+    config.kind === "CONFIGMAP" &&
+    messagingConfigPath === undefined
+  ) {
+    messagingConfigPath = join(
+      config.mountDir ?? ConfigMapConfigSource.DEFAULT_MOUNT_DIR,
+      config.key ?? ConfigMapConfigSource.DEFAULT_KEY,
+    );
+  }
 
   return {
     platform: resolved.platform,
     transport: resolved.transport,
-    config: parseConfigSource(resolved.configSource),
+    config,
     messagingConfigPath,
     thing: resolved.identity,
   };

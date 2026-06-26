@@ -279,6 +279,12 @@ public class App implements ConfigurationChangeListener
     public void run() {
         LOGGER.info("Starting component execution...");
 
+        // Log the resolved component identity (thing name) once at startup. On KUBERNETES this is the
+        // Downward-API value (GGCOMMONS_THING_NAME -> POD_NAME, FR-RT-7); elsewhere it is -t/--thing or
+        // AWS_IOT_THING_NAME. Logging it here (after logging is configured) makes the resolved identity
+        // observable in pod/container logs.
+        LOGGER.info("Component identity (thing name): {}", configService.getThingName());
+
         // Demonstrate encrypted-vault secret access once at startup (non-fatal).
         demonstrateCredentials(ggCommons);
 

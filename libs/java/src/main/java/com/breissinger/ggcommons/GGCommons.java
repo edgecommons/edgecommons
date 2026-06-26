@@ -394,10 +394,13 @@ public class GGCommons
             String[] configArgs = line.hasOption("c") ? line.getOptionValues("config") : null;
 
             Platform platformFlag = parsePlatform(line);
+            // parseTransport stashes the explicit --transport MQTT <path> payload on retVal; pass it
+            // to the resolver so it can apply the FR-MSG-1 CONFIGMAP default when it is absent.
             Transport transportFlag = parseTransport(line, retVal);
             String thingFlag = line.hasOption("t") ? line.getOptionValue("thing") : null;
 
-            inputs = new PlatformResolver.ResolverInputs(platformFlag, transportFlag, configArgs, thingFlag);
+            inputs = new PlatformResolver.ResolverInputs(
+                    platformFlag, transportFlag, configArgs, thingFlag, retVal.standaloneConfigPath);
         }
         catch (ParseException exp) {
             LOGGER.error("Unexpected exception parsing command line options: {}", exp.getMessage());
@@ -411,6 +414,10 @@ public class GGCommons
         retVal.transport = resolved.transport();
         retVal.configArgs = resolved.configSource();
         retVal.thingName = resolved.identity();
+        // FR-MSG-1: the resolved messaging-config path is the explicit --transport MQTT <path> when
+        // given, else (under CONFIGMAP+MQTT) the default ConfigMap file path; else null. Overwrites the
+        // explicit value parseTransport stashed (a no-op when it was the source of the resolved value).
+        retVal.standaloneConfigPath = resolved.messagingConfigPath();
 
         // Note: a missing MQTT messaging-config path is enforced when the MQTT provider is actually
         // built (MessagingClient), mirroring how the IPC provider only fails against a live Nucleus.

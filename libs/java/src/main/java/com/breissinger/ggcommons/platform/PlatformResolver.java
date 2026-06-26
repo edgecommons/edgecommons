@@ -31,9 +31,16 @@ import java.util.function.Predicate;
  *
  * <p><b>Phase 1a:</b> {@link Platform#KUBERNETES} now has a profile (transport {@code MQTT}, config
  * source {@code CONFIGMAP}) and resolves cleanly — a service-account-token pod auto-detects to it. The
- * IPC&times;KUBERNETES rejection still holds (the IPC lock). Identity for KUBERNETES still uses the
- * Phase-0 {@link #resolveIdentity} env probe; the Downward-API identity, the {@code prometheus} metrics
- * target, stdout-JSON logging, and the HTTP health endpoint are deferred to later Phase-1 sub-phases.
+ * IPC&times;KUBERNETES rejection still holds (the IPC lock).
+ *
+ * <p><b>Phase 1b:</b> two KUBERNETES-platform behaviors land here. (1) FR-MSG-1: under transport
+ * {@code MQTT} with the {@code CONFIGMAP} source and no explicit {@code --transport MQTT <path>}, the
+ * messaging-config path defaults to the resolved ConfigMap file (see
+ * {@link #resolveMessagingConfigPath}), so one mounted {@code config.json} carries both the
+ * {@code .messaging} section and the component config. (2) FR-RT-7: {@link #resolveIdentity} gains a
+ * KUBERNETES Downward-API tier ({@code GGCOMMONS_THING_NAME}, then {@code POD_NAME}) ahead of the
+ * generic {@code AWS_IOT_THING_NAME} probe. The {@code prometheus} metrics target, stdout-JSON logging,
+ * and the HTTP health endpoint are deferred to later Phase-1 sub-phases.
  */
 public final class PlatformResolver {
 
@@ -50,8 +57,34 @@ public final class PlatformResolver {
     /** Projected service-account token path: the primary, definitive Kubernetes signal. */
     public static final String K8S_SA_TOKEN_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/token";
 
+    /**
+     * KUBERNETES Downward-API identity env var (FR-RT-7): the Helm chart maps the
+     * {@code ggcommons.io/thing-name} pod annotation (or an explicit value) into this var. Highest of
+     * the KUBERNETES identity tier, ahead of {@link #ENV_K8S_POD_NAME}.
+     */
+    public static final String ENV_K8S_THING_NAME = "GGCOMMONS_THING_NAME";
+    /**
+     * KUBERNETES Downward-API pod name env var (FR-RT-7): {@code metadata.name} via a {@code fieldRef}.
+     * Used as the identity when {@link #ENV_K8S_THING_NAME} is absent.
+     */
+    public static final String ENV_K8S_POD_NAME = "POD_NAME";
+
     /** The library-default identity when no thing name is available (matches today's behavior). */
     public static final String DEFAULT_IDENTITY = "NOT_GREENGRASS";
+
+    /**
+     * The CONFIGMAP config-source token (the k8s-native source / the KUBERNETES profile default).
+     * Used to detect the CONFIGMAP source when defaulting the MQTT messaging-config path (FR-MSG-1).
+     */
+    public static final String CONFIGMAP_SOURCE = "CONFIGMAP";
+    /**
+     * Default ConfigMap mount directory — the single source of truth shared with
+     * {@code ConfigMapConfigProvider} (FR-MSG-1 / FR-CFG-1). A pod with a ConfigMap mounted here loads
+     * {@code config.json} with no {@code -c} flag.
+     */
+    public static final String CONFIGMAP_DEFAULT_MOUNT_DIR = "/etc/ggcommons";
+    /** Default ConfigMap key (file name within the mount), shared with {@code ConfigMapConfigProvider}. */
+    public static final String CONFIGMAP_DEFAULT_KEY = "config.json";
 
     /**
      * The platform-profile table (DESIGN-core §3). GREENGRASS and HOST deliberately default the config
@@ -74,12 +107,22 @@ public final class PlatformResolver {
      * The parse-time inputs to the resolver. Any field may be {@code null}, meaning "not specified —
      * fall back to detection / the profile default".
      *
-     * @param platform   explicit {@code --platform} value, or {@code null} for {@code auto}
-     * @param transport  explicit {@code --transport} value, or {@code null} to derive from the platform
-     * @param configArgs explicit {@code -c/--config} vector, or {@code null} when {@code -c} is omitted
-     * @param thing      explicit {@code -t/--thing} value, or {@code null}
+     * @param platform            explicit {@code --platform} value, or {@code null} for {@code auto}
+     * @param transport           explicit {@code --transport} value, or {@code null} to derive from the platform
+     * @param configArgs          explicit {@code -c/--config} vector, or {@code null} when {@code -c} is omitted
+     * @param thing               explicit {@code -t/--thing} value, or {@code null}
+     * @param messagingConfigPath explicit {@code --transport MQTT <path>} payload, or {@code null}
+     *                            (the resolver may then synthesize the FR-MSG-1 CONFIGMAP default)
      */
-    public record ResolverInputs(Platform platform, Transport transport, String[] configArgs, String thing) {
+    public record ResolverInputs(Platform platform, Transport transport, String[] configArgs, String thing,
+                                 String messagingConfigPath) {
+        /**
+         * Convenience constructor for callers (and tests) that do not supply an explicit MQTT
+         * messaging-config path; equivalent to passing {@code null} for {@code messagingConfigPath}.
+         */
+        public ResolverInputs(Platform platform, Transport transport, String[] configArgs, String thing) {
+            this(platform, transport, configArgs, thing, null);
+        }
     }
 
     /**
@@ -111,10 +154,47 @@ public final class PlatformResolver {
 
         String identity = resolveIdentity(inputs.thing(), platform, env);
 
-        LOGGER.info("Resolved platform={} (basis={}) transport={} configSource={} identity={}",
-                platform, basis, transport, configSource[0], identity);
+        String messagingConfigPath = resolveMessagingConfigPath(
+                inputs.messagingConfigPath(), transport, configSource);
 
-        return new ResolvedProfile(platform, transport, configSource, identity);
+        LOGGER.info("Resolved platform={} (basis={}) transport={} configSource={} identity={} messagingConfigPath={}",
+                platform, basis, transport, configSource[0], identity, messagingConfigPath);
+
+        return new ResolvedProfile(platform, transport, configSource, identity, messagingConfigPath);
+    }
+
+    /**
+     * Resolves the MQTT messaging-config path (FR-MSG-1). The explicit {@code --transport MQTT <path>}
+     * payload always wins. Otherwise, <b>only</b> under transport {@code MQTT} <i>and</i> the
+     * {@code CONFIGMAP} config source, the path defaults to the resolved ConfigMap file — the same
+     * mount dir + key the CONFIGMAP source resolves from ({@code -c CONFIGMAP [dir] [key]} or the
+     * profile default {@value #CONFIGMAP_DEFAULT_MOUNT_DIR}/{@value #CONFIGMAP_DEFAULT_KEY}). The
+     * single mounted ConfigMap file then doubles as both the messaging config (its {@code .messaging}
+     * section) and the component config.
+     *
+     * <p>Computed from parse-time inputs only (the resolved transport + config source), <em>before</em>
+     * messaging init — the ConfigMap is never read via the config source first. HOST is unaffected (it
+     * defaults to {@code GG_CONFIG}, not {@code CONFIGMAP}, so HOST+MQTT still requires an explicit
+     * path).
+     *
+     * @param explicit     the explicit {@code --transport MQTT <path>} payload, or {@code null}
+     * @param transport    the resolved transport
+     * @param configSource the resolved config-source vector ({@code [SOURCE, args...]})
+     * @return the explicit path if present; else the CONFIGMAP default under MQTT+CONFIGMAP; else {@code null}
+     */
+    static String resolveMessagingConfigPath(String explicit, Transport transport, String[] configSource) {
+        if (explicit != null) {
+            return explicit;  // explicit path always wins (behavior unchanged)
+        }
+        if (transport == Transport.MQTT && configSource != null && configSource.length > 0
+                && CONFIGMAP_SOURCE.equalsIgnoreCase(configSource[0])) {
+            String mountDir = configSource.length > 1 ? configSource[1] : CONFIGMAP_DEFAULT_MOUNT_DIR;
+            String key = configSource.length > 2 ? configSource[2] : CONFIGMAP_DEFAULT_KEY;
+            // Resolve exactly as ConfigMapConfigProvider does (mountDir.resolve(key)) so this is
+            // literally the same file path the CONFIGMAP source will load the component config from.
+            return Path.of(mountDir).resolve(key).toString();
+        }
+        return null;
     }
 
     /**
@@ -166,13 +246,25 @@ public final class PlatformResolver {
     }
 
     /**
-     * Resolves the IoT Thing name / identity (DESIGN-core §6.2). Order: explicit {@code -t/--thing},
-     * then the {@code AWS_IOT_THING_NAME} env probe, then the library fallback. For Phase 0 the
-     * GREENGRASS and HOST platforms share the same probe, so behavior is unchanged; KUBERNETES
-     * Downward-API identity is Phase 1.
+     * Resolves the IoT Thing name / identity (DESIGN-core §6.2, FR-RT-7 / FR-CFG-6). Order:
+     * <ol>
+     *   <li>explicit {@code -t/--thing} (highest);</li>
+     *   <li><b>only when {@code platform == KUBERNETES}</b> the Downward-API env tier, in order:
+     *       {@link #ENV_K8S_THING_NAME} ({@code GGCOMMONS_THING_NAME}) then {@link #ENV_K8S_POD_NAME}
+     *       ({@code POD_NAME});</li>
+     *   <li>the generic {@code AWS_IOT_THING_NAME} probe (GREENGRASS / platform-supplied);</li>
+     *   <li>the library fallback {@link #DEFAULT_IDENTITY}.</li>
+     * </ol>
+     *
+     * <p>The KUBERNETES tier (2) takes precedence over the generic probe (3) <b>only</b> on the
+     * KUBERNETES platform; on every other platform behavior is unchanged (the {@code platform}
+     * argument is now load-bearing). Empty env values are treated as absent at every tier. The
+     * resolved value is not mangled here — it is sanitized later by template substitution
+     * ({@link com.breissinger.ggcommons.config.ConfigManager#resolveTemplate}) wherever it is
+     * interpolated into a path/topic.
      *
      * @param thing    the explicit thing name, or {@code null}
-     * @param platform the resolved platform (reserved for the Phase-1 Kubernetes branch)
+     * @param platform the resolved platform (selects the KUBERNETES Downward-API tier)
      * @param env      the process environment
      * @return the resolved identity, never {@code null}
      */
@@ -180,11 +272,33 @@ public final class PlatformResolver {
         if (thing != null) {
             return thing;
         }
-        String fromEnv = env == null ? null : env.get(ENV_THING_NAME);
-        if (fromEnv != null && !fromEnv.isEmpty()) {  // empty AWS_IOT_THING_NAME treated as absent
+        // KUBERNETES Downward-API identity tier — precedes the generic probe only on k8s.
+        if (platform == Platform.KUBERNETES) {
+            String fromAnnotation = nonEmpty(env, ENV_K8S_THING_NAME);
+            if (fromAnnotation != null) {
+                return fromAnnotation;
+            }
+            String fromPod = nonEmpty(env, ENV_K8S_POD_NAME);
+            if (fromPod != null) {
+                return fromPod;
+            }
+        }
+        String fromEnv = nonEmpty(env, ENV_THING_NAME);  // empty AWS_IOT_THING_NAME treated as absent
+        if (fromEnv != null) {
             return fromEnv;
         }
         return DEFAULT_IDENTITY;
+    }
+
+    /**
+     * Returns the env value for {@code key} if present and non-empty, else {@code null}.
+     */
+    private static String nonEmpty(Map<String, String> env, String key) {
+        if (env == null) {
+            return null;
+        }
+        String v = env.get(key);
+        return (v != null && !v.isEmpty()) ? v : null;
     }
 
     private static boolean isSet(Map<String, String> env, String key) {

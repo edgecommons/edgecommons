@@ -202,6 +202,13 @@ class GreengrassApp(ConfigurationChangeListener, ABC):
         return metric
 
     def run(self):
+        # Log the resolved component identity (thing name) once at startup. On KUBERNETES this is the
+        # Downward-API value (GGCOMMONS_THING_NAME ▸ POD_NAME, FR-RT-7); elsewhere it is -t/--thing or
+        # AWS_IOT_THING_NAME. Logging it here (after logging is configured) makes the resolved identity
+        # observable in pod/container logs.
+        logger.info(
+            f"Component identity (thing name): {self._config_manager.get_thing_name()}"
+        )
         i = 1
         try:
             measure_values = {}

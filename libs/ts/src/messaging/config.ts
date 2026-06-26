@@ -1,9 +1,15 @@
 /**
- * Messaging — STANDALONE dual-broker configuration.
+ * Messaging — MQTT-transport dual-broker configuration.
  *
- * Loaded from the `-m STANDALONE <path>` JSON file. `messaging.local` is required;
- * `messaging.iotCore` is optional (the AWS IoT Core leg, mutual-TLS). Shape matches
- * the Java/Python/Rust libraries:
+ * Loaded from the `--transport MQTT <path>` JSON file. On the `KUBERNETES` platform the path is
+ * optional: under `CONFIGMAP` + MQTT it defaults to the resolved ConfigMap file
+ * (`/etc/ggcommons/config.json` by default), so a single mounted ConfigMap file doubles as both this
+ * messaging-config (read via the `messaging` wrapper key below) and the component config (FR-MSG-1).
+ *
+ * `messaging.local` is required; `messaging.iotCore` is optional — its presence selects single-broker
+ * (air-gapped, local only) vs dual-MQTT (local + AWS IoT Core, mutual-TLS). The host is an opaque
+ * string, so a Kubernetes Service DNS name (e.g. `emqx.mqtt.svc.cluster.local`) works with no special
+ * handling (FR-MSG-2/3). Shape matches the Java/Python/Rust libraries:
  *
  * ```json
  * { "messaging": {
