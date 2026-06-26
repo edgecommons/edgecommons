@@ -38,6 +38,7 @@ async fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
         ConfigSourceSpec::Shadow { .. } => "SHADOW",
         ConfigSourceSpec::Greengrass { .. } => "GG_CONFIG",
         ConfigSourceSpec::File { .. } => "FILE",
+        ConfigSourceSpec::ConfigMap { .. } => "CONFIGMAP",
         ConfigSourceSpec::Env { .. } => "ENV",
         ConfigSourceSpec::ConfigComponent => "CONFIG_COMPONENT",
     };

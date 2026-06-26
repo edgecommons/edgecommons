@@ -51,6 +51,9 @@ use crate::platform::{self, Platform, ResolverInputs, Transport};
 pub enum ConfigSourceSpec {
     /// `FILE [path]` — JSON file (default `config.json`).
     File { path: PathBuf },
+    /// `CONFIGMAP [mountDir] [key]` — Kubernetes-native: a mounted ConfigMap directory
+    /// (defaults: dir `/etc/ggcommons`, key `config.json`). The default source on KUBERNETES.
+    ConfigMap { mount_dir: Option<PathBuf>, key: Option<String> },
     /// `ENV [var]` — JSON in an environment variable (default `CONFIG`).
     Env { var: String },
     /// `GG_CONFIG [component] [key]` — Greengrass deployment config (default key `ComponentConfig`).
@@ -96,7 +99,7 @@ pub fn command() -> Command {
                 .num_args(1..=3)
                 .value_parser(clap::value_parser!(String))
                 .value_name("SOURCE")
-                .help("Config source: FILE|ENV|GG_CONFIG|SHADOW|CONFIG_COMPONENT [args...] \
+                .help("Config source: FILE|CONFIGMAP|ENV|GG_CONFIG|SHADOW|CONFIG_COMPONENT [args...] \
                        (default: from the resolved platform profile)"),
         )
         .arg(
@@ -242,6 +245,12 @@ fn parse_config_source(args: &[String]) -> Result<ConfigSourceSpec> {
         "FILE" => ConfigSourceSpec::File {
             path: arg(1).map(PathBuf::from).unwrap_or_else(|| PathBuf::from(DEFAULT_CONFIG_FILE)),
         },
+        // -c CONFIGMAP [mountDir] [key]; defaults applied inside the source (/etc/ggcommons,
+        // config.json). The k8s-native source; the default on the KUBERNETES platform.
+        "CONFIGMAP" => ConfigSourceSpec::ConfigMap {
+            mount_dir: arg(1).map(PathBuf::from),
+            key: arg(2),
+        },
         "ENV" => ConfigSourceSpec::Env {
             var: arg(1).unwrap_or_else(|| DEFAULT_ENV_VAR.to_string()),
         },
@@ -317,8 +326,35 @@ mod tests {
     }
 
     #[test]
-    fn kubernetes_fails_fast_in_phase0() {
-        assert!(parse(&["--platform", "KUBERNETES"]).is_err());
+    fn kubernetes_resolves_to_mqtt_and_configmap() {
+        // Phase 1a: KUBERNETES resolves cleanly — MQTT transport + the CONFIGMAP default source.
+        let a = parse(&["--platform", "KUBERNETES"]).unwrap();
+        assert_eq!(a.platform, Platform::Kubernetes);
+        assert_eq!(a.transport, Transport::Mqtt);
+        assert_eq!(a.config, ConfigSourceSpec::ConfigMap { mount_dir: None, key: None });
+    }
+
+    #[test]
+    fn kubernetes_rejects_ipc_transport() {
+        // The IPC × KUBERNETES rejection is retained (only a Nucleus provides the IPC socket).
+        assert!(parse(&["--platform", "KUBERNETES", "--transport", "IPC"]).is_err());
+    }
+
+    #[test]
+    fn configmap_source_with_and_without_args() {
+        assert_eq!(
+            parse(&["--platform", "KUBERNETES", "-c", "CONFIGMAP"]).unwrap().config,
+            ConfigSourceSpec::ConfigMap { mount_dir: None, key: None }
+        );
+        assert_eq!(
+            parse(&["--platform", "KUBERNETES", "-c", "CONFIGMAP", "/mnt/cfg", "app.json"])
+                .unwrap()
+                .config,
+            ConfigSourceSpec::ConfigMap {
+                mount_dir: Some(PathBuf::from("/mnt/cfg")),
+                key: Some("app.json".into())
+            }
+        );
     }
 
     #[test]

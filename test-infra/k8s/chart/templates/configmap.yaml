@@ -1,0 +1,23 @@
+{{/*
+The component config (config.json), mounted as a DIRECTORY at .Values.configMountPath
+so the CONFIGMAP source watches the kubelet's ..data swap and hot-reloads (FR-CFG-1/2).
+We render .Values.config and inject the MQTT messaging block pointing at the in-cluster
+broker Service DNS. `component` is the only schema-required key.
+*/}}
+{{- $messaging := dict "local" (dict
+    "type" "mqtt"
+    "host" .Values.messaging.brokerHost
+    "port" (.Values.messaging.brokerPort | int)
+    "clientId" .Values.messaging.clientId) -}}
+{{- $config := merge (dict "messaging" $messaging) (deepCopy .Values.config) -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ggcommons.configMapName" . }}
+  labels:
+    {{- include "ggcommons.labels" . | nindent 4 }}
+data:
+  # The CONFIGMAP source reads this key (default key: config.json). Edit this value
+  # (kubectl patch / kubectl edit) to drive the ..data hot-reload test (see smoke.sh).
+  config.json: |-
+    {{- $config | toPrettyJson | nindent 4 }}

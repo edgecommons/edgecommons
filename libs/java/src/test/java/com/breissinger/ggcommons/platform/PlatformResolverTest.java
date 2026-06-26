@@ -143,11 +143,34 @@ class PlatformResolverTest {
     // ---------- resolveProfile: failures ----------
 
     @Test
-    void resolveKubernetesFailsFastInPhase0() {
+    void resolveKubernetesExplicitGivesMqttAndConfigMap() {
+        // Phase 1a: KUBERNETES now resolves cleanly (no fail-fast) to MQTT + the CONFIGMAP source.
         var inputs = new PlatformResolver.ResolverInputs(Platform.KUBERNETES, null, null, null);
+        ResolvedProfile r = PlatformResolver.resolveProfile(inputs, Map.of());
+
+        assertEquals(Platform.KUBERNETES, r.platform());
+        assertEquals(Transport.MQTT, r.transport());
+        assertArrayEquals(new String[]{"CONFIGMAP"}, r.configSource());
+    }
+
+    @Test
+    void resolveAutoWithServiceAccountTokenDetectsKubernetes() {
+        // A SA-token pod auto-detects to KUBERNETES and gets MQTT + CONFIGMAP.
+        var inputs = new PlatformResolver.ResolverInputs(null, null, null, null);
+        ResolvedProfile r = PlatformResolver.resolveProfile(
+                inputs, Map.of(PlatformResolver.ENV_K8S_SERVICE_HOST, "10.0.0.1"));
+        assertEquals(Platform.KUBERNETES, r.platform());
+        assertEquals(Transport.MQTT, r.transport());
+        assertArrayEquals(new String[]{"CONFIGMAP"}, r.configSource());
+    }
+
+    @Test
+    void resolveIpcOnKubernetesFailsTheIpcLock() {
+        // The IPC lock still holds on KUBERNETES (only the Nucleus provides the IPC socket).
+        var inputs = new PlatformResolver.ResolverInputs(Platform.KUBERNETES, Transport.IPC, null, null);
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
                 () -> PlatformResolver.resolveProfile(inputs, Map.of()));
-        assertTrue(ex.getMessage().contains("KUBERNETES"));
+        assertTrue(ex.getMessage().contains("IPC transport requires --platform GREENGRASS"));
     }
 
     @Test
@@ -211,11 +234,18 @@ class PlatformResolverTest {
     // ---------- profiles + enums ----------
 
     @Test
-    void profilesContainOnlyGreengrassAndHostInPhase0() {
-        assertEquals(2, PlatformResolver.PROFILES.size());
+    void profilesContainAllThreePlatforms() {
+        assertEquals(3, PlatformResolver.PROFILES.size());
         assertTrue(PlatformResolver.PROFILES.containsKey(Platform.GREENGRASS));
         assertTrue(PlatformResolver.PROFILES.containsKey(Platform.HOST));
-        assertFalse(PlatformResolver.PROFILES.containsKey(Platform.KUBERNETES));
+        assertTrue(PlatformResolver.PROFILES.containsKey(Platform.KUBERNETES));
+    }
+
+    @Test
+    void kubernetesProfileExposesMqttAndConfigMap() {
+        PlatformProfile p = PlatformResolver.PROFILES.get(Platform.KUBERNETES);
+        assertEquals(Transport.MQTT, p.transport());
+        assertEquals("CONFIGMAP", p.configSource());
     }
 
     @Test

@@ -21,7 +21,13 @@ Example::
 from .config import open_from_config
 from .errors import ParameterError
 from .service import DefaultParameterService, ParameterService, ParameterStats
-from .source import EnvSource, MountedDirSource, ParamValue, ParameterSource
+from .source import (
+    EnvSource,
+    MountedDirSource,
+    ParamValue,
+    ParameterSource,
+    is_projection_artifact,
+)
 
 __all__ = [
     "open_from_config",
@@ -33,4 +39,5 @@ __all__ = [
     "ParamValue",
     "EnvSource",
     "MountedDirSource",
+    "is_projection_artifact",
 ]

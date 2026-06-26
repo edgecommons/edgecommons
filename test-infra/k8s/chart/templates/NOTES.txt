@@ -1,0 +1,21 @@
+ggcommons component deployed (Phase 1a test harness).
+
+Release:   {{ .Release.Name }}
+Namespace: {{ .Release.Namespace }}
+Image:     {{ .Values.image.repository }}:{{ .Values.image.tag }}
+
+The component auto-detects platform=KUBERNETES from its ServiceAccount token and loads
+its config via the CONFIGMAP source from the directory mounted at {{ .Values.configMountPath }}.
+
+Watch it come up and confirm the resolved platform + config source:
+
+  kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "ggcommons.fullname" . }}
+  kubectl -n {{ .Release.Namespace }} logs -l app.kubernetes.io/instance={{ .Release.Name }} -f | grep -E "platform=KUBERNETES|CONFIGMAP"
+
+Drive the hot-reload (..data swap) test by editing the ConfigMap in place:
+
+  kubectl -n {{ .Release.Namespace }} edit configmap {{ include "ggcommons.configMapName" . }}
+  # then watch the same logs for the in-process reload (no pod restart)
+
+NOTE: liveness/readiness are PLACEHOLDER exec probes — the real HTTP /livez,/readyz
+endpoint arrives in sub-phase 1c.

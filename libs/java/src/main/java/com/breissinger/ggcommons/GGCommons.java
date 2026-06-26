@@ -350,11 +350,12 @@ public class GGCommons
                                     .hasArgs()
                                     .desc("Configuration source - one of: " +
                                             "'FILE <optional: file_path>', " +
+                                            "'CONFIGMAP <optional: mount_dir> <optional: key>', " +
                                             "'ENV <optional: env_var_name>', " +
                                             "'SHADOW <optional: shadow_name>', " +
                                             "'GG_CONFIG <optional: component_name> <optional: config_key>', " +
                                             "'CONFIG_COMPONENT'\n" +
-                                            "Default: from the resolved platform profile (GG_CONFIG)")
+                                            "Default: from the resolved platform profile (GREENGRASS/HOST -> GG_CONFIG, KUBERNETES -> CONFIGMAP)")
                                     .build();
         Option platformOption = Option.builder()
                                        .longOpt("platform")

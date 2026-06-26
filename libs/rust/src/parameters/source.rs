@@ -138,7 +138,9 @@ impl MountedDirSource {
         for entry in entries.flatten() {
             let file_name = entry.file_name();
             let fname = file_name.to_string_lossy();
-            if fname.starts_with('.') {
+            // Shared dotfile filter (single source of truth in the config CONFIGMAP source) — skips
+            // the kubelet symlink farm (..data, ..2025_..., ..data_tmp) and hidden entries.
+            if crate::config::source::configmap::is_projection_artifact(&fname) {
                 continue; // K8s internal (..data, ..2025_...) / hidden
             }
             let ft = match entry.file_type() {

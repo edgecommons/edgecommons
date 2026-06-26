@@ -33,9 +33,11 @@ def test_unknown_transport_is_rejected():
         GGCommons("com.test.C", ["-c", "FILE", "x.json", "--platform", "HOST", "--transport", "BOGUS"])
 
 
-def test_kubernetes_platform_fails_fast_in_phase0():
-    with pytest.raises(ValueError, match="KUBERNETES"):
-        GGCommons("com.test.C", ["-c", "FILE", "x.json", "--platform", "KUBERNETES"])
+def test_ipc_on_kubernetes_fails_the_ipc_lock():
+    # Phase 1a: KUBERNETES resolves cleanly (no fail-fast), but the IPC lock still holds — only the
+    # Greengrass Nucleus provides the IPC socket. This raises during resolution, before broker setup.
+    with pytest.raises(ValueError, match="IPC transport requires --platform GREENGRASS"):
+        GGCommons("com.test.C", ["-c", "FILE", "x.json", "--platform", "KUBERNETES", "--transport", "IPC"])
 
 
 def test_ipc_on_host_fails_the_ipc_lock():

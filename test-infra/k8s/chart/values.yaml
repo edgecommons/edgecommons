@@ -1,0 +1,146 @@
+# Default values for the ggcommons-component test-harness chart (Phase 1a).
+# See test-infra/k8s/README.md for the end-to-end run + the ConfigMap hot-reload test.
+
+# -- Number of pod replicas. Keep at 1 for the hot-reload smoke test (a durable
+# streaming buffer would require a StatefulSet + per-pod PVC — out of scope for 1a).
+replicas: 1
+
+image:
+  # -- Component image. The CI workflow builds this and `kind load`s it into the cluster.
+  repository: ggcommons-component
+  tag: ci
+  # Use IfNotPresent so a `kind load`-ed local image is never re-pulled from a registry.
+  pullPolicy: IfNotPresent
+
+# -- Container entrypoint override. Leave empty to use the image's ENTRYPOINT.
+# The image is language-specific (java -jar … / python3 main.py / the rust binary /
+# node dist/…); set this if the image has no baked-in entrypoint.
+command: []
+
+# -- Component args. Platform would also auto-detect to KUBERNETES (from the projected
+# ServiceAccount token); we pass it explicitly for clarity. KUBERNETES derives
+# transport=MQTT, and the StandaloneProvider needs its broker config at messaging-init
+# time — which runs BEFORE config load — so we MUST pass --transport MQTT <messaging-config>.
+# config.json carries an injected `messaging.local` block (see configmap.yaml) pointing at
+# the in-cluster broker, so it doubles as the messaging-config file. -c CONFIGMAP (also the
+# KUBERNETES profile default) reads the component config from the mounted ConfigMap directory.
+#   --transport MQTT <messaging-config-file>  ;  -c CONFIGMAP <mountDir> <key>
+args:
+  - "--platform"
+  - "KUBERNETES"
+  - "--transport"
+  - "MQTT"
+  - "/etc/ggcommons/config.json"
+  - "-c"
+  - "CONFIGMAP"
+  - "/etc/ggcommons"
+  - "config.json"
+
+# -- Directory the ConfigMap volume is mounted at. MUST match the CONFIGMAP source
+# mount dir above. Mounted as a WHOLE VOLUME (never subPath) so the kubelet's atomic
+# ..data symlink swap drives hot-reload (DESIGN-subsystems §1, FR-CFG-2/3).
+configMountPath: /etc/ggcommons
+
+# Messaging / broker wiring. The component config points local MQTT at the in-cluster
+# EMQX broker by Service DNS (test-infra/k8s/emqx.yaml). Within the same namespace the
+# short Service name resolves; the FQDN form is ggcommons-emqx.<ns>.svc.cluster.local.
+messaging:
+  brokerHost: ggcommons-emqx
+  brokerPort: 1883
+  clientId: ggcommons-k8s-smoke
+
+# The rendered ggcommons component config (config.json) placed in the ConfigMap.
+# A minimal VALID config: a log metric target, a heartbeat, and an MQTT messaging
+# config pointing at the in-cluster broker. `component` is the only schema-required key.
+config:
+  logging:
+    level: INFO
+  heartbeat:
+    intervalSecs: 5
+    targets:
+      - type: metric
+    measures:
+      cpu: true
+      memory: true
+      disk: false
+      files: false
+      threads: true
+      fds: false
+  metricEmission:
+    target: log
+    namespace: ggcommons
+    targetConfig:
+      # Writable path; on k8s the cluster log agent owns rotation (1c switches the
+      # default sink to stdout-JSON — out of scope for 1a).
+      logFileName: /tmp/ggcommons-metrics.log
+  # Free-form business config; `component` is required by the schema.
+  component:
+    global:
+      publish_interval: 5
+    instances: []
+
+serviceAccount:
+  # -- Create a dedicated ServiceAccount. Its projected token is what makes the
+  # component auto-detect platform=KUBERNETES, so keep automount on.
+  create: true
+  name: ""
+  # IRSA role-arn annotation goes here when AWS cooperation is wired (Phase 1b+).
+  annotations: {}
+
+rbac:
+  # -- Minimal namespaced RBAC. The default component needs NO Kubernetes API access
+  # (config + secrets arrive as mounted volumes), so this is OFF by default
+  # (DESIGN-packaging §6). Enable to grant read-only get/list/watch scoped to the
+  # named ConfigMap only — least privilege, never cluster-wide.
+  create: false
+
+service:
+  # -- A ClusterIP Service exposing the (future) health + metrics ports. In 1a the
+  # component does not yet listen on these — this is a placeholder for 1c (/livez,
+  # /readyz) and the prometheus target. helm template/lint render it regardless.
+  enabled: true
+  type: ClusterIP
+  healthPort: 8081
+  metricsPort: 9090
+
+# PLACEHOLDER probes. The real HTTP /livez,/readyz endpoint is sub-phase 1c; until
+# then we use a dependency-free exec probe asserting the config mount is readable.
+# Replace `exec` with `httpGet: { path: /livez|/readyz, port: health }` in 1c.
+probes:
+  enabled: true
+  liveness:
+    initialDelaySeconds: 10
+    periodSeconds: 15
+  readiness:
+    initialDelaySeconds: 5
+    periodSeconds: 10
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 96Mi
+  limits:
+    cpu: "1"
+    memory: 256Mi
+
+# Run non-root with a read-only root FS where possible; /tmp is writable via an
+# emptyDir for the log-target file above.
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+# Time for SIGTERM-driven graceful shutdown (unsubscribe-before-exit). The real
+# SIGTERM wiring is sub-phase 1c; the budget is harmless now.
+terminationGracePeriodSeconds: 30
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}
+podLabels: {}

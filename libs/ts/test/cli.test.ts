@@ -165,14 +165,35 @@ describe("parseArgs", () => {
     }
   });
 
-  it("KUBERNETES platform fails fast in Phase 0", () => {
+  it("KUBERNETES platform resolves to MQTT + CONFIGMAP (Phase 1a)", () => {
+    const parsed = parseArgs(["--platform", "KUBERNETES"], NO_ENV);
+    expect(parsed.platform).toBe(Platform.KUBERNETES);
+    expect(parsed.transport).toBe(Transport.MQTT);
+    expect(parsed.config).toEqual({ kind: "CONFIGMAP", mountDir: undefined, key: undefined });
+  });
+
+  it("KUBERNETES with IPC transport fails the IPC lock", () => {
     try {
-      parseArgs(["--platform", "KUBERNETES"], NO_ENV);
+      parseArgs(["--platform", "KUBERNETES", "--transport", "IPC"], NO_ENV);
       throw new Error("expected throw");
     } catch (e) {
       expect(e).toBeInstanceOf(GgError);
-      expect((e as GgError).message).toContain("KUBERNETES");
+      expect((e as GgError).kind).toBe("Cli");
+      expect((e as GgError).message).toContain("IPC transport requires --platform GREENGRASS");
     }
+  });
+
+  it("CONFIGMAP without args (defaults applied in the source)", () => {
+    const parsed = parseArgs(["--platform", "KUBERNETES", "-c", "CONFIGMAP"], NO_ENV);
+    expect(parsed.config).toEqual({ kind: "CONFIGMAP", mountDir: undefined, key: undefined });
+  });
+
+  it("CONFIGMAP with explicit mount dir and key", () => {
+    const parsed = parseArgs(
+      ["--platform", "KUBERNETES", "-c", "CONFIGMAP", "/etc/myconf", "app.json"],
+      NO_ENV,
+    );
+    expect(parsed.config).toEqual({ kind: "CONFIGMAP", mountDir: "/etc/myconf", key: "app.json" });
   });
 
   it("legacy -m flag is rejected with guidance", () => {

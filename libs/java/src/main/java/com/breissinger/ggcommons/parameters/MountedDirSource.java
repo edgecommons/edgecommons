@@ -38,6 +38,20 @@ public final class MountedDirSource implements ParameterSource {
         return securePaths.stream().anyMatch(name::startsWith);
     }
 
+    /**
+     * True for kubelet/Docker volume-projection artifacts and hidden entries — anything whose file
+     * name begins with {@code "."}. This is the single source of truth for the dotfile filter that
+     * skips the kubelet symlink farm ({@code ..data}, {@code ..2026_06_25_...} timestamped dirs, and
+     * the {@code ..data_tmp} swap staging entry). Reused by the {@code CONFIGMAP} config source so the
+     * filter stays identical across the parameters and config subsystems (FR-CFG-4).
+     *
+     * @param fileName the bare file name (not a path)
+     * @return {@code true} if the entry is a projection artifact / hidden file to ignore
+     */
+    public static boolean isProjectionArtifact(String fileName) {
+        return fileName.startsWith(".");
+    }
+
     private Path nameToPath(String name) {
         String rel = name.startsWith("/") ? name.substring(1) : name;
         return root.resolve(rel);
@@ -52,7 +66,7 @@ public final class MountedDirSource implements ParameterSource {
         try (DirectoryStream<Path> entries = Files.newDirectoryStream(dir)) {
             for (Path path : entries) {
                 String fname = path.getFileName().toString();
-                if (fname.startsWith(".")) {
+                if (isProjectionArtifact(fname)) {
                     continue; // K8s internal (..data, ..2025_...) / hidden
                 }
                 if (Files.isDirectory(path)) {

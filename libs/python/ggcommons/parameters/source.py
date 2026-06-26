@@ -34,6 +34,24 @@ class ParamValue:
         return f"ParamValue(secure={self.secure}, version={self.version!r}, bytes=<{len(self.value)} redacted>)"
 
 
+def is_projection_artifact(file_name: str) -> bool:
+    """True for kubelet/Docker volume-projection artifacts and hidden entries — anything whose file
+    name begins with ``"."``.
+
+    This is the single source of truth for the dotfile filter that skips the kubelet symlink farm
+    (``..data``, ``..2026_06_25_...`` timestamped dirs, and the ``..data_tmp`` swap-staging entry).
+    Reused by the ``CONFIGMAP`` config source so the filter stays identical across the parameters and
+    config subsystems (FR-CFG-4). Mirrors the canonical Java ``MountedDirSource.isProjectionArtifact``.
+
+    Args:
+        file_name: the bare file name (not a path).
+
+    Returns:
+        ``True`` if the entry is a projection artifact / hidden file to ignore.
+    """
+    return file_name.startswith(".")
+
+
 class ParameterSource(ABC):
     """The pluggable parameter backend."""
 
@@ -131,7 +149,7 @@ class MountedDirSource(ParameterSource):
         except OSError as e:
             raise ParameterError(f"read dir {directory}: {e}") from None
         for fname in entries:
-            if fname.startswith("."):
+            if is_projection_artifact(fname):
                 continue  # K8s internal (..data, ..2025_...) / hidden
             path = os.path.join(directory, fname)
             if os.path.isdir(path):

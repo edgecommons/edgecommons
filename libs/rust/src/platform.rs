@@ -14,13 +14,14 @@
 //! platform-profile defaults) to a single [`ResolvedProfile`] consumed by every subsystem
 //! initializer.
 //!
-//! ## Phase 0
-//! Only [`Platform::Greengrass`] and [`Platform::Host`] have profiles, and both default
-//! their config source to `GG_CONFIG` — a faithful re-expression of today's behavior (HOST
-//! does **not** flip to `FILE` until Phase 1). Resolving to [`Platform::Kubernetes`] fails
-//! fast. The compile-time capability check (GREENGRASS requires the `greengrass` cargo
-//! feature) lives at the transport-injection site (`crate::init_messaging`), where the
-//! legacy silent `Ok(None)` used to be.
+//! ## Phases
+//! Phase 0 wired [`Platform::Greengrass`] and [`Platform::Host`], both defaulting their config
+//! source to `GG_CONFIG` (a faithful re-expression of today's behavior; HOST does **not** flip
+//! to `FILE`). Phase 1a wires [`Platform::Kubernetes`]: MQTT transport and the k8s-native
+//! `CONFIGMAP` source (a mounted ConfigMap directory). The IPC × KUBERNETES rejection is
+//! retained (the IPC lock, [`validate`]). The compile-time capability check (GREENGRASS requires
+//! the `greengrass` cargo feature) lives at the transport-injection site
+//! (`crate::init_messaging`), where the legacy silent `Ok(None)` used to be.
 //!
 //! ## Safety & Panics
 //! All functions are pure (no I/O beyond the explicitly-injected filesystem probe used for
@@ -36,9 +37,9 @@ use crate::error::{GgError, Result};
 /// [`resolve_profile`]. Orthogonal to [`Transport`]; only messaging-transport is
 /// platform-coupled (via the IPC lock, [`validate`]).
 ///
-/// Phase 0 populates only [`Self::Greengrass`] and [`Self::Host`] (a behavior-preserving
-/// re-expression of today's two modes). [`Self::Kubernetes`] is declared but *not* wired —
-/// selecting it fails fast until its profile ships in Phase 1.
+/// Phase 0 wired [`Self::Greengrass`] and [`Self::Host`] (a behavior-preserving re-expression
+/// of today's two modes); Phase 1a wires [`Self::Kubernetes`] (MQTT transport + the `CONFIGMAP`
+/// source).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Platform {
     /// On an AWS IoT Greengrass v2 Nucleus: IPC transport, Nucleus-managed config/identity.
@@ -159,9 +160,10 @@ pub const K8S_SA_TOKEN_PATH: &str = "/var/run/secrets/kubernetes.io/serviceaccou
 /// The library-default identity when no thing name is available (matches today's behavior).
 pub const DEFAULT_IDENTITY: &str = "NOT_GREENGRASS";
 
-/// The platform-profile for a platform (DESIGN-core §3). Phase 0 populates only GREENGRASS
-/// and HOST; both deliberately default the config source to `GG_CONFIG` to preserve current
-/// behavior. KUBERNETES has no profile yet (declared enum value), so this returns `None`.
+/// The platform-profile for a platform (DESIGN-core §3). GREENGRASS and HOST deliberately
+/// default the config source to `GG_CONFIG` to preserve current behavior; KUBERNETES (Phase 1a)
+/// defaults to MQTT transport and the k8s-native `CONFIGMAP` source. Returns `None` only for a
+/// platform with no profile (none today).
 pub fn profile(platform: Platform) -> Option<PlatformProfile> {
     match platform {
         Platform::Greengrass => Some(PlatformProfile {
@@ -172,14 +174,19 @@ pub fn profile(platform: Platform) -> Option<PlatformProfile> {
             transport: Transport::Mqtt,
             config_source: "GG_CONFIG",
         }),
-        Platform::Kubernetes => None,
+        // Phase 1a: KUBERNETES is wired — MQTT transport (no Nucleus IPC) and the k8s-native
+        // CONFIGMAP source (a mounted ConfigMap directory) as its default config source.
+        Platform::Kubernetes => Some(PlatformProfile {
+            transport: Transport::Mqtt,
+            config_source: "CONFIGMAP",
+        }),
     }
 }
 
-/// The platforms that have a Phase-0 profile (GREENGRASS, HOST). Mirrors the Java `PROFILES`
+/// The platforms that have a profile (GREENGRASS, HOST, KUBERNETES). Mirrors the Java `PROFILES`
 /// map key set; used by tests and diagnostics.
-pub fn profiled_platforms() -> [Platform; 2] {
-    [Platform::Greengrass, Platform::Host]
+pub fn profiled_platforms() -> [Platform; 3] {
+    [Platform::Greengrass, Platform::Host, Platform::Kubernetes]
 }
 
 /// Resolves the runtime profile from parse-time inputs and the environment (DESIGN-core §4).
@@ -188,8 +195,8 @@ pub fn profiled_platforms() -> [Platform; 2] {
 /// `resolve(setting) = explicit flag ▸ platform-profile default ▸ library default`.
 ///
 /// # Errors
-/// Returns [`GgError::Cli`] if the resolved platform has no Phase-0 profile (KUBERNETES) or
-/// the platform/transport combination is illegal (the IPC lock, §4.1).
+/// Returns [`GgError::Cli`] if the resolved platform has no profile, or the platform/transport
+/// combination is illegal (the IPC lock, §4.1).
 pub fn resolve_profile(inputs: ResolverInputs, env: &HashMap<String, String>) -> Result<ResolvedProfile> {
     let auto_detected = inputs.platform.is_none();
     let platform = match inputs.platform {
@@ -201,7 +208,7 @@ pub fn resolve_profile(inputs: ResolverInputs, env: &HashMap<String, String>) ->
     let profile = profile(platform).ok_or_else(|| {
         GgError::Cli(format!(
             "Platform {platform:?} is not supported in this build (no profile). Valid \
-             platforms: GREENGRASS, HOST. (KUBERNETES ships in Phase 1.)"
+             platforms: GREENGRASS, HOST, KUBERNETES."
         ))
     })?;
 
@@ -431,13 +438,40 @@ mod tests {
     // ---------- resolve_profile: failures ----------
 
     #[test]
-    fn resolve_kubernetes_fails_fast_in_phase0() {
+    fn resolve_kubernetes_gives_mqtt_and_configmap() {
+        // Phase 1a: KUBERNETES resolves cleanly to MQTT transport + the CONFIGMAP default source.
         let inputs = ResolverInputs {
             platform: Some(Platform::Kubernetes),
             ..Default::default()
         };
+        let r = resolve_profile(inputs, &env(&[])).unwrap();
+        assert_eq!(Platform::Kubernetes, r.platform);
+        assert_eq!(Transport::Mqtt, r.transport);
+        assert_eq!(vec!["CONFIGMAP".to_string()], r.config_source);
+    }
+
+    #[test]
+    fn resolve_auto_with_k8s_token_detects_kubernetes() {
+        // A SA-token pod auto-detects to KUBERNETES and resolves to MQTT + CONFIGMAP.
+        let r = resolve_profile(
+            ResolverInputs::default(),
+            &env(&[(ENV_K8S_SERVICE_HOST, "10.0.0.1")]),
+        )
+        .unwrap();
+        assert_eq!(Platform::Kubernetes, r.platform);
+        assert_eq!(Transport::Mqtt, r.transport);
+        assert_eq!(vec!["CONFIGMAP".to_string()], r.config_source);
+    }
+
+    #[test]
+    fn resolve_ipc_on_kubernetes_fails_the_ipc_lock() {
+        let inputs = ResolverInputs {
+            platform: Some(Platform::Kubernetes),
+            transport: Some(Transport::Ipc),
+            ..Default::default()
+        };
         let err = resolve_profile(inputs, &env(&[])).unwrap_err();
-        assert!(err.to_string().contains("Kubernetes"));
+        assert!(err.to_string().contains("IPC transport requires --platform GREENGRASS"));
     }
 
     #[test]
@@ -497,11 +531,18 @@ mod tests {
     // ---------- profiles + enums ----------
 
     #[test]
-    fn profiles_contain_only_greengrass_and_host_in_phase0() {
-        assert_eq!(2, profiled_platforms().len());
+    fn profiles_contain_greengrass_host_and_kubernetes() {
+        assert_eq!(3, profiled_platforms().len());
         assert!(profile(Platform::Greengrass).is_some());
         assert!(profile(Platform::Host).is_some());
-        assert!(profile(Platform::Kubernetes).is_none());
+        assert!(profile(Platform::Kubernetes).is_some());
+    }
+
+    #[test]
+    fn kubernetes_profile_exposes_mqtt_and_configmap() {
+        let p = profile(Platform::Kubernetes).unwrap();
+        assert_eq!(Transport::Mqtt, p.transport);
+        assert_eq!("CONFIGMAP", p.config_source);
     }
 
     #[test]

@@ -5,6 +5,7 @@ from typing import List
 
 from ggcommons.config.manager.config_component_manager import ConfigComponentManager
 from ggcommons.config.manager.config_manager import ConfigManager
+from ggcommons.config.manager.configmap_config_manager import ConfigMapConfigManager
 from ggcommons.config.manager.environment_config_manager import EnvironmentConfigManager
 from ggcommons.config.manager.file_config_manager import FileConfigManager
 from ggcommons.config.manager.greengrass_config_manager import GreengrassConfigManager
@@ -31,6 +32,15 @@ class ConfigManagerBuilder:
             logger.info("Config file specified. Using FileConfigManager")
             config_file = config_args[1] if len(config_args) > 1 else "config.json"
             config_manager = FileConfigManager(thing_name, component_name, config_file)
+        elif config_args[0].upper() == "CONFIGMAP":
+            logger.info("CONFIGMAP specified. Using ConfigMapConfigManager")
+            # -c CONFIGMAP [mount_dir] [key]; defaults applied inside the manager
+            # (/etc/ggcommons, config.json). The k8s-native source; default on KUBERNETES.
+            mount_dir = config_args[1] if len(config_args) > 1 else None
+            config_key = config_args[2] if len(config_args) > 2 else None
+            config_manager = ConfigMapConfigManager(
+                thing_name, component_name, mount_dir, config_key
+            )
         elif config_args[0].upper() == "ENV":
             logger.info("Environment config specified. Using EnvironmentConfigManager")
             env_var = config_args[1] if len(config_args) > 1 else "CONFIG"
@@ -61,10 +71,10 @@ class ConfigManagerBuilder:
         else:
             logger.fatal(
                 f"Unrecognized config source '{config_args[0]}'.  "
-                f"Valid values are 'FILE', 'ENV', 'SHADOW', 'GG_CONFIG' and 'CONFIG_COMPONENT' "
+                f"Valid values are 'FILE', 'CONFIGMAP', 'ENV', 'SHADOW', 'GG_CONFIG' and 'CONFIG_COMPONENT' "
             )
             raise ValueError(
                 f"Unrecognized config source '{config_args[0]}'. Valid values are "
-                f"'FILE', 'ENV', 'SHADOW', 'GG_CONFIG' and 'CONFIG_COMPONENT'"
+                f"'FILE', 'CONFIGMAP', 'ENV', 'SHADOW', 'GG_CONFIG' and 'CONFIG_COMPONENT'"
             )
         return config_manager

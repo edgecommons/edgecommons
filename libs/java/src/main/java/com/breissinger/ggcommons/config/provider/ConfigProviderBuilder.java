@@ -21,6 +21,14 @@ public class ConfigProviderBuilder {
                 String configFile = configArgs.length > 1 ? configArgs[1] : "com.breissinger.ggcommons.config.json";
                 yield new FileConfigProvider(configManager, configFile);
             }
+            case "CONFIGMAP" -> {
+                LOGGER.debug("Using ConfigMap com.breissinger.ggcommons.config provider");
+                // -c CONFIGMAP [mountDir] [key]; defaults applied inside the provider
+                // (/etc/ggcommons, config.json). The k8s-native source; default on KUBERNETES.
+                String mountDir = configArgs.length > 1 ? configArgs[1] : null;
+                String configKey = configArgs.length > 2 ? configArgs[2] : null;
+                yield new ConfigMapConfigProvider(configManager, mountDir, configKey);
+            }
             case "ENV" -> {
                 LOGGER.debug("Using Environment com.breissinger.ggcommons.config provider");
                 String envVarName = configArgs.length > 1 ? configArgs[1] : "CONFIG";
@@ -56,7 +64,7 @@ public class ConfigProviderBuilder {
                 yield new ConfigComponentProvider(configManager, messagingClient);
             }
             default -> {
-                LOGGER.fatal("Unrecognized config source '{}'.  Valid values are 'FILE', 'ENV', 'SHADOW', 'GG_CONFIG', 'CONFIG_COMPONENT'", configArgs[0]);
+                LOGGER.fatal("Unrecognized config source '{}'.  Valid values are 'FILE', 'CONFIGMAP', 'ENV', 'SHADOW', 'GG_CONFIG', 'CONFIG_COMPONENT'", configArgs[0]);
                 throw new IllegalArgumentException("Unrecognized config source: " + configArgs[0]);
             }
         };

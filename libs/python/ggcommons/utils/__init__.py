@@ -6,11 +6,13 @@ This package provides utility functions and classes used throughout the ggcommon
 
 from .utils import Utils, ThreadSafeCounter
 from .file_watcher import FileWatcher, FileChangeHandler, ConfigFileWatcher
+from .directory_watcher import DirectoryWatcher
 
 __all__ = [
     'Utils',
-    'ThreadSafeCounter', 
+    'ThreadSafeCounter',
     'FileWatcher',
     'FileChangeHandler',
-    'ConfigFileWatcher'
+    'ConfigFileWatcher',
+    'DirectoryWatcher'
 ]

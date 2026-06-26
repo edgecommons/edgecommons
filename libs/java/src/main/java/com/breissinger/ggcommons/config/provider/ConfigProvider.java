@@ -9,8 +9,8 @@ import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 
 public abstract sealed class ConfigProvider
-        permits FileConfigProvider, EnvironmentConfigProvider, GreengrassConfigProvider,
-                ShadowConfigProvider, ConfigComponentProvider {
+        permits FileConfigProvider, ConfigMapConfigProvider, EnvironmentConfigProvider,
+                GreengrassConfigProvider, ShadowConfigProvider, ConfigComponentProvider {
 
    ConfigProvider(ConfigManager configManager)
    {

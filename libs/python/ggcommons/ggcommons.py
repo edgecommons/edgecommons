@@ -30,6 +30,7 @@ class ConfigSource(str, Enum):
     FILE = "FILE"
     ENV = "ENV"
     GG_CONFIG = "GG_CONFIG"
+    CONFIGMAP = "CONFIGMAP"
     SHADOW = "SHADOW"
     CONFIG_COMPONENT = "CONFIG_COMPONENT"
 
@@ -143,8 +144,10 @@ class GGCommons:
             nargs='*',
             type=str,
             default=None,
-            help='Configuration source. One of: ENV, GG_CONFIG, FILE, SHADOW, CONFIG_COMPONENT. '
-                 'Default: from the resolved platform profile (GG_CONFIG)'
+            help='Configuration source. One of: ENV, GG_CONFIG, FILE, CONFIGMAP, SHADOW, '
+                 'CONFIG_COMPONENT. CONFIGMAP takes [mount_dir] [key] (defaults /etc/ggcommons, '
+                 'config.json). Default: from the resolved platform profile '
+                 '(GREENGRASS/HOST -> GG_CONFIG, KUBERNETES -> CONFIGMAP)'
         )
         parser.add_argument(
             '--platform',

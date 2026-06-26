@@ -7,10 +7,10 @@ orthogonal to :class:`~ggcommons.platform.transport.Transport`; only
 messaging-transport is platform-coupled (via the IPC lock,
 :func:`~ggcommons.platform.resolver.validate`).
 
-Phase 0 populates only :attr:`GREENGRASS` and :attr:`HOST` (a
-behavior-preserving re-expression of today's two modes). :attr:`KUBERNETES` is
-declared but *not* wired — selecting it fails fast until its profile ships in
-Phase 1.
+Phase 0 populated :attr:`GREENGRASS` and :attr:`HOST` (a behavior-preserving
+re-expression of today's two modes). Phase 1a wires :attr:`KUBERNETES` (transport
+``MQTT``, config source ``CONFIGMAP``); a service-account-token pod auto-detects
+to it and it resolves cleanly.
 """
 
 from enum import Enum
@@ -23,5 +23,5 @@ class Platform(str, Enum):
     GREENGRASS = "GREENGRASS"
     #: A plain host (Docker/bare host without a Nucleus): MQTT transport.
     HOST = "HOST"
-    #: Kubernetes (declared for Phase 0; profile populated in Phase 1).
+    #: Kubernetes (Phase 1a): MQTT transport, ConfigMap-mounted config/identity.
     KUBERNETES = "KUBERNETES"
