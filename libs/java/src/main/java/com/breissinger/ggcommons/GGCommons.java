@@ -161,7 +161,7 @@ public class GGCommons
 
             // Credentials / local vault first (mirrors Rust lib.rs): the vault must be open before
             // streaming consumes its config, so `$secret` refs in the streaming config resolve.
-            initCredentials();
+            initCredentials(parsedCommandLine.platform);
             // Parameters (externalized config): independent offline-first service paralleling
             // credentials. Opened after the vault so a remote source can reuse the same crypto.
             initParameters();
@@ -270,9 +270,15 @@ public class GGCommons
 
     /**
      * Opens the local vault from the {@code credentials} config section (if any), resolving path
-     * templates. No-op when the section is absent.
+     * templates. No-op when the section is absent — the {@code platform}-derived default key provider
+     * is applied <em>only</em> when a {@code credentials} section is present, so this never
+     * auto-enables credentials (FR-CRED-6).
+     *
+     * @param platform the resolved deployment platform, selecting the platform-profile default
+     *                 key-provider type ({@code env} on KUBERNETES) when the config omits an explicit
+     *                 {@code credentials.vault.keyProvider.type}
      */
-    private void initCredentials()
+    private void initCredentials(Platform platform)
     {
         JsonObject full = configManager.getFullConfig();
         if (full == null || !full.has("credentials") || !full.get("credentials").isJsonObject())
@@ -283,7 +289,11 @@ public class GGCommons
         String credentialsJson = configManager.resolveTemplate(full.getAsJsonObject("credentials").toString());
         // Transparently namespace every key by <thingName>/<componentName> (collision-free).
         String namespace = configManager.getThingName() + "/" + configManager.getComponentFullName();
-        credentials = Credentials.open(JsonParser.parseString(credentialsJson).getAsJsonObject(), namespace);
+        // FR-RT-3 middle tier: when keyProvider.type is absent, default to the platform-profile
+        // provider (env on KUBERNETES); the library default 'file' applies when this is null.
+        String defaultKeyProvider = PlatformResolver.profileCredentialsKeyProvider(platform);
+        credentials = Credentials.open(JsonParser.parseString(credentialsJson).getAsJsonObject(), namespace,
+                defaultKeyProvider);
         // Bridge non-sensitive credential stats into the configured metric target.
         credentialMetricsBridge = new CredentialMetricsBridge(configManager, metricEmitter, credentials);
         LOGGER.info("Credentials vault initialized");

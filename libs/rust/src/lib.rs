@@ -356,7 +356,14 @@ impl GgCommonsBuilder {
                     // Transparently namespace every key by <thingName>/<componentName> so a shared
                     // device vault / fleet central store can't collide across components or devices.
                     let namespace = format!("{}/{}", snapshot.thing_name, self.component_name);
-                    let svc = credentials::open_namespaced(&cfg, &namespace)?;
+                    // Platform-default KEK custodian (FR-CRED-6 / FR-RT-3): when `keyProvider.type`
+                    // is unspecified, fall back to the resolved platform's profile default (env on
+                    // KUBERNETES) before the library default `file`. Threaded the same way the
+                    // logging-format / metric-target defaults are; an explicit type always wins.
+                    // This only changes the default provider TYPE — it never enables credentials
+                    // (we are already inside the `Some(credentials section present)` arm).
+                    let default_kind = crate::platform::profile_credentials_key_provider(parsed.platform);
+                    let svc = credentials::open_namespaced_with_default(&cfg, &namespace, default_kind)?;
                     Some(Arc::new(svc) as Arc<dyn credentials::CredentialService>)
                 }
             };

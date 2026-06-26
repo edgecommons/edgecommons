@@ -281,3 +281,226 @@ def test_cross_language_conformance():
         crypto.hmac_sha256(mac_key, fmt.mac_input(vault_id, secrets, base64.b64decode))
     ).decode()
     assert mac == vec["macB64"]
+
+
+# ---------- Phase 1d: EnvKeyProvider (FR-CRED-3) + KUBERNETES default (FR-CRED-6 / FR-RT-3) ----------
+
+ENV_KEK_VAR = "GGCOMMONS_VAULT_KEK"
+
+
+def _kek_b64(fill: int = 7) -> str:
+    return base64.b64encode(bytes([fill] * 32)).decode()
+
+
+def test_env_key_provider_roundtrip_via_config(tmp_path, monkeypatch):
+    """type=env, built via the config path: round-trip a secret across close/reopen."""
+    monkeypatch.setenv(ENV_KEK_VAR, _kek_b64())
+    cfg = {"vault": {"path": str(tmp_path / "vault"), "keyProvider": {"type": "env"}}}
+    open_from_config(cfg).put("db/password", b"s3cr3t")
+    # Reopen from disk -> a fresh unwrap of the DEK with the env KEK.
+    assert open_from_config(cfg).get_string("db/password") == "s3cr3t"
+
+
+def test_env_key_provider_tolerates_trailing_newline(tmp_path, monkeypatch):
+    """A KEK sourced from a mounted file/Secret commonly has a trailing newline; it must decode
+    identically to the trimmed value (cross-language parity with Java/Rust which also trim)."""
+    monkeypatch.setenv(ENV_KEK_VAR, _kek_b64() + "\n")  # trailing newline, as from a mounted Secret
+    cfg = {"vault": {"path": str(tmp_path / "vault"), "keyProvider": {"type": "env"}}}
+    open_from_config(cfg).put("k", b"hello")
+    assert open_from_config(cfg).get_string("k") == "hello"
+
+
+def test_env_key_provider_custom_env_var_name(tmp_path, monkeypatch):
+    monkeypatch.delenv(ENV_KEK_VAR, raising=False)
+    monkeypatch.setenv("MY_KEK", base64.b64encode(bytes([3] * 32)).decode())
+    cfg = {"vault": {"path": str(tmp_path / "vault"), "keyProvider": {"type": "env", "envVar": "MY_KEK"}}}
+    open_from_config(cfg).put("k", b"v")
+    assert open_from_config(cfg).get_string("k") == "v"
+
+
+def test_env_key_provider_writes_env_provider_label(tmp_path, monkeypatch):
+    """The on-disk `kek` block is labelled provider=env (FileKeyProvider would write file)."""
+    monkeypatch.setenv(ENV_KEK_VAR, _kek_b64())
+    path = tmp_path / "vault"
+    open_from_config({"vault": {"path": str(path), "keyProvider": {"type": "env"}}}).put("k", b"v")
+    vf = json.loads(path.read_text())
+    assert vf["kek"]["provider"] == "env"
+    assert vf["kek"]["alg"] == "AES-256-GCM"
+
+
+def test_env_and_file_key_providers_are_crypto_interchangeable(tmp_path, monkeypatch):
+    """A vault wrapped by EnvKeyProvider(KEK=K) opens with FileKeyProvider(K), and vice versa —
+    cryptographically identical envelope given the same raw 32-byte KEK."""
+    from ggcommons.credentials import EnvKeyProvider
+
+    k = bytes([42] * 32)
+    monkeypatch.setenv(ENV_KEK_VAR, base64.b64encode(k).decode())
+
+    # (1) env-wrapped vault opens with a FileKeyProvider holding the same raw K.
+    p1 = str(tmp_path / "v1")
+    DefaultCredentialService(LocalVault.open(p1, EnvKeyProvider(), 2)).put("k", b"hello")
+    assert DefaultCredentialService(LocalVault.open(p1, FileKeyProvider(k), 2)).get_string("k") == "hello"
+
+    # (2) file-wrapped vault opens with the EnvKeyProvider (same K, sourced from the env var).
+    p2 = str(tmp_path / "v2")
+    DefaultCredentialService(LocalVault.open(p2, FileKeyProvider(k), 2)).put("k", b"world")
+    assert DefaultCredentialService(LocalVault.open(p2, EnvKeyProvider(), 2)).get_string("k") == "world"
+
+
+def test_env_and_file_wrap_outputs_are_byte_identical(monkeypatch):
+    """With the same raw KEK and the same nonce, EnvKeyProvider and FileKeyProvider produce the
+    identical wrapNonce/wrappedDek — only the provider label differs (proves crypto identity)."""
+    from ggcommons.credentials import EnvKeyProvider
+    from ggcommons.credentials import keyprovider as kp_mod
+
+    k = bytes([11] * 32)
+    monkeypatch.setenv(ENV_KEK_VAR, base64.b64encode(k).decode())
+    fixed_nonce = bytes(range(crypto.NONCE_LEN))
+    monkeypatch.setattr(kp_mod.crypto, "random", lambda n: fixed_nonce[:n])
+
+    dek = bytes(range(32))
+    vault_id = "vault-xyz"
+    file_kek = FileKeyProvider(k).wrap_dek(vault_id, dek)
+    env_kek = EnvKeyProvider().wrap_dek(vault_id, dek)
+
+    assert file_kek["wrapNonce"] == env_kek["wrapNonce"]
+    assert file_kek["wrappedDek"] == env_kek["wrappedDek"]  # byte-identical ciphertext
+    assert file_kek["provider"] == "file"
+    assert env_kek["provider"] == "env"
+    # Each KEK custodian unwraps the other's wrapped DEK (interchangeable).
+    assert FileKeyProvider(k).unwrap_dek(vault_id, env_kek) == dek
+    assert EnvKeyProvider().unwrap_dek(vault_id, file_kek) == dek
+
+
+def test_env_key_provider_error_unset(tmp_path, monkeypatch):
+    monkeypatch.delenv(ENV_KEK_VAR, raising=False)
+    cfg = {"vault": {"path": str(tmp_path / "vault"), "keyProvider": {"type": "env"}}}
+    with pytest.raises(CredentialError):
+        open_from_config(cfg)
+
+
+def test_env_key_provider_error_empty(monkeypatch):
+    from ggcommons.credentials import EnvKeyProvider
+
+    monkeypatch.setenv(ENV_KEK_VAR, "")
+    with pytest.raises(CredentialError):
+        EnvKeyProvider()
+
+
+def test_env_key_provider_error_invalid_base64(monkeypatch):
+    from ggcommons.credentials import EnvKeyProvider
+
+    monkeypatch.setenv(ENV_KEK_VAR, "not!valid!base64!")
+    with pytest.raises(CredentialError):
+        EnvKeyProvider()
+
+
+def test_env_key_provider_error_wrong_length(monkeypatch):
+    from ggcommons.credentials import EnvKeyProvider
+
+    monkeypatch.setenv(ENV_KEK_VAR, base64.b64encode(bytes([7] * 16)).decode())  # 16 != 32
+    with pytest.raises(CredentialError):
+        EnvKeyProvider()
+
+
+# ---------- build_key_provider: platform-default precedence (explicit ▸ profile default ▸ file) ----------
+
+def test_build_key_provider_platform_default_env_when_type_absent(tmp_path, monkeypatch):
+    from ggcommons.credentials import EnvKeyProvider
+    from ggcommons.credentials.config import build_key_provider
+
+    monkeypatch.setenv(ENV_KEK_VAR, _kek_b64())
+    p = build_key_provider({}, str(tmp_path / "x.key"), default_type="env")
+    assert isinstance(p, EnvKeyProvider)
+
+
+def test_build_key_provider_explicit_type_wins_over_platform_default(tmp_path, monkeypatch):
+    from ggcommons.credentials import EnvKeyProvider
+    from ggcommons.credentials.config import build_key_provider
+
+    monkeypatch.setenv(ENV_KEK_VAR, _kek_b64())
+    p = build_key_provider({"type": "file"}, str(tmp_path / "x.key"), default_type="env")
+    assert isinstance(p, FileKeyProvider) and not isinstance(p, EnvKeyProvider)
+
+
+def test_build_key_provider_no_default_falls_through_to_file(tmp_path):
+    from ggcommons.credentials import EnvKeyProvider
+    from ggcommons.credentials.config import build_key_provider
+
+    p = build_key_provider({}, str(tmp_path / "x.key"), default_type=None)
+    assert isinstance(p, FileKeyProvider) and not isinstance(p, EnvKeyProvider)
+
+
+# ---------- _init_credentials: platform-default threading + opt-in gating (FR-CRED-6) ----------
+
+class _FakeConfigManager:
+    """Minimal config-manager seam for driving GGCommons._init_credentials in isolation."""
+
+    def __init__(self, full_config: dict, platform):
+        self._full = full_config
+        self._platform = platform
+
+    def get_full_config(self):
+        return self._full
+
+    def resolve_template(self, s):
+        return s  # no template vars in these tests
+
+    def get_thing_name(self):
+        return "thing-1"
+
+    def get_component_full_name(self):
+        return "com.example.Comp"
+
+    def get_platform(self):
+        return self._platform
+
+
+def _run_init_credentials(full_config: dict, platform):
+    from ggcommons.ggcommons import GGCommons
+
+    gg = GGCommons.__new__(GGCommons)
+    gg._config_manager = _FakeConfigManager(full_config, platform)
+    gg._credentials = None
+    gg._credential_metrics = None
+    gg._init_credentials()
+    return gg
+
+
+def test_init_credentials_kubernetes_default_selects_env(tmp_path, monkeypatch):
+    from ggcommons.platform import Platform
+
+    monkeypatch.setenv(ENV_KEK_VAR, _kek_b64())
+    path = tmp_path / "vault"
+    full = {"credentials": {"vault": {"path": str(path)}}}  # no keyProvider.type
+    gg = _run_init_credentials(full, Platform.KUBERNETES)
+    assert gg.get_credentials() is not None
+    assert json.loads(path.read_text())["kek"]["provider"] == "env"
+
+
+def test_init_credentials_host_default_selects_file(tmp_path):
+    from ggcommons.platform import Platform
+
+    path = tmp_path / "vault"
+    full = {"credentials": {"vault": {"path": str(path)}}}  # no keyProvider.type
+    gg = _run_init_credentials(full, Platform.HOST)
+    assert gg.get_credentials() is not None
+    assert json.loads(path.read_text())["kek"]["provider"] == "file"
+
+
+def test_init_credentials_explicit_type_wins_on_kubernetes(tmp_path):
+    from ggcommons.platform import Platform
+
+    path = tmp_path / "vault"
+    full = {"credentials": {"vault": {"path": str(path), "keyProvider": {"type": "file"}}}}
+    _run_init_credentials(full, Platform.KUBERNETES)
+    assert json.loads(path.read_text())["kek"]["provider"] == "file"
+
+
+def test_init_credentials_absent_section_does_not_enable_on_kubernetes(monkeypatch):
+    """The KUBERNETES profile default must NOT auto-enable credentials — it stays opt-in."""
+    from ggcommons.platform import Platform
+
+    monkeypatch.setenv(ENV_KEK_VAR, _kek_b64())
+    gg = _run_init_credentials({"component": {"global": {}}}, Platform.KUBERNETES)
+    assert gg.get_credentials() is None

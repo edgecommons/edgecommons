@@ -10,7 +10,13 @@
  * (stops the heartbeat + config watch and disconnects messaging) rather than on GC.
  */
 import { parseArgs, ParsedArgs } from "./cli";
-import { Transport, profileLoggingFormat, profileHealthEnabled, profileMetricTarget } from "./platform";
+import {
+  Transport,
+  profileLoggingFormat,
+  profileHealthEnabled,
+  profileMetricTarget,
+  profileCredentialsKeyProvider,
+} from "./platform";
 import { Config } from "./config/model";
 import { HealthServer, ReadinessState } from "./health";
 import { resolve } from "./config/template";
@@ -353,7 +359,14 @@ export class GGCommonsBuilder {
       const resolved = JSON.parse(resolve(current, JSON.stringify(credentialsRaw)));
       // Transparently namespace every key by <thingName>/<componentName> (collision-free).
       const namespace = `${current.thingName}/${this.componentNameValue}`;
-      credentialService = await credentialsApi.openFromConfig(resolved, namespace);
+      // Platform-default vault key-provider (FR-CRED-6, precedence FR-RT-3): when `keyProvider.type`
+      // is absent, KUBERNETES defaults to the env/software-KEK custodian; an explicit type wins, and
+      // this does NOT auto-enable credentials (we only reach here because a section is present).
+      credentialService = await credentialsApi.openFromConfig(
+        resolved,
+        namespace,
+        profileCredentialsKeyProvider(parsed.platform),
+      );
       runtime._setCredentials(credentialService);
       const credentialMetrics = new credentialsApi.CredentialMetricsBridge(current, metrics, credentialService);
       runtime._setCredentialMetrics(credentialMetrics);

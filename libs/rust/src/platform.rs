@@ -136,6 +136,19 @@ pub struct PlatformProfile {
     /// gracefully falls back to `log` (with a warning). See
     /// [`crate::metrics::resolve_effective_target`].
     pub metric_target: Option<&'static str>,
+    /// The default credentials-vault KEK custodian (`keyProvider.type`) for this platform
+    /// (FR-CRED-6, precedence FR-RT-3), applied when a `credentials` section is present but
+    /// `credentials.vault.keyProvider.type` is unspecified. `Some("env")` on KUBERNETES (the
+    /// offline-capable software-KEK sourced from a mounted Secret); `None` on GREENGRASS/HOST so
+    /// the library default (`file`) is unchanged off-Kubernetes. Precedence is enforced at the
+    /// credentials init site (explicit `keyProvider.type` ▸ this profile default ▸ `file`).
+    ///
+    /// CRITICAL: this is *only* a default provider **type** — it never auto-enables credentials.
+    /// Credentials stay opt-in (the vault opens only when a `credentials` config section exists).
+    ///
+    /// This is pure profile *data*; the field is present unconditionally even though the
+    /// credentials subsystem is feature-gated (it is just a string token).
+    pub credentials_key_provider: Option<&'static str>,
 }
 
 /// The output of [`resolve_profile`]: the fully resolved runtime settings that every
@@ -207,6 +220,7 @@ pub fn profile(platform: Platform) -> Option<PlatformProfile> {
             logging_format: None,
             health_enabled: false,
             metric_target: None,
+            credentials_key_provider: None,
         }),
         Platform::Host => Some(PlatformProfile {
             transport: Transport::Mqtt,
@@ -214,18 +228,23 @@ pub fn profile(platform: Platform) -> Option<PlatformProfile> {
             logging_format: None,
             health_enabled: false,
             metric_target: None,
+            credentials_key_provider: None,
         }),
         // Phase 1a: KUBERNETES is wired — MQTT transport (no Nucleus IPC) and the k8s-native
         // CONFIGMAP source (a mounted ConfigMap directory) as its default config source.
         // Phase 1c: its default logging format is the structured stdout-JSON sink (FR-LOG-1), the
         // HTTP health/readiness endpoint (FR-HB-1) is on by default, and the default metric target
         // is the pull-based `prometheus` registry served at `/metrics` (FR-MET-1).
+        // Phase 1d: the default credentials-vault KEK custodian is `env` — the offline-capable
+        // software-KEK read from a mounted Secret (FR-CRED-6), applied only when a credentials
+        // section is configured without an explicit keyProvider.type.
         Platform::Kubernetes => Some(PlatformProfile {
             transport: Transport::Mqtt,
             config_source: "CONFIGMAP",
             logging_format: Some("json"),
             health_enabled: true,
             metric_target: Some("prometheus"),
+            credentials_key_provider: Some("env"),
         }),
     }
 }
@@ -247,6 +266,20 @@ pub fn profile_health_enabled(platform: Platform) -> bool {
 /// [`crate::metrics::resolve_effective_target`].
 pub fn profile_metric_target(platform: Platform) -> Option<&'static str> {
     profile(platform).and_then(|p| p.metric_target)
+}
+
+/// The platform-profile default credentials-vault KEK custodian (`keyProvider.type`) for
+/// `platform` — consulted when a `credentials` section is present but `keyProvider.type` is
+/// unspecified (FR-CRED-6, precedence FR-RT-3). `Some("env")` on KUBERNETES, `None` elsewhere
+/// (and for any platform without a profile). Mirrors the threading of [`profile_metric_target`] /
+/// [`profile_health_enabled`]; the final decision (explicit `keyProvider.type` ▸ this default ▸
+/// `file`) is made at the credentials init site in [`crate::GgCommonsBuilder::build`] and applied
+/// by [`crate::credentials::build_key_provider`].
+///
+/// CRITICAL: returning `Some("env")` here does **not** enable credentials — it only changes the
+/// default provider type *when* credentials is already configured.
+pub fn profile_credentials_key_provider(platform: Platform) -> Option<&'static str> {
+    profile(platform).and_then(|p| p.credentials_key_provider)
 }
 
 /// The platforms that have a profile (GREENGRASS, HOST, KUBERNETES). Mirrors the Java `PROFILES`
@@ -810,6 +843,24 @@ mod tests {
         assert_eq!(Some("prometheus"), profile_metric_target(Platform::Kubernetes));
         assert_eq!(None, profile_metric_target(Platform::Greengrass));
         assert_eq!(None, profile_metric_target(Platform::Host));
+    }
+
+    #[test]
+    fn kubernetes_profile_defaults_credentials_key_provider_to_env() {
+        // FR-CRED-6: the KUBERNETES profile's default vault KEK custodian is `env` (the offline
+        // software-KEK from a mounted Secret); GREENGRASS/HOST carry no profile default (None) so
+        // the library default (`file`) is unchanged off-Kubernetes. Pure profile data — it does not
+        // enable credentials, only changes the default provider type when credentials is configured.
+        assert_eq!(Some("env"), profile(Platform::Kubernetes).unwrap().credentials_key_provider);
+        assert_eq!(None, profile(Platform::Greengrass).unwrap().credentials_key_provider);
+        assert_eq!(None, profile(Platform::Host).unwrap().credentials_key_provider);
+    }
+
+    #[test]
+    fn profile_credentials_key_provider_helper_matches_profiles() {
+        assert_eq!(Some("env"), profile_credentials_key_provider(Platform::Kubernetes));
+        assert_eq!(None, profile_credentials_key_provider(Platform::Greengrass));
+        assert_eq!(None, profile_credentials_key_provider(Platform::Host));
     }
 
     #[test]

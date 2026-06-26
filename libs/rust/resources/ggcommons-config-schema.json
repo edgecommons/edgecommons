@@ -528,10 +528,11 @@
     },
     "keyProvider": {
       "type": "object",
-      "description": "Envelope-encryption KEK custodian. Tagged by `type`: file (local keyfile), kms/greengrass (AWS KMS via TES), pkcs11 (HSM/TPM). Fields not used by the selected type are ignored.",
+      "description": "Envelope-encryption KEK custodian. Tagged by `type`: file (local keyfile), env (base64 KEK from an env var / mounted Secret — the offline-capable software-KEK, default on KUBERNETES), kms/greengrass (AWS KMS via TES), pkcs11 (HSM/TPM). Fields not used by the selected type are ignored.",
       "properties": {
-        "type": { "enum": ["file", "kms", "greengrass", "pkcs11"], "default": "file" },
+        "type": { "enum": ["file", "env", "kms", "greengrass", "pkcs11"], "default": "file" },
         "keyPath": { "type": ["string", "null"], "description": "file: path to the keyfile." },
+        "envVar": { "type": ["string", "null"], "description": "env: name of the env var holding the base64-encoded 32-byte KEK (default GGCOMMONS_VAULT_KEK)." },
         "kmsKeyId": { "type": ["string", "null"], "description": "kms/greengrass: KMS key id/ARN." },
         "region": { "type": ["string", "null"] },
         "endpointUrl": { "type": ["string", "null"] },

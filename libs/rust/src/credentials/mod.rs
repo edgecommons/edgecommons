@@ -49,9 +49,13 @@ pub mod views;
 
 pub use audit::{AuditEvent, AuditSink, LogAuditSink};
 pub use central::{CentralSecret, CentralVaultSource};
-pub use config::{open, open_namespaced, AuditConfig, CentralConfig, CredentialsConfig, KeyProviderConfig, SyncEntry, SyncSelect, VaultConfig};
+pub use config::{open, open_namespaced, open_namespaced_with_default, AuditConfig, CentralConfig, CredentialsConfig, KeyProviderConfig, SyncEntry, SyncSelect, VaultConfig};
+// Convenience re-export consumed only by the parameter cache (`parameters` feature). The
+// credentials module itself calls the function via its `config::` path, so gate the re-export to
+// avoid an unused-import warning in credentials-only builds.
+#[cfg(feature = "parameters")]
 pub(crate) use config::build_key_provider;
-pub use keyprovider::{FileKeyProvider, KeyProvider};
+pub use keyprovider::{EnvKeyProvider, FileKeyProvider, KeyProvider, DEFAULT_KEK_ENV_VAR};
 pub use secretref::resolve_secret_refs;
 pub use bridge::CredentialMetricsBridge;
 pub use service::{CredentialService, CredentialStats, DefaultCredentialService, Secret, SecretMeta};
@@ -382,5 +386,193 @@ mod tests {
         let v = LocalVault::open(&vault_path, provider, 2).unwrap();
         assert_eq!(v.get("alpha").unwrap().unwrap().bytes(), b"hello");
         assert_eq!(v.get("beta").unwrap().unwrap().as_json().unwrap()["x"], 1);
+    }
+
+    // ===================== env KeyProvider (Phase 1d, FR-CRED-3 / FR-CRED-6) =====================
+    // Self-contained: these set unique, per-test env vars and never touch the shared
+    // vault-test-vectors/ files (to avoid cross-agent races).
+
+    use crate::credentials::config::build_key_provider;
+    use crate::platform::{profile_credentials_key_provider, Platform};
+
+    fn b64(bytes: &[u8]) -> String {
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    }
+
+    /// A `type=env` KeyProviderConfig reading the KEK from `env_var`.
+    fn env_kp(env_var: &str) -> KeyProviderConfig {
+        KeyProviderConfig {
+            kind: Some("env".to_string()),
+            env_var: Some(env_var.to_string()),
+            ..Default::default()
+        }
+    }
+
+    // (a) Round-trip through the config path (type=env): create a vault, put a secret, close, reopen
+    // with a fresh env provider, get it back.
+    #[test]
+    fn env_provider_round_trips_via_config_path() {
+        let var = "GGTEST_VAULT_KEK_ROUNDTRIP";
+        let kek = [7u8; 32];
+        unsafe { std::env::set_var(var, b64(&kek)) };
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vault");
+        let key_path = format!("{}.key", path.display());
+
+        {
+            let provider = build_key_provider(&env_kp(var), &key_path, None).unwrap();
+            assert_eq!(provider.provider_id(), "env");
+            let c = DefaultCredentialService::new(LocalVault::open(&path, provider, 2).unwrap());
+            c.put("db/password", b"s3cr3t", PutOptions::default()).unwrap();
+        }
+        // Reopen with a fresh env provider built from the same var.
+        let provider = build_key_provider(&env_kp(var), &key_path, None).unwrap();
+        let c2 = DefaultCredentialService::new(LocalVault::open(&path, provider, 2).unwrap());
+        assert_eq!(c2.get_string("db/password").unwrap().unwrap(), "s3cr3t");
+
+        unsafe { std::env::remove_var(var) };
+    }
+
+    // (b) Crypto identity with FileKeyProvider given the SAME raw KEK: an env-wrapped vault opens
+    // under a FileKeyProvider with K, and provider-level wrap/unwrap interoperates both directions.
+    #[test]
+    fn env_provider_is_crypto_identical_to_file_provider() {
+        let var = "GGTEST_VAULT_KEK_IDENTITY";
+        let kek = [7u8; 32];
+        unsafe { std::env::set_var(var, b64(&kek)) };
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vault");
+        let key_path = format!("{}.key", path.display());
+
+        // Write with the env provider (KekInfo.provider == "env").
+        {
+            let provider = build_key_provider(&env_kp(var), &key_path, None).unwrap();
+            let c = DefaultCredentialService::new(LocalVault::open(&path, provider, 2).unwrap());
+            c.put("token", b"abc", PutOptions::default()).unwrap();
+        }
+        // The on-disk KEK record is tagged `env`.
+        let raw = std::fs::read_to_string(&path).unwrap();
+        let vf: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(vf["kek"]["provider"], "env");
+
+        // Open with a FileKeyProvider holding the SAME raw KEK — must decrypt (crypto identity).
+        let file_provider = Arc::new(FileKeyProvider::from_bytes(kek)) as Arc<dyn KeyProvider>;
+        let c2 = DefaultCredentialService::new(LocalVault::open(&path, file_provider, 2).unwrap());
+        assert_eq!(c2.get_string("token").unwrap().unwrap(), "abc");
+
+        // Provider-level interop both ways: env-wrap → file-unwrap and file-wrap → env-unwrap.
+        let env_p = EnvKeyProvider::from_bytes(kek);
+        let file_p = FileKeyProvider::from_bytes(kek);
+        assert_eq!(env_p.provider_id(), "env");
+        let vault_id = "00000000-0000-4000-8000-0000000000aa";
+        let dek = [0x41u8; 32];
+
+        let env_wrapped = env_p.wrap_dek(vault_id, &dek).unwrap();
+        assert_eq!(env_wrapped.provider, "env");
+        assert_eq!(&file_p.unwrap_dek(vault_id, &env_wrapped).unwrap()[..], &dek[..]);
+
+        let file_wrapped = file_p.wrap_dek(vault_id, &dek).unwrap();
+        assert_eq!(file_wrapped.provider, "file");
+        assert_eq!(&env_p.unwrap_dek(vault_id, &file_wrapped).unwrap()[..], &dek[..]);
+
+        unsafe { std::env::remove_var(var) };
+    }
+
+    // (c) Error cases: unset, empty, invalid base64, wrong length — clear errors, never panics.
+    #[test]
+    fn env_provider_errors_on_unset_invalid_and_wrong_length() {
+        let err = EnvKeyProvider::from_env("GGTEST_VAULT_KEK_DOES_NOT_EXIST_ZZZ").err().unwrap();
+        assert!(err.to_string().contains("not set"), "{err}");
+
+        let var_empty = "GGTEST_VAULT_KEK_EMPTY";
+        unsafe { std::env::set_var(var_empty, "   ") };
+        let err = EnvKeyProvider::from_env(var_empty).err().unwrap();
+        assert!(err.to_string().contains("empty"), "{err}");
+        unsafe { std::env::remove_var(var_empty) };
+
+        let var_bad = "GGTEST_VAULT_KEK_BADB64";
+        unsafe { std::env::set_var(var_bad, "@@@ not valid base64 @@@") };
+        let err = EnvKeyProvider::from_env(var_bad).err().unwrap();
+        assert!(err.to_string().contains("base64"), "{err}");
+        unsafe { std::env::remove_var(var_bad) };
+
+        let var_short = "GGTEST_VAULT_KEK_SHORT";
+        unsafe { std::env::set_var(var_short, b64(&[0u8; 16])) }; // valid base64, only 16 bytes
+        let err = EnvKeyProvider::from_env(var_short).err().unwrap();
+        assert!(err.to_string().contains("32 bytes"), "{err}");
+        unsafe { std::env::remove_var(var_short) };
+    }
+
+    // The env var NAME defaults to GGCOMMONS_VAULT_KEK when keyProvider.envVar is absent.
+    #[test]
+    fn env_provider_defaults_env_var_name_to_ggcommons_vault_kek() {
+        assert_eq!(DEFAULT_KEK_ENV_VAR, "GGCOMMONS_VAULT_KEK");
+        unsafe { std::env::set_var(DEFAULT_KEK_ENV_VAR, b64(&[9u8; 32])) };
+        let dir = tempfile::tempdir().unwrap();
+        let kp = KeyProviderConfig { kind: Some("env".to_string()), env_var: None, ..Default::default() };
+        let p = build_key_provider(&kp, &format!("{}.key", dir.path().join("v").display()), None).unwrap();
+        assert_eq!(p.provider_id(), "env");
+        unsafe { std::env::remove_var(DEFAULT_KEK_ENV_VAR) };
+    }
+
+    // (d) Platform default precedence (FR-CRED-6 / FR-RT-3): absent type + KUBERNETES → env;
+    // absent + HOST/GREENGRASS → file; an explicit type always wins.
+    #[test]
+    fn platform_default_selects_env_on_kubernetes_file_elsewhere() {
+        let var = "GGTEST_VAULT_KEK_PLATDEFAULT";
+        unsafe { std::env::set_var(var, b64(&[7u8; 32])) };
+        let dir = tempfile::tempdir().unwrap();
+
+        // Absent type + KUBERNETES default ("env") → env provider.
+        let kp_absent_env = KeyProviderConfig { kind: None, env_var: Some(var.to_string()), ..Default::default() };
+        let k8s_default = profile_credentials_key_provider(Platform::Kubernetes);
+        assert_eq!(k8s_default, Some("env"));
+        let p = build_key_provider(&kp_absent_env, &format!("{}.key", dir.path().join("k8s").display()), k8s_default).unwrap();
+        assert_eq!(p.provider_id(), "env");
+
+        // Absent type + HOST/GREENGRASS (no profile default) → library default `file`.
+        for (label, platform) in [("host", Platform::Host), ("gg", Platform::Greengrass)] {
+            let default = profile_credentials_key_provider(platform);
+            assert_eq!(default, None);
+            let kp_absent = KeyProviderConfig::default(); // kind = None
+            let p = build_key_provider(&kp_absent, &format!("{}.key", dir.path().join(label).display()), default).unwrap();
+            assert_eq!(p.provider_id(), "file", "{label}");
+        }
+
+        // Explicit type ALWAYS wins, even on KUBERNETES (explicit `file` stays `file`).
+        let kp_file = KeyProviderConfig { kind: Some("file".to_string()), ..Default::default() };
+        let p = build_key_provider(
+            &kp_file,
+            &format!("{}.key", dir.path().join("explicit").display()),
+            profile_credentials_key_provider(Platform::Kubernetes),
+        )
+        .unwrap();
+        assert_eq!(p.provider_id(), "file");
+
+        unsafe { std::env::remove_var(var) };
+    }
+
+    // (e) Credentials stay OPT-IN: the KUBERNETES profile default only changes the provider TYPE; it
+    // must NOT auto-enable credentials when no `credentials` section is configured. This mirrors the
+    // gating in GgCommonsBuilder::build (credentials are opened only inside the
+    // `snapshot.raw.get("credentials") == Some` arm, where the default is consulted). The full
+    // build() path is exercised by the broker-gated integration test `tests/lib_standalone.rs`.
+    #[test]
+    fn profile_default_does_not_enable_credentials_without_a_section() {
+        use crate::config::model::Config;
+        // The KUBERNETES profile advertises an "env" default ...
+        assert_eq!(profile_credentials_key_provider(Platform::Kubernetes), Some("env"));
+        // ... but a config without a `credentials` section means no vault is opened (any platform).
+        let cfg = Config::from_value(
+            "com.example.C",
+            "thing-1",
+            serde_json::json!({ "logging": { "level": "INFO" } }),
+        )
+        .unwrap();
+        assert!(cfg.raw.get("credentials").is_none(), "no credentials section present");
+        let would_open = cfg.raw.get("credentials").is_some();
+        assert!(!would_open, "credentials must stay OFF without a section, even on KUBERNETES");
     }
 }

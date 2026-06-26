@@ -121,6 +121,7 @@ export {
   openFromConfig as openCredentials,
   CredentialError,
   DefaultCredentialService,
+  EnvKeyProvider,
   FileKeyProvider,
   LocalVault,
   Secret,

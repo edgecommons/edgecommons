@@ -251,9 +251,12 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("ggparam-sec-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let provider =
-            crate::credentials::config::build_key_provider(&Default::default(), &format!("{}.key", dir.join("v").display()))
-                .unwrap();
+        let provider = crate::credentials::config::build_key_provider(
+            &Default::default(),
+            &format!("{}.key", dir.join("v").display()),
+            None,
+        )
+        .unwrap();
         let vault = crate::credentials::LocalVault::open(dir.join("v"), provider, 1).unwrap();
         let vault = Arc::new(std::sync::Mutex::new(vault));
         // A source that yields a secure, versioned value.

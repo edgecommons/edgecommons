@@ -11,7 +11,7 @@
 
 use serde::{Deserialize, Deserializer};
 
-use super::keyprovider::FileKeyProvider;
+use super::keyprovider::{EnvKeyProvider, FileKeyProvider, DEFAULT_KEK_ENV_VAR};
 use super::service::DefaultCredentialService;
 use super::vault::LocalVault;
 use crate::error::GgError;
@@ -80,13 +80,22 @@ impl Default for VaultConfig {
     }
 }
 
-/// KEK custodian selection. Only `file` is implemented so far.
-#[derive(Debug, Clone, Deserialize)]
+/// KEK custodian selection (`file` | `env` | `kms` | `greengrass` | `pkcs11`).
+///
+/// `kind` (the `type` field) is `Option`: `None` means *unspecified*, which lets the credentials
+/// init site distinguish "explicitly `file`" from "absent" so it can apply the platform-profile
+/// default (env on KUBERNETES, FR-CRED-6) before falling back to the library default `file`
+/// ([`build_key_provider`]). An explicit `type` always wins.
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct KeyProviderConfig {
     #[serde(rename = "type")]
-    pub kind: String,
+    pub kind: Option<String>,
     pub key_path: Option<String>,
+    /// env: name of the env var holding the base64-encoded 32-byte KEK (default
+    /// [`keyprovider::DEFAULT_KEK_ENV_VAR`](super::keyprovider::DEFAULT_KEK_ENV_VAR),
+    /// i.e. `GGCOMMONS_VAULT_KEK`).
+    pub env_var: Option<String>,
     pub kms_key_id: Option<String>,
     pub region: Option<String>,
     /// Override the KMS endpoint (floci/LocalStack/VPC endpoint).
@@ -102,23 +111,6 @@ pub struct KeyProviderConfig {
     pub pin_env: Option<String>,
     /// Inline User PIN (discouraged — prefer `pinEnv`).
     pub pin: Option<String>,
-}
-
-impl Default for KeyProviderConfig {
-    fn default() -> Self {
-        Self {
-            kind: "file".to_string(),
-            key_path: None,
-            kms_key_id: None,
-            region: None,
-            endpoint_url: None,
-            module_path: None,
-            token_label: None,
-            key_label: None,
-            pin_env: None,
-            pin: None,
-        }
-    }
 }
 
 /// Central upstream source + sync settings.
@@ -187,11 +179,18 @@ impl<'de> Deserialize<'de> for SyncEntry {
 
 /// Build a KEK custodian from a [`KeyProviderConfig`] (shared by the vault and the parameter
 /// cache). `default_key_path` is used for the `file` provider when `keyPath` is absent.
+///
+/// `default_kind` is the platform-profile default custodian type applied when
+/// `keyProvider.type` is unspecified (FR-CRED-6, precedence FR-RT-3): the EFFECTIVE type is
+/// `explicit keyProvider.type ▸ default_kind ▸ "file"`. Callers without a platform default
+/// (e.g. the parameter cache) pass `None`, preserving the library default `file`.
 pub(crate) fn build_key_provider(
     kp: &KeyProviderConfig,
     default_key_path: &str,
+    default_kind: Option<&str>,
 ) -> Result<std::sync::Arc<dyn super::keyprovider::KeyProvider>> {
-    match kp.kind.as_str() {
+    let kind = kp.kind.as_deref().or(default_kind).unwrap_or("file");
+    match kind {
         "file" => {
             let key_path = kp.key_path.clone().unwrap_or_else(|| default_key_path.to_string());
             if let Some(dir) = std::path::Path::new(&key_path).parent() {
@@ -203,6 +202,14 @@ pub(crate) fn build_key_provider(
                 FileKeyProvider::generate_keyfile(&key_path)?
             };
             Ok(std::sync::Arc::new(fp))
+        }
+        "env" => {
+            // Software-KEK from an env var (typically a mounted k8s Secret). Cryptographically
+            // identical to `file` given the same raw KEK; the env var NAME defaults to
+            // GGCOMMONS_VAULT_KEK when `keyProvider.envVar` is absent (FR-CRED-3).
+            let env_var = kp.env_var.as_deref().unwrap_or(DEFAULT_KEK_ENV_VAR);
+            let p = EnvKeyProvider::from_env(env_var)?;
+            Ok(std::sync::Arc::new(p))
         }
         #[cfg(feature = "credentials-aws")]
         "kms" | "greengrass" => {
@@ -241,7 +248,7 @@ pub(crate) fn build_key_provider(
             Ok(std::sync::Arc::new(p))
         }
         other => Err(GgError::Credentials(format!(
-            "key provider '{other}' is not available (supported: 'file'; 'kms'/'greengrass' need the credentials-aws feature; 'pkcs11' needs the credentials-pkcs11 feature)"
+            "key provider '{other}' is not available (supported: 'file', 'env'; 'kms'/'greengrass' need the credentials-aws feature; 'pkcs11' needs the credentials-pkcs11 feature)"
         ))),
     }
 }
@@ -253,8 +260,27 @@ pub fn open(config: &CredentialsConfig) -> Result<DefaultCredentialService> {
 
 /// As [`open`], but transparently namespacing every key under `namespace` (typically
 /// `<thingName>/<componentName>`) so a shared device vault / fleet central store can't collide.
+///
+/// Uses the library default KEK custodian (`file`) when `keyProvider.type` is unspecified. The
+/// runtime builder calls [`open_namespaced_with_default`] to apply the platform-profile default
+/// (env on KUBERNETES, FR-CRED-6).
 pub fn open_namespaced(config: &CredentialsConfig, namespace: &str) -> Result<DefaultCredentialService> {
-    let provider = build_key_provider(&config.vault.key_provider, &format!("{}.key", config.vault.path))?;
+    open_namespaced_with_default(config, namespace, None)
+}
+
+/// As [`open_namespaced`], but applying `default_kind` as the KEK custodian when
+/// `keyProvider.type` is unspecified (FR-CRED-6, precedence FR-RT-3): the effective type is
+/// `explicit keyProvider.type ▸ default_kind ▸ "file"`. The runtime builder threads the resolved
+/// platform's [`crate::platform::profile_credentials_key_provider`] here (env on KUBERNETES). This
+/// only changes the default provider *type*; it does **not** enable credentials (the caller opens a
+/// vault only when a `credentials` config section is present).
+pub fn open_namespaced_with_default(
+    config: &CredentialsConfig,
+    namespace: &str,
+    default_kind: Option<&str>,
+) -> Result<DefaultCredentialService> {
+    let provider =
+        build_key_provider(&config.vault.key_provider, &format!("{}.key", config.vault.path), default_kind)?;
 
     let vault = LocalVault::open(&config.vault.path, provider, config.vault.keep_versions)?;
 

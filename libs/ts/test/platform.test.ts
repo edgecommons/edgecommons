@@ -10,6 +10,7 @@ import {
   DEFAULT_IDENTITY,
   ENV_GG_IPC_SOCKET,
   ENV_GG_SVCUID,
+  ENV_KEY_PROVIDER,
   ENV_K8S_POD_NAME,
   ENV_K8S_SERVICE_HOST,
   ENV_K8S_THING_NAME,
@@ -21,6 +22,7 @@ import {
   Platform,
   Transport,
   detectPlatform,
+  profileCredentialsKeyProvider,
   profileLoggingFormat,
   profileHealthEnabled,
   profileMetricTarget,
@@ -372,5 +374,19 @@ describe("profile metric-target default (Phase 1c prometheus / FR-MET-4)", () =>
     expect(PROFILES.get(Platform.HOST)!.metricTarget).toBeUndefined();
     expect(profileMetricTarget(Platform.GREENGRASS)).toBeUndefined();
     expect(profileMetricTarget(Platform.HOST)).toBeUndefined();
+  });
+});
+
+describe("profile credentials key-provider default (Phase 1d / FR-CRED-6)", () => {
+  it("the KUBERNETES profile defaults its vault key provider to env", () => {
+    expect(PROFILES.get(Platform.KUBERNETES)!.credentialsKeyProvider).toBe(ENV_KEY_PROVIDER);
+    expect(profileCredentialsKeyProvider(Platform.KUBERNETES)).toBe("env");
+  });
+
+  it("GREENGRASS/HOST pin no key-provider default (library default stays file)", () => {
+    expect(PROFILES.get(Platform.GREENGRASS)!.credentialsKeyProvider).toBeUndefined();
+    expect(PROFILES.get(Platform.HOST)!.credentialsKeyProvider).toBeUndefined();
+    expect(profileCredentialsKeyProvider(Platform.GREENGRASS)).toBeUndefined();
+    expect(profileCredentialsKeyProvider(Platform.HOST)).toBeUndefined();
   });
 });

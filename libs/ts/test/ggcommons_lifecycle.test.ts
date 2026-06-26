@@ -246,6 +246,45 @@ describe("GGCommons lifecycle (mocked)", () => {
     }
   });
 
+  it("threads NO key-provider default on HOST (3rd openFromConfig arg undefined → library default file)", async () => {
+    const gg = await buildWith({ ...BASE, credentials: { audit: { enabled: true } } });
+    try {
+      // HOST profile pins no credentials key-provider default (FR-CRED-6).
+      expect(credOpen.mock.calls[0][2]).toBeUndefined();
+    } finally {
+      await gg.close();
+    }
+  });
+
+  it("threads the KUBERNETES key-provider default 'env' as the 3rd openFromConfig arg (FR-CRED-6)", async () => {
+    const gg = await buildWith({ ...BASE, credentials: { audit: { enabled: true } } }, [
+      "--platform",
+      "KUBERNETES",
+      "--transport",
+      "MQTT",
+      "messaging.json",
+    ]);
+    try {
+      expect(credOpen).toHaveBeenCalledTimes(1);
+      // KUBERNETES profile defaults the vault key provider to env; explicit keyProvider.type still wins
+      // (precedence is enforced inside buildKeyProvider, which receives this default).
+      expect(credOpen.mock.calls[0][2]).toBe("env");
+    } finally {
+      await gg.close();
+    }
+  });
+
+  it("does NOT enable credentials on KUBERNETES when no `credentials` section is present", async () => {
+    // The platform credentials default must never auto-enable the subsystem (it stays opt-in).
+    const gg = await buildWith({ ...BASE }, ["--platform", "KUBERNETES", "--transport", "MQTT", "messaging.json"]);
+    try {
+      expect(credOpen).not.toHaveBeenCalled();
+      expect(gg.credentials()).toBeUndefined();
+    } finally {
+      await gg.close();
+    }
+  });
+
   it("wires parameters when a `parameters` section is present and closes it", async () => {
     const gg = await buildWith({ ...BASE, parameters: { refreshIntervalSecs: 0 } });
     try {

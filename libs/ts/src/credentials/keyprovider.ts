@@ -59,6 +59,70 @@ export class FileKeyProvider implements KeyProvider {
 }
 
 /**
+ * KEK sourced as a RAW 32-byte key, base64-encoded, from an environment variable (typically a mounted
+ * Kubernetes Secret) — the offline-capable software-KEK and the DEFAULT vault custodian on the
+ * KUBERNETES platform (FR-CRED-3/FR-CRED-6). Cryptographically IDENTICAL to {@link FileKeyProvider}
+ * given the same raw 32-byte KEK: it delegates wrap/unwrap to an internal {@link FileKeyProvider}
+ * (same AES-256-GCM, same {@link dekWrapAad} AAD), so a vault wrapped by this provider with KEK `K` is
+ * byte-compatible with one wrapped by `FileKeyProvider` with the same `K`. The ONLY differences are
+ * {@link providerId} (`"env"`) and the {@link KekInfo} `provider` tag it writes. The KEK never touches
+ * disk — it is read from the env var (a mounted Secret), not a key file.
+ */
+export class EnvKeyProvider implements KeyProvider {
+  /** Delegate that owns the identical AES-256-GCM DEK wrap/unwrap crypto. */
+  private readonly delegate: FileKeyProvider;
+
+  /** Wrap a raw 32-byte KEK; length is validated by the delegate {@link FileKeyProvider}. */
+  constructor(kek: Buffer) {
+    this.delegate = new FileKeyProvider(kek);
+  }
+
+  /**
+   * Read the base64-encoded KEK from environment variable `envVar`, base64-decode it, and validate it
+   * is EXACTLY {@link KEY_LEN} (32) bytes.
+   *
+   * @throws {@link CredentialError} if the env var is unset/empty, not valid base64, or the decoded
+   *         key is not 32 bytes.
+   */
+  static fromEnv(envVar: string): EnvKeyProvider {
+    const rawValue = process.env[envVar];
+    if (rawValue === undefined || rawValue === "") {
+      throw new CredentialError(`env key provider: environment variable '${envVar}' is unset or empty`);
+    }
+    // Tolerate surrounding whitespace / a trailing newline — common when the value is sourced from a
+    // mounted file / Secret (echo|base64, kubectl --from-file). Matches canonical Java (b64.trim()) and
+    // Rust (raw.trim()) so the same Secret decodes identically across all four languages.
+    const b64 = rawValue.trim();
+    // Strict standard base64 (no embedded whitespace) — mirrors Java's basic Base64 decoder. Node's
+    // Buffer.from(.,"base64") is lenient and never throws, so validate the shape explicitly first.
+    if (b64.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(b64)) {
+      throw new CredentialError(`env key provider: environment variable '${envVar}' is not valid base64`);
+    }
+    const kek = Buffer.from(b64, "base64");
+    if (kek.length !== KEY_LEN) {
+      throw new CredentialError(
+        `env key provider: decoded KEK from '${envVar}' must be ${KEY_LEN} bytes, got ${kek.length}`,
+      );
+    }
+    return new EnvKeyProvider(kek);
+  }
+
+  providerId(): string {
+    return "env";
+  }
+
+  /** Wrap the DEK exactly as {@link FileKeyProvider} does, tagging the {@link KekInfo} `provider:"env"`. */
+  wrapDek(vaultId: string, dek: Buffer): KekInfo {
+    return { ...this.delegate.wrapDek(vaultId, dek), provider: "env" };
+  }
+
+  /** Unwrap the DEK via the delegate (the `provider` tag is irrelevant to the crypto). */
+  unwrapDek(vaultId: string, kek: KekInfo): Buffer {
+    return this.delegate.unwrapDek(vaultId, kek);
+  }
+}
+
+/**
  * KMS-wrapped DEK custodian (mirrors the Rust `kms` module): the DEK is encrypted by an AWS KMS CMK
  * (the KEK never leaves KMS) and unwrapped via `kms:Decrypt` — using the default AWS credential chain
  * / TES on Greengrass. The encryption context `{vaultId}` binds the wrapped DEK to the vault id
