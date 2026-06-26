@@ -90,6 +90,7 @@ public class DirectoryWatcher extends Thread {
     public void run() {
         // Outer loop = the re-arm loop: if the directory watch is lost (key invalidated, e.g. the
         // mount directory itself was replaced), drop out, back off, and re-register.
+        boolean reconcileOnArm = false;
         while (!isStopped()) {
             try (WatchService watcher = FileSystems.getDefault().newWatchService()) {
                 dir.register(watcher,
@@ -97,6 +98,15 @@ public class DirectoryWatcher extends Thread {
                         StandardWatchEventKinds.ENTRY_MODIFY,
                         StandardWatchEventKinds.ENTRY_DELETE);
                 LOGGER.debug("DirectoryWatcher armed on {}", dir);
+
+                // Reconcile after a RE-arm: a change can land in the gap between losing the old watch
+                // and re-registering (the REARM_BACKOFF window), and a freshly-armed WatchService only
+                // delivers events that occur AFTER it is armed — so re-read now, or that ConfigMap
+                // update is silently lost (the "hot-reload dies after an update" failure mode).
+                if (reconcileOnArm) {
+                    LOGGER.debug("DirectoryWatcher reconciling state after re-arm on {}", dir);
+                    doOnChange();
+                }
 
                 boolean rearm = watchLoop(watcher);
                 if (!rearm) {
@@ -112,6 +122,8 @@ public class DirectoryWatcher extends Thread {
                 LOGGER.warn("DirectoryWatcher for {} could not arm ({}); retrying.", dir, e.toString());
             }
 
+            // Any path reaching here is heading into a re-arm; reconcile right after the next arm.
+            reconcileOnArm = true;
             // Back off before re-arming so a persistently-missing directory does not spin the CPU.
             if (!isStopped()) {
                 try {

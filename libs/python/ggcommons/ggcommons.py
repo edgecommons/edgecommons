@@ -30,6 +30,7 @@ class ConfigSource(str, Enum):
     FILE = "FILE"
     ENV = "ENV"
     GG_CONFIG = "GG_CONFIG"
+    CONFIGMAP = "CONFIGMAP"
     SHADOW = "SHADOW"
     CONFIG_COMPONENT = "CONFIG_COMPONENT"
 

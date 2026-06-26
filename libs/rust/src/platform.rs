@@ -195,8 +195,8 @@ pub fn profiled_platforms() -> [Platform; 3] {
 /// `resolve(setting) = explicit flag ▸ platform-profile default ▸ library default`.
 ///
 /// # Errors
-/// Returns [`GgError::Cli`] if the resolved platform has no Phase-0 profile (KUBERNETES) or
-/// the platform/transport combination is illegal (the IPC lock, §4.1).
+/// Returns [`GgError::Cli`] if the resolved platform has no profile, or the platform/transport
+/// combination is illegal (the IPC lock, §4.1).
 pub fn resolve_profile(inputs: ResolverInputs, env: &HashMap<String, String>) -> Result<ResolvedProfile> {
     let auto_detected = inputs.platform.is_none();
     let platform = match inputs.platform {
@@ -208,7 +208,7 @@ pub fn resolve_profile(inputs: ResolverInputs, env: &HashMap<String, String>) ->
     let profile = profile(platform).ok_or_else(|| {
         GgError::Cli(format!(
             "Platform {platform:?} is not supported in this build (no profile). Valid \
-             platforms: GREENGRASS, HOST. (KUBERNETES ships in Phase 1.)"
+             platforms: GREENGRASS, HOST, KUBERNETES."
         ))
     })?;
 

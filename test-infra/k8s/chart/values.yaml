@@ -17,12 +17,20 @@ image:
 # node dist/…); set this if the image has no baked-in entrypoint.
 command: []
 
-# -- Component args. Platform is AUTO-DETECTED to KUBERNETES from the projected
-# ServiceAccount token (/var/run/secrets/kubernetes.io/serviceaccount/token), so no
-# --platform flag is needed. We pass -c CONFIGMAP explicitly (it is also the
-# KUBERNETES profile default) pointing at the mounted directory + key.
-#   -c CONFIGMAP <mountDir> <key>   (defaults: /etc/ggcommons config.json)
+# -- Component args. Platform would also auto-detect to KUBERNETES (from the projected
+# ServiceAccount token); we pass it explicitly for clarity. KUBERNETES derives
+# transport=MQTT, and the StandaloneProvider needs its broker config at messaging-init
+# time — which runs BEFORE config load — so we MUST pass --transport MQTT <messaging-config>.
+# config.json carries an injected `messaging.local` block (see configmap.yaml) pointing at
+# the in-cluster broker, so it doubles as the messaging-config file. -c CONFIGMAP (also the
+# KUBERNETES profile default) reads the component config from the mounted ConfigMap directory.
+#   --transport MQTT <messaging-config-file>  ;  -c CONFIGMAP <mountDir> <key>
 args:
+  - "--platform"
+  - "KUBERNETES"
+  - "--transport"
+  - "MQTT"
+  - "/etc/ggcommons/config.json"
   - "-c"
   - "CONFIGMAP"
   - "/etc/ggcommons"

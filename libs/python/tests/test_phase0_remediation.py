@@ -25,6 +25,14 @@ def test_mqtt_transport_without_path_raises():
         MessagingClient.init(args, standalone_config_path=None)
 
 
+def test_configmap_is_a_recognized_config_source():
+    """Phase-1a regression: the up-front config-source gate must accept CONFIGMAP, or
+    --platform KUBERNETES (which resolves to CONFIGMAP) dies with 'Unrecognized config
+    source' before the builder runs. (The ConfigSource enum must include CONFIGMAP.)"""
+    from ggcommons.ggcommons import ConfigSource
+    assert "CONFIGMAP" in {s.value for s in ConfigSource}
+
+
 def _thing_name_from_build(monkeypatch, args):
     """Build a config manager with the GreengrassConfigManager stubbed out (no IPC),
     returning the thing_name the builder computed and passed to the manager."""

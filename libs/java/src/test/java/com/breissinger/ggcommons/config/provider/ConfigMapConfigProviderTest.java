@@ -211,12 +211,11 @@ class ConfigMapConfigProviderTest {
             Thread.sleep(1_500);
             write(key, configJson(3));
 
-            ArgumentCaptor<JsonObject> captor = ArgumentCaptor.forClass(JsonObject.class);
-            // At least two reloads (the watch survived the first edit and re-fired on the second);
-            // the final applied config carries version 3.
-            verify(cm, timeout(20_000).atLeast(2)).applyConfig(captor.capture());
-            assertEquals(3, captor.getAllValues().get(captor.getAllValues().size() - 1)
-                    .get("version").getAsInt());
+            // Deterministic: wait until the reload carrying version 3 is applied — proving the watch
+            // re-armed across BOTH edits (not a one-shot). Avoids the race where "at least 2 calls"
+            // returns after the v1+v2 applies, before v3's reload lands.
+            verify(cm, timeout(20_000).atLeastOnce()).applyConfig(argThat(c ->
+                    c.has("version") && c.get("version").getAsInt() == 3));
         } finally {
             provider.close();
         }

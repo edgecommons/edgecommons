@@ -93,23 +93,32 @@ log "Waiting for the component rollout"
 "${KUBECTL}" -n "${NAMESPACE}" rollout status deploy/"${RELEASE}"-ggcommons-component --timeout="${TIMEOUT}s"
 
 # --- Core assertions: platform resolution + CONFIGMAP source + broker connect -------
-assert_log "Resolved platform=KUBERNETES|platform=KUBERNETES" "auto-detected platform=KUBERNETES"
-assert_log "CONFIGMAP|ConfigMap \(mountDir" "config loaded via the CONFIGMAP source"
-assert_log "connect|MQTT|broker|messaging" "messaging/broker connect"
+# NOTE: the resolver's "Resolved platform=KUBERNETES" and messaging's "Successfully connected"
+# logs are emitted BEFORE the component configures logging (both precede config load), so they are
+# dropped at INFO and are not assertable from pod logs yet — a startup-log observability gap tracked
+# for the 1c logging sub-phase (when the stdout-JSON sink + early bootstrap land). We assert instead
+# on reliably-emitted, equally-conclusive logs: the CONFIGMAP directory watcher starting (only the
+# KUBERNETES profile selects CONFIGMAP, and --platform KUBERNETES is passed explicitly), and the
+# in-cluster broker round-trip (the component receives its own published message off the broker).
+assert_log "Starting ConfigMap directory watcher on /etc/ggcommons" "config loaded via the CONFIGMAP source (KUBERNETES profile)"
+assert_log "Received an .* message on topic ggcommons" "MQTT pub/sub round-trip via the in-cluster broker (connect proven)"
 
 # --- Hot-reload (..data swap re-arm) test -------------------------------------------
 # Patch the ConfigMap's config.json in place (NOT helm upgrade) and assert the running
 # pod reloads in-process. We flip logging.level INFO->DEBUG as the observable change.
 log "Patching the ConfigMap to trigger the ..data hot-reload"
+# Portable interpreter: python3 on Linux/CI, python on Windows Git Bash.
+PY="$(command -v python3 || command -v python || true)"
+[[ -n "${PY}" ]] || fail "need python3/python to JSON-encode the ConfigMap patch payload"
 CM_NAME="${RELEASE}-ggcommons-component-config"
 CURRENT_JSON="$("${KUBECTL}" -n "${NAMESPACE}" get configmap "${CM_NAME}" -o jsonpath='{.data.config\.json}')"
 NEW_JSON="$(printf '%s' "${CURRENT_JSON}" | sed 's/"level": *"INFO"/"level": "DEBUG"/')"
 if [[ "${NEW_JSON}" == "${CURRENT_JSON}" ]]; then
   fail "could not mutate config.json (logging.level INFO not found) — check the rendered ConfigMap"
 fi
-# Replace the whole data key via a strategic-merge patch.
+# Replace the whole data key via a strategic-merge patch (JSON-encode the doc as a string).
 "${KUBECTL}" -n "${NAMESPACE}" patch configmap "${CM_NAME}" --type merge \
-  -p "$(printf '{"data":{"config.json":%s}}' "$(printf '%s' "${NEW_JSON}" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')")"
+  -p "$(printf '{"data":{"config.json":%s}}' "$(printf '%s' "${NEW_JSON}" | "${PY}" -c 'import json,sys; print(json.dumps(sys.stdin.read()))')")"
 
 # kubelet propagation of a ConfigMap edit is ~60-90s at defaults; allow generous time.
 RELOAD_TIMEOUT="${RELOAD_TIMEOUT:-150}"
