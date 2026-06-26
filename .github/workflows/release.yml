@@ -17,6 +17,7 @@ on:
   push:
     tags:
       - "java-lib/v*"
+      - "ts-lib/v*"
       - "python-lib/v*"
       - "rust-lib/v*"
       - "cli/v*"
@@ -28,21 +29,95 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # --- Scaffold publish for the pure-source libs (tag push only; not streaming/*) ---
+  # --- Per-artifact publish for the pure-source libs (tag push only; not streaming/*) ---
+  # GitHub-native private distribution (DESIGN-packaging §13): java-lib + ts-lib publish to
+  # GitHub Packages (Maven/npm) via the built-in GITHUB_TOKEN; python-lib + rust-lib are
+  # consumed via git refs (pip git+https@<tag> / cargo git dep tag = "<tag>"), so their tag
+  # IS the release (a dist/package is built for inspection). Each step is guarded on the tag
+  # prefix; nothing publishes without a deliberate `<artifact>/v*` tag push.
   release:
     if: ${{ github.event_name == 'push' && !startsWith(github.ref_name, 'streaming/') }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write          # GitHub Packages (Maven/npm) via GITHUB_TOKEN
     steps:
       - uses: actions/checkout@v4
       - name: Identify the artifact from the tag
         id: which
         run: echo "artifact=${GITHUB_REF_NAME%%/*}" >> "$GITHUB_OUTPUT"
-      # --- Wire up per-artifact publish below (guarded on steps.which.outputs.artifact) ---
-      # java-lib   -> (cd libs/java   && mvn -B -ntp deploy)        # needs Maven settings/creds
-      # python-lib -> (cd libs/python && python -m build && twine upload dist/*)
-      # rust-lib   -> (cd libs/rust   && cargo publish)             # needs CARGO_REGISTRY_TOKEN
-      # cli        -> (cd cli         && python -m build && twine upload dist/*)
-      - run: echo "Release ${{ github.ref_name }} (artifact=${{ steps.which.outputs.artifact }}) — wire up publish steps."
+
+      # java-lib -> GitHub Packages Maven (com.mbreissi:ggcommons; <distributionManagement> id=github)
+      - name: Set up JDK (java-lib)
+        if: ${{ steps.which.outputs.artifact == 'java-lib' }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+          server-id: github
+          server-username: MAVEN_USERNAME
+          server-password: MAVEN_PASSWORD
+      - name: Publish java-lib to GitHub Packages
+        if: ${{ steps.which.outputs.artifact == 'java-lib' }}
+        working-directory: libs/java
+        env:
+          MAVEN_USERNAME: ${{ github.actor }}
+          MAVEN_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        run: mvn -B -ntp -DskipTests deploy
+
+      # ts-lib -> GitHub Packages npm (@mbreissi/ggcommons; scope matches the repo owner)
+      - name: Set up Node (ts-lib)
+        if: ${{ steps.which.outputs.artifact == 'ts-lib' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@mbreissi"
+      - name: Build & publish ts-lib to GitHub Packages
+        if: ${{ steps.which.outputs.artifact == 'ts-lib' }}
+        working-directory: libs/ts
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          npm ci
+          npm run build
+          npm publish
+
+      # python-lib / cli -> build the dist (consumed via pip git+https@<tag>; add twine upload when a
+      # PyPI/CodeArtifact token is configured — DESIGN-packaging §13).
+      - name: Set up Python (python-lib / cli)
+        if: ${{ steps.which.outputs.artifact == 'python-lib' || steps.which.outputs.artifact == 'cli' }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build python-lib
+        if: ${{ steps.which.outputs.artifact == 'python-lib' }}
+        working-directory: libs/python
+        run: pipx run build
+      - name: Build cli
+        if: ${{ steps.which.outputs.artifact == 'cli' }}
+        working-directory: cli
+        run: pipx run build
+      - name: Upload python dist
+        if: ${{ steps.which.outputs.artifact == 'python-lib' || steps.which.outputs.artifact == 'cli' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.which.outputs.artifact }}-dist
+          path: "**/dist/*"
+          if-no-files-found: warn
+
+      # rust-lib -> the tag IS the release (consumed via a cargo git dep `tag = "rust-lib/v<X>"`);
+      # build-check the crate. Add `cargo publish` when the crates.io name is claimed + a token set.
+      - name: Set up Rust (rust-lib)
+        if: ${{ steps.which.outputs.artifact == 'rust-lib' }}
+        uses: dtolnay/rust-toolchain@stable
+      - name: Build-check rust-lib
+        if: ${{ steps.which.outputs.artifact == 'rust-lib' }}
+        working-directory: libs/rust
+        run: cargo build --release
+
+      - run: echo "Released ${{ github.ref_name }} (artifact=${{ steps.which.outputs.artifact }})."
 
   # ===========================================================================
   # streaming/v* (or manual dispatch): prebuilt native core across four targets
