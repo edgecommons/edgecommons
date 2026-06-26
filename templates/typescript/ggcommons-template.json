@@ -1,9 +1,9 @@
 {
   "language": "TYPESCRIPT",
   "description": "TypeScript Greengrass component built on the ggcommons TypeScript library.",
-  "required": ["GGCOMMONS_PATH"],
+  "required": ["GGCOMMONS_DEP"],
   "substitutions": {
-    "package.json": ["COMPONENTNAME", "DESCRIPTION", "GGCOMMONS_PATH"],
+    "package.json": ["COMPONENTNAME", "DESCRIPTION", "GGCOMMONS_DEP"],
     "recipe.yaml": ["DESCRIPTION", "COMPONENTFULLNAME", "AUTHOR", "COMPONENTNAME"],
     "gdk-config.json": ["COMPONENTFULLNAME", "AUTHOR", "BUCKET", "REGION"],
     "build.sh": ["COMPONENTFULLNAME", "COMPONENTNAME"],

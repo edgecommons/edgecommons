@@ -1,9 +1,9 @@
 {
   "language": "RUST",
   "description": "Rust Greengrass component built on the ggcommons Rust library.",
-  "required": ["GGCOMMONS_PATH"],
+  "required": ["GGCOMMONS_DEP"],
   "substitutions": {
-    "Cargo.toml": ["BINNAME", "DESCRIPTION", "GGCOMMONS_PATH"],
+    "Cargo.toml": ["BINNAME", "DESCRIPTION", "GGCOMMONS_DEP"],
     "gdk-config.json": ["COMPONENTFULLNAME", "AUTHOR", "BUCKET", "REGION"],
     "recipe.yaml": ["DESCRIPTION", "COMPONENTFULLNAME", "AUTHOR", "BINNAME"],
     "build.sh": ["COMPONENTFULLNAME", "BINNAME"],

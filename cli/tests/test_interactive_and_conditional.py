@@ -124,6 +124,50 @@ class TestParsePlatforms:
         assert CreateComponent._parse_platforms(["greengrass"]) == {"GREENGRASS"}
 
 
+class TestDepSourceWiring:
+    """The dep-source choice drives the ggcommons dependency declaration in the REAL
+    Rust/TS templates via the GGCOMMONS_DEP substitution."""
+
+    _WS = pathlib.Path(__file__).resolve().parents[2]
+
+    def _gen(self, tmp_path, language, tmpl, **overrides):
+        args = {
+            "name": "com.example.DepGen", "language": language, "path": str(tmp_path),
+            "template_url": str(self._WS / "templates" / tmpl), "force": True,
+        }
+        args.update(overrides)
+        CreateComponent().execute_command(args)
+        return tmp_path / "DepGen"
+
+    def test_rust_registry_uses_git_dep(self, tmp_path):
+        if not (self._WS / "templates" / "rust").is_dir():
+            pytest.skip("rust template not present")
+        proj = self._gen(tmp_path, "RUST", "rust", dep_source="registry")
+        cargo = (proj / "Cargo.toml").read_text()
+        dep = [l for l in cargo.splitlines() if l.startswith("ggcommons =")][0]
+        assert 'git = "https://github.com/mbreissi/ggcommons"' in dep
+        assert "path =" not in dep  # the ggcommons line must not be a path dep
+
+    def test_rust_local_uses_path_dep(self, tmp_path):
+        ws = self._WS
+        if not (ws / "templates" / "rust").is_dir() or not (ws / "libs" / "rust").is_dir():
+            pytest.skip("rust template/lib not present")
+        proj = self._gen(tmp_path, "RUST", "rust", dep_source="local",
+                         ggcommons_path=str(ws / "libs" / "rust"))
+        dep = [l for l in (proj / "Cargo.toml").read_text().splitlines() if l.startswith("ggcommons =")][0]
+        assert "path =" in dep and "git =" not in dep
+
+    def test_ts_registry_uses_mbreissi_scope(self, tmp_path):
+        if not (self._WS / "templates" / "typescript").is_dir():
+            pytest.skip("ts template not present")
+        proj = self._gen(tmp_path, "TYPESCRIPT", "typescript", dep_source="registry")
+        pkg = (proj / "package.json").read_text()
+        assert '"@mbreissi/ggcommons": "^0.1.0"' in pkg
+        assert "@breissinger" not in pkg
+        # the source imports must use the new scope too
+        assert "@breissinger" not in (proj / "src" / "main.ts").read_text()
+
+
 class TestWizard:
     def test_wizard_fills_inputs_and_gates_artifacts(self, tmp_path, monkeypatch):
         template = _make_template(tmp_path)

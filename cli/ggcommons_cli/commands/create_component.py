@@ -73,6 +73,11 @@ VALID_PLATFORMS = ("GREENGRASS", "HOST", "KUBERNETES")
 VALID_DEP_SOURCES = ("registry", "local")
 _DEFAULT_DEP_SOURCE = "local"
 
+# Coordinates for the `registry` dependency source (DESIGN-packaging §13). Initial version;
+# `ggcommons upgrade --to <ver>` bumps a generated component later.
+_GGCOMMONS_VERSION = "0.1.0"
+_GGCOMMONS_GIT_URL = "https://github.com/mbreissi/ggcommons"
+
 
 class CreateComponent(CommandBase):
 
@@ -327,7 +332,27 @@ class CreateComponent(CommandBase):
             "BUCKET": self.bucket or "",
             "REGION": self.region or "",
             "GGCOMMONS_PATH": self.ggcommons_path or "",
+            "GGCOMMONS_DEP": self._ggcommons_dep(),
         }
+
+    def _ggcommons_dep(self) -> str:
+        """The dependency-declaration fragment a path-dep template (Rust/TS) substitutes for
+        ``<<GGCOMMONS_DEP>>``, chosen by --dep-source. `local` = a path/file dependency on the
+        monorepo checkout (the dev default); `registry` = the published artifact (git tag for
+        Rust, a semver range for TS GitHub-Packages npm). See DESIGN-packaging §13."""
+        lang = self.component_language
+        if self.dep_source == "registry":
+            if lang == "RUST":
+                return f'git = "{_GGCOMMONS_GIT_URL}", tag = "rust-lib/v{_GGCOMMONS_VERSION}"'
+            if lang == "TYPESCRIPT":
+                return f"^{_GGCOMMONS_VERSION}"
+            return ""
+        path = (self.ggcommons_path or "").replace("\\", "/")
+        if lang == "RUST":
+            return f'path = "{path}"'
+        if lang == "TYPESCRIPT":
+            return f"file:{path}"
+        return ""
 
     # ----- platforms / conditional generation ------------------------------------------
 
