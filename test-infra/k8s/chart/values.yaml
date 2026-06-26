@@ -44,6 +44,16 @@ thingName: ""
 # Downward-API fieldRefs or AWS_REGION). Each item is a standard corev1.EnvVar.
 extraEnv: []
 
+# -- Encrypted credentials vault using the `env` KeyProvider (Phase 1d). When enabled, the chart creates
+# a Secret holding a base64 32-byte KEK, projects it as GGCOMMONS_VAULT_KEK, and injects a `credentials`
+# section (vault under the writable /tmp; keyProvider omitted -> the KUBERNETES profile default `env`).
+# OFF by default. The smoke enables it to prove the env KeyProvider unlocks a vault on a real pod. In
+# production the operator owns the Secret (ESO / sealed-secrets); kekBase64 here is a FIXED TEST key.
+credentials:
+  enabled: false
+  vaultPath: /tmp/ggcommons-vault
+  kekBase64: "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc="
+
 # -- Directory the ConfigMap volume is mounted at. MUST match the CONFIGMAP source
 # mount dir above. Mounted as a WHOLE VOLUME (never subPath) so the kubelet's atomic
 # ..data symlink swap drives hot-reload (DESIGN-subsystems §1, FR-CFG-2/3).

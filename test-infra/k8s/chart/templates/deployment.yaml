@@ -69,6 +69,15 @@ spec:
             - name: GGCOMMONS_THING_NAME
               value: {{ .Values.thingName | quote }}
             {{- end }}
+            {{- if .Values.credentials.enabled }}
+            # The vault KEK for the `env` KeyProvider (Phase 1d), from the mounted Secret. The component
+            # base64-decodes it to unlock the encrypted vault offline (no cloud).
+            - name: GGCOMMONS_VAULT_KEK
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "ggcommons.fullname" . }}-vault-kek
+                  key: GGCOMMONS_VAULT_KEK
+            {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
