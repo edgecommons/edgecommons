@@ -279,7 +279,13 @@ impl GgCommonsBuilder {
         config::validation::validate(&raw)?;
         let cfg = Config::from_value(self.component_name.clone(), thing_name.clone(), raw)?;
 
-        logging::init(&cfg);
+        // Logging is configured from the component CONFIG, which loads after the resolver. The
+        // resolved platform is already known, so its profile's default logging format (json on
+        // KUBERNETES — FR-LOG-1) is threaded in to seed the format when the config omits one
+        // (precedence FR-RT-3: explicit config ▸ profile default ▸ library default).
+        let profile_logging_default =
+            crate::platform::profile(parsed.platform).and_then(|p| p.logging_format);
+        logging::init(&cfg, profile_logging_default);
 
         tracing::info!(
             component = %self.component_name,

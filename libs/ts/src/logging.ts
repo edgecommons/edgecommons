@@ -22,7 +22,14 @@
  *   suffixes (case-insensitive, 1024-based); unparseable falls back to `10MB`.
  * - `logging.ts_format` IS applied (token template: {timestamp}/{level}/{logger}/{message});
  *   it replaces the former language-agnostic `format`, re-applied on hot reload with the level and
- *   file writer.
+ *   file writer. The special selector value `json` (case-insensitive, {@link JSON_LOG_FORMAT}) instead
+ *   selects the structured **stdout-JSON sink** (Phase 1c / FR-LOG-1): one JSON object per line. This
+ *   sink is the platform-profile default on KUBERNETES (threaded in via {@link initLogging}'s
+ *   `formatDefault`); precedence is explicit `logging.ts_format` ▸ profile default ▸ library default.
+ *   When the JSON sink is active, in-process file rotation is NOT installed (FR-LOG-2 — the cluster log
+ *   agent owns rotation; stdout-only also survives a read-only root FS), and best-effort correlation
+ *   fields (pod/namespace/node from the Downward-API env vars, thing from the resolved identity) are
+ *   added to each line when present (FR-LOG-3).
  * - `logging.loggers` (per-logger levels) IS applied: {@link getLogger} returns a named logger
  *   whose level is the longest dotted-prefix match in `logging.loggers`, else the root level
  *   (mirrors Python's logging hierarchy / Rust's EnvFilter targets).
@@ -35,6 +42,13 @@ import * as path from "path";
 import type { Config } from "./config/model";
 import { resolve } from "./config/template";
 import type { ConfigurationChangeListener } from "./config";
+import {
+  Env,
+  ENV_K8S_NODE_NAME,
+  ENV_K8S_POD_NAME,
+  ENV_K8S_POD_NAMESPACE,
+  JSON_LOG_FORMAT,
+} from "./platform";
 
 /** Severity levels, ordered low → high. */
 enum Level {
@@ -249,11 +263,86 @@ function renderLine(format: string, level: Level, message: string, loggerName: s
     .replace(/\{message\}/g, message);
 }
 
+/**
+ * Best-effort logging correlation fields (FR-LOG-3) added to each stdout-JSON line. Sourced from the
+ * Kubernetes Downward-API env vars ({@link ENV_K8S_POD_NAME}/{@link ENV_K8S_POD_NAMESPACE}/
+ * {@link ENV_K8S_NODE_NAME} — the same vars wired in Phase 1b) and the resolved identity (`thing`).
+ * An absent value is `undefined` and is omitted from the JSON object (no empty/null noise).
+ */
+interface Correlation {
+  pod?: string;
+  namespace?: string;
+  node?: string;
+  thing?: string;
+}
+
+/** Read `env[key]` if present and non-empty, else `undefined` (treats `""` as absent). */
+function envNonEmpty(env: Env, key: string): string | undefined {
+  const v = env[key];
+  return v !== undefined && v !== "" ? v : undefined;
+}
+
+/** Capture the correlation fields from the environment + resolved identity (best-effort). */
+function captureCorrelation(env: Env, thingName: string): Correlation {
+  return {
+    pod: envNonEmpty(env, ENV_K8S_POD_NAME),
+    namespace: envNonEmpty(env, ENV_K8S_POD_NAMESPACE),
+    node: envNonEmpty(env, ENV_K8S_NODE_NAME),
+    thing: thingName && thingName.length > 0 ? thingName : undefined,
+  };
+}
+
+/** Render an error/exception value into a string for the JSON `thrown` field (stack when available). */
+function errorToString(err: unknown): string {
+  if (err instanceof Error) {
+    return err.stack ?? `${err.name}: ${err.message}`;
+  }
+  return String(err);
+}
+
+/**
+ * Render one line of the structured stdout-JSON sink (FR-LOG-1): a single JSON object with at least
+ * `timestamp`, `level`, `logger`, `message`, plus any present correlation fields (FR-LOG-3) and a
+ * `thrown` field when an error is supplied. `JSON.stringify` yields no embedded newlines (control chars
+ * are escaped), so the result is always exactly one line of valid JSON.
+ */
+function renderJsonLine(
+  level: Level,
+  message: string,
+  loggerName: string,
+  corr: Correlation,
+  error?: unknown,
+): string {
+  const obj: Record<string, unknown> = {
+    timestamp: new Date().toISOString(),
+    level: Level[level],
+    logger: loggerName,
+    message,
+  };
+  if (corr.pod !== undefined) obj.pod = corr.pod;
+  if (corr.namespace !== undefined) obj.namespace = corr.namespace;
+  if (corr.node !== undefined) obj.node = corr.node;
+  if (corr.thing !== undefined) obj.thing = corr.thing;
+  if (error !== undefined) obj.thrown = errorToString(error);
+  return JSON.stringify(obj);
+}
+
 // ---- Module-wide logging state: root level, per-logger overrides, shared sinks. ----
 let rootLevel: Level = Level.INFO;
 let loggersConfig: Record<string, string> = {};
 let sharedFormat: string = DEFAULT_TS_FORMAT;
 let sharedFileWriter: RotatingFileWriter | undefined;
+/** Whether the structured stdout-JSON sink is active (FR-LOG-1); set by {@link applyLoggingConfig}. */
+let sharedJsonMode = false;
+/** Best-effort correlation fields for the JSON sink (FR-LOG-3); refreshed on each config apply. */
+let sharedCorrelation: Correlation = {};
+/**
+ * The platform-profile default logging format (e.g. `json` on KUBERNETES), threaded in via
+ * {@link initLogging} and preserved across hot reloads so {@link reconfigureLogging} can re-apply it.
+ */
+let moduleFormatDefault: string | undefined;
+/** Environment used to source correlation fields (default `process.env`; injectable for tests). */
+let moduleEnv: Env = process.env;
 const registry = new Map<string, Logger>();
 
 /**
@@ -282,17 +371,21 @@ export class Logger {
   private level: Level = Level.INFO;
   private fileWriter?: RotatingFileWriter;
   private format: string = DEFAULT_TS_FORMAT;
+  private jsonMode = false;
+  private correlation: Correlation = {};
   readonly loggerName: string;
 
   constructor(name = "ggcommons") {
     this.loggerName = name;
   }
 
-  /** Recompute this logger's level (per-logger or root), format, and file sink from config. */
+  /** Recompute this logger's level (per-logger or root), format, JSON mode, and file sink from config. */
   refresh(): void {
     this.level = effectiveLevel(this.loggerName);
     this.format = sharedFormat;
     this.fileWriter = sharedFileWriter;
+    this.jsonMode = sharedJsonMode;
+    this.correlation = sharedCorrelation;
   }
 
   /** Set the active level threshold (overridden by the next config refresh). */
@@ -310,14 +403,28 @@ export class Logger {
     this.fileWriter = writer;
   }
 
-  private log(level: Level, message: string): void {
+  private log(level: Level, message: string, error?: unknown): void {
     if (level < this.level) {
       return;
     }
-    const line = renderLine(this.format, level, message, this.loggerName);
+    let line: string;
     try {
-      // Console: warn/error to stderr, everything else to stdout.
-      if (level >= Level.WARN) {
+      if (this.jsonMode) {
+        line = renderJsonLine(level, message, this.loggerName, this.correlation, error);
+      } else {
+        // Text mode (unchanged token-template behavior). An error, when supplied, is appended inline
+        // so it is not lost (no existing call site passes one, so existing output is byte-identical).
+        const text = error !== undefined ? `${message}: ${errorToString(error)}` : message;
+        line = renderLine(this.format, level, text, this.loggerName);
+      }
+    } catch {
+      return; /* fail-soft: never let a render error escape */
+    }
+    try {
+      // JSON sink (FR-LOG-1): a single structured stream on stdout for all levels (mirrors the Java
+      // canonical single SYSTEM_OUT console appender). Text mode keeps today's split: warn/error to
+      // stderr, everything else to stdout.
+      if (!this.jsonMode && level >= Level.WARN) {
         process.stderr.write(line + "\n");
       } else {
         process.stdout.write(line + "\n");
@@ -330,17 +437,17 @@ export class Logger {
     }
   }
 
-  debug(message: string): void {
-    this.log(Level.DEBUG, message);
+  debug(message: string, error?: unknown): void {
+    this.log(Level.DEBUG, message, error);
   }
-  info(message: string): void {
-    this.log(Level.INFO, message);
+  info(message: string, error?: unknown): void {
+    this.log(Level.INFO, message, error);
   }
-  warn(message: string): void {
-    this.log(Level.WARN, message);
+  warn(message: string, error?: unknown): void {
+    this.log(Level.WARN, message, error);
   }
-  error(message: string): void {
-    this.log(Level.ERROR, message);
+  error(message: string, error?: unknown): void {
+    this.log(Level.ERROR, message, error);
   }
 }
 
@@ -363,29 +470,68 @@ export function getLogger(name: string): Logger {
   return existing;
 }
 
+/**
+ * The effective logging format selector (FR-RT-3 precedence): explicit `logging.ts_format` ▸ the
+ * platform-profile default ({@link moduleFormatDefault}, `json` on KUBERNETES) ▸ the library default
+ * ({@link DEFAULT_TS_FORMAT}). The result is either the special {@link JSON_LOG_FORMAT} token (selects
+ * the stdout-JSON sink) or a text token template.
+ */
+function effectiveFormat(config: Config): string {
+  const fmt = config.parsed.logging.tsFormat;
+  if (fmt && fmt.length > 0) return fmt; // explicit config wins
+  if (moduleFormatDefault && moduleFormatDefault.length > 0) return moduleFormatDefault; // profile default
+  return DEFAULT_TS_FORMAT; // library default
+}
+
 /** Apply config to the module-wide state and refresh every live logger. */
 function applyLoggingConfig(config: Config): void {
   rootLevel = parseLevel(config.parsed.logging.level);
   loggersConfig = config.parsed.logging.loggers ?? {};
-  const fmt = config.parsed.logging.tsFormat;
-  sharedFormat = fmt && fmt.length > 0 ? fmt : DEFAULT_TS_FORMAT;
-  sharedFileWriter = buildFileWriter(config);
+
+  const fmt = effectiveFormat(config);
+  sharedJsonMode = fmt.trim().toLowerCase() === JSON_LOG_FORMAT;
+  // In text mode the format is the token template; in JSON mode the template is unused.
+  sharedFormat = sharedJsonMode ? DEFAULT_TS_FORMAT : fmt;
+  // FR-LOG-2: under the JSON sink, do NOT install in-process file rotation (the cluster log agent owns
+  // rotation; stdout-only also keeps logging alive on a read-only root FS). File logging stays
+  // available off the JSON sink.
+  sharedFileWriter = sharedJsonMode ? undefined : buildFileWriter(config);
+  sharedCorrelation = sharedJsonMode ? captureCorrelation(moduleEnv, config.thingName) : {};
+
   for (const l of registry.values()) {
     l.refresh();
   }
 }
 
+/** Options threaded into the logging configurator from the resolved runtime profile (Phase 1c). */
+export interface LoggingOptions {
+  /**
+   * The platform-profile default logging format (e.g. {@link JSON_LOG_FORMAT} on KUBERNETES), applied
+   * when the component config sets no `logging.ts_format`. Stored and re-applied across hot reloads.
+   */
+  formatDefault?: string;
+  /** Environment for the JSON-sink correlation fields (default `process.env`; injectable for tests). */
+  env?: Env;
+}
+
 /**
  * Initialize logging from `config`: root level (`logging.level`), per-logger overrides
- * (`logging.loggers`), format (`logging.ts_format`), and the rotating file writer. Fail-soft.
+ * (`logging.loggers`), the effective format (`logging.ts_format` ▸ profile default ▸ library default),
+ * the stdout-JSON sink when `json` is selected (FR-LOG-1), and the rotating file writer otherwise.
+ * Fail-soft. `options.formatDefault`/`options.env` (the resolved platform's logging default + the
+ * correlation environment) are stored and reused on subsequent {@link reconfigureLogging} calls.
  */
-export function initLogging(config: Config): void {
+export function initLogging(config: Config, options?: LoggingOptions): void {
+  moduleFormatDefault = options?.formatDefault;
+  moduleEnv = options?.env ?? process.env;
   applyLoggingConfig(config);
 }
 
 /**
- * Re-apply level (root + per-logger), format, and the rotating file writer on hot reload.
- * (Node lets us rebuild the file writer live, unlike the Rust tracing-layer limitation.)
+ * Re-apply level (root + per-logger), the effective format/sink, and the rotating file writer on hot
+ * reload, preserving the platform-profile default + correlation environment captured at
+ * {@link initLogging}. (Node lets us rebuild the file writer live, unlike the Rust tracing-layer
+ * limitation; the JSON sink likewise re-selects cleanly on reload.)
  */
 export function reconfigureLogging(config: Config): void {
   applyLoggingConfig(config);

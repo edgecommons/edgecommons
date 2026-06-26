@@ -27,8 +27,8 @@ class ShadowConfigManager(ConfigManager):
         "component": {"global": {}, "instances": []},
     }
 
-    def __init__(self, thing_name: str, component_name: str, shadow_name: str):
-        super().__init__(component_name, thing_name)
+    def __init__(self, thing_name: str, component_name: str, shadow_name: str, platform=None):
+        super().__init__(component_name, thing_name, platform=platform)
         self._shadow_name = (
             shadow_name if shadow_name is not None else _sanitize_shadow_name(component_name)
         )

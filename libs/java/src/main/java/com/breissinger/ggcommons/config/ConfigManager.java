@@ -7,6 +7,8 @@ package com.breissinger.ggcommons.config;
 import com.breissinger.ggcommons.ParsedCommandLine;
 import com.breissinger.ggcommons.config.provider.ConfigProvider;
 import com.breissinger.ggcommons.config.provider.ConfigProviderBuilder;
+import com.breissinger.ggcommons.platform.Platform;
+import com.breissinger.ggcommons.platform.PlatformResolver;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -23,6 +25,7 @@ import org.apache.logging.log4j.core.config.builder.impl.BuiltConfiguration;
 
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -42,6 +45,14 @@ public class ConfigManager
     protected final String componentName;
     protected final String componentFullName;
     protected final String thingName;
+    /**
+     * The resolved deployment platform (or {@code null} when unknown, e.g. test/subclass bring-up).
+     * Used only to source the platform-profile default logging format (FR-LOG-1/4, precedence
+     * FR-RT-3): the resolved platform is known before the component config loads, so the logging
+     * configurator can default to the stdout-JSON sink on KUBERNETES when the config omits
+     * {@code logging.java_format}. See {@link #reconfigureLogging()}.
+     */
+    protected final Platform platform;
     protected final CopyOnWriteArrayList<ConfigurationChangeListener> configChangeListeners = new CopyOnWriteArrayList<>();
     private boolean initializing = true;
     protected final JsonObject fullConfig;
@@ -67,16 +78,23 @@ public class ConfigManager
         this.componentName = null;
         this.thingName = null;
         this.fullConfig = null;
+        this.platform = null;
     }
 
     ConfigManager(String componentFullName, String componentName, String thingName,
                  ConfigProvider configProvider, JsonObject fullConfig) {
+        this(componentFullName, componentName, thingName, configProvider, fullConfig, null);
+    }
+
+    ConfigManager(String componentFullName, String componentName, String thingName,
+                 ConfigProvider configProvider, JsonObject fullConfig, Platform platform) {
         this.componentFullName = componentFullName;
         this.componentName = componentName;
         this.thingName = thingName;
         this.configProvider = configProvider;
         this.fullConfig = fullConfig;
-        
+        this.platform = platform;
+
         applyConfig(fullConfig);
         
         // Register logging configuration change listener
@@ -430,19 +448,46 @@ public class ConfigManager
             // Set basic configuration properties
             builder.setStatusLevel(Level.INFO);
             builder.setConfigurationName("DynamicConfig-" + componentName);
-            
-            // Create the console appender with the configured pattern
+
+            // FR-LOG-1/4 (precedence FR-RT-3): resolve the effective logging-format token —
+            // explicit `logging.java_format` ▸ platform-profile default (`json` on KUBERNETES) ▸ the
+            // library default. The `json` token (case-insensitive) selects the structured stdout-JSON
+            // sink; any other token is a Log4j2 PatternLayout pattern (behavior unchanged).
+            String effectiveFormat = resolveEffectiveLogFormat();
+            boolean jsonSink = PlatformResolver.LOGGING_FORMAT_JSON.equalsIgnoreCase(effectiveFormat);
+
+            // FR-LOG-2: the stdout-JSON sink (the KUBERNETES default) is stdout-only — no in-process
+            // size-rotation is installed (the cluster log agent owns rotation), so a read-only root FS
+            // never breaks logging. Off the JSON sink the optional RollingFile appender is unchanged.
+            // Parity with Python/Rust, which also drop the file appender under the JSON sink.
+            boolean fileLogging = !jsonSink
+                    && getLoggingConfig().isFileLoggingEnabled()
+                    && getLoggingConfig().getLogFilePath() != null;
+
+            // The console (SYSTEM_OUT) appender is always installed; only its LAYOUT changes. The
+            // JSON layout is a PatternLayout built from Log4j2 built-in converters (%enc{..}{JSON}
+            // escaping + %notEmpty conditional fields) that emits one valid JSON object per line — no
+            // extra dependency / Log4j2 plugin, so the shaded self-contained JAR keeps working.
+            String pattern = jsonSink ? buildJsonPattern(correlationFields()) : effectiveFormat;
+
+            // Create the console appender with the resolved layout
             LayoutComponentBuilder layoutBuilder = builder.newLayout("PatternLayout")
-                .addAttribute("pattern", getLoggingConfig().getFormat());
-            
+                .addAttribute("pattern", pattern);
+            if (jsonSink) {
+                // The JSON pattern renders the exception itself (a single escaped line under "thrown");
+                // disable PatternLayout's automatic trailing throwable append, which would otherwise
+                // emit a raw multi-line stack trace AFTER the JSON object and break one-object-per-line.
+                layoutBuilder.addAttribute("alwaysWriteExceptions", false);
+            }
+
             AppenderComponentBuilder consoleAppender = builder.newAppender("Console", "Console")
                 .addAttribute("target", ConsoleAppender.Target.SYSTEM_OUT)
                 .add(layoutBuilder);
-            
+
             builder.add(consoleAppender);
-            
-            // Create a file appender if file logging is enabled
-            if (getLoggingConfig().isFileLoggingEnabled() && getLoggingConfig().getLogFilePath() != null) {
+
+            // Create a file appender if file logging is enabled (never under the JSON sink)
+            if (fileLogging) {
                 String logFilePath = getLoggingConfig().getLogFilePath();
                 
                 // Resolve any template variables in the file path
@@ -470,9 +515,9 @@ public class ConfigManager
             Level rootLevel = getLoggingConfig().getLevel();
             RootLoggerComponentBuilder rootLogger = builder.newRootLogger(rootLevel);
             rootLogger.add(builder.newAppenderRef("Console"));
-            
+
             // Add file appender reference to root logger if file logging is enabled
-            if (getLoggingConfig().isFileLoggingEnabled() && getLoggingConfig().getLogFilePath() != null) {
+            if (fileLogging) {
                 rootLogger.add(builder.newAppenderRef("File"));
             }
             
@@ -488,7 +533,7 @@ public class ConfigManager
                     .add(builder.newAppenderRef("Console"));
                 
                 // Add file appender reference if file logging is enabled
-                if (getLoggingConfig().isFileLoggingEnabled() && getLoggingConfig().getLogFilePath() != null) {
+                if (fileLogging) {
                     loggerBuilder.add(builder.newAppenderRef("File"));
                 }
                 
@@ -505,9 +550,10 @@ public class ConfigManager
             context.start(newConfig);
             context.updateLoggers();
             
-            LOGGER.info("Logging reconfigured with root level: {} and format: {}", 
-                      rootLevel, 
-                      getLoggingConfig().getFormat());
+            LOGGER.info("Logging reconfigured with root level: {} and format: {} (sink: {})",
+                      rootLevel,
+                      effectiveFormat,
+                      jsonSink ? "stdout-JSON" : "console/text");
             
             // Log information about configured loggers
             if (!loggerLevels.isEmpty()) {
@@ -518,7 +564,7 @@ public class ConfigManager
             }
             
             // Log information about file logging
-            if (getLoggingConfig().isFileLoggingEnabled() && getLoggingConfig().getLogFilePath() != null) {
+            if (fileLogging) {
                 LOGGER.info("File logging enabled with path: {}", resolveTemplate(getLoggingConfig().getLogFilePath()));
             }
             
@@ -527,5 +573,141 @@ public class ConfigManager
             LOGGER.error("Failed to reconfigure logging: {}", e.getMessage(), e);
             LOGGER.warn("Continuing with previous logging configuration");
         }
+    }
+
+    /**
+     * Resolves the <em>effective</em> logging-format token under the FR-RT-3 precedence
+     * (FR-LOG-1/4): an explicit {@code logging.java_format} from the component config ▸ the
+     * platform-profile default ({@value PlatformResolver#LOGGING_FORMAT_JSON} on
+     * {@link Platform#KUBERNETES}, via {@link PlatformResolver#profileLoggingFormat}) ▸ the library
+     * default ({@link LoggingConfiguration#DEFAULT_FORMAT}). The resolved platform is known before the
+     * component config loads, so a pod with no {@code logging.java_format} logs JSON, while setting it
+     * to a non-{@code json} value overrides; GREENGRASS/HOST (no profile default) keep today's default.
+     *
+     * @return the effective logging-format token (never {@code null})
+     */
+    String resolveEffectiveLogFormat() {
+        LoggingConfiguration cfg = getLoggingConfig();
+        if (cfg.isFormatExplicitlySet()) {
+            return cfg.getFormat();  // explicit config wins (FR-RT-3 top tier)
+        }
+        String profileDefault = PlatformResolver.profileLoggingFormat(platform);
+        if (profileDefault != null && !profileDefault.isEmpty()) {
+            return profileDefault;  // platform-profile default (json on KUBERNETES)
+        }
+        return cfg.getFormat();  // library default
+    }
+
+    /**
+     * Builds the best-effort logging correlation fields (FR-LOG-3) for the stdout-JSON sink:
+     * {@code thing} (the resolved identity, when non-empty) plus {@code pod}/{@code namespace}/
+     * {@code node} from the KUBERNETES Downward-API env vars ({@link PlatformResolver#ENV_K8S_POD_NAME}
+     * / {@link PlatformResolver#ENV_K8S_POD_NAMESPACE} / {@link PlatformResolver#ENV_K8S_NODE_NAME} —
+     * the same vars wired in Phase 1b). Absent / empty values are omitted (never emitted as empty/null
+     * noise). Captured once at (re)configuration time; insertion order is preserved for stable output.
+     * Mirrors Rust {@code correlation_fields} and Python {@code _logging_correlation}.
+     *
+     * @return an ordered map of correlation field name to value (possibly empty)
+     */
+    // Package-private so {@link GlobalLoggingManager} (the logging.globalControl=true path) can build
+    // the same correlation fields as {@link #reconfigureLogging()}.
+    Map<String, String> correlationFields() {
+        Map<String, String> fields = new LinkedHashMap<>();
+        String thing = getThingName();
+        if (thing != null && !thing.isEmpty()) {
+            fields.put("thing", thing);
+        }
+        putEnvField(fields, "pod", PlatformResolver.ENV_K8S_POD_NAME);
+        putEnvField(fields, "namespace", PlatformResolver.ENV_K8S_POD_NAMESPACE);
+        putEnvField(fields, "node", PlatformResolver.ENV_K8S_NODE_NAME);
+        return fields;
+    }
+
+    /** Adds {@code key -> System.getenv(envVar)} to {@code fields} only when the env var is non-empty. */
+    private static void putEnvField(Map<String, String> fields, String key, String envVar) {
+        String value = System.getenv(envVar);
+        if (value != null && !value.isEmpty()) {
+            fields.put(key, value);
+        }
+    }
+
+    /**
+     * Builds the Log4j2 PatternLayout pattern for the structured stdout-JSON sink (FR-LOG-1): one
+     * valid JSON object per line carrying {@code timestamp} (ISO-8601 UTC), {@code level},
+     * {@code logger}, {@code message}, the supplied correlation fields, and {@code thrown} (the
+     * exception/stack trace) <em>only when an exception is present</em>. The field set mirrors the
+     * Python/Rust/TS sinks for four-way parity.
+     *
+     * <p>Validity is guaranteed by built-in converters: {@code %enc{...}{JSON}} JSON-escapes every
+     * dynamic value (quotes, backslashes, control chars → escape sequences, so the object stays on one
+     * physical line); the exception is first run through {@code %replace{%ex}{[\r\n\t]+}{ }} to
+     * collapse its stack-trace newlines/tabs to single spaces (a Log4j2 throwable converter otherwise
+     * emits raw newlines that {@code %enc} does not fold), then JSON-escaped; and {@code %notEmpty{...}}
+     * omits the {@code thrown} field when {@code %ex} is empty. No extra dependency or custom Log4j2
+     * plugin is needed, keeping the shaded self-contained JAR intact. <b>The owning appender's
+     * PatternLayout MUST set {@code alwaysWriteExceptions=false}</b> so PatternLayout does not also
+     * append a raw multi-line stack trace after the JSON object (see {@link #reconfigureLogging()}).
+     *
+     * <p>Correlation values are emitted as literal JSON (process-wide constants captured at configure
+     * time, so they appear on every line regardless of the logging thread — MDC/ThreadContext is
+     * thread-local and would miss other threads). They are first {@linkplain #sanitizeForJsonLiteral
+     * sanitized} because a Log4j2 PatternLayout un-escapes backslash sequences (e.g. {@code \n}) in
+     * literal text, which would otherwise undo JSON escaping and break the line.
+     *
+     * @param correlation the correlation fields to embed (already filtered to present values)
+     * @return the JSON PatternLayout pattern
+     */
+    static String buildJsonPattern(Map<String, String> correlation) {
+        StringBuilder p = new StringBuilder(256);
+        // timestamp in UTC with a literal 'Z' (parity with the Python/Rust sinks).
+        p.append("{\"timestamp\":\"%d{yyyy-MM-dd'T'HH:mm:ss.SSS'Z'}{UTC}\"")
+                .append(",\"level\":\"%p\"")
+                .append(",\"logger\":\"%enc{%c}{JSON}\"")
+                .append(",\"message\":\"%enc{%m}{JSON}\"");
+        if (correlation != null) {
+            for (Map.Entry<String, String> entry : correlation.entrySet()) {
+                p.append(jsonField(entry.getKey(), entry.getValue()));
+            }
+        }
+        // The exception/stack trace is included only when present; CR/LF/TAB runs are collapsed to a
+        // single space so the trace stays on one physical line, then JSON-escaped. `thrown` mirrors
+        // the Python sink's key for the formatted exception.
+        p.append("%notEmpty{,\"thrown\":\"%enc{%replace{%ex}{[\\r\\n\\t]+}{ }}{JSON}\"}");
+        p.append("}%n");
+        return p.toString();
+    }
+
+    /**
+     * Renders a single constant JSON field {@code ,"key":"value"} for embedding as a literal in the
+     * JSON PatternLayout pattern, or {@code ""} when the value is null/empty. The value is
+     * {@linkplain #sanitizeForJsonLiteral sanitized} (never JSON-escaped) because PatternLayout
+     * un-escapes backslash sequences in literal text.
+     */
+    static String jsonField(String key, String value) {
+        if (value == null || value.isEmpty()) {
+            return "";
+        }
+        return ",\"" + key + "\":\"" + sanitizeForJsonLiteral(value) + "\"";
+    }
+
+    /**
+     * Neutralizes characters that are unsafe inside a JSON string literal embedded in a Log4j2
+     * PatternLayout pattern: the double-quote and backslash (would break JSON / be un-escaped by
+     * PatternLayout), the {@code %} (the PatternLayout converter sigil), and control characters (no
+     * raw control chars in JSON) are each replaced with {@code _}. Best-effort: correlation values are
+     * non-sensitive identifiers (pod/namespace/node/thing), so neutralizing a stray special character
+     * is acceptable — mirrors the philosophy of {@link #sanitize(String)} for template values.
+     */
+    static String sanitizeForJsonLiteral(String value) {
+        StringBuilder sb = new StringBuilder(value.length());
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (c == '"' || c == '\\' || c == '%' || Character.isISOControl(c)) {
+                sb.append('_');
+            } else {
+                sb.append(c);
+            }
+        }
+        return sb.toString();
     }
 }

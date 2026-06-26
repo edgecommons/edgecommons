@@ -30,8 +30,10 @@ export {
   Platform,
   Transport,
   PROFILES,
+  JSON_LOG_FORMAT,
   resolveProfile,
   detectPlatform,
+  profileLoggingFormat,
   validate as validatePlatformTransport,
   resolveIdentity,
 } from "./platform";
@@ -102,6 +104,7 @@ export type { ConfigProvider } from "./heartbeat";
 
 // Logging
 export { logger, getLogger, initLogging, reconfigureLogging, LoggingReconfigurer, Logger } from "./logging";
+export type { LoggingOptions } from "./logging";
 
 // Telemetry streaming
 export { StreamService, StreamHandle, GgStreamError, StreamMetricsBridge } from "./streaming";

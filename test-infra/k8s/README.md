@@ -19,12 +19,15 @@ What the harness proves end-to-end:
 4. with **no `-t/--thing`**, the component's **identity resolves from the Downward API**
    (Phase 1b, FR-RT-7): `GGCOMMONS_THING_NAME` (set from `values.thingName`) ▸ `POD_NAME`
    (the pod's `metadata.name`, injected via a `fieldRef`);
-5. a **`kubectl` edit of the ConfigMap is hot-reloaded in-process** — the watcher
+5. it logs to a **structured stdout-JSON sink** (one JSON object per line — the KUBERNETES
+   default, Phase 1c) carrying Downward-API **correlation fields**; the smoke asserts a JSON
+   line whose `thing` correlation equals the pod's `POD_NAME`;
+6. a **`kubectl` edit of the ConfigMap is hot-reloaded in-process** — the watcher
    re-arms across the kubelet's atomic `..data` symlink swap — **with no pod restart**.
 
 > Not yet (deferred, with TODO markers in the chart): the HTTP `/livez,/readyz` health
-> endpoint and the `prometheus` metrics target (sub-phase **1c**); PVC-aware streaming and
-> the `env` KeyProvider (**1d**). The chart's probes and Service are therefore
+> endpoint and the `prometheus` metrics target (the rest of sub-phase **1c**); PVC-aware
+> streaming and the `env` KeyProvider (**1d**). The chart's probes and Service are therefore
 > **placeholders**.
 
 ## Contents

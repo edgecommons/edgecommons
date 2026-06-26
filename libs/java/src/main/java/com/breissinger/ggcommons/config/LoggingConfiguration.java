@@ -27,6 +27,10 @@ public class LoggingConfiguration
     // Basic logging properties
     private String level = DEFAULT_LEVEL;
     private String format = DEFAULT_FORMAT;
+    // Whether `logging.java_format` was explicitly present in the config (vs. the library default).
+    // Drives the logging-format precedence (FR-RT-3): an explicit config value wins over the
+    // platform-profile default (e.g. `json` on KUBERNETES); see ConfigManager#reconfigureLogging.
+    private boolean formatExplicit = false;
     
     // File logging properties
     static String DEFAULT_MAX_FILE_SIZE = "10MB";
@@ -58,8 +62,10 @@ public class LoggingConfiguration
             if (jsonConfig.has("level"))
                 level = jsonConfig.get("level").getAsString();
             // Per-language format key (replaces the former language-agnostic `format`).
-            if (jsonConfig.has("java_format"))
+            if (jsonConfig.has("java_format")) {
                 format = jsonConfig.get("java_format").getAsString();
+                formatExplicit = true;
+            }
                 
             // Parse file logging configuration if present
             if (jsonConfig.has("fileLogging") && jsonConfig.get("fileLogging").isJsonObject()) {
@@ -160,7 +166,20 @@ public class LoggingConfiguration
     {
         return format;
     }
-    
+
+    /**
+     * Whether {@code logging.java_format} was explicitly set in the component configuration (as
+     * opposed to falling back to the library default {@link #DEFAULT_FORMAT}). The logging-format
+     * precedence (FR-RT-3) gives an explicit config value priority over the platform-profile default
+     * (e.g. the {@code json} stdout-JSON sink defaulted on KUBERNETES).
+     *
+     * @return {@code true} if the config supplied an explicit {@code java_format}
+     */
+    public boolean isFormatExplicitlySet()
+    {
+        return formatExplicit;
+    }
+
     /**
      * Checks if file logging is enabled.
      *

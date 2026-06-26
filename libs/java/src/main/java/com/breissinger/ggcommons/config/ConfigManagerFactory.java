@@ -64,9 +64,12 @@ public class ConfigManagerFactory {
             // Validate configuration
             validateConfiguration(fullConfig);
             
-            // Create ConfigManager instance
-            ConfigManager configManager = new ConfigManager(componentFullName, componentShortName, thingName, 
-                                                           configProvider, fullConfig);
+            // Create ConfigManager instance. The resolved platform (from the resolver; may be null in
+            // test bring-up) is threaded in so the logging configurator can apply the platform-profile
+            // default logging format — `json` (stdout-JSON sink) on KUBERNETES — when the component
+            // config omits `logging.java_format` (FR-LOG-1/4, precedence FR-RT-3).
+            ConfigManager configManager = new ConfigManager(componentFullName, componentShortName, thingName,
+                                                           configProvider, fullConfig, cmdLine.platform);
             
             LOGGER.info("Configuration loaded from {}", configProvider.getConfigSource());
             return configManager;

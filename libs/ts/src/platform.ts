@@ -21,8 +21,12 @@
  *
  * **Phase 1b:** {@link resolveIdentity} now reads the Kubernetes Downward-API env vars
  * (`GGCOMMONS_THING_NAME`, then `POD_NAME`) ahead of the generic `AWS_IOT_THING_NAME` probe **when
- * the resolved platform is KUBERNETES** (FR-RT-7). The `prometheus` metrics target, stdout-JSON
- * logging, and the HTTP health endpoint remain deferred to later Phase-1 sub-phases.
+ * the resolved platform is KUBERNETES** (FR-RT-7).
+ *
+ * **Phase 1c:** the KUBERNETES profile now defaults its logging format to {@link JSON_LOG_FORMAT} (the
+ * structured stdout-JSON sink, FR-LOG-1); {@link profileLoggingFormat} exposes that default to the
+ * logging configurator. The `prometheus` metrics target and the HTTP health endpoint remain deferred
+ * to later Phase-1 sub-phases.
  */
 import { existsSync } from "fs";
 
@@ -68,6 +72,13 @@ export interface PlatformProfile {
   readonly transport: Transport;
   /** The default `-c/--config` source token (e.g. `"GG_CONFIG"`, `"FILE"`) when `-c` is omitted. */
   readonly configSource: string;
+  /**
+   * The default logging format for this platform, applied when the component config sets no
+   * `logging.ts_format` (FR-LOG-1/FR-RT-3). `KUBERNETES` defaults to {@link JSON_LOG_FORMAT} (the
+   * structured stdout-JSON sink); `GREENGRASS`/`HOST` leave this `undefined` so the library default
+   * (console/text) is unchanged. Consulted by the logging configurator via {@link profileLoggingFormat}.
+   */
+  readonly loggingFormat?: string;
 }
 
 /**
@@ -120,9 +131,29 @@ export const ENV_K8S_THING_NAME = "GGCOMMONS_THING_NAME";
 /**
  * Kubernetes Downward-API pod-name env var (`metadata.name` via `fieldRef`). The KUBERNETES identity
  * fallback after {@link ENV_K8S_THING_NAME}. Honored only when the resolved platform is
- * {@link Platform.KUBERNETES}.
+ * {@link Platform.KUBERNETES}. Also a logging correlation field (`pod`) on the stdout-JSON sink (FR-LOG-3).
  */
 export const ENV_K8S_POD_NAME = "POD_NAME";
+/**
+ * Kubernetes Downward-API pod-namespace env var (`metadata.namespace` via `fieldRef`). Used only as a
+ * logging correlation field (`namespace`) on the stdout-JSON sink (FR-LOG-3); same Downward-API wiring
+ * as {@link ENV_K8S_POD_NAME} (Phase 1b).
+ */
+export const ENV_K8S_POD_NAMESPACE = "POD_NAMESPACE";
+/**
+ * Kubernetes Downward-API node-name env var (`spec.nodeName` via `fieldRef`). Used only as a logging
+ * correlation field (`node`) on the stdout-JSON sink (FR-LOG-3).
+ */
+export const ENV_K8S_NODE_NAME = "NODE_NAME";
+
+/**
+ * The logging-format selector token that selects the structured stdout-JSON sink (FR-LOG-1/FR-LOG-4),
+ * matched case-insensitively against `logging.<lang>_format` (TS: `logging.ts_format`). The KUBERNETES
+ * profile's default logging format (see {@link PROFILES}). Any other token value is treated as the
+ * existing console/text token template. Kept here (next to the profile default) as the single source of
+ * truth; consumed by the logging configurator.
+ */
+export const JSON_LOG_FORMAT = "json";
 /** Confirming (secondary) Kubernetes signal. The token file is the primary, definitive one. */
 export const ENV_K8S_SERVICE_HOST = "KUBERNETES_SERVICE_HOST";
 /** Projected service-account token path: the primary, definitive Kubernetes signal. */
@@ -136,15 +167,34 @@ export const DEFAULT_IDENTITY = "NOT_GREENGRASS";
  * source to `GG_CONFIG` to preserve current behavior. KUBERNETES (Phase 1a) defaults to the `MQTT`
  * transport and the k8s-native `CONFIGMAP` config source.
  *
- * TODO (Phase 1b–1d): the KUBERNETES profile's metrics/logging/credentials/streaming/identity
- * defaults (prometheus target, stdout-JSON sink, env KeyProvider, PVC buffer, Downward-API identity)
- * are not yet modeled here — for Phase 1a those subsystems keep their current library defaults.
+ * Phase 1c adds the KUBERNETES profile's default `loggingFormat` ({@link JSON_LOG_FORMAT}: the
+ * structured stdout-JSON sink). TODO (Phase 1b–1d): the metrics/credentials/streaming defaults
+ * (prometheus target, env KeyProvider, PVC buffer) are not yet modeled here — those subsystems keep
+ * their current library defaults for now.
  */
 export const PROFILES: ReadonlyMap<Platform, PlatformProfile> = new Map([
   [Platform.GREENGRASS, { transport: Transport.IPC, configSource: "GG_CONFIG" } as PlatformProfile],
   [Platform.HOST, { transport: Transport.MQTT, configSource: "GG_CONFIG" } as PlatformProfile],
-  [Platform.KUBERNETES, { transport: Transport.MQTT, configSource: "CONFIGMAP" } as PlatformProfile],
+  [
+    Platform.KUBERNETES,
+    {
+      transport: Transport.MQTT,
+      configSource: "CONFIGMAP",
+      loggingFormat: JSON_LOG_FORMAT,
+    } as PlatformProfile,
+  ],
 ]);
+
+/**
+ * The platform-profile default logging format for `platform` (FR-LOG-1/FR-RT-3), or `undefined` when
+ * the profile pins no default (GREENGRASS/HOST → library default). Threaded into the logging
+ * configurator so a KUBERNETES pod with no `logging.ts_format` config logs JSON, while explicit config
+ * still wins. Pure lookup; the configurator owns the precedence
+ * (explicit config ▸ this profile default ▸ library default).
+ */
+export function profileLoggingFormat(platform: Platform): string | undefined {
+  return PROFILES.get(platform)?.loggingFormat;
+}
 
 /**
  * Resolves the runtime profile from parse-time inputs and the environment (DESIGN-core §4).

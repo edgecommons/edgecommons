@@ -39,8 +39,13 @@ import java.util.function.Predicate;
  * {@link #resolveMessagingConfigPath}), so one mounted {@code config.json} carries both the
  * {@code .messaging} section and the component config. (2) FR-RT-7: {@link #resolveIdentity} gains a
  * KUBERNETES Downward-API tier ({@code GGCOMMONS_THING_NAME}, then {@code POD_NAME}) ahead of the
- * generic {@code AWS_IOT_THING_NAME} probe. The {@code prometheus} metrics target, stdout-JSON logging,
- * and the HTTP health endpoint are deferred to later Phase-1 sub-phases.
+ * generic {@code AWS_IOT_THING_NAME} probe.
+ *
+ * <p><b>Phase 1c:</b> the KUBERNETES profile gains a default logging format of
+ * {@value #LOGGING_FORMAT_JSON} ({@link PlatformProfile#loggingFormat()}), the stdout-JSON sink
+ * (FR-LOG-1). {@link #profileLoggingFormat(Platform)} exposes it as the middle precedence tier
+ * (FR-RT-3) for the logging configurator. The {@code prometheus} metrics target and the HTTP health
+ * endpoint are deferred to later Phase-1 sub-phases.
  */
 public final class PlatformResolver {
 
@@ -68,6 +73,24 @@ public final class PlatformResolver {
      * Used as the identity when {@link #ENV_K8S_THING_NAME} is absent.
      */
     public static final String ENV_K8S_POD_NAME = "POD_NAME";
+    /**
+     * KUBERNETES Downward-API pod namespace env var ({@code metadata.namespace} via a {@code fieldRef}).
+     * A best-effort logging correlation field (FR-LOG-3), wired by the Helm chart in Phase 1b.
+     */
+    public static final String ENV_K8S_POD_NAMESPACE = "POD_NAMESPACE";
+    /**
+     * KUBERNETES Downward-API node name env var ({@code spec.nodeName} via a {@code fieldRef}).
+     * A best-effort logging correlation field (FR-LOG-3), wired by the Helm chart in Phase 1b.
+     */
+    public static final String ENV_K8S_NODE_NAME = "NODE_NAME";
+
+    /**
+     * The case-insensitive {@code logging.java_format} selector value that selects the structured
+     * stdout-JSON logging sink (FR-LOG-1 / FR-LOG-4) — the KUBERNETES profile's default logging
+     * format. The same {@code json} token selects the sink in every language (Python
+     * {@code python_format}, Rust {@code rust_format}, TS), kept consistent for parity.
+     */
+    public static final String LOGGING_FORMAT_JSON = "json";
 
     /** The library-default identity when no thing name is available (matches today's behavior). */
     public static final String DEFAULT_IDENTITY = "NOT_GREENGRASS";
@@ -88,17 +111,19 @@ public final class PlatformResolver {
 
     /**
      * The platform-profile table (DESIGN-core §3). GREENGRASS and HOST deliberately default the config
-     * source to {@code GG_CONFIG} to preserve current behavior. KUBERNETES (Phase 1a) defaults to the
-     * {@code MQTT} transport and the k8s-native {@code CONFIGMAP} config source.
+     * source to {@code GG_CONFIG} to preserve current behavior, and carry no logging-format default
+     * ({@code null} → the library console/text default). KUBERNETES (Phase 1a) defaults to the
+     * {@code MQTT} transport and the k8s-native {@code CONFIGMAP} config source, and (Phase 1c)
+     * defaults the logging format to {@value #LOGGING_FORMAT_JSON} — the stdout-JSON sink (FR-LOG-1).
      *
-     * <p>TODO (Phase 1b–1d): the KUBERNETES profile's metrics/logging/credentials/streaming/identity
-     * defaults (prometheus target, stdout-JSON sink, env KeyProvider, PVC buffer, Downward-API identity)
-     * are not yet modeled here — for Phase 1a those subsystems keep their current library defaults.
+     * <p>TODO (Phase 1d): the KUBERNETES profile's metrics/credentials/streaming defaults (prometheus
+     * target, env KeyProvider, PVC buffer) are not yet modeled here — those subsystems keep their
+     * current library defaults until their sub-phase ships.
      */
     public static final Map<Platform, PlatformProfile> PROFILES = Map.of(
-            Platform.GREENGRASS, new PlatformProfile(Transport.IPC, "GG_CONFIG"),
-            Platform.HOST, new PlatformProfile(Transport.MQTT, "GG_CONFIG"),
-            Platform.KUBERNETES, new PlatformProfile(Transport.MQTT, "CONFIGMAP"));
+            Platform.GREENGRASS, new PlatformProfile(Transport.IPC, "GG_CONFIG", null),
+            Platform.HOST, new PlatformProfile(Transport.MQTT, "GG_CONFIG", null),
+            Platform.KUBERNETES, new PlatformProfile(Transport.MQTT, "CONFIGMAP", LOGGING_FORMAT_JSON));
 
     private PlatformResolver() {
     }
@@ -243,6 +268,27 @@ public final class PlatformResolver {
             throw new IllegalArgumentException("IPC transport requires --platform GREENGRASS (the "
                     + "Nucleus provides the IPC socket); got platform=" + platform);
         }
+    }
+
+    /**
+     * Returns the platform-profile's default {@code logging.<lang>_format} token (FR-LOG-1/4,
+     * precedence FR-RT-3) — {@value #LOGGING_FORMAT_JSON} on {@link Platform#KUBERNETES}, {@code null}
+     * on GREENGRASS/HOST (no override → the library console/text default). This is the <em>middle</em>
+     * precedence tier consumed by the logging configurator
+     * ({@link com.breissinger.ggcommons.config.ConfigManager#reconfigureLogging}): the resolved
+     * platform is known before the component config loads, so the profile default can be applied when
+     * the config omits an explicit {@code logging.java_format}. Mirrors Rust
+     * {@code platform::profile(p).logging_format} and Python {@code profile_logging_format(p)}.
+     *
+     * @param platform the resolved platform, or {@code null}
+     * @return the profile's default logging-format token, or {@code null} when none applies
+     */
+    public static String profileLoggingFormat(Platform platform) {
+        if (platform == null) {
+            return null;
+        }
+        PlatformProfile profile = PROFILES.get(platform);
+        return profile == null ? null : profile.loggingFormat();
     }
 
     /**

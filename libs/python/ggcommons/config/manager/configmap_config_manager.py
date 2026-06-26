@@ -63,8 +63,15 @@ class ConfigMapConfigManager(ConfigManager):
         ValueError: if ``key`` is a kubelet projection artifact (a ``..``/``.`` entry).
     """
 
-    def __init__(self, thing_name: str, component_name: str, mount_dir: str = None, key: str = None):
-        super().__init__(component_name, thing_name)
+    def __init__(
+        self,
+        thing_name: str,
+        component_name: str,
+        mount_dir: str = None,
+        key: str = None,
+        platform=None,
+    ):
+        super().__init__(component_name, thing_name, platform=platform)
         self._mount_dir = mount_dir if mount_dir is not None else DEFAULT_MOUNT_DIR
         self._key = key if key is not None else DEFAULT_KEY
         if is_projection_artifact(self._key):

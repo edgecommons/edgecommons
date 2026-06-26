@@ -189,3 +189,69 @@ Log file paths and other configuration strings support the same template variabl
 - Enable DEBUG level for `com.breissinger.ggcommons.config` to see configuration loading
 - Check for configuration validation errors in startup logs
 - Verify template variable resolution in resolved file paths
+
+## 8. Structured stdout-JSON sink (Kubernetes) — FR-LOG-1..4
+
+A structured **stdout-JSON** logging sink emits **one JSON object per line** to stdout, for ingestion
+by a cluster log agent (Fluent Bit → CloudWatch/Loki/etc.). It is the **default on the KUBERNETES
+platform** and selectable everywhere via the logging-format token.
+
+### Selecting the sink (FR-LOG-4)
+
+The sink is selected through the existing per-language format key — `logging.java_format` — using the
+case-insensitive token **`json`**. The same `json` token selects the equivalent sink in the Python,
+Rust and TypeScript libraries (parity).
+
+```json
+{ "logging": { "level": "INFO", "java_format": "json" } }
+```
+
+Any other `java_format` value remains a Log4j2 `PatternLayout` pattern (console/text), exactly as
+before. The console (`SYSTEM_OUT`) appender is always installed; only its **layout** becomes JSON.
+
+### KUBERNETES default + precedence (FR-RT-3)
+
+The effective logging format is resolved as:
+
+```
+explicit logging.java_format  ▸  platform-profile default (json on KUBERNETES)  ▸  library default
+```
+
+So a pod on the KUBERNETES platform with **no** `logging.java_format` logs JSON automatically; setting
+`logging.java_format` to a non-`json` value overrides it; the GREENGRASS and HOST platforms keep the
+current console/text default (they have no profile default). The resolved platform is known before the
+component config loads, so the configurator can apply the profile default; see
+`PlatformResolver.profileLoggingFormat(Platform)` and `ConfigManager.resolveEffectiveLogFormat()`.
+
+### Fields
+
+Each line carries at least:
+
+| Field | Source |
+|-------|--------|
+| `timestamp` | event time, ISO-8601 UTC with a trailing `Z` |
+| `level` | log level |
+| `logger` | logger name |
+| `message` | the (JSON-escaped) message |
+| `thrown` | the exception + stack trace, **only when an exception is present** (collapsed to one escaped line) |
+
+### Correlation fields (FR-LOG-3)
+
+When present, best-effort correlation fields are added: `thing` (the resolved identity) and
+`pod` / `namespace` / `node` from the Kubernetes Downward-API env vars `POD_NAME` / `POD_NAMESPACE` /
+`NODE_NAME` (wired by the Helm chart). Absent values are **omitted** (no empty/null noise). These
+identifiers are non-sensitive; any character unsafe inside a JSON literal is neutralized.
+
+### No in-process rotation under the JSON sink (FR-LOG-2)
+
+Under the JSON sink the library installs **no** in-process size-rotation (no `RollingFile` appender) —
+it is **stdout-only**, so a read-only root filesystem never breaks logging. The cluster log agent owns
+rotation and retention. File logging stays available off the JSON sink (it is simply off by default on
+the KUBERNETES profile). Setting `fileLogging` together with the `json` sink is ignored (stdout only).
+
+### Implementation note
+
+The JSON layout is a Log4j2 `PatternLayout` built from **built-in converters** only
+(`%enc{…}{JSON}` for escaping, `%notEmpty{…}` for the conditional `thrown` field,
+`alwaysWriteExceptions=false` so the stack trace is not also appended raw). No extra dependency or
+custom Log4j2 plugin is added, so the shaded self-contained JAR is unaffected.

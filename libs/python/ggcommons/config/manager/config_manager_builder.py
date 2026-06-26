@@ -13,6 +13,7 @@ from ggcommons.config.manager.shadow_config_manager import (
     ShadowConfigManager,
     _sanitize_shadow_name,
 )
+from ggcommons.platform.platform import Platform
 from ggcommons.platform.resolver import resolve_identity
 
 logger = logging.getLogger("ConfigManagerBuilder")
@@ -28,10 +29,19 @@ class ConfigManagerBuilder:
         thing_name = getattr(args, "identity", None)
         if thing_name is None:
             thing_name = resolve_identity(getattr(args, "thing", None), None, os.environ)
+        # The resolved platform (set on the namespace by GGCommons after resolve_profile). Threaded
+        # into the manager so its logging configurator can apply the platform's default logging
+        # format (json on KUBERNETES) when the config omits one (FR-RT-3 / FR-LOG-1). Only a real
+        # Platform enum is forwarded; a string/absent value falls through to the library default.
+        platform = getattr(args, "platform", None)
+        if not isinstance(platform, Platform):
+            platform = None
         if config_args[0].upper() == "FILE":
             logger.info("Config file specified. Using FileConfigManager")
             config_file = config_args[1] if len(config_args) > 1 else "config.json"
-            config_manager = FileConfigManager(thing_name, component_name, config_file)
+            config_manager = FileConfigManager(
+                thing_name, component_name, config_file, platform=platform
+            )
         elif config_args[0].upper() == "CONFIGMAP":
             logger.info("CONFIGMAP specified. Using ConfigMapConfigManager")
             # -c CONFIGMAP [mount_dir] [key]; defaults applied inside the manager
@@ -39,20 +49,21 @@ class ConfigManagerBuilder:
             mount_dir = config_args[1] if len(config_args) > 1 else None
             config_key = config_args[2] if len(config_args) > 2 else None
             config_manager = ConfigMapConfigManager(
-                thing_name, component_name, mount_dir, config_key
+                thing_name, component_name, mount_dir, config_key, platform=platform
             )
         elif config_args[0].upper() == "ENV":
             logger.info("Environment config specified. Using EnvironmentConfigManager")
             env_var = config_args[1] if len(config_args) > 1 else "CONFIG"
             config_manager = EnvironmentConfigManager(
-                thing_name, component_name, env_var
+                thing_name, component_name, env_var, platform=platform
             )
         elif config_args[0].upper() == "GG_CONFIG":
             logger.info("GG_CONFIG specified. Using GreengrassConfigManager")
             config_component_name = config_args[1] if len(config_args) > 1 else None
             config_component_key = config_args[2] if len(config_args) > 2 else None
             config_manager = GreengrassConfigManager(
-                thing_name, component_name, config_component_name, config_component_key
+                thing_name, component_name, config_component_name, config_component_key,
+                platform=platform,
             )
         elif config_args[0].upper() == "SHADOW":
             logger.info("SHADOW specified. Using ShadowConfigManager")
@@ -63,11 +74,13 @@ class ConfigManagerBuilder:
                 config_args[1] if len(config_args) > 1 else _sanitize_shadow_name(component_name)
             )
             config_manager = ShadowConfigManager(
-                thing_name, component_name, shadow_name
+                thing_name, component_name, shadow_name, platform=platform
             )
         elif config_args[0].upper() == "CONFIG_COMPONENT":
             logger.info("CONFIG_COMPONENT specified. Using ConfigComponentManager")
-            config_manager = ConfigComponentManager(thing_name, component_name)
+            config_manager = ConfigComponentManager(
+                thing_name, component_name, platform=platform
+            )
         else:
             logger.fatal(
                 f"Unrecognized config source '{config_args[0]}'.  "
