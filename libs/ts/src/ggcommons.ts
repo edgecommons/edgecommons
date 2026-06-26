@@ -10,8 +10,9 @@
  * (stops the heartbeat + config watch and disconnects messaging) rather than on GC.
  */
 import { parseArgs, ParsedArgs } from "./cli";
-import { Transport, profileLoggingFormat } from "./platform";
+import { Transport, profileLoggingFormat, profileHealthEnabled } from "./platform";
 import { Config } from "./config/model";
+import { HealthServer, ReadinessState } from "./health";
 import { resolve } from "./config/template";
 import { validate } from "./config/validation";
 import { buildConfigSource, ConfigSource, ConfigWatch } from "./config/source";
@@ -41,9 +42,13 @@ export class GGCommons {
     private readonly listeners: ConfigurationChangeListener[],
     private readonly heartbeat: Heartbeat,
     private readonly configSource: ConfigSource,
+    private readonly readiness: ReadinessState,
   ) {}
 
   private configWatch?: ConfigWatch;
+  private healthServer?: HealthServer;
+  private signalHandlers: Array<[NodeJS.Signals, () => void]> = [];
+  private closed = false;
   private streamsService?: StreamService;
   private streamMetrics?: StreamMetricsBridge;
   private credentialsService?: CredentialService;
@@ -53,6 +58,46 @@ export class GGCommons {
   /** @internal Attach the config-watch handle after construction. */
   _setWatch(watch: ConfigWatch | undefined): void {
     this.configWatch = watch;
+  }
+
+  /** @internal Attach the HTTP health server after construction (FR-HB-1). */
+  _setHealth(server: HealthServer | undefined): void {
+    this.healthServer = server;
+  }
+
+  /**
+   * @internal Wire SIGTERM/SIGINT to graceful shutdown — the library owns this so a component never
+   * leaks subscriptions on the shared connection (FR-HB-2). On signal: flip `/readyz` to 503
+   * immediately, run the idempotent {@link close} path, then `process.exit(0)`. Handlers are removed in
+   * {@link close} so a clean library shutdown leaves no listeners behind.
+   */
+  _installSignalHandlers(): void {
+    for (const signal of ["SIGTERM", "SIGINT"] as NodeJS.Signals[]) {
+      const handler = (): void => {
+        this.readiness.beginShutdown();
+        logger.info(`${signal} received; shutting down`);
+        this.close()
+          .catch((e) => logger.warn(`shutdown error: ${String(e)}`))
+          .finally(() => process.exit(0));
+      };
+      process.on(signal, handler);
+      this.signalHandlers.push([signal, handler]);
+    }
+  }
+
+  /**
+   * Set the app-controlled readiness flag consumed by `/readyz` and `/startupz` (FR-HB-1). Defaults to
+   * `true`, so a component is ready as soon as messaging connects. Call `setReady(false)` early (before
+   * subscribing to required topics) and `setReady(true)` once the component can serve, to gate traffic
+   * on the component's own startup work. Mirrors the Rust/Java/Python `setReady`/`set_ready`.
+   */
+  setReady(ready: boolean): void {
+    this.readiness.setReady(ready);
+  }
+
+  /** Whether the runtime is currently ready (`messaging connected && readyFlag && !shuttingDown`). */
+  ready(): boolean {
+    return this.readiness.isReady();
   }
 
   /** @internal Attach the streaming service + metrics bridge after construction. */
@@ -141,8 +186,21 @@ export class GGCommons {
     if (idx >= 0) this.listeners.splice(idx, 1);
   }
 
-  /** Release resources: stop the heartbeat + config watch and disconnect messaging. */
+  /**
+   * Release resources: flip readiness to 503, unsubscribe/close every subsystem, and stop the health
+   * server. Idempotent (safe to call from both the SIGTERM handler and the app). The shutting-down flag
+   * is set first — even on a repeat call — so `/readyz` returns 503 the instant shutdown begins
+   * (FR-HB-2), before the drain completes.
+   */
   async close(): Promise<void> {
+    this.readiness.beginShutdown();
+    if (this.closed) return;
+    this.closed = true;
+    // Drop the library-owned SIGTERM/SIGINT handlers so a clean shutdown leaves no listeners.
+    for (const [signal, handler] of this.signalHandlers) {
+      process.removeListener(signal, handler);
+    }
+    this.signalHandlers = [];
     (this.parametersService as { close?: () => void } | undefined)?.close?.();
     this.credentialMetrics?.close();
     this.streamMetrics?.close();
@@ -153,6 +211,8 @@ export class GGCommons {
     if (this.messagingService instanceof DefaultMessagingService) {
       await this.messagingService.disconnect().catch(() => undefined);
     }
+    // Stop the health server last so `/readyz` keeps serving 503 throughout the drain above.
+    if (this.healthServer) await this.healthServer.stop().catch(() => undefined);
   }
 
   /** @internal Apply a reloaded snapshot and notify listeners. */
@@ -230,6 +290,10 @@ export class GGCommonsBuilder {
 
     const heartbeat = Heartbeat.start(() => current, metrics, messaging);
 
+    // Readiness state behind /readyz (FR-HB-1): messaging-connected (live getter; no wired service ⇒
+    // not ready) AND the app's readyFlag (default true) AND not shutting down.
+    const readiness = new ReadinessState(() => messaging?.connected() ?? false);
+
     // Build the runtime first so the reload closure can update its snapshot.
     let runtime: GGCommons;
     const onUpdate = (rawUpdate: unknown): void => {
@@ -272,6 +336,7 @@ export class GGCommonsBuilder {
       listeners,
       heartbeat,
       source,
+      readiness,
     );
     // Credentials / local vault (only when a `credentials` config section is present). Loaded
     // dynamically so components that don't use it pay nothing. Opened BEFORE streaming so the vault
@@ -324,6 +389,36 @@ export class GGCommonsBuilder {
       runtime._setStreaming(svc, bridge);
       logger.info(`Telemetry streaming initialized with ${names.length} stream(s)`);
     }
+
+    // HTTP health endpoint (FR-HB-1). Precedence (FR-RT-3): explicit `health.enabled` ▸ platform
+    // default (on for KUBERNETES, off for GREENGRASS/HOST). The platform is known here (resolved at
+    // parse time), reusing the same threading as the logging default — no resolver→ConfigManager dep.
+    const healthCfg = current.parsed.health;
+    const healthEnabled = healthCfg.enabled ?? profileHealthEnabled(parsed.platform);
+    if (healthEnabled) {
+      // A health-endpoint problem must NEVER crash the component (health is auxiliary), and by this
+      // point messaging/heartbeat/streams are already live — letting a bind failure reject build()
+      // would also leak them. Log and continue without a health server, mirroring Java/Rust.
+      try {
+        const health = await HealthServer.start({
+          port: healthCfg.port,
+          paths: {
+            liveness: healthCfg.livenessPath,
+            readiness: healthCfg.readinessPath,
+            startup: healthCfg.startupPath,
+          },
+          readiness,
+        });
+        runtime._setHealth(health);
+      } catch (e) {
+        logger.error(`health server failed to start (continuing without it): ${String(e)}`);
+      }
+    }
+
+    // The library owns SIGTERM/SIGINT → graceful shutdown (FR-HB-2): flip /readyz to 503, run the
+    // idempotent close() (unsubscribe all + bounded-close), then exit 0. Components no longer wire
+    // their own handlers (the example skeleton's duplicate is removed).
+    runtime._installSignalHandlers();
 
     // Attach the watch only after the runtime exists, so a reload that fires during
     // subscription setup has a valid runtime to update.

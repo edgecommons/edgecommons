@@ -6,6 +6,8 @@ package com.breissinger.ggcommons;
 
 import com.breissinger.ggcommons.config.ConfigManager;
 import com.breissinger.ggcommons.config.ConfigManagerFactory;
+import com.breissinger.ggcommons.config.HealthConfiguration;
+import com.breissinger.ggcommons.health.HealthServer;
 import com.breissinger.ggcommons.heartbeat.Heartbeat;
 import com.breissinger.ggcommons.heartbeat.HeartbeatBuilder;
 import com.breissinger.ggcommons.messaging.MessagingClient;
@@ -33,6 +35,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 
 public class GGCommons
@@ -50,6 +53,28 @@ public class GGCommons
     protected ParameterService parameters;
     protected StreamMetricsBridge streamMetricsBridge;
     protected CredentialMetricsBridge credentialMetricsBridge;
+
+    /**
+     * The HTTP health/readiness server (FR-HB-1). Non-null only when the health server is enabled
+     * (explicit {@code health.enabled} ▸ default-on for KUBERNETES). Closed by {@link #shutdown()}.
+     */
+    protected HealthServer healthServer;
+    /**
+     * App-settable readiness gate (FR-HB-2), defaulting to {@code true}: a component is ready as soon
+     * as messaging connects, but an app can gate readiness on its own required subscriptions by
+     * calling {@link #setReady(boolean) setReady(false)} early and {@code setReady(true)} once ready.
+     * Part of {@code readyz = connected && readyFlag && !shuttingDown}.
+     */
+    private volatile boolean readyFlag = true;
+    /**
+     * Flipped to {@code true} at the very start of the shutdown / SIGTERM path so {@code /readyz}
+     * returns 503 immediately (drains traffic) before teardown begins (FR-HB-2).
+     */
+    private volatile boolean shuttingDown = false;
+    /** Guards the close chain so {@link #shutdown()} is idempotent across the app + the SIGTERM hook. */
+    private final AtomicBoolean shutdownComplete = new AtomicBoolean(false);
+    /** The library-owned SIGTERM/SIGINT shutdown hook (FR-HB-2); removed by an app-driven shutdown. */
+    private Thread shutdownHook;
 
     /**
      * Constructs a new GGCommons instance with the given component name and command line arguments.
@@ -146,6 +171,13 @@ public class GGCommons
             // Complete initialization - this must be the very last step
             // After this point, configuration changes will trigger listener notifications
             configManager.completeInitialization();
+
+            // FR-HB-1: start the HTTP health endpoint (default-on for KUBERNETES; opt-in elsewhere),
+            // and FR-HB-2: wire SIGTERM/SIGINT to the graceful, idempotent shutdown so a kubelet (or
+            // the Greengrass Nucleus) terminating the process flips /readyz -> 503, unsubscribes
+            // every tracked subscription and bounded-closes the runtime before exit.
+            startHealthServer(parsedCommandLine.platform);
+            installShutdownHook();
         } catch (Exception e) {
             LOGGER.error("Failed to initialize GGCommons: {}", e.getMessage(), e);
             throw new RuntimeException("Failed to initialize GGCommons: " + e.getMessage(), e);
@@ -288,11 +320,184 @@ public class GGCommons
     }
 
     /**
+     * Sets the application-controlled readiness flag (FR-HB-2). The flag defaults to {@code true}, so
+     * a component is reported ready by {@code /readyz} as soon as messaging connects. An app that must
+     * not receive traffic until its own required subscriptions are established should call
+     * {@code setReady(false)} early (e.g. before subscribing) and {@code setReady(true)} once ready.
+     * It contributes to the readiness predicate {@code connected && readyFlag && !shuttingDown}; it
+     * cannot force readiness while messaging is disconnected or during shutdown.
+     *
+     * @param ready the new application readiness state
+     */
+    public void setReady(boolean ready)
+    {
+        this.readyFlag = ready;
+        LOGGER.debug("Application readiness flag set to {}", ready);
+    }
+
+    /**
+     * Liveness signal for {@code GET /livez} (FR-HB-1): always {@code true} while this object's
+     * methods can execute (the process is alive). It deliberately <b>never</b> consults the broker or
+     * any external dependency — a broker outage must not fail liveness and trigger kubelet restart
+     * storms.
+     *
+     * @return {@code true} (the process is alive)
+     */
+    boolean isLive()
+    {
+        return true;
+    }
+
+    /**
+     * Whether the messaging transport is connected — the messaging input to the readiness model.
+     * {@code false} when no messaging client is wired (treated as not-ready).
+     *
+     * @return {@code true} if messaging is connected
+     */
+    boolean messagingConnected()
+    {
+        return messagingClient != null && messagingClient.connected();
+    }
+
+    /**
+     * Readiness signal for {@code GET /readyz} and {@code GET /startupz} (FR-HB-2):
+     * {@code messagingConnected() && readyFlag && !shuttingDown}. Returns {@code false} (probe 503)
+     * during startup before messaging connects, when the app has gated readiness via
+     * {@link #setReady(boolean)}, and immediately on shutdown/SIGTERM.
+     *
+     * @return {@code true} when the component is ready to serve traffic
+     */
+    boolean isReadyz()
+    {
+        return messagingConnected() && readyFlag && !shuttingDown;
+    }
+
+    /**
+     * Resolves whether the health server should start (FR-HB-1, precedence FR-RT-3): an explicit
+     * {@code health.enabled} from the config wins ▸ else the platform-profile default ({@code true} on
+     * KUBERNETES via {@link PlatformResolver#profileHealthEnabled}) ▸ else {@code false}.
+     *
+     * @param health   the parsed health configuration
+     * @param platform the resolved deployment platform (may be {@code null})
+     * @return {@code true} if the health server should be started
+     */
+    static boolean resolveHealthEnabled(HealthConfiguration health, Platform platform)
+    {
+        if (health != null && health.isEnabledExplicitlySet())
+        {
+            return health.isEnabled();  // explicit config wins (top tier)
+        }
+        return PlatformResolver.profileHealthEnabled(platform);  // platform-profile default
+    }
+
+    /**
+     * Starts the HTTP health server (FR-HB-1) when enabled by {@link #resolveHealthEnabled}. A
+     * bind/start failure is logged and swallowed — a health-endpoint problem must never crash the
+     * component. No-op when disabled (the GREENGRASS / HOST default without {@code health.enabled}).
+     *
+     * @param platform the resolved deployment platform (selects the default-on KUBERNETES behavior)
+     */
+    void startHealthServer(Platform platform)
+    {
+        HealthConfiguration health = configManager.getHealthConfig();
+        if (!resolveHealthEnabled(health, platform))
+        {
+            LOGGER.debug("Health server disabled (platform={}, explicit={})",
+                    platform, health != null && health.isEnabledExplicitlySet());
+            return;
+        }
+        try
+        {
+            healthServer = new HealthServer(health.getPort(), health.getLivenessPath(),
+                    health.getReadinessPath(), health.getStartupPath(), this::isLive, this::isReadyz);
+            LOGGER.info("Health server listening on 0.0.0.0:{} ({}=livez, {}=readyz, {}=startupz)",
+                    healthServer.getPort(), health.getLivenessPath(), health.getReadinessPath(),
+                    health.getStartupPath());
+        }
+        catch (Exception e)
+        {
+            LOGGER.error("Failed to start health server on port {} (continuing without it): {}",
+                    health.getPort(), e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Installs the library-owned SIGTERM/SIGINT shutdown hook (FR-HB-2). The JVM runs shutdown hooks
+     * on SIGTERM (the kubelet's termination signal) and SIGINT, so this is where the kubelet's
+     * graceful-stop is wired to {@link #onShutdownSignal()}: flip {@code /readyz} to 503, then run the
+     * idempotent close chain. The JVM exits 0 after the hook completes (no explicit {@code exit} — and
+     * calling {@code System.exit} inside a hook would deadlock). An app-initiated {@link #shutdown()}
+     * deregisters this hook to avoid a redundant second run.
+     */
+    private void installShutdownHook()
+    {
+        shutdownHook = new Thread(this::onShutdownSignal, "ggcommons-shutdown");
+        try
+        {
+            Runtime.getRuntime().addShutdownHook(shutdownHook);
+        }
+        catch (IllegalStateException e)
+        {
+            // The JVM is already shutting down; nothing to wire.
+            LOGGER.debug("Could not register shutdown hook (JVM already shutting down): {}", e.getMessage());
+        }
+    }
+
+    /**
+     * The SIGTERM/SIGINT handler body (FR-HB-2). Flips {@code shuttingDown} so {@code /readyz} returns
+     * 503 immediately, then runs the idempotent shutdown chain. Does not remove the hook (it is
+     * running inside it) and does not call {@code System.exit} (the JVM exits 0 once hooks finish).
+     */
+    void onShutdownSignal()
+    {
+        LOGGER.info("Received termination signal; shutting down GGCommons gracefully");
+        shuttingDown = true;
+        shutdownInternal(false);
+    }
+
+    /**
      * Shuts down this GGCommons instance, releasing background timers, threads and connections
-     * held by the heartbeat, metric, messaging and configuration subsystems.
+     * held by the health, heartbeat, metric, messaging and configuration subsystems. Idempotent and
+     * safe to call multiple times (e.g. by the app and the SIGTERM hook). Flips readiness to 503
+     * before tearing down (FR-HB-2).
      */
     public void shutdown()
     {
+        shutdownInternal(true);
+    }
+
+    /**
+     * The shared, idempotent shutdown chain. The first caller wins the {@link #shutdownComplete}
+     * CAS and runs the teardown; later callers (the other of app/SIGTERM-hook) return immediately.
+     *
+     * @param removeHook whether to deregister the SIGTERM hook (true for an app-driven shutdown;
+     *                   false when invoked from within the hook itself)
+     */
+    private void shutdownInternal(boolean removeHook)
+    {
+        // Flip readiness to 503 first so an in-flight /readyz probe drains traffic even if the close
+        // chain below takes a moment.
+        shuttingDown = true;
+        if (!shutdownComplete.compareAndSet(false, true))
+        {
+            return;  // already shut down — idempotent
+        }
+        if (removeHook && shutdownHook != null)
+        {
+            try
+            {
+                Runtime.getRuntime().removeShutdownHook(shutdownHook);
+            }
+            catch (IllegalStateException ignored)
+            {
+                // JVM shutdown already in progress; the hook will be (or is being) run anyway.
+            }
+        }
+        // Stop accepting health probes first (the readiness flag already reports 503).
+        if (healthServer != null)
+        {
+            healthServer.close();
+        }
         if (credentialMetricsBridge != null)
         {
             credentialMetricsBridge.close();

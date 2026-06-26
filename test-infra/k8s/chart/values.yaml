@@ -111,17 +111,24 @@ service:
   healthPort: 8081
   metricsPort: 9090
 
-# PLACEHOLDER probes. The real HTTP /livez,/readyz endpoint is sub-phase 1c; until
-# then we use a dependency-free exec probe asserting the config mount is readable.
-# Replace `exec` with `httpGet: { path: /livez|/readyz, port: health }` in 1c.
+# Real HTTP probes against the component's health server (Phase 1c-health). The component
+# listens on `service.healthPort` (the `health` container port) and serves /livez, /readyz,
+# /startupz. The pod reaching Ready proves /readyz returned 200.
 probes:
   enabled: true
+  livenessPath: /livez
+  readinessPath: /readyz
+  startupPath: /startupz
+  # Startup gates slow connects: up to failureThreshold*periodSeconds before liveness/readiness apply.
+  startup:
+    periodSeconds: 3
+    failureThreshold: 30
   liveness:
-    initialDelaySeconds: 10
+    initialDelaySeconds: 0
     periodSeconds: 15
   readiness:
-    initialDelaySeconds: 5
-    periodSeconds: 10
+    initialDelaySeconds: 0
+    periodSeconds: 5
 
 resources:
   requests:

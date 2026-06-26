@@ -45,6 +45,12 @@ export interface MessagingProvider {
     qos: Qos,
     onMessage: (topic: string, payload: Buffer) => void,
   ): Promise<RawSubscription>;
+  /**
+   * Whether the transport is currently connected (the readiness signal consumed by the `/readyz`
+   * health probe; FR-HB-1). MUST be cheap and non-blocking — it is polled on every probe and MUST NOT
+   * be consulted by `/livez`.
+   */
+  connected(): boolean;
   /** Close the transport and all subscriptions. */
   disconnect(): Promise<void>;
 }
@@ -109,6 +115,14 @@ export interface IMessagingService {
 
   cancelRequest(reply: ReplyFuture): void;
   cancelRequestFromIotCore(reply: ReplyFuture): void;
+
+  /**
+   * Whether the underlying messaging transport is currently connected. The readiness signal behind the
+   * `/readyz` health probe (FR-HB-1): the runtime is "ready" only when this is `true` (and the app's
+   * `setReady` flag is set and the process is not shutting down). Cheap, non-blocking, and never
+   * consulted by `/livez` (a broker outage must not fail liveness).
+   */
+  connected(): boolean;
 }
 
 /** Prefix for generated reply topics. Matches the other libraries exactly. */

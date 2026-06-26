@@ -81,17 +81,27 @@ spec:
               containerPort: {{ .Values.service.metricsPort }}
               protocol: TCP
           {{- if .Values.probes.enabled }}
-          # PLACEHOLDER probes (sub-phase 1c replaces with httpGet /livez,/readyz on
-          # the `health` port). Until the HTTP health server exists, a dependency-free
-          # exec probe asserts the ConfigMap mount is present and readable.
+          # Real HTTP probes against the component's health server (Phase 1c-health):
+          #   /livez  — process alive; never checks the broker (a broker outage must not restart the pod)
+          #   /readyz — 200 only when messaging is connected and the component is ready; 503 on startup/shutdown
+          #   /startupz — startup gate for slow connects (generous failureThreshold), then liveness/readiness take over
+          # The pod reaching Ready therefore PROVES /readyz returned 200.
+          startupProbe:
+            httpGet:
+              path: {{ .Values.probes.startupPath }}
+              port: health
+            periodSeconds: {{ .Values.probes.startup.periodSeconds }}
+            failureThreshold: {{ .Values.probes.startup.failureThreshold }}
           livenessProbe:
-            exec:
-              command: ["sh", "-c", "test -f {{ .Values.configMountPath }}/config.json"]
+            httpGet:
+              path: {{ .Values.probes.livenessPath }}
+              port: health
             initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
             periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
           readinessProbe:
-            exec:
-              command: ["sh", "-c", "test -f {{ .Values.configMountPath }}/config.json"]
+            httpGet:
+              path: {{ .Values.probes.readinessPath }}
+              port: health
             initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
             periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
           {{- end }}

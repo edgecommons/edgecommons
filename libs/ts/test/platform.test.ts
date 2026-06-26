@@ -21,6 +21,7 @@ import {
   Transport,
   detectPlatform,
   profileLoggingFormat,
+  profileHealthEnabled,
   resolveIdentity,
   resolveProfile,
   validate,
@@ -341,5 +342,19 @@ describe("profile logging-format default (Phase 1c / FR-LOG-1)", () => {
     expect(PROFILES.get(Platform.HOST)!.loggingFormat).toBeUndefined();
     expect(profileLoggingFormat(Platform.GREENGRASS)).toBeUndefined();
     expect(profileLoggingFormat(Platform.HOST)).toBeUndefined();
+  });
+});
+
+describe("profile health-endpoint default (Phase 1c / FR-HB-1)", () => {
+  it("the KUBERNETES profile turns the health endpoint on by default", () => {
+    expect(PROFILES.get(Platform.KUBERNETES)!.healthEnabled).toBe(true);
+    expect(profileHealthEnabled(Platform.KUBERNETES)).toBe(true);
+  });
+
+  it("GREENGRASS/HOST leave the health endpoint off by default", () => {
+    expect(PROFILES.get(Platform.GREENGRASS)!.healthEnabled).toBeUndefined();
+    expect(PROFILES.get(Platform.HOST)!.healthEnabled).toBeUndefined();
+    expect(profileHealthEnabled(Platform.GREENGRASS)).toBe(false);
+    expect(profileHealthEnabled(Platform.HOST)).toBe(false);
   });
 });

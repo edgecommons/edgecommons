@@ -99,6 +99,21 @@ class MessagingClient:
         return MessagingClient._messaging_provider
 
     @staticmethod
+    def connected() -> bool:
+        """Whether messaging currently has a usable connection (backs ``/readyz``, FR-HB-1).
+
+        Returns ``False`` when no provider is wired (treated as not connected -> not ready) or when the
+        provider reports/raises a non-connected state. Never raises.
+        """
+        provider = MessagingClient._messaging_provider
+        if provider is None:
+            return False
+        try:
+            return bool(provider.connected())
+        except Exception:  # noqa: BLE001 - readiness check must never raise
+            return False
+
+    @staticmethod
     def publish(topic: str, msg: Message):
         logger.debug(f"Publishing message to topic: {topic}")
         MessagingClient._messaging_provider.publish(topic, msg)

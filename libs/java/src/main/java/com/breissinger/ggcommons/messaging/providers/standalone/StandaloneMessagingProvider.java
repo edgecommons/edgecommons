@@ -615,4 +615,18 @@ public final class StandaloneMessagingProvider extends MessagingProvider
 
     @Override
     public Object getNativeIotCoreClient() { return iotCoreMqttClient; }
+
+    /**
+     * Reports the <em>local</em> broker connection state (Paho {@link MqttClient#isConnected()}) — the
+     * edge-critical half of the dual-MQTT transport. The IoT Core link is deliberately excluded: a
+     * dropped cloud link must not flip readiness while local pub/sub keeps serving. Feeds the
+     * readiness model (FR-HB-2).
+     *
+     * @return {@code true} when the local MQTT client is connected
+     */
+    @Override
+    public boolean connected()
+    {
+        return localMqttClient != null && localMqttClient.isConnected();
+    }
 }

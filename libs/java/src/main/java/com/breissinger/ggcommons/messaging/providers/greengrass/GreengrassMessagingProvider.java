@@ -280,4 +280,18 @@ public final class GreengrassMessagingProvider extends MessagingProvider
     {
         return ipcClient;
     }
+
+    /**
+     * Reports IPC connectivity for the readiness model (FR-HB-2): {@code true} once the Greengrass IPC
+     * client has been built (the constructor connects to the Nucleus over the IPC domain socket, or
+     * throws). There is no broker link to lose for IPC, so this stays {@code true} for the client's
+     * lifetime.
+     *
+     * @return {@code true} when the IPC client is present
+     */
+    @Override
+    public boolean connected()
+    {
+        return ipcClient != null;
+    }
 }

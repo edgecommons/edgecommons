@@ -101,4 +101,11 @@ impl MessagingProvider for IpcProvider {
         // there is no filter-keyed unsubscribe in the SDK.
         Ok(())
     }
+
+    fn connected(&self) -> bool {
+        // The IPC client is built (and `connect()` succeeded) before this provider exists, so the
+        // Nucleus-side connection is established. Greengrass exposes no liveness probe on the IPC
+        // socket, so "the client is built" is the connected signal (parity with Java IPC readiness).
+        true
+    }
 }

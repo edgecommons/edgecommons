@@ -195,6 +195,9 @@ mod tests {
             self.subs.lock().unwrap().remove(filter);
             Ok(())
         }
+        fn connected(&self) -> bool {
+            true
+        }
     }
 
     #[test]

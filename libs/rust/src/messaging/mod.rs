@@ -159,6 +159,14 @@ pub trait MessagingProvider: Send + Sync {
 
     /// Unsubscribe from `filter` on `dest`.
     async fn unsubscribe(&self, filter: &str, dest: Destination) -> Result<()>;
+
+    /// Whether the underlying transport currently has a live connection.
+    ///
+    /// Reads the provider's live connection state (e.g. the MQTT CONNACK watch channel for the
+    /// local broker; `true` once the Greengrass IPC client is built). Consumed by the health
+    /// readiness endpoint (`/readyz`, [`crate::health`]); it MUST NOT gate liveness (`/livez`),
+    /// because a broker outage must never trigger a restart storm.
+    fn connected(&self) -> bool;
 }
 
 /// Test whether an MQTT topic `filter` (with `+` / `#` wildcards) matches a

@@ -14,7 +14,7 @@ export type {
   HeartbeatTarget,
   ComponentConfig,
 } from "./model";
-export { LoggingConfig, FileLoggingConfig, HeartbeatConfig, MetricConfig } from "./model";
+export { LoggingConfig, FileLoggingConfig, HeartbeatConfig, MetricConfig, HealthConfig } from "./model";
 export { resolve } from "./template";
 export { validate } from "./validation";
 export type { ConfigSource } from "./source";

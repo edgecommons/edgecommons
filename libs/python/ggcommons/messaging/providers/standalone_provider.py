@@ -345,6 +345,23 @@ class StandaloneProvider(MessagingProvider):
                          exc_info=True)
             # Don't re-raise - this could cause disconnection.
 
+    def connected(self) -> bool:
+        """Report the broker connection state for readiness (FR-HB-1).
+
+        Tracks the **local** broker ONLY — it carries in-cluster pub/sub and is the connection
+        readiness should gate on; an IoT Core drop alone must not flip readiness while the local
+        broker serves. There is deliberately NO IoT Core fallback, matching the canonical Java
+        ``StandaloneMessagingProvider.connected()`` (local-only) and the Rust/TS providers. Returns
+        ``False`` when the local client is absent or down. Backed by paho's ``client.is_connected()``.
+        """
+        client = self._local.client
+        if client is None:
+            return False
+        try:
+            return bool(client.is_connected())
+        except Exception:  # noqa: BLE001 - readiness check must never raise
+            return False
+
     def disconnect(self):
         """Disconnect from all brokers and release resources."""
         logger.info("Initiating STANDALONE mode broker disconnection")

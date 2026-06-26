@@ -102,6 +102,9 @@ struct BrokerConn {
     pending_subacks: PendingSubacks,
     next_id: AtomicU64,
     task: JoinHandle<()>,
+    /// Live connection state: the event-loop task sets it `true` on each `CONNACK` and `false`
+    /// on a connection error. Read (latest value) by [`MqttProvider::connected`] for `/readyz`.
+    connected: watch::Receiver<bool>,
 }
 
 impl Drop for BrokerConn {
@@ -250,6 +253,13 @@ impl MessagingProvider for MqttProvider {
             .await
             .map_err(|e| GgError::Messaging(format!("unsubscribe from '{filter}' failed: {e}")))
     }
+
+    fn connected(&self) -> bool {
+        // Readiness reflects the LOCAL broker — the connection that serves local traffic. The
+        // optional AWS IoT Core link is intermittent by design (cloud cooperation), so it must
+        // not gate `/readyz`; an offline cloud keeps the pod ready for local work.
+        *self.local.connected.borrow()
+    }
 }
 
 /// Establish one broker connection over plain TCP and block until its first CONNACK.
@@ -336,22 +346,25 @@ async fn connect_broker(broker: &BrokerConfig, role: BrokerRole) -> Result<Broke
     });
 
     let mut ready = connected_rx;
-    let connected = tokio::time::timeout(CONNECT_TIMEOUT, ready.wait_for(|&c| c)).await;
-    match connected {
-        Ok(Ok(_)) => Ok(BrokerConn {
+    let result = tokio::time::timeout(CONNECT_TIMEOUT, ready.wait_for(|&c| c)).await;
+    let connacked = matches!(result, Ok(Ok(_)));
+    // Release the `Ref` borrow of `ready` before moving it into the BrokerConn.
+    drop(result);
+    if connacked {
+        Ok(BrokerConn {
             client,
             registry,
             pending_subacks,
             next_id: AtomicU64::new(0),
             task,
-        }),
-        _ => {
-            task.abort();
-            Err(GgError::Messaging(format!(
-                "timed out waiting {}s for broker CONNACK",
-                CONNECT_TIMEOUT.as_secs()
-            )))
-        }
+            connected: ready,
+        })
+    } else {
+        task.abort();
+        Err(GgError::Messaging(format!(
+            "timed out waiting {}s for broker CONNACK",
+            CONNECT_TIMEOUT.as_secs()
+        )))
     }
 }
 

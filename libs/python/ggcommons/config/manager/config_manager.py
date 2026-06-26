@@ -10,6 +10,7 @@ from ggcommons.platform.resolver import (
     profile_logging_format,
 )
 from ggcommons.config.heartbeat_config import HeartbeatConfiguration
+from ggcommons.config.health_config import HealthConfiguration
 from ggcommons.config.metric_config import MetricConfiguration
 from ggcommons.config.tag_config import TagConfiguration
 from ggcommons.config.enhanced_logging_config import EnhancedLoggingConfiguration
@@ -56,6 +57,7 @@ class ConfigManager:
         self._platform = platform
         self._tag_config = None
         self._heartbeat_config = None
+        self._health_config = None
         self._metric_config = None
         self._component_config = None
         self._logging_config = None
@@ -118,6 +120,12 @@ class ConfigManager:
 
         heartbeat_json = config.get("heartbeat")
         self._heartbeat_config = HeartbeatConfiguration(heartbeat_json)
+
+        # Health server config (Phase 1c health slice). Always constructed (schema-aligned defaults)
+        # so GGCommons._init_health can read port/paths even when the section is absent; `enabled`
+        # stays None to let the platform-profile default decide (on for KUBERNETES, FR-RT-3).
+        health_json = config.get("health")
+        self._health_config = HealthConfiguration(health_json)
 
         metric_json = config.get("metricEmission")
         self._metric_config = MetricConfiguration(metric_json)
@@ -220,6 +228,11 @@ class ConfigManager:
 
     def get_heartbeat_config(self) -> HeartbeatConfiguration:
         return self._heartbeat_config
+
+    def get_health_config(self) -> HealthConfiguration:
+        """The parsed ``health`` config section (Phase 1c). Never ``None`` after init — defaults to a
+        schema-aligned :class:`HealthConfiguration` with ``enabled=None`` when the section is absent."""
+        return self._health_config
 
     def get_metric_config(self) -> MetricConfiguration:
         return self._metric_config

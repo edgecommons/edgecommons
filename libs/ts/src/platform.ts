@@ -25,8 +25,9 @@
  *
  * **Phase 1c:** the KUBERNETES profile now defaults its logging format to {@link JSON_LOG_FORMAT} (the
  * structured stdout-JSON sink, FR-LOG-1); {@link profileLoggingFormat} exposes that default to the
- * logging configurator. The `prometheus` metrics target and the HTTP health endpoint remain deferred
- * to later Phase-1 sub-phases.
+ * logging configurator. The KUBERNETES profile also turns the HTTP health endpoint on by default
+ * (FR-HB-1); {@link profileHealthEnabled} exposes that default to the lifecycle builder. The
+ * `prometheus` metrics target remains deferred to a later Phase-1 sub-phase.
  */
 import { existsSync } from "fs";
 
@@ -79,6 +80,13 @@ export interface PlatformProfile {
    * (console/text) is unchanged. Consulted by the logging configurator via {@link profileLoggingFormat}.
    */
   readonly loggingFormat?: string;
+  /**
+   * Whether the HTTP health endpoint is on by default for this platform when the component config sets
+   * no explicit `health.enabled` (Phase 1c / FR-HB-1, precedence FR-RT-3). `true` on `KUBERNETES` (the
+   * kubelet needs probes), `false`/absent on `GREENGRASS`/`HOST`. Consulted by the lifecycle builder via
+   * {@link profileHealthEnabled}; an explicit `health.enabled` always wins.
+   */
+  readonly healthEnabled?: boolean;
 }
 
 /**
@@ -181,6 +189,7 @@ export const PROFILES: ReadonlyMap<Platform, PlatformProfile> = new Map([
       transport: Transport.MQTT,
       configSource: "CONFIGMAP",
       loggingFormat: JSON_LOG_FORMAT,
+      healthEnabled: true,
     } as PlatformProfile,
   ],
 ]);
@@ -194,6 +203,16 @@ export const PROFILES: ReadonlyMap<Platform, PlatformProfile> = new Map([
  */
 export function profileLoggingFormat(platform: Platform): string | undefined {
   return PROFILES.get(platform)?.loggingFormat;
+}
+
+/**
+ * Whether the HTTP health endpoint is on by default for `platform` (Phase 1c / FR-HB-1), i.e. `true`
+ * on KUBERNETES and `false` on GREENGRASS/HOST. Threaded into the lifecycle builder, which owns the
+ * precedence (explicit `health.enabled` ▸ this profile default). Pure lookup; mirrors
+ * {@link profileLoggingFormat}.
+ */
+export function profileHealthEnabled(platform: Platform): boolean {
+  return PROFILES.get(platform)?.healthEnabled === true;
 }
 
 /**

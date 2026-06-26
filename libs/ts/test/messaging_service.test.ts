@@ -53,6 +53,10 @@ class FakeProvider implements MessagingProvider {
     };
   }
 
+  connected(): boolean {
+    return true;
+  }
+
   async disconnect(): Promise<void> {
     this.subs.clear();
   }

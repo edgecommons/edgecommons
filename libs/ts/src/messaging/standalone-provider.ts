@@ -130,6 +130,16 @@ export class StandaloneMqttProvider implements MessagingProvider {
     });
   }
 
+  /**
+   * Whether the transport is connected (FR-HB-1). Reports the **local** broker's `mqtt.js`
+   * `client.connected` flag: the local broker is the always-present, primary uplink (it stands in for
+   * Greengrass IPC), so it gates readiness. An optional IoT Core bridge being down is deliberately NOT
+   * a readiness failure — the design keeps `/readyz` tolerant of cloud-uplink outages.
+   */
+  connected(): boolean {
+    return this.local.client.connected;
+  }
+
   async disconnect(): Promise<void> {
     await Promise.all(
       [this.local, this.iot]

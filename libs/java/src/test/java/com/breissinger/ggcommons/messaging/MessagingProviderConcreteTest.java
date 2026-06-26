@@ -83,6 +83,13 @@ class MessagingProviderConcreteTest {
     }
 
     @Test
+    void defaultConnectedIsFalse() {
+        // A provider that does not report connectivity is treated as not-connected (not-ready).
+        RecordingProvider p = new RecordingProvider();
+        assertFalse(p.connected());
+    }
+
+    @Test
     void literalFilterCharVsTopicSeparatorDoesNotMatch() {
         // filter has a literal 'x' where the topic has a '/': must break (line 96) -> no match.
         assertFalse(MessagingProvider.topicMatchesFilter("ax", "a/"));

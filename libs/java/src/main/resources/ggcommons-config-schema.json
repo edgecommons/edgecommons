@@ -352,6 +352,39 @@
         "sync": { "$ref": "#/definitions/paramSync" }
       },
       "additionalProperties": false
+    },
+    "health": {
+      "type": "object",
+      "description": "Kubernetes HTTP health/readiness endpoint (on by default on the KUBERNETES platform). Exposes GET /livez (process alive; never checks the broker) and GET /readyz (200 only when messaging is connected and the component is ready; 503 during startup and shutdown), plus an optional GET /startupz.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable the HTTP health server. Defaults to true on the KUBERNETES platform, false elsewhere."
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "default": 8081,
+          "description": "TCP port the health server listens on."
+        },
+        "livenessPath": {
+          "type": "string",
+          "default": "/livez",
+          "description": "Path for the liveness probe (200 while the process is alive; never checks the broker)."
+        },
+        "readinessPath": {
+          "type": "string",
+          "default": "/readyz",
+          "description": "Path for the readiness probe (200 only when connected and ready; 503 on startup/shutdown)."
+        },
+        "startupPath": {
+          "type": "string",
+          "default": "/startupz",
+          "description": "Path for the startup probe (reuses readiness semantics; for slow connects)."
+        }
+      },
+      "additionalProperties": false
     }
   },
   "required": ["component"],

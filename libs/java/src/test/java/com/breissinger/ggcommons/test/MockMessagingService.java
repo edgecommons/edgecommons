@@ -24,6 +24,12 @@ import java.util.function.BiConsumer;
 public class MockMessagingService extends MessagingClient {
     private final List<PublishedMessage> publishedMessages = new ArrayList<>();
     private final Map<String, BiConsumer<String, Message>> subscriptions = new HashMap<>();
+    // Simulated transport connectivity for the readiness model (FR-HB-2). Defaults to connected so a
+    // freshly-built mock messaging client reports a ready transport; tests flip it to exercise the
+    // disconnected -> not-ready path.
+    private volatile boolean connected = true;
+    // Records that the library closed messaging (the SIGTERM/shutdown teardown path).
+    private volatile int closeCount = 0;
 
     public static class PublishedMessage {
         public final String topic;
@@ -130,6 +136,26 @@ public class MockMessagingService extends MessagingClient {
     @Override
     public void cancelRequestFromIoTCore(ReplyFuture replyFuture) {
         // Mock implementation - no-op
+    }
+
+    @Override
+    public boolean connected() {
+        return connected;
+    }
+
+    /** Sets the simulated transport connectivity reported by {@link #connected()}. */
+    public void setConnected(boolean connected) {
+        this.connected = connected;
+    }
+
+    @Override
+    public void close() {
+        closeCount++;
+    }
+
+    /** Number of times the library invoked {@link #close()} (for idempotency assertions). */
+    public int getCloseCount() {
+        return closeCount;
     }
 
     @Override

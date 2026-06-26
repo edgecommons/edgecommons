@@ -20,9 +20,18 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Messaging providers: return inert handles; the DefaultMessagingService wrapping them
 // is real, but we never publish through it here.
-const standaloneConnect = vi.fn(async () => ({ kind: "standalone-provider" }));
-const ipcConnect = vi.fn(async () => ({ kind: "ipc-provider" }));
+const standaloneConnect = vi.fn(async () => ({ kind: "standalone-provider", connected: () => true }));
+const ipcConnect = vi.fn(async () => ({ kind: "ipc-provider", connected: () => true }));
 const loadMessagingConfigMock = vi.fn(async () => ({ messaging: { local: { host: "h", port: 1 } } }));
+
+// Health server: spy on start (keep ReadinessState + evaluateHealth real) so platform/config gating is
+// asserted without binding a socket. start() resolves to a stub with a no-op stop().
+const healthStop = vi.fn(async () => undefined);
+const healthStart = vi.fn(async () => ({ stop: healthStop, port: () => 0 }));
+vi.mock("../src/health", async (importOriginal) => {
+  const orig = await importOriginal<typeof import("../src/health")>();
+  return { ...orig, HealthServer: { start: (...a: unknown[]) => healthStart(...a) } };
+});
 
 vi.mock("../src/messaging/standalone-provider", async (importOriginal) => {
   const orig = await importOriginal<typeof import("../src/messaging/standalone-provider")>();
@@ -87,8 +96,9 @@ const BASE = { component: { global: {} }, logging: { level: "INFO" } };
 
 beforeEach(() => {
   vi.clearAllMocks();
-  standaloneConnect.mockResolvedValue({ kind: "standalone-provider" });
-  ipcConnect.mockResolvedValue({ kind: "ipc-provider" });
+  standaloneConnect.mockResolvedValue({ kind: "standalone-provider", connected: () => true });
+  ipcConnect.mockResolvedValue({ kind: "ipc-provider", connected: () => true });
+  healthStart.mockResolvedValue({ stop: healthStop, port: () => 0 });
   loadMessagingConfigMock.mockResolvedValue({ messaging: { local: { host: "h", port: 1 } } });
   credOpen.mockResolvedValue({ kind: "cred-svc" });
   paramOpen.mockResolvedValue({ kind: "param-svc", close: paramClose });
@@ -312,5 +322,118 @@ describe("GGCommons lifecycle (mocked)", () => {
     await expect(
       buildWith({ component: { global: {} }, metricEmission: { target: "not-real" } }),
     ).rejects.toBeInstanceOf(GgError);
+  });
+
+  // ---- Phase 1c: health endpoint default-on-KUBERNETES + SIGTERM wiring (FR-HB-1/2) ----
+
+  const K8S = ["--platform", "KUBERNETES", "--transport", "MQTT", "messaging.json"];
+
+  it("health server is OFF by default on HOST", async () => {
+    const gg = await buildWith(BASE);
+    try {
+      expect(healthStart).not.toHaveBeenCalled();
+    } finally {
+      await gg.close();
+    }
+  });
+
+  it("health server is ON by default on KUBERNETES (default port 8081 + default paths)", async () => {
+    const gg = await buildWith(BASE, K8S);
+    try {
+      expect(healthStart).toHaveBeenCalledTimes(1);
+      const opts = healthStart.mock.calls[0][0] as {
+        port: number;
+        paths: { liveness: string; readiness: string; startup: string };
+      };
+      expect(opts.port).toBe(8081);
+      expect(opts.paths).toEqual({ liveness: "/livez", readiness: "/readyz", startup: "/startupz" });
+    } finally {
+      await gg.close();
+      expect(healthStop).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("explicit health.enabled=true turns it ON on HOST with custom port/paths", async () => {
+    const gg = await buildWith({
+      ...BASE,
+      health: { enabled: true, port: 9111, livenessPath: "/l", readinessPath: "/r", startupPath: "/s" },
+    });
+    try {
+      expect(healthStart).toHaveBeenCalledTimes(1);
+      const opts = healthStart.mock.calls[0][0] as { port: number; paths: Record<string, string> };
+      expect(opts.port).toBe(9111);
+      expect(opts.paths).toEqual({ liveness: "/l", readiness: "/r", startup: "/s" });
+    } finally {
+      await gg.close();
+    }
+  });
+
+  it("explicit health.enabled=false turns it OFF on KUBERNETES (explicit wins over the profile default)", async () => {
+    const gg = await buildWith({ ...BASE, health: { enabled: false } }, K8S);
+    try {
+      expect(healthStart).not.toHaveBeenCalled();
+    } finally {
+      await gg.close();
+    }
+  });
+
+  it("setReady() gates gg.ready(); default is ready once connected", async () => {
+    const gg = await buildWith({ ...BASE, health: { enabled: true } });
+    try {
+      expect(gg.ready()).toBe(true); // connected (mock) + readyFlag default true + not shutting down
+      gg.setReady(false);
+      expect(gg.ready()).toBe(false);
+      gg.setReady(true);
+      expect(gg.ready()).toBe(true);
+    } finally {
+      await gg.close();
+    }
+  });
+
+  it("close() flips readiness to not-ready, stops the health server, and is idempotent", async () => {
+    const gg = await buildWith({ ...BASE, health: { enabled: true } });
+    expect(gg.ready()).toBe(true);
+    await gg.close();
+    expect(gg.ready()).toBe(false); // shuttingDown -> 503
+    expect(healthStop).toHaveBeenCalledTimes(1);
+    expect(heartbeatStop).toHaveBeenCalledTimes(1);
+    // Idempotent: a second close does not re-run the shutdown path.
+    await gg.close();
+    expect(healthStop).toHaveBeenCalledTimes(1);
+    expect(heartbeatStop).toHaveBeenCalledTimes(1);
+  });
+
+  it("the library wires SIGTERM and removes the handler on close (FR-HB-2)", async () => {
+    const before = process.listenerCount("SIGTERM");
+    const gg = await buildWith(BASE);
+    expect(process.listenerCount("SIGTERM")).toBe(before + 1);
+    await gg.close();
+    expect(process.listenerCount("SIGTERM")).toBe(before);
+  });
+
+  it("the SIGTERM handler flips readiness to 503 and exits 0 after a graceful close", async () => {
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+    const before = process.listeners("SIGTERM").length;
+    const gg = await buildWith({ ...BASE, health: { enabled: true } });
+    try {
+      const handlers = process.listeners("SIGTERM");
+      // The library installed exactly one new SIGTERM handler; invoke ONLY ours (not vitest's own).
+      expect(handlers.length).toBe(before + 1);
+      const ours = handlers[handlers.length - 1] as () => void;
+
+      expect(gg.ready()).toBe(true);
+      ours();
+      // beginShutdown() runs synchronously in the handler -> /readyz is 503 immediately.
+      expect(gg.ready()).toBe(false);
+      // Let the async close() drain, then assert it exited 0.
+      await new Promise((r) => setImmediate(r));
+      await new Promise((r) => setImmediate(r));
+      expect(heartbeatStop).toHaveBeenCalled();
+      expect(healthStop).toHaveBeenCalled();
+      expect(exitSpy).toHaveBeenCalledWith(0);
+    } finally {
+      exitSpy.mockRestore();
+      await gg.close();
+    }
   });
 });

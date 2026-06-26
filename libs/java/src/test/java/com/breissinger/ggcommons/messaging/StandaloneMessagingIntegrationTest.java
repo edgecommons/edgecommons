@@ -26,6 +26,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import software.amazon.awssdk.aws.greengrass.model.QOS;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -193,5 +194,39 @@ class StandaloneMessagingIntegrationTest {
     void nativeClientsReflectConfiguration() {
         assertNotNull(provider.getNativeLocalClient());
         assertNull(provider.getNativeIotCoreClient(), "iotCore client is null when not configured");
+    }
+
+    @Test
+    void connectedReflectsLocalLinkAndCloseUnsubscribesAll() throws Exception {
+        // A dedicated provider so closing it does not disturb the shared one used by other tests.
+        var json = """
+                { "messaging": { "local": {"host": "127.0.0.1", "port": %s, "clientId": "itest-connclose" } } }"""
+                .formatted(port);
+        MessagingConfiguration config = new Gson().fromJson(json, MessagingConfiguration.class);
+        StandaloneMessagingProvider p = new StandaloneMessagingProvider(config, "test-thing");
+
+        // connected() reports the local broker link (FR-HB-2 readiness input).
+        assertTrue(p.connected(), "provider should report connected after connecting to the broker");
+
+        // Track a couple of subscriptions, then close: close() must unsubscribe/clear them all and
+        // disconnect — the leak-prevention behavior the SIGTERM path relies on.
+        p.subscribe("itest/connclose/a", (t, m) -> { }, 1);
+        p.subscribe("itest/connclose/b", (t, m) -> { }, 1);
+
+        @SuppressWarnings("unchecked")
+        var subs = (java.util.Map<String, ?>) localSubsField(p);
+        assertEquals(2, subs.size(), "two tracked subscriptions before close");
+
+        p.close();
+        assertEquals(0, subs.size(), "close() must unsubscribe all tracked subscriptions");
+        assertFalse(p.connected(), "provider should report disconnected after close");
+    }
+
+    /** Reflectively reads the provider's private local-subscription registry for the close assertion. */
+    private static Object localSubsField(StandaloneMessagingProvider p) throws Exception {
+        java.lang.reflect.Field f =
+                StandaloneMessagingProvider.class.getDeclaredField("localSubscriptionProcessors");
+        f.setAccessible(true);
+        return f.get(p);
     }
 }

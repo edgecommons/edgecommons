@@ -59,6 +59,7 @@ public class ConfigManager
     protected TagConfiguration tagConfig;
     protected HeartbeatConfiguration heartbeatConfig;
     protected MetricConfiguration metricConfig;
+    protected HealthConfiguration healthConfig;
     protected JsonObject componentConfig;
     protected JsonObject globalConfig;
     protected LoggingConfiguration loggingConfig;
@@ -128,6 +129,7 @@ public class ConfigManager
         loggingConfig = ConfigurationFactory.createLoggingConfiguration(config);
         heartbeatConfig = ConfigurationFactory.createHeartbeatConfiguration(config);
         metricConfig = ConfigurationFactory.createMetricConfiguration(config);
+        healthConfig = ConfigurationFactory.createHealthConfiguration(config);
         reconfigureLogging();
 
         componentConfig = config.get("component").getAsJsonObject();
@@ -238,6 +240,18 @@ public class ConfigManager
      */
     public MetricConfiguration getMetricConfig() {
         return metricConfig;
+    }
+
+    /**
+     * Returns the HTTP health-endpoint configuration (the {@code health} config section, or defaults
+     * when absent). Drives the Kubernetes liveness/readiness/startup probe server (FR-HB-1). Whether
+     * the server actually starts is decided by {@link com.breissinger.ggcommons.GGCommons} from the
+     * explicit {@code health.enabled} ▸ the KUBERNETES platform default ▸ {@code false} precedence.
+     *
+     * @return HealthConfiguration object containing health-endpoint settings
+     */
+    public HealthConfiguration getHealthConfig() {
+        return healthConfig;
     }
 
     /**

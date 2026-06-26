@@ -7,6 +7,7 @@ package com.breissinger.ggcommons.test;
 import com.breissinger.ggcommons.config.ConfigManager;
 import com.breissinger.ggcommons.config.ConfigurationChangeListener;
 import com.breissinger.ggcommons.config.ConfigurationFactory;
+import com.breissinger.ggcommons.config.HealthConfiguration;
 import com.breissinger.ggcommons.config.HeartbeatConfiguration;
 import com.breissinger.ggcommons.config.LoggingConfiguration;
 import com.breissinger.ggcommons.config.MetricConfiguration;
@@ -140,5 +141,17 @@ public class MockConfigurationService extends ConfigManager {
     @Override
     public MetricConfiguration getMetricConfig() {
         return ConfigurationFactory.createMetricConfiguration(null);
+    }
+
+    private HealthConfiguration healthConfig = ConfigurationFactory.createHealthConfiguration(null);
+
+    @Override
+    public HealthConfiguration getHealthConfig() {
+        return healthConfig;
+    }
+
+    /** Injects a custom health configuration (for health-server enablement/port tests). */
+    public void setHealthConfig(HealthConfiguration healthConfig) {
+        this.healthConfig = healthConfig;
     }
 }

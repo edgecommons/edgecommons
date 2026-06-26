@@ -34,6 +34,7 @@ export {
   resolveProfile,
   detectPlatform,
   profileLoggingFormat,
+  profileHealthEnabled,
   validate as validatePlatformTransport,
   resolveIdentity,
 } from "./platform";
@@ -46,6 +47,7 @@ export {
   FileLoggingConfig,
   HeartbeatConfig,
   MetricConfig,
+  HealthConfig,
   resolve,
   validate,
   buildConfigSource,
@@ -101,6 +103,10 @@ export type { MetricService, MetricTarget, MeasureValues } from "./metrics";
 // Heartbeat
 export { Heartbeat, HeartbeatMonitor } from "./heartbeat";
 export type { ConfigProvider } from "./heartbeat";
+
+// Health (HTTP /livez · /readyz · /startupz + readiness state)
+export { HealthServer, ReadinessState, evaluateHealth } from "./health";
+export type { HealthServerOptions, HealthPaths, HealthResponse } from "./health";
 
 // Logging
 export { logger, getLogger, initLogging, reconfigureLogging, LoggingReconfigurer, Logger } from "./logging";

@@ -11,6 +11,9 @@ MetricEmitter directly.
 import argparse
 import logging
 import os
+import signal
+import sys
+import threading
 from enum import Enum
 from typing import Optional, List
 from ggcommons.config.manager.config_manager import ConfigManager
@@ -68,6 +71,13 @@ class GGCommons:
         self._credentials = None
         self._credential_metrics = None
         self._parameters = None
+        # Phase 1c health slice: readiness state + HTTP health server + SIGTERM bookkeeping.
+        # Created defensively before the try so the shutdown path (also reached on a failed init)
+        # can null-guard them.
+        self._readiness = None
+        self._health_server = None
+        self._sigterm_installed = False
+        self._prev_sigterm_handler = None
 
         try:
             # Process command line arguments
@@ -99,6 +109,16 @@ class GGCommons:
             # Telemetry streaming (only when a `streaming` config section is present, so components
             # that don't use it never load the native library). Resolves $secret refs first.
             self._init_streaming()
+
+            # HTTP health server + readiness state (Phase 1c health slice). Always builds the
+            # readiness state (so set_ready works); starts the server only when enabled (explicit
+            # health.enabled ▸ on-by-default on KUBERNETES ▸ off).
+            self._init_health(parsed_args)
+
+            # Wire SIGTERM -> graceful shutdown (FR-HB-2). The LIBRARY owns this now, so apps no
+            # longer need their own handler. Installed unconditionally (also matters on GREENGRASS,
+            # which sends SIGTERM on stop); guarded to the main thread.
+            self._install_signal_handlers()
 
             # Complete initialization
             if hasattr(self._config_manager, 'complete_initialization'):
@@ -431,6 +451,87 @@ class GGCommons:
         """
         return self._parameters
 
+    def _init_health(self, parsed_args: argparse.Namespace) -> None:
+        """Build the readiness state and (when enabled) start the HTTP health server (FR-HB-1).
+
+        Readiness is always created so :meth:`set_ready` is usable even when the server is off. The
+        server is enabled by the FR-RT-3 precedence: explicit ``health.enabled`` config ▸ on by
+        default on KUBERNETES ▸ off. The resolved platform is read from the namespace (set by
+        ``_process_args``), reusing the same threading as the logging default — no new
+        resolver->ConfigManager dependency.
+        """
+        from ggcommons.health import HealthServer, ReadinessState
+        from ggcommons.messaging.messaging_client import MessagingClient
+        from ggcommons.platform.resolver import profile_health_enabled
+
+        # Readiness queries the live messaging connection on each check; if messaging is not wired
+        # MessagingClient.connected() returns False (not ready).
+        self._readiness = ReadinessState(lambda: MessagingClient.connected())
+
+        health_config = self._config_manager.get_health_config()
+        platform = getattr(parsed_args, "platform", None)
+        if not isinstance(platform, Platform):
+            platform = None
+
+        explicit = health_config.enabled  # Optional[bool]; None => use the platform default
+        enabled = explicit if explicit is not None else profile_health_enabled(platform)
+        if not enabled:
+            logger.debug(
+                "Health server disabled (explicit=%s, platform=%s)",
+                explicit,
+                platform.value if platform else None,
+            )
+            return
+
+        try:
+            self._health_server = HealthServer(health_config, self._readiness)
+            self._health_server.start()
+        except Exception as e:
+            # A bind failure (e.g. port in use) must not abort component startup; log and continue.
+            logger.error(f"Failed to start health server: {e}")
+            self._health_server = None
+
+    def set_ready(self, ready: bool) -> None:
+        """Set the app-controlled readiness flag consulted by ``/readyz`` and ``/startupz`` (FR-HB-1).
+
+        Defaults to ``True`` (a component is ready once messaging connects). An app that must finish
+        its own setup (e.g. confirm required subscriptions) before serving traffic can call
+        ``gg.set_ready(False)`` early and ``gg.set_ready(True)`` once ready. No-op if the readiness
+        state was never built (a fully failed init). Mirrors Java/TS ``setReady`` and Rust
+        ``set_ready``.
+        """
+        if self._readiness is not None:
+            self._readiness.set_ready(ready)
+
+    def _install_signal_handlers(self) -> None:
+        """Wire SIGTERM to the graceful-shutdown path (FR-HB-2).
+
+        Installed only on the main thread — ``signal.signal`` raises ``ValueError`` off the main
+        thread (e.g. when a component is embedded in a worker thread or under some test runners), in
+        which case the app keeps responsibility for calling :meth:`shutdown`. The previous SIGTERM
+        handler is saved and restored on shutdown so the library does not permanently hijack signals.
+        """
+        if threading.current_thread() is not threading.main_thread():
+            logger.debug("Not on the main thread; skipping library SIGTERM handler install")
+            return
+        try:
+            self._prev_sigterm_handler = signal.signal(signal.SIGTERM, self._handle_termination_signal)
+            self._sigterm_installed = True
+            logger.debug("Installed library SIGTERM handler for graceful shutdown")
+        except (ValueError, OSError, RuntimeError) as e:
+            logger.warning(f"Could not install SIGTERM handler (app must call shutdown itself): {e}")
+
+    def _handle_termination_signal(self, signum, frame) -> None:
+        """SIGTERM handler: flip readiness to 503, run the idempotent shutdown, then exit 0."""
+        logger.info(f"Received signal {signum}; beginning graceful shutdown")
+        # Flip /readyz to 503 immediately, before draining (FR-HB-2 acceptance).
+        if self._readiness is not None:
+            self._readiness.set_shutting_down()
+        try:
+            self.shutdown()
+        finally:
+            sys.exit(0)
+
     def __enter__(self) -> "GGCommons":
         """Support `with GGCommonsBuilder...build() as gg:` so callers get
         deterministic shutdown without a manual try/finally."""
@@ -488,6 +589,11 @@ class GGCommons:
         from ggcommons.messaging.messaging_client import MessagingClient
         from ggcommons.metrics.metric_emitter import MetricEmitter
 
+        # Flip /readyz to 503 first so a probe sees "not ready" the instant shutdown begins, whether
+        # this was reached via SIGTERM or a direct shutdown() call (FR-HB-2). Idempotent.
+        if self._readiness is not None:
+            self._readiness.set_shutting_down()
+
         try:
             # Stop the streaming stats bridge + close the native service (flush + stop engines).
             if self._stream_metrics is not None:
@@ -543,5 +649,25 @@ class GGCommons:
                 self._config_manager.close()
         except Exception as e:
             logger.error(f"Error closing config manager during shutdown: {e}")
+
+        try:
+            # Stop the HTTP health server last (it served 503 during the drain above) and release
+            # the socket. Idempotent + bounded (joins the daemon thread briefly).
+            if self._health_server is not None:
+                self._health_server.stop()
+                self._health_server = None
+        except Exception as e:
+            logger.error(f"Error stopping health server during shutdown: {e}")
+
+        # Restore the previous SIGTERM handler so the library does not permanently hijack signals
+        # (matters for tests and embedding apps). Only if we installed ours, and only on the main
+        # thread (signal.signal raises elsewhere).
+        if self._sigterm_installed and threading.current_thread() is threading.main_thread():
+            try:
+                signal.signal(signal.SIGTERM, self._prev_sigterm_handler or signal.SIG_DFL)
+            except (ValueError, OSError, RuntimeError) as e:
+                logger.debug(f"Could not restore previous SIGTERM handler: {e}")
+            finally:
+                self._sigterm_installed = False
 
         logger.info("GGCommons shutdown completed")
