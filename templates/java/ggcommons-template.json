@@ -5,7 +5,8 @@
     "recipe.yaml": ["DESCRIPTION", "COMPONENTFULLNAME", "AUTHOR", "JARNAME", "MAINCLASSNAME"],
     "gdk-config.json": ["COMPONENTFULLNAME", "AUTHOR", "BUCKET", "REGION"],
     "pom.xml": ["PACKAGE", "JARNAME", "COMPONENTNAME"],
-    "src/main/java/com/breissinger/testcomponent/App.java": ["PACKAGE", "COMPONENTNAME", "COMPONENTFULLNAME"]
+    "src/main/java/com/breissinger/testcomponent/App.java": ["PACKAGE", "COMPONENTNAME", "COMPONENTFULLNAME"],
+    "README.md": ["COMPONENTNAME", "COMPONENTFULLNAME", "JARNAME"]
   },
   "renames": [
     {"from": "src/main/java/com/breissinger/testcomponent", "to": "src/main/java/{PACKAGEPATH}"},
