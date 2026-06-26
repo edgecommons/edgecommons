@@ -373,9 +373,27 @@ environment at startup; the transport, when omitted, is derived from the resolve
 <table>
 <thead><tr><th>Platform</th><th>Default transport</th><th>Config source</th><th>Best for</th></tr></thead>
 <tbody>
-<tr><td><code>GREENGRASS</code></td><td>Greengrass <strong>IPC</strong></td><td>Greengrass deployment</td><td>On-device, Nucleus-managed production</td></tr>
-<tr><td><code>HOST</code></td><td><strong>MQTT</strong> — dual (local broker + AWS IoT Core)</td><td>File / env / shadow</td><td>Docker, bare hosts, local dev</td></tr>
+<tr><td><code>GREENGRASS</code></td><td>Greengrass <strong>IPC</strong></td><td><code>GG_CONFIG</code> — the Nucleus deployment config</td><td>On-device, Nucleus-managed production</td></tr>
+<tr><td><code>HOST</code></td><td><strong>MQTT</strong> — dual (local broker + AWS IoT Core)</td><td><code>FILE</code> <span class="muted">(default)</span> — or <code>ENV</code> / <code>SHADOW</code></td><td>Docker, bare hosts, local dev</td></tr>
 <tr><td><code>KUBERNETES</code></td><td><strong>MQTT</strong> (derived)</td><td><code>CONFIGMAP</code> (mounted ConfigMap directory)</td><td>Kubernetes / edge clusters — broker config from the ConfigMap, identity from the Downward API</td></tr>
+</tbody>
+</table>
+
+<h3>Per-platform profile defaults</h3>
+<p>A platform is a <strong>profile</strong> — a table of per-subsystem defaults the resolver injects for anything you
+don't set explicitly. Every default below is overridable; the precedence is
+<strong>explicit flag ▸ explicit config ▸ platform-profile default ▸ library default</strong>. GREENGRASS and HOST
+share the conservative library defaults; KUBERNETES flips each one to its cluster-native choice.</p>
+<table>
+<thead><tr><th>Profile default</th><th><code>GREENGRASS</code></th><th><code>HOST</code></th><th><code>KUBERNETES</code></th></tr></thead>
+<tbody>
+<tr><td>Transport</td><td><code>IPC</code></td><td><code>MQTT</code> (dual)</td><td><code>MQTT</code> (dual, via Service DNS)</td></tr>
+<tr><td>Config source</td><td><code>GG_CONFIG</code></td><td><code>FILE</code> (<code>./config.json</code>)</td><td><code>CONFIGMAP</code></td></tr>
+<tr><td>Logging format</td><td>console / text</td><td>console / text</td><td><strong>stdout-JSON</strong> (one object per line)</td></tr>
+<tr><td>Metrics target</td><td><code>log</code></td><td><code>log</code></td><td><strong><code>prometheus</code></strong> (pull <code>/metrics</code>)</td></tr>
+<tr><td>Health endpoint</td><td>off</td><td>off</td><td><strong>on</strong> (<code>/livez</code>·<code>/readyz</code>·<code>/startupz</code> :8081)</td></tr>
+<tr><td>Credentials KEK <span class="muted">(when a <code>credentials</code> section is present)</span></td><td><code>file</code></td><td><code>file</code></td><td><strong><code>env</code></strong> (base64 KEK from a mounted Secret)</td></tr>
+<tr><td>Identity <span class="muted">(when <code>-t</code> omitted)</span></td><td><code>AWS_IOT_THING_NAME</code></td><td>explicit <code>-t</code> (else fallback)</td><td>Downward API (<code>GGCOMMONS_THING_NAME</code> ▸ <code>POD_NAME</code>)</td></tr>
 </tbody>
 </table>
 
@@ -408,6 +426,29 @@ environment at startup; the transport, when omitted, is derived from the resolve
 <figcaption>The same component interface; only the provider behind it changes with the platform and transport.</figcaption>
 </figure>
 
+<h3>The KUBERNETES architecture</h3>
+<p><code>KUBERNETES</code> reuses the HOST <strong>dual-MQTT</strong> provider above — it connects to an in-cluster broker
+by <strong>Service DNS</strong> (and, where configured, AWS IoT Core) — so the messaging picture is the same. What
+changes is everything <em>around</em> messaging, each wired to a Kubernetes-native facility and on by default in the
+profile:</p>
+<ul>
+<li><strong>Config</strong> — the <code>CONFIGMAP</code> source reads a mounted ConfigMap <em>directory</em> and
+hot-reloads in-process on the kubelet's <code>..data</code> atomic swap (no restart). That one file also carries the
+<code>messaging</code> section, so no positional broker path is needed (<a href="#configuration">Configuration</a>).</li>
+<li><strong>Identity</strong> — resolved from the <strong>Downward API</strong>
+(<code>GGCOMMONS_THING_NAME</code> ▸ <code>POD_NAME</code>) when <code>-t</code> is omitted.</li>
+<li><strong>Logging</strong> — <strong>stdout-JSON</strong> by default (one object per line, with pod/namespace/node
+correlation), for the cluster log agent (<a href="#logging">Logging</a>).</li>
+<li><strong>Metrics</strong> — the pull-based <code>prometheus</code> target serving <code>/metrics</code>
+(<a href="#metrics">Metrics</a>); scraped intra-cluster, never an inbound path from the cloud.</li>
+<li><strong>Health</strong> — an HTTP server for <code>/livez</code>·<code>/readyz</code>·<code>/startupz</code> probes,
+plus library-owned SIGTERM graceful shutdown (<a href="#heartbeat">Health &amp; lifecycle</a>).</li>
+<li><strong>Credentials</strong> — the vault KEK defaults to the offline-capable <code>env</code> provider (a base64
+key from a mounted Secret), so a cold boot during a cloud disconnect still unlocks the vault.</li>
+<li><strong>Streaming</strong> — the durable buffer lives on a per-pod <strong>PVC</strong> (single-writer) via a
+StatefulSet.</li>
+</ul>
+
 <div class="callout warn"><span class="ct">Important</span>
 <p>The <strong>MQTT</strong> transport reads its broker/TLS config from a messaging-config JSON. On
 <code>--platform HOST</code> you pass the path explicitly: <code>--transport MQTT &lt;messaging_config.json&gt;</code>;
@@ -427,7 +468,7 @@ component config, so no positional path is needed (an explicit path still wins).
 <tbody>
 <tr><td><code>-c</code>, <code>--config</code></td>
 <td><code>FILE</code> · <code>ENV</code> · <code>GG_CONFIG</code> · <code>SHADOW</code> · <code>CONFIG_COMPONENT</code> · <code>CONFIGMAP</code></td>
-<td><code>GG_CONFIG</code> <span class="muted">(<code>CONFIGMAP</code> on KUBERNETES)</span></td><td>Where configuration is loaded from</td></tr>
+<td><span class="muted">per platform —</span> <code>GG_CONFIG</code> <span class="muted">(GREENGRASS)</span> · <code>FILE</code> <span class="muted">(HOST)</span> · <code>CONFIGMAP</code> <span class="muted">(KUBERNETES)</span></td><td>Where configuration is loaded from</td></tr>
 <tr><td><code>--platform</code></td>
 <td><code>GREENGRASS</code> · <code>HOST</code> · <code>KUBERNETES</code> · <code>auto</code></td>
 <td><code>auto</code></td><td>Runtime environment (auto-detected; always overridable)</td></tr>
@@ -454,14 +495,17 @@ launch command onto the two-axis model:</p>
 <li><code>-m GREENGRASS</code> → <code>--platform GREENGRASS</code></li>
 <li><code>-m STANDALONE &lt;messaging_config.json&gt;</code> → <code>--platform HOST --transport MQTT &lt;messaging_config.json&gt;</code></li>
 </ul>
-<p><code>KUBERNETES</code> is a declared platform value today; its profile and k8s-native features arrive in Phase 1.</p></div>
+<p><code>KUBERNETES</code> is fully wired: its profile and k8s-native facilities (CONFIGMAP config, Downward-API
+identity, stdout-JSON logging, the <code>prometheus</code> /metrics target, the HTTP health endpoint, the
+<code>env</code> KEK vault, and PVC-backed streaming) have shipped — see <a href="#runtime-modes">the profile table
+above</a>.</p></div>
 
 <h3>Config-source arguments</h3>
 <p>The <code>-c</code> option takes a source keyword followed by optional positional arguments:</p>
 <div class="codeblock"><div class="tabs"><button class="active">Shell</button><div class="spacer"></div></div>
-<div class="pane active"><pre><code class="language-bash">-c FILE [file_path]                      # JSON file (default: ./ in the working dir)
+<div class="pane active"><pre><code class="language-bash">-c FILE [file_path]                      # JSON file (default: ./config.json; the HOST default source)
 -c ENV [env_var_name]                    # JSON in an env var (default: GGCOMMONS_CONFIG)
--c GG_CONFIG [component_name] [key]       # Greengrass deployment config (default; current component)
+-c GG_CONFIG [component_name] [key]       # Greengrass deployment config (the GREENGRASS default; current component)
 -c SHADOW [shadow_name]                   # AWS IoT Device Shadow desired-state
 -c CONFIG_COMPONENT                       # a dedicated configuration-management component</code></pre></div></div>
 
