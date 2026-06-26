@@ -4,7 +4,7 @@
   "substitutions": {
     "recipe.yaml": ["DESCRIPTION", "COMPONENTFULLNAME", "AUTHOR", "JARNAME", "MAINCLASSNAME"],
     "gdk-config.json": ["COMPONENTFULLNAME", "AUTHOR", "BUCKET", "REGION"],
-    "pom.xml": ["PACKAGE", "JARNAME", "COMPONENTNAME"],
+    "pom.xml": ["PACKAGE", "JARNAME", "COMPONENTNAME", "GGCOMMONS_VERSION"],
     "src/main/java/com/mbreissi/testcomponent/App.java": ["PACKAGE", "COMPONENTNAME", "COMPONENTFULLNAME"],
     "README.md": ["COMPONENTNAME", "COMPONENTFULLNAME", "JARNAME"],
     "Dockerfile": ["JARNAME"],

@@ -46,7 +46,7 @@
     <dependency>
       <groupId>com.mbreissi</groupId>
       <artifactId>ggcommons</artifactId>
-      <version>1.1.9-SNAPSHOT</version>
+      <version><<GGCOMMONS_VERSION>></version>
     </dependency>
     <dependency>
       <groupId>com.google.code.gson</groupId>

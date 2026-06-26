@@ -333,6 +333,9 @@ class CreateComponent(CommandBase):
             "REGION": self.region or "",
             "GGCOMMONS_PATH": self.ggcommons_path or "",
             "GGCOMMONS_DEP": self._ggcommons_dep(),
+            # The ggcommons release version a generated component depends on (Java pom; also the
+            # registry coordinate Rust/TS use via GGCOMMONS_DEP). `ggcommons upgrade` bumps it later.
+            "GGCOMMONS_VERSION": _GGCOMMONS_VERSION,
         }
 
     def _ggcommons_dep(self) -> str:
