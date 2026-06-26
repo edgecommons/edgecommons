@@ -23,7 +23,17 @@ public class MetricConfiguration
     private final static int DEFAULT_INTERVAL_SECS = 5;
     private final static String DEFAULT_MESSAGING_DESTINATION = "ipc";
     private final static String DEFAULT_MAX_FILE_SIZE = "10MB";
+    /** Default HTTP port for the prometheus target's /metrics endpoint (matches the canonical schema). */
+    private final static int DEFAULT_PROMETHEUS_PORT = 9090;
+    /** Default HTTP path for the prometheus target's OpenMetrics exposition (matches the schema). */
+    private final static String DEFAULT_PROMETHEUS_PATH = "/metrics";
     private String target = DEFAULT_TARGET;
+    /**
+     * Whether {@code metricEmission.target} was explicitly present in the config (vs defaulted). The
+     * top tier of the metric-target precedence (FR-RT-3): when {@code false}, the platform-profile
+     * default (prometheus on KUBERNETES) applies; see {@code MetricEmitter.resolveEffectiveTarget}.
+     */
+    private boolean targetExplicitlySet = false;
     private String namespace = DEFAULT_METRIC_NAMESPACE;
     private String logFileNameTemplate = DEFAULT_METRIC_FILE_NAME_TEMPLATE;
     private String topic;
@@ -31,6 +41,8 @@ public class MetricConfiguration
     private String destination = DEFAULT_MESSAGING_DESTINATION;
     private boolean largeFleetWorkaround = false;
     private String maxFileSize = DEFAULT_MAX_FILE_SIZE;
+    private int prometheusPort = DEFAULT_PROMETHEUS_PORT;
+    private String prometheusPath = DEFAULT_PROMETHEUS_PATH;
     private BufferConfiguration bufferConfig = BufferConfiguration.memory();
 
     /**
@@ -42,8 +54,10 @@ public class MetricConfiguration
     {
         if (jsonConfig != null)
         {
-            if (jsonConfig.has("target"))
+            if (jsonConfig.has("target")) {
                 target = jsonConfig.get("target").getAsString();
+                targetExplicitlySet = true;
+            }
             if (jsonConfig.has("namespace"))
                 namespace = jsonConfig.get("namespace").getAsString();
             if (jsonConfig.has("largeFleetWorkaround"))
@@ -99,8 +113,21 @@ public class MetricConfiguration
                 // buffer (survives lengthy disconnects); type=memory keeps the in-memory batching.
                 bufferConfig = BufferConfiguration.fromJson(bufferJson);
             }
-            LOGGER.debug("Metric configuration: target={}, namespace={}, logFileName={}, topic={}, intervalSecs={}",
-                    target, namespace, logFileNameTemplate, topic, intervalSecs);
+
+            // Prometheus target (port/path) — read unconditionally when present so the KUBERNETES
+            // profile default (target defaulted to prometheus, not set in config) still honors an
+            // explicit targetConfig.port/path; both have schema defaults (9090, /metrics) otherwise.
+            if (jsonConfig.has("targetConfig"))
+            {
+                JsonObject targetConfig = jsonConfig.get("targetConfig").getAsJsonObject();
+                if (targetConfig.has("port"))
+                    prometheusPort = targetConfig.get("port").getAsBigDecimal().intValue();
+                if (targetConfig.has("path"))
+                    prometheusPath = targetConfig.get("path").getAsString();
+            }
+            LOGGER.debug("Metric configuration: target={}, namespace={}, logFileName={}, topic={}, "
+                    + "intervalSecs={}, prometheusPort={}, prometheusPath={}",
+                    target, namespace, logFileNameTemplate, topic, intervalSecs, prometheusPort, prometheusPath);
         }
     }
 
@@ -134,6 +161,35 @@ public class MetricConfiguration
 
     public String getTarget() {
         return target;
+    }
+
+    /**
+     * Whether {@code metricEmission.target} was explicitly set in the config (vs library-defaulted to
+     * {@code "log"}). Used by {@code MetricEmitter} to apply the platform-profile metric-target default
+     * (prometheus on KUBERNETES) only when the config did not specify a target (FR-RT-3 precedence).
+     *
+     * @return {@code true} if the config explicitly set {@code metricEmission.target}
+     */
+    public boolean isTargetExplicitlySet() {
+        return targetExplicitlySet;
+    }
+
+    /**
+     * The HTTP port for the prometheus target's {@code /metrics} endpoint (prometheus target only).
+     *
+     * @return the configured port, or the default {@value #DEFAULT_PROMETHEUS_PORT}
+     */
+    public int getPrometheusPort() {
+        return prometheusPort;
+    }
+
+    /**
+     * The HTTP path for the prometheus target's OpenMetrics exposition (prometheus target only).
+     *
+     * @return the configured path, or the default {@value #DEFAULT_PROMETHEUS_PATH}
+     */
+    public String getPrometheusPath() {
+        return prometheusPath;
     }
 
     public String getNamespace() {

@@ -151,6 +151,7 @@ public class GGCommons
 
             metricEmitter = MetricEmitterBuilder.create(configManager)
                     .withMessagingService(messagingClient)
+                    .withPlatform(parsedCommandLine.platform)
                     .build();
 
             heartbeat = HeartbeatBuilder.create(configManager)

@@ -192,7 +192,10 @@ pub struct MetricConfig {
 }
 
 impl MetricConfig {
-    /// Selected target (`log` | `messaging` | `cloudwatch` | `cloudwatchcomponent`); default `log`.
+    /// The explicitly-configured target (`log` | `messaging` | `cloudwatch` |
+    /// `cloudwatchcomponent` | `prometheus`), or `log` when unset. NOTE: this is the *literal*
+    /// config value; the *effective* target also factors in the platform-profile default (e.g.
+    /// `prometheus` on KUBERNETES) — see `crate::metrics::resolve_effective_target`.
     pub fn target(&self) -> &str {
         self.target.as_deref().unwrap_or("log")
     }
@@ -299,6 +302,23 @@ impl MetricConfig {
             .and_then(Value::as_str)
             .map(|s| s.to_ascii_lowercase())
             .unwrap_or_else(|| "perbatch".to_string())
+    }
+
+    /// `targetConfig.port` (prometheus target HTTP port); default `9090`. Out-of-range
+    /// (`0` or `> 65535`) or non-numeric values fall back to the default.
+    pub fn prometheus_port(&self) -> u16 {
+        self.target_config
+            .as_ref()
+            .and_then(|tc| tc.get("port"))
+            .and_then(value_as_u64)
+            .and_then(|p| u16::try_from(p).ok())
+            .filter(|&p| p != 0)
+            .unwrap_or(9090)
+    }
+
+    /// `targetConfig.path` (prometheus target OpenMetrics exposition path); default `/metrics`.
+    pub fn prometheus_path(&self) -> String {
+        self.target_config_str("path").unwrap_or_else(|| "/metrics".to_string())
     }
 }
 

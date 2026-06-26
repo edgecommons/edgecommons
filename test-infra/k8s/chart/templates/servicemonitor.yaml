@@ -1,0 +1,28 @@
+{{- if .Values.serviceMonitor.enabled -}}
+{{/*
+OPTIONAL Prometheus Operator ServiceMonitor for the component's /metrics endpoint (Phase 1c).
+Requires the Prometheus Operator CRD (monitoring.coreos.com/v1) — OFF by default. With it enabled,
+a cluster-local Prometheus scrapes `metrics` (port 9090, path /metrics) on the component's pods; that
+local Prometheus / a remote_write agent then forwards OUTBOUND to a central store (AMP / Mimir /
+Thanos / Grafana Cloud) for multi-site aggregation — edge-initiated egress, never cloud->edge inbound.
+The SCRAPER owns the interval (set below), not the component.
+*/}}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "ggcommons.fullname" . }}
+  labels:
+    {{- include "ggcommons.labels" . | nindent 4 }}
+    {{- with .Values.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "ggcommons.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: metrics
+      path: {{ .Values.serviceMonitor.path }}
+      interval: {{ .Values.serviceMonitor.interval }}
+      scrapeTimeout: {{ .Values.serviceMonitor.scrapeTimeout }}
+{{- end -}}

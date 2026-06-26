@@ -79,6 +79,24 @@
             <artifactId>cloudwatch</artifactId>
             <version>2.26.25</version>
         </dependency>
+        <!-- Prometheus client (official io.prometheus). Backs the pull-based 'prometheus' metric
+             target (FR-MET-1), the default on the KUBERNETES platform: an in-process registry served
+             as OpenMetrics/Prometheus text at /metrics. The 0.16.0 'simpleclient' line shades cleanly
+             (no SPI service files needing a ServicesResourceTransformer in the shade plugin, unlike the
+             1.x prometheus-metrics-* line). simpleclient_common provides TextFormat (the exposition
+             writer, which sets a valid Content-Type — Prometheus 3.x rejects a blank type). Not
+             optional: the target is a platform-profile default, so it must be on the runtime classpath
+             of the shaded self-contained JAR. -->
+        <dependency>
+            <groupId>io.prometheus</groupId>
+            <artifactId>simpleclient</artifactId>
+            <version>0.16.0</version>
+        </dependency>
+        <dependency>
+            <groupId>io.prometheus</groupId>
+            <artifactId>simpleclient_common</artifactId>
+            <version>0.16.0</version>
+        </dependency>
         <!-- Credentials central source (AWS Secrets Manager). Optional: only components that use
              credential central sync need it on the runtime classpath. -->
         <dependency>

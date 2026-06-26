@@ -328,7 +328,14 @@ impl GgCommonsBuilder {
 
         let config: Arc<ArcSwap<Config>> = Arc::new(ArcSwap::from_pointee(cfg));
         let snapshot = config.load_full();
-        let emitter = Arc::new(metrics::MetricEmitter::new(&snapshot, messaging.clone()).await?);
+        // The resolved platform threads the metric-target profile default into target selection the
+        // same way logging-format/health-enabled are threaded (FR-MET-1 / FR-RT-3): the effective
+        // target is `explicit metricEmission.target ▸ profile default (prometheus on KUBERNETES) ▸
+        // log`. No resolver→ConfigManager dependency is added — the platform is already known here.
+        let emitter = Arc::new(
+            metrics::MetricEmitter::new_for_platform(&snapshot, messaging.clone(), parsed.platform)
+                .await?,
+        );
         let metrics: Arc<dyn metrics::MetricService> = emitter.clone();
         let heartbeat = heartbeat::Heartbeat::start(config.clone(), metrics.clone(), messaging.clone());
 

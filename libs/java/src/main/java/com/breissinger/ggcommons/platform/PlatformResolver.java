@@ -94,6 +94,16 @@ public final class PlatformResolver {
      */
     public static final String LOGGING_FORMAT_JSON = "json";
 
+    /**
+     * The {@code metricEmission.target} selector value that selects the pull-based prometheus target
+     * (FR-MET-1) — the KUBERNETES profile's default metric target. The same {@code prometheus} token
+     * selects the target in every language, kept consistent for parity. The target maintains an
+     * in-process registry and serves it as OpenMetrics/Prometheus text at an HTTP {@code /metrics}
+     * endpoint (pull-based); unlike the push targets (log/messaging/cloudwatch/cloudwatchcomponent) its
+     * {@code emit*} only updates the registry and {@code flush()} is a no-op (FR-MET-2).
+     */
+    public static final String METRIC_TARGET_PROMETHEUS = "prometheus";
+
     /** The library-default identity when no thing name is available (matches today's behavior). */
     public static final String DEFAULT_IDENTITY = "NOT_GREENGRASS";
 
@@ -123,9 +133,10 @@ public final class PlatformResolver {
      * current library defaults until their sub-phase ships.
      */
     public static final Map<Platform, PlatformProfile> PROFILES = Map.of(
-            Platform.GREENGRASS, new PlatformProfile(Transport.IPC, "GG_CONFIG", null, false),
-            Platform.HOST, new PlatformProfile(Transport.MQTT, "GG_CONFIG", null, false),
-            Platform.KUBERNETES, new PlatformProfile(Transport.MQTT, "CONFIGMAP", LOGGING_FORMAT_JSON, true));
+            Platform.GREENGRASS, new PlatformProfile(Transport.IPC, "GG_CONFIG", null, false, null),
+            Platform.HOST, new PlatformProfile(Transport.MQTT, "GG_CONFIG", null, false, null),
+            Platform.KUBERNETES, new PlatformProfile(Transport.MQTT, "CONFIGMAP", LOGGING_FORMAT_JSON,
+                    true, METRIC_TARGET_PROMETHEUS));
 
     private PlatformResolver() {
     }
@@ -311,6 +322,35 @@ public final class PlatformResolver {
         }
         PlatformProfile profile = PROFILES.get(platform);
         return profile != null && profile.healthEnabled();
+    }
+
+    /**
+     * Returns the platform-profile's default {@code metricEmission.target} token (FR-MET-1/4,
+     * precedence FR-RT-3) — {@value #METRIC_TARGET_PROMETHEUS} on {@link Platform#KUBERNETES} (the
+     * pull-based in-process registry + {@code /metrics} HTTP endpoint), {@code null} on GREENGRASS/HOST
+     * and for a {@code null}/unknown platform (no override; the library default {@code "log"} applies).
+     * This is the <em>middle</em> precedence tier consumed by
+     * {@link com.breissinger.ggcommons.metrics.MetricEmitter}: an explicit {@code metricEmission.target}
+     * from the config wins; otherwise this profile default decides; else the library default. Mirrors
+     * {@link #profileLoggingFormat(Platform)} / {@link #profileHealthEnabled(Platform)} and the Rust
+     * {@code platform::profile(p).metric_target} / Python {@code profile_metric_target(p)} / TS
+     * {@code profileMetricTarget(p)}.
+     *
+     * <p><b>Rust feature nuance (parity note):</b> in the Rust port the KUBERNETES default resolves to
+     * {@code prometheus} only when the {@code metrics-prometheus} cargo feature is compiled in, and
+     * gracefully falls back to {@code log} (with a warning) otherwise. Java has no compile-time feature
+     * gate — the prometheus client is always on the classpath of the shaded JAR — so the Java default is
+     * unconditionally {@value #METRIC_TARGET_PROMETHEUS} on KUBERNETES.
+     *
+     * @param platform the resolved platform, or {@code null}
+     * @return the profile's default metric-target token, or {@code null} when none applies
+     */
+    public static String profileMetricTarget(Platform platform) {
+        if (platform == null) {
+            return null;
+        }
+        PlatformProfile profile = PROFILES.get(platform);
+        return profile == null ? null : profile.metricTarget();
     }
 
     /**

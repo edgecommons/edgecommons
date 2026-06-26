@@ -144,6 +144,28 @@ else
   fail "/livez did not return 200 from inside the pod"
 fi
 
+# --- FR-MET-1: prometheus metrics target -------------------------------------------
+# On KUBERNETES the metric target DEFAULTS to `prometheus` (no metricEmission.target in the config),
+# so the component serves an in-process registry as OpenMetrics text at :9090/metrics. The heartbeat
+# (routed to the metric target) populates it within an interval. Poll an in-pod GET of /metrics until a
+# ggcommons-namespaced gauge appears (proves: pull endpoint up + valid exposition + heartbeat scraped).
+log "Asserting prometheus /metrics endpoint (FR-MET-1)"
+metrics_ok=""
+for _ in $(seq 1 20); do
+  if "${KUBECTL}" -n "${NAMESPACE}" exec "${POD}" -- python3 -c "
+import urllib.request,sys
+r=urllib.request.urlopen('http://127.0.0.1:9090/metrics',timeout=5)
+b=r.read().decode()
+sys.exit(0 if r.getcode()==200 and '# TYPE' in b and 'ggcommons_' in b else 1)
+" >/dev/null 2>&1; then
+    metrics_ok=1
+    break
+  fi
+  sleep 3
+done
+[[ -n "${metrics_ok}" ]] || fail "/metrics did not serve a ggcommons_* gauge (prometheus target / heartbeat)"
+ok "prometheus /metrics serves OpenMetrics text with a ggcommons_* gauge (FR-MET-1)"
+
 # --- Hot-reload (..data swap re-arm) test -------------------------------------------
 # Patch the ConfigMap's config.json in place (NOT helm upgrade) and assert the running
 # pod reloads in-process. We flip logging.level INFO->DEBUG as the observable change.

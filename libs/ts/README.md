@@ -17,7 +17,7 @@ same CLI contract, the same subsystem boundaries, the same on-wire message envel
 | CLI contract | `src/cli.ts` | `-c/--config` (FILE/ENV/GG_CONFIG/SHADOW/CONFIG_COMPONENT), `--platform` (GREENGRASS/HOST/KUBERNETES/auto), `--transport` (IPC/MQTT), `-t/--thing`. |
 | Config | `src/config/` | Typed model + defaulting accessors, template substitution (sanitized), embedded JSON schema + `ajv` validation, all 5 sources, hot reload. |
 | Messaging | `src/messaging/` | Transport/service split: `MessagingProvider` (`StandaloneMqttProvider` dual-broker, `IpcMessagingProvider` Greengrass IPC) + `DefaultMessagingService` (envelope, dispatch, request/reply). |
-| Metrics | `src/metrics/` | `Metric`/`MetricBuilder`, EMF (ms timestamps), targets (log w/ rotation, messaging, cloudwatchcomponent, cloudwatch via optional `@aws-sdk/client-cloudwatch`), `MetricEmitter`. |
+| Metrics | `src/metrics/` | `Metric`/`MetricBuilder`, EMF (ms timestamps), targets (log w/ rotation, messaging, cloudwatchcomponent, cloudwatch via optional `@aws-sdk/client-cloudwatch`, **prometheus** pull-based registry served over HTTP via optional `prom-client` — default on KUBERNETES), `MetricEmitter`. |
 | Heartbeat | `src/heartbeat.ts` | Periodic cpu/mem/disk/threads/files/fds to metric/messaging targets; reacts to config reload. |
 | Health | `src/health.ts` | Dependency-free HTTP `GET /livez` (process alive; never checks the broker), `/readyz` + `/startupz` (200 only when messaging-connected && `setReady` && not shutting down); on by default on KUBERNETES, opt-in via `health.enabled` elsewhere. |
 | Logging | `src/logging.ts` | Leveled logger with file rotation; reconfigures on reload; per-logger levels via `getLogger(name)`. |

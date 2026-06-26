@@ -135,7 +135,16 @@ export class MetricConfig {
     return typeof v === "string" ? v : undefined;
   }
 
-  /** Selected target (`log`|`messaging`|`cloudwatch`|`cloudwatchcomponent`); default `log`. */
+  /**
+   * The **explicitly configured** target, or `undefined` when `metricEmission.target` is absent.
+   * Exposed so the effective-target precedence (explicit config ▸ platform-profile default ▸ `log`)
+   * can be applied by the metrics service without conflating "unset" with the library default.
+   */
+  explicitTarget(): string | undefined {
+    return this.target_;
+  }
+
+  /** Selected target (`log`|`messaging`|`cloudwatch`|`cloudwatchcomponent`|`prometheus`); default `log`. */
   target(): string {
     return this.target_ ?? "log";
   }
@@ -173,6 +182,17 @@ export class MetricConfig {
   intervalSecs(): number {
     const n = asInt(this.targetConfig?.intervalSecs);
     return n !== undefined && n >= 1 ? n : 5;
+  }
+
+  /** `targetConfig.port` — the prometheus target's HTTP port (bound `0.0.0.0`); default `9090`. */
+  prometheusPort(): number {
+    const n = asInt(this.targetConfig?.port);
+    return n !== undefined && n >= 1 && n <= 65535 ? n : 9090;
+  }
+
+  /** `targetConfig.path` — the prometheus target's OpenMetrics exposition path; default `/metrics`. */
+  prometheusPath(): string {
+    return this.targetConfigStr("path") ?? "/metrics";
   }
 
   /**

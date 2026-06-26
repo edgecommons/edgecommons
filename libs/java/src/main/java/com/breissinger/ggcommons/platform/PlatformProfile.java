@@ -29,7 +29,13 @@ package com.breissinger.ggcommons.platform;
  *                      {@code health.enabled} — the middle tier of the enablement precedence
  *                      (FR-RT-3). {@code true} on KUBERNETES (the server starts with no config
  *                      needed); {@code false} on GREENGRASS / HOST (opt-in via {@code health.enabled}).
+ * @param metricTarget  the default {@code metricEmission.target} token applied when the component
+ *                      config omits {@code metricEmission.target} — the middle tier of the metric-target
+ *                      precedence (FR-RT-3). {@code "prometheus"} selects the pull-based in-process
+ *                      registry + {@code /metrics} HTTP endpoint on KUBERNETES (FR-MET-1); {@code null}
+ *                      keeps the library default {@code "log"} (GREENGRASS / HOST). See
+ *                      {@link PlatformResolver#METRIC_TARGET_PROMETHEUS}.
  */
 public record PlatformProfile(Transport transport, String configSource, String loggingFormat,
-                              boolean healthEnabled) {
+                              boolean healthEnabled, String metricTarget) {
 }

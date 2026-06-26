@@ -17,11 +17,13 @@ import {
   JSON_LOG_FORMAT,
   K8S_SA_TOKEN_PATH,
   PROFILES,
+  PROMETHEUS_METRIC_TARGET,
   Platform,
   Transport,
   detectPlatform,
   profileLoggingFormat,
   profileHealthEnabled,
+  profileMetricTarget,
   resolveIdentity,
   resolveProfile,
   validate,
@@ -356,5 +358,19 @@ describe("profile health-endpoint default (Phase 1c / FR-HB-1)", () => {
     expect(PROFILES.get(Platform.HOST)!.healthEnabled).toBeUndefined();
     expect(profileHealthEnabled(Platform.GREENGRASS)).toBe(false);
     expect(profileHealthEnabled(Platform.HOST)).toBe(false);
+  });
+});
+
+describe("profile metric-target default (Phase 1c prometheus / FR-MET-4)", () => {
+  it("the KUBERNETES profile defaults its metric target to prometheus", () => {
+    expect(PROFILES.get(Platform.KUBERNETES)!.metricTarget).toBe(PROMETHEUS_METRIC_TARGET);
+    expect(profileMetricTarget(Platform.KUBERNETES)).toBe("prometheus");
+  });
+
+  it("GREENGRASS/HOST pin no metric-target default (library default stays log)", () => {
+    expect(PROFILES.get(Platform.GREENGRASS)!.metricTarget).toBeUndefined();
+    expect(PROFILES.get(Platform.HOST)!.metricTarget).toBeUndefined();
+    expect(profileMetricTarget(Platform.GREENGRASS)).toBeUndefined();
+    expect(profileMetricTarget(Platform.HOST)).toBeUndefined();
   });
 });

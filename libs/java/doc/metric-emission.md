@@ -16,11 +16,19 @@ Metrics in the system consist of:
 
 ### Common Configuration Options
 
-- **`target`**: (Required) Specifies which metric emission target to use. Valid values:
+- **`target`**: Specifies which metric emission target to use. Valid values:
   - `"cloudwatch"` - Direct CloudWatch metrics emission with batching
   - `"cloudwatchcomponent"` - CloudWatch metrics via Greengrass component
   - `"log"` - Local file logging with rotation support
   - `"messaging"` - Message-based metrics via IPC or IoT Core
+  - `"prometheus"` - **Pull-based** in-process registry exposed as OpenMetrics text at an HTTP
+    `/metrics` endpoint (the **default on the KUBERNETES platform**; see "Prometheus Target" below)
+
+  **Target precedence (FR-RT-3).** `target` is no longer strictly required. When it is omitted, the
+  effective target is resolved as: **explicit `metricEmission.target`** ▸ **platform-profile default**
+  (`prometheus` on the KUBERNETES platform; nothing on GREENGRASS/HOST) ▸ **library default `"log"`**.
+  So a KUBERNETES pod with no `metricEmission.target` set gets the prometheus target automatically,
+  while GREENGRASS and HOST keep defaulting to `log`. An explicit `target` always wins.
 - **`namespace`**: The namespace for your metrics (Default: "ggcommons")
 - **`largeFleetWorkaround`**: Boolean flag that creates aggregate metrics by replacing "coreName" dimension with "ALL" (Default: false)
 
@@ -157,6 +165,64 @@ Publishes metrics through the messaging system in EMF format, supporting both lo
   }
 }
 ```
+
+#### 5. Prometheus Target (`"prometheus"`)
+A **pull-based** target — the default on the KUBERNETES platform. It maintains an in-process metric
+registry and serves it as OpenMetrics/Prometheus text over HTTP at `path` (default `/metrics`) on
+`port` (default `9090`), bound on `0.0.0.0`. Backed by the official `io.prometheus:simpleclient`
+client (bundled in the shaded JAR); the exposition is written by the client's `TextFormat` writer,
+which sets a valid `Content-Type` (Prometheus 3.x rejects a blank type).
+
+**Inverted lifecycle (FR-MET-2) — important.** Unlike every other target (log/messaging/cloudwatch/
+cloudwatchcomponent), which *push* on each emit, the prometheus target *inverts* the lifecycle:
+
+- `emitMetric` **and** `emitMetricNow` only **update the registry** — they do **not** push anywhere.
+- `flushMetrics()` is a **no-op** w.r.t. delivery — a Prometheus scrape *pulls* the current values.
+- `close()` (via `GGCommons.shutdown()` / SIGTERM) **stops the HTTP listener**, releasing the port
+  and its daemon thread.
+
+> **Caveat:** a component relying on `emitMetricNow`/`flushMetrics` to flush-before-exit gets **nothing
+> delivered** under the prometheus target until the next scrape. The push targets are unchanged.
+
+**Dimension → label mapping (FR-MET-3, identical across all four languages).** For each measure in an
+emitted metric a `Gauge` is registered/updated with **latest-value** semantics (a scrape reads the
+current value):
+
+- **Gauge name** = `sanitize(lowercase("{namespace}_{measureName}"))`, where `namespace` defaults to
+  `ggcommons`. Sanitization replaces every character not matching `[a-z0-9_]` with `_`, and prefixes
+  `_` if the result starts with a digit (Prometheus metric-name rules).
+- **Labels** = the metric's dimensions (which already include `category` (= metric name), `coreName`
+  (= thing name), `component` (= component name), plus any custom dimensions). Each label **name** is
+  sanitized to `[a-zA-Z_][a-zA-Z0-9_]*` (invalid chars → `_`, prefix `_` if it starts with a digit;
+  **case is preserved**). The label **value** is used as-is.
+- The gauge for that label-set is **set** to the measure's float value on each emit.
+
+A gauge's label-name set is fixed at first registration; if the same gauge name is later emitted with a
+different label-name set (the same measure carrying different dimensions), that emit is logged and
+skipped rather than throwing.
+
+**Configuration options:**
+- **`port`**: HTTP port for the `/metrics` endpoint (Default: `9090`, range 1–65535)
+- **`path`**: HTTP path for the OpenMetrics exposition (Default: `/metrics`)
+
+**Example:**
+```json
+{
+  "metricEmission": {
+    "target": "prometheus",
+    "namespace": "MyApp",
+    "targetConfig": {
+      "port": 9090,
+      "path": "/metrics"
+    }
+  }
+}
+```
+
+Scrape wiring (a Prometheus Operator `ServiceMonitor`/`PodMonitor`) is a deployment concern handled by
+the Helm chart, not library config. On a feature-less Rust build the KUBERNETES default falls back to
+`log` (the `metrics-prometheus` cargo feature is required for the Rust target); Java/Python/TS always
+ship the client, so their KUBERNETES default is unconditionally `prometheus`.
 
 ## Configuration Examples
 

@@ -10,7 +10,7 @@
  * (stops the heartbeat + config watch and disconnects messaging) rather than on GC.
  */
 import { parseArgs, ParsedArgs } from "./cli";
-import { Transport, profileLoggingFormat, profileHealthEnabled } from "./platform";
+import { Transport, profileLoggingFormat, profileHealthEnabled, profileMetricTarget } from "./platform";
 import { Config } from "./config/model";
 import { HealthServer, ReadinessState } from "./health";
 import { resolve } from "./config/template";
@@ -283,7 +283,11 @@ export class GGCommonsBuilder {
       `GGCommons initialized: component=${this.componentNameValue} thing=${thingName} configSource=${source.sourceName()}`,
     );
 
-    const emitter = await MetricEmitter.create(current, messaging);
+    // Thread the resolved platform's default metric target into the metrics service (Phase 1c /
+    // FR-MET-4): a KUBERNETES pod with no `metricEmission.target` selects the pull-based prometheus
+    // target, while explicit config still wins and HOST/GREENGRASS keep the library default (`log`).
+    // Same threading as the logging-format/health defaults — no resolver→ConfigManager dependency.
+    const emitter = await MetricEmitter.create(current, messaging, profileMetricTarget(parsed.platform));
     const metrics: MetricService = emitter;
 
     const listeners: ConfigurationChangeListener[] = [emitter, new LoggingReconfigurer()];

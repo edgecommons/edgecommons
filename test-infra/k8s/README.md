@@ -26,15 +26,25 @@ What the harness proves end-to-end:
    `httpGet` startup/liveness/readiness probes hit `/startupz`,`/livez`,`/readyz` on `:8081`,
    so the pod only reaches **Ready** when `/readyz` returns 200 (messaging connected + ready);
    the smoke also GETs `/livez` in-pod to prove liveness is served and broker-independent;
-7. a **`kubectl` edit of the ConfigMap is hot-reloaded in-process** — the watcher
+7. it serves a **pull-based `prometheus` metrics endpoint** (Phase 1c, the default metric target on
+   KUBERNETES): the component exposes an in-process registry as OpenMetrics text at `:9090/metrics`
+   (no `metricEmission.target` in the config — the profile default applies), and the heartbeat is
+   routed to it; the smoke does an in-pod GET of `/metrics` and asserts a `ggcommons_*` gauge appears;
+8. a **`kubectl` edit of the ConfigMap is hot-reloaded in-process** — the watcher
    re-arms across the kubelet's atomic `..data` symlink swap — **with no pod restart**
    (`restartCount=0` also confirms the liveness probe never failed).
 
 > Also exercised (not asserted explicitly here): **SIGTERM → graceful shutdown** — the library
 > wires SIGTERM to flip `/readyz`→503 then unsubscribe-all + bounded-close (FR-HB-2).
 >
-> Not yet (deferred, with TODO markers in the chart): the `prometheus` metrics target (the last
-> 1c slice); PVC-aware streaming and the `env` KeyProvider (**1d**).
+> **Scrape & central aggregation:** the `/metrics` scrape is **intra-cluster** (a local collector /
+> the opt-in `ServiceMonitor` — enable with `--set serviceMonitor.enabled=true`), never cloud→edge
+> inbound. Multi-site aggregation is the collector's **outbound** `remote_write` to AMP/Mimir/Thanos/
+> Grafana Cloud — edge-initiated egress, same direction as CloudWatch (see DESIGN-subsystems §3.1).
+>
+> Not yet (deferred): PVC-aware streaming and the `env` KeyProvider (**1d**). Deferred metrics
+> enhancements (measure `type`/histograms, a unified durable metrics-streamlog, heartbeat-as-collector)
+> are captured in DESIGN-subsystems §3.2.
 
 ## Contents
 

@@ -1,9 +1,8 @@
 {{- if .Values.service.enabled -}}
 {{/*
-PLACEHOLDER Service. In 1a the component does not yet open the health (/livez,
-/readyz — sub-phase 1c) or prometheus /metrics (sub-phase 1c) listeners, so this
-Service has no live endpoints yet. It is shipped now so the wiring (ports, selector,
-the future ServiceMonitor target) renders and lints; remove the comment once 1c lands.
+ClusterIP Service exposing the component's health (/livez,/readyz on `health`) and prometheus
+(/metrics on `metrics`) listeners — both live as of Phase 1c. The `metrics` port is the
+ServiceMonitor scrape target (templates/servicemonitor.yaml, opt-in).
 */}}
 apiVersion: v1
 kind: Service

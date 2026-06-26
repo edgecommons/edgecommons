@@ -6,9 +6,11 @@
 //! ## Overview
 //! Component authors build a [`Metric`] (via [`MetricBuilder`]), `define_metric` it
 //! once, then `emit_metric` / `emit_metric_now` measure values by metric name. The
-//! [`MetricEmitter`] routes emissions to the target selected by
-//! `metricEmission.target`: [`target::log`], [`target::messaging`],
-//! [`target::cloudwatch_component`], or `target::cloudwatch` (feature `cloudwatch`).
+//! [`MetricEmitter`] routes emissions to the EFFECTIVE target — `explicit
+//! metricEmission.target ▸ platform-profile default ▸ "log"` (see [`resolve_effective_target`]):
+//! [`target::log`], [`target::messaging`], [`target::cloudwatch_component`],
+//! `target::cloudwatch` (feature `cloudwatch`), or `target::prometheus` (feature
+//! `metrics-prometheus`; the pull-based default on KUBERNETES).
 //!
 //! ## Semantics & Architecture
 //! - `define_metric` / `is_metric_defined` are synchronous (pure registry ops);
@@ -53,10 +55,11 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 
-use crate::config::model::Config;
+use crate::config::model::{Config, MetricConfig};
 use crate::config::template::resolve;
 use crate::error::{GgError, Result};
 use crate::messaging::MessagingService;
+use crate::platform::Platform;
 
 /// Define and emit metrics. Mirrors the Java/Python `IMetricService`.
 #[async_trait]
@@ -89,6 +92,9 @@ pub struct MetricEmitter {
     target: Mutex<Arc<dyn MetricTarget>>,
     metrics: Mutex<HashMap<String, Metric>>,
     messaging: Option<Arc<dyn MessagingService>>,
+    /// The resolved runtime platform, retained so the metric target can be rebuilt with the same
+    /// platform-profile default on config hot-reload (mirrors how logging/health thread it).
+    platform: Platform,
 }
 
 impl MetricEmitter {
@@ -106,15 +112,37 @@ impl MetricEmitter {
     ///
     /// The `log` target is fail-soft: an unwritable `logFileName` does not error
     /// here (it warns and drops metrics on emit), matching the Java target.
+    ///
+    /// This convenience defaults the platform to [`Platform::Host`] (no profile metric-target
+    /// default, so the effective target is `explicit config ▸ log`). The runtime builder uses
+    /// [`Self::new_for_platform`] to thread the resolved platform so the KUBERNETES profile default
+    /// (`prometheus`) applies.
     pub async fn new(
         config: &Config,
         messaging: Option<Arc<dyn MessagingService>>,
     ) -> Result<MetricEmitter> {
-        let target = build_target(config, messaging.clone()).await?;
+        Self::new_for_platform(config, messaging, Platform::Host).await
+    }
+
+    /// Build an emitter from configuration for a specific resolved `platform`, applying the
+    /// platform-profile metric-target default (FR-MET-1 / FR-RT-3): the effective target is
+    /// `explicit metricEmission.target ▸ profile default (prometheus on KUBERNETES) ▸ log`. See
+    /// [`resolve_effective_target`] for the precedence and the Rust `metrics-prometheus` feature gate.
+    ///
+    /// # Errors
+    /// See [`Self::new`]; additionally, an explicit `target=prometheus` without the
+    /// `metrics-prometheus` cargo feature is a [`GgError::Metrics`] (mirroring `cloudwatch`).
+    pub async fn new_for_platform(
+        config: &Config,
+        messaging: Option<Arc<dyn MessagingService>>,
+        platform: Platform,
+    ) -> Result<MetricEmitter> {
+        let target = build_target(config, messaging.clone(), platform).await?;
         Ok(MetricEmitter {
             target: Mutex::new(target),
             metrics: Mutex::new(HashMap::new()),
             messaging,
+            platform,
         })
     }
 
@@ -133,15 +161,52 @@ impl MetricEmitter {
     }
 }
 
-/// Build the configured metric target.
+/// Resolve the EFFECTIVE metric target for `platform` (FR-MET-1, precedence FR-RT-3):
+/// `explicit metricEmission.target ▸ platform-profile default ▸ "log"`.
+///
+/// The only platform-profile default today is `prometheus` on KUBERNETES. The Rust
+/// `metrics-prometheus` feature gate is applied HERE for the *profile-default* path only: when the
+/// k8s default would select `prometheus` but the feature is NOT compiled in, this gracefully falls
+/// back to `"log"` with a warning so a feature-less k8s build still runs. An EXPLICIT
+/// `target=prometheus` is returned as-is regardless of the feature — the target builder then turns
+/// it into a clear error when the feature is absent (mirroring the `cloudwatch` feature behavior).
+///
+/// Returns a lowercased target token.
+pub fn resolve_effective_target(metric_config: &MetricConfig, platform: Platform) -> String {
+    if let Some(explicit) = metric_config.target.as_deref() {
+        return explicit.to_ascii_lowercase();
+    }
+    match crate::platform::profile_metric_target(platform) {
+        Some("prometheus") => {
+            #[cfg(feature = "metrics-prometheus")]
+            {
+                "prometheus".to_string()
+            }
+            #[cfg(not(feature = "metrics-prometheus"))]
+            {
+                tracing::warn!(
+                    platform = ?platform,
+                    "platform default metric target 'prometheus' requires the 'metrics-prometheus' \
+                     cargo feature; falling back to 'log'"
+                );
+                "log".to_string()
+            }
+        }
+        Some(other) => other.to_ascii_lowercase(),
+        None => "log".to_string(),
+    }
+}
+
+/// Build the configured metric target for the resolved `platform`.
 async fn build_target(
     config: &Config,
     messaging: Option<Arc<dyn MessagingService>>,
+    platform: Platform,
 ) -> Result<Arc<dyn MetricTarget>> {
     let metric_config = &config.parsed.metric_emission;
     let namespace = metric_config.namespace().to_string();
     let large_fleet = metric_config.large_fleet_workaround;
-    let target_name = metric_config.target().to_ascii_lowercase();
+    let target_name = resolve_effective_target(metric_config, platform);
 
     let log_target = || -> Result<Arc<dyn MetricTarget>> {
         let path = resolve(config, &metric_config.log_file_name());
@@ -185,6 +250,7 @@ async fn build_target(
             build_cloudwatch_target(config, &namespace, large_fleet, metric_config.interval_secs())
                 .await?
         }
+        "prometheus" => build_prometheus_target(config, &namespace)?,
         other => {
             tracing::warn!(target = %other, "unknown metric target; defaulting to 'log'");
             log_target()?
@@ -245,6 +311,29 @@ async fn build_cloudwatch_target(
     {
         Err(GgError::Metrics(
             "metric target 'cloudwatch' requires the 'cloudwatch' cargo feature".to_string(),
+        ))
+    }
+}
+
+/// Construct the pull-based `prometheus` target (feature `metrics-prometheus`), or error if the
+/// feature is disabled (mirroring `cloudwatch`). Binds the `/metrics` HTTP server on the configured
+/// port/path. The `metricEmission.namespace` becomes the gauge-name prefix (FR-MET-3).
+#[allow(unused_variables)]
+fn build_prometheus_target(config: &Config, namespace: &str) -> Result<Arc<dyn MetricTarget>> {
+    #[cfg(feature = "metrics-prometheus")]
+    {
+        let mc = &config.parsed.metric_emission;
+        let target = target::prometheus::PrometheusTarget::start(
+            namespace,
+            mc.prometheus_port(),
+            &mc.prometheus_path(),
+        )?;
+        Ok(Arc::new(target))
+    }
+    #[cfg(not(feature = "metrics-prometheus"))]
+    {
+        Err(GgError::Metrics(
+            "metric target 'prometheus' requires the 'metrics-prometheus' cargo feature".to_string(),
         ))
     }
 }
@@ -336,7 +425,7 @@ impl MetricService for MetricEmitter {
 impl crate::config::ConfigurationChangeListener for MetricEmitter {
     /// Rebuild the metric target from the new config (keeping the previous one on error).
     async fn on_configuration_change(&self, config: Arc<Config>) -> bool {
-        match build_target(&config, self.messaging.clone()).await {
+        match build_target(&config, self.messaging.clone(), self.platform).await {
             Ok(target) => {
                 if let Ok(mut slot) = self.target.lock() {
                     *slot = target;
@@ -492,6 +581,122 @@ mod tests {
         emitter.emit_metric_now("m", one_value()).await.unwrap();
         assert_eq!(recorder.local().len(), 1, "metrics now flow to the messaging target");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ---------- effective-target precedence (FR-MET-1 / FR-RT-3) ----------
+
+    fn metric_config(raw: serde_json::Value) -> MetricConfig {
+        Config::from_value("c", "t", raw).unwrap().parsed.metric_emission
+    }
+
+    #[test]
+    fn host_and_greengrass_default_to_log() {
+        // No explicit target + no profile metric default → library default "log" (unchanged).
+        let mc = metric_config(json!({ "metricEmission": {} }));
+        assert_eq!(resolve_effective_target(&mc, Platform::Host), "log");
+        assert_eq!(resolve_effective_target(&mc, Platform::Greengrass), "log");
+    }
+
+    #[test]
+    fn explicit_target_overrides_platform_default() {
+        // Explicit config wins everywhere, including over the KUBERNETES prometheus default.
+        let mc = metric_config(json!({ "metricEmission": { "target": "messaging" } }));
+        assert_eq!(resolve_effective_target(&mc, Platform::Kubernetes), "messaging");
+        let mc_log = metric_config(json!({ "metricEmission": { "target": "log" } }));
+        assert_eq!(resolve_effective_target(&mc_log, Platform::Kubernetes), "log");
+    }
+
+    #[test]
+    fn explicit_prometheus_is_returned_as_is_regardless_of_feature() {
+        // The feature gate for the EXPLICIT path is applied at build time (a clear error without the
+        // feature), not in the precedence resolver — so the token is returned verbatim here.
+        let mc = metric_config(json!({ "metricEmission": { "target": "PROMETHEUS" } }));
+        assert_eq!(resolve_effective_target(&mc, Platform::Host), "prometheus");
+    }
+
+    #[cfg(feature = "metrics-prometheus")]
+    #[test]
+    fn kubernetes_default_selects_prometheus_with_feature() {
+        let mc = metric_config(json!({ "metricEmission": {} }));
+        assert_eq!(resolve_effective_target(&mc, Platform::Kubernetes), "prometheus");
+    }
+
+    #[cfg(not(feature = "metrics-prometheus"))]
+    #[test]
+    fn kubernetes_default_falls_back_to_log_without_feature() {
+        // Feature-less k8s build must still run: the prometheus profile default gracefully degrades
+        // to "log" (with a warning) rather than failing.
+        let mc = metric_config(json!({ "metricEmission": {} }));
+        assert_eq!(resolve_effective_target(&mc, Platform::Kubernetes), "log");
+    }
+
+    #[cfg(not(feature = "metrics-prometheus"))]
+    #[tokio::test]
+    async fn explicit_prometheus_without_feature_is_error() {
+        // An EXPLICIT target=prometheus without the cargo feature is a clear error (mirrors the
+        // cloudwatch-without-feature behavior), on any platform.
+        let raw = json!({ "metricEmission": { "target": "prometheus" } });
+        let config = Config::from_value("c", "t", raw).unwrap();
+        let result = MetricEmitter::new_for_platform(&config, None, Platform::Host).await;
+        assert!(matches!(result, Err(GgError::Metrics(_))));
+    }
+
+    #[cfg(not(feature = "metrics-prometheus"))]
+    #[tokio::test]
+    async fn kubernetes_default_builds_without_feature_via_log_fallback() {
+        // No explicit target on KUBERNETES, feature off → builds the log target (fallback), not an
+        // error. Use a writable temp log path so the (fail-soft) log target has somewhere to go.
+        let dir = std::env::temp_dir().join(format!("ggcommons-k8sfb-{}", uuid::Uuid::new_v4()));
+        let path = dir.join("m.log");
+        let raw = json!({ "metricEmission": { "targetConfig": { "logFileName": path.to_string_lossy() } } });
+        let config = Config::from_value("c", "t", raw).unwrap();
+        let emitter = MetricEmitter::new_for_platform(&config, None, Platform::Kubernetes)
+            .await
+            .expect("k8s should build the log fallback without the feature");
+        define(&emitter);
+        emitter.emit_metric_now("m", one_value()).await.unwrap();
+        assert!(std::fs::read_to_string(&path).unwrap().lines().count() >= 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(feature = "metrics-prometheus")]
+    #[tokio::test]
+    async fn kubernetes_default_builds_and_serves_prometheus_with_feature() {
+        use std::io::{Read, Write};
+        use std::net::{SocketAddr, TcpListener, TcpStream};
+
+        // Pick a free port (bind :0, read it, release) so the build-path server has a known address.
+        let port = {
+            let l = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+            l.local_addr().unwrap().port()
+        };
+        let raw = json!({ "metricEmission": { "targetConfig": { "port": port } } });
+        let config = Config::from_value("com.example.C", "thing-1", raw).unwrap();
+        // No explicit target + KUBERNETES profile → effective target is prometheus.
+        let emitter = MetricEmitter::new_for_platform(&config, None, Platform::Kubernetes)
+            .await
+            .expect("k8s should build the prometheus target with the feature");
+
+        emitter.define_metric(
+            MetricBuilder::create("requests").add_measure("count", "Count", 60).build(),
+        );
+        emitter.emit_metric("requests", one_value()).await.unwrap();
+        // flush is a no-op for prometheus (pull); it must not error.
+        emitter.flush_metrics().await.unwrap();
+
+        // Scrape the /metrics endpoint and confirm the gauge is present (selection end-to-end).
+        let addr = SocketAddr::from(([127, 0, 0, 1], port));
+        let mut stream = TcpStream::connect(addr).expect("connect to prometheus build-path server");
+        stream
+            .write_all(b"GET /metrics HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+            .unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        assert!(response.contains("200 OK"), "expected 200, got:\n{response}");
+        assert!(response.contains("ggcommons_count"), "missing gauge in:\n{response}");
+
+        // close() stops the listener.
+        emitter.shutdown().await;
     }
 
     #[tokio::test]
