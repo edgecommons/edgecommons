@@ -9,7 +9,12 @@
     "build.sh": ["COMPONENTFULLNAME", "COMPONENTNAME"],
     "src/main.ts": ["COMPONENTFULLNAME", "COMPONENTNAME"],
     "src/app.ts": ["COMPONENTNAME"],
-    "README.md": ["COMPONENTNAME", "COMPONENTFULLNAME"]
+    "README.md": ["COMPONENTNAME", "COMPONENTFULLNAME"],
+    "k8s/configmap.yaml": ["COMPONENTNAME", "COMPONENTFULLNAME"],
+    "k8s/deployment.yaml": ["COMPONENTNAME"]
   },
-  "renames": []
+  "renames": [],
+  "conditional": [
+    {"when": "platform:KUBERNETES", "paths": ["Dockerfile", "k8s"]}
+  ]
 }

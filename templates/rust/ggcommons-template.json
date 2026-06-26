@@ -10,7 +10,13 @@
     "src/main.rs": ["COMPONENTFULLNAME", "COMPONENTNAME"],
     "src/app.rs": ["COMPONENTNAME"],
     "README.md": ["COMPONENTNAME", "COMPONENTFULLNAME", "BINNAME"],
-    "test-configs/standalone-messaging.json": ["BINNAME"]
+    "test-configs/standalone-messaging.json": ["BINNAME"],
+    "Dockerfile": ["BINNAME"],
+    "k8s/configmap.yaml": ["COMPONENTNAME", "COMPONENTFULLNAME"],
+    "k8s/deployment.yaml": ["COMPONENTNAME"]
   },
-  "renames": []
+  "renames": [],
+  "conditional": [
+    { "when": "platform:KUBERNETES", "paths": ["Dockerfile", "k8s"] }
+  ]
 }

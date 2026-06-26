@@ -40,12 +40,12 @@ node dist/main.js \
 - `--transport <TRANSPORT> [path]` — `IPC | MQTT [messaging_config.json]` (default: from the platform; IPC only valid on GREENGRASS)
 - `-t/--thing <name>` — IoT Thing name
 
-## Build & publish with the GDK (on-device)
+## Deploy to Greengrass
 
+Packaged with the **GDK (Greengrass Development Kit)** using `gdk-config.json` and `recipe.yaml`.
 The on-device build uses the GDK **custom** build system (`gdk-config.json` →
-`custom_build_command: bash build.sh`). `build.sh` runs `npm install` + `npm run
-build` (tsc) and stages a ZIP artifact (`dist/` + `node_modules/` + `package.json`)
-per the GDK contract.
+`custom_build_command: bash build.sh`). `build.sh` runs `npm install` + `npm run build` (tsc) and
+stages a ZIP artifact (`dist/` + `node_modules/` + `package.json`) per the GDK contract.
 
 ```bash
 gdk component build
@@ -55,6 +55,31 @@ gdk component publish
 The recipe declares a `linux` platform and runs the prebuilt JS on the GREENGRASS platform
 (`node {artifacts:decompressedPath}/<<COMPONENTNAME>>/dist/main.js --platform GREENGRASS -c GG_CONFIG`),
 reading its configuration from the deployment (`GG_CONFIG`).
+
+## Deploy to Kubernetes
+
+The Kubernetes artifacts (`Dockerfile`, `k8s/`) exist only when this component was scaffolded
+with **KUBERNETES** as a target platform. Build the image from `./Dockerfile`, make it available
+to the cluster, point `image:` at it, then apply the manifests:
+
+```bash
+# 1. Build the image (npm ci resolves the published @mbreissi/ggcommons from GitHub Packages —
+#    needs an .npmrc with the registry + a GITHUB_TOKEN at build time).
+docker build -t ghcr.io/<owner>/<<COMPONENTNAME>>:latest .
+
+# 2. Make it available to the cluster — push to a registry...
+docker push ghcr.io/<owner>/<<COMPONENTNAME>>:latest
+#    ...or, for a local kind cluster, load it directly:
+# kind load docker-image ghcr.io/<owner>/<<COMPONENTNAME>>:latest
+
+# 3. Set `image:` in k8s/deployment.yaml (replace REPLACE_ME) to that image, then:
+kubectl apply -f k8s/
+```
+
+With `--platform auto` the library detects KUBERNETES from the ServiceAccount token, reads its
+config from the mounted ConfigMap (`CONFIGMAP` source, hot-reloaded on `kubectl apply`), uses the
+MQTT transport from that same ConfigMap, and resolves identity from the Downward API — so the
+Deployment needs no command-line args.
 
 ## The ggcommons dependency
 
