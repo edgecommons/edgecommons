@@ -14,11 +14,13 @@ import {
   ENV_K8S_SERVICE_HOST,
   ENV_K8S_THING_NAME,
   ENV_THING_NAME,
+  JSON_LOG_FORMAT,
   K8S_SA_TOKEN_PATH,
   PROFILES,
   Platform,
   Transport,
   detectPlatform,
+  profileLoggingFormat,
   resolveIdentity,
   resolveProfile,
   validate,
@@ -325,5 +327,19 @@ describe("profiles + enums", () => {
     const p = PROFILES.get(Platform.GREENGRASS)!;
     expect(p.transport).toBe(Transport.IPC);
     expect(p.configSource).toBe("GG_CONFIG");
+  });
+});
+
+describe("profile logging-format default (Phase 1c / FR-LOG-1)", () => {
+  it("the KUBERNETES profile defaults its logging format to json", () => {
+    expect(PROFILES.get(Platform.KUBERNETES)!.loggingFormat).toBe(JSON_LOG_FORMAT);
+    expect(profileLoggingFormat(Platform.KUBERNETES)).toBe("json");
+  });
+
+  it("GREENGRASS/HOST pin no logging-format default (library default stays console/text)", () => {
+    expect(PROFILES.get(Platform.GREENGRASS)!.loggingFormat).toBeUndefined();
+    expect(PROFILES.get(Platform.HOST)!.loggingFormat).toBeUndefined();
+    expect(profileLoggingFormat(Platform.GREENGRASS)).toBeUndefined();
+    expect(profileLoggingFormat(Platform.HOST)).toBeUndefined();
   });
 });

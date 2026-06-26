@@ -9,10 +9,10 @@ logger = logging.getLogger("EnvironmentConfigManager")
 
 class EnvironmentConfigManager(ConfigManager):
     def __init__(
-        self, thing_name: str, component_name: str, environment_variable_name: str
+        self, thing_name: str, component_name: str, environment_variable_name: str, platform=None
     ):
         self._environment_variable_name = environment_variable_name
-        super().__init__(component_name, thing_name)
+        super().__init__(component_name, thing_name, platform=platform)
         self._config_source = f"Environment (var name: {environment_variable_name})"
         self.init()
 

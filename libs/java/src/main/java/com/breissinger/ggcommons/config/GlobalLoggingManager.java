@@ -4,6 +4,7 @@
  */
 package com.breissinger.ggcommons.config;
 
+import com.breissinger.ggcommons.platform.PlatformResolver;
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.core.LoggerContext;
@@ -46,18 +47,40 @@ public class GlobalLoggingManager {
             ConfigurationBuilder<BuiltConfiguration> builder = newConfigurationBuilder();
             builder.setConfigurationName("GGCommons-Global-Config");
             
-            // Console appender
+            // FR-LOG-1/4 (precedence FR-RT-3): resolve the effective logging-format token the SAME way
+            // as ConfigManager.reconfigureLogging() — explicit `logging.java_format` ▸ platform-profile
+            // default (`json` on KUBERNETES) ▸ library default — so the global-control path honors the
+            // stdout-JSON sink and the KUBERNETES default identically (no globalControl bypass).
+            String effectiveFormat = configManager.resolveEffectiveLogFormat();
+            boolean jsonSink = PlatformResolver.LOGGING_FORMAT_JSON.equalsIgnoreCase(effectiveFormat);
+
+            // FR-LOG-2: under the JSON sink (the KUBERNETES default) logging is stdout-only — no
+            // in-process size-rotation, so a read-only root FS never breaks logging.
+            boolean fileLogging = !jsonSink
+                    && loggingConfig.isFileLoggingEnabled()
+                    && loggingConfig.getLogFilePath() != null;
+
+            // Console appender. Only the LAYOUT changes for the JSON sink: a PatternLayout built from
+            // Log4j2 built-in converters that emits one valid JSON object per line (no extra dependency).
+            String pattern = jsonSink
+                    ? ConfigManager.buildJsonPattern(configManager.correlationFields())
+                    : effectiveFormat;
             LayoutComponentBuilder layoutBuilder = builder.newLayout("PatternLayout")
-                .addAttribute("pattern", loggingConfig.getFormat());
-            
+                .addAttribute("pattern", pattern);
+            if (jsonSink) {
+                // The JSON pattern renders the exception itself (single escaped line under "thrown");
+                // disable PatternLayout's automatic trailing throwable append (would break one-per-line).
+                layoutBuilder.addAttribute("alwaysWriteExceptions", false);
+            }
+
             AppenderComponentBuilder consoleAppender = builder.newAppender("Console", "Console")
                 .addAttribute("target", "SYSTEM_OUT")
                 .add(layoutBuilder);
             builder.add(consoleAppender);
-            
-            // File appender if enabled — size-rotated (maxFileSize / backupCount),
-            // matching the Python/Rust RotatingFileHandler contract.
-            if (loggingConfig.isFileLoggingEnabled() && loggingConfig.getLogFilePath() != null) {
+
+            // File appender if enabled — size-rotated (maxFileSize / backupCount), matching the
+            // Python/Rust RotatingFileHandler contract. Never installed under the JSON sink.
+            if (fileLogging) {
                 String logFilePath = configManager.resolveTemplate(loggingConfig.getLogFilePath());
                 AppenderComponentBuilder fileAppender = builder.newAppender("File", "RollingFile")
                     .addAttribute("fileName", logFilePath)
@@ -71,21 +94,21 @@ public class GlobalLoggingManager {
                         .addAttribute("fileIndex", "min"));
                 builder.add(fileAppender);
             }
-            
+
             // Root logger
             RootLoggerComponentBuilder rootLogger = builder.newRootLogger(loggingConfig.getLevel());
             rootLogger.add(builder.newAppenderRef("Console"));
-            if (loggingConfig.isFileLoggingEnabled()) {
+            if (fileLogging) {
                 rootLogger.add(builder.newAppenderRef("File"));
             }
             builder.add(rootLogger);
-            
+
             // Specific loggers
             for (Map.Entry<String, Level> entry : loggingConfig.getLoggerLevels().entrySet()) {
                 LoggerComponentBuilder loggerBuilder = builder.newLogger(entry.getKey(), entry.getValue())
                     .add(builder.newAppenderRef("Console"))
                     .addAttribute("additivity", false);
-                if (loggingConfig.isFileLoggingEnabled()) {
+                if (fileLogging) {
                     loggerBuilder.add(builder.newAppenderRef("File"));
                 }
                 builder.add(loggerBuilder);

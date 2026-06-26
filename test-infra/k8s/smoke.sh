@@ -59,12 +59,19 @@ cleanup() {
 trap cleanup EXIT
 
 # Wait until `kubectl logs` for the release contains $1 (extended regex), or fail.
+#
+# NB: we CAPTURE the logs into a variable and grep a here-string rather than piping
+# `kubectl logs ... | grep -q`. Under `set -o pipefail`, `grep -q` exits on the first match
+# and closes the pipe, so `kubectl logs` (still streaming the rest) dies with SIGPIPE (141) —
+# making the pipeline status non-zero EVEN ON A MATCH, so the `if` would never fire and the
+# assertion would time out (observed on a busy k3s with kubectl 1.35.x). The capture form has
+# no pipe to break; `|| true` neutralizes any kubectl non-zero exit so only the grep decides.
 assert_log() {
-  local pattern="$1" desc="$2" deadline=$((SECONDS + TIMEOUT))
+  local pattern="$1" desc="$2" deadline=$((SECONDS + TIMEOUT)) out
   log "Asserting log: ${desc}"
   while (( SECONDS < deadline )); do
-    if "${KUBECTL}" -n "${NAMESPACE}" logs -l "${SELECTOR}" --tail=-1 2>/dev/null \
-         | grep -Eiq -- "${pattern}"; then
+    out="$("${KUBECTL}" -n "${NAMESPACE}" logs -l "${SELECTOR}" --tail=-1 2>/dev/null || true)"
+    if grep -Eiq -- "${pattern}" <<<"${out}"; then
       ok "${desc}"
       return 0
     fi
@@ -93,11 +100,12 @@ log "Waiting for the component rollout"
 "${KUBECTL}" -n "${NAMESPACE}" rollout status deploy/"${RELEASE}"-ggcommons-component --timeout="${TIMEOUT}s"
 
 # --- Core assertions: CONFIGMAP source + broker connect (FR-MSG-1) + identity (FR-RT-7) -------
-# NOTE: the resolver's "Resolved platform=KUBERNETES" and messaging's "Successfully connected"
-# logs are emitted BEFORE the component configures logging (both precede config load), so they are
-# dropped at INFO and are not assertable from pod logs yet — a startup-log observability gap tracked
-# for the 1c logging sub-phase (when the stdout-JSON sink + early bootstrap land). We assert instead
-# on reliably-emitted, equally-conclusive logs.
+# NOTE: the resolver's "Resolved platform=KUBERNETES" and messaging's "Successfully connected" logs
+# are emitted BEFORE the component configures logging (both precede config load), so they are dropped
+# and not assertable from pod logs. The stdout-JSON sink (1c-logging) is now in place, but the
+# early-logging-bootstrap that would make those pre-config startup lines visible is still deferred, so
+# we keep asserting on reliably-emitted logs. (Human-readable messages still match here because they
+# appear verbatim as the "message" field inside each JSON log line.)
 #
 # FR-MSG-1: the chart `args` pass NO positional `--transport MQTT <path>` (and no --transport at all);
 # the KUBERNETES profile derives transport=MQTT and the messaging-config path DEFAULTS to the mounted
@@ -113,6 +121,12 @@ assert_log "Received an .* message on topic ggcommons" "MQTT round-trip via in-c
 POD="$("${KUBECTL}" -n "${NAMESPACE}" get pods -l "${SELECTOR}" -o jsonpath='{.items[0].metadata.name}')"
 [[ -n "${POD}" ]] || fail "could not determine the component pod name"
 assert_log "Component identity .thing name.: ${POD}" "Downward-API identity resolved to POD_NAME=${POD} (FR-RT-7)"
+
+# FR-LOG-1/3: on KUBERNETES the default logging sink is structured stdout-JSON (one JSON object per
+# line), and each line carries Downward-API correlation fields. Assert a JSON line whose `thing`
+# correlation equals this pod's POD_NAME — this proves the json sink is the k8s default AND that the
+# correlation fields are wired (one assertion covers both). (json.dumps emits `: ` with a space.)
+assert_log "\"thing\": *\"${POD}\"" "stdout-JSON logging sink with Downward-API correlation (FR-LOG-1/3)"
 
 # --- Hot-reload (..data swap re-arm) test -------------------------------------------
 # Patch the ConfigMap's config.json in place (NOT helm upgrade) and assert the running

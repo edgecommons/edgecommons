@@ -33,7 +33,19 @@ The logging system is configured through the `logging` section of the component 
 
 - **`level`**: Root logging level (Default: "INFO")
   - Valid values: "TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"
-- **`format`**: Log message pattern (Default: "%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+- **`python_format`**: Log message pattern, the per-language format token (Default: "%(asctime)s [%(levelname)s] %(name)s: %(message)s"). The special case-insensitive value **`"json"`** selects the structured stdout-JSON sink (see below).
+
+### Structured stdout-JSON sink (Kubernetes)
+
+Setting `python_format` to the case-insensitive token **`"json"`** swaps the console layout to a structured **one-JSON-object-per-line** sink on stdout (fields: `timestamp` (ISO-8601 UTC), `level`, `logger`, `message`; plus `thrown`/`stack` on exceptions, plus any `extra=` fields). The same stdout appender is reused — only the layout changes.
+
+- **Default on the KUBERNETES platform.** A pod resolved to `--platform KUBERNETES` defaults to the JSON sink with no `logging` config. The precedence is: explicit `logging.python_format` ▸ the platform-profile default (`json` on KUBERNETES) ▸ the library default (console/text). So setting `python_format` to any non-`json` value overrides it, and HOST/GREENGRASS keep today's console/text default.
+- **No in-process rotation under the JSON sink.** When the JSON sink is active the library does **not** install a size-rotated file handler even if `fileLogging.enabled` is true — the cluster log agent owns rotation, and stdout-only logging survives a read-only root filesystem. File logging is unchanged off the JSON sink.
+- **Correlation fields (best-effort).** When set, each JSON line includes `thing` (the resolved identity) and `pod`/`namespace`/`node` from the Kubernetes Downward-API env vars `POD_NAME`/`POD_NAMESPACE`/`NODE_NAME`. Absent env vars are omitted (no empty/null noise).
+
+```json
+{ "logging": { "python_format": "json" } }
+```
 
 ### File Logging Options
 

@@ -3,15 +3,88 @@ Enhanced logging configuration with advanced features.
 
 This module provides enhanced logging configuration with support for:
 - File logging with rotation
+- A structured **stdout-JSON sink** (one JSON object per line) — Phase 1c, FR-LOG-1
 - Per-logger level configuration
 - Global logging control
 - Dynamic reconfiguration
+
+The stdout-JSON sink is selected via the existing per-language ``logging.python_format``
+token (FR-LOG-4): the case-insensitive value :data:`~ggcommons.platform.resolver.LOGGING_FORMAT_JSON`
+(``"json"``) swaps the console handler's *layout* to :class:`JsonLogFormatter` while keeping the
+same stdout appender. It is the default on the ``KUBERNETES`` platform (FR-LOG-1) via the
+platform-profile default; the effective format follows the precedence
+explicit ``logging.python_format`` config ▸ platform-profile default ▸ library default (FR-RT-3).
+Under the JSON sink the libraries do **not** install in-process size-rotation (FR-LOG-2) — the
+cluster log agent owns rotation — so a read-only root FS never breaks logging (stdout only).
 """
 
+import json
 import logging
 import logging.handlers
+import time
 from typing import Dict, Optional, Any
 from pathlib import Path
+
+#: The case-insensitive token (FR-LOG-4) that selects the stdout-JSON sink. Mirrors
+#: :data:`ggcommons.platform.resolver.LOGGING_FORMAT_JSON`; duplicated here as a plain literal so
+#: this module carries no import-time dependency on the platform package.
+JSON_FORMAT_TOKEN = "json"
+
+#: Standard :class:`logging.LogRecord` attributes that are never echoed into the JSON object as
+#: structured extras (they are either rendered explicitly or are noise). Used by
+#: :class:`JsonLogFormatter` to surface caller-supplied ``extra=`` fields without leaking internals.
+_RESERVED_RECORD_ATTRS = frozenset(
+    logging.makeLogRecord({}).__dict__.keys()
+) | {"message", "asctime", "taskName"}
+
+
+class JsonLogFormatter(logging.Formatter):
+    """Render each :class:`logging.LogRecord` as a single-line JSON object (FR-LOG-1).
+
+    One JSON object is emitted per line (``json.dumps`` produces no embedded newlines for the scalar
+    fields used here), with at least ``timestamp`` (ISO-8601 UTC), ``level``, ``logger`` and
+    ``message``; plus ``thrown`` (the formatted exception) and ``stack`` when present. Best-effort
+    **correlation fields** (``thing``/``pod``/``namespace``/``node``) are merged when non-empty and
+    omitted otherwise — never emitted as empty/null noise (FR-LOG-3). Any caller-supplied ``extra=``
+    record attributes are included too, so structured logging composes.
+
+    Timestamps are always UTC (the converter is pinned to :func:`time.gmtime`) so the trailing ``Z``
+    is correct regardless of the host's process-global ``logging.Formatter.converter``.
+
+    Args:
+        correlation: a mapping of correlation field name to value; falsy values are dropped.
+    """
+
+    converter = staticmethod(time.gmtime)
+
+    def __init__(self, correlation: Optional[Dict[str, Any]] = None):
+        super().__init__()
+        # Snapshot only the non-empty correlation fields once, so the hot format() path stays cheap
+        # and absent fields are never emitted (FR-LOG-3).
+        self._correlation = {k: v for k, v in (correlation or {}).items() if v}
+
+    def format(self, record: logging.LogRecord) -> str:
+        ts = self.formatTime(record, "%Y-%m-%dT%H:%M:%S")
+        obj: Dict[str, Any] = {
+            "timestamp": f"{ts}.{int(record.msecs):03d}Z",
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        # Best-effort correlation fields (already pre-filtered to non-empty).
+        obj.update(self._correlation)
+        # Caller-supplied structured extras (logger.info(..., extra={...})).
+        for key, value in record.__dict__.items():
+            if key not in _RESERVED_RECORD_ATTRS and not key.startswith("_"):
+                obj.setdefault(key, value)
+        if record.exc_info:
+            obj["thrown"] = self.formatException(record.exc_info)
+        elif record.exc_text:
+            obj["thrown"] = record.exc_text
+        if record.stack_info:
+            obj["stack"] = self.formatStack(record.stack_info)
+        # default=str keeps the line valid JSON even for non-serializable extras (no logging failure).
+        return json.dumps(obj, default=str)
 
 
 class EnhancedLoggingConfiguration:
@@ -23,24 +96,48 @@ class EnhancedLoggingConfiguration:
     
     DEFAULT_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
     DEFAULT_LEVEL = logging.INFO
-    
-    def __init__(self, logging_config: Optional[Dict[str, Any]] = None):
+
+    def __init__(
+        self,
+        logging_config: Optional[Dict[str, Any]] = None,
+        platform_default_format: Optional[str] = None,
+        correlation: Optional[Dict[str, Any]] = None,
+    ):
         """
         Initialize enhanced logging configuration.
-        
+
         Args:
             logging_config: Dictionary containing logging configuration
+            platform_default_format: the platform-profile default ``logging.<lang>_format`` token
+                (e.g. ``"json"`` on KUBERNETES) applied when the config omits ``python_format`` —
+                the middle tier of the logging-format precedence (FR-RT-3 / FR-LOG-1). ``None``
+                keeps the library default.
+            correlation: best-effort correlation fields (``thing``/``pod``/``namespace``/``node``)
+                merged into each line of the stdout-JSON sink; falsy values are dropped (FR-LOG-3).
         """
         self._config = logging_config or {}
+        self._platform_default_format = platform_default_format
+        self._correlation = correlation or {}
         self._parse_config()
-        
+
     def _parse_config(self) -> None:
         """Parse the logging configuration dictionary."""
         # Basic logging settings
         self._level = self._parse_level(self._config.get('level', 'INFO'))
-        # Per-language format key (replaces the former language-agnostic `format`).
-        self._format = self._config.get('python_format', self.DEFAULT_FORMAT)
-        
+        # Per-language format key (replaces the former language-agnostic `format`). Precedence
+        # (FR-RT-3): explicit `python_format` config > platform-profile default > library default.
+        explicit_format = self._config.get('python_format')
+        if explicit_format is not None:
+            self._format = explicit_format
+        elif self._platform_default_format is not None:
+            self._format = self._platform_default_format
+        else:
+            self._format = self.DEFAULT_FORMAT
+        # FR-LOG-4: the case-insensitive token `json` selects the stdout-JSON sink.
+        self._json_sink = (
+            isinstance(self._format, str) and self._format.strip().lower() == JSON_FORMAT_TOKEN
+        )
+
         # File logging settings
         file_cfg = self._config.get('fileLogging', {})
         self._file_logging_enabled = file_cfg.get('enabled', False)
@@ -132,18 +229,32 @@ class EnhancedLoggingConfiguration:
             
         # Set root level
         root_logger.setLevel(self._level)
-        
-        # Create formatter
-        formatter = logging.Formatter(self._format)
-        
+
+        # Create the layout for the always-on stdout/console appender. FR-LOG-1: when the JSON sink
+        # is selected the LAYOUT becomes one-JSON-object-per-line (with best-effort correlation
+        # fields); otherwise the existing text/console layout is unchanged.
+        if self._json_sink:
+            formatter: logging.Formatter = JsonLogFormatter(self._correlation)
+        else:
+            formatter = logging.Formatter(self._format)
+
         # Add console handler
         console_handler = logging.StreamHandler()
         console_handler.setFormatter(formatter)
         console_handler.setLevel(self._level)
         root_logger.addHandler(console_handler)
-        
-        # Add file handler if enabled
-        if self._file_logging_enabled and self._log_file_path:
+
+        # FR-LOG-2: under the stdout-JSON sink (the KUBERNETES default) we never install in-process
+        # size-rotation — the cluster log agent owns rotation/retention, and a rotating file handler
+        # would also break on a read-only root FS. File logging stays available off the JSON sink.
+        if self._json_sink and self._file_logging_enabled:
+            logging.info(
+                "stdout-JSON logging sink selected: skipping in-process file rotation "
+                "(the cluster log agent owns rotation)."
+            )
+
+        # Add file handler if enabled (and not suppressed by the JSON sink)
+        if self._file_logging_enabled and self._log_file_path and not self._json_sink:
             try:
                 log_file_path = self._log_file_path
                 
@@ -183,9 +294,13 @@ class EnhancedLoggingConfiguration:
         return self._level
         
     def get_format(self) -> str:
-        """Get the logging format string."""
+        """Get the effective logging format token (after precedence resolution)."""
         return self._format
-        
+
+    def is_json_sink(self) -> bool:
+        """Whether the stdout-JSON sink is selected (the ``json`` format token; FR-LOG-1/4)."""
+        return self._json_sink
+
     def is_file_logging_enabled(self) -> bool:
         """Check if file logging is enabled."""
         return self._file_logging_enabled

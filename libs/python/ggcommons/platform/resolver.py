@@ -26,8 +26,16 @@ still holds (the IPC lock).
 **Phase 1b:** :func:`resolve_identity` now reads the Kubernetes Downward-API env
 tier (:data:`ENV_K8S_THING_NAME` then :data:`ENV_K8S_POD_NAME`) ahead of the
 generic ``AWS_IOT_THING_NAME`` probe **when** the resolved platform is
-``KUBERNETES``. The ``prometheus`` metrics target, stdout-JSON logging and the
-HTTP health endpoint are deferred to later Phase-1 sub-phases.
+``KUBERNETES``.
+
+**Phase 1c (logging slice):** the :class:`PlatformProfile` gains a
+:attr:`~PlatformProfile.logging_format` default; the KUBERNETES profile defaults it
+to :data:`LOGGING_FORMAT_JSON` (the stdout-JSON sink), while GREENGRASS/HOST leave
+it ``None`` (the library console/text default). The effective logging format follows
+the same one-line precedence — explicit ``logging.<lang>_format`` config ▸ this
+platform-profile default ▸ library default — applied by the logging configurator
+(see :func:`profile_logging_format`). The ``prometheus`` metrics target and the HTTP
+health endpoint are deferred to later Phase-1 sub-phases.
 """
 
 import logging
@@ -54,11 +62,21 @@ ENV_K8S_THING_NAME = "GGCOMMONS_THING_NAME"
 #: Kubernetes Downward-API pod name (Phase 1b): ``metadata.name`` via a Downward-API ``fieldRef``.
 #: The fallback identity on KUBERNETES when ``GGCOMMONS_THING_NAME`` is absent.
 ENV_K8S_POD_NAME = "POD_NAME"
+#: Kubernetes Downward-API pod namespace (``metadata.namespace`` via ``fieldRef``); a Phase-1c
+#: logging *correlation* field (not an identity probe). Same env var wired by the chart in 1b.
+ENV_K8S_POD_NAMESPACE = "POD_NAMESPACE"
+#: Kubernetes Downward-API node name (``spec.nodeName`` via ``fieldRef``); a Phase-1c logging
+#: *correlation* field. Same env var wired by the chart in 1b.
+ENV_K8S_NODE_NAME = "NODE_NAME"
 #: Projected service-account token path: the primary, definitive Kubernetes signal.
 K8S_SA_TOKEN_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 
 #: The library-default identity when no thing name is available (matches today's behavior).
 DEFAULT_IDENTITY = "NOT_GREENGRASS"
+
+#: The case-insensitive selector value (FR-LOG-4) that selects the stdout-JSON logging sink via the
+#: per-language ``logging.<lang>_format`` token. Consistent across all four languages.
+LOGGING_FORMAT_JSON = "json"
 
 
 @dataclass(frozen=True)
@@ -66,29 +84,60 @@ class PlatformProfile:
     """A platform profile: the table of per-subsystem *defaults* for a platform (DESIGN-core sec 3).
 
     Pure data; the resolver consults it only for settings the caller did not set
-    explicitly. Phase 0 carries only the two defaultable settings the resolver
-    actually injects — the default messaging ``transport`` and the default
-    ``config_source``. Later phases append more fields (additive; no resolver
-    change).
+    explicitly. Phase 0 carries the two defaultable settings the resolver actually
+    injects — the default messaging ``transport`` and the default ``config_source``.
+    Phase 1c appends :attr:`logging_format` (the platform's default logging-format
+    token, e.g. ``"json"`` on KUBERNETES, or ``None`` to keep the library default).
+    Later phases append more fields (additive; no resolver change).
+
+    Args:
+        transport: the platform's default messaging transport.
+        config_source: the platform's default ``-c/--config`` source token.
+        logging_format: the platform's default ``logging.<lang>_format`` value, or
+            ``None`` to fall through to the library console/text default. Consumed by
+            the logging configurator, not the resolver (logging is configured after
+            config load); see :func:`profile_logging_format`.
     """
 
     transport: Transport
     config_source: str
+    logging_format: Optional[str] = None
 
 
 #: The platform-profile table (DESIGN-core sec 3). GREENGRASS and HOST deliberately default the
 #: config source to ``GG_CONFIG`` to preserve current behavior. KUBERNETES (Phase 1a) defaults to the
 #: ``MQTT`` transport and the k8s-native ``CONFIGMAP`` config source.
 #:
-#: TODO (Phase 1c-1d): the KUBERNETES profile's metrics/logging/credentials/streaming
-#: defaults (prometheus target, stdout-JSON sink, env KeyProvider, PVC buffer) are not yet modeled
-#: here — those subsystems keep their current library defaults. (Phase 1b wires the Downward-API
-#: identity in :func:`resolve_identity` and the CONFIGMAP-default messaging path in GGCommons.)
+#: Phase 1c models the KUBERNETES profile's default ``logging_format`` (``json``, the stdout-JSON
+#: sink). GREENGRASS/HOST keep ``None`` (the library console/text default), so their logging is
+#: unchanged. TODO (Phase 1d): the KUBERNETES profile's metrics/credentials/streaming defaults
+#: (prometheus target, env KeyProvider, PVC buffer) are not yet modeled here.
 PROFILES: Mapping[Platform, PlatformProfile] = {
     Platform.GREENGRASS: PlatformProfile(Transport.IPC, "GG_CONFIG"),
     Platform.HOST: PlatformProfile(Transport.MQTT, "GG_CONFIG"),
-    Platform.KUBERNETES: PlatformProfile(Transport.MQTT, "CONFIGMAP"),
+    Platform.KUBERNETES: PlatformProfile(Transport.MQTT, "CONFIGMAP", LOGGING_FORMAT_JSON),
 }
+
+
+def profile_logging_format(platform: Optional[Platform]) -> Optional[str]:
+    """Return the platform-profile default logging-format token, or ``None`` (FR-RT-3 / FR-LOG-1).
+
+    The logging configurator uses this as the **middle** tier of the logging-format precedence —
+    explicit ``logging.<lang>_format`` config ▸ this platform-profile default ▸ library default —
+    when the component config does not specify a format. It is a pure lookup (no I/O, no
+    ``ConfigManager`` dependency), so the resolved platform alone selects the default; the KUBERNETES
+    profile yields :data:`LOGGING_FORMAT_JSON`, every other platform yields ``None``.
+
+    Args:
+        platform: the resolved platform, or ``None`` (e.g. a caller that bypassed the resolver).
+
+    Returns:
+        The profile's default logging-format token, or ``None`` to keep the library default.
+    """
+    if platform is None:
+        return None
+    profile = PROFILES.get(platform)
+    return None if profile is None else profile.logging_format
 
 
 @dataclass(frozen=True)

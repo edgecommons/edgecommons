@@ -17,11 +17,13 @@ from ggcommons.platform import (
     ENV_K8S_THING_NAME,
     ENV_THING_NAME,
     K8S_SA_TOKEN_PATH,
+    LOGGING_FORMAT_JSON,
     PROFILES,
     Platform,
     ResolverInputs,
     Transport,
     detect_platform,
+    profile_logging_format,
     resolve_identity,
     resolve_profile,
     validate,
@@ -315,3 +317,23 @@ def test_profile_record_exposes_its_fields():
     p = PROFILES[Platform.GREENGRASS]
     assert p.transport == Transport.IPC
     assert p.config_source == "GG_CONFIG"
+
+
+# ---------- Phase 1c: the logging-format profile default (FR-RT-3 / FR-LOG-1) ----------
+
+def test_kubernetes_profile_defaults_logging_format_to_json():
+    assert PROFILES[Platform.KUBERNETES].logging_format == LOGGING_FORMAT_JSON == "json"
+
+
+def test_greengrass_and_host_profiles_keep_library_logging_default():
+    # None => no platform default => the library console/text default is kept (logging unchanged).
+    assert PROFILES[Platform.GREENGRASS].logging_format is None
+    assert PROFILES[Platform.HOST].logging_format is None
+
+
+def test_profile_logging_format_helper():
+    assert profile_logging_format(Platform.KUBERNETES) == "json"
+    assert profile_logging_format(Platform.HOST) is None
+    assert profile_logging_format(Platform.GREENGRASS) is None
+    # A None platform (caller bypassing the resolver) falls through to the library default.
+    assert profile_logging_format(None) is None

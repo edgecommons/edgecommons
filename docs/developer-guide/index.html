@@ -1093,6 +1093,16 @@ and per-logger overrides. Log file paths support the same template variables as 
 </tbody>
 </table>
 
+<div class="callout note"><span class="ct">Structured JSON on Kubernetes</span>
+<p>Set the per-language format token to <code>json</code> (e.g. <code>"java_format": "json"</code>) to emit a
+<strong>structured stdout-JSON sink</strong> — one JSON object per line (<code>timestamp</code>, <code>level</code>,
+<code>logger</code>, <code>message</code>, and any exception), the shape cluster log agents expect. On
+<code>--platform KUBERNETES</code> this is the <strong>default</strong> (no token needed); the sink also adds
+Downward-API <strong>correlation fields</strong> (<code>thing</code>, <code>pod</code>, <code>namespace</code>,
+<code>node</code>) when those env vars are present, and <strong>disables in-process file rotation</strong> (the cluster
+log agent owns rotation). <code>GREENGRASS</code>/<code>HOST</code> defaults are unchanged; an explicit format token
+always overrides the platform default.</p></div>
+
 <div class="codeblock"><div class="tabs"><button class="active">logging</button><div class="spacer"></div></div>
 <div class="pane active"><pre><code class="language-json">{
   "logging": {

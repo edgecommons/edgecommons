@@ -21,10 +21,18 @@
 //!   … The same level filter gates both console and file output.
 //! - Error handling: infallible — an unparseable level falls back to `info`; a
 //!   file that cannot be opened is reported to stderr and file logging is skipped.
-//! - **Format**: `logging.rust_format` (token template `{timestamp}` `{level}`
-//!   `{target}` `{message}`) is rendered by a custom [`TokenLayer`] to console +
-//!   file when set; otherwise the default `fmt` layers are used. (Replaces the
-//!   former language-agnostic `format`.)
+//! - **Format / sink selection** (FR-LOG-4) is decided once at [`init`] from the
+//!   *effective format*: explicit `logging.rust_format` ▸ the platform-profile default
+//!   (`json` on KUBERNETES) ▸ `None` (the library default). Three sinks:
+//!   - `"json"` (case-insensitive) → the structured **stdout-JSON** sink ([`JsonLayer`],
+//!     FR-LOG-1): one JSON object per line on stdout, **stdout-only** — no in-process file
+//!     rotation is installed (FR-LOG-2), so a read-only root FS never breaks logging. Best-effort
+//!     correlation fields (`pod`/`namespace`/`node`/`thing`) are added when present (FR-LOG-3).
+//!   - any other token (`{timestamp}` `{level}` `{target}` `{message}`) → the custom
+//!     [`TokenLayer`] (console + optional rotating file).
+//!   - `None` → the default `fmt` layers (console + optional rotating file).
+//! - The KUBERNETES profile default is threaded into [`init`] as `profile_format_default` (the
+//!   resolved platform is known before the component config loads); precedence FR-RT-3.
 //! - Limitation: the format and file layers are decided at [`init`] time only
 //!   (tracing layers cannot be added/removed after install), so a `rust_format` or
 //!   `fileLogging` change on hot reload does not take effect until restart; the
@@ -37,7 +45,9 @@
 //! use serde_json::json;
 //!
 //! let cfg = Config::from_value("c", "t", json!({ "logging": { "level": "DEBUG" } })).unwrap();
-//! logging::init(&cfg);
+//! // `None` = no platform-profile default; pass the KUBERNETES profile's `Some("json")` to default
+//! // to the stdout-JSON sink.
+//! logging::init(&cfg, None);
 //! ```
 //!
 //! ## Safety & Panics
@@ -47,10 +57,13 @@
 //! - [`crate::config::model`], [`crate::config::ConfigurationChangeListener`],
 //!   [`crate::config::template`].
 
+use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
+
+use serde_json::{Map, Value};
 
 use async_trait::async_trait;
 use tracing::field::{Field, Visit};
@@ -69,22 +82,52 @@ use crate::config::ConfigurationChangeListener;
 /// Type-erased "reload the level filter" callback, installed once by [`init`].
 static RECONFIGURE: OnceLock<Box<dyn Fn(EnvFilter) + Send + Sync>> = OnceLock::new();
 
-/// Initialize the global tracing subscriber with a reloadable level filter and,
-/// if `logging.fileLogging.enabled`, a size-rotated file layer.
-pub fn init(config: &Config) {
-    let (filter_layer, handle) = reload::Layer::new(level_filter(config));
-    let file_writer = file_make_writer(config);
+/// The `logging.rust_format` selector value (case-insensitive) that selects the structured
+/// stdout-JSON sink (FR-LOG-4). The same `json` token selects the sink in every language.
+const JSON_FORMAT: &str = "json";
 
-    // When `logging.rust_format` is set, render every event through the token template
-    // (console + file) via a custom layer; otherwise keep the default `fmt` layers. Two
-    // separate registry branches avoid boxing the heterogeneous layer types. The level
-    // filter (and its reload handle) is shared by both branches.
-    let installed = match config.parsed.logging.rust_format.clone() {
+/// Initialize the global tracing subscriber with a reloadable level filter and the configured
+/// logging sink (FR-LOG-1/2/3/4).
+///
+/// `profile_format_default` is the resolved platform-profile's default logging format
+/// ([`crate::platform::PlatformProfile::logging_format`], `Some("json")` on KUBERNETES). It is
+/// threaded in by the builder because the resolved platform is known *before* the component config
+/// loads. The effective format follows the FR-RT-3 precedence: explicit `logging.rust_format` ▸
+/// this profile default ▸ `None` (the library default).
+pub fn init(config: &Config, profile_format_default: Option<&str>) {
+    let (filter_layer, handle) = reload::Layer::new(level_filter(config));
+    let effective = effective_format(config, profile_format_default);
+
+    // FR-LOG-2: the stdout-JSON sink is stdout-only — no rotating file appender is built, so a
+    // read-only root FS is never touched. Off the json sink, the optional `logging.fileLogging`
+    // rotating appender is unchanged. Building the writer at most once (and not at all under json).
+    let file_writer = if installs_file_appender(config, effective.as_deref()) {
+        file_make_writer(config)
+    } else {
+        None
+    };
+
+    // The effective format selects one of three sinks. Separate registry branches avoid boxing the
+    // heterogeneous layer types; the level filter (and its reload handle) is shared by all three.
+    let installed = match effective {
+        // FR-LOG-1: structured stdout-JSON sink (one object per line). Best-effort correlation
+        // fields are captured once here from the env + the resolved identity (FR-LOG-3).
+        Some(ref fmt) if selects_json(fmt) => {
+            let env: HashMap<String, String> = std::env::vars().collect();
+            let correlation = correlation_fields(&env, &config.thing_name);
+            tracing_subscriber::registry()
+                .with(filter_layer)
+                .with(JsonLayer { correlation })
+                .try_init()
+                .is_ok()
+        }
+        // A non-json token template → render every event through the token layer (console + file).
         Some(template) => tracing_subscriber::registry()
             .with(filter_layer)
             .with(TokenLayer { template, file: file_writer })
             .try_init()
             .is_ok(),
+        // Library default: the plain `fmt` console layer + optional rotating-file layer.
         None => {
             let file_layer = file_writer
                 .map(|writer| fmt::layer().with_ansi(false).with_writer(writer));
@@ -101,6 +144,40 @@ pub fn init(config: &Config) {
             let _ = handle.reload(filter);
         }));
     }
+}
+
+/// Resolve the *effective* logging format (FR-LOG-4, precedence FR-RT-3): explicit
+/// `logging.rust_format` ▸ the platform-profile default (`json` on KUBERNETES) ▸ `None` (the
+/// library console/text default). Pure — unit-testable without installing a subscriber.
+fn effective_format(config: &Config, profile_format_default: Option<&str>) -> Option<String> {
+    config
+        .parsed
+        .logging
+        .rust_format
+        .clone()
+        .or_else(|| profile_format_default.map(str::to_string))
+}
+
+/// Whether `format` selects the structured stdout-JSON sink — the case-insensitive [`JSON_FORMAT`]
+/// token (FR-LOG-4).
+fn selects_json(format: &str) -> bool {
+    format.eq_ignore_ascii_case(JSON_FORMAT)
+}
+
+/// Whether the resolved sink installs an in-process (rotating) file appender. The stdout-JSON sink
+/// is **stdout-only** (FR-LOG-2): it never installs file rotation regardless of `logging.fileLogging`
+/// (the cluster log agent owns rotation), so a read-only root FS cannot break logging on the
+/// KUBERNETES default. Every other sink keeps the existing optional `logging.fileLogging` appender.
+fn installs_file_appender(config: &Config, effective: Option<&str>) -> bool {
+    if effective.is_some_and(selects_json) {
+        return false;
+    }
+    config
+        .parsed
+        .logging
+        .file_logging
+        .as_ref()
+        .is_some_and(|fl| fl.enabled)
 }
 
 /// A `tracing` layer that renders each event from a `rust_format` token template
@@ -159,6 +236,120 @@ where
             let _ = writeln!(w, "{line}");
         }
     }
+}
+
+/// A `tracing` layer that emits **one JSON object per line to stdout** (FR-LOG-1) — the default
+/// sink on the KUBERNETES platform. Each line carries at least `timestamp`, `level`, `logger`
+/// (the event target/name), and `message`, plus every other structured event field (so a logged
+/// `error`/`exception` field is preserved verbatim — "thrown when present"), plus the best-effort
+/// correlation fields captured at install (FR-LOG-3). The sink is **stdout-only**: no file rotation
+/// is installed (FR-LOG-2). Installed only when the effective format is the `json` token; the
+/// format is fixed at [`init`] (tracing layers cannot be swapped at runtime).
+struct JsonLayer {
+    /// `(json key, value)` for the present correlation fields (`pod`/`namespace`/`node`/`thing`).
+    /// Absent fields are omitted entirely, so no empty/null noise is emitted.
+    correlation: Vec<(&'static str, String)>,
+}
+
+/// Collects an event's fields into a JSON object. `message` and any user fields (e.g. an
+/// `error`/`exception`) are captured under their own keys, each rendered to the closest JSON type.
+struct JsonVisitor<'a>(&'a mut Map<String, Value>);
+
+impl Visit for JsonVisitor<'_> {
+    fn record_str(&mut self, field: &Field, value: &str) {
+        self.0.insert(field.name().to_string(), Value::from(value));
+    }
+    fn record_bool(&mut self, field: &Field, value: bool) {
+        self.0.insert(field.name().to_string(), Value::from(value));
+    }
+    fn record_i64(&mut self, field: &Field, value: i64) {
+        self.0.insert(field.name().to_string(), Value::from(value));
+    }
+    fn record_u64(&mut self, field: &Field, value: u64) {
+        self.0.insert(field.name().to_string(), Value::from(value));
+    }
+    fn record_f64(&mut self, field: &Field, value: f64) {
+        self.0.insert(field.name().to_string(), Value::from(value));
+    }
+    fn record_error(&mut self, field: &Field, value: &(dyn std::error::Error + 'static)) {
+        self.0.insert(field.name().to_string(), Value::from(value.to_string()));
+    }
+    fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+        // The `message` field and any non-primitive field arrive here; `{:?}` of `format_args!`
+        // renders the message text without extra quoting (matches the token-layer visitor).
+        self.0.insert(field.name().to_string(), Value::from(format!("{value:?}")));
+    }
+}
+
+/// Assemble a single JSON log line from the standard fields, the collected event `fields`, and the
+/// correlation fields. The standard keys (`timestamp`/`level`/`logger`) and the correlation fields
+/// take precedence over any same-named event field. `serde_json` guarantees valid, single-line
+/// output (string escaping included), so embedded newlines in a message stay on one physical line.
+fn build_json_line(
+    timestamp: &str,
+    level: &str,
+    logger: &str,
+    fields: Map<String, Value>,
+    correlation: &[(&'static str, String)],
+) -> Option<String> {
+    // Start from the event fields so the authoritative keys below win on any collision.
+    let mut map = fields;
+    map.insert("timestamp".to_string(), Value::from(timestamp));
+    map.insert("level".to_string(), Value::from(level));
+    map.insert("logger".to_string(), Value::from(logger));
+    for (key, value) in correlation {
+        map.insert((*key).to_string(), Value::from(value.clone()));
+    }
+    serde_json::to_string(&Value::Object(map)).ok()
+}
+
+impl<S> tracing_subscriber::Layer<S> for JsonLayer
+where
+    S: Subscriber + for<'a> LookupSpan<'a>,
+{
+    fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
+        let meta = event.metadata();
+        let mut fields = Map::new();
+        event.record(&mut JsonVisitor(&mut fields));
+
+        let mut timestamp = String::new();
+        let _ = SystemTime.format_time(&mut fmt::format::Writer::new(&mut timestamp));
+
+        if let Some(line) = build_json_line(
+            timestamp.trim(),
+            meta.level().as_str(),
+            meta.target(),
+            fields,
+            &self.correlation,
+        ) {
+            let _ = writeln!(io::stdout(), "{line}");
+        }
+    }
+}
+
+/// Build the best-effort logging correlation fields (FR-LOG-3) from the environment and the
+/// resolved identity. Includes `pod`/`namespace`/`node` only when the matching Downward-API env var
+/// ([`crate::platform::ENV_K8S_POD_NAME`] / [`crate::platform::ENV_K8S_POD_NAMESPACE`] /
+/// [`crate::platform::ENV_K8S_NODE_NAME`] — the same vars wired in Phase 1b) is present and
+/// non-empty, and `thing` when the resolved identity is non-empty. Absent values are omitted (no
+/// empty/null noise). Pure (the env is injected) so it is unit-testable.
+fn correlation_fields(env: &HashMap<String, String>, thing: &str) -> Vec<(&'static str, String)> {
+    let mut fields = Vec::new();
+    for (key, var) in [
+        ("pod", crate::platform::ENV_K8S_POD_NAME),
+        ("namespace", crate::platform::ENV_K8S_POD_NAMESPACE),
+        ("node", crate::platform::ENV_K8S_NODE_NAME),
+    ] {
+        if let Some(value) = env.get(var) {
+            if !value.is_empty() {
+                fields.push((key, value.clone()));
+            }
+        }
+    }
+    if !thing.is_empty() {
+        fields.push(("thing", thing.to_string()));
+    }
+    fields
 }
 
 /// Apply the log level from `config` to the running subscriber (no-op if logging
@@ -560,5 +751,202 @@ mod tests {
         // The short component name must have been substituted into the path.
         assert!(dir.join("MyComp.log").exists(), "template-resolved log file should be created");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ---------- FR-LOG: stdout-JSON sink selection + precedence ----------
+
+    fn env(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    }
+
+    fn cfg_with(logging: serde_json::Value) -> Config {
+        Config::from_value("com.example.C", "thing-1", serde_json::json!({ "logging": logging }))
+            .unwrap()
+    }
+
+    #[test]
+    fn json_token_is_recognized_case_insensitively() {
+        // FR-LOG-4: the consistent selector value is `json`, matched case-insensitively.
+        assert!(selects_json("json"));
+        assert!(selects_json("JSON"));
+        assert!(selects_json("Json"));
+        assert!(!selects_json("console"));
+        assert!(!selects_json("{level}|{message}"));
+        assert!(!selects_json("jsonish"));
+    }
+
+    #[test]
+    fn effective_format_precedence_explicit_then_profile_then_default() {
+        // Explicit config wins over the profile default (FR-RT-3).
+        let cfg = cfg_with(serde_json::json!({ "rust_format": "{level}|{message}" }));
+        assert_eq!(
+            Some("{level}|{message}".to_string()),
+            effective_format(&cfg, Some("json"))
+        );
+        // No explicit config → the platform-profile default applies (json on KUBERNETES).
+        let cfg = cfg_with(serde_json::json!({}));
+        assert_eq!(Some("json".to_string()), effective_format(&cfg, Some("json")));
+        // No explicit config and no profile default (GREENGRASS/HOST) → library default (None).
+        assert_eq!(None, effective_format(&cfg, None));
+    }
+
+    #[test]
+    fn explicit_non_json_format_overrides_k8s_json_default() {
+        // A pod that sets a non-json token must NOT get the json sink (FR-LOG-4 / FR-RT-3).
+        let cfg = cfg_with(serde_json::json!({ "rust_format": "{message}" }));
+        let effective = effective_format(&cfg, Some("json")).unwrap();
+        assert!(!selects_json(&effective));
+    }
+
+    #[test]
+    fn explicit_json_selects_sink_even_off_kubernetes() {
+        // The `json` token selects the sink regardless of platform (no profile default needed).
+        let cfg = cfg_with(serde_json::json!({ "rust_format": "json" }));
+        let effective = effective_format(&cfg, None).unwrap();
+        assert!(selects_json(&effective));
+    }
+
+    #[test]
+    fn json_sink_installs_no_file_appender_even_with_file_logging_enabled() {
+        // FR-LOG-2: under the json sink the rotating file appender is NOT installed — stdout-only,
+        // so a read-only root FS cannot break logging — even if `fileLogging` is set in config.
+        let cfg = cfg_with(serde_json::json!({
+            "fileLogging": { "enabled": true, "filePath": "/nonexistent/should-not-open.log" }
+        }));
+        assert!(!installs_file_appender(&cfg, Some("json")));
+        assert!(!installs_file_appender(&cfg, Some("JSON")));
+    }
+
+    #[test]
+    fn non_json_sinks_keep_the_file_appender_contract() {
+        // Off the json sink, `fileLogging.enabled` still drives the rotating appender.
+        let on = cfg_with(serde_json::json!({
+            "fileLogging": { "enabled": true, "filePath": "/var/log/app.log" }
+        }));
+        assert!(installs_file_appender(&on, None));
+        assert!(installs_file_appender(&on, Some("{message}")));
+        // Disabled / absent fileLogging → no appender, as today.
+        let off = cfg_with(serde_json::json!({ "fileLogging": { "enabled": false } }));
+        assert!(!installs_file_appender(&off, None));
+        let none = cfg_with(serde_json::json!({}));
+        assert!(!installs_file_appender(&none, None));
+    }
+
+    // ---------- FR-LOG-1: one-object-per-line JSON ----------
+
+    #[test]
+    fn build_json_line_emits_valid_single_object_with_required_fields() {
+        let mut fields = Map::new();
+        fields.insert("message".to_string(), Value::from("hello world"));
+        let line = build_json_line(
+            "2026-01-01T00:00:00Z",
+            "INFO",
+            "ggcommons::x",
+            fields,
+            &[],
+        )
+        .unwrap();
+
+        // Exactly one line (no embedded raw newline).
+        assert_eq!(1, line.lines().count(), "must be one JSON object per line");
+        let v: Value = serde_json::from_str(&line).expect("each line must be valid JSON");
+        assert_eq!("2026-01-01T00:00:00Z", v["timestamp"]);
+        assert_eq!("INFO", v["level"]);
+        assert_eq!("ggcommons::x", v["logger"]);
+        assert_eq!("hello world", v["message"]);
+    }
+
+    #[test]
+    fn build_json_line_includes_correlation_when_present_and_omits_when_absent() {
+        // FR-LOG-3: correlation fields appear when present...
+        let mut fields = Map::new();
+        fields.insert("message".to_string(), Value::from("m"));
+        let correlation = vec![
+            ("pod", "pod-7".to_string()),
+            ("namespace", "ns".to_string()),
+            ("node", "node-a".to_string()),
+            ("thing", "thing-1".to_string()),
+        ];
+        let line = build_json_line("t", "WARN", "tgt", fields, &correlation).unwrap();
+        let v: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!("pod-7", v["pod"]);
+        assert_eq!("ns", v["namespace"]);
+        assert_eq!("node-a", v["node"]);
+        assert_eq!("thing-1", v["thing"]);
+
+        // ...and are entirely absent (not null/empty) when no correlation is supplied.
+        let line = build_json_line("t", "WARN", "tgt", Map::new(), &[]).unwrap();
+        let v: Value = serde_json::from_str(&line).unwrap();
+        let obj = v.as_object().unwrap();
+        assert!(!obj.contains_key("pod"));
+        assert!(!obj.contains_key("namespace"));
+        assert!(!obj.contains_key("node"));
+        assert!(!obj.contains_key("thing"));
+    }
+
+    #[test]
+    fn build_json_line_preserves_exception_field_and_stays_one_line() {
+        // "thrown/exception when present": a structured error field is preserved; a message with an
+        // embedded newline is escaped, not split across physical lines.
+        let mut fields = Map::new();
+        fields.insert("message".to_string(), Value::from("line1\nline2"));
+        fields.insert("exception".to_string(), Value::from("BrokenPipe: connection reset"));
+        let line = build_json_line("t", "ERROR", "tgt", fields, &[]).unwrap();
+        assert_eq!(1, line.lines().count(), "embedded newline must stay one physical line");
+        let v: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!("line1\nline2", v["message"]);
+        assert_eq!("BrokenPipe: connection reset", v["exception"]);
+    }
+
+    #[test]
+    fn build_json_line_standard_keys_win_over_colliding_event_fields() {
+        // A user field that collides with a reserved key must not shadow the authoritative value.
+        let mut fields = Map::new();
+        fields.insert("level".to_string(), Value::from("bogus"));
+        fields.insert("message".to_string(), Value::from("m"));
+        let line = build_json_line("t", "INFO", "tgt", fields, &[]).unwrap();
+        let v: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!("INFO", v["level"], "the real level must win over a colliding field");
+    }
+
+    // ---------- FR-LOG-3: correlation_fields from the Downward API ----------
+
+    #[test]
+    fn correlation_fields_from_full_downward_api_env() {
+        let e = env(&[
+            (crate::platform::ENV_K8S_POD_NAME, "pod-7"),
+            (crate::platform::ENV_K8S_POD_NAMESPACE, "team-a"),
+            (crate::platform::ENV_K8S_NODE_NAME, "node-1"),
+        ]);
+        let fields = correlation_fields(&e, "thing-1");
+        assert_eq!(
+            vec![
+                ("pod", "pod-7".to_string()),
+                ("namespace", "team-a".to_string()),
+                ("node", "node-1".to_string()),
+                ("thing", "thing-1".to_string()),
+            ],
+            fields
+        );
+    }
+
+    #[test]
+    fn correlation_fields_omits_absent_and_empty_env_values() {
+        // Empty env values are not signals; missing vars are skipped. Only `thing` remains.
+        let e = env(&[
+            (crate::platform::ENV_K8S_POD_NAME, ""),
+            (crate::platform::ENV_K8S_NODE_NAME, "node-1"),
+        ]);
+        let fields = correlation_fields(&e, "thing-1");
+        assert_eq!(
+            vec![("node", "node-1".to_string()), ("thing", "thing-1".to_string())],
+            fields
+        );
+    }
+
+    #[test]
+    fn correlation_fields_omits_thing_when_identity_empty() {
+        let fields = correlation_fields(&env(&[]), "");
+        assert!(fields.is_empty(), "no env and empty identity → no correlation noise");
     }
 }

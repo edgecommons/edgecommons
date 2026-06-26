@@ -19,8 +19,8 @@ class ConfigComponentManager(ConfigManager):
         config = message.get_body()
         self.configuration_changed(config)
 
-    def __init__(self, thing_name: str, component_name: str):
-        super().__init__(component_name, thing_name)
+    def __init__(self, thing_name: str, component_name: str, platform=None):
+        super().__init__(component_name, thing_name, platform=platform)
         self._GET_TOPIC = self._GET_TOPIC.format(self.get_thing_name(), component_name)
         self._UPDATED_TOPIC = self._UPDATED_TOPIC.format(
             self.get_thing_name(), component_name

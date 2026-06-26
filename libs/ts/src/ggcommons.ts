@@ -10,7 +10,7 @@
  * (stops the heartbeat + config watch and disconnects messaging) rather than on GC.
  */
 import { parseArgs, ParsedArgs } from "./cli";
-import { Transport } from "./platform";
+import { Transport, profileLoggingFormat } from "./platform";
 import { Config } from "./config/model";
 import { resolve } from "./config/template";
 import { validate } from "./config/validation";
@@ -214,7 +214,11 @@ export class GGCommonsBuilder {
     validate(raw);
     let current = Config.fromValue(this.componentNameValue, thingName, raw);
 
-    initLogging(current);
+    // Thread the resolved platform's default logging format into the configurator (Phase 1c / FR-LOG-1):
+    // a KUBERNETES pod with no `logging.ts_format` logs structured stdout-JSON, while explicit config
+    // still wins and HOST/GREENGRASS keep today's console/text default. The platform is known here
+    // (resolved at parse time) even though config loads after the resolver/messaging.
+    initLogging(current, { formatDefault: profileLoggingFormat(parsed.platform) });
     logger.info(
       `GGCommons initialized: component=${this.componentNameValue} thing=${thingName} configSource=${source.sourceName()}`,
     );

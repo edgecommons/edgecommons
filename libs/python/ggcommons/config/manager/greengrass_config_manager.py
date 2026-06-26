@@ -14,8 +14,9 @@ class GreengrassConfigManager(ConfigManager):
         component_name: str,
         config_component_name: str,
         config_key: str,
+        platform=None,
     ):
-        super().__init__(component_name, thing_name)
+        super().__init__(component_name, thing_name, platform=platform)
         self._config_component_name = config_component_name
         self._config_key = config_key if config_key is not None else "ComponentConfig"
         self._config_source = f"Greengrass config (component: {config_component_name}; key: {self._config_key})"

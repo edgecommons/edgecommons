@@ -1,7 +1,14 @@
 import logging
+import os
 import time
 from typing import Dict, Any
 
+from ggcommons.platform.resolver import (
+    ENV_K8S_NODE_NAME,
+    ENV_K8S_POD_NAME,
+    ENV_K8S_POD_NAMESPACE,
+    profile_logging_format,
+)
 from ggcommons.config.heartbeat_config import HeartbeatConfiguration
 from ggcommons.config.metric_config import MetricConfiguration
 from ggcommons.config.tag_config import TagConfiguration
@@ -33,10 +40,20 @@ def _sanitize(value: str) -> str:
 
 
 class ConfigManager:
-    def __init__(self, component_name: str, thing_name: str = None, validate_config: bool = True):
+    def __init__(
+        self,
+        component_name: str,
+        thing_name: str = None,
+        validate_config: bool = True,
+        platform=None,
+    ):
         if not component_name:
             raise ValueError("Component name cannot be None or empty")
-            
+
+        # The resolved platform (a ggcommons.platform.Platform, or None when constructed outside the
+        # resolver/builder). Threaded in BEFORE init() so _apply_config can apply the platform's
+        # default logging format (json on KUBERNETES) when the config omits one (FR-RT-3 / FR-LOG-1).
+        self._platform = platform
         self._tag_config = None
         self._heartbeat_config = None
         self._metric_config = None
@@ -83,11 +100,19 @@ class ConfigManager:
         self._tag_config = TagConfiguration(tag_json)
 
         logging_json = config.get("logging")
-        self._logging_config = EnhancedLoggingConfiguration(logging_json)
-        # configure_logging wires the console handler plus, when
-        # logging.fileLogging.enabled, a size-rotated RotatingFileHandler
-        # (maxFileSize / backupCount). It clears existing handlers first, so calling
-        # it again on a config hot-reload reconfigures cleanly without leaking.
+        # FR-RT-3 / FR-LOG-1: the platform-profile default logging format (json on KUBERNETES) is
+        # the middle precedence tier — applied only when the config omits `python_format`.
+        platform_default_format = profile_logging_format(self._platform)
+        self._logging_config = EnhancedLoggingConfiguration(
+            logging_json,
+            platform_default_format=platform_default_format,
+            correlation=self._logging_correlation(),
+        )
+        # configure_logging wires the console handler (text or, under the `json` token, the
+        # stdout-JSON layout). Off the JSON sink and when logging.fileLogging.enabled it also wires a
+        # size-rotated RotatingFileHandler (maxFileSize / backupCount); under the JSON sink in-process
+        # rotation is intentionally skipped (FR-LOG-2 — the cluster log agent owns rotation). It
+        # clears existing handlers first, so a config hot-reload reconfigures cleanly without leaking.
         self._logging_config.configure_logging(self)
         logging.Formatter.converter = time.gmtime
 
@@ -118,6 +143,27 @@ class ConfigManager:
             for instance in self._component_config["instances"]:
                 self._instances[instance["id"]] = instance
                 logger.debug(f"loaded config for {self._instances[instance['id']]}")
+
+    def _logging_correlation(self) -> Dict[str, str]:
+        """Best-effort correlation fields for the stdout-JSON sink (FR-LOG-3).
+
+        ``thing`` is the resolved identity; ``pod``/``namespace``/``node`` come from the Kubernetes
+        Downward-API env vars (``POD_NAME``/``POD_NAMESPACE``/``NODE_NAME`` — the same vars wired in
+        Phase 1b). Absent env vars are simply omitted (no empty/null noise); the JSON formatter also
+        drops falsy values. These are only consumed when the JSON sink is active.
+        """
+        correlation: Dict[str, str] = {}
+        if self._thing_name:
+            correlation["thing"] = self._thing_name
+        for field, env_var in (
+            ("pod", ENV_K8S_POD_NAME),
+            ("namespace", ENV_K8S_POD_NAMESPACE),
+            ("node", ENV_K8S_NODE_NAME),
+        ):
+            value = os.environ.get(env_var)
+            if value:
+                correlation[field] = value
+        return correlation
 
     def configuration_changed(self, new_config: dict) -> bool:
         try:

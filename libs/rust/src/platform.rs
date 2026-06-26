@@ -113,6 +113,12 @@ pub struct PlatformProfile {
     /// The default `-c/--config` source token (e.g. `"GG_CONFIG"`, `"FILE"`) used when
     /// `-c` is omitted.
     pub config_source: &'static str,
+    /// The default logging-format selector for this platform (FR-LOG-1 / FR-LOG-4), applied when
+    /// the component config does not set `logging.rust_format`. `Some("json")` selects the
+    /// structured stdout-JSON sink (the KUBERNETES default); `None` keeps the library default
+    /// (console/text), so GREENGRASS and HOST are unchanged. The precedence is enforced by the
+    /// logging configurator (explicit config ▸ this profile default ▸ library default — FR-RT-3).
+    pub logging_format: Option<&'static str>,
 }
 
 /// The output of [`resolve_profile`]: the fully resolved runtime settings that every
@@ -158,6 +164,12 @@ pub const ENV_K8S_THING_NAME: &str = "GGCOMMONS_THING_NAME";
 /// KUBERNETES Downward-API identity (secondary k8s tier): the pod name, projected via a
 /// Downward-API `fieldRef` on `metadata.name`.
 pub const ENV_K8S_POD_NAME: &str = "POD_NAME";
+/// KUBERNETES Downward-API logging-correlation field (FR-LOG-3): the pod namespace, projected via
+/// a Downward-API `fieldRef` on `metadata.namespace`. Best-effort; absent off-Kubernetes.
+pub const ENV_K8S_POD_NAMESPACE: &str = "POD_NAMESPACE";
+/// KUBERNETES Downward-API logging-correlation field (FR-LOG-3): the node name, projected via a
+/// Downward-API `fieldRef` on `spec.nodeName`. Best-effort; absent off-Kubernetes.
+pub const ENV_K8S_NODE_NAME: &str = "NODE_NAME";
 /// Confirming (secondary) Kubernetes signal. The token file is the primary, definitive one.
 pub const ENV_K8S_SERVICE_HOST: &str = "KUBERNETES_SERVICE_HOST";
 /// Projected service-account token path: the primary, definitive Kubernetes signal.
@@ -175,16 +187,20 @@ pub fn profile(platform: Platform) -> Option<PlatformProfile> {
         Platform::Greengrass => Some(PlatformProfile {
             transport: Transport::Ipc,
             config_source: "GG_CONFIG",
+            logging_format: None,
         }),
         Platform::Host => Some(PlatformProfile {
             transport: Transport::Mqtt,
             config_source: "GG_CONFIG",
+            logging_format: None,
         }),
         // Phase 1a: KUBERNETES is wired — MQTT transport (no Nucleus IPC) and the k8s-native
         // CONFIGMAP source (a mounted ConfigMap directory) as its default config source.
+        // Phase 1c: its default logging format is the structured stdout-JSON sink (FR-LOG-1).
         Platform::Kubernetes => Some(PlatformProfile {
             transport: Transport::Mqtt,
             config_source: "CONFIGMAP",
+            logging_format: Some("json"),
         }),
     }
 }
@@ -703,6 +719,20 @@ mod tests {
         let p = profile(Platform::Kubernetes).unwrap();
         assert_eq!(Transport::Mqtt, p.transport);
         assert_eq!("CONFIGMAP", p.config_source);
+    }
+
+    #[test]
+    fn kubernetes_profile_defaults_logging_to_json() {
+        // FR-LOG-1: the KUBERNETES profile's default logging format is the stdout-JSON sink.
+        assert_eq!(Some("json"), profile(Platform::Kubernetes).unwrap().logging_format);
+    }
+
+    #[test]
+    fn greengrass_and_host_profiles_keep_library_default_logging() {
+        // GREENGRASS/HOST carry no profile logging-format default (None) so the library default
+        // (console/text) is unchanged off-Kubernetes.
+        assert_eq!(None, profile(Platform::Greengrass).unwrap().logging_format);
+        assert_eq!(None, profile(Platform::Host).unwrap().logging_format);
     }
 
     #[test]
