@@ -6,6 +6,7 @@ package com.breissinger.ggcommons.metrics;
 
 import com.breissinger.ggcommons.config.MetricConfiguration;
 import com.breissinger.ggcommons.config.ConfigurationFactory;
+import com.breissinger.ggcommons.platform.Platform;
 import com.breissinger.ggcommons.test.MockConfigurationService;
 import com.breissinger.ggcommons.test.MockMessagingService;
 import com.google.gson.JsonObject;
@@ -136,6 +137,78 @@ class MetricEmitterTest {
         emitter.defineMetric(metric("m1"));
         assertDoesNotThrow(() -> emitter.emitMetricNow("m1", values()));
         emitter.close();
+    }
+
+    // ---------- prometheus target selection + effective-target precedence (FR-MET-1/4, FR-RT-3) ----------
+
+    private static MetricConfiguration metricConfigOf(String metricJson) {
+        var root = new JsonObject();
+        root.add("metricEmission", JsonParser.parseString(metricJson).getAsJsonObject());
+        return ConfigurationFactory.createMetricConfiguration(root);
+    }
+
+    @Test
+    void prometheusTargetSelectedByConfigTarget() {
+        // Explicit target=prometheus selects the pull-based target; emit/flush push nothing to messaging.
+        var config = new EmitterConfig(
+                "{\"target\":\"prometheus\",\"namespace\":\"ns1\",\"targetConfig\":{\"port\":0}}");
+        var mock = new MockMessagingService();
+        var emitter = new MetricEmitter(config, mock);
+
+        emitter.defineMetric(metric("m1"));
+        emitter.emitMetric("m1", values());
+        emitter.emitMetricNow("m1", values());
+        assertDoesNotThrow(emitter::flushMetrics);
+        // FR-MET-2: the prometheus target never pushes — nothing is delivered to messaging.
+        assertTrue(mock.getPublishedMessages().isEmpty(), "prometheus must not push to messaging");
+
+        emitter.close();
+    }
+
+    @Test
+    void kubernetesProfileDefaultsToPrometheusWhenConfigOmitsTarget() {
+        // No explicit target + KUBERNETES => the platform-profile default selects prometheus.
+        var config = new EmitterConfig("{\"namespace\":\"ns1\",\"targetConfig\":{\"port\":0}}");
+        var mock = new MockMessagingService();
+        var emitter = new MetricEmitter(config, mock, Platform.KUBERNETES);
+
+        emitter.defineMetric(metric("m1"));
+        emitter.emitMetricNow("m1", values());
+        // Prometheus (pull) => no messaging push despite the injected service.
+        assertTrue(mock.getPublishedMessages().isEmpty());
+
+        emitter.close();
+    }
+
+    @Test
+    void explicitConfigTargetOverridesKubernetesProfileDefault() {
+        // target=messaging explicitly set => wins over the KUBERNETES prometheus default.
+        var config = new EmitterConfig(
+                "{\"target\":\"messaging\",\"namespace\":\"ns1\",\"targetConfig\":{\"topic\":\"t/topic\",\"destination\":\"ipc\"}}");
+        var mock = new MockMessagingService();
+        var emitter = new MetricEmitter(config, mock, Platform.KUBERNETES);
+
+        emitter.defineMetric(metric("m1"));
+        emitter.emitMetricNow("m1", values());
+        assertEquals(1, mock.getPublishedMessages().size(), "explicit messaging target must still push");
+
+        emitter.close();
+    }
+
+    @Test
+    void resolveEffectiveTargetPrecedence() {
+        // Explicit config target wins regardless of platform.
+        assertEquals("messaging", MetricEmitter.resolveEffectiveTarget(
+                metricConfigOf("{\"target\":\"messaging\"}"), Platform.KUBERNETES));
+        // No explicit target: KUBERNETES => prometheus; HOST/GREENGRASS/null => library default "log".
+        assertEquals("prometheus", MetricEmitter.resolveEffectiveTarget(
+                metricConfigOf("{\"namespace\":\"ns1\"}"), Platform.KUBERNETES));
+        assertEquals("log", MetricEmitter.resolveEffectiveTarget(
+                metricConfigOf("{\"namespace\":\"ns1\"}"), Platform.HOST));
+        assertEquals("log", MetricEmitter.resolveEffectiveTarget(
+                metricConfigOf("{\"namespace\":\"ns1\"}"), Platform.GREENGRASS));
+        assertEquals("log", MetricEmitter.resolveEffectiveTarget(
+                metricConfigOf("{\"namespace\":\"ns1\"}"), null));
     }
 
     @Test

@@ -20,6 +20,14 @@ standalone = ["dep:rumqttc"]
 greengrass = ["dep:aws-greengrass-component-sdk"]
 # CloudWatch metric target via the AWS SDK (heavy deps; off by default).
 cloudwatch = ["dep:aws-config", "dep:aws-sdk-cloudwatch"]
+# Prometheus pull-based metric target (FR-MET-1/2/3): an in-process registry served as
+# OpenMetrics/Prometheus text over HTTP at /metrics. The DEFAULT metric target on the
+# KUBERNETES platform — but only when this feature is compiled in (a feature-less k8s build
+# gracefully falls back to the `log` target; an EXPLICIT config target=prometheus without the
+# feature is an error, mirroring the `cloudwatch` feature pattern). Off by default so the
+# standard build stays light; the community `prometheus` crate is cross-platform (its optional
+# `process`/`push` collectors are NOT enabled here).
+metrics-prometheus = ["dep:prometheus"]
 # Durable CloudWatch metric buffer: store-and-forward `PutMetricData` over the ggstreamlog
 # embedded disk buffer + export engine (a `CloudWatchSink` impl'ing the core `Sink` trait).
 # This feature alone pulls in ONLY the lightweight streaming core, so the buffer/serialize/
@@ -74,6 +82,12 @@ rumqttc = { version = "0.25", optional = true }
 # cloudwatch metric target (feature = "cloudwatch").
 aws-config = { version = "1", optional = true }
 aws-sdk-cloudwatch = { version = "1", optional = true }
+
+# prometheus metric target (feature = "metrics-prometheus"). The community client (tikv/
+# rust-prometheus); there is no Prometheus-org official Rust client. Default features only enable
+# the cross-platform `protobuf` exposition encoder used to serve a valid OpenMetrics Content-Type
+# (the `process` procfs collector and `push` gateway are deliberately NOT enabled).
+prometheus = { version = "0.14", optional = true }
 
 # Telemetry-streaming core (feature = "streaming"); the Kinesis sink adds the AWS SDK
 # (feature = "streaming-kinesis"). Pure-Rust core builds everywhere.

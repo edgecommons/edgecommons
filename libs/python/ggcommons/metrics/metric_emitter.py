@@ -5,6 +5,8 @@ from ggcommons.metrics.targets.cloudwatch import CloudWatch
 from ggcommons.metrics.targets.cloudwatch_component import CloudWatchComponent
 from ggcommons.metrics.targets.messaging import Messaging
 from ggcommons.metrics.targets.metric_log import MetricLog
+from ggcommons.metrics.targets.prometheus import Prometheus
+from ggcommons.platform.resolver import profile_metric_target
 
 
 class MetricEmitter:
@@ -24,7 +26,13 @@ class MetricEmitter:
         "log": MetricLog,
         "cloudwatch": CloudWatch,
         "cloudwatchcomponent": CloudWatchComponent,
+        # Pull-based target (FR-MET-1): in-process registry served as OpenMetrics text over HTTP;
+        # the platform-profile default on KUBERNETES (see _resolve_target).
+        "prometheus": Prometheus,
     }
+
+    # The library default when neither config nor the platform profile selects a target.
+    _DEFAULT_TARGET = "log"
 
     @staticmethod
     def init(config_manager: ConfigManager):
@@ -37,9 +45,9 @@ class MetricEmitter:
         MetricEmitter.logger.debug(f"MetricEmitter configuration - thing: {MetricEmitter.thing_name}, component: {MetricEmitter.component_name}")
 
         if MetricEmitter.metric_target is None:
-            target = MetricEmitter.metric_config.get_target()
             namespace = MetricEmitter.metric_config.get_namespace()
-            
+            target = MetricEmitter._resolve_target(config_manager)
+
             MetricEmitter.logger.info(f"Configuring metric target: {target}, namespace: {namespace}")
 
             factory = MetricEmitter._TARGET_FACTORIES.get(target.lower())
@@ -53,6 +61,31 @@ class MetricEmitter:
 
             config_manager.add_config_change_listener(MetricEmitter.metric_target)
             MetricEmitter.logger.info(f"MetricEmitter initialized successfully - target: {target}, registered metrics: {len(MetricEmitter.metrics)}")
+
+    @staticmethod
+    def _resolve_target(config_manager: ConfigManager) -> str:
+        """Resolve the effective metric target by the FR-MET-4 / FR-RT-3 precedence.
+
+        ``explicit metricEmission.target`` (if present in config) ▸ the platform-profile default
+        (``prometheus`` on KUBERNETES) ▸ the library default ``log``. The resolved platform is read
+        from the config manager (threaded in by the builder), mirroring how the logging-format
+        default is threaded — no new resolver->ConfigManager dependency.
+        """
+        explicit = config_manager.get_metric_config().get_explicit_target()
+        if explicit:
+            return explicit
+        platform = None
+        if hasattr(config_manager, "get_platform"):
+            platform = config_manager.get_platform()
+        profile_default = profile_metric_target(platform)
+        if profile_default:
+            MetricEmitter.logger.info(
+                "No explicit metricEmission.target; using the %s platform-profile default '%s'",
+                platform.value if platform is not None else None,
+                profile_default,
+            )
+            return profile_default
+        return MetricEmitter._DEFAULT_TARGET
 
     @staticmethod
     def get_metric_config():

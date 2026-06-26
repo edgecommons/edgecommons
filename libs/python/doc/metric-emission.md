@@ -16,10 +16,15 @@ Metrics in the system consist of:
 
 ### Common Configuration Options
 
-- **`target`**: (Required) Specifies which metric emission target to use. Valid values:
+- **`target`**: Specifies which metric emission target to use. When omitted, the effective target
+  follows the precedence *explicit `target` ▸ platform-profile default (`prometheus` on KUBERNETES) ▸
+  library default `log`* (FR-MET-4 / FR-RT-3). Valid values:
   - `"cloudwatch"` - Direct CloudWatch metrics emission with batching
-  - `"log"` - Local file logging with rotation support
+  - `"log"` - Local file logging with rotation support (the library default)
   - `"messaging"` - Message-based metrics via IPC or IoT Core
+  - `"cloudwatchcomponent"` - Hand off to a CloudWatch publisher component over messaging
+  - `"prometheus"` - **Pull-based** in-process registry served as OpenMetrics/Prometheus text over
+    HTTP (the default on the KUBERNETES platform). See the dedicated section below.
 - **`namespace`**: The namespace for your metrics (Default: "ggcommons")
 
 ### Template Variables
@@ -128,6 +133,62 @@ Publishes metrics through the messaging system in EMF format, supporting both lo
   }
 }
 ```
+
+#### 4. Prometheus Target (`"prometheus"`)
+A **pull-based** target (FR-MET-1/2/3): instead of pushing an EMF datum on each emit, it maintains an
+in-process registry of latest-value gauges and serves it as OpenMetrics/Prometheus text over HTTP for
+a scraper to pull. This is the **default metric target on the KUBERNETES platform** (the `prometheus`
+client lib is `prometheus-client`, an install dependency of the library).
+
+**Inverted lifecycle (FR-MET-2) — different from the push targets above:**
+- `emit_metric()` and `emit_metric_now()` both **only update the in-process registry** (set the gauge
+  for the emitted label-set). They never deliver anywhere and never make a network call, so a metric
+  emit can never block on the cloud. (There is no batching and no flush — the "batched" and
+  "immediate" paths are identical here.)
+- Delivery happens when a Prometheus scraper performs a `GET` against the exposition endpoint — the
+  *pull*. A "flush" is therefore a no-op with respect to delivery.
+- `close()` (invoked by `MetricEmitter.shutdown()` / `gg.shutdown()`) **stops the HTTP listener**, so
+  no port/thread leaks.
+
+The push targets (`log`/`messaging`/`cloudwatch`/`cloudwatchcomponent`) are unchanged — they still
+push EMF on emit. Only the `prometheus` target inverts the lifecycle.
+
+**Dimension → label mapping (FR-MET-3, identical across all four languages):**
+- gauge **name** = `sanitize(lowercase("{namespace}_{measureName}"))`, where `namespace` defaults to
+  `ggcommons` and `sanitize` replaces every char not matching `[a-z0-9_]` with `_` and prefixes a
+  leading digit with `_` (Prometheus metric-name rules).
+- **labels** = the metric's dimensions (`coreName`, `category` = the metric name, `component`, plus
+  any custom dimensions). Each label *name* is sanitized to `[a-zA-Z_][a-zA-Z0-9_]*` (invalid chars →
+  `_`, leading digit prefixed with `_`); each label *value* is used as-is.
+- the gauge for that label-set is **set** to the measure's float value on each emit (latest-value
+  gauge semantics).
+
+The exposition binds `0.0.0.0` on the configured `port` (default `9090`) and serves the configured
+`path` (default `/metrics`); any other path returns `404`. The `Content-Type` is the client lib's
+`CONTENT_TYPE_LATEST` (`text/plain; version=0.0.4; charset=utf-8`) — a valid, non-blank type that
+Prometheus 3.x accepts.
+
+**Configuration options:**
+- **`port`**: HTTP port for the `/metrics` endpoint (Default: 9090).
+- **`path`**: HTTP path for the OpenMetrics exposition (Default: "/metrics").
+
+**Example:**
+```json
+{
+  "metricEmission": {
+    "target": "prometheus",
+    "namespace": "MyApp/Metrics",
+    "targetConfig": {
+      "port": 9090,
+      "path": "/metrics"
+    }
+  }
+}
+```
+
+On the KUBERNETES platform the section can be omitted entirely — the platform-profile default selects
+`prometheus` with the default port/path. An explicit `target` (e.g. `"log"`) always overrides the
+platform default.
 
 ## Configuration Examples
 

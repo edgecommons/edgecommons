@@ -32,6 +32,9 @@ REQUIRED = [
     # Credentials / encrypted local vault subsystem (always importable, like the other subsystems).
     "cryptography>=43.0.0",
     "filelock>=3.12.0",
+    # Pull-based `prometheus` metric target (FR-MET-1): in-process registry served as OpenMetrics
+    # text over HTTP; the default metric target on the KUBERNETES platform.
+    "prometheus-client>=0.20",
 ]
 
 # What packages are optional?

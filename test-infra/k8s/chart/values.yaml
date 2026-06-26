@@ -74,13 +74,12 @@ config:
       files: false
       threads: true
       fds: false
+  # No explicit `target`: on the KUBERNETES platform the metric target DEFAULTS to `prometheus`
+  # (Phase 1c) — an in-process registry served as OpenMetrics text at :9090/metrics. So the heartbeat
+  # (routed via `heartbeat.targets: [{type: metric}]`) and any app metrics are SCRAPED, not pushed.
+  # gauge name = sanitize(lower("{namespace}_{measure}")), so e.g. heartbeat memory -> ggcommons_memory_usage.
   metricEmission:
-    target: log
     namespace: ggcommons
-    targetConfig:
-      # Writable path; on k8s the cluster log agent owns rotation (1c switches the
-      # default sink to stdout-JSON — out of scope for 1a).
-      logFileName: /tmp/ggcommons-metrics.log
   # Free-form business config; `component` is required by the schema.
   component:
     global:
@@ -103,13 +102,27 @@ rbac:
   create: false
 
 service:
-  # -- A ClusterIP Service exposing the (future) health + metrics ports. In 1a the
-  # component does not yet listen on these — this is a placeholder for 1c (/livez,
-  # /readyz) and the prometheus target. helm template/lint render it regardless.
+  # -- A ClusterIP Service exposing the health (/livez,/readyz) and metrics (/metrics) ports,
+  # both served by the component as of Phase 1c.
   enabled: true
   type: ClusterIP
   healthPort: 8081
   metricsPort: 9090
+
+# -- Optional Prometheus Operator ServiceMonitor wiring the scrape of the `metrics` port.
+# OFF by default (it requires the Prometheus Operator CRD; the smoke validates /metrics by a
+# direct GET instead). Enable on a cluster that runs the Prometheus Operator. Central, multi-site
+# aggregation is then the collector's outbound remote_write to AMP/Mimir/Thanos/Grafana Cloud —
+# edge-initiated egress, never cloud->edge inbound (see test-infra/k8s/README.md + DESIGN-subsystems §3).
+serviceMonitor:
+  enabled: false
+  # /metrics path (matches the component's prometheus targetConfig.path default).
+  path: /metrics
+  # Scrape interval/timeout for the metrics endpoint (the SCRAPER owns the cadence, not the component).
+  interval: 30s
+  scrapeTimeout: 10s
+  # Extra labels (e.g. `release: kube-prometheus-stack`) so the operator selects this monitor.
+  labels: {}
 
 # Real HTTP probes against the component's health server (Phase 1c-health). The component
 # listens on `service.healthPort` (the `health` container port) and serves /livez, /readyz,

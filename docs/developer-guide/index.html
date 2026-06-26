@@ -951,6 +951,18 @@ Where those metrics go is chosen by configuration, not code.</p>
 <figcaption>One emit call; the configured target decides the destination. Dimensions for component and Thing name are added automatically.</figcaption>
 </figure>
 
+<div class="callout note"><span class="ct">Pull-based <code>prometheus</code> target (Kubernetes)</span>
+<p>A fifth target, <code>prometheus</code>, is the <strong>default on <code>--platform KUBERNETES</code></strong>. Instead of
+pushing, it keeps an in-process registry and serves it as OpenMetrics text at an HTTP <code>/metrics</code> endpoint
+(default port <code>9090</code>; configure via <code>metricEmission.targetConfig.{port,path}</code>). The same
+<code>emitMetric</code> call updates a gauge — <code>flush()</code> is a no-op and <code>close()</code> stops the
+listener. Each measure becomes a gauge named <code>sanitize("{namespace}_{measure}")</code> and the metric's
+dimensions become labels. <strong>The scrape is local</strong> (a collector in the same cluster), never cloud→edge
+inbound; central multi-site aggregation is the collector's <em>outbound</em> <code>remote_write</code> to AMP/Mimir/Thanos
+— see <code>docs/platform/DESIGN-subsystems.md §3.1</code>. The push targets (<code>cloudwatch</code> with its durable
+buffer, <code>messaging</code>, <code>log</code>) remain available; on GREENGRASS/HOST the default is still <code>log</code>.
+<span class="muted">(Rust: behind the off-by-default <code>metrics-prometheus</code> feature.)</span></p></div>
+
 <h3>Define and emit</h3>
 <div class="code-sample" data-sample="emitmetric"></div>
 <script type="text/plain" class="src" data-sample="emitmetric" data-lang="java">

@@ -455,4 +455,27 @@ class PlatformResolverTest {
         assertFalse(PlatformResolver.PROFILES.get(Platform.HOST).healthEnabled());
         assertFalse(PlatformResolver.PROFILES.get(Platform.GREENGRASS).healthEnabled());
     }
+
+    // ---------- profileMetricTarget (FR-MET-1 / FR-RT-3) ----------
+
+    @Test
+    void profileMetricTargetIsPrometheusOnlyForKubernetes() {
+        assertEquals(PlatformResolver.METRIC_TARGET_PROMETHEUS,
+                PlatformResolver.profileMetricTarget(Platform.KUBERNETES),
+                "metric target defaults to prometheus for KUBERNETES");
+        assertNull(PlatformResolver.profileMetricTarget(Platform.HOST));
+        assertNull(PlatformResolver.profileMetricTarget(Platform.GREENGRASS));
+    }
+
+    @Test
+    void profileMetricTargetNullForNullPlatform() {
+        assertNull(PlatformResolver.profileMetricTarget(null));
+    }
+
+    @Test
+    void profileMetricTargetFieldMatchesProfileTable() {
+        assertEquals("prometheus", PlatformResolver.PROFILES.get(Platform.KUBERNETES).metricTarget());
+        assertNull(PlatformResolver.PROFILES.get(Platform.HOST).metricTarget());
+        assertNull(PlatformResolver.PROFILES.get(Platform.GREENGRASS).metricTarget());
+    }
 }

@@ -156,6 +156,67 @@ lifecycle inversion uniformly. Java/Python silently skip messaging injection (NP
 scrape under the prometheus target — must be documented. New inbound listener/port (NFR-SEC-4). Dimension
 cap (10) and `coreName`/`largeFleetWorkaround` are CloudWatch-isms needing a documented label-mapping policy.
 
+### 3.1 Edge networking & central aggregation (how pull works behind a "no cloud-inbound" firewall)
+
+The pull model does **not** mean the cloud reaches into the edge. `/metrics` is only ever scraped from
+**inside the site/cluster trust boundary** — a collector (sidecar / per-node agent / per-site Prometheus)
+on the same network as the pod. The cloud never initiates a connection to the edge, so a "no inbound HTTP
+from the cloud" posture is satisfied by construction. Central, multi-site aggregation is achieved with
+**outbound, edge-initiated `remote_write`/push** from a per-site collector to a central store:
+
+```
+  cloud ──X──▶ (no inbound)   SITE / FACTORY (edge cluster)
+                              component pods ──/metrics (intra-site scrape)──▶ local collector
+                                                                              (Alloy / ADOT / vmagent /
+                                                                               Prometheus-agent)
+                                                                                   │ remote_write (HTTPS 443, OUTBOUND)
+                                                                                   ▼
+                                                  central TSDB (AMP / Mimir / Thanos / VictoriaMetrics / Grafana Cloud)
+```
+
+- **Same network direction as CloudWatch** (edge→cloud egress); only the protocol differs (`remote_write`
+  vs `PutMetricData`). The egress moves from *inside each component* to *one collector per site*.
+- **Topology labels** (`site`/`factory`, `cluster`, `node`, plus the component's `thing`/`component`
+  dimensions) are the multi-tenancy keys — the Prometheus equivalent of CloudWatch dimensions; aggregate
+  centrally with `sum by (site, component) (...)` and federate **edge → regional → central** for large fleets.
+- **Disconnect tolerance**: the collector's **WAL** buffers during a cloud outage and drains on reconnect
+  (the pull analogue of the FR-MET-5 durable CloudWatch buffer); the **component** has zero cloud
+  dependency/egress for metrics, and a missed scrape is just a gap (Prometheus also gets a free `up`
+  liveness signal). A fully **air-gapped** site still gets complete *local* observability (on-site
+  Prometheus/Grafana) and catches up centrally if/when a link exists.
+- **AWS/CloudWatch parity**, all outbound: (1) keep the direct `cloudwatch` durable-buffer target
+  (FR-MET-5) as the literal CloudWatch path; (2) an **ADOT Collector** scrapes `/metrics` → AMP
+  remote_write or → CloudWatch (EMF exporter); (3) **EMF-over-stdout** → Fluent Bit → CloudWatch Logs /
+  Container Insights. The prometheus target is **additive** to the push targets, never a replacement.
+
+The Helm chart ships an **opt-in `ServiceMonitor`** (off by default; requires the Prometheus Operator)
+documenting the in-cluster scrape; the smoke validates `/metrics` by a direct in-pod GET instead.
+
+### 3.2 Deferred enhancements (captured, not built in the prometheus slice)
+
+The shipped target is the standard **in-memory gauge** registry (latest-value per measure). Three
+follow-ups are recorded for a deliberate later decision:
+
+- **(B) Measure `type` model (gauge / counter / histogram).** ggcommons measures carry name+unit but no
+  type, so every measure maps to a latest-value **gauge** — which is lossy *between scrapes* for
+  measurement-style values (e.g. latency). The idiomatic Prometheus fix is to model a measure type and map
+  measurements to **histograms** (every observation contributes to count/sum/buckets, surviving scrape
+  gaps in aggregate) and monotonic values to **counters**. This is a four-language `Metric`/`Measure` API
+  addition — do it in lockstep, Java canonical.
+- **(C) Unified durable "metrics streamlog → pluggable exporters".** Have every `emitMetric` append to one
+  durable `ggstreamlog` metrics buffer, with each target a reader/exporter (CloudWatch/Kinesis drain+push;
+  prometheus folds the log into its registry). Wins: one durable buffer for push *and* pull + counter
+  **restart-survival**. It should **subsume the FR-MET-5 CloudWatch buffer**; bigger, best as its own phase.
+  Note: for the *pull* path this does **not** add lossless-between-scrapes (the scraper still samples — that
+  durability is the collector WAL's job); its value is restart-durability + unifying push/pull behind one buffer.
+- **(D) Heartbeat in a pull world.** The heartbeat is a metric *producer* that already routes through the
+  metric target (so on KUBERNETES its samples land in the prometheus registry — not "folded in"). But its
+  internal **interval timer is partly redundant with the scrape interval**; the idiomatic pull pattern is a
+  **scrape-time collector** (sample lazily when pulled). And k8s already exposes per-container CPU/mem via
+  cAdvisor/kubelet, so per-pod heartbeat resource metrics are partly redundant at the infra layer (app-level
+  heartbeat still adds self-reported liveness + the `thing` identity + off-k8s value). Ties into FR-HB-4
+  (cgroup-aware heartbeat).
+
 ---
 
 ## 4. Heartbeat — an HTTP health endpoint + graceful shutdown

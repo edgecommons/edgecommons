@@ -41,8 +41,16 @@ platform-profile default ▸ library default — applied by the logging configur
 ``True`` (the HTTP health server starts by default), while GREENGRASS/HOST leave it
 ``False`` (opt-in via ``health.enabled``). The effective enable follows the same
 precedence — explicit ``health.enabled`` config ▸ this platform-profile default ▸ off —
-applied where the health server is started (see :func:`profile_health_enabled`). The
-``prometheus`` metrics target is deferred to a later Phase-1 sub-phase.
+applied where the health server is started (see :func:`profile_health_enabled`).
+
+**Phase 1c (prometheus slice):** the :class:`PlatformProfile` gains a
+:attr:`~PlatformProfile.metric_target` default; the KUBERNETES profile defaults it to
+:data:`METRIC_TARGET_PROMETHEUS` (the pull-based in-process registry exposed as OpenMetrics
+text at an HTTP ``/metrics`` endpoint), while GREENGRASS/HOST leave it ``None`` (the library
+default ``log`` target). The effective metric target follows the same one-line precedence —
+explicit ``metricEmission.target`` config ▸ this platform-profile default ▸ library default
+``log`` — applied by :class:`~ggcommons.metrics.metric_emitter.MetricEmitter` when it selects
+the target (see :func:`profile_metric_target`).
 """
 
 import logging
@@ -85,6 +93,11 @@ DEFAULT_IDENTITY = "NOT_GREENGRASS"
 #: per-language ``logging.<lang>_format`` token. Consistent across all four languages.
 LOGGING_FORMAT_JSON = "json"
 
+#: The pull-based metric target (FR-MET-1): an in-process registry exposed as OpenMetrics/Prometheus
+#: text over HTTP. The KUBERNETES profile defaults ``metricEmission.target`` to this value. Consistent
+#: across all four languages.
+METRIC_TARGET_PROMETHEUS = "prometheus"
+
 
 @dataclass(frozen=True)
 class PlatformProfile:
@@ -109,12 +122,19 @@ class PlatformProfile:
             config), ``False`` elsewhere. The middle tier of the FR-RT-3 precedence —
             explicit ``health.enabled`` config ▸ this default ▸ off — applied where the
             health server is started; see :func:`profile_health_enabled`.
+        metric_target: the platform's default ``metricEmission.target`` (Phase 1c prometheus
+            slice). :data:`METRIC_TARGET_PROMETHEUS` on KUBERNETES (the pull-based registry),
+            ``None`` elsewhere (fall through to the library default ``log``). The middle tier of
+            the FR-RT-3 precedence — explicit ``metricEmission.target`` config ▸ this default ▸
+            ``log`` — applied by ``MetricEmitter`` when selecting the target; see
+            :func:`profile_metric_target`.
     """
 
     transport: Transport
     config_source: str
     logging_format: Optional[str] = None
     health_enabled: bool = False
+    metric_target: Optional[str] = None
 
 
 #: The platform-profile table (DESIGN-core sec 3). GREENGRASS and HOST deliberately default the
@@ -122,14 +142,19 @@ class PlatformProfile:
 #: ``MQTT`` transport and the k8s-native ``CONFIGMAP`` config source.
 #:
 #: Phase 1c models the KUBERNETES profile's default ``logging_format`` (``json``, the stdout-JSON
-#: sink). GREENGRASS/HOST keep ``None`` (the library console/text default), so their logging is
-#: unchanged. TODO (Phase 1d): the KUBERNETES profile's metrics/credentials/streaming defaults
-#: (prometheus target, env KeyProvider, PVC buffer) are not yet modeled here.
+#: sink) and ``metric_target`` (``prometheus``, the pull-based registry). GREENGRASS/HOST keep
+#: ``None`` for both (the library console/text default + the ``log`` metric target), so their
+#: behavior is unchanged. TODO (Phase 1d): the KUBERNETES profile's credentials/streaming defaults
+#: (env KeyProvider, PVC buffer) are not yet modeled here.
 PROFILES: Mapping[Platform, PlatformProfile] = {
     Platform.GREENGRASS: PlatformProfile(Transport.IPC, "GG_CONFIG"),
     Platform.HOST: PlatformProfile(Transport.MQTT, "GG_CONFIG"),
     Platform.KUBERNETES: PlatformProfile(
-        Transport.MQTT, "CONFIGMAP", LOGGING_FORMAT_JSON, health_enabled=True
+        Transport.MQTT,
+        "CONFIGMAP",
+        LOGGING_FORMAT_JSON,
+        health_enabled=True,
+        metric_target=METRIC_TARGET_PROMETHEUS,
     ),
 }
 
@@ -174,6 +199,28 @@ def profile_health_enabled(platform: Optional[Platform]) -> bool:
         return False
     profile = PROFILES.get(platform)
     return False if profile is None else profile.health_enabled
+
+
+def profile_metric_target(platform: Optional[Platform]) -> Optional[str]:
+    """Return the platform-profile default metric target, or ``None`` (FR-MET-4 / FR-RT-3).
+
+    This is the **middle** tier of the metric-target precedence — explicit ``metricEmission.target``
+    config ▸ this platform-profile default ▸ library default ``log`` — consulted by
+    :class:`~ggcommons.metrics.metric_emitter.MetricEmitter` when it selects the target. It is a pure
+    lookup (no I/O, no ``ConfigManager`` dependency), so the resolved platform alone selects the
+    default: KUBERNETES yields :data:`METRIC_TARGET_PROMETHEUS`, every other platform yields ``None``
+    (the caller falls through to ``log``).
+
+    Args:
+        platform: the resolved platform, or ``None`` (e.g. a caller that bypassed the resolver).
+
+    Returns:
+        The profile's default metric target token, or ``None`` to keep the library default.
+    """
+    if platform is None:
+        return None
+    profile = PROFILES.get(platform)
+    return None if profile is None else profile.metric_target
 
 
 @dataclass(frozen=True)

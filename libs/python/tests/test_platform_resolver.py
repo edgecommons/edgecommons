@@ -18,12 +18,14 @@ from ggcommons.platform import (
     ENV_THING_NAME,
     K8S_SA_TOKEN_PATH,
     LOGGING_FORMAT_JSON,
+    METRIC_TARGET_PROMETHEUS,
     PROFILES,
     Platform,
     ResolverInputs,
     Transport,
     detect_platform,
     profile_logging_format,
+    profile_metric_target,
     resolve_identity,
     resolve_profile,
     validate,
@@ -337,3 +339,27 @@ def test_profile_logging_format_helper():
     assert profile_logging_format(Platform.GREENGRASS) is None
     # A None platform (caller bypassing the resolver) falls through to the library default.
     assert profile_logging_format(None) is None
+
+
+# ---------- Phase 1c: the metric-target profile default (FR-MET-4 / FR-RT-3) ----------
+
+def test_kubernetes_profile_defaults_metric_target_to_prometheus():
+    assert (
+        PROFILES[Platform.KUBERNETES].metric_target
+        == METRIC_TARGET_PROMETHEUS
+        == "prometheus"
+    )
+
+
+def test_greengrass_and_host_profiles_keep_library_metric_default():
+    # None => no platform default => the library `log` metric target is kept (metrics unchanged).
+    assert PROFILES[Platform.GREENGRASS].metric_target is None
+    assert PROFILES[Platform.HOST].metric_target is None
+
+
+def test_profile_metric_target_helper():
+    assert profile_metric_target(Platform.KUBERNETES) == "prometheus"
+    assert profile_metric_target(Platform.HOST) is None
+    assert profile_metric_target(Platform.GREENGRASS) is None
+    # A None platform (caller bypassing the resolver) falls through to the library default (log).
+    assert profile_metric_target(None) is None

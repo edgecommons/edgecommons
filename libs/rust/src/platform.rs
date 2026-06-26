@@ -124,6 +124,18 @@ pub struct PlatformProfile {
     /// the orchestrator's contract); `false` on GREENGRASS/HOST (opt-in via `health.enabled=true`).
     /// Precedence (FR-RT-3): explicit `health.enabled` ▸ this profile default ▸ `false`.
     pub health_enabled: bool,
+    /// The default `metricEmission.target` for this platform (FR-MET-1 / FR-RT-3), applied when the
+    /// component config omits `metricEmission.target`. `Some("prometheus")` on KUBERNETES (the
+    /// pull-based in-process registry served at `/metrics`); `None` on GREENGRASS/HOST so the
+    /// library default (`log`) is unchanged off-Kubernetes. Precedence is enforced by the
+    /// metric-target selector (explicit config ▸ this profile default ▸ `log` — FR-RT-3).
+    ///
+    /// NOTE (Rust feature gating): this is pure profile *data* and is `Some("prometheus")` on
+    /// KUBERNETES regardless of cargo features. The *effective* k8s default only resolves to
+    /// `prometheus` when the `metrics-prometheus` feature is compiled in; without it the selector
+    /// gracefully falls back to `log` (with a warning). See
+    /// [`crate::metrics::resolve_effective_target`].
+    pub metric_target: Option<&'static str>,
 }
 
 /// The output of [`resolve_profile`]: the fully resolved runtime settings that every
@@ -194,22 +206,26 @@ pub fn profile(platform: Platform) -> Option<PlatformProfile> {
             config_source: "GG_CONFIG",
             logging_format: None,
             health_enabled: false,
+            metric_target: None,
         }),
         Platform::Host => Some(PlatformProfile {
             transport: Transport::Mqtt,
             config_source: "GG_CONFIG",
             logging_format: None,
             health_enabled: false,
+            metric_target: None,
         }),
         // Phase 1a: KUBERNETES is wired — MQTT transport (no Nucleus IPC) and the k8s-native
         // CONFIGMAP source (a mounted ConfigMap directory) as its default config source.
-        // Phase 1c: its default logging format is the structured stdout-JSON sink (FR-LOG-1), and
-        // the HTTP health/readiness endpoint (FR-HB-1) is on by default.
+        // Phase 1c: its default logging format is the structured stdout-JSON sink (FR-LOG-1), the
+        // HTTP health/readiness endpoint (FR-HB-1) is on by default, and the default metric target
+        // is the pull-based `prometheus` registry served at `/metrics` (FR-MET-1).
         Platform::Kubernetes => Some(PlatformProfile {
             transport: Transport::Mqtt,
             config_source: "CONFIGMAP",
             logging_format: Some("json"),
             health_enabled: true,
+            metric_target: Some("prometheus"),
         }),
     }
 }
@@ -221,6 +237,16 @@ pub fn profile(platform: Platform) -> Option<PlatformProfile> {
 /// in [`crate::GgCommonsBuilder::build`].
 pub fn profile_health_enabled(platform: Platform) -> bool {
     profile(platform).map(|p| p.health_enabled).unwrap_or(false)
+}
+
+/// The platform-profile default `metricEmission.target` for `platform` — consulted when the
+/// component config omits `metricEmission.target` (FR-MET-1, precedence FR-RT-3). `Some("prometheus")`
+/// on KUBERNETES, `None` elsewhere (and for any platform without a profile). Mirrors the threading of
+/// [`profile_health_enabled`] / the logging-format default; the final decision (explicit config ▸ this
+/// default ▸ `log`, plus the Rust `metrics-prometheus` feature gate) is made in
+/// [`crate::metrics::resolve_effective_target`].
+pub fn profile_metric_target(platform: Platform) -> Option<&'static str> {
+    profile(platform).and_then(|p| p.metric_target)
 }
 
 /// The platforms that have a profile (GREENGRASS, HOST, KUBERNETES). Mirrors the Java `PROFILES`
@@ -766,6 +792,24 @@ mod tests {
         assert!(profile_health_enabled(Platform::Kubernetes));
         assert!(!profile_health_enabled(Platform::Greengrass));
         assert!(!profile_health_enabled(Platform::Host));
+    }
+
+    #[test]
+    fn kubernetes_profile_defaults_metric_target_to_prometheus() {
+        // FR-MET-1: the KUBERNETES profile's default metric target is the pull-based prometheus
+        // registry; GREENGRASS/HOST carry no profile default (None) so the library default (log)
+        // is unchanged off-Kubernetes. (This is pure profile data; the Rust feature gate is applied
+        // by the metric-target selector, not here.)
+        assert_eq!(Some("prometheus"), profile(Platform::Kubernetes).unwrap().metric_target);
+        assert_eq!(None, profile(Platform::Greengrass).unwrap().metric_target);
+        assert_eq!(None, profile(Platform::Host).unwrap().metric_target);
+    }
+
+    #[test]
+    fn profile_metric_target_helper_matches_profiles() {
+        assert_eq!(Some("prometheus"), profile_metric_target(Platform::Kubernetes));
+        assert_eq!(None, profile_metric_target(Platform::Greengrass));
+        assert_eq!(None, profile_metric_target(Platform::Host));
     }
 
     #[test]

@@ -8,6 +8,8 @@ import com.breissinger.ggcommons.config.ConfigManager;
 import com.breissinger.ggcommons.config.MetricConfiguration;
 import com.breissinger.ggcommons.messaging.MessagingClient;
 import com.breissinger.ggcommons.metrics.targets.*;
+import com.breissinger.ggcommons.platform.Platform;
+import com.breissinger.ggcommons.platform.PlatformResolver;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -42,14 +44,34 @@ public class MetricEmitter
     }
 
     /**
-     * Package-private constructor for builder pattern.
+     * Package-private constructor for builder pattern. Equivalent to
+     * {@link #MetricEmitter(ConfigManager, MessagingClient, Platform)} with a {@code null} platform —
+     * no platform-profile metric-target default applies, so the effective target is the explicit
+     * config target (or the library default {@code "log"}). Retained for backward compatibility.
      */
     MetricEmitter(ConfigManager configurationService, MessagingClient messagingService) {
+        this(configurationService, messagingService, null);
+    }
+
+    /**
+     * Package-private constructor for builder pattern with the resolved deployment platform.
+     *
+     * <p>The effective metric target follows the FR-RT-3 precedence: an explicit
+     * {@code metricEmission.target} from the config wins; otherwise the platform-profile default
+     * (prometheus on KUBERNETES, via {@link PlatformResolver#profileMetricTarget}); otherwise the
+     * library default {@code "log"}. See {@link #resolveEffectiveTarget}.
+     *
+     * @param configurationService the configuration manager
+     * @param messagingService     the messaging client (injected into messaging/cloudwatchcomponent targets)
+     * @param platform             the resolved deployment platform (selects the KUBERNETES prometheus
+     *                             default), or {@code null} for none
+     */
+    MetricEmitter(ConfigManager configurationService, MessagingClient messagingService, Platform platform) {
         this.metricConfig = configurationService.getMetricConfig();
         this.thingName = configurationService.getThingName();
         this.componentName = configurationService.getComponentName();
-        
-        String target = metricConfig.getTarget();
+
+        String target = resolveEffectiveTarget(metricConfig, platform);
         this.metricTarget = switch (target.toLowerCase()) {
             case "messaging" -> {
                 Messaging messaging = new Messaging(configurationService);
@@ -66,15 +88,38 @@ public class MetricEmitter
                 }
                 yield cwComponent;
             }
+            case "prometheus" -> new Prometheus(configurationService);
             case "log" -> new Log(configurationService);
             default -> {
                 LOGGER.warn("Invalid metric target '{}' specified. Defaulting to 'log'", target);
                 yield new Log(configurationService);
             }
         };
-        
-        LOGGER.info("MetricEmitter initialized with target: {}", target);
+
+        LOGGER.info("MetricEmitter initialized with target: {} (platform={})", target, platform);
         configurationService.addConfigChangeListener(metricTarget);
+    }
+
+    /**
+     * Resolves the effective metric target by the FR-RT-3 precedence:
+     * <pre>
+     *   explicit metricEmission.target  ▸  platform-profile default (prometheus on KUBERNETES)  ▸  "log"
+     * </pre>
+     * Mirrors {@code GGCommons.resolveHealthEnabled} (health) and the logging-format resolution.
+     *
+     * @param cfg      the metric configuration (its {@code target} is {@code "log"} when unset)
+     * @param platform the resolved platform (may be {@code null})
+     * @return the effective metric-target token
+     */
+    static String resolveEffectiveTarget(MetricConfiguration cfg, Platform platform) {
+        if (cfg.isTargetExplicitlySet()) {
+            return cfg.getTarget();  // explicit config wins (top tier)
+        }
+        String profileDefault = PlatformResolver.profileMetricTarget(platform);
+        if (profileDefault != null) {
+            return profileDefault;   // platform-profile default (prometheus on KUBERNETES)
+        }
+        return cfg.getTarget();      // library default ("log")
     }
     
 

@@ -26,8 +26,9 @@
  * **Phase 1c:** the KUBERNETES profile now defaults its logging format to {@link JSON_LOG_FORMAT} (the
  * structured stdout-JSON sink, FR-LOG-1); {@link profileLoggingFormat} exposes that default to the
  * logging configurator. The KUBERNETES profile also turns the HTTP health endpoint on by default
- * (FR-HB-1); {@link profileHealthEnabled} exposes that default to the lifecycle builder. The
- * `prometheus` metrics target remains deferred to a later Phase-1 sub-phase.
+ * (FR-HB-1); {@link profileHealthEnabled} exposes that default to the lifecycle builder. The KUBERNETES
+ * profile now also defaults its metric target to the pull-based `prometheus` target (FR-MET-4);
+ * {@link profileMetricTarget} exposes that default to the metrics service.
  */
 import { existsSync } from "fs";
 
@@ -87,6 +88,14 @@ export interface PlatformProfile {
    * {@link profileHealthEnabled}; an explicit `health.enabled` always wins.
    */
   readonly healthEnabled?: boolean;
+  /**
+   * The default metric target for this platform, applied when the component config sets no
+   * `metricEmission.target` (FR-MET-4/FR-RT-3). `KUBERNETES` defaults to {@link PROMETHEUS_METRIC_TARGET}
+   * (the pull-based prometheus target); `GREENGRASS`/`HOST` leave this `undefined` so the library default
+   * (`log`) is unchanged. Consulted by the metrics service via {@link profileMetricTarget}; an explicit
+   * `metricEmission.target` always wins.
+   */
+  readonly metricTarget?: string;
 }
 
 /**
@@ -162,6 +171,13 @@ export const ENV_K8S_NODE_NAME = "NODE_NAME";
  * truth; consumed by the logging configurator.
  */
 export const JSON_LOG_FORMAT = "json";
+/**
+ * The metric-target token selecting the pull-based prometheus target (FR-MET-1/FR-MET-4) — an
+ * in-process registry exposed as OpenMetrics text over HTTP. The KUBERNETES profile's default metric
+ * target (see {@link PROFILES}). Kept here (next to the profile default) as the single source of truth;
+ * consumed by the metrics service via {@link profileMetricTarget}.
+ */
+export const PROMETHEUS_METRIC_TARGET = "prometheus";
 /** Confirming (secondary) Kubernetes signal. The token file is the primary, definitive one. */
 export const ENV_K8S_SERVICE_HOST = "KUBERNETES_SERVICE_HOST";
 /** Projected service-account token path: the primary, definitive Kubernetes signal. */
@@ -176,9 +192,10 @@ export const DEFAULT_IDENTITY = "NOT_GREENGRASS";
  * transport and the k8s-native `CONFIGMAP` config source.
  *
  * Phase 1c adds the KUBERNETES profile's default `loggingFormat` ({@link JSON_LOG_FORMAT}: the
- * structured stdout-JSON sink). TODO (Phase 1b–1d): the metrics/credentials/streaming defaults
- * (prometheus target, env KeyProvider, PVC buffer) are not yet modeled here — those subsystems keep
- * their current library defaults for now.
+ * structured stdout-JSON sink), `healthEnabled`, and (prometheus slice) the default `metricTarget`
+ * ({@link PROMETHEUS_METRIC_TARGET}: the pull-based prometheus target). TODO (Phase 1d): the
+ * credentials/streaming defaults (env KeyProvider, PVC buffer) are not yet modeled here — those
+ * subsystems keep their current library defaults for now.
  */
 export const PROFILES: ReadonlyMap<Platform, PlatformProfile> = new Map([
   [Platform.GREENGRASS, { transport: Transport.IPC, configSource: "GG_CONFIG" } as PlatformProfile],
@@ -190,6 +207,7 @@ export const PROFILES: ReadonlyMap<Platform, PlatformProfile> = new Map([
       configSource: "CONFIGMAP",
       loggingFormat: JSON_LOG_FORMAT,
       healthEnabled: true,
+      metricTarget: PROMETHEUS_METRIC_TARGET,
     } as PlatformProfile,
   ],
 ]);
@@ -213,6 +231,17 @@ export function profileLoggingFormat(platform: Platform): string | undefined {
  */
 export function profileHealthEnabled(platform: Platform): boolean {
   return PROFILES.get(platform)?.healthEnabled === true;
+}
+
+/**
+ * The platform-profile default metric target for `platform` (FR-MET-4/FR-RT-3), or `undefined` when the
+ * profile pins no default (GREENGRASS/HOST → library default `log`). Threaded into the metrics service
+ * so a KUBERNETES pod with no `metricEmission.target` config selects the pull-based prometheus target,
+ * while explicit config still wins. Pure lookup; the metrics service owns the precedence
+ * (explicit config ▸ this profile default ▸ library default `log`). Mirrors {@link profileLoggingFormat}.
+ */
+export function profileMetricTarget(platform: Platform): string | undefined {
+  return PROFILES.get(platform)?.metricTarget;
 }
 
 /**

@@ -84,9 +84,9 @@
       "properties": {
         "target": {
           "type": "string",
-          "enum": ["log", "messaging", "cloudwatch", "cloudwatchcomponent"],
+          "enum": ["log", "messaging", "cloudwatch", "cloudwatchcomponent", "prometheus"],
           "default": "log",
-          "description": "Target destination for metrics"
+          "description": "Target destination for metrics. 'prometheus' is a pull-based target (in-process registry exposed as OpenMetrics text at an HTTP /metrics endpoint) and is the default on the KUBERNETES platform."
         },
         "namespace": {
           "type": "string",
@@ -155,6 +155,18 @@
                 }
               },
               "additionalProperties": false
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "default": 9090,
+              "description": "HTTP port for the prometheus target's /metrics endpoint (prometheus target only)."
+            },
+            "path": {
+              "type": "string",
+              "default": "/metrics",
+              "description": "HTTP path for the prometheus target's OpenMetrics exposition (prometheus target only)."
             }
           },
           "additionalProperties": false

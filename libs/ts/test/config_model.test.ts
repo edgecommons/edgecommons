@@ -32,11 +32,30 @@ describe("Config.fromValue", () => {
     it("applies defaults when metricEmission is empty", () => {
       const mc = Config.fromValue("c", "t", {}).parsed.metricEmission;
       expect(mc.target()).toBe("log");
+      expect(mc.explicitTarget()).toBeUndefined();
       expect(mc.namespace()).toBe("ggcommons");
       expect(mc.destination()).toBe("ipc");
       expect(mc.intervalSecs()).toBe(5);
       expect(mc.logFileName()).toContain("{ComponentFullName}");
       expect(mc.topic()).toBe("{ThingName}/{ComponentName}/metric");
+      // prometheus target accessors (FR-MET-1): schema defaults port 9090, path /metrics.
+      expect(mc.prometheusPort()).toBe(9090);
+      expect(mc.prometheusPath()).toBe("/metrics");
+    });
+
+    it("prometheus target port/path overrides + invalid-port fallback", () => {
+      const mc = Config.fromValue("c", "t", {
+        metricEmission: { target: "prometheus", targetConfig: { port: 9123, path: "/prom" } },
+      }).parsed.metricEmission;
+      expect(mc.target()).toBe("prometheus");
+      expect(mc.explicitTarget()).toBe("prometheus");
+      expect(mc.prometheusPort()).toBe(9123);
+      expect(mc.prometheusPath()).toBe("/prom");
+      // Out-of-range / non-numeric port falls back to the 9090 default.
+      const bad = Config.fromValue("c", "t", {
+        metricEmission: { targetConfig: { port: 0 } },
+      }).parsed.metricEmission;
+      expect(bad.prometheusPort()).toBe(9090);
     });
 
     it("cloudwatchcomponent target topic default", () => {

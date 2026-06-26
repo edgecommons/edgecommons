@@ -237,6 +237,18 @@ class ConfigManager:
     def get_metric_config(self) -> MetricConfiguration:
         return self._metric_config
 
+    def get_platform(self):
+        """The resolved :class:`~ggcommons.platform.platform.Platform` (or ``None`` when constructed
+        outside the resolver/builder).
+
+        Threaded in by the builder so subsystem initializers can apply platform-profile defaults
+        without a new resolver dependency. Used as the middle precedence tier by the logging
+        configurator (default logging format) and by
+        :class:`~ggcommons.metrics.metric_emitter.MetricEmitter` (default metric target — prometheus
+        on KUBERNETES, FR-MET-4 / FR-RT-3).
+        """
+        return self._platform
+
     def get_logging_config(self) -> EnhancedLoggingConfiguration:
         return self._logging_config
 
