@@ -33,7 +33,6 @@
 import { existsSync } from "fs";
 
 import { GgError } from "./errors";
-import { logger } from "./logging";
 
 /**
  * The deployment platform — the primary runtime axis (DESIGN-core §2/§3). A platform is a named
@@ -284,7 +283,6 @@ export function profileCredentialsKeyProvider(platform: Platform): string | unde
 export function resolveProfile(inputs: ResolverInputs, env: Env): ResolvedProfile {
   const autoDetected = inputs.platform === undefined;
   const platform = autoDetected ? detectPlatform(env) : inputs.platform!;
-  const basis = autoDetected ? "auto-detected" : "explicit --platform";
 
   const profile = PROFILES.get(platform);
   if (!profile) {
@@ -299,11 +297,6 @@ export function resolveProfile(inputs: ResolverInputs, env: Env): ResolvedProfil
 
   const configSource = inputs.configArgs ?? [profile.configSource];
   const identity = resolveIdentity(inputs.thing, platform, env);
-
-  logger.info(
-    `Resolved platform=${platform} (basis=${basis}) transport=${transport} ` +
-      `configSource=${configSource[0]} identity=${identity}`,
-  );
 
   return { platform, transport, configSource, identity };
 }

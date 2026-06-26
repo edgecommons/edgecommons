@@ -285,6 +285,15 @@ export class GGCommonsBuilder {
     // still wins and HOST/GREENGRASS keep today's console/text default. The platform is known here
     // (resolved at parse time) even though config loads after the resolver/messaging.
     initLogging(current, { formatDefault: profileLoggingFormat(parsed.platform) });
+    // Deferred early-bootstrap observability: the resolver summary and the messaging "connected"
+    // fact are produced BEFORE logging is configured, so they are emitted here — immediately after
+    // initLogging — using values already resolved at parse time (`parsed`) and the messaging service.
+    logger.info(
+      `platform resolved: platform=${parsed.platform} transport=${parsed.transport} configSource=${parsed.config.kind} identity=${parsed.thing}`,
+    );
+    if (messaging?.connected()) {
+      logger.info(`messaging connected (transport=${parsed.transport})`);
+    }
     logger.info(
       `GGCommons initialized: component=${this.componentNameValue} thing=${thingName} configSource=${source.sourceName()}`,
     );

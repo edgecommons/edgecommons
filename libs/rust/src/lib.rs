@@ -319,6 +319,29 @@ impl GgCommonsBuilder {
             crate::platform::profile(parsed.platform).and_then(|p| p.logging_format);
         logging::init(&cfg, profile_logging_default);
 
+        // Deferred early-bootstrap observability: the platform-resolver summary and the messaging
+        // connection happen BEFORE the tracing subscriber is installed (above), so they are emitted
+        // here, immediately after `logging::init`, where they can actually be captured. The config
+        // source is rendered as its short CLI token (the same tokens accepted by `-c`).
+        let config_source_token = match parsed.config {
+            crate::cli::ConfigSourceSpec::File { .. } => "FILE",
+            crate::cli::ConfigSourceSpec::ConfigMap { .. } => "CONFIGMAP",
+            crate::cli::ConfigSourceSpec::Env { .. } => "ENV",
+            crate::cli::ConfigSourceSpec::Greengrass { .. } => "GG_CONFIG",
+            crate::cli::ConfigSourceSpec::Shadow { .. } => "SHADOW",
+            crate::cli::ConfigSourceSpec::ConfigComponent => "CONFIG_COMPONENT",
+        };
+        tracing::info!(
+            "platform resolved: platform={:?} transport={:?} configSource={} identity={}",
+            parsed.platform,
+            parsed.transport,
+            config_source_token,
+            parsed.identity
+        );
+        if messaging.as_ref().is_some_and(|m| m.connected()) {
+            tracing::info!("messaging connected (transport={:?})", parsed.transport);
+        }
+
         tracing::info!(
             component = %self.component_name,
             thing = %cfg.thing_name,

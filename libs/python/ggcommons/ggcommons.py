@@ -91,6 +91,20 @@ class GGCommons:
             # Initialize configuration manager
             self._init_config_manager(component_name, parsed_args)
 
+            # Logging is configured inside _init_config_manager (via the config manager's
+            # _apply_config -> configure_logging). Defer the startup-fact lines to here so they
+            # land AFTER logging is configured rather than being dropped during early bootstrap.
+            from ggcommons.messaging.messaging_client import MessagingClient
+            logger.info(
+                "platform resolved: platform=%s transport=%s configSource=%s identity=%s",
+                parsed_args.platform.value,
+                parsed_args.transport.value,
+                parsed_args.config[0],
+                parsed_args.identity,
+            )
+            if MessagingClient.connected():
+                logger.info("messaging connected (transport=%s)", parsed_args.transport.value)
+
             # Initialize metric emitter
             self._init_metrics()
             

@@ -429,7 +429,6 @@ def resolve_profile(
     """
     auto_detected = inputs.platform is None
     platform = detect_platform(env) if auto_detected else inputs.platform
-    basis = "auto-detected" if auto_detected else "explicit --platform"
 
     profile = PROFILES.get(platform)
     if profile is None:
@@ -449,14 +448,5 @@ def resolve_profile(
     )
 
     identity = resolve_identity(inputs.thing, platform, env)
-
-    logger.info(
-        "Resolved platform=%s (basis=%s) transport=%s configSource=%s identity=%s",
-        platform.value,
-        basis,
-        transport.value,
-        config_source[0],
-        identity,
-    )
 
     return ResolvedProfile(platform, transport, config_source, identity)

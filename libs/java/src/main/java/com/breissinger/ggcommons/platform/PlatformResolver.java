@@ -195,7 +195,6 @@ public final class PlatformResolver {
     public static ResolvedProfile resolveProfile(ResolverInputs inputs, Map<String, String> env) {
         boolean autoDetected = inputs.platform() == null;
         Platform platform = autoDetected ? detectPlatform(env) : inputs.platform();
-        String basis = autoDetected ? "auto-detected" : "explicit --platform";
 
         PlatformProfile profile = PROFILES.get(platform);
         if (profile == null) {
@@ -214,9 +213,6 @@ public final class PlatformResolver {
 
         String messagingConfigPath = resolveMessagingConfigPath(
                 inputs.messagingConfigPath(), transport, configSource);
-
-        LOGGER.info("Resolved platform={} (basis={}) transport={} configSource={} identity={} messagingConfigPath={}",
-                platform, basis, transport, configSource[0], identity, messagingConfigPath);
 
         return new ResolvedProfile(platform, transport, configSource, identity, messagingConfigPath);
     }

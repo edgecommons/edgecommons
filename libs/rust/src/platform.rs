@@ -299,12 +299,10 @@ pub fn profiled_platforms() -> [Platform; 3] {
 /// Returns [`GgError::Cli`] if the resolved platform has no profile, or the platform/transport
 /// combination is illegal (the IPC lock, §4.1).
 pub fn resolve_profile(inputs: ResolverInputs, env: &HashMap<String, String>) -> Result<ResolvedProfile> {
-    let auto_detected = inputs.platform.is_none();
     let platform = match inputs.platform {
         Some(p) => p,
         None => detect_platform(env),
     };
-    let basis = if auto_detected { "auto-detected" } else { "explicit --platform" };
 
     let profile = profile(platform).ok_or_else(|| {
         GgError::Cli(format!(
@@ -321,15 +319,6 @@ pub fn resolve_profile(inputs: ResolverInputs, env: &HashMap<String, String>) ->
         .unwrap_or_else(|| vec![profile.config_source.to_string()]);
 
     let identity = resolve_identity(inputs.thing.as_deref(), platform, env);
-
-    tracing::info!(
-        platform = ?platform,
-        basis,
-        transport = ?transport,
-        config_source = %config_source[0],
-        identity = %identity,
-        "platform/transport resolved"
-    );
 
     Ok(ResolvedProfile {
         platform,

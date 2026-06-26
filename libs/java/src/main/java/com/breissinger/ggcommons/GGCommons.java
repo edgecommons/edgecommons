@@ -149,6 +149,17 @@ public class GGCommons
             // Initialize the config manager (passing messaging for IPC-backed config sources).
             configManager = ConfigManagerFactory.create(componentName, parsedCommandLine, messagingClient);
 
+            // Logging is now (re)configured (the ConfigManager constructor applied the config and
+            // reconfigured Log4j2). Re-emit the startup facts that were resolved/connected BEFORE
+            // logging was ready, so they actually reach the log: the resolver summary and, if the
+            // messaging client is connected, the messaging connectivity line.
+            LOGGER.info("platform resolved: platform={} transport={} configSource={} identity={}",
+                    parsedCommandLine.platform, parsedCommandLine.transport,
+                    parsedCommandLine.configArgs[0], parsedCommandLine.thingName);
+            if (messagingClient.connected()) {
+                LOGGER.info("messaging connected (transport={})", parsedCommandLine.transport);
+            }
+
             metricEmitter = MetricEmitterBuilder.create(configManager)
                     .withMessagingService(messagingClient)
                     .withPlatform(parsedCommandLine.platform)
