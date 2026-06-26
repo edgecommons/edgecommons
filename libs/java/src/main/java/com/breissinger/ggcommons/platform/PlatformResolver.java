@@ -43,9 +43,11 @@ import java.util.function.Predicate;
  *
  * <p><b>Phase 1c:</b> the KUBERNETES profile gains a default logging format of
  * {@value #LOGGING_FORMAT_JSON} ({@link PlatformProfile#loggingFormat()}), the stdout-JSON sink
- * (FR-LOG-1). {@link #profileLoggingFormat(Platform)} exposes it as the middle precedence tier
- * (FR-RT-3) for the logging configurator. The {@code prometheus} metrics target and the HTTP health
- * endpoint are deferred to later Phase-1 sub-phases.
+ * (FR-LOG-1), exposed via {@link #profileLoggingFormat(Platform)}; and a default-on HTTP health
+ * server ({@link PlatformProfile#healthEnabled()}, FR-HB-1), exposed via
+ * {@link #profileHealthEnabled(Platform)}. Both are middle-tier (FR-RT-3) profile defaults consumed
+ * downstream (the logging configurator and {@link com.breissinger.ggcommons.GGCommons} respectively).
+ * The {@code prometheus} metrics target is deferred to a later Phase-1 sub-phase.
  */
 public final class PlatformResolver {
 
@@ -121,9 +123,9 @@ public final class PlatformResolver {
      * current library defaults until their sub-phase ships.
      */
     public static final Map<Platform, PlatformProfile> PROFILES = Map.of(
-            Platform.GREENGRASS, new PlatformProfile(Transport.IPC, "GG_CONFIG", null),
-            Platform.HOST, new PlatformProfile(Transport.MQTT, "GG_CONFIG", null),
-            Platform.KUBERNETES, new PlatformProfile(Transport.MQTT, "CONFIGMAP", LOGGING_FORMAT_JSON));
+            Platform.GREENGRASS, new PlatformProfile(Transport.IPC, "GG_CONFIG", null, false),
+            Platform.HOST, new PlatformProfile(Transport.MQTT, "GG_CONFIG", null, false),
+            Platform.KUBERNETES, new PlatformProfile(Transport.MQTT, "CONFIGMAP", LOGGING_FORMAT_JSON, true));
 
     private PlatformResolver() {
     }
@@ -289,6 +291,26 @@ public final class PlatformResolver {
         }
         PlatformProfile profile = PROFILES.get(platform);
         return profile == null ? null : profile.loggingFormat();
+    }
+
+    /**
+     * Returns the platform-profile's default for the HTTP health server (FR-HB-1, precedence FR-RT-3)
+     * — {@code true} on {@link Platform#KUBERNETES} (the liveness/readiness endpoint starts by default,
+     * no config needed), {@code false} on GREENGRASS / HOST (opt-in via {@code health.enabled=true})
+     * and for a {@code null}/unknown platform. This is the <em>middle</em> precedence tier consumed by
+     * {@link com.breissinger.ggcommons.GGCommons}: an explicit {@code health.enabled} from the config
+     * wins; otherwise this profile default decides. Mirrors {@link #profileLoggingFormat(Platform)} and
+     * the Rust {@code platform::profile(p).health_enabled} / Python {@code profile_health_enabled(p)}.
+     *
+     * @param platform the resolved platform, or {@code null}
+     * @return {@code true} if the health server should default to on for this platform
+     */
+    public static boolean profileHealthEnabled(Platform platform) {
+        if (platform == null) {
+            return false;
+        }
+        PlatformProfile profile = PROFILES.get(platform);
+        return profile != null && profile.healthEnabled();
     }
 
     /**

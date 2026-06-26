@@ -194,6 +194,23 @@ class MessagingClientDelegationTest {
     }
 
     @Test
+    void connectedDelegatesToProvider() {
+        when(provider.connected()).thenReturn(true);
+        assertTrue(client.connected());
+        when(provider.connected()).thenReturn(false);
+        assertFalse(client.connected());
+    }
+
+    @Test
+    void connectedIsFalseWhenProviderNull() throws Exception {
+        MessagingClient bare = new MessagingClient() { };
+        Field f = MessagingClient.class.getDeclaredField("messagingProvider");
+        f.setAccessible(true);
+        f.set(bare, null);
+        assertFalse(bare.connected(), "no provider wired -> not connected (treated as not-ready)");
+    }
+
+    @Test
     void closeDelegatesWhenProviderPresent() {
         client.close();
         verify(provider).close();

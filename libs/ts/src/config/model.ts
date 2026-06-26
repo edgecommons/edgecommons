@@ -209,6 +209,35 @@ export interface CloudWatchBufferConfig {
   fsync: "perBatch" | "interval" | "always";
 }
 
+/**
+ * `health` section — the Kubernetes-style HTTP health/readiness endpoint (Phase 1c / FR-HB-1).
+ *
+ * Parsed per the canonical schema. {@link enabled} is deliberately **tri-state** (`true`/`false`/
+ * `undefined`): a present value overrides the platform default, while `undefined` (no `enabled` key)
+ * lets the platform profile decide (on by default on KUBERNETES, off elsewhere). The remaining fields
+ * carry the schema defaults (port `8081`; paths `/livez`, `/readyz`, `/startupz`).
+ */
+export class HealthConfig {
+  /** Explicit enable/disable, or `undefined` to defer to the platform-profile default. */
+  enabled?: boolean;
+  /** TCP port the health server binds (0.0.0.0); default `8081`. */
+  port: number;
+  /** Liveness probe path (200 while the process is alive); default `/livez`. */
+  livenessPath: string;
+  /** Readiness probe path (200 only when connected && ready && !shuttingDown); default `/readyz`. */
+  readinessPath: string;
+  /** Startup probe path (reuses readiness semantics); default `/startupz`. */
+  startupPath: string;
+
+  constructor(raw: Record<string, unknown>) {
+    this.enabled = typeof raw.enabled === "boolean" ? raw.enabled : undefined;
+    this.port = asInt(raw.port) ?? 8081;
+    this.livenessPath = typeof raw.livenessPath === "string" ? raw.livenessPath : "/livez";
+    this.readinessPath = typeof raw.readinessPath === "string" ? raw.readinessPath : "/readyz";
+    this.startupPath = typeof raw.startupPath === "string" ? raw.startupPath : "/startupz";
+  }
+}
+
 /** `component` section. */
 export interface ComponentConfig {
   global: unknown;
@@ -220,6 +249,7 @@ export interface RawConfig {
   logging: LoggingConfig;
   heartbeat: HeartbeatConfig;
   metricEmission: MetricConfig;
+  health: HealthConfig;
   tags: Record<string, unknown>;
   component: ComponentConfig;
 }
@@ -247,6 +277,7 @@ export class Config {
       logging: new LoggingConfig(obj(r.logging)),
       heartbeat: new HeartbeatConfig(obj(r.heartbeat)),
       metricEmission: new MetricConfig(obj(r.metricEmission)),
+      health: new HealthConfig(obj(r.health)),
       tags: obj(r.tags),
       component: {
         global: component.global ?? null,

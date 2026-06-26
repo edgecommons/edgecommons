@@ -34,8 +34,15 @@ to :data:`LOGGING_FORMAT_JSON` (the stdout-JSON sink), while GREENGRASS/HOST lea
 it ``None`` (the library console/text default). The effective logging format follows
 the same one-line precedence — explicit ``logging.<lang>_format`` config ▸ this
 platform-profile default ▸ library default — applied by the logging configurator
-(see :func:`profile_logging_format`). The ``prometheus`` metrics target and the HTTP
-health endpoint are deferred to later Phase-1 sub-phases.
+(see :func:`profile_logging_format`).
+
+**Phase 1c (health slice):** the :class:`PlatformProfile` gains a
+:attr:`~PlatformProfile.health_enabled` default; the KUBERNETES profile defaults it to
+``True`` (the HTTP health server starts by default), while GREENGRASS/HOST leave it
+``False`` (opt-in via ``health.enabled``). The effective enable follows the same
+precedence — explicit ``health.enabled`` config ▸ this platform-profile default ▸ off —
+applied where the health server is started (see :func:`profile_health_enabled`). The
+``prometheus`` metrics target is deferred to a later Phase-1 sub-phase.
 """
 
 import logging
@@ -97,11 +104,17 @@ class PlatformProfile:
             ``None`` to fall through to the library console/text default. Consumed by
             the logging configurator, not the resolver (logging is configured after
             config load); see :func:`profile_logging_format`.
+        health_enabled: the platform's default for the HTTP health server (Phase 1c
+            health slice). ``True`` on KUBERNETES (the server starts by default with no
+            config), ``False`` elsewhere. The middle tier of the FR-RT-3 precedence —
+            explicit ``health.enabled`` config ▸ this default ▸ off — applied where the
+            health server is started; see :func:`profile_health_enabled`.
     """
 
     transport: Transport
     config_source: str
     logging_format: Optional[str] = None
+    health_enabled: bool = False
 
 
 #: The platform-profile table (DESIGN-core sec 3). GREENGRASS and HOST deliberately default the
@@ -115,7 +128,9 @@ class PlatformProfile:
 PROFILES: Mapping[Platform, PlatformProfile] = {
     Platform.GREENGRASS: PlatformProfile(Transport.IPC, "GG_CONFIG"),
     Platform.HOST: PlatformProfile(Transport.MQTT, "GG_CONFIG"),
-    Platform.KUBERNETES: PlatformProfile(Transport.MQTT, "CONFIGMAP", LOGGING_FORMAT_JSON),
+    Platform.KUBERNETES: PlatformProfile(
+        Transport.MQTT, "CONFIGMAP", LOGGING_FORMAT_JSON, health_enabled=True
+    ),
 }
 
 
@@ -138,6 +153,27 @@ def profile_logging_format(platform: Optional[Platform]) -> Optional[str]:
         return None
     profile = PROFILES.get(platform)
     return None if profile is None else profile.logging_format
+
+
+def profile_health_enabled(platform: Optional[Platform]) -> bool:
+    """Return the platform-profile default for the HTTP health server (FR-HB-1 / FR-RT-3).
+
+    This is the **middle** tier of the health-enable precedence — explicit ``health.enabled`` config ▸
+    this platform-profile default ▸ off — used where the health server is started (see
+    ``GGCommons._init_health``). It is a pure lookup (no I/O, no ``ConfigManager`` dependency), so the
+    resolved platform alone selects the default: KUBERNETES yields ``True`` (the server starts by
+    default with no config), every other platform yields ``False``.
+
+    Args:
+        platform: the resolved platform, or ``None`` (e.g. a caller that bypassed the resolver).
+
+    Returns:
+        ``True`` if the platform defaults the health server on, else ``False``.
+    """
+    if platform is None:
+        return False
+    profile = PROFILES.get(platform)
+    return False if profile is None else profile.health_enabled
 
 
 @dataclass(frozen=True)

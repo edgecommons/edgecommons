@@ -102,6 +102,11 @@ export class RecordingMessagingService implements IMessagingService {
   cancelRequestFromIotCore(reply: ReplyFuture): void {
     reply.cancel();
   }
+  /** Toggle to drive the /readyz readiness signal in tests. */
+  connectedState = true;
+  connected(): boolean {
+    return this.connectedState;
+  }
 }
 
 /** A subscription registered with the {@link FakeMessagingProvider}. */
@@ -145,6 +150,12 @@ export class FakeMessagingProvider implements MessagingProvider {
         if (i >= 0) this.subs.splice(i, 1);
       },
     };
+  }
+
+  /** Reports connected until {@link disconnect}; tests may flip {@link connectedState} directly. */
+  connectedState = true;
+  connected(): boolean {
+    return this.connectedState && !this.disconnected;
   }
 
   async disconnect(): Promise<void> {

@@ -133,6 +133,19 @@ public abstract class MessagingProvider
 
     public abstract Object getNativeIotCoreClient();
 
+    /**
+     * Whether the underlying transport is currently connected — the messaging input to the readiness
+     * model (FR-HB-2): {@code /readyz} requires {@code connected() && ready && !shuttingDown}. For the
+     * dual-MQTT provider this reflects the <em>local</em> broker link (the edge-critical half); for
+     * the Greengrass IPC provider it is {@code true} once the IPC client is built. The default is
+     * {@code false} (a provider that does not report connectivity is treated as not-ready).
+     *
+     * @return {@code true} if the transport is connected
+     */
+    public boolean connected() {
+        return false;
+    }
+
     /** Releases any resources held by this provider (connections, threads). Default no-op. */
     public void close() {}
 }

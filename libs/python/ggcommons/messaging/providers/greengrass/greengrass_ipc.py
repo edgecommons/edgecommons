@@ -61,6 +61,15 @@ class GreengrassIpcProvider(MessagingProvider):
                     time.sleep(attempt)
         raise RuntimeError(f"Greengrass IPC connect failed after {attempts} attempts: {last_err}")
 
+    def connected(self) -> bool:
+        """Report the IPC connection state for readiness (FR-HB-1).
+
+        For GREENGRASS/IPC, ``connected()`` is ``True`` once the IPC client is built (the
+        ``GreengrassCoreIPCClientV2`` connects with retry during construction); it becomes ``False``
+        after :meth:`disconnect` nulls the client.
+        """
+        return self._ipc_client is not None
+
     def disconnect(self):
         # The handler maps are keyed by topic filter, so iterate the keys directly
         # and unsubscribe on the matching transport.

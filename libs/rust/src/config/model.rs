@@ -131,6 +131,56 @@ pub struct HeartbeatTarget {
     pub config: Option<Value>,
 }
 
+/// `health` section (FR-HB-1) — the Kubernetes HTTP health/readiness endpoint.
+///
+/// Mirrors the canonical schema `health` object. [`enabled`](Self::enabled) is an `Option`: `None`
+/// means "unset", so the platform profile decides (on by default on KUBERNETES, off elsewhere —
+/// resolved in [`crate::GgCommonsBuilder::build`] via the FR-RT-3 precedence). The path/port
+/// accessors apply the schema defaults when a field is absent.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct HealthConfig {
+    /// Explicit enable toggle. `None` defers to the platform-profile default.
+    pub enabled: Option<bool>,
+    /// TCP port (schema default 8081); accepts integer-valued floats from Greengrass.
+    #[serde(default, deserialize_with = "de_lenient_opt_u64")]
+    pub port: Option<u64>,
+    /// Liveness route (schema default `/livez`).
+    pub liveness_path: Option<String>,
+    /// Readiness route (schema default `/readyz`).
+    pub readiness_path: Option<String>,
+    /// Startup route (schema default `/startupz`); reuses readiness semantics.
+    pub startup_path: Option<String>,
+}
+
+impl HealthConfig {
+    /// The schema's default health port.
+    pub const DEFAULT_PORT: u16 = 8081;
+
+    /// Resolved listen port; default [`Self::DEFAULT_PORT`] (8081) when absent or out of range.
+    pub fn port(&self) -> u16 {
+        self.port
+            .and_then(|p| u16::try_from(p).ok())
+            .filter(|&p| p != 0)
+            .unwrap_or(Self::DEFAULT_PORT)
+    }
+
+    /// Resolved liveness path; default `/livez`.
+    pub fn liveness_path(&self) -> &str {
+        self.liveness_path.as_deref().unwrap_or("/livez")
+    }
+
+    /// Resolved readiness path; default `/readyz`.
+    pub fn readiness_path(&self) -> &str {
+        self.readiness_path.as_deref().unwrap_or("/readyz")
+    }
+
+    /// Resolved startup path; default `/startupz`.
+    pub fn startup_path(&self) -> &str {
+        self.startup_path.as_deref().unwrap_or("/startupz")
+    }
+}
+
 /// `metricEmission` section.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -266,6 +316,7 @@ pub struct ComponentConfig {
 pub struct RawConfig {
     pub logging: LoggingConfig,
     pub heartbeat: HeartbeatConfig,
+    pub health: HealthConfig,
     pub metric_emission: MetricConfig,
     pub tags: BTreeMap<String, Value>,
     pub component: ComponentConfig,
@@ -466,6 +517,47 @@ mod tests {
         )
         .unwrap();
         assert_eq!(cfg.parsed.metric_emission.interval_secs(), 5);
+    }
+
+    #[test]
+    fn health_config_defaults() {
+        let cfg = Config::from_value("c", "t", json!({})).unwrap();
+        let h = &cfg.parsed.health;
+        assert_eq!(h.enabled, None, "enabled is unset by default (profile decides)");
+        assert_eq!(h.port(), 8081);
+        assert_eq!(h.liveness_path(), "/livez");
+        assert_eq!(h.readiness_path(), "/readyz");
+        assert_eq!(h.startup_path(), "/startupz");
+    }
+
+    #[test]
+    fn health_config_reads_explicit_values() {
+        let cfg = Config::from_value(
+            "c",
+            "t",
+            json!({ "health": {
+                "enabled": true,
+                "port": 9000,
+                "livenessPath": "/alive",
+                "readinessPath": "/ready",
+                "startupPath": "/started"
+            } }),
+        )
+        .unwrap();
+        let h = &cfg.parsed.health;
+        assert_eq!(h.enabled, Some(true));
+        assert_eq!(h.port(), 9000);
+        assert_eq!(h.liveness_path(), "/alive");
+        assert_eq!(h.readiness_path(), "/ready");
+        assert_eq!(h.startup_path(), "/started");
+    }
+
+    #[test]
+    fn health_port_accepts_float_from_greengrass() {
+        // Greengrass delivers config numbers as doubles (e.g. 8082.0).
+        let cfg =
+            Config::from_value("c", "t", json!({ "health": { "port": 8082.0 } })).unwrap();
+        assert_eq!(cfg.parsed.health.port(), 8082);
     }
 
     #[test]

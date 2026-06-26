@@ -31,6 +31,7 @@
 pub mod cli;
 pub mod config;
 pub mod error;
+pub mod health;
 pub mod heartbeat;
 #[cfg(feature = "greengrass")]
 pub mod ipc;
@@ -88,6 +89,15 @@ pub struct GgCommons {
     parameters: Option<Arc<dyn parameters::ParameterService>>,
     /// Config-change listeners notified on hot reload.
     listeners: ConfigListeners,
+    /// Shared readiness state (FR-HB-1/2): [`Self::set_ready`] toggles the ready flag, the SIGTERM
+    /// watcher flips "shutting down", and the health server reads both (+ messaging connected) to
+    /// answer `/readyz`.
+    health_state: health::HealthState,
+    /// Owns the HTTP health server thread; dropping `GgCommons` stops it (RAII). `None` when health
+    /// is disabled (the default off-KUBERNETES) or the listener failed to bind.
+    _health_server: Option<health::HealthServer>,
+    /// Owns the SIGTERM/Ctrl-C watcher task (FR-HB-2); aborted on drop.
+    _signal_task: AbortOnDrop,
     /// Owns the heartbeat task; dropping `GgCommons` stops it (RAII).
     _heartbeat: heartbeat::Heartbeat,
     /// Owns the hot-reload task; aborted on drop. `None` if the source can't watch.
@@ -178,6 +188,28 @@ impl GgCommons {
     #[cfg(feature = "parameters")]
     pub fn parameters(&self) -> Option<Arc<dyn parameters::ParameterService>> {
         self.parameters.clone()
+    }
+
+    /// Set the component's readiness flag (FR-HB-1 readiness model).
+    ///
+    /// # Purpose
+    /// Gate the health `/readyz` (and `/startupz`) endpoint on the app's own startup work. The flag
+    /// **defaults to `true`**, so a component is reported ready as soon as messaging connects. An
+    /// app that must finish setup first (e.g. confirm required subscriptions) calls
+    /// `set_ready(false)` early and `set_ready(true)` once ready.
+    ///
+    /// # Semantics
+    /// `/readyz` returns 200 only when `messaging-connected && ready && !shutting_down`. This flag
+    /// is the `ready` term; it has no effect on `/livez` (liveness never depends on app state).
+    /// Idempotent and thread-safe; a no-op if the health server is disabled.
+    pub fn set_ready(&self, ready: bool) {
+        self.health_state.set_ready(ready);
+    }
+
+    /// Whether the runtime has begun shutting down (the SIGTERM watcher fired). Exposed so an app
+    /// run loop can cooperatively exit; `/readyz` already reports 503 once this is true.
+    pub fn is_shutting_down(&self) -> bool {
+        self.health_state.is_shutting_down()
     }
 
     /// Register a listener invoked after the configuration is hot-reloaded.
@@ -373,6 +405,42 @@ impl GgCommonsBuilder {
             (svc, bridge)
         };
 
+        // Health / readiness (FR-HB-1/2). The shared readiness state seeds both the HTTP health
+        // endpoint and the SIGTERM watcher. `ready` defaults to true and messaging-connected is
+        // queried live, so a component is ready as soon as the broker connects unless the app gates
+        // it via `set_ready(false)`.
+        let health_state = health::HealthState::new(messaging.clone());
+
+        // The health server is enabled by: explicit config `health.enabled` ▸ the platform-profile
+        // default (on for KUBERNETES) ▸ off (precedence FR-RT-3). The resolved platform is known
+        // here, reusing the same threading as the logging default — no resolver→ConfigManager dep.
+        let health_enabled = health::resolve_enabled(&snapshot.parsed.health, parsed.platform);
+        let health_server = if health_enabled {
+            let hc = &snapshot.parsed.health;
+            let server_cfg = health::ServerConfig {
+                port: hc.port(),
+                liveness_path: hc.liveness_path().to_string(),
+                readiness_path: hc.readiness_path().to_string(),
+                startup_path: hc.startup_path().to_string(),
+            };
+            match health::HealthServer::start(server_cfg, health_state.clone()) {
+                Ok(server) => Some(server),
+                Err(e) => {
+                    // A bind failure must not take down the component (health is auxiliary).
+                    tracing::error!(error = %e, port = hc.port(), "failed to start health server");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        // FR-HB-2: the LIBRARY wires SIGTERM (Unix) / Ctrl-C so a kubelet stop flips `/readyz` to
+        // 503 at once. The library does not own the run loop, so it cannot exit the process —
+        // resource teardown stays RAII on `GgCommons` drop when the app leaves its loop. The watcher
+        // only flips the (idempotent) shutting-down flag and logs.
+        let signal_task = AbortOnDrop(spawn_signal_watcher(health_state.clone()));
+
         // Internal listeners reconfigure the metric target and logging on hot reload.
         let listeners: ConfigListeners = Arc::new(std::sync::Mutex::new(Vec::new()));
         if let Ok(mut l) = listeners.lock() {
@@ -407,6 +475,9 @@ impl GgCommonsBuilder {
             #[cfg(feature = "parameters")]
             parameters: params,
             listeners,
+            health_state,
+            _health_server: health_server,
+            _signal_task: signal_task,
             _heartbeat: heartbeat,
             _reload_task: reload_task,
             _config_source: source,
@@ -445,6 +516,50 @@ fn spawn_config_reload(
             }
         }
     }))
+}
+
+/// Spawn the SIGTERM/Ctrl-C watcher (FR-HB-2).
+///
+/// # Purpose
+/// On the first termination signal it flips the readiness state to "shutting down" so the health
+/// `/readyz` endpoint returns 503 immediately (the kubelet stops routing traffic before the pod
+/// goes away), then logs and ends. The library cannot exit the process (it does not own the run
+/// loop); resource teardown remains RAII on [`GgCommons`] drop when the app leaves its loop.
+///
+/// # Semantics
+/// Idempotent — [`health::HealthState::begin_shutdown`] is a flag store, safe under repeated
+/// signals. The returned [`tokio::task::JoinHandle`] is held in an [`AbortOnDrop`] so the watcher
+/// is cleaned up if the runtime is dropped before any signal arrives.
+fn spawn_signal_watcher(state: health::HealthState) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        wait_for_terminate().await;
+        state.begin_shutdown();
+        tracing::info!("termination signal received; readiness set to 503 (shutting down)");
+    })
+}
+
+/// Resolve on SIGTERM (Unix — the signal Greengrass / the kubelet send to stop) or Ctrl-C (all
+/// platforms). On Unix, falls back to Ctrl-C if the SIGTERM handler cannot be installed.
+async fn wait_for_terminate() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        match signal(SignalKind::terminate()) {
+            Ok(mut term) => {
+                tokio::select! {
+                    _ = tokio::signal::ctrl_c() => {}
+                    _ = term.recv() => {}
+                }
+            }
+            Err(_) => {
+                let _ = tokio::signal::ctrl_c().await;
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
 }
 
 /// Initialize the messaging service for the resolved [`Transport`] (DESIGN-core §4.2 — the

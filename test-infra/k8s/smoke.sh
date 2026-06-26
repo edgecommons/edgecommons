@@ -128,6 +128,22 @@ assert_log "Component identity .thing name.: ${POD}" "Downward-API identity reso
 # correlation fields are wired (one assertion covers both). (json.dumps emits `: ` with a space.)
 assert_log "\"thing\": *\"${POD}\"" "stdout-JSON logging sink with Downward-API correlation (FR-LOG-1/3)"
 
+# --- FR-HB-1: HTTP health endpoint -------------------------------------------------
+# The chart wires httpGet startup/liveness/readiness probes to the component's health server
+# (/startupz, /livez, /readyz on :8081 — the KUBERNETES default, no `health` config needed). The
+# rollout above already gates on Ready, so /startupz and /readyz must have returned 200. Assert the
+# Ready condition explicitly, then do an INDEPENDENT in-pod GET of /livez to prove liveness is served
+# and decoupled from the broker. (restartCount==0, asserted below, also confirms /livez isn't failing.)
+log "Asserting HTTP health endpoint (/livez, /readyz, /startupz)"
+READY="$("${KUBECTL}" -n "${NAMESPACE}" get pods -l "${SELECTOR}" -o jsonpath='{.items[0].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)"
+[[ "${READY}" == "True" ]] || fail "pod is not Ready — the httpGet /readyz (and /startupz) probe did not return 200"
+ok "readiness probe /readyz + startup probe /startupz returned 200 (pod Ready) (FR-HB-1)"
+if "${KUBECTL}" -n "${NAMESPACE}" exec "${POD}" -- python3 -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8081/livez',timeout=5).getcode()==200 else 1)" >/dev/null 2>&1; then
+  ok "liveness probe /livez returned 200 from inside the pod (FR-HB-1)"
+else
+  fail "/livez did not return 200 from inside the pod"
+fi
+
 # --- Hot-reload (..data swap re-arm) test -------------------------------------------
 # Patch the ConfigMap's config.json in place (NOT helm upgrade) and assert the running
 # pod reloads in-process. We flip logging.level INFO->DEBUG as the observable change.

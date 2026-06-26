@@ -22,13 +22,19 @@ What the harness proves end-to-end:
 5. it logs to a **structured stdout-JSON sink** (one JSON object per line — the KUBERNETES
    default, Phase 1c) carrying Downward-API **correlation fields**; the smoke asserts a JSON
    line whose `thing` correlation equals the pod's `POD_NAME`;
-6. a **`kubectl` edit of the ConfigMap is hot-reloaded in-process** — the watcher
-   re-arms across the kubelet's atomic `..data` symlink swap — **with no pod restart**.
+6. it serves an **HTTP health endpoint** (Phase 1c, on by default on KUBERNETES): the chart's
+   `httpGet` startup/liveness/readiness probes hit `/startupz`,`/livez`,`/readyz` on `:8081`,
+   so the pod only reaches **Ready** when `/readyz` returns 200 (messaging connected + ready);
+   the smoke also GETs `/livez` in-pod to prove liveness is served and broker-independent;
+7. a **`kubectl` edit of the ConfigMap is hot-reloaded in-process** — the watcher
+   re-arms across the kubelet's atomic `..data` symlink swap — **with no pod restart**
+   (`restartCount=0` also confirms the liveness probe never failed).
 
-> Not yet (deferred, with TODO markers in the chart): the HTTP `/livez,/readyz` health
-> endpoint and the `prometheus` metrics target (the rest of sub-phase **1c**); PVC-aware
-> streaming and the `env` KeyProvider (**1d**). The chart's probes and Service are therefore
-> **placeholders**.
+> Also exercised (not asserted explicitly here): **SIGTERM → graceful shutdown** — the library
+> wires SIGTERM to flip `/readyz`→503 then unsubscribe-all + bounded-close (FR-HB-2).
+>
+> Not yet (deferred, with TODO markers in the chart): the `prometheus` metrics target (the last
+> 1c slice); PVC-aware streaming and the `env` KeyProvider (**1d**).
 
 ## Contents
 

@@ -99,6 +99,32 @@ describe("Config.fromValue", () => {
     });
   });
 
+  describe("HealthConfig parsing (Phase 1c / FR-HB-1)", () => {
+    it("applies schema defaults when health is absent (enabled tri-state undefined)", () => {
+      const h = Config.fromValue("c", "t", {}).parsed.health;
+      expect(h.enabled).toBeUndefined(); // no key -> defer to the platform default
+      expect(h.port).toBe(8081);
+      expect(h.livenessPath).toBe("/livez");
+      expect(h.readinessPath).toBe("/readyz");
+      expect(h.startupPath).toBe("/startupz");
+    });
+
+    it("preserves an explicit enabled=false (distinct from absent)", () => {
+      expect(Config.fromValue("c", "t", { health: { enabled: false } }).parsed.health.enabled).toBe(false);
+      expect(Config.fromValue("c", "t", { health: { enabled: true } }).parsed.health.enabled).toBe(true);
+    });
+
+    it("honors explicit port (incl. float) and custom paths", () => {
+      const h = Config.fromValue("c", "t", {
+        health: { enabled: true, port: 9090.0, livenessPath: "/l", readinessPath: "/r", startupPath: "/s" },
+      }).parsed.health;
+      expect(h.port).toBe(9090);
+      expect(h.livenessPath).toBe("/l");
+      expect(h.readinessPath).toBe("/r");
+      expect(h.startupPath).toBe("/s");
+    });
+  });
+
   describe("FileLoggingConfig defaults", () => {
     it("defaults maxFileSize and backupCount", () => {
       const lc = Config.fromValue("c", "t", {

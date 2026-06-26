@@ -64,13 +64,13 @@ public class App implements ConfigurationChangeListener
 
     public static void main(String[] args) {
         App app = new App(args);
-        
-        // Add shutdown hook for graceful cleanup
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            LOGGER.info("Shutting down component...");
-            app.shutdown();
-        }));
-        
+
+        // NOTE: no manual SIGTERM/shutdown-hook wiring here. As of the Phase-1c health slice the
+        // GGCommons library itself wires SIGTERM/SIGINT (Runtime shutdown hook) to its graceful,
+        // idempotent shutdown(): on signal it flips /readyz to 503, unsubscribes every tracked
+        // subscription and bounded-closes messaging/streams/heartbeat/vault before the JVM exits 0.
+        // Registering another hook here would double-run teardown, so the app relies on the library.
+
         app.run();
     }
 

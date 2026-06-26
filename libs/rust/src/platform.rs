@@ -119,6 +119,11 @@ pub struct PlatformProfile {
     /// (console/text), so GREENGRASS and HOST are unchanged. The precedence is enforced by the
     /// logging configurator (explicit config ▸ this profile default ▸ library default — FR-RT-3).
     pub logging_format: Option<&'static str>,
+    /// Whether the HTTP health/readiness endpoint (FR-HB-1) starts by default on this platform,
+    /// applied when the component config omits `health.enabled`. `true` on KUBERNETES (probes are
+    /// the orchestrator's contract); `false` on GREENGRASS/HOST (opt-in via `health.enabled=true`).
+    /// Precedence (FR-RT-3): explicit `health.enabled` ▸ this profile default ▸ `false`.
+    pub health_enabled: bool,
 }
 
 /// The output of [`resolve_profile`]: the fully resolved runtime settings that every
@@ -188,21 +193,34 @@ pub fn profile(platform: Platform) -> Option<PlatformProfile> {
             transport: Transport::Ipc,
             config_source: "GG_CONFIG",
             logging_format: None,
+            health_enabled: false,
         }),
         Platform::Host => Some(PlatformProfile {
             transport: Transport::Mqtt,
             config_source: "GG_CONFIG",
             logging_format: None,
+            health_enabled: false,
         }),
         // Phase 1a: KUBERNETES is wired — MQTT transport (no Nucleus IPC) and the k8s-native
         // CONFIGMAP source (a mounted ConfigMap directory) as its default config source.
-        // Phase 1c: its default logging format is the structured stdout-JSON sink (FR-LOG-1).
+        // Phase 1c: its default logging format is the structured stdout-JSON sink (FR-LOG-1), and
+        // the HTTP health/readiness endpoint (FR-HB-1) is on by default.
         Platform::Kubernetes => Some(PlatformProfile {
             transport: Transport::Mqtt,
             config_source: "CONFIGMAP",
             logging_format: Some("json"),
+            health_enabled: true,
         }),
     }
+}
+
+/// Whether the HTTP health endpoint (FR-HB-1) is on by default for `platform` — the
+/// platform-profile default consulted when the component config omits `health.enabled`. `true` on
+/// KUBERNETES, `false` elsewhere (and for any platform without a profile). Mirrors the threading of
+/// the logging-format default; the final decision (explicit config ▸ this default ▸ false) is made
+/// in [`crate::GgCommonsBuilder::build`].
+pub fn profile_health_enabled(platform: Platform) -> bool {
+    profile(platform).map(|p| p.health_enabled).unwrap_or(false)
 }
 
 /// The platforms that have a profile (GREENGRASS, HOST, KUBERNETES). Mirrors the Java `PROFILES`
@@ -733,6 +751,21 @@ mod tests {
         // (console/text) is unchanged off-Kubernetes.
         assert_eq!(None, profile(Platform::Greengrass).unwrap().logging_format);
         assert_eq!(None, profile(Platform::Host).unwrap().logging_format);
+    }
+
+    #[test]
+    fn kubernetes_profile_enables_health_by_default() {
+        // FR-HB-1: the health endpoint is on by default on KUBERNETES and off on GREENGRASS/HOST.
+        assert!(profile(Platform::Kubernetes).unwrap().health_enabled);
+        assert!(!profile(Platform::Greengrass).unwrap().health_enabled);
+        assert!(!profile(Platform::Host).unwrap().health_enabled);
+    }
+
+    #[test]
+    fn profile_health_enabled_helper_matches_profiles() {
+        assert!(profile_health_enabled(Platform::Kubernetes));
+        assert!(!profile_health_enabled(Platform::Greengrass));
+        assert!(!profile_health_enabled(Platform::Host));
     }
 
     #[test]

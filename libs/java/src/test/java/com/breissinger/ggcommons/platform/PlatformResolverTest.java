@@ -433,4 +433,26 @@ class PlatformResolverTest {
         assertEquals(Transport.IPC, p.transport());
         assertEquals("GG_CONFIG", p.configSource());
     }
+
+    // ---------- profileHealthEnabled (FR-HB-1 / FR-RT-3) ----------
+
+    @Test
+    void profileHealthEnabledTrueOnlyForKubernetes() {
+        assertTrue(PlatformResolver.profileHealthEnabled(Platform.KUBERNETES),
+                "health server defaults on for KUBERNETES");
+        assertFalse(PlatformResolver.profileHealthEnabled(Platform.HOST));
+        assertFalse(PlatformResolver.profileHealthEnabled(Platform.GREENGRASS));
+    }
+
+    @Test
+    void profileHealthEnabledFalseForNullPlatform() {
+        assertFalse(PlatformResolver.profileHealthEnabled(null));
+    }
+
+    @Test
+    void profileHealthEnabledFieldMatchesProfileTable() {
+        assertTrue(PlatformResolver.PROFILES.get(Platform.KUBERNETES).healthEnabled());
+        assertFalse(PlatformResolver.PROFILES.get(Platform.HOST).healthEnabled());
+        assertFalse(PlatformResolver.PROFILES.get(Platform.GREENGRASS).healthEnabled());
+    }
 }

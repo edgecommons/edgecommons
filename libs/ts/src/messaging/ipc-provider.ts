@@ -62,6 +62,8 @@ function toBuffer(payload: string | ArrayBuffer | ArrayBufferView): Buffer {
 /** Greengrass IPC transport provider plus config/shadow operations. */
 export class IpcMessagingProvider implements MessagingProvider {
   private readonly streams = new Set<{ close(): Promise<void> }>();
+  /** True once the IPC client is built/connected; flipped false on {@link disconnect}. */
+  private open = true;
 
   private constructor(
     private readonly client: greengrasscoreipc.Client,
@@ -202,7 +204,17 @@ export class IpcMessagingProvider implements MessagingProvider {
     await this.client.deleteThingShadow({ thingName, shadowName: shadowName ?? "" });
   }
 
+  /**
+   * Whether the IPC transport is connected (FR-HB-1). The Nucleus IPC client is a connected domain
+   * socket from the moment {@link connect} returns it, so this is `true` until {@link disconnect}; the
+   * SDK exposes no finer-grained liveness signal.
+   */
+  connected(): boolean {
+    return this.open;
+  }
+
   async disconnect(): Promise<void> {
+    this.open = false;
     const ops = [...this.streams];
     this.streams.clear();
     await Promise.allSettled(ops.map((op) => op.close()));

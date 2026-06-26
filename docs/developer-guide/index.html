@@ -1073,6 +1073,24 @@ for you.</p>
 <p>The default messaging topic is <code>ggcommons/{ThingName}/{ComponentName}/heartbeat</code>. Subscribe to
 <code>heartbeat/+/+</code> (or your custom topic) during local development to confirm the component is alive. The
 minimum interval is 1 second; the default is 5.</p></div>
+
+<h3>HTTP health endpoint (Kubernetes)</h3>
+<p>On <code>--platform KUBERNETES</code> the library also starts a minimal HTTP health server (default port
+<code>8081</code>; configure via the <code>health</code> section, enable it elsewhere with
+<code>"health": { "enabled": true }</code>):</p>
+<table>
+<thead><tr><th>Route</th><th>Returns</th><th>Semantics</th></tr></thead>
+<tbody>
+<tr><td><code>GET /livez</code></td><td>200 while the process is alive</td><td>Never checks the broker — a broker outage must not restart the pod</td></tr>
+<tr><td><code>GET /readyz</code></td><td>200 only when messaging is connected and the component is ready; else 503</td><td>Gates traffic; flips to 503 during startup and shutdown</td></tr>
+<tr><td><code>GET /startupz</code></td><td>readiness semantics</td><td>For slow connects (generous startup failureThreshold)</td></tr>
+</tbody>
+</table>
+<p>Readiness is <code>connected &amp;&amp; ready &amp;&amp; !shuttingDown</code>. The <em>ready</em> flag defaults true; call
+<code>gg.setReady(false)</code>/<code>setReady(true)</code> (Rust: <code>set_ready</code>) to gate readiness on your own
+required subscriptions. The library also wires <strong>SIGTERM</strong> to flip <code>/readyz</code>→503 and run the
+graceful shutdown (unsubscribe every subscription, then bounded-close), so you no longer wire a signal handler yourself.
+The Helm chart ships matching <code>httpGet</code> startup/liveness/readiness probes.</p>
 </section>
 
 <section id="logging">

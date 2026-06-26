@@ -30,4 +30,10 @@ public class ConfigurationFactory {
             ? new MetricConfiguration(config.get("metricEmission").getAsJsonObject())
             : new MetricConfiguration(null);
     }
+
+    public static HealthConfiguration createHealthConfiguration(JsonObject config) {
+        return config != null && config.has("health")
+            ? new HealthConfiguration(config.get("health").getAsJsonObject())
+            : new HealthConfiguration(null);
+    }
 }

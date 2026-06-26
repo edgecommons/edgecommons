@@ -18,6 +18,17 @@ class MessagingProvider(metaclass=abc.ABCMeta):
         pass
 
     @abstractmethod
+    def connected(self) -> bool:
+        """Whether the provider currently has a usable broker/IPC connection.
+
+        Backs the readiness probe (FR-HB-1): ``/readyz`` is 200 only when this is ``True`` (and the
+        component is ready and not shutting down). It MUST be cheap/non-blocking — it is queried on
+        every readiness check. Liveness deliberately does NOT consult it (a broker outage must not
+        fail ``/livez``).
+        """
+        pass
+
+    @abstractmethod
     def publish(self, topic: str, msg: Message):
         pass
 

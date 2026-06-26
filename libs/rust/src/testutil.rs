@@ -13,6 +13,7 @@
 //! Compiled only under `#[cfg(test)]`.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -36,6 +37,9 @@ pub(crate) struct RecordingMessaging {
     pub subscribed: Mutex<Vec<String>>,
     /// Monotonic timestamps of each publish (local or IoT Core), for timing tests.
     pub publish_times: Mutex<Vec<Instant>>,
+    /// The value [`MessagingService::connected`] returns (default `false`); set via
+    /// [`RecordingMessaging::set_connected`] to drive readiness tests.
+    pub connected: AtomicBool,
 }
 
 impl RecordingMessaging {
@@ -57,6 +61,11 @@ impl RecordingMessaging {
     /// Monotonic timestamps of each publish, in order.
     pub fn times(&self) -> Vec<Instant> {
         self.publish_times.lock().unwrap().clone()
+    }
+
+    /// Set the value reported by [`MessagingService::connected`] (drives `/readyz` tests).
+    pub fn set_connected(&self, connected: bool) {
+        self.connected.store(connected, Ordering::SeqCst);
     }
 }
 
@@ -139,6 +148,10 @@ impl MessagingService for RecordingMessaging {
     fn cancel_request(&self, _reply_future: ReplyFuture) {}
 
     fn cancel_request_from_iot_core(&self, _reply_future: ReplyFuture) {}
+
+    fn connected(&self) -> bool {
+        self.connected.load(Ordering::SeqCst)
+    }
 }
 
 /// A [`MetricService`] that records defined metrics and emitted measure maps.

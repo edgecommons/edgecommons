@@ -246,6 +246,19 @@ public class MessagingClient
     }
 
     /**
+     * Whether the messaging transport is currently connected — the messaging input to the health
+     * readiness model (FR-HB-2). Delegates to the underlying provider
+     * ({@link MessagingProvider#connected()}); returns {@code false} when no provider is wired (e.g.
+     * the test/subclass no-arg constructor), so a runtime with no messaging is treated as not-ready.
+     *
+     * @return {@code true} if the transport is connected
+     */
+    public boolean connected()
+    {
+        return messagingProvider != null && messagingProvider.connected();
+    }
+
+    /**
      * Closes the underlying messaging provider, releasing connections and background threads.
      */
     public void close()

@@ -221,6 +221,13 @@ pub trait MessagingService: Send + Sync {
     fn cancel_request(&self, reply_future: ReplyFuture);
     /// Abandon a pending IoT Core request, cleaning up its reply subscription.
     fn cancel_request_from_iot_core(&self, reply_future: ReplyFuture);
+
+    /// Whether the messaging transport currently has a live connection.
+    ///
+    /// Delegates to the underlying [`MessagingProvider::connected`] (the local broker's MQTT
+    /// CONNACK state, or `true` once the Greengrass IPC client is built). Used by the health
+    /// readiness endpoint (`/readyz`); never used to gate liveness.
+    fn connected(&self) -> bool;
 }
 
 /// Default [`MessagingService`] built over a [`MessagingProvider`].
@@ -427,6 +434,10 @@ impl MessagingService for DefaultMessagingService {
     fn cancel_request_from_iot_core(&self, reply_future: ReplyFuture) {
         drop(reply_future);
     }
+
+    fn connected(&self) -> bool {
+        self.provider.connected()
+    }
 }
 
 /// Drain a subscription's queue and invoke `handler` with bounded concurrency.
@@ -515,6 +526,9 @@ mod tests {
         async fn unsubscribe(&self, _f: &str, _d: Destination) -> Result<()> {
             self.unsubscribed.fetch_add(1, Ordering::SeqCst);
             Ok(())
+        }
+        fn connected(&self) -> bool {
+            true
         }
     }
 
