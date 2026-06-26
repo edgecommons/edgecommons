@@ -15,6 +15,7 @@
   },
   "renames": [],
   "conditional": [
-    {"when": "platform:KUBERNETES", "paths": ["Dockerfile", "k8s"]}
+    {"when": "platform:KUBERNETES", "paths": ["Dockerfile", "k8s"]},
+    {"when": "dep:registry", "paths": [".npmrc"]}
   ]
 }

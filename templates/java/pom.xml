@@ -100,21 +100,20 @@
 
 
   <repositories>
+    <!-- Resolve com.mbreissi:ggcommons from GitHub Packages. Auth via ~/.m2/settings.xml:
+         a <server> with <id>github</id> and a GitHub token (read:packages). For a local
+         monorepo build use `mvn install` on libs/java instead (then ~/.m2 satisfies it). -->
     <repository>
-      <id>gitlab-maven</id>
-      <url>https://gitlab.aws.dev/api/v4/projects/83110/packages/maven</url>
+      <id>github</id>
+      <url>https://maven.pkg.github.com/mbreissi/ggcommons</url>
     </repository>
   </repositories>
 
   <distributionManagement>
+    <!-- Where THIS component would publish — edit to your own GitHub Packages repo. -->
     <repository>
-      <id>gitlab-maven</id>
-      <url>https://gitlab.aws.dev/api/v4/projects/83110/packages/maven</url>
+      <id>github</id>
+      <url>https://maven.pkg.github.com/OWNER/REPO</url>
     </repository>
-
-    <snapshotRepository>
-      <id>gitlab-maven</id>
-      <url>https://gitlab.aws.dev/api/v4/projects/83110/packages/maven</url>
-    </snapshotRepository>
   </distributionManagement>
 </project>

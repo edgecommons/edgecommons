@@ -166,6 +166,17 @@ class TestDepSourceWiring:
         assert "@breissinger" not in pkg
         # the source imports must use the new scope too
         assert "@breissinger" not in (proj / "src" / "main.ts").read_text()
+        # registry dep-source must ship the consumer .npmrc mapping @mbreissi -> GitHub Packages
+        npmrc = (proj / ".npmrc").read_text()
+        assert "@mbreissi:registry=https://npm.pkg.github.com" in npmrc
+
+    def test_ts_local_omits_npmrc(self, tmp_path):
+        if not (self._WS / "templates" / "typescript").is_dir():
+            pytest.skip("ts template not present")
+        proj = self._gen(tmp_path, "TYPESCRIPT", "typescript", dep_source="local",
+                         ggcommons_path=str(self._WS / "libs" / "ts"))
+        assert not (proj / ".npmrc").exists()  # local file: dep needs no registry config
+        assert 'file:' in (proj / "package.json").read_text()
 
 
 class TestWizard:
