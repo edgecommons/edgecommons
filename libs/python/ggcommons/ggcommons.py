@@ -197,7 +197,49 @@ class GGCommons:
                 f"{', '.join(sorted(valid_sources))}"
             )
 
+        # FR-MSG-1: under the KUBERNETES convention (CONFIGMAP config source + MQTT transport) a
+        # single mounted ConfigMap file holds BOTH a `messaging` section (read by the messaging
+        # loader) AND the component config (loaded+validated by the CONFIGMAP source afterwards).
+        # When no explicit messaging-config path was given on `--transport MQTT`, default it to the
+        # resolved CONFIGMAP file path (mount dir + key), using the SAME dir/key the CONFIGMAP source
+        # resolves from `-c CONFIGMAP [dir] [key]` (or its profile default). Resolved here from
+        # parse-time inputs only (flags/env/profile), BEFORE messaging init — never by reading the
+        # ConfigMap through the config source (that runs after messaging). The existing explicit-path
+        # behavior is unchanged, and HOST keeps requiring an explicit path (HOST defaults to
+        # GG_CONFIG, not CONFIGMAP).
+        if (
+            parsed.transport == Transport.MQTT
+            and getattr(parsed, "standalone_config_path", None) is None
+            and parsed.config
+            and parsed.config[0].upper() == ConfigSource.CONFIGMAP.value
+        ):
+            parsed.standalone_config_path = self._configmap_messaging_path(parsed.config)
+            logger.info(
+                "CONFIGMAP+MQTT: defaulting messaging-config path to the mounted ConfigMap file '%s'",
+                parsed.standalone_config_path,
+            )
+
         return parsed
+
+    @staticmethod
+    def _configmap_messaging_path(config_args: List[str]) -> str:
+        """Resolve the CONFIGMAP file path (mount dir + key) exactly as the CONFIGMAP config source
+        does, so one mounted ConfigMap doubles as both the messaging config and the component config
+        (FR-MSG-1).
+
+        ``config_args`` is the resolved ``-c`` vector: ``["CONFIGMAP", [mount_dir], [key]]`` (the
+        positional dir/key are optional; defaults mirror :class:`ConfigMapConfigManager`).
+        """
+        # Import here (not at module load) to avoid pulling the config-manager subtree on the hot
+        # import path, and to reuse the single source of the CONFIGMAP mount/key defaults.
+        from ggcommons.config.manager.configmap_config_manager import (
+            DEFAULT_KEY,
+            DEFAULT_MOUNT_DIR,
+        )
+
+        mount_dir = config_args[1] if len(config_args) > 1 else DEFAULT_MOUNT_DIR
+        key = config_args[2] if len(config_args) > 2 else DEFAULT_KEY
+        return os.path.join(mount_dir, key)
 
     @staticmethod
     def _reject_legacy_mode_flag(args: Optional[List[str]]) -> None:

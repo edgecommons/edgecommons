@@ -64,6 +64,9 @@ jobs:
           NAMESPACE: ggcommons
           RELEASE: ggc
           TIMEOUT: "240"
+          # kubelet ConfigMap-volume propagation is slow + variable on shared CI runners; give the
+          # ..data hot-reload a roomy budget so a slow sync doesn't flake the smoke.
+          RELOAD_TIMEOUT: "300"
           KEEP: "1"
 
       - name: Diagnostics on failure

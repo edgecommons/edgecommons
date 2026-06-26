@@ -152,6 +152,12 @@ pub const ENV_GG_IPC_SOCKET: &str = "AWS_GG_NUCLEUS_DOMAIN_SOCKET_FILEPATH_FOR_C
 pub const ENV_GG_SVCUID: &str = "SVCUID";
 /// Greengrass-injected IoT Thing name (identity probe).
 pub const ENV_THING_NAME: &str = "AWS_IOT_THING_NAME";
+/// KUBERNETES Downward-API identity (primary k8s tier): the chart maps the
+/// `ggcommons.io/thing-name` pod annotation (or an explicit value) into this env var.
+pub const ENV_K8S_THING_NAME: &str = "GGCOMMONS_THING_NAME";
+/// KUBERNETES Downward-API identity (secondary k8s tier): the pod name, projected via a
+/// Downward-API `fieldRef` on `metadata.name`.
+pub const ENV_K8S_POD_NAME: &str = "POD_NAME";
 /// Confirming (secondary) Kubernetes signal. The token file is the primary, definitive one.
 pub const ENV_K8S_SERVICE_HOST: &str = "KUBERNETES_SERVICE_HOST";
 /// Projected service-account token path: the primary, definitive Kubernetes signal.
@@ -279,13 +285,31 @@ pub fn validate(platform: Platform, transport: Transport) -> Result<()> {
     Ok(())
 }
 
-/// Resolves the IoT Thing name / identity (DESIGN-core §6.2). Order: explicit `-t/--thing`,
-/// then the `AWS_IOT_THING_NAME` env probe, then the library fallback. For Phase 0 the
-/// GREENGRASS and HOST platforms share the same probe, so behavior is unchanged; KUBERNETES
-/// Downward-API identity is Phase 1.
-pub fn resolve_identity(thing: Option<&str>, _platform: Platform, env: &HashMap<String, String>) -> String {
+/// Resolves the IoT Thing name / identity (DESIGN-core §6.2, FR-RT-7 / FR-CFG-6). Order:
+/// 1. explicit `-t/--thing` (highest);
+/// 2. **only when `platform == KUBERNETES`** the Downward-API env tier, in order:
+///    [`ENV_K8S_THING_NAME`] (`GGCOMMONS_THING_NAME`) then [`ENV_K8S_POD_NAME`] (`POD_NAME`);
+/// 3. the generic `AWS_IOT_THING_NAME` probe (GREENGRASS / platform-supplied);
+/// 4. the library fallback [`DEFAULT_IDENTITY`].
+///
+/// The KUBERNETES tier (2) takes precedence over the generic probe (3) **only** on the
+/// KUBERNETES platform; on every other platform behavior is unchanged (the `platform`
+/// argument is now load-bearing). Empty env values are ignored at every tier. The resolved
+/// value is not mangled here — it is sanitized later by template substitution
+/// ([`crate::config::template`]) wherever it is interpolated into a path/topic.
+pub fn resolve_identity(thing: Option<&str>, platform: Platform, env: &HashMap<String, String>) -> String {
     if let Some(t) = thing {
         return t.to_string();
+    }
+    // KUBERNETES Downward-API identity tier — precedes the generic probe only on k8s.
+    if platform == Platform::Kubernetes {
+        for key in [ENV_K8S_THING_NAME, ENV_K8S_POD_NAME] {
+            if let Some(v) = env.get(key) {
+                if !v.is_empty() {
+                    return v.clone();
+                }
+            }
+        }
     }
     if let Some(v) = env.get(ENV_THING_NAME) {
         if !v.is_empty() {
@@ -435,6 +459,22 @@ mod tests {
         assert_eq!("my-thing", r.identity);
     }
 
+    #[test]
+    fn resolve_profile_uses_k8s_downward_api_identity_on_kubernetes() {
+        // End-to-end through the resolver: KUBERNETES + POD_NAME yields the pod identity, even
+        // with AWS_IOT_THING_NAME also set (the k8s tier precedes the generic probe).
+        let inputs = ResolverInputs {
+            platform: Some(Platform::Kubernetes),
+            ..Default::default()
+        };
+        let r = resolve_profile(
+            inputs,
+            &env(&[(ENV_K8S_POD_NAME, "pod-7"), (ENV_THING_NAME, "iot-thing")]),
+        )
+        .unwrap();
+        assert_eq!("pod-7", r.identity);
+    }
+
     // ---------- resolve_profile: failures ----------
 
     #[test]
@@ -526,6 +566,126 @@ mod tests {
             DEFAULT_IDENTITY,
             resolve_identity(None, Platform::Host, &env(&[(ENV_THING_NAME, "")]))
         );
+    }
+
+    // ---------- resolve_identity: KUBERNETES Downward-API tier (FR-RT-7 / FR-CFG-6) ----------
+
+    #[test]
+    fn k8s_identity_from_ggcommons_thing_name() {
+        let r = resolve_identity(
+            None,
+            Platform::Kubernetes,
+            &env(&[(ENV_K8S_THING_NAME, "annotated-thing")]),
+        );
+        assert_eq!("annotated-thing", r);
+    }
+
+    #[test]
+    fn k8s_identity_from_pod_name() {
+        let r = resolve_identity(
+            None,
+            Platform::Kubernetes,
+            &env(&[(ENV_K8S_POD_NAME, "my-pod-abc123")]),
+        );
+        assert_eq!("my-pod-abc123", r);
+    }
+
+    #[test]
+    fn k8s_ggcommons_thing_name_wins_over_pod_name() {
+        // The annotation/explicit value (GGCOMMONS_THING_NAME) precedes POD_NAME.
+        let r = resolve_identity(
+            None,
+            Platform::Kubernetes,
+            &env(&[(ENV_K8S_THING_NAME, "annotated"), (ENV_K8S_POD_NAME, "pod-xyz")]),
+        );
+        assert_eq!("annotated", r);
+    }
+
+    #[test]
+    fn k8s_identity_tier_precedes_aws_iot_thing_name() {
+        // On KUBERNETES, the Downward-API tier takes precedence over the generic probe.
+        let r = resolve_identity(
+            None,
+            Platform::Kubernetes,
+            &env(&[(ENV_K8S_POD_NAME, "pod-1"), (ENV_THING_NAME, "iot-thing")]),
+        );
+        assert_eq!("pod-1", r);
+    }
+
+    #[test]
+    fn k8s_falls_through_to_aws_iot_thing_name_when_no_downward_api() {
+        // No GGCOMMONS_THING_NAME / POD_NAME → fall through to the generic probe even on k8s.
+        let r = resolve_identity(
+            None,
+            Platform::Kubernetes,
+            &env(&[(ENV_THING_NAME, "iot-thing")]),
+        );
+        assert_eq!("iot-thing", r);
+    }
+
+    #[test]
+    fn k8s_ignores_empty_downward_api_values() {
+        // Empty Downward-API values are not signals; fall through to the generic probe.
+        let r = resolve_identity(
+            None,
+            Platform::Kubernetes,
+            &env(&[
+                (ENV_K8S_THING_NAME, ""),
+                (ENV_K8S_POD_NAME, ""),
+                (ENV_THING_NAME, "iot-thing"),
+            ]),
+        );
+        assert_eq!("iot-thing", r);
+    }
+
+    #[test]
+    fn k8s_identity_defaults_when_nothing_available() {
+        assert_eq!(
+            DEFAULT_IDENTITY,
+            resolve_identity(None, Platform::Kubernetes, &env(&[]))
+        );
+    }
+
+    #[test]
+    fn explicit_thing_wins_over_k8s_downward_api() {
+        // -t/--thing is highest precedence, even on KUBERNETES with Downward-API vars set.
+        let r = resolve_identity(
+            Some("cli-thing"),
+            Platform::Kubernetes,
+            &env(&[(ENV_K8S_THING_NAME, "annotated"), (ENV_K8S_POD_NAME, "pod-1")]),
+        );
+        assert_eq!("cli-thing", r);
+    }
+
+    #[test]
+    fn non_k8s_platforms_ignore_the_k8s_identity_tier() {
+        // The Downward-API tier is gated on platform==KUBERNETES; HOST/GREENGRASS ignore it and
+        // use only the generic AWS_IOT_THING_NAME probe.
+        let e = env(&[(ENV_K8S_THING_NAME, "annotated"), (ENV_K8S_POD_NAME, "pod-1")]);
+        assert_eq!(DEFAULT_IDENTITY, resolve_identity(None, Platform::Host, &e));
+        assert_eq!(DEFAULT_IDENTITY, resolve_identity(None, Platform::Greengrass, &e));
+        // ... and the generic probe still wins for them.
+        let e2 = env(&[(ENV_K8S_POD_NAME, "pod-1"), (ENV_THING_NAME, "iot-thing")]);
+        assert_eq!("iot-thing", resolve_identity(None, Platform::Host, &e2));
+    }
+
+    #[test]
+    fn resolved_k8s_identity_is_sanitized_when_interpolated() {
+        // FR-RT-7: the resolved identity is not mangled by the resolver, but a hostile pod name
+        // MUST still pass the existing template-variable sanitization wherever it is interpolated
+        // into a path/topic (no path traversal, no MQTT wildcards).
+        use crate::config::model::Config;
+        use crate::config::template::resolve;
+
+        let identity = resolve_identity(
+            None,
+            Platform::Kubernetes,
+            &env(&[(ENV_K8S_POD_NAME, "../../etc/passwd")]),
+        );
+        assert_eq!("../../etc/passwd", identity, "resolver returns the raw value");
+
+        let cfg = Config::from_value("com.example.C", &identity, serde_json::json!({})).unwrap();
+        assert_eq!(resolve(&cfg, "/logs/{ThingName}.log"), "/logs/____etc_passwd.log");
     }
 
     // ---------- profiles + enums ----------

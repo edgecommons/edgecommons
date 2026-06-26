@@ -10,7 +10,9 @@ import {
   DEFAULT_IDENTITY,
   ENV_GG_IPC_SOCKET,
   ENV_GG_SVCUID,
+  ENV_K8S_POD_NAME,
   ENV_K8S_SERVICE_HOST,
+  ENV_K8S_THING_NAME,
   ENV_THING_NAME,
   K8S_SA_TOKEN_PATH,
   PROFILES,
@@ -21,6 +23,8 @@ import {
   resolveProfile,
   validate,
 } from "../src/platform";
+import { resolve as resolveTemplate } from "../src/config/template";
+import { Config } from "../src/config/model";
 import { GgError } from "../src/errors";
 
 const NO_FILES = (): boolean => false;
@@ -191,6 +195,110 @@ describe("resolveIdentity", () => {
 
   it("handles an undefined env", () => {
     expect(resolveIdentity(undefined, Platform.HOST, undefined)).toBe(DEFAULT_IDENTITY);
+  });
+});
+
+// ---------- FR-RT-7 / FR-CFG-6: Kubernetes Downward-API identity ----------
+
+describe("resolveIdentity: KUBERNETES Downward-API (FR-RT-7)", () => {
+  it("reads GGCOMMONS_THING_NAME on KUBERNETES", () => {
+    expect(
+      resolveIdentity(undefined, Platform.KUBERNETES, { [ENV_K8S_THING_NAME]: "edge-42" }),
+    ).toBe("edge-42");
+  });
+
+  it("falls back to POD_NAME on KUBERNETES when GGCOMMONS_THING_NAME is absent", () => {
+    expect(
+      resolveIdentity(undefined, Platform.KUBERNETES, { [ENV_K8S_POD_NAME]: "ggc-pod-abc123" }),
+    ).toBe("ggc-pod-abc123");
+  });
+
+  it("GGCOMMONS_THING_NAME takes precedence over POD_NAME on KUBERNETES", () => {
+    expect(
+      resolveIdentity(undefined, Platform.KUBERNETES, {
+        [ENV_K8S_THING_NAME]: "annotated-thing",
+        [ENV_K8S_POD_NAME]: "ggc-pod-abc123",
+      }),
+    ).toBe("annotated-thing");
+  });
+
+  it("the KUBERNETES Downward-API tier wins over AWS_IOT_THING_NAME (only on KUBERNETES)", () => {
+    expect(
+      resolveIdentity(undefined, Platform.KUBERNETES, {
+        [ENV_K8S_THING_NAME]: "k8s-thing",
+        [ENV_THING_NAME]: "aws-thing",
+      }),
+    ).toBe("k8s-thing");
+    // POD_NAME also wins over the AWS probe on KUBERNETES.
+    expect(
+      resolveIdentity(undefined, Platform.KUBERNETES, {
+        [ENV_K8S_POD_NAME]: "k8s-pod",
+        [ENV_THING_NAME]: "aws-thing",
+      }),
+    ).toBe("k8s-pod");
+  });
+
+  it("explicit -t/--thing still wins over every KUBERNETES env tier", () => {
+    expect(
+      resolveIdentity("explicit-thing", Platform.KUBERNETES, {
+        [ENV_K8S_THING_NAME]: "k8s-thing",
+        [ENV_K8S_POD_NAME]: "k8s-pod",
+        [ENV_THING_NAME]: "aws-thing",
+      }),
+    ).toBe("explicit-thing");
+  });
+
+  it("KUBERNETES with only AWS_IOT_THING_NAME falls through to it (tier 3)", () => {
+    expect(
+      resolveIdentity(undefined, Platform.KUBERNETES, { [ENV_THING_NAME]: "aws-thing" }),
+    ).toBe("aws-thing");
+  });
+
+  it("KUBERNETES with no identity env falls back to the default", () => {
+    expect(resolveIdentity(undefined, Platform.KUBERNETES, {})).toBe(DEFAULT_IDENTITY);
+  });
+
+  it("present-but-empty k8s env vars are treated as absent", () => {
+    expect(
+      resolveIdentity(undefined, Platform.KUBERNETES, {
+        [ENV_K8S_THING_NAME]: "",
+        [ENV_K8S_POD_NAME]: "",
+        [ENV_THING_NAME]: "aws-thing",
+      }),
+    ).toBe("aws-thing");
+  });
+
+  it("the KUBERNETES tier is NOT consulted on other platforms (HOST ignores GGCOMMONS_THING_NAME/POD_NAME)", () => {
+    // On HOST, the k8s Downward-API vars must be ignored; only AWS_IOT_THING_NAME / -t apply.
+    expect(
+      resolveIdentity(undefined, Platform.HOST, {
+        [ENV_K8S_THING_NAME]: "k8s-thing",
+        [ENV_K8S_POD_NAME]: "k8s-pod",
+      }),
+    ).toBe(DEFAULT_IDENTITY);
+    expect(
+      resolveIdentity(undefined, Platform.GREENGRASS, {
+        [ENV_K8S_THING_NAME]: "k8s-thing",
+        [ENV_THING_NAME]: "aws-thing",
+      }),
+    ).toBe("aws-thing");
+  });
+
+  it("the resolved KUBERNETES identity still passes template-variable sanitization", () => {
+    // A hostile POD_NAME with path separators / wildcards / traversal must not break out of a
+    // {ThingName}-interpolated path or topic (the resolved value is sanitized at interpolation).
+    const identity = resolveIdentity(undefined, Platform.KUBERNETES, {
+      [ENV_K8S_POD_NAME]: "../evil/+name#",
+    });
+    expect(identity).toBe("../evil/+name#");
+    const cfg = Config.fromValue("com.example.Comp", identity, {});
+    const out = resolveTemplate(cfg, "logs/{ThingName}/app.log");
+    // The substituted value is sanitized: '/' and '\' separators, '+'/'#' wildcards, and '..'
+    // traversal each collapse to '_'. The literal template separators are preserved.
+    expect(out).toBe("logs/__evil__name_/app.log");
+    expect(out).not.toContain("..");
+    expect(out).not.toContain("+");
+    expect(out).not.toContain("#");
   });
 });
 

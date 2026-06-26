@@ -1,24 +1,31 @@
-# ggcommons on Kubernetes — Phase-1a test harness
+# ggcommons on Kubernetes — Phase-1a/1b test harness
 
-This harness exercises the **KUBERNETES platform** and its native config mechanism — the
-new **`CONFIGMAP` config source** with directory-watch hot-reload — on a real cluster
-(kind locally, or lab k3s). It is the live counterpart to the unit tests that verify the
-source + the simulated `..data` swap in each language library.
+This harness exercises the **KUBERNETES platform** and its native facilities — the
+**`CONFIGMAP` config source** with directory-watch hot-reload (1a), the
+**MQTT-broker-config-from-ConfigMap convention** and **Downward-API identity** (1b) — on a
+real cluster (kind locally, or lab k3s). It is the live counterpart to the unit tests that
+verify the source + the simulated `..data` swap in each language library.
 
-What Phase 1a proves end-to-end:
+What the harness proves end-to-end:
 
 1. a pod **auto-detects `platform=KUBERNETES`** from its projected ServiceAccount token
-   (`/var/run/secrets/kubernetes.io/serviceaccount/token`) — no `--platform` flag;
+   (`/var/run/secrets/kubernetes.io/serviceaccount/token`) — no `--platform` flag needed;
 2. it loads its component config via the **`CONFIGMAP` source** from a ConfigMap mounted
    as a **directory** at `/etc/ggcommons` (never `subPath`);
-3. it connects to the **in-cluster EMQX broker by Service DNS**;
-4. a **`kubectl` edit of the ConfigMap is hot-reloaded in-process** — the watcher
+3. it connects to the **in-cluster EMQX broker by Service DNS** — and on KUBERNETES the
+   broker config is **sourced from the mounted ConfigMap with no positional `--transport MQTT
+   <path>`** (Phase 1b, FR-MSG-1): the single `config.json` carries both the `messaging`
+   section and the component config;
+4. with **no `-t/--thing`**, the component's **identity resolves from the Downward API**
+   (Phase 1b, FR-RT-7): `GGCOMMONS_THING_NAME` (set from `values.thingName`) ▸ `POD_NAME`
+   (the pod's `metadata.name`, injected via a `fieldRef`);
+5. a **`kubectl` edit of the ConfigMap is hot-reloaded in-process** — the watcher
    re-arms across the kubelet's atomic `..data` symlink swap — **with no pod restart**.
 
-> Not in 1a (deferred, with TODO markers in the chart): the HTTP `/livez,/readyz` health
-> endpoint and the `prometheus` metrics target (sub-phase **1c**); PVC-aware streaming,
-> the `env` KeyProvider, and Downward-API identity (**1b/1d**). The chart's probes and
-> Service are therefore **placeholders**.
+> Not yet (deferred, with TODO markers in the chart): the HTTP `/livez,/readyz` health
+> endpoint and the `prometheus` metrics target (sub-phase **1c**); PVC-aware streaming and
+> the `env` KeyProvider (**1d**). The chart's probes and Service are therefore
+> **placeholders**.
 
 ## Contents
 
@@ -111,6 +118,13 @@ helm template ggc test-infra/k8s/chart --set rbac.create=true   # render the opt
 
 - `values.yaml` parameterizes `image`, the broker Service DNS (`messaging.brokerHost`),
   and `replicas`.
+- **Identity** (FR-RT-7): the chart always injects `POD_NAME`/`POD_NAMESPACE`/`NODE_NAME`
+  via the Downward API. Set `--set thingName=my-thing` to pin a stable identity (exposed as
+  `GGCOMMONS_THING_NAME`, the highest k8s identity tier); leave it empty to fall through to
+  `POD_NAME`. Append further env (e.g. `AWS_REGION`) via `extraEnv`.
+- **Messaging** (FR-MSG-1): the chart passes no `--transport MQTT <path>` — the KUBERNETES
+  profile derives `MQTT` and the messaging-config path defaults to the mounted ConfigMap
+  file. An explicit `--transport MQTT <path>` in `args` still overrides.
 - RBAC is **off by default** — the component needs no Kubernetes API access (config and
   secrets arrive as mounted volumes). Enable least-privilege, ConfigMap-scoped read RBAC
   with `--set rbac.create=true`.

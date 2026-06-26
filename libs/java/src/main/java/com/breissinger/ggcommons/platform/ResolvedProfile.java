@@ -10,11 +10,16 @@ package com.breissinger.ggcommons.platform;
  * and before messaging init, from parse-time inputs only (flags &rarr; env &rarr; messaging-config
  * payload).
  *
- * @param platform     the resolved platform (after auto-detection / explicit flag)
- * @param transport    the resolved messaging transport (validated against the platform)
- * @param configSource the resolved {@code -c/--config} argument vector (explicit, else the profile
- *                     default as a single-element array)
- * @param identity     the resolved IoT Thing name (identity), never {@code null}
+ * @param platform            the resolved platform (after auto-detection / explicit flag)
+ * @param transport           the resolved messaging transport (validated against the platform)
+ * @param configSource        the resolved {@code -c/--config} argument vector (explicit, else the
+ *                            profile default as a single-element array)
+ * @param identity            the resolved IoT Thing name (identity), never {@code null}
+ * @param messagingConfigPath the resolved MQTT messaging-config path (the explicit
+ *                            {@code --transport MQTT <path>} payload, or — under CONFIGMAP+MQTT with
+ *                            no explicit path — the default ConfigMap file path; FR-MSG-1).
+ *                            {@code null} when no path applies.
  */
-public record ResolvedProfile(Platform platform, Transport transport, String[] configSource, String identity) {
+public record ResolvedProfile(Platform platform, Transport transport, String[] configSource,
+                              String identity, String messagingConfigPath) {
 }

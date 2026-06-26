@@ -92,16 +92,27 @@ log "Installing the component chart (image ${IMAGE})"
 log "Waiting for the component rollout"
 "${KUBECTL}" -n "${NAMESPACE}" rollout status deploy/"${RELEASE}"-ggcommons-component --timeout="${TIMEOUT}s"
 
-# --- Core assertions: platform resolution + CONFIGMAP source + broker connect -------
+# --- Core assertions: CONFIGMAP source + broker connect (FR-MSG-1) + identity (FR-RT-7) -------
 # NOTE: the resolver's "Resolved platform=KUBERNETES" and messaging's "Successfully connected"
 # logs are emitted BEFORE the component configures logging (both precede config load), so they are
 # dropped at INFO and are not assertable from pod logs yet — a startup-log observability gap tracked
 # for the 1c logging sub-phase (when the stdout-JSON sink + early bootstrap land). We assert instead
-# on reliably-emitted, equally-conclusive logs: the CONFIGMAP directory watcher starting (only the
-# KUBERNETES profile selects CONFIGMAP, and --platform KUBERNETES is passed explicitly), and the
-# in-cluster broker round-trip (the component receives its own published message off the broker).
+# on reliably-emitted, equally-conclusive logs.
+#
+# FR-MSG-1: the chart `args` pass NO positional `--transport MQTT <path>` (and no --transport at all);
+# the KUBERNETES profile derives transport=MQTT and the messaging-config path DEFAULTS to the mounted
+# ConfigMap file. So a successful in-cluster broker round-trip proves the broker config was sourced
+# from the ConfigMap with no positional path.
 assert_log "Starting ConfigMap directory watcher on /etc/ggcommons" "config loaded via the CONFIGMAP source (KUBERNETES profile)"
-assert_log "Received an .* message on topic ggcommons" "MQTT pub/sub round-trip via the in-cluster broker (connect proven)"
+assert_log "Received an .* message on topic ggcommons" "MQTT round-trip via in-cluster broker — broker config from ConfigMap, no positional path (FR-MSG-1)"
+
+# FR-RT-7: no -t/--thing is passed, so the resolved identity must come from the Downward-API env. With
+# `thingName` unset, GGCOMMONS_THING_NAME is absent and identity falls through to POD_NAME (the pod's
+# metadata.name, injected via a Downward-API fieldRef). The skeleton logs its resolved identity once at
+# startup; assert it equals this pod's actual name.
+POD="$("${KUBECTL}" -n "${NAMESPACE}" get pods -l "${SELECTOR}" -o jsonpath='{.items[0].metadata.name}')"
+[[ -n "${POD}" ]] || fail "could not determine the component pod name"
+assert_log "Component identity .thing name.: ${POD}" "Downward-API identity resolved to POD_NAME=${POD} (FR-RT-7)"
 
 # --- Hot-reload (..data swap re-arm) test -------------------------------------------
 # Patch the ConfigMap's config.json in place (NOT helm upgrade) and assert the running
@@ -120,8 +131,10 @@ fi
 "${KUBECTL}" -n "${NAMESPACE}" patch configmap "${CM_NAME}" --type merge \
   -p "$(printf '{"data":{"config.json":%s}}' "$(printf '%s' "${NEW_JSON}" | "${PY}" -c 'import json,sys; print(json.dumps(sys.stdin.read()))')")"
 
-# kubelet propagation of a ConfigMap edit is ~60-90s at defaults; allow generous time.
-RELOAD_TIMEOUT="${RELOAD_TIMEOUT:-150}"
+# kubelet propagation of a ConfigMap edit to a mounted volume can be as long as the kubelet
+# sync period + the ConfigMap cache TTL (~1m + ~1m at defaults), and is slower still on loaded
+# CI runners. Allow generous time; override with RELOAD_TIMEOUT (CI sets it higher — see k8s.yml).
+RELOAD_TIMEOUT="${RELOAD_TIMEOUT:-240}"
 TIMEOUT="${RELOAD_TIMEOUT}" assert_log \
   "ConfigMap changed|configuration reloaded|reloaded config|config.*reload" \
   "in-process hot-reload after the ..data swap (no restart)"

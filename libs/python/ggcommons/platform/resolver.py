@@ -21,10 +21,13 @@ does *not* flip to ``FILE`` until Phase 1).
 **Phase 1a:** :attr:`~ggcommons.platform.platform.Platform.KUBERNETES` now has a
 profile (transport ``MQTT``, config source ``CONFIGMAP``) and resolves cleanly —
 a service-account-token pod auto-detects to it. The IPC x KUBERNETES rejection
-still holds (the IPC lock). Identity for KUBERNETES still uses the Phase-0
-:func:`resolve_identity` env probe; the Downward-API identity, the ``prometheus``
-metrics target, stdout-JSON logging and the HTTP health endpoint are deferred to
-later Phase-1 sub-phases.
+still holds (the IPC lock).
+
+**Phase 1b:** :func:`resolve_identity` now reads the Kubernetes Downward-API env
+tier (:data:`ENV_K8S_THING_NAME` then :data:`ENV_K8S_POD_NAME`) ahead of the
+generic ``AWS_IOT_THING_NAME`` probe **when** the resolved platform is
+``KUBERNETES``. The ``prometheus`` metrics target, stdout-JSON logging and the
+HTTP health endpoint are deferred to later Phase-1 sub-phases.
 """
 
 import logging
@@ -45,6 +48,12 @@ ENV_GG_SVCUID = "SVCUID"
 ENV_THING_NAME = "AWS_IOT_THING_NAME"
 #: Confirming (secondary) Kubernetes signal. The token file is the primary, definitive one.
 ENV_K8S_SERVICE_HOST = "KUBERNETES_SERVICE_HOST"
+#: Kubernetes Downward-API identity (Phase 1b): the chart maps the ``ggcommons.io/thing-name`` pod
+#: annotation (or an explicit value) into this env var. Highest of the KUBERNETES identity tier.
+ENV_K8S_THING_NAME = "GGCOMMONS_THING_NAME"
+#: Kubernetes Downward-API pod name (Phase 1b): ``metadata.name`` via a Downward-API ``fieldRef``.
+#: The fallback identity on KUBERNETES when ``GGCOMMONS_THING_NAME`` is absent.
+ENV_K8S_POD_NAME = "POD_NAME"
 #: Projected service-account token path: the primary, definitive Kubernetes signal.
 K8S_SA_TOKEN_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 
@@ -71,9 +80,10 @@ class PlatformProfile:
 #: config source to ``GG_CONFIG`` to preserve current behavior. KUBERNETES (Phase 1a) defaults to the
 #: ``MQTT`` transport and the k8s-native ``CONFIGMAP`` config source.
 #:
-#: TODO (Phase 1b-1d): the KUBERNETES profile's metrics/logging/credentials/streaming/identity
-#: defaults (prometheus target, stdout-JSON sink, env KeyProvider, PVC buffer, Downward-API identity)
-#: are not yet modeled here — for Phase 1a those subsystems keep their current library defaults.
+#: TODO (Phase 1c-1d): the KUBERNETES profile's metrics/logging/credentials/streaming
+#: defaults (prometheus target, stdout-JSON sink, env KeyProvider, PVC buffer) are not yet modeled
+#: here — those subsystems keep their current library defaults. (Phase 1b wires the Downward-API
+#: identity in :func:`resolve_identity` and the CONFIGMAP-default messaging path in GGCommons.)
 PROFILES: Mapping[Platform, PlatformProfile] = {
     Platform.GREENGRASS: PlatformProfile(Transport.IPC, "GG_CONFIG"),
     Platform.HOST: PlatformProfile(Transport.MQTT, "GG_CONFIG"),
@@ -181,16 +191,27 @@ def resolve_identity(
     platform: Optional[Platform],
     env: Optional[Mapping[str, str]],
 ) -> str:
-    """Resolve the IoT Thing name / identity (DESIGN-core sec 6.2).
+    """Resolve the IoT Thing name / identity (DESIGN-core sec 6.2; FR-RT-7 / FR-CFG-6).
 
-    Order: explicit ``-t/--thing``, then the ``AWS_IOT_THING_NAME`` env probe,
-    then the library fallback. For Phase 0 the GREENGRASS and HOST platforms
-    share the same probe, so behavior is unchanged; KUBERNETES Downward-API
-    identity is Phase 1.
+    Order of precedence:
+
+    1. explicit ``-t/--thing`` (highest, unchanged);
+    2. **if** ``platform == KUBERNETES``: the Downward-API env vars, in order —
+       :data:`ENV_K8S_THING_NAME` (``GGCOMMONS_THING_NAME``, the
+       ``ggcommons.io/thing-name`` pod annotation mapped by the chart), then
+       :data:`ENV_K8S_POD_NAME` (``POD_NAME``, ``metadata.name`` via ``fieldRef``);
+    3. ``AWS_IOT_THING_NAME`` (GREENGRASS / generic platform-supplied, unchanged for non-k8s);
+    4. the library fallback :data:`DEFAULT_IDENTITY`.
+
+    The KUBERNETES env tier (2) takes precedence over the generic
+    ``AWS_IOT_THING_NAME`` probe (3) **only** when ``platform == KUBERNETES``; on
+    every other platform behavior is unchanged. The returned value is the raw
+    string — template-variable sanitization is still applied downstream when it is
+    interpolated as ``{ThingName}`` (see ``ConfigManager.resolve_template``).
 
     Args:
         thing: the explicit thing name, or ``None``.
-        platform: the resolved platform (reserved for the Phase-1 Kubernetes branch).
+        platform: the resolved platform (now consulted for the KUBERNETES tier).
         env: the process environment.
 
     Returns:
@@ -198,6 +219,13 @@ def resolve_identity(
     """
     if thing is not None:
         return thing
+    # KUBERNETES Downward-API identity tier (FR-RT-7): GGCOMMONS_THING_NAME, then POD_NAME.
+    # Empty values are treated as absent so an unset Downward-API field falls through.
+    if platform == Platform.KUBERNETES and env is not None:
+        for key in (ENV_K8S_THING_NAME, ENV_K8S_POD_NAME):
+            value = env.get(key)
+            if value:
+                return value
     from_env = None if env is None else env.get(ENV_THING_NAME)
     if from_env:  # present and non-empty (an empty AWS_IOT_THING_NAME is treated as absent)
         return from_env

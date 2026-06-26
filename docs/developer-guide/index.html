@@ -375,7 +375,7 @@ environment at startup; the transport, when omitted, is derived from the resolve
 <tbody>
 <tr><td><code>GREENGRASS</code></td><td>Greengrass <strong>IPC</strong></td><td>Greengrass deployment</td><td>On-device, Nucleus-managed production</td></tr>
 <tr><td><code>HOST</code></td><td><strong>MQTT</strong> — dual (local broker + AWS IoT Core)</td><td>File / env / shadow</td><td>Docker, bare hosts, local dev</td></tr>
-<tr><td><code>KUBERNETES</code> <span class="muted">(declared; Phase 1)</span></td><td><strong>MQTT</strong> (derived)</td><td>File / env / shadow</td><td>Kubernetes — the profile &amp; k8s-native features land in Phase 1</td></tr>
+<tr><td><code>KUBERNETES</code></td><td><strong>MQTT</strong> (derived)</td><td><code>CONFIGMAP</code> (mounted ConfigMap directory)</td><td>Kubernetes / edge clusters — broker config from the ConfigMap, identity from the Downward API</td></tr>
 </tbody>
 </table>
 
@@ -409,9 +409,12 @@ environment at startup; the transport, when omitted, is derived from the resolve
 </figure>
 
 <div class="callout warn"><span class="ct">Important</span>
-<p>The <strong>MQTT</strong> transport requires a messaging-config JSON path:
-<code>--transport MQTT &lt;messaging_config.json&gt;</code>. Because <code>--platform HOST</code> derives <code>MQTT</code>,
-it needs the same path; selecting MQTT without a path is a hard error. <code>IPC</code> is only valid on
+<p>The <strong>MQTT</strong> transport reads its broker/TLS config from a messaging-config JSON. On
+<code>--platform HOST</code> you pass the path explicitly: <code>--transport MQTT &lt;messaging_config.json&gt;</code>;
+selecting MQTT without a path there is a hard error. On <code>--platform KUBERNETES</code> with the
+<code>CONFIGMAP</code> source the path is <strong>defaulted to the mounted ConfigMap file</strong>
+(<code>/etc/ggcommons/config.json</code>) — that one file carries both the <code>messaging</code> section and the
+component config, so no positional path is needed (an explicit path still wins). <code>IPC</code> is only valid on
 <code>GREENGRASS</code>. See <a href="#messaging">Messaging</a> for the file format.</p></div>
 </section>
 
@@ -423,8 +426,8 @@ it needs the same path; selecting MQTT without a path is a hard error. <code>IPC
 <thead><tr><th>Option</th><th>Values</th><th>Default</th><th>Purpose</th></tr></thead>
 <tbody>
 <tr><td><code>-c</code>, <code>--config</code></td>
-<td><code>FILE</code> · <code>ENV</code> · <code>GG_CONFIG</code> · <code>SHADOW</code> · <code>CONFIG_COMPONENT</code></td>
-<td><code>GG_CONFIG</code></td><td>Where configuration is loaded from</td></tr>
+<td><code>FILE</code> · <code>ENV</code> · <code>GG_CONFIG</code> · <code>SHADOW</code> · <code>CONFIG_COMPONENT</code> · <code>CONFIGMAP</code></td>
+<td><code>GG_CONFIG</code> <span class="muted">(<code>CONFIGMAP</code> on KUBERNETES)</span></td><td>Where configuration is loaded from</td></tr>
 <tr><td><code>--platform</code></td>
 <td><code>GREENGRASS</code> · <code>HOST</code> · <code>KUBERNETES</code> · <code>auto</code></td>
 <td><code>auto</code></td><td>Runtime environment (auto-detected; always overridable)</td></tr>
@@ -432,7 +435,7 @@ it needs the same path; selecting MQTT without a path is a hard error. <code>IPC
 <td><code>IPC</code> · <code>MQTT &lt;path&gt;</code></td>
 <td>derived from platform</td><td>Messaging transport (<code>IPC</code> only valid on <code>GREENGRASS</code>)</td></tr>
 <tr><td><code>-t</code>, <code>--thing</code></td>
-<td>any IoT Thing name</td><td>resolved from environment</td><td>The device identity this component runs as</td></tr>
+<td>any IoT Thing name</td><td>resolved from environment</td><td>The device identity this component runs as. When omitted: on <code>GREENGRASS</code> from <code>AWS_IOT_THING_NAME</code>; on <code>KUBERNETES</code> from the Downward API (<code>GGCOMMONS_THING_NAME</code> ▸ <code>POD_NAME</code>)</td></tr>
 <tr><td><code>-h</code>, <code>--help</code></td><td>—</td><td>—</td><td>Print usage and exit</td></tr>
 </tbody>
 </table>

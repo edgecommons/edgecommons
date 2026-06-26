@@ -6,6 +6,7 @@ package com.breissinger.ggcommons.config.provider;
 
 import com.breissinger.ggcommons.config.ConfigManager;
 import com.breissinger.ggcommons.parameters.MountedDirSource;
+import com.breissinger.ggcommons.platform.PlatformResolver;
 import com.breissinger.ggcommons.utils.DirectoryWatcher;
 import com.breissinger.ggcommons.utils.FileWatcher;
 import com.google.gson.JsonObject;
@@ -58,10 +59,14 @@ final class ConfigMapConfigProvider extends ConfigProvider implements FileWatche
 
     private static final Logger LOGGER = LogManager.getLogger(ConfigMapConfigProvider.class);
 
-    /** Default ConfigMap mount directory when {@code -c CONFIGMAP} is given no path argument. */
-    static final String DEFAULT_MOUNT_DIR = "/etc/ggcommons";
+    /**
+     * Default ConfigMap mount directory when {@code -c CONFIGMAP} is given no path argument. Single
+     * source of truth lives in {@link PlatformResolver}, which reuses it to default the MQTT
+     * messaging-config path under CONFIGMAP+MQTT (FR-MSG-1) — the two must stay identical.
+     */
+    static final String DEFAULT_MOUNT_DIR = PlatformResolver.CONFIGMAP_DEFAULT_MOUNT_DIR;
     /** Default config key (file name within the mount) when none is given. */
-    static final String DEFAULT_KEY = "config.json";
+    static final String DEFAULT_KEY = PlatformResolver.CONFIGMAP_DEFAULT_KEY;
     /** The kubelet's atomic-swap symlink; its presence indicates a whole-volume (reloadable) mount. */
     static final String KUBELET_DATA_LINK = "..data";
 

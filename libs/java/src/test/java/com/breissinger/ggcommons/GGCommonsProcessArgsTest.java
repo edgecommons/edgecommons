@@ -5,9 +5,12 @@
 package com.breissinger.ggcommons;
 
 import com.breissinger.ggcommons.platform.Platform;
+import com.breissinger.ggcommons.platform.PlatformResolver;
 import com.breissinger.ggcommons.platform.Transport;
 import org.apache.commons.cli.Options;
 import org.junit.jupiter.api.Test;
+
+import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -159,6 +162,48 @@ class GGCommonsProcessArgsTest {
         assertEquals(Platform.KUBERNETES, pcl.platform);
         assertEquals(Transport.MQTT, pcl.transport);
         assertArrayEquals(new String[]{"CONFIGMAP"}, pcl.configArgs);
+    }
+
+    @Test
+    void kubernetesDefaultsMessagingPathToConfigMapFile() {
+        // FR-MSG-1: --platform KUBERNETES resolves to MQTT + CONFIGMAP, so the messaging-config path
+        // defaults to the ConfigMap file (/etc/ggcommons/config.json) with no positional path. The
+        // single mounted config.json then doubles as both the messaging config and the component config.
+        ParsedCommandLine pcl = GGCommons.processArgs(
+                COMPONENT, new String[]{"--platform", "KUBERNETES"}, null);
+        assertEquals(Transport.MQTT, pcl.transport);
+        assertArrayEquals(new String[]{"CONFIGMAP"}, pcl.configArgs);
+        assertEquals(Path.of(PlatformResolver.CONFIGMAP_DEFAULT_MOUNT_DIR)
+                .resolve(PlatformResolver.CONFIGMAP_DEFAULT_KEY).toString(), pcl.standaloneConfigPath);
+    }
+
+    @Test
+    void kubernetesDefaultsMessagingPathFromCustomConfigMapArgs() {
+        // The default uses the SAME mount dir/key the CONFIGMAP source resolves from -c CONFIGMAP.
+        ParsedCommandLine pcl = GGCommons.processArgs(
+                COMPONENT, new String[]{"--platform", "KUBERNETES", "-c", "CONFIGMAP", "/mnt/cfg", "app.json"}, null);
+        assertArrayEquals(new String[]{"CONFIGMAP", "/mnt/cfg", "app.json"}, pcl.configArgs);
+        assertEquals(Path.of("/mnt/cfg").resolve("app.json").toString(), pcl.standaloneConfigPath);
+    }
+
+    @Test
+    void kubernetesHonorsExplicitMessagingPathOverConfigMapDefault() {
+        // An explicit --transport MQTT <path> still wins under CONFIGMAP+MQTT (existing behavior).
+        ParsedCommandLine pcl = GGCommons.processArgs(
+                COMPONENT, new String[]{"--platform", "KUBERNETES", "--transport", "MQTT", "/custom/msg.json"}, null);
+        assertEquals(Transport.MQTT, pcl.transport);
+        assertEquals("/custom/msg.json", pcl.standaloneConfigPath);
+    }
+
+    @Test
+    void hostMqttWithoutPathGetsNoConfigMapDefault() {
+        // FR-MSG-1 must NOT change HOST: HOST defaults to GG_CONFIG (not CONFIGMAP), so HOST+MQTT with
+        // no explicit path leaves the messaging-config path null (enforced later at provider build).
+        ParsedCommandLine pcl = GGCommons.processArgs(
+                COMPONENT, new String[]{"--platform", "HOST", "--transport", "MQTT"}, null);
+        assertEquals(Transport.MQTT, pcl.transport);
+        assertArrayEquals(new String[]{"GG_CONFIG"}, pcl.configArgs);
+        assertNull(pcl.standaloneConfigPath);
     }
 
     @Test

@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { join } from "path";
 
 import { parseArgs } from "../src/cli";
 import { Platform, Transport } from "../src/platform";
@@ -214,6 +215,62 @@ describe("parseArgs", () => {
 
   it("unexpected argument throws Cli", () => {
     expect(() => parseArgs(["--frobnicate"], NO_ENV)).toThrow(GgError);
+  });
+
+  // ---------- FR-MSG-1: default messaging-config path from CONFIGMAP ----------
+
+  it("KUBERNETES (CONFIGMAP + MQTT) defaults messagingConfigPath to /etc/ggcommons/config.json", () => {
+    // No explicit `--transport MQTT <path>` is needed: the single mounted ConfigMap file doubles as
+    // both the messaging-config and the component config.
+    const parsed = parseArgs(["--platform", "KUBERNETES"], NO_ENV);
+    expect(parsed.transport).toBe(Transport.MQTT);
+    expect(parsed.config).toEqual({ kind: "CONFIGMAP", mountDir: undefined, key: undefined });
+    expect(parsed.messagingConfigPath).toBe(join("/etc/ggcommons", "config.json"));
+  });
+
+  it("CONFIGMAP + MQTT default uses the explicit -c CONFIGMAP mount dir + key", () => {
+    const parsed = parseArgs(
+      ["--platform", "KUBERNETES", "-c", "CONFIGMAP", "/etc/myconf", "app.json"],
+      NO_ENV,
+    );
+    expect(parsed.messagingConfigPath).toBe(join("/etc/myconf", "app.json"));
+  });
+
+  it("CONFIGMAP + MQTT default uses the explicit mount dir but the default key when key omitted", () => {
+    const parsed = parseArgs(["--platform", "KUBERNETES", "-c", "CONFIGMAP", "/etc/myconf"], NO_ENV);
+    expect(parsed.messagingConfigPath).toBe(join("/etc/myconf", "config.json"));
+  });
+
+  it("an explicit --transport MQTT <path> still wins over the CONFIGMAP default", () => {
+    const parsed = parseArgs(
+      ["--platform", "KUBERNETES", "--transport", "MQTT", "/custom/messaging.json"],
+      NO_ENV,
+    );
+    expect(parsed.config.kind).toBe("CONFIGMAP");
+    expect(parsed.messagingConfigPath).toBe("/custom/messaging.json");
+  });
+
+  it("HOST + MQTT does NOT get a default path (HOST defaults to GG_CONFIG, not CONFIGMAP)", () => {
+    // HOST keeps the old behavior: MQTT requires an explicit messaging-config path (enforced later
+    // at provider build), so parseArgs leaves it undefined here.
+    const parsed = parseArgs(["--platform", "HOST"], NO_ENV);
+    expect(parsed.transport).toBe(Transport.MQTT);
+    expect(parsed.config).toEqual({ kind: "GG_CONFIG", key: "ComponentConfig" });
+    expect(parsed.messagingConfigPath).toBeUndefined();
+  });
+
+  it("HOST + MQTT + explicit -c CONFIGMAP also gets the default path (CONFIGMAP+MQTT is the trigger, not the platform)", () => {
+    const parsed = parseArgs(["--platform", "HOST", "-c", "CONFIGMAP"], NO_ENV);
+    expect(parsed.config.kind).toBe("CONFIGMAP");
+    expect(parsed.messagingConfigPath).toBe(join("/etc/ggcommons", "config.json"));
+  });
+
+  it("CONFIGMAP with a non-MQTT path does not apply the messaging default (no MQTT, no messaging)", () => {
+    // GREENGRASS + IPC + explicit -c CONFIGMAP: IPC transport means no MQTT messaging-config default.
+    const parsed = parseArgs(["--platform", "GREENGRASS", "-c", "CONFIGMAP"], NO_ENV);
+    expect(parsed.transport).toBe(Transport.IPC);
+    expect(parsed.config.kind).toBe("CONFIGMAP");
+    expect(parsed.messagingConfigPath).toBeUndefined();
   });
 
   it("combines platform, transport, config and thing", () => {

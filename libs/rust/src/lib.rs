@@ -253,7 +253,8 @@ impl GgCommonsBuilder {
         };
 
         // Identity (thing name) was resolved by the platform resolver during arg parse
-        // (explicit -t ▸ AWS_IOT_THING_NAME env probe ▸ library fallback, DESIGN-core §6.2).
+        // (explicit -t ▸ [KUBERNETES: GGCOMMONS_THING_NAME ▸ POD_NAME] ▸ AWS_IOT_THING_NAME env
+        // probe ▸ library fallback, DESIGN-core §6.2 / FR-RT-7).
         let thing_name = parsed.identity.clone();
 
         // Messaging is initialized first: it depends only on the resolved transport (the

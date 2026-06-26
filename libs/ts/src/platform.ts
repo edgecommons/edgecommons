@@ -17,9 +17,12 @@
  *
  * **Phase 1a:** {@link Platform.KUBERNETES} now has a profile (transport `MQTT`, config source
  * `CONFIGMAP`) and resolves cleanly — a service-account-token pod auto-detects to it. The
- * IPC×KUBERNETES rejection still holds (the IPC lock). Identity for KUBERNETES still uses the Phase-0
- * {@link resolveIdentity} env probe; the Downward-API identity, the `prometheus` metrics target,
- * stdout-JSON logging, and the HTTP health endpoint are deferred to later Phase-1 sub-phases.
+ * IPC×KUBERNETES rejection still holds (the IPC lock).
+ *
+ * **Phase 1b:** {@link resolveIdentity} now reads the Kubernetes Downward-API env vars
+ * (`GGCOMMONS_THING_NAME`, then `POD_NAME`) ahead of the generic `AWS_IOT_THING_NAME` probe **when
+ * the resolved platform is KUBERNETES** (FR-RT-7). The `prometheus` metrics target, stdout-JSON
+ * logging, and the HTTP health endpoint remain deferred to later Phase-1 sub-phases.
  */
 import { existsSync } from "fs";
 
@@ -107,6 +110,19 @@ export const ENV_GG_IPC_SOCKET = "AWS_GG_NUCLEUS_DOMAIN_SOCKET_FILEPATH_FOR_COMP
 export const ENV_GG_SVCUID = "SVCUID";
 /** Greengrass-injected IoT Thing name (identity probe). */
 export const ENV_THING_NAME = "AWS_IOT_THING_NAME";
+/**
+ * Kubernetes Downward-API thing-name env var (FR-RT-7). The chart maps the
+ * `ggcommons.io/thing-name` pod annotation (or an explicit value) into this var. Honored only when
+ * the resolved platform is {@link Platform.KUBERNETES}; it then takes precedence over
+ * {@link ENV_THING_NAME}.
+ */
+export const ENV_K8S_THING_NAME = "GGCOMMONS_THING_NAME";
+/**
+ * Kubernetes Downward-API pod-name env var (`metadata.name` via `fieldRef`). The KUBERNETES identity
+ * fallback after {@link ENV_K8S_THING_NAME}. Honored only when the resolved platform is
+ * {@link Platform.KUBERNETES}.
+ */
+export const ENV_K8S_POD_NAME = "POD_NAME";
 /** Confirming (secondary) Kubernetes signal. The token file is the primary, definitive one. */
 export const ENV_K8S_SERVICE_HOST = "KUBERNETES_SERVICE_HOST";
 /** Projected service-account token path: the primary, definitive Kubernetes signal. */
@@ -198,30 +214,53 @@ export function validate(platform: Platform, transport: Transport): void {
 }
 
 /**
- * Resolves the IoT Thing name / identity (DESIGN-core §6.2). Order: explicit `-t/--thing`, then the
- * `AWS_IOT_THING_NAME` env probe, then the library fallback. For Phase 0 the GREENGRASS and HOST
- * platforms share the same probe, so behavior is unchanged; KUBERNETES Downward-API identity is
- * Phase 1.
+ * Resolves the IoT Thing name / identity (DESIGN-core §6.2, FR-RT-7 / FR-CFG-6). Precedence:
+ *
+ *   1. explicit `-t/--thing` (highest, every platform);
+ *   2. **KUBERNETES only** — the Downward-API env vars in order: {@link ENV_K8S_THING_NAME}
+ *      (`GGCOMMONS_THING_NAME`, the chart-mapped `ggcommons.io/thing-name` annotation or an explicit
+ *      value), then {@link ENV_K8S_POD_NAME} (`POD_NAME`, `metadata.name` via `fieldRef`);
+ *   3. {@link ENV_THING_NAME} (`AWS_IOT_THING_NAME`, GREENGRASS / generic platform-supplied);
+ *   4. the library fallback ({@link DEFAULT_IDENTITY}).
+ *
+ * The KUBERNETES tier (2) takes precedence over the generic AWS probe (3) **only** when
+ * `platform === KUBERNETES`; on every other platform behavior is unchanged. A present-but-empty env
+ * value is treated as absent (cross-language parity with the canonical Java/Python/Rust resolvers,
+ * which only honor a non-empty thing name). The resolved value is later sanitized wherever it is
+ * interpolated into a path or topic (see `config/template.ts`).
  */
 export function resolveIdentity(
   thing: string | undefined,
-  _platform: Platform,
+  platform: Platform,
   env: Env | undefined,
 ): string {
+  // (1) explicit -t/--thing wins everywhere.
   if (thing !== undefined) {
     return thing;
   }
-  const fromEnv = env ? env[ENV_THING_NAME] : undefined;
-  // Treat a present-but-empty env value as absent (cross-language parity with the
-  // canonical Java/Python/Rust resolvers, which only honor a non-empty thing name).
-  if (fromEnv !== undefined && fromEnv !== "") {
+  // (2) KUBERNETES Downward-API identity (precedence over the generic AWS probe only on k8s).
+  if (platform === Platform.KUBERNETES) {
+    const k8sThing = nonEmpty(env, ENV_K8S_THING_NAME) ?? nonEmpty(env, ENV_K8S_POD_NAME);
+    if (k8sThing !== undefined) {
+      return k8sThing;
+    }
+  }
+  // (3) Greengrass / generic platform-supplied identity probe.
+  const fromEnv = nonEmpty(env, ENV_THING_NAME);
+  if (fromEnv !== undefined) {
     return fromEnv;
   }
+  // (4) library fallback.
   return DEFAULT_IDENTITY;
 }
 
 function isSet(env: Env | undefined, key: string): boolean {
-  if (!env) return false;
+  return nonEmpty(env, key) !== undefined;
+}
+
+/** Return `env[key]` if present and non-empty, else `undefined` (treats `""` as absent). */
+function nonEmpty(env: Env | undefined, key: string): string | undefined {
+  if (!env) return undefined;
   const v = env[key];
-  return v !== undefined && v !== "";
+  return v !== undefined && v !== "" ? v : undefined;
 }
