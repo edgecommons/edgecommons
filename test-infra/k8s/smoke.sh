@@ -131,8 +131,10 @@ fi
 "${KUBECTL}" -n "${NAMESPACE}" patch configmap "${CM_NAME}" --type merge \
   -p "$(printf '{"data":{"config.json":%s}}' "$(printf '%s' "${NEW_JSON}" | "${PY}" -c 'import json,sys; print(json.dumps(sys.stdin.read()))')")"
 
-# kubelet propagation of a ConfigMap edit is ~60-90s at defaults; allow generous time.
-RELOAD_TIMEOUT="${RELOAD_TIMEOUT:-150}"
+# kubelet propagation of a ConfigMap edit to a mounted volume can be as long as the kubelet
+# sync period + the ConfigMap cache TTL (~1m + ~1m at defaults), and is slower still on loaded
+# CI runners. Allow generous time; override with RELOAD_TIMEOUT (CI sets it higher — see k8s.yml).
+RELOAD_TIMEOUT="${RELOAD_TIMEOUT:-240}"
 TIMEOUT="${RELOAD_TIMEOUT}" assert_log \
   "ConfigMap changed|configuration reloaded|reloaded config|config.*reload" \
   "in-process hot-reload after the ..data swap (no restart)"
