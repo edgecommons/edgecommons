@@ -1,6 +1,6 @@
 {
   "component": {
-    "com.breissinger.greengrass.TsComponentSkeleton": {
+    "com.mbreissi.greengrass.TsComponentSkeleton": {
       "author": "Marc Breissinger",
       "version": "NEXT_PATCH",
       "build": {

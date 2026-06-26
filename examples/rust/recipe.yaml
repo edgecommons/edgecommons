@@ -1,6 +1,6 @@
 ---
 RecipeFormatVersion: "2020-01-25"
-ComponentName: "com.breissinger.greengrass.RustComponentSkeleton"
+ComponentName: "com.mbreissi.greengrass.RustComponentSkeleton"
 ComponentVersion: "1.0.0"
 ComponentDescription: "Skeleton Rust component built on the ggcommons Rust library: standardized configuration, logging, messaging, metrics, and heartbeats."
 ComponentPublisher: "Marc Breissinger"
@@ -113,7 +113,7 @@ ComponentConfiguration:
         instances: []
     accessControl:
       aws.greengrass.ipc.pubsub:
-        "com.breissinger.greengrass.RustComponentSkeleton:pubsub:1":
+        "com.mbreissi.greengrass.RustComponentSkeleton:pubsub:1":
           policyDescription: Allows access to publish/subscribe to all topics.
           operations:
             - "aws.greengrass#PublishToTopic"
@@ -121,7 +121,7 @@ ComponentConfiguration:
           resources:
             - "*"
       aws.greengrass.ipc.mqttproxy:
-        "com.breissinger.greengrass.RustComponentSkeleton:iotcore:1":
+        "com.mbreissi.greengrass.RustComponentSkeleton:iotcore:1":
           policyDescription: Allows access to publish/subscribe to all topics on IoT Core.
           operations:
             - "aws.greengrass#PublishToIoTCore"
@@ -129,7 +129,7 @@ ComponentConfiguration:
           resources:
             - "*"
       aws.greengrass.ShadowManager:
-        "com.breissinger.greengrass.RustComponentSkeleton:shadow:1":
+        "com.mbreissi.greengrass.RustComponentSkeleton:shadow:1":
           policyDescription: Allows access to shadows.
           operations:
             - 'aws.greengrass#GetThingShadow'

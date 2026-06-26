@@ -18,7 +18,7 @@ envelope. **Java is the canonical reference.**
 
 | Path | What it is | Stack |
 |------|-----------|-------|
-| `libs/java/` | The canonical, most complete library. Maven artifact `com.breissinger:ggcommons`. | Java 25 (LTS), Maven |
+| `libs/java/` | The canonical, most complete library. Maven artifact `com.mbreissi:ggcommons`. | Java 25 (LTS), Maven |
 | `libs/python/` | The Python port (PyPI `greengrass-commons`). **Has its own `CLAUDE.md` — read it before working here.** | Python 3.9+, setuptools |
 | `libs/rust/` | The Rust port (crate `ggcommons`). | Rust (edition 2024, MSRV 1.85), Cargo |
 | `libs/ts/` | The TypeScript port (npm `ggcommons`). | TypeScript 5 / Node 18+ |

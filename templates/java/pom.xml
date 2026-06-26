@@ -44,7 +44,7 @@
       <scope>test</scope>
     </dependency>
     <dependency>
-      <groupId>com.breissinger</groupId>
+      <groupId>com.mbreissi</groupId>
       <artifactId>ggcommons</artifactId>
       <version>1.1.9-SNAPSHOT</version>
     </dependency>

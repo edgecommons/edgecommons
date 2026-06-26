@@ -19,7 +19,7 @@ Therefore this watcher (a) watches the mount directory, which persists across sw
 directory each poll cycle, so the watch survives inode replacement / symlink swap rather than silently
 going dead.
 
-Mirrors the canonical Java ``com.breissinger.ggcommons.utils.DirectoryWatcher``. Java uses the JDK
+Mirrors the canonical Java ``com.mbreissi.ggcommons.utils.DirectoryWatcher``. Java uses the JDK
 ``WatchService`` with an explicit re-arm loop; Python's portable, deterministic equivalent is a
 periodic re-scan poll loop, which is inherently immune to inode replacement (it holds no inode/key
 across cycles). The dotfile filter that prevents the projection artifacts from being *parsed* as

@@ -8,7 +8,7 @@
       "filePath": "/var/log/{ComponentName}-{ThingName}.log"
     },
     "loggers": {
-      "com.breissinger.ggcommons": "DEBUG",
+      "com.mbreissi.ggcommons": "DEBUG",
       "com.mycompany.myapp": "WARN",
       "org.springframework": "ERROR",
       "root": "INFO"

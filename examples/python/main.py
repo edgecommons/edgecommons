@@ -21,7 +21,7 @@ def main():
     # work dir (/greengrass/v2/work/<full-name>). A short name resolves to a path under the
     # root-owned /greengrass/v2/work that the component can't create (vault/stream dirs then fail).
     gg = (
-        GGCommonsBuilder.create("com.breissinger.greengrass.PythonComponentSkeleton")
+        GGCommonsBuilder.create("com.mbreissi.greengrass.PythonComponentSkeleton")
         .with_args(sys.argv[1:])
         .with_app_options(arg_parser)
         .receive_own_messages(True)

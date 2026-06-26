@@ -48,7 +48,7 @@ HOST → FILE, KUBERNETES → CONFIGMAP), `--platform <PLATFORM>`, `--transport 
 
 | Path | What it is | Stack |
 |------|-----------|-------|
-| `libs/java/` | The **canonical**, most complete library. Maven artifact `com.breissinger:ggcommons`. | Java 25, Maven |
+| `libs/java/` | The **canonical**, most complete library. Maven artifact `com.mbreissi:ggcommons`. | Java 25, Maven |
 | `libs/python/` | The Python port (PyPI `greengrass-commons`). | Python 3.9+, setuptools |
 | `libs/rust/` | The Rust port (crate `ggcommons`). | Rust (edition 2024), Cargo |
 | `libs/ts/` | The TypeScript port (npm `ggcommons`). | TypeScript 5 / Node 18+ |

@@ -1,8 +1,8 @@
-import com.breissinger.ggcommons.config.ConfigManager;
-import com.breissinger.ggcommons.messaging.Message;
-import com.breissinger.ggcommons.messaging.MessageBuilder;
-import com.breissinger.ggcommons.messaging.MessagingConfiguration;
-import com.breissinger.ggcommons.messaging.providers.standalone.StandaloneMessagingProvider;
+import com.mbreissi.ggcommons.config.ConfigManager;
+import com.mbreissi.ggcommons.messaging.Message;
+import com.mbreissi.ggcommons.messaging.MessageBuilder;
+import com.mbreissi.ggcommons.messaging.MessagingConfiguration;
+import com.mbreissi.ggcommons.messaging.providers.standalone.StandaloneMessagingProvider;
 import com.google.gson.Gson;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;

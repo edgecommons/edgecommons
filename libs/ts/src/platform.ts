@@ -4,7 +4,7 @@
  * The pure precedence resolver and platform auto-detector. Maps parse-time inputs
  * (explicit flags, then environment, then the platform-profile defaults) to a single
  * {@link ResolvedProfile} consumed by the lifecycle builder. Mirrors the canonical Java
- * `com.breissinger.ggcommons.platform` package.
+ * `com.mbreissi.ggcommons.platform` package.
  *
  * One rule governs every defaultable setting:
  * ```

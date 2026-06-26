@@ -434,7 +434,7 @@ Developers can use the schema file with JSON editors and IDEs that support JSON 
 - **Schema validation errors**: Check configuration against the JSON schema
 
 ### Debugging Configuration
-- Enable DEBUG logging for `com.breissinger.ggcommons.config` package
+- Enable DEBUG logging for `com.mbreissi.ggcommons.config` package
 - Use `getFullConfig()` to inspect the complete loaded configuration
 - Test template resolution with `resolveTemplate()` method
 - Verify configuration source with `configProvider.getConfigSource()`

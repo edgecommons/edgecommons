@@ -8,8 +8,8 @@
       "filePath": "/var/log/{ComponentName}-{ThingName}.log"
     },
     "loggers": {
-      "com.breissinger.ggcommons": "DEBUG",
-      "com.breissinger.ggcommons.messaging": "TRACE",
+      "com.mbreissi.ggcommons": "DEBUG",
+      "com.mbreissi.ggcommons.messaging": "TRACE",
       "org.apache.http": "WARN"
     }
   },

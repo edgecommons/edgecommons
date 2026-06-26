@@ -1,7 +1,7 @@
 //! # Platform — the two-axis runtime model (platform × transport)
 //!
 //! **One-liner purpose**: The pure precedence resolver and platform auto-detector
-//! (DESIGN-core §4 / §5), mirroring the canonical Java `com.breissinger.ggcommons.platform`.
+//! (DESIGN-core §4 / §5), mirroring the canonical Java `com.mbreissi.ggcommons.platform`.
 //!
 //! ## Overview
 //! Two orthogonal runtime axes replace the legacy single `-m/--mode` token:

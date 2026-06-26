@@ -190,7 +190,7 @@ mechanism per provider:
 |---------------|-----------------------------------|----------------------|
 | `FILE` | `extends` key in component file → path; else `$GGCOMMONS_SHARED_CONFIG`; else `/etc/ggcommons/shared.json` (D7) | All three supported; first hit wins. `extends` may be relative to the component file. |
 | `ENV` | `$GGCOMMONS_SHARED_CONFIG` = JSON (or `@/path`) | Containers/K8s project a shared ConfigMap into this var. |
-| `GG_CONFIG` | `GetConfiguration` on a **shared-config component** (D8), name from `$GGCOMMONS_SHARED_COMPONENT` (default `com.breissinger.greengrass.GGCommonsSharedConfig`) | Reuses the cross-component IPC read that `CONFIG_COMPONENT` already does. Alt: nucleus-level config (rejected — fights the per-component deploy model). |
+| `GG_CONFIG` | `GetConfiguration` on a **shared-config component** (D8), name from `$GGCOMMONS_SHARED_COMPONENT` (default `com.mbreissi.greengrass.GGCommonsSharedConfig`) | Reuses the cross-component IPC read that `CONFIG_COMPONENT` already does. Alt: nucleus-level config (rejected — fights the per-component deploy model). |
 | `SHADOW` | A shared **named shadow** `ggcommons-shared` on the same Thing (D9) | Read with `GetThingShadow(thing, "ggcommons-shared")`, watch its delta. |
 | `CONFIG_COMPONENT` | The config component serves a base + per-component overlay (it is already the "shared" model) | The client requests the reserved base id, then its own; or the component returns `{base, overlay}`. |
 
@@ -461,4 +461,4 @@ shared on-disk cache file is required.
 2. **D11 (reframed)** — verified cross-read works *only* under the single-`ggc_user` model, so a shared on-disk vault file is rejected as primary (§9). Confirm the path: **option (3)** per-component vault + shared central as the near-term default, and **option (2)** served manager as the robust later phase? (And: is per-component duplicate central fetching acceptable near-term, or do you want option (2) sooner?)
 3. **D4** opt-out knob naming (`sharedConfig` / `--no-shared-config`) acceptable?
 4. **D2** arrays replace (not concat) — OK for `heartbeat.targets` etc.?
-5. Naming of the shared-config component (`com.breissinger.greengrass.GGCommonsSharedConfig`) and whether it doubles as the credentials sync owner.
+5. Naming of the shared-config component (`com.mbreissi.greengrass.GGCommonsSharedConfig`) and whether it doubles as the credentials sync owner.

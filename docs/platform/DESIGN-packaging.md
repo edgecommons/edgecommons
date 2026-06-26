@@ -263,7 +263,7 @@ cache, the IRSA `identity` binding) surface here.
 **The problem.** A scaffolded component is built into a container image in a **clean build context** that has
 none of the monorepo. But the templates depend on the library by a **local path** (`Rust` `ggcommons = { path
 = "<<GGCOMMONS_PATH>>" }`, `TS` `"file:<<GGCOMMONS_PATH>>"`) or an **unpublished** coordinate (`Python`
-`greengrass-commons`, `Java` `com.breissinger:ggcommons` from local `~/.m2`). So a scaffold cannot build an
+`greengrass-commons`, `Java` `com.mbreissi:ggcommons` from local `~/.m2`). So a scaffold cannot build an
 image — and therefore cannot be deployed to Kubernetes — until each library is obtainable from a registry the
 build can reach. (The `test-infra/k8s` image works only because it builds from the *monorepo root* and copies
 `libs/` in; that is the example, not an arbitrary scaffold.)
@@ -274,7 +274,7 @@ private by default; resolved 2026-06-26):
 | Artifact | Private channel (now) | Coordinate / ref | Public later (low-cost swap) |
 |----------|-----------------------|------------------|------------------------------|
 | Component **images** | **ghcr.io** | `ghcr.io/mbreissi/<component>` | same |
-| **Java** lib | GitHub Packages **Maven** | `com.breissinger:ggcommons` | Maven Central (same coord; add GPG signing) |
+| **Java** lib | GitHub Packages **Maven** | `com.mbreissi:ggcommons` | Maven Central (same coord; add GPG signing) |
 | **TypeScript** lib | GitHub Packages **npm** | **`@mbreissi/ggcommons`** (renamed from `@breissinger`) | public npm under `@mbreissi` |
 | **Python** lib | `pip git+https` | `git+https://github.com/mbreissi/ggcommons.git#subdirectory=libs/python` | PyPI `greengrass-commons==x.y` |
 | **Rust** lib | cargo **git dep** | `ggcommons = { git = "https://github.com/mbreissi/ggcommons", tag = "rust-lib/vX.Y.Z" }` | crates.io `ggcommons = "x.y"` (⚠ verify name free before first public release) |
