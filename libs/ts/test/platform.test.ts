@@ -82,11 +82,11 @@ describe("resolveProfile: profile defaults", () => {
     expect(r.identity).toBe(DEFAULT_IDENTITY);
   });
 
-  it("explicit HOST -> MQTT + GG_CONFIG in Phase 0 (not FILE)", () => {
+  it("explicit HOST -> MQTT + FILE (Phase 1, §12 #1)", () => {
     const r = resolveProfile({ platform: Platform.HOST }, {});
     expect(r.platform).toBe(Platform.HOST);
     expect(r.transport).toBe(Transport.MQTT);
-    expect(r.configSource).toEqual(["GG_CONFIG"]);
+    expect(r.configSource).toEqual(["FILE"]);
   });
 
   it("auto with no signals detects HOST", () => {

@@ -76,11 +76,12 @@ def test_no_configmap_default_under_file_source():
 
 
 def test_host_mqtt_does_not_default_messaging_path():
-    # HOST defaults its config source to GG_CONFIG (not CONFIGMAP), so HOST+MQTT must NOT get a
-    # defaulted messaging path — it still requires an explicit one.
+    # Only CONFIGMAP synthesizes a default messaging path; HOST defaults its config source to FILE
+    # (not CONFIGMAP), so HOST+MQTT must NOT get a defaulted messaging path — it still requires an
+    # explicit one.
     parsed = _parse(["--platform", "HOST", "--transport", "MQTT"])
     assert parsed.transport == Transport.MQTT
-    assert parsed.config == ["GG_CONFIG"]
+    assert parsed.config == ["FILE"]
     assert parsed.standalone_config_path is None
 
 

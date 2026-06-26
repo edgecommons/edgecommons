@@ -89,14 +89,14 @@ class PlatformResolverTest {
     }
 
     @Test
-    void resolveHostExplicitGivesMqttAndGgConfigInPhase0() {
-        // Phase 0 deliberately keeps HOST's default config source at GG_CONFIG (not FILE).
+    void resolveHostExplicitGivesMqttAndFile() {
+        // Phase 1 (§12 #1): HOST defaults its config source to FILE (GG_CONFIG needs Nucleus IPC).
         var inputs = new PlatformResolver.ResolverInputs(Platform.HOST, null, null, null);
         ResolvedProfile r = PlatformResolver.resolveProfile(inputs, Map.of());
 
         assertEquals(Platform.HOST, r.platform());
         assertEquals(Transport.MQTT, r.transport());
-        assertArrayEquals(new String[]{"GG_CONFIG"}, r.configSource());
+        assertArrayEquals(new String[]{"FILE"}, r.configSource());
     }
 
     @Test
@@ -359,7 +359,8 @@ class PlatformResolverTest {
 
     @Test
     void messagingPathNullForMqttWithNonConfigMapSource() {
-        // HOST defaults to GG_CONFIG (not CONFIGMAP) -> no default synthesized; MQTT still needs a path.
+        // Only CONFIGMAP synthesizes a default messaging path; FILE/GG_CONFIG do not, so HOST (FILE)
+        // and explicit non-CONFIGMAP sources still require an explicit MQTT path.
         assertNull(PlatformResolver.resolveMessagingConfigPath(null, Transport.MQTT, new String[]{"GG_CONFIG"}));
         assertNull(PlatformResolver.resolveMessagingConfigPath(null, Transport.MQTT, new String[]{"FILE", "c.json"}));
     }

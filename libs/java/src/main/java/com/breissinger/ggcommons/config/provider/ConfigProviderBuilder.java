@@ -17,8 +17,8 @@ public class ConfigProviderBuilder {
     public static ConfigProvider build(ConfigManager configManager, String componentName, String thingName, String[] configArgs, com.breissinger.ggcommons.messaging.MessagingClient messagingClient) {
         ConfigProvider configProvider = switch (configArgs[0].toUpperCase()) {
             case "FILE" -> {
-                LOGGER.debug("Using File com.breissinger.ggcommons.config provider");
-                String configFile = configArgs.length > 1 ? configArgs[1] : "com.breissinger.ggcommons.config.json";
+                LOGGER.debug("Using File config provider");
+                String configFile = configArgs.length > 1 ? configArgs[1] : "config.json";
                 yield new FileConfigProvider(configManager, configFile);
             }
             case "CONFIGMAP" -> {

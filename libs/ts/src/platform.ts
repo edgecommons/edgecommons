@@ -204,9 +204,10 @@ export const K8S_SA_TOKEN_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/
 export const DEFAULT_IDENTITY = "NOT_GREENGRASS";
 
 /**
- * The platform-profile table (DESIGN-core §3). GREENGRASS and HOST deliberately default the config
- * source to `GG_CONFIG` to preserve current behavior. KUBERNETES (Phase 1a) defaults to the `MQTT`
- * transport and the k8s-native `CONFIGMAP` config source.
+ * The platform-profile table (DESIGN-core §3). GREENGRASS defaults the config source to `GG_CONFIG`
+ * (the Nucleus-managed deployment config); HOST defaults to `FILE` (Phase 1, §12 #1 — `GG_CONFIG`
+ * needs the Nucleus IPC that HOST lacks, so it was a latent footgun). KUBERNETES (Phase 1a) defaults
+ * to the `MQTT` transport and the k8s-native `CONFIGMAP` config source.
  *
  * Phase 1c adds the KUBERNETES profile's default `loggingFormat` ({@link JSON_LOG_FORMAT}: the
  * structured stdout-JSON sink), `healthEnabled`, and (prometheus slice) the default `metricTarget`
@@ -216,7 +217,7 @@ export const DEFAULT_IDENTITY = "NOT_GREENGRASS";
  */
 export const PROFILES: ReadonlyMap<Platform, PlatformProfile> = new Map([
   [Platform.GREENGRASS, { transport: Transport.IPC, configSource: "GG_CONFIG" } as PlatformProfile],
-  [Platform.HOST, { transport: Transport.MQTT, configSource: "GG_CONFIG" } as PlatformProfile],
+  [Platform.HOST, { transport: Transport.MQTT, configSource: "FILE" } as PlatformProfile],
   [
     Platform.KUBERNETES,
     {

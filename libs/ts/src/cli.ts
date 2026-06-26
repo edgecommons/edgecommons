@@ -5,7 +5,7 @@
  * - `--platform GREENGRASS | HOST | KUBERNETES | auto` (default `auto`) — the primary runtime axis.
  * - `--transport IPC | MQTT [messaging_config.json]` — secondary axis; defaults from the platform.
  * - `-c/--config <SOURCE> [args...]` — `FILE | CONFIGMAP | ENV | GG_CONFIG | SHADOW | CONFIG_COMPONENT`
- *   (default: from the resolved platform profile — GREENGRASS/HOST -> GG_CONFIG, KUBERNETES -> CONFIGMAP).
+ *   (default: from the resolved platform profile — GREENGRASS -> GG_CONFIG, HOST -> FILE, KUBERNETES -> CONFIGMAP).
  * - `-t/--thing <name>` — IoT Thing name (takes the **full** string value; default: platform identity).
  *
  * The legacy single-axis `-m/--mode` flag is removed (FR-RT-1): passing it errors with guidance to

@@ -152,9 +152,10 @@ class PlatformProfile:
     credentials_key_provider: Optional[str] = None
 
 
-#: The platform-profile table (DESIGN-core sec 3). GREENGRASS and HOST deliberately default the
-#: config source to ``GG_CONFIG`` to preserve current behavior. KUBERNETES (Phase 1a) defaults to the
-#: ``MQTT`` transport and the k8s-native ``CONFIGMAP`` config source.
+#: The platform-profile table (DESIGN-core sec 3). GREENGRASS defaults the config source to
+#: ``GG_CONFIG`` (the Nucleus-managed deployment config); HOST defaults to ``FILE`` (Phase 1,
+#: sec 12 #1 — ``GG_CONFIG`` needs the Nucleus IPC that HOST lacks, so it was a latent footgun).
+#: KUBERNETES (Phase 1a) defaults to the ``MQTT`` transport and the k8s-native ``CONFIGMAP`` source.
 #:
 #: Phase 1c models the KUBERNETES profile's default ``logging_format`` (``json``, the stdout-JSON
 #: sink) and ``metric_target`` (``prometheus``, the pull-based registry). GREENGRASS/HOST keep
@@ -165,7 +166,7 @@ class PlatformProfile:
 #: not yet modeled here.
 PROFILES: Mapping[Platform, PlatformProfile] = {
     Platform.GREENGRASS: PlatformProfile(Transport.IPC, "GG_CONFIG"),
-    Platform.HOST: PlatformProfile(Transport.MQTT, "GG_CONFIG"),
+    Platform.HOST: PlatformProfile(Transport.MQTT, "FILE"),
     Platform.KUBERNETES: PlatformProfile(
         Transport.MQTT,
         "CONFIGMAP",

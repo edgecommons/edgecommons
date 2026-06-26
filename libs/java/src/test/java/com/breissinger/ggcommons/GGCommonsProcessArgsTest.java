@@ -27,14 +27,17 @@ class GGCommonsProcessArgsTest {
     private static final String COMPONENT = "com.example.TestComponent";
 
     @Test
-    void defaultConfigSourceIsGgConfigRegardlessOfDetectedPlatform() {
-        // -c absent -> default comes from the resolved platform profile, which is GG_CONFIG for
-        // both Phase-0 platforms.
-        ParsedCommandLine pcl = GGCommons.processArgs(
+    void defaultConfigSourceComesFromPlatformProfile() {
+        // -c absent -> default comes from the resolved platform profile: GG_CONFIG on GREENGRASS,
+        // FILE on HOST (Phase 1, §12 #1).
+        ParsedCommandLine host = GGCommons.processArgs(
                 COMPONENT, new String[]{"--platform", "HOST", "--transport", "MQTT", "./msg.json"}, null);
+        assertArrayEquals(new String[]{"FILE"}, host.configArgs);
+        assertNotNull(host.commandLine);
 
-        assertArrayEquals(new String[]{"GG_CONFIG"}, pcl.configArgs);
-        assertNotNull(pcl.commandLine);
+        ParsedCommandLine gg = GGCommons.processArgs(
+                COMPONENT, new String[]{"--platform", "GREENGRASS"}, null);
+        assertArrayEquals(new String[]{"GG_CONFIG"}, gg.configArgs);
     }
 
     @Test
@@ -197,12 +200,13 @@ class GGCommonsProcessArgsTest {
 
     @Test
     void hostMqttWithoutPathGetsNoConfigMapDefault() {
-        // FR-MSG-1 must NOT change HOST: HOST defaults to GG_CONFIG (not CONFIGMAP), so HOST+MQTT with
-        // no explicit path leaves the messaging-config path null (enforced later at provider build).
+        // FR-MSG-1 only synthesizes a messaging path for CONFIGMAP: HOST defaults to FILE (not
+        // CONFIGMAP), so HOST+MQTT with no explicit path leaves the messaging-config path null
+        // (enforced later at provider build).
         ParsedCommandLine pcl = GGCommons.processArgs(
                 COMPONENT, new String[]{"--platform", "HOST", "--transport", "MQTT"}, null);
         assertEquals(Transport.MQTT, pcl.transport);
-        assertArrayEquals(new String[]{"GG_CONFIG"}, pcl.configArgs);
+        assertArrayEquals(new String[]{"FILE"}, pcl.configArgs);
         assertNull(pcl.standaloneConfigPath);
     }
 

@@ -16,13 +16,13 @@ This document describes the available command line options provided by the AWS P
 ### -c, --config
 * **Description**: Specifies the configuration source and related parameters for the component
 * **Usage**: `-c <source> [additional args]` or `--config <source> [additional args]`
-* **Required**: No (defaults to "GG_CONFIG" if not specified)
+* **Required**: No (default comes from the resolved platform profile — GREENGRASS → GG_CONFIG, HOST → FILE, KUBERNETES → CONFIGMAP)
 * **Dependencies**: None
 * **Values**: One of the following sources with optional additional parameters:
   * `FILE [file_path]` - Load configuration from a file
   * `ENV [env_var_name]` - Load configuration from environment variable
   * `SHADOW [shadow_name]` - Load configuration from AWS IoT Device Shadow
-  * `GG_CONFIG [component_name] [config_key]` - Load configuration from Greengrass component configuration (default)
+  * `GG_CONFIG [component_name] [config_key]` - Load configuration from Greengrass component configuration (the default on the GREENGRASS platform)
   * `CONFIG_COMPONENT` - Load configuration from a configuration component
 * **Effect**: Determines how the component obtains its configuration settings
 

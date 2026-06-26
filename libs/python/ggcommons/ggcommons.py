@@ -167,7 +167,7 @@ class GGCommons:
             help='Configuration source. One of: ENV, GG_CONFIG, FILE, CONFIGMAP, SHADOW, '
                  'CONFIG_COMPONENT. CONFIGMAP takes [mount_dir] [key] (defaults /etc/ggcommons, '
                  'config.json). Default: from the resolved platform profile '
-                 '(GREENGRASS/HOST -> GG_CONFIG, KUBERNETES -> CONFIGMAP)'
+                 '(GREENGRASS -> GG_CONFIG, HOST -> FILE, KUBERNETES -> CONFIGMAP)'
         )
         parser.add_argument(
             '--platform',

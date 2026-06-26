@@ -15,9 +15,10 @@
 //! initializer.
 //!
 //! ## Phases
-//! Phase 0 wired [`Platform::Greengrass`] and [`Platform::Host`], both defaulting their config
-//! source to `GG_CONFIG` (a faithful re-expression of today's behavior; HOST does **not** flip
-//! to `FILE`). Phase 1a wires [`Platform::Kubernetes`]: MQTT transport and the k8s-native
+//! Phase 0 wired [`Platform::Greengrass`] and [`Platform::Host`] (both initially defaulting their
+//! config source to `GG_CONFIG`, a faithful re-expression of then-current behavior). Phase 1
+//! (§12 #1) flips HOST's default to `FILE` (`GG_CONFIG` needs the Nucleus IPC that HOST lacks);
+//! GREENGRASS keeps `GG_CONFIG`. Phase 1a wires [`Platform::Kubernetes`]: MQTT transport and the k8s-native
 //! `CONFIGMAP` source (a mounted ConfigMap directory). The IPC × KUBERNETES rejection is
 //! retained (the IPC lock, [`validate`]). The compile-time capability check (GREENGRASS requires
 //! the `greengrass` cargo feature) lives at the transport-injection site
@@ -208,10 +209,11 @@ pub const K8S_SA_TOKEN_PATH: &str = "/var/run/secrets/kubernetes.io/serviceaccou
 /// The library-default identity when no thing name is available (matches today's behavior).
 pub const DEFAULT_IDENTITY: &str = "NOT_GREENGRASS";
 
-/// The platform-profile for a platform (DESIGN-core §3). GREENGRASS and HOST deliberately
-/// default the config source to `GG_CONFIG` to preserve current behavior; KUBERNETES (Phase 1a)
-/// defaults to MQTT transport and the k8s-native `CONFIGMAP` source. Returns `None` only for a
-/// platform with no profile (none today).
+/// The platform-profile for a platform (DESIGN-core §3). GREENGRASS defaults the config source to
+/// `GG_CONFIG` (the Nucleus-managed deployment config); HOST defaults to `FILE` (Phase 1, §12 #1 —
+/// `GG_CONFIG` needs the Nucleus IPC that HOST lacks, so it was a latent footgun); KUBERNETES
+/// (Phase 1a) defaults to MQTT transport and the k8s-native `CONFIGMAP` source. Returns `None`
+/// only for a platform with no profile (none today).
 pub fn profile(platform: Platform) -> Option<PlatformProfile> {
     match platform {
         Platform::Greengrass => Some(PlatformProfile {
@@ -224,7 +226,7 @@ pub fn profile(platform: Platform) -> Option<PlatformProfile> {
         }),
         Platform::Host => Some(PlatformProfile {
             transport: Transport::Mqtt,
-            config_source: "GG_CONFIG",
+            config_source: "FILE",
             logging_format: None,
             health_enabled: false,
             metric_target: None,
@@ -487,8 +489,8 @@ mod tests {
     }
 
     #[test]
-    fn resolve_host_explicit_gives_mqtt_and_gg_config_in_phase0() {
-        // Phase 0 deliberately keeps HOST's default config source at GG_CONFIG (not FILE).
+    fn resolve_host_explicit_gives_mqtt_and_file() {
+        // Phase 1 (§12 #1): HOST defaults its config source to FILE (GG_CONFIG needs Nucleus IPC).
         let inputs = ResolverInputs {
             platform: Some(Platform::Host),
             ..Default::default()
@@ -496,7 +498,7 @@ mod tests {
         let r = resolve_profile(inputs, &env(&[])).unwrap();
         assert_eq!(Platform::Host, r.platform);
         assert_eq!(Transport::Mqtt, r.transport);
-        assert_eq!(vec!["GG_CONFIG".to_string()], r.config_source);
+        assert_eq!(vec!["FILE".to_string()], r.config_source);
     }
 
     #[test]

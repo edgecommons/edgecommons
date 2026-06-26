@@ -139,11 +139,13 @@ public final class PlatformResolver {
     public static final String CONFIGMAP_DEFAULT_KEY = "config.json";
 
     /**
-     * The platform-profile table (DESIGN-core §3). GREENGRASS and HOST deliberately default the config
-     * source to {@code GG_CONFIG} to preserve current behavior, and carry no logging-format default
-     * ({@code null} → the library console/text default). KUBERNETES (Phase 1a) defaults to the
-     * {@code MQTT} transport and the k8s-native {@code CONFIGMAP} config source, and (Phase 1c)
-     * defaults the logging format to {@value #LOGGING_FORMAT_JSON} — the stdout-JSON sink (FR-LOG-1).
+     * The platform-profile table (DESIGN-core §3). GREENGRASS defaults the config source to
+     * {@code GG_CONFIG} (the Nucleus-managed deployment config); HOST defaults to {@code FILE}
+     * (Phase 1, §12 #1 — {@code GG_CONFIG} needs the Nucleus IPC that HOST lacks, so it was a latent
+     * footgun). Both carry no logging-format default ({@code null} → the library console/text
+     * default). KUBERNETES (Phase 1a) defaults to the {@code MQTT} transport and the k8s-native
+     * {@code CONFIGMAP} config source, and (Phase 1c) defaults the logging format to
+     * {@value #LOGGING_FORMAT_JSON} — the stdout-JSON sink (FR-LOG-1).
      *
      * <p>Phase 1d models the KUBERNETES profile's metric target ({@value #METRIC_TARGET_PROMETHEUS})
      * and credentials key-provider default ({@value #CREDENTIALS_KEY_PROVIDER_ENV} — the env/software
@@ -152,7 +154,7 @@ public final class PlatformResolver {
      */
     public static final Map<Platform, PlatformProfile> PROFILES = Map.of(
             Platform.GREENGRASS, new PlatformProfile(Transport.IPC, "GG_CONFIG", null, false, null, null),
-            Platform.HOST, new PlatformProfile(Transport.MQTT, "GG_CONFIG", null, false, null, null),
+            Platform.HOST, new PlatformProfile(Transport.MQTT, "FILE", null, false, null, null),
             Platform.KUBERNETES, new PlatformProfile(Transport.MQTT, "CONFIGMAP", LOGGING_FORMAT_JSON,
                     true, METRIC_TARGET_PROMETHEUS, CREDENTIALS_KEY_PROVIDER_ENV));
 

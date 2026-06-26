@@ -58,7 +58,7 @@ exists to abstract these differences away so the same business logic runs everyw
   k8s service-account token → HOST fallback); always overridable by an explicit `--platform`.
 
 **Standard CLI contract** (identical across all four languages — keep them aligned):
-- `-c/--config <SOURCE> [args...]` — one of `FILE`, `ENV`, `GG_CONFIG` (default), `SHADOW`, `CONFIG_COMPONENT`.
+- `-c/--config <SOURCE> [args...]` — one of `FILE`, `ENV`, `GG_CONFIG`, `SHADOW`, `CONFIG_COMPONENT` (default: from the resolved platform profile — GREENGRASS → GG_CONFIG, HOST → FILE, KUBERNETES → CONFIGMAP).
 - `--platform <PLATFORM>` — `GREENGRASS`, `HOST`, `KUBERNETES`, or `auto` (default `auto`); the primary axis.
 - `--transport <TRANSPORT> [path]` — `IPC` or `MQTT [messaging_config.json]`; defaults from the
   platform (GREENGRASS→IPC, HOST→MQTT) and is validated (IPC is only valid on GREENGRASS). The

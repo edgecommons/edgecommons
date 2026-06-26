@@ -571,7 +571,7 @@ public class GGCommons
                                             "'SHADOW <optional: shadow_name>', " +
                                             "'GG_CONFIG <optional: component_name> <optional: config_key>', " +
                                             "'CONFIG_COMPONENT'\n" +
-                                            "Default: from the resolved platform profile (GREENGRASS/HOST -> GG_CONFIG, KUBERNETES -> CONFIGMAP)")
+                                            "Default: from the resolved platform profile (GREENGRASS -> GG_CONFIG, HOST -> FILE, KUBERNETES -> CONFIGMAP)")
                                     .build();
         Option platformOption = Option.builder()
                                        .longOpt("platform")

@@ -198,9 +198,11 @@ GGCommons supports several command line options for configuration and messaging:
 ### Configuration Source (`-c, --config`)
 - `FILE [path]` - Load from JSON file (default: current directory)
 - `ENV [var_name]` - Load from environment variable (default: GGCOMMONS_CONFIG)
-- `GG_CONFIG [component] [key]` - Load from Greengrass deployment (default)
+- `GG_CONFIG [component] [key]` - Load from Greengrass deployment (the default on the GREENGRASS platform)
 - `SHADOW [name]` - Load from IoT Device Shadow
 - `CONFIG_COMPONENT` - Load from configuration management component
+
+The default source comes from the resolved platform profile (GREENGRASS → GG_CONFIG, HOST → FILE, KUBERNETES → CONFIGMAP).
 
 ### Platform (`--platform`)
 - `GREENGRASS` - Greengrass runtime; uses Greengrass IPC by default

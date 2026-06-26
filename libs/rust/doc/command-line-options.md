@@ -9,7 +9,8 @@ and surfaced as [`ParsedArgs`].
 ### `-c` / `--config <SOURCE> [args...]`
 
 Selects the configuration source. The first token is the source; the rest are
-source-specific. Default (when omitted): `GG_CONFIG ComponentConfig`.
+source-specific. Default (when omitted): from the resolved platform profile —
+GREENGRASS → `GG_CONFIG ComponentConfig`, HOST → `FILE`, KUBERNETES → `CONFIGMAP`.
 
 | Source | Extra args | Meaning |
 |--------|-----------|---------|
