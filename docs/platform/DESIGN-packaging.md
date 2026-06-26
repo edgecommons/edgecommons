@@ -257,3 +257,56 @@ expected but every cloud path tolerates lengthy disconnects (AWS reachability is
 running). `credentials`/`parameters` are driven by the component **config document** (mounted via the
 ConfigMap), not chart values — only their deployment-affecting bits (a PVC for a persistent parameter
 cache, the IRSA `identity` binding) surface here.
+
+## 13. Distribution & publishing (libraries + component images)
+
+**The problem.** A scaffolded component is built into a container image in a **clean build context** that has
+none of the monorepo. But the templates depend on the library by a **local path** (`Rust` `ggcommons = { path
+= "<<GGCOMMONS_PATH>>" }`, `TS` `"file:<<GGCOMMONS_PATH>>"`) or an **unpublished** coordinate (`Python`
+`greengrass-commons`, `Java` `com.breissinger:ggcommons` from local `~/.m2`). So a scaffold cannot build an
+image — and therefore cannot be deployed to Kubernetes — until each library is obtainable from a registry the
+build can reach. (The `test-infra/k8s` image works only because it builds from the *monorepo root* and copies
+`libs/` in; that is the example, not an arbitrary scaffold.)
+
+**Decision — GitHub-native private distribution** (the repo `mbreissi/ggcommons` is private, so all of these are
+private by default; resolved 2026-06-26):
+
+| Artifact | Private channel (now) | Coordinate / ref | Public later (low-cost swap) |
+|----------|-----------------------|------------------|------------------------------|
+| Component **images** | **ghcr.io** | `ghcr.io/mbreissi/<component>` | same |
+| **Java** lib | GitHub Packages **Maven** | `com.breissinger:ggcommons` | Maven Central (same coord; add GPG signing) |
+| **TypeScript** lib | GitHub Packages **npm** | **`@mbreissi/ggcommons`** (renamed from `@breissinger`) | public npm under `@mbreissi` |
+| **Python** lib | `pip git+https` | `git+https://github.com/mbreissi/ggcommons.git#subdirectory=libs/python` | PyPI `greengrass-commons==x.y` |
+| **Rust** lib | cargo **git dep** | `ggcommons = { git = "https://github.com/mbreissi/ggcommons", tag = "rust-lib/vX.Y.Z" }` | crates.io `ggcommons = "x.y"` (⚠ verify name free before first public release) |
+
+GitHub Packages has **no native PyPI/crates registry**, hence the git-based deps for Python/Rust; both resolve
+against the private repo with the built-in `GITHUB_TOKEN`. Going public is a registry URL/credential change in
+`release.yml` plus a one-line consumer dependency swap — *provided names/coordinates stay stable*, so they are
+locked now (the npm scope `@mbreissi` is the only consumer-visible rename, done once, up front).
+
+**Dual-mode scaffold Dockerfile.** Each template ships a `Dockerfile` with a build arg
+`GGCOMMONS_SOURCE = registry | local`:
+- `registry` (default) — resolves the library from the channel above (needs `GITHUB_TOKEN` build secret). The
+  path real users take.
+- `local` — vendors the library from a monorepo checkout (the `test-infra` approach). Used for in-repo dev, CI,
+  and **offline validation** (build the image, `kind load`, deploy — no registry/credentials needed). This is
+  how the deploy QuickStart is validated without consuming Actions or publishing.
+
+Multi-arch + non-root + read-only-root carry over from §11.
+
+**Per-scaffold k8s manifests.** Each template ships `k8s/` (raw, `kubectl apply`-able): `configmap.yaml`
+(component config incl. the `messaging` section, mounted as a *directory* at `/etc/ggcommons`) + `deployment.yaml`
+(image ref, Downward-API identity env, httpGet probes on `:8081`, ConfigMap volume, `/tmp` emptyDir, no args —
+`--platform auto` detects KUBERNETES from the SA token). The shared Helm chart (`test-infra/k8s/chart`) remains
+the richer path; these raw manifests are the minimal hello-world deploy.
+
+**`release.yml` wiring** (extends the existing skeleton; all publish steps **gated on secrets + manual
+`workflow_dispatch`**, never auto-publish on a plain push): per-tag-prefix build+publish — Java→GH Packages
+Maven, TS→GH Packages npm (`@mbreissi`), Python→git-tag (consumers `pip git+https@<tag>`), Rust→git-tag
+(consumers `cargo { git, tag }`), and a component-image job pushing multi-arch images to `ghcr.io`.
+
+**Sequencing & cost.** Decision (2026-06-26): **hold all CI** — do every file/wiring change locally, validate
+via the Dockerfile `local` mode + `kind`, and run `release.yml` only on an explicit later go (conserves the
+~Actions budget). The interactive-CLI follow-on (a `prompts` + conditional-files extension to
+`ggcommons-template.json`) would emit the `Dockerfile`/`k8s/` artifacts **only when the user targets
+Kubernetes**, and choose the dependency source (registry vs local) — designed but not built here.
