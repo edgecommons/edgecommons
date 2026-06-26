@@ -230,9 +230,18 @@ class TestInitAndConnect:
             self.host, self.port = host, port  # stays disconnected
 
         monkeypatch.setattr(FakeMqttClient, "connect_async", never_connect)
-        # speed up: patch time so the 5s wait loop trips immediately
-        times = iter([0.0, 100.0, 100.0])
-        monkeypatch.setattr(sp.time, "time", lambda: next(times))
+        # Speed up: patch time so the 5s wait loop trips immediately. Use an
+        # ever-advancing clock (not a fixed-length iterator): patching sp.time.time
+        # patches time.time process-wide, and the logging framework (log_cli=DEBUG)
+        # also calls it, so a 3-value iter exhausts -> StopIteration on chattier runs.
+        clock = {"t": 0.0}
+
+        def fake_time():
+            t = clock["t"]
+            clock["t"] += 100.0
+            return t
+
+        monkeypatch.setattr(sp.time, "time", fake_time)
         monkeypatch.setattr(sp.time, "sleep", lambda s: None)
         with pytest.raises((TimeoutError, RuntimeError)):
             StandaloneProvider(_local_only_config(), "t")

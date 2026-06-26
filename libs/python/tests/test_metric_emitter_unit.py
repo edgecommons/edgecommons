@@ -80,11 +80,16 @@ class TestInit:
         # the target registered itself as a config-change listener
         assert cm.listeners
 
-    def test_invalid_target_falls_back_to_log(self, tmp_path):
-        mc = MetricConfiguration({
-            "target": "bogus-target",
-            "targetConfig": {"logFileName": str(tmp_path / "m.log")},
-        })
+    def test_invalid_target_falls_back_to_log(self, tmp_path, monkeypatch):
+        # `logFileName` in targetConfig is only honored when target == "log"; the
+        # fallback path uses the default template, so point that default at tmp_path
+        # (the real default is /greengrass/v2/logs/... which doesn't exist off-device).
+        monkeypatch.setattr(
+            MetricConfiguration,
+            "DEFAULT_METRIC_FILE_NAME_TEMPLATE",
+            str(tmp_path / "m.log"),
+        )
+        mc = MetricConfiguration({"target": "bogus-target"})
         cm = FakeConfigManager(mc)
         MetricEmitter.init(cm)
         from ggcommons.metrics.targets.metric_log import MetricLog
