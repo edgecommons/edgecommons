@@ -59,18 +59,23 @@ prints `Done. Component generated at: <dir>`.
 
 | Flag | Required | Default | Description |
 |------|----------|---------|-------------|
-| `-n`, `--name` | **yes** | – | Fully-qualified component name (e.g. `com.example.MyComponent`). The generated directory and recipe `ComponentName` use the last segment. |
-| `-l`, `--language` | **yes** | – | One of `JAVA`, `PYTHON`, `RUST`, `TYPESCRIPT`. |
+| `-n`, `--name` | yes¹ | – | Fully-qualified component name (e.g. `com.example.MyComponent`). The generated directory and recipe `ComponentName` use the last segment. |
+| `-l`, `--language` | yes¹ | – | One of `JAVA`, `PYTHON`, `RUST`, `TYPESCRIPT`. |
+| `-i`, `--interactive` | no | off | Prompt for the inputs with a guided wizard (Enter accepts each `[default]`). **Auto-enabled when `-n/--name` is omitted on a terminal.** |
+| `--platforms` | no | `GREENGRASS,HOST,KUBERNETES` (all) | Comma-separated target platforms. Controls which **platform-specific artifacts** the template emits — e.g. the Kubernetes `Dockerfile` + `k8s/` manifests are generated **only when `KUBERNETES` is included**. |
+| `--dep-source` | no | `local` | How the component depends on the ggcommons library: `local` (a path/`file:` dependency on a monorepo checkout) or `registry` (the published artifact). `registry` skips the `--ggcommons-path` requirement. |
 | `-d`, `--description` | no | `This is a Greengrass v2 component` | Short description embedded in the recipe. |
 | `-p`, `--path` | no | `.` | Directory to create the component in (the project is created at `<path>/<ComponentName>`). |
 | `-j`, `--jar` | no | the component name | Jar file name (Java only). |
 | `-a`, `--author` | no | `Amazon Web Services` | Component author. |
 | `-b`, `--bucket` | no | `greengrass-component-artifacts-us-east-1` | S3 bucket recorded in `gdk-config.json`. |
 | `-r`, `--region` | no | `us-east-1` | AWS region recorded in `gdk-config.json`. |
-| `-g`, `--ggcommons-path` | no | the in-repo `libs/rust` (or `libs/ts` for TypeScript) | **Rust/TypeScript only** — absolute path to the ggcommons library; becomes the Cargo **path** dependency (Rust) or npm `file:` dependency (TypeScript). Must exist for `RUST`/`TYPESCRIPT`. |
+| `-g`, `--ggcommons-path` | no | the in-repo `libs/rust` (or `libs/ts` for TypeScript) | **Rust/TypeScript with `--dep-source local` only** — absolute path to the ggcommons library; becomes the Cargo **path** dependency (Rust) or npm `file:` dependency (TypeScript). |
 | `-u`, `--template-url` | no | the built-in source for the language | Override the template source: a **git URL** (cloned) **or** a **local directory** (copied). |
 | `--template-ref` | no | the repo's default branch | Git branch or tag to clone (ignored when `--template-url` is a local directory). |
 | `-f`, `--force` | no | off | Overwrite the target directory if it already exists and is non-empty. |
+
+¹ Required in non-interactive use. In `--interactive` mode (or when `-n` is omitted on a terminal) they are prompted for.
 
 **Examples**
 
@@ -101,6 +106,14 @@ ggcommons create-component -n com.example.MyComponent -l PYTHON \
 ```
 Generates from a **local** template directory instead of cloning the default git source —
 useful for a forked/offline template.
+
+```bash
+ggcommons create-component -i
+```
+Runs the **interactive wizard**: prompts for language, name, description, **target platform(s)**,
+and dependency source. Selecting only `GREENGRASS`/`HOST` omits the Kubernetes `Dockerfile` +
+`k8s/` manifests; including `KUBERNETES` emits them. The same gating is available
+non-interactively, e.g. `--platforms GREENGRASS,KUBERNETES`.
 
 ---
 
@@ -243,9 +256,16 @@ ggcommons upgrade  -p ./Foo --to 1.3.2             # later: move to a newer ggco
   `required`, `default`, and `enum`. The framework auto-registers it as a subcommand and builds
   its `argparse` flags from that schema.
 - **Add a language/template:** templates are **manifest-driven** — a template repo ships a
-  `ggcommons-template.json` declaring the placeholder substitutions and file renames, so adding
+  `ggcommons-template.json` declaring the placeholder `substitutions` and file `renames`, so adding
   a language needs a template (and an entry in `create-component`'s template sources), not new
   CLI logic.
+- **Conditional (platform-gated) artifacts:** a manifest may add a `conditional` array —
+  `[{"when": "platform:KUBERNETES", "paths": ["Dockerfile", "k8s"]}, ...]`. Each entry's paths are
+  generated **only when its `when` flag is active**; the active flags are one `platform:<P>` per
+  selected `--platforms` value plus `dep:<source>` from `--dep-source`. Unmet paths are removed,
+  and any `substitutions`/`renames` that reference a removed path are skipped (so a file can appear
+  in both `substitutions` and `conditional`). This is how a template ships k8s artifacts that only
+  materialize when the user targets Kubernetes.
 
 ## Repository structure
 

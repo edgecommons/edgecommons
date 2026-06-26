@@ -136,10 +136,15 @@ npm run coverage     # vitest run --coverage
 pipx install ./cli           # or: python -m pip install ./cli  → gives `ggcommons` / `ggcommons-cli`
 ggcommons doctor             # check prerequisites (git, gdk, cargo, mvn, python3, aws)
 ggcommons create-component -n com.example.MyComponent -l PYTHON   # JAVA|PYTHON|RUST|TYPESCRIPT
+ggcommons create-component -i                                     # interactive wizard (prompts for inputs)
 ggcommons list-templates | validate | deploy | upgrade
 ```
 Templates are **manifest-driven**: each ships a `ggcommons-template.json` declaring placeholder
-substitutions and file renames, so adding a language needs a template, not CLI code.
+`substitutions`, file `renames`, and optional **`conditional`** (platform-gated) artifacts, so adding
+a language needs a template, not CLI code. `create-component` supports an **interactive wizard**
+(`-i`, auto when `-n` is omitted on a TTY) and gates optional artifacts by `--platforms`
+(e.g. the k8s `Dockerfile`+`k8s/` manifests emit only when `KUBERNETES` is selected) and
+`--dep-source` (`local` path dep vs `registry`).
 
 ### Config schema (single source — `schema/`)
 The canonical config schema lives **only** in `schema/ggcommons-config-schema.json`. After editing
