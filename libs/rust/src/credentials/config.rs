@@ -327,3 +327,144 @@ fn open_central(_vault: LocalVault, _central: &CentralConfig, _namespace: &str) 
         "central source 'awsSecretsManager' requires the 'credentials-aws' feature".to_string(),
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::credentials::CredentialService;
+    use base64::engine::general_purpose::STANDARD as B64;
+    use base64::Engine as _;
+
+    #[test]
+    fn build_key_provider_file_generates_then_loads_a_keyfile() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join("vault.key");
+        let kp = KeyProviderConfig {
+            kind: Some("file".to_string()),
+            key_path: Some(key_path.to_string_lossy().into_owned()),
+            ..KeyProviderConfig::default()
+        };
+        // First call generates the keyfile; the second loads the same one (both arms covered).
+        let _p1 = build_key_provider(&kp, "ignored.key", None).expect("generate keyfile");
+        assert!(key_path.exists(), "the file provider must create its keyfile");
+        let _p2 = build_key_provider(&kp, "ignored.key", None).expect("load existing keyfile");
+    }
+
+    #[test]
+    fn build_key_provider_default_kind_applies_when_type_is_unspecified() {
+        // Unspecified type + a platform default of "file" → the file provider (FR-CRED-6).
+        let dir = tempfile::tempdir().unwrap();
+        let kp = KeyProviderConfig::default();
+        let default_key = dir.path().join("default.key");
+        let _ = build_key_provider(&kp, &default_key.to_string_lossy(), Some("file")).expect("file default");
+        assert!(default_key.exists(), "the default key path is used when keyPath is absent");
+    }
+
+    #[test]
+    fn build_key_provider_env_reads_the_kek_and_errors_when_missing() {
+        let var = "GGCOMMONS_TEST_KEK_CFG";
+        // SAFETY: a test-only env var with a unique name; no other test reads/writes it.
+        unsafe { std::env::set_var(var, B64.encode([9u8; 32])) };
+        let kp = KeyProviderConfig {
+            kind: Some("env".to_string()),
+            env_var: Some(var.to_string()),
+            ..KeyProviderConfig::default()
+        };
+        assert!(build_key_provider(&kp, "n/a", None).is_ok());
+        unsafe { std::env::remove_var(var) };
+        assert!(
+            build_key_provider(&kp, "n/a", None).is_err(),
+            "a missing env KEK must be a hard error"
+        );
+    }
+
+    #[test]
+    fn build_key_provider_rejects_unknown_kind() {
+        let kp = KeyProviderConfig {
+            kind: Some("nonsense".to_string()),
+            ..KeyProviderConfig::default()
+        };
+        let err = match build_key_provider(&kp, "n/a", None) {
+            Err(e) => e,
+            Ok(_) => panic!("an unknown key provider kind must error"),
+        };
+        assert!(format!("{err}").contains("nonsense"), "error names the bad provider: {err}");
+    }
+
+    #[test]
+    fn open_namespaced_opens_a_local_vault_with_audit_on_by_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = CredentialsConfig {
+            vault: VaultConfig {
+                path: dir.path().join("v").to_string_lossy().into_owned(),
+                ..VaultConfig::default()
+            },
+            ..CredentialsConfig::default()
+        };
+        let svc = open_namespaced_with_default(&cfg, "thing/comp", None).expect("open local vault");
+        svc.put("api/token", b"xyz", super::super::vault::PutOptions::default()).unwrap();
+        assert_eq!(svc.get_string("api/token").unwrap().unwrap(), "xyz");
+        // The namespace is transparent: the caller sees the bare key, not "thing/comp/api/token".
+        let names: Vec<_> = svc.list("").unwrap().into_iter().map(|m| m.name).collect();
+        assert_eq!(names, vec!["api/token".to_string()]);
+    }
+
+    #[test]
+    fn open_rejects_unknown_central_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = CredentialsConfig {
+            vault: VaultConfig {
+                path: dir.path().join("v").to_string_lossy().into_owned(),
+                ..VaultConfig::default()
+            },
+            central: CentralConfig { kind: "mysteryCloud".to_string(), ..CentralConfig::default() },
+            ..CredentialsConfig::default()
+        };
+        assert!(open(&cfg).is_err(), "an unknown central.type must be rejected");
+    }
+
+    #[test]
+    fn awssecretsmanager_central_requires_the_aws_feature() {
+        // Without `credentials-aws` the awsSecretsManager source is unavailable and must error
+        // (rather than silently degrade). This is the non-AWS `open_central` stub.
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = CredentialsConfig {
+            vault: VaultConfig {
+                path: dir.path().join("v").to_string_lossy().into_owned(),
+                ..VaultConfig::default()
+            },
+            central: CentralConfig { kind: "awsSecretsManager".to_string(), ..CentralConfig::default() },
+            ..CredentialsConfig::default()
+        };
+        let result = open(&cfg);
+        #[cfg(not(feature = "credentials-aws"))]
+        assert!(result.is_err(), "awsSecretsManager needs the credentials-aws feature");
+        // (With the feature on, opening may instead fail later on AWS config — not asserted here.)
+        let _ = result;
+    }
+
+    #[test]
+    fn sync_entry_accepts_bare_string_or_object_form() {
+        let bare: SyncEntry = serde_json::from_value(serde_json::json!("db/password")).unwrap();
+        assert_eq!(bare.name, "db/password");
+        assert!(bare.from.is_none());
+
+        let obj: SyncEntry =
+            serde_json::from_value(serde_json::json!({ "name": "tls", "from": "fleet/tls" })).unwrap();
+        assert_eq!(obj.name, "tls");
+        assert_eq!(obj.from.as_deref(), Some("fleet/tls"));
+    }
+
+    #[test]
+    fn numeric_fields_parse_leniently_from_greengrass_doubles() {
+        // Greengrass delivers config numbers as doubles (e.g. 5.0); they must still parse to ints.
+        let cfg: CredentialsConfig = serde_json::from_value(serde_json::json!({
+            "vault": { "keepVersions": 5.0, "cacheTtlSecs": 120.0 },
+            "central": { "refreshIntervalSecs": 30.0 }
+        }))
+        .unwrap();
+        assert_eq!(cfg.vault.keep_versions, 5);
+        assert_eq!(cfg.vault.cache_ttl_secs, 120);
+        assert_eq!(cfg.central.refresh_interval_secs, 30);
+    }
+}

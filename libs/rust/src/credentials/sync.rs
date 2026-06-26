@@ -182,3 +182,118 @@ impl Drop for SyncEngine {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::credentials::central::CentralSecret;
+    use crate::credentials::keyprovider::{FileKeyProvider, KeyProvider};
+    use std::collections::{BTreeMap, HashMap, HashSet};
+    use std::sync::atomic::AtomicU64;
+
+    /// A fake central source: returns a stored secret, `None` for unknown ids, and an error for ids
+    /// in `fail` (to drive the offline-first path). Counts fetch calls.
+    struct FakeSource {
+        data: Mutex<HashMap<String, (Vec<u8>, String)>>, // central_id -> (bytes, version)
+        fail: HashSet<String>,
+        calls: AtomicU64,
+    }
+
+    impl CentralVaultSource for FakeSource {
+        fn fetch(&self, name: &str) -> crate::Result<Option<CentralSecret>> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            if self.fail.contains(name) {
+                return Err(crate::GgError::Credentials("offline".into()));
+            }
+            Ok(self.data.lock().unwrap().get(name).map(|(bytes, ver)| CentralSecret {
+                bytes: bytes.clone(),
+                central_version_id: ver.clone(),
+                labels: BTreeMap::new(),
+            }))
+        }
+    }
+
+    fn temp_vault() -> (tempfile::TempDir, Arc<Mutex<LocalVault>>) {
+        let dir = tempfile::tempdir().unwrap();
+        let kp = Arc::new(FileKeyProvider::from_bytes([3u8; 32])) as Arc<dyn KeyProvider>;
+        let vault = LocalVault::open(dir.path().join("vault"), kp, 3).unwrap();
+        (dir, Arc::new(Mutex::new(vault)))
+    }
+
+    #[test]
+    fn bootstrap_writes_changed_secrets_skips_unchanged_and_counts_failures() {
+        let (_dir, vault) = temp_vault();
+        let source = Arc::new(FakeSource {
+            data: Mutex::new(HashMap::from([
+                ("ns/a".to_string(), (b"alpha".to_vec(), "v1".to_string())),
+                ("fleet/x".to_string(), (b"shared".to_vec(), "s1".to_string())),
+            ])),
+            // "ns/b" is absent (Ok(None)); "ns/c" errors (offline-first keeps cache).
+            fail: HashSet::from(["ns/c".to_string()]),
+            calls: AtomicU64::new(0),
+        });
+
+        // "a"/"b"/"c" default their central id to the namespaced path; "shared" overrides via `from`.
+        let secrets = vec![
+            ("a".to_string(), None),
+            ("b".to_string(), None),
+            ("c".to_string(), None),
+            ("shared".to_string(), Some("fleet/x".to_string())),
+        ];
+        let engine = SyncEngine::start(
+            vault.clone(),
+            source.clone() as Arc<dyn CentralVaultSource>,
+            "ns".to_string(),
+            secrets,
+            0, // no background thread; bootstrap only
+            true,
+        );
+
+        {
+            let v = vault.lock().unwrap();
+            assert_eq!(v.get("ns/a").unwrap().unwrap().bytes(), b"alpha");
+            assert_eq!(v.get("ns/shared").unwrap().unwrap().bytes(), b"shared");
+            assert!(v.get("ns/b").unwrap().is_none(), "absent upstream → nothing written");
+            assert!(v.get("ns/c").unwrap().is_none(), "errored fetch → cache untouched");
+            assert_eq!(v.latest_central_version_id("ns/a").as_deref(), Some("v1"));
+        }
+
+        let (last_ok, failures, rotations) = engine.stats();
+        assert!(last_ok.is_some(), "at least one fetch succeeded → last_success recorded");
+        assert_eq!(failures, 1, "the offline fetch counts as one failure");
+        assert_eq!(rotations, 2, "two secrets were written (a + shared)");
+
+        // A second pass with identical upstream versions must skip (no new rotations).
+        engine.sync_now();
+        assert_eq!(engine.stats().2, 2, "unchanged upstream versions are not rewritten");
+    }
+
+    #[test]
+    fn background_thread_refreshes_then_stops_and_joins_on_drop() {
+        let (_dir, vault) = temp_vault();
+        let source = Arc::new(FakeSource {
+            data: Mutex::new(HashMap::from([(
+                "k".to_string(),
+                (b"val".to_vec(), "r1".to_string()),
+            )])),
+            fail: HashSet::new(),
+            calls: AtomicU64::new(0),
+        });
+        let engine = SyncEngine::start(
+            vault.clone(),
+            source.clone() as Arc<dyn CentralVaultSource>,
+            String::new(), // empty namespace → local_key == name
+            vec![("k".to_string(), None)],
+            1,     // 1s background refresh
+            false, // no bootstrap; the first write comes from the background tick
+        );
+
+        // Wait for the background thread to complete one refresh tick (>1s).
+        std::thread::sleep(Duration::from_millis(1300));
+        assert!(source.calls.load(Ordering::Relaxed) >= 1, "the refresh thread fetched at least once");
+        assert_eq!(vault.lock().unwrap().get("k").unwrap().unwrap().bytes(), b"val");
+
+        // Dropping the engine flips `stop` and joins the thread without hanging.
+        drop(engine);
+    }
+}
