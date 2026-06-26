@@ -250,7 +250,14 @@ language template and substitutes your component name.</p>
 ggcommons doctor                        # check prerequisites (git, gdk, mvn, cargo, python3, aws)
 
 # scaffold ./MyComponent for your chosen language
-ggcommons create-component -n com.example.MyComponent -l PYTHON   # JAVA | PYTHON | RUST | TYPESCRIPT</code></pre></div></div>
+ggcommons create-component -n com.example.MyComponent -l PYTHON   # JAVA | PYTHON | RUST | TYPESCRIPT
+
+# ...or run the interactive wizard (prompts for language, name, target platform(s), dependency source)
+ggcommons create-component -i</code></pre></div></div>
+<p class="muted">The wizard's <strong>target platform(s)</strong> answer gates the optional artifacts: selecting
+<code>KUBERNETES</code> emits a <code>Dockerfile</code> + <code>k8s/</code> manifests; selecting only
+<code>GREENGRASS</code>/<code>HOST</code> omits them. Non-interactively, use
+<code>--platforms GREENGRASS,KUBERNETES</code> and <code>--dep-source local|registry</code>.</p>
 
 <h3>2. Initialize the framework in your entry point</h3>
 <p>Every component constructs a GGCommons runtime from the command-line arguments using the fluent
@@ -358,8 +365,44 @@ node dist/main.js --platform HOST --transport MQTT ./standalone-messaging.json -
 
 <div class="callout tip"><span class="ct">Tip</span>
 <p>Subscribe to <code>heartbeat/+/+</code> with an MQTT client (such as MQTTX) to watch your component's heartbeats
-as soon as it starts. Packaging and deployment to a real core use the GDK: <code>gdk component build</code> then
-<code>gdk component publish</code>.</p></div>
+as soon as it starts. That covers the <strong>HOST</strong> platform; to deploy to the other two, see below.</p></div>
+
+<h3>4. Deploy to a platform</h3>
+<p>The same component artifact runs on all three platforms — only how it's packaged and launched differs. HOST is
+the local run above; the two managed platforms:</p>
+
+<h4>GREENGRASS — package &amp; publish with the GDK</h4>
+<p>The scaffold ships a <code>recipe.yaml</code> + <code>gdk-config.json</code>. Build the language artifact, then
+package and publish with the Greengrass Development Kit; the recipe launches the component with
+<code>--platform GREENGRASS</code>.</p>
+<div class="codeblock"><div class="tabs"><button class="active">Shell</button><div class="spacer"></div></div>
+<div class="pane active"><pre><code class="language-bash"># build the language artifact first (e.g. mvn clean package · cargo build --release · npm run build · pip install -r requirements.txt)
+gdk component build
+gdk component publish                     # uploads artifacts + creates a cloud component version
+
+# then deploy the version to a thing / thing-group (cloud), or on-device with the local CLI:
+ggcommons deploy -p . -t arn:aws:iot:us-east-1:ACCOUNT:thinggroup/edge-fleet
+# on a core directly:  greengrass-cli deployment create --recipeDir … --artifactDir … --merge "<Comp>=<ver>"</code></pre></div></div>
+
+<h4>KUBERNETES — container image + manifests</h4>
+<p>Scaffold with <code>KUBERNETES</code> as a target (<code>-i</code> and pick it, or <code>--platforms KUBERNETES</code>,
+typically with <code>--dep-source registry</code>) and the project gains a <code>Dockerfile</code> + <code>k8s/</code>
+(a <code>ConfigMap</code> with the component config + messaging, and a <code>Deployment</code> with health probes and
+Downward-API identity). The container runs with <strong>no args</strong> — the library auto-detects
+<code>KUBERNETES</code>, reads config from the mounted ConfigMap (<code>CONFIGMAP</code> source), and connects over MQTT.</p>
+<div class="codeblock"><div class="tabs"><button class="active">Shell</button><div class="spacer"></div></div>
+<div class="pane active"><pre><code class="language-bash"># build the component image (needs the published ggcommons library — see Distribution, DESIGN-packaging §13)
+docker build -t ghcr.io/&lt;owner&gt;/my-component:0.1.0 .
+docker push  ghcr.io/&lt;owner&gt;/my-component:0.1.0      # ...or: kind load docker-image my-component:0.1.0
+
+# set image: in k8s/deployment.yaml to that ref, then:
+kubectl apply -f k8s/                                  # ConfigMap + Deployment
+kubectl rollout status deploy/my-component            # waits on /readyz (200 ⇒ messaging connected)</code></pre></div></div>
+<div class="callout note"><span class="ct">Note</span>
+<p>Editing <code>k8s/configmap.yaml</code> and re-applying hot-reloads the config <strong>in place</strong> (the
+ConfigMap is mounted as a whole directory so the kubelet <code>..data</code> swap is picked up — never a
+<code>subPath</code>). The richer Helm path (ServiceMonitor, External-Secrets, PVC streaming) lives in
+<code>test-infra/k8s/chart</code>.</p></div>
 </section>
 
 <section id="runtime-modes">
