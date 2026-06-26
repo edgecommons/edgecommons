@@ -94,6 +94,7 @@ log "Installing the component chart (image ${IMAGE})"
   --set image.repository="${IMAGE_REPO}" \
   --set image.tag="${IMAGE_TAG}" \
   --set image.pullPolicy=IfNotPresent \
+  --set credentials.enabled=true \
   --wait --timeout "${TIMEOUT}s"
 
 log "Waiting for the component rollout"
@@ -165,6 +166,13 @@ sys.exit(0 if r.getcode()==200 and '# TYPE' in b and 'ggcommons_' in b else 1)
 done
 [[ -n "${metrics_ok}" ]] || fail "/metrics did not serve a ggcommons_* gauge (prometheus target / heartbeat)"
 ok "prometheus /metrics serves OpenMetrics text with a ggcommons_* gauge (FR-MET-1)"
+
+# --- FR-CRED-3/6: env KeyProvider (encrypted vault unlocked by a base64 KEK from a mounted Secret) ----
+# credentials.enabled=true mounted a Secret as GGCOMMONS_VAULT_KEK and injected a `credentials` section
+# with keyProvider OMITTED — so the KUBERNETES profile default (env) is exercised. The skeleton opens the
+# vault and round-trips a demo secret, logging "credential access OK" (value redacted) on success. That
+# proves the env KeyProvider unlocked an encrypted vault on a real pod from a mounted Secret, offline.
+assert_log "credential access OK" "env KeyProvider unlocked the vault from a mounted Secret (FR-CRED-3/6)"
 
 # --- Hot-reload (..data swap re-arm) test -------------------------------------------
 # Patch the ConfigMap's config.json in place (NOT helm upgrade) and assert the running

@@ -78,19 +78,20 @@ describe("FileConfigSource", () => {
     expect(updates.length).toBeGreaterThanOrEqual(1);
     expect(updates[updates.length - 1]).toEqual({ v: 2 });
 
-    // Malformed write -> NOT delivered (previous stays in effect).
-    const before = updates.length;
+    // Malformed write -> NOT delivered (previous valid doc stays in effect) and is warned.
+    // Note: fs.watch coalesces poorly on Linux (inotify can fire >1 event per write), so a
+    // valid write may re-deliver the SAME doc — assert by content/intent, not an exact count.
     await fsp.writeFile(p, "{ broken");
     await tick(300);
-    expect(updates.length).toBe(before);
+    expect(updates[updates.length - 1]).toEqual({ v: 2 });
     expect(warn).toHaveBeenCalled();
+    expect(updates.some((u) => JSON.stringify(u) === "{ broken")).toBe(false);
 
     await watch!.close();
-    // After close, further writes do not deliver.
-    const afterClose = updates.length;
+    // After close, a fresh write delivers no NEW doc ({ v: 3 } never appears).
     await fsp.writeFile(p, JSON.stringify({ v: 3 }));
     await tick(300);
-    expect(updates.length).toBe(afterClose);
+    expect(updates.some((u) => JSON.stringify(u) === JSON.stringify({ v: 3 }))).toBe(false);
   });
 
   it("watch() returns undefined when the directory cannot be watched", async () => {

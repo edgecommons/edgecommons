@@ -96,6 +96,16 @@ export interface PlatformProfile {
    * `metricEmission.target` always wins.
    */
   readonly metricTarget?: string;
+  /**
+   * The default vault key-provider type for this platform, applied when a `credentials` config section
+   * IS present but its `vault.keyProvider.type` is absent (Phase 1d / FR-CRED-6, precedence FR-RT-3).
+   * `KUBERNETES` defaults to {@link ENV_KEY_PROVIDER} (the offline-capable software-KEK read from a
+   * mounted Secret env var); `GREENGRASS`/`HOST` leave this `undefined` so the library default (`file`)
+   * is unchanged. Consulted by the credentials init site via {@link profileCredentialsKeyProvider}; an
+   * explicit `keyProvider.type` always wins. This NEVER auto-enables credentials — it only changes the
+   * default provider type when credentials is already configured.
+   */
+  readonly credentialsKeyProvider?: string;
 }
 
 /**
@@ -178,6 +188,13 @@ export const JSON_LOG_FORMAT = "json";
  * consumed by the metrics service via {@link profileMetricTarget}.
  */
 export const PROMETHEUS_METRIC_TARGET = "prometheus";
+/**
+ * The key-provider type selecting the env KEK custodian (FR-CRED-3/FR-CRED-6) — a raw 32-byte KEK,
+ * base64-encoded, read from an env var (typically a mounted Kubernetes Secret). The KUBERNETES profile's
+ * default vault key-provider (see {@link PROFILES}). Kept here (next to the profile default) as the single
+ * source of truth; consumed by the credentials init site via {@link profileCredentialsKeyProvider}.
+ */
+export const ENV_KEY_PROVIDER = "env";
 /** Confirming (secondary) Kubernetes signal. The token file is the primary, definitive one. */
 export const ENV_K8S_SERVICE_HOST = "KUBERNETES_SERVICE_HOST";
 /** Projected service-account token path: the primary, definitive Kubernetes signal. */
@@ -193,9 +210,9 @@ export const DEFAULT_IDENTITY = "NOT_GREENGRASS";
  *
  * Phase 1c adds the KUBERNETES profile's default `loggingFormat` ({@link JSON_LOG_FORMAT}: the
  * structured stdout-JSON sink), `healthEnabled`, and (prometheus slice) the default `metricTarget`
- * ({@link PROMETHEUS_METRIC_TARGET}: the pull-based prometheus target). TODO (Phase 1d): the
- * credentials/streaming defaults (env KeyProvider, PVC buffer) are not yet modeled here — those
- * subsystems keep their current library defaults for now.
+ * ({@link PROMETHEUS_METRIC_TARGET}: the pull-based prometheus target). Phase 1d adds the KUBERNETES
+ * profile's default `credentialsKeyProvider` ({@link ENV_KEY_PROVIDER}: the env/software-KEK custodian).
+ * TODO (Phase 1d, remaining): the streaming PVC-buffer default is not yet modeled here.
  */
 export const PROFILES: ReadonlyMap<Platform, PlatformProfile> = new Map([
   [Platform.GREENGRASS, { transport: Transport.IPC, configSource: "GG_CONFIG" } as PlatformProfile],
@@ -208,6 +225,7 @@ export const PROFILES: ReadonlyMap<Platform, PlatformProfile> = new Map([
       loggingFormat: JSON_LOG_FORMAT,
       healthEnabled: true,
       metricTarget: PROMETHEUS_METRIC_TARGET,
+      credentialsKeyProvider: ENV_KEY_PROVIDER,
     } as PlatformProfile,
   ],
 ]);
@@ -242,6 +260,18 @@ export function profileHealthEnabled(platform: Platform): boolean {
  */
 export function profileMetricTarget(platform: Platform): string | undefined {
   return PROFILES.get(platform)?.metricTarget;
+}
+
+/**
+ * The platform-profile default vault key-provider type for `platform` (Phase 1d / FR-CRED-6/FR-RT-3),
+ * i.e. {@link ENV_KEY_PROVIDER} on KUBERNETES and `undefined` on GREENGRASS/HOST (library default
+ * `file`). Threaded into the credentials init site, which owns the precedence (explicit
+ * `keyProvider.type` ▸ this profile default ▸ library default `file`). Pure lookup; mirrors
+ * {@link profileMetricTarget}. Does NOT enable credentials — it only selects the default provider type
+ * when a `credentials` config section is present without an explicit `keyProvider.type`.
+ */
+export function profileCredentialsKeyProvider(platform: Platform): string | undefined {
+  return PROFILES.get(platform)?.credentialsKeyProvider;
 }
 
 /**

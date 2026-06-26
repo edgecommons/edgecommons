@@ -213,8 +213,10 @@ pub fn open(config: &ParametersConfig) -> Result<DefaultParameterService> {
     let persist = config.cache.persist.unwrap_or_else(|| config.source.is_remote());
 
     let service = if persist {
+        // The parameter cache has no platform-profile KEK default (FR-CRED-6 applies only to the
+        // credentials vault) — pass `None` so the library default `file` is preserved.
         let provider =
-            build_key_provider(&config.cache.key_provider, &format!("{}.key", config.cache.path))?;
+            build_key_provider(&config.cache.key_provider, &format!("{}.key", config.cache.path), None)?;
         // keep_versions = 1: the cache only ever needs the latest value of each parameter.
         let vault = LocalVault::open(&config.cache.path, provider, 1)?;
         let vault = Arc::new(Mutex::new(vault));

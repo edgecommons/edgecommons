@@ -24,13 +24,34 @@ public final class Credentials {
     }
 
     public static CredentialService open(JsonObject credentialsConfig, String namespace) {
+        return open(credentialsConfig, namespace, null);
+    }
+
+    /**
+     * Open the credential service, applying a platform-derived default key-provider type when the
+     * {@code credentials.vault.keyProvider.type} field is absent (FR-CRED-6, precedence FR-RT-3).
+     *
+     * <p>The effective key-provider type follows: explicit {@code keyProvider.type} ▸
+     * {@code defaultKeyProviderType} (the platform-profile default — {@code "env"} on KUBERNETES) ▸
+     * the library default {@code "file"}. This method is reached <b>only when a {@code credentials}
+     * config section is present</b>, so it never auto-enables credentials — it only changes the
+     * default provider <em>type</em> for an already-configured vault.
+     *
+     * @param credentialsConfig      the {@code credentials} config section
+     * @param namespace              the per-component key namespace
+     * @param defaultKeyProviderType the platform-profile default provider type, or {@code null} for
+     *                               none (then the library default {@code "file"} applies)
+     * @return the constructed credential service
+     */
+    public static CredentialService open(JsonObject credentialsConfig, String namespace,
+                                         String defaultKeyProviderType) {
         JsonObject cfg = credentialsConfig != null ? credentialsConfig : new JsonObject();
         JsonObject vaultCfg = cfg.has("vault") ? cfg.getAsJsonObject("vault") : new JsonObject();
         String path = vaultCfg.has("path") ? vaultCfg.get("path").getAsString() : "vault";
         int keep = vaultCfg.has("keepVersions") ? vaultCfg.get("keepVersions").getAsInt() : 2;
 
         JsonObject kp = vaultCfg.has("keyProvider") ? vaultCfg.getAsJsonObject("keyProvider") : new JsonObject();
-        KeyProvider provider = buildKeyProvider(kp, path + ".key");
+        KeyProvider provider = buildKeyProvider(kp, path + ".key", defaultKeyProviderType);
 
         LocalVault vault = LocalVault.open(Paths.get(path), provider, keep);
         Object lock = new Object();
@@ -63,10 +84,13 @@ public final class Credentials {
     /**
      * Build a {@link KeyProvider} (the KEK custodian) from a {@code keyProvider} config object.
      *
-     * <p>Supports {@code file} (default), {@code kms}/{@code greengrass} (KMS-via-TES) and
-     * {@code pkcs11} (HSM/TPM). Mirrors the Rust {@code build_key_provider}. Shared by the
-     * credentials vault and the {@code parameters} persistent cache so both apply identical
-     * key-provider semantics. Behavior is unchanged from the previous inline switch.
+     * <p>Supports {@code file} (default), {@code env} (base64 32-byte KEK from an env var),
+     * {@code kms}/{@code greengrass} (KMS-via-TES) and {@code pkcs11} (HSM/TPM). Mirrors the Rust
+     * {@code build_key_provider}. Shared by the credentials vault and the {@code parameters}
+     * persistent cache so both apply identical key-provider semantics. This 2-arg form keeps the
+     * library default {@code file} when {@code keyProvider.type} is absent (parameters cache behavior
+     * is unchanged); see {@link #buildKeyProvider(JsonObject, String, String)} for the platform-default
+     * variant.
      *
      * @param kp             the {@code keyProvider} config object (may be empty → defaults to {@code file})
      * @param defaultKeyPath the on-disk key path used by the {@code file} provider when
@@ -74,8 +98,30 @@ public final class Credentials {
      * @return the constructed {@link KeyProvider}
      */
     public static KeyProvider buildKeyProvider(JsonObject kp, String defaultKeyPath) {
+        return buildKeyProvider(kp, defaultKeyPath, null);
+    }
+
+    /**
+     * Build a {@link KeyProvider} as {@link #buildKeyProvider(JsonObject, String)}, but applying
+     * {@code defaultType} when {@code keyProvider.type} is absent (FR-CRED-6, precedence FR-RT-3).
+     *
+     * <p>The effective type is: explicit {@code keyProvider.type} ▸ {@code defaultType} (the
+     * platform-profile default — {@code "env"} on KUBERNETES) ▸ the library default {@code "file"}.
+     * Adds the {@code env} arm: a base64 32-byte KEK read from the env var named by
+     * {@code keyProvider.envVar} (default {@link EnvKeyProvider#DEFAULT_ENV_VAR}). All other arms are
+     * unchanged.
+     *
+     * @param kp             the {@code keyProvider} config object (may be empty)
+     * @param defaultKeyPath the {@code file}-provider key path used when {@code keyProvider.keyPath}
+     *                       is absent
+     * @param defaultType    the default provider type when {@code keyProvider.type} is absent, or
+     *                       {@code null} for none (then the library default {@code "file"} applies)
+     * @return the constructed {@link KeyProvider}
+     */
+    public static KeyProvider buildKeyProvider(JsonObject kp, String defaultKeyPath, String defaultType) {
         JsonObject cfg = kp != null ? kp : new JsonObject();
-        String kind = cfg.has("type") ? cfg.get("type").getAsString() : "file";
+        String fallback = (defaultType != null && !defaultType.isEmpty()) ? defaultType : "file";
+        String kind = cfg.has("type") && !cfg.get("type").isJsonNull() ? cfg.get("type").getAsString() : fallback;
         return switch (kind) {
             case "file" -> {
                 String keyPath = cfg.has("keyPath") ? cfg.get("keyPath").getAsString() : defaultKeyPath;
@@ -90,6 +136,12 @@ public final class Credentials {
                 yield Files.exists(keyFile)
                         ? FileKeyProvider.fromKeyFile(keyFile)
                         : FileKeyProvider.generateKeyFile(keyFile);
+            }
+            case "env" -> {
+                String envVar = cfg.has("envVar") && !cfg.get("envVar").isJsonNull()
+                        ? cfg.get("envVar").getAsString()
+                        : EnvKeyProvider.DEFAULT_ENV_VAR;
+                yield EnvKeyProvider.fromEnv(envVar);
             }
             case "kms", "greengrass" -> {
                 if (!cfg.has("kmsKeyId")) {
@@ -125,7 +177,7 @@ public final class Credentials {
                 yield Pkcs11KeyProvider.create(modulePath, tokenLabel, keyLabel, pin);
             }
             default -> throw new CredentialException(
-                    "key provider '" + kind + "' is not supported (supported: 'file', 'kms'/'greengrass', 'pkcs11')");
+                    "key provider '" + kind + "' is not supported (supported: 'file', 'env', 'kms'/'greengrass', 'pkcs11')");
         };
     }
 

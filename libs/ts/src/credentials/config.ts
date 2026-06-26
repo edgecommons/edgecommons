@@ -11,6 +11,7 @@ import { randomUUID } from "crypto";
 import { KEY_LEN, random } from "./crypto";
 import { CredentialError } from "./errors";
 import {
+  EnvKeyProvider,
   FileKeyProvider,
   KeyProvider,
   KmsKeyProvider,
@@ -30,6 +31,8 @@ export interface CredentialsConfig {
     keyProvider?: {
       type?: string;
       keyPath?: string;
+      /** `env`: name of the env var holding the base64-encoded 32-byte KEK (default `GGCOMMONS_VAULT_KEK`). */
+      envVar?: string;
       kmsKeyId?: string;
       region?: string;
       endpointUrl?: string;
@@ -79,20 +82,26 @@ export interface BuiltKeyProvider {
 /**
  * Build a KEK custodian from a key-provider config (mirrors the Rust `build_key_provider`). Shared
  * by the credentials vault ({@link openVault}) and the parameter cache. `file` wraps the DEK under a
- * local key file; `kms`/`greengrass` wrap it via an AWS KMS CMK; `pkcs11` wraps it inside an HSM/TPM.
+ * local key file; `env` wraps it under a raw 32-byte KEK read (base64) from an env var / mounted
+ * Secret; `kms`/`greengrass` wrap it via an AWS KMS CMK; `pkcs11` wraps it inside an HSM/TPM.
  *
  * Because `LocalVault.open` calls `wrapDek`/`unwrapDek` synchronously, the async KMS round trip is
  * performed eagerly here and handed back as a {@link PrewrappedKeyProvider} (plus the brand-new
  * vault id/DEK when creating a fresh KMS vault). The on-disk format is unchanged. `vaultPath` is the
  * vault file (read to unwrap an existing KMS DEK); `defaultKeyPath` is the `file` provider's key file
  * when `keyPath` is absent.
+ *
+ * `defaultType` is the key-provider type to use when `kp.type` is ABSENT — the platform-profile
+ * default (e.g. `"env"` on KUBERNETES, FR-CRED-6) threaded from the credentials init site. When it too
+ * is absent the library default `"file"` applies. An explicit `kp.type` always wins.
  */
 export async function buildKeyProvider(
   kp: KeyProviderConfig,
   vaultPath: string,
   defaultKeyPath: string,
+  defaultType?: string,
 ): Promise<BuiltKeyProvider> {
-  const kind = kp.type ?? "file";
+  const kind = kp.type ?? defaultType ?? "file";
 
   if (kind === "file") {
     const keyPath = kp.keyPath ?? defaultKeyPath;
@@ -102,6 +111,12 @@ export async function buildKeyProvider(
       ? FileKeyProvider.fromKeyFile(keyPath)
       : FileKeyProvider.generateKeyFile(keyPath);
     return { provider };
+  }
+
+  if (kind === "env") {
+    // Raw 32-byte KEK, base64, from an env var (typically a mounted k8s Secret) — the software-KEK.
+    const envVar = kp.envVar ?? "GGCOMMONS_VAULT_KEK";
+    return { provider: EnvKeyProvider.fromEnv(envVar) };
   }
 
   if (kind === "kms" || kind === "greengrass") {
@@ -143,33 +158,45 @@ export async function buildKeyProvider(
   }
 
   throw new CredentialError(
-    `key provider '${kind}' is not supported (supported: 'file', 'kms'/'greengrass', 'pkcs11')`,
+    `key provider '${kind}' is not supported (supported: 'file', 'env', 'kms'/'greengrass', 'pkcs11')`,
   );
 }
 
 /**
  * Open (or create) the local vault under the configured key provider. Thin wrapper over
- * {@link buildKeyProvider} + {@link LocalVault.open} (the latter is synchronous).
+ * {@link buildKeyProvider} + {@link LocalVault.open} (the latter is synchronous). `defaultKeyProvider`
+ * is the platform-profile default key-provider type used when `kp.type` is absent (see
+ * {@link buildKeyProvider}).
  */
 async function openVault(
   path: string,
   keep: number,
   kp: KeyProviderConfig,
+  defaultKeyProvider?: string,
 ): Promise<LocalVault> {
-  const { provider, newVaultId, newDek } = await buildKeyProvider(kp, path, `${path}.key`);
+  const { provider, newVaultId, newDek } = await buildKeyProvider(kp, path, `${path}.key`, defaultKeyProvider);
   return LocalVault.open(path, provider, keep, newVaultId, newDek);
 }
 
-/** Open the vault and return the default credential service from a `credentials` config object. */
+/**
+ * Open the vault and return the default credential service from a `credentials` config object.
+ *
+ * `defaultKeyProvider` is the platform-profile default vault key-provider type (e.g. `"env"` on
+ * KUBERNETES, FR-CRED-6) supplied by the credentials init site where the resolved platform is known.
+ * It only changes the DEFAULT provider TYPE used when `keyProvider.type` is absent — an explicit
+ * `keyProvider.type` always wins, and this NEVER auto-enables credentials (the caller only invokes
+ * this when a `credentials` config section is present).
+ */
 export async function openFromConfig(
   cfg: CredentialsConfig = {},
   namespace = "",
+  defaultKeyProvider?: string,
 ): Promise<DefaultCredentialService> {
   const vaultCfg = cfg.vault ?? {};
   const path = vaultCfg.path ?? "vault";
   const keep = vaultCfg.keepVersions ?? 2;
 
-  const vault = await openVault(path, keep, vaultCfg.keyProvider ?? {});
+  const vault = await openVault(path, keep, vaultCfg.keyProvider ?? {}, defaultKeyProvider);
 
   // Access auditing on by default (config can disable) — logs op/name/version/source/outcome,
   // never the value.

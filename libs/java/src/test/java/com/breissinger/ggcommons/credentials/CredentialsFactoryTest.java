@@ -94,6 +94,123 @@ class CredentialsFactoryTest {
         assertEquals(32, Files.size(keyFile));
     }
 
+    // ---- env key provider (config path) ----
+
+    /** Env var injected by the surefire config, holding base64 of the 0x00..0x1f KEK. */
+    private static final String TEST_KEK_ENV = "GGCOMMONS_TEST_VAULT_KEK";
+
+    private static JsonObject envKeyProvider() {
+        JsonObject kp = new JsonObject();
+        kp.addProperty("type", "env");
+        kp.addProperty("envVar", TEST_KEK_ENV);
+        return kp;
+    }
+
+    /** The 0x00..0x1f raw KEK that {@code GGCOMMONS_TEST_VAULT_KEK} base64-encodes. */
+    private static byte[] testKek() {
+        byte[] k = new byte[VaultCrypto.KEY_LEN];
+        for (int i = 0; i < k.length; i++) {
+            k[i] = (byte) i;
+        }
+        return k;
+    }
+
+    @Test
+    void envKeyProviderConfigPathRoundTrips(@TempDir Path dir) {
+        // (a) build the env provider via the config path (type=env), put a secret, reopen, get.
+        CredentialService c = Credentials.open(vaultCfg(dir, envKeyProvider()));
+        c.put("k", "v".getBytes(StandardCharsets.UTF_8));
+        assertEquals("v", c.getString("k").orElseThrow());
+
+        // Reopen a fresh service over the same on-disk vault via the same env config path.
+        CredentialService reopened = Credentials.open(vaultCfg(dir, envKeyProvider()));
+        assertEquals("v", reopened.getString("k").orElseThrow());
+    }
+
+    @Test
+    void envWrappedVaultOpensUnderFileKeyProviderWithSameKek(@TempDir Path dir) {
+        // (b) crypto-identity through the real config path: a vault wrapped by the env provider
+        // (KEK from GGCOMMONS_TEST_VAULT_KEK) is byte-compatible with a FileKeyProvider holding the
+        // SAME raw 32-byte KEK.
+        CredentialService c = Credentials.open(vaultCfg(dir, envKeyProvider()));
+        c.put("k", "v".getBytes(StandardCharsets.UTF_8));
+
+        Path vaultPath = dir.resolve("vault");
+        LocalVault viaFile = LocalVault.open(vaultPath, new FileKeyProvider(testKek()), 3);
+        assertEquals("v", viaFile.get("k").asString());
+    }
+
+    @Test
+    void envKeyProviderConfigUnsetVarFails(@TempDir Path dir) {
+        // (c) error case: envVar names a variable that is not set.
+        JsonObject kp = new JsonObject();
+        kp.addProperty("type", "env");
+        kp.addProperty("envVar", "GGCOMMONS_UNSET_VAULT_KEK_" + System.nanoTime());
+        CredentialException ex = assertThrows(CredentialException.class,
+                () -> Credentials.buildKeyProvider(kp, dir.resolve("k.key").toString()));
+        assertTrue(ex.getMessage().contains("unset or empty"));
+    }
+
+    @Test
+    void envKeyProviderDefaultsEnvVarToConventionalName(@TempDir Path dir) {
+        // type=env with no envVar -> default GGCOMMONS_VAULT_KEK, which is unset here -> clear error
+        // naming that default var (proves the default-name fallback is wired).
+        JsonObject kp = new JsonObject();
+        kp.addProperty("type", "env");
+        CredentialException ex = assertThrows(CredentialException.class,
+                () -> Credentials.buildKeyProvider(kp, dir.resolve("k.key").toString()));
+        assertTrue(ex.getMessage().contains("GGCOMMONS_VAULT_KEK"));
+    }
+
+    // ---- default-type precedence (FR-CRED-6 / FR-RT-3) ----
+
+    @Test
+    void defaultTypeEnvSelectsEnvWhenTypeAbsent(@TempDir Path dir) {
+        // type absent + defaultType "env" (the KUBERNETES profile default) -> env provider selected.
+        JsonObject kp = new JsonObject();
+        kp.addProperty("envVar", TEST_KEK_ENV); // envVar present, type ABSENT
+        KeyProvider p = Credentials.buildKeyProvider(kp, dir.resolve("k.key").toString(), "env");
+        assertEquals("env", p.providerId());
+    }
+
+    @Test
+    void explicitTypeWinsOverDefaultType(@TempDir Path dir) {
+        // explicit type=file always wins even when the platform default is env.
+        JsonObject kp = new JsonObject();
+        kp.addProperty("type", "file");
+        KeyProvider p = Credentials.buildKeyProvider(kp, dir.resolve("k.key").toString(), "env");
+        assertEquals("file", p.providerId());
+    }
+
+    @Test
+    void nullDefaultTypeFallsBackToFile(@TempDir Path dir) {
+        // type absent + no platform default (HOST/GREENGRASS) -> library default "file".
+        KeyProvider p = Credentials.buildKeyProvider(new JsonObject(), dir.resolve("k.key").toString(), null);
+        assertEquals("file", p.providerId());
+    }
+
+    @Test
+    void openWithDefaultTypeEnvOpensEnvBackedVault(@TempDir Path dir) {
+        // The 3-arg open() threads the platform default: keyProvider.type absent + default "env"
+        // -> env-backed vault (the KUBERNETES init-site behavior).
+        JsonObject kp = new JsonObject();
+        kp.addProperty("envVar", TEST_KEK_ENV);
+        CredentialService c = Credentials.open(vaultCfg(dir, kp), "ns", "env");
+        c.put("k", "v".getBytes(StandardCharsets.UTF_8));
+        // Prove the env custodian was used: the on-disk KEK record is tagged provider=env.
+        assertEquals("env", readVaultKekProvider(dir.resolve("vault")));
+    }
+
+    private static String readVaultKekProvider(Path vaultPath) {
+        try {
+            String raw = Files.readString(vaultPath);
+            return com.google.gson.JsonParser.parseString(raw).getAsJsonObject()
+                    .getAsJsonObject("kek").get("provider").getAsString();
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
     // ---- kms key provider validation (no live KMS) ----
 
     @Test

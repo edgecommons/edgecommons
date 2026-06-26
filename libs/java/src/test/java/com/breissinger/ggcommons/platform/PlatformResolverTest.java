@@ -478,4 +478,27 @@ class PlatformResolverTest {
         assertNull(PlatformResolver.PROFILES.get(Platform.HOST).metricTarget());
         assertNull(PlatformResolver.PROFILES.get(Platform.GREENGRASS).metricTarget());
     }
+
+    // ---------- profileCredentialsKeyProvider (FR-CRED-3 / FR-CRED-6 / FR-RT-3) ----------
+
+    @Test
+    void profileCredentialsKeyProviderIsEnvOnlyForKubernetes() {
+        assertEquals(PlatformResolver.CREDENTIALS_KEY_PROVIDER_ENV,
+                PlatformResolver.profileCredentialsKeyProvider(Platform.KUBERNETES),
+                "credentials key provider defaults to env for KUBERNETES");
+        assertNull(PlatformResolver.profileCredentialsKeyProvider(Platform.HOST));
+        assertNull(PlatformResolver.profileCredentialsKeyProvider(Platform.GREENGRASS));
+    }
+
+    @Test
+    void profileCredentialsKeyProviderNullForNullPlatform() {
+        assertNull(PlatformResolver.profileCredentialsKeyProvider(null));
+    }
+
+    @Test
+    void profileCredentialsKeyProviderFieldMatchesProfileTable() {
+        assertEquals("env", PlatformResolver.PROFILES.get(Platform.KUBERNETES).credentialsKeyProvider());
+        assertNull(PlatformResolver.PROFILES.get(Platform.HOST).credentialsKeyProvider());
+        assertNull(PlatformResolver.PROFILES.get(Platform.GREENGRASS).credentialsKeyProvider());
+    }
 }

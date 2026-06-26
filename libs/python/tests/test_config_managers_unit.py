@@ -1,0 +1,446 @@
+"""Unit tests for the config subsystem: ConfigManager base, ConfigurationValidator,
+EnvironmentConfigManager, FileConfigManager, ConfigManagerBuilder dispatch, and
+ConfigComponentManager (with a mocked MessagingClient).
+
+All paths run in-process: temp files, env vars, and mocks stand in for any live source.
+"""
+import json
+import os
+from argparse import Namespace
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
+import pytest
+
+from ggcommons.config.manager.config_manager import ConfigManager, _sanitize
+from ggcommons.config.manager.configuration_change_listener import ConfigurationChangeListener
+from ggcommons.validation.configuration_validator import (
+    ConfigurationValidator,
+    ConfigurationValidationException,
+)
+
+
+class DictConfigManager(ConfigManager):
+    """ConfigManager whose source is a fixed dict (no live config source)."""
+
+    def __init__(self, cfg, component="com.example.MyComp", thing="thing-1", **kw):
+        self._cfg = cfg
+        super().__init__(component, thing, **kw)
+        self.init()
+
+    def _load_configuration(self):
+        return self._cfg
+
+
+# --------------------------------------------------------------------------- base
+
+
+class TestConfigManagerBase:
+    def test_empty_component_name_raises(self):
+        with pytest.raises(ValueError):
+            ConfigManager("")
+
+    def test_component_short_vs_full_name(self):
+        cm = DictConfigManager({"component": {}})
+        assert cm.get_component_name() == "MyComp"
+        assert cm.get_component_full_name() == "com.example.MyComp"
+        assert cm.get_thing_name() == "thing-1"
+
+    def test_accessors_populated_after_init(self):
+        cm = DictConfigManager({"component": {"global": {"k": "v"}, "instances": [{"id": "main"}]}})
+        assert cm.get_metric_config() is not None
+        assert cm.get_heartbeat_config() is not None
+        assert cm.get_health_config() is not None
+        assert cm.get_logging_config() is not None
+        assert cm.get_tag_config() is not None
+        assert cm.get_global_config() == {"k": "v"}
+        assert cm.get_instance_ids() == ["main"]
+        assert cm.get_instance_config("main") == {"id": "main"}
+        assert cm.get_config_source() == "unknown"
+        assert cm.is_validation_enabled() is True
+
+    def test_initializing_then_complete(self):
+        cm = DictConfigManager({"component": {}})
+        assert cm.is_initializing() is True
+        cm.complete_initialization()
+        assert cm.is_initializing() is False
+
+    def test_get_full_config_includes_optional_sections(self):
+        # validation disabled: this test only checks get_full_config surfaces the raw
+        # optional sections, not that they match the (stricter) schema.
+        cm = DictConfigManager({
+            "component": {"global": {}, "instances": []},
+            "streaming": {"streams": []},
+            "credentials": {"vault": {}},
+            "parameters": {"sources": []},
+        }, validate_config=False)
+        full = cm.get_full_config()
+        assert full["streaming"] == {"streams": []}
+        assert full["credentials"] == {"vault": {}}
+        assert full["parameters"] == {"sources": []}
+        assert "component" in full and "metricEmission" in full
+
+    def test_logging_correlation_reads_k8s_env(self, monkeypatch):
+        monkeypatch.setenv("POD_NAME", "pod-1")
+        monkeypatch.setenv("POD_NAMESPACE", "ns-1")
+        monkeypatch.setenv("NODE_NAME", "node-1")
+        cm = DictConfigManager({"component": {}})
+        corr = cm._logging_correlation()
+        assert corr["thing"] == "thing-1"
+        assert corr["pod"] == "pod-1"
+        assert corr["namespace"] == "ns-1"
+        assert corr["node"] == "node-1"
+
+    def test_listeners_add_notify_remove(self):
+        cm = DictConfigManager({"component": {}})
+        cm.complete_initialization()
+        events = []
+
+        class L(ConfigurationChangeListener):
+            def on_configuration_change(self, cfg):
+                events.append(cfg)
+                return True
+
+        listener = L()
+        cm.add_config_change_listener(listener)
+        assert cm.configuration_changed({"component": {}}) is True
+        assert len(events) == 1
+        cm.remove_config_change_listener(listener)
+        cm.configuration_changed({"component": {}})
+        assert len(events) == 1  # no longer notified
+
+    def test_add_remove_none_listener_raises(self):
+        cm = DictConfigManager({"component": {}})
+        with pytest.raises(ValueError):
+            cm.add_config_change_listener(None)
+        with pytest.raises(ValueError):
+            cm.remove_config_change_listener(None)
+
+    def test_remove_unknown_listener_warns_not_raises(self):
+        cm = DictConfigManager({"component": {}})
+
+        class L(ConfigurationChangeListener):
+            def on_configuration_change(self, cfg):
+                return True
+
+        cm.remove_config_change_listener(L())  # not present -> warning, no raise
+
+    def test_listener_returning_false_is_logged(self):
+        cm = DictConfigManager({"component": {}})
+        cm.complete_initialization()
+
+        class L(ConfigurationChangeListener):
+            def on_configuration_change(self, cfg):
+                return False
+
+        cm.add_config_change_listener(L())
+        # still returns True overall (apply succeeded); listener False just logs
+        assert cm.configuration_changed({"component": {}}) is True
+
+    def test_listener_exception_is_swallowed(self):
+        cm = DictConfigManager({"component": {}})
+        cm.complete_initialization()
+
+        class L(ConfigurationChangeListener):
+            def on_configuration_change(self, cfg):
+                raise RuntimeError("boom")
+
+        cm.add_config_change_listener(L())
+        assert cm.configuration_changed({"component": {}}) is True
+
+    def test_configuration_changed_apply_failure_returns_false(self):
+        cm = DictConfigManager({"component": {}})
+        cm.complete_initialization()
+        # component as a non-dict makes _apply_config raise -> returns False
+        assert cm.configuration_changed({"component": "not-a-dict"}) is False
+
+    def test_init_raises_on_invalid_config_while_initializing(self):
+        # extra top-level property -> schema rejects (top level is strict)
+        with pytest.raises(Exception):
+            DictConfigManager({"component": {}, "bogusTopLevelKey": 1})
+
+    def test_close_is_noop_by_default(self):
+        cm = DictConfigManager({"component": {}})
+        cm.close()  # no error
+
+    def test_validate_disabled_skips(self):
+        # invalid config but validation disabled -> constructs fine
+        cm = DictConfigManager({"component": {}, "bogusTopLevelKey": 1}, validate_config=False)
+        assert cm.is_validation_enabled() is False
+
+
+class TestSanitize:
+    def test_sanitize_none_is_empty(self):
+        assert _sanitize(None) == ""
+
+    def test_sanitize_replaces_hostile_chars(self):
+        assert _sanitize("a/b\\c+d#e") == "a_b_c_d_e"
+
+    def test_sanitize_collapses_traversal(self):
+        assert _sanitize("..") == "_"
+
+
+# --------------------------------------------------------------------- validator
+
+
+class TestConfigurationValidator:
+    def test_validate_none_raises_value_error(self):
+        with pytest.raises(ValueError):
+            ConfigurationValidator.validate(None)
+
+    def test_validate_valid_config_passes(self):
+        ConfigurationValidator.validate({"component": {"global": {}, "instances": []}})
+
+    def test_validate_invalid_raises_with_errors(self):
+        with pytest.raises(ConfigurationValidationException) as exc:
+            ConfigurationValidator.validate({"component": {}, "unexpectedKey": 1})
+        assert exc.value.validation_errors  # populated detail list
+
+    def test_validate_section_none_raises(self):
+        with pytest.raises(ValueError):
+            ConfigurationValidator.validate_section(None, "component")
+
+    def test_validate_section_empty_name_raises(self):
+        with pytest.raises(ValueError):
+            ConfigurationValidator.validate_section({}, "")
+
+    def test_validate_section_valid(self):
+        ConfigurationValidator.validate_section({"global": {}, "instances": []}, "component")
+
+    def test_validate_section_invalid_reraises_with_context(self):
+        with pytest.raises(ConfigurationValidationException) as exc:
+            # 'tags' must be an object; a string is invalid
+            ConfigurationValidator.validate_section("nope", "tags")
+        assert "section 'tags'" in str(exc.value)
+
+    def test_is_validation_available(self):
+        assert ConfigurationValidator.is_validation_available() is True
+
+    def test_exception_stores_errors(self):
+        e = ConfigurationValidationException("msg", [{"a": 1}])
+        assert e.validation_errors == [{"a": 1}]
+        e2 = ConfigurationValidationException("msg")
+        assert e2.validation_errors == []
+
+
+# ----------------------------------------------------------- environment manager
+
+
+class TestEnvironmentConfigManager:
+    def test_loads_from_env(self, monkeypatch):
+        from ggcommons.config.manager.environment_config_manager import EnvironmentConfigManager
+
+        monkeypatch.setenv("MY_CFG", json.dumps({"component": {"global": {"x": 1}}}))
+        cm = EnvironmentConfigManager("thing-1", "com.example.C", "MY_CFG")
+        assert cm.get_global_config() == {"x": 1}
+        assert "MY_CFG" in cm.get_config_source()
+
+    def test_missing_env_raises(self, monkeypatch):
+        from ggcommons.config.manager.environment_config_manager import EnvironmentConfigManager
+
+        monkeypatch.delenv("ABSENT_CFG", raising=False)
+        with pytest.raises(RuntimeError, match="ABSENT_CFG"):
+            EnvironmentConfigManager("thing-1", "com.example.C", "ABSENT_CFG")
+
+
+# ------------------------------------------------------------------ file manager
+
+
+class TestFileConfigManager:
+    def test_loads_and_watches_then_closes(self, tmp_path):
+        from ggcommons.config.manager.file_config_manager import FileConfigManager
+
+        cfg = tmp_path / "config.json"
+        cfg.write_text(json.dumps({"component": {"global": {"k": "v"}}}))
+        cm = FileConfigManager("thing-1", "com.example.C", str(cfg))
+        try:
+            assert cm.get_global_config() == {"k": "v"}
+            assert "config.json" in cm.get_config_source()
+        finally:
+            cm.close()
+            # close is idempotent
+            cm.close()
+
+    def test_missing_file_raises_runtime_error(self, tmp_path):
+        from ggcommons.config.manager.file_config_manager import FileConfigManager
+
+        with pytest.raises(RuntimeError, match="Unable to open config file"):
+            FileConfigManager("thing-1", "com.example.C", str(tmp_path / "nope.json"))
+
+    def test_change_event_handler_dispatch(self, tmp_path):
+        from ggcommons.config.manager.file_config_manager import (
+            FileConfigManager,
+            ConfigFileChangeEventHandler,
+        )
+
+        cfg = tmp_path / "config.json"
+        cfg.write_text(json.dumps({"component": {"global": {"k": 1}}}))
+        cm = FileConfigManager("thing-1", "com.example.C", str(cfg))
+        try:
+            handler = ConfigFileChangeEventHandler(cm, str(cfg))
+            # directory events are ignored
+            handler.on_modified(SimpleNamespace(is_directory=True, src_path=str(cfg)))
+            handler.on_created(SimpleNamespace(is_directory=True, src_path=str(cfg)))
+            handler.on_moved(SimpleNamespace(is_directory=True, dest_path=str(cfg)))
+            # non-matching path ignored
+            handler.on_modified(SimpleNamespace(is_directory=False, src_path="other.json"))
+            # matching modify -> reload picks up new content
+            cfg.write_text(json.dumps({"component": {"global": {"k": 2}}}))
+            handler.on_modified(SimpleNamespace(is_directory=False, src_path=str(cfg)))
+            assert cm.get_global_config() == {"k": 2}
+            # matching create + move also reload
+            handler.on_created(SimpleNamespace(is_directory=False, src_path=str(cfg)))
+            handler.on_moved(SimpleNamespace(is_directory=False, dest_path=str(cfg)))
+        finally:
+            cm.close()
+
+    def test_reload_swallows_parse_error(self, tmp_path):
+        from ggcommons.config.manager.file_config_manager import (
+            FileConfigManager,
+            ConfigFileChangeEventHandler,
+        )
+
+        cfg = tmp_path / "config.json"
+        cfg.write_text(json.dumps({"component": {}}))
+        cm = FileConfigManager("thing-1", "com.example.C", str(cfg))
+        try:
+            handler = ConfigFileChangeEventHandler(cm, str(cfg))
+            cfg.write_text("{ broken json")
+            # must not raise even though reload fails to parse
+            handler.on_modified(SimpleNamespace(is_directory=False, src_path=str(cfg)))
+        finally:
+            cm.close()
+
+
+# ---------------------------------------------------------------- builder dispatch
+
+
+class TestConfigManagerBuilderDispatch:
+    def _patch_all(self, monkeypatch):
+        import ggcommons.config.manager.config_manager_builder as cmb
+
+        calls = {}
+
+        def make(name):
+            def fake(*args, **kwargs):
+                calls[name] = (args, kwargs)
+                return f"{name}-instance"
+            return fake
+
+        for cls_name in (
+            "FileConfigManager",
+            "ConfigMapConfigManager",
+            "EnvironmentConfigManager",
+            "GreengrassConfigManager",
+            "ShadowConfigManager",
+            "ConfigComponentManager",
+        ):
+            monkeypatch.setattr(cmb, cls_name, make(cls_name))
+        return cmb, calls
+
+    def _args(self, config):
+        return Namespace(config=config, identity="thing-1", thing="thing-1", platform=None)
+
+    def test_dispatch_file(self, monkeypatch):
+        cmb, calls = self._patch_all(monkeypatch)
+        result = cmb.ConfigManagerBuilder.build(self._args(["FILE", "cfg.json"]), "com.example.C")
+        assert result == "FileConfigManager-instance"
+        assert "FileConfigManager" in calls
+
+    def test_dispatch_configmap(self, monkeypatch):
+        cmb, calls = self._patch_all(monkeypatch)
+        cmb.ConfigManagerBuilder.build(self._args(["CONFIGMAP", "/etc/x", "key"]), "com.example.C")
+        assert "ConfigMapConfigManager" in calls
+
+    def test_dispatch_env(self, monkeypatch):
+        cmb, calls = self._patch_all(monkeypatch)
+        cmb.ConfigManagerBuilder.build(self._args(["ENV", "MYVAR"]), "com.example.C")
+        assert "EnvironmentConfigManager" in calls
+
+    def test_dispatch_gg_config(self, monkeypatch):
+        cmb, calls = self._patch_all(monkeypatch)
+        cmb.ConfigManagerBuilder.build(self._args(["GG_CONFIG"]), "com.example.C")
+        assert "GreengrassConfigManager" in calls
+
+    def test_dispatch_shadow(self, monkeypatch):
+        cmb, calls = self._patch_all(monkeypatch)
+        cmb.ConfigManagerBuilder.build(self._args(["SHADOW"]), "com.example.C")
+        assert "ShadowConfigManager" in calls
+
+    def test_dispatch_config_component(self, monkeypatch):
+        cmb, calls = self._patch_all(monkeypatch)
+        cmb.ConfigManagerBuilder.build(self._args(["CONFIG_COMPONENT"]), "com.example.C")
+        assert "ConfigComponentManager" in calls
+
+    def test_dispatch_unrecognized_raises(self, monkeypatch):
+        cmb, _ = self._patch_all(monkeypatch)
+        with pytest.raises(ValueError, match="Unrecognized config source"):
+            cmb.ConfigManagerBuilder.build(self._args(["BOGUS"]), "com.example.C")
+
+    def test_dispatch_resolves_identity_when_absent(self, monkeypatch):
+        cmb, calls = self._patch_all(monkeypatch)
+        args = Namespace(config=["FILE", "c.json"], thing="raw-thing", platform=None)
+        cmb.ConfigManagerBuilder.build(args, "com.example.C")
+        # thing_name resolved from -t flag passed positionally as first arg
+        passed_args = calls["FileConfigManager"][0]
+        assert passed_args[0] == "raw-thing"
+
+
+# ----------------------------------------------------------- config component mgr
+
+
+class TestConfigComponentManager:
+    def test_init_requests_and_subscribes(self, monkeypatch):
+        import ggcommons.config.manager.config_component_manager as ccm
+        from ggcommons.messaging.message import Message
+
+        subscribed = {}
+        monkeypatch.setattr(
+            ccm.MessagingClient, "subscribe",
+            staticmethod(lambda topic, cb: subscribed.update(topic=topic, cb=cb)),
+        )
+
+        reply = Message()
+        reply.body = {"component": {"global": {"k": "from-component"}}}
+
+        def fake_request(topic, msg):
+            return SimpleNamespace(get=lambda timeout=None: (True, reply))
+
+        monkeypatch.setattr(ccm.MessagingClient, "request", staticmethod(fake_request))
+
+        mgr = ccm.ConfigComponentManager("thing-1", "com.example.C")
+        assert mgr.get_global_config() == {"k": "from-component"}
+        assert "ggcommons/thing-1/" in subscribed["topic"]
+
+    def test_load_with_str_body(self, monkeypatch):
+        import ggcommons.config.manager.config_component_manager as ccm
+        from ggcommons.messaging.message import Message
+
+        monkeypatch.setattr(ccm.MessagingClient, "subscribe", staticmethod(lambda t, cb: None))
+        reply = Message()
+        reply.body = json.dumps({"component": {"global": {"k": "str-body"}}})
+        monkeypatch.setattr(
+            ccm.MessagingClient, "request",
+            staticmethod(lambda topic, msg: SimpleNamespace(get=lambda timeout=None: (True, reply))),
+        )
+        mgr = ccm.ConfigComponentManager("thing-1", "com.example.C")
+        assert mgr.get_global_config() == {"k": "str-body"}
+
+    def test_load_and_apply_config_triggers_change(self, monkeypatch):
+        import ggcommons.config.manager.config_component_manager as ccm
+        from ggcommons.messaging.message import Message
+
+        monkeypatch.setattr(ccm.MessagingClient, "subscribe", staticmethod(lambda t, cb: None))
+        reply = Message()
+        reply.body = {"component": {}}
+        monkeypatch.setattr(
+            ccm.MessagingClient, "request",
+            staticmethod(lambda topic, msg: SimpleNamespace(get=lambda timeout=None: (True, reply))),
+        )
+        mgr = ccm.ConfigComponentManager("thing-1", "com.example.C")
+        mgr.complete_initialization()
+
+        update = Message()
+        update.body = {"component": {"global": {"k": "updated"}}}
+        mgr.load_and_apply_config("topic", update)
+        assert mgr.get_global_config() == {"k": "updated"}

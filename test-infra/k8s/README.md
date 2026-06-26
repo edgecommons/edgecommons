@@ -30,7 +30,12 @@ What the harness proves end-to-end:
    KUBERNETES): the component exposes an in-process registry as OpenMetrics text at `:9090/metrics`
    (no `metricEmission.target` in the config — the profile default applies), and the heartbeat is
    routed to it; the smoke does an in-pod GET of `/metrics` and asserts a `ggcommons_*` gauge appears;
-8. a **`kubectl` edit of the ConfigMap is hot-reloaded in-process** — the watcher
+8. it unlocks an **encrypted credentials vault via the `env` KeyProvider** (Phase 1d, the default
+   vault custodian on KUBERNETES): `--set credentials.enabled=true` mounts a Secret as
+   `GGCOMMONS_VAULT_KEK` and injects a `credentials` section with `keyProvider` omitted (so the
+   profile default `env` applies); the skeleton opens the vault from that base64 KEK and round-trips a
+   demo secret — the smoke asserts the `credential access OK` log (offline, no cloud/HSM);
+9. a **`kubectl` edit of the ConfigMap is hot-reloaded in-process** — the watcher
    re-arms across the kubelet's atomic `..data` symlink swap — **with no pod restart**
    (`restartCount=0` also confirms the liveness probe never failed).
 
@@ -42,8 +47,13 @@ What the harness proves end-to-end:
 > inbound. Multi-site aggregation is the collector's **outbound** `remote_write` to AMP/Mimir/Thanos/
 > Grafana Cloud — edge-initiated egress, same direction as CloudWatch (see DESIGN-subsystems §3.1).
 >
-> Not yet (deferred): PVC-aware streaming and the `env` KeyProvider (**1d**). Deferred metrics
-> enhancements (measure `type`/histograms, a unified durable metrics-streamlog, heartbeat-as-collector)
+> **Durable streaming on k8s:** a component using `gg.streams()` with a durable disk buffer needs a
+> **StatefulSet + per-pod PVC** (single-writer), not a Deployment — see `streaming-statefulset-example.yaml`
+> + DESIGN-packaging. The ggstreamlog engine is unchanged; this is a deployment shape (not smoke-tested
+> here — it needs a reachable Kinesis/Kafka sink).
+>
+> Deferred metrics enhancements (measure `type`/histograms, a unified durable metrics-streamlog,
+> heartbeat-as-collector)
 > are captured in DESIGN-subsystems §3.2.
 
 ## Contents

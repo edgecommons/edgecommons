@@ -98,6 +98,12 @@ LOGGING_FORMAT_JSON = "json"
 #: across all four languages.
 METRIC_TARGET_PROMETHEUS = "prometheus"
 
+#: The offline software-KEK vault key provider (FR-CRED-3): the KEK is a base64-encoded 32-byte raw
+#: key read from an env var (typically a mounted Kubernetes Secret). The KUBERNETES profile defaults
+#: the credentials vault ``keyProvider.type`` to this value (FR-CRED-6). Consistent across all four
+#: languages.
+CREDENTIALS_KEY_PROVIDER_ENV = "env"
+
 
 @dataclass(frozen=True)
 class PlatformProfile:
@@ -128,6 +134,14 @@ class PlatformProfile:
             the FR-RT-3 precedence — explicit ``metricEmission.target`` config ▸ this default ▸
             ``log`` — applied by ``MetricEmitter`` when selecting the target; see
             :func:`profile_metric_target`.
+        credentials_key_provider: the platform's default credentials-vault ``keyProvider.type``
+            (Phase 1d env-KeyProvider slice). :data:`CREDENTIALS_KEY_PROVIDER_ENV` (``env``) on
+            KUBERNETES — the offline software-KEK from a mounted Secret — ``None`` elsewhere (fall
+            through to the library default ``file``). The middle tier of the FR-CRED-6 / FR-RT-3
+            precedence — explicit ``credentials.vault.keyProvider.type`` config ▸ this default ▸
+            ``file`` — applied at the credentials init site (it does NOT enable credentials, only
+            changes the default provider type when a ``credentials`` section is present); see
+            :func:`profile_credentials_key_provider`.
     """
 
     transport: Transport
@@ -135,6 +149,7 @@ class PlatformProfile:
     logging_format: Optional[str] = None
     health_enabled: bool = False
     metric_target: Optional[str] = None
+    credentials_key_provider: Optional[str] = None
 
 
 #: The platform-profile table (DESIGN-core sec 3). GREENGRASS and HOST deliberately default the
@@ -144,8 +159,10 @@ class PlatformProfile:
 #: Phase 1c models the KUBERNETES profile's default ``logging_format`` (``json``, the stdout-JSON
 #: sink) and ``metric_target`` (``prometheus``, the pull-based registry). GREENGRASS/HOST keep
 #: ``None`` for both (the library console/text default + the ``log`` metric target), so their
-#: behavior is unchanged. TODO (Phase 1d): the KUBERNETES profile's credentials/streaming defaults
-#: (env KeyProvider, PVC buffer) are not yet modeled here.
+#: behavior is unchanged. Phase 1d models the KUBERNETES profile's default ``credentials_key_provider``
+#: (``env``, the offline software-KEK from a mounted Secret); GREENGRASS/HOST keep ``None`` (the
+#: library default ``file``). TODO (later Phase 1d): the KUBERNETES streaming default (PVC buffer) is
+#: not yet modeled here.
 PROFILES: Mapping[Platform, PlatformProfile] = {
     Platform.GREENGRASS: PlatformProfile(Transport.IPC, "GG_CONFIG"),
     Platform.HOST: PlatformProfile(Transport.MQTT, "GG_CONFIG"),
@@ -155,6 +172,7 @@ PROFILES: Mapping[Platform, PlatformProfile] = {
         LOGGING_FORMAT_JSON,
         health_enabled=True,
         metric_target=METRIC_TARGET_PROMETHEUS,
+        credentials_key_provider=CREDENTIALS_KEY_PROVIDER_ENV,
     ),
 }
 
@@ -221,6 +239,33 @@ def profile_metric_target(platform: Optional[Platform]) -> Optional[str]:
         return None
     profile = PROFILES.get(platform)
     return None if profile is None else profile.metric_target
+
+
+def profile_credentials_key_provider(platform: Optional[Platform]) -> Optional[str]:
+    """Return the platform-profile default credentials key-provider type, or ``None`` (FR-CRED-6 / FR-RT-3).
+
+    This is the **middle** tier of the credentials key-provider precedence — explicit
+    ``credentials.vault.keyProvider.type`` config ▸ this platform-profile default ▸ library default
+    ``file`` — consulted at the credentials init site (``GGCommons._init_credentials``) when a
+    ``credentials`` section is present. It is a pure lookup (no I/O, no ``ConfigManager`` dependency),
+    so the resolved platform alone selects the default: KUBERNETES yields
+    :data:`CREDENTIALS_KEY_PROVIDER_ENV` (``env``, the offline software-KEK), every other platform
+    yields ``None`` (the caller falls through to ``file``).
+
+    Note this does **not** enable credentials — the subsystem stays opt-in, gated by the presence of a
+    ``credentials`` config section. It only changes the **default provider type** when credentials is
+    configured without an explicit ``keyProvider.type``.
+
+    Args:
+        platform: the resolved platform, or ``None`` (e.g. a caller that bypassed the resolver).
+
+    Returns:
+        The profile's default key-provider type token, or ``None`` to keep the library default.
+    """
+    if platform is None:
+        return None
+    profile = PROFILES.get(platform)
+    return None if profile is None else profile.credentials_key_provider
 
 
 @dataclass(frozen=True)

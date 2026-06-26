@@ -238,6 +238,17 @@ Follow this for **every** code change, in the language(s) you touched:
    paths, edge cases, and error conditions; run the suite and fix failures:
    - Java `mvn test` · Python `python -m pytest` · Rust `cargo test` · TS `npm test`.
    Include the relevant test output in your response.
+   **Coverage is gated at 90% (line) in ALL FOUR languages**, scoped to the **CI-testable surface** —
+   live-infra-only code (Greengrass IPC, AWS KMS/Secrets-Manager/SSM, PKCS#11, shadow/GG config sources)
+   is validated on the lab/floci and is excluded from the gate, mirroring how Java/TS already scope theirs.
+   Run the gate locally before pushing:
+   - **Java**: `mvn verify` (JaCoCo 90% BUNDLE gate).
+   - **TS**: `npm run coverage` (vitest thresholds: stmts/lines 90, funcs 85, branches 80).
+   - **Python**: `python -m pytest -m "not slow and not integration and not aws" --cov=ggcommons --cov-fail-under=90`
+     (omit/exclude list in `libs/python/.coveragerc`).
+   - **Rust**: `cargo llvm-cov --features credentials,streaming,metrics-prometheus,parameters --ignore-filename-regex 'testutil\.rs' --fail-under-lines 90`
+     (needs `cargo-llvm-cov` + `llvm-tools`; excludes test-support + the AWS/HSM-gated infra not built here).
+   Don't lower a gate or `pragma`/exclude genuinely-testable code to pass — add tests.
 4. **Parity check.** If the change alters public behavior, the config schema, the CLI contract, or
    the message envelope, note whether the other three languages need the matching change.
 

@@ -259,6 +259,12 @@
                     <!-- @{argLine} keeps the JaCoCo agent; enable-native-access avoids the FFM
                          restricted-method warnings (Panama) from the streaming binding. -->
                     <argLine>@{argLine} --enable-native-access=ALL-UNNAMED</argLine>
+                    <!-- Fixed env var holding a known base64 32-byte KEK (0x00..0x1f) so the env
+                         KeyProvider config-path tests (EnvKeyProvider / type=env) run deterministically
+                         in the forked JVM; Java has no portable in-process env setter under JDK 25. -->
+                    <environmentVariables>
+                        <GGCOMMONS_TEST_VAULT_KEK>AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=</GGCOMMONS_TEST_VAULT_KEK>
+                    </environmentVariables>
                     <!-- These require live infrastructure (a real broker / IoT Core for the
                          STANDALONE GGCommonsTest, and a Greengrass Nucleus for MessagingClientTest)
                          and are run manually, not in the self-contained unit/integration suite. -->

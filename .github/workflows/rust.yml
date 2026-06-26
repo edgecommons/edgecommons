@@ -21,9 +21,16 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy
+          components: clippy, llvm-tools-preview
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: libs/rust
       - run: cargo test --lib
       - run: cargo clippy --all-targets -- -D warnings
+      # 90% line-coverage gate on the CI-testable surface: the pure-Rust feature set (the AWS/HSM infra
+      # features credentials-aws/pkcs11/kafka + the Linux-only greengrass feature are excluded — validated
+      # on the lab/floci), with the test-support file excluded. Mirrors Java JaCoCo / TS vitest scoping.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+      - run: cargo llvm-cov --features credentials,streaming,metrics-prometheus,parameters --ignore-filename-regex 'testutil\.rs' --fail-under-lines 90

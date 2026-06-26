@@ -89,9 +89,13 @@ class GGCommonsLifecycleTest {
     }
 
     private GGCommons bringUp(String component, String thing, File appCfg, File msgCfg) {
+        return bringUp(component, thing, appCfg, msgCfg, "HOST");
+    }
+
+    private GGCommons bringUp(String component, String thing, File appCfg, File msgCfg, String platform) {
         String[] args = {
                 "-t", thing,
-                "--platform", "HOST", "--transport", "MQTT", msgCfg.getAbsolutePath(),
+                "--platform", platform, "--transport", "MQTT", msgCfg.getAbsolutePath(),
                 "-c", "FILE", appCfg.getAbsolutePath()
         };
         return GGCommonsBuilder.create(component).withArgs(args).build();
@@ -148,6 +152,58 @@ class GGCommonsLifecycleTest {
         GGCommons toClose = gg;
         gg = null; // prevent double-close in @AfterEach
         assertDoesNotThrow(toClose::shutdown);
+    }
+
+    @Test
+    void kubernetesProfileDefaultDoesNotAutoEnableCredentials() throws Exception {
+        // FR-CRED-6 guard: the KUBERNETES profile defaults the key-provider to 'env', but that is a
+        // default for an *already-configured* vault — with no 'credentials' section, credentials must
+        // stay OFF even on KUBERNETES (the opt-in contract is preserved).
+        // Disable the KUBERNETES prometheus/health HTTP servers (explicit config wins) so this
+        // credentials-focused test binds no ports; the credentials key-provider default is unaffected.
+        File appCfg = new File(tmp.toFile(), "k8s-bare-config.json");
+        Files.write(appCfg.toPath(), """
+                { "logging": {"level": "INFO"}, "metricEmission": {"target": "log"},
+                  "health": {"enabled": false}, "component": {"global": {}} }"""
+                .getBytes(StandardCharsets.UTF_8));
+        File msgCfg = writeMessagingConfig("k8s-bare-messaging.json");
+
+        gg = bringUp("com.test.K8sBareComponent", "k8s-bare-thing", appCfg, msgCfg, "KUBERNETES");
+
+        assertNull(gg.getCredentials(),
+                "no 'credentials' section -> credentials OFF even with the KUBERNETES env default");
+    }
+
+    @Test
+    void kubernetesDefaultsCredentialsKeyProviderToEnvWhenTypeAbsent() throws Exception {
+        // FR-CRED-6 (precedence FR-RT-3): a 'credentials' section present but with NO keyProvider.type
+        // resolves to the KUBERNETES profile default 'env'. envVar points at the surefire-injected
+        // GGCOMMONS_TEST_VAULT_KEK (base64 of the 0x00..0x1f KEK).
+        String vaultPath = new File(tmp.toFile(), "k8s-vault").getAbsolutePath().replace("\\", "/");
+
+        File appCfg = new File(tmp.toFile(), "k8s-creds-config.json");
+        Files.write(appCfg.toPath(), ("""
+                {
+                  "logging": {"level": "INFO"},
+                  "metricEmission": {"target": "log"}, "health": {"enabled": false},
+                  "credentials": { "vault": { "path": "%s",
+                      "keyProvider": { "envVar": "GGCOMMONS_TEST_VAULT_KEK" } } },
+                  "component": {"global": {}}
+                }""").formatted(vaultPath).getBytes(StandardCharsets.UTF_8));
+        File msgCfg = writeMessagingConfig("k8s-creds-messaging.json");
+
+        gg = bringUp("com.test.K8sCredsComponent", "k8s-creds-thing", appCfg, msgCfg, "KUBERNETES");
+
+        assertNotNull(gg.getCredentials(), "credentials section present -> service initialized");
+        gg.getCredentials().put("unit/test", "value".getBytes(StandardCharsets.UTF_8));
+        assertEquals("value", gg.getCredentials().getString("unit/test").orElseThrow());
+
+        // The on-disk KEK record is tagged provider=env -> the env custodian (not file) was selected
+        // by the platform default.
+        String raw = Files.readString(Path.of(vaultPath));
+        String provider = com.google.gson.JsonParser.parseString(raw).getAsJsonObject()
+                .getAsJsonObject("kek").get("provider").getAsString();
+        assertEquals("env", provider);
     }
 
     @Test

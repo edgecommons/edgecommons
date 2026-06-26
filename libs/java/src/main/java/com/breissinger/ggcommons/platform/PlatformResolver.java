@@ -47,7 +47,13 @@ import java.util.function.Predicate;
  * server ({@link PlatformProfile#healthEnabled()}, FR-HB-1), exposed via
  * {@link #profileHealthEnabled(Platform)}. Both are middle-tier (FR-RT-3) profile defaults consumed
  * downstream (the logging configurator and {@link com.breissinger.ggcommons.GGCommons} respectively).
- * The {@code prometheus} metrics target is deferred to a later Phase-1 sub-phase.
+ *
+ * <p><b>Phase 1d:</b> the KUBERNETES profile gains a default {@code prometheus} metrics target
+ * ({@link PlatformProfile#metricTarget()}, FR-MET-1; via {@link #profileMetricTarget(Platform)}) and a
+ * default {@code env} credentials key-provider ({@link PlatformProfile#credentialsKeyProvider()},
+ * FR-CRED-6; via {@link #profileCredentialsKeyProvider(Platform)}) — the offline-capable software KEK
+ * read from a mounted Secret. Both are middle-tier (FR-RT-3) defaults; the credentials default only
+ * changes the provider type for an already-configured vault and never auto-enables credentials.
  */
 public final class PlatformResolver {
 
@@ -104,6 +110,17 @@ public final class PlatformResolver {
      */
     public static final String METRIC_TARGET_PROMETHEUS = "prometheus";
 
+    /**
+     * The {@code credentials.vault.keyProvider.type} selector value for the env KEY provider
+     * (FR-CRED-3 / FR-CRED-6) — the KUBERNETES profile's default key-provider. The env provider sources
+     * the vault KEK from a base64-encoded 32-byte key read from an environment variable (typically a
+     * mounted k8s Secret), the offline-capable software KEK. The same {@code env} token selects it in
+     * every language, kept consistent for parity. It is a <em>middle</em>-tier default: it only changes
+     * the default provider type when a {@code credentials} section is already present (it never
+     * auto-enables credentials).
+     */
+    public static final String CREDENTIALS_KEY_PROVIDER_ENV = "env";
+
     /** The library-default identity when no thing name is available (matches today's behavior). */
     public static final String DEFAULT_IDENTITY = "NOT_GREENGRASS";
 
@@ -128,15 +145,16 @@ public final class PlatformResolver {
      * {@code MQTT} transport and the k8s-native {@code CONFIGMAP} config source, and (Phase 1c)
      * defaults the logging format to {@value #LOGGING_FORMAT_JSON} — the stdout-JSON sink (FR-LOG-1).
      *
-     * <p>TODO (Phase 1d): the KUBERNETES profile's metrics/credentials/streaming defaults (prometheus
-     * target, env KeyProvider, PVC buffer) are not yet modeled here — those subsystems keep their
-     * current library defaults until their sub-phase ships.
+     * <p>Phase 1d models the KUBERNETES profile's metric target ({@value #METRIC_TARGET_PROMETHEUS})
+     * and credentials key-provider default ({@value #CREDENTIALS_KEY_PROVIDER_ENV} — the env/software
+     * KEK, FR-CRED-6). The streaming (PVC buffer) default is not yet modeled here — it keeps its
+     * current library default until its sub-phase ships.
      */
     public static final Map<Platform, PlatformProfile> PROFILES = Map.of(
-            Platform.GREENGRASS, new PlatformProfile(Transport.IPC, "GG_CONFIG", null, false, null),
-            Platform.HOST, new PlatformProfile(Transport.MQTT, "GG_CONFIG", null, false, null),
+            Platform.GREENGRASS, new PlatformProfile(Transport.IPC, "GG_CONFIG", null, false, null, null),
+            Platform.HOST, new PlatformProfile(Transport.MQTT, "GG_CONFIG", null, false, null, null),
             Platform.KUBERNETES, new PlatformProfile(Transport.MQTT, "CONFIGMAP", LOGGING_FORMAT_JSON,
-                    true, METRIC_TARGET_PROMETHEUS));
+                    true, METRIC_TARGET_PROMETHEUS, CREDENTIALS_KEY_PROVIDER_ENV));
 
     private PlatformResolver() {
     }
@@ -351,6 +369,36 @@ public final class PlatformResolver {
         }
         PlatformProfile profile = PROFILES.get(platform);
         return profile == null ? null : profile.metricTarget();
+    }
+
+    /**
+     * Returns the platform-profile's default {@code credentials.vault.keyProvider.type} token
+     * (FR-CRED-3 / FR-CRED-6, precedence FR-RT-3) — {@value #CREDENTIALS_KEY_PROVIDER_ENV} on
+     * {@link Platform#KUBERNETES} (the env/software KEK), {@code null} on GREENGRASS/HOST and for a
+     * {@code null}/unknown platform (no override; the library default {@code "file"} applies). This is
+     * the <em>middle</em> precedence tier consumed by
+     * {@link com.breissinger.ggcommons.credentials.Credentials#open(com.google.gson.JsonObject, String, String)}
+     * at the credentials init site: an explicit {@code keyProvider.type} from the config wins;
+     * otherwise this profile default decides; else the library default {@code "file"}. Mirrors
+     * {@link #profileLoggingFormat(Platform)} / {@link #profileHealthEnabled(Platform)} /
+     * {@link #profileMetricTarget(Platform)} and the Rust
+     * {@code platform::profile(p).credentials_key_provider} / Python
+     * {@code profile_credentials_key_provider(p)} / TS {@code profileCredentialsKeyProvider(p)}.
+     *
+     * <p><b>Important:</b> this only changes the <em>default provider type</em> for a credentials
+     * vault that is <em>already configured</em> (a {@code credentials} section is present). It never
+     * auto-enables credentials — a component with no {@code credentials} section keeps no vault on any
+     * platform.
+     *
+     * @param platform the resolved platform, or {@code null}
+     * @return the profile's default credentials key-provider token, or {@code null} when none applies
+     */
+    public static String profileCredentialsKeyProvider(Platform platform) {
+        if (platform == null) {
+            return null;
+        }
+        PlatformProfile profile = PROFILES.get(platform);
+        return profile == null ? null : profile.credentialsKeyProvider();
     }
 
     /**

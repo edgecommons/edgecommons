@@ -1,9 +1,11 @@
-"""Key providers (KEK custodians). Phase 1 ships :class:`FileKeyProvider`.
+"""Key providers (KEK custodians). Phase 1 ships :class:`FileKeyProvider`; Phase 1d adds
+:class:`EnvKeyProvider` (the offline software-KEK, default on KUBERNETES).
 
 The DEK is wrapped with AES-256-GCM under the KEK, AAD-bound to the vault id — identical to the
 Rust reference, so a vault wrapped by one language unwraps in another.
 """
 import base64
+import binascii
 import os
 from abc import ABC, abstractmethod
 
@@ -60,8 +62,11 @@ class FileKeyProvider(KeyProvider):
     def wrap_dek(self, vault_id: str, dek: bytes) -> dict:
         nonce = crypto.random(crypto.NONCE_LEN)
         wrapped = crypto.seal(self._kek, nonce, dek_wrap_aad(vault_id), dek)
+        # ``provider`` is :attr:`provider_id` (``file`` here, ``env`` for :class:`EnvKeyProvider`)
+        # so the env provider can reuse this exact wrap path — the crypto is byte-identical given the
+        # same raw 32-byte KEK; only the on-disk provider label differs.
         return {
-            "provider": "file",
+            "provider": self.provider_id,
             "alg": "AES-256-GCM",
             "wrapNonce": base64.b64encode(nonce).decode("ascii"),
             "wrappedDek": base64.b64encode(wrapped).decode("ascii"),
@@ -74,6 +79,56 @@ class FileKeyProvider(KeyProvider):
         nonce = base64.b64decode(nonce_b)
         wrapped = base64.b64decode(kek["wrappedDek"])
         return crypto.open_(self._kek, nonce, dek_wrap_aad(vault_id), wrapped)
+
+
+class EnvKeyProvider(FileKeyProvider):
+    """KEK sourced from a base64-encoded 32-byte raw key in an environment variable (FR-CRED-3).
+
+    The offline-capable software-KEK: the env var typically projects a mounted Kubernetes Secret, so
+    it is the **default** vault custodian on the KUBERNETES platform (FR-CRED-6). The envelope crypto
+    is *cryptographically identical* to :class:`FileKeyProvider` given the same raw 32-byte KEK — it
+    inherits :meth:`wrap_dek`/:meth:`unwrap_dek` unchanged (AES-256-GCM DEK wrap/unwrap, same
+    ``dek-wrap`` AAD). The only differences: :attr:`provider_id` returns ``env`` (so the on-disk
+    ``kek`` block is labelled ``env``) and the KEK comes from the env var instead of a keyfile.
+    A vault wrapped by ``EnvKeyProvider`` with KEK ``K`` therefore opens with a ``FileKeyProvider``
+    holding the same ``K`` (and vice versa).
+
+    Selected via ``keyProvider.type = "env"`` with the env var **name** in ``keyProvider.envVar``
+    (default :data:`DEFAULT_ENV_VAR`). Errors (never panics): the env var unset/empty, the value not
+    valid base64, or the decoded key not exactly :data:`~ggcommons.credentials.crypto.KEY_LEN` bytes.
+    """
+
+    #: Default env var name holding the base64-encoded 32-byte KEK when ``keyProvider.envVar`` is
+    #: absent. Consistent across all four languages.
+    DEFAULT_ENV_VAR = "GGCOMMONS_VAULT_KEK"
+
+    def __init__(self, env_var: str = DEFAULT_ENV_VAR):
+        env_var = env_var or self.DEFAULT_ENV_VAR
+        self._env_var = env_var
+        raw = os.environ.get(env_var)
+        if not raw:
+            raise CredentialError(
+                f"env key provider: environment variable '{env_var}' is unset or empty"
+            )
+        # Tolerate surrounding whitespace / a trailing newline — common when the value is sourced
+        # from a mounted file / Secret (echo|base64, kubectl --from-file). Matches canonical Java
+        # (b64.trim()) and Rust (raw.trim()) so the same Secret decodes identically across all 4 langs.
+        b64 = raw.strip()
+        try:
+            kek = base64.b64decode(b64, validate=True)
+        except (binascii.Error, ValueError):
+            raise CredentialError(
+                f"env key provider: '{env_var}' is not valid base64"
+            ) from None
+        if len(kek) != crypto.KEY_LEN:
+            raise CredentialError(
+                f"env key provider: decoded KEK must be {crypto.KEY_LEN} bytes, got {len(kek)}"
+            )
+        super().__init__(kek)
+
+    @property
+    def provider_id(self) -> str:
+        return "env"
 
 
 class KmsKeyProvider(KeyProvider):

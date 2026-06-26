@@ -1,0 +1,34 @@
+# Coverage config for the 90% gate (run: pytest --cov=ggcommons --cov-fail-under=90).
+#
+# Scope = the CI-testable surface (full-surface is ~85%; this scoping yields ~90.5%). Each omit below is
+# LIVE-INFRA-ONLY — it requires a running Greengrass Nucleus / IoT shadow / AWS Secrets Manager that the
+# unit-test job cannot provide, and is instead validated out-of-band on the lab (the GREENGRASS smoke) /
+# floci. This mirrors how Java (JaCoCo) and TS (vitest) already scope their gates by which tests run in CI.
+#   - messaging/providers/greengrass/*           : Greengrass IPC transport (needs the Nucleus)
+#   - config/manager/greengrass_config_manager.py: the GG_CONFIG source (reads config over GG IPC)
+#   - config/manager/shadow_config_manager.py    : the SHADOW source (reads config from an IoT device
+#                                                  shadow over GG IPC) — same GG-platform category as
+#                                                  greengrass_config_manager; both are lab-validated
+#   - credentials/sync.py, credentials/central.py: AWS Secrets Manager central sync (needs SM/floci)
+# The KMS / PKCS#11 KeyProvider classes (AWS KMS / HSM) are excluded via `exclude_also` so the file/env
+# KeyProvider paths in the same module still count toward the gate.
+[run]
+source = ggcommons
+branch = false
+omit =
+    */messaging/providers/greengrass/*
+    */config/manager/greengrass_config_manager.py
+    */config/manager/shadow_config_manager.py
+    */credentials/sync.py
+    */credentials/central.py
+
+[report]
+show_missing = true
+skip_covered = false
+exclude_also =
+    pragma: no cover
+    raise NotImplementedError
+    if TYPE_CHECKING:
+    if __name__ == .__main__.:
+    class KmsKeyProvider
+    class Pkcs11KeyProvider

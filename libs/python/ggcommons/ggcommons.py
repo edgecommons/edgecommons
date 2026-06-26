@@ -408,13 +408,23 @@ class GGCommons:
             return
 
         from ggcommons.credentials import CredentialMetricsBridge, open_from_config
+        from ggcommons.platform.resolver import profile_credentials_key_provider
 
         # Resolve {ThingName}/{ComponentFullName} in the vault path(s) before opening.
         resolved = _json.loads(self._config_manager.resolve_template(_json.dumps(credentials)))
         # Transparently namespace every key by <thingName>/<componentName> (collision-free across
         # components/devices).
         namespace = f"{self._config_manager.get_thing_name()}/{self._config_manager.get_component_full_name()}"
-        self._credentials = open_from_config(resolved, namespace)
+        # FR-CRED-6 / FR-RT-3: the platform-profile default vault key provider (env on KUBERNETES) is
+        # the middle precedence tier, applied only when keyProvider.type is absent. The resolved
+        # platform is read from the config manager (threaded by the builder, same as logging/health/
+        # metric defaults) — no new resolver->ConfigManager dependency. This does NOT enable
+        # credentials (gated above by the credentials section's presence); it only changes the
+        # DEFAULT provider type when credentials is configured without an explicit keyProvider.type.
+        default_key_provider = profile_credentials_key_provider(self._config_manager.get_platform())
+        self._credentials = open_from_config(
+            resolved, namespace, default_key_provider=default_key_provider
+        )
         # Bridge non-sensitive credential stats into the metric targets (never emits secret values).
         self._credential_metrics = CredentialMetricsBridge(self._credentials)
         logger.info("Credentials vault initialized")

@@ -949,4 +949,133 @@ mod tests {
         let fields = correlation_fields(&env(&[]), "");
         assert!(fields.is_empty(), "no env and empty identity → no correlation noise");
     }
+
+    // ---------- init / reconfigure (the subscriber install + the three sink branches) ----------
+
+    #[test]
+    fn init_installs_subscriber_and_reconfigure_reapplies_level() {
+        // No other unit test installs a global subscriber, so this `init` wins the one-time install
+        // and exercises the `installed` block + RECONFIGURE wiring. The two follow-up `init` calls
+        // can no longer install (global already set) but still execute their sink-branch construction.
+        let dir = test_dir("init");
+
+        // Default sink (no rust_format) + file logging → the `None` branch builds the file appender.
+        let cfg_default = Config::from_value(
+            "com.example.C",
+            "thing-1",
+            serde_json::json!({ "logging": { "level": "DEBUG",
+                "fileLogging": { "enabled": true, "filePath": dir.join("a.log").to_string_lossy() } } }),
+        )
+        .unwrap();
+        init(&cfg_default, None);
+
+        // JSON sink branch (captures correlation fields from the env + identity).
+        init(&cfg_with(serde_json::json!({ "rust_format": "json", "level": "INFO" })), None);
+
+        // Token sink branch + file appender.
+        let cfg_token = Config::from_value(
+            "com.example.C",
+            "thing-1",
+            serde_json::json!({ "logging": { "rust_format": "{level} {message}",
+                "fileLogging": { "enabled": true, "filePath": dir.join("b.log").to_string_lossy() } } }),
+        )
+        .unwrap();
+        init(&cfg_token, None);
+
+        // reconfigure re-applies the level (incl. a per-logger override directive). Safe no-op when
+        // the subscriber was never installed; here it is, so the reload handle swaps the filter.
+        let cfg_reload = cfg_with(serde_json::json!({ "level": "WARN", "loggers": { "ggcommons": "debug" } }));
+        reconfigure(&cfg_reload);
+
+        // The hot-reload listener wrapper drives reconfigure on a config change.
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            assert!(LoggingReconfigurer
+                .on_configuration_change(Arc::new(cfg_reload))
+                .await);
+        });
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn level_filter_applies_root_and_per_logger_directives() {
+        let cfg = cfg_with(serde_json::json!({
+            "level": "warn",
+            "loggers": { "ggcommons::messaging": "debug", "rumqttc": "error" }
+        }));
+        // Rendering the filter is enough to prove the directives parse; the EnvFilter Display lists
+        // them. (A malformed per-logger entry would fall back to the bare root level.)
+        let rendered = level_filter(&cfg).to_string();
+        assert!(rendered.contains("ggcommons::messaging=debug"), "got {rendered}");
+        assert!(rendered.contains("rumqttc=error"), "got {rendered}");
+    }
+
+    // ---------- the token + json layers (driven via a thread-local subscriber) ----------
+
+    #[test]
+    fn token_layer_renders_event_to_stdout_and_file() {
+        let dir = test_dir("tokenlayer");
+        let base = dir.join("t.log");
+        let mw = RotatingFileMakeWriter(Arc::new(Mutex::new(
+            RotatingFileWriter::open(base.clone(), 0, 1).unwrap(),
+        )));
+        let layer = TokenLayer {
+            template: "{level}|{target}|{message}".to_string(),
+            file: Some(mw),
+        };
+        let subscriber = tracing_subscriber::registry()
+            .with(EnvFilter::new("trace"))
+            .with(layer);
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::info!("hello token");
+        });
+        // The rendered line must have reached the rotating file via the MakeWriter + locked writer.
+        let contents = read(&base);
+        assert!(contents.contains("INFO|"), "level token rendered, got {contents:?}");
+        assert!(contents.contains("|hello token"), "message token rendered, got {contents:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn json_layer_emits_every_scalar_field_type_without_dropping_events() {
+        // Drives JsonLayer::on_event and every JsonVisitor branch (str/bool/i64/u64/f64/error/debug).
+        let layer = JsonLayer {
+            correlation: vec![("thing", "t1".to_string())],
+        };
+        let subscriber = tracing_subscriber::registry()
+            .with(EnvFilter::new("trace"))
+            .with(layer);
+        let io_err = std::io::Error::other("boom");
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::info!(
+                s = "str",
+                b = true,
+                i = -3_i64,
+                u = 7_u64,
+                f = 1.5_f64,
+                err = &io_err as &dyn std::error::Error,
+                "json line"
+            );
+        });
+        // No panic + the layer accepted the event for every field type (the JSON shape itself is
+        // asserted by the build_json_line tests above).
+    }
+
+    #[test]
+    fn file_make_writer_returns_none_when_the_file_cannot_be_opened() {
+        // filePath points at an existing *directory*, so opening it as an append file fails — the
+        // builder reports to stderr and yields None (file logging is skipped, never a panic).
+        let dir = test_dir("openfail");
+        let cfg = Config::from_value(
+            "c",
+            "t",
+            serde_json::json!({
+                "logging": { "fileLogging": { "enabled": true, "filePath": dir.to_string_lossy() } }
+            }),
+        )
+        .unwrap();
+        assert!(file_make_writer(&cfg).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

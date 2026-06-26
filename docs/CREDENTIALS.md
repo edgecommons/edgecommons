@@ -196,12 +196,21 @@ is identical across all of them (only the `kek.provider` field differs).
 | **kms** | AWS KMS CMK (KEK never leaves KMS) | `kms:Decrypt` of `wrappedDek` via AWS creds/TES | ❌ (needs cloud at unlock) | cloud-connected; CMK key policy is a real access gate |
 | **greengrass** | KMS through **TES** + device role | `kms:Decrypt` with the device role | ❌ | GG default (zero extra config) — falls back to **file** when cloud is unreachable |
 | **file** | 32 random bytes in a `0600` key file | local AES-Key-Wrap | ✅ | standalone / bare container; offline fallback |
-| **env** | KEK (base64) from an env var | local AES-Key-Wrap | ✅ | dev / k8s secret-as-env |
+| **env** | base64 32-byte KEK from an env var (typically a **mounted k8s Secret**) | local AES-Key-Wrap | ✅ | **Kubernetes** (default) / dev / secret-as-env |
+
+The **`env`** provider (the offline-capable software-KEK) reads a base64-encoded 32-byte KEK from the env
+var named by `keyProvider.envVar` (default `GGCOMMONS_VAULT_KEK`); the value is **trimmed** before decoding,
+so a Secret with a trailing newline works. It is cryptographically identical to `file` given the same raw
+KEK (the on-disk `kek.provider` is just labelled `env`), so an env-wrapped vault and a file-wrapped vault
+are interchangeable. It is the **default vault KeyProvider on `--platform KUBERNETES`** (FR-CRED-6): the KEK
+arrives from a mounted Secret, so the vault unlocks offline (a cold boot during a cloud disconnect works).
 
 **Default selection (confirmed):**
 - `--platform GREENGRASS`: **HSM/TPM if the device exposes one**, else **KMS-via-TES with a `file`
   keyfile fallback** (so a cold boot with no cloud can still unlock).
 - `--platform HOST`: **hsm/tpm if present**, else **file**.
+- `--platform KUBERNETES`: **env** (base64 KEK from a mounted Secret) — offline-capable; the operator
+  manages the Secret (ESO / sealed-secrets / etc.). Precedence: an explicit `keyProvider.type` always wins.
 
 The HSM/TPM provider is treated as a first-class custodian from the start (not a "later"
 add-on): the `KeyProvider` interface and the on-disk envelope are designed so a PKCS#11

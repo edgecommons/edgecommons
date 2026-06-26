@@ -10,6 +10,13 @@ broker Service DNS. `component` is the only schema-required key.
     "port" (.Values.messaging.brokerPort | int)
     "clientId" .Values.messaging.clientId) -}}
 {{- $config := merge (dict "messaging" $messaging) (deepCopy .Values.config) -}}
+{{- if .Values.credentials.enabled -}}
+{{/* Inject a credentials section so the component opens an encrypted vault using the `env` KeyProvider
+     (the KUBERNETES default): keyProvider.type is OMITTED, so the platform profile default (env) applies,
+     sourcing the KEK from the GGCOMMONS_VAULT_KEK env var (the mounted Secret). The vault lives under the
+     writable /tmp emptyDir (the root FS is read-only). */}}
+{{- $config = merge $config (dict "credentials" (dict "vault" (dict "path" .Values.credentials.vaultPath))) -}}
+{{- end -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:

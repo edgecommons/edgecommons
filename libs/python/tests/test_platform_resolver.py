@@ -17,6 +17,7 @@ from ggcommons.platform import (
     ENV_K8S_THING_NAME,
     ENV_THING_NAME,
     K8S_SA_TOKEN_PATH,
+    CREDENTIALS_KEY_PROVIDER_ENV,
     LOGGING_FORMAT_JSON,
     METRIC_TARGET_PROMETHEUS,
     PROFILES,
@@ -24,6 +25,7 @@ from ggcommons.platform import (
     ResolverInputs,
     Transport,
     detect_platform,
+    profile_credentials_key_provider,
     profile_logging_format,
     profile_metric_target,
     resolve_identity,
@@ -363,3 +365,27 @@ def test_profile_metric_target_helper():
     assert profile_metric_target(Platform.GREENGRASS) is None
     # A None platform (caller bypassing the resolver) falls through to the library default (log).
     assert profile_metric_target(None) is None
+
+
+# ---------- Phase 1d: the credentials key-provider profile default (FR-CRED-6 / FR-RT-3) ----------
+
+def test_kubernetes_profile_defaults_credentials_key_provider_to_env():
+    assert (
+        PROFILES[Platform.KUBERNETES].credentials_key_provider
+        == CREDENTIALS_KEY_PROVIDER_ENV
+        == "env"
+    )
+
+
+def test_greengrass_and_host_profiles_keep_library_credentials_default():
+    # None => no platform default => the library `file` key provider is kept (credentials unchanged).
+    assert PROFILES[Platform.GREENGRASS].credentials_key_provider is None
+    assert PROFILES[Platform.HOST].credentials_key_provider is None
+
+
+def test_profile_credentials_key_provider_helper():
+    assert profile_credentials_key_provider(Platform.KUBERNETES) == "env"
+    assert profile_credentials_key_provider(Platform.HOST) is None
+    assert profile_credentials_key_provider(Platform.GREENGRASS) is None
+    # A None platform (caller bypassing the resolver) falls through to the library default (file).
+    assert profile_credentials_key_provider(None) is None

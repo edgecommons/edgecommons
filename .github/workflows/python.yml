@@ -24,4 +24,7 @@ jobs:
           python-version: "3.12"
       - run: pip install -e . && pip install -r requirements-test.txt
       # The default local gate (broker-free); broker-backed tests run in the interop job.
-      - run: python -m pytest -m "not slow and not integration and not aws"
+      # 90% line-coverage gate on the CI-testable surface (omit/exclude list in libs/python/.coveragerc:
+      # GG-IPC, AWS Secrets-Manager sync, shadow/GG config sources, KMS/PKCS#11 providers — validated on
+      # the lab/floci, mirroring how Java JaCoCo / TS vitest scope their gates).
+      - run: python -m pytest -m "not slow and not integration and not aws" --cov=ggcommons --cov-fail-under=90

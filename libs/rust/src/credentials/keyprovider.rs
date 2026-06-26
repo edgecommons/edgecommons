@@ -122,6 +122,76 @@ impl KeyProvider for FileKeyProvider {
     }
 }
 
+/// Default env var holding the base64-encoded 32-byte vault KEK when `keyProvider.envVar` is
+/// absent (FR-CRED-3). Typically projected from a mounted Kubernetes Secret.
+pub const DEFAULT_KEK_ENV_VAR: &str = "GGCOMMONS_VAULT_KEK";
+
+/// KEK sourced from a base64-encoded 32-byte key in an **environment variable** (typically a
+/// mounted Kubernetes Secret) — the offline-capable software-KEK and the default vault custodian on
+/// the KUBERNETES platform (FR-CRED-3 / FR-CRED-6).
+///
+/// Cryptographically **identical** to [`FileKeyProvider`] given the same raw 32-byte KEK: it holds
+/// an inner [`FileKeyProvider`] and delegates the AES-256-GCM DEK wrap/unwrap (same AAD) to it. The
+/// only differences are [`provider_id`](KeyProvider::provider_id) / the written
+/// [`KekInfo::provider`] tag (`"env"`) and where the KEK comes from. Because unwrap is
+/// provider-agnostic, an `env`-wrapped vault unwraps byte-for-byte under a [`FileKeyProvider`] with
+/// the same KEK (and vice versa).
+pub struct EnvKeyProvider {
+    inner: FileKeyProvider,
+}
+
+impl EnvKeyProvider {
+    /// Construct from raw 32-byte key material (shares [`FileKeyProvider`]'s crypto exactly).
+    pub fn from_bytes(kek: [u8; KEY_LEN]) -> Self {
+        Self { inner: FileKeyProvider::from_bytes(kek) }
+    }
+
+    /// Read the base64 KEK from environment variable `env_var`, base64-decode it, and validate it
+    /// is exactly [`KEY_LEN`] (32) bytes.
+    ///
+    /// # Errors
+    /// [`GgError::Credentials`] if the env var is unset/empty, the value is not valid base64, or
+    /// the decoded key is not exactly 32 bytes. Messages never include the key material.
+    pub fn from_env(env_var: &str) -> Result<Self> {
+        let raw = std::env::var(env_var)
+            .map_err(|_| GgError::Credentials(format!("env key provider: env var '{env_var}' is not set")))?;
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return Err(GgError::Credentials(format!("env key provider: env var '{env_var}' is empty")));
+        }
+        let bytes = B64
+            .decode(trimmed)
+            .map_err(|_| GgError::Credentials(format!("env key provider: env var '{env_var}' is not valid base64")))?;
+        let len = bytes.len();
+        let kek: [u8; KEY_LEN] = bytes.as_slice().try_into().map_err(|_| {
+            GgError::Credentials(format!(
+                "env key provider: decoded KEK from '{env_var}' must be {KEY_LEN} bytes, got {len}"
+            ))
+        })?;
+        Ok(Self::from_bytes(kek))
+    }
+}
+
+impl KeyProvider for EnvKeyProvider {
+    fn provider_id(&self) -> &str {
+        "env"
+    }
+
+    fn wrap_dek(&self, vault_id: &str, dek: &[u8; KEY_LEN]) -> Result<KekInfo> {
+        // Delegate to the inner FileKeyProvider — the exact same AES-256-GCM wrap under the same KEK
+        // and AAD — then re-tag the custodian id as `env` (the only difference from `file`).
+        let mut info = self.inner.wrap_dek(vault_id, dek)?;
+        info.provider = "env".to_string();
+        Ok(info)
+    }
+
+    fn unwrap_dek(&self, vault_id: &str, kek: &KekInfo) -> Result<Zeroizing<[u8; KEY_LEN]>> {
+        // Unwrap is provider-agnostic (it does not inspect `provider`), so the inner FileKeyProvider
+        // unwraps an `env`-wrapped DEK byte-for-byte — proving crypto identity with the same KEK.
+        self.inner.unwrap_dek(vault_id, kek)
+    }
+}
+
 #[cfg(feature = "credentials-pkcs11")]
 pub use pkcs11::Pkcs11KeyProvider;
 

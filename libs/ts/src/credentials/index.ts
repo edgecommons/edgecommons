@@ -10,6 +10,7 @@ export { CredentialError } from "./errors";
 export { CredentialService, DefaultCredentialService } from "./service";
 export { AuditEvent, AuditSink, LogAuditSink, logSink } from "./audit";
 export {
+  EnvKeyProvider,
   FileKeyProvider,
   KeyProvider,
   KmsKeyProvider,
