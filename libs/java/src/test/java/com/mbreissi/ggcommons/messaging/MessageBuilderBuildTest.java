@@ -87,4 +87,64 @@ class MessageBuilderBuildTest {
         assertEquals("corr-123", message.getCorrelationId());
         assertNotNull(message.getTags());
     }
+
+    // ----- #13: non-JsonElement payloads serialize via Gson (no ClassCastException at publish) -----
+
+    @Test
+    void mapPayloadSerializesViaToDictWithoutClassCast() {
+        Map<String, Object> payload = new java.util.LinkedHashMap<>();
+        payload.put("from", "java");
+        payload.put("seq", 1);
+
+        Message message = MessageBuilder.create("MapEvt", "1.0")
+                .withPayload(payload)
+                .withConfig(config)
+                .build();
+
+        // Previously threw: LinkedHashMap cannot be cast to JsonElement.
+        JsonObject dict = assertDoesNotThrow(message::toDict);
+        JsonObject body = dict.getAsJsonObject("body");
+        assertEquals("java", body.get("from").getAsString());
+        assertEquals(1, body.get("seq").getAsInt());
+    }
+
+    @Test
+    void jsonStringPayloadSerializesViaToDict() {
+        // build() parses a JSON string into a Map(Object.class); toDict() must still serialize it.
+        Message message = MessageBuilder.create("JsonStr2", "1.0")
+                .withPayload("{\"k\":\"v\",\"n\":7}")
+                .withConfig(config)
+                .build();
+
+        JsonObject body = assertDoesNotThrow(message::toDict).getAsJsonObject("body");
+        assertEquals("v", body.get("k").getAsString());
+        assertEquals(7, body.get("n").getAsInt());
+    }
+
+    @Test
+    void jsonObjectPayloadSerializesViaToDict() {
+        JsonObject payload = new JsonObject();
+        payload.addProperty("data", "value");
+
+        Message message = MessageBuilder.create("JsonObj2", "1.0")
+                .withPayload(payload)
+                .withConfig(config)
+                .build();
+
+        assertEquals("value", message.toDict().getAsJsonObject("body").get("data").getAsString());
+    }
+
+    @Test
+    void pojoPayloadSerializesViaToDict() {
+        record Point(int x, int y) {}
+
+        Message message = MessageBuilder.create("Pojo", "1.0")
+                .withPayload(new Point(3, 4))
+                .withConfig(config)
+                .build();
+
+        JsonObject body = message.toDict().getAsJsonObject("body");
+        assertEquals(3, body.get("x").getAsInt());
+        assertEquals(4, body.get("y").getAsInt());
+    }
 }

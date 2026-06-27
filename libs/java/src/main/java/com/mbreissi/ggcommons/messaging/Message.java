@@ -7,6 +7,7 @@ package com.mbreissi.ggcommons.messaging;
 import com.mbreissi.ggcommons.config.ConfigManager;
 import com.google.gson.Gson;
 import com.google.gson.JsonElement;
+import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonSyntaxException;
 import org.apache.logging.log4j.LogManager;
@@ -55,13 +56,34 @@ public class Message
                 retVal.add("header", header.toDict());
             if (tags != null)
                 retVal.add("tags", new Gson().toJsonTree(tags.toDict()).getAsJsonObject());
-            retVal.add("body", (JsonElement) body);
+            retVal.add("body", toJsonElement(body));
         }
         else
         {
-            retVal.add("raw", (JsonElement) raw);
+            retVal.add("raw", toJsonElement(raw));
         }
         return retVal;
+    }
+
+    /**
+     * Coerces a message body/raw value to a Gson {@link JsonElement} for serialization. A value that
+     * is already a {@link JsonElement} is returned as-is; {@code null} becomes {@link JsonNull}; any
+     * other object (a {@link Map}, POJO, {@code List}, primitive wrapper, etc.) is converted via
+     * Gson's reflective tree adapter. This lets callers pass a plain {@code Map}/POJO to
+     * {@link MessageBuilder#withPayload(Object)} and have it serialize correctly, instead of failing
+     * with a {@code ClassCastException} at publish time — at parity with the Rust/Python/TypeScript
+     * libraries, which accept native maps/objects as payloads.
+     *
+     * @param value the body or raw value (any type, may be {@code null})
+     * @return the value as a {@link JsonElement}
+     */
+    private static JsonElement toJsonElement(Object value)
+    {
+        if (value == null)
+            return JsonNull.INSTANCE;
+        if (value instanceof JsonElement element)
+            return element;
+        return new Gson().toJsonTree(value);
     }
 
     @Override
