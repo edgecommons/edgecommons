@@ -244,6 +244,26 @@ for that, see each library's own <code>README</code> and <code>CLAUDE.md</code>.
 <p>The fastest path to a running component is to scaffold one with the <strong>GGCommons CLI</strong>, which copies a
 language template and substitutes your component name.</p>
 
+<h3>Prerequisites</h3>
+<p>Install the toolchain for the language(s) you'll use, plus the shared tools. The CLI itself is Python.
+A bare Linux host (e.g. Ubuntu) also needs the C/C++ build tools that some libraries' native dependencies
+compile against (Python's <code>awscrt</code>, the TypeScript AWS IoT SDK, the Rust SDK).</p>
+<div class="codeblock"><div class="tabs"><button class="active">Shell</button><div class="spacer"></div></div>
+<div class="pane active"><pre><code class="language-bash"># Shared — git, Python 3.9+ (runs the CLI), a local MQTT broker for HOST runs, and build tools:
+sudo apt-get install -y git python3 python3-pip python3-venv \
+     mosquitto mosquitto-clients build-essential cmake clang pkg-config libssl-dev curl
+
+# Per language — install only what you need:
+#   Java         JDK 25 + Maven                       apt: openjdk-25-jdk maven
+#   Python       Python 3.9+ (3.14 verified)          (above; component deps build awscrt/awsiotsdk)
+#   Rust         rustup toolchain, edition 2024 / MSRV 1.85
+#                                                     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+#   TypeScript   Node 18+ and npm (Node 22 verified)  apt: nodejs npm</code></pre></div></div>
+<p class="muted"><code>ggcommons doctor</code> reports which of these it finds. The Java library targets
+<strong>Java 25</strong> and uses the FFM/Panama binding for streaming — run Java components with
+<code>--enable-native-access=ALL-UNNAMED</code>. Rust needs <strong>rustup</strong> (not the distro
+<code>cargo</code>) for edition 2024 / MSRV 1.85.</p>
+
 <h3>1. Install the CLI and scaffold a component</h3>
 <div class="codeblock"><div class="tabs"><button class="active">Shell</button><div class="spacer"></div></div>
 <div class="pane active"><pre><code class="language-bash">pipx install ./cli                      # or: python -m pip install ./cli
@@ -348,24 +368,63 @@ async function main(): Promise<void> {
 main().catch((err) => { console.error("fatal:", err); process.exit(1); });
 </script>
 
-<h3>3. Run it locally</h3>
-<p>Bring up a local MQTT broker (standing in for Greengrass IPC), then run the component on the <code>HOST</code> platform over MQTT:</p>
-<div class="codeblock"><div class="tabs"><button class="active">Shell</button><div class="spacer"></div></div>
-<div class="pane active"><pre><code class="language-bash"># start the shared broker (EMQX)
-docker compose -f test-infra/compose.yaml up -d
+<h3>3. Build and run it locally (HOST)</h3>
+<p>Build the language artifact, drop two small JSON files next to it, start a local MQTT broker (standing
+in for Greengrass IPC), then run on the <code>HOST</code> platform over MQTT.</p>
 
-# Python
-python3 main.py --platform HOST --transport MQTT standalone-messaging.json -c FILE config.json -t my-thing
-# Java
-java -jar target/&lt;artifact&gt;.jar --platform HOST --transport MQTT ./standalone-messaging.json -c FILE ./config.json -t my-thing
+<p><strong>a. Build the artifact.</strong></p>
+<div class="codeblock"><div class="tabs"><button class="active">Shell</button><div class="spacer"></div></div>
+<div class="pane active"><pre><code class="language-bash"># Java       — shaded, executable jar in target/
+mvn -DskipTests package
+# Python     — install the component's deps (and the ggcommons library) into a venv
+python3 -m venv .venv &amp;&amp; . .venv/bin/activate &amp;&amp; pip install -r requirements.txt
+# Rust       — debug binary in target/debug/
+cargo build
+# TypeScript — compile to dist/
+npm install &amp;&amp; npm run build</code></pre></div></div>
+<p class="muted">From a monorepo checkout (<code>--dep-source local</code>), resolve the library locally first:
+Java <code>mvn -DskipTests install</code> in <code>libs/java</code>; Python <code>pip install ../path/to/libs/python</code>;
+Rust/TS already point at it via the path/<code>file:</code> dependency the wizard wrote (TS: install with
+<code>npm install --install-links</code> so it copies rather than symlinks).</p>
+
+<p><strong>b. Provide a messaging config and a component config.</strong> HOST/MQTT reads the broker from a
+small <code>messaging.json</code>; the component reads its own settings from <code>config.json</code> (the
+<code>FILE</code> source). The <code>local.type</code> field is required, and each process needs a unique
+<code>clientId</code>:</p>
+<div class="codeblock"><div class="tabs"><button class="active">messaging.json</button><div class="spacer"></div></div>
+<div class="pane active"><pre><code class="language-json">{ "messaging": { "local": { "type": "mqtt", "host": "localhost", "port": 1883, "clientId": "my-component-local" } } }</code></pre></div></div>
+<div class="codeblock"><div class="tabs"><button class="active">config.json</button><div class="spacer"></div></div>
+<div class="pane active"><pre><code class="language-json">{ "logging": { "level": "INFO" },
+  "component": { "global": { "publish_interval": 3 }, "instances": [ { "id": "main" } ] } }</code></pre></div></div>
+
+<p><strong>c. Start a local broker</strong> — either the bundled EMQX, or a plain mosquitto:</p>
+<div class="codeblock"><div class="tabs"><button class="active">Shell</button><div class="spacer"></div></div>
+<div class="pane active"><pre><code class="language-bash">docker compose -f test-infra/compose.yaml up -d    # EMQX on 1883 (plaintext) + 8883 (mTLS)
+# ...or a plain local broker:  mosquitto -p 1883</code></pre></div></div>
+
+<p><strong>d. Run.</strong> Each component connects to the broker; point several at the same topic (with
+distinct <code>clientId</code>s) and they cross-subscribe — every component receives its own messages and
+the others'.</p>
+<div class="codeblock"><div class="tabs"><button class="active">Shell</button><div class="spacer"></div></div>
+<div class="pane active"><pre><code class="language-bash"># Python
+python3 main.py        --platform HOST --transport MQTT ./messaging.json -c FILE ./config.json -t my-thing
+# Java   (the shaded jar is executable; --enable-native-access silences the FFM/streaming warning)
+java --enable-native-access=ALL-UNNAMED -jar target/&lt;artifact&gt;.jar \
+                       --platform HOST --transport MQTT ./messaging.json -c FILE ./config.json -t my-thing
 # Rust
-cargo run -- --platform HOST --transport MQTT ./standalone-messaging.json -c FILE ./config.json -t my-thing
+./target/debug/&lt;binary&gt; --platform HOST --transport MQTT ./messaging.json -c FILE ./config.json -t my-thing
 # TypeScript
-node dist/main.js --platform HOST --transport MQTT ./standalone-messaging.json -c FILE ./config.json -t my-thing</code></pre></div></div>
+node dist/main.js      --platform HOST --transport MQTT ./messaging.json -c FILE ./config.json -t my-thing</code></pre></div></div>
 
 <div class="callout tip"><span class="ct">Tip</span>
 <p>Subscribe to <code>heartbeat/+/+</code> with an MQTT client (such as MQTTX) to watch your component's heartbeats
 as soon as it starts. That covers the <strong>HOST</strong> platform; to deploy to the other two, see below.</p></div>
+
+<div class="callout note"><span class="ct">Note</span>
+<p>On HOST the default metric <code>log</code> target writes to <code>/greengrass/v2/logs/</code>. If that
+directory isn't present/writable, point it at a local path with
+<code>metricEmission.targetConfig.logFileName</code> (or create the directory). Java/Rust/TypeScript degrade
+gracefully when it's missing.</p></div>
 
 <h3>4. Deploy to a platform</h3>
 <p>The same component artifact runs on all three platforms — only how it's packaged and launched differs. HOST is
