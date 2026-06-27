@@ -121,6 +121,18 @@ public final class PlatformResolver {
      */
     public static final String CREDENTIALS_KEY_PROVIDER_ENV = "env";
 
+    /**
+     * The default metric {@code log} file path on platforms WITHOUT the Greengrass logs directory
+     * (HOST and KUBERNETES) — the HOST-aware metric-log-path default. Those platforms default
+     * {@code metricEmission.targetConfig.logFileName} to this local, writable path (relative to the
+     * process working directory; the parent is created on demand) instead of the GREENGRASS
+     * {@code /greengrass/v2/logs} default, which does not exist off-device. The effective path follows
+     * the precedence — explicit {@code logFileName} config ▸ this platform-profile default ▸ the
+     * library default — applied by the metric {@code log} target. Kept consistent across languages
+     * (the local {@code ./logs/} directory); the filename suffix matches each library's own default.
+     */
+    public static final String METRIC_LOG_PATH_LOCAL = "./logs/{ComponentFullName}.metric.log";
+
     /** The library-default identity when no thing name is available (matches today's behavior). */
     public static final String DEFAULT_IDENTITY = "NOT_GREENGRASS";
 
@@ -153,10 +165,10 @@ public final class PlatformResolver {
      * current library default until its sub-phase ships.
      */
     public static final Map<Platform, PlatformProfile> PROFILES = Map.of(
-            Platform.GREENGRASS, new PlatformProfile(Transport.IPC, "GG_CONFIG", null, false, null, null),
-            Platform.HOST, new PlatformProfile(Transport.MQTT, "FILE", null, false, null, null),
+            Platform.GREENGRASS, new PlatformProfile(Transport.IPC, "GG_CONFIG", null, false, null, null, null),
+            Platform.HOST, new PlatformProfile(Transport.MQTT, "FILE", null, false, null, null, METRIC_LOG_PATH_LOCAL),
             Platform.KUBERNETES, new PlatformProfile(Transport.MQTT, "CONFIGMAP", LOGGING_FORMAT_JSON,
-                    true, METRIC_TARGET_PROMETHEUS, CREDENTIALS_KEY_PROVIDER_ENV));
+                    true, METRIC_TARGET_PROMETHEUS, CREDENTIALS_KEY_PROVIDER_ENV, METRIC_LOG_PATH_LOCAL));
 
     private PlatformResolver() {
     }
@@ -367,6 +379,29 @@ public final class PlatformResolver {
         }
         PlatformProfile profile = PROFILES.get(platform);
         return profile == null ? null : profile.metricTarget();
+    }
+
+    /**
+     * Returns the platform-profile's default metric {@code log} file path, or {@code null} (the
+     * HOST-aware metric-log-path default). {@link #METRIC_LOG_PATH_LOCAL} (a local, writable path) on
+     * {@link Platform#HOST} / {@link Platform#KUBERNETES} — neither has the GREENGRASS
+     * {@code /greengrass/v2/logs} directory — {@code null} on GREENGRASS and for a {@code null}/unknown
+     * platform (no override; the library default {@code /greengrass/v2/logs} applies). This is the
+     * <em>middle</em> precedence tier consumed by the metric {@code log} target: an explicit
+     * {@code metricEmission.targetConfig.logFileName} wins; otherwise this profile default decides;
+     * else the library default. Mirrors {@link #profileMetricTarget(Platform)} and the Rust
+     * {@code profile(p).metric_log_path} / Python {@code profile_metric_log_path(p)} / TS
+     * {@code profileMetricLogPath(p)}.
+     *
+     * @param platform the resolved platform, or {@code null}
+     * @return the profile's default metric-log path template, or {@code null} when none applies
+     */
+    public static String profileMetricLogPath(Platform platform) {
+        if (platform == null) {
+            return null;
+        }
+        PlatformProfile profile = PROFILES.get(platform);
+        return profile == null ? null : profile.metricLogPath();
     }
 
     /**

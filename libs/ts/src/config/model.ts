@@ -159,6 +159,16 @@ export class MetricConfig {
     return this.targetConfigStr("logFileName") ?? "/greengrass/v2/logs/{ComponentFullName}.metric.log";
   }
 
+  /**
+   * The explicit `targetConfig.logFileName` exactly as configured, or `undefined` when absent. Lets the
+   * metrics service distinguish an explicit path (which must win) from an unset one (which falls through
+   * to the platform-profile default, then the library default) — the HOST-aware metric-log-path
+   * precedence. Mirrors {@link explicitTarget}.
+   */
+  explicitLogFileName(): string | undefined {
+    return this.targetConfigStr("logFileName");
+  }
+
   /** `targetConfig.maxFileSize` (log target); default `10MB`. */
   maxFileSize(): string {
     return this.targetConfigStr("maxFileSize") ?? "10MB";

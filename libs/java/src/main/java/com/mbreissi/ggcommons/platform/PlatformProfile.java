@@ -47,7 +47,15 @@ package com.mbreissi.ggcommons.platform;
  *                      {@code "file"} (GREENGRASS / HOST). It never auto-enables credentials — it only
  *                      changes the default provider type for an already-configured vault. See
  *                      {@link PlatformResolver#CREDENTIALS_KEY_PROVIDER_ENV}.
+ * @param metricLogPath the default metric {@code log} file path applied when the component config omits
+ *                      {@code metricEmission.targetConfig.logFileName} — the middle tier of the
+ *                      log-path precedence. {@link PlatformResolver#METRIC_LOG_PATH_LOCAL} (a local,
+ *                      writable path) on HOST / KUBERNETES — neither has the GREENGRASS
+ *                      {@code /greengrass/v2/logs} directory — {@code null} on GREENGRASS (keep the
+ *                      library default). Applied by the metric {@code log} target; see
+ *                      {@link PlatformResolver#profileMetricLogPath(Platform)}.
  */
 public record PlatformProfile(Transport transport, String configSource, String loggingFormat,
-                              boolean healthEnabled, String metricTarget, String credentialsKeyProvider) {
+                              boolean healthEnabled, String metricTarget, String credentialsKeyProvider,
+                              String metricLogPath) {
 }

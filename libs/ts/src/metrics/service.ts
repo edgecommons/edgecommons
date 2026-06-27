@@ -49,14 +49,19 @@ async function buildTarget(
   config: Config,
   messaging: IMessagingService | undefined,
   targetDefault?: string,
+  logPathDefault?: string,
 ): Promise<MetricTarget> {
   const mc = config.parsed.metricEmission;
   const namespace = mc.namespace();
   const largeFleet = mc.largeFleetWorkaround;
   const targetName = (mc.explicitTarget() ?? targetDefault ?? "log").toLowerCase();
 
-  const logTarget = (): MetricTarget =>
-    new LogTarget(resolve(config, mc.logFileName()), namespace, largeFleet, mc.maxFileSize());
+  const logTarget = (): MetricTarget => {
+    // HOST-aware path precedence: explicit logFileName config ▸ the platform-profile default (a local
+    // path on HOST/KUBERNETES, which lack /greengrass/v2/logs) ▸ the library default.
+    const template = mc.explicitLogFileName() ?? logPathDefault ?? mc.logFileName();
+    return new LogTarget(resolve(config, template), namespace, largeFleet, mc.maxFileSize());
+  };
 
   switch (targetName) {
     case "log":
@@ -130,15 +135,19 @@ export class MetricEmitter implements MetricService, ConfigurationChangeListener
   private readonly messaging?: IMessagingService;
   /** The platform-profile default target (e.g. `prometheus` on KUBERNETES); retained for hot-reload. */
   private readonly targetDefault?: string;
+  /** The platform-profile default metric-log path (local path on HOST/KUBERNETES); retained for hot-reload. */
+  private readonly logPathDefault?: string;
 
   private constructor(
     target: MetricTarget,
     messaging: IMessagingService | undefined,
     targetDefault: string | undefined,
+    logPathDefault: string | undefined,
   ) {
     this.target = target;
     this.messaging = messaging;
     this.targetDefault = targetDefault;
+    this.logPathDefault = logPathDefault;
   }
 
   /**
@@ -152,9 +161,10 @@ export class MetricEmitter implements MetricService, ConfigurationChangeListener
     config: Config,
     messaging?: IMessagingService,
     targetDefault?: string,
+    logPathDefault?: string,
   ): Promise<MetricEmitter> {
-    const target = await buildTarget(config, messaging, targetDefault);
-    return new MetricEmitter(target, messaging, targetDefault);
+    const target = await buildTarget(config, messaging, targetDefault, logPathDefault);
+    return new MetricEmitter(target, messaging, targetDefault, logPathDefault);
   }
 
   defineMetric(metric: Metric): void {
@@ -201,7 +211,7 @@ export class MetricEmitter implements MetricService, ConfigurationChangeListener
    */
   async onConfigurationChange(config: Config): Promise<boolean> {
     try {
-      const target = await buildTarget(config, this.messaging, this.targetDefault);
+      const target = await buildTarget(config, this.messaging, this.targetDefault, this.logPathDefault);
       const previous = this.target;
       this.target = target;
       if (previous !== target) {

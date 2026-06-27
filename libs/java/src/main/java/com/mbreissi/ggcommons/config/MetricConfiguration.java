@@ -36,6 +36,13 @@ public class MetricConfiguration
     private boolean targetExplicitlySet = false;
     private String namespace = DEFAULT_METRIC_NAMESPACE;
     private String logFileNameTemplate = DEFAULT_METRIC_FILE_NAME_TEMPLATE;
+    /**
+     * The raw {@code metricEmission.targetConfig.logFileName} exactly as configured, or {@code null}
+     * when absent. Distinguishing "absent" from an explicit value lets the metric {@code log} target
+     * apply the HOST-aware path precedence (explicit ▸ platform-profile default ▸ library default) —
+     * mirroring {@link #targetExplicitlySet} for the target.
+     */
+    private String explicitLogFileName = null;
     private String topic;
     private int intervalSecs = DEFAULT_INTERVAL_SECS;
     private String destination = DEFAULT_MESSAGING_DESTINATION;
@@ -68,8 +75,10 @@ public class MetricConfiguration
                 if (jsonConfig.has("targetConfig"))
                 {
                     JsonObject targetConfig = jsonConfig.get("targetConfig").getAsJsonObject();
-                    if (targetConfig.has("logFileName"))
-                        logFileNameTemplate = targetConfig.get("logFileName").getAsString();
+                    if (targetConfig.has("logFileName")) {
+                        explicitLogFileName = targetConfig.get("logFileName").getAsString();
+                        logFileNameTemplate = explicitLogFileName;
+                    }
                     if (targetConfig.has("maxFileSize"))
                         maxFileSize = targetConfig.get("maxFileSize").getAsString();
                 }
@@ -198,6 +207,18 @@ public class MetricConfiguration
 
     public String getLogFileNameTemplate() {
         return logFileNameTemplate;
+    }
+
+    /**
+     * The raw {@code metricEmission.targetConfig.logFileName} exactly as configured, or {@code null}
+     * when absent. Lets the metric {@code log} target distinguish an explicit path (which must win)
+     * from an unset one (which falls through to the platform-profile default, then the library
+     * default) — mirroring {@link #isTargetExplicitlySet()} for the target.
+     *
+     * @return the explicit log-file template, or {@code null} if not configured
+     */
+    public String getExplicitLogFileName() {
+        return explicitLogFileName;
     }
 
     public String getTopic() {

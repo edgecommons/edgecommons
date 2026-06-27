@@ -32,6 +32,10 @@ class MetricConfiguration:
         self._explicit_target = None
         self._namespace = self.DEFAULT_METRIC_NAMESPACE
         self._log_file_name_template = self.DEFAULT_METRIC_FILE_NAME_TEMPLATE
+        # The raw `logFileName` exactly as it appeared in config, or None when absent. Distinguishing
+        # "absent" from an explicit value lets the `log` target apply the HOST-aware path precedence
+        # (explicit config ▸ platform-profile default ▸ library default) — mirroring _explicit_target.
+        self._explicit_log_file_name = None
         self._topic = self.DEFAULT_MESSAGING_TOPIC
         self._interval_secs = self.DEFAULT_INTERVAL_SECS
         self._destination = self.DEFAULT_MESSAGING_DESTINATION
@@ -68,6 +72,7 @@ class MetricConfiguration:
             )
 
             if target == "log":
+                self._explicit_log_file_name = target_config.get("logFileName")
                 self._log_file_name_template = target_config.get(
                     "logFileName", self.DEFAULT_METRIC_FILE_NAME_TEMPLATE
                 )
@@ -154,6 +159,13 @@ class MetricConfiguration:
 
     def get_log_file_name_template(self) -> str:
         return self._log_file_name_template
+
+    def get_explicit_log_file_name(self):
+        """The raw ``metricEmission.targetConfig.logFileName`` exactly as configured, or ``None`` when
+        absent. Lets the metric ``log`` target distinguish an explicit path (which must win) from an
+        unset one (which falls through to the platform-profile default, then the library default) —
+        mirroring :meth:`get_explicit_target` for the target."""
+        return self._explicit_log_file_name
 
     def get_topic(self) -> str:
         return self._topic

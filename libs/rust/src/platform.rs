@@ -150,6 +150,13 @@ pub struct PlatformProfile {
     /// This is pure profile *data*; the field is present unconditionally even though the
     /// credentials subsystem is feature-gated (it is just a string token).
     pub credentials_key_provider: Option<&'static str>,
+    /// The default metric `log` file path for this platform (the HOST-aware metric-log-path default),
+    /// applied when the component config omits `metricEmission.targetConfig.logFileName`.
+    /// `Some(`[`METRIC_LOG_PATH_LOCAL`]`)` on HOST/KUBERNETES — neither has the GREENGRASS
+    /// `/greengrass/v2/logs` directory, so a local, writable path is used instead — `None` on
+    /// GREENGRASS so the library default (`/greengrass/v2/logs`) is unchanged. Precedence is enforced
+    /// by the metric `log` target (explicit config ▸ this profile default ▸ library default).
+    pub metric_log_path: Option<&'static str>,
 }
 
 /// The output of [`resolve_profile`]: the fully resolved runtime settings that every
@@ -209,6 +216,14 @@ pub const K8S_SA_TOKEN_PATH: &str = "/var/run/secrets/kubernetes.io/serviceaccou
 /// The library-default identity when no thing name is available (matches today's behavior).
 pub const DEFAULT_IDENTITY: &str = "NOT_GREENGRASS";
 
+/// The default metric `log` file path on platforms WITHOUT the Greengrass logs directory (HOST and
+/// KUBERNETES) — the HOST-aware metric-log-path default. Those platforms default
+/// `metricEmission.targetConfig.logFileName` to this local, writable path (relative to the process
+/// working directory; the parent is created on demand) instead of the GREENGRASS
+/// `/greengrass/v2/logs` default, which does not exist off-device. Kept consistent across languages
+/// (the local `./logs/` directory); the filename suffix matches the library's own default.
+pub const METRIC_LOG_PATH_LOCAL: &str = "./logs/{ComponentFullName}.metric.log";
+
 /// The platform-profile for a platform (DESIGN-core §3). GREENGRASS defaults the config source to
 /// `GG_CONFIG` (the Nucleus-managed deployment config); HOST defaults to `FILE` (Phase 1, §12 #1 —
 /// `GG_CONFIG` needs the Nucleus IPC that HOST lacks, so it was a latent footgun); KUBERNETES
@@ -223,6 +238,7 @@ pub fn profile(platform: Platform) -> Option<PlatformProfile> {
             health_enabled: false,
             metric_target: None,
             credentials_key_provider: None,
+            metric_log_path: None,
         }),
         Platform::Host => Some(PlatformProfile {
             transport: Transport::Mqtt,
@@ -231,6 +247,7 @@ pub fn profile(platform: Platform) -> Option<PlatformProfile> {
             health_enabled: false,
             metric_target: None,
             credentials_key_provider: None,
+            metric_log_path: Some(METRIC_LOG_PATH_LOCAL),
         }),
         // Phase 1a: KUBERNETES is wired — MQTT transport (no Nucleus IPC) and the k8s-native
         // CONFIGMAP source (a mounted ConfigMap directory) as its default config source.
@@ -247,6 +264,7 @@ pub fn profile(platform: Platform) -> Option<PlatformProfile> {
             health_enabled: true,
             metric_target: Some("prometheus"),
             credentials_key_provider: Some("env"),
+            metric_log_path: Some(METRIC_LOG_PATH_LOCAL),
         }),
     }
 }
@@ -268,6 +286,16 @@ pub fn profile_health_enabled(platform: Platform) -> bool {
 /// [`crate::metrics::resolve_effective_target`].
 pub fn profile_metric_target(platform: Platform) -> Option<&'static str> {
     profile(platform).and_then(|p| p.metric_target)
+}
+
+/// The platform-profile default metric `log` file path for `platform` — consulted when the component
+/// config omits `metricEmission.targetConfig.logFileName` (the HOST-aware metric-log-path default,
+/// precedence FR-RT-3). `Some(`[`METRIC_LOG_PATH_LOCAL`]`)` on HOST/KUBERNETES (neither has the
+/// GREENGRASS `/greengrass/v2/logs` directory), `None` on GREENGRASS (and for any platform without a
+/// profile). Mirrors the threading of [`profile_metric_target`]; the final decision (explicit config
+/// ▸ this default ▸ the library default) is made by the metric `log` target.
+pub fn profile_metric_log_path(platform: Platform) -> Option<&'static str> {
+    profile(platform).and_then(|p| p.metric_log_path)
 }
 
 /// The platform-profile default credentials-vault KEK custodian (`keyProvider.type`) for
@@ -834,6 +862,23 @@ mod tests {
         assert_eq!(Some("prometheus"), profile_metric_target(Platform::Kubernetes));
         assert_eq!(None, profile_metric_target(Platform::Greengrass));
         assert_eq!(None, profile_metric_target(Platform::Host));
+    }
+
+    #[test]
+    fn host_and_kubernetes_profiles_default_metric_log_to_local_path() {
+        // The HOST-aware metric-log-path default: HOST/KUBERNETES default to a local path (neither
+        // has /greengrass/v2/logs); GREENGRASS carries no profile default (None) so the library
+        // default (/greengrass/v2/logs) is unchanged.
+        assert_eq!(Some(METRIC_LOG_PATH_LOCAL), profile(Platform::Host).unwrap().metric_log_path);
+        assert_eq!(Some(METRIC_LOG_PATH_LOCAL), profile(Platform::Kubernetes).unwrap().metric_log_path);
+        assert_eq!(None, profile(Platform::Greengrass).unwrap().metric_log_path);
+    }
+
+    #[test]
+    fn profile_metric_log_path_helper_matches_profiles() {
+        assert_eq!(Some(METRIC_LOG_PATH_LOCAL), profile_metric_log_path(Platform::Host));
+        assert_eq!(Some(METRIC_LOG_PATH_LOCAL), profile_metric_log_path(Platform::Kubernetes));
+        assert_eq!(None, profile_metric_log_path(Platform::Greengrass));
     }
 
     #[test]

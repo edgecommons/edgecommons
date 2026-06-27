@@ -243,6 +243,19 @@ public class ConfigManager
     }
 
     /**
+     * Returns the resolved deployment {@link Platform}, or {@code null} when unknown (e.g. test /
+     * subclass bring-up). Lets subsystem targets apply platform-profile defaults — e.g. the metric
+     * {@code log} target's HOST-aware log-file path (a local path off-device rather than the
+     * GREENGRASS {@code /greengrass/v2/logs} default); see
+     * {@link com.mbreissi.ggcommons.platform.PlatformResolver#profileMetricLogPath(Platform)}.
+     *
+     * @return the resolved platform, or {@code null} if not threaded in
+     */
+    public Platform getPlatform() {
+        return platform;
+    }
+
+    /**
      * Returns the HTTP health-endpoint configuration (the {@code health} config section, or defaults
      * when absent). Drives the Kubernetes liveness/readiness/startup probe server (FR-HB-1). Whether
      * the server actually starts is decided by {@link com.mbreissi.ggcommons.GGCommons} from the

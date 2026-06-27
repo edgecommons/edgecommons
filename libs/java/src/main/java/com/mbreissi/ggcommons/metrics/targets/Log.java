@@ -68,7 +68,16 @@ public final class Log extends MetricTarget
     private Logger configureMetricLogger()
     {
         MetricConfiguration metricConfig = configManager.getMetricConfig();
-        String metricFile = configManager.resolveTemplate(metricConfig.getLogFileNameTemplate());
+        // Resolve the log-file path with the HOST-aware precedence: explicit
+        // metricEmission.targetConfig.logFileName ▸ the platform-profile default (a local path on
+        // HOST/KUBERNETES, which lack /greengrass/v2/logs) ▸ the library default.
+        String template = metricConfig.getExplicitLogFileName();
+        if (template == null) {
+            String profileDefault =
+                com.mbreissi.ggcommons.platform.PlatformResolver.profileMetricLogPath(configManager.getPlatform());
+            template = (profileDefault != null) ? profileDefault : metricConfig.getLogFileNameTemplate();
+        }
+        String metricFile = configManager.resolveTemplate(template);
         String uniqueAppenderName = "MetricFileAppender_" + System.currentTimeMillis();
         String uniqueLoggerName = "metric_" + System.currentTimeMillis();
 

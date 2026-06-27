@@ -15,6 +15,7 @@ import {
   profileLoggingFormat,
   profileHealthEnabled,
   profileMetricTarget,
+  profileMetricLogPath,
   profileCredentialsKeyProvider,
 } from "./platform";
 import { Config } from "./config/model";
@@ -302,7 +303,12 @@ export class GGCommonsBuilder {
     // FR-MET-4): a KUBERNETES pod with no `metricEmission.target` selects the pull-based prometheus
     // target, while explicit config still wins and HOST/GREENGRASS keep the library default (`log`).
     // Same threading as the logging-format/health defaults — no resolver→ConfigManager dependency.
-    const emitter = await MetricEmitter.create(current, messaging, profileMetricTarget(parsed.platform));
+    const emitter = await MetricEmitter.create(
+      current,
+      messaging,
+      profileMetricTarget(parsed.platform),
+      profileMetricLogPath(parsed.platform),
+    );
     const metrics: MetricService = emitter;
 
     const listeners: ConfigurationChangeListener[] = [emitter, new LoggingReconfigurer()];

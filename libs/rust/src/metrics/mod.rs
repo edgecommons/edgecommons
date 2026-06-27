@@ -197,6 +197,18 @@ pub fn resolve_effective_target(metric_config: &MetricConfig, platform: Platform
     }
 }
 
+/// The metric `log` file-path template, resolved with the HOST-aware precedence: explicit
+/// `metricEmission.targetConfig.logFileName` config ▸ the platform-profile default (a local path on
+/// HOST/KUBERNETES, which lack `/greengrass/v2/logs`) ▸ the library default. The returned template is
+/// still run through [`resolve`] for `{ComponentFullName}` etc. by the caller.
+fn log_path_template(metric_config: &MetricConfig, platform: Platform) -> String {
+    metric_config.explicit_log_file_name().unwrap_or_else(|| {
+        crate::platform::profile_metric_log_path(platform)
+            .map(str::to_string)
+            .unwrap_or_else(|| metric_config.log_file_name())
+    })
+}
+
 /// Build the configured metric target for the resolved `platform`.
 async fn build_target(
     config: &Config,
@@ -209,7 +221,7 @@ async fn build_target(
     let target_name = resolve_effective_target(metric_config, platform);
 
     let log_target = || -> Result<Arc<dyn MetricTarget>> {
-        let path = resolve(config, &metric_config.log_file_name());
+        let path = resolve(config, &log_path_template(metric_config, platform));
         Ok(Arc::new(target::log::LogTarget::new(
             path,
             namespace.clone(),
@@ -604,6 +616,36 @@ mod tests {
         assert_eq!(resolve_effective_target(&mc, Platform::Kubernetes), "messaging");
         let mc_log = metric_config(json!({ "metricEmission": { "target": "log" } }));
         assert_eq!(resolve_effective_target(&mc_log, Platform::Kubernetes), "log");
+    }
+
+    // ---------- HOST-aware metric-log path precedence ----------
+
+    #[test]
+    fn log_path_template_host_uses_local_default() {
+        // No explicit logFileName + HOST/KUBERNETES → the local platform default (not /greengrass).
+        let mc = metric_config(json!({ "metricEmission": { "target": "log" } }));
+        assert_eq!(log_path_template(&mc, Platform::Host), crate::platform::METRIC_LOG_PATH_LOCAL);
+        assert_eq!(log_path_template(&mc, Platform::Kubernetes), crate::platform::METRIC_LOG_PATH_LOCAL);
+    }
+
+    #[test]
+    fn log_path_template_greengrass_uses_library_default() {
+        // No explicit logFileName + GREENGRASS → the library default (the on-device Greengrass path).
+        let mc = metric_config(json!({ "metricEmission": { "target": "log" } }));
+        assert_eq!(
+            log_path_template(&mc, Platform::Greengrass),
+            "/greengrass/v2/logs/{ComponentFullName}.metric.log"
+        );
+    }
+
+    #[test]
+    fn log_path_template_explicit_wins_over_platform_default() {
+        // An explicit logFileName wins on every platform, including HOST.
+        let mc = metric_config(
+            json!({ "metricEmission": { "target": "log", "targetConfig": { "logFileName": "/custom/x.log" } } }),
+        );
+        assert_eq!(log_path_template(&mc, Platform::Host), "/custom/x.log");
+        assert_eq!(log_path_template(&mc, Platform::Greengrass), "/custom/x.log");
     }
 
     #[test]

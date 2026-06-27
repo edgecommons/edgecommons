@@ -98,6 +98,15 @@ LOGGING_FORMAT_JSON = "json"
 #: across all four languages.
 METRIC_TARGET_PROMETHEUS = "prometheus"
 
+#: The default metric ``log`` file path on platforms WITHOUT the Greengrass logs directory (HOST and
+#: KUBERNETES). Those platforms default ``metricEmission.targetConfig.logFileName`` to this local,
+#: writable path (relative to the process working directory; the parent is created on demand) instead
+#: of the GREENGRASS ``/greengrass/v2/logs`` default, which does not exist off-device. The effective
+#: path follows the precedence — explicit ``logFileName`` config ▸ this platform-profile default ▸ the
+#: library default ``/greengrass/v2/logs`` — applied by the metric ``log`` target. Consistent across
+#: all four languages.
+METRIC_LOG_PATH_LOCAL = "./logs/{ComponentFullName}_metric.log"
+
 #: The offline software-KEK vault key provider (FR-CRED-3): the KEK is a base64-encoded 32-byte raw
 #: key read from an env var (typically a mounted Kubernetes Secret). The KUBERNETES profile defaults
 #: the credentials vault ``keyProvider.type`` to this value (FR-CRED-6). Consistent across all four
@@ -142,6 +151,13 @@ class PlatformProfile:
             ``file`` — applied at the credentials init site (it does NOT enable credentials, only
             changes the default provider type when a ``credentials`` section is present); see
             :func:`profile_credentials_key_provider`.
+        metric_log_path: the platform's default metric ``log`` file path (HOST-aware default slice).
+            :data:`METRIC_LOG_PATH_LOCAL` (a local, writable path) on HOST and KUBERNETES — neither
+            has the GREENGRASS ``/greengrass/v2/logs`` directory — ``None`` on GREENGRASS (fall
+            through to the library default ``/greengrass/v2/logs``). The middle tier of the
+            precedence — explicit ``metricEmission.targetConfig.logFileName`` config ▸ this default ▸
+            the library default — applied by the metric ``log`` target; see
+            :func:`profile_metric_log_path`.
     """
 
     transport: Transport
@@ -150,6 +166,7 @@ class PlatformProfile:
     health_enabled: bool = False
     metric_target: Optional[str] = None
     credentials_key_provider: Optional[str] = None
+    metric_log_path: Optional[str] = None
 
 
 #: The platform-profile table (DESIGN-core sec 3). GREENGRASS defaults the config source to
@@ -166,7 +183,9 @@ class PlatformProfile:
 #: not yet modeled here.
 PROFILES: Mapping[Platform, PlatformProfile] = {
     Platform.GREENGRASS: PlatformProfile(Transport.IPC, "GG_CONFIG"),
-    Platform.HOST: PlatformProfile(Transport.MQTT, "FILE"),
+    Platform.HOST: PlatformProfile(
+        Transport.MQTT, "FILE", metric_log_path=METRIC_LOG_PATH_LOCAL
+    ),
     Platform.KUBERNETES: PlatformProfile(
         Transport.MQTT,
         "CONFIGMAP",
@@ -174,6 +193,7 @@ PROFILES: Mapping[Platform, PlatformProfile] = {
         health_enabled=True,
         metric_target=METRIC_TARGET_PROMETHEUS,
         credentials_key_provider=CREDENTIALS_KEY_PROVIDER_ENV,
+        metric_log_path=METRIC_LOG_PATH_LOCAL,
     ),
 }
 
@@ -240,6 +260,29 @@ def profile_metric_target(platform: Optional[Platform]) -> Optional[str]:
         return None
     profile = PROFILES.get(platform)
     return None if profile is None else profile.metric_target
+
+
+def profile_metric_log_path(platform: Optional[Platform]) -> Optional[str]:
+    """Return the platform-profile default metric ``log`` file path, or ``None`` (FR-MET / FR-RT-3).
+
+    This is the **middle** tier of the metric-log path precedence — explicit
+    ``metricEmission.targetConfig.logFileName`` config ▸ this platform-profile default ▸ the library
+    default ``/greengrass/v2/logs`` — consulted by the metric ``log`` target when it resolves its
+    file path. It is a pure lookup (no I/O, no ``ConfigManager`` dependency), so the resolved platform
+    alone selects the default: HOST and KUBERNETES yield :data:`METRIC_LOG_PATH_LOCAL` (a local,
+    writable path — neither has the GREENGRASS logs directory), every other platform yields ``None``
+    (the caller falls through to the library default).
+
+    Args:
+        platform: the resolved platform, or ``None`` (e.g. a caller that bypassed the resolver).
+
+    Returns:
+        The profile's default metric-log path template, or ``None`` to keep the library default.
+    """
+    if platform is None:
+        return None
+    profile = PROFILES.get(platform)
+    return None if profile is None else profile.metric_log_path
 
 
 def profile_credentials_key_provider(platform: Optional[Platform]) -> Optional[str]:

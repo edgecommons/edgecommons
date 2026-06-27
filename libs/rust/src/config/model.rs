@@ -220,6 +220,14 @@ impl MetricConfig {
             .unwrap_or_else(|| "/greengrass/v2/logs/{ComponentFullName}.metric.log".to_string())
     }
 
+    /// The explicit `targetConfig.logFileName` exactly as configured, or `None` when absent. Lets the
+    /// metric `log` target distinguish an explicit path (which must win) from an unset one (which
+    /// falls through to the platform-profile default, then the library default) — the HOST-aware
+    /// metric-log-path precedence.
+    pub fn explicit_log_file_name(&self) -> Option<String> {
+        self.target_config_str("logFileName")
+    }
+
     /// `targetConfig.maxFileSize` (log target); default `10MB`.
     pub fn max_file_size(&self) -> String {
         self.target_config_str("maxFileSize").unwrap_or_else(|| "10MB".to_string())
@@ -441,6 +449,23 @@ mod tests {
         assert_eq!(m.destination(), "ipc");
         assert_eq!(m.interval_secs(), 5);
         assert!(!m.large_fleet_workaround);
+    }
+
+    #[test]
+    fn explicit_log_file_name_absent_and_present() {
+        let none = Config::from_value("c", "t", json!({})).unwrap();
+        assert_eq!(none.parsed.metric_emission.explicit_log_file_name(), None);
+
+        let set = Config::from_value(
+            "c",
+            "t",
+            json!({ "metricEmission": { "target": "log", "targetConfig": { "logFileName": "/x.log" } } }),
+        )
+        .unwrap();
+        assert_eq!(
+            set.parsed.metric_emission.explicit_log_file_name(),
+            Some("/x.log".to_string())
+        );
     }
 
     #[test]

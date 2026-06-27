@@ -37,10 +37,19 @@ describe("Config.fromValue", () => {
       expect(mc.destination()).toBe("ipc");
       expect(mc.intervalSecs()).toBe(5);
       expect(mc.logFileName()).toContain("{ComponentFullName}");
+      expect(mc.explicitLogFileName()).toBeUndefined();
       expect(mc.topic()).toBe("{ThingName}/{ComponentName}/metric");
       // prometheus target accessors (FR-MET-1): schema defaults port 9090, path /metrics.
       expect(mc.prometheusPort()).toBe(9090);
       expect(mc.prometheusPath()).toBe("/metrics");
+    });
+
+    it("explicitLogFileName reflects the configured value (HOST-aware path precedence)", () => {
+      const mc = Config.fromValue("c", "t", {
+        metricEmission: { target: "log", targetConfig: { logFileName: "/custom/x.log" } },
+      }).parsed.metricEmission;
+      expect(mc.explicitLogFileName()).toBe("/custom/x.log");
+      expect(mc.logFileName()).toBe("/custom/x.log");
     });
 
     it("prometheus target port/path overrides + invalid-port fallback", () => {
