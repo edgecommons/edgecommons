@@ -69,8 +69,18 @@ async fn main() {
             let topic = args[2].clone();
             let token = args[3].clone();
             let svc = provider("req").await;
+            // Canonical cross-language payload permutations (echoed back by the responder;
+            // test_interop asserts a deep round-trip). null is tested inside an array.
+            let types = json!({
+                "b": true, "bf": false,
+                "i": 42, "ni": -7, "fl": 3.5,
+                "slash": "a/b", "quote": "x\"y",
+                "arr": [1, "two", false, null],
+                "nested": { "k": [1, { "d": 2 }] },
+                "ea": [], "eo": {}
+            });
             let req = MessageBuilder::new("InteropRequest", "1.0")
-                .payload(json!({ "token": token, "from": LANG }))
+                .payload(json!({ "token": token, "from": LANG, "types": types }))
                 .thing_name("interop-rust")
                 .build();
             let corr = req.header.correlation_id.clone();

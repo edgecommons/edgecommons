@@ -16,6 +16,22 @@ const LANG = "ts";
 const HOST = process.env.GGCOMMONS_IT_MQTT_HOST ?? "localhost";
 const PORT = Number(process.env.GGCOMMONS_IT_MQTT_PORT ?? "1883");
 
+// Canonical cross-language payload permutations (echoed by the responder; test_interop asserts a
+// deep round-trip both ways). null is tested inside an array.
+const TYPES = {
+  b: true,
+  bf: false,
+  i: 42,
+  ni: -7,
+  fl: 3.5,
+  slash: "a/b",
+  quote: 'x"y',
+  arr: [1, "two", false, null],
+  nested: { k: [1, { d: 2 }] },
+  ea: [],
+  eo: {},
+};
+
 async function service(suffix: string): Promise<DefaultMessagingService> {
   const mc: MessagingConfig = {
     local: { host: HOST, port: PORT, clientId: `interop-${LANG}-${suffix}-${process.pid}` },
@@ -45,7 +61,7 @@ async function runRequest(topic: string, token: string): Promise<number> {
   const svc = await service("req");
   try {
     const req = MessageBuilder.create("InteropRequest", "1.0")
-      .withPayload({ token, from: LANG })
+      .withPayload({ token, from: LANG, types: TYPES })
       .withTags({})
       .build();
     const corr = req.getCorrelationId();

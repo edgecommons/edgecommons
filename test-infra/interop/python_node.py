@@ -27,6 +27,19 @@ LANG = "python"
 HOST = os.environ.get("GGCOMMONS_IT_MQTT_HOST", "localhost")
 PORT = int(os.environ.get("GGCOMMONS_IT_MQTT_PORT", "1883"))
 
+# Canonical cross-language payload permutations: every language sends this as its request body's
+# `types` field; the responder echoes it; test_interop asserts a deep, number-lenient round-trip in
+# both directions. null is tested inside an array (Java/Gson drops null-valued MAP entries — a
+# documented divergence, so no top-level null key here).
+TYPES = {
+    "b": True, "bf": False,
+    "i": 42, "ni": -7, "fl": 3.5,
+    "slash": "a/b", "quote": "x\"y",
+    "arr": [1, "two", False, None],
+    "nested": {"k": [1, {"d": 2}]},
+    "ea": [], "eo": {},
+}
+
 
 def _provider(suffix):
     cfg = {
@@ -75,7 +88,7 @@ def run_request(topic, token):
     try:
         req = (
             MessageBuilder.create("InteropRequest", "1.0")
-            .with_payload({"token": token, "from": LANG})
+            .with_payload({"token": token, "from": LANG, "types": TYPES})
             .with_tags({})
             .build()
         )
