@@ -1,0 +1,468 @@
+---
+title: Quickstart
+description: Scaffold, build, and run your first GGCommons Greengrass v2 component on the HOST platform against a local MQTT broker, in any of the four languages.
+sidebar:
+  order: 2
+---
+
+import { Tabs, TabItem, Aside, LinkCard } from "@astrojs/starlight/components";
+
+This guide takes you from an empty directory to a running Greengrass v2 component talking to a
+local MQTT broker. You will scaffold a component with the `ggcommons` CLI, look at what it
+generated, wire up the bootstrap code, build it, and run it on the **HOST** platform.
+
+Pick your language with the tabs in each code block — the tabs stay in sync across the page.
+
+
+1. ### Install the prerequisites
+
+   The scaffolding CLI is a Python tool, and each language has its own toolchain. At a minimum you
+   need **git**, **Python 3.9+** (to run the CLI), **Docker** (for the local MQTT broker), and the
+   toolchain for the language you are targeting:
+
+   - **Java** — JDK 25 and Maven. (The library targets Java 25, so the JDK must be 25 even though
+     the generated component compiles to an older bytecode level.)
+   - **Python** — Python 3.9+.
+   - **Rust** — a `rustup` toolchain. The generated component crate is edition 2021 / MSRV 1.75.
+   - **TypeScript** — Node 18+ and npm.
+
+   See the [Installation guide](/start/installation/) for full setup, including how to make the
+   `ggcommons` library resolvable for each language. Once the toolchain is in place, install the CLI
+   and confirm your environment:
+
+<Tabs syncKey="os">
+<TabItem label="Linux">
+
+     ```bash
+     # From the monorepo root — installs the `ggcommons` / `ggcommons-cli` commands.
+     pipx install ./cli        # or: python -m pip install ./cli
+     ggcommons doctor          # reports git, gdk, cargo, mvn, python3, node, npm, aws
+     ```
+
+</TabItem>
+<TabItem label="Windows">
+
+     ```powershell
+     # From the monorepo root — installs the `ggcommons` / `ggcommons-cli` commands.
+     pipx install ./cli        # or: python -m pip install ./cli
+     ggcommons doctor          # reports git, gdk, cargo, mvn, python3, node, npm, aws
+     ```
+
+</TabItem>
+</Tabs>
+
+   `ggcommons doctor` checks eight tools and prints `[ok] <name> -> <path>` or
+   `[missing] <name>` for each. It only reports status — a missing tool you do not need for your
+   language will not stop you.
+
+2. ### Scaffold a component
+
+   `ggcommons create-component` generates a component from a bundled template. Templates ship inside
+   the CLI, so scaffolding works offline. The output directory is `<path>/<ComponentName>`, where
+   `ComponentName` is the last dot-segment of the name you pass (`com.example.MyComponent`
+   produces a `MyComponent/` directory).
+
+   The interactive wizard prompts for everything (and starts automatically if you omit `-n` on a
+   terminal):
+
+<Tabs syncKey="os">
+<TabItem label="Linux">
+
+     ```bash
+     ggcommons create-component -i
+     ```
+
+</TabItem>
+<TabItem label="Windows">
+
+     ```powershell
+     ggcommons create-component -i
+     ```
+
+</TabItem>
+</Tabs>
+
+   Or pass the flags directly. Use `-l` to choose the language (`JAVA`, `PYTHON`, `RUST`, or
+   `TYPESCRIPT`):
+
+<Tabs syncKey="os">
+<TabItem label="Linux">
+
+     ```bash
+     # Choose -l to match the language tab you are following.
+     ggcommons create-component -n com.example.MyComponent -l JAVA
+     # -l PYTHON  |  -l RUST  |  -l TYPESCRIPT
+     ```
+
+</TabItem>
+<TabItem label="Windows">
+
+     ```powershell
+     ggcommons create-component -n com.example.MyComponent -l JAVA
+     # -l PYTHON  |  -l RUST  |  -l TYPESCRIPT
+     ```
+
+</TabItem>
+</Tabs>
+
+   On success the CLI prints `Done. Component generated at: <dir>`. By default the component targets
+   all platforms (`--platforms GREENGRASS,HOST,KUBERNETES`) and uses a local library dependency
+   (`--dep-source local`). The Kubernetes artifacts (`Dockerfile`, `k8s/`) are only emitted when
+   `KUBERNETES` is among the selected platforms.
+
+   <Aside type="note" title="Where the library comes from">
+   `--dep-source` and `--ggcommons-path` only affect **Rust** and **TypeScript**, whose default
+   `local` dependency points at the in-repo `libs/rust` / `libs/ts` so they build offline inside the
+   monorepo. **Java** always depends on `com.mbreissi:ggcommons` and **Python** on
+   `greengrass-commons`, so those two must be able to resolve the library — either from a registry
+   or from a local install. See the [Installation guide](/start/installation/).
+   </Aside>
+
+3. ### Tour the generated project
+
+   The layout differs slightly per language, but every component carries your business-logic file,
+   a build manifest, the Greengrass `recipe.yaml` + `gdk-config.json`, and sample configs under
+   `test-configs/`.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+     ```text
+     MyComponent/
+     ├─ src/main/java/.../MyComponent.java   # your business logic
+     ├─ pom.xml                              # Maven build (shaded JAR)
+     ├─ recipe.yaml  gdk-config.json         # Greengrass recipe + GDK config
+     └─ test-configs/MyComponent.json        # sample component config
+     ```
+
+</TabItem>
+<TabItem label="Python">
+
+     ```text
+     MyComponent/
+     ├─ main.py                # entry point — builds GGCommons, starts the app
+     ├─ app/MyComponent.py     # your business logic
+     ├─ requirements.txt       # depends on greengrass-commons
+     ├─ recipe.yaml  gdk-config.json
+     └─ test-configs/config_1.json  config_2.json
+     ```
+
+</TabItem>
+<TabItem label="Rust">
+
+     ```text
+     MyComponent/
+     ├─ src/main.rs  src/app.rs        # entry point + your business logic
+     ├─ Cargo.toml  build.sh
+     ├─ recipe.yaml  gdk-config.json
+     └─ test-configs/config.json  standalone-messaging.json
+     ```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+     ```text
+     MyComponent/
+     ├─ src/main.ts  src/app.ts        # entry point + your business logic
+     ├─ package.json  tsconfig.json  build.sh
+     ├─ recipe.yaml  gdk-config.json
+     └─ test-configs/config.json  standalone-messaging.json   (+ .npmrc if --dep-source registry)
+     ```
+
+</TabItem>
+</Tabs>
+
+4. ### Understand the bootstrap code
+
+   The entry point builds one `GGCommons` runtime from the standard CLI args, then reads each
+   subsystem off it via typed accessors. The accessor names follow each language's conventions
+   (`getMessaging()` / `get_messaging()` / `messaging()`), but the shape is the same everywhere.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+     ```java
+     import com.mbreissi.ggcommons.GGCommons;
+     import com.mbreissi.ggcommons.GGCommonsBuilder;
+
+     public class MyComponent {
+         public static void main(String[] args) {
+             // Build the runtime from the standard CLI args (use the FULL component name).
+             GGCommons gg = GGCommonsBuilder.create("com.example.MyComponent")
+                     .withArgs(args)
+                     .build();
+
+             var config    = gg.getConfigManager();
+             var messaging = gg.getMessaging();
+             var metrics   = gg.getMetrics();
+
+             // ... your business logic ...
+             // Do NOT register your own shutdown hook: the library wires SIGTERM/SIGINT to a
+             // graceful, idempotent shutdown() for you.
+         }
+     }
+     ```
+
+     The shipped Java template uses the deprecated direct constructor
+     (`new GGCommons(name, args)`); the builder shown here is the canonical convention and is what
+     the worked example uses.
+
+</TabItem>
+<TabItem label="Python">
+
+     ```python
+     import sys
+     from ggcommons import GGCommonsBuilder
+
+     def main():
+         gg = (GGCommonsBuilder.create("com.example.MyComponent")
+               .with_args(sys.argv[1:])
+               .build())
+
+         config    = gg.get_config_manager()
+         messaging = gg.get_messaging()   # returns the MessagingClient class (its ops are static)
+         metrics   = gg.get_metrics()
+         try:
+             ...  # your business logic
+         finally:
+             gg.shutdown()   # or: with GGCommonsBuilder.create(...).build() as gg:
+
+     if __name__ == "__main__":
+         main()
+     ```
+
+     The library installs a SIGTERM handler that calls `shutdown()` for you; calling `shutdown()`
+     yourself is safe and idempotent.
+
+</TabItem>
+<TabItem label="Rust">
+
+     ```rust
+     use ggcommons::prelude::*;
+
+     const COMPONENT_NAME: &str = "com.example.MyComponent";
+
+     #[tokio::main]
+     async fn main() -> anyhow::Result<()> {
+         let gg = GgCommonsBuilder::new(COMPONENT_NAME)
+             .args(std::env::args_os())   // argv INCLUDES the program name
+             .build()
+             .await?;
+
+         let config = gg.config();
+         tracing::info!(thing = %config.thing_name, "starting");
+
+         if let Ok(messaging) = gg.messaging() {   // messaging() returns Result, not Option
+             let _ = messaging;
+             // ... publish / subscribe ...
+         }
+
+         Ok(())   // dropping `gg` releases all resources (RAII) — there is no close()
+     }
+     ```
+
+     The signal watcher only flips readiness when a stop signal arrives; teardown happens when
+     `gg` is dropped at the end of `main`.
+
+</TabItem>
+<TabItem label="TypeScript">
+
+     ```typescript
+     import { GGCommonsBuilder, logger } from "@mbreissi/ggcommons";
+
+     const COMPONENT_NAME = "com.example.MyComponent";
+
+     async function main(): Promise<void> {
+       const gg = await new GGCommonsBuilder(COMPONENT_NAME)
+         .args(process.argv.slice(2))   // argv WITHOUT the node/script prefix
+         .build();
+
+       const config    = gg.config();
+       const messaging = gg.messaging();   // throws if no transport is wired
+       const metrics   = gg.metrics();
+       logger.info(`starting: thing=${config.thingName}`);
+
+       // ... your business logic ...
+       // The library wires SIGTERM + SIGINT to gg.close() for you.
+     }
+
+     main().catch((err) => { console.error("fatal:", err); process.exit(1); });
+     ```
+
+     The npm package is `@mbreissi/ggcommons` (not a bare `ggcommons`). `close()` is idempotent and
+     the library calls it on a stop signal.
+
+</TabItem>
+</Tabs>
+
+   <Aside type="tip" title="Accessor differences">
+   The opt-in subsystems return nothing until their config section is present:
+   Java/Python `null` / `None`, TypeScript `undefined`, and Rust `Option<...>` for
+   `credentials()` / `parameters()`. In Rust those accessors only exist when the matching cargo
+   feature (`credentials`, `parameters`, `streaming`) is enabled, and `streams()` returns an
+   (empty) service rather than an `Option`. See the [Entry point reference](/reference/entry-point/).
+   </Aside>
+
+5. ### Build the component
+
+   Build with your language's standard toolchain. These commands are the same on Linux and Windows
+   (forward-slash paths work in PowerShell too).
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+     ```bash
+     mvn clean package        # produces target/MyComponent-1.0.0.jar (shaded, self-contained)
+     ```
+
+</TabItem>
+<TabItem label="Python">
+
+     ```bash
+     pip install -r requirements.txt   # pulls in greengrass-commons; no compile step
+     ```
+
+</TabItem>
+<TabItem label="Rust">
+
+     ```bash
+     cargo build              # standalone build — works on any OS
+     ```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+     ```bash
+     npm install              # for a local dep, add --install-links to copy rather than symlink
+     npm run build            # tsc -> dist/
+     ```
+
+</TabItem>
+</Tabs>
+
+   <Aside type="caution" title="Rust on Greengrass">
+   The HOST/MQTT path builds and runs on any OS with the default (standalone) build. The on-device
+   **GREENGRASS** transport needs the `greengrass` cargo feature, which only compiles on Linux/WSL.
+   That is out of scope for this local quickstart.
+   </Aside>
+
+6. ### Start a local MQTT broker
+
+   The HOST platform with the MQTT transport connects to a local broker (and, optionally, to AWS IoT
+   Core). Bring up the EMQX broker that ships with the repo — it exposes `1883` (plaintext) and
+   `8883` (mutual TLS):
+
+<Tabs syncKey="os">
+<TabItem label="Linux">
+
+     ```bash
+     docker compose -f test-infra/compose.yaml up -d
+     # Or a throwaway broker anywhere: docker run -d -p 1883:1883 emqx/emqx:latest
+     ```
+
+</TabItem>
+<TabItem label="Windows">
+
+     ```powershell
+     docker compose -f test-infra/compose.yaml up -d
+     # Or a throwaway broker anywhere: docker run -d -p 1883:1883 emqx/emqx:latest
+     ```
+
+</TabItem>
+</Tabs>
+
+   The MQTT transport needs a small messaging-config JSON (the `--transport MQTT <path>` payload):
+   `messaging.local` is required and `messaging.iotCore` is optional. Each running process needs a
+   unique `clientId`. The Rust and TypeScript templates already ship one at
+   `test-configs/standalone-messaging.json`; for Java and Python, create a
+   `standalone-messaging.json` in the component directory:
+
+   ```json
+   {
+     "messaging": {
+       "local": {
+         "host": "localhost",
+         "port": 1883,
+         "clientId": "my-component-local"
+       }
+     }
+   }
+   ```
+
+   {/* NEEDS REVIEW: the developer guide states messaging.local.type is required, but the shipped
+   templates omit it and a recent fix made local.type optional. Confirm whether type must be set
+   for a plaintext localhost broker. */}
+
+7. ### Run it
+
+   Start the component on the HOST platform, pointing `--transport MQTT` at the messaging config and
+   `-c FILE` at a component config, with a Thing name via `-t`. Run from inside the generated
+   component directory.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+     ```bash
+     java -jar target/MyComponent-1.0.0.jar \
+       --platform HOST --transport MQTT ./standalone-messaging.json \
+       -c FILE test-configs/MyComponent.json -t my-thing
+     ```
+
+</TabItem>
+<TabItem label="Python">
+
+     ```bash
+     python3 main.py \
+       --platform HOST --transport MQTT ./standalone-messaging.json \
+       -c FILE test-configs/config_2.json -t my-thing
+     ```
+
+</TabItem>
+<TabItem label="Rust">
+
+     ```bash
+     cargo run -- \
+       --platform HOST --transport MQTT ./test-configs/standalone-messaging.json \
+       -c FILE ./test-configs/config.json -t my-thing
+     ```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+     ```bash
+     node dist/main.js \
+       --platform HOST --transport MQTT ./test-configs/standalone-messaging.json \
+       -c FILE ./test-configs/config.json -t my-thing
+     ```
+
+</TabItem>
+</Tabs>
+
+   To confirm the component is alive, subscribe to `heartbeat/+/+` on the broker (for example with
+   MQTTX) and watch the periodic heartbeat messages arrive.
+
+   <Aside type="note" title="Java streaming">
+   If you enable the telemetry-streaming subsystem, add `--enable-native-access=ALL-UNNAMED` to the
+   `java` command — it is required for the FFM/Panama binding to the native streaming core.
+   </Aside>
+
+   {/* TODO: unverified - whether a generated Java component compiles cleanly with
+   maven.compiler.target=11 against the Java-25 com.mbreissi:ggcommons artifact. It must run on
+   JDK 25 regardless; confirm against a real build before pinning the exact JDK requirement. */}
+
+
+<Aside type="caution" title="Resolving the published library">
+Whether a bare `pip install greengrass-commons`, `npm i @mbreissi/ggcommons`, or the Rust registry
+git tag resolve from public registries (versus requiring GitHub Packages authentication) is not yet
+confirmed. {/* NEEDS REVIEW: verify published availability of greengrass-commons, @mbreissi/ggcommons,
+and the Rust git tag before telling readers a plain registry install works. */} Until then, the
+default `--dep-source local` (Rust/TS) and a local `mvn install` / editable Python install are the
+reliable paths — see the [Installation guide](/start/installation/).
+</Aside>
+
+## Next steps
+
+<LinkCard title="Messaging guide" href="/guides/messaging/" description="Publish, subscribe, and request/reply across IPC and MQTT." />
+<LinkCard title="Configuration guide" href="/guides/configuration/" description="Config sources, template variables, hot reload, and validation." />
+<LinkCard title="Entry point reference" href="/reference/entry-point/" description="The GGCommons builder, accessors, and lifecycle in all four languages." />
+<LinkCard title="Deploy to Greengrass" href="/deploy/greengrass/" description="Package with the GDK and deploy to a Nucleus device." />

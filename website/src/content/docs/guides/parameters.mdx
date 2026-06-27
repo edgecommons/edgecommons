@@ -1,0 +1,479 @@
+---
+title: Parameters
+description: Read externalized configuration from env, mounted files, or AWS SSM with the opt-in, offline-first parameters subsystem.
+sidebar:
+  order: 9
+---
+
+import { Tabs, TabItem, Aside, LinkCard, CardGrid } from "@astrojs/starlight/components";
+
+The **parameters** subsystem (`gg.parameters()`) is an independent, **opt-in, offline-first** service
+for externalized **configuration** — endpoints, feature flags, tuning knobs. It is the sibling of
+[credentials](/guides/credentials/) (which handles secrets): a pluggable source (`env` / `mountedDir`
+/ `awsSsm`) sits behind a local cache, and **reads are always served from the cache, never the
+network**. Your component keeps running with the last-known values even when the source is
+unreachable.
+
+Because it is opt-in, the accessor returns nothing unless a `parameters` section is present in your
+config (and, in Rust, the `parameters` cargo feature is enabled). When it is off, your component
+simply skips the calls.
+
+<Aside type="tip" title="Parameters vs. config">
+Use the [config subsystem](/guides/configuration/) for the component's own settings that ship with
+the deployment. Use **parameters** for values that live *outside* the deployment — pulled from the
+environment, a mounted volume, or AWS SSM Parameter Store — and that may change at runtime.
+</Aside>
+
+## Enabling parameters
+
+Add a `parameters` section to your component config. The minimum is a `source`. This config is
+identical across all four languages (it validates against the single
+[config schema](/reference/configuration/#parameters)).
+
+```json
+{
+  "parameters": {
+    "source": { "type": "env", "prefix": "GG_PARAM_" },
+    "sync": { "names": ["/myapp/region", "/myapp/poolSize"] }
+  }
+}
+```
+
+The full set of keys: `source.{type,region,endpointUrl,withDecryption,root,securePaths,prefix}`,
+`cache.{persist,path,keyProvider}`, `refreshIntervalSecs` (default `300`; `0` disables periodic
+refresh), `bootstrapOnStart` (default `true`), and `sync.{names,paths}`.
+
+### Rust: enable the cargo feature
+
+Rust gates the whole subsystem behind the `parameters` feature, and the AWS SSM source behind
+`parameters-aws`. Without the feature, `gg.parameters()` always returns `None`.
+
+```toml
+[dependencies]
+ggcommons = { version = "*", features = ["parameters"] }
+# add "parameters-aws" as well if you use the awsSsm source
+```
+
+## Getting the service and the null contract
+
+Fetch the service from your `GGCommons` instance. It is `null` / `None` / `undefined` whenever the
+`parameters` section is absent (Rust: also when the feature is off) — always guard before use.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+// getParameters() returns null when there is no `parameters` config section.
+ParameterService params = gg.getParameters();
+if (params == null) {
+    return; // parameters subsystem is off
+}
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+# get_parameters() returns None when there is no `parameters` config section.
+params = gg.get_parameters()
+if params is None:
+    return  # parameters subsystem is off
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+// parameters() returns None with no `parameters` section, or if the `parameters` feature is off.
+let Some(params) = gg.parameters() else {
+    return Ok(()); // parameters subsystem is off
+};
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+// parameters() returns undefined when there is no `parameters` config section.
+const params = gg.parameters();
+if (!params) {
+  return; // parameters subsystem is off
+}
+```
+
+</TabItem>
+</Tabs>
+
+The accessor returns the `ParameterService` interface — depend on that, not the concrete
+`DefaultParameterService`. The `gg` instance owns the service's lifecycle (it stops the background
+refresher at component shutdown), so you do not call `close()` yourself in the normal path.
+
+<Aside type="caution" title="Rust reads return Result">
+Every Rust `ParameterService` method returns `Result<…>` (for example, `get` can `Err` on a
+non-UTF-8 value), so Rust callers must `?` or match even on plain reads. Java throws
+`ParameterException`, Python raises `ParameterError`, and TypeScript throws `ParameterError`.
+</Aside>
+
+## Reading parameters
+
+Parameters are addressed by an SSM-style path name like `/myapp/region`. `get` returns the raw
+string; the typed accessors parse it. All four reject malformed values (a non-integer for `getInt`,
+an unknown token for `getBool`).
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+Optional<String>        region   = params.get("/myapp/region");
+Optional<Long>          poolSize = params.getInt("/myapp/poolSize");
+Optional<Boolean>       debug    = params.getBool("/myapp/debug");
+Optional<JsonElement>   limits   = params.getJson("/myapp/limits");
+Optional<List<String>>  hosts    = params.getStringList("/myapp/hosts");
+Optional<byte[]>        raw      = params.getBytes("/myapp/blob");
+
+// A whole subtree by prefix, and the names under a prefix:
+Map<String, String> db    = params.getByPath("/myapp/db");
+List<String>        names = params.names("/myapp"); // pass "" for all
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+region    = params.get("/myapp/region")            # Optional[str]
+pool_size = params.get_int("/myapp/poolSize")      # Optional[int]
+debug     = params.get_bool("/myapp/debug")        # Optional[bool]
+limits    = params.get_json("/myapp/limits")       # parsed JSON object
+hosts     = params.get_string_list("/myapp/hosts") # Optional[List[str]]
+raw       = params.get_bytes("/myapp/blob")        # Optional[bytes]
+
+# A whole subtree by prefix, and the names under a prefix:
+db    = params.get_by_path("/myapp/db")            # Dict[str, str]
+names = params.names("/myapp")                      # List[str]; pass "" for all
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+let region    = params.get("/myapp/region")?;             // Option<String>
+let pool_size = params.get_int("/myapp/poolSize")?;       // Option<i64>
+let debug     = params.get_bool("/myapp/debug")?;         // Option<bool>
+let limits    = params.get_json("/myapp/limits")?;        // Option<serde_json::Value>
+let hosts     = params.get_string_list("/myapp/hosts")?;  // Option<Vec<String>>
+let raw       = params.get_bytes("/myapp/blob")?;         // Option<Vec<u8>>
+
+// A whole subtree by prefix, and the names under a prefix:
+let db    = params.get_by_path("/myapp/db")?;             // BTreeMap<String, String>
+let names = params.names("/myapp")?;                      // Vec<String>; pass "" for all
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+const region   = params.get("/myapp/region");            // string | undefined
+const poolSize = params.getInt("/myapp/poolSize");       // number | undefined
+const debug    = params.getBool("/myapp/debug");         // boolean | undefined
+const limits   = params.getJson("/myapp/limits");        // unknown | undefined
+const hosts    = params.getStringList("/myapp/hosts");   // string[] | undefined
+const raw      = params.getBytes("/myapp/blob");         // Buffer | undefined
+
+// A whole subtree by prefix, and the names under a prefix:
+const db    = params.getByPath("/myapp/db");             // Map<string, string>
+const names = params.names("/myapp");                     // string[]; pass "" for all
+```
+
+</TabItem>
+</Tabs>
+
+A few behaviors worth knowing:
+
+- **`getByPath` / `get_by_path` takes only a path prefix — there is no `recursive` argument at read
+  time.** Recursion is decided once, at sync-config time (see [Choosing what to sync](#choosing-what-to-sync)).
+- **`names` requires the prefix argument** in every language — pass `""` explicitly to list everything.
+- **Typed parsing:** `getInt` is `Long` (Java, 64-bit), `int` (Python, arbitrary precision), `i64`
+  (Rust), and `number` (TypeScript — IEEE-754, so values above `2^53` lose precision; it validates
+  with a strict integer regex first). `getBool` accepts `true/1/yes/on` and `false/0/no/off`
+  (case-insensitive). `getStringList` splits on commas and trims; an empty string yields an empty list.
+- **UTF-8:** `get` errors on a non-UTF-8 value, `getByPath` silently skips non-decodable entries, and
+  `getBytes` always returns the raw bytes.
+- **Ordering:** Java, Python, and Rust return `names`/`getByPath` results **sorted**. The TypeScript
+  in-memory cache returns **insertion order** — do not rely on TypeScript ordering.
+  {/* TODO: unverified - whether TS MemoryCache insertion-order (vs sorted) is intentional is not stated in source/tests */}
+
+### Inspecting refresh state
+
+`stats()` returns a non-sensitive `ParameterStats` (safe to log): a parameter count, the age of the
+last successful refresh (`null` / `None` / `undefined` until the first fully-clean refresh), a
+refresh-failure counter, and the source id.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+ParameterStats st = params.stats();
+LOGGER.info("params source={} count={} failures={}",
+        st.source(), st.parameterCount(), st.refreshFailures());
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+st = params.stats()
+logger.info(f"params source={st.source} count={st.parameter_count} failures={st.refresh_failures}")
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+let st = params.stats();
+tracing::info!(source = %st.source, count = st.parameter_count, failures = st.refresh_failures,
+    "params");
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+const st = params.stats();
+console.log(`params source=${st.source} count=${st.parameterCount} failures=${st.refreshFailures}`);
+```
+
+</TabItem>
+</Tabs>
+
+## Sources
+
+The `source.type` selects one of three built-in sources. **`env`, `mountedDir`, and `awsSsm` are the
+only config-driven sources** — there is no `custom` type (see [Custom sources](#custom-sources) for
+the programmatic seam). Each config example below is the same in all four languages.
+
+### env — environment variables
+
+Maps a parameter name to an environment variable: `/myapp/db/host` becomes
+`<PREFIX>MYAPP_DB_HOST` (`/`, `-`, and `.` become `_`, then uppercase). The default `prefix` is
+`GG_PARAM_`. Values from `env` are always non-secure.
+
+```json
+{
+  "parameters": {
+    "source": { "type": "env", "prefix": "GG_PARAM_" },
+    "sync": { "names": ["/myapp/region", "/myapp/db/host"] }
+  }
+}
+```
+
+With that config, `params.get("/myapp/db/host")` reads `GG_PARAM_MYAPP_DB_HOST`.
+
+### mountedDir — a mounted file tree
+
+Each file under `root` is a parameter: its **bytes are the value**, and its name is `/` plus the
+path relative to `root`. Names under any `securePaths` prefix are marked `secure=true`. Dotfiles are
+skipped (this safely ignores the kubelet `..data` symlink farm on Kubernetes), and a directory at a
+name is treated as "not a parameter".
+
+```json
+{
+  "parameters": {
+    "source": {
+      "type": "mountedDir",
+      "root": "/etc/myapp/params",
+      "securePaths": ["/myapp/db"]
+    },
+    "sync": { "paths": ["/myapp"] }
+  }
+}
+```
+
+### awsSsm — AWS Systems Manager Parameter Store
+
+Reads from SSM via `GetParameter` / `GetParametersByPath` (paginated). `withDecryption` (default
+`true`) decrypts `SecureString` parameters, which are marked `secure=true`. `region` and an optional
+`endpointUrl` (for floci / LocalStack / a VPC endpoint) configure the client; it otherwise uses the
+default credential chain (TES on Greengrass).
+
+```json
+{
+  "parameters": {
+    "source": {
+      "type": "awsSsm",
+      "region": "us-east-1",
+      "withDecryption": true
+    },
+    "refreshIntervalSecs": 300,
+    "sync": {
+      "names": ["/myapp/region"],
+      "paths": [{ "path": "/myapp/db", "recursive": true }]
+    }
+  }
+}
+```
+
+<Aside type="note" title="SSM dependency is optional">
+The AWS SDK for SSM is an optional dependency: Rust requires the `parameters-aws` feature (a build
+error otherwise), while Java (`software.amazon.awssdk:ssm`), Python (`boto3`), and TypeScript
+(`@aws-sdk/client-ssm`) load it lazily at runtime and raise a parameter error if it is missing.
+</Aside>
+
+## Choosing what to sync
+
+`refresh()` pulls only what you declare in `sync`:
+
+- **`sync.names`** — exact parameter names to fetch.
+- **`sync.paths`** — path prefixes to fetch. Each entry is a bare string (recursive) **or** an object
+  `{ "path": "...", "recursive": true|false }`. `recursive` defaults to `true`.
+
+This is the only place recursion is configured — the read-time `getByPath` always reads whatever the
+cache already holds under a prefix.
+
+### Offline-first refresh semantics
+
+Refresh is designed to never take a healthy component down:
+
+- A **per-item failure** is logged and increments the `refresh_failures` counter. The error only
+  propagates when the cache is still **empty** (the bootstrap case) — otherwise the previously cached
+  values are kept.
+- A **missing** parameter (an unset env var, an SSM `ParameterNotFound`) is **not** an error; the
+  read just returns nothing.
+- Only a **fully-clean** refresh updates the last-refresh timestamp.
+- **`bootstrapOnStart`** (default `true`) runs one `refresh()` inside the accessor at startup; if it
+  fails it is caught and logged, and the service is still returned.
+- **`refreshIntervalSecs`** (default `300`; `0` disables) drives a background daemon that refreshes
+  periodically.
+
+You can also refresh on demand. Note that **only TypeScript's `refresh()` is async** (it returns
+`Promise<void>`); the read accessors are synchronous in all four languages because they read the
+already-loaded cache.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+params.refresh(); // synchronous
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+params.refresh()  # synchronous
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+params.refresh()?; // synchronous, returns Result
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+await params.refresh(); // async in TypeScript
+```
+
+</TabItem>
+</Tabs>
+
+## The offline cache
+
+Every read is served from a local cache; the source is only touched on `refresh()`. The cache is
+**source-aware** by default:
+
+- A **remote** source (`awsSsm`) → a **persistent, encrypted** cache that reuses the
+  [credentials `LocalVault`](/guides/credentials/) (same on-disk format), so values survive restarts
+  and remain usable offline.
+- A **local** source (`env` / `mountedDir`) → an **in-memory** cache (the source is already local).
+
+Set `cache.persist` to override the default either way. The default `cache.path` is the relative
+`"param-cache"`.
+
+<Aside type="caution" title="Cache encryption key">
+The persistent cache does **not** inherit the platform-profile key provider that the credentials
+vault uses (for example, it does not auto-pick the `env`-based KEK on Kubernetes). It defaults to the
+library `file` key provider unless you set `cache.keyProvider` explicitly.
+</Aside>
+
+When the `gg` accessor builds the service, it resolves template variables like `{ComponentFullName}`
+and `{ThingName}` in `cache.path` and the key path before opening the cache. (Calling the low-level
+`open` factory directly does no templating — the raw default really is `"param-cache"`.)
+
+## ParamValue and secure values
+
+Sources return values as a `ParamValue` carrying `value` (bytes), a `secure` flag, and an optional
+`version`. The `secure` flag is set automatically — by a `securePaths` prefix (`mountedDir`) or a
+`SecureString` (`awsSsm`). Component developers rarely touch `ParamValue` directly; it is the seam
+between a source and the cache, and the typed accessors hand you plain strings, ints, and so on.
+
+If you do handle a `ParamValue`, mind how each language treats secure values when logged:
+
+- **Java** redacts the value in `toString()`, and **Python** redacts it in `__repr__` — logging the
+  value object will not leak the secret.
+- **Rust** derives `Debug` (so `format!("{:?}", pv)` would print the raw bytes) and **TypeScript** is
+  a plain interface with no custom stringifier (logging it prints the `value` buffer). On Rust and
+  TypeScript, **do not log a `ParamValue`** for a secure parameter.
+
+{/* NEEDS REVIEW: confirm whether the Rust derived-Debug / TS plain-interface non-redaction is an accepted trade-off before stating any redaction guarantee for those two languages. */}
+
+## Custom sources
+
+A custom `ParameterSource` cannot be selected through config or reached via `gg.parameters()` — the
+config-driven `buildSource` only knows `env`, `mountedDir`, and `awsSsm`. To inject your own source,
+construct a `DefaultParameterService` directly with the public `withMemoryCache` /
+`withPersistentCache` factories (these also back the `open` path and the test suites).
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+DefaultParameterService s = DefaultParameterService.withMemoryCache(
+        myCustomSource, List.of("/myapp/region"), List.of());
+s.refresh();
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+s = DefaultParameterService.with_memory_cache(my_custom_source, ["/myapp/region"], [])
+s.refresh()
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+let s = DefaultParameterService::with_memory_cache(
+    my_custom_source, vec!["/myapp/region".into()], vec![]);
+s.refresh()?;
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+const s = DefaultParameterService.withMemoryCache(myCustomSource, ["/myapp/region"], []);
+await s.refresh();
+```
+
+</TabItem>
+</Tabs>
+
+<Aside type="note" title="Lifecycle of a hand-built service">
+When you build a service yourself, you also own its lifecycle. Java, Python, and TypeScript expose
+`close()` to stop the background refresher; Rust stops and joins the refresh thread automatically
+when the service is dropped (RAII — there is no `close()`).
+</Aside>
+
+## See also
+
+<CardGrid>
+  <LinkCard title="API reference: Parameters" href="/reference/parameters/" description="The full ParameterService surface, verified against source." />
+  <LinkCard title="Config schema: parameters" href="/reference/configuration/#parameters" description="Every key in the parameters config section." />
+  <LinkCard title="Credentials guide" href="/guides/credentials/" description="The secrets sibling — the encrypted vault parameters reuses for its cache." />
+  <LinkCard title="Configuration guide" href="/guides/configuration/" description="The component's own deployment-shipped config." />
+</CardGrid>

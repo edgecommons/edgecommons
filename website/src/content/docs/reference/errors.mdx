@@ -1,0 +1,496 @@
+---
+title: Errors & exceptions
+description: The GGCommons error taxonomy across Java, Python, Rust, and TypeScript — which exception or error each subsystem raises, and how to handle it.
+sidebar:
+  order: 14
+---
+
+import { Tabs, TabItem, Aside, LinkCard } from "@astrojs/starlight/components";
+
+The error taxonomy is how your component tells *which subsystem* failed — config, schema validation,
+messaging, credentials, parameters, or streaming — and decides whether to recover or abort. Each
+SDK exposes the same set of failure modes, but in its own idiomatic shape, so the type you catch
+differs by language even when the underlying cause is identical.
+
+There is **no single, unified error type across the four languages.** Only Rust unifies everything
+into one enum; TypeScript unifies the core subsystems only; Java and Python use a distinct exception
+class per subsystem.
+
+## How errors are shaped per language
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+A small set of subsystem exceptions in `com.mbreissi.ggcommons`. Some are **checked** (the compiler
+forces a `try/catch` or `throws`), some are **unchecked** (`RuntimeException`).
+
+```java
+// package com.mbreissi.ggcommons.*
+class ConfigurationException extends Exception                 // CHECKED — config.ConfigurationException
+class ConfigurationValidator.ConfigurationValidationException  // CHECKED — nested static in config.ConfigurationValidator
+        extends Exception
+class CredentialException extends RuntimeException             // unchecked — credentials.CredentialException
+class ParameterException extends RuntimeException              // unchecked — parameters.ParameterException
+class GgStreamException extends RuntimeException {             // unchecked — streaming.GgStreamException
+    GgStreamException(int code, String message);
+    int code();                                               // the underlying ggsl_status value
+    // constants mirroring ggsl_status:
+    //   OK=0, ERR_CONFIG=1, ERR_IO=2, ERR_CORRUPT=3, ERR_FULL=4,
+    //   ERR_UNKNOWN_STREAM=5, ERR_SINK=6, ERR_PANIC=7, ERR_INVALID_ARG=8
+}
+```
+
+CLI and builder preconditions throw the standard `IllegalArgumentException` (e.g. unknown
+`--platform` / `--transport`, the removed `-m/--mode` flag) and `IllegalStateException` (builder
+precondition violations).
+
+</TabItem>
+<TabItem label="Python">
+
+Subsystem `Exception` subclasses, each exported from its package.
+
+```python
+# ggcommons.credentials
+class CredentialError(Exception): ...                  # message-only
+
+# ggcommons.parameters
+class ParameterError(Exception): ...                   # message-only
+
+# ggcommons.streaming
+class GgStreamError(Exception):
+    def __init__(self, code: int, message: str | None = None)
+    # instance attributes: .code (int), .message
+
+# ggcommons.validation.configuration_validator
+class ConfigurationValidationException(Exception):
+    def __init__(self, message: str, validation_errors: list | None = None)
+    # instance attribute: .validation_errors
+```
+
+Python has **no dedicated config-load exception class**. Config-load failures surface as the
+built-in `ValueError`, as `ConfigurationValidationException`, or as a propagated stdlib exception.
+Using an accessor before the runtime is initialized raises `RuntimeError("GGCommons not properly
+initialized")`.
+
+{/* TODO: unverified - confirm with the doc owner whether Python should grow a dedicated config-load exception class (parity with Java ConfigurationException) or whether ValueError / ConfigurationValidationException is the intended stable public contract for component authors to catch. */}
+
+</TabItem>
+<TabItem label="Rust">
+
+One library-wide error enum plus a `Result` alias in `ggcommons`. Fallibility is encoded in the
+return type — there are no separate per-subsystem error types.
+
+```rust
+// ggcommons
+pub type Result<T> = std::result::Result<T, GgError>;
+
+#[derive(Debug, thiserror::Error)]
+pub enum GgError {
+    Cli(String),         // CLI parsing / contract violation
+    Config(String),      // config loading / shape
+    Validation(String),  // JSON-schema validation failure
+    Messaging(String),
+    Metrics(String),
+    Ipc(String),         // Greengrass IPC
+    Streaming(String),   // `streaming` feature
+    Credentials(String), // `credentials` feature
+    Parameters(String),  // `parameters` feature
+    Io(std::io::Error),    // #[from] — auto-converts via `?`
+    Json(serde_json::Error), // #[from] — auto-converts via `?`
+}
+```
+
+`GgError` is `Send + Sync`; constructing or matching on it cannot panic. The `#[from]` on `Io` and
+`Json` means stdlib I/O and `serde_json` errors convert into a `GgError` automatically through the
+`?` operator.
+
+</TabItem>
+<TabItem label="TypeScript">
+
+Two families. The core subsystems share one **tagged** `GgError`; credentials, parameters, and
+streaming are **standalone `Error` subclasses** that are *not* part of the tag union.
+
+```typescript
+// @mbreissi/ggcommons
+type GgErrorKind =
+  | "Cli" | "Config" | "Validation"
+  | "Messaging" | "Metrics" | "Ipc"
+  | "Io" | "Json";                       // NOTE: no Streaming/Credentials/Parameters
+
+class GgError extends Error {
+  readonly kind: GgErrorKind;            // this.name === `GgError(${kind})`
+  // static factories: GgError.cli / config / validation / messaging /
+  //                   metrics / ipc / io / json
+}
+
+// separate Error subclasses (NOT covered by GgErrorKind):
+class CredentialError extends Error {}                 // this.name = "CredentialError"
+class ParameterError extends Error {}                  // this.name = "ParameterError"
+class GgStreamError extends Error {                     // this.name = "GgStreamError"
+  readonly code: number;                               // the underlying ggsl_status value
+}
+```
+
+Because `GgErrorKind` omits `Streaming`/`Credentials`/`Parameters`, a check like
+`e.kind === "Streaming"` will never match — those failures are the separate classes above. Use
+`instanceof GgStreamError` / `instanceof CredentialError` / `instanceof ParameterError` instead.
+
+{/* TODO: unverified - confirm GgErrorKind intentionally omits Streaming/Credentials/Parameters as the final shape; it diverges from Rust's all-in-one GgError and can surprise a developer expecting e.kind === "Streaming". */}
+
+</TabItem>
+</Tabs>
+
+## Where each subsystem's failure surfaces
+
+The same logical failure maps to a different type in each SDK. Read across a row to translate.
+
+| Subsystem failure | Java | Python | Rust | TypeScript |
+|---|---|---|---|---|
+| CLI / arg validation | `IllegalArgumentException` | `ValueError` | `GgError::Cli` | `GgError` kind `"Cli"` |
+| Config load | `ConfigurationException` (checked) | `ValueError` / propagated | `GgError::Config` | `GgError` kind `"Config"` |
+| Schema validation | `ConfigurationValidationException` (checked) | `ConfigurationValidationException` | `GgError::Validation` | `GgError` kind `"Validation"` |
+| Messaging | standard exception (no dedicated class) | standard exception (no dedicated class) | `GgError::Messaging` | `GgError` kind `"Messaging"` |
+| Metrics | standard exception (no dedicated class) | standard exception (no dedicated class) | `GgError::Metrics` | `GgError` kind `"Metrics"` |
+| Greengrass IPC | standard exception (no dedicated class) | standard exception (no dedicated class) | `GgError::Ipc` | `GgError` kind `"Ipc"` |
+| Credentials | `CredentialException` | `CredentialError` | `GgError::Credentials` | `CredentialError` |
+| Parameters | `ParameterException` | `ParameterError` | `GgError::Parameters` | `ParameterError` |
+| Streaming | `GgStreamException` (+`code()`) | `GgStreamError` (+`.code`) | `GgError::Streaming` (code discarded) | `GgStreamError` (+`.code`) |
+| I/O · JSON | JDK `IOException` etc. | stdlib exceptions | `GgError::Io` / `GgError::Json` | `GgError` kind `"Io"` / `"Json"` |
+
+{/* NEEDS REVIEW: Java and Python have no dedicated Messaging/Metrics/IPC exception class in the taxonomy; the "standard exception" cells describe the absence of a dedicated type, not a confirmed concrete type a runtime messaging/metrics failure throws. A human should confirm what those paths actually throw at runtime. */}
+
+## When each is thrown
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+- **`ConfigurationException`** — thrown by `ConfigManagerFactory.create(...)` when no configuration is
+  found, or when a `ConfigManager` cannot be created. It is **not** thrown by `ConfigManager` itself.
+- **`ConfigurationValidationException`** — thrown by `ConfigurationValidator.validate(JsonObject)`
+  when the config violates the canonical JSON schema. It is **fail-closed**: a missing schema
+  resource on the classpath also throws (it does not silently pass).
+- **`CredentialException`** — vault open/decrypt failures: a wrong KEK, tampered data, an unsupported
+  vault format, or corrupt JSON. Messages never include secret or key material.
+- **`ParameterException`** — parameter resolution/decryption failures (the parameters subsystem
+  reuses the credentials vault as an encrypted cache).
+- **`GgStreamException`** — any non-zero `ggsl_status` from the native `ggstreamlog` engine; inspect
+  `code()` (e.g. `ERR_UNKNOWN_STREAM`, `ERR_CONFIG`, `ERR_FULL`) to branch.
+
+</TabItem>
+<TabItem label="Python">
+
+- **`ConfigurationValidationException`** — raised by `ConfigurationValidator.validate(config)` and
+  `validate_section(...)` on a schema violation; **fail-closed** when `jsonschema` or the schema
+  resource is missing. A `None` config raises the built-in `ValueError` instead.
+- **`CredentialError`** — vault failures (wrong KEK, tamper, unsupported format, corrupt data).
+- **`ParameterError`** — parameter resolution/decryption failures.
+- **`GgStreamError`** — native streaming failures; check `.code` (e.g. `ERR_UNKNOWN_STREAM` is `5`,
+  `ERR_CONFIG` is `1`). It is also raised with `.code == -1` when the native streaming wheel is not
+  installed.
+- **`ValueError`** — `None`/empty inputs (validation, an empty component name in the builder, and
+  other argument checks).
+- **`RuntimeError`** — `"GGCommons not properly initialized"` when an accessor is used before init.
+
+</TabItem>
+<TabItem label="Rust">
+
+Every fallible call returns `Result<T, GgError>`; match on the variant to tell subsystems apart.
+
+- **`GgError::Cli`** — CLI parsing or contract violations (unknown platform/transport, etc.).
+- **`GgError::Config`** — config loading / shape problems.
+- **`GgError::Validation`** — JSON-schema validation failures.
+- **`GgError::Messaging`** / **`GgError::Metrics`** / **`GgError::Ipc`** — the respective subsystem
+  failed; `messaging()` itself returns `Err(GgError::Messaging(...))` when the transport is unwired.
+- **`GgError::Streaming`** / **`GgError::Credentials`** / **`GgError::Parameters`** — the matching
+  feature-gated subsystem failed (these variants exist only when the corresponding cargo feature is
+  enabled).
+- **`GgError::Io`** / **`GgError::Json`** — propagated stdlib I/O or `serde_json` errors, converted
+  automatically by `?`.
+
+</TabItem>
+<TabItem label="TypeScript">
+
+- **`GgError` (kind `"Validation"`)** — thrown by `validate(...)` on a schema violation.
+- **`GgError` (kind `"Cli"` / `"Config"`)** — CLI/arg and config-load problems.
+- **`GgError` (kind `"Messaging"` / `"Metrics"` / `"Ipc"`)** — the respective subsystem failed;
+  `messaging()` **throws** `GgError.messaging(...)` when the transport is unwired, while `metrics()`
+  returns the (always-wired) metric service.
+- **`GgError` (kind `"Io"` / `"Json"`)** — I/O and JSON failures.
+- **`CredentialError`** — vault failures (wrong KEK, tamper, unsupported format).
+- **`ParameterError`** — parameter resolution/decryption failures.
+- **`GgStreamError`** — native streaming failures; check `.code`. The helper `translate(e)` parses a
+  native `ggsl:<code>:<message>` string into a `GgStreamError`.
+
+</TabItem>
+</Tabs>
+
+## The streaming status code
+
+Streaming is the one place that carries a numeric status (`ggsl_status` from the native
+`ggstreamlog` engine) — but only three of the four SDKs preserve it.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+`GgStreamException.code()` returns the int, and named constants are exposed
+(`GgStreamException.ERR_FULL`, `ERR_UNKNOWN_STREAM`, …) so you can branch on a name.
+
+```java
+GgStreamException ex = assertThrows(GgStreamException.class, () -> svc.stats("nope"));
+assertEquals(GgStreamException.ERR_UNKNOWN_STREAM, ex.code());   // 5
+```
+
+</TabItem>
+<TabItem label="Python">
+
+`GgStreamError.code` holds the int, but **no named `ERR_*` constants are exposed** — compare against
+the literal integers (or declare your own).
+
+```python
+from ggcommons.streaming import GgStreamError
+
+with pytest.raises(GgStreamError) as ei:
+    svc.stats("nope")
+assert ei.value.code == 5     # ERR_UNKNOWN_STREAM — no named constant in ggcommons.streaming
+```
+
+{/* TODO: unverified - confirm whether Python intentionally omits named ERR_* constants (vs Java's GgStreamException.ERR_*) or whether that is a parity gap to close. */}
+
+</TabItem>
+<TabItem label="Rust">
+
+**The code is discarded.** Streaming failures stringify into `GgError::Streaming(String)`, so a Rust
+caller can read the message but **cannot branch on the numeric `ggsl_status`**.
+
+```rust
+// streaming errors funnel into GgError::Streaming(e.to_string()) — no numeric code is retained
+if let Err(ggcommons::GgError::Streaming(msg)) = result {
+    eprintln!("streaming failed: {msg}");
+}
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+`GgStreamError.code` holds the int (no named constants).
+
+```typescript
+import { GgStreamError } from "@mbreissi/ggcommons";
+
+// e was thrown by a streaming call (or produced by translate(...))
+expect((e as GgStreamError).code).toBe(5);   // ERR_UNKNOWN_STREAM
+```
+
+</TabItem>
+</Tabs>
+
+## Optional subsystems return empty, they do not throw
+
+Credentials, parameters, and streaming are **opt-in**: when the matching config section is absent
+(and, in Rust, the matching cargo feature is enabled), the accessor returns an empty value rather
+than throwing. Always check before use.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+`getStreams()`, `getCredentials()`, and `getParameters()` return **`null`** when the section is
+absent. `getMessaging()` and `getMetrics()` return the wired subsystem.
+
+```java
+var creds = gg.getCredentials();
+if (creds == null) {
+    // no `credentials` config section — feature is off
+} else {
+    var secret = creds.get("db-password");
+}
+```
+
+</TabItem>
+<TabItem label="Python">
+
+`get_streams()`, `get_credentials()`, and `get_parameters()` return **`None`** when the section is
+absent.
+
+```python
+creds = gg.get_credentials()
+if creds is None:
+    pass   # no `credentials` config section — feature is off
+else:
+    secret = creds.get("db-password")
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+`credentials()` and `parameters()` return **`Option`**; `streams()` is gated behind the `streaming`
+feature. By contrast `messaging()` returns a **`Result`** and yields `Err(GgError::Messaging(...))`
+when the transport is unwired.
+
+```rust
+match gg.credentials() {
+    None => { /* no `credentials` config section — feature is off */ }
+    Some(creds) => { let _secret = creds.get("db-password")?; }
+}
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+`streams()`, `credentials()`, and `parameters()` return **`undefined`** when the section is absent.
+By contrast `messaging()` **throws** `GgError.messaging(...)` when the transport is unwired.
+
+```typescript
+const creds = gg.credentials();
+if (creds === undefined) {
+  // no `credentials` config section — feature is off
+} else {
+  const secret = await creds.get("db-password");
+}
+```
+
+</TabItem>
+</Tabs>
+
+## Handling errors
+
+A minimal, idiomatic handler in each language — catch the validation error to abort startup, and
+branch on the streaming status code where it is available.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+import com.mbreissi.ggcommons.config.ConfigurationValidator;
+import com.mbreissi.ggcommons.config.ConfigurationValidator.ConfigurationValidationException;
+import com.mbreissi.ggcommons.streaming.GgStreamException;
+
+// Checked: the compiler forces you to handle (or declare) this one.
+try {
+    ConfigurationValidator.validate(config);            // JsonObject
+} catch (ConfigurationValidationException e) {
+    log.error("config rejected: {}", e.getMessage());   // lists each schema violation
+    throw new IllegalStateException("cannot start", e); // abort startup
+}
+
+// Unchecked, code-bearing.
+try {
+    var stats = gg.getStreams().stats("telemetry");
+} catch (GgStreamException e) {
+    if (e.code() == GgStreamException.ERR_FULL) {
+        // durable buffer is full — back off and retry later
+    } else {
+        throw e;
+    }
+}
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+from ggcommons.validation.configuration_validator import (
+    ConfigurationValidator,
+    ConfigurationValidationException,
+)
+from ggcommons.streaming import GgStreamError
+
+try:
+    ConfigurationValidator.validate(config)
+except ConfigurationValidationException as e:
+    # e.validation_errors carries the individual violations
+    raise SystemExit(f"config rejected: {e}")
+
+try:
+    stats = gg.get_streams().stats("telemetry")
+except GgStreamError as e:
+    if e.code == 4:        # ERR_FULL — no named constant exported
+        pass               # back off and retry later
+    else:
+        raise
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+use ggcommons::{GgCommonsBuilder, GgError};
+
+let gg = match GgCommonsBuilder::new("com.example.MyComponent")
+    .args(std::env::args_os())
+    .build()
+    .await
+{
+    Ok(gg) => gg,
+    Err(GgError::Cli(msg)) => {
+        eprintln!("bad CLI args: {msg}");
+        std::process::exit(2);   // the app decides to exit — the library never does
+    }
+    Err(GgError::Config(msg)) | Err(GgError::Validation(msg)) => {
+        eprintln!("config rejected: {msg}");
+        std::process::exit(1);
+    }
+    Err(e) => {
+        eprintln!("startup failed: {e}");
+        std::process::exit(1);
+    }
+};
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+import { GgError, GgStreamError } from "@mbreissi/ggcommons";
+
+try {
+  validate(config);
+} catch (e) {
+  if (e instanceof GgError && e.kind === "Validation") {
+    console.error(`config rejected: ${e.message}`);
+    process.exit(1);            // the app decides to exit — the library never does
+  }
+  throw e;
+}
+
+try {
+  const stats = await gg.streams()?.stats("telemetry");
+} catch (e) {
+  // streaming is a separate class, NOT GgError kind "Streaming"
+  if (e instanceof GgStreamError && e.code === 4 /* ERR_FULL */) {
+    // back off and retry later
+  } else {
+    throw e;
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+## Process exit and SIGTERM
+
+Whether a failure (or shutdown) ends the OS process differs sharply across the SDKs. This matters
+when a supervisor (the Nucleus, a container runtime, Kubernetes) watches the exit code.
+
+<Aside type="caution" title="Exit behavior is not uniform">
+- **Java** calls `System.exit(0)` in exactly **one** place: the `-h`/`--help` usage path, after
+  printing help. Its SIGTERM/shutdown hook deliberately does **not** call `System.exit` — the JVM
+  exits 0 once the hooks finish.
+- **Python**'s library error types do not exit, but the `GGCommons` orchestrator **does** call
+  `sys.exit(0)` from its SIGTERM handler. Net effect: **on SIGTERM, Python exits the process and
+  Java does not.**
+- **Rust** and **TypeScript** never exit the process from the library — they return or throw and let
+  your application decide (the handler examples above call `process::exit` / `process.exit`
+  explicitly, in app code).
+</Aside>
+
+<Aside type="note">
+Whatever the exit path, always unsubscribe and handle SIGTERM cleanly before exit — a leaked
+subscription or thread can trip the shared-connection quota on the next run.
+</Aside>
+
+## See also
+
+<LinkCard title="Entry point & builder" href="/reference/entry-point/" description="The accessors that surface these errors, and the opt-in null/None/Option/undefined contract." />
+<LinkCard title="Configuration reference" href="/reference/configuration/" description="The config sources and JSON-schema validation that raise ConfigurationException / ConfigurationValidationException." />
+<LinkCard title="Streaming reference" href="/reference/streaming/" description="The telemetry-streaming subsystem behind GgStreamException / GgStreamError and the ggsl_status code." />

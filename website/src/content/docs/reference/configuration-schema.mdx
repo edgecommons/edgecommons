@@ -1,0 +1,557 @@
+---
+title: Configuration schema reference
+description: Exhaustive, language-agnostic field reference for the GGCommons config document — every section, type, default, and the platform-specific precedence rules.
+sidebar:
+  order: 15
+---
+
+import { Tabs, TabItem, Aside, LinkCard } from "@astrojs/starlight/components";
+
+Every GGCommons component is driven by a single JSON **config document** that is validated against
+one canonical JSON Schema. That schema is **shared, byte-for-byte, across all four SDKs** (Java,
+Python, Rust, TypeScript) — there is no language-specific config dialect. This page is the exhaustive
+field reference: for **every** section it lists each field's type, default, allowed values, and
+meaning, exactly as declared in the schema.
+
+This is a data reference, not an API reference. For how to *read* the document from component code —
+typed accessors, change listeners, hot reload — see the [config API reference](/reference/config/)
+and the [Configuration guide](/guides/configuration/).
+
+## Where the schema lives
+
+The single source of truth is `schema/ggcommons-config-schema.json` (JSON Schema draft-07). Each
+library embeds a generated copy (`libs/java/.../resources/`, `libs/python/ggcommons/resources/`,
+`libs/rust/resources/`, `libs/ts/src/config/schema.json`). **Never hand-edit a per-library copy** —
+edit the canonical file, then run the sync script to propagate it. CI fails on drift.
+
+<Tabs syncKey="os">
+<TabItem label="Linux">
+
+```bash
+./schema/sync-schema.sh           # copy canonical schema into libs/{java,python,rust,ts}
+./schema/sync-schema.sh --check   # the drift gate CI runs
+```
+
+</TabItem>
+<TabItem label="Windows">
+
+```powershell
+.\schema\sync-schema.ps1          # copy canonical schema into libs/{java,python,rust,ts}
+.\schema\sync-schema.ps1 --check  # the drift gate CI runs
+```
+
+</TabItem>
+</Tabs>
+
+## Validation policy
+
+Validation is **fail-closed** in every language: a missing schema or any validation failure is a hard
+error at startup, never a silent skip. The public entry points are `ConfigurationValidator.validate`
+(Java/Python), `ggcommons::config::validation::validate` (Rust), and `validate` (TypeScript / Ajv).
+
+The top level is **strict**: `additionalProperties: false` and `required: ["component"]`. An unknown
+or mistyped top-level key is rejected. Each named section (`logging`, `metricEmission`, `messaging`,
+`streaming`, `credentials`, `parameters`, `health`, and the rest) is **also strict** —
+`additionalProperties: false` with fully-described fields.
+
+<Aside type="caution" title="The subsystem sections are strict, not permissive">
+Older notes (including `schema/README.md`) describe the subsystem sections as "permissive
+(`additionalProperties: true`)". That is **wrong** against the canonical schema, which fully
+describes every section with `additionalProperties: false`. Only a few **nested subtrees** are
+genuinely open for arbitrary keys: `component.global` and each `component.instances[]` entry
+(arbitrary component-specific keys), plus the kafka sink `properties` map. `tags` and `logging.loggers`
+accept any matching key but constrain the value (string / level enum). Everything else rejects unknown
+keys.
+</Aside>
+
+### `component` is the only required section
+
+`component` is the single required top-level key. Every other section is optional, and the newer
+subsystems are **opt-in**: the matching accessor returns null / `None` / `undefined` (and the
+subsystem stays dormant) unless its config section is present. The ten top-level sections are:
+
+| Section | Purpose |
+|---------|---------|
+| `logging` | Console + optional rotated file logging, per-logger levels, per-language format. |
+| `metricEmission` | Where metrics go (log / messaging / CloudWatch / Prometheus) and target tuning. |
+| `heartbeat` | Periodic system-metric publishing and its targets. |
+| `tags` | Custom template variables for paths and topics. |
+| `component` (**required**) | Your component's own config — global and per-instance. |
+| `messaging` | Dual-MQTT broker config (local + optional IoT Core). |
+| `streaming` | High-rate telemetry streams to Kinesis/Kafka via the embedded buffer. |
+| `credentials` | Encrypted local vault + optional central sync from AWS Secrets Manager. |
+| `parameters` | Offline-first externalized config (env / mountedDir / AWS SSM). |
+| `health` | Kubernetes HTTP health/readiness endpoint. |
+
+<Aside type="note" title="Numbers vs integers">
+Most numeric fields are typed `number` (not `integer`) **on purpose**: Greengrass delivers config
+numbers as doubles (for example `300.0`), and the libraries parse them leniently. A handful of fields
+are still declared `integer` in the schema (`heartbeat.intervalSecs`, `health.port`,
+`logging.fileLogging.backupCount`, the MQTT/Prometheus ports).
+</Aside>
+
+{/* TODO: unverified - several fields declared `integer` in the schema (heartbeat.intervalSecs, health.port, fileLogging.backupCount) are parsed leniently from Greengrass doubles in code; whether the draft-07 validator runs before that lenient parse (and could reject a Greengrass-supplied 5.0) was not traced end-to-end. */}
+
+## Precedence and platform defaults
+
+Many defaults are not fixed constants — they depend on the resolved **platform**. Every defaultable
+setting follows one rule:
+
+```text
+resolve(setting) = explicit config field  ▸  platform-profile default  ▸  library default
+```
+
+That is: an explicit value in your config always wins; if absent, the active platform profile
+supplies a default; if the profile has none, the library's built-in default applies. The platform is
+`GREENGRASS`, `HOST`, or `KUBERNETES` (auto-detected unless you pass `--platform`). The settings that
+differ by platform:
+
+| Setting | GREENGRASS | HOST | KUBERNETES | Library default |
+|---------|-----------|------|------------|-----------------|
+| `metricEmission.target` | (none) | (none) | `prometheus` | `log` |
+| metric-log path (`metricEmission.targetConfig.logFileName`) | (none) | local path \* | local path \* | `/greengrass/v2/logs/{ComponentFullName}.metric.log` |
+| logging format (`logging.<lang>_format`) | (none) | (none) | `json` (stdout-JSON sink) | console/text |
+| `health.enabled` | `false` | `false` | `true` | `false` |
+| `credentials.vault.keyProvider.type` | (none) | (none) | `env` | `file` |
+
+\* The local metric-log path constant is `./logs/{ComponentFullName}.metric.log` in Java, Rust, and
+TypeScript, but `./logs/{ComponentFullName}_metric.log` (underscore, not dot) in **Python** — a
+real cross-language divergence to be aware of when scraping metric logs from a HOST/Kubernetes run.
+
+<Aside type="note" title="Two platform-default nuances">
+The `KUBERNETES` credentials default only changes the default key-provider **type** — it never
+auto-enables credentials; the `credentials` section must already be present. And in the Rust SDK the
+`prometheus` Kubernetes default is feature-gated: it applies only with the `metrics-prometheus` cargo
+feature, otherwise Rust falls back to `log` with a warning. Java/Python/TS apply `prometheus`
+unconditionally.
+</Aside>
+
+## `logging`
+
+Console logging plus optional size-rotated file logging. Object, strict.
+
+| Field | Type | Default | Allowed values | Meaning |
+|-------|------|---------|----------------|---------|
+| `level` | string | `INFO` | `TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR`, `FATAL` | Root logger level. |
+| `java_format` | string | (none) | — | Log4j2 PatternLayout. Applied **only by Java**; other SDKs ignore it. |
+| `python_format` | string | (none) | — | `logging.Formatter` string. Applied **only by Python**. |
+| `rust_format` | string | (none) | — | Token format (`{timestamp}` `{level}` `{target}` `{message}`). Applied **only by Rust**. |
+| `ts_format` | string | (none) | — | Token format (`{timestamp}` `{level}` `{logger}` `{message}`). Applied **only by TypeScript**. |
+| `fileLogging` | object (strict) | — | — | Rotated file logging (below); requires `enabled`. |
+| `fileLogging.enabled` | boolean | `false` | — | Enable file logging. |
+| `fileLogging.filePath` | string | (none) | — | Log file path (supports template variables). |
+| `fileLogging.maxFileSize` | string | `10MB` | e.g. `512KB`, `10MB`, `1GB` | Size at which the file rotates. |
+| `fileLogging.backupCount` | integer (min 0) | `5` | — | Number of rotated backups to keep. |
+| `loggers` | object | — | keys `^[a-zA-Z0-9._-]+$` → level enum | Per-logger level overrides. |
+| `globalControl` | boolean | `false` | — | Apply logging config to the whole application, not just GGCommons. |
+
+Each library reads **only its own** `<lang>_format` key and ignores the other three. The
+case-insensitive token `json` in a `<lang>_format` field selects the structured stdout-JSON sink — it
+is the default on the `KUBERNETES` platform.
+
+## `metricEmission`
+
+Where metrics are sent, plus target-specific tuning. Object, strict.
+
+| Field | Type | Default | Allowed values | Meaning |
+|-------|------|---------|----------------|---------|
+| `target` | string | `log` | `log`, `messaging`, `cloudwatch`, `cloudwatchcomponent`, `prometheus` | Metric destination. `prometheus` is pull-based (in-process registry exposed as OpenMetrics over HTTP) and is the `KUBERNETES` default. |
+| `namespace` | string | `ggcommons` | — | CloudWatch namespace. |
+| `largeFleetWorkaround` | boolean | `false` | — | Enable the large-fleet emit workaround. |
+| `targetConfig` | object (strict) | — | — | Target-specific config (below). |
+
+### `metricEmission.targetConfig`
+
+Several fields here have **no schema default**; the library default is shown in parentheses (and is
+applied in code, not by the schema).
+
+| Field | Type | Default | Allowed values | Meaning |
+|-------|------|---------|----------------|---------|
+| `logFileName` | string | (code: `/greengrass/v2/logs/{ComponentFullName}.metric.log`) | — | File for the `log` target (template variables). Overridden to a local path on HOST/Kubernetes — see [Precedence](#precedence-and-platform-defaults). |
+| `maxFileSize` | string | (code: `10MB`) | — | Rotation size for the `log` target. |
+| `topic` | string | (code: `{ThingName}/{ComponentName}/metric`, or `cloudwatch/metric/put` for `cloudwatchcomponent`) | — | Topic for the `messaging` / cloudwatch-component targets. |
+| `destination` | string | (code: `ipc`) | `ipc`, `local`, `iotcore`, `iot_core` | Destination for the `messaging` target. `ipc`/`local` = local transport; `iotcore`/`iot_core` = IoT Core. |
+| `intervalSecs` | integer (min 1) | (code: `5`) | — | Batch flush interval for the `cloudwatch` target. |
+| `port` | integer (1–65535) | `9090` | — | HTTP port for the `prometheus` target. |
+| `path` | string | `/metrics` | — | OpenMetrics exposition path for the `prometheus` target. |
+| `buffer` | object (strict) | — | — | Durable store-and-forward buffer for the `cloudwatch` target (below). |
+
+{/* NEEDS REVIEW: the targetConfig defaults marked "(code: ...)" have no schema `default`; the values shown are the library defaults read from config/model.rs and config/model.ts — confirm they match the Java and Python code paths. */}
+
+#### `metricEmission.targetConfig.buffer`
+
+Durable disk buffer that lets the `cloudwatch` target survive long cloud disconnects (drains via a
+host-callback `PutMetricData` sink).
+
+| Field | Type | Default | Allowed values | Meaning |
+|-------|------|---------|----------------|---------|
+| `type` | string | `durable` | `durable`, `memory` | `durable` = ggstreamlog disk buffer + callback drain; `memory` = in-memory batching. |
+| `path` | string | (code: `/var/lib/ggcommons/metrics/{ComponentName}/cw`) | — | Buffer directory (`durable` only; template variables). |
+| `maxDiskBytes` | number (min 0) | `134217728` (~128 MiB) | — | Maximum on-disk backlog in bytes. |
+| `onFull` | string | `dropOldest` | `dropOldest`, `block`, `rejectNew` | Behavior when the buffer reaches `maxDiskBytes`. |
+| `fsync` | string | `perBatch` | `perBatch`, `interval`, `always` | Durability flush policy. |
+
+## `heartbeat`
+
+Periodic system-metric publishing. Object, strict.
+
+| Field | Type | Default | Allowed values | Meaning |
+|-------|------|---------|----------------|---------|
+| `intervalSecs` | integer (min 1) | `5` | — | Heartbeat interval in seconds. |
+| `measures` | object (strict) | — | — | Which system metrics to include (below). |
+| `targets` | array of objects (strict) | `[{"type":"metric"}]` | — | Publish targets (below); each requires `type`. |
+
+### `heartbeat.measures`
+
+Availability of individual measures varies by language and platform.
+
+| Field | Type | Default | Meaning |
+|-------|------|---------|---------|
+| `cpu` | boolean | `true` | Include CPU usage. |
+| `memory` | boolean | `true` | Include memory usage. |
+| `disk` | boolean | `false` | Include disk usage (not on all platforms/languages). |
+| `threads` | boolean | `false` | Include thread count. |
+| `files` | boolean | `false` | Include open-file count. |
+| `fds` | boolean | `false` | Include file-descriptor count (not on all platforms/languages). |
+
+### `heartbeat.targets[]`
+
+| Field | Type | Default | Allowed values | Meaning |
+|-------|------|---------|----------------|---------|
+| `type` | string | (**required**) | `metric`, `messaging` | Target type. |
+| `config` | object (strict) | — | — | Target-specific config (below). |
+| `config.destination` | string | `ipc` | `ipc`, `local`, `iotcore`, `iot_core` | Messaging destination (for `messaging` targets). |
+| `config.topic` | string | `ggcommons/{ThingName}/{ComponentName}/heartbeat` | — | Topic template (for `messaging` targets). |
+| `topic` | string | (none) | — | Alternative to `config.topic`. |
+
+## `tags`
+
+Object whose keys match `^[a-zA-Z0-9_-]+$` and whose values are strings. Each tag becomes a custom
+**template variable**: a tag `site` is usable as `{site}` in any templated path or topic (alongside
+the built-ins `{ComponentName}`, `{ComponentFullName}`, and `{ThingName}`). Unknown-shaped keys are
+rejected.
+
+## `component` (required)
+
+Your component's own configuration. Object, strict at this level; the nested `global` and
+`instances[]` payloads are **open** (arbitrary keys).
+
+| Field | Type | Default | Meaning |
+|-------|------|---------|---------|
+| `global` | object (open — `additionalProperties: true`) | — | Config applied to all instances; arbitrary component keys. |
+| `instances` | array of objects (open; each requires `id`) | — | Per-instance config for multi-instance components. |
+| `instances[].id` | string | (**required**) | Unique instance identifier. |
+
+## `messaging`
+
+Dual-MQTT broker configuration — a local broker plus an optional AWS IoT Core connection. The same
+shape is used as the standalone messaging-config file passed via
+`--platform HOST --transport MQTT <file>`. In `GREENGRASS` mode, messaging uses IPC and this section
+is typically absent. Object, strict.
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `local` | object (`mqttBroker`) | The local MQTT broker connection (required when using the MQTT transport). |
+| `iotCore` | object (`mqttBroker`) | The optional AWS IoT Core connection (mutual TLS). |
+
+{/* NEEDS REVIEW: the schema description for `messaging` still references the removed `-m STANDALONE <file>` flag; the current contract passes this file via `--platform HOST --transport MQTT <file>`. */}
+
+### `mqttBroker`
+
+A single MQTT broker connection. Object, strict.
+
+| Field | Type | Default | Allowed values | Meaning |
+|-------|------|---------|----------------|---------|
+| `type` | string | (none) | — | Broker type tag (e.g. `mqtt`). Set by the Java/Python samples; **ignored by Rust/TS**. |
+| `host` | string | (none) | — | Broker host (used by the `local` broker). |
+| `endpoint` | string | (none) | — | Broker endpoint FQDN (used by the `iotCore` broker). |
+| `port` | integer (1–65535) | (none) | — | Broker port (e.g. `1883` plaintext, `8883` TLS). |
+| `clientId` | string | (none) | — | MQTT client id. |
+| `credentials` | object (`mqttCredentials`) | — | — | Broker authentication (below). |
+
+### `mqttCredentials`
+
+Broker authentication. Object, strict. There is **no boolean TLS flag**: TLS is triggered purely by
+the **presence** of the certificate fields.
+
+| Field | Type | Default | Meaning |
+|-------|------|---------|---------|
+| `username` | string | (none) | Username (local broker, plaintext auth). |
+| `password` | string | (none) | Password (local broker, plaintext auth). |
+| `certPath` | string | (none) | Client certificate path (TLS / mutual TLS). |
+| `keyPath` | string | (none) | Client private-key path (TLS / mutual TLS). |
+| `caPath` | string | (none) | CA bundle path (server-trust / mutual TLS). |
+
+**TLS trigger rules:** provide `username`/`password` for a plaintext local broker. Supplying
+`certPath` + `keyPath` (+ `caPath`) switches the connection to TLS / mutual TLS — used for IoT Core,
+and supported for the local broker too. A `caPath`-only local connection enables server-trust TLS
+without a client certificate.
+
+## `streaming`
+
+High-rate telemetry streaming to Kinesis or Kafka, fronted by the embedded durable/in-memory buffer.
+Object, strict.
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `streams` | array of objects (`stream`) | The set of named streams to open (below). |
+
+### `stream`
+
+A single telemetry stream. Object, strict; requires `name` and `sink`.
+
+| Field | Type | Default | Meaning |
+|-------|------|---------|---------|
+| `name` | string | (**required**) | Stream identifier. |
+| `sink` | object (`streamSink`) | (**required**) | Export destination (tagged union, below). |
+| `buffer` | object (`streamBuffer`) | — | Embedded buffer tuning (below). |
+| `batch` | object (`streamBatch`) | — | Export batching tuning (below). |
+| `delivery` | object (`streamDelivery`) | — | Retry/polling behavior (below). |
+
+### `stream.sink`
+
+A tagged union on `type` (exactly one variant). Strict.
+
+**`type: "kinesis"`** (requires `type`, `streamName`):
+
+| Field | Type | Default | Allowed values | Meaning |
+|-------|------|---------|----------------|---------|
+| `type` | string | — | `kinesis` | Selects the Kinesis sink. |
+| `streamName` | string | (**required**) | — | Kinesis data-stream name (template variables). |
+| `region` | string \| null | (none) | — | AWS region. |
+| `endpointUrl` | string \| null | (none) | — | Override endpoint (e.g. LocalStack/floci/VPC). |
+
+**`type: "kafka"`** (requires `type`, `bootstrapServers`, `topic`):
+
+| Field | Type | Default | Allowed values | Meaning |
+|-------|------|---------|----------------|---------|
+| `type` | string | — | `kafka` | Selects the Kafka sink. |
+| `bootstrapServers` | string | (**required**) | — | Kafka bootstrap servers. |
+| `topic` | string | (**required**) | — | Kafka topic. |
+| `properties` | object (open string→string) | — | — | Extra librdkafka producer properties. |
+
+### `stream.buffer`
+
+Embedded buffer. `disk` is durable/file-backed (needs `path`); `memory` is a non-durable RAM ring.
+Object, strict.
+
+| Field | Type | Default | Allowed values | Meaning |
+|-------|------|---------|----------------|---------|
+| `type` | string | `disk` | `disk`, `memory` | Buffer backing. |
+| `path` | string | (none) | — | Buffer directory (`disk` only). |
+| `segmentBytes` | number (min 0) | `67108864` (64 MiB) | — | Segment file size. |
+| `maxDiskBytes` | number (min 0) | `1073741824` (1 GiB) | — | Maximum on-disk (or in-memory byte) backlog. |
+| `maxAgeSecs` | number \| null (min 0) | (none) | — | Drop records older than this. |
+| `onFull` | string | `dropOldest` | `dropOldest`, `block`, `rejectNew` | Behavior when the buffer is full. |
+| `fsync` | string | `perBatch` | `always`, `perBatch`, `interval` | Durability flush policy. |
+| `fsyncIntervalMs` | number (min 0) | `1000` | — | Flush interval when `fsync: interval`. |
+| `maxBufferedRecords` | number (min 0) | `10000` | — | In-flight record cap. |
+
+### `stream.batch`
+
+Export batching tuning. Object, strict.
+
+| Field | Type | Default | Allowed values | Meaning |
+|-------|------|---------|----------------|---------|
+| `maxRecords` | number (min 0) | `500` | — | Max records per export batch. |
+| `maxBytes` | number (min 0) | `4194304` (4 MiB) | — | Max bytes per export batch. |
+| `maxLatencyMs` | number (min 0) | `1000` | — | Max time to wait before flushing a partial batch. |
+| `compression` | string | `none` | `none`, `zstd` | Batch compression. |
+
+### `stream.delivery`
+
+Export retry/polling behavior. Object, strict.
+
+| Field | Type | Default | Meaning |
+|-------|------|---------|---------|
+| `maxRetries` | number | (none — `-1` = retry forever) | Max delivery retries before giving up. |
+| `backoffBaseMs` | number (min 0) | `50` | Base backoff between retries. |
+| `backoffMaxMs` | number (min 0) | `30000` | Maximum backoff. |
+| `pollIntervalMs` | number (min 0) | `100` | Drain poll interval. |
+
+## `credentials`
+
+Encrypted local vault, with optional central sync from AWS Secrets Manager. Object, strict.
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `vault` | object (`credentialsVault`) | Local vault settings (below). |
+| `central` | object (`credentialsCentral`) | Optional central sync (below). |
+| `audit` | object (strict) | Access-audit logging — `audit.enabled` (boolean, default `true`); never logs secret values. |
+
+### `credentials.vault`
+
+Local encrypted vault settings. Object, strict.
+
+| Field | Type | Default | Meaning |
+|-------|------|---------|---------|
+| `path` | string | `vault` | Vault directory (template variables). |
+| `keyProvider` | object (`keyProvider`) | — | KEK custodian (below). |
+| `keepVersions` | number (min 0) | `2` | Number of prior secret versions to retain. |
+| `cacheTtlSecs` | number (min 0) | `300` | In-memory decrypt cache TTL. |
+
+### `keyProvider`
+
+The envelope-encryption KEK custodian, tagged by `type`. Used by both `credentials.vault.keyProvider`
+and `parameters.cache.keyProvider`. Fields not used by the selected type are ignored. Object, strict.
+
+| Field | Type | Default | Allowed values | Meaning |
+|-------|------|---------|----------------|---------|
+| `type` | string | `file` | `file`, `env`, `kms`, `greengrass`, `pkcs11` | KEK source. `env` is the offline software-KEK and the `KUBERNETES` default. |
+| `keyPath` | string \| null | (none) | — | `file`: path to the keyfile. |
+| `envVar` | string \| null | (default name `GGCOMMONS_VAULT_KEK`) | — | `env`: env var holding the base64-encoded 32-byte KEK (from a mounted Secret). |
+| `kmsKeyId` | string \| null | (none) | — | `kms`/`greengrass`: KMS key id/ARN. |
+| `region` | string \| null | (none) | — | `kms`/`greengrass`: AWS region. |
+| `endpointUrl` | string \| null | (none) | — | `kms`/`greengrass`: override endpoint. |
+| `modulePath` | string \| null | (none) | — | `pkcs11`: PKCS#11 module `.so`/`.dll` path. |
+| `tokenLabel` | string \| null | (none) | — | `pkcs11`: token label. |
+| `keyLabel` | string \| null | (none) | — | `pkcs11`: key label. |
+| `pinEnv` | string \| null | (none) | — | `pkcs11`: env var holding the PIN (preferred over inline `pin`). |
+| `pin` | string \| null | (none) | — | `pkcs11`: inline PIN (discouraged). |
+
+### `credentials.central`
+
+Optional central sync. Object, strict.
+
+| Field | Type | Default | Allowed values | Meaning |
+|-------|------|---------|----------------|---------|
+| `type` | string | `none` | `none`, `awsSecretsManager` | `none` = local-only. |
+| `region` | string \| null | (none) | — | AWS region. |
+| `endpointUrl` | string \| null | (none) | — | Override Secrets Manager endpoint. |
+| `refreshIntervalSecs` | number (min 0) | `300` | — | Background refresh interval. |
+| `bootstrapOnStart` | boolean | `true` | — | Pull declared secrets at startup. |
+| `sync.secrets` | array | — | — | Which secrets this device pulls (below). |
+
+Each entry in `sync.secrets` is either a **bare string** (the central id, a namespaced path) or an
+object `{ "name": "...", "from": "..." }` where `name` is the local name and `from` (string \| null)
+is an explicit or shared central id.
+
+## `parameters`
+
+Offline-first externalized config, reusing the credentials vault as an encrypted cache. Object,
+strict.
+
+| Field | Type | Default | Meaning |
+|-------|------|---------|---------|
+| `source` | object (`paramSource`) | — | Where parameters come from (below). |
+| `cache` | object (`paramCache`) | — | Offline-first cache (below). |
+| `refreshIntervalSecs` | number (min 0) | `300` | Background refresh interval (`0` = no periodic refresh). |
+| `bootstrapOnStart` | boolean | `true` | Pull the declared sync names/paths at startup (non-fatal on failure). |
+| `sync` | object (`paramSync`) | — | Selective bootstrap/refresh selection (below). |
+
+### `parameters.source`
+
+Parameter source, tagged by `type`. Fields not used by the selected type are ignored. Object, strict.
+
+| Field | Type | Default | Allowed values | Meaning |
+|-------|------|---------|----------------|---------|
+| `type` | string | `none` | `none`, `env`, `mountedDir`, `awsSsm` | Source kind. |
+| `prefix` | string | (none) | — | `env`: variable-name prefix (e.g. `GG_PARAM_`). |
+| `root` | string | (none) | — | `mountedDir`: root directory of the mounted tree. |
+| `securePaths` | array of string | (none) | — | `mountedDir`: path prefixes whose values are sensitive. |
+| `region` | string \| null | (none) | — | `awsSsm`: AWS region. |
+| `endpointUrl` | string \| null | (none) | — | `awsSsm`: override SSM endpoint. |
+| `withDecryption` | boolean | `true` | — | `awsSsm`: decrypt `SecureString` parameters. |
+
+### `parameters.cache`
+
+Offline-first cache. Persistence is source-aware by default: remote sources persist encrypted, local
+sources stay in memory. Object, strict.
+
+| Field | Type | Default | Meaning |
+|-------|------|---------|---------|
+| `persist` | boolean \| null | (none — source-aware) | Override the source-aware persistence default. |
+| `path` | string | `param-cache` | Cache directory. |
+| `keyProvider` | object (`keyProvider`) | — | KEK custodian for the encrypted cache (see [`keyProvider`](#keyprovider)). |
+
+### `parameters.sync`
+
+Selective bootstrap/refresh — which parameters to pull. Object, strict.
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `names` | array of string | Explicit parameter names to sync. |
+| `paths` | array | Path prefixes to sync; each entry is a bare string (recursive) or `{ "path": "...", "recursive": true }`. |
+
+## `health`
+
+Kubernetes HTTP health/readiness endpoint. Exposes `GET /livez` (process alive; never checks the
+broker), `GET /readyz` (200 only when messaging is connected **and** the component is ready; 503
+during startup and shutdown), and an optional `GET /startupz`. Object, strict.
+
+| Field | Type | Default | Allowed values | Meaning |
+|-------|------|---------|----------------|---------|
+| `enabled` | boolean | (tri-state — see below) | — | Enable the HTTP health server. |
+| `port` | integer (1–65535) | `8081` | — | TCP port the server listens on. |
+| `livenessPath` | string | `/livez` | — | Liveness route. |
+| `readinessPath` | string | `/readyz` | — | Readiness route. |
+| `startupPath` | string | `/startupz` | — | Startup route (reuses readiness semantics). |
+
+`health.enabled` has **no schema default** — it is tri-state. When absent, the platform decides:
+`true` on `KUBERNETES`, `false` everywhere else. Set it explicitly to force the behavior.
+
+## A complete example
+
+A multi-section component config document (this validates clean against the schema):
+
+```json
+{
+  "logging": { "level": "DEBUG", "rust_format": "{timestamp} [{level}] {target} - {message}" },
+  "heartbeat": {
+    "intervalSecs": 5,
+    "measures": { "cpu": true, "memory": true },
+    "targets": [ { "type": "metric" } ]
+  },
+  "metricEmission": { "target": "log", "namespace": "ggcommons" },
+  "credentials": {
+    "vault": {
+      "path": "./.vault/vault",
+      "keyProvider": { "type": "file", "keyPath": "./.vault/vault.key" }
+    }
+  },
+  "parameters": {
+    "source": { "type": "env", "prefix": "GG_PARAM_" },
+    "refreshIntervalSecs": 0,
+    "sync": { "names": ["/skeleton/region", "/skeleton/poolSize"] }
+  },
+  "tags": { "site": "factory-1" },
+  "component": {
+    "global": { "publish_interval": 3 },
+    "instances": [ { "id": "main" } ]
+  }
+}
+```
+
+The `messaging` section is most often supplied as a **separate** file passed via
+`--platform HOST --transport MQTT <file>`, rather than embedded in the component config:
+
+```json
+{
+  "messaging": {
+    "local": { "host": "localhost", "port": 1883, "clientId": "ts-skeleton-local" }
+  }
+}
+```
+
+More committed examples live under `examples/{java,python,rust,ts}/test-configs/` and
+`templates/*/test-configs/`.
+
+## Related pages
+
+<LinkCard
+  title="Configuration guide"
+  href="/guides/configuration/"
+  description="Config sources, template variables, change listeners, and hot reload — with code in all four languages."
+/>
+
+<LinkCard
+  title="Config API reference"
+  href="/reference/config/"
+  description="The typed accessors for reading each section from your component code."
+/>
+
+<LinkCard
+  title="Platforms & transports"
+  href="/start/platforms-and-transports/"
+  description="How the platform and transport are selected and what each profile defaults to."
+/>

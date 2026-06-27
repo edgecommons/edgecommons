@@ -1,0 +1,49 @@
+---
+title: GGCommons
+description: One SDK, four languages — Java, Python, Rust, and TypeScript — for building AWS IoT Greengrass v2 components.
+template: splash
+hero:
+  tagline: The Greengrass Commons SDK. The same library in Java, Python, Rust, and TypeScript — so your components carry only business logic.
+  actions:
+    - text: Get started
+      link: /start/introduction/
+      icon: right-arrow
+    - text: View on GitHub
+      link: https://github.com/mbreissi/ggcommons
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+GGCommons bundles the cross-cutting concerns every edge component needs — configuration,
+messaging, metrics, heartbeat, logging, credentials, parameters, and telemetry streaming — behind
+clean interfaces, implemented as deliberate mirrors across **four languages**.
+
+<CardGrid stagger>
+	<Card title="One API, four languages" icon="seti:default">
+		Java, Python, Rust, and TypeScript share the same config schema, CLI contract, subsystem
+		boundaries, and on-wire message envelope. Java is the canonical reference.
+	</Card>
+	<Card title="Platform × transport" icon="laptop">
+		Run the same component on Greengrass (IPC), a bare host or Docker (dual-MQTT), or Kubernetes —
+		selected at startup, auto-detected by default.
+	</Card>
+	<Card title="Batteries included" icon="setting">
+		Configuration, messaging, metrics, heartbeat, and logging out of the box; opt-in credentials,
+		parameters, and telemetry streaming when you need them.
+	</Card>
+	<Card title="Edge-first" icon="rocket">
+		Offline-capable by design — encrypted local vault, offline parameter cache, and durable
+		store-and-forward streaming that survives cloud disconnects.
+	</Card>
+</CardGrid>
+
+## Start here
+
+<CardGrid>
+	<LinkCard title="Introduction" href="/start/introduction/" description="What GGCommons is and how the pieces fit together." />
+	<LinkCard title="Quickstart" href="/start/quickstart/" description="Scaffold, build, and run your first component in your language." />
+	<LinkCard title="Guides" href="/guides/components/" description="Conceptual guides for every subsystem, in all four languages." />
+	<LinkCard title="API Reference" href="/reference/overview/" description="The public API surface, verified against source." />
+</CardGrid>

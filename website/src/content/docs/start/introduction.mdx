@@ -1,0 +1,241 @@
+---
+title: Introduction
+description: GGCommons is one SDK in four languages for AWS IoT Greengrass v2 components — config, messaging, metrics, and more behind one builder.
+sidebar:
+  order: 1
+---
+
+import { Tabs, TabItem, Aside, CardGrid, LinkCard } from "@astrojs/starlight/components";
+
+**GGCommons** (Greengrass Commons) is one SDK that gives every AWS IoT Greengrass v2
+component the cross-cutting plumbing it would otherwise rewrite by hand — configuration,
+messaging, metrics, heartbeat, and logging — plus opt-in **credentials**, **parameters**, and
+**telemetry streaming**. You wire it up once at startup and write only business logic.
+
+The unusual part: GGCommons is implemented **four times**, in **Java, Python, Rust, and
+TypeScript**, as deliberate mirrors of one another. The same config schema, the same CLI
+contract, the same subsystem boundaries, and the same on-wire message envelope apply to all four.
+**Java is the canonical reference**; the other three track it.
+
+## What's in the box
+
+Every component gets these subsystems out of the box — they are always present:
+
+- **config** — loads the component config from one of several sources (`FILE`, `ENV`,
+  `GG_CONFIG`, `SHADOW`, `CONFIG_COMPONENT`, `CONFIGMAP`), validates it against the canonical JSON
+  schema, substitutes template variables like `{ComponentName}` and `{ThingName}`, and supports
+  hot reload.
+- **messaging** — one interface over two transports (Greengrass IPC and dual-MQTT). Connections
+  and subscriptions block until confirmed; request/reply uses correlation IDs; the message
+  envelope is identical across all four languages.
+- **metrics** — pluggable targets: CloudWatch EMF, a cloudwatch component, the messaging bus, a
+  local rotated log file, or a pull-based Prometheus endpoint.
+- **heartbeat** — periodic system metrics (CPU, memory, disk, threads, file descriptors) emitted
+  through the metric or messaging subsystem.
+- **logging** — console logging plus optional size-rotated file logging, with a per-language
+  format token (`java_format`, `python_format`, `rust_format`, `ts_format`).
+
+Three more subsystems are **opt-in** — their accessor returns nothing unless the matching config
+section is present:
+
+- **credentials** — an encrypted local vault (envelope encryption) with optional central sync from
+  AWS Secrets Manager.
+- **parameters** — offline-first externalized config from env, a mounted directory, or AWS SSM,
+  reusing the credentials vault as an encrypted cache.
+- **streaming** — high-rate telemetry streaming with a durable (or in-memory) store-and-forward
+  buffer that drains to Kinesis or Kafka.
+
+<Aside type="note" title="Opt-in means absent by default">
+  When a subsystem's config section is missing, its accessor returns the language's "nothing"
+  value — `null` in Java, `None` in Python, `undefined` in TypeScript. In Rust, `credentials()`
+  and `parameters()` return `Option<…>` (so `None`), while `streams()` always returns a service
+  that is simply empty. Rust additionally gates each opt-in behind a Cargo feature
+  (`credentials`, `parameters`, `streaming`), off by default — without the feature the accessor
+  does not exist.
+</Aside>
+
+## Platform × transport, at a glance
+
+A component runs on a **platform** and talks over a **transport**. These are two orthogonal axes,
+chosen at startup with `--platform` and `--transport`:
+
+| Platform | What it is | Default transport | Default config source |
+|----------|-----------|-------------------|-----------------------|
+| `GREENGRASS` | On-device, Nucleus-managed | `IPC` | `GG_CONFIG` |
+| `HOST` | Docker or a bare host | `MQTT` (dual: local broker + AWS IoT Core) | `FILE` |
+| `KUBERNETES` | A pod in a cluster | `MQTT` | `CONFIGMAP` |
+
+The transport is one of `IPC` (Greengrass IPC, valid **only** on `GREENGRASS`) or `MQTT`
+(the dual-MQTT provider that connects to a local broker and, optionally, AWS IoT Core).
+
+By default `--platform` is `auto`: the library detects the platform from the environment
+(Greengrass Nucleus signals first, then a Kubernetes service-account token, then a `HOST`
+fallback) and derives the transport, config source, and other defaults from the resolved platform
+profile. An explicit `--platform` or `--transport` always wins. See the
+[Quickstart](/start/quickstart/) for runnable command lines.
+
+<Aside type="tip" title="One contract, every language">
+  The CLI flags are identical across all four SDKs: `-c/--config <SOURCE> [args...]`,
+  `--platform <PLATFORM>`, `--transport <TRANSPORT> [path]`, and `-t/--thing <name>`. The legacy
+  `-m/--mode` flag has been removed and now errors with guidance to use `--platform` /
+  `--transport`.
+</Aside>
+
+## The mental model
+
+Working with GGCommons is the same three steps in every language:
+
+1. **Build the runtime once.** A fluent builder (`GGCommonsBuilder` / `GgCommonsBuilder`) takes
+   your component name and the process arguments and returns a single runtime object. That object
+   parses the CLI, resolves the platform profile, loads and validates config, and wires up every
+   subsystem.
+2. **Reach subsystems through accessors.** Hold the runtime for your component's lifetime and ask
+   it for what you need — messaging, metrics, config, and the opt-ins. Each accessor returns the
+   already-wired service.
+3. **Let the library own the lifecycle.** GGCommons installs its own signal handling and tears
+   subsystems down on shutdown — you do **not** register your own signal handler.
+
+<Aside type="caution" title="Don't wire your own shutdown hook">
+  The library owns `SIGTERM`/`SIGINT` itself (Java installs a JVM shutdown hook; Python installs a
+  `SIGTERM` handler; TypeScript installs `SIGTERM` and `SIGINT` handlers). Registering another hook
+  just double-runs teardown. Rust has no `close()`/`shutdown()` at all — teardown is RAII: dropping
+  the runtime aborts its background tasks. You may still call the explicit `shutdown()` (Java/Python)
+  or `close()` (TypeScript) yourself; both are idempotent.
+</Aside>
+
+## A first bootstrap
+
+The shape is the same everywhere — only the naming conventions differ. Note especially how each
+language passes process arguments and how each one shuts down.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+import com.mbreissi.ggcommons.GGCommons;
+import com.mbreissi.ggcommons.GGCommonsBuilder;
+
+public static void main(String[] args) {
+    // Build the runtime from the standard CLI args (use the FULL component name).
+    GGCommons gg = GGCommonsBuilder.create("com.mbreissi.greengrass.JavaComponentSkeleton")
+            .withArgs(args)
+            .build();
+
+    var config    = gg.getConfigManager();
+    var messaging = gg.getMessaging();
+    var metrics   = gg.getMetrics();
+
+    // ... business logic ...
+    // The library wired SIGTERM/SIGINT to a graceful, idempotent shutdown() — do not add your own.
+}
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+import sys
+from ggcommons.ggcommons_builder import GGCommonsBuilder
+
+gg = GGCommonsBuilder.create("com.example.python.Component") \
+    .with_args(sys.argv[1:]) \
+    .build()
+
+config    = gg.get_config_manager()
+messaging = gg.get_messaging()   # the MessagingClient class (its operations are static)
+metrics   = gg.get_metrics()
+
+# ... business logic ...
+gg.shutdown()   # or: with GGCommonsBuilder.create(...).build() as gg:
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+use ggcommons::prelude::*;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let gg = GgCommonsBuilder::new("com.example.SkeletonComponent")
+        .args(std::env::args_os())   // argv INCLUDES the program name
+        .build()
+        .await?;
+
+    let cfg     = gg.config();
+    let metrics = gg.metrics();
+    if let Ok(messaging) = gg.messaging() {   // returns a Result, not an Option
+        let _ = messaging;
+    }
+
+    // ... business logic ...
+    Ok(())   // dropping `gg` here releases every resource (RAII) — there is no close()
+}
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+import { GGCommonsBuilder } from "@mbreissi/ggcommons";
+
+const gg = await new GGCommonsBuilder("com.example.Component")
+  .args(process.argv.slice(2))   // argv WITHOUT the node/script prefix
+  .build();
+
+const config    = gg.config();
+const messaging = gg.messaging();   // throws if no transport is wired
+const metrics   = gg.metrics();
+
+// ... business logic ...
+await gg.close();   // idempotent
+```
+
+</TabItem>
+</Tabs>
+
+<Aside type="note" title="Accessor names follow each language's conventions">
+  Java uses `getMessaging()` / `getMetrics()` / `getConfigManager()`; Python uses the
+  `snake_case` `get_messaging()` / `get_metrics()` / `get_config_manager()`; Rust and TypeScript
+  drop the `get` prefix: `messaging()` / `metrics()` / `config()`. Java and Python expose a
+  `ConfigManager` with per-section getters, while Rust and TypeScript hand you an immutable `config()`
+  snapshot. The behavior behind the names is the same.
+</Aside>
+
+## How four-way parity works
+
+The four SDKs stay aligned because they share their contracts, not their code:
+
+- **One config schema.** The JSON schema lives only at `schema/ggcommons-config-schema.json` and is
+  synced into each library; CI fails on drift. Every library validates fail-closed against its
+  embedded copy.
+- **One CLI contract.** The same flags, defaults, platform profiles, and auto-detection rules are
+  implemented by a shared resolver design in each language.
+- **One message envelope.** The on-wire format is identical, so a component in any language can talk
+  to a component in any other.
+- **Java is canonical.** When public behavior changes, it changes in Java first; the other three
+  mirror it. Differences that remain are idiomatic (naming, `Option` vs `null`, RAII vs explicit
+  shutdown), never behavioral.
+
+This is why the snippets above look like the same program written four ways — that is exactly what
+they are.
+
+## Where to go next
+
+<CardGrid>
+  <LinkCard
+    title="Quickstart"
+    href="/start/quickstart/"
+    description="Scaffold, build, and run your first component end to end, in your language."
+  />
+  <LinkCard
+    title="Guides"
+    href="/guides/components/"
+    description="Conceptual, per-subsystem walkthroughs — config, messaging, metrics, and more."
+  />
+  <LinkCard
+    title="API Reference"
+    href="/reference/overview/"
+    description="The public API surface for all four languages, verified against source."
+  />
+</CardGrid>

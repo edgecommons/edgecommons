@@ -1,0 +1,427 @@
+---
+title: Parameters API
+description: API reference for the opt-in parameters subsystem — the factory, ParameterService methods, sources, ParamValue, and ParameterStats across all four SDKs.
+sidebar:
+  order: 12
+---
+
+import { Tabs, TabItem, Aside, LinkCard, CardGrid } from "@astrojs/starlight/components";
+
+API reference for the **opt-in** parameters subsystem. This page lists the public surface verified
+against source; for the conceptual model, refresh semantics, and config keys, read the
+[Parameters guide](/guides/parameters/).
+
+The subsystem is opt-in: the `gg` accessor returns nothing unless a `parameters` section is present
+in the active config (Rust additionally requires the `parameters` cargo feature). Reads are always
+served from a local cache — the network is touched only on `refresh()`.
+
+<Aside type="note" title="Names used here">
+Each SDK uses its own idiomatic names. This page shows the real per-language identifiers (for
+example Java `getParameters()`, Python `get_parameters()`, Rust `parameters()`, TypeScript
+`parameters()`) — never a generic shorthand.
+</Aside>
+
+## The accessor
+
+Fetch the `ParameterService` from your `GGCommons` instance. It is `null` / `None` / `undefined`
+when the `parameters` section is absent (Rust: also when the `parameters` feature is off). Depend on
+the `ParameterService` interface, not the concrete `DefaultParameterService`.
+
+| SDK | Accessor | Returns | Empty when |
+|-----|----------|---------|------------|
+| Java | `ParameterService getParameters()` | `ParameterService` or `null` | no `parameters` section |
+| Python | `get_parameters()` | service or `None` | no `parameters` section |
+| Rust | `fn parameters(&self) -> Option<Arc<dyn ParameterService>>` | `Some` / `None` | no section **or** `parameters` feature off |
+| TypeScript | `parameters(): ParameterService \| undefined` | service or `undefined` | no `parameters` section |
+
+The `gg` instance owns the service lifecycle — it stops the background refresher at component
+shutdown — so you do not call `close()` yourself on the accessor-returned service.
+
+### Rust feature gating
+
+The Rust accessor is compiled in only with the `parameters` feature; the `awsSsm` source
+additionally needs `parameters-aws`. Without `parameters`, `gg.parameters()` always returns `None`.
+
+```toml
+[dependencies]
+ggcommons = { version = "*", features = ["parameters"] }
+# add "parameters-aws" as well to use the awsSsm source
+```
+
+## ParameterService
+
+The interface to depend on. Six core methods plus four typed accessors (default/concrete methods
+that parse the underlying string). Signatures as they appear in source:
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+public interface ParameterService {
+    Optional<String>           get(String name);
+    Optional<byte[]>           getBytes(String name);
+    Map<String, String>        getByPath(String path);   // path = prefix; no recursive arg
+    List<String>               names(String prefix);      // pass "" for all
+    void                       refresh();
+    ParameterStats             stats();
+
+    // typed accessors (default methods on the interface)
+    default Optional<Long>          getInt(String name);
+    default Optional<Boolean>       getBool(String name);
+    default Optional<JsonElement>   getJson(String name);
+    default Optional<List<String>>  getStringList(String name);
+}
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+class ParameterService(ABC):
+    def get(self, name) -> Optional[str]: ...
+    def get_bytes(self, name) -> Optional[bytes]: ...
+    def get_by_path(self, path) -> Dict[str, str]: ...   # path = prefix; no recursive arg
+    def names(self, prefix) -> List[str]: ...            # pass "" for all
+    def refresh(self) -> None: ...
+    def stats(self) -> ParameterStats: ...
+
+    # typed accessors (concrete methods on the base class)
+    def get_int(self, name) -> Optional[int]: ...
+    def get_bool(self, name) -> Optional[bool]: ...
+    def get_json(self, name): ...                         # parsed JSON object
+    def get_string_list(self, name) -> Optional[List[str]]: ...
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+pub trait ParameterService: Send + Sync {
+    fn get(&self, name: &str) -> Result<Option<String>>;
+    fn get_bytes(&self, name: &str) -> Result<Option<Vec<u8>>>;
+    fn get_by_path(&self, path: &str) -> Result<BTreeMap<String, String>>; // prefix; no recursive arg
+    fn names(&self, prefix: &str) -> Result<Vec<String>>;                  // pass "" for all
+    fn refresh(&self) -> Result<()>;
+    fn stats(&self) -> ParameterStats;
+
+    // typed accessors (trait-default methods)
+    fn get_int(&self, name: &str) -> Result<Option<i64>>;
+    fn get_bool(&self, name: &str) -> Result<Option<bool>>;
+    fn get_json(&self, name: &str) -> Result<Option<serde_json::Value>>;
+    fn get_string_list(&self, name: &str) -> Result<Option<Vec<String>>>;
+}
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+interface ParameterService {
+  get(name: string): string | undefined;
+  getBytes(name: string): Buffer | undefined;
+  getByPath(path: string): Map<string, string>;   // path = prefix; no recursive arg
+  names(prefix: string): string[];                 // pass "" for all
+  refresh(): Promise<void>;                         // async — unlike the other three SDKs
+  stats(): ParameterStats;
+
+  // typed accessors
+  getInt(name: string): number | undefined;
+  getBool(name: string): boolean | undefined;
+  getJson(name: string): unknown | undefined;
+  getStringList(name: string): string[] | undefined;
+}
+```
+
+</TabItem>
+</Tabs>
+
+### Method semantics
+
+These hold in all four SDKs unless noted:
+
+- **`get(name)`** — the cached value of `name` decoded as a UTF-8 string. Errors on a non-UTF-8 value.
+- **`getBytes(name)`** — the raw value bytes (no decoding).
+- **`getByPath(path)`** — every cached parameter under the `path` prefix as a `name -> string` map.
+  `path` is a **prefix only**; there is **no `recursive` argument at read time** (recursion is fixed
+  by `sync.paths` at config time). Non-UTF-8 entries are silently skipped.
+- **`names(prefix)`** — cached parameter names under `prefix` (metadata only, no values). The
+  `prefix` argument is **required** — pass `""` to list everything.
+- **`refresh()`** — pulls the declared `sync.names` + `sync.paths` from the source into the cache.
+  **Async (`Promise<void>`) in TypeScript; synchronous in Java, Python, and Rust.**
+- **`stats()`** — a non-sensitive [`ParameterStats`](#parameterstats) snapshot, safe to log.
+- **Typed accessors** parse the underlying string. `getInt` is `Long` (Java, 64-bit), `int` (Python,
+  arbitrary precision), `i64` (Rust), `number` (TypeScript — IEEE-754, loses precision above `2^53`;
+  validated with a strict `^[+-]?\d+$` regex first). `getBool` accepts `true/1/yes/on` and
+  `false/0/no/off` (case-insensitive). `getStringList` comma-splits and trims; an empty string yields
+  an empty list. All reject malformed values.
+- **Ordering** — `names` / `getByPath` results are **sorted** in Java (`TreeMap`), Python (`sorted`),
+  and Rust (`BTreeMap`). The TypeScript in-memory cache returns **insertion order**.
+  {/* TODO: unverified - whether TS MemoryCache insertion-order (vs sorted) is intentional is not stated in source/tests */}
+
+<Aside type="caution" title="Rust reads return Result">
+Every Rust `ParameterService` method returns `Result<…>` (for example `get` can `Err` on a non-UTF-8
+value), so Rust callers must `?` or match even on plain reads. The other SDKs throw/raise instead:
+Java `ParameterException`, Python `ParameterError`, TypeScript `ParameterError`.
+</Aside>
+
+## Reading parameters
+
+A complete read example. Parameters are addressed by SSM-style path names like `/myapp/region`.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+ParameterService params = gg.getParameters();
+if (params == null) return;                            // parameters subsystem is off
+
+Optional<String>       region   = params.get("/myapp/region");
+Optional<Long>         poolSize = params.getInt("/myapp/poolSize");
+Optional<Boolean>      debug    = params.getBool("/myapp/debug");
+Map<String, String>    db       = params.getByPath("/myapp/db");
+List<String>           all      = params.names("");    // every cached name
+
+LOGGER.info("parameter subsystem stats [{}]", params.stats());
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+params = gg.get_parameters()
+if params is None:
+    return                                             # parameters subsystem is off
+
+region    = params.get("/myapp/region")                # Optional[str]
+pool_size = params.get_int("/myapp/poolSize")          # Optional[int]
+debug     = params.get_bool("/myapp/debug")            # Optional[bool]
+db        = params.get_by_path("/myapp/db")            # Dict[str, str]
+all_names = params.names("")                            # every cached name
+
+st = params.stats()
+logger.info(f"source={st.source} count={st.parameter_count}")
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+let Some(params) = gg.parameters() else { return Ok(()); }; // subsystem off / feature off
+
+let region    = params.get("/myapp/region")?;          // Option<String>
+let pool_size = params.get_int("/myapp/poolSize")?;    // Option<i64>
+let debug     = params.get_bool("/myapp/debug")?;      // Option<bool>
+let db        = params.get_by_path("/myapp/db")?;      // BTreeMap<String, String>
+let all       = params.names("")?;                     // every cached name
+
+let st = params.stats();
+tracing::info!(source = %st.source, count = st.parameter_count, "parameters");
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+const params = gg.parameters();
+if (!params) return;                                   // parameters subsystem is off
+
+const region   = params.get("/myapp/region");          // string | undefined
+const poolSize = params.getInt("/myapp/poolSize");     // number | undefined
+const debug    = params.getBool("/myapp/debug");       // boolean | undefined
+const db       = params.getByPath("/myapp/db");        // Map<string, string>
+const all      = params.names("");                     // every cached name
+
+const st = params.stats();
+console.log(`source=${st.source} count=${st.parameterCount}`);
+```
+
+</TabItem>
+</Tabs>
+
+## The factory
+
+`open` / `open_from_config` / `openFromConfig` build a `DefaultParameterService` from a parsed
+`parameters` config section. The `gg` accessor calls these for you (after resolving template
+variables); call them directly only when wiring the service yourself.
+
+| SDK | Signature |
+|-----|-----------|
+| Java | `static DefaultParameterService open(JsonObject parametersConfig)` · `static DefaultParameterService open(JsonObject parametersConfig, String namespace)` |
+| Python | `open_from_config(parameters_cfg: dict, namespace: str = "") -> DefaultParameterService` |
+| Rust | `pub fn open(config: &ParametersConfig) -> Result<DefaultParameterService>` |
+| TypeScript | `async function openFromConfig(cfg: ParametersConfig = {}): Promise<DefaultParameterService>` |
+
+Notes:
+
+- **The `namespace` argument exists only in Java and Python, and is deliberately ignored.** It is
+  present for signature parity with `Credentials.open`; parameter keys are never namespaced
+  (isolation comes from the per-component templated `cache.path`). Rust `open` and TypeScript
+  `openFromConfig` take no namespace argument.
+- **TypeScript `openFromConfig` is async** (`Promise`) because building a remote source or KMS key
+  provider is promise-based. The other three are synchronous.
+- The default `cache.path` when unset is the relative `"param-cache"`. The accessor path substitutes
+  template variables such as `{ComponentFullName}` and `{ThingName}` before calling the factory; the
+  raw factory does no templating.
+
+## DefaultParameterService factories and lifecycle
+
+The concrete implementation. Use these static/builder factories to inject a custom
+[`ParameterSource`](#sources) (the only way to do so — config and the `gg` accessor know only the
+three built-in source types).
+
+| SDK | Factories and lifecycle |
+|-----|-------------------------|
+| Java | `withMemoryCache(source, syncNames, syncPaths)` · `withPersistentCache(source, LocalVault, Object lock, syncNames, syncPaths)` · `withRefresh(long intervalSecs)` (returns `this`) · `close()` (`AutoCloseable`, stops the daemon) |
+| Python | `with_memory_cache(source, sync_names, sync_paths)` · `with_persistent_cache(source, vault, lock, sync_names, sync_paths)` · `with_refresh(interval_secs)` · `close()` |
+| Rust | `with_memory_cache(source, sync_names, sync_paths)` · `with_persistent_cache(source, Arc<Mutex<LocalVault>>, sync_names, sync_paths)` · `with_refresh(interval_secs)` (consumes + returns `self`) · **no `close()` — `Refresher::drop` stops + joins the thread (RAII)** |
+| TypeScript | `static withMemoryCache(...)` · `static withPersistentCache(source, vault, syncNames, syncPaths)` · `withRefresh(intervalSecs): this` · `close(): void` |
+
+The `syncPaths` element is a `(path, recursive)` pair: Java `List<Map.Entry<String, Boolean>>`,
+Python `List[Tuple[str, bool]]`, Rust `Vec<(String, bool)>`, TypeScript `SyncPath = [string, boolean]`.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+DefaultParameterService s = DefaultParameterService.withMemoryCache(
+        myCustomSource, List.of("/myapp/region"), List.of());
+s.refresh();
+// ... use s ...
+s.close(); // you own the lifecycle when you build it yourself
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+s = DefaultParameterService.with_memory_cache(my_custom_source, ["/myapp/region"], [])
+s.refresh()
+# ... use s ...
+s.close()  # you own the lifecycle when you build it yourself
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+let s = DefaultParameterService::with_memory_cache(
+    my_custom_source, vec!["/myapp/region".into()], vec![]);
+s.refresh()?;
+// ... use s ...
+// no close(): dropping `s` stops and joins the refresh thread (RAII)
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+const s = DefaultParameterService.withMemoryCache(myCustomSource, ["/myapp/region"], []);
+await s.refresh();
+// ... use s ...
+s.close(); // you own the lifecycle when you build it yourself
+```
+
+</TabItem>
+</Tabs>
+
+## Sources
+
+A `ParameterSource` is the pluggable seam between the network/filesystem and the cache. There are
+three config-selectable built-ins — **`env`, `mountedDir`, and `awsSsm` only** (there is no `custom`
+config type). See the [Parameters guide](/guides/parameters/#sources) for config examples.
+
+The `ParameterSource` interface:
+
+- `fetch(name) -> Option<ParamValue>`
+- `fetchByPath(path, recursive) -> [(name, ParamValue)]`
+- `sourceId() -> "env" | "mountedDir" | "awsSsm"`
+
+**In TypeScript `fetch` / `fetchByPath` are async (`Promise`).** In Java, Python, and Rust they are
+synchronous (the Rust SSM implementation `block_on`s an internal runtime).
+
+| Source | Constructor | Behavior |
+|--------|-------------|----------|
+| `EnvSource` | `EnvSource(prefix)` | Maps a name to an env var: `/myapp/db/host` ⇄ `<PREFIX>MYAPP_DB_HOST` (`/`, `-`, `.` → `_`, uppercased). Always non-secure. Default `prefix` = `"GG_PARAM_"`. |
+| `MountedDirSource` | `MountedDirSource(root, securePaths)` | Each file under `root` is a parameter (bytes = value; name = `/` + path relative to `root`). A name under any `securePaths` prefix is `secure=true`. `version` is always null. Dotfiles are skipped (the kubelet `..data` symlink farm); a directory at a name is "not a parameter". |
+| `AwsSsmSource` | `AwsSsmSource(region, endpointUrl, withDecryption=true)` | `GetParameter` / `GetParametersByPath` (paginated) with `WithDecryption`. `SecureString` → `secure=true`; `version` = SSM version. Uses the default credential chain (TES on Greengrass). `endpointUrl` overrides for floci / LocalStack / a VPC endpoint. |
+
+{/* NEEDS REVIEW: Java EnvSource has a public test-seam ctor EnvSource(prefix, lookup, allVars) (EnvSource.java:39) for injecting env in tests; omitted here as a component-developer reference detail — confirm whether it should be documented. */}
+
+### Optional SSM dependency
+
+The AWS SDK for SSM is an optional dependency in every SDK, but enforced differently:
+
+- **Rust** — feature-gated at compile time. `awsSsm` requires the `parameters-aws` feature; without
+  it, `build_source("awsSsm")` errors (the message names only `env` / `mountedDir` as available).
+- **Java / Python / TypeScript** — loaded lazily at runtime: Java `software.amazon.awssdk:ssm`,
+  Python `boto3`, TypeScript `@aws-sdk/client-ssm` (an `optionalDependency`). A missing dependency
+  surfaces as a parameter error at first use.
+
+## ParamValue
+
+The value type a source returns. Component developers rarely handle it directly — the typed
+accessors hand back plain strings, ints, and so on — but it is the source↔cache seam.
+
+```text
+ParamValue {
+  value:   bytes           // the raw parameter value
+  secure:  bool            // set automatically: securePaths (mountedDir) or SecureString (awsSsm)
+  version: Option<String>  // source-assigned version, when available
+}
+```
+
+| SDK | Type + plain constructor | Redaction on log |
+|-----|--------------------------|------------------|
+| Java | `ParamValue` record; `plain(byte[])`, `plain(String)` | `toString()` **redacts** the value |
+| Python | `ParamValue`; `ParamValue.plain(value)` | `__repr__` **redacts** the value |
+| Rust | `ParamValue`; `ParamValue::plain(...)` | derives `Debug` — **does NOT redact** (raw bytes print) |
+| TypeScript | `ParamValue` interface; `plainValue(value)` | plain interface — **no redaction** (the `value` buffer prints) |
+
+<Aside type="caution" title="Secure values on Rust and TypeScript">
+Only Java and Python redact a `ParamValue` when logged. **Rust** derives `Debug` (so
+`format!("{:?}", pv)` prints the raw value bytes) and **TypeScript** is a plain interface with no
+custom stringifier — on those two SDKs, **do not log a `ParamValue`** for a secure parameter.
+</Aside>
+
+{/* NEEDS REVIEW: confirm whether the Rust derived-Debug / TS plain-interface non-redaction is an accepted trade-off before stating any redaction guarantee for those two languages. */}
+
+## ParameterStats
+
+A non-sensitive observability snapshot returned by `stats()` — safe to log.
+
+| Field (Java / TS · Python / Rust) | Type | Meaning |
+|-----------------------------------|------|---------|
+| `parameterCount` · `parameter_count` | `long` / `u64` / int | Number of parameters currently cached. |
+| `lastRefreshAgeMs` · `last_refresh_age_ms` | nullable `Long` / `Option<u64>` / int | Age of the last fully-clean refresh. **`null` / `None` / `undefined` until the first fully-successful refresh.** |
+| `refreshFailures` · `refresh_failures` | `long` / `u64` / int | Cumulative per-item refresh-failure count. |
+| `source` | `String` | The active source id (`env` / `mountedDir` / `awsSsm`). |
+
+Type definitions:
+
+- Java — `record ParameterStats(long parameterCount, Long lastRefreshAgeMs, long refreshFailures, String source)`
+- Python — `@dataclass ParameterStats`
+- Rust — `pub struct ParameterStats { parameter_count: u64, last_refresh_age_ms: Option<u64>, refresh_failures: u64, source: String }`
+- TypeScript — `interface ParameterStats`
+
+## Cross-language divergences
+
+A quick reference to the differences that affect calling code:
+
+- **TypeScript is async where the others are sync.** `refresh()` returns `Promise<void>`,
+  `openFromConfig` is async, and `ParameterSource.fetch` / `fetchByPath` return promises. The read
+  accessors (`get`, `getBytes`, `getByPath`, `names`, typed getters) are still synchronous in
+  TypeScript — they read the already-loaded cache.
+- **Rust reads return `Result`.** Every method is `Result<…>`; the other SDKs throw/raise.
+- **Rust gates the subsystem behind cargo features** (`parameters`, plus `parameters-aws` for SSM).
+- **`namespace` exists only in Java/Python `open` and is ignored.**
+- **Lifecycle:** Java/Python/TypeScript expose `close()`; Rust uses RAII (drop stops the refresher).
+- **`ParamValue` redaction is enforced only in Java and Python.**
+- **`names` / `getByPath` ordering** is sorted in Java/Python/Rust, insertion order in TypeScript.
+
+## See also
+
+<CardGrid>
+  <LinkCard title="Parameters guide" href="/guides/parameters/" description="Concepts, sources, refresh semantics, and the offline cache — start here." />
+  <LinkCard title="Config schema: parameters" href="/reference/configuration/#parameters" description="Every key in the parameters config section." />
+  <LinkCard title="Credentials API" href="/reference/credentials/" description="The secrets sibling — the encrypted vault parameters reuses for its cache." />
+</CardGrid>

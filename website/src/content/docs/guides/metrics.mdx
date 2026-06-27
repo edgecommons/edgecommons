@@ -1,0 +1,343 @@
+---
+title: Metrics
+description: Define metrics with MetricBuilder, emit measure values, and route them to log, messaging, CloudWatch, or a Prometheus endpoint.
+sidebar:
+  order: 4
+---
+
+import { Tabs, TabItem, Aside, LinkCard, CardGrid } from "@astrojs/starlight/components";
+
+The metrics subsystem lets you **define a metric once** — its measures and dimensions — and then
+**emit measure values by name**. Where those values go (a log file, the messaging transport,
+CloudWatch, or a Prometheus scrape endpoint) is chosen by configuration, not by your code. The same
+business logic emits the same metric regardless of platform.
+
+The push targets serialize to CloudWatch **EMF** (Embedded Metric Format); the pull target serves a
+Prometheus/OpenMetrics exposition.
+
+You obtain the service from your `GGCommons` instance. The accessor name differs per language:
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+MetricEmitter metrics = gg.getMetrics();
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+# get_metrics() returns the MetricEmitter CLASS — every method is static, with
+# process-global state. There is no per-instance emitter in Python.
+metrics = gg.get_metrics()
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+// metrics() returns an Arc<dyn MetricService>.
+let metrics = gg.metrics();
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+// metrics() returns a MetricService.
+const metrics = gg.metrics();
+```
+
+</TabItem>
+</Tabs>
+
+## Define a metric
+
+Build a metric with `MetricBuilder`: give it a name, add one or more **measures** (each with a unit
+and a storage resolution), and optionally add **dimensions**. A measure's storage resolution is
+either `1` (high resolution, 1-second granularity) or `60` (standard, 1-minute granularity).
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+metrics.defineMetric(
+    MetricBuilder.create("performance")
+        .withConfig(config)                       // fills thingName, componentName, namespace
+        .addMeasure("replyLatency", "Milliseconds", 1)
+        .addDimension("instance", "main")
+        .build());
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+# with_config() fills thing + component ONLY (not namespace) in Python — set the
+# namespace explicitly, or build() substitutes the placeholder "GGCommons/Metrics".
+metric = (MetricBuilder.create("performance")
+          .with_config(config)
+          .with_namespace("MyApp/Metrics")
+          .add_measure("reply_latency", "Milliseconds", 1)
+          .add_dimension("instance", "main")
+          .build())
+metrics.define_metric(metric)
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+metrics.define_metric(
+    MetricBuilder::create("performance")
+        .with_config(&config)                     // fills thing, component, namespace
+        .add_measure("replyLatency", "Milliseconds", 1)
+        .add_dimension("instance", "main")
+        .build(),
+);
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+const metric = MetricBuilder.create("performance")
+  .withConfig(config)                             // fills thing, component, namespace
+  .addMeasure("replyLatency", "Milliseconds", 1)
+  .addDimension("instance", "main")
+  .build();
+metrics.defineMetric(metric);
+```
+
+</TabItem>
+</Tabs>
+
+<Aside type="caution" title="Builder differences worth knowing">
+- **`withConfig` and namespace.** In Java, Rust, and TypeScript, `withConfig`/`with_config` fills
+  the thing name, component name, **and** namespace. In **Python**, `with_config` fills only the
+  thing and component — set `with_namespace(...)` yourself, or `build()` silently substitutes the
+  placeholders `test-thing`, `test-component`, and `GGCommons/Metrics`.
+- **Storage resolution.** Java, Rust, and TypeScript silently coerce the value (`< 60` becomes `1`,
+  otherwise `60`). **Python rejects** anything that is not exactly `1` or `60` with a `ValueError`.
+- **`build()` overloads.** Java has both `build()` (requires a namespace, or throws) and
+  `build(MetricEmitter)` (fills missing fields from the emitter). Python, Rust, and TypeScript have a
+  single `build()`.
+</Aside>
+
+### Dimensions and the auto-injected three
+
+Dimensions are key/value labels attached to every datum of the metric. Three are **injected
+automatically** when you build:
+
+| Dimension   | Value                | Source                          |
+|-------------|----------------------|---------------------------------|
+| `category`  | the metric's name    | injected by the builder on `build()` |
+| `coreName`  | the IoT Thing name   | from `withThingName` / config   |
+| `component` | the component name    | from `withComponentName` / config |
+
+CloudWatch caps a metric at **10 dimensions** (`MAX_DIMENSIONS = 10`), counting the three injected
+ones. The SDKs enforce the cap differently when you exceed it:
+
+- **Java, Python, TypeScript** throw (Java at `addDimension` and `build`; Python and TypeScript at `build`).
+- **Rust** is infallible: `build()` **trims** the excess custom dimensions (keeping the three
+  injected) and logs a `tracing::warn!` instead of erroring.
+
+<Aside type="note">
+Python also rejects an **empty dimension value** with a `ValueError`; Java, Rust, and TypeScript
+accept it.
+</Aside>
+
+## Emit measure values
+
+After a metric is defined, emit values by passing the metric name and a map of
+`measureName -> value`. There are two emission paths:
+
+- **`emitMetric`** (batched) — records the value into the target's buffer; it is delivered on the
+  target's normal interval / batching policy.
+- **`emitMetricNow`** (immediate) — bypasses the buffer and delivers right away.
+
+`flushMetrics` force-drains the buffer on demand. The measure-value container type is
+language-specific: `Map<String, Float>` (Java — note `Float`, not `double`), a plain `dict`
+(Python), `HashMap<String, f64>` (Rust), and `Record<string, number>` (TypeScript).
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+Map<String, Float> values = new HashMap<>();
+values.put("replyLatency", 12.5f);            // Map<String, Float>
+
+metrics.emitMetric("performance", values);    // buffered — drained on the emit interval
+metrics.emitMetricNow("performance", values); // immediate — bypasses the buffer
+metrics.flushMetrics();                        // force-drain now
+// metrics.close();                            // flush + release the target on shutdown
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+metrics.emit_metric("performance", {"reply_latency": 12.5})       # buffered
+metrics.emit_metric_now("performance", {"reply_latency": 12.5})   # immediate
+
+# Python's MetricEmitter has NO public flush method — targets own their batching.
+# Use shutdown() to close the target (which flushes/releases it) on exit.
+metrics.shutdown()
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+let mut values = HashMap::new();
+values.insert("replyLatency".to_string(), 12.5_f64);   // HashMap<String, f64>
+
+metrics.emit_metric("performance", values.clone()).await?;  // buffered
+metrics.emit_metric_now("performance", values).await?;      // immediate
+metrics.flush_metrics().await?;                              // force-drain now
+// metrics.shutdown().await;                                 // release the target on exit
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+await metrics.emitMetric("performance", { replyLatency: 12.5 });      // buffered
+await metrics.emitMetricNow("performance", { replyLatency: 12.5 });   // immediate
+await metrics.flushMetrics();                                          // force-drain now
+// await metrics.shutdown();                                           // release on exit
+```
+
+</TabItem>
+</Tabs>
+
+<Aside type="note" title="Flush vs shutdown by language">
+Java exposes both `flushMetrics()` and `close()`. Rust and TypeScript expose
+`flush_metrics()`/`flushMetrics()` plus `shutdown()`. **Python has no public flush** on the metric
+emitter — only `shutdown()`, which closes the active target.
+</Aside>
+
+## Targets and how one is chosen
+
+A **target** decides where emitted metrics actually go. You select it with `metricEmission.target`
+in your component config:
+
+| `target`               | What it does                                                                 |
+|------------------------|-----------------------------------------------------------------------------|
+| `log`                  | Writes EMF JSON lines to the metric log file (the library default).         |
+| `messaging`            | Publishes EMF over the active messaging transport.                          |
+| `cloudwatch`           | Sends EMF to CloudWatch through a durable store-and-forward buffer (see below). |
+| `cloudwatchcomponent`  | Hands metrics to the AWS-managed CloudWatch metrics Greengrass component.    |
+| `prometheus`           | Exposes metrics on an HTTP scrape endpoint (the default on Kubernetes).      |
+
+<Aside type="note" title="cloudwatch_durable is a mode, not a target string">
+`cloudwatch_durable` is **not** a selectable `metricEmission.target` value. It is the disk-backed
+store-and-forward implementation that the `cloudwatch` target uses by default; you switch it on or
+off with `buffer.type` (`durable` vs `memory`) — see [Durable CloudWatch buffer](#durable-cloudwatch-buffer).
+</Aside>
+
+The effective target is resolved by a **three-tier precedence**, identical across all four SDKs:
+
+1. The **explicit** `metricEmission.target` from config, if set.
+2. Otherwise the **platform-profile default** — `prometheus` on Kubernetes.
+3. Otherwise the **library default**, `log`.
+
+An unknown target name logs a warning and falls back to `log`.
+
+```json
+// component config — metricEmission section
+{
+  "metricEmission": {
+    "target": "cloudwatch",
+    "namespace": "MyApp/Metrics"
+  }
+}
+```
+
+<Aside type="caution" title="Rust feature gates">
+In Rust, the CloudWatch and Prometheus targets are behind cargo features (`cloudwatch`,
+`metrics-cloudwatch-durable`, `metrics-prometheus`). The Kubernetes `prometheus` **profile default**
+gracefully falls back to `log` (with a warning) when `metrics-prometheus` is not compiled in, but an
+**explicit** `target = "prometheus"` without the feature is a hard error. Selecting `cloudwatch`
+without its feature is likewise an error. Java, Python, and TypeScript always bundle these targets.
+</Aside>
+
+## Prometheus pull endpoint
+
+The `prometheus` target inverts the usual lifecycle. Instead of pushing, `emit`/`emitNow` only
+update an in-process **latest-value gauge registry**; `flush` is a no-op (a scrape pulls the data);
+`shutdown`/`close` stops the HTTP listener. A Prometheus server (or any scraper) pulls the current
+values on its own schedule.
+
+- The HTTP server binds on `0.0.0.0`, default port **9090**, default path **`/metrics`**.
+- `GET <path>` returns `200` with the OpenMetrics text exposition; any other path returns `404`
+  (and, on Java, a non-`GET` on the metrics path returns `405`).
+- A bind/start failure is logged and **swallowed** — the component keeps running and emits keep
+  updating the registry; only the scrape endpoint is unavailable.
+
+Gauge naming: the gauge name is `sanitize(lowercase("{namespace}_{measureName}"))` (restricted to
+`[a-z0-9_]`, prefixed with `_` if it would start with a digit). Dimensions become labels, with each
+label name sanitized to `[a-zA-Z_][a-zA-Z0-9_]*`. The namespace used is the **configured**
+`metricEmission.namespace` (not the per-metric namespace), defaulting to `ggcommons`.
+
+{/* NEEDS REVIEW: exact JSON config keys for the Prometheus listener port/path were not confirmed against schema source in the fact sheet — only the default values (9090, /metrics). Verify the key names before documenting them. */}
+
+<Aside type="tip">
+This is why `prometheus` is the Kubernetes default: a sidecar or the cluster Prometheus scrapes the
+pod's `/metrics` endpoint rather than the component pushing out.
+</Aside>
+
+## Durable CloudWatch buffer
+
+The `cloudwatch` target is backed by a **durable, disk-backed store-and-forward buffer by default**
+(`buffer.type` defaults to `durable`). Datums are written to local disk first and drained to
+CloudWatch in batches, so metrics survive process restarts and cloud disconnects — the edge-first
+default. Set `buffer.type` to `memory` to opt back into in-memory batching only.
+
+```json
+{
+  "metricEmission": {
+    "target": "cloudwatch",
+    "namespace": "MyApp/Metrics",
+    "buffer": {
+      "type": "durable",
+      "maxDiskBytes": 134217728,
+      "path": "/var/lib/ggcommons/metrics/{ComponentName}/cw",
+      "onFull": "dropOldest",
+      "fsync": "perBatch"
+    }
+  }
+}
+```
+
+The defaults shown above (`128 MiB` cap, the per-component `cw` path, `dropOldest` when full,
+`fsync` per batch) apply when the `buffer` block is omitted.
+
+Behavior to be aware of:
+
+- **Durable mode fails fast** if the bundled `ggstreamlog` native core is missing — that is a
+  deployment error, since the core ships with the SDK. If the core is present but the buffer cannot
+  open (bad path / IO error), it degrades to in-memory batching.
+- The drain batches up to **1000 datums** (≈900 KB) per CloudWatch request, drops datums outside
+  CloudWatch's accept window (≈14 days past / ≈2 hours future), and groups by namespace.
+- `close()` on a durable buffer flushes to **disk** and stops the engine — it does **not** drain to
+  the cloud, so any backlog persists for the next restart.
+
+{/* NEEDS REVIEW: the fine-grained durable tuning keys (segmentBytes, delivery.maxRetries, batch sizing, pollIntervalMs) were flagged TODO in the fact sheet as not fully confirmed as a stable public surface — verify against schema source before documenting them here. */}
+
+## EMF timestamp units
+
+For the push (EMF) targets, the `_aws.Timestamp` field is in **epoch milliseconds**. The
+`cloudwatchcomponent` message carries its own timestamp in **epoch seconds** (a deliberately
+different unit), and its JSON location differs by language — Java places it at
+`request.metricData.timestamp`, while Python places it at `request.timestamp` (a sibling of
+`metricData`).
+
+## See also
+
+<CardGrid>
+  <LinkCard title="API reference: Metrics" href="/reference/metrics/" description="MetricBuilder, MetricEmitter / MetricService, and Measure, verified against source." />
+  <LinkCard title="Config schema: metricEmission" href="/reference/schema/#metricemission" description="The metricEmission section — target, namespace, and buffer keys." />
+  <LinkCard title="Messaging guide" href="/guides/messaging/" description="The transport the messaging metric target publishes over." />
+</CardGrid>

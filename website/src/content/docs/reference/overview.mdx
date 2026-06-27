@@ -1,0 +1,217 @@
+---
+title: API Reference overview
+description: How the GGCommons API reference is organized, plus the cross-language accessor-name map for every subsystem in Java, Python, Rust, and TypeScript.
+sidebar:
+  order: 1
+---
+
+import { Tabs, TabItem, Aside, CardGrid, LinkCard } from "@astrojs/starlight/components";
+
+The API reference documents the **public surface a component developer builds against**: the runtime
+object you construct at startup, the typed accessors that reach each subsystem, and the per-subsystem
+types (builders, services, models). It is verified against source — Java is the canonical reference,
+and the other three SDKs mirror it deliberately.
+
+## How the reference is organized
+
+There is **one reference page per subsystem**, and every page presents **all four languages in
+synced tabs** (Java, then Python, then Rust, then TypeScript — in that order). When you switch a tab
+on one page, the choice follows you across the site, so you read the reference in your language.
+
+The conceptual [guides](/guides/components/) explain *why* and *when* to use a subsystem; the
+reference pages give the exact *what* — signatures, return types, and per-language naming.
+
+<CardGrid>
+  <LinkCard title="Entry point, builder & lifecycle" href="/reference/entry-point/" description="GGCommonsBuilder, the GGCommons runtime, every accessor, and shutdown." />
+  <LinkCard title="Configuration" href="/reference/config/" description="The config manager / snapshot accessor surface — reading, reloading, and change listeners." />
+  <LinkCard title="Messaging" href="/reference/messaging/" description="The messaging service, MessageBuilder, publish/subscribe, and request/reply." />
+  <LinkCard title="Metrics" href="/reference/metrics/" description="MetricBuilder, the metric emitter / service, and Measure." />
+  <LinkCard title="Heartbeat" href="/reference/heartbeat/" description="The heartbeat service and its config model." />
+  <LinkCard title="Logging" href="/reference/logging/" description="Logger setup and the per-language logging format token." />
+  <LinkCard title="Health" href="/reference/health/" description="The readiness flag and the HTTP health endpoint." />
+  <LinkCard title="Credentials" href="/reference/credentials/" description="The credential service (opt-in): the encrypted vault and central sync." />
+  <LinkCard title="Parameters" href="/reference/parameters/" description="The parameter service (opt-in): offline-first externalized config." />
+  <LinkCard title="Streaming" href="/reference/streaming/" description="The stream service (opt-in): durable telemetry streaming." />
+  <LinkCard title="Configuration schema" href="/reference/configuration-schema/" description="Every section, field, type, default, and enum in the canonical config schema." />
+</CardGrid>
+
+{/* TODO: unverified - guides reference the config-schema page under several slugs (/reference/configuration-schema/, /reference/config-schema/, /reference/schema/, /reference/configuration/). Confirm the canonical slug when those pages are authored and align the links here and in the guides. */}
+
+## The accessor-name map
+
+Everything starts from one object: the **`GGCommons` runtime** (`GgCommons` in Rust). You build it
+once from the standard CLI args, then call typed **accessors** on it to reach each subsystem. The
+*concept* is identical in all four languages; only the **name** differs, following each language's
+convention (Java `getX()`, Python `get_x()`, Rust/TS `x()`).
+
+This table is the map. Find the row for what you need, read across to your language.
+
+| Concern | Java | Python | Rust | TypeScript |
+|---|---|---|---|---|
+| **Build** | `GGCommonsBuilder.create(name).withArgs(args).build()` | `GGCommonsBuilder.create(name).with_args(args).build()` | `GgCommonsBuilder::new(name).args(argv).build().await` | `new GGCommonsBuilder(name).args(argv).build()` (await) |
+| **Runtime type** | `GGCommons` | `GGCommons` | `GgCommons` | `GGCommons` |
+| **Messaging** | `getMessaging()` | `get_messaging()` | `messaging()` | `messaging()` |
+| **Metrics** | `getMetrics()` | `get_metrics()` | `metrics()` | `metrics()` |
+| **Config** | `getConfigManager()` | `get_config_manager()` | `config()` | `config()` |
+| **Credentials** (opt-in) | `getCredentials()` | `get_credentials()` | `credentials()` | `credentials()` |
+| **Parameters** (opt-in) | `getParameters()` | `get_parameters()` | `parameters()` | `parameters()` |
+| **Streams** (opt-in) | `getStreams()` | `get_streams()` | `streams()` | `streams()` |
+| **Shutdown** | `shutdown()` | `shutdown()` (or a `with` block) | none — RAII `Drop` | `close()` (async) |
+
+<Aside type="note" title="Naming you cannot guess">
+- There is **no `getConfig()` in Java** — config is reached via `getConfigManager()`. Rust and
+  TypeScript expose `config()`, which returns an atomic config **snapshot**, not a manager.
+- **Python `get_messaging()` and `get_metrics()` return the *class*, not an instance** — their
+  operations are static, process-global. You call methods on the returned handle as usual; just know
+  there is no per-instance object behind it.
+- **Rust has no `shutdown()`/`close()`.** Teardown is RAII: when the `GgCommons` value is dropped,
+  its background tasks (heartbeat, hot-reload, signal watcher, health server) are aborted.
+</Aside>
+
+## The opt-in return contract
+
+The three newer subsystems — **credentials, parameters, streams** — are **opt-in**. Their accessor
+returns an "absent" value unless the matching config section is present. Everything else (messaging,
+metrics, config) is always wired and always returns a usable service.
+
+The *idea* is the same everywhere ("absent when not configured"), but the *type* follows each
+language's idiom:
+
+| Accessor | Java | Python | Rust | TypeScript |
+|---|---|---|---|---|
+| `credentials` | `null` | `None` | `Option` → `None` | `undefined` |
+| `parameters` | `null` | `None` | `Option` → `None` | `undefined` |
+| `streams` | `null` | `None` | **not `Option`** — an *empty* service | `undefined` |
+
+Two language-specific traps:
+
+- **Rust `streams()` is not an `Option`.** It always returns an `Arc<dyn StreamService>`; when no
+  `streaming` section exists, that service is simply **empty**. Check `streams().stream_names()`
+  rather than testing for `None`. (Credentials and parameters *are* `Option<Arc<dyn ...>>`.)
+- **Rust opt-ins are also cargo-feature-gated.** The `streams()`, `credentials()`, and
+  `parameters()` methods only exist when the matching feature (`streaming`, `credentials`,
+  `parameters`) is compiled in — they are off by default. In the other three SDKs the accessor
+  always exists and returns the null/`None`/`undefined` value above.
+
+<Aside type="caution" title="messaging() when no transport is wired">
+Messaging is always present, but its behavior when *no transport* is configured differs: Java and
+Python return the concrete handle; **Rust returns `Result<Arc<dyn MessagingService>>`** (an `Err`
+when none is wired); **TypeScript throws** a `GgError`. Handle the `Result`/exception accordingly.
+</Aside>
+
+## How to read the signatures
+
+Each reference page shows the real, idiomatic signature for every language. A few conventions repay
+knowing before you read them:
+
+- **Accessor naming** is mechanical: Java `getMessaging()` ⇄ Python `get_messaging()` ⇄ Rust/TS
+  `messaging()`. Once you know the concern, the name is predictable in each language.
+- **`build()` is async in Rust and TypeScript** (`await`), synchronous in Java and Python.
+- **The argv you pass to the builder differs.** Rust `.args(...)` expects the **full** argv
+  *including* the program name (e.g. `std::env::args_os()`). TypeScript `.args(...)` expects argv
+  **without** the node/script prefix (`process.argv.slice(2)`). Java `withArgs(...)` and Python
+  `with_args(...)` take the already-stripped application args.
+- **You do not wire your own signal handler.** The library installs the SIGTERM/SIGINT handling for
+  you (Java: a JVM shutdown hook on both signals; TypeScript: SIGTERM + SIGINT; Python: **SIGTERM
+  only**; Rust: a watcher that flips readiness to "shutting down" and relies on `Drop` for teardown).
+  Registering another handler just double-runs teardown. `shutdown()`/`close()` are idempotent, so
+  calling them explicitly is still safe.
+
+## Minimal example
+
+The same shape in every language: build the runtime from CLI args, take the accessors you need, run
+your business logic, then let the runtime tear down. (`messaging()` here is the always-present
+transport accessor; the opt-ins are reached the same way when their config section is present.)
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+import com.mbreissi.ggcommons.GGCommons;
+import com.mbreissi.ggcommons.GGCommonsBuilder;
+
+GGCommons gg = GGCommonsBuilder.create("com.example.MyComponent")
+        .withArgs(args)        // already-stripped application args
+        .build();
+
+var config    = gg.getConfigManager();
+var messaging = gg.getMessaging();
+var metrics   = gg.getMetrics();
+
+// ... business logic ...
+// Do NOT register your own shutdown hook — the library wires SIGTERM/SIGINT itself.
+// gg.shutdown();  // idempotent; safe to call explicitly
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+import sys
+
+from ggcommons.ggcommons_builder import GGCommonsBuilder
+
+gg = (GGCommonsBuilder.create("com.example.MyComponent")
+      .with_args(sys.argv[1:])   # already-stripped application args
+      .build())
+
+config    = gg.get_config_manager()
+messaging = gg.get_messaging()    # the MessagingClient class (static handle)
+metrics   = gg.get_metrics()      # the MetricEmitter class (static handle)
+
+# ... business logic ...
+gg.shutdown()                      # or: with GGCommonsBuilder.create(...).build() as gg:
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+use ggcommons::prelude::*;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let gg = GgCommonsBuilder::new("com.example.MyComponent")
+        .args(std::env::args_os())   // argv INCLUDES the program name
+        .build()
+        .await?;
+
+    let cfg = gg.config();           // atomic config snapshot
+    if let Ok(messaging) = gg.messaging() {   // Result, not Option
+        let _ = messaging;
+    }
+
+    // ... business logic ...
+    Ok(())   // dropping `gg` releases all resources (RAII) — there is no close()
+}
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+import { GGCommonsBuilder } from "@mbreissi/ggcommons";
+
+const gg = await new GGCommonsBuilder("com.example.MyComponent")
+  .args(process.argv.slice(2))   // argv WITHOUT the node/script prefix
+  .build();
+
+const config    = gg.config();
+const messaging = gg.messaging();   // throws if no transport is wired
+const metrics   = gg.metrics();
+
+// ... business logic ...
+await gg.close();                   // idempotent
+```
+
+</TabItem>
+</Tabs>
+
+## Where to go next
+
+<CardGrid>
+  <LinkCard title="Entry point reference" href="/reference/entry-point/" description="Every builder method and accessor in full, with return types and lifecycle." />
+  <LinkCard title="CLI contract" href="/start/cli-contract/" description="The args you pass to the builder: --platform, --transport, -c/--config, -t/--thing." />
+  <LinkCard title="Components guide" href="/guides/components/" description="The end-to-end shape of a component built on GGCommons." />
+  <LinkCard title="Configuration schema" href="/reference/configuration-schema/" description="The canonical schema that drives every subsystem's config section." />
+</CardGrid>

@@ -1,0 +1,327 @@
+---
+title: Deploy to a host or Docker
+description: Run a GGCommons component on a bare host or in Docker with the HOST platform and dual-MQTT against a local broker and optional AWS IoT Core.
+sidebar:
+  order: 2
+---
+
+import { Tabs, TabItem, Aside } from "@astrojs/starlight/components";
+
+The **HOST** platform runs a component on a bare host or in a plain Docker container, with no
+Greengrass Nucleus. It uses a **dual-MQTT** transport: the component connects to a **local MQTT
+broker** and, optionally, to **AWS IoT Core** at the same time. This is the path you use for local
+development, smoke tests, and standalone Docker deployments.
+
+You select it at startup with `--platform HOST`. On `HOST` the SDK applies these profile defaults
+(any of which an explicit flag or config value overrides):
+
+| Setting | Default on HOST |
+|---|---|
+| `--transport` | `MQTT` (the dual-MQTT provider) |
+| `-c/--config` source | `FILE` |
+| Metric target | library default (local `log`) |
+| Metric log path | `./logs/{ComponentFullName}.metric.log` |
+| Identity | the `-t/--thing` value, else the `AWS_IOT_THING_NAME` env var, else `NOT_GREENGRASS` |
+
+<Aside type="note" title="Why MQTT and not IPC">
+  `IPC` is valid only on `GREENGRASS`. On a host there is no Nucleus to talk to, so messaging runs
+  over MQTT against a broker you provide. See
+  [Platforms &amp; transports](/start/platforms-and-transports/) for the full axis model.
+</Aside>
+
+## 1. Start a local MQTT broker
+
+The dual-MQTT transport needs a broker for its `local` connection. The repo ships a shared EMQX
+broker that exposes plaintext MQTT on `1883` and mutual-TLS MQTT on `8883`.
+
+<Tabs syncKey="os">
+<TabItem label="Linux">
+
+```bash
+docker compose -f test-infra/compose.yaml up -d   # EMQX: 1883 plaintext, 8883 mTLS
+# ...or a throwaway broker:
+docker run -d -p 1883:1883 emqx/emqx:latest
+```
+
+</TabItem>
+<TabItem label="Windows">
+
+```powershell
+docker compose -f test-infra/compose.yaml up -d   # EMQX: 1883 plaintext, 8883 mTLS
+# ...or a throwaway broker:
+docker run -d -p 1883:1883 emqx/emqx:latest
+```
+
+</TabItem>
+</Tabs>
+
+<Aside type="caution">
+  The `8883` (mutual-TLS) listener of `test-infra/compose.yaml` requires generated certificates.
+  Run `bash test-infra/gen-tls-certs.sh` once before `docker compose up` if you intend to use the
+  TLS listener. For plain local development, port `1883` needs no certificates.
+</Aside>
+
+## 2. Write the messaging config
+
+HOST/MQTT is configured by a **messaging config JSON** file, passed as the positional argument to
+`--transport MQTT <messaging_config.json>`. It has two brokers under `messaging`:
+
+- **`local`** (required) — the local broker. Fields: `host`, `port`, `clientId`, optional `type`,
+  optional `credentials`.
+- **`iotCore`** (optional) — an AWS IoT Core connection. Fields: `endpoint`, `port`, `clientId`,
+  `credentials`.
+
+TLS is configured inside `credentials`: `caPath` (the CA to verify the broker) plus `certPath` and
+`keyPath` (the client cert/key for mutual TLS). For a plaintext local broker on `1883` you omit
+`credentials` entirely.
+
+Where the file comes from differs per SDK. The **Rust/TS** scaffolds ship a ready-to-edit sample at
+`test-configs/standalone-messaging.json` (the minimal local-only form; `type` is ignored by Rust/TS).
+The **Java/Python** scaffolds do **not** include this file — you create `./standalone-messaging.json`
+yourself, as the generated `README` instructs ("Provide an MQTT messaging-config JSON"). A full
+sample that sets `type` and includes an `iotCore` block lives in the library repo at
+`libs/java/standalone-messaging-sample.json` / `libs/python/standalone-messaging-sample.json` — copy
+it and edit. Each running process must use a **unique `clientId`**.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+Create `./standalone-messaging.json` yourself (the Java scaffold does not ship it — copy
+`libs/java/standalone-messaging-sample.json` from the library repo). Full sample with an optional IoT
+Core connection:
+
+```json
+{
+  "messaging": {
+    "local": {
+      "type": "mqtt",
+      "host": "localhost",
+      "port": 1883,
+      "clientId": "my-component-local"
+    },
+    "iotCore": {
+      "endpoint": "xxxx-ats.iot.us-east-1.amazonaws.com",
+      "port": 8883,
+      "clientId": "my-component",
+      "credentials": {
+        "certPath": "creds/device.cert.pem",
+        "keyPath": "creds/device.private.key",
+        "caPath": "creds/root-CA.crt"
+      }
+    }
+  }
+}
+```
+
+</TabItem>
+<TabItem label="Python">
+
+Create `./standalone-messaging.json` yourself (the Python scaffold does not ship it — copy
+`libs/python/standalone-messaging-sample.json` from the library repo). Full sample with an optional
+IoT Core connection:
+
+```json
+{
+  "messaging": {
+    "local": {
+      "type": "mqtt",
+      "host": "localhost",
+      "port": 1883,
+      "clientId": "my-component-local"
+    },
+    "iotCore": {
+      "endpoint": "xxxx-ats.iot.us-east-1.amazonaws.com",
+      "port": 8883,
+      "clientId": "my-component",
+      "credentials": {
+        "certPath": "creds/device.cert.pem",
+        "keyPath": "creds/device.private.key",
+        "caPath": "creds/root-CA.crt"
+      }
+    }
+  }
+}
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+`./test-configs/standalone-messaging.json` — minimal local-only form (`type` is ignored by Rust):
+
+```json
+{
+  "messaging": {
+    "local": {
+      "host": "localhost",
+      "port": 1883,
+      "clientId": "my-component-local"
+    }
+  }
+}
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+`./test-configs/standalone-messaging.json` — minimal local-only form (`type` is ignored by TS):
+
+```json
+{
+  "messaging": {
+    "local": {
+      "host": "localhost",
+      "port": 1883,
+      "clientId": "my-component-local"
+    }
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+<Aside type="tip" title="Where does this config come from">
+  The broker settings can come from the `--transport MQTT <path>` payload (shown here) **or** from
+  the active config source (`-c`). The explicit payload wins. The component's own settings (the
+  `component` section and subsystem config) come from the `-c FILE <config.json>` source.
+</Aside>
+
+## 3. Build and run
+
+Build the component, then launch it with `--platform HOST --transport MQTT <messaging_config.json>`,
+the component config via `-c FILE <config.json>`, and the IoT Thing name via `-t`. The CLI contract
+is identical across SDKs; only the build tool and the launcher binary differ.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```bash
+mvn clean package
+java -jar target/<jar>-1.0.0.jar \
+  --platform HOST --transport MQTT ./standalone-messaging.json \
+  -c FILE test-configs/<Component>.json -t my-thing-name
+```
+
+Add `--enable-native-access=ALL-UNNAMED` to the `java` command **only** when the component uses the
+streaming subsystem (which loads the native `ggstreamlog` binding via the FFM API).
+
+</TabItem>
+<TabItem label="Python">
+
+```bash
+pip install -r requirements.txt
+python3 main.py \
+  --platform HOST --transport MQTT ./standalone-messaging.json \
+  -c FILE test-configs/config_2.json -t my-thing-name
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```bash
+cargo run -- \
+  --platform HOST --transport MQTT ./test-configs/standalone-messaging.json \
+  -c FILE ./test-configs/config.json -t my-thing
+```
+
+The default build runs the standalone (non-Greengrass) feature set, so `cargo run` works on any OS.
+The `greengrass` feature is not needed — and not available on Windows — for HOST.
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```bash
+npm install
+npm run build
+node dist/main.js \
+  --platform HOST --transport MQTT ./test-configs/standalone-messaging.json \
+  -c FILE ./test-configs/config.json -t my-thing
+```
+
+</TabItem>
+</Tabs>
+
+<Aside type="note" title="Windows PowerShell">
+  The backslash line-continuations above are bash. In PowerShell, put each command on a single line
+  (or use a backtick `` ` `` at the end of a line to continue it). The forward-slash paths work as
+  shown.
+</Aside>
+
+## 4. Verify it is running
+
+A running component publishes heartbeats. Subscribe to the wildcard heartbeat topic with any MQTT
+client (for example MQTTX or `mosquitto_sub`) pointed at your local broker:
+
+<Tabs syncKey="os">
+<TabItem label="Linux">
+
+```bash
+mosquitto_sub -h localhost -p 1883 -t 'heartbeat/+/+' -v
+```
+
+</TabItem>
+<TabItem label="Windows">
+
+```powershell
+mosquitto_sub -h localhost -p 1883 -t 'heartbeat/+/+' -v
+```
+
+</TabItem>
+</Tabs>
+
+You should see periodic heartbeat messages keyed by your component and Thing name. From there, use the
+[Messaging guide](/guides/messaging/) to publish/subscribe on your own topics, and the
+[Configuration guide](/guides/configuration/) to drive behavior from the `-c FILE` config.
+
+## Connecting to AWS IoT Core
+
+The `iotCore` block makes the component connect to AWS IoT Core **in addition** to the local broker —
+the dual-MQTT provider bridges both. It always uses **mutual TLS** on port `8883`:
+
+- `endpoint` — your account's `xxxx-ats.iot.<region>.amazonaws.com` ATS data endpoint.
+- `credentials.certPath` / `credentials.keyPath` — the device certificate and private key.
+- `credentials.caPath` — the Amazon Root CA used to verify IoT Core.
+
+Provision a Thing, certificate, and policy in AWS IoT, then point `certPath`/`keyPath`/`caPath` at the
+downloaded files (paths are resolved relative to the working directory). Omit the whole `iotCore`
+block to run purely against the local broker.
+
+## Containerizing for a bare host
+
+{/* NEEDS REVIEW: the scaffolding CLI emits a Dockerfile ONLY for the KUBERNETES target (gated by
+    --platforms KUBERNETES); there is no dedicated HOST/bare-host Dockerfile in templates/*. Confirm
+    the intended supported story for running a container on a plain Docker host (reuse the k8s
+    Dockerfile with overridden args vs. a documented HOST Dockerfile) before presenting a copy-paste
+    recipe. */}
+
+There is **no dedicated bare-host Dockerfile** in the templates. The scaffolding CLI generates a
+`Dockerfile` only when **Kubernetes** is a selected target (it is gated behind `--platforms
+KUBERNETES`), and that image's entrypoint runs with **no platform arguments** so it can auto-detect
+the platform at runtime. See [Deploy to Kubernetes](/deploy/kubernetes/) for that image and its build
+flow.
+
+To run a component in a container on a **plain Docker host** (no Kubernetes), the practical options
+are:
+
+- Run the built artifact directly on the host (the [build and run](#3-build-and-run) commands above),
+  which is the documented HOST path.
+- Reuse the Kubernetes `Dockerfile` as a base image but **override the entrypoint** to pass
+  `--platform HOST --transport MQTT <messaging_config.json> -c FILE <config.json> -t <thing>`, and
+  mount your messaging config and component config into the container.
+
+{/* NEEDS REVIEW: behavior of `--platform auto` inside a plain (non-k8s) container — with no
+    service-account token it should fall back to HOST, but the exact in-container invocation and
+    config mounting for a bare-host container are not exercised in the templates. Verify before
+    documenting a concrete command. */}
+
+When the platform is left as `auto` (the default) outside Kubernetes and without Greengrass signals,
+the resolver falls back to `HOST`. A bare-host container therefore still needs its broker and config
+supplied — either as the `--transport MQTT <path>` payload or through the active config source.
+
+## Related
+
+- [Platforms &amp; transports](/start/platforms-and-transports/) — the `--platform` / `--transport` model and auto-detection.
+- [CLI contract](/start/cli-contract/) — every flag (`-c`, `--platform`, `--transport`, `-t`).
+- [Deploy to Greengrass](/deploy/greengrass/) — the on-device, Nucleus-managed path (IPC transport).
+- [Deploy to Kubernetes](/deploy/kubernetes/) — the container + ConfigMap path (includes the generated `Dockerfile`).
+- [Messaging guide](/guides/messaging/) and [Messaging reference](/reference/messaging/).

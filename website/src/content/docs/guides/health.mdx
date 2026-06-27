@@ -1,0 +1,289 @@
+---
+title: Health & graceful shutdown
+description: Expose Kubernetes liveness, readiness, and startup probes and drain cleanly on SIGTERM across all four GGCommons SDKs.
+sidebar:
+  order: 7
+---
+
+import { Tabs, TabItem, Aside, LinkCard } from "@astrojs/starlight/components";
+
+GGCommons ships a tiny, dependency-free HTTP/1.1 health server that exposes Kubernetes-style probes,
+plus library-owned signal handling that drains your subsystems cleanly on `SIGTERM`. It is **on by
+default only on the KUBERNETES platform** and off everywhere else, so you get correct probe behavior
+in a cluster without writing any HTTP code, and zero overhead on the edge.
+
+This guide is for component developers using the SDK. You almost never build the health server
+yourself — the builder wires it for you. Your job is to **drive the readiness gate** from your code
+and let the library handle the rest.
+
+## The three probes
+
+The server binds `0.0.0.0` (default port **8081**) and answers three paths:
+
+| Probe | Default path | Returns 200 when | Returns 503 when |
+|-------|--------------|------------------|------------------|
+| Liveness | `/livez` | the process is alive — **always**, the running handler is the proof | never (a broker outage must not fail liveness) |
+| Readiness | `/readyz` | `connected && ready && !shuttingDown` | starting up, gated off, disconnected, or shutting down |
+| Startup | `/startupz` | same predicate as readiness | same as readiness (use it to give slow connects more time) |
+
+Key semantics, identical across all four SDKs:
+
+- **`/livez` never consults the broker.** The fact that the handler can answer is itself the liveness
+  proof. Kubernetes should restart a hung process, not a temporarily disconnected one — so liveness
+  stays decoupled from connectivity.
+- **`/readyz` is the full predicate** `messaging connected && readyFlag && !shuttingDown`. It is 200
+  only when all three hold. A 200 therefore means more than "messaging connected" — if your code
+  called `setReady(false)`, `/readyz` stays 503 even while connected.
+- An unknown path returns **404 "not found"**. Bodies are tiny `text/plain`: `"ok"` or `"not ready"`.
+
+<Aside type="note" title="Probes always use GET">
+  The probe handlers are GET-only, but each SDK responds differently to a non-GET method (Java
+  `405` on a known path, TypeScript `405` for any path, Rust ignores the method, Python `501`).
+  Kubernetes only ever issues `GET` against probe paths, so this rarely matters in practice.
+  {/* TODO: unverified - Python 501 for non-GET is inferred from stdlib BaseHTTPRequestHandler (only do_GET defined); no ggcommons test exercises a non-GET verb against the Python server. */}
+</Aside>
+
+## When the server runs
+
+Enablement follows one rule in every language: **explicit `health.enabled` wins; otherwise the
+platform default applies.** The platform default is on only for KUBERNETES.
+
+| Platform | Default | Override |
+|----------|---------|----------|
+| `KUBERNETES` | on | set `health.enabled: false` to turn it off |
+| `HOST` | off | set `health.enabled: true` to turn it on |
+| `GREENGRASS` | off | set `health.enabled: true` to turn it on |
+| auto-detected as none of the above | off | set `health.enabled: true` to turn it on |
+
+The `enabled` key is **tri-state**: absent means "use the platform default", and an explicit value
+overrides in either direction (explicit `false` turns it off even on KUBERNETES). A bind failure is
+logged and swallowed in all four SDKs — a port clash never crashes your component.
+
+## Configuring the endpoint
+
+Health lives under the `health` section of your component config (the single schema in
+`schema/ggcommons-config-schema.json`, shared by all four SDKs). Every key is optional:
+
+```json
+{
+  "component": { "name": "com.example.MyComponent" },
+  "health": {
+    "enabled": true,
+    "port": 8081,
+    "livenessPath": "/livez",
+    "readinessPath": "/readyz",
+    "startupPath": "/startupz"
+  }
+}
+```
+
+The values above are the defaults — you only need a `health` block at all if you want to change the
+port, rename a path, or force-enable the server off-cluster. On KUBERNETES, omitting the section
+entirely still starts the server on `8081` with the default paths.
+
+## Driving readiness from your code
+
+The readiness flag (`readyFlag`) defaults to **`true`**, so if you do nothing, `/readyz` flips to
+200 as soon as messaging connects. To hold the gate closed while you do startup work — warming a
+cache, confirming required subscriptions, loading parameters — call `setReady(false)` early, then
+`setReady(true)` once you are genuinely ready to serve traffic.
+
+You cannot force-ready while disconnected or shutting down: `setReady(true)` only lifts your gate;
+the connectivity and shutdown parts of the predicate still apply.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+// gg is your built GGCommons instance (see the Components guide for construction).
+gg.setReady(false);                 // hold /readyz at 503 during startup
+
+gg.getMessaging().subscribe("commands/+", handler);
+warmCaches();
+
+gg.setReady(true);                  // /readyz can now return 200 (once connected)
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+# gg is your built GGCommons instance (see the Components guide for construction).
+gg.set_ready(False)                 # hold /readyz at 503 during startup
+
+gg.get_messaging().subscribe("commands/+", handler)
+warm_caches()
+
+gg.set_ready(True)                  # /readyz can now return 200 (once connected)
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+// gg is your built GgCommons instance (see the Components guide for construction).
+gg.set_ready(false);                // hold /readyz at 503 during startup
+
+gg.messaging()?.subscribe("commands/+", handler).await?;
+warm_caches().await;
+
+gg.set_ready(true);                 // /readyz can now return 200 (once connected)
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+// gg is your built GGCommons instance (see the Components guide for construction).
+gg.setReady(false);                 // hold /readyz at 503 during startup
+
+await gg.messaging().subscribe("commands/+", handler);
+await warmCaches();
+
+gg.setReady(true);                  // /readyz can now return 200 (once connected)
+if (gg.ready()) { /* serving */ }   // TS also exposes a public ready() getter
+```
+
+</TabItem>
+</Tabs>
+
+<Aside type="tip" title="Runtime accessors are not symmetric">
+  All four SDKs expose `setReady` / `set_ready`. Beyond that they differ: **Rust** also exposes
+  `gg.is_shutting_down()` (public, so a run loop can exit cooperatively), and **TypeScript** also
+  exposes `gg.ready()` (a public boolean getter). Java and Python expose neither readiness getter
+  publicly — drive the gate through `setReady` / `set_ready` only.
+</Aside>
+
+## Graceful shutdown
+
+When the library receives `SIGTERM` (and, in some SDKs, `SIGINT`), it runs a fixed drain sequence:
+
+
+1. **Readiness flips to 503 first.** The `shuttingDown` flag is set before anything is torn down, so
+   `/readyz` immediately reports "not ready". Kubernetes stops routing new traffic to the pod while
+   in-flight work finishes.
+
+2. **Subsystems drain.** Messaging unsubscribes and disconnects, metrics/heartbeat stop, and the
+   other subsystems shut down in order.
+
+3. **The health server stops last.** It keeps answering `/readyz` with 503 throughout the drain, so
+   the orchestrator sees a clean "not ready → gone" transition rather than a connection refused mid-drain.
+
+
+The library installs the signal handling for you — you do not register `SIGTERM` yourself. You can
+also trigger the same drain from your own code (for example after a fatal error), and it is
+idempotent, so the signal path and an explicit call cannot double-drain.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+// A JVM shutdown hook catches SIGTERM/SIGINT and runs the drain; the JVM then exits 0.
+// You can also drive it explicitly — this deregisters the hook and is idempotent:
+gg.shutdown();
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+# A SIGTERM handler (installed on the main thread) flips readiness, drains, and exits 0.
+# You can also drive it explicitly — it is idempotent:
+gg.shutdown()
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+// A tokio signal watcher calls begin_shutdown() on the first signal. There is no explicit
+// shutdown() method on the runtime — teardown is RAII: drop the GgCommons to stop the health
+// server and abort the signal task. Use is_shutting_down() to exit your loop cooperatively:
+while !gg.is_shutting_down() {
+    do_work().await;
+}
+// `gg` drops here -> health server and subsystems tear down.
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+// process.on("SIGTERM" | "SIGINT", ...) flips readiness, awaits close(), then exits 0.
+// You can also drive it explicitly — close() is idempotent and flips readiness first even
+// on a repeat call:
+await gg.close();
+```
+
+</TabItem>
+</Tabs>
+
+<Aside type="caution" title="Always let the drain run">
+  The shutdown sequence is what unsubscribes and releases the shared messaging connection. Killing
+  the process with `SIGKILL` (or never letting the drain complete) leaks subscriptions and can trip
+  the shared-connection quota. Give the pod a `terminationGracePeriodSeconds` long enough for the
+  drain, and let the library handle `SIGTERM`.
+</Aside>
+
+## Wiring the Kubernetes probes
+
+Point each probe at the matching path on the health port. The startup probe guards a slow first
+connect; once it passes, liveness and readiness take over.
+
+```yaml
+# Deployment > spec.template.spec.containers[]
+ports:
+  - name: health
+    containerPort: 8081
+livenessProbe:
+  httpGet:
+    path: /livez
+    port: health
+  periodSeconds: 10
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: health
+  periodSeconds: 5
+startupProbe:
+  httpGet:
+    path: /startupz
+    port: health
+  failureThreshold: 30
+  periodSeconds: 2
+```
+
+Because `/readyz` reflects the full predicate, a rollout will wait on genuine readiness — not merely
+on the process starting:
+
+<Tabs syncKey="os">
+<TabItem label="Linux">
+
+```bash
+kubectl rollout status deploy/my-component
+# blocks until enough pods report /readyz == 200 (connected, ready, not shutting down)
+```
+
+</TabItem>
+<TabItem label="Windows">
+
+```powershell
+kubectl rollout status deploy/my-component
+# blocks until enough pods report /readyz == 200 (connected, ready, not shutting down)
+```
+
+</TabItem>
+</Tabs>
+
+## Next steps
+
+<LinkCard
+  title="API reference: Health"
+  href="/reference/health/"
+  description="Exact signatures, config keys, and per-language behavior for the health server and readiness state."
+/>
+<LinkCard
+  title="Deploy to Kubernetes"
+  href="/deploy/kubernetes/"
+  description="Run a GGCommons component in a cluster, including the manifests these probes plug into."
+/>

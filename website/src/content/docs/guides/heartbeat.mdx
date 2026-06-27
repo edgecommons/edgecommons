@@ -1,0 +1,198 @@
+---
+title: Heartbeat
+description: The autonomous heartbeat task samples CPU, memory, disk, and more, then publishes liveness to the metric and messaging subsystems — all from config.
+sidebar:
+  order: 5
+---
+
+import { Tabs, TabItem, Aside, CardGrid, LinkCard } from "@astrojs/starlight/components";
+
+The **heartbeat** subsystem periodically samples process and system health — CPU, memory, disk,
+threads, open files, and file descriptors — and publishes it as a liveness and resource-utilization
+signal. It is owned entirely by the library: the GGCommons runtime starts it at init and stops it at
+shutdown, with **zero component code**.
+
+You never call the heartbeat API. You enable and shape it with a single `heartbeat` section in your
+component config; the runtime does the rest.
+
+<Aside type="note" title="Heartbeat is autonomous">
+No SDK exposes a public accessor to the heartbeat object — there is **no** `getHeartbeat()`,
+`heartbeat()`, or equivalent in any of the four languages. The runtime constructs the heartbeat
+during GGCommons initialization and tears it down on close. The only thing you control is the
+`heartbeat` config section described below.
+</Aside>
+
+## What it measures
+
+When a measure is enabled, the heartbeat collects it into a nested stats object of the shape
+`{ cpu, memory, disk, threads, files, fds }` (disabled measures are omitted). The `metric` target
+flattens this to one metric value per measure; the `messaging` target sends the nested object as the
+message payload.
+
+Counter availability varies by language and platform. Where a counter is enabled but unavailable on
+the current platform, the value falls back as noted.
+
+| Measure | Unit | Availability and fallbacks |
+|---------|------|----------------------------|
+| `cpu` | Percent | All languages, all platforms. |
+| `memory` | MB (resident set) | All languages, all platforms. Java reports whole-number MB (integer division); Python, Rust, and TypeScript report fractional MB. |
+| `disk` | Gigabytes (`disk_total`, `disk_used`, `disk_free`; `disk_used = disk_total − disk_free`) | All languages, all platforms. Measured for the current working directory's mount. |
+| `threads` | Count | Java and Python: all platforms. Rust: Linux and Windows. TypeScript: **Linux only** (returns `0` elsewhere). |
+| `files` | Count (open files) | Java and Python: all platforms. Rust: Linux (regular-file descriptors) and Windows (total handles). TypeScript: **Linux only** (returns `0` elsewhere). |
+| `fds` | Count (open file descriptors) | Java: Unix only (**`-1` on Windows**). Python: all platforms (Windows reports handle count). Rust: Linux and Windows. TypeScript: **Linux only** (returns `0` elsewhere). |
+
+<Aside type="caution" title="Platform-specific counters">
+`threads`, `files`, and `fds` are the least portable. If you depend on them, confirm they are
+available on your target platform — on TypeScript they are Linux-only, and Java's `fds` is `-1` on
+Windows. CPU, memory, and disk are safe everywhere.
+</Aside>
+
+## How it is published
+
+A heartbeat fires on its interval and is routed to one or more **targets**. Two target types exist:
+
+- **`metric`** — emits one metric per enabled measure through the [metrics](/guides/metrics/)
+  subsystem (metric name `heartbeat`). The metric's `storageResolution` is `1` when the interval is
+  under 60 seconds, otherwise `60`.
+- **`messaging`** — publishes the nested stats object through the [messaging](/guides/messaging/)
+  subsystem, to a configurable `destination` and `topic`.
+
+The default interval is **5 seconds** in all four languages. The messaging envelope carries a fixed
+message name and version:
+
+| Field | Value |
+|-------|-------|
+| Message name | `heartbeat` (Java, Rust, TypeScript) · `Heartbeat` (Python — capital H) |
+| Message version | `1.0.0` (all languages) |
+
+<Aside type="caution" title="Message-name casing differs in Python">
+Python publishes the messaging envelope with the header name `Heartbeat` (capital H), while Java,
+Rust, and TypeScript use `heartbeat`. A subscriber that filters on the message name must accept
+**both** spellings. The metric target is unaffected — it always emits a metric named `heartbeat`.
+</Aside>
+
+### Destination and topic
+
+The `messaging` target's `config` accepts:
+
+- **`destination`** — where to publish. Recognized values are `ipc` / `local` (the local broker or
+  Greengrass IPC) and `iot_core` / `iotcore` (AWS IoT Core, published at QoS at-least-once). The
+  default is `ipc`. Any other value is logged as unrecognized and skipped.
+- **`topic`** — the publish topic. The default is `ggcommons/{ThingName}/{ComponentName}/heartbeat`.
+  The `{ThingName}` and `{ComponentName}` template variables are resolved at publish time.
+
+## Configuration
+
+Add a `heartbeat` section to your component config file (the same config source you select with
+`-c`). Because the cross-language defaults differ (see below), the most portable approach is to
+specify `intervalSecs`, `measures`, and `targets` **explicitly**.
+
+```json
+{
+  "heartbeat": {
+    "intervalSecs": 5,
+    "measures": {
+      "cpu": true,
+      "memory": true,
+      "disk": false,
+      "threads": false,
+      "files": false,
+      "fds": false
+    },
+    "targets": [
+      { "type": "metric" },
+      {
+        "type": "messaging",
+        "config": {
+          "destination": "ipc",
+          "topic": "ggcommons/{ThingName}/{ComponentName}/heartbeat"
+        }
+      }
+    ]
+  }
+}
+```
+
+A minimal metric-only heartbeat is just:
+
+```json
+{
+  "heartbeat": {
+    "intervalSecs": 30,
+    "measures": { "cpu": true, "memory": true },
+    "targets": [{ "type": "metric" }]
+  }
+}
+```
+
+<Aside type="tip" title="Customizing is config, not code">
+There is no per-language customize hook to write. Tuning the interval, choosing measures, and
+selecting targets are all done in the `heartbeat` config section above — it behaves identically
+across Java, Python, Rust, and TypeScript. Config changes are picked up without a restart (the
+runtime re-reads the live config; in Java and Python via the configuration-change listener, in Rust
+and TypeScript by re-reading the config handle on each tick).
+</Aside>
+
+## Cross-language differences to know
+
+The heartbeat is config-driven and consistent in spirit, but a few behaviors diverge. Being explicit
+in config (above) avoids most of them.
+
+- **Defaults when `targets` is omitted.** Java injects a single `{ "type": "metric" }` target; Python
+  defaults to a single `messaging`/`ipc` target on the default topic; **Rust and TypeScript publish
+  nothing** (empty target list). Always set `targets` explicitly for predictable behavior.
+- **Defaults when `measures` is omitted.** Java and Python default to `cpu` and `memory` enabled (rest
+  off); **Rust and TypeScript default all measures off**, so an omitted `measures` block collects
+  nothing. Always set `measures` explicitly.
+- **First-tick timing.** Java, Rust, and TypeScript fire the first heartbeat at roughly `t=0`. Python
+  waits one full interval before its first publish.
+- **Interval floor.** Java, Rust, and TypeScript enforce a minimum (Java resets a value below `1` to
+  `5`; Rust and TypeScript clamp to a minimum of `1`). **Python applies no floor** — a sub-second or
+  zero interval is honored as-is and will busy-loop, so do not set a tiny interval in Python.
+- **Messaging service requirement.** In Java a messaging service is always present (the heartbeat is
+  wired with both messaging and metric services). In Python, Rust, and TypeScript messaging is
+  optional — a `messaging` target with no messaging service available is logged and skipped.
+
+Every tick is exception-guarded in all four languages: a failing sample is logged and the next tick
+still fires.
+
+## Observe heartbeats locally
+
+With the HOST platform and the MQTT transport, subscribe to the heartbeat topic to watch heartbeats
+arrive. The default topic has four segments (`ggcommons/<thing>/<component>/heartbeat`), so the
+matching wildcard filter is `ggcommons/+/+/heartbeat`.
+
+<Tabs syncKey="os">
+<TabItem label="Linux">
+
+```bash
+# Bring up the local broker (EMQX), then subscribe to all heartbeats.
+docker compose -f test-infra/compose.yaml up -d
+mosquitto_sub -h localhost -p 1883 -t 'ggcommons/+/+/heartbeat' -v
+```
+
+</TabItem>
+<TabItem label="Windows">
+
+```powershell
+# Bring up the local broker (EMQX), then subscribe to all heartbeats.
+docker compose -f test-infra/compose.yaml up -d
+mosquitto_sub -h localhost -p 1883 -t 'ggcommons/+/+/heartbeat' -v
+```
+
+</TabItem>
+</Tabs>
+
+<Aside type="note">
+The older guidance to subscribe to `heartbeat/+/+` is stale — that filter does not match the default
+topic. Use `ggcommons/+/+/heartbeat`.
+</Aside>
+
+## Related
+
+<CardGrid>
+  <LinkCard title="API reference: Heartbeat" href="/reference/heartbeat/" description="Heartbeat classes, config model, and the heartbeat schema section." />
+  <LinkCard title="Metrics guide" href="/guides/metrics/" description="Where the metric target emits, and how metric targets work." />
+  <LinkCard title="Messaging guide" href="/guides/messaging/" description="The transport and envelope the messaging target uses." />
+  <LinkCard title="Configuration guide" href="/guides/configuration/" description="Config sources and the schema that validates the heartbeat section." />
+</CardGrid>

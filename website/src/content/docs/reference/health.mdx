@@ -1,0 +1,524 @@
+---
+title: Health API
+description: Signatures and per-language behavior for the GGCommons health server, readiness state, and Kubernetes liveness/readiness/startup probes.
+sidebar:
+  order: 10
+---
+
+import { Tabs, TabItem, Aside, LinkCard } from "@astrojs/starlight/components";
+
+The health subsystem is a minimal, dependency-free HTTP/1.1 server that exposes Kubernetes-style
+probes (`GET /livez`, `/readyz`, `/startupz`) backed by a thread-safe readiness state, plus
+library-owned `SIGTERM`/`SIGINT` wiring that flips `/readyz` to 503 and then drains all subsystems.
+It is **on by default only on the KUBERNETES platform** and opt-in elsewhere.
+
+This page is the API reference: exact types, signatures, config keys, and the per-language
+behavioral differences. For the narrative — how to drive the readiness gate and wire the probes
+into a Deployment — see the [Health & graceful shutdown guide](/guides/health/).
+
+In a component you almost never construct the server yourself; the builder wires it for you, and you
+drive readiness through the runtime accessors (`setReady` / `set_ready`). The server, readiness, and
+config types below are documented because they are the public surface and are what the tests and
+builder use directly.
+
+## Endpoint semantics
+
+The server binds `0.0.0.0:<port>` (default port **8081**; port `0` selects an ephemeral port, used in
+tests). Bodies are tiny `text/plain` strings. These semantics are identical across all four SDKs:
+
+| Request | Status | Body | Condition |
+|---------|--------|------|-----------|
+| `GET <livenessPath>` (default `/livez`) | 200 | `ok` | Always while the process is alive. **Never consults the broker** — the handler running is itself the liveness proof, so a broker outage must not fail liveness. |
+| `GET <readinessPath>` (default `/readyz`) | 200 / 503 | `ok` / `not ready` | 200 only when `messagingConnected && readyFlag && !shuttingDown`; otherwise 503. |
+| `GET <startupPath>` (default `/startupz`) | 200 / 503 | `ok` / `not ready` | Reuses the readiness predicate exactly. |
+| `GET <unknown path>` | 404 | `not found` | Any path not matching the three above. |
+| non-`GET` method | diverges | — | See [non-GET method handling](#non-get-method-handling) — the four SDKs differ. |
+
+The `readyFlag` defaults to **`true`**, so `/readyz` returns 200 as soon as messaging connects unless
+you call `setReady(false)`. `setReady(true)` only lifts your gate — it cannot force readiness while
+disconnected or shutting down, because the connectivity and `!shuttingDown` parts of the predicate
+still apply.
+
+## Configuration
+
+Health lives under the `health` section of the component config (the single schema in
+`schema/ggcommons-config-schema.json`, shared by all four SDKs). Every key is optional; the values
+shown are the defaults.
+
+```json
+{
+  "component": { "name": "com.example.MyComponent" },
+  "health": {
+    "enabled": true,
+    "port": 8081,
+    "livenessPath": "/livez",
+    "readinessPath": "/readyz",
+    "startupPath": "/startupz"
+  }
+}
+```
+
+The `enabled` key is **tri-state**: absent means "use the platform default", and an explicit value
+overrides in either direction (explicit `false` turns the server off even on KUBERNETES). See
+[enablement precedence](#enablement-precedence) below.
+
+### Config types per language
+
+Each SDK parses the `health` section into a config type. Java and Python carry a single
+`HealthConfiguration` (enabled + port + paths); Rust splits the on/off flag (`HealthConfig.enabled`,
+from the config model) from the server's bind config (`ServerConfig`); TypeScript expresses the
+server's inputs as `HealthServerOptions` / `HealthPaths`.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+// libs/java/.../config/HealthConfiguration.java
+public HealthConfiguration(JsonObject jsonConfig);   // accepts null
+
+public boolean isEnabled();                  // resolved on/off
+public boolean isEnabledExplicitlySet();     // tri-state: was the "enabled" key present?
+public int     getPort();                    // default 8081
+public String  getLivenessPath();            // default "/livez"
+public String  getReadinessPath();           // default "/readyz"
+public String  getStartupPath();             // default "/startupz"
+
+// Constants: DEFAULT_PORT=8081, DEFAULT_LIVENESS_PATH="/livez",
+//            DEFAULT_READINESS_PATH="/readyz", DEFAULT_STARTUP_PATH="/startupz"
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+# libs/python/ggcommons/config/health_config.py
+class HealthConfiguration:
+    def __init__(self, health_json: Optional[dict]): ...   # accepts None
+
+    @property
+    def enabled(self) -> Optional[bool]: ...   # tri-state: None = unset
+    @property
+    def port(self) -> int: ...                 # default 8081
+    @property
+    def liveness_path(self) -> str: ...        # default "/livez"
+    @property
+    def readiness_path(self) -> str: ...       # default "/readyz"
+    @property
+    def startup_path(self) -> str: ...         # default "/startupz"
+
+    def to_dict(self) -> dict: ...
+
+    # Class constants: DEFAULT_PORT=8081, DEFAULT_LIVENESS_PATH="/livez", etc.
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+// On/off flag from the config model: crate::config::model::HealthConfig
+pub struct HealthConfig {
+    pub enabled: Option<bool>,   // tri-state: None = use platform default
+    // ...
+}
+
+// Server bind config: crate::health::ServerConfig
+// #[derive(Debug, Clone)]
+pub struct ServerConfig {
+    pub port: u16,                // 0 = ephemeral
+    pub liveness_path: String,    // "/livez"
+    pub readiness_path: String,   // "/readyz"
+    pub startup_path: String,     // "/startupz"
+}
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+// libs/ts/src/health.ts
+export interface HealthPaths {
+  liveness: string;   // "/livez"
+  readiness: string;  // "/readyz"
+  startup: string;    // "/startupz"
+}
+
+export interface HealthServerOptions {
+  port: number;            // 0 = ephemeral
+  paths: HealthPaths;
+  readiness: ReadinessState;
+}
+
+// The resolved on/off flag is read from the parsed `health.enabled`
+// config field (boolean | undefined; undefined = use platform default).
+```
+
+</TabItem>
+</Tabs>
+
+## ReadinessState
+
+The readiness state holds the `readyFlag` and `shuttingDown` flags and answers the readiness
+predicate `connected && ready && !shuttingDown`. The connectivity check is supplied as a callback at
+construction so the state never depends on the messaging subsystem directly.
+
+<Aside type="note" title="Java has no ReadinessState object">
+  Java does not have a standalone readiness class. The `HealthServer` constructor takes two
+  `BooleanSupplier` callbacks (liveness and readiness) instead, and the runtime owns the
+  `volatile boolean readyFlag` / `shuttingDown` fields directly. Java exposes the same behavior
+  through the runtime accessor `setReady(boolean)` and an internal `shuttingDown` flip on shutdown.
+</Aside>
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+// Java has no ReadinessState class. The HealthServer takes BooleanSupplier callbacks
+// (see "HealthServer" below), and you drive readiness via the runtime accessor:
+gg.setReady(false);   // hold the gate; gg.setReady(true) lifts it
+// The runtime sets its internal `shuttingDown` flag during shutdown() — there is no
+// public "begin shutdown" call; readiness flips to 503 automatically on drain.
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+# libs/python/ggcommons/health/health_server.py
+class ReadinessState:
+    def __init__(self, connected_fn: Callable[[], bool]): ...
+
+    def set_ready(self, ready: bool) -> None: ...
+    def set_shutting_down(self) -> None: ...    # NOTE: not "begin_shutdown"
+    def is_shutting_down(self) -> bool: ...
+    def is_ready(self) -> bool: ...             # not shutting_down and ready_flag and connected_fn()
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+// libs/rust/src/health.rs
+// #[derive(Clone)] — cloning shares the same underlying Arc<AtomicBool> state.
+pub struct HealthState { /* ... */ }
+
+impl HealthState {
+    pub fn new(messaging: Option<Arc<dyn MessagingService>>) -> Self;
+    pub fn set_ready(&self, ready: bool);
+    pub fn begin_shutdown(&self);            // NOTE: name differs from Python's set_shutting_down
+    pub fn is_shutting_down(&self) -> bool;
+    pub fn messaging_connected(&self) -> bool;   // None messaging -> false
+    pub fn livez_ok(&self) -> bool;          // always true
+    pub fn readyz_ok(&self) -> bool;         // connected && ready && !shutting_down
+}
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+// libs/ts/src/health.ts
+export class ReadinessState {
+  constructor(messagingConnected: () => boolean);
+
+  setReady(ready: boolean): void;
+  beginShutdown(): void;          // NOTE: matches Rust's begin_shutdown
+  isShuttingDown(): boolean;
+  isReady(): boolean;             // messagingConnected() && readyFlag && !shuttingDown
+}
+```
+
+</TabItem>
+</Tabs>
+
+The "begin shutdown" method name is one of the cross-language divergences: Python
+`set_shutting_down()`, Rust `begin_shutdown()`, TypeScript `beginShutdown()`, and Java has no
+separate object (it flips an internal `volatile boolean shuttingDown` field).
+
+## HealthServer
+
+The server starts on a background thread and answers the three probe paths. Construction/startup and
+teardown differ by language idiom (see [lifecycle & threading](#lifecycle--threading)).
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+// libs/java/.../health/HealthServer.java — the constructor STARTS the server immediately.
+public HealthServer(
+    int port,                     // 0 = ephemeral
+    String livenessPath,
+    String readinessPath,
+    String startupPath,
+    BooleanSupplier liveness,     // () -> true: never checks the broker
+    BooleanSupplier readiness     // () -> connected && readyFlag && !shuttingDown
+) throws IOException;
+
+public int  getPort();   // resolves the actual (possibly ephemeral) port
+public void close();     // idempotent; server.stop(0)
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+# libs/python/ggcommons/health/health_server.py
+class HealthServer:
+    def __init__(
+        self,
+        config: HealthConfiguration,
+        readiness: ReadinessState,
+        bind_host: str = "0.0.0.0",
+    ): ...
+
+    def start(self) -> None: ...   # binds + serves on a daemon thread
+    @property
+    def port(self) -> int: ...
+    def stop(self) -> None: ...    # idempotent; shutdown() + server_close() + join(timeout=5.0)
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+// libs/rust/src/health.rs
+impl HealthServer {
+    // Binds and spawns the serving thread; returns once listening.
+    pub fn start(config: ServerConfig, state: HealthState) -> std::io::Result<HealthServer>;
+
+    pub fn local_addr(&self) -> SocketAddr;   // resolves the actual (possibly ephemeral) addr
+}
+// impl Drop: dropping the HealthServer stops the thread (bounded by POLL_INTERVAL = 50ms).
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+// libs/ts/src/health.ts
+export class HealthServer {
+  // Resolves once listening; calls server.unref() so it never keeps the event loop alive.
+  static start(opts: HealthServerOptions): Promise<HealthServer>;
+
+  port(): number;
+  stop(): Promise<void>;   // close-after-close is a no-op
+}
+```
+
+</TabItem>
+</Tabs>
+
+## evaluateHealth (TypeScript only)
+
+TypeScript is the only SDK that exports the router as a pure, public function — handy for unit
+testing routing without binding a socket. It takes the method, URL, paths, and readiness state and
+returns a `{ status, body }` response with no I/O.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+// Not available as a public function in Java. Routing happens inside the request handler
+// (HealthServer); there is no standalone pure router to call.
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+# Not available as a public function in Python. Routing happens inside the private
+# request handler (do_GET); there is no standalone pure router to call.
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+// Not available as a PUBLIC function in Rust. An equivalent pure router exists
+// (fn route(path, &ServerConfig, &HealthState) -> (u16, &'static str)) but it is
+// private and exercised only by in-module #[cfg(test)] tests.
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+// libs/ts/src/health.ts
+export interface HealthResponse {
+  status: number;
+  body: string;
+}
+
+export function evaluateHealth(
+  method: string | undefined,
+  url: string | undefined,
+  paths: HealthPaths,
+  readiness: ReadinessState,
+): HealthResponse;
+
+// Example:
+evaluateHealth(
+  "GET",
+  "/livez",
+  { liveness: "/livez", readiness: "/readyz", startup: "/startupz" },
+  readiness,
+); // -> { status: 200, body: "ok" }
+```
+
+</TabItem>
+</Tabs>
+
+## Runtime accessors
+
+In a component you interact with health through the built runtime instance (`GGCommons` /
+`GgCommons`), not the server directly. All four SDKs expose a readiness setter; beyond that the
+surface is intentionally asymmetric (see [accessor asymmetry](#runtime-accessor-asymmetry)).
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+gg.setReady(false);   // hold /readyz at 503 during startup
+gg.setReady(true);    // lift the gate (connectivity still required)
+gg.shutdown();        // idempotent; flips readiness to 503 first, then drains
+// Messaging accessor for this subsystem's connectivity is gg.getMessaging().
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+gg.set_ready(False)   # hold /readyz at 503 during startup
+gg.set_ready(True)    # lift the gate (connectivity still required)
+gg.shutdown()         # idempotent; flips readiness to 503 first, then drains
+# Messaging accessor for connectivity is gg.get_messaging().
+# Note: set_ready is a no-op if the readiness state was never built (server disabled).
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+gg.set_ready(false);             // hold /readyz at 503 during startup
+gg.set_ready(true);              // lift the gate (connectivity still required)
+while !gg.is_shutting_down() {   // PUBLIC — for cooperative run-loop exit
+    // work...
+}
+// There is no shutdown() method: teardown is RAII — drop the GgCommons to stop the
+// health server and abort the signal task. Messaging accessor is gg.messaging().
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+gg.setReady(false);              // hold /readyz at 503 during startup
+gg.setReady(true);               // lift the gate (connectivity still required)
+if (gg.ready()) { /* serving */ } // PUBLIC convenience getter (returns readiness.isReady())
+await gg.close();                // idempotent; flips readiness FIRST even on a repeat call
+// Messaging accessor is gg.messaging().
+```
+
+</TabItem>
+</Tabs>
+
+## Enablement precedence
+
+Enablement follows one rule in every language: **explicit `health.enabled` wins; otherwise the
+platform default applies.** The platform default is on only for KUBERNETES.
+
+| Platform | Default | Override |
+|----------|---------|----------|
+| `KUBERNETES` | on | set `health.enabled: false` to turn it off |
+| `HOST` | off | set `health.enabled: true` to turn it on |
+| `GREENGRASS` | off | set `health.enabled: true` to turn it on |
+| auto-detected as none of the above / unknown | off | set `health.enabled: true` to turn it on |
+
+The default lives in a per-language `profileHealthEnabled(platform)` helper (Java
+`PlatformResolver.profileHealthEnabled`, Python `profile_health_enabled`, Rust
+`profile_health_enabled`, TypeScript `profileHealthEnabled`) that returns `true` only for KUBERNETES
+(a `null` / `None` / unknown platform resolves to off). A bind failure is logged and swallowed in all
+four SDKs — a port clash never crashes your component.
+
+## Cross-language divergences
+
+The health subsystem is a deliberate four-way mirror, but a handful of behaviors differ. Document
+against the SDK you are using.
+
+### non-GET method handling
+
+The probe handlers are GET-only, and Kubernetes only ever issues `GET` against probe paths, so this
+rarely matters in practice. The response to a non-`GET` method nonetheless **diverges four ways**:
+
+| SDK | Behavior for a non-`GET` method |
+|-----|----------------------------------|
+| Java | Path is checked first. non-`GET` on a **known** path (`/livez`/`/readyz`/`/startupz`) -> **405 "method not allowed"**; non-`GET` on an unknown path -> **404 "not found"**. |
+| TypeScript | `method !== "GET"` is checked **first**, before the path -> **405 "method not allowed"** for *any* path, including unknown. So `POST /nope` -> 405 in TS but 404 in Java. |
+| Rust | The method is parsed then **discarded** — routing is by path regardless of method, so `POST /livez` -> **200**. A malformed request line -> **400 "bad request"**. There is no 405 path. |
+| Python | Only `do_GET` is defined; other verbs fall through to the stdlib `BaseHTTPRequestHandler` -> **501 Not Implemented**. |
+
+{/* TODO: unverified - Python 501 for non-GET is inferred from stdlib BaseHTTPRequestHandler (only do_GET is defined); no ggcommons test exercises a non-GET verb against the Python server. */}
+
+{/* NEEDS REVIEW: the Python non-GET 501 and Rust 400 (malformed line) bodies/status lines are behavioral edges with no Python test and no doc comment in source; confirm the exact status line if documenting it precisely. */}
+
+### Runtime-accessor asymmetry
+
+All four SDKs expose `setReady` / `set_ready`. Beyond that:
+
+- **Rust** additionally exposes `gg.is_shutting_down()` (public, so a run loop can exit
+  cooperatively).
+- **TypeScript** additionally exposes `gg.ready()` (a public boolean getter returning
+  `readiness.isReady()`).
+- **Java** and **Python** expose neither readiness getter publicly — drive the gate through
+  `setReady` / `set_ready` only. (Java's `isReadyz` is package-private; Python's readiness object is
+  the private `_readiness`.)
+
+### Public router
+
+Only **TypeScript** exports the pure `evaluateHealth(...)` router. Rust has an equivalent pure
+`route(...)` but it is private (`#[cfg(test)]`-tested in-module). Java and Python route inside the
+request handler with no standalone pure function.
+
+### Lifecycle & threading
+
+| SDK | Server | Teardown |
+|-----|--------|----------|
+| Java | JDK `com.sun.net.httpserver.HttpServer` on a single daemon thread | `close()` = `server.stop(0)` (idempotent) |
+| Python | stdlib `ThreadingHTTPServer` on a daemon thread | `stop()` joins with a 5s timeout (idempotent) |
+| Rust | hand-rolled `TcpListener` on a dedicated `std::thread`; non-blocking accept polled every 50ms; 2s per-connection read timeout | RAII — dropping `HealthServer` (or `GgCommons`) stops it |
+| TypeScript | node `http.Server` with `server.unref()` so it never keeps the event loop alive | async `stop()` returns a `Promise`; close-after-close is a no-op |
+
+### Graceful shutdown ordering
+
+Every SDK runs the same drain order on `SIGTERM`: **readiness flips to 503 first**, then subsystems
+drain, and **the health server stops last** — so `/readyz` keeps serving 503 throughout the drain and
+the orchestrator sees a clean "not ready -> gone" transition. The signal wiring itself differs by
+platform reality:
+
+- **Java** — a JVM shutdown hook (`Runtime.addShutdownHook`) catches `SIGTERM`/`SIGINT`; the JVM exits
+  0 after the hook. An app-driven `shutdown()` deregisters the hook; a `shutdownComplete`
+  `AtomicBoolean` CAS makes it idempotent.
+- **Python** — `signal.signal(SIGTERM, ...)` is installed **only on the main thread**; the handler
+  flips readiness, calls `shutdown()`, and `sys.exit(0)`. `SIGINT` is not hooked by the library.
+- **Rust** — a tokio signal-watcher task calls `state.begin_shutdown()` on the first signal; teardown
+  is RAII.
+- **TypeScript** — `process.on("SIGTERM" | "SIGINT", ...)` flips readiness, awaits `close()`, then
+  `process.exit(0)`; handlers are removed in `close()`.
+
+<Aside type="caution" title="Let the drain run">
+  The drain is what unsubscribes and releases the shared messaging connection. `SIGKILL` (or never
+  letting the drain finish) leaks subscriptions and can trip the shared-connection quota. Give the
+  pod a `terminationGracePeriodSeconds` long enough to complete the drain.
+</Aside>
+
+## See also
+
+<LinkCard
+  title="Health & graceful shutdown guide"
+  href="/guides/health/"
+  description="How to drive the readiness gate, configure the endpoint, and wire the Kubernetes probes."
+/>
+<LinkCard
+  title="Messaging guide"
+  href="/guides/messaging/"
+  description="The messaging connectivity that backs the /readyz predicate."
+/>

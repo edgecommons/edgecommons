@@ -1,0 +1,600 @@
+---
+title: Scaffolding CLI
+description: Install the ggcommons CLI and generate, validate, build, and deploy Greengrass v2 components in Java, Python, Rust, or TypeScript.
+sidebar:
+  order: 4
+---
+
+import { Tabs, TabItem, Aside, LinkCard, CardGrid } from "@astrojs/starlight/components";
+
+The `ggcommons` scaffolding CLI is the fastest way to start a new Greengrass v2 component. It
+generates a ready-to-build project for any of the four languages, wires up the ggcommons
+dependency, and gives you commands to validate, build, publish, deploy, and upgrade the result.
+
+The CLI is a single Python package (`ggcommons-cli`) that ships the templates for **all four
+languages** inside the wheel, so once installed it scaffolds offline — no network needed to
+generate a project.
+
+<Aside type="note" title="One CLI, four target languages">
+The CLI itself is written in Python, but it generates Java, Python, Rust, and TypeScript
+components. You pick the target language with `-l/--language`; everything else about the workflow
+is the same.
+</Aside>
+
+## Install
+
+The CLI installs from the `cli/` directory of the monorepo. `pipx` is recommended (isolated global
+install); plain `pip` also works.
+
+<Tabs syncKey="os">
+<TabItem label="Linux">
+
+```bash
+pipx install ./cli              # recommended: isolated global `ggcommons`
+# or:
+python -m pip install ./cli     # plain install
+python -m pip install -e ./cli  # editable (for developing the CLI itself)
+```
+
+</TabItem>
+<TabItem label="Windows">
+
+```powershell
+pipx install ./cli              # recommended: isolated global `ggcommons`
+# or:
+python -m pip install ./cli     # plain install
+python -m pip install -e ./cli  # editable (for developing the CLI itself)
+```
+
+</TabItem>
+</Tabs>
+
+Two identical console entry points are installed — `ggcommons` and `ggcommons-cli` — so use
+whichever you prefer. The examples below use `ggcommons`.
+
+```text
+ggcommons --version          # print the installed CLI version
+ggcommons                    # no subcommand → prints top-level help
+ggcommons <unknown>          # → "Unknown command: <unknown>" (exit 2)
+```
+
+When a command fails it prints `error: <message>` (no Python traceback) and exits non-zero.
+
+## `doctor` — check your toolchain
+
+`ggcommons doctor` checks for the external tools needed to build and publish components and prints
+where each one was found. It takes no flags and reports status only — it does **not** exit non-zero
+when something is missing, so it is safe to run anytime.
+
+<Tabs syncKey="os">
+<TabItem label="Linux">
+
+```bash
+ggcommons doctor
+```
+
+</TabItem>
+<TabItem label="Windows">
+
+```powershell
+ggcommons doctor
+```
+
+</TabItem>
+</Tabs>
+
+It checks eight tools, in this order:
+
+| Tool | Needed to |
+|------|-----------|
+| `git` | clone component templates |
+| `gdk` | build/publish components (Greengrass Development Kit) |
+| `cargo` | build Rust components |
+| `mvn` | build Java components |
+| `python3` (or `python`) | run/build Python components |
+| `node` | run/build TypeScript components |
+| `npm` | install TypeScript dependencies |
+| `aws` | publish to AWS / deploy |
+
+Each line prints `[ok] <name> -> <path>` or `[missing] <name> -- needed to …`. You only need the
+tools for the language and workflow you actually target.
+
+## `create-component` — scaffold a project
+
+This is the core command. The minimal non-interactive form requires a fully-qualified component
+name (`-n`) and a language (`-l`):
+
+<Tabs syncKey="os">
+<TabItem label="Linux">
+
+```bash
+# pick one language with -l (JAVA | PYTHON | RUST | TYPESCRIPT)
+ggcommons create-component -n com.example.MyComponent -l JAVA
+ggcommons create-component -n com.example.MyComponent -l PYTHON
+ggcommons create-component -n com.example.MyComponent -l RUST
+ggcommons create-component -n com.example.MyComponent -l TYPESCRIPT
+```
+
+</TabItem>
+<TabItem label="Windows">
+
+```powershell
+# pick one language with -l (JAVA | PYTHON | RUST | TYPESCRIPT)
+ggcommons create-component -n com.example.MyComponent -l JAVA
+ggcommons create-component -n com.example.MyComponent -l PYTHON
+ggcommons create-component -n com.example.MyComponent -l RUST
+ggcommons create-component -n com.example.MyComponent -l TYPESCRIPT
+```
+
+</TabItem>
+</Tabs>
+
+The output directory is `<path>/<ComponentName>`, where `ComponentName` is the **last dot-segment**
+of `--name` (so `com.example.MyComponent` generates into `./MyComponent`). On success the CLI prints
+`Done. Component generated at: <dir>`.
+
+After generation it runs two guards: it fails fast if any `<<TOKEN>>` placeholder was left
+unsubstituted, and it lints the generated `recipe.yaml`, printing `WARNING (recipe): …` for any
+issues it finds.
+
+### Flags
+
+| Flag | Short | Default | Notes |
+|------|-------|---------|-------|
+| `--name` | `-n` | _(required non-interactively)_ | Fully-qualified component name, e.g. `com.example.MyComponent`. |
+| `--language` | `-l` | _(required non-interactively)_ | One of `JAVA`, `PYTHON`, `RUST`, `TYPESCRIPT`. |
+| `--description` | `-d` | `This is a Greengrass v2 component` | Short component description. |
+| `--path` | `-p` | `.` | Parent directory for the generated project. |
+| `--jar` | `-j` | the component name | Jar file name (Java only). |
+| `--author` | `-a` | `Amazon Web Services` | Component author. |
+| `--bucket` | `-b` | `greengrass-component-artifacts-us-east-1` | S3 artifact bucket (written into `gdk-config.json`). |
+| `--region` | `-r` | `us-east-1` | AWS region (written into `gdk-config.json`). |
+| `--ggcommons-path` | `-g` | `libs/rust` or `libs/ts` | Absolute path to the local ggcommons library. **Rust/TypeScript only** (see below). |
+| `--template-url` | `-u` | built-in template | Override the template source: a git URL (cloned) or a local directory (copied). |
+| `--template-ref` | _(none)_ | repo default branch | Git branch/tag to clone. Only applies to a git `--template-url`; ignored for local dirs. |
+| `--force` | `-f` | off | Overwrite the target directory if it already exists and is non-empty. |
+| `--interactive` | `-i` | off | Run the guided wizard (see below). |
+| `--platforms` | _(none)_ | `GREENGRASS,HOST,KUBERNETES` | Comma-separated target platforms; gates which platform-specific artifacts are emitted. |
+| `--dep-source` | _(none)_ | `local` | How the component depends on ggcommons: `local` (path/file dep) or `registry` (published artifact). |
+
+<Aside type="caution" title="Default scaffolding is offline (a local copy)">
+By default the CLI copies its bundled/in-repo template — it does **not** clone over the network.
+A git clone happens only when you pass a git URL to `--template-url`.
+</Aside>
+
+### Interactive wizard
+
+The wizard auto-enables when you pass `-i/--interactive`, **or** when you omit `-n/--name` while
+running on a terminal (a TTY). It collects the same inputs the flags do, then runs the identical
+generation flow. Press Enter to accept the `[default]` shown in each prompt.
+
+The prompts, in order, are: **language**, **fully-qualified name** (required), **description**,
+**target platform(s)**, **dependency source**, **local ggcommons path** (only asked for a Rust or
+TypeScript component with `--dep-source local`), and **author**.
+
+<Tabs syncKey="os">
+<TabItem label="Linux">
+
+```bash
+$ ggcommons create-component -i
+Interactive component scaffolding — press Enter to accept the [default].
+
+Language (JAVA/PYTHON/RUST/TYPESCRIPT): PYTHON
+Fully-qualified component name (e.g. com.example.MyComponent): com.example.MyComponent
+Description [This is a Greengrass v2 component]:
+Target platform(s) — comma-separated from GREENGRASS,HOST,KUBERNETES [GREENGRASS,HOST,KUBERNETES]: HOST
+ggcommons dependency source (registry/local) [local]:
+Author [Amazon Web Services]: Marc
+```
+
+</TabItem>
+<TabItem label="Windows">
+
+```powershell
+PS> ggcommons create-component -i
+Interactive component scaffolding — press Enter to accept the [default].
+
+Language (JAVA/PYTHON/RUST/TYPESCRIPT): PYTHON
+Fully-qualified component name (e.g. com.example.MyComponent): com.example.MyComponent
+Description [This is a Greengrass v2 component]:
+Target platform(s) — comma-separated from GREENGRASS,HOST,KUBERNETES [GREENGRASS,HOST,KUBERNETES]: HOST
+ggcommons dependency source (registry/local) [local]:
+Author [Amazon Web Services]: Marc
+```
+
+</TabItem>
+</Tabs>
+
+### Platform gating (`--platforms`)
+
+`--platforms` controls which **platform-specific artifacts** the template emits. The three valid
+values are `GREENGRASS`, `HOST`, and `KUBERNETES`; the default selects all three. Selecting a
+subset prunes the artifacts only that platform needs.
+
+The headline case: the Kubernetes `Dockerfile` and `k8s/` manifests are emitted **only when
+`KUBERNETES` is among the selected platforms**.
+
+<Tabs syncKey="os">
+<TabItem label="Linux">
+
+```bash
+# Greengrass + HOST only → no Dockerfile, no k8s/ manifests
+ggcommons create-component -n com.example.MyComponent -l RUST --platforms GREENGRASS,HOST
+
+# include KUBERNETES → also emits Dockerfile + k8s/ (configmap.yaml, deployment.yaml)
+ggcommons create-component -n com.example.MyComponent -l RUST --platforms KUBERNETES
+```
+
+</TabItem>
+<TabItem label="Windows">
+
+```powershell
+# Greengrass + HOST only → no Dockerfile, no k8s/ manifests
+ggcommons create-component -n com.example.MyComponent -l RUST --platforms GREENGRASS,HOST
+
+# include KUBERNETES → also emits Dockerfile + k8s/ (configmap.yaml, deployment.yaml)
+ggcommons create-component -n com.example.MyComponent -l RUST --platforms KUBERNETES
+```
+
+</TabItem>
+</Tabs>
+
+### Dependency source (`--dep-source`)
+
+`--dep-source` decides how the generated component resolves the ggcommons library:
+
+- `local` (the default) — a **path/file dependency** on a monorepo checkout, ideal for developing
+  against an unpublished library.
+- `registry` — the **published artifact** (GitHub Packages / git tag).
+
+This flag (and `--ggcommons-path`) only affect **Rust and TypeScript** — the two languages whose
+generated dependency is a path/file reference. For **Java and Python** the dependency is always the
+named coordinate (`com.mbreissi:ggcommons` in `pom.xml`, `greengrass-commons` in
+`requirements.txt`), so `--dep-source` is a no-op there.
+
+Here is the dependency declaration each language ends up with:
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```xml
+<!-- pom.xml — always this coordinate; --dep-source has no effect for Java -->
+<dependency>
+  <groupId>com.mbreissi</groupId>
+  <artifactId>ggcommons</artifactId>
+  <version>0.1.0</version>
+</dependency>
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```text
+# requirements.txt — always the named package; --dep-source has no effect for Python
+greengrass-commons
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```toml
+# Cargo.toml — local (default): path dependency on your --ggcommons-path
+ggcommons = { path = "/abs/path/to/libs/rust", default-features = false }
+
+# Cargo.toml — registry: git tag
+ggcommons = { git = "https://github.com/mbreissi/ggcommons", tag = "rust-lib/v0.1.0", default-features = false }
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```json
+// package.json — local (default): file: dependency on your --ggcommons-path
+"@mbreissi/ggcommons": "file:/abs/path/to/libs/ts"
+
+// package.json — registry: version range (plus a generated .npmrc pointing at GitHub Packages)
+"@mbreissi/ggcommons": "^0.1.0"
+```
+
+</TabItem>
+</Tabs>
+
+For a Rust or TypeScript component with `--dep-source local`, the CLI requires a valid
+`--ggcommons-path` (it defaults to `libs/rust` / `libs/ts` in this monorepo and is validated to
+exist before any files are written).
+
+{/* TODO: unverified - whether `registry` artifacts (GitHub Packages Maven/npm, the Rust `rust-lib/v0.1.0` git tag, PyPI greengrass-commons) are published and resolvable yet. The fact sheet flags this as not determinable from code; confirm published availability before telling readers a plain pip/npm/cargo install works. */}
+
+<Aside type="note" title="Registry artifacts are auth-gated">
+The `registry` dependency forms point at GitHub Packages (the generated TypeScript `.npmrc` and the
+Java `pom.xml` repository), which require authentication. Confirm the package is published and you
+are authenticated before relying on a registry build.
+</Aside>
+
+## What you get
+
+A generated project is a complete, buildable component: the language entry point, the ggcommons
+dependency wired in, a `recipe.yaml` and `gdk-config.json` for GDK packaging, and sample
+`test-configs/`. The exact layout is language-specific (for example `pom.xml` for Java, `main.py`
+for Python, `Cargo.toml` + `build.sh` for Rust, `package.json` + `tsconfig.json` for TypeScript).
+
+The generated entry point constructs the ggcommons runtime and reads the config manager off it:
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+package com.example.mycomponent;
+
+import com.mbreissi.ggcommons.GGCommons;
+import com.mbreissi.ggcommons.config.ConfigManager;
+
+public class MyComponent {
+    public static void main(String[] args) { new MyComponent(args); }
+
+    public MyComponent(String[] args) {
+        GGCommons ggCommons = new GGCommons("com.example.MyComponent", args);
+        ConfigManager configManager = ggCommons.getConfigManager();
+        // ... business logic ...
+    }
+}
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+import sys, argparse
+from ggcommons import GGCommonsBuilder
+
+def main():
+    arg_parser = argparse.ArgumentParser()
+    gg = (GGCommonsBuilder.create("MyComponent")  # short name; see note below
+          .with_args(sys.argv[1:])
+          .with_app_options(arg_parser)
+          .receive_own_messages(True)
+          .build())
+    config_manager = gg.get_config_manager()
+    try:
+        ...  # business logic
+    finally:
+        gg.shutdown()
+
+if __name__ == "__main__":
+    main()
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+use ggcommons::prelude::*;
+
+const COMPONENT_NAME: &str = "com.example.MyComponent";
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let gg = GgCommonsBuilder::new(COMPONENT_NAME)
+        .args(std::env::args_os())
+        .build()
+        .await?;
+    tracing::info!(thing = %gg.config().thing_name, "starting");
+    // ... business logic; dropping `gg` releases all resources (RAII) ...
+    Ok(())
+}
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+import { GGCommonsBuilder, logger } from "@mbreissi/ggcommons";
+
+const COMPONENT_NAME = "com.example.MyComponent";
+
+async function main(): Promise<void> {
+  const gg = await new GGCommonsBuilder(COMPONENT_NAME).args(process.argv.slice(2)).build();
+  logger.info(`starting: thing=${gg.config().thingName}`);
+  process.on("SIGTERM", () => void gg.close().then(() => process.exit(0)));
+  // ... business logic ...
+}
+
+main().catch((err) => { console.error("fatal:", err); process.exit(1); });
+```
+
+</TabItem>
+</Tabs>
+
+<Aside type="caution" title="Python template uses the short component name">
+Unlike the full-name examples above, the shipped Python template substitutes the **short**
+component name (the last dot-segment) into `GGCommonsBuilder.create(...)` — its
+`templates/python/main.py` uses the `<<COMPONENTNAME>>` token, so a component generated as
+`com.example.MyComponent` reads `GGCommonsBuilder.create("MyComponent")`. The Java, Rust, and
+TypeScript templates use the fully-qualified name (`<<COMPONENTFULLNAME>>`), matching the
+`com.example.MyComponent` strings shown in the other tabs. This is a template divergence, not a
+library difference.
+</Aside>
+
+<Aside type="caution" title="Java template uses the deprecated constructor">
+The shipped Java template scaffolds the deprecated (but still functional) direct
+`new GGCommons(name, args)` constructor shown above. The canonical convention — used by the Java
+*example* and by the other three languages — is the builder:
+`GGCommonsBuilder.create("com.example.MyComponent").withArgs(args).build()`. Prefer the builder in
+new code.
+</Aside>
+
+For building and running a generated component against a local MQTT broker, see the
+[Quickstart](/start/quickstart/).
+
+## `list-templates` — see available languages
+
+Prints each language and the template **source** it will use — a local filesystem path (the bundled
+wheel copy, or the in-repo `templates/<lang>` directory). It takes no flags.
+
+<Tabs syncKey="os">
+<TabItem label="Linux">
+
+```bash
+ggcommons list-templates
+```
+
+</TabItem>
+<TabItem label="Windows">
+
+```powershell
+ggcommons list-templates
+```
+
+</TabItem>
+</Tabs>
+
+{/* NEEDS REVIEW: cli/README.md historically showed git URLs here; the code prints local filesystem paths. Make sure rendered docs/README examples don't contradict this. */}
+
+## `validate` — lint the recipe
+
+Checks a generated component's `recipe.yaml` for problems that would break
+`gdk component publish`. Pass `-p/--path` to the project directory (or directly to a `recipe.yaml`);
+it defaults to the current directory. It prints `OK: …` when clean, or lists the issues and exits
+non-zero.
+
+<Tabs syncKey="os">
+<TabItem label="Linux">
+
+```bash
+ggcommons validate -p ./MyComponent
+```
+
+</TabItem>
+<TabItem label="Windows">
+
+```powershell
+ggcommons validate -p ./MyComponent
+```
+
+</TabItem>
+</Tabs>
+
+## `deploy` — build, publish, deploy
+
+Wraps the GDK (`gdk component build`, then optionally `gdk component publish`) and can create a
+cloud deployment with the AWS CLI.
+
+| Flag | Short | Default | Notes |
+|------|-------|---------|-------|
+| `--path` | `-p` | `.` | Component project directory. |
+| `--publish` | _(none)_ | off | Publish to the cloud after building. |
+| `--target` | `-t` | _(none)_ | Deployment target ARN (thing or thing group). **Implies `--publish`** and creates a cloud deployment. |
+| `--region` | `-r` | `us-east-1` | AWS region for the deployment. |
+
+<Tabs syncKey="os">
+<TabItem label="Linux">
+
+```bash
+ggcommons deploy -p ./MyComponent                 # build only
+ggcommons deploy -p ./MyComponent --publish       # build + publish
+ggcommons deploy -p ./MyComponent -t <target-arn> # build + publish + create deployment
+```
+
+</TabItem>
+<TabItem label="Windows">
+
+```powershell
+ggcommons deploy -p ./MyComponent                 # build only
+ggcommons deploy -p ./MyComponent --publish       # build + publish
+ggcommons deploy -p ./MyComponent -t <target-arn> # build + publish + create deployment
+```
+
+</TabItem>
+</Tabs>
+
+`deploy` requires `gdk` on `PATH` (and AWS credentials for publish/deploy). When deploying with
+`--target`, the project's `gdk-config.json` must use a **concrete version** — a `NEXT_PATCH`
+version is rejected so the exact version to deploy is unambiguous. On-device development with
+`greengrass-cli` is out of scope for this command.
+
+## `upgrade` — bump the ggcommons dependency
+
+Updates the ggcommons dependency version in whichever manifest is present — `pom.xml` (Java),
+`requirements.txt` (Python), `Cargo.toml` (Rust), or `package.json` (TypeScript). The target
+version is required via `-t/--to`; the project path defaults to the current directory.
+
+<Tabs syncKey="os">
+<TabItem label="Linux">
+
+```bash
+ggcommons upgrade -p ./MyComponent --to 1.2.3
+```
+
+</TabItem>
+<TabItem label="Windows">
+
+```powershell
+ggcommons upgrade -p ./MyComponent --to 1.2.3
+```
+
+</TabItem>
+</Tabs>
+
+A Rust `path` dependency is deliberately left untouched: `upgrade` reports it as "nothing to
+version-bump" rather than rewriting it.
+
+For TypeScript, `upgrade` keys on the bare dependency name `ggcommons` and does **not** match the
+scoped `@mbreissi/ggcommons` key the TS template generates. As a result, for a generated TS
+component `upgrade` reports `package.json: no ggcommons dependency found` — for both a local
+(`file:`) and a registry (`^0.1.0`) dependency — and the `file:`/`link:` "nothing to version-bump"
+branch is never reached. {/* NEEDS REVIEW: this reflects upgrade.py keying on "ggcommons" while the TS template emits "@mbreissi/ggcommons"; the CLI should be fixed to recognize the scoped package name for parity. */}
+
+<Aside type="tip" title="Watch the -t short flag">
+`-t` means different things per command: it is `--to` (a version) for `upgrade`, `--target` (a
+deployment ARN) for `deploy`, and — separately — the runtime components themselves use `-t/--thing`
+for the IoT Thing name. Prefer the long forms to avoid confusion.
+</Aside>
+
+## Manifest-driven templates
+
+Each template directory ships a `ggcommons-template.json` manifest that fully describes how the CLI
+turns it into a project — adding a new language (or a forked template) needs only a template, not
+changes to the CLI. The manifest has these sections:
+
+- **`substitutions`** — maps each file to the list of `<<TOKEN>>` placeholders to replace in it
+  (for example `COMPONENTFULLNAME`, `COMPONENTNAME`, `GGCOMMONS_VERSION`).
+- **`renames`** — file/directory renames, including templated targets such as
+  `src/main/java/{PACKAGEPATH}/{COMPONENTNAME}.java`.
+- **`required`** — substitution keys that must be provided.
+- **`conditional`** — artifacts gated by an active **condition flag**.
+
+The active condition flags are derived from your `create-component` inputs: one `platform:<P>` flag
+per selected `--platforms` value, plus one `dep:<source>` flag for `--dep-source`. A `conditional`
+entry's `paths` are emitted only when its `when` flag is active. For example, the Java manifest
+gates the Kubernetes artifacts:
+
+```json
+{
+  "conditional": [
+    { "when": "platform:KUBERNETES", "paths": ["Dockerfile", "k8s"] }
+  ]
+}
+```
+
+and the TypeScript manifest additionally gates `.npmrc` on the registry dependency source:
+
+```json
+{
+  "conditional": [
+    { "when": "platform:KUBERNETES", "paths": ["Dockerfile", "k8s"] },
+    { "when": "dep:registry", "paths": [".npmrc"] }
+  ]
+}
+```
+
+That is why `--platforms KUBERNETES` is what produces the Dockerfile and `k8s/` manifests, and
+`--dep-source registry` is what produces the TypeScript `.npmrc`.
+
+## Next steps
+
+<CardGrid>
+  <LinkCard title="Quickstart" href="/start/quickstart/" description="Build and run your scaffolded component against a local MQTT broker." />
+  <LinkCard title="Introduction" href="/start/introduction/" description="What GGCommons is and how the pieces fit together." />
+  <LinkCard title="Guides" href="/guides/components/" description="Conceptual guides for every subsystem, in all four languages." />
+  <LinkCard title="API Reference" href="/reference/overview/" description="The public API surface, verified against source." />
+</CardGrid>
