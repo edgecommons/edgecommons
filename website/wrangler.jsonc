@@ -1,0 +1,15 @@
+{
+	// Static-assets-only Worker for the GGCommons docs site (Astro/Starlight).
+	// Deployed via Cloudflare Workers Builds git integration: `npx wrangler deploy`
+	// uploads ./dist (relative to this file). No Worker script (`main`) is needed —
+	// this Worker only serves the prebuilt static site.
+	"name": "ggcommons-docs",
+	// Keep current; bump to a recent date when adopting new runtime behavior.
+	"compatibility_date": "2026-06-27",
+	"assets": {
+		"directory": "./dist",
+		// Serve Starlight's generated 404.html for unmatched routes (it's a
+		// multi-page static site, not a single-page app).
+		"not_found_handling": "404-page"
+	}
+}
