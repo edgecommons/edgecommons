@@ -77,10 +77,11 @@ export class StandaloneMqttProvider implements MessagingProvider {
 
   /** Connect the local broker (and IoT Core if configured), resolving when ready. */
   static async connect(config: MessagingConfig): Promise<StandaloneMqttProvider> {
-    // Local broker uses TLS when CA/cert material is configured (CA-only server TLS or mTLS),
-    // not just for IoT Core — previously the local broker was always plaintext.
+    // Local broker uses TLS when a CA is configured (CA-only server TLS, or mutual TLS when a client
+    // cert+key are also present) — keyed on `caPath` to match Java/Python/Rust. A client cert without
+    // a CA stays plaintext (the other three ignore it), so the four languages agree.
     const lc = config.local.credentials;
-    const localTls = !!(lc?.caPath || lc?.certPath);
+    const localTls = !!lc?.caPath;
     const local = new BrokerChannel(await connectBroker(config.local, localTls));
     const iot = config.iotCore ? new BrokerChannel(await connectBroker(config.iotCore, true)) : undefined;
     return new StandaloneMqttProvider(local, iot);
