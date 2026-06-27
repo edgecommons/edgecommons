@@ -1,0 +1,494 @@
+---
+title: Heartbeat API
+description: API reference for the autonomous heartbeat — the Heartbeat type, lifecycle, HeartbeatMonitor.getStats, wiring, and the config model.
+sidebar:
+  order: 8
+---
+
+import { Tabs, TabItem, Aside, CardGrid, LinkCard } from "@astrojs/starlight/components";
+
+This is the API reference for the **heartbeat** subsystem: the heartbeat type and its lifecycle, the
+`HeartbeatMonitor` sampler, how the runtime constructs and wires it, and the config model that drives
+it. For the conceptual overview, the measures table, and cross-language behavior, see the
+[Heartbeat guide](/guides/heartbeat/).
+
+<Aside type="note" title="The heartbeat is autonomous — no public accessor">
+The GGCommons runtime constructs the heartbeat during initialization and tears it down on close.
+**No SDK exposes a public accessor** — there is no `getHeartbeat()` / `heartbeat()` /
+`get_heartbeat()` on the GGCommons object in any language. The types below are documented for
+reference; component code drives the heartbeat through the [`heartbeat` config section](#configuration-model),
+not through these APIs.
+</Aside>
+
+## The heartbeat type and lifecycle
+
+Each SDK has a heartbeat type that owns a background task. The lifecycle method names diverge by
+language (see the [summary table](#lifecycle-summary)).
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+`com.mbreissi.ggcommons.heartbeat.Heartbeat` implements `ConfigurationChangeListener`. Its
+constructor is package-private; construct it with [`HeartbeatBuilder`](#construction-and-wiring).
+
+```java
+public class Heartbeat implements ConfigurationChangeListener {
+
+    // Stop: cancel the periodic task and shut down the scheduler.
+    public void close();
+
+    // Hot-reload hook: re-initializes the schedule on a config change.
+    public boolean onConfigurationChanged();
+}
+// private constants: MESSAGE_NAME = "heartbeat", MESSAGE_VERSION = "1.0.0"
+```
+
+</TabItem>
+<TabItem label="Python">
+
+`ggcommons.heartbeat.enhanced_heartbeat.EnhancedHeartbeat` extends `ConfigurationChangeListener`.
+
+```python
+class EnhancedHeartbeat(ConfigurationChangeListener):
+    MESSAGE_NAME = "Heartbeat"      # capital H — diverges from the other three SDKs
+    MESSAGE_VERSION = "1.0.0"
+
+    def __init__(self, config_service: "ConfigManager"): ...   # raises ValueError if None
+    def set_messaging_service(self, messaging_service) -> None: ...
+    def set_metric_service(self, metric_service) -> None: ...
+    def start(self) -> None: ...
+    def stop(self) -> None: ...                # joins the loop thread + deregisters the listener
+    def is_running(self) -> bool: ...
+    def get_last_heartbeat_time(self) -> Optional[float]: ...   # reserved: always returns None
+    def on_configuration_change(self, configuration) -> bool: ...
+```
+
+The return type of `get_last_heartbeat_time()` is `Optional[float]`, but it is a reserved stub that
+**always returns `None`** — do not treat it as a real timestamp.
+
+</TabItem>
+<TabItem label="Rust">
+
+`ggcommons::heartbeat::Heartbeat` wraps the background task. There is no explicit stop method —
+dropping the value aborts the task (RAII).
+
+```rust
+use std::sync::Arc;
+use arc_swap::ArcSwap;
+
+pub struct Heartbeat { /* task: Option<JoinHandle<()>> */ }
+
+impl Heartbeat {
+    pub fn start(
+        config: Arc<ArcSwap<Config>>,
+        metrics: Arc<dyn MetricService>,
+        messaging: Option<Arc<dyn MessagingService>>,
+    ) -> Heartbeat;
+}
+
+// Stop is RAII: dropping the Heartbeat calls task.abort().
+impl Drop for Heartbeat { /* ... */ }
+// private constants: MESSAGE_NAME = "heartbeat", MESSAGE_VERSION = "1.0.0",
+//                    DEFAULT_INTERVAL_SECS = 5
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+`Heartbeat` is exported from `ggcommons`. Its constructor is private — use the static `start` factory.
+
+```typescript
+import { Heartbeat } from "ggcommons";
+
+export type ConfigProvider = () => Config;   // live-config getter (mirrors Rust Arc<ArcSwap<Config>>)
+
+export class Heartbeat {
+  static start(
+    configProvider: ConfigProvider,
+    metrics: MetricService,
+    messaging?: IMessagingService,
+  ): Heartbeat;
+
+  stop(): void;   // idempotent: clears the timer (the RAII analog of Rust's Drop)
+}
+// module-private constants: MESSAGE_NAME = "heartbeat", MESSAGE_VERSION = "1.0.0",
+//                           DEFAULT_INTERVAL_SECS = 5
+```
+
+</TabItem>
+</Tabs>
+
+<Aside type="caution" title="Message-name casing differs in Python">
+The messaging envelope carries the message name `heartbeat` in Java, Rust, and TypeScript, but
+`Heartbeat` (capital H) in Python. A subscriber filtering on the message name must accept both. The
+message version is `1.0.0` everywhere. See the [guide](/guides/heartbeat/#how-it-is-published) for
+detail.
+</Aside>
+
+### Lifecycle summary
+
+| Language | Type | Construct | Stop | Extra lifecycle |
+|----------|------|-----------|------|-----------------|
+| Java | `Heartbeat` | `HeartbeatBuilder.build()` | `close()` | `onConfigurationChanged()` |
+| Python | `EnhancedHeartbeat` | `EnhancedHeartbeat(config_service)` | `stop()` | `start()`, `is_running()`, `on_configuration_change()` |
+| Rust | `Heartbeat` | `Heartbeat::start(...)` | drop (RAII `abort()`) | re-reads live config each tick |
+| TypeScript | `Heartbeat` | `Heartbeat.start(...)` | `stop()` | re-reads live config each tick |
+
+Hot reload also diverges: Java and Python register as a configuration-change listener and re-init the
+schedule on a change event; Rust and TypeScript hold a live config handle and re-read it on every
+tick (rebuilding the ticker when `intervalSecs` changes).
+
+## Construction and wiring
+
+In production you never call these — the runtime wires the heartbeat for you. The snippets below show
+exactly what the runtime does, which is also the path the tests exercise.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+`HeartbeatBuilder` requires **both** a messaging client and a metric emitter; `build()` throws
+`IllegalStateException` if either is null. `create(null)` throws `IllegalArgumentException`.
+
+```java
+import com.mbreissi.ggcommons.heartbeat.Heartbeat;
+import com.mbreissi.ggcommons.heartbeat.HeartbeatBuilder;
+
+// Both collaborators are MANDATORY in Java.
+Heartbeat heartbeat = HeartbeatBuilder.create(configManager)
+        .withMessagingService(messagingClient)
+        .withMetricService(metricEmitter)
+        .build();              // first tick fires at delay 0
+
+// ... runs autonomously on the configured interval ...
+heartbeat.close();            // cancel the task + shut down the scheduler
+```
+
+</TabItem>
+<TabItem label="Python">
+
+The constructor takes only the `ConfigManager` and registers as a config listener; messaging and
+metric handles are injected via setters. The runtime injects the `MessagingClient` and
+`MetricEmitter` **classes** (their operations are static methods).
+
+```python
+from ggcommons.heartbeat.enhanced_heartbeat import EnhancedHeartbeat
+
+h = EnhancedHeartbeat(config_service)        # registers as a config-change listener
+h.set_messaging_service(MessagingClient)     # inject the static-method class handles
+h.set_metric_service(MetricEmitter)          # also (re)defines the "heartbeat" metric
+h.start()
+assert h.is_running() is True
+h.stop()                                      # join the loop thread + deregister the listener
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+`start` takes the live config handle, the metric service, and an **optional** messaging service. The
+returned `Heartbeat` must be kept alive — dropping it stops the task.
+
+```rust
+use std::sync::Arc;
+// config:    Arc<ArcSwap<Config>>
+// metrics:   Arc<dyn MetricService>
+// messaging: Option<Arc<dyn MessagingService>>  — optional; a messaging target with
+//            no service logs a warning and is skipped
+let hb = ggcommons::heartbeat::Heartbeat::start(config, metrics, Some(messaging));
+
+// ... runs on its own tokio task; first tick at t=0, then every intervalSecs ...
+drop(hb);   // RAII stop
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+`start` takes a `ConfigProvider` (a `() => Config` getter), the metric service, and an **optional**
+messaging service.
+
+```typescript
+import { Heartbeat } from "ggcommons";
+
+// configProvider: () => Config (live getter); metrics: MetricService;
+// messaging is optional — a messaging target with no service is logged and skipped.
+const hb = Heartbeat.start(() => currentConfig, metrics, messaging);
+
+hb.stop();   // clear the timer (idempotent)
+```
+
+</TabItem>
+</Tabs>
+
+<Aside type="note" title="Messaging-service requirement differs">
+In Java a messaging service is **always** present (the builder rejects a null messaging client). In
+Python, Rust, and TypeScript messaging is **optional** — a `messaging` target with no messaging
+service available is logged and skipped, while `metric` targets still publish.
+</Aside>
+
+## HeartbeatMonitor and getStats
+
+`HeartbeatMonitor` is the sampler the heartbeat task uses each tick. It collects only the enabled
+[measures](#configuration-model) into a nested stats object. You can also use it directly to read
+process/system health. Note that the **constructor input differs by language**: Java takes the
+`HeartbeatConfiguration`, Python takes the `ConfigManager`, and Rust/TypeScript take a `Measures`
+struct of toggles.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+import com.mbreissi.ggcommons.heartbeat.HeartbeatMonitor;
+import com.google.gson.JsonObject;
+
+HeartbeatMonitor monitor = new HeartbeatMonitor(heartbeatConfiguration);
+JsonObject stats = monitor.getStats();   // nested per-measure object; disabled measures omitted
+monitor.updateMetrics();                 // refresh the OSHI process snapshot (advance previous->current) for the next CPU-between-ticks delta; getStats() already calls this internally
+```
+
+{/* NEEDS REVIEW: Java HeartbeatMonitor.updateMetrics() (HeartbeatMonitor.java:162-166) only advances the OSHI process snapshot (previousProc = currentProc; currentProc = new SystemInfo()...getCurrentProcess()) so the next CPU-between-ticks delta can be computed. It does NOT emit to the metric subsystem — HeartbeatMonitor holds no MetricEmitter (constructor takes only HeartbeatConfiguration). getStats() calls updateMetrics() internally at its start (line 46), so the standalone call shown is redundant. Metric emission is done by the Heartbeat tick path via MetricEmitter, not here. */}
+
+</TabItem>
+<TabItem label="Python">
+
+The Python monitor takes the `ConfigManager` and reads the heartbeat config from it. `get_stats()`
+returns a `dict` of the enabled measures (disabled ones are omitted).
+
+```python
+from ggcommons.heartbeat.heartbeat_monitor import HeartbeatMonitor
+
+monitor = HeartbeatMonitor(config_service)   # reads heartbeat config from the ConfigManager
+stats = monitor.get_stats()                  # dict of enabled measures (psutil-backed)
+```
+
+{/* NEEDS REVIEW: Python HeartbeatMonitor (heartbeat_monitor.py) has no class or method docstrings; the get_stats() return shape is derived from source. */}
+
+</TabItem>
+<TabItem label="Rust">
+
+The Rust monitor takes a `Measures` struct and is mutable (it holds the `sysinfo` system handle and
+the CPU baseline). The first `get_stats` call establishes the CPU baseline and reports CPU as `0.0`.
+
+```rust
+use ggcommons::heartbeat::HeartbeatMonitor;
+use ggcommons::config::model::Measures;
+
+let mut monitor = HeartbeatMonitor::new(measures);
+monitor.set_measures(new_measures);   // swap toggles on hot-reload
+let stats = monitor.get_stats();      // serde_json::Value; first CPU sample = 0.0
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+The TypeScript monitor takes a `Measures` object. CPU is a delta between consecutive `getStats`
+calls, so the first sample reports `0.0`.
+
+```typescript
+import { HeartbeatMonitor } from "ggcommons";
+
+const monitor = new HeartbeatMonitor({
+  cpu: false, memory: true, disk: false,
+  threads: false, files: false, fds: false,
+});
+monitor.setMeasures(newMeasures);     // swap toggles on hot-reload
+const stats = monitor.getStats();     // => { memory: { memory_usage: <number> } }
+```
+
+</TabItem>
+</Tabs>
+
+### Stats shape
+
+When a measure is enabled, `getStats` includes its nested object; disabled measures are omitted. The
+shape is identical across all four languages:
+
+```json
+{
+  "cpu":     { "cpu_usage": 12.5 },
+  "memory":  { "memory_usage": 84 },
+  "disk":    { "disk_total": 512.0, "disk_used": 210.4, "disk_free": 301.6 },
+  "threads": { "threads": 14 },
+  "files":   { "files": 23 },
+  "fds":     { "fds": 31 }
+}
+```
+
+The `metric` target flattens this to one metric value per inner key (`cpu_usage`, `memory_usage`,
+`disk_total`, ...); the `messaging` target sends the nested object as the message payload. Units and
+per-platform availability (for example Java `fds` is `-1` on Windows, and TypeScript `threads` /
+`files` / `fds` are Linux-only) are documented in the
+[guide's measures table](/guides/heartbeat/#what-it-measures).
+
+## Configuration model
+
+Each SDK has a typed model for the `heartbeat` config section. The accessors below are read by the
+runtime; you rarely touch them directly.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+`com.mbreissi.ggcommons.config.HeartbeatConfiguration`:
+
+```java
+public class HeartbeatConfiguration {
+    public static final String DEFAULT_TOPIC =
+        "ggcommons/{ThingName}/{ComponentName}/heartbeat";
+    public static final String DEFAULT_MESSAGING_DESTINATION = "ipc";
+
+    public int     getIntervalSecs();
+    public boolean includeCpu();
+    public boolean includeMemory();
+    public boolean includeDisk();
+    public boolean includeThreads();
+    public boolean includeFiles();
+    public boolean includeFds();
+    public List<HeartbeatTarget> getTargets();
+
+    public static class HeartbeatTarget {
+        public String     getType();
+        public JsonObject getConfig();
+    }
+}
+```
+
+{/* NEEDS REVIEW: the public getters on Java HeartbeatConfiguration (getIntervalSecs, include*, getTargets) have no Javadoc in source; semantics are taken from their names/return types. */}
+
+Defaults when keys are absent: `measures` defaults to `cpu` + `memory` enabled; `targets` defaults to
+a single `{ "type": "metric" }`.
+
+</TabItem>
+<TabItem label="Python">
+
+`ggcommons.config.heartbeat_config.HeartbeatConfiguration`:
+
+```python
+class HeartbeatConfiguration:
+    DEFAULT_HEARTBEAT_MESSAGING_TOPIC = "ggcommons/{ThingName}/{ComponentName}/heartbeat"
+    DEFAULT_HEARTBEAT_MESSAGING_DESTINATION = "ipc"
+
+    def get_interval_secs(self) -> int: ...
+    def include_cpu(self) -> bool: ...
+    def include_memory(self) -> bool: ...
+    def include_disk(self) -> bool: ...
+    def include_threads(self) -> bool: ...
+    def include_files(self) -> bool: ...
+    def include_fds(self) -> bool: ...
+    def get_targets(self) -> list: ...
+```
+
+{/* NEEDS REVIEW: Python HeartbeatConfiguration (config/heartbeat_config.py) has no class/method docstrings; accessor semantics are derived from source. */}
+
+Defaults when keys are absent: `measures` defaults to `cpu` + `memory` enabled; `targets` defaults to
+a single `messaging` / `ipc` target on the default topic. Python applies **no** minimum-interval
+floor — a sub-1s or zero interval is honored as-is.
+
+</TabItem>
+<TabItem label="Rust">
+
+`ggcommons::config::model` (all `#[derive(Default)]` — defaults are all-false / empty):
+
+```rust
+pub struct HeartbeatConfig {
+    pub interval_secs: Option<u64>,   // None -> default 5; clamped to a minimum of 1
+    pub measures: Measures,
+    pub targets: Vec<HeartbeatTarget>,
+}
+
+pub struct Measures {
+    pub cpu: bool, pub memory: bool, pub disk: bool,
+    pub threads: bool, pub files: bool, pub fds: bool,
+}
+
+pub struct HeartbeatTarget {
+    #[serde(rename = "type")]
+    pub target_type: String,
+    pub config: Option<Value>,        // serde_json::Value
+}
+```
+
+Defaults when keys are absent: `measures` derives `Default` (**all false**) and `targets` is an
+**empty `Vec`**, so omitting them collects nothing / publishes nothing. Set both explicitly.
+
+</TabItem>
+<TabItem label="TypeScript">
+
+`ggcommons` config model:
+
+```typescript
+export class HeartbeatConfig {
+  intervalSecs?: number;     // undefined -> default 5; clamped to a minimum of 1
+  measures: Measures;
+  targets: HeartbeatTarget[];
+}
+
+export interface Measures {
+  cpu: boolean; memory: boolean; disk: boolean;
+  threads: boolean; files: boolean; fds: boolean;
+}
+
+export interface HeartbeatTarget {
+  type: string;
+  config?: Record<string, unknown>;
+}
+```
+
+Defaults when keys are absent: `measures` parses with `=== true` (so any missing key is **false**)
+and `targets` is an **empty array**, so omitting them collects nothing / publishes nothing. Set both
+explicitly.
+
+</TabItem>
+</Tabs>
+
+### The `heartbeat` config shape
+
+The config section is the single source of truth across all four SDKs. It is validated against the
+`heartbeat` section of `schema/ggcommons-config-schema.json`. Because the cross-language defaults
+diverge (see the model tabs above and the
+[guide's differences section](/guides/heartbeat/#cross-language-differences-to-know)), the most
+portable approach is to set `intervalSecs`, `measures`, and `targets` **explicitly**.
+
+```json
+{
+  "heartbeat": {
+    "intervalSecs": 5,
+    "measures": {
+      "cpu": true,
+      "memory": true,
+      "disk": false,
+      "threads": false,
+      "files": false,
+      "fds": false
+    },
+    "targets": [
+      { "type": "metric" },
+      {
+        "type": "messaging",
+        "config": {
+          "destination": "ipc",
+          "topic": "ggcommons/{ThingName}/{ComponentName}/heartbeat"
+        }
+      }
+    ]
+  }
+}
+```
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `intervalSecs` | integer | Sample/publish period. Default `5`. Java/Rust/TypeScript enforce a floor; Python does not. |
+| `measures.cpu` ... `measures.fds` | boolean | Per-measure toggles: `cpu`, `memory`, `disk`, `threads`, `files`, `fds`. |
+| `targets[].type` | string | `metric` or `messaging`. |
+| `targets[].config.destination` | string | `messaging` only. `ipc` / `local` or `iot_core` / `iotcore`. Default `ipc`. |
+| `targets[].config.topic` | string | `messaging` only. Default `ggcommons/{ThingName}/{ComponentName}/heartbeat`; `{ThingName}` and `{ComponentName}` are resolved at publish time. |
+
+The metric target's `storageResolution` is `1` when `intervalSecs` is under `60`, otherwise `60`
+(all four languages). See the [Configuration guide](/guides/configuration/) for how the schema is
+synced and validated.
+
+## Related
+
+<CardGrid>
+  <LinkCard title="Heartbeat guide" href="/guides/heartbeat/" description="Concepts, the measures table, publishing, and cross-language behavior." />
+  <LinkCard title="API reference: Metrics" href="/reference/metrics/" description="Where the metric target emits and how measures become metrics." />
+  <LinkCard title="API reference: Messaging" href="/reference/messaging/" description="The transport and envelope the messaging target uses." />
+  <LinkCard title="Configuration guide" href="/guides/configuration/" description="Config sources and the schema that validates the heartbeat section." />
+</CardGrid>

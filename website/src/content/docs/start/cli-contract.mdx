@@ -1,0 +1,363 @@
+---
+title: CLI contract
+description: The command-line contract shared by all four GGCommons SDKs — config, platform, transport, and thing flags, with per-platform defaults.
+sidebar:
+  order: 6
+---
+
+import { Tabs, TabItem, Aside } from "@astrojs/starlight/components";
+
+Every GGCommons component selects two things at startup: a **platform** (`--platform` — where it
+runs) and a messaging **transport** (`--transport` — how it talks). A pure precedence *resolver*
+maps the command-line flags plus the process environment to one resolved profile, so the same
+business logic runs unchanged on Greengrass (IPC), a host or Docker container (dual-MQTT), or
+Kubernetes (MQTT).
+
+The contract is **identical in all four languages** — the same flags, the same defaults, the same
+validation. Only the launcher in front of the flags (`java -jar`, `python3`, the Rust binary,
+`node`) differs.
+
+## The four flags
+
+| Flag | Values | Default |
+|------|--------|---------|
+| `-c` / `--config <SOURCE> [args...]` | `FILE` \| `CONFIGMAP` \| `ENV` \| `GG_CONFIG` \| `SHADOW` \| `CONFIG_COMPONENT` | from the resolved platform profile |
+| `--platform <PLATFORM>` | `GREENGRASS` \| `HOST` \| `KUBERNETES` \| `auto` | `auto` (auto-detected) |
+| `--transport <TRANSPORT> [path]` | `IPC` \| `MQTT [messaging_config.json]` | derived from the platform |
+| `-t` / `--thing <name>` | IoT Thing name (full string) | resolved from env (see below) |
+
+Platform tokens parse case-insensitively. `auto` (or an absent `--platform`) lets the resolver
+auto-detect the platform from the environment.
+
+### `-c` / `--config` — the config source
+
+The first positional argument is the source name; any following positionals are source-specific.
+When `--config` is omitted entirely, the source comes from the resolved platform profile
+(GREENGRASS → `GG_CONFIG`, HOST → `FILE`, KUBERNETES → `CONFIGMAP`).
+
+| Source | Extra args | Default when args omitted |
+|--------|-----------|---------------------------|
+| `FILE` | `[path]` | `config.json` |
+| `CONFIGMAP` | `[mountDir] [key]` | `/etc/ggcommons` + `config.json` |
+| `ENV` | `[var]` | env var `CONFIG` |
+| `GG_CONFIG` | `[component] [key]` | key `ComponentConfig` |
+| `SHADOW` | `[name]` | the component's shadow |
+| `CONFIG_COMPONENT` | *(none)* | — |
+
+`FILE` is the host/dev path, `CONFIGMAP` is the Kubernetes-native path (it reads the component
+config from a mounted ConfigMap directory with `..data`-swap hot-reload), and `GG_CONFIG` reads from
+the Greengrass deployment. See the [Configuration guide](/guides/configuration/) for what each source
+reads.
+
+<Aside type="note">
+On Kubernetes, the same mounted ConfigMap file can serve as **both** the component config and the
+MQTT messaging config — under `--transport MQTT` with the `CONFIGMAP` source and no explicit
+`--transport MQTT <path>`, the messaging-config path defaults to the resolved ConfigMap file. An
+explicit path always wins, and HOST (FILE source) always requires an explicit path.
+</Aside>
+
+### `--platform` — where it runs
+
+`GREENGRASS` is the on-device, Nucleus-managed path; `HOST` is for bare hosts and Docker;
+`KUBERNETES` is the k8s-native profile. Left at `auto`, the resolver auto-detects (first match wins):
+
+1. **GREENGRASS** — if env `AWS_GG_NUCLEUS_DOMAIN_SOCKET_FILEPATH_FOR_COMPONENT` or `SVCUID` is set.
+2. **KUBERNETES** — if the service-account token file
+   `/var/run/secrets/kubernetes.io/serviceaccount/token` exists, or env `KUBERNETES_SERVICE_HOST` is set.
+3. **HOST** — the fallback.
+
+An empty environment value is not treated as a signal, and GREENGRASS wins when both Greengrass and
+Kubernetes signals are present. An explicit `--platform` always overrides auto-detection.
+
+### `--transport` — how it talks
+
+`IPC` uses Greengrass inter-process communication; `MQTT` is the dual-MQTT provider that connects to
+a local broker and to AWS IoT Core at once. When omitted, the transport defaults from the platform
+(GREENGRASS → `IPC`, HOST → `MQTT`, KUBERNETES → `MQTT`).
+
+`IPC` is **only valid on GREENGRASS** — the resolver rejects `IPC` on HOST or KUBERNETES with a
+validation error. For `MQTT`, an optional trailing path supplies the broker/TLS config
+(`--transport MQTT ./messaging.json`).
+
+### `-t` / `--thing` — the IoT Thing name
+
+Takes the full string value. When `--thing` is absent, the identity resolves in this order:
+
+```text
+explicit -t/--thing
+  ▸ (KUBERNETES only) GGCOMMONS_THING_NAME ▸ POD_NAME
+  ▸ AWS_IOT_THING_NAME
+  ▸ "NOT_GREENGRASS"
+```
+
+Empty environment values count as absent, and the Kubernetes Downward-API tier
+(`GGCOMMONS_THING_NAME` ▸ `POD_NAME`) only applies when the platform is `KUBERNETES`. The resolver
+returns the raw value; sanitization happens later, when the name is interpolated into templates such
+as `{ThingName}`.
+
+## Per-platform defaults
+
+Leaving a flag off lets the platform profile fill it in. The CLI-relevant defaults:
+
+| Default | GREENGRASS | HOST | KUBERNETES |
+|---------|-----------|------|------------|
+| transport | `IPC` | `MQTT` | `MQTT` |
+| config source | `GG_CONFIG` | `FILE` | `CONFIGMAP` |
+
+Each profile also carries downstream subsystem defaults — logging format, metric target,
+metric-log path, credentials key provider, and health-endpoint enablement — applied by the
+respective subsystems rather than by the CLI resolver:
+
+| Profile default | GREENGRASS | HOST | KUBERNETES |
+|-----------------|-----------|------|------------|
+| logging format | library default | library default | `json` (stdout-JSON) |
+| metric target | library `log` | library `log` | `prometheus` |
+| credentials key provider | library `file` | library `file` | `env` (base64 KEK) |
+| health endpoint | off | off | on |
+
+The effective precedence is `explicit flag ▸ explicit config value ▸ platform-profile default ▸ library default`.
+The runtime axes (transport, config source, identity) are resolved from the **flag** tier by the
+resolver; the subsystem settings above honour an **explicit config value** first, then fall back to
+the profile default at each subsystem's init site.
+
+## How the flags reach your code
+
+You rarely call the parser directly — the builder parses the contract for you. Hand it the
+process arguments and read the resolved services back off the built instance.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+import com.mbreissi.ggcommons.GGCommons;
+import com.mbreissi.ggcommons.GGCommonsBuilder;
+
+public final class App {
+    public static void main(String[] args) throws Exception {
+        GGCommons gg = GGCommonsBuilder.create("com.example.MyComponent")
+                .withArgs(args)   // parses --platform/--transport/-c/-t
+                .build();
+
+        var messaging = gg.getMessaging();
+        // gg.getConfigManager(), gg.getMetrics(), gg.getStreams(),
+        // gg.getCredentials(), gg.getParameters() are also available.
+    }
+}
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+import sys
+from ggcommons.ggcommons_builder import GGCommonsBuilder
+
+gg = (
+    GGCommonsBuilder.create("com.example.MyComponent")
+    .with_args(sys.argv[1:])   # args WITHOUT the program name
+    .build()
+)
+
+messaging = gg.get_messaging()
+# gg.get_streams(), gg.get_credentials(), gg.get_parameters() are also available.
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+use ggcommons::GgCommonsBuilder;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    // Rust takes the FULL argv, including the program name at index 0.
+    let argv: Vec<String> = std::env::args().collect();
+
+    let gg = GgCommonsBuilder::new("com.example.MyComponent")
+        .args(argv)
+        .build()
+        .await?;
+
+    let _args = gg.args();          // the resolved ParsedArgs
+    let _messaging = gg.messaging()?; // returns Result
+    // gg.config(), gg.streams() are also available.
+    Ok(())
+}
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+import { GGCommonsBuilder } from "ggcommons";
+
+// Supply argv WITHOUT the node/script prefix (process.argv.slice(2)).
+const gg = await new GGCommonsBuilder("com.example.MyComponent")
+  .args(process.argv.slice(2))
+  .build();
+
+const parsed = gg.args();       // the resolved ParsedArgs
+const messaging = gg.messaging();
+```
+
+</TabItem>
+</Tabs>
+
+<Aside type="caution" title="argv conventions differ">
+**Rust** parses the *full* argv including the program name at index 0 (C-style). **Java**
+(`main`'s `String[] args`), **Python** (`sys.argv[1:]`), and **TypeScript**
+(`process.argv.slice(2)`) all expect the arguments *without* the program name. Pass the wrong slice
+and the first real flag is silently dropped or mis-parsed.
+</Aside>
+
+## Full command lines
+
+The flags are identical across languages; only the launcher changes. A HOST run with the dual-MQTT
+transport, a local config file, and an explicit thing name:
+
+<Tabs syncKey="os">
+<TabItem label="Linux">
+
+```bash
+# Java
+java --enable-native-access=ALL-UNNAMED -jar target/my-component.jar \
+  --platform HOST --transport MQTT ./messaging.json \
+  -c FILE ./config.json -t my-thing
+
+# Python
+python3 main.py \
+  --platform HOST --transport MQTT ./messaging.json \
+  -c FILE ./config.json -t my-thing
+
+# Rust
+./target/release/my-component \
+  --platform HOST --transport MQTT ./messaging.json \
+  -c FILE ./config.json -t my-thing
+
+# TypeScript
+node dist/main.js \
+  --platform HOST --transport MQTT ./messaging.json \
+  -c FILE ./config.json -t my-thing
+```
+
+</TabItem>
+<TabItem label="Windows">
+
+```powershell
+# Java
+java --enable-native-access=ALL-UNNAMED -jar target\my-component.jar `
+  --platform HOST --transport MQTT .\messaging.json `
+  -c FILE .\config.json -t my-thing
+
+# Python
+python main.py `
+  --platform HOST --transport MQTT .\messaging.json `
+  -c FILE .\config.json -t my-thing
+
+# Rust
+.\target\release\my-component.exe `
+  --platform HOST --transport MQTT .\messaging.json `
+  -c FILE .\config.json -t my-thing
+
+# TypeScript
+node dist\main.js `
+  --platform HOST --transport MQTT .\messaging.json `
+  -c FILE .\config.json -t my-thing
+```
+
+</TabItem>
+</Tabs>
+
+Other platforms lean on the profile defaults, so the command lines shrink (shown with the Java
+launcher; swap in your language's launcher as above):
+
+<Tabs syncKey="os">
+<TabItem label="Linux">
+
+```bash
+# GREENGRASS — on-device: transport defaults to IPC, config to GG_CONFIG,
+# identity from AWS_IOT_THING_NAME. Auto-detected, so --platform is optional.
+java --enable-native-access=ALL-UNNAMED -jar target/my-component.jar \
+  --platform GREENGRASS
+
+# KUBERNETES — transport defaults to MQTT, config to CONFIGMAP (the mounted
+# ConfigMap is both component and messaging config), identity from the
+# Downward API (GGCOMMONS_THING_NAME ▸ POD_NAME). Auto-detected in-cluster.
+java --enable-native-access=ALL-UNNAMED -jar target/my-component.jar \
+  --platform KUBERNETES
+```
+
+</TabItem>
+<TabItem label="Windows">
+
+```powershell
+# GREENGRASS — transport/config/identity all default from the profile + env.
+java --enable-native-access=ALL-UNNAMED -jar target\my-component.jar `
+  --platform GREENGRASS
+
+# KUBERNETES — config from the mounted ConfigMap; identity from the Downward API.
+java --enable-native-access=ALL-UNNAMED -jar target\my-component.jar `
+  --platform KUBERNETES
+```
+
+</TabItem>
+</Tabs>
+
+## Migrating from `-m` / `--mode`
+
+The legacy single `-m` / `--mode` axis has been **removed**. The two orthogonal flags
+`--platform` and `--transport` replace it. All four SDKs reject the old flag with the same guidance:
+
+```text
+The -m/--mode flag has been removed. Use --platform GREENGRASS|HOST|KUBERNETES and
+--transport IPC|MQTT instead (e.g. '-m STANDALONE <path>' becomes
+'--platform HOST --transport MQTT <path>').
+```
+
+Typical translations:
+
+| Old | New |
+|-----|-----|
+| `-m STANDALONE ./messaging.json` | `--platform HOST --transport MQTT ./messaging.json` |
+| `-m GREENGRASS` | `--platform GREENGRASS` (transport defaults to `IPC`) |
+
+<Aside type="note" title="Rejection breadth differs">
+**Java** and **Python** reject any token that starts with `-m` or `--mode=` (so even an attached
+form like `-mSTANDALONE` is caught). **Rust** and **TypeScript** reject only the exact tokens `-m`
+and `--mode`, so a custom flag that merely begins with `-m` is left alone there.
+</Aside>
+
+## Cross-language notes
+
+The contract is identical, but a few details of the *parsed result* differ between SDKs — relevant
+only if you inspect the parsed args directly rather than just reading services off the builder.
+
+- **`thing` vs resolved identity.** Rust's `ParsedArgs` exposes both `thing: Option<String>` (the
+  raw `-t` value, verbatim) and `identity: String` (the resolved name). TypeScript's
+  `ParsedArgs.thing` is the **resolved** identity (never undefined) — there is no separate raw field.
+  Java's `ParsedCommandLine.thingName` is likewise the resolved identity. Do not assume `thing` means
+  the raw flag everywhere.
+- **Where the messaging-config path lives.** Java threads the MQTT messaging-config path through the
+  resolver (its `ResolverInputs` / `ResolvedProfile` carry it). Python, Rust, and TypeScript keep
+  those resolver types at four fields and compute the ConfigMap-default messaging path in the CLI
+  layer instead. Either way the resolved path is on the parsed result.
+- **Config-source typing.** Rust and TypeScript parse `-c` into a typed `ConfigSourceSpec`
+  (a Rust enum / a TS discriminated union, both including `CONFIGMAP`). Python validates the token
+  against its `ConfigSource` enum. Java passes the raw `configArgs` array straight through to the
+  config-manager builder.
+- **Enum casing (Rust).** Rust uses `Platform::{Greengrass, Host, Kubernetes}` and
+  `Transport::{Ipc, Mqtt}` (PascalCase) internally; Java, Python, and TypeScript use the uppercase
+  token names. All four parse the CLI token case-insensitively, so this never affects the command line.
+- **Metric-log filename.** The default local metric-log path is `./logs/{ComponentFullName}.metric.log`
+  in Java, Rust, and TypeScript, but `./logs/{ComponentFullName}_metric.log` (underscore) in Python —
+  each library matches its own default filename suffix.
+- **Public parser entry point.** Java `GGCommons.processArgs`, Rust `cli::parse_from`, and TS
+  `parseArgs` are public; Python's `_process_args` is private — the public Python path is the builder
+  (`with_args`) only.
+
+## See also
+
+- [Quickstart](/start/quickstart/) — scaffold, build, and run your first component.
+- [Configuration guide](/guides/configuration/) — what each `-c` source reads and how hot-reload works.
+- [Messaging guide](/guides/messaging/) — IPC vs dual-MQTT and the messaging config file.
+- [API reference](/reference/overview/) — the resolver and parsed-args types per language.

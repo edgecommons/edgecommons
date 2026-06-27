@@ -1,0 +1,563 @@
+---
+title: Deploy to Kubernetes
+description: Run a GGCommons component in a cluster — image, ConfigMap, Deployment with probes, the env-KEK vault Secret, and Prometheus/JSON defaults.
+sidebar:
+  order: 3
+---
+
+import { Tabs, TabItem, Aside, LinkCard, CardGrid } from "@astrojs/starlight/components";
+
+The **KUBERNETES platform** runs the same component artifact you would run on Greengrass or a bare
+host — only the packaging and launch differ. In a pod the SDK auto-detects the platform from the
+projected ServiceAccount token, reads its config from a mounted **ConfigMap**, talks **dual-MQTT**,
+serves Kubernetes-style **health probes**, exposes **Prometheus** metrics, and logs **structured
+JSON** to stdout. So a container started with **no arguments** does the right thing in a cluster.
+
+This page is for component developers shipping to Kubernetes. It covers the artifacts the scaffolding
+CLI actually generates, what each one does, and the cluster-side pieces (the vault Secret, the Helm
+chart) you add yourself.
+
+## What the KUBERNETES profile gives you
+
+Selecting `--platform KUBERNETES` (or letting `auto` detect it) resolves a profile of defaults. You
+override any of them with an explicit flag or a config value — the precedence is
+`explicit flag ▸ explicit config ▸ platform-profile default ▸ library default` (see
+[Platforms & transports](/start/platforms-and-transports/)).
+
+| Setting | KUBERNETES default | Effect |
+|---|---|---|
+| transport | `MQTT` | dual-MQTT (local broker + AWS IoT Core); `IPC` is rejected off Greengrass |
+| config source | `CONFIGMAP` | reads a ConfigMap mounted as a directory, with `..data` hot-reload |
+| logging format | `json` | one JSON object per line to stdout (correlation fields included) |
+| metric target | `prometheus` | in-process registry served as OpenMetrics at `:9090/metrics` (pull) |
+| credentials key provider | `env` | the vault KEK comes from an env var (a Secret) — offline, no cloud |
+| health endpoint | on | the HTTP probe server binds `:8081` (`/livez`, `/readyz`, `/startupz`) |
+| identity | Downward API | `GGCOMMONS_THING_NAME` then `POD_NAME` when `-t/--thing` is absent |
+
+<Aside type="note" title="Defaults never auto-enable an opt-in subsystem">
+  The `env` key-provider default only changes behavior **when a `credentials` section is already
+  present** in your config — it never turns credentials on by itself. The same holds for parameters
+  and streaming: they stay off unless their config section exists.
+</Aside>
+
+Auto-detection keys off the projected ServiceAccount token at
+`/var/run/secrets/kubernetes.io/serviceaccount/token` (or the `KUBERNETES_SERVICE_HOST` env var). As
+long as that token is mounted (`automountServiceAccountToken: true`), the container needs no
+`--platform` flag.
+
+## What the scaffolding CLI generates
+
+Scaffold a component with Kubernetes artifacts by selecting `KUBERNETES` as a target platform. The
+k8s files are **conditional** — they emit only when KUBERNETES is selected — and a registry
+dependency source is what makes the image build standalone (no monorepo checkout):
+
+<Tabs syncKey="os">
+<TabItem label="Linux">
+
+```bash
+ggcommons create-component -n com.example.MyComponent -l PYTHON \
+  --platforms KUBERNETES --dep-source registry
+```
+
+</TabItem>
+<TabItem label="Windows">
+
+```powershell
+ggcommons create-component -n com.example.MyComponent -l PYTHON `
+  --platforms KUBERNETES --dep-source registry
+```
+
+</TabItem>
+</Tabs>
+
+That adds exactly three artifacts to the component (`-l` is `JAVA`, `PYTHON`, `RUST`, or
+`TYPESCRIPT`; see the [scaffolding CLI](/start/scaffolding-cli/)):
+
+- **`Dockerfile`** — a per-language container image that runs the component with no default args.
+- **`k8s/configmap.yaml`** — the component config (and the in-cluster MQTT broker settings).
+- **`k8s/deployment.yaml`** — a hardened Deployment wired to the health probes.
+
+<Aside type="caution" title="What is NOT generated per-component">
+  The scaffolder does **not** emit a `Secret`, `Service`, `ServiceAccount`, `RBAC`, `ServiceMonitor`,
+  or a Helm chart. The vault-KEK Secret is something you add (see [The vault KEK
+  Secret](#the-vault-kek-secret-env-keyprovider) below). A reusable Helm chart with all of those
+  pieces lives under `test-infra/k8s/chart` — it is **shared test/reference infra, not generated per
+  component** (see [The shared Helm chart](#advanced-the-shared-helm-chart)).
+</Aside>
+
+## Step 1 — Build the container image
+
+The Dockerfile is the one genuinely per-language artifact: each language resolves the `ggcommons`
+library from its own registry and uses a different base image. All four entrypoints take **no
+platform args** — auto-detection handles the rest.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```dockerfile
+# Multi-stage: build the shaded jar against the PUBLISHED ggcommons artifact, run on a slim JRE.
+# Requires com.mbreissi:ggcommons resolvable from GitHub Packages Maven.
+FROM maven:3.9-eclipse-temurin-25 AS build
+WORKDIR /build
+COPY pom.xml ./
+COPY src ./src
+RUN mvn -q -DskipTests package
+
+FROM eclipse-temurin:25-jre
+WORKDIR /app
+COPY --from=build /build/target/<<JARNAME>>-1.0.0.jar /app/app.jar
+USER 65532:65532
+# No default args: --platform auto -> KUBERNETES (config CONFIGMAP, transport MQTT, identity Downward API).
+ENTRYPOINT ["java", "--enable-native-access=ALL-UNNAMED", "-jar", "/app/app.jar"]
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```dockerfile
+# Single-stage: install greengrass-commons from the registry (requirements.txt), copy the app, run non-root.
+FROM python:3.12-slim
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+WORKDIR /app
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
+COPY main.py /app/main.py
+COPY app     /app/app
+USER 65532:65532
+ENTRYPOINT ["python3", "/app/main.py"]
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```dockerfile
+# Multi-stage: build the release binary against the ggcommons crate, run on a slim glibc base.
+# The private git dependency needs build-time auth (GITHUB_TOKEN or an SSH agent).
+FROM rust:1.85-slim AS build
+ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /build
+COPY Cargo.toml ./
+COPY Cargo.lock* ./
+COPY src ./src
+RUN cargo build --release --bin <<BINNAME>>
+
+FROM debian:bookworm-slim AS runtime
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build /build/target/release/<<BINNAME>> /usr/local/bin/component
+USER 65532:65532
+ENTRYPOINT ["/usr/local/bin/component"]
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```dockerfile
+# Multi-stage: install @mbreissi/ggcommons from GitHub Packages npm, compile to dist/, run non-root.
+# The npm install needs an .npmrc pointing at GitHub Packages + a GITHUB_TOKEN at build time.
+FROM node:20 AS build
+WORKDIR /app
+COPY package.json tsconfig.json ./
+COPY package-lock.json* ./
+RUN npm ci
+COPY src ./src
+RUN npm run build
+
+FROM node:20-slim AS runtime
+WORKDIR /app
+COPY --from=build /app/dist          ./dist
+COPY --from=build /app/node_modules  ./node_modules
+COPY --from=build /app/package.json  ./package.json
+USER 65532:65532
+ENTRYPOINT ["node", "/app/dist/main.js"]
+```
+
+</TabItem>
+</Tabs>
+
+The image-build prerequisites differ by language — make sure the library is resolvable at build time:
+
+| Language | Library source | Build-time auth |
+|---|---|---|
+| Java | `com.mbreissi:ggcommons` from GitHub Packages Maven | a `settings.xml` / token for the private Maven registry |
+| Python | `greengrass-commons` via `requirements.txt` (registry or `git+https`) | usually none (public/registry) |
+| Rust | the `ggcommons` crate as a **git dependency** | `GITHUB_TOKEN` or SSH (the build sets `CARGO_NET_GIT_FETCH_WITH_CLI=true`) |
+| TypeScript | `@mbreissi/ggcommons` from GitHub Packages npm | an `.npmrc` + `GITHUB_TOKEN` |
+
+<Aside type="tip" title="Rust on Kubernetes needs a registry/git dep">
+  The Rust template's default library dependency is a local `path` dep, but the Rust Dockerfile
+  assumes a git dependency. Scaffold with `--dep-source registry` so the generated `Cargo.toml`
+  carries a git dependency the image can fetch.
+</Aside>
+
+Then build and ship the image to where your cluster can pull it:
+
+<Tabs syncKey="os">
+<TabItem label="Linux">
+
+```bash
+# From the component directory:
+docker build -t ghcr.io/<owner>/my-component:latest .
+
+# Push to a registry...
+docker push ghcr.io/<owner>/my-component:latest
+# ...or load straight into a local kind cluster (no registry needed):
+kind load docker-image ghcr.io/<owner>/my-component:latest --name ggcommons
+```
+
+</TabItem>
+<TabItem label="Windows">
+
+```powershell
+# From the component directory:
+docker build -t ghcr.io/<owner>/my-component:latest .
+
+# Push to a registry...
+docker push ghcr.io/<owner>/my-component:latest
+# ...or load straight into a local kind cluster (no registry needed):
+kind load docker-image ghcr.io/<owner>/my-component:latest --name ggcommons
+```
+
+</TabItem>
+</Tabs>
+
+The Rust and TypeScript images need build-time auth to fetch the private library — pass a
+`GITHUB_TOKEN` (e.g. via a Docker build secret/arg) per the header comment in each generated
+`Dockerfile`. {/* NEEDS REVIEW: exact `docker build` token-passing flags (--secret vs --build-arg) are not pinned in the template Dockerfile header; verify the intended mechanism before documenting a concrete command. */}
+
+## Step 2 — The ConfigMap (config + broker)
+
+The generated `k8s/configmap.yaml` carries **both** the component config and the `messaging.local`
+block, under the `config.json` key (the `CONFIGMAP` source's default key). It is mounted as a **whole
+directory** at `/etc/ggcommons` — never with `subPath` — so the kubelet's atomic `..data` symlink
+swap drives in-process **hot-reload** with no pod restart.
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: <<COMPONENTNAME>>-config
+  labels:
+    app.kubernetes.io/name: <<COMPONENTNAME>>
+data:
+  config.json: |-
+    {
+      "component": "<<COMPONENTFULLNAME>>",
+      "messaging": {
+        "local": { "type": "mqtt", "host": "emqx.default.svc.cluster.local", "port": 1883, "clientId": "<<COMPONENTNAME>>" }
+      },
+      "logging": { "level": "INFO" }
+    }
+```
+
+Point `messaging.local.host` at your in-cluster broker's Service DNS. Because the config source is
+`CONFIGMAP` and the transport is `MQTT`, the messaging-config path **defaults to this same mounted
+file** — you do not pass a positional `--transport MQTT <path>`. Edit the ConfigMap and re-apply to
+drive a hot reload; an invalid edit is rejected-and-kept (the pod keeps serving the previous config).
+See the [Configuration guide](/guides/configuration/) for the `CONFIGMAP` source and `{ThingName}` /
+`{ComponentName}` template variables.
+
+## Step 3 — The Deployment (probes, identity, hardening)
+
+The generated `k8s/deployment.yaml` wires the health probes to the SDK's HTTP server, injects the
+Downward-API identity env vars, and runs hardened (non-root, read-only root FS, all capabilities
+dropped). Set `image:` (it ships as `REPLACE_ME`) to the image you built.
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: <<COMPONENTNAME>>
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: <<COMPONENTNAME>>
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: <<COMPONENTNAME>>
+    spec:
+      automountServiceAccountToken: true   # the projected SA token is the KUBERNETES auto-detect signal
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: component
+          image: REPLACE_ME              # e.g. ghcr.io/<owner>/<<COMPONENTNAME>>:latest
+          imagePullPolicy: IfNotPresent
+          env:                            # Downward-API identity + general fields
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - name: POD_NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+            - name: NODE_NAME
+              valueFrom: { fieldRef: { fieldPath: spec.nodeName } }
+          ports:
+            - { name: health, containerPort: 8081 }
+            - { name: metrics, containerPort: 9090 }
+          startupProbe:
+            httpGet: { path: /startupz, port: health }
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet: { path: /livez, port: health }
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /readyz, port: health }
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: config, mountPath: /etc/ggcommons, readOnly: true }   # WHOLE volume, never subPath
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: config
+          configMap: { name: <<COMPONENTNAME>>-config }
+        - name: tmp
+          emptyDir: {}
+```
+
+A few load-bearing details:
+
+- **`/readyz` reflects the full readiness predicate** (`messaging connected && ready && !shuttingDown`),
+  so a rollout waits on genuine readiness — not merely on the process starting. `/livez` never
+  consults the broker, so a broker outage cannot restart your pod. The startup probe gives slow first
+  connects up to `failureThreshold * periodSeconds` before liveness/readiness take over. Full
+  semantics are in the [Health guide](/guides/health/) and the
+  [Health API reference](/reference/health/).
+- **`/tmp` is a writable `emptyDir`** because the root FS is read-only — the local metric-log target
+  and any scratch writes go there.
+- **The config volume is the whole ConfigMap**, mounted read-only at `/etc/ggcommons`. A `subPath`
+  mount would never receive the `..data` swap, silently killing hot-reload.
+
+## Step 4 — Apply and verify
+
+<Tabs syncKey="os">
+<TabItem label="Linux">
+
+```bash
+# After setting image: in k8s/deployment.yaml:
+kubectl apply -f k8s/
+kubectl rollout status deploy/my-component   # blocks until /readyz returns 200
+kubectl logs -l app.kubernetes.io/name=my-component -f
+```
+
+</TabItem>
+<TabItem label="Windows">
+
+```powershell
+# After setting image: in k8s/deployment.yaml:
+kubectl apply -f k8s/
+kubectl rollout status deploy/my-component   # blocks until /readyz returns 200
+kubectl logs -l app.kubernetes.io/name=my-component -f
+```
+
+</TabItem>
+</Tabs>
+
+Because `/readyz` is the full predicate, `kubectl rollout status` returning success proves the pod
+connected to the broker and reported ready.
+
+## Identity via the Downward API
+
+On KUBERNETES, when you do not pass `-t/--thing`, the component resolves its identity from the
+environment in this order: **`GGCOMMONS_THING_NAME` ▸ `POD_NAME`** (then the non-k8s fallbacks
+`AWS_IOT_THING_NAME` ▸ `NOT_GREENGRASS`). The generated Deployment injects `POD_NAME` from
+`metadata.name`, so each pod gets a stable identity for free. To pin a fixed thing name, add a
+`GGCOMMONS_THING_NAME` env var (a `fieldRef` cannot read it from an annotation, so set it explicitly):
+
+```yaml
+env:
+  - name: GGCOMMONS_THING_NAME
+    value: "edge-sensor-01"
+```
+
+The resolved value is interpolated wherever `{ThingName}` appears in your config.
+
+## The vault KEK Secret (env KeyProvider)
+
+On KUBERNETES the credentials vault's default key provider is **`env`**: the SDK reads a base64-encoded
+32-byte key-encryption key (KEK) from the `GGCOMMONS_VAULT_KEK` environment variable and uses it to
+unlock the encrypted local vault — entirely offline, no cloud or HSM.
+
+<Aside type="caution" title="The scaffolded manifests do not include this">
+  The generated `k8s/deployment.yaml` has **no** `GGCOMMONS_VAULT_KEK` env var and the scaffolder
+  emits **no** Secret. To use the env-KEK vault you add three things yourself: a Secret, the
+  `secretKeyRef` env var on the container, and a `credentials` section in `config.json`. The
+  [shared Helm chart](#advanced-the-shared-helm-chart) wires all three when `credentials.enabled=true`.
+</Aside>
+
+
+1. Create a Secret holding the base64 KEK (its value surfaces as the `GGCOMMONS_VAULT_KEK` key):
+
+   ```yaml
+   apiVersion: v1
+   kind: Secret
+   metadata:
+     name: my-component-vault-kek
+   type: Opaque
+   stringData:
+     # base64-encoded 32-byte KEK. The value below is a FIXED TEST key — never commit a real one.
+     # In production the operator owns this Secret (External Secrets Operator / sealed-secrets / SOPS).
+     GGCOMMONS_VAULT_KEK: "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc="
+   ```
+
+2. Project it into the container by adding to the Deployment's `env:`:
+
+   ```yaml
+   env:
+     - name: GGCOMMONS_VAULT_KEK
+       valueFrom:
+         secretKeyRef:
+           name: my-component-vault-kek
+           key: GGCOMMONS_VAULT_KEK
+   ```
+
+3. Add a `credentials` section to `config.json` (omit `keyProvider` so the KUBERNETES profile default
+   `env` applies; put the vault under the writable `/tmp`):
+
+   ```json
+   {
+     "credentials": { "vaultPath": "/tmp/ggcommons-vault" }
+   }
+   ```
+
+
+Your component then opens the vault from that KEK with no code changes — see the
+[Credentials guide](/guides/credentials/).
+
+## Observability defaults
+
+On KUBERNETES two observability defaults flip on automatically:
+
+- **Prometheus pull metrics.** The metric target defaults to `prometheus`: the SDK keeps an in-process
+  registry and serves it as OpenMetrics text at `:9090/metrics`. Metrics (and the heartbeat, when
+  routed to a `metric` target) are **scraped**, not pushed. Gauge names are
+  `sanitize(lower("{namespace}_{measure}"))`, so a heartbeat memory gauge under namespace `ggcommons`
+  appears as `ggcommons_memory_usage`. Central, multi-site aggregation is the scraping collector's
+  outbound `remote_write` to AMP/Mimir/Thanos/Grafana Cloud — edge-initiated egress, never
+  cloud→edge inbound. See the [Metrics guide](/guides/metrics/).
+- **Structured stdout-JSON logging.** The logging format defaults to `json`: one JSON object per line
+  to stdout, carrying Downward-API correlation fields (the pod's identity), ready for any log shipper.
+  See the [Logging guide](/guides/logging/).
+
+The generated Deployment already exposes the `metrics` (9090) and `health` (8081) container ports; add
+a `Service` and/or a `ServiceMonitor` (below) to let a cluster collector scrape them.
+
+## Advanced: the shared Helm chart
+
+A complete, parameterized Helm chart lives at **`test-infra/k8s/chart`**. It renders the Deployment,
+ConfigMap, a ServiceAccount, an optional namespaced RBAC role, a ClusterIP Service, an optional
+ServiceMonitor, and the vault-KEK Secret. It is **shared test/reference infra** — it is not produced
+by `create-component` and is not published as a chart — but it is the most complete worked example of
+a production-shaped deployment, and the live counterpart to the per-language unit tests.
+
+Key knobs in `values.yaml`:
+
+| Value | Default | What it does |
+|---|---|---|
+| `image.repository` / `image.tag` | `ggcommons-component` / `ci` | the component image to run |
+| `thingName` | `""` | when set, injects `GGCOMMONS_THING_NAME`; else identity falls through to `POD_NAME` |
+| `credentials.enabled` | `false` | create the vault-KEK Secret, project `GGCOMMONS_VAULT_KEK`, inject a `credentials` section |
+| `credentials.kekBase64` | a fixed test key | the base64 KEK the Secret holds (replace in production) |
+| `rbac.create` | `false` | grant read-only, ConfigMap-scoped `get/list/watch` (least privilege; off because the component needs no API access) |
+| `serviceMonitor.enabled` | `false` | emit a Prometheus Operator `ServiceMonitor` scraping `:9090/metrics` |
+| `probes.enabled` | `true` | real HTTP probes against `/startupz`, `/livez`, `/readyz` on `:8081` |
+
+Validate the chart statically (no cluster), then render with the optional pieces:
+
+<Tabs syncKey="os">
+<TabItem label="Linux">
+
+```bash
+helm lint test-infra/k8s/chart
+helm template ggc test-infra/k8s/chart                                   # defaults
+helm template ggc test-infra/k8s/chart \
+  --set credentials.enabled=true --set serviceMonitor.enabled=true       # opt-in pieces
+```
+
+</TabItem>
+<TabItem label="Windows">
+
+```powershell
+helm lint test-infra/k8s/chart
+helm template ggc test-infra/k8s/chart                                   # defaults
+helm template ggc test-infra/k8s/chart `
+  --set credentials.enabled=true --set serviceMonitor.enabled=true       # opt-in pieces
+```
+
+</TabItem>
+</Tabs>
+
+{/* NEEDS REVIEW: the ServiceMonitor / RBAC / ServiceAccount rendered resources are described from chart values.yaml knobs and the chart's secret.yaml + deployment.yaml (read directly); the servicemonitor.yaml/rbac.yaml/serviceaccount.yaml templates themselves were not opened — confirm the exact rendered output before relying on it verbatim. */}
+
+### Smoke it on a local cluster (kind)
+
+The repo ships an end-to-end smoke test that brings up an in-cluster broker, installs the chart, and
+asserts auto-detection, ConfigMap hot-reload, identity, health, metrics, and the env-KEK vault:
+
+<Tabs syncKey="os">
+<TabItem label="Linux">
+
+```bash
+kind create cluster --name ggcommons --config test-infra/k8s/kind-config.yaml
+docker build -f test-infra/k8s/Dockerfile -t ggcommons-component:ci .
+kind load docker-image ggcommons-component:ci --name ggcommons
+IMAGE=ggcommons-component:ci NAMESPACE=ggcommons ./test-infra/k8s/smoke.sh
+```
+
+</TabItem>
+<TabItem label="Windows">
+
+```powershell
+kind create cluster --name ggcommons --config test-infra/k8s/kind-config.yaml
+docker build -f test-infra/k8s/Dockerfile -t ggcommons-component:ci .
+kind load docker-image ggcommons-component:ci --name ggcommons
+# smoke.sh is a bash script — run it under WSL or Git Bash:
+$env:IMAGE = "ggcommons-component:ci"; $env:NAMESPACE = "ggcommons"; bash test-infra/k8s/smoke.sh
+```
+
+</TabItem>
+</Tabs>
+
+The smoke test cleans up its namespace on exit; pass `KEEP=1` to leave it for inspection.
+
+## Durable streaming on Kubernetes
+
+A component that uses telemetry streaming with a **durable disk buffer** needs a single writer per
+buffer, so it must run as a **StatefulSet with a per-pod PVC** rather than a Deployment. The repo
+includes a deployment-shape example at `test-infra/k8s/streaming-statefulset-example.yaml`. The
+`ggstreamlog` engine itself is unchanged — only the workload shape differs (see the
+[Streaming guide](/guides/streaming/)).
+
+{/* TODO: unverified - streaming-statefulset-example.yaml contents were not opened; it is described per test-infra/k8s/README.md as a deployment shape that is NOT smoke-tested (it needs a reachable Kinesis/Kafka sink). Verify the manifest before treating it as turnkey. */}
+
+## Next steps
+
+<CardGrid>
+  <LinkCard
+    title="Platforms & transports"
+    href="/start/platforms-and-transports/"
+    description="How --platform and --transport resolve, auto-detection, and the full per-platform profile table."
+  />
+  <LinkCard
+    title="Health & graceful shutdown"
+    href="/guides/health/"
+    description="The probe semantics behind /livez, /readyz, /startupz and SIGTERM draining."
+  />
+  <LinkCard
+    title="Configuration"
+    href="/guides/configuration/"
+    description="The CONFIGMAP source, ..data hot-reload, and template variables."
+  />
+  <LinkCard
+    title="Credentials"
+    href="/guides/credentials/"
+    description="The encrypted vault and the env KeyProvider that the KUBERNETES profile defaults to."
+  />
+</CardGrid>

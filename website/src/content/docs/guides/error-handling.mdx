@@ -1,0 +1,575 @@
+---
+title: Error handling
+description: Catch and handle GGCommons failures — config validation, messaging, credentials, parameters, and streaming — idiomatically in all four SDKs.
+sidebar:
+  order: 11
+---
+
+import { Tabs, TabItem, Aside, LinkCard, CardGrid } from "@astrojs/starlight/components";
+
+GGCommons reports failure through each language's normal error channel: Java throws exceptions,
+Python raises exceptions, Rust returns `Result<T, GgError>`, and TypeScript throws an `Error`. This
+guide shows the error and exception types a component developer actually encounters, organized by the
+scenario that produces them — startup and config validation, messaging, credentials, parameters, and
+streaming — with idiomatic handling in each SDK.
+
+<Aside type="note" title="The library throws — it does not exit on you">
+Apart from two well-defined cases, the SDK never terminates your process: it hands the failure back
+to you to handle. The exceptions are (1) Java calls `System.exit(0)` **only** on the `-h`/`--help`
+usage path, after printing help — its SIGTERM shutdown hook deliberately does **not** exit (the JVM
+exits 0 once hooks finish); and (2) Python's GGCommons orchestrator calls `sys.exit(0)` from its
+SIGTERM handler. Rust and TypeScript never exit the process from the library. See
+[Process exit and shutdown](#process-exit-and-shutdown) below.
+</Aside>
+
+## How each language shapes errors
+
+The four SDKs are deliberate mirrors, but their error *shapes* are idiomatic to each language, so the
+handling differs:
+
+- **Java** — one exception class per subsystem. Some are **checked** (`ConfigurationException`,
+  `ConfigurationValidationException`) and the compiler forces you to handle them; the rest are
+  unchecked (`extends RuntimeException`).
+- **Python** — one `Exception` subclass per subsystem (`CredentialError`, `ParameterError`,
+  `GgStreamError`, `ConfigurationValidationException`). No checked/unchecked distinction.
+- **Rust** — a single library-wide enum `GgError` with one variant per subsystem, returned inside
+  the alias `ggcommons::Result<T>`. You `match` on the variant or propagate with `?`.
+- **TypeScript** — a **mix**: a single tagged `GgError` (with a `kind` field) covers the core
+  subsystems, while credentials, parameters, and streaming throw their own standalone `Error`
+  subclasses. See [Cross-language differences](#cross-language-differences).
+
+The table below maps each failure scenario to the type you catch, per language. Generic types are in
+backticks to keep them readable.
+
+| Scenario | Java | Python | Rust (`GgError` variant) | TypeScript |
+|----------|------|--------|--------------------------|------------|
+| Config load | `ConfigurationException` (checked) | `ValueError` / propagated stdlib | `GgError::Config` | `GgError` kind `"Config"` |
+| Config validation | `ConfigurationValidationException` (checked) | `ConfigurationValidationException` | `GgError::Validation` | `GgError` kind `"Validation"` |
+| CLI / bad arguments | `IllegalArgumentException` | `ValueError` | `GgError::Cli` | `GgError` kind `"Cli"` |
+| Messaging | `RuntimeException` / `IllegalStateException` | `RuntimeError` / `TimeoutError` | `GgError::Messaging`, `GgError::Ipc` | `GgError` kind `"Messaging"` / `"Ipc"` |
+| Credentials | `CredentialException` | `CredentialError` | `GgError::Credentials` | `CredentialError` (standalone) |
+| Parameters | `ParameterException` | `ParameterError` | `GgError::Parameters` | `ParameterError` (standalone) |
+| Streaming | `GgStreamException` (has `code()`) | `GgStreamError` (has `.code`) | `GgError::Streaming` (code discarded) | `GgStreamError` (standalone, has `.code`) |
+| Accessor used before init | (n/a) | `RuntimeError` | (n/a — typed accessors) | (n/a) |
+
+## Startup and config validation
+
+Configuration is loaded and then validated against the canonical JSON schema. In Java these are two
+**checked** exceptions: loading via `ConfigManagerFactory.create(componentName, cmdLine)` throws
+`ConfigurationException` when no source resolves, and `ConfigurationValidator.validate(config)` throws
+`ConfigurationValidationException` on a schema violation. Validation is **fail-closed** in every
+language: if the bundled schema resource is missing, validation throws rather than silently passing.
+
+{/* TODO: unverified - Python has no dedicated config-load exception class; confirm with the doc owner the stable public type a component should catch for "config failed to load" (currently ValueError / ConfigurationValidationException / propagated stdlib exceptions). */}
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+import com.mbreissi.ggcommons.config.ConfigurationValidator;
+import com.mbreissi.ggcommons.config.ConfigurationValidator.ConfigurationValidationException;
+import com.google.gson.JsonObject;
+
+// ConfigurationValidationException is CHECKED — handle it or declare `throws`.
+try {
+    ConfigurationValidator.validate(config);   // config is the parsed JsonObject
+} catch (ConfigurationValidationException e) {
+    // e.getMessage() lists each schema violation.
+    logger.error("Configuration failed schema validation: {}", e.getMessage());
+    return;
+}
+// Config LOADING (ConfigManagerFactory.create) throws the sibling checked
+// ConfigurationException when no source resolves ("No configuration found").
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+from ggcommons.validation.configuration_validator import (
+    ConfigurationValidator,
+    ConfigurationValidationException,
+)
+
+try:
+    ConfigurationValidator.validate(config)
+except ConfigurationValidationException as e:
+    # e.validation_errors holds the structured list of schema violations.
+    logger.error("Configuration failed schema validation: %s", e)
+    return
+except ValueError as e:
+    # Raised when config is None or empty before validation even runs.
+    logger.error("No configuration provided: %s", e)
+    return
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+use ggcommons::GgError;
+
+// `startup` is a ggcommons::Result<GgCommons>; match on the failure variant.
+match startup {
+    Ok(gg) => { /* run the component with gg */ }
+    Err(GgError::Validation(msg)) => eprintln!("config failed schema validation: {msg}"),
+    Err(GgError::Config(msg)) => eprintln!("could not load configuration: {msg}"),
+    Err(GgError::Cli(msg)) => eprintln!("invalid CLI arguments: {msg}"),
+    Err(e) => eprintln!("startup failed: {e}"),
+}
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+import { GgError } from "@mbreissi/ggcommons";
+
+try {
+  start(); // building/initializing GGCommons loads and validates the config
+} catch (e) {
+  if (e instanceof GgError) {
+    switch (e.kind) {
+      case "Validation":
+        console.error(`config failed schema validation: ${e.message}`);
+        break;
+      case "Config":
+        console.error(`could not load configuration: ${e.message}`);
+        break;
+      case "Cli":
+        console.error(`invalid CLI arguments: ${e.message}`);
+        break;
+      default:
+        throw e; // re-throw anything we don't recognize
+    }
+  } else {
+    throw e;
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+## Messaging
+
+Messaging failures (failure to connect to the local broker or AWS IoT Core, a publish/subscribe
+error, or a request timeout) reach you through the messaging accessor and its operations. Rust and
+TypeScript have first-class messaging error signals; Java and Python surface them as standard runtime
+exceptions.
+
+{/* NEEDS REVIEW: Java and Python have NO dedicated messaging exception class (verified by reading libs/java/.../messaging and libs/python/ggcommons/messaging — failures are RuntimeException/IllegalStateException in Java and RuntimeError/TimeoutError/ValueError in Python; no doc comment defines a taxonomy). Confirm whether a dedicated MessagingException/MessagingError is intended for parity with Rust GgError::Messaging and TS kind "Messaging". */}
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+// Java has no dedicated messaging exception type. Connect/publish failures
+// surface as RuntimeException (e.g. "Failed to connect to IoT Core ...") or
+// IllegalStateException.
+try {
+    gg.getMessaging().publish(topic, message);
+} catch (RuntimeException e) {
+    logger.error("Publish failed", e);
+}
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+# Python has no dedicated messaging exception. Init/connect failures raise
+# RuntimeError; request/subscribe round-trips that time out raise TimeoutError.
+try:
+    gg.get_messaging().publish(topic, message)
+except (RuntimeError, TimeoutError) as e:
+    logger.error("Publish failed: %s", e)
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+use ggcommons::GgError;
+
+// messaging() returns Result — Err(GgError::Messaging) if the service is unwired.
+let messaging = gg.messaging()?;
+match messaging.publish(topic, &message).await {
+    Ok(()) => {}
+    Err(GgError::Messaging(msg)) => eprintln!("publish failed: {msg}"),
+    Err(GgError::Ipc(msg)) => eprintln!("Greengrass IPC error: {msg}"),
+    Err(e) => eprintln!("unexpected: {e}"),
+}
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+import { GgError } from "@mbreissi/ggcommons";
+
+try {
+  // messaging() throws GgError.messaging(...) if the service is unavailable.
+  await gg.messaging().publish(topic, message);
+} catch (e) {
+  if (e instanceof GgError && (e.kind === "Messaging" || e.kind === "Ipc")) {
+    console.error(`publish failed (${e.kind}): ${e.message}`);
+  } else {
+    throw e;
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+## Credentials
+
+The credentials subsystem is **opt-in**: the accessor returns a "missing" value (`null` / `None` /
+`Option::None` / `undefined`) unless a `credentials` config section is present — always check that
+first. Once you have the service, a *missing* secret returns an empty value, while a vault
+**open/decrypt failure** (wrong key, tampered file, corrupt or unsupported vault format) raises the
+credentials error. Error messages never include secret or key material.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+import com.mbreissi.ggcommons.credentials.CredentialException;
+import com.mbreissi.ggcommons.credentials.CredentialService;
+import com.mbreissi.ggcommons.credentials.Secret;
+import java.util.Optional;
+
+CredentialService creds = gg.getCredentials();   // null if no `credentials` section
+if (creds == null) {
+    logger.info("Credentials subsystem not configured");
+    return;
+}
+try {
+    Optional<Secret> secret = creds.get("db-password");   // empty if name absent
+    secret.ifPresent(s -> connect(s));
+} catch (CredentialException e) {
+    // Vault open/decrypt failure (unchecked). No secret/key material in the message.
+    logger.error("Credential access failed: {}", e.getMessage());
+}
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+from ggcommons.credentials import CredentialError
+
+creds = gg.get_credentials()   # None if no `credentials` section
+if creds is None:
+    logger.info("Credentials subsystem not configured")
+    return
+try:
+    password = creds.get_string("db-password")   # None if name absent
+    if password is not None:
+        connect(password)
+except CredentialError as e:
+    logger.error("Credential access failed: %s", e)
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+use ggcommons::GgError;
+
+// credentials() returns Option — None if no `credentials` section.
+// (This fragment is inside a fn returning ggcommons::Result<()>.)
+let Some(creds) = gg.credentials() else {
+    eprintln!("credentials subsystem not configured");
+    return Ok(());
+};
+match creds.get_string("db-password") {        // Result<Option<String>>
+    Ok(Some(password)) => connect(&password),
+    Ok(None) => eprintln!("no such secret"),
+    Err(GgError::Credentials(msg)) => eprintln!("credential access failed: {msg}"),
+    Err(e) => return Err(e),
+}
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+import { CredentialError } from "@mbreissi/ggcommons";
+
+const creds = gg.credentials();   // undefined if no `credentials` section
+if (!creds) {
+  console.info("credentials subsystem not configured");
+} else {
+  try {
+    const password = creds.getString("db-password");   // undefined if absent
+    if (password !== undefined) connect(password);
+  } catch (e) {
+    // CredentialError is a standalone Error subclass, NOT a GgError kind.
+    if (e instanceof CredentialError) {
+      console.error(`credential access failed: ${e.message}`);
+    } else {
+      throw e;
+    }
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+## Parameters
+
+Parameters mirror credentials: the accessor returns a missing value unless a `parameters` config
+section is present, a missing key returns empty, and a lookup/refresh failure raises the parameters
+error (`ParameterException` / `ParameterError` / `GgError::Parameters`).
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+import com.mbreissi.ggcommons.parameters.ParameterException;
+import com.mbreissi.ggcommons.parameters.ParameterService;
+import java.util.Optional;
+
+ParameterService params = gg.getParameters();   // null if no `parameters` section
+if (params == null) return;
+try {
+    Optional<String> endpoint = params.get("api-endpoint");   // empty if absent
+    endpoint.ifPresent(this::configure);
+} catch (ParameterException e) {
+    logger.error("Parameter lookup failed: {}", e.getMessage());
+}
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+from ggcommons.parameters import ParameterError
+
+params = gg.get_parameters()   # None if no `parameters` section
+if params is None:
+    return
+try:
+    endpoint = params.get("api-endpoint")   # Optional[str] — None if absent
+    if endpoint is not None:
+        configure(endpoint)
+except ParameterError as e:
+    logger.error("Parameter lookup failed: %s", e)
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+use ggcommons::GgError;
+
+// parameters() returns Option — None if no `parameters` section.
+// (Inside a fn returning ggcommons::Result<()>.)
+let Some(params) = gg.parameters() else { return Ok(()) };
+match params.get("api-endpoint") {      // Result<Option<String>>
+    Ok(Some(endpoint)) => configure(&endpoint),
+    Ok(None) => {}
+    Err(GgError::Parameters(msg)) => eprintln!("parameter lookup failed: {msg}"),
+    Err(e) => return Err(e),
+}
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+import { ParameterError } from "@mbreissi/ggcommons";
+
+const params = gg.parameters();   // undefined if no `parameters` section
+if (params) {
+  try {
+    const endpoint = params.get("api-endpoint");   // undefined if absent
+    if (endpoint !== undefined) configure(endpoint);
+  } catch (e) {
+    // ParameterError is a standalone Error subclass, NOT a GgError kind.
+    if (e instanceof ParameterError) {
+      console.error(`parameter lookup failed: ${e.message}`);
+    } else {
+      throw e;
+    }
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+## Streaming
+
+Streaming errors come from the embedded native `ggstreamlog` engine and carry a numeric status code
+(`ERR_FULL`, `ERR_UNKNOWN_STREAM`, and so on). **How much of that code survives differs by language**:
+Java exposes `code()` plus named constants, Python and TypeScript expose a `.code` integer but no
+named constants, and **Rust discards the code entirely** — it stringifies into `GgError::Streaming`,
+so a Rust caller cannot branch on the status value.
+
+{/* TODO: unverified - Python's GgStreamError carries .code but exposes no named ERR_* constants (tests hard-code the integers). Confirm with the doc owner whether this is intended parity or a gap to close vs Java's GgStreamException.ERR_* constants. */}
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+import com.mbreissi.ggcommons.streaming.GgStreamException;
+import com.mbreissi.ggcommons.streaming.StreamHandle;
+import com.mbreissi.ggcommons.streaming.StreamService;
+
+StreamService streams = gg.getStreams();   // null if no `streaming` section
+if (streams == null) return;
+try {
+    StreamHandle handle = streams.stream("telemetry");
+    handle.append(partitionKey, System.currentTimeMillis(), payload);
+} catch (GgStreamException e) {
+    // Branch on the native numeric status via the named constants.
+    if (e.code() == GgStreamException.ERR_FULL) {
+        logger.warn("Telemetry buffer full — applying backpressure");
+    } else if (e.code() == GgStreamException.ERR_UNKNOWN_STREAM) {
+        logger.error("No such stream configured");
+    } else {
+        logger.error("Stream append failed (code {})", e.code(), e);
+    }
+}
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+from ggcommons.streaming import GgStreamError
+
+streams = gg.get_streams()   # None if no `streaming` section
+if streams is None:
+    return
+try:
+    handle = streams.stream("telemetry")
+    handle.append(partition_key, timestamp_ms, payload)
+except GgStreamError as e:
+    # .code carries the native status, but Python exposes NO named constants —
+    # compare against the integer values (4 = full, 5 = unknown stream).
+    if e.code == 4:        # ERR_FULL
+        logger.warning("Telemetry buffer full — applying backpressure")
+    else:
+        logger.error("Stream append failed (code %s)", e.code)
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+use ggcommons::GgError;
+
+// streams() requires the `streaming` cargo feature and returns the service
+// directly. (Inside a fn returning ggcommons::Result<()>.)
+let handle = gg.streams().stream("telemetry")?;
+match handle.append(record) {
+    Ok(()) => {}
+    Err(GgError::Streaming(msg)) => {
+        // The native numeric status code is NOT preserved on the Rust side —
+        // you cannot branch on it, only inspect the message.
+        eprintln!("stream append failed: {msg}");
+    }
+    Err(e) => return Err(e),
+}
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+import { GgStreamError } from "@mbreissi/ggcommons";
+
+const streams = gg.streams();   // undefined if no `streaming` section
+if (streams) {
+  try {
+    const handle = streams.stream("telemetry");
+    handle.append(partitionKey, Date.now(), payload);
+  } catch (e) {
+    // GgStreamError is a standalone class (not a GgError kind). .code holds the
+    // native status, with no named constants (4 = full, 5 = unknown stream).
+    if (e instanceof GgStreamError) {
+      if (e.code === 4) {
+        console.warn("telemetry buffer full — applying backpressure");
+      } else {
+        console.error(`stream append failed (code ${e.code})`);
+      }
+    } else {
+      throw e;
+    }
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+## Check optional subsystems before you use them
+
+Credentials, parameters, and streaming are opt-in. Their accessors return a "missing" value when the
+matching config section is absent — guard for it before calling methods. Messaging and metrics are
+always-on subsystems, but Rust and TypeScript still signal an unavailable service rather than handing
+back a usable object.
+
+| Accessor when the config section is absent | Java | Python | Rust | TypeScript |
+|--------------------------------------------|------|--------|------|------------|
+| Credentials | `getCredentials()` → `null` | `get_credentials()` → `None` | `credentials()` → `Option` `None` | `credentials()` → `undefined` |
+| Parameters | `getParameters()` → `null` | `get_parameters()` → `None` | `parameters()` → `Option` `None` | `parameters()` → `undefined` |
+| Streaming | `getStreams()` → `null` | `get_streams()` → `None` | `streams()` is **compile-time gated** by the `streaming` feature and returns the service directly (no `Option`) | `streams()` → `undefined` |
+| Messaging | `getMessaging()` (present) | `get_messaging()` (present) | `messaging()` → `Result` (`Err(GgError::Messaging)` if unwired) | `messaging()` **throws** `GgError.messaging(...)` |
+| Metrics | `getMetrics()` (present) | `get_metrics()` (present) | `metrics()` (present) | `metrics()` **throws** if unavailable |
+
+<Aside type="caution" title="Python: accessor before init">
+In Python, calling an accessor such as `get_messaging()` before GGCommons has finished initializing
+raises `RuntimeError("GGCommons not properly initialized")`. Build and initialize the GGCommons
+instance before reaching for any subsystem.
+</Aside>
+
+## Process exit and shutdown
+
+The library reports failures by throwing, raising, or returning an error — it does **not** terminate
+your process for you. There are exactly two intentional exits, and they are about lifecycle, not
+errors:
+
+- **Java** calls `System.exit(0)` only on the `-h`/`--help` usage path, after printing help. Its
+  SIGTERM/shutdown hook deliberately does **not** call `System.exit` — the JVM exits 0 once the hooks
+  finish.
+- **Python's** GGCommons orchestrator calls `sys.exit(0)` from its SIGTERM handler.
+- **Rust** and **TypeScript** never exit the process from the library.
+
+Net effect on **SIGTERM**: Python exits the process, while Java does not. Whatever the language, don't
+rely on the library to terminate on an error — catch it and decide. (And always unsubscribe and handle
+SIGTERM before exiting, or a run leaks subscriptions.)
+
+## Cross-language differences
+
+A few shape differences are worth internalizing so a snippet from one language doesn't mislead you in
+another:
+
+- **One enum vs many classes.** Rust folds *everything* into a single `GgError` enum, including its
+  `Streaming`, `Credentials`, and `Parameters` variants. TypeScript does **not**: its `GgErrorKind`
+  union covers only `"Cli" | "Config" | "Validation" | "Messaging" | "Metrics" | "Ipc" | "Io" |
+  "Json"`, and credentials/parameters/streaming are **separate `Error` subclasses**
+  (`CredentialError`, `ParameterError`, `GgStreamError`). Java and Python use a distinct exception
+  class per subsystem throughout. There is **no single error type shared across all four languages**.
+- **Checked vs unchecked is Java-only.** `ConfigurationException` and `ConfigurationValidationException`
+  are checked (the compiler forces handling); `CredentialException`, `ParameterException`, and
+  `GgStreamException` are unchecked. Python and TypeScript have no such distinction, and Rust encodes
+  fallibility in the `Result` return type.
+- **Streaming status code.** Java keeps it (`code()` + named constants), Python and TypeScript keep
+  the integer (no named constants), Rust drops it.
+
+{/* TODO: unverified - TS GgErrorKind deliberately omits Streaming/Credentials/Parameters (they are separate classes), which diverges from Rust's all-in-one GgError and could surprise a developer expecting e.kind === "Streaming". Confirm this is the intended final shape with the doc owner. */}
+
+## Related
+
+<CardGrid>
+  <LinkCard title="API reference: Errors" href="/reference/errors/" description="Every error and exception type, per language, with fields and throw sites." />
+  <LinkCard title="Messaging guide" href="/guides/messaging/" description="Where messaging errors come from and how the transport behaves." />
+  <LinkCard title="Credentials guide" href="/guides/credentials/" description="The vault and what causes a CredentialException / CredentialError." />
+  <LinkCard title="Configuration guide" href="/guides/configuration/" description="Config sources and the schema that drives validation errors." />
+</CardGrid>

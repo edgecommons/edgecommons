@@ -1,0 +1,183 @@
+---
+title: Platforms & transports
+description: How GGCommons chooses where a component runs and how it talks — platform, transport, auto-detection, precedence, and per-platform defaults.
+sidebar:
+  order: 5
+---
+
+import { Tabs, TabItem, Aside } from "@astrojs/starlight/components";
+
+Every GGCommons component picks two things at startup, on **two orthogonal axes**:
+
+- **`--platform`** — *where* the component runs: `GREENGRASS`, `HOST`, `KUBERNETES`, or `auto` (the default).
+- **`--transport`** — *how* it talks to the broker/Nucleus: `IPC` or `MQTT`.
+
+These are independent: the platform says which environment you are on; the transport says which
+messaging mechanism to use. The SDK feeds both (plus the config source and identity) through a single
+**resolver** that produces one resolved profile, so the same business logic runs unchanged on
+Greengrass, a bare host or Docker, or Kubernetes. The flags are **identical in all four SDKs** (Java,
+Python, Rust, TypeScript) — only the launcher differs.
+
+<Aside type="note" title="Migrating from -m/--mode">
+  The old single `-m/--mode` axis has been removed in all four SDKs. Passing `-m` or `--mode` now
+  fails fast with guidance to use `--platform`/`--transport` instead.
+</Aside>
+
+## The platforms
+
+| Platform | What it is | Default transport |
+|---|---|---|
+| `GREENGRASS` | On-device, Nucleus-managed. Messaging over Greengrass IPC; config from the Greengrass deployment (`GG_CONFIG`). | `IPC` |
+| `HOST` | Docker or a bare host. A dual-MQTT provider that connects to a local broker **and** AWS IoT Core at once. | `MQTT` |
+| `KUBERNETES` | A pod. MQTT messaging; config (and the MQTT broker settings) mounted from a ConfigMap; identity from the Downward API. | `MQTT` |
+| `auto` | The default. The platform is detected from the environment (see below) and is always overridable by an explicit `--platform`. | derived from the detected platform |
+
+## The transports
+
+- **`IPC`** — Greengrass inter-process communication. Valid **only** on `GREENGRASS`.
+- **`MQTT`** — the dual-MQTT provider (local broker + AWS IoT Core). The default for `HOST` and
+  `KUBERNETES`. The broker/TLS settings come either from the `--transport MQTT <path>` payload or from
+  the active config source.
+
+<Aside type="caution" title="IPC is locked to GREENGRASS">
+  The resolver validates the combination and rejects `IPC` on any platform other than `GREENGRASS`
+  (it raises on `HOST` and `KUBERNETES`). `MQTT` is valid on every platform.
+</Aside>
+
+## Auto-detection
+
+When `--platform` is omitted (or set to `auto`), the SDK inspects the environment. The order is
+**load-bearing — the first match wins**:
+
+1. **`GREENGRASS`** — if the env var `AWS_GG_NUCLEUS_DOMAIN_SOCKET_FILEPATH_FOR_COMPONENT` **or**
+   `SVCUID` is set to a non-empty value (the Nucleus injects these into a managed component).
+2. **`KUBERNETES`** — if the service-account token file
+   `/var/run/secrets/kubernetes.io/serviceaccount/token` exists **or** the env var
+   `KUBERNETES_SERVICE_HOST` is set.
+3. **`HOST`** — the fallback when neither of the above matches.
+
+A few rules worth knowing:
+
+- An **empty** environment value is not a signal — only a non-empty value counts.
+- When both Greengrass and Kubernetes signals are present, **GREENGRASS wins** (it is checked first).
+- An explicit `--platform` always overrides detection.
+
+<Aside type="tip">
+  On a real Greengrass device you normally pass nothing — `auto` resolves to `GREENGRASS` + `IPC` +
+  `GG_CONFIG`. For local testing you typically force `--platform HOST` to get the dual-MQTT path.
+</Aside>
+
+## Precedence
+
+The fully resolved value of any setting follows a four-tier precedence:
+
+`explicit flag ▸ explicit config value ▸ platform-profile default ▸ library default`
+
+In practice this splits across two layers, because not every setting is a CLI flag:
+
+- **Runtime axes** — transport, config source, and identity — are resolved by the resolver as
+  `explicit flag ▸ platform-profile default ▸ library default`. (There is no "config value" tier
+  here; these are driven by flags.)
+- **Subsystem settings** — logging format, metric target, metric-log path, credentials key provider,
+  and the health endpoint — are resolved **downstream**, at each subsystem's init site, as
+  `explicit config value ▸ platform-profile default ▸ library default`.
+
+The union of the two is the four-tier rule above: the flag tier governs the runtime axes, and the
+config tier governs the subsystem settings. {/* NEEDS REVIEW: no single source file documents all four tiers together; this synthesis follows resolver docstrings + per-subsystem init sites (e.g. Python _init_health, Java profileMetricTarget javadoc). */}
+
+## Per-platform profile defaults
+
+Each platform carries a profile of defaults. These are identical across all four SDKs (verified
+against `PlatformResolver.PROFILES` in Java, `PROFILES` in Python/TypeScript, and `profile()` in
+Rust). Cells marked *(library default)* mean the profile carries **no** override, so the library's own
+default applies downstream.
+
+| Default | `GREENGRASS` | `HOST` | `KUBERNETES` |
+|---|---|---|---|
+| transport | `IPC` | `MQTT` | `MQTT` |
+| config source | `GG_CONFIG` | `FILE` | `CONFIGMAP` |
+| logging format | console/text *(library default)* | console/text *(library default)* | `json` (stdout-JSON sink) |
+| metric target | `log` *(library default)* | `log` *(library default)* | `prometheus` (pull-based `/metrics`) |
+| metric-log path | `/greengrass/v2/logs` *(library default)* | `./logs/{ComponentFullName}.metric.log` | `./logs/{ComponentFullName}.metric.log` |
+| credentials key provider | `file` *(library default)* | `file` *(library default)* | `env` (base64 KEK from env/Secret) |
+| health endpoint | off | off | on |
+
+Notes:
+
+- The `GREENGRASS` and `HOST` profiles only set the **transport**, the **config source**, and (HOST
+  only) the **metric-log path**; everything else falls through to the library default. The
+  `KUBERNETES` profile additionally sets `json` logging, the `prometheus` metric target, the `env`
+  credentials key provider, and turns the health endpoint on.
+- These subsystem defaults are **middle-tier**: e.g. the `env` key provider only changes the default
+  *when a `credentials` section is already present* — it never auto-enables credentials. The opt-in
+  subsystems (credentials, parameters, streaming) stay off unless their config section is present.
+- The metric-log **filename suffix** differs by language: Java, Rust, and TypeScript emit
+  `{ComponentFullName}.metric.log` (a dot); **Python uses `{ComponentFullName}_metric.log`** (an
+  underscore). This matches each library's own default and is intentional.
+
+### Config-source extra-argument defaults
+
+When you name a config source with `-c <SOURCE>` but omit its argument, these defaults apply:
+
+- `FILE` → `config.json`
+- `ENV` → reads the `CONFIG` variable
+- `GG_CONFIG` → key `ComponentConfig`
+- `CONFIGMAP` → mount dir `/etc/ggcommons`, key `config.json`
+
+Under `MQTT` + `CONFIGMAP` with no explicit `--transport MQTT <path>`, the messaging-config path
+defaults to that same mounted ConfigMap file — so one mounted file serves as both the component config
+and the MQTT broker config. An explicit path always wins; `HOST` (which uses the `FILE` source) still
+requires an explicit `--transport MQTT <path>`.
+
+## Passing the flags
+
+The flags after the launcher are the same in every SDK; only the launcher itself differs:
+
+- **Java** — `java --enable-native-access=ALL-UNNAMED -jar <artifact>.jar …`
+- **Python** — `python3 main.py …`
+- **Rust** — `cargo run -- …` (or the built binary)
+- **TypeScript** — `node dist/main.js …`
+
+Below, `run-component` stands in for your language's launcher.
+
+<Tabs syncKey="os">
+<TabItem label="Linux">
+
+```bash
+# Auto-detect (default): on a Greengrass device this resolves to IPC + GG_CONFIG — pass nothing
+run-component
+
+# Force HOST + dual-MQTT for local testing: file config, explicit thing name
+run-component --platform HOST --transport MQTT ./messaging.json -c FILE ./config.json -t my-thing
+```
+
+</TabItem>
+<TabItem label="Windows">
+
+```powershell
+# Auto-detect (default): on a Greengrass device this resolves to IPC + GG_CONFIG — pass nothing
+run-component
+
+# Force HOST + dual-MQTT for local testing: file config, explicit thing name
+run-component --platform HOST --transport MQTT .\messaging.json -c FILE .\config.json -t my-thing
+```
+
+</TabItem>
+</Tabs>
+
+A few flag details that are easy to miss:
+
+- `-t/--thing` takes the **full** string value (a historical bug once truncated it to a single
+  character — that is fixed).
+- Asking for `IPC` off Greengrass (e.g. `--platform HOST --transport IPC`) fails validation rather
+  than silently falling back.
+- The resolved identity is `-t/--thing` ▸ (on `KUBERNETES` only: `GGCOMMONS_THING_NAME` ▸ `POD_NAME`)
+  ▸ `AWS_IOT_THING_NAME` ▸ `NOT_GREENGRASS`. The Kubernetes Downward-API tier is ignored on
+  `HOST`/`GREENGRASS`. The raw value is interpolated later wherever `{ThingName}` appears.
+
+## Where to go next
+
+- [Quickstart](/start/quickstart/) — scaffold, build, and run your first component in your language.
+- [Configuration guide](/guides/configuration/) — the five config sources (`FILE`, `ENV`,
+  `GG_CONFIG`, `SHADOW`, `CONFIG_COMPONENT`) and `CONFIGMAP`, plus template variables and hot reload.
+- [Messaging guide](/guides/messaging/) — the one interface over IPC and dual-MQTT.

@@ -1,0 +1,491 @@
+---
+title: Components & lifecycle
+description: Build the GGCommons runtime with the builder, reach subsystems through typed accessors, and let the library own graceful shutdown.
+sidebar:
+  order: 1
+---
+
+import { Tabs, TabItem, Aside } from "@astrojs/starlight/components";
+
+Every GGCommons component is built around one runtime object: `GGCommons` (Rust spells it
+`GgCommons`). You construct it once at startup from the standard CLI args, hold it for the lifetime
+of the process, and reach every subsystem through it — messaging, config, metrics, heartbeat,
+health, and the opt-in credentials, parameters, and streaming services. Teardown is owned by the
+library, not by your code.
+
+This guide covers the three things you do with that object: **build it**, **use its accessors**, and
+**let it shut down cleanly**. For the full per-method API surface, see the
+[API reference: entry point](/reference/entry-point/).
+
+## Build the runtime
+
+Always construct the runtime through the fluent **builder** — `GGCommonsBuilder`
+(`GgCommonsBuilder` in Rust). The pattern is the same everywhere: name the component, hand it the
+CLI args, then `build()`.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+import com.mbreissi.ggcommons.GGCommons;
+import com.mbreissi.ggcommons.GGCommonsBuilder;
+
+public static void main(String[] args) {
+    // Use the FULL component name; pass argv straight through (already app-stripped).
+    GGCommons gg = GGCommonsBuilder.create("com.mbreissi.greengrass.JavaComponentSkeleton")
+            .withArgs(args)
+            .build();
+
+    // ... use gg ...
+}
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+from ggcommons.ggcommons_builder import GGCommonsBuilder
+
+gg = (
+    GGCommonsBuilder.create("ggcommons_python")
+    .with_args([
+        "-c", "FILE", "config.json",
+        "--platform", "HOST", "--transport", "MQTT", "messaging.json",
+        "-t", "my-thing",
+    ])
+    .build()
+)
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+use ggcommons::prelude::*;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let gg = GgCommonsBuilder::new("com.example.SkeletonComponent")
+        .args(std::env::args_os()) // argv INCLUDES the program name
+        .build()
+        .await?;
+
+    // ... use gg ...
+    Ok(())
+}
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+import { GGCommonsBuilder } from "ggcommons";
+
+const gg = await new GGCommonsBuilder("com.example.Lc")
+  .args([
+    "--platform", "HOST", "--transport", "MQTT", "messaging.json",
+    "-c", "ENV", "GGC_LIFECYCLE_CFG", "-t", "lc-thing",
+  ]) // argv WITHOUT the node/script prefix (process.argv.slice(2))
+  .build();
+```
+
+</TabItem>
+</Tabs>
+
+{/* NEEDS REVIEW: the Java builder methods (create/withArgs/receiveOwnMessages/build) carry no Javadoc in source; descriptions here are taken from their signatures and the verified skeleton example. */}
+
+<Aside type="caution" title="argv conventions differ">
+The three languages disagree on what `args` should contain:
+
+- **Rust** `args(...)` expects the **full** argv including the program name — pass
+  `std::env::args_os()`.
+- **TypeScript** `args(...)` expects argv **without** the node/script prefix — pass
+  `process.argv.slice(2)`.
+- **Java** `withArgs(args)` and **Python** `with_args(sys.argv[1:])` take the already-stripped
+  application args.
+</Aside>
+
+A few builder details worth knowing:
+
+- **`build()` is async only in Rust and TypeScript** (it connects messaging before returning).
+  Java and Python `build()` are synchronous.
+- **Construction is builder-first in every language.** Java additionally keeps three deprecated
+  public `GGCommons(...)` constructors for back-compat, and Python keeps a public `GGCommons(...)`
+  constructor — but the builder is the recommended path and Rust/TS are builder-only. There is **no**
+  `init()` facade in any language.
+- **A null component name is rejected** — Java `build()` throws `IllegalStateException`; Python
+  additionally rejects an empty string (`create()`/the constructor raise `ValueError` for both empty
+  and `None`).
+- `withAppOptions` / `with_app_options` let you register extra CLI options your component needs;
+  `receiveOwnMessages` is covered [below](#receiving-your-own-messages).
+
+## Reach subsystems through accessors
+
+Once built, the runtime exposes a typed accessor per subsystem. The **names follow each language's
+convention** — Java uses `getX()`, Python uses `get_x()`, Rust and TypeScript use bare `x()`:
+
+| Subsystem | Java | Python | Rust | TypeScript |
+|-----------|------|--------|------|------------|
+| Config | `getConfigManager()` | `get_config_manager()` | `config()` | `config()` |
+| Messaging | `getMessaging()` | `get_messaging()` | `messaging()` | `messaging()` |
+| Metrics | `getMetrics()` | `get_metrics()` | `metrics()` | `metrics()` |
+| Streaming | `getStreams()` | `get_streams()` | `streams()` | `streams()` |
+| Credentials | `getCredentials()` | `get_credentials()` | `credentials()` | `credentials()` |
+| Parameters | `getParameters()` | `get_parameters()` | `parameters()` | `parameters()` |
+
+The **always-on** subsystems (config, messaging, metrics) return their service directly:
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+var config    = gg.getConfigManager();   // ConfigManager
+var messaging = gg.getMessaging();        // MessagingClient
+var metrics   = gg.getMetrics();          // MetricEmitter
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+config    = gg.get_config_manager()   # ConfigManager
+messaging = gg.get_messaging()        # the MessagingClient class (its ops are static)
+metrics   = gg.get_metrics()          # the MetricEmitter class
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+let cfg     = gg.config();            // Arc<Config> snapshot
+let metrics = gg.metrics();           // Arc<dyn MetricService>
+if let Ok(messaging) = gg.messaging() {   // Result, not Option
+    // ... publish / subscribe ...
+}
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+const config    = gg.config();        // Config snapshot
+const messaging = gg.messaging();     // IMessagingService (throws if no transport wired)
+const metrics   = gg.metrics();       // MetricService
+```
+
+</TabItem>
+</Tabs>
+
+<Aside type="note" title="Two cross-language quirks for messaging & config">
+- **Python `get_messaging()` returns the `MessagingClient` _class_, not an instance** — its
+  operations are static, so you call them on the returned handle directly.
+- **`messaging()` behaves differently when no transport is wired.** Java and Python return the
+  concrete handle; **Rust returns `Result` (`Err` if none)** and **TypeScript throws** `GgError`.
+  There is no Java `getConfig()` — config is reached via `getConfigManager()`; Rust/TS `config()`
+  returns an atomic snapshot.
+</Aside>
+
+## Opt-in subsystems: the null contract
+
+Credentials, parameters, and streaming are **opt-in**. The accessor returns "nothing" unless the
+matching section is present in your config — so a component that never configures credentials never
+pays for them. What "nothing" means follows each language's idiom:
+
+- **Java** returns `null`.
+- **Python** returns `None`.
+- **TypeScript** returns `undefined`.
+- **Rust** returns `Option` (`None`) for **credentials** and **parameters** — but **`streams()` is
+  NOT an `Option`**. It always returns an `Arc<dyn StreamService>`; that service is simply *empty*
+  (no streams) when there is no `streaming` section. Check `streams().stream_names()`, not for
+  `None`.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+var streams     = gg.getStreams();       // null if no `streaming` section
+var credentials = gg.getCredentials();   // null if no `credentials` section
+var parameters  = gg.getParameters();    // null if no `parameters` section
+
+if (credentials != null) {
+    // ... use the vault ...
+}
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+streams     = gg.get_streams()       # None if no `streaming` section
+credentials = gg.get_credentials()   # None if no `credentials` section
+parameters  = gg.get_parameters()    # None if no `parameters` section
+
+if credentials is not None:
+    ...  # use the vault
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+// Each accessor exists ONLY when the matching cargo feature is built
+// (`streaming`, `credentials`, `parameters` — all off by default).
+
+#[cfg(feature = "streaming")]
+{
+    let streams = gg.streams();          // Arc<dyn StreamService>, NOT Option
+    let _ = streams.stream_names();      // empty when no `streaming` section
+}
+
+#[cfg(feature = "credentials")]
+if let Some(creds) = gg.credentials() { // Option<Arc<dyn CredentialService>>
+    let _ = creds;                       // None when no `credentials` section
+}
+
+#[cfg(feature = "parameters")]
+if let Some(params) = gg.parameters() { // Option<Arc<dyn ParameterService>>
+    let _ = params;
+}
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+const streams     = gg.streams();       // undefined if no `streaming` section
+const credentials = gg.credentials();   // undefined if no `credentials` section
+const parameters  = gg.parameters();    // undefined if no `parameters` section
+
+if (credentials !== undefined) {
+  // ... use the vault ...
+}
+```
+
+</TabItem>
+</Tabs>
+
+<Aside type="caution" title="Rust needs the cargo feature, too">
+In Rust the opt-in accessors are `#[cfg(...)]`-gated: `streams()` needs the `streaming` feature,
+`credentials()` needs `credentials`, and `parameters()` needs `parameters`. These features are
+**off by default**, so without the feature the method does not even compile — unlike the other three
+languages, where the accessor always exists and returns `null`/`None`/`undefined`.
+</Aside>
+
+See the per-subsystem guides for what each service does:
+[Credentials](/guides/credentials/), [Parameters](/guides/parameters/), and
+[Streaming](/guides/streaming/).
+
+## Readiness gates `/readyz`
+
+The runtime exposes an HTTP health endpoint (default-on for Kubernetes, opt-in elsewhere). Its
+`/readyz` probe answers a single predicate: `messagingConnected && readyFlag && !shuttingDown`. The
+`readyFlag` defaults to `true`, so a component is reported ready as soon as messaging connects.
+
+If your component must **not** receive traffic until its own subscriptions (or other startup work)
+are established, call `setReady(false)` early and flip it back to `true` once you are ready. The flag
+only *gates* readiness — it cannot force a component ready while messaging is disconnected or during
+shutdown.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+gg.setReady(false);             // probe returns 503 while we set up
+// ... subscribe to required topics ...
+gg.setReady(true);              // now /readyz can report ready
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+gg.set_ready(False)             # probe returns 503 while we set up
+# ... subscribe to required topics ...
+gg.set_ready(True)              # now /readyz can report ready
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+gg.set_ready(false);            // probe returns 503 while we set up
+// ... subscribe to required topics ...
+gg.set_ready(true);             // now /readyz can report ready
+
+// Rust also exposes a readiness/shutdown getter:
+if gg.is_shutting_down() {
+    // drain in-flight work
+}
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+gg.setReady(false);             // probe returns 503 while we set up
+// ... subscribe to required topics ...
+gg.setReady(true);              // now /readyz can report ready
+
+if (gg.ready()) {
+  // ... readiness getter is public in TS ...
+}
+```
+
+</TabItem>
+</Tabs>
+
+<Aside type="note">
+**Readiness getters vary.** TypeScript exposes a public `ready()` and Rust a public
+`is_shutting_down()`; Java and Python expose only the **setter** publicly. On the shutdown path the
+library flips readiness to 503 *first* — before teardown — so an in-flight `/readyz` probe drains
+traffic away from the instance immediately.
+</Aside>
+
+## Lifecycle & graceful shutdown
+
+The most important rule on this page: **the library owns the termination signal.** When the
+Greengrass Nucleus or the kubelet stops your component, GGCommons catches the signal, flips
+`/readyz` to 503, unsubscribes every tracked subscription, and bounded-closes
+messaging/streams/heartbeat/vault before the process exits.
+
+<Aside type="danger" title="Do NOT wire your own shutdown hook or signal handler">
+This is the single most common mistake. The library already installs the signal handling for you —
+registering your own `Runtime.getRuntime().addShutdownHook(...)`, `signal.signal(...)`, or
+`process.on("SIGTERM", ...)` just **double-runs teardown**. (Some older docs and bootstrap snippets
+still show a manual hook — that guidance is obsolete.) You may still call `shutdown()` / `close()`
+explicitly; both are idempotent.
+</Aside>
+
+How teardown is wired differs by language:
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+// The library installs a JVM shutdown hook on SIGTERM + SIGINT.
+// You do NOT add your own hook. An explicit call is optional and idempotent:
+gg.shutdown();   // idempotent (guarded by an atomic CAS)
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+# The library installs a SIGTERM handler (main thread only) that runs shutdown()
+# then sys.exit(0). Prefer the context manager so teardown is automatic:
+with GGCommonsBuilder.create("ggcommons_python").with_args(args).build() as gg:
+    ...  # business logic; gg.shutdown() runs on exit
+
+# Or call it explicitly (also idempotent):
+gg.shutdown()
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+// Rust has NO close()/shutdown(): teardown is pure RAII — dropping `gg`
+// aborts the heartbeat, hot-reload, signal-watcher and health-server tasks.
+// The library's signal watcher ONLY flips readiness to "shutting down"; it does
+// NOT exit the process, so YOUR app must await the signal and then return/drop.
+
+let gg = GgCommonsBuilder::new("com.example.SkeletonComponent")
+    .args(std::env::args_os())
+    .build()
+    .await?;
+
+tokio::select! {
+    // ... your run loops ...
+    _ = shutdown_signal() => tracing::info!("shutdown signal received"),
+}
+// falling out of scope drops `gg` -> all resources released (RAII)
+Ok(())
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+// The library installs BOTH SIGTERM and SIGINT handlers; on signal it flips
+// readiness to 503, runs close(), then process.exit(0). You do NOT add your own.
+// An explicit call is optional and idempotent (TS has no RAII):
+await gg.close();   // idempotent
+```
+
+</TabItem>
+</Tabs>
+
+<Aside type="note" title="Two lifecycle asymmetries">
+- **Rust must drive its own run loop to shutdown.** The library watcher only flips readiness — it
+  never tears down or exits. Await a terminate signal yourself (Ctrl-C / SIGTERM), then return so
+  `gg` drops. There is no `close()` to call.
+- **Python wires SIGTERM only.** Java's hook covers both SIGTERM and SIGINT, and TypeScript wires
+  both explicitly, but Python installs a **SIGTERM-only** handler (this matches how Greengrass and
+  Kubernetes stop a process). Ctrl-C is not routed through the graceful path the same way — rely on
+  the context manager or an explicit `shutdown()` for interactive runs.
+</Aside>
+
+## Receiving your own messages
+
+`receiveOwnMessages` controls whether a component receives messages it published itself (relevant
+when a component both publishes and subscribes to the same topic). It defaults to `true` and is set
+on the builder.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+GGCommons gg = GGCommonsBuilder.create("com.example.MyComponent")
+        .withArgs(args)
+        .receiveOwnMessages(false)   // honored on the IPC transport
+        .build();
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+gg = (
+    GGCommonsBuilder.create("com.example.MyComponent")
+    .with_args(args)
+    .receive_own_messages(False)   # honored on the IPC transport
+    .build()
+)
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+let gg = GgCommonsBuilder::new("com.example.MyComponent")
+    .args(std::env::args_os())
+    .receive_own_messages(false)   // NO-OP in Rust: the GG Rust SDK has no IPC
+    .build()                       // ReceiveMode, so build() logs a warning and
+    .await?;                       // proceeds as `true`.
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+const gg = await new GGCommonsBuilder("com.example.MyComponent")
+  .args(process.argv.slice(2))
+  .receiveOwnMessages(false)   // honored on IPC; MQTT uses local-broker semantics
+  .build();
+```
+
+</TabItem>
+</Tabs>
+
+<Aside type="caution" title="receiveOwnMessages(false) is a no-op in Rust">
+The Greengrass Rust SDK does not expose an IPC `ReceiveMode`, so `receive_own_messages(false)` is a
+documented no-op: `build()` logs a warning and behaves as `true`. Java and Python honor it on the
+IPC transport; TypeScript honors it on IPC, while MQTT relies on local-broker semantics.
+</Aside>
+
+## Related
+
+- [API reference: entry point](/reference/entry-point/) — every builder method and accessor, with
+  exact signatures.
+- [Messaging guide](/guides/messaging/) — publish, subscribe, and request/reply.
+- [Configuration guide](/guides/configuration/) — config sources and hot reload.

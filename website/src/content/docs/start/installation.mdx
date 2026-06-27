@@ -1,0 +1,271 @@
+---
+title: Installation
+description: Install the GGCommons toolchain and scaffolding CLI, then add the library to a Java, Python, Rust, or TypeScript project.
+sidebar:
+  order: 3
+---
+
+import { Tabs, TabItem, Aside, LinkCard } from "@astrojs/starlight/components";
+
+This page covers the three things you need before building a component: a per-language
+**toolchain**, the **`ggcommons` scaffolding CLI**, and the **library dependency** wired into your
+project. The CLI normally wires the dependency for you when it scaffolds a component — the manual
+declarations below are for adding GGCommons to a project by hand.
+
+## Toolchain prerequisites
+
+GGCommons is one SDK in four languages. You only need the toolchain for the language you build in.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+  Java 25 (LTS) and Maven. The published SDK artifact is built for Java 25, so a JDK 25 is required
+  even though a generated component compiles its own bytecode to level 11.
+
+  ```bash
+  java -version    # expect 25.x
+  mvn -version     # any recent Maven 3.x
+  ```
+
+  <Aside type="note">
+  Run a component that uses the streaming subsystem with `--enable-native-access=ALL-UNNAMED` (the
+  Java FFM / Panama binding to the native `ggstreamlog` core).
+  </Aside>
+
+</TabItem>
+<TabItem label="Python">
+
+  Python 3.9 or newer for components.
+
+  ```bash
+  python3 --version    # expect 3.9 or newer
+  ```
+
+  <Aside type="note">
+  The `ggcommons` CLI itself runs on Python 3.8+, but scaffolded Python **components** target 3.9+.
+  </Aside>
+
+</TabItem>
+<TabItem label="Rust">
+
+  A Rust toolchain installed via [rustup](https://rustup.rs/), plus `cargo`.
+
+  ```bash
+  rustc --version    # 1.85 or newer recommended
+  cargo --version
+  ```
+
+  <Aside type="note">
+  The library crate is edition 2024 / MSRV 1.85; a scaffolded **component** crate is edition 2021 /
+  MSRV 1.75. A current stable toolchain satisfies both. Building the on-device `greengrass` feature
+  additionally needs a C toolchain and `libclang` and is **Linux/WSL only**.
+  </Aside>
+
+</TabItem>
+<TabItem label="TypeScript">
+
+  Node.js 18 or newer and npm.
+
+  ```bash
+  node --version    # expect v18 or newer
+  npm --version
+  ```
+
+</TabItem>
+</Tabs>
+
+Beyond the language toolchain, you will want **git**, a local **MQTT broker** for HOST-platform
+testing, and — for packaging/deploying to Greengrass — the **GDK** (Greengrass Development Kit).
+
+## Install the scaffolding CLI
+
+The CLI is the Python package `ggcommons-cli`. It installs two identical console entry points,
+`ggcommons` and `ggcommons-cli`. Templates are bundled into the wheel, so an installed CLI
+scaffolds **offline**.
+
+<Tabs syncKey="os">
+<TabItem label="Linux">
+
+  ```bash
+  pipx install ./cli              # recommended: isolated global `ggcommons`
+  # or:  python3 -m pip install ./cli
+  # or:  python3 -m pip install -e ./cli   # editable, for developing the CLI itself
+  ```
+
+</TabItem>
+<TabItem label="Windows">
+
+  ```powershell
+  pipx install ./cli              # recommended: isolated global ggcommons
+  # or:  python -m pip install ./cli
+  # or:  python -m pip install -e ./cli    # editable, for developing the CLI itself
+  ```
+
+</TabItem>
+</Tabs>
+
+### Verify your environment
+
+`ggcommons doctor` checks for the eight tools the CLI can use — `git`, `gdk`, `cargo`, `mvn`,
+`python3` (or `python`), `node`, `npm`, and `aws` — and prints `[ok] <name> -> <path>` or
+`[missing] <name>` for each. It reports status only and does **not** fail when a tool is missing, so
+a missing entry is only a problem if you need that tool for your language or workflow.
+
+<Tabs syncKey="os">
+<TabItem label="Linux">
+
+  ```bash
+  ggcommons doctor
+  ```
+
+</TabItem>
+<TabItem label="Windows">
+
+  ```powershell
+  ggcommons doctor
+  ```
+
+</TabItem>
+</Tabs>
+
+## Add the library to a project
+
+When you scaffold with `ggcommons create-component`, the dependency is written for you. The
+`--dep-source` flag chooses between two forms:
+
+- **`local`** (the default) — a path dependency on a monorepo checkout of the library. Best for
+  developing against the SDK in this repo, and it needs no registry access.
+- **`registry`** — the published artifact, resolved from a registry.
+
+<Aside type="note">
+`--dep-source` and `--ggcommons-path` only affect the **Rust** and **TypeScript** templates (the
+ones with a parameterized dependency). The **Java** template always declares `com.mbreissi:ggcommons`
+and the **Python** template always lists `greengrass-commons`, so for those two languages you pick
+local-vs-registry by where the artifact actually resolves from (a local install vs a registry), not
+by a flag.
+</Aside>
+
+The declarations below show what each form looks like if you are adding GGCommons to an existing
+project by hand. The current published version is `0.1.0` (the value the CLI substitutes for the
+`<<GGCOMMONS_VERSION>>` token).
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+  Coordinate `com.mbreissi:ggcommons`. Add the dependency to your `pom.xml`:
+
+  ```xml
+  <dependency>
+    <groupId>com.mbreissi</groupId>
+    <artifactId>ggcommons</artifactId>
+    <version>0.1.0</version>
+  </dependency>
+  ```
+
+  **Registry** — resolve from GitHub Packages by adding the repository and authenticating in
+  `~/.m2/settings.xml` with a `<server>` whose `<id>` is `github` and a GitHub token that has the
+  `read:packages` scope:
+
+  ```xml
+  <repositories>
+    <repository>
+      <id>github</id>
+      <url>https://maven.pkg.github.com/mbreissi/ggcommons</url>
+    </repository>
+  </repositories>
+  ```
+
+  **Local** — build the library from the monorepo and install it to your local Maven cache, then the
+  same coordinate resolves from `~/.m2` with no repository configured:
+
+  ```bash
+  cd libs/java && mvn clean install
+  ```
+
+  {/* NEEDS REVIEW: confirm whether com.mbreissi:ggcommons is published to a PUBLIC Maven registry, or only to auth-gated GitHub Packages, before telling readers a plain dependency resolves without a token. */}
+
+</TabItem>
+<TabItem label="Python">
+
+  Package `greengrass-commons`. A scaffolded component lists it (unpinned) in `requirements.txt`:
+
+  ```text
+  greengrass-commons
+  ```
+
+  Install with:
+
+  ```bash
+  pip install -r requirements.txt
+  ```
+
+  {/* NEEDS REVIEW: confirm whether `pip install greengrass-commons` resolves from public PyPI, or requires a private index / GitHub-Packages auth, before documenting a bare pip install. */}
+
+</TabItem>
+<TabItem label="Rust">
+
+  Crate `ggcommons`. The dependency form is chosen by `--dep-source`; in `Cargo.toml`:
+
+  ```toml
+  [dependencies]
+  # local (dev default): a path dependency on the monorepo checkout
+  ggcommons = { path = "/abs/path/to/libs/rust", default-features = false }
+
+  # registry: the published artifact via a git tag
+  # ggcommons = { git = "https://github.com/mbreissi/ggcommons", tag = "rust-lib/v0.1.0", default-features = false }
+  ```
+
+  For the `local` form, the CLI fills the path from `--ggcommons-path` (defaulting to the in-repo
+  `libs/rust`). Off-by-default cargo features (`greengrass`, `cloudwatch`, `streaming`,
+  `credentials`, `parameters`, …) are composed on top as your component needs them.
+
+  {/* NEEDS REVIEW: confirm the `rust-lib/v0.1.0` git tag actually exists on the published repo, and whether a crates.io release is available, before pointing readers at the registry form. */}
+
+</TabItem>
+<TabItem label="TypeScript">
+
+  Package `@mbreissi/ggcommons` (note the scope — it is **not** a bare `ggcommons`). The dependency
+  form is chosen by `--dep-source`; in `package.json`:
+
+  ```json
+  {
+    "dependencies": {
+      "@mbreissi/ggcommons": "file:/abs/path/to/libs/ts"
+    }
+  }
+  ```
+
+  For the `local` form above, the value is `file:<path>` (the CLI fills it from `--ggcommons-path`,
+  defaulting to the in-repo `libs/ts`). Install local path deps with `npm install --install-links` so
+  the package is copied rather than symlinked.
+
+  **Registry** — use a semver range and resolve the `@mbreissi` scope from GitHub Packages. The CLI
+  emits an `.npmrc` (only for `--dep-source registry`) and authenticates from the `NODE_AUTH_TOKEN`
+  environment variable (a GitHub token with `read:packages`):
+
+  ```json
+  {
+    "dependencies": {
+      "@mbreissi/ggcommons": "^0.1.0"
+    }
+  }
+  ```
+
+  ```text
+  // .npmrc
+  @mbreissi:registry=https://npm.pkg.github.com
+  //npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}
+  ```
+
+  {/* NEEDS REVIEW: confirm whether `npm i @mbreissi/ggcommons` resolves from public npm, or only from auth-gated GitHub Packages, before documenting a token-free install. */}
+
+</TabItem>
+</Tabs>
+
+## Next steps
+
+<LinkCard
+  title="Quickstart"
+  href="/start/quickstart/"
+  description="Scaffold, build, and run your first component against a local MQTT broker."
+/>

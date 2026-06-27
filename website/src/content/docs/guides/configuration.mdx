@@ -1,0 +1,419 @@
+---
+title: Configuration
+description: Configure a GGCommons component — config sources, document structure, template variables, typed accessors, change listeners, hot reload, and validation.
+sidebar:
+  order: 2
+---
+
+import { Tabs, TabItem, Aside, LinkCard, CardGrid } from "@astrojs/starlight/components";
+
+Every GGCommons component is driven by a single JSON **config document**. The configuration
+subsystem loads that document from one of several pluggable sources, validates it against the
+canonical cross-language JSON schema, exposes its sections through typed accessors, substitutes
+template variables into paths and topics, and hot-reloads when the underlying source changes.
+
+This guide covers how to choose a source, how the document is structured, how to read it from your
+component code in all four languages, and how to react to live changes. For the exhaustive field
+list see the [configuration schema reference](/reference/configuration-schema/); for the full
+accessor surface see the [config API reference](/reference/config/).
+
+## Config sources
+
+There are **six** config sources, identical across all four languages. You pick one with the
+`-c/--config <SOURCE> [args...]` CLI flag. When `-c` is omitted, the source is chosen by the
+resolved **platform profile**: `GREENGRASS` defaults to `GG_CONFIG`, `HOST` to `FILE`, and
+`KUBERNETES` to `CONFIGMAP`.
+
+| Source | Select with | When to use |
+|--------|-------------|-------------|
+| `FILE` | `-c FILE [path]` (default `config.json`) | Local development, `HOST`/Docker, bare hosts. Watches the file and hot-reloads on change. Default on `HOST`. |
+| `ENV` | `-c ENV [var]` (default `CONFIG`) | Pass the entire config JSON through an environment variable — handy in containers and CI. |
+| `CONFIGMAP` | `-c CONFIGMAP [mountDir] [key]` (defaults `/etc/ggcommons`, `config.json`) | Kubernetes. Reads a mounted ConfigMap directory and hot-reloads via the kubelet `..data` swap. Default on `KUBERNETES`. |
+| `GG_CONFIG` | `-c GG_CONFIG [component] [key]` (default key `ComponentConfig`) | On-device: read the config delivered by the Greengrass deployment (Nucleus). Default on `GREENGRASS`. Loads over IPC, so it needs a messaging client. |
+| `SHADOW` | `-c SHADOW [name]` (default: the component name sanitized to `[A-Za-z0-9:_-]`) | Read config from an AWS IoT device shadow. Loads over IPC. |
+| `CONFIG_COMPONENT` | `-c CONFIG_COMPONENT` | Read config served by a shared config component over IPC. |
+
+`GG_CONFIG`, `SHADOW`, and `CONFIG_COMPONENT` load the document over Greengrass IPC, so a messaging
+client/provider must be available — selecting one without it is a hard error. `FILE`, `ENV`, and
+`CONFIGMAP` need nothing extra.
+
+<Aside type="note" title="Rust feature gate">
+In the Rust SDK, the `GG_CONFIG` and `SHADOW` sources are compiled in only with the `greengrass`
+cargo feature. Selecting either without the feature returns a config error. The other four sources
+are always available.
+</Aside>
+
+A run command places the `-c` flag alongside `--platform`/`--transport`. The exact launcher differs
+by language (see the [Quickstart](/start/quickstart/)); here is a representative `HOST`/`FILE` run:
+
+<Tabs syncKey="os">
+<TabItem label="Linux">
+
+  ```bash
+  python3 main.py --platform HOST --transport MQTT standalone-messaging.json \
+    -c FILE config.json -t my-thing
+  ```
+
+</TabItem>
+<TabItem label="Windows">
+
+  ```powershell
+  python3 main.py --platform HOST --transport MQTT standalone-messaging.json `
+    -c FILE config.json -t my-thing
+  ```
+
+</TabItem>
+</Tabs>
+
+## The config document
+
+The top level of the document is **strict**: only the known sections are allowed and `component` is
+the only required one. The framework sections (`logging`, `metricEmission`, `heartbeat`, `tags`,
+`messaging`, `streaming`, `credentials`, `parameters`, `health`) configure the SDK subsystems; the
+`component` section carries **your** application config, split into a shared `component.global`
+object and an optional `component.instances` array for multi-instance components.
+
+```json
+{
+  "logging": { "level": "DEBUG", "rust_format": "{timestamp} [{level}] {target} - {message}" },
+  "heartbeat": { "intervalSecs": 5, "measures": { "cpu": true, "memory": true }, "targets": [ { "type": "metric" } ] },
+  "metricEmission": { "target": "log", "namespace": "ggcommons" },
+  "credentials": { "vault": { "path": "./.vault/vault", "keyProvider": { "type": "file", "keyPath": "./.vault/vault.key" } } },
+  "parameters": { "source": { "type": "env", "prefix": "GG_PARAM_" }, "refreshIntervalSecs": 0, "sync": { "names": ["/skeleton/region", "/skeleton/poolSize"] } },
+  "tags": { "site": "factory-1" },
+  "component": {
+    "global": { "publish_interval": 3 },
+    "instances": [ { "id": "main" } ]
+  }
+}
+```
+
+A few things worth knowing about the structure:
+
+- **`component.global`** is an open object — put any keys your component needs there, and every
+  instance sees them.
+- **`component.instances`** is an array of objects, each requiring a unique `id`. Use it when one
+  component process drives several logical instances (for example, one per production line). Each
+  instance object is also open.
+- **`tags`** holds custom key/value strings that double as template variables (see below). Keys
+  match `^[a-zA-Z0-9_-]+$`.
+- The per-language **logging format** key is language-scoped: `java_format`, `python_format`,
+  `rust_format`, or `ts_format`. Each SDK reads only its own key and ignores the other three — there
+  is no shared `format` key.
+
+<Aside type="tip">
+The framework sections (`credentials`, `parameters`, `streaming`, and so on) are **opt-in**: the
+matching accessor returns null/None/undefined unless the section is present in the document. See the
+[configuration schema reference](/reference/configuration-schema/) for every field, type, default,
+and enum.
+</Aside>
+
+## Template variables
+
+String values such as log paths and MQTT topics can contain template variables that the SDK
+substitutes at resolution time. The supported placeholders are identical in all four languages:
+
+| Variable | Resolves to |
+|----------|-------------|
+| `{ThingName}` | The resolved IoT thing / identity name. |
+| `{ComponentName}` | The **short** component name (the segment after the last `.`). |
+| `{ComponentFullName}` | The **full** component name. |
+| `{<tagKey>}` | Any string key under the `tags` section — e.g. a tag `site` is usable as `{site}`. |
+
+<Aside type="caution" title="There is no InstanceId variable">
+There is **no** `{InstanceId}` template variable in any of the four SDKs. The only built-ins are
+`{ThingName}`, `{ComponentName}`, `{ComponentFullName}`, and your custom `{tag}` keys. Per-instance
+config is read by id through the instance accessors (below), not via template substitution.
+</Aside>
+
+### Sanitization
+
+Only the **substituted values** are sanitized — the template literal itself is left intact, so
+legitimate separators you write in the template (slashes in a path, `/` in an MQTT topic) survive.
+Within each injected value, the characters `/`, `\`, `+`, `#`, and control characters become `_`,
+and any remaining `..` traversal sequence is collapsed to `_`. This prevents an attacker-controlled
+thing name or tag from escaping a path or topic.
+
+### Resolving a template
+
+The resolution entry point differs by language: Java and Python expose an **instance method** on the
+config manager, while Rust and TypeScript expose a **free function** that takes the `Config`
+snapshot.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+  ```java
+  // instance method on ConfigManager
+  String path = config.resolveTemplate("/var/log/{ComponentName}-{ThingName}.log");
+  ```
+
+</TabItem>
+<TabItem label="Python">
+
+  ```python
+  # instance method on ConfigManager
+  path = config.resolve_template("/data/{ThingName}/{ComponentName}.log")
+  ```
+
+</TabItem>
+<TabItem label="Rust">
+
+  ```rust
+  use ggcommons::config::template;
+
+  // free function taking the Config snapshot
+  let path = template::resolve(&cfg, "heartbeat/{ThingName}/{ComponentName}");
+  ```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+  ```typescript
+  import { resolve } from "ggcommons";
+
+  // free function taking the Config snapshot
+  const path = resolve(cfg, "/data/{ThingName}/{ComponentName}.log");
+  ```
+
+</TabItem>
+</Tabs>
+
+The SDK also auto-resolves templates inside the `streaming`, `credentials`, and `parameters`
+sections before handing them to those subsystems — you only call `resolve` yourself for your own
+templated strings.
+
+## Reading config in code
+
+How you reach the config differs by language. Java and Python hand you a **`ConfigManager`** object
+with per-section getters. Rust and TypeScript hand you an **immutable `Config` snapshot** directly —
+re-call `config()` after a reload to see updates, because the snapshot is replaced atomically.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+  ```java
+  ConfigManager config = gg.getConfigManager();
+
+  // Global config shared by all instances
+  JsonObject global = config.getGlobalConfig();
+  long timeout = global.has("timeout") ? global.get("timeout").getAsLong() : 5000L;
+
+  // Per-instance config (multi-instance components)
+  for (String id : config.getInstanceIds()) {       // Collection<String>
+      JsonObject inst = config.getInstanceConfig(id); // null if id is absent
+  }
+
+  // Typed framework sections + identity
+  LoggingConfiguration logging = config.getLoggingConfig();
+  HeartbeatConfiguration heartbeat = config.getHeartbeatConfig();
+  String thing = config.getThingName();
+  String name = config.getComponentName();          // short name (after the last '.')
+  ```
+
+</TabItem>
+<TabItem label="Python">
+
+  ```python
+  config = gg.get_config_manager()
+
+  # Global config shared by all instances
+  global_cfg = config.get_global_config()
+  timeout = global_cfg.get("timeout", 5000)
+
+  # Per-instance config (multi-instance components)
+  for inst_id in config.get_instance_ids():
+      inst = config.get_instance_config(inst_id)   # raises KeyError if id is absent
+
+  # Typed framework sections + identity
+  logging = config.get_logging_config()
+  heartbeat = config.get_heartbeat_config()
+  thing = config.get_thing_name()
+  name = config.get_component_name()               # short name (after the last '.')
+  ```
+
+</TabItem>
+<TabItem label="Rust">
+
+  ```rust
+  let cfg = gg.config(); // Arc<Config> — immutable snapshot
+
+  // Global config shared by all instances
+  let global = cfg.global(); // &serde_json::Value
+
+  // Per-instance config (multi-instance components)
+  for id in cfg.instance_ids() {          // Vec<String>
+      let inst = cfg.instance(&id);       // Option<&Value> — None if id is absent
+  }
+
+  // Typed framework sections (parsed snapshot) + identity
+  let logging = &cfg.parsed.logging;
+  let heartbeat = &cfg.parsed.heartbeat;
+  let thing = &cfg.thing_name;
+  let name = &cfg.component_name;
+  ```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+  ```typescript
+  const cfg = gg.config(); // immutable Config snapshot
+
+  // Global config shared by all instances
+  const global = cfg.global(); // unknown
+
+  // Per-instance config (multi-instance components)
+  for (const id of cfg.instanceIds()) {   // string[]
+    const inst = cfg.instance(id);        // unknown | undefined — undefined if id is absent
+  }
+
+  // Typed framework sections (parsed snapshot) + identity
+  const logging = cfg.parsed.logging;
+  const heartbeat = cfg.parsed.heartbeat;
+  const thing = cfg.thingName;
+  const name = cfg.componentName;
+  ```
+
+</TabItem>
+</Tabs>
+
+<Aside type="caution" title="Missing-instance lookup differs">
+Looking up an absent instance id is **not** uniform: Java's `getInstanceConfig` returns `null`,
+Rust's `instance` returns `None`, TypeScript's `instance` returns `undefined`, but Python's
+`get_instance_config` **raises `KeyError`**. Guard the lookup accordingly (check
+`get_instance_ids()` first, or catch the exception).
+</Aside>
+
+## Reacting to config changes
+
+Register a change listener to be notified after a hot reload. Here too the SDKs diverge: Java and
+Python register the listener on the `ConfigManager`; Rust and TypeScript register it on the
+top-level runtime (`gg`). The callback shape also differs — Java's callback takes **no argument**
+(you read the new values back from the manager), while the others receive the new config.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+  ```java
+  // Register on the ConfigManager. onConfigurationChanged() takes NO argument —
+  // read the updated values back from the manager. The return value is ignored.
+  config.addConfigChangeListener(() -> {
+      JsonObject updated = config.getGlobalConfig();
+      // ... re-apply what you need
+      return true;
+  });
+  ```
+
+</TabItem>
+<TabItem label="Python">
+
+  ```python
+  from ggcommons.config.manager.configuration_change_listener import (
+      ConfigurationChangeListener,
+  )
+
+  class MyListener(ConfigurationChangeListener):
+      def on_configuration_change(self, configuration) -> bool:
+          # `configuration` is the new config dict
+          return True
+
+  config.add_config_change_listener(MyListener())
+  ```
+
+</TabItem>
+<TabItem label="Rust">
+
+  ```rust
+  use std::sync::Arc;
+  use async_trait::async_trait;
+  use ggcommons::config::{Config, ConfigurationChangeListener};
+
+  struct MyListener;
+
+  #[async_trait]
+  impl ConfigurationChangeListener for MyListener {
+      async fn on_configuration_change(&self, config: Arc<Config>) -> bool {
+          // `config` is the new snapshot
+          true
+      }
+  }
+
+  // Register on the runtime, not the Config snapshot.
+  gg.add_config_change_listener(Arc::new(MyListener));
+  ```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+  ```typescript
+  // Register on the runtime. The callback receives the new Config snapshot
+  // and may return a boolean or a Promise<boolean>.
+  gg.addConfigChangeListener({
+    onConfigurationChange(config) {
+      return true;
+    },
+  });
+  ```
+
+</TabItem>
+</Tabs>
+
+The listener method name is past-tense in Java (`onConfigurationChanged`) and present-tense
+elsewhere (`on_configuration_change` / `onConfigurationChange`). Java and Python listeners are
+synchronous; Rust is `async`; TypeScript may return a `Promise<boolean> | boolean`. The boolean
+return is logged but not otherwise acted on. To stop receiving callbacks, use the matching
+`removeConfigChangeListener` / `remove_config_change_listener` (Rust removes by `Arc` pointer
+identity).
+
+## Hot reload and validation
+
+### Hot reload
+
+The `FILE` source watches the config file (and its parent directory, to handle atomic-rename saves)
+and reloads on change in every language. The `CONFIGMAP` source reloads in place via the kubelet
+`..data` directory swap. On every reload the new document is **re-validated** against the schema.
+
+### Schema validation
+
+Configuration is validated against the single canonical schema
+(`schema/ggcommons-config-schema.json`), which each SDK embeds or loads. Validation is
+**fail-closed** in all four languages — a missing schema or a validation error at startup is a hard
+error, not a silent skip. Each SDK uses its native validator (networknt / JSON Schema draft V7 in
+Java, `jsonschema` in Python, the `jsonschema` crate in Rust, Ajv in TypeScript).
+
+The top level of the schema is strict (`additionalProperties: false`, `required: ["component"]`), so
+an unknown or mistyped top-level section is rejected. The `component.global`, `component.instances`,
+and `tags` subtrees are intentionally open so you can put arbitrary application keys there.
+
+<Aside type="caution" title="Invalid-reload behavior is not uniform">
+On a **hot reload** that produces a schema-invalid document, Java, Rust, and TypeScript reject the
+new config and keep the previously-loaded one. Python is different: it logs the validation failure
+but then **applies the invalid config and notifies listeners anyway** (the failure is only fatal
+during the initial load). If you rely on reject-and-keep semantics, do not assume it on Python.
+{/* NEEDS REVIEW: confirm whether Python's apply-invalid-on-reload behavior is intended or a parity bug before publishing — the fact sheet flags it as a likely defect, not a documented contract. */}
+</Aside>
+
+Python is also the only SDK that can opt out of validation, by constructing the config manager with
+`validate_config=False`. Java, Rust, and TypeScript embed the schema and cannot disable validation.
+
+## Cross-language differences at a glance
+
+- **Entry point**: Java/Python `getConfigManager()` / `get_config_manager()` return a
+  `ConfigManager` with getters; Rust/TypeScript `config()` return an immutable `Config` snapshot
+  (re-call after reload).
+- **Template resolution**: instance method (`resolveTemplate` / `resolve_template`) in Java/Python;
+  free function (`template::resolve(&cfg, s)` / `resolve(cfg, s)`) in Rust/TypeScript.
+- **Listener registration**: on the `ConfigManager` in Java/Python; on the runtime `gg` in
+  Rust/TypeScript.
+- **Listener callback**: Java takes no argument; Python/Rust/TypeScript receive the new config. Rust
+  is async.
+- **Missing instance**: `null` (Java) / `None` (Rust) / `undefined` (TypeScript) / `KeyError`
+  (Python).
+- **Invalid reload**: reject-and-keep in Java/Rust/TypeScript; apply-and-notify in Python.
+
+## Next steps
+
+<CardGrid>
+  <LinkCard title="Configuration schema reference" href="/reference/configuration-schema/" description="Every section, field, type, default, and enum in the canonical schema." />
+  <LinkCard title="Config API reference" href="/reference/config/" description="The full per-language accessor surface for reading and reloading config." />
+</CardGrid>

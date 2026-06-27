@@ -1,0 +1,457 @@
+---
+title: Logging API
+description: The public logging API per SDK — how to obtain a logger, the log methods and level predicates, the logging configuration type, and the format tokens.
+sidebar:
+  order: 9
+---
+
+import { Tabs, TabItem, Aside, LinkCard } from "@astrojs/starlight/components";
+
+This page is the API reference for GGCommons logging: the logger type in each SDK, how you obtain
+one, the log methods and level predicates, the configuration type, the configurator entry points,
+and the per-language format tokens. For the concepts behind these — how levels are honored, the
+stdout-JSON sink, file rotation, and hot reload — see the [Logging guide](/guides/logging/).
+
+There is **no `gg.logging()` accessor** in any SDK. The framework configures your language's logging
+framework when you build your GGCommons instance; component code obtains a logger from the native
+facility and writes to it. The configuration types and configurator functions below are wired by the
+framework — component authors normally only touch the *get a logger and log* surface.
+
+## At a glance
+
+| SDK | Obtain a logger | Logger type | Log methods | Predicates | Format key |
+| --- | --- | --- | --- | --- | --- |
+| Java | `LoggerFactory.getLogger(...)` | `com.mbreissi.ggcommons.logging.Logger` (interface) | `trace` `debug` `info` `warn` `error` | `isTraceEnabled()` … `isErrorEnabled()` | `java_format` |
+| Python | stdlib `logging.getLogger(name)` | stdlib `logging.Logger` | `debug` `info` `warning` `error` `critical` | `isEnabledFor(level)` | `python_format` |
+| Rust | `tracing` macros (no factory) | n/a (macros) | `trace!` `debug!` `info!` `warn!` `error!` | `tracing` level checks | `rust_format` |
+| TypeScript | `logger` / `getLogger(name)` | `Logger` (class) | `debug` `info` `warn` `error` | none exported | `ts_format` |
+
+<Aside type="note" title="Not every level has a method">
+TypeScript exposes only `debug`/`info`/`warn`/`error` (no `trace`/`fatal`), and Java's `Logger`
+interface has no `fatal()` even though the config enum includes `FATAL`. See the level-handling table
+in the [Logging guide](/guides/logging/#levels) for how each SDK folds `TRACE`/`FATAL`.
+</Aside>
+
+## Obtaining a logger
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+import com.mbreissi.ggcommons.logging.Logger;
+import com.mbreissi.ggcommons.logging.LoggerFactory;
+
+Logger byClass = LoggerFactory.getLogger(MyApp.class);
+Logger byName  = LoggerFactory.getLogger("com.example.MyApp");
+```
+
+`LoggerFactory` is a static factory:
+
+```java
+public final class LoggerFactory {
+    public static Logger getLogger(Class<?> clazz);
+    public static Logger getLogger(String name);
+}
+```
+
+The factory auto-detects the underlying framework once at class-load time, preferring SLF4J, then
+Log4j2, then JUL. You can also bypass the facade and use Log4j2 directly
+(`LogManager.getLogger(...)`) — the library has already reconfigured the Log4j2 root logger.
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+import logging
+
+log = logging.getLogger(__name__)
+```
+
+There is no GGCommons logger factory in Python. The library configures the **root** logger, so the
+stdlib `logging.getLogger(name)` is all you need. Per-logger levels from `logging.loggers` apply by
+the name you pass here.
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+use tracing::{debug, info, warn, error};
+```
+
+There is no `getLogger` in Rust. Components emit through the `tracing` macros; the library installs
+the global `tracing-subscriber` once during `build()`. The macro's `target` defaults to the current
+module path, which is what per-logger `loggers` directives match against.
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+import { logger, getLogger } from "ggcommons";
+
+logger.info("using the process-wide root logger");   // name "ggcommons"
+
+const dbLog = getLogger("app.db");                    // named, cached, hierarchically leveled
+```
+
+`logger` is the process-wide root `Logger` (named `"ggcommons"`). `getLogger(name)` returns a named,
+cached `Logger` whose level is resolved by longest dotted-prefix match against `logging.loggers`.
+
+</TabItem>
+</Tabs>
+
+## The logger type
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+`com.mbreissi.ggcommons.logging.Logger` is an interface. Each of `trace`/`debug`/`info`/`warn`/`error`
+has three overloads, plus a level predicate per level:
+
+```java
+public interface Logger {
+    void trace(String message);
+    void trace(String message, Object... args);      // SLF4J-style {} placeholders
+    void trace(String message, Throwable throwable);
+    // ... identical trio for debug, info, warn, error ...
+
+    boolean isTraceEnabled();
+    boolean isDebugEnabled();
+    boolean isInfoEnabled();
+    boolean isWarnEnabled();
+    boolean isErrorEnabled();
+}
+```
+
+The `(String, Object...)` overload uses SLF4J-style `{}` placeholders; the `(String, Throwable)`
+overload attaches an exception. There is **no `fatal()` method** on this interface.
+
+{/* NEEDS REVIEW: the Logger interface has class-level Javadoc but NO per-method Javadoc in source (libs/java/.../logging/Logger.java); the overload/predicate descriptions above are derived from the signatures. Confirm the SLF4J-style {} semantics hold for the Log4j2 and JUL adapters too. */}
+
+</TabItem>
+<TabItem label="Python">
+
+Python uses the standard-library `logging.Logger` returned by `logging.getLogger(name)` — GGCommons
+does not define its own logger type. The standard methods are:
+
+```python
+log.debug("payload bytes: %d", len(payload))
+log.info("publish interval set to %sms", interval)
+log.warning("retrying after error", exc_info=True)
+log.error("query failed")
+log.critical("fatal condition")                   # FATAL maps to CRITICAL
+
+if log.isEnabledFor(logging.DEBUG):               # the stdlib level predicate
+    log.debug(expensive())
+```
+
+These are stdlib semantics; GGCommons only configures the root logger, level, format, and sinks.
+
+</TabItem>
+<TabItem label="Rust">
+
+Rust has no logger object — components use the `tracing` macros, and GGCommons installs the
+subscriber that decides what is emitted:
+
+```rust
+tracing::trace!(detail = ?value, "trace line");
+tracing::debug!(payload_bytes = payload.len(), "received payload");
+tracing::info!(publish_interval = interval, "configuration changed");
+tracing::warn!(error = %err, "retrying after error");
+tracing::error!("query failed");
+```
+
+Structured key/value fields are preserved verbatim in the JSON sink. Level "predicates" are handled
+by `tracing` itself (the subscriber and `EnvFilter`); there is no GGCommons-provided `isEnabled`
+helper.
+
+</TabItem>
+<TabItem label="TypeScript">
+
+`Logger` is an exported class. Construction is normally via `getLogger(name)` / the `logger`
+singleton rather than `new`:
+
+```typescript
+export class Logger {
+  readonly loggerName: string;
+  constructor(name?: string);                       // defaults to "ggcommons"
+
+  debug(message: string, error?: unknown): void;
+  info(message: string, error?: unknown): void;
+  warn(message: string, error?: unknown): void;
+  error(message: string, error?: unknown): void;
+
+  refresh(): void;                                  // recompute level/format/sink from config
+  setLevel(level: Level): void;                     // Level enum is internal — see note
+  setFormat(format: string | undefined): void;      // ts_format template; undefined → default
+  setFileWriter(writer: RotatingFileWriter | undefined): void;
+}
+```
+
+There are only four log methods (`debug`/`info`/`warn`/`error`) — no `trace`/`fatal`, and **no
+level-predicate methods**. Each method takes an optional second `error?: unknown`. In text mode
+`warn`/`error` write to stderr and the rest to stdout; in JSON mode all levels go to stdout.
+
+{/* NEEDS REVIEW: Logger.debug/info/warn/error have NO JSDoc in source (libs/ts/src/logging.ts:440-451); the signatures and stream-routing note are read directly from source. The Level enum and RotatingFileWriter are internal/un-exported — components set levels via config (logging.level / logging.loggers), not via setLevel. */}
+
+</TabItem>
+</Tabs>
+
+## The logging configuration type
+
+These types model the `logging` config section and drive the configurator. They are framework-facing —
+you rarely construct them yourself — but they expose the resolved values via getters.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+`com.mbreissi.ggcommons.config.LoggingConfiguration` parses the `logging` JSON object and exposes
+typed getters:
+
+```java
+LoggingConfiguration(JsonObject json);
+
+org.apache.logging.log4j.Level getLevel();          // default INFO
+String  getFormat();                                 // java_format or DEFAULT_FORMAT
+boolean isFormatExplicitlySet();                     // true if java_format was provided
+boolean isFileLoggingEnabled();
+String  getLogFilePath();                            // == fileLogging.filePath
+String  getMaxFileSize();                            // default "10MB"
+int     getBackupCount();                            // default 5
+java.util.Map<String, Level> getLoggerLevels();      // from logging.loggers
+boolean isGlobalControlEnabled();                    // default false
+```
+
+Defaults: level `INFO`, format
+`%d{yyyy-MM-dd HH:mm:ss} [%-5p] %-25.25c{1}(%4L): %m%n`, `maxFileSize` `"10MB"`, `backupCount` `5`.
+Obtain the live instance via `ConfigManager.getLoggingConfig()`.
+
+</TabItem>
+<TabItem label="Python">
+
+`ggcommons.config.enhanced_logging_config.EnhancedLoggingConfiguration` parses the section, applies
+it, and exposes getters:
+
+```python
+EnhancedLoggingConfiguration(
+    logging_config=None,            # the logging dict
+    platform_default_format=None,   # e.g. "json" on KUBERNETES
+    correlation=None,               # thing/pod/namespace/node fields
+)
+
+cfg.configure_logging(config_manager=None)   # clears root handlers, installs sinks
+cfg.get_level(); cfg.get_format(); cfg.is_json_sink()
+cfg.is_file_logging_enabled(); cfg.get_log_file_path()
+cfg.get_logger_levels(); cfg.is_global_control_enabled(); cfg.to_dict()
+```
+
+Defaults: level `logging.INFO`, format `%(asctime)s [%(levelname)s] %(name)s: %(message)s`. The
+companion `JsonLogFormatter(logging.Formatter)` renders the JSON sink (UTC timestamps via
+`time.gmtime`). Obtain the live instance via `ConfigManager.get_logging_config()`.
+
+</TabItem>
+<TabItem label="Rust">
+
+Rust has no separate configuration class — `logging::init`/`logging::reconfigure` read the parsed
+`logging` section off `config.parsed.logging`:
+
+```rust
+// fields read from config.parsed.logging
+level: String,                          // default "INFO"
+rust_format: Option<String>,            // token template or "json"
+loggers: HashMap<String, String>,       // target -> level (EnvFilter directives)
+file_logging.enabled: bool,
+file_logging.file_path: String,
+file_logging.max_file_size(): String,   // default "10MB"
+file_logging.backup_count(): u32,       // default 5
+```
+
+There are no getters to call; the values are consumed directly by the configurator.
+
+</TabItem>
+<TabItem label="TypeScript">
+
+TypeScript has no exported configuration class — `initLogging`/`reconfigureLogging` read the parsed
+`logging` section off `config.parsed.logging`:
+
+```typescript
+// fields read from config.parsed.logging
+level: string;                          // default "INFO"
+tsFormat?: string;                      // token template or "json"
+loggers: Record<string, string>;        // logger name -> level
+fileLogging.enabled: boolean;
+fileLogging.filePath: string;
+fileLogging.maxFileSize(): string;      // default "10MB"
+fileLogging.backupCount(): number;      // default 5
+```
+
+The platform default (e.g. `json` on Kubernetes) is supplied through `LoggingOptions`:
+
+```typescript
+interface LoggingOptions {
+  formatDefault?: string;   // platform-profile default format
+  env?: Env;                // environment lookup for correlation fields
+}
+```
+
+</TabItem>
+</Tabs>
+
+## Configurator and reconfiguration entry points
+
+The framework calls these at startup and on hot reload. They are documented here for completeness;
+component authors do not normally invoke them.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+// on ConfigManager — the live runtime configurator
+public void reconfigureLogging();             // rebuilds the Log4j2 config from LoggingConfiguration
+public LoggingConfiguration getLoggingConfig();
+```
+
+`reconfigureLogging()` runs at init and again on hot reload via the registered
+`LoggingConfigChangeListener`. It always installs a `SYSTEM_OUT` console appender, optionally a
+size-rotated `RollingFile` appender, sets the root level, and adds a per-logger `LoggerConfig`
+(with `additivity=false`) for each `logging.loggers` entry. When `globalControl=true` it delegates to
+`GlobalLoggingManager`, which rebuilds the entire Log4j2 configuration.
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+EnhancedLoggingConfiguration(...).configure_logging(config_manager=None)
+```
+
+`configure_logging()` clears the root handlers, sets the root level, installs a `StreamHandler` (JSON
+or text formatter), and — only when `fileLogging.enabled` and not under the JSON sink — a
+`logging.handlers.RotatingFileHandler(maxBytes, backupCount)`. The `ConfigManager` rebuilds and calls
+this on hot reload. Note: Python parses `globalControl` (`is_global_control_enabled()`) but
+`configure_logging()` never acts on it.
+
+{/* NEEDS REVIEW: configure_logging() installs a bare logging.StreamHandler() whose default stream is sys.stderr (for both text and JSON modes). Confirm on a real run whether Python's JSON lines land on stdout vs stderr before documenting "stdout-JSON" for Python specifically. */}
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+use ggcommons::{config::model::Config, logging};
+
+logging::init(&config, profile_format_default);   // install the global subscriber once (idempotent)
+logging::reconfigure(&config);                     // swap the level EnvFilter live
+```
+
+`init` takes the parsed `Config` and an `Option<&str>` platform default (pass `Some("json")` for the
+Kubernetes profile). It installs the global `tracing-subscriber` exactly once. `reconfigure` swaps
+only the level filter live — the format and file layers are fixed at `init`, so a `rust_format` or
+`fileLogging` change requires a restart. `LoggingReconfigurer` implements `ConfigurationChangeListener`
+to call `reconfigure` on reload.
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+import { initLogging, reconfigureLogging, LoggingReconfigurer } from "ggcommons";
+
+initLogging(config, options?);        // (config: Config, options?: LoggingOptions)
+reconfigureLogging(config);           // re-run the full configurator
+```
+
+`initLogging` configures all `Logger` instances from `config.parsed.logging` (level, per-logger
+levels, format/JSON mode, and the rotating file writer). `reconfigureLogging` re-runs the full
+configurator on hot reload and can swap the file writer live. `LoggingReconfigurer` implements
+`ConfigurationChangeListener` and forwards reload events to `reconfigureLogging`.
+
+</TabItem>
+</Tabs>
+
+## Format tokens
+
+Each SDK reads **only its own** format key, written in **its own** syntax; a token from one language
+is meaningless to the others. Setting the value to the literal `json` (case-insensitive) selects the
+[stdout-JSON sink](/guides/logging/#the-stdout-json-sink) instead of a text layout.
+
+| SDK | Config key | Syntax | Default (when unset) |
+| --- | --- | --- | --- |
+| Java | `java_format` | Log4j2 `PatternLayout` | `%d{yyyy-MM-dd HH:mm:ss} [%-5p] %-25.25c{1}(%4L): %m%n` |
+| Python | `python_format` | `logging.Formatter` string | `%(asctime)s [%(levelname)s] %(name)s: %(message)s` |
+| Rust | `rust_format` | token template | `{timestamp} {level} {target} {message}` |
+| TypeScript | `ts_format` | token template | `{timestamp} [{level}] {message}` |
+
+Token-template placeholders differ between Rust and TypeScript: Rust supports `{timestamp}`,
+`{level}`, `{target}`, `{message}` (it uses `{target}`), while TypeScript supports `{timestamp}`,
+`{level}`, `{logger}`, `{message}` (it uses `{logger}`). The effective format is resolved with the
+precedence: explicit `*_format` token, then the platform-profile default (`json` on Kubernetes), then
+the SDK's built-in text default.
+
+## Example: get a logger and log
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+import com.mbreissi.ggcommons.logging.Logger;
+import com.mbreissi.ggcommons.logging.LoggerFactory;
+
+Logger log = LoggerFactory.getLogger(MyApp.class);   // or getLogger("my.logger")
+
+log.info("publish interval set to {}ms", interval);  // SLF4J-style {} args
+log.warn("retrying after error", throwable);         // (String, Throwable) overload
+if (log.isDebugEnabled()) {
+    log.debug("payload bytes: {}", payload.length);
+}
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+import logging
+
+log = logging.getLogger(__name__)
+
+log.info("publish interval set to %sms", interval)
+log.warning("retrying after error", exc_info=True)
+log.debug("payload bytes: %d", len(payload))
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+use tracing::{debug, info, warn};
+
+info!(publish_interval = interval, "configuration changed");
+warn!(error = %err, "retrying after error");
+debug!(payload_bytes = payload.len(), "received payload");
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+import { logger, getLogger } from "ggcommons";
+
+logger.info("publish interval set to " + interval + "ms");
+
+const dbLog = getLogger("app.db");
+dbLog.debug("db detail");                  // honors logging.loggers["app.db"]
+dbLog.error("query failed", err);          // (message, error?) signature
+```
+
+</TabItem>
+</Tabs>
+
+## See also
+
+<LinkCard
+  title="Logging guide"
+  href="/guides/logging/"
+  description="Concepts: levels, per-logger overrides, the stdout-JSON sink, file rotation, globalControl, and hot reload."
+/>
+
+<LinkCard
+  title="Configuration schema: logging"
+  href="/reference/configuration/#logging"
+  description="The canonical logging schema section — every key, type, default, and constraint."
+/>

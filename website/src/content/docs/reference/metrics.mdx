@@ -1,0 +1,525 @@
+---
+title: Metrics API
+description: API reference for the GGCommons metrics subsystem — MetricService/MetricEmitter, MetricBuilder, Metric, Measure, targets, and constants in four languages.
+sidebar:
+  order: 7
+---
+
+import { Tabs, TabItem, Aside, LinkCard, CardGrid } from "@astrojs/starlight/components";
+
+API reference for the metrics subsystem: the service/emitter type and its methods, the
+`MetricBuilder`, the `Metric` and `Measure` value types, the target abstraction with its concrete
+target names, and the dimension-cap constant. Signatures below are taken from source and reflect each
+SDK's exact names.
+
+For conceptual explanation — how a target is chosen, the Prometheus pull lifecycle, the durable
+CloudWatch buffer, and EMF timestamp units — see the [Metrics guide](/guides/metrics/). This page is
+the signature reference.
+
+## Obtaining the service
+
+The accessor name and the returned type differ per language.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+// getMetrics() returns a MetricEmitter instance.
+MetricEmitter metrics = gg.getMetrics();
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+# get_metrics() returns the MetricEmitter CLASS itself — every method is a
+# @staticmethod backed by process-global state. There is no per-instance emitter.
+metrics = gg.get_metrics()
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+// metrics() returns an Arc<dyn MetricService>.
+let metrics = gg.metrics();
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+// metrics() returns a MetricService.
+const metrics = gg.metrics();
+```
+
+</TabItem>
+</Tabs>
+
+The type names map across SDKs as follows: Java `MetricEmitter` (concrete class), Python
+`MetricEmitter` (returned as the class, static methods), Rust `MetricService` trait behind
+`Arc<dyn MetricService>`, TypeScript `MetricService` interface (the concrete impl is also named
+`MetricEmitter`).
+
+## MetricService / MetricEmitter
+
+The emitting surface. `defineMetric` registers a metric definition by name; `emitMetric` records
+measure values through the target's buffer; `emitMetricNow` bypasses batching and delivers
+immediately; `isMetricDefined` reports whether a name is registered; flush/shutdown drain and release
+the target.
+
+The measure-value container type is language-specific: `Map<String, Float>` (Java — note `Float`, not
+`double`), a `dict` of `str -> float` (Python), `HashMap<String, f64>` (Rust), and
+`Record<string, number>` (TypeScript, aliased as `MeasureValues`).
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+void                  defineMetric(Metric metric);
+boolean               isMetricDefined(String name);
+void                  emitMetric(String name, Map<String, Float> measureValues);    // buffered
+void                  emitMetricNow(String name, Map<String, Float> measureValues); // immediate
+void                  flushMetrics();   // force-drain the buffer
+void                  close();          // release the target on shutdown (call flushMetrics() first to drain)
+MetricConfiguration   getMetricConfig();
+String                getThingName();
+String                getComponentName();
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+# All methods are @staticmethod on the MetricEmitter class.
+init(config_manager)                       # wired by GGCommons during startup
+define_metric(metric)
+is_metric_defined(name) -> bool
+emit_metric(name, measure_values)          # buffered;  measure_values: dict[str, float]
+emit_metric_now(name, measure_values)      # immediate
+shutdown()                                 # closes the active target
+get_metric_config()
+get_thing_name()
+get_component_name()
+# NOTE: there is NO public flush method on the Python emitter — targets own batching/close.
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+// trait MetricService (implemented by MetricEmitter)
+fn define_metric(&self, metric: Metric);
+fn is_metric_defined(&self, name: &str) -> bool;
+async fn emit_metric(&self, name: &str, values: HashMap<String, f64>) -> Result<()>;     // buffered
+async fn emit_metric_now(&self, name: &str, values: HashMap<String, f64>) -> Result<()>; // immediate
+async fn flush_metrics(&self) -> Result<()>;
+async fn shutdown(&self);
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+// interface MetricService (type MeasureValues = Record<string, number>)
+defineMetric(metric: Metric): void;
+isMetricDefined(name: string): boolean;
+emitMetric(name: string, values: MeasureValues): Promise<void>;     // buffered
+emitMetricNow(name: string, values: MeasureValues): Promise<void>;  // immediate
+flushMetrics(): Promise<void>;
+shutdown(): Promise<void>;
+```
+
+</TabItem>
+</Tabs>
+
+<Aside type="note" title="Flush / shutdown parity">
+Java exposes `flushMetrics()` plus `close()`; Rust and TypeScript expose
+`flush_metrics()`/`flushMetrics()` plus `shutdown()`. **Python has no public flush** on the emitter —
+only `shutdown()`, which closes the active target.
+</Aside>
+
+{/* NEEDS REVIEW: Java construction path — gg.getMetrics() returns an emitter built internally via MetricEmitterBuilder.create(cfg).withMessagingService(mc).withPlatform(p).build(); component developers should not construct it directly. Confirm whether the builder is part of the documented public surface before adding it here. */}
+
+## MetricBuilder
+
+Defines a metric: a name, one or more **measures** (each with a unit and a storage resolution), and
+optional **dimensions**. `withConfig`/`with_config` populates identity fields from the active config.
+Storage resolution is `1` (high resolution, 1-second) or `60` (standard, 1-minute).
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+static MetricBuilder  create(String name);
+MetricBuilder         withNamespace(String namespace);
+MetricBuilder         withThingName(String thingName);       // -> coreName dimension
+MetricBuilder         withComponentName(String componentName); // -> component dimension
+MetricBuilder         withConfig(ConfigManager config);     // fills thing + component + namespace
+MetricBuilder         addMeasure(String name, String unit, int storageResolution);
+MetricBuilder         addMeasure(Measure measure);
+MetricBuilder         addDimension(String key, String value); // throws if > 10 dimensions
+Metric                build();                  // throws IllegalStateException if namespace unset / no measures
+Metric                build(MetricEmitter emitter); // fills namespace/thing/component from the emitter
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+MetricBuilder(name)                            # or: MetricBuilder.create(name)  (static)
+with_namespace(namespace)                      # raises ValueError if empty
+with_thing_name(thing_name)
+with_component_name(component_name)
+with_config(config_service)                    # fills thing + component ONLY (not namespace)
+add_measure(name, unit, storage_resolution=60) # ValueError if storage_resolution not in [1, 60]
+add_dimension(key, value)                      # ValueError if key OR value empty
+build() -> Metric                              # ValueError if assembled dims > Metric.MAX_DIMENSIONS
+# build() has NO emitter overload; if thing/component/namespace are unset it substitutes the
+# placeholders "test-thing" / "test-component" / "GGCommons/Metrics".
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+// MetricBuilder — build() is infallible (no Result)
+pub fn create(name: impl Into<String>) -> MetricBuilder;
+pub fn with_namespace(self, namespace: impl Into<String>) -> MetricBuilder;
+pub fn with_thing_name(self, thing_name: impl Into<String>) -> MetricBuilder;
+pub fn with_component_name(self, component_name: impl Into<String>) -> MetricBuilder;
+pub fn with_config(self, config: &Config) -> MetricBuilder; // fills thing + component + namespace
+pub fn add_measure(self, name: impl Into<String>, unit: impl Into<String>, storage_resolution: u32) -> MetricBuilder;
+pub fn add_dimension(self, key: impl Into<String>, value: impl Into<String>) -> MetricBuilder;
+pub fn build(self) -> Metric;  // > 10 dims: TRIMS excess custom dims + tracing::warn! (never errors)
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+static create(name: string): MetricBuilder;
+withNamespace(namespace: string): MetricBuilder;
+withThingName(thingName: string): MetricBuilder;
+withComponentName(componentName: string): MetricBuilder;
+withConfig(config: ConfigManager): MetricBuilder;   // fills thing + component + namespace
+addMeasure(name: string, unit: string, storageResolution: number): MetricBuilder;
+addDimension(key: string, value: string): MetricBuilder;
+build(): Metric;   // throws Error if dimensions > Metric.MAX_DIMENSIONS
+```
+
+</TabItem>
+</Tabs>
+
+### Builder behavior divergences
+
+These differences are load-bearing — they change what valid code looks like per language:
+
+- **`withConfig` and namespace.** Java, Rust, and TypeScript fill thing **+** component **+**
+  namespace. **Python `with_config` fills thing + component only** — set `with_namespace(...)`
+  yourself or `build()` substitutes `GGCommons/Metrics`.
+- **Storage resolution.** Java, Rust, and TypeScript silently coerce (`< 60` becomes `1`, otherwise
+  `60`). **Python's `add_measure` rejects** anything not exactly `1` or `60` with a `ValueError`.
+  (The `Measure` value object still coerces if constructed directly — see below.)
+- **`build()` overloads.** Java has both `build()` (requires namespace, else throws) and
+  `build(MetricEmitter)`. Python, Rust, and TypeScript have a single `build()`.
+- **Dimension-cap behavior.** Java, Python, and TypeScript **throw** when more than 10 dimensions are
+  present; **Rust trims** the excess custom dimensions and logs a `tracing::warn!` (its `build()` is
+  infallible).
+- **Empty dimension value.** Python raises `ValueError` for an empty value; Java, Rust, and
+  TypeScript accept it.
+
+## Metric and Measure
+
+A `Measure` is a named value type within a metric (its `name`, `unit`, and `storageResolution`). The
+`Measure` value object itself coerces storage resolution to `1` or `60` (`< 60` becomes `1`) in every
+language.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+// record Measure(String name, String unit, int storageResolution)
+Measure(String name, String unit, int storageResolution); // coerces: storageResolution < 60 ? 1 : 60
+Measure(String name, String unit);                         // convenience — defaults to 60
+String name();
+String unit();
+int    storageResolution();
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+# @dataclass Measure
+Measure(name, unit, storage_resolution=60)  # __post_init__ coerces: 1 if < 60 else 60
+get_name()                                  # also exposed as public attrs: name / unit / storage_resolution
+get_unit()
+get_storage_resolution()
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+pub fn new(name: impl Into<String>, unit: impl Into<String>, storage_resolution: u32) -> Measure; // coerces: if < 60 { 1 } else { 60 }
+pub fn get_name(&self) -> &str;
+pub fn get_unit(&self) -> &str;
+pub fn get_storage_resolution(&self) -> u32;
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+// class Measure — readonly fields name / unit / storageResolution
+new Measure(name: string, unit: string, storageResolution: number); // coerces: storageResolution < 60 ? 1 : 60
+```
+
+</TabItem>
+</Tabs>
+
+A `Metric` is what `MetricBuilder.build()` returns and what `defineMetric` registers. You normally
+build it rather than construct it directly. Its read accessors:
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+String              getName();
+String              getNamespace();
+Map<String, Measure> getMeasures();
+Measure             getMeasure(String name);
+Map<String, String> getDimensions();
+void                addMeasure(...);     // adds (or replaces) a measure
+void                addDimension(String key, String value); // enforces the 10-dimension cap
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+MAX_DIMENSIONS = 10          # public class attribute on Metric
+get_name()
+get_namespace()
+get_measures()
+get_measure(name)
+get_dimensions()
+add_dimension(key, value)    # raises ValueError when the 10-dimension cap is exceeded
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+pub fn get_name(&self) -> &str;
+pub fn get_namespace(&self) -> Option<&str>;             // namespace is optional
+pub fn get_measures(&self) -> &BTreeMap<String, Measure>;
+pub fn get_measure(&self, name: &str) -> Option<&Measure>;
+pub fn get_dimensions(&self) -> &BTreeMap<String, String>;
+pub fn add_measure(&mut self, measure: Measure);
+pub fn add_dimension(&mut self, name: impl Into<String>, value: impl Into<String>);
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+static readonly MAX_DIMENSIONS = 10;     // public static on Metric
+getName(): string;
+getNamespace(): string | undefined;      // namespace is optional
+getMeasures(): Map<string, Measure>;
+getMeasure(name: string): Measure | undefined;
+getDimensions(): Map<string, string>;
+```
+
+</TabItem>
+</Tabs>
+
+### Auto-injected dimensions
+
+Three dimensions are injected automatically at `build()` time (they count toward the 10-dimension
+cap):
+
+| Dimension   | Value              | Source                              |
+|-------------|--------------------|-------------------------------------|
+| `category`  | the metric's name  | set by the `Metric` constructor     |
+| `coreName`  | the IoT Thing name | from `withThingName` / config       |
+| `component` | the component name | from `withComponentName` / config   |
+
+## Constants
+
+| Constant         | Value | Meaning                                                  |
+|------------------|-------|----------------------------------------------------------|
+| `MAX_DIMENSIONS` | `10`  | CloudWatch's per-metric dimension cap (incl. the 3 injected). |
+| Prometheus port  | `9090`| Default listener port for the `prometheus` target.       |
+| Prometheus path  | `/metrics` | Default scrape path for the `prometheus` target.    |
+
+`MAX_DIMENSIONS` is exposed as a **named public constant** only in Python (`Metric.MAX_DIMENSIONS`)
+and TypeScript (`Metric.MAX_DIMENSIONS`). In Java the cap is a hard-coded literal `10` in
+`Metric.addDimension` and `MetricBuilder.addDimension`; in Rust it is a **module-private**
+`const MAX_DIMENSIONS: usize = 10` (not part of the public API). The value is `10` in all four.
+
+## Targets
+
+A **target** is the destination metrics are written to. Each SDK has a target abstraction that the
+concrete targets implement; the active target is selected by config (`metricEmission.target`) and the
+three-tier precedence described in the [Metrics guide](/guides/metrics/#targets-and-how-one-is-chosen).
+
+The abstraction:
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+// abstract class MetricTarget
+abstract void    emitMetric(Metric metric, Map<String, Float> measureValues);
+abstract void    emitMetricNow(Metric metric, Map<String, Float> measureValues);
+abstract boolean onConfigurationChanged();
+void             flush();   // default no-op
+void             close();   // default no-op
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+# class MetricTarget(ConfigurationChangeListener, ABC)
+emit_metric(metric, measure_values: dict[str, float])
+emit_metric_now(metric, measure_values: dict[str, float])
+on_configuration_change(configuration) -> bool
+close() -> None
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+// trait MetricTarget: Send + Sync
+async fn emit(&self, metric: &Metric, values: &HashMap<String, f64>) -> Result<()>;
+async fn emit_now(&self, metric: &Metric, values: &HashMap<String, f64>) -> Result<()>;
+async fn flush(&self) -> Result<()>;  // default no-op
+async fn shutdown(&self);             // default no-op
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+// interface MetricTarget
+emit(metric: Metric, values: MeasureValues): Promise<void>;
+emitNow(metric: Metric, values: MeasureValues): Promise<void>;
+flush(): Promise<void>;     // default no-op
+shutdown(): Promise<void>;  // default no-op
+```
+
+</TabItem>
+</Tabs>
+
+### Concrete targets
+
+The selectable `metricEmission.target` values, and the source file that implements each:
+
+| `target` value         | Java                       | Python                    | Rust (feature)                                  | TypeScript                |
+|------------------------|----------------------------|---------------------------|-------------------------------------------------|---------------------------|
+| `log`                  | `Log.java`                 | `metric_log.py`           | `target/log.rs`                                 | `target/log.ts`           |
+| `messaging`            | `Messaging.java`           | `messaging.py`            | `target/messaging.rs`                           | `target/messaging.ts`     |
+| `cloudwatch`           | `CloudWatch.java`          | `cloudwatch.py`           | `target/cloudwatch.rs` (`cloudwatch`)           | `target/cloudwatch.ts`    |
+| `cloudwatchcomponent`  | `CloudWatchComponent.java` | `cloudwatch_component.py` | `target/cloudwatch_component.rs`                | `target/cloudwatch_component.ts` |
+| `prometheus`           | `Prometheus.java`          | `prometheus.py`           | `target/prometheus.rs` (`metrics-prometheus`)   | `target/prometheus.ts`    |
+
+<Aside type="note" title="cloudwatch_durable is a mode, not a target value">
+`cloudwatch_durable` is **not** a selectable `metricEmission.target`. It is the disk-backed
+store-and-forward implementation the `cloudwatch` target uses by default (`buffer.type` of `durable`
+vs `memory`). See the [durable CloudWatch buffer](/guides/metrics/#durable-cloudwatch-buffer).
+</Aside>
+
+<Aside type="caution" title="Rust feature gates">
+In Rust the `cloudwatch` and `prometheus` targets are behind cargo features (`cloudwatch`,
+`metrics-cloudwatch-durable`, `metrics-prometheus`). On Kubernetes the `prometheus` **profile
+default** falls back to `log` (with a warning) when `metrics-prometheus` is absent, but an
+**explicit** `target = "prometheus"` without the feature is a hard error; selecting `cloudwatch`
+without its feature errors likewise. Java, Python, and TypeScript always bundle these targets (Python
+lazy-imports `prometheus-client` and errors at target construction if it is missing).
+</Aside>
+
+## Define and emit
+
+A complete define-then-emit cycle in all four languages.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+MetricEmitter metrics = gg.getMetrics();
+
+metrics.defineMetric(
+    MetricBuilder.create("performance")
+        .withConfig(config)                       // fills thing / component / namespace
+        .addMeasure("replyLatency", "Milliseconds", 1)
+        .build());
+
+Map<String, Float> values = new HashMap<>();
+values.put("replyLatency", 12.5f);                // Map<String, Float>
+metrics.emitMetric("performance", values);        // buffered
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+metrics = gg.get_metrics()                         # the MetricEmitter class (static methods)
+
+metric = (MetricBuilder.create("performance")
+          .with_config(config)
+          .with_namespace("MyApp/Metrics")         # set explicitly: with_config skips namespace
+          .add_measure("reply_latency", "Milliseconds", 1)
+          .build())
+metrics.define_metric(metric)
+
+metrics.emit_metric_now("performance", {"reply_latency": 12.5})
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+let metrics = gg.metrics();                        // Arc<dyn MetricService>
+
+metrics.define_metric(
+    MetricBuilder::create("performance")
+        .with_config(&config)                      // fills thing / component / namespace
+        .add_measure("replyLatency", "Milliseconds", 1)
+        .build(),
+);
+
+let mut values = HashMap::new();
+values.insert("replyLatency".to_string(), 12.5_f64); // HashMap<String, f64>
+metrics.emit_metric("performance", values).await?;
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+const metrics = gg.metrics();                      // MetricService
+
+const metric = MetricBuilder.create("performance")
+  .withConfig(config)                              // fills thing / component / namespace
+  .addMeasure("replyLatency", "Milliseconds", 1)
+  .build();
+metrics.defineMetric(metric);
+
+await metrics.emitMetric("performance", { replyLatency: 12.5 }); // Record<string, number>
+```
+
+</TabItem>
+</Tabs>
+
+## See also
+
+<CardGrid>
+  <LinkCard title="Metrics guide" href="/guides/metrics/" description="Targets, the Prometheus pull lifecycle, the durable CloudWatch buffer, and EMF timestamps explained." />
+  <LinkCard title="Config schema: metricEmission" href="/reference/schema/#metricemission" description="The metricEmission config section — target, namespace, and buffer keys." />
+  <LinkCard title="API reference: Messaging" href="/reference/messaging/" description="The transport the messaging metric target publishes over." />
+</CardGrid>

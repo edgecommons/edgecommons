@@ -1,0 +1,729 @@
+---
+title: Platform & transport
+description: API reference for the platform/transport model — the Platform and Transport enums, the profile types, the resolver functions, and the platform-profile constants, per language.
+sidebar:
+  order: 4
+---
+
+import { Tabs, TabItem, Aside } from "@astrojs/starlight/components";
+
+This is the API reference for the **platform × transport** runtime model: the `Platform` and
+`Transport` enums, the `PlatformProfile` / `ResolvedProfile` / `ResolverInputs` types, the pure
+resolver functions, the profile-helper functions, and the platform-profile constants. Signatures are
+shown as they appear in source, in each of the four SDKs.
+
+For the conceptual narrative (the two axes, auto-detection, precedence) see
+[Platforms & transports](/start/platforms-and-transports/); for the command-line flags that feed
+this resolver see the [CLI contract](/start/cli-contract/). You rarely call the resolver yourself —
+the builder parses the flags and runs it for you — but the types below are the public surface, and
+the constants are the source of truth for the env vars and tokens the model keys off.
+
+## Where these live
+
+| SDK | Module / package |
+|---|---|
+| Java | `com.mbreissi.ggcommons.platform` (the resolver, enums, and profile types); `com.mbreissi.ggcommons.GGCommons` (the parser entry point `processArgs`). |
+| Python | `ggcommons.platform` — submodules `platform` (the `Platform` enum), `transport` (the `Transport` enum), and `resolver` (everything else). |
+| Rust | `ggcommons::platform` (enums, profile types, resolver fns); `ggcommons::cli` (the `parse_from` entry point). |
+| TypeScript | the `ggcommons` package root re-exports from `platform.ts` and `cli.ts`. |
+
+## `Platform`
+
+The primary axis — *where* the component runs. Three variants; `auto` is a CLI token only (it is
+**not** an enum member — it maps to "no explicit platform", i.e. auto-detect). The CLI token parses
+case-insensitively.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+package com.mbreissi.ggcommons.platform;
+
+public enum Platform {
+    GREENGRASS,  // on a Greengrass v2 Nucleus: IPC transport, Nucleus-managed config/identity
+    HOST,        // a plain host (Docker / bare host without a Nucleus): MQTT transport
+    KUBERNETES   // a pod: MQTT transport, ConfigMap-mounted config/identity
+}
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+from enum import Enum
+
+class Platform(str, Enum):
+    """str-valued so it compares directly to the raw uppercased CLI token."""
+    GREENGRASS = "GREENGRASS"
+    HOST = "HOST"
+    KUBERNETES = "KUBERNETES"
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+// PascalCase variants (the CLI token still parses case-insensitively).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Platform {
+    Greengrass,
+    Host,
+    Kubernetes,
+}
+
+impl Platform {
+    // `auto` yields `Ok(None)` so the resolver auto-detects; unknown tokens are `Err`.
+    pub fn parse(raw: &str) -> Result<Option<Platform>>;
+}
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+export enum Platform {
+  GREENGRASS = "GREENGRASS",
+  HOST = "HOST",
+  KUBERNETES = "KUBERNETES",
+}
+```
+
+</TabItem>
+</Tabs>
+
+## `Transport`
+
+The secondary axis — *how* it talks. `IPC` is valid **only** on `GREENGRASS` (the IPC lock, enforced
+by `validate`); `MQTT` (the dual-MQTT provider) is valid on every platform.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+package com.mbreissi.ggcommons.platform;
+
+public enum Transport {
+    IPC,   // Greengrass Nucleus IPC (domain socket) — requires GREENGRASS
+    MQTT   // dual-MQTT (local broker + AWS IoT Core)
+}
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+class Transport(str, Enum):
+    IPC = "IPC"
+    MQTT = "MQTT"
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Transport {
+    Ipc,
+    Mqtt,
+}
+
+impl Transport {
+    // Case-insensitive; unknown tokens are `Err`.
+    pub fn parse(raw: &str) -> Result<Transport>;
+}
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+export enum Transport {
+  IPC = "IPC",
+  MQTT = "MQTT",
+}
+```
+
+</TabItem>
+</Tabs>
+
+## `PlatformProfile`
+
+The per-platform table of subsystem **defaults** — pure data the resolver (and the subsystem init
+sites) consult for any setting the caller did not set explicitly. All four carry the same seven
+fields. The fields beyond `transport` and `configSource` are *middle-tier* defaults: e.g.
+`credentialsKeyProvider` only changes the default key-provider type **when** a `credentials` section
+is already present; it never auto-enables a subsystem.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+public record PlatformProfile(
+    Transport transport,             // default messaging transport
+    String configSource,             // default -c/--config source token
+    String loggingFormat,            // default logging.<lang>_format, or null
+    boolean healthEnabled,           // start the HTTP health endpoint by default?
+    String metricTarget,             // default metricEmission.target, or null
+    String credentialsKeyProvider,   // default vault keyProvider.type, or null
+    String metricLogPath             // default metric-log file path, or null
+) {}
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+@dataclass(frozen=True)
+class PlatformProfile:
+    transport: Transport
+    config_source: str
+    logging_format: Optional[str] = None
+    health_enabled: bool = False
+    metric_target: Optional[str] = None
+    credentials_key_provider: Optional[str] = None
+    metric_log_path: Optional[str] = None
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlatformProfile {
+    pub transport: Transport,
+    pub config_source: &'static str,
+    pub logging_format: Option<&'static str>,
+    pub health_enabled: bool,
+    pub metric_target: Option<&'static str>,
+    pub credentials_key_provider: Option<&'static str>,
+    pub metric_log_path: Option<&'static str>,
+}
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+export interface PlatformProfile {
+  readonly transport: Transport;
+  readonly configSource: string;
+  readonly loggingFormat?: string;
+  readonly healthEnabled?: boolean;
+  readonly metricTarget?: string;
+  readonly credentialsKeyProvider?: string;
+  readonly metricLogPath?: string;
+}
+```
+
+</TabItem>
+</Tabs>
+
+## `ResolvedProfile`
+
+The resolver's output — the fully resolved runtime settings every subsystem initializer consumes.
+
+<Aside type="caution" title="Java carries one extra field">
+**Java**'s `ResolvedProfile` has **five** fields: it threads the resolved MQTT
+`messagingConfigPath` through the resolver. **Python**, **Rust**, and **TypeScript** keep
+`ResolvedProfile` at **four** fields and compute the FR-MSG-1 ConfigMap-default messaging path in the
+CLI layer instead. Either way the resolved path ends up on the parsed-args result.
+</Aside>
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+public record ResolvedProfile(
+    Platform platform,
+    Transport transport,
+    String[] configSource,        // [SOURCE, args...]
+    String identity,              // resolved IoT Thing name, never empty
+    String messagingConfigPath    // resolved --transport MQTT <path>, or null  (Java-only field)
+) {}
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+@dataclass(frozen=True)
+class ResolvedProfile:
+    platform: Platform
+    transport: Transport
+    config_source: List[str]   # explicit, else [profile default]
+    identity: str              # resolved IoT Thing name, never None
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedProfile {
+    pub platform: Platform,
+    pub transport: Transport,
+    pub config_source: Vec<String>,  // explicit, else [profile default]
+    pub identity: String,            // resolved IoT Thing name, never empty
+}
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+export interface ResolvedProfile {
+  readonly platform: Platform;
+  readonly transport: Transport;
+  readonly configSource: string[]; // explicit, else [profile default]
+  readonly identity: string;       // resolved IoT Thing name, never empty
+}
+```
+
+</TabItem>
+</Tabs>
+
+## `ResolverInputs`
+
+The parse-time inputs to the resolver. Any field may be null/`None`/`undefined`, meaning "not
+specified — fall back to detection / the profile default".
+
+<Aside type="note" title="Java has the extra messaging field here too">
+**Java**'s `ResolverInputs` is a five-field record `(platform, transport, configArgs, thing,
+messagingConfigPath)` plus a four-arg convenience constructor (passing `null` for the path).
+Python, Rust, and TypeScript are four-field.
+</Aside>
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+// Nested in PlatformResolver. Field 5 (messagingConfigPath) is Java-only.
+public record ResolverInputs(
+    Platform platform, Transport transport, String[] configArgs,
+    String thing, String messagingConfigPath
+) {
+    // Convenience ctor: equivalent to passing null for messagingConfigPath.
+    public ResolverInputs(Platform platform, Transport transport,
+                          String[] configArgs, String thing) { /* ... */ }
+}
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+@dataclass(frozen=True)
+class ResolverInputs:
+    platform: Optional[Platform]      # None = auto
+    transport: Optional[Transport]    # None = derive from platform
+    config_args: Optional[List[str]]  # None = -c omitted
+    thing: Optional[str]              # None = resolve from env
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ResolverInputs {
+    pub platform: Option<Platform>,     // None = auto
+    pub transport: Option<Transport>,   // None = derive from platform
+    pub config_args: Option<Vec<String>>,
+    pub thing: Option<String>,
+}
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+export interface ResolverInputs {
+  readonly platform?: Platform;     // undefined = auto
+  readonly transport?: Transport;   // undefined = derive from platform
+  readonly configArgs?: string[];
+  readonly thing?: string;
+}
+```
+
+</TabItem>
+</Tabs>
+
+## Resolver functions
+
+The pure resolver: it maps `ResolverInputs` + the process environment to a `ResolvedProfile`, with no
+I/O beyond an injectable filesystem probe (used only to detect the Kubernetes service-account token).
+Signatures below.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+public final class PlatformResolver {
+    // explicit flag ▸ platform-profile default ▸ library default
+    public static ResolvedProfile resolveProfile(ResolverInputs inputs, Map<String,String> env);
+
+    public static Platform detectPlatform(Map<String,String> env);
+    static Platform detectPlatform(Map<String,String> env, Predicate<String> fileExists);
+
+    // throws IllegalArgumentException when transport == IPC && platform != GREENGRASS
+    public static void validate(Platform platform, Transport transport);
+
+    public static String resolveIdentity(String thing, Platform platform, Map<String,String> env);
+
+    // the profile-default table, keyed by Platform
+    public static final Map<Platform, PlatformProfile> PROFILES;
+}
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+# module: ggcommons.platform.resolver
+def resolve_profile(inputs: ResolverInputs,
+                    env: Optional[Mapping[str, str]]) -> ResolvedProfile: ...
+
+def detect_platform(env: Optional[Mapping[str, str]],
+                    file_exists: Optional[Callable[[str], bool]] = None) -> Platform: ...
+
+# raises ValueError when transport == IPC and platform != GREENGRASS
+def validate(platform: Platform, transport: Transport) -> None: ...
+
+def resolve_identity(thing: Optional[str], platform: Optional[Platform],
+                     env: Optional[Mapping[str, str]]) -> str: ...
+
+PROFILES: Mapping[Platform, PlatformProfile]
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+// module: ggcommons::platform
+// Returns GgError::Cli on the IPC lock or an unprofiled platform.
+pub fn resolve_profile(inputs: ResolverInputs,
+                       env: &HashMap<String, String>) -> Result<ResolvedProfile>;
+
+pub fn detect_platform(env: &HashMap<String, String>) -> Platform;
+pub fn detect_platform_with<F: Fn(&str) -> bool>(
+    env: &HashMap<String, String>, file_exists: F) -> Platform;
+
+pub fn validate(platform: Platform, transport: Transport) -> Result<()>;
+pub fn resolve_identity(thing: Option<&str>, platform: Platform,
+                        env: &HashMap<String, String>) -> String;
+
+// Rust exposes the table via an accessor rather than a static map:
+pub fn profile(platform: Platform) -> Option<PlatformProfile>;
+pub fn profiled_platforms() -> [Platform; 3];
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+// module: ggcommons (re-exported from platform.ts)
+export function resolveProfile(inputs: ResolverInputs, env: Env): ResolvedProfile;
+
+export function detectPlatform(
+  env: Env, fileExists?: (p: string) => boolean): Platform;
+
+// throws GgError (kind "Cli") on the IPC lock
+export function validate(platform: Platform, transport: Transport): void;
+export function resolveIdentity(
+  thing: string | undefined, platform: Platform, env: Env): string;
+
+export const PROFILES: ReadonlyMap<Platform, PlatformProfile>;
+export type Env = Record<string, string | undefined>;
+```
+
+</TabItem>
+</Tabs>
+
+<Aside type="note" title="TypeScript: validate is renamed at the package root">
+`validate` is exported from the `ggcommons` package root as **`validatePlatformTransport`** (to avoid
+a name clash). Importing directly from the `platform` module, it is `validate`.
+</Aside>
+
+### Resolving a profile
+
+The same call in all four SDKs — forcing `HOST` with a `FILE` config source and an explicit thing
+name. Leaving `platform` unset (null/`None`/`undefined`) auto-detects; leaving `transport` unset
+derives it from the platform (HOST → `MQTT`).
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+import com.mbreissi.ggcommons.platform.*;
+import java.util.Map;
+
+ResolvedProfile resolved = PlatformResolver.resolveProfile(
+    // 4-arg convenience ctor (messagingConfigPath defaults to null)
+    new PlatformResolver.ResolverInputs(
+        Platform.HOST,                         // null = auto-detect
+        null,                                  // null = derive (→ MQTT)
+        new String[]{"FILE", "config.json"},   // null = profile default
+        "my-thing"),                           // null = resolve from env
+    System.getenv());
+
+resolved.platform();   // HOST
+resolved.transport();  // MQTT
+resolved.identity();   // "my-thing"
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+import os
+from ggcommons.platform.platform import Platform
+from ggcommons.platform.resolver import ResolverInputs, resolve_profile
+
+resolved = resolve_profile(
+    ResolverInputs(
+        platform=Platform.HOST,               # None = auto-detect
+        transport=None,                       # None = derive (→ MQTT)
+        config_args=["FILE", "config.json"],  # None = profile default
+        thing="my-thing",                     # None = resolve from env
+    ),
+    os.environ,
+)
+
+resolved.platform   # Platform.HOST
+resolved.transport  # Transport.MQTT
+resolved.identity   # "my-thing"
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+use std::collections::HashMap;
+use ggcommons::platform::{resolve_profile, Platform, ResolverInputs};
+
+let env: HashMap<String, String> = std::env::vars().collect();
+let resolved = resolve_profile(
+    ResolverInputs {
+        platform: Some(Platform::Host),       // None = auto-detect
+        transport: None,                      // None = derive (→ MQTT)
+        config_args: Some(vec!["FILE".into(), "config.json".into()]),
+        thing: Some("my-thing".into()),       // None = resolve from env
+    },
+    &env,
+)?;
+
+resolved.platform;   // Platform::Host
+resolved.transport;  // Transport::Mqtt
+resolved.identity;   // "my-thing"
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+import { resolveProfile, Platform, type ResolverInputs } from "ggcommons";
+
+const resolved = resolveProfile(
+  {
+    platform: Platform.HOST,                 // undefined = auto-detect
+    transport: undefined,                    // undefined = derive (→ MQTT)
+    configArgs: ["FILE", "config.json"],     // undefined = profile default
+    thing: "my-thing",                       // undefined = resolve from env
+  } satisfies ResolverInputs,
+  process.env,
+);
+
+resolved.platform;   // Platform.HOST
+resolved.transport;  // Transport.MQTT
+resolved.identity;   // "my-thing"
+```
+
+</TabItem>
+</Tabs>
+
+## Profile-helper functions
+
+Convenience lookups into the profile table — the **middle precedence tier** consumed by each
+subsystem's init site (`explicit config value ▸ this profile default ▸ library default`). They are
+pure lookups (no I/O), keyed only on the resolved platform.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+public static String  profileLoggingFormat(Platform platform);        // "json" on KUBERNETES, else null
+public static boolean profileHealthEnabled(Platform platform);        // true on KUBERNETES, else false
+public static String  profileMetricTarget(Platform platform);         // "prometheus" on KUBERNETES, else null
+public static String  profileMetricLogPath(Platform platform);        // local path on HOST/KUBERNETES, else null
+public static String  profileCredentialsKeyProvider(Platform platform); // "env" on KUBERNETES, else null
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+def profile_logging_format(platform: Optional[Platform]) -> Optional[str]: ...
+def profile_health_enabled(platform: Optional[Platform]) -> bool: ...
+def profile_metric_target(platform: Optional[Platform]) -> Optional[str]: ...
+def profile_metric_log_path(platform: Optional[Platform]) -> Optional[str]: ...
+def profile_credentials_key_provider(platform: Optional[Platform]) -> Optional[str]: ...
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+pub fn profile_health_enabled(platform: Platform) -> bool;
+pub fn profile_metric_target(platform: Platform) -> Option<&'static str>;
+pub fn profile_metric_log_path(platform: Platform) -> Option<&'static str>;
+pub fn profile_credentials_key_provider(platform: Platform) -> Option<&'static str>;
+
+// Rust has no dedicated logging-format helper — read it off the profile struct:
+//   profile(platform).and_then(|p| p.logging_format)
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+export function profileLoggingFormat(platform: Platform): string | undefined;
+export function profileHealthEnabled(platform: Platform): boolean;
+export function profileMetricTarget(platform: Platform): string | undefined;
+export function profileMetricLogPath(platform: Platform): string | undefined;
+export function profileCredentialsKeyProvider(platform: Platform): string | undefined;
+```
+
+</TabItem>
+</Tabs>
+
+## Per-platform profile defaults
+
+The contents of `PROFILES` (Java/Python/TypeScript) / `profile()` (Rust), identical across all four
+SDKs. Cells marked *(library default)* mean the profile carries **no** override, so the library's own
+default applies downstream.
+
+| Default | `GREENGRASS` | `HOST` | `KUBERNETES` |
+|---|---|---|---|
+| `transport` | `IPC` | `MQTT` | `MQTT` |
+| `configSource` | `GG_CONFIG` | `FILE` | `CONFIGMAP` |
+| `loggingFormat` | console/text *(library default)* | console/text *(library default)* | `json` (stdout-JSON sink) |
+| `metricTarget` | `log` *(library default)* | `log` *(library default)* | `prometheus` (pull-based `/metrics`) |
+| `metricLogPath` | `/greengrass/v2/logs` *(library default)* | `./logs/{ComponentFullName}.metric.log` | `./logs/{ComponentFullName}.metric.log` |
+| `credentialsKeyProvider` | `file` *(library default)* | `file` *(library default)* | `env` (base64 KEK from env/Secret) |
+| `healthEnabled` | `false` | `false` | `true` |
+
+<Aside type="caution" title="Python's metric-log filename differs">
+The metric-log **filename suffix** differs by language. Java, Rust, and TypeScript emit
+`{ComponentFullName}.metric.log` (a **dot**); **Python uses `{ComponentFullName}_metric.log`** (an
+**underscore**). This matches each library's own default and is intentional.
+</Aside>
+
+### Config-source extra-argument defaults
+
+When you name a config source but omit its argument (`-c <SOURCE>` with no extra positionals), these
+apply:
+
+- `FILE` → `config.json`
+- `ENV` → reads the `CONFIG` variable
+- `GG_CONFIG` → key `ComponentConfig`
+- `CONFIGMAP` → mount dir `/etc/ggcommons`, key `config.json`
+
+Under `MQTT` + `CONFIGMAP` with no explicit `--transport MQTT <path>`, the messaging-config path
+defaults to that same mounted ConfigMap file (FR-MSG-1) — one file serves as both component config and
+MQTT broker config. An explicit path always wins; `HOST` (which uses `FILE`) still requires an
+explicit path. Java computes this in `PlatformResolver.resolveMessagingConfigPath`; Python, Rust, and
+TypeScript compute it in their CLI layer.
+
+## Constants
+
+### Environment variables and identity
+
+These constant **names and values are identical** in all four SDKs (`public static final String` in
+Java, module-level in Python, `pub const` in Rust, `export const` in TypeScript).
+
+| Constant | Value | Role |
+|---|---|---|
+| `ENV_GG_IPC_SOCKET` | `AWS_GG_NUCLEUS_DOMAIN_SOCKET_FILEPATH_FOR_COMPONENT` | Definitive `GREENGRASS` auto-detect signal. |
+| `ENV_GG_SVCUID` | `SVCUID` | Definitive `GREENGRASS` auto-detect signal. |
+| `ENV_THING_NAME` | `AWS_IOT_THING_NAME` | Identity probe (Greengrass / platform-supplied). |
+| `ENV_K8S_SERVICE_HOST` | `KUBERNETES_SERVICE_HOST` | Confirming (secondary) Kubernetes signal. |
+| `K8S_SA_TOKEN_PATH` | `/var/run/secrets/kubernetes.io/serviceaccount/token` | Primary, definitive Kubernetes signal (a file probe). |
+| `ENV_K8S_THING_NAME` | `GGCOMMONS_THING_NAME` | Kubernetes Downward-API identity (primary k8s tier). |
+| `ENV_K8S_POD_NAME` | `POD_NAME` | Kubernetes Downward-API identity (secondary k8s tier). |
+| `ENV_K8S_POD_NAMESPACE` | `POD_NAMESPACE` | Logging-correlation field (best-effort). |
+| `ENV_K8S_NODE_NAME` | `NODE_NAME` | Logging-correlation field (best-effort). |
+| `DEFAULT_IDENTITY` | `NOT_GREENGRASS` | Library fallback identity when nothing resolves. |
+
+### Profile-default tokens
+
+The token **values** are identical across SDKs; the constant **identifiers** differ. The metric-log
+path also differs in its filename suffix (see the caution above) and Rust inlines the three selector
+strings rather than naming constants for them.
+
+| Token value | Java / Python identifier | Rust identifier | TypeScript identifier |
+|---|---|---|---|
+| `json` | `LOGGING_FORMAT_JSON` | *(inline `"json"`)* | `JSON_LOG_FORMAT` |
+| `prometheus` | `METRIC_TARGET_PROMETHEUS` | *(inline `"prometheus"`)* | `PROMETHEUS_METRIC_TARGET` |
+| `env` | `CREDENTIALS_KEY_PROVIDER_ENV` | *(inline `"env"`)* | `ENV_KEY_PROVIDER` |
+| `./logs/{ComponentFullName}.metric.log` | `METRIC_LOG_PATH_LOCAL` | `METRIC_LOG_PATH_LOCAL` | `LOCAL_METRIC_LOG_PATH` |
+
+The token value shown for `METRIC_LOG_PATH_LOCAL` is the Java/Rust/TypeScript form; Python's value uses
+an underscore (`./logs/{ComponentFullName}_metric.log`) — see the caution above.
+
+ConfigMap defaults (Java names them `CONFIGMAP_DEFAULT_MOUNT_DIR` / `CONFIGMAP_DEFAULT_KEY`): mount dir
+`/etc/ggcommons`, key `config.json`.
+
+## Auto-detection, validation, and identity
+
+These three behaviors are summarized here for the API surface; the
+[Platforms & transports](/start/platforms-and-transports/) page covers them in depth.
+
+- **`detectPlatform`** — first match wins, order is load-bearing: (1) `GREENGRASS` if
+  `ENV_GG_IPC_SOCKET` or `ENV_GG_SVCUID` is set non-empty; (2) `KUBERNETES` if the
+  `K8S_SA_TOKEN_PATH` file exists or `ENV_K8S_SERVICE_HOST` is set; (3) `HOST` otherwise. An empty env
+  value is not a signal; `GREENGRASS` wins when both signal sets are present.
+- **`validate`** — rejects `transport == IPC && platform != GREENGRASS` (the IPC lock). Java raises
+  `IllegalArgumentException`, Python raises `ValueError`, Rust returns `GgError::Cli`, TypeScript
+  throws a `GgError` of kind `Cli`.
+- **`resolveIdentity`** — precedence: explicit `-t/--thing` ▸ (only on `KUBERNETES`:
+  `ENV_K8S_THING_NAME` ▸ `ENV_K8S_POD_NAME`) ▸ `ENV_THING_NAME` ▸ `DEFAULT_IDENTITY`. Empty env values
+  are ignored; the returned value is raw (sanitized later wherever `{ThingName}` is interpolated).
+
+### Precedence
+
+The fully resolved value of any setting follows a four-tier rule:
+
+`explicit flag ▸ explicit config value ▸ platform-profile default ▸ library default`
+
+It splits across two layers: the resolver applies `explicit flag ▸ profile default ▸ library default`
+to the **runtime axes** (transport, config source, identity), while each subsystem's init site applies
+`explicit config value ▸ profile default ▸ library default` to the **subsystem settings** (logging
+format, metric target, metric-log path, credentials key provider, health endpoint).
+
+## Cross-language differences
+
+Relevant only if you inspect the resolver types or the parsed-args result directly:
+
+- **`ResolvedProfile` / `ResolverInputs` field counts.** Java is five fields (it threads
+  `messagingConfigPath` through the resolver); Python, Rust, and TypeScript are four (the
+  ConfigMap-default messaging path is computed in the CLI layer).
+- **Enum casing (Rust).** Rust uses `Platform::{Greengrass, Host, Kubernetes}` and
+  `Transport::{Ipc, Mqtt}` (PascalCase); the others use the uppercase token names. All four parse the
+  CLI token case-insensitively.
+- **Logging-format helper.** Java, Python, and TypeScript expose a `profileLoggingFormat` helper; Rust
+  has none — read `profile(platform).logging_format` instead.
+- **The profile table accessor.** Java/Python/TypeScript expose a `PROFILES` map; Rust exposes
+  `profile(platform) -> Option<PlatformProfile>` plus `profiled_platforms() -> [Platform; 3]`.
+- **`validate` name in TypeScript.** Re-exported from the package root as `validatePlatformTransport`.
+
+See the [CLI contract](/start/cli-contract/) for the parser entry points (`processArgs` /
+`parse_from` / `parseArgs`) and the `ParsedCommandLine` / `ParsedArgs` result types, including the
+`thing`-vs-resolved-`identity` distinction.
+
+## See also
+
+- [Platforms & transports](/start/platforms-and-transports/) — the conceptual model, auto-detection,
+  and precedence.
+- [CLI contract](/start/cli-contract/) — the flags that feed the resolver and how the builder runs it.
+- [Configuration guide](/guides/configuration/) — what each `-c` config source reads.
+- [API reference: overview](/reference/overview/) — the rest of the public API surface.

@@ -1,0 +1,331 @@
+---
+title: Deploy to Greengrass
+description: Package a GGCommons component with the GDK and deploy it to an AWS IoT Greengrass v2 core device over the IPC transport.
+sidebar:
+  order: 1
+---
+
+import { Tabs, TabItem, Aside, LinkCard } from "@astrojs/starlight/components";
+
+This page covers deploying a GGCommons component to **AWS IoT Greengrass v2**, where it runs on the
+`GREENGRASS` platform and talks to the Nucleus over **Greengrass IPC** (the `IPC` transport). You
+build and package the component with the **GDK (Greengrass Development Kit)**, then either deploy it
+locally with `greengrass-cli` or push it to a fleet from the cloud.
+
+Every component the `ggcommons` CLI scaffolds already ships the two files the GDK needs —
+`gdk-config.json` (build + publish settings) and `recipe.yaml` (the component recipe) — so you
+rarely write either by hand.
+
+<Aside type="tip" title="Developing first?">
+For local iteration you do not need a Greengrass core at all — run on the **HOST** platform against
+a local MQTT broker. See the [Quickstart](/start/quickstart/) and
+[Platforms and transports](/start/platforms-and-transports/).
+</Aside>
+
+## Prerequisites
+
+- A **scaffolded component** (`ggcommons create-component` with `GREENGRASS` among its target
+  platforms — the default). See the [Quickstart](/start/quickstart/).
+- The **GDK CLI** (`gdk`) installed and on your `PATH`, plus AWS credentials with permission to
+  upload artifacts to S3 and register component versions. Confirm with `ggcommons doctor`, which
+  reports whether `gdk` and `aws` are present.
+  {/* TODO: unverified - the exact GDK install command is not pinned in the repo; install per the AWS IoT Greengrass Development Kit CLI docs and verify with `gdk --version`. */}
+- An **S3 bucket** for published artifacts. The CLI writes the bucket/region you pass at scaffold
+  time into `gdk-config.json` (`--bucket` / `--region`, defaulting to
+  `greengrass-component-artifacts-us-east-1` in `us-east-1`).
+- A **Greengrass v2 core device** running the Nucleus, plus the Greengrass CLI component
+  (`greengrass-cli`) installed on it if you want to deploy locally.
+
+## How a component runs under Greengrass
+
+On the `GREENGRASS` platform the runtime resolves two defaults from the platform profile, so the
+launch command is short:
+
+- **Transport defaults to `IPC`** — you do not pass `--transport`. (`IPC` is valid *only* on
+  `GREENGRASS`; selecting it on another platform fails fast.)
+- **Config source defaults to `GG_CONFIG`** — the component reads its configuration from the
+  Greengrass deployment rather than a local file.
+
+The generated `recipe.yaml` wires this into the component's `Run` lifecycle for you. The exact launch
+line differs per language (and the artifact layout differs with it):
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+  The recipe sets the `CONFIG` environment variable from the deployment configuration and launches
+  the shaded JAR on the `GREENGRASS` platform. Config source is left to the profile default
+  (`GG_CONFIG`), so no `-c` flag is passed:
+
+  ```bash
+  # recipe.yaml -> Manifests[0].Lifecycle.Run (tokens resolved to example values)
+  java -cp {artifacts:path}/MyComponent-1.0.0.jar com.example.MyComponent --platform GREENGRASS
+  # with Setenv CONFIG: "{configuration:/ComponentConfig}"
+  ```
+
+</TabItem>
+<TabItem label="Python">
+
+  The recipe activates the per-component venv (created in the `install` lifecycle) and runs `main.py`
+  on the `GREENGRASS` platform, relying on the `GG_CONFIG` profile default (no `-c` flag):
+
+  ```bash
+  # recipe.yaml -> Manifests[0].Lifecycle.Run (tokens resolved to example values)
+  python3 -u {artifacts:decompressedPath}/MyComponent/main.py --platform GREENGRASS
+  ```
+
+</TabItem>
+<TabItem label="Rust">
+
+  The recipe `chmod +x`'s the binary in the `Install` lifecycle, then runs it. The Rust recipe
+  passes `-c GG_CONFIG` explicitly (the result is identical to relying on the profile default):
+
+  ```bash
+  # recipe.yaml -> Manifests[0].Lifecycle.Run (tokens resolved to example values)
+  {artifacts:path}/MyComponent --platform GREENGRASS -c GG_CONFIG
+  ```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+  The recipe runs the prebuilt JS bundle (no on-device install step). Like Rust, it passes
+  `-c GG_CONFIG` explicitly:
+
+  ```bash
+  # recipe.yaml -> Manifests[0].Lifecycle.Run (tokens resolved to example values)
+  node {artifacts:decompressedPath}/MyComponent/dist/main.js --platform GREENGRASS -c GG_CONFIG
+  ```
+
+</TabItem>
+</Tabs>
+
+<Aside type="note">
+The Java and Python recipes pass only `--platform GREENGRASS` and let the platform profile supply
+the `GG_CONFIG` config source; the Rust and TypeScript recipes pass `-c GG_CONFIG` as well. Both
+forms resolve to the same thing.
+</Aside>
+
+## Build and publish with the GDK
+
+`gdk component build` runs the per-language build declared in `gdk-config.json` and stages the
+artifact + recipe; `gdk component publish` uploads the artifact to your S3 bucket and registers a new
+component version in your account. These two commands are the same for every language — run them from
+the generated component directory:
+
+<Tabs syncKey="os">
+<TabItem label="Linux">
+
+  ```bash
+  cd MyComponent
+  gdk component build
+  gdk component publish
+  ```
+
+</TabItem>
+<TabItem label="Windows">
+
+  ```powershell
+  cd MyComponent
+  gdk component build
+  gdk component publish
+  ```
+
+</TabItem>
+</Tabs>
+
+<Aside type="note" title="Auto-versioning">
+`gdk-config.json` sets the component version to `NEXT_PATCH`, so each `gdk component publish`
+registers the next patch version above whatever is already in your account. (The cloud-deploy
+helper below needs a *concrete* version instead — see that section.)
+</Aside>
+
+### Per-language packaging notes
+
+What `gdk component build` actually does — and the artifact it produces — is driven by the
+`build_system` in `gdk-config.json`:
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+  `build_system: "maven"` — the GDK runs Maven to produce a **shaded, self-contained JAR**
+  (`target/MyComponent-1.0.0.jar`). The recipe's `Manifests.Platform.os` is `all`. The recipe also
+  declares a **HARD dependency on the Token Exchange Service (TES)** so the component can obtain AWS
+  credentials on-device.
+
+  ```bash
+  # gdk-config.json -> component.<name>.build.build_system = "maven"
+  gdk component build
+  ```
+
+  <Aside type="caution" title="Streaming + native access">
+  If your component uses the telemetry-streaming subsystem, the JVM needs
+  `--enable-native-access=ALL-UNNAMED` for the FFM/Panama binding to the native streaming core. The
+  shipped recipe's `Run` script does **not** include this flag, so add it to the recipe's `java`
+  command before publishing a streaming component.
+  {/* NEEDS REVIEW: confirm whether/where --enable-native-access=ALL-UNNAMED should be injected into the generated Java recipe Run script for streaming components. */}
+  </Aside>
+
+</TabItem>
+<TabItem label="Python">
+
+  `build_system: "zip"` — the GDK produces a **ZIP artifact** (`Unarchive: ZIP`). The recipe's
+  `install` lifecycle creates a per-component venv under the work dir and `pip install`s
+  `requirements.txt`. `Manifests.Platform.os` is `all`, and the recipe declares a **HARD TES
+  dependency**.
+
+  ```bash
+  # gdk-config.json -> component.<name>.build.build_system = "zip"
+  gdk component build
+  ```
+
+  <Aside type="caution" title="Bundled wheel">
+  The shipped recipe's `install` step also `pip install`s a hard-coded wheel,
+  `greengrass_commons-0.0.10038883-py3-none-any.whl`, whose pinned version may not match the
+  `greengrass-commons` line in `requirements.txt`. On-device install fails unless that exact wheel is
+  bundled into the ZIP. Prefer resolving the library through `requirements.txt`.
+  {/* NEEDS REVIEW: confirm whether the hard-coded greengrass_commons wheel in templates/python/recipe.yaml is meant to be bundled at publish time or is a stale placeholder line. */}
+  </Aside>
+
+</TabItem>
+<TabItem label="Rust">
+
+  `build_system: "custom"` → `custom_build_command: ["bash", "build.sh"]`. `build.sh` compiles the
+  release binary **with the `greengrass` cargo feature** (Greengrass IPC). The recipe's
+  `Manifests.Platform.os` is `linux` and its `Install` lifecycle `chmod +x`'s the binary.
+
+  ```bash
+  gdk component build
+  # The greengrass feature compiles a C-FFI SDK and only builds on Linux (needs libclang).
+  # Build on a Linux host/WSL, or cross-compile:
+  GGCOMMONS_TARGET=x86_64-unknown-linux-gnu gdk component build
+  ```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+  `build_system: "custom"` → `custom_build_command: ["bash", "build.sh"]`. `build.sh` runs
+  `npm install` + `npm run build` (tsc) and stages a **ZIP bundling `dist/` + `node_modules/` +
+  `package.json`**, so there is no on-device install step. The recipe's `Manifests.Platform.os` is
+  `linux`.
+
+  ```bash
+  # gdk-config.json -> component.<name>.build.build_system = "custom" (bash build.sh)
+  gdk component build
+  ```
+
+</TabItem>
+</Tabs>
+
+<Aside type="note">
+The Java and Python recipes declare a HARD `aws.greengrass.TokenExchangeService` dependency; the
+Rust and TypeScript recipes currently do not. If your Rust/TS component calls AWS APIs on-device
+(for example CloudWatch metrics or Secrets Manager sync), add that dependency to its `recipe.yaml`.
+{/* NEEDS REVIEW: confirm whether the omission of the TES ComponentDependency from the Rust/TS recipes is intentional. */}
+</Aside>
+
+## What the generated recipe declares
+
+The scaffolded `recipe.yaml` is a complete Greengrass v2 component recipe. The parts you are most
+likely to touch:
+
+- **`ComponentConfiguration.DefaultConfiguration.ComponentConfig`** — the component's default config
+  (logging, heartbeat, `metricEmission`, `tags`, and the `component` instances block). This is the
+  same schema the `GG_CONFIG` source reads; override any of it from a deployment.
+- **`accessControl`** — IPC authorization policies the component needs: `aws.greengrass.ipc.pubsub`
+  (local pub/sub), `aws.greengrass.ipc.mqttproxy` (publish/subscribe to IoT Core), and
+  `aws.greengrass.ShadowManager` (thing shadows). The defaults grant `*`; tighten the `resources`
+  to the topics/shadows your component actually uses.
+- **`Manifests`** — the artifact URI (rewritten by `gdk component publish`) and the `Run` lifecycle
+  shown above. `os` is `all` for Java/Python and `linux` for Rust/TypeScript.
+
+`gdk-config.json` holds the build system, the publish `bucket`/`region`, and the `NEXT_PATCH`
+version. Edit the recipe and re-run `gdk component build` to pick up changes.
+
+{/* TODO: unverified - gdk_version differs between templates (Java/Rust/TS pin "1.0.0", Python pins "1.6.2"); confirm whether this is intentional or drift before documenting a required GDK version. */}
+
+## Deploy locally with greengrass-cli
+
+For a development core device you can deploy straight from the device without going through the
+cloud, using the Greengrass CLI. After building, copy the recipe and artifact onto the core, then
+create a local deployment that **merges** the component (`<Comp>=<ver>` names the component and
+version):
+
+<Tabs syncKey="os">
+<TabItem label="Linux">
+
+  ```bash
+  # Run on the core device. Point --recipeDir / --artifactDir at the recipe and the built artifact.
+  greengrass-cli deployment create \
+    --recipeDir ./recipes \
+    --artifactDir ./artifacts \
+    --merge "com.example.MyComponent=1.0.0"
+
+  # Tear the component down again:
+  greengrass-cli deployment create --remove "com.example.MyComponent"
+  ```
+
+</TabItem>
+<TabItem label="Windows">
+
+  ```powershell
+  # Run on the core device (greengrass-cli typically lives under C:\greengrass\v2\bin).
+  greengrass-cli deployment create `
+    --recipeDir .\recipes `
+    --artifactDir .\artifacts `
+    --merge "com.example.MyComponent=1.0.0"
+
+  # Tear the component down again:
+  greengrass-cli deployment create --remove "com.example.MyComponent"
+  ```
+
+</TabItem>
+</Tabs>
+
+<Aside type="note">
+`greengrass-cli` is usually invoked by its full path (for example
+`/greengrass/v2/bin/greengrass-cli`) and requires the Greengrass CLI component installed on the
+core. The artifact filename in `--artifactDir` must match the artifact URI in your `recipe.yaml`.
+</Aside>
+
+## Deploy to devices from the cloud
+
+Once a version is published, deploy it to a thing or thing group via the cloud. The `ggcommons` CLI
+wraps the whole flow — `gdk component build`, `gdk component publish`, then
+`aws greengrassv2 create-deployment`:
+
+<Tabs syncKey="os">
+<TabItem label="Linux">
+
+  ```bash
+  ggcommons deploy -p . -t arn:aws:iot:us-east-1:123456789012:thinggroup/edge-fleet
+  ```
+
+</TabItem>
+<TabItem label="Windows">
+
+  ```powershell
+  ggcommons deploy -p . -t arn:aws:iot:us-east-1:123456789012:thinggroup/edge-fleet
+  ```
+
+</TabItem>
+</Tabs>
+
+<Aside type="caution" title="Concrete version required">
+The cloud-deploy step needs a real component version — it rejects `NEXT_PATCH` (and empty versions).
+Set a concrete version before deploying to a fleet. See the [CLI reference](/reference/cli/) for the
+full `ggcommons deploy` options.
+</Aside>
+
+## Verify the deployment
+
+- On the core device, check component status with the Greengrass CLI:
+  `greengrass-cli component list` (and watch the Nucleus logs under `/greengrass/v2/logs/`).
+- Subscribe to `heartbeat/+/+` to confirm the component is alive and emitting heartbeats — over IPC
+  these surface on the local pub/sub bus (and on IoT Core if the heartbeat target is configured for
+  it). The topic uses the `{ThingName}` and `{ComponentName}` template variables.
+
+## Next steps
+
+<LinkCard title="Messaging guide" href="/guides/messaging/" description="Publish, subscribe, and request/reply across IPC and MQTT." />
+<LinkCard title="Configuration guide" href="/guides/configuration/" description="Config sources, template variables, hot reload, and validation." />
+<LinkCard title="Platforms and transports" href="/start/platforms-and-transports/" description="How --platform and --transport resolve, and their defaults." />
+<LinkCard title="CLI reference" href="/reference/cli/" description="ggcommons create-component, validate, deploy, and upgrade." />

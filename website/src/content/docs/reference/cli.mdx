@@ -1,0 +1,399 @@
+---
+title: CLI parsing
+description: API reference for the GGCommons CLI parser — the per-language parse entry point, the parsed-result type, and ConfigSourceSpec.
+sidebar:
+  order: 3
+---
+
+import { Tabs, TabItem, Aside } from "@astrojs/starlight/components";
+
+This is the API reference for the **CLI parsing surface**: the function that turns raw process
+arguments into a resolved, typed result, and the shape of that result in each SDK. After parsing the
+raw flags it runs the platform/transport precedence resolver, so the value it returns already carries
+the two resolved runtime axes plus the resolved config source, identity, and (for `MQTT`) the
+messaging-config path.
+
+<Aside type="note">
+You normally do **not** call the parser directly. The builder
+(`GGCommonsBuilder` / `GgCommonsBuilder`) parses the contract for you when you hand it the process
+arguments — see [How the builder uses it](#how-the-builder-uses-it) below. Reach for these functions
+only when you want the parsed result without constructing the full SDK. For the conceptual contract,
+defaults, and migration notes, see the [CLI contract](/start/cli-contract/) page.
+</Aside>
+
+## Accepted flags
+
+The parser recognizes the four standard flags (identical across all four SDKs). Any
+application-specific options are merged in alongside them (Java `Options`, Python an
+`argparse.ArgumentParser`, Rust/TS by composing onto the base command).
+
+| Flag | Values | Default |
+|------|--------|---------|
+| `-c` / `--config <SOURCE> [args...]` | `FILE` \| `CONFIGMAP` \| `ENV` \| `GG_CONFIG` \| `SHADOW` \| `CONFIG_COMPONENT` | from the resolved platform profile |
+| `--platform <PLATFORM>` | `GREENGRASS` \| `HOST` \| `KUBERNETES` \| `auto` | `auto` (auto-detected) |
+| `--transport <TRANSPORT> [path]` | `IPC` \| `MQTT [messaging_config.json]` | derived from the platform |
+| `-t` / `--thing <name>` | IoT Thing name (full string) | resolved from the environment |
+
+Platform and transport tokens parse case-insensitively. The removed `-m` / `--mode` flag is rejected
+with guidance to `--platform` / `--transport`. See the [CLI contract](/start/cli-contract/) for the
+per-source extra-argument defaults, the auto-detection order, and the `IPC`-on-GREENGRASS-only rule.
+
+## Parse entry point
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+`GGCommons.processArgs` is `public static`. It parses with Apache Commons CLI, rejects `-m`/`--mode`,
+runs the resolver, and returns a [`ParsedCommandLine`](#parsed-result).
+
+```java
+package com.mbreissi.ggcommons;
+
+// componentName  — used for the --help banner
+// args           — the raw String[] from main(...), WITHOUT the program name
+// appOptions     — extra application Options to merge (may be null)
+public static ParsedCommandLine processArgs(
+        String componentName, String[] args, Options appOptions)
+
+// Example: parse with no extra application options.
+ParsedCommandLine parsed =
+        GGCommons.processArgs("com.example.MyComponent", args, null);
+Platform platform = parsed.platform;       // resolved
+Transport transport = parsed.transport;    // resolved
+```
+
+</TabItem>
+<TabItem label="Python">
+
+`_process_args` is a **private** method — there is no public parser function in Python. The public
+path is the builder (`with_args`). It uses `argparse`, rejects `-m`/`--mode`, runs the resolver, and
+returns an `argparse.Namespace` with the resolved fields set on it.
+
+```python
+# ggcommons.ggcommons.GGCommons  —  PRIVATE; shown for reference only
+def _process_args(
+    self,
+    component_name: str,
+    args: list[str],                                 # WITHOUT the program name
+    app_options: argparse.ArgumentParser | None,
+) -> argparse.Namespace: ...
+
+# Public path — let the builder parse for you:
+from ggcommons.ggcommons_builder import GGCommonsBuilder
+gg = GGCommonsBuilder.create("com.example.MyComponent").with_args(sys.argv[1:]).build()
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+`cli::parse_from` is a public function returning `Result<ParsedArgs>`. It rejects `-m`/`--mode`,
+parses with `clap`, runs the resolver, and applies the `MQTT` + `CONFIGMAP` messaging-path default.
+`cli::command()` returns the base `clap::Command` you can compose onto.
+
+```rust
+use ggcommons::cli::{self, ParsedArgs};
+use ggcommons::error::Result;
+use std::ffi::OsString;
+
+// args — an argv-style iterator; the FIRST element (program name) is skipped, per clap.
+pub fn parse_from<I, T>(args: I) -> Result<ParsedArgs>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<OsString> + Clone;
+
+// Example: parse the real argv (program name at index 0 is skipped).
+let parsed = cli::parse_from(std::env::args())?;
+println!("{:?} / {:?}", parsed.platform, parsed.transport);
+```
+
+A bad flag, an unknown source/platform/transport token, the removed `-m`/`--mode`, or an illegal
+platform/transport combination (`IPC` off GREENGRASS) returns `GgError::Cli`.
+
+</TabItem>
+<TabItem label="TypeScript">
+
+`parseArgs` is an exported function (re-exported from the package index). It rejects `-m`/`--mode`,
+parses the flags, runs the resolver, and applies the `MQTT` + `CONFIGMAP` messaging-path default.
+
+```typescript
+import { parseArgs, type ParsedArgs } from "ggcommons";
+
+// argv — WITHOUT the program name (pass process.argv.slice(2)).
+// env  — defaults to process.env (mirrors Java reading System.getenv()).
+export function parseArgs(
+  argv: string[],
+  env?: Record<string, string | undefined>,
+): ParsedArgs;
+
+// Example:
+const parsed = parseArgs(process.argv.slice(2));
+console.log(parsed.platform, parsed.transport);
+```
+
+Parse failures throw a `GgError` of kind `Cli`.
+
+</TabItem>
+</Tabs>
+
+<Aside type="caution" title="argv conventions differ">
+**Rust** `parse_from` consumes the *full* argv and skips the program name at index 0 (clap
+convention) — `std::env::args()` works directly. **Java** (`main`'s `String[] args`), **Python**
+(`sys.argv[1:]`), and **TypeScript** (`process.argv.slice(2)`) all expect the arguments *without* the
+program name.
+</Aside>
+
+## Parsed result
+
+The parse entry point returns the resolved arguments. The fields are the same idea everywhere, with
+a few per-language shape differences called out in [Cross-language differences](#cross-language-differences).
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+`ParsedCommandLine` is a plain public-field data class. `thingName` is the **resolved** identity (not
+the raw `-t`), and `standaloneConfigPath` is the `MQTT` messaging-config path (or `null`).
+
+```java
+package com.mbreissi.ggcommons;
+
+public class ParsedCommandLine {
+    public CommandLine commandLine;       // raw Apache Commons CLI line
+    public String[] configArgs;           // resolved -c source + args (e.g. {"FILE","config.json"})
+    public Platform platform;             // resolved platform
+    public Transport transport;           // resolved transport
+    public String standaloneConfigPath;   // MQTT messaging-config path, or null
+    public String thingName;              // resolved IoT Thing name (identity)
+}
+```
+
+</TabItem>
+<TabItem label="Python">
+
+There is no dedicated result class — `_process_args` returns an `argparse.Namespace` with these
+attributes set after resolution. `identity` is the resolved Thing name; `thing` is the raw `-t`
+value from `argparse`.
+
+```python
+# Attributes set on the returned argparse.Namespace:
+ns.platform               # Platform (resolved)
+ns.transport              # Transport (resolved)
+ns.config                 # list[str]: [SOURCE, *args] (resolved, e.g. ["FILE", "config.json"])
+ns.identity               # str: resolved IoT Thing name
+ns.thing                  # str | None: the raw -t/--thing value
+ns.standalone_config_path # str: MQTT messaging-config path, when present
+```
+
+`standalone_config_path` is set by the `--transport MQTT <path>` payload, or defaulted under
+`CONFIGMAP` + `MQTT`; otherwise it is absent — read it with `getattr(ns, "standalone_config_path", None)`.
+
+</TabItem>
+<TabItem label="Rust">
+
+`ParsedArgs` carries **both** the raw flag (`thing`) and the resolved identity. The messaging-config
+path is a `PathBuf`.
+
+```rust
+pub struct ParsedArgs {
+    pub platform: Platform,                       // resolved
+    pub transport: Transport,                     // resolved
+    pub config: ConfigSourceSpec,                 // typed; see below
+    pub thing: Option<String>,                    // the raw -t value, verbatim (None if absent)
+    pub identity: String,                         // resolved IoT Thing name
+    pub messaging_config_path: Option<PathBuf>,   // MQTT messaging-config path (explicit or
+                                                  // CONFIGMAP+MQTT default), else None
+}
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+`ParsedArgs.thing` is the **resolved** identity (never `undefined`) — there is no separate raw field.
+`messagingConfigPath` is optional.
+
+```typescript
+export interface ParsedArgs {
+  platform: Platform;            // resolved
+  transport: Transport;          // resolved
+  config: ConfigSourceSpec;      // typed union; see below
+  messagingConfigPath?: string;  // MQTT messaging-config path (explicit or CONFIGMAP+MQTT default)
+  thing: string;                 // RESOLVED IoT Thing name (identity), never undefined
+}
+```
+
+</TabItem>
+</Tabs>
+
+## ConfigSourceSpec
+
+The resolved `-c` source. Rust and TypeScript parse it into a typed value at parse time; Java and
+Python carry it as the raw token vector (the typed spec genuinely does not exist in those two SDKs).
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+Java does not type the config source in `processArgs`. The resolved source and its arguments are the
+raw `String[] ParsedCommandLine.configArgs` (for example `{"FILE", "config.json"}` or
+`{"CONFIGMAP", "/etc/ggcommons", "config.json"}`), handed straight to `ConfigManagerBuilder`
+downstream.
+
+```java
+// No ConfigSourceSpec type in Java — inspect the raw vector:
+String[] cfg = parsed.configArgs;   // e.g. {"FILE", "config.json"}
+String source = cfg[0];             // "FILE" | "CONFIGMAP" | "ENV" | ...
+```
+
+</TabItem>
+<TabItem label="Python">
+
+Python has no typed spec either. The resolved source and its arguments are the `list[str]`
+`Namespace.config`; the first token is validated against the `ConfigSource` enum.
+
+```python
+class ConfigSource(str, Enum):
+    """Configuration source passed via -c/--config."""
+    FILE = "FILE"
+    ENV = "ENV"
+    GG_CONFIG = "GG_CONFIG"
+    CONFIGMAP = "CONFIGMAP"
+    SHADOW = "SHADOW"
+    CONFIG_COMPONENT = "CONFIG_COMPONENT"
+
+# Inspect the raw vector:
+source = ns.config[0]   # validated to be one of ConfigSource's values
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+A typed enum with the per-source arguments parsed into fields. `ConfigMap` is the KUBERNETES default.
+
+```rust
+pub enum ConfigSourceSpec {
+    File { path: PathBuf },
+    ConfigMap { mount_dir: Option<PathBuf>, key: Option<String> },
+    Env { var: String },
+    Greengrass { component: Option<String>, key: String },
+    Shadow { name: Option<String> },
+    ConfigComponent,
+}
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+A discriminated union keyed on `kind`. `CONFIGMAP` is the KUBERNETES default.
+
+```typescript
+export type ConfigSourceSpec =
+  | { kind: "FILE"; path: string }
+  | { kind: "CONFIGMAP"; mountDir?: string; key?: string }
+  | { kind: "ENV"; var: string }
+  | { kind: "GG_CONFIG"; component?: string; key: string }
+  | { kind: "SHADOW"; name?: string }
+  | { kind: "CONFIG_COMPONENT" };
+```
+
+</TabItem>
+</Tabs>
+
+The per-source argument defaults (applied when a positional is omitted) are: `FILE` → `config.json`,
+`ENV` → env var `CONFIG`, `GG_CONFIG` key → `ComponentConfig`, `CONFIGMAP` → dir `/etc/ggcommons` +
+key `config.json`.
+
+## Cross-language differences
+
+These affect only code that inspects the parsed result directly — the flags and their behavior are
+identical across SDKs.
+
+- **`thing` vs resolved identity.** Rust exposes both `thing: Option<String>` (raw `-t`, verbatim)
+  and `identity: String` (resolved). TypeScript's `ParsedArgs.thing` and Java's
+  `ParsedCommandLine.thingName` are the **resolved** identity; the raw `-t` is not preserved
+  separately. Python's namespace keeps both (`ns.thing` raw, `ns.identity` resolved). Do not assume
+  `thing` means the raw flag everywhere.
+- **Config-source typing.** Rust (`ConfigSourceSpec` enum) and TypeScript (a discriminated union)
+  type the source at parse time; both include `CONFIGMAP`. Java passes the raw `String[]` through;
+  Python carries a `list[str]` and validates the first token against `ConfigSource`.
+- **Messaging-config path placement.** Java threads the `MQTT` messaging-config path through the
+  resolver (its `ResolverInputs` / `ResolvedProfile` carry it). Python, Rust, and TypeScript keep
+  those resolver types at four fields and compute the `CONFIGMAP`-default messaging path in the CLI
+  layer. Either way the resolved path lands on the parsed result
+  (`standaloneConfigPath` / `standalone_config_path` / `messaging_config_path` / `messagingConfigPath`).
+- **Public vs private.** Java `processArgs`, Rust `parse_from`, and TS `parseArgs` are public;
+  Python's `_process_args` is private — use the builder.
+- **`-m`/`--mode` rejection breadth.** Java and Python reject any token starting with `-m` or
+  `--mode=` (so `-mSTANDALONE` is also caught); Rust and TypeScript reject only the exact tokens `-m`
+  and `--mode`.
+
+## How the builder uses it
+
+In normal use the builder calls the parser for you. Hand it the process arguments and read the
+resolved services (and, where exposed, the parsed args) off the built instance.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+import com.mbreissi.ggcommons.GGCommons;
+import com.mbreissi.ggcommons.GGCommonsBuilder;
+
+GGCommons gg = GGCommonsBuilder.create("com.example.MyComponent")
+        .withArgs(args)   // runs GGCommons.processArgs internally
+        .build();
+
+var messaging = gg.getMessaging();
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+import sys
+from ggcommons.ggcommons_builder import GGCommonsBuilder
+
+gg = (
+    GGCommonsBuilder.create("com.example.MyComponent")
+    .with_args(sys.argv[1:])   # runs _process_args internally
+    .build()
+)
+
+messaging = gg.get_messaging()
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+use ggcommons::GgCommonsBuilder;
+
+let gg = GgCommonsBuilder::new("com.example.MyComponent")
+    .args(std::env::args().collect::<Vec<_>>())  // runs cli::parse_from internally
+    .build()
+    .await?;
+
+let parsed = gg.args();           // the resolved ParsedArgs
+let messaging = gg.messaging()?;  // returns Result
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+import { GGCommonsBuilder } from "ggcommons";
+
+const gg = await new GGCommonsBuilder("com.example.MyComponent")
+  .args(process.argv.slice(2))   // runs parseArgs internally
+  .build();
+
+const parsed = gg.args();         // the resolved ParsedArgs
+const messaging = gg.messaging();
+```
+
+</TabItem>
+</Tabs>
+
+## See also
+
+- [CLI contract](/start/cli-contract/) — the flags, per-platform defaults, auto-detection, and the
+  `-m`/`--mode` migration in depth.
+- [Configuration guide](/guides/configuration/) — what each `-c` source reads and how hot-reload works.
+- [Messaging guide](/guides/messaging/) — IPC vs dual-MQTT and the messaging-config file.
