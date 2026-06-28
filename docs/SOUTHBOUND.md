@@ -82,6 +82,21 @@ It maps onto the contract as:
 emit its pre-contract body during migration. The contract body is additive, so subscribers move
 topic-by-topic.
 
+### 2.2 Command surface (on-demand read + write)
+
+Beyond streaming subscriptions, an adapter MAY expose a request/reply **command surface** so clients
+can read or write arbitrary tags at any time, on per-instance topics:
+
+- **Batch write** (fire-and-forget) — body `{ "writes": [ { "ns": <int>, "tagId": "<id>",
+  "value": <any>, "status": "GOOD|BAD|UNCERTAIN"?, "sourceTs": "<iso>"? }, ... ] }`. A single
+  `{ns,tagId,value}` object (no `writes` array) is also accepted. One round-trip writes many tags.
+- **On-demand read** (request/reply) — request body `{ "tags": [ { "ns": <int>, "tagId": "<id>" },
+  ... ] }`; the reply (`SouthboundReadResult`) body is `{ "id": "<instance>", "reads": [ { "tag":
+  {id, address}, "value", "quality", "qualityRaw", "sourceTs", "serverTs" }, ... ] }`.
+
+Both batch (one round-trip for many tags) and reuse the §2 value/quality encoding. Topic templates
+are per-instance config (`write.topic`, `read.topic`).
+
 ## 3. Quality normalization
 
 `quality` is the normalized, protocol-independent verdict; `qualityRaw` preserves the native code.
