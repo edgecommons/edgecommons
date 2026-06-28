@@ -65,6 +65,11 @@ Design rules:
   message (deadband/publish-interval driven).
 - **Timestamps** are ISO-8601 UTC. `sourceTs` (device/field) and `serverTs` (protocol server) are
   kept distinct; both optional but at least one SHOULD be present.
+- **Value typing.** `value` is JSON-native: numbers (including unsigned integers) as JSON numbers,
+  booleans as JSON booleans, strings as strings, and **date/time as an ISO-8601 string**. An
+  **array-valued tag is a JSON array**, each element following these same rules (and writes accept a
+  JSON array, coerced to the element type). A value an adapter cannot model as one of these (e.g. an
+  opaque blob or a structure) MAY be rendered as a string; adapters SHOULD document such fallbacks.
 
 ### 2.1 Mapping a protocol onto the contract (OPC UA reference)
 
