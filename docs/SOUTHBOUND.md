@@ -53,8 +53,11 @@ Design rules:
   (see §3), plus `qualityRaw` retaining the native code for diagnostics. Consumers gate on `quality`
   without knowing the protocol.
 - **Identity is split.** `tag.id` is a **canonical, stable** string the cloud keys on (e.g.
-  `ns=3;i=1001`); `tag.address` is the **protocol-native** identity, opaque to consumers (OPC UA
-  `{ns, nodeId}`, Modbus `{unitId, register, type}`, MQTT `{topic}`). `tag.name` is the human label.
+  `ns=3;i=1001`); `tag.address` is the **protocol-native** identity for round-tripping back to the
+  device (OPC UA `{ns, namespaceUri, nodeId}`, Modbus `{unitId, register, type}`, MQTT `{topic}`).
+  Where a protocol's index-style handle is unstable, the address SHOULD also carry the stable form —
+  e.g. OPC UA's namespace **URI** alongside the volatile namespace **index** — so consumers and
+  round-trip reads/writes need not depend on the index. `tag.name` is the human label.
 - **Site hierarchy lives in `tags`, not the body.** `thing` + the configured `tags{}` (appId / site /
   shop / line / …) ride in the envelope's `tags`, so routing and partitioning never require parsing
   the body. This is the existing tag mechanism (`MessageBuilder.withConfig(...)`).
@@ -73,7 +76,7 @@ It maps onto the contract as:
 | `device.adapter` | `"opcua"` |
 | `device.instance` | the component instance id |
 | `device.endpoint` | `connectionInfo.url` |
-| `tag.address` | `{ ns, nodeId: id }` |
+| `tag.address` | `{ ns, namespaceUri, nodeId: id }` — `namespaceUri` is the stable identity; `ns` (index) can change between servers/restarts |
 | `tag.id` | `"ns=<ns>;i=<id>"` (or `s=<id>` for string node ids) |
 | `tag.name` | `displayName` if non-empty, else `browseName` |
 | `samples[]` | `updates[]` → `value`→`value`; `quality`→`qualityRaw` + normalized `quality`; `serverTs`/`sourceTs` preserved |
