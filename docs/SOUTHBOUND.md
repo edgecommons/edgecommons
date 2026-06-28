@@ -90,12 +90,16 @@ topic-by-topic.
 Beyond streaming subscriptions, an adapter MAY expose a request/reply **command surface** so clients
 can read or write arbitrary tags at any time, on per-instance topics:
 
-- **Batch write** (fire-and-forget) — body `{ "writes": [ { "ns": <int>, "tagId": "<id>",
-  "value": <any>, "status": "GOOD|BAD|UNCERTAIN"?, "sourceTs": "<iso>"? }, ... ] }`. A single
-  `{ns,tagId,value}` object (no `writes` array) is also accepted. One round-trip writes many tags.
-- **On-demand read** (request/reply) — request body `{ "tags": [ { "ns": <int>, "tagId": "<id>" },
-  ... ] }`; the reply (`SouthboundReadResult`) body is `{ "id": "<instance>", "reads": [ { "tag":
-  {id, address}, "value", "quality", "qualityRaw", "sourceTs", "serverTs" }, ... ] }`.
+- **Batch write** (fire-and-forget) — body `{ "writes": [ { <tag-ref>, "value": <any>,
+  "status": "GOOD|BAD|UNCERTAIN"?, "sourceTs": "<iso>"? }, ... ] }`. A single object (no `writes`
+  array) is also accepted. One round-trip writes many tags.
+- **On-demand read** (request/reply) — request body `{ "tags": [ { <tag-ref> }, ... ] }`; the reply
+  (`SouthboundReadResult`) body is `{ "id": "<instance>", "reads": [ { "tag": {id, address}, "value",
+  "quality", "qualityRaw", "sourceTs", "serverTs" }, ... ] }`.
+
+`<tag-ref>` addresses a tag by its **stable** identity where possible — for OPC UA, `"namespaceUri":
+"<uri>"` (preferred, resolved to the current index) or a literal `"ns": <int>`, plus `"tagId":
+"<id>"`. This keeps request inputs, like the published `address`, independent of a volatile index.
 
 Both batch (one round-trip for many tags) and reuse the §2 value/quality encoding. Topic templates
 are per-instance config (`write.topic`, `read.topic`).
