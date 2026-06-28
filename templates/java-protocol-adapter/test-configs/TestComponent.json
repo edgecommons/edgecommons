@@ -1,0 +1,41 @@
+{
+  "tags": {
+    "appId": "adapter",
+    "site": "site1",
+    "shop": "shop1",
+    "line": "line1"
+  },
+  "messaging": {
+    "local": { "host": "localhost", "port": 1883 }
+  },
+  "metricEmission": {
+    "target": "messaging",
+    "targetConfig": { "topic": "metrics/{ThingName}/{ComponentName}" }
+  },
+  "component": {
+    "global": {
+      "defaults": { "publishIntervalMs": 1000, "samplingRateMs": 500, "queueSize": 100 },
+      "healthThresholds": { "staleTagSecs": 30 }
+    },
+    "instances": [
+      {
+        "id": "device-1",
+        "adapter": "example",
+        "connection": { "endpoint": "example://localhost:0/" },
+        "defaults": { "publishIntervalMs": 1000, "samplingRateMs": 500, "queueSize": 100 },
+        "publish": { "topic": "southbound/{site}/{ComponentName}/{InstanceId}/{tagId}", "batchMs": 1000 },
+        "write": { "enabled": false, "topic": "southbound/{ComponentName}/{InstanceId}/write" },
+        "subscriptions": [
+          {
+            "id": "all",
+            "include": [
+              { "namespace": 0, "match": ".*", "samplingRateMs": 500, "queueSize": 100,
+                "deadband": { "type": "Absolute", "value": 0.0 } }
+            ],
+            "exclude": []
+          }
+        ]
+      }
+    ]
+  }
+}

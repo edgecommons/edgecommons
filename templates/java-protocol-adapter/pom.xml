@@ -1,0 +1,127 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId><<PACKAGE>></groupId>
+  <artifactId><<JARNAME>></artifactId>
+  <packaging>jar</packaging>
+  <version>1.0.0</version>
+  <name><<COMPONENTNAME>></name>
+  <url>http://maven.apache.org</url>
+
+  <properties>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <maven.compiler.source>25</maven.compiler.source>
+    <maven.compiler.target>25</maven.compiler.target>
+    <junitVersion>5.9.2</junitVersion>
+    <mavenPluginVersion>3.5.1</mavenPluginVersion>
+  </properties>
+
+  <dependencies>
+
+    <dependency>
+      <groupId>org.apache.logging.log4j</groupId>
+      <artifactId>log4j-api</artifactId>
+      <version>2.20.0</version>
+    </dependency>
+
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter-api</artifactId>
+      <version>${junitVersion}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter-engine</artifactId>
+      <version>${junitVersion}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>junit</groupId>
+      <artifactId>junit</artifactId>
+      <version>4.13.2</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>com.mbreissi</groupId>
+      <artifactId>ggcommons</artifactId>
+      <version><<GGCOMMONS_VERSION>></version>
+    </dependency>
+    <dependency>
+      <groupId>com.google.code.gson</groupId>
+      <artifactId>gson</artifactId>
+      <version>2.10.1</version>
+    </dependency>
+
+    <!-- TODO(adapter): add your protocol SDK here. This scaffold is intentionally protocol-agnostic.
+         Examples:
+           OPC UA  ->  org.eclipse.milo:milo-sdk-client:1.1.4   (pulls in BouncyCastle for security)
+           Modbus  ->  a Modbus client library of your choice
+         Then implement the connect / subscribe-or-poll / value->SouthboundTagUpdate mapping in the
+         App class where the TODO(adapter) markers are. -->
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-shade-plugin</artifactId>
+        <version>${mavenPluginVersion}</version>
+        <executions>
+          <execution>
+            <phase>package</phase>
+            <goals>
+              <goal>shade</goal>
+            </goals>
+            <configuration>
+              <transformers>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                  <mainClass><<MAINCLASSNAME>></mainClass>
+                </transformer>
+              </transformers>
+              <filters>
+                <filter>
+                  <artifact>*:*</artifact>
+                  <excludes>
+                    <exclude>META-INF/*.SF</exclude>
+                    <exclude>META-INF/*.DSA</exclude>
+                    <exclude>META-INF/*.RSA</exclude>
+                  </excludes>
+                </filter>
+              </filters>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.13.0</version>
+        <configuration>
+          <source>${maven.compiler.source}</source>
+          <target>${maven.compiler.target}</target>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+
+
+  <repositories>
+    <!-- Resolve com.mbreissi:ggcommons from GitHub Packages. Auth via ~/.m2/settings.xml:
+         a <server> with <id>github</id> and a GitHub token (read:packages). For a local
+         monorepo build use `mvn install` on libs/java instead (then ~/.m2 satisfies it). -->
+    <repository>
+      <id>github</id>
+      <url>https://maven.pkg.github.com/mbreissi/ggcommons</url>
+    </repository>
+  </repositories>
+
+  <distributionManagement>
+    <!-- Where THIS component would publish — edit to your own GitHub Packages repo. -->
+    <repository>
+      <id>github</id>
+      <url>https://maven.pkg.github.com/OWNER/REPO</url>
+    </repository>
+  </distributionManagement>
+</project>
