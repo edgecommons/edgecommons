@@ -56,8 +56,9 @@ Manifests:
           python3 -m venv "$COMPONENT_DIR/venv"
           . $COMPONENT_DIR/venv/bin/activate
           pip3 install --upgrade pip
-          pip3 install -r {artifacts:decompressedPath}/<<COMPONENTNAME>>/requirements.txt
+          # Bundled ggcommons wheel first (not on public PyPI), then the rest.
           pip3 install {artifacts:decompressedPath}/<<COMPONENTNAME>>/greengrass_commons-*.whl
+          pip3 install -r {artifacts:decompressedPath}/<<COMPONENTNAME>>/requirements.txt
           deactivate
       Run:
         Script: |-
