@@ -1,0 +1,21 @@
+# Component config for Kubernetes, mounted as a DIRECTORY at /etc/ggcommons (CONFIGMAP source watches
+# the ..data swap and hot-reloads). Carries the component config + the in-cluster broker. Add your
+# device instances under component.instances[]; `kubectl apply -f k8s/` to hot-reload.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: <<COMPONENTNAME>>-config
+  labels:
+    app.kubernetes.io/name: <<COMPONENTNAME>>
+data:
+  config.json: |-
+    {
+      "logging": { "level": "INFO" },
+      "messaging": {
+        "local": { "type": "mqtt", "host": "emqx.default.svc.cluster.local", "port": 1883, "clientId": "<<COMPONENTNAME>>" }
+      },
+      "component": {
+        "global": { "defaults": { "pollIntervalMs": 1000 } },
+        "instances": []
+      }
+    }

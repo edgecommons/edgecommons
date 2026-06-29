@@ -1,0 +1,59 @@
+# Minimal Kubernetes Deployment for the <<COMPONENTNAME>> adapter. --platform auto detects KUBERNETES
+# from the SA token (CONFIGMAP source, MQTT transport, Downward-API identity). Build ./Dockerfile and
+# set image: below.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: <<COMPONENTNAME>>
+  labels:
+    app.kubernetes.io/name: <<COMPONENTNAME>>
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: <<COMPONENTNAME>>
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: <<COMPONENTNAME>>
+    spec:
+      automountServiceAccountToken: true
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: component
+          image: REPLACE_ME
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - name: POD_NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+            - name: NODE_NAME
+              valueFrom: { fieldRef: { fieldPath: spec.nodeName } }
+          ports:
+            - { name: health, containerPort: 8081 }
+            - { name: metrics, containerPort: 9090 }
+          startupProbe:
+            httpGet: { path: /startupz, port: health }
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet: { path: /livez, port: health }
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /readyz, port: health }
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: config, mountPath: /etc/ggcommons, readOnly: true }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: config
+          configMap: { name: <<COMPONENTNAME>>-config }
+        - name: tmp
+          emptyDir: {}

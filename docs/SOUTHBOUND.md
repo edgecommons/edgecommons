@@ -90,6 +90,28 @@ It maps onto the contract as:
 emit its pre-contract body during migration. The contract body is additive, so subscribers move
 topic-by-topic.
 
+### 2.1.1 Mapping Modbus onto the contract (poll-based reference)
+
+The Python Modbus adapter is the **poll-based** reference (OPC UA is the subscribe-based one). Modbus
+has no eventing or discovery, so the adapter polls a config-declared register map and detects change
+client-side; richer types are *synthesized* from bits + 16-bit registers (configurable byte/word
+order, scale/offset, single-bit extraction).
+
+| Contract field | Modbus source |
+|----------------|---------------|
+| `device.adapter` | `"modbus"` |
+| `device.instance` | the component instance id |
+| `device.endpoint` | e.g. `tcp://host:502 unit=1` (also serial `rtu` / `rtutcp`) |
+| `tag.address` | `{ unitId, table, address, type, wordOrder?, byteOrder?, bit?, count? }` — `table` ∈ `coil`/`discrete`/`holding`/`input` |
+| `tag.id` | `"u<unitId>/<table>/<address>/<type>"` (stable canonical id) |
+| `tag.name` | the configured tag name |
+| `samples[]` | one per poll publish (deadband-gated); `value` decoded per the tag's type; `quality` `GOOD`, or `BAD` with the exception/timeout in `qualityRaw` |
+
+There is no namespace or discovery — tags are **declared explicitly** in config (no regex matching
+against a browsed address space). For the command surface (§2.2), a Modbus `<tag-ref>` is either
+`{ "name": "<configured tag>" }` (the friendly, stable form) or an explicit
+`{ "unitId"?, "table", "address", "type", ... }` for arbitrary access.
+
 ### 2.2 Command surface (on-demand read + write)
 
 Beyond streaming subscriptions, an adapter MAY expose a request/reply **command surface** so clients
@@ -203,6 +225,14 @@ ggcommons create-component -l JAVA -u ./templates/java-protocol-adapter \
   -n com.example.MyAdapter --platforms GREENGRASS,HOST
 ```
 
+A `templates/python-protocol-adapter/` mirror ships too — a Builder + per-instance worker-thread
+skeleton with `recipe.yaml`, `Dockerfile`, and `k8s/` — scaffolded the same way:
+
+```bash
+ggcommons create-component -l PYTHON -u ./templates/python-protocol-adapter \
+  -n com.example.MyAdapter --platforms GREENGRASS,HOST,KUBERNETES
+```
+
 A first-class `--kind {component|protocol-adapter}` flag (resolving `templates/<lang>-<kind>`) is a
 small, optional CLI follow-up once the pattern is proven.
 
@@ -214,9 +244,18 @@ vault. It demonstrates the full contract end-to-end and is the template for futu
 component's README for protocol-specific configuration (security policies, cert sources, tag-match
 syntax).
 
+The **Modbus adapter** (pymodbus, **Python**, standalone repo) is the second reference and the
+**poll-based** counterpart to OPC UA's subscribe model. It validates that the contract is
+language-agnostic and exercises the parts OPC UA does not — polling with register coalescing,
+client-side change/deadband, and a synthesized type/scaling layer (byte/word order, scale/offset, bit
+extraction). Its mapping is §2.1.1; protocol-specific configuration is in its own docs.
+
 ## 8. Roadmap
 
-- **Tier-2** (helpers) and **Tier-3** (`gg.devices()`) are deferred until at least two real adapters
-  (OPC UA + a poll-based one such as Modbus) reveal the shared pain points worth extracting.
-- Quality-mapping tables for additional protocols (Modbus, EtherNet/IP, Sparkplug B) are added here
-  as adapters land.
+- With the OPC UA (subscribe-based, Java) and Modbus (poll-based, Python) adapters now landed, the
+  two-adapter precondition for **Tier-2** (shared helpers: poll/subscribe scheduler with
+  backpressure + deadbanding, connection lifecycle, quality/timestamp stamping, store-and-forward) is
+  met — Tier-2 extraction is the natural next step (still deferred from this Tier-1 doc). **Tier-3**
+  (`gg.devices()`) remains further out.
+- Quality + address mappings now cover OPC UA (§2.1) and Modbus (§2.1.1, §3); further protocols
+  (EtherNet/IP, Sparkplug B) are added here as adapters land.
