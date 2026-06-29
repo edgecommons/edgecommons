@@ -22,6 +22,7 @@ export default defineConfig({
 			sidebar: [
 				{ label: 'Getting Started', items: [{ autogenerate: { directory: 'start' } }] },
 				{ label: 'Guides', items: [{ autogenerate: { directory: 'guides' } }] },
+				{ label: 'Components', items: [{ autogenerate: { directory: 'components' } }] },
 				{ label: 'API Reference', items: [{ autogenerate: { directory: 'reference' } }] },
 				{ label: 'Deployment', items: [{ autogenerate: { directory: 'deploy' } }] },
 			],

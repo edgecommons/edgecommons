@@ -1,0 +1,167 @@
+#!/usr/bin/env node
+/**
+ * sync-component-docs.mjs
+ *
+ * Aggregates each registered component's `docs/` into the Starlight site at
+ * `src/content/docs/components/<name>/`, so the one EdgeCommons docs site carries both the
+ * `ggcommons` library docs and every component's user/deployer guide.
+ *
+ * - Component list comes from the registry (`ecosystem/staging/registry/components.json`,
+ *   committed in this repo; override with REGISTRY_JSON).
+ * - Each component's docs come from either:
+ *     dev: a local path map in $COMPONENT_DOCS_MAP (JSON: {"opcua-adapter":"/abs/path", ...})
+ *     CI:  a shallow, sparse `git clone` of the component repo using $EDGECOMMONS_READ_TOKEN.
+ * - NON-FATAL: if a component's docs can't be obtained, it's skipped with a warning and the site
+ *   still builds (so the live docs never break just because a token isn't configured yet).
+ *
+ * Component docs stay PLAIN markdown in their own repos; this script injects Starlight frontmatter
+ * (title from the first H1; sidebar order from the Diátaxis filename), rewrites relative `.md`
+ * cross-links to Starlight routes, and flattens the `reference/` subdir for clean sidebar ordering.
+ */
+import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync, readdirSync, statSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const WEB = join(__dirname, "..");
+const REPO = join(WEB, "..");
+const REGISTRY = process.env.REGISTRY_JSON || join(REPO, "ecosystem/staging/registry/components.json");
+const OUT = join(WEB, "src/content/docs/components");
+const TMP = join(WEB, ".component-src");
+const TOKEN = process.env.EDGECOMMONS_READ_TOKEN || "";
+const LOCAL_MAP = JSON.parse(process.env.COMPONENT_DOCS_MAP || "{}");
+
+// Sidebar order by source filename (Diátaxis). reference/* are flattened to reference-<x> at 30+.
+const ORDER = { index: 0, tutorial: 10, "how-to-guides": 20, explanation: 40 };
+
+function jsonStr(s) {
+  return JSON.stringify(String(s));
+}
+
+function rewriteLinks(body) {
+  // reference/<x>.md(#a) -> reference-<x>(#a) ; reference/ -> reference-configuration
+  body = body.replace(/\]\(\.?\/?reference\/([A-Za-z0-9_-]+)\.md(#[^)]*)?\)/g, "](reference-$1$2)");
+  body = body.replace(/\]\(\.?\/?reference\/\)/g, "](reference-configuration)");
+  // generic: foo.md(#a) -> foo(#a)  (README.md -> index handled via slug, but rewrite stray links too)
+  body = body.replace(/\]\(\.?\/?([A-Za-z0-9_-]+)\.md(#[^)]*)?\)/g, (m, p, a) =>
+    `](${p === "README" ? "index" : p}${a || ""})`,
+  );
+  return body;
+}
+
+function toStarlight(raw, { title, description, order }) {
+  let body = raw;
+  const h1 = raw.match(/^\s*#\s+(.+?)\s*$/m);
+  if (!title) title = h1 ? h1[1].replace(/`/g, "") : "Untitled";
+  if (h1) body = raw.slice(0, h1.index) + raw.slice(h1.index + h1[0].length).replace(/^\n+/, "\n");
+  body = rewriteLinks(body).replace(/^\s+/, "");
+  let fm = `---\ntitle: ${jsonStr(title)}\n`;
+  if (description) fm += `description: ${jsonStr(description)}\n`;
+  fm += `sidebar:\n  order: ${order}\n---\n\n`;
+  return fm + body;
+}
+
+function obtainDocs(c) {
+  if (LOCAL_MAP[c.name]) {
+    const p = LOCAL_MAP[c.name];
+    if (existsSync(join(p, "docs"))) return join(p, "docs");
+    if (existsSync(p)) return p;
+    console.warn(`! local path for ${c.name} not found: ${p}`);
+    return null;
+  }
+  const dst = join(TMP, c.name);
+  rmSync(dst, { recursive: true, force: true });
+  mkdirSync(dst, { recursive: true });
+  const url = TOKEN
+    ? `https://x-access-token:${TOKEN}@github.com/${c.repo}.git`
+    : `https://github.com/${c.repo}.git`;
+  try {
+    // execFileSync (no shell): repo/token are passed as args, not interpolated into a shell string.
+    execFileSync("git", ["clone", "--depth", "1", "--filter=blob:none", "--sparse", url, dst], { stdio: "pipe" });
+    execFileSync("git", ["-C", dst, "sparse-checkout", "set", "docs"], { stdio: "pipe" });
+  } catch (e) {
+    console.warn(`! could not clone ${c.repo} (token set: ${Boolean(TOKEN)}): ${String(e.message).split("\n")[0]}`);
+    return null;
+  }
+  return existsSync(join(dst, "docs")) ? join(dst, "docs") : null;
+}
+
+function syncComponent(c) {
+  const docsDir = obtainDocs(c);
+  if (!docsDir) return false;
+  const dest = join(OUT, c.name);
+  mkdirSync(dest, { recursive: true });
+  for (const entry of readdirSync(docsDir)) {
+    const src = join(docsDir, entry);
+    if (statSync(src).isDirectory()) {
+      if (entry !== "reference") continue; // only the known Diátaxis subdir
+      let i = 0;
+      for (const ref of readdirSync(src).filter((f) => f.endsWith(".md")).sort()) {
+        const name = ref.replace(/\.md$/, "");
+        const md = toStarlight(readFileSync(join(src, ref), "utf8"), {
+          title: `Reference — ${titleCase(name)}`,
+          order: 30 + i++,
+        });
+        writeFileSync(join(dest, `reference-${name}.md`), md);
+      }
+      continue;
+    }
+    if (!entry.endsWith(".md")) continue;
+    const isIndex = entry.toLowerCase() === "readme.md";
+    const slug = isIndex ? "index" : entry.replace(/\.md$/, "");
+    const md = toStarlight(readFileSync(src, "utf8"), {
+      title: isIndex ? c.name : undefined,
+      description: isIndex ? c.description : undefined,
+      order: ORDER[slug] ?? 50,
+    });
+    writeFileSync(join(dest, `${slug}.md`), md);
+  }
+  return true;
+}
+
+function titleCase(s) {
+  return s.replace(/[-_]/g, " ").replace(/\b\w/g, (m) => m.toUpperCase());
+}
+
+function writeComponentsLanding(synced) {
+  const rows = synced
+    .map(
+      (c) =>
+        `| [${c.name}](/components/${c.name}/) | ${c.language || "—"} | ${c.protocol || c.category || "—"} | ${(c.platforms || []).join(" · ") || "—"} |`,
+    )
+    .join("\n");
+  const md = `---
+title: Components
+description: User and deployer guides for the components in the EdgeCommons ecosystem.
+sidebar:
+  order: 0
+---
+
+The EdgeCommons ecosystem ships ready-to-deploy components built on the \`ggcommons\` library —
+protocol **adapters**, edge **processors**, and northbound **sinks**. Each component's operator /
+integrator guide lives below; scaffold your own with \`ggcommons create-component\`.
+
+| Component | Language | Protocol / Category | Platforms |
+|-----------|----------|---------------------|-----------|
+${rows || "| _none yet_ | | | |"}
+`;
+  mkdirSync(OUT, { recursive: true });
+  writeFileSync(join(OUT, "index.md"), md);
+}
+
+// --- main ---
+const registry = JSON.parse(readFileSync(REGISTRY, "utf8"));
+rmSync(OUT, { recursive: true, force: true });
+mkdirSync(OUT, { recursive: true });
+const synced = [];
+for (const c of registry.components || []) {
+  if (syncComponent(c)) {
+    synced.push(c);
+    console.log(`✓ synced ${c.name}`);
+  } else {
+    console.warn(`- skipped ${c.name} (docs unavailable)`);
+  }
+}
+writeComponentsLanding(synced);
+console.log(`component docs sync complete: ${synced.length}/${(registry.components || []).length} component(s).`);
