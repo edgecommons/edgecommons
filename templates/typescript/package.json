@@ -10,7 +10,7 @@
     "start": "node dist/main.js"
   },
   "dependencies": {
-    "@mbreissi/ggcommons": "<<GGCOMMONS_DEP>>"
+    "@edgecommons/ggcommons": "<<GGCOMMONS_DEP>>"
   },
   "devDependencies": {
     "@types/node": "^20",

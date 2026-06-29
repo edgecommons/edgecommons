@@ -111,7 +111,7 @@ Two families. The core subsystems share one **tagged** `GgError`; credentials, p
 streaming are **standalone `Error` subclasses** that are *not* part of the tag union.
 
 ```typescript
-// @mbreissi/ggcommons
+// @edgecommons/ggcommons
 type GgErrorKind =
   | "Cli" | "Config" | "Validation"
   | "Messaging" | "Metrics" | "Ipc"
@@ -275,7 +275,7 @@ if let Err(ggcommons::GgError::Streaming(msg)) = result {
 `GgStreamError.code` holds the int (no named constants).
 
 ```typescript
-import { GgStreamError } from "@mbreissi/ggcommons";
+import { GgStreamError } from "@edgecommons/ggcommons";
 
 // e was thrown by a streaming call (or produced by translate(...))
 expect((e as GgStreamError).code).toBe(5);   // ERR_UNKNOWN_STREAM
@@ -440,7 +440,7 @@ let gg = match GgCommonsBuilder::new("com.example.MyComponent")
 <TabItem label="TypeScript">
 
 ```typescript
-import { GgError, GgStreamError } from "@mbreissi/ggcommons";
+import { GgError, GgStreamError } from "@edgecommons/ggcommons";
 
 try {
   validate(config);

@@ -20,7 +20,7 @@
  *   -t my-thing
  * ```
  */
-import { GGCommonsBuilder, logger } from "@mbreissi/ggcommons";
+import { GGCommonsBuilder, logger } from "@edgecommons/ggcommons";
 
 import { SkeletonApp } from "./app";
 

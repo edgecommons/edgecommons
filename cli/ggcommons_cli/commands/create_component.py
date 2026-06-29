@@ -76,7 +76,7 @@ _DEFAULT_DEP_SOURCE = "local"
 # Coordinates for the `registry` dependency source (DESIGN-packaging §13). Initial version;
 # `ggcommons upgrade --to <ver>` bumps a generated component later.
 _GGCOMMONS_VERSION = "0.1.0"
-_GGCOMMONS_GIT_URL = "https://github.com/mbreissi/ggcommons"
+_GGCOMMONS_GIT_URL = "https://github.com/edgecommons/ggcommons"
 
 
 class CreateComponent(CommandBase):

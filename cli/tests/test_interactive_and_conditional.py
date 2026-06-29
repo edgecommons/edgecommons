@@ -145,7 +145,7 @@ class TestDepSourceWiring:
         proj = self._gen(tmp_path, "RUST", "rust", dep_source="registry")
         cargo = (proj / "Cargo.toml").read_text()
         dep = [l for l in cargo.splitlines() if l.startswith("ggcommons =")][0]
-        assert 'git = "https://github.com/mbreissi/ggcommons"' in dep
+        assert 'git = "https://github.com/edgecommons/ggcommons"' in dep
         assert "path =" not in dep  # the ggcommons line must not be a path dep
 
     def test_rust_local_uses_path_dep(self, tmp_path):
@@ -162,13 +162,13 @@ class TestDepSourceWiring:
             pytest.skip("ts template not present")
         proj = self._gen(tmp_path, "TYPESCRIPT", "typescript", dep_source="registry")
         pkg = (proj / "package.json").read_text()
-        assert '"@mbreissi/ggcommons": "^0.1.0"' in pkg
+        assert '"@edgecommons/ggcommons": "^0.1.0"' in pkg
         assert "@breissinger" not in pkg
         # the source imports must use the new scope too
         assert "@breissinger" not in (proj / "src" / "main.ts").read_text()
         # registry dep-source must ship the consumer .npmrc mapping @mbreissi -> GitHub Packages
         npmrc = (proj / ".npmrc").read_text()
-        assert "@mbreissi:registry=https://npm.pkg.github.com" in npmrc
+        assert "@edgecommons:registry=https://npm.pkg.github.com" in npmrc
 
     def test_ts_local_omits_npmrc(self, tmp_path):
         if not (self._WS / "templates" / "typescript").is_dir():

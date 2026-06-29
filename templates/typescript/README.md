@@ -63,7 +63,7 @@ with **KUBERNETES** as a target platform. Build the image from `./Dockerfile`, m
 to the cluster, point `image:` at it, then apply the manifests:
 
 ```bash
-# 1. Build the image (npm ci resolves the published @mbreissi/ggcommons from GitHub Packages —
+# 1. Build the image (npm ci resolves the published @edgecommons/ggcommons from GitHub Packages —
 #    needs an .npmrc with the registry + a GITHUB_TOKEN at build time).
 docker build -t ghcr.io/<owner>/<<COMPONENTNAME>>:latest .
 

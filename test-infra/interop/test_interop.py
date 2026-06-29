@@ -159,7 +159,7 @@ def commands():
             for info in ts_dir.glob("*.tsbuildinfo"):
                 info.unlink(missing_ok=True)
         r = subprocess.run(
-            f'"{npm}" run build --workspace=@mbreissi/ggcommons --workspace=ggcommons-interop-ts-node',
+            f'"{npm}" run build --workspace=@edgecommons/ggcommons --workspace=ggcommons-interop-ts-node',
             cwd=WORKSPACE, capture_output=True, text=True, timeout=300, shell=True)
         assert r.returncode == 0, f"ts build failed:\n{r.stderr}\n{r.stdout}"
         node_js = HERE / "ts_node" / "dist" / "interop_node.js"
