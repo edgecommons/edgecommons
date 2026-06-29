@@ -77,6 +77,22 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ inputs.python-version }}
+      # Components that depend on the private ggcommons via a git URL
+      # (greengrass-commons @ git+https://github.com/edgecommons/ggcommons.git@<tag>...)
+      # need a token to clone it. The org GITHUB_TOKEN is repo-scoped and cannot read
+      # another private repo, so provide a read-only PAT as the org/repo Actions secret
+      # GGCOMMONS_READ_TOKEN. No token -> step is a no-op (fine for public-dep components).
+      - if: inputs.language == 'PYTHON'
+        name: Configure private git auth for ggcommons (if a token is provided)
+        env:
+          GGCOMMONS_READ_TOKEN: ${{ secrets.GGCOMMONS_READ_TOKEN }}
+        run: |
+          if [ -n "$GGCOMMONS_READ_TOKEN" ]; then
+            git config --global url."https://x-access-token:${GGCOMMONS_READ_TOKEN}@github.com/".insteadOf "https://github.com/"
+            echo "configured private git auth for github.com"
+          else
+            echo "GGCOMMONS_READ_TOKEN not set; private git-dep installs may fail"
+          fi
       - if: inputs.language == 'PYTHON'
         run: |
           python -m pip install --upgrade pip
