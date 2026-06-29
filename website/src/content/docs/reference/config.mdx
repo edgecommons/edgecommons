@@ -387,13 +387,11 @@ language.
 </TabItem>
 </Tabs>
 
-{/* NEEDS REVIEW: confirm intended invalid-reload behavior for Python. Java/Rust/TS reject-and-keep the previous config on a schema-invalid hot reload, but Python applies the invalid config and still notifies listeners (validation failure is swallowed when not initializing). The fact sheet flags this as a likely defect rather than a documented contract. */}
-
-<Aside type="caution" title="Invalid hot reload — not four-way parity">
-On a schema-invalid hot reload, Java, Rust, and TypeScript **reject the new document and keep the
-previous valid config**. Python currently **applies the invalid config and still notifies listeners**
-(first-load validation still fails closed in all four). Treat the Python difference as a behavioral
-caveat when writing listeners that assume the new config is valid.
+<Aside type="note" title="Invalid hot reload — reject-and-keep (all four)">
+On a schema-invalid hot reload, all four SDKs **reject the new document and keep the previous valid
+config** — listeners are not notified and the reload reports failure. First-load validation fails
+closed in all four. (Python was brought to parity here; it previously swallowed the reload-path
+validation failure and applied the invalid config.)
 </Aside>
 
 ## Construction
