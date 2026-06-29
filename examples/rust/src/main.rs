@@ -52,7 +52,7 @@ async fn main() -> anyhow::Result<()> {
     );
 
     let app = app::SkeletonApp::new(&gg)?;
-    app.run().await?;
+    app.run(&gg).await?;
 
     tracing::info!("Rust Component Skeleton stopped");
     Ok(())

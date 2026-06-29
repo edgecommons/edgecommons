@@ -316,7 +316,7 @@ impl SkeletonApp {
     ///
     /// # Errors
     /// Propagates failures from subscribing, publishing, or signal handling.
-    pub async fn run(&self) -> anyhow::Result<()> {
+    pub async fn run(&self, gg: &GgCommons) -> anyhow::Result<()> {
         let thing = &self.config.thing_name;
 
         // Demonstrate encrypted-vault secret access once at startup (feature-gated, non-fatal).
@@ -331,7 +331,7 @@ impl SkeletonApp {
             tracing::warn!(
                 "messaging unavailable for this build/mode; running heartbeat-only until shutdown"
             );
-            shutdown_signal().await;
+            gg.shutdown_signal().await;
             return Ok(());
         };
 
@@ -410,7 +410,7 @@ impl SkeletonApp {
         tokio::select! {
             result = self.publish_loop(messaging.clone(), data_topic, telemetry_topic) => result?,
             result = self.request_loop(messaging.clone(), request_topic.clone()) => result?,
-            _ = shutdown_signal() => tracing::info!("shutdown signal received"),
+            _ = gg.shutdown_signal() => tracing::info!("shutdown signal received"),
         }
 
         // 4. Clean up subscriptions before the runtime drops (only the ones established).
@@ -540,26 +540,3 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/// Resolve when the process should shut down: Ctrl-C on all platforms, plus SIGTERM
-/// on Unix (the signal Greengrass sends to stop a component).
-async fn shutdown_signal() {
-    #[cfg(unix)]
-    {
-        use tokio::signal::unix::{signal, SignalKind};
-        let mut term = match signal(SignalKind::terminate()) {
-            Ok(s) => s,
-            Err(_) => {
-                let _ = tokio::signal::ctrl_c().await;
-                return;
-            }
-        };
-        tokio::select! {
-            _ = tokio::signal::ctrl_c() => {},
-            _ = term.recv() => {},
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = tokio::signal::ctrl_c().await;
-    }
-}

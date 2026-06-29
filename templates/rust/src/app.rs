@@ -45,7 +45,11 @@ impl App {
     }
 
     /// Run until a shutdown signal (Ctrl-C / SIGTERM) is received.
-    pub async fn run(&self) -> anyhow::Result<()> {
+    ///
+    /// The library owns signal handling (FR-HB-2): await [`GgCommons::shutdown_signal`] rather than
+    /// re-implementing `tokio::signal` here, so there is a single signal source. Dropping the
+    /// `GgCommons` runtime after this returns releases all resources (RAII).
+    pub async fn run(&self, gg: &GgCommons) -> anyhow::Result<()> {
         tracing::info!(thing = %self.config.thing_name, "<<COMPONENTNAME>> running");
 
         // TODO: your business logic goes here. The wired services are available as:
@@ -55,31 +59,8 @@ impl App {
         // Touch the handles so the starting template compiles without warnings.
         let _ = (&self.metrics, &self.messaging);
 
-        shutdown_signal().await;
+        gg.shutdown_signal().await;
         tracing::info!("shutdown signal received; exiting");
         Ok(())
-    }
-}
-
-/// Resolve when the process receives Ctrl-C or (on Unix) SIGTERM.
-async fn shutdown_signal() {
-    #[cfg(unix)]
-    {
-        use tokio::signal::unix::{signal, SignalKind};
-        match signal(SignalKind::terminate()) {
-            Ok(mut term) => {
-                tokio::select! {
-                    _ = tokio::signal::ctrl_c() => {}
-                    _ = term.recv() => {}
-                }
-            }
-            Err(_) => {
-                let _ = tokio::signal::ctrl_c().await;
-            }
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = tokio::signal::ctrl_c().await;
     }
 }

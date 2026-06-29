@@ -93,6 +93,11 @@ pub struct GgCommons {
     /// watcher flips "shutting down", and the health server reads both (+ messaging connected) to
     /// answer `/readyz`.
     health_state: health::HealthState,
+    /// Flipped to `true` by the signal watcher (FR-HB-2) on SIGTERM/Ctrl-C; awaited by
+    /// [`Self::shutdown_signal`] so an app's run loop can exit on the library's termination signal
+    /// instead of hand-rolling `tokio::signal`. Watch semantics mean a clone created after the
+    /// signal still observes the latched `true` (no missed-notification race).
+    shutdown_rx: tokio::sync::watch::Receiver<bool>,
     /// Owns the HTTP health server thread; dropping `GgCommons` stops it (RAII). `None` when health
     /// is disabled (the default off-KUBERNETES) or the listener failed to bind.
     _health_server: Option<health::HealthServer>,
@@ -127,6 +132,22 @@ impl GgCommons {
     /// The parsed standard CLI arguments.
     pub fn args(&self) -> &ParsedArgs {
         &self.args
+    }
+
+    /// Resolve when the library observes a termination signal — SIGTERM on Unix (what Greengrass /
+    /// the kubelet send to stop), or Ctrl-C on any platform — the same signal that flips `/readyz`
+    /// to 503 (FR-HB-2). Await this from your run loop instead of re-implementing `tokio::signal`,
+    /// so the library remains the single signal source. Returns immediately if a termination signal
+    /// has already been observed.
+    ///
+    /// ```no_run
+    /// # async fn run(gg: &ggcommons::GgCommons) {
+    /// gg.shutdown_signal().await; // resolves on SIGTERM / Ctrl-C
+    /// # }
+    /// ```
+    pub async fn shutdown_signal(&self) {
+        let mut rx = self.shutdown_rx.clone();
+        wait_for_shutdown(&mut rx).await;
     }
 
     /// A consistent snapshot of the current configuration. Cheap to call; returns
@@ -476,7 +497,11 @@ impl GgCommonsBuilder {
         // 503 at once. The library does not own the run loop, so it cannot exit the process —
         // resource teardown stays RAII on `GgCommons` drop when the app leaves its loop. The watcher
         // only flips the (idempotent) shutting-down flag and logs.
-        let signal_task = AbortOnDrop(spawn_signal_watcher(health_state.clone()));
+        // Watch channel the signal watcher flips on shutdown; `GgCommons::shutdown_signal` awaits it
+        // so apps await one library-owned future instead of hand-rolling `tokio::signal`.
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let signal_task =
+            AbortOnDrop(spawn_signal_watcher(health_state.clone(), Arc::new(shutdown_tx)));
 
         // Internal listeners reconfigure the metric target and logging on hot reload.
         let listeners: ConfigListeners = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -513,6 +538,7 @@ impl GgCommonsBuilder {
             parameters: params,
             listeners,
             health_state,
+            shutdown_rx,
             _health_server: health_server,
             _signal_task: signal_task,
             _heartbeat: heartbeat,
@@ -567,12 +593,24 @@ fn spawn_config_reload(
 /// Idempotent — [`health::HealthState::begin_shutdown`] is a flag store, safe under repeated
 /// signals. The returned [`tokio::task::JoinHandle`] is held in an [`AbortOnDrop`] so the watcher
 /// is cleaned up if the runtime is dropped before any signal arrives.
-fn spawn_signal_watcher(state: health::HealthState) -> tokio::task::JoinHandle<()> {
+fn spawn_signal_watcher(
+    state: health::HealthState,
+    shutdown_tx: Arc<tokio::sync::watch::Sender<bool>>,
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         wait_for_terminate().await;
         state.begin_shutdown();
+        // Latch the shutdown flag so `GgCommons::shutdown_signal` resolves (and stays resolved for
+        // any later-cloned receiver). Ignore the error when there are no receivers.
+        let _ = shutdown_tx.send(true);
         tracing::info!("termination signal received; readiness set to 503 (shutting down)");
     })
+}
+
+/// Resolve once `rx` observes a shutdown (value `true`), returning immediately if it already has.
+/// Backs [`GgCommons::shutdown_signal`]; an `Err` (all senders dropped) is treated as shutdown.
+async fn wait_for_shutdown(rx: &mut tokio::sync::watch::Receiver<bool>) {
+    let _ = rx.wait_for(|flag| *flag).await;
 }
 
 /// Resolve on SIGTERM (Unix — the signal Greengrass / the kubelet send to stop) or Ctrl-C (all
@@ -708,4 +746,37 @@ pub mod prelude {
     #[cfg(feature = "streaming")]
     pub use crate::streaming::{StreamHandle, StreamRecord, StreamService, Stats as StreamStats};
     pub use crate::{GgCommons, GgCommonsBuilder, GgError, Result};
+}
+
+#[cfg(test)]
+mod shutdown_tests {
+    //! Tests for the library-owned shutdown future (#17) backing `GgCommons::shutdown_signal`.
+    use super::wait_for_shutdown;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn resolves_when_watcher_flips_the_flag() {
+        let (tx, rx) = tokio::sync::watch::channel(false);
+        let mut rx = rx;
+        tokio::spawn(async move {
+            // Emulates spawn_signal_watcher latching shutdown after a termination signal.
+            let _ = tx.send(true);
+        });
+        // Must resolve promptly once the flag flips (fails-before: a hand-rolled signal future
+        // would never see this in-process flip).
+        tokio::time::timeout(Duration::from_secs(2), wait_for_shutdown(&mut rx))
+            .await
+            .expect("shutdown_signal did not resolve after the flag flipped");
+    }
+
+    #[tokio::test]
+    async fn returns_immediately_if_already_shutting_down() {
+        // A receiver cloned after the signal already fired must still observe the latched value.
+        let (tx, rx) = tokio::sync::watch::channel(true);
+        drop(tx); // all senders gone, but the latched `true` persists
+        let mut rx = rx;
+        tokio::time::timeout(Duration::from_millis(200), wait_for_shutdown(&mut rx))
+            .await
+            .expect("shutdown_signal should return immediately when already shutting down");
+    }
 }
