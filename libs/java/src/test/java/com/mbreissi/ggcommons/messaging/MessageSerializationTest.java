@@ -4,6 +4,7 @@
  */
 package com.mbreissi.ggcommons.messaging;
 
+import com.mbreissi.ggcommons.test.MockConfigurationService;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -55,5 +56,50 @@ class MessageSerializationTest {
         assertNotNull(m.getBody());
         assertTrue(((JsonElement) m.getBody()).isJsonArray());
         assertEquals(2, ((JsonElement) m.getBody()).getAsJsonArray().size());
+    }
+
+    /**
+     * #16: a {@code byte[]} body must serialize as a base64 JSON string (portable cross-language
+     * interim), not as a Gson number array. The canonical vector {0,1,2,254,255} base64-encodes to
+     * "AAEC/v8=" — the same string Python/TS produce for the same bytes.
+     */
+    @Test
+    void byteArrayBodySerializesAsBase64String() {
+        byte[] bytes = new byte[] {0, 1, 2, (byte) 254, (byte) 255};
+
+        Message m = MessageBuilder.create("Bin", "1.0").withPayload(bytes)
+            .withConfig(new MockConfigurationService()).build();
+        JsonElement body = m.toDict().get("body");
+
+        assertTrue(body.isJsonPrimitive() && body.getAsJsonPrimitive().isString(),
+            "a byte[] body must serialize as a base64 JSON string, not a number array");
+        assertEquals("AAEC/v8=", body.getAsString());
+    }
+
+    /**
+     * #15: an explicit null-valued entry in a {@code Map} body must serialize as JSON {@code null}
+     * (parity with Python dict None / TS object null / serde), not be dropped by Gson's default
+     * null-omitting serializer.
+     */
+    @Test
+    void mapBodyPreservesExplicitNullEntry() {
+        java.util.Map<String, Object> nested = new java.util.LinkedHashMap<>();
+        nested.put("inner", null);  // a NESTED null (toJsonTree drops these; the fix must not)
+        java.util.Map<String, Object> payload = new java.util.LinkedHashMap<>();
+        payload.put("present", 1);
+        payload.put("nullv", null);
+        payload.put("nested", nested);
+
+        Message m = MessageBuilder.create("M", "1.0").withPayload(payload)
+            .withConfig(new MockConfigurationService()).build();
+        JsonObject body = m.toDict().get("body").getAsJsonObject();
+
+        assertTrue(body.has("nullv"), "an explicit null Map entry must be preserved (#15)");
+        assertTrue(body.get("nullv").isJsonNull());
+        assertEquals(1, body.get("present").getAsInt());
+        // The full wire string (JsonObject.toString) must also carry both nulls.
+        assertTrue(body.getAsJsonObject("nested").has("inner"), "a NESTED null entry must survive too");
+        assertTrue(body.getAsJsonObject("nested").get("inner").isJsonNull());
+        assertTrue(m.toString().contains("\"inner\":null"), "nested null must reach the wire string");
     }
 }

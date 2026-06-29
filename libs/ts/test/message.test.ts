@@ -24,6 +24,24 @@ describe("Message / MessageBuilder", () => {
     expect(obj.body).toEqual({ value: 42 });
   });
 
+  it("serializes a Buffer body as a base64 string (#16)", () => {
+    // A binary body travels as a base64 JSON string (portable cross-language interim), not the
+    // non-portable `{ type: "Buffer", data: [...] }`. The canonical vector {0,1,2,254,255}
+    // base64-encodes to "AAEC/v8=" — the same string Java/Python produce for the same bytes.
+    const msg = MessageBuilder.create("bin", "1.0.0")
+      .withPayload(Buffer.from([0, 1, 2, 254, 255]))
+      .build();
+    const obj = msg.toObject();
+    expect(obj.body).toBe("AAEC/v8=");
+    expect(JSON.parse(msg.toJSON()).body).toBe("AAEC/v8=");
+  });
+
+  it("preserves an explicit null map entry in the body (#15)", () => {
+    // Parity with the Java fix: an explicit null object value round-trips as JSON null.
+    const msg = MessageBuilder.create("evt", "1.0.0").withPayload({ present: 1, nullv: null }).build();
+    expect(JSON.parse(msg.toJSON()).body).toEqual({ present: 1, nullv: null });
+  });
+
   it("omits the thing tag when there is no thing name", () => {
     const msg = MessageBuilder.create("evt", "1.0.0").withPayload(1).build();
     const obj = msg.toObject();

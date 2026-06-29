@@ -76,6 +76,7 @@ async fn main() {
                 "i": 42, "ni": -7, "fl": 3.5,
                 "slash": "a/b", "quote": "x\"y",
                 "arr": [1, "two", false, null],
+                "nullv": null,
                 "nested": { "k": [1, { "d": 2 }] },
                 "ea": [], "eo": {}
             });

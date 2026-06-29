@@ -29,13 +29,14 @@ PORT = int(os.environ.get("GGCOMMONS_IT_MQTT_PORT", "1883"))
 
 # Canonical cross-language payload permutations: every language sends this as its request body's
 # `types` field; the responder echoes it; test_interop asserts a deep, number-lenient round-trip in
-# both directions. null is tested inside an array (Java/Gson drops null-valued MAP entries — a
-# documented divergence, so no top-level null key here).
+# both directions. null is tested both inside an array and as a top-level map entry (`nullv`); since
+# #15 the Java sender preserves null-valued Map entries, so explicit nulls round-trip four ways.
 TYPES = {
     "b": True, "bf": False,
     "i": 42, "ni": -7, "fl": 3.5,
     "slash": "a/b", "quote": "x\"y",
     "arr": [1, "two", False, None],
+    "nullv": None,
     "nested": {"k": [1, {"d": 2}]},
     "ea": [], "eo": {},
 }

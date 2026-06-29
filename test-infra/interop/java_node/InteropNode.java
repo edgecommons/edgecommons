@@ -68,6 +68,7 @@ public class InteropNode {
         m.put("slash", "a/b");
         m.put("quote", "x\"y");
         m.put("arr", java.util.Arrays.asList(1, "two", false, null));
+        m.put("nullv", null);
         java.util.Map<String, Object> inner = new java.util.LinkedHashMap<>();
         inner.put("d", 2);
         m.put("nested", java.util.Collections.singletonMap("k", java.util.Arrays.asList(1, inner)));

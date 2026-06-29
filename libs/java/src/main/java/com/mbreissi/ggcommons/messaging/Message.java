@@ -6,13 +6,17 @@ package com.mbreissi.ggcommons.messaging;
 
 import com.mbreissi.ggcommons.config.ConfigManager;
 import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import com.google.gson.JsonPrimitive;
 import com.google.gson.JsonSyntaxException;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.util.Base64;
 import java.util.Map;
 
 
@@ -24,6 +28,17 @@ import java.util.Map;
 public class Message
 {
     protected static final Logger LOGGER = LogManager.getLogger(Message.class);
+
+    /** Default serializer: omits null members (Gson default), used for POJO/record/List payloads. */
+    private static final Gson DEFAULT_GSON = new Gson();
+    /**
+     * Null-serializing serializer used only for {@link Map}-shaped payloads, where a present key with
+     * a null value is unambiguous intent ({@code map.put("k", null)}) and must serialize as JSON
+     * {@code null} — at parity with a Python {@code dict} {@code None}, a TS object {@code null}, and
+     * serde. POJO/record payloads deliberately keep the default omit-null behavior (an unset field is
+     * ambiguous), so this is not enabled globally (#15).
+     */
+    private static final Gson NULL_SERIALIZING_GSON = new GsonBuilder().serializeNulls().create();
 
     MessageHeader header;
     MessageTags tags;
@@ -67,9 +82,12 @@ public class Message
 
     /**
      * Coerces a message body/raw value to a Gson {@link JsonElement} for serialization. A value that
-     * is already a {@link JsonElement} is returned as-is; {@code null} becomes {@link JsonNull}; any
-     * other object (a {@link Map}, POJO, {@code List}, primitive wrapper, etc.) is converted via
-     * Gson's reflective tree adapter. This lets callers pass a plain {@code Map}/POJO to
+     * is already a {@link JsonElement} is returned as-is; {@code null} becomes {@link JsonNull}; a
+     * {@code byte[]} is base64-encoded to a JSON string (#16, the portable cross-language interim for
+     * binary bodies — see the binary-message feature request); a {@link Map} is converted with
+     * null-valued entries preserved as JSON {@code null} (#15); any other object (POJO, {@code List},
+     * primitive wrapper, etc.) is converted via Gson's default reflective adapter (which omits null
+     * members). This lets callers pass a plain {@code Map}/POJO to
      * {@link MessageBuilder#withPayload(Object)} and have it serialize correctly, instead of failing
      * with a {@code ClassCastException} at publish time — at parity with the Rust/Python/TypeScript
      * libraries, which accept native maps/objects as payloads.
@@ -83,7 +101,17 @@ public class Message
             return JsonNull.INSTANCE;
         if (value instanceof JsonElement element)
             return element;
-        return new Gson().toJsonTree(value);
+        if (value instanceof byte[] bytes)
+            // #16 interim: binary bodies travel as a base64 JSON string (portable across all four
+            // libraries) until a first-class header-carrying binary message type lands.
+            return new JsonPrimitive(Base64.getEncoder().encodeToString(bytes));
+        if (value instanceof Map<?, ?>)
+            // #15: a Map carries key presence, so a null value is an explicit JSON null (not an
+            // ambiguous unset POJO field) — serialize it as such, matching Python/TS/serde. We go via
+            // a JSON string (not toJsonTree) because Gson's JsonTreeWriter drops null values in NESTED
+            // maps; the string path with serializeNulls preserves them at every nesting level.
+            return JsonParser.parseString(NULL_SERIALIZING_GSON.toJson(value));
+        return DEFAULT_GSON.toJsonTree(value);
     }
 
     @Override

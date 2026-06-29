@@ -3,6 +3,7 @@
 # available at http://aws.amazon.com/agreement or other written agreement between
 # Customer and Amazon Web Services, Inc.
 
+import base64
 import json
 import logging
 from dataclasses import dataclass
@@ -10,6 +11,17 @@ from uuid import uuid4
 from typing import Any, Optional, TYPE_CHECKING
 
 from ggcommons.utils import Utils
+
+
+def _encode_body(body: Any) -> Any:
+    """#16: a ``bytes`` body travels as a base64 JSON string — the portable cross-language interim for
+    binary bodies (a raw ``bytes`` payload has no portable JSON form; Python's ``json.dumps`` would
+    otherwise raise). Matches Java ``byte[]`` -> base64 and TS ``Buffer`` -> base64, scoped to a
+    top-level binary body (not nested bytes), pending a first-class binary message type. Non-bytes
+    bodies pass through unchanged."""
+    if isinstance(body, (bytes, bytearray)):
+        return base64.b64encode(bytes(body)).decode("ascii")
+    return body
 
 if TYPE_CHECKING:
     from ggcommons.config.manager.config_manager import ConfigManager
@@ -123,10 +135,10 @@ class Message:
                 msg["header"] = self.header.to_dict()
             if self.tags is not None:
                 msg["tags"] = self.tags.to_dict()
-            msg["body"] = self.body
+            msg["body"] = _encode_body(self.body)
             return msg
         else:
-            return {"raw": self.raw}
+            return {"raw": _encode_body(self.raw)}
 
     def __str__(self) -> str:
         return json.dumps(self.to_dict())
@@ -137,7 +149,7 @@ class Message:
             msg["header"] = self.header.to_dict()
         if self.tags is not None:
             msg["tags"] = self.tags.to_dict()
-        msg["body"] = self.body
+        msg["body"] = _encode_body(self.body)
         return json.dumps(msg, indent=indent)
 
     def get_correlation_id(self) -> str:

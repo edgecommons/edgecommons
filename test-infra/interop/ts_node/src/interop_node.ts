@@ -27,6 +27,7 @@ const TYPES = {
   slash: "a/b",
   quote: 'x"y',
   arr: [1, "two", false, null],
+  nullv: null,
   nested: { k: [1, { d: 2 }] },
   ea: [],
   eo: {},

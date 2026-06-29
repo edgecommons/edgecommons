@@ -42,13 +42,15 @@ LANGS = ["python", "java", "rust", "ts"]
 # Canonical payload permutations every requester sends as the request body's `types` field; the
 # responder echoes it. A deep round-trip across all 16 ordered pairs proves cross-language payload
 # fidelity (serialized by the requester, parsed + re-serialized by the responder, parsed back).
-# null is tested inside an array — Gson drops null-valued MAP entries on the Java sender, a separate
-# documented divergence — so there is no top-level null key here.
+# Both a null inside an array AND a top-level null-valued MAP entry (`nullv`) are tested: since #15,
+# the Java sender preserves null-valued Map entries (serializeNulls for Map payloads), so all four
+# languages now round-trip explicit nulls as JSON null.
 EXPECTED_TYPES = {
     "b": True, "bf": False,
     "i": 42, "ni": -7, "fl": 3.5,
     "slash": "a/b", "quote": 'x"y',
     "arr": [1, "two", False, None],
+    "nullv": None,
     "nested": {"k": [1, {"d": 2}]},
     "ea": [], "eo": {},
 }
@@ -147,6 +149,15 @@ def commands():
         r = subprocess.run(f'"{npm}" install', cwd=WORKSPACE, capture_output=True, text=True,
                            timeout=600, shell=True)
         assert r.returncode == 0, f"ts npm install failed:\n{r.stderr}"
+        # #14 guard: force-clean the TS build outputs so the ts_node can never silently run against a
+        # stale libs/ts build (the "old library" trap that made the ts raw-publisher time out even
+        # though publishRaw was correct). The plain `tsc` build below then regenerates both dists from
+        # current source, so ts_node always links the freshly-built library.
+        for stale_dist in (WORKSPACE / "libs" / "ts" / "dist", HERE / "ts_node" / "dist"):
+            shutil.rmtree(stale_dist, ignore_errors=True)
+        for ts_dir in (WORKSPACE / "libs" / "ts", HERE / "ts_node"):
+            for info in ts_dir.glob("*.tsbuildinfo"):
+                info.unlink(missing_ok=True)
         r = subprocess.run(
             f'"{npm}" run build --workspace=@mbreissi/ggcommons --workspace=ggcommons-interop-ts-node',
             cwd=WORKSPACE, capture_output=True, text=True, timeout=300, shell=True)
