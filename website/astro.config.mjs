@@ -7,14 +7,14 @@ export default defineConfig({
 	site: 'https://docs.edgecommons.mbreissi.com',
 	integrations: [
 		starlight({
-			title: 'GGCommons',
+			title: 'EdgeCommons',
 			description:
-				'The Greengrass Commons SDK — one library, four languages (Java, Python, Rust, TypeScript) for building AWS IoT Greengrass v2 components.',
+				'EdgeCommons — one library in four languages (Java, Python, Rust, TypeScript) for building edge components that run on AWS IoT Greengrass, Docker, or Kubernetes.',
 			social: [
 				{
 					icon: 'github',
 					label: 'GitHub',
-					href: 'https://github.com/mbreissi/ggcommons',
+					href: 'https://github.com/edgecommons/ggcommons',
 				},
 			],
 			// Position within each group is controlled by every page's
