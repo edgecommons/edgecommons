@@ -66,7 +66,7 @@ jobs:
           server-id: github
           server-username: MAVEN_USERNAME
           server-password: MAVEN_PASSWORD
-      # MAVEN_PASSWORD prefers a read-only PAT (org/repo secret GGCOMMONS_READ_TOKEN) so the
+      # MAVEN_PASSWORD prefers a read-only PAT (org/repo secret EDGECOMMONS_READ_TOKEN) so the
       # private com.mbreissi:ggcommons resolves cross-repo without a per-package UI grant. Falls
       # back to the repo GITHUB_TOKEN, which works only if you instead add this repo to the
       # package's "Manage Actions access" list in the UI (no REST API exists for that).
@@ -74,7 +74,7 @@ jobs:
         run: mvn -B verify
         env:
           MAVEN_USERNAME: ${{ github.actor }}
-          MAVEN_PASSWORD: ${{ secrets.GGCOMMONS_READ_TOKEN || secrets.GITHUB_TOKEN }}
+          MAVEN_PASSWORD: ${{ secrets.EDGECOMMONS_READ_TOKEN || secrets.GITHUB_TOKEN }}
 
       # ----- PYTHON -----
       - if: inputs.language == 'PYTHON'
@@ -85,17 +85,17 @@ jobs:
       # (greengrass-commons @ git+https://github.com/edgecommons/ggcommons.git@<tag>...)
       # need a token to clone it. The org GITHUB_TOKEN is repo-scoped and cannot read
       # another private repo, so provide a read-only PAT as the org/repo Actions secret
-      # GGCOMMONS_READ_TOKEN. No token -> step is a no-op (fine for public-dep components).
+      # EDGECOMMONS_READ_TOKEN. No token -> step is a no-op (fine for public-dep components).
       - if: inputs.language == 'PYTHON'
         name: Configure private git auth for ggcommons (if a token is provided)
         env:
-          GGCOMMONS_READ_TOKEN: ${{ secrets.GGCOMMONS_READ_TOKEN }}
+          EDGECOMMONS_READ_TOKEN: ${{ secrets.EDGECOMMONS_READ_TOKEN }}
         run: |
-          if [ -n "$GGCOMMONS_READ_TOKEN" ]; then
-            git config --global url."https://x-access-token:${GGCOMMONS_READ_TOKEN}@github.com/".insteadOf "https://github.com/"
+          if [ -n "$EDGECOMMONS_READ_TOKEN" ]; then
+            git config --global url."https://x-access-token:${EDGECOMMONS_READ_TOKEN}@github.com/".insteadOf "https://github.com/"
             echo "configured private git auth for github.com"
           else
-            echo "GGCOMMONS_READ_TOKEN not set; private git-dep installs may fail"
+            echo "EDGECOMMONS_READ_TOKEN not set; private git-dep installs may fail"
           fi
       - if: inputs.language == 'PYTHON'
         run: |
