@@ -1,0 +1,99 @@
+# Reusable component CI for the edgecommons ecosystem.
+#
+# Call from a component repo:
+#
+#   # .github/workflows/ci.yml
+#   name: ci
+#   on: [push, pull_request]
+#   jobs:
+#     ci:
+#       uses: edgecommons/.github/.github/workflows/component-ci.yml@main
+#       with:
+#         language: PYTHON            # JAVA | PYTHON | RUST | TYPESCRIPT
+#         working-directory: "."      # optional
+#
+# Toolchain versions are inputs so a component can pin its own. This is a sensible starting
+# template — specialize per component as real CI needs surface (coverage gates, GDK build,
+# container publish to ghcr.io/edgecommons/*, etc.).
+
+name: component-ci
+
+on:
+  workflow_call:
+    inputs:
+      language:
+        description: "JAVA | PYTHON | RUST | TYPESCRIPT"
+        required: true
+        type: string
+      working-directory:
+        description: "Path to the component within the repo"
+        required: false
+        type: string
+        default: "."
+      java-version:
+        required: false
+        type: string
+        default: "25"
+      python-version:
+        required: false
+        type: string
+        default: "3.12"
+      node-version:
+        required: false
+        type: string
+        default: "20"
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # ----- JAVA -----
+      - if: inputs.language == 'JAVA'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java-version }}
+          cache: maven
+      - if: inputs.language == 'JAVA'
+        run: mvn -B verify
+
+      # ----- PYTHON -----
+      - if: inputs.language == 'PYTHON'
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+      - if: inputs.language == 'PYTHON'
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e . -r requirements-test.txt
+          python -m pytest
+
+      # ----- RUST -----
+      - if: inputs.language == 'RUST'
+        uses: dtolnay/rust-toolchain@stable
+      - if: inputs.language == 'RUST'
+        run: |
+          cargo build --all-targets
+          cargo test
+          cargo clippy --all-targets -- -D warnings
+
+      # ----- TYPESCRIPT -----
+      - if: inputs.language == 'TYPESCRIPT'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+      - if: inputs.language == 'TYPESCRIPT'
+        run: |
+          npm ci
+          npm run build
+          npm test
+
+      - if: ${{ !contains(fromJSON('["JAVA","PYTHON","RUST","TYPESCRIPT"]'), inputs.language) }}
+        run: |
+          echo "::error::unknown language input '${{ inputs.language }}' (expected JAVA|PYTHON|RUST|TYPESCRIPT)"
+          exit 1

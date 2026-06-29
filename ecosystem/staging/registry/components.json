@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "updated": "2026-06-29",
+  "components": [
+    {
+      "name": "opcua-adapter",
+      "repo": "edgecommons/opcua-adapter",
+      "language": "JAVA",
+      "category": "adapter",
+      "protocol": "OPC UA",
+      "description": "Java reference southbound adapter (Eclipse Milo). Subscribes to OPC UA nodes and republishes value changes as SouthboundTagUpdate messages; serves on-demand reads/writes and emits the southbound_health metric.",
+      "status": "beta",
+      "platforms": ["GREENGRASS", "HOST", "KUBERNETES"],
+      "library": "com.mbreissi:ggcommons",
+      "topics": ["edgecommons", "aws-iot-greengrass", "iiot", "opc-ua", "edgecommons-adapter"]
+    },
+    {
+      "name": "modbus-adapter",
+      "repo": "edgecommons/modbus-adapter",
+      "language": "PYTHON",
+      "category": "adapter",
+      "protocol": "Modbus",
+      "description": "Python reference southbound adapter (pymodbus). Polls Modbus TCP / serial RTU / RTU-over-TCP register maps and republishes value changes as SouthboundTagUpdate messages; serves reads/writes and emits the southbound_health metric.",
+      "status": "beta",
+      "platforms": ["GREENGRASS", "HOST", "KUBERNETES"],
+      "library": "greengrass-commons",
+      "topics": ["edgecommons", "aws-iot-greengrass", "iiot", "modbus", "edgecommons-adapter"]
+    }
+  ]
+}

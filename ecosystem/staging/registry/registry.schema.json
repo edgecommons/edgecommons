@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/edgecommons/registry/main/registry.schema.json",
+  "title": "edgecommons component registry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "components"],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "updated": { "type": "string", "description": "ISO date (YYYY-MM-DD) the catalog was last edited" },
+    "components": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/component" }
+    }
+  },
+  "$defs": {
+    "component": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "repo", "language", "category", "description"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+          "description": "Flat repo name within the org, e.g. opcua-adapter"
+        },
+        "repo": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+          "description": "owner/name on GitHub, e.g. edgecommons/opcua-adapter"
+        },
+        "language": {
+          "type": "string",
+          "enum": ["JAVA", "PYTHON", "RUST", "TYPESCRIPT"]
+        },
+        "category": {
+          "type": "string",
+          "enum": ["adapter", "processor", "sink"]
+        },
+        "protocol": {
+          "type": "string",
+          "description": "Optional field/transport protocol, e.g. OPC UA, Modbus"
+        },
+        "description": { "type": "string", "minLength": 10 },
+        "status": {
+          "type": "string",
+          "enum": ["experimental", "beta", "stable", "deprecated"],
+          "default": "experimental"
+        },
+        "platforms": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["GREENGRASS", "HOST", "KUBERNETES"] },
+          "uniqueItems": true
+        },
+        "library": {
+          "type": "string",
+          "description": "The ggcommons coordinate this component builds on, e.g. com.mbreissi:ggcommons or greengrass-commons"
+        },
+        "topics": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true
+        }
+      }
+    }
+  }
+}
