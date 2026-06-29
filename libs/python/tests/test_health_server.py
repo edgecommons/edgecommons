@@ -17,6 +17,7 @@ behavior; kept parallel to the other Phase-1c parity tests.
 
 import argparse
 import http.client
+import signal
 
 import pytest
 
@@ -383,6 +384,8 @@ def _bare_gg_for_shutdown(readiness, health_server=None):
     gg._health_server = health_server
     gg._sigterm_installed = False
     gg._prev_sigterm_handler = None
+    gg._sigint_installed = False
+    gg._prev_sigint_handler = None
     return gg
 
 
@@ -429,3 +432,44 @@ def test_sigterm_handler_flips_readiness_and_exits(monkeypatch):
         assert readiness.is_ready() is False
     finally:
         MessagingClient._messaging_provider = prev
+
+
+def test_install_wires_both_sigterm_and_sigint_and_restores_both(monkeypatch):
+    """#21 FR-HB-2 parity: the library wires BOTH SIGTERM and SIGINT to the graceful-shutdown path,
+    and restores the previous handler for each on shutdown (Java's JVM hook fires on SIGTERM+SIGINT,
+    TS wires both process.on signals, Rust awaits SIGTERM + Ctrl-C). Before the fix only SIGTERM was
+    installed, so an interactive Ctrl-C (SIGINT) bypassed the library-owned shutdown."""
+    calls = []
+    sentinel_prev = object()
+
+    def fake_signal(signum, handler):
+        calls.append((signum, handler))
+        return sentinel_prev  # pretend each signal already had a handler
+
+    monkeypatch.setattr(signal, "signal", fake_signal)
+
+    gg = _bare_gg_for_shutdown(readiness=None)
+    gg._install_signal_handlers()
+
+    installed = {signum for signum, _ in calls}
+    assert signal.SIGTERM in installed
+    assert signal.SIGINT in installed
+    assert gg._sigterm_installed is True
+    assert gg._sigint_installed is True
+    assert gg._prev_sigterm_handler is sentinel_prev
+    assert gg._prev_sigint_handler is sentinel_prev
+
+    # On shutdown both signals are restored to their previous handlers and the flags reset.
+    calls.clear()
+    prev = MessagingClient._messaging_provider
+    MessagingClient._messaging_provider = _FakeProvider(connected=True)
+    try:
+        gg.shutdown()
+    finally:
+        MessagingClient._messaging_provider = prev
+
+    restored = {signum for signum, handler in calls if handler is sentinel_prev}
+    assert signal.SIGTERM in restored
+    assert signal.SIGINT in restored
+    assert gg._sigterm_installed is False
+    assert gg._sigint_installed is False

@@ -439,15 +439,14 @@ with GGCommonsBuilder.create("my-component").with_args(args).build() as gg:
     ...   # business logic
 ```
 
-The library installs a **SIGTERM-only** signal handler (main thread only) that calls `shutdown()`
-then `sys.exit(0)`. `__enter__`/`__exit__` make `GGCommons` a context manager that calls
-`shutdown()` on exit.
+The library installs **SIGTERM and SIGINT** signal handlers (main thread only) that call `shutdown()`
+then `sys.exit(0)`; the previous handler for each signal is saved and restored on shutdown.
+`__enter__`/`__exit__` make `GGCommons` a context manager that calls `shutdown()` on exit.
 
 <Aside type="note">
-Python wires **SIGTERM only** — it does not install a SIGINT handler, unlike Java (hook covers both)
-and TypeScript (explicit SIGTERM + SIGINT). This matches how Greengrass and Kubernetes stop a
-process (SIGTERM); Ctrl-C (SIGINT/`KeyboardInterrupt`) is not routed through the graceful path.
-{/* NEEDS REVIEW: confirm Python SIGINT-not-wired is intended behavior, not just an omission (ggcommons.py:530-546). */}
+Python wires **both SIGTERM and SIGINT** through the graceful-shutdown path, at parity with Java
+(JVM hook covers both) and TypeScript (explicit SIGTERM + SIGINT). SIGTERM is how Greengrass and
+Kubernetes stop a process; SIGINT is interactive Ctrl-C on a local/host run.
 </Aside>
 
 </TabItem>
