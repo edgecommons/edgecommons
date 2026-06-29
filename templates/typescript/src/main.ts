@@ -15,7 +15,7 @@
  *   -t my-thing
  * ```
  */
-import { GGCommonsBuilder, logger } from "@breissinger/ggcommons";
+import { GGCommonsBuilder, logger } from "@mbreissi/ggcommons";
 
 import { App } from "./app";
 
@@ -30,19 +30,19 @@ async function main(): Promise<void> {
 
   const app = new App(gg);
 
-  // Graceful shutdown: stop the app, then release the runtime. SIGTERM is what
-  // Greengrass sends to stop a component; SIGINT is Ctrl-C for local runs.
-  const shutdown = async (signal: string): Promise<void> => {
-    logger.info(`${signal} received; shutting down`);
+  // The ggcommons runtime owns SIGTERM/SIGINT (FR-HB-2): on a termination signal it flips
+  // `/readyz` to 503, runs the idempotent graceful close, removes its handlers, and exits the
+  // process. Do NOT register your own `process.on("SIGTERM"/"SIGINT")` handler or call
+  // `process.exit()` — that double-runs teardown and can cut off the library's async close. The
+  // active runtime (messaging, heartbeat, health server) keeps the process alive until that signal.
+  // The try/finally below only covers a normal (non-signal) return from `run()`.
+  try {
+    await app.run();
+  } finally {
     await app.stop();
     await gg.close();
     logger.info("<<COMPONENTNAME>> stopped");
-    process.exit(0);
-  };
-  process.on("SIGINT", () => void shutdown("SIGINT"));
-  process.on("SIGTERM", () => void shutdown("SIGTERM"));
-
-  await app.run();
+  }
 }
 
 main().catch((err) => {

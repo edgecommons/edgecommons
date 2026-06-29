@@ -159,6 +159,29 @@ class TestConfigManagerBase:
         with pytest.raises(Exception):
             DictConfigManager({"component": {}, "bogusTopLevelKey": 1})
 
+    def test_invalid_hot_reload_is_rejected_and_prior_config_kept(self):
+        """#20 parity: a schema-invalid HOT RELOAD is reject-and-keep — the prior config is retained,
+        listeners are NOT notified, and configuration_changed returns False (matching Java/Rust/TS).
+        Before the fix the validation failure was swallowed on the reload path and the invalid config
+        was applied + broadcast."""
+        cm = DictConfigManager({"component": {"global": {"k": "v1"}}}, validate_config=True)
+        cm.complete_initialization()  # _initializing == False -> the hot-reload path
+
+        notified = []
+
+        class _Listener(ConfigurationChangeListener):
+            def on_configuration_change(self, cfg):
+                notified.append(cfg)
+                return True
+
+        cm.add_config_change_listener(_Listener())
+
+        # extra top-level property -> schema-invalid; top level is strict (additionalProperties:false)
+        invalid = {"component": {"global": {"k": "v2"}}, "bogusTopLevelKey": 1}
+        assert cm.configuration_changed(invalid) is False  # rejected
+        assert notified == []                              # listeners NOT notified
+        assert cm.get_global_config() == {"k": "v1"}       # last-good config retained
+
     def test_close_is_noop_by_default(self):
         cm = DictConfigManager({"component": {}})
         cm.close()  # no error

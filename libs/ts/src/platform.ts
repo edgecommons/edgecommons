@@ -4,7 +4,7 @@
  * The pure precedence resolver and platform auto-detector. Maps parse-time inputs
  * (explicit flags, then environment, then the platform-profile defaults) to a single
  * {@link ResolvedProfile} consumed by the lifecycle builder. Mirrors the canonical Java
- * `com.breissinger.ggcommons.platform` package.
+ * `com.mbreissi.ggcommons.platform` package.
  *
  * One rule governs every defaultable setting:
  * ```
@@ -33,7 +33,6 @@
 import { existsSync } from "fs";
 
 import { GgError } from "./errors";
-import { logger } from "./logging";
 
 /**
  * The deployment platform — the primary runtime axis (DESIGN-core §2/§3). A platform is a named
@@ -106,6 +105,15 @@ export interface PlatformProfile {
    * default provider type when credentials is already configured.
    */
   readonly credentialsKeyProvider?: string;
+  /**
+   * The default metric `log` file path for this platform, applied when the component config sets no
+   * `metricEmission.targetConfig.logFileName` (the HOST-aware metric-log-path default). `HOST` and
+   * `KUBERNETES` default to {@link LOCAL_METRIC_LOG_PATH} (a local, writable path — neither has the
+   * GREENGRASS `/greengrass/v2/logs` directory); `GREENGRASS` leaves this `undefined` so the library
+   * default is unchanged. Consulted by the metrics service via {@link profileMetricLogPath}; an
+   * explicit `logFileName` always wins.
+   */
+  readonly metricLogPath?: string;
 }
 
 /**
@@ -189,6 +197,16 @@ export const JSON_LOG_FORMAT = "json";
  */
 export const PROMETHEUS_METRIC_TARGET = "prometheus";
 /**
+ * The default metric `log` file path on platforms WITHOUT the Greengrass logs directory (HOST and
+ * KUBERNETES) — the HOST-aware metric-log-path default. Those platforms default
+ * `metricEmission.targetConfig.logFileName` to this local, writable path (relative to the process
+ * working directory; the parent is created on demand) instead of the GREENGRASS `/greengrass/v2/logs`
+ * default, which does not exist off-device. The HOST/KUBERNETES profile default (see {@link PROFILES});
+ * consumed by the metrics service via {@link profileMetricLogPath}. Kept consistent across languages
+ * (the local `./logs/` directory); the filename suffix matches the library's own default.
+ */
+export const LOCAL_METRIC_LOG_PATH = "./logs/{ComponentFullName}.metric.log";
+/**
  * The key-provider type selecting the env KEK custodian (FR-CRED-3/FR-CRED-6) — a raw 32-byte KEK,
  * base64-encoded, read from an env var (typically a mounted Kubernetes Secret). The KUBERNETES profile's
  * default vault key-provider (see {@link PROFILES}). Kept here (next to the profile default) as the single
@@ -204,9 +222,10 @@ export const K8S_SA_TOKEN_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/
 export const DEFAULT_IDENTITY = "NOT_GREENGRASS";
 
 /**
- * The platform-profile table (DESIGN-core §3). GREENGRASS and HOST deliberately default the config
- * source to `GG_CONFIG` to preserve current behavior. KUBERNETES (Phase 1a) defaults to the `MQTT`
- * transport and the k8s-native `CONFIGMAP` config source.
+ * The platform-profile table (DESIGN-core §3). GREENGRASS defaults the config source to `GG_CONFIG`
+ * (the Nucleus-managed deployment config); HOST defaults to `FILE` (Phase 1, §12 #1 — `GG_CONFIG`
+ * needs the Nucleus IPC that HOST lacks, so it was a latent footgun). KUBERNETES (Phase 1a) defaults
+ * to the `MQTT` transport and the k8s-native `CONFIGMAP` config source.
  *
  * Phase 1c adds the KUBERNETES profile's default `loggingFormat` ({@link JSON_LOG_FORMAT}: the
  * structured stdout-JSON sink), `healthEnabled`, and (prometheus slice) the default `metricTarget`
@@ -216,7 +235,10 @@ export const DEFAULT_IDENTITY = "NOT_GREENGRASS";
  */
 export const PROFILES: ReadonlyMap<Platform, PlatformProfile> = new Map([
   [Platform.GREENGRASS, { transport: Transport.IPC, configSource: "GG_CONFIG" } as PlatformProfile],
-  [Platform.HOST, { transport: Transport.MQTT, configSource: "GG_CONFIG" } as PlatformProfile],
+  [
+    Platform.HOST,
+    { transport: Transport.MQTT, configSource: "FILE", metricLogPath: LOCAL_METRIC_LOG_PATH } as PlatformProfile,
+  ],
   [
     Platform.KUBERNETES,
     {
@@ -226,6 +248,7 @@ export const PROFILES: ReadonlyMap<Platform, PlatformProfile> = new Map([
       healthEnabled: true,
       metricTarget: PROMETHEUS_METRIC_TARGET,
       credentialsKeyProvider: ENV_KEY_PROVIDER,
+      metricLogPath: LOCAL_METRIC_LOG_PATH,
     } as PlatformProfile,
   ],
 ]);
@@ -263,6 +286,18 @@ export function profileMetricTarget(platform: Platform): string | undefined {
 }
 
 /**
+ * The platform-profile default metric `log` file path for `platform` (the HOST-aware metric-log-path
+ * default), or `undefined` when the profile pins no default (GREENGRASS → library default). `HOST` and
+ * `KUBERNETES` return {@link LOCAL_METRIC_LOG_PATH} (a local path — neither has `/greengrass/v2/logs`).
+ * Threaded into the metrics service so a HOST/KUBERNETES component with no `logFileName` config writes
+ * locally, while explicit config still wins. Pure lookup; the metrics service owns the precedence
+ * (explicit config ▸ this profile default ▸ library default). Mirrors {@link profileMetricTarget}.
+ */
+export function profileMetricLogPath(platform: Platform): string | undefined {
+  return PROFILES.get(platform)?.metricLogPath;
+}
+
+/**
  * The platform-profile default vault key-provider type for `platform` (Phase 1d / FR-CRED-6/FR-RT-3),
  * i.e. {@link ENV_KEY_PROVIDER} on KUBERNETES and `undefined` on GREENGRASS/HOST (library default
  * `file`). Threaded into the credentials init site, which owns the precedence (explicit
@@ -283,7 +318,6 @@ export function profileCredentialsKeyProvider(platform: Platform): string | unde
 export function resolveProfile(inputs: ResolverInputs, env: Env): ResolvedProfile {
   const autoDetected = inputs.platform === undefined;
   const platform = autoDetected ? detectPlatform(env) : inputs.platform!;
-  const basis = autoDetected ? "auto-detected" : "explicit --platform";
 
   const profile = PROFILES.get(platform);
   if (!profile) {
@@ -298,11 +332,6 @@ export function resolveProfile(inputs: ResolverInputs, env: Env): ResolvedProfil
 
   const configSource = inputs.configArgs ?? [profile.configSource];
   const identity = resolveIdentity(inputs.thing, platform, env);
-
-  logger.info(
-    `Resolved platform=${platform} (basis=${basis}) transport=${transport} ` +
-      `configSource=${configSource[0]} identity=${identity}`,
-  );
 
   return { platform, transport, configSource, identity };
 }

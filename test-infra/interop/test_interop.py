@@ -39,6 +39,36 @@ HOST = os.environ.get("GGCOMMONS_IT_MQTT_HOST", "localhost")
 PORT = int(os.environ.get("GGCOMMONS_IT_MQTT_PORT", "1883"))
 LANGS = ["python", "java", "rust", "ts"]
 
+# Canonical payload permutations every requester sends as the request body's `types` field; the
+# responder echoes it. A deep round-trip across all 16 ordered pairs proves cross-language payload
+# fidelity (serialized by the requester, parsed + re-serialized by the responder, parsed back).
+# Both a null inside an array AND a top-level null-valued MAP entry (`nullv`) are tested: since #15,
+# the Java sender preserves null-valued Map entries (serializeNulls for Map payloads), so all four
+# languages now round-trip explicit nulls as JSON null.
+EXPECTED_TYPES = {
+    "b": True, "bf": False,
+    "i": 42, "ni": -7, "fl": 3.5,
+    "slash": "a/b", "quote": 'x"y',
+    "arr": [1, "two", False, None],
+    "nullv": None,
+    "nested": {"k": [1, {"d": 2}]},
+    "ea": [], "eo": {},
+}
+
+
+def _payload_eq(exp, act):
+    """Deep payload equality across languages: bool-strict, number-lenient (Java's Gson parses every
+    JSON number to a double, so 42 and 42.0 must compare equal), structure-strict otherwise."""
+    if isinstance(exp, bool) or isinstance(act, bool):
+        return exp is act
+    if isinstance(exp, (int, float)) and isinstance(act, (int, float)):
+        return float(exp) == float(act)
+    if isinstance(exp, dict) and isinstance(act, dict):
+        return exp.keys() == act.keys() and all(_payload_eq(exp[k], act[k]) for k in exp)
+    if isinstance(exp, list) and isinstance(act, list):
+        return len(exp) == len(act) and all(_payload_eq(x, y) for x, y in zip(exp, act))
+    return exp == act
+
 
 def _broker_up():
     try:
@@ -72,7 +102,10 @@ def _shaded_jar():
     jars = [j for j in target.glob("ggcommons-*.jar")
             if not j.name.startswith("original-")
             and not j.name.endswith(("-sources.jar", "-javadoc.jar", "-shaded.jar"))]
-    return str(sorted(jars)[-1]) if jars else None
+    # Pick the most-recently-built jar (by mtime), NOT the name-sorted last: a stale higher-version
+    # jar left in target/ (e.g. a pre-rename 1.3.2-SNAPSHOT) would otherwise name-sort above the
+    # current 0.1.0 build and silently run interop against an old library.
+    return str(max(jars, key=lambda p: p.stat().st_mtime)) if jars else None
 
 
 # Built once and reused; populated by the session fixtures below.
@@ -116,8 +149,17 @@ def commands():
         r = subprocess.run(f'"{npm}" install', cwd=WORKSPACE, capture_output=True, text=True,
                            timeout=600, shell=True)
         assert r.returncode == 0, f"ts npm install failed:\n{r.stderr}"
+        # #14 guard: force-clean the TS build outputs so the ts_node can never silently run against a
+        # stale libs/ts build (the "old library" trap that made the ts raw-publisher time out even
+        # though publishRaw was correct). The plain `tsc` build below then regenerates both dists from
+        # current source, so ts_node always links the freshly-built library.
+        for stale_dist in (WORKSPACE / "libs" / "ts" / "dist", HERE / "ts_node" / "dist"):
+            shutil.rmtree(stale_dist, ignore_errors=True)
+        for ts_dir in (WORKSPACE / "libs" / "ts", HERE / "ts_node"):
+            for info in ts_dir.glob("*.tsbuildinfo"):
+                info.unlink(missing_ok=True)
         r = subprocess.run(
-            f'"{npm}" run build --workspace=@breissinger/ggcommons --workspace=ggcommons-interop-ts-node',
+            f'"{npm}" run build --workspace=@mbreissi/ggcommons --workspace=ggcommons-interop-ts-node',
             cwd=WORKSPACE, capture_output=True, text=True, timeout=300, shell=True)
         assert r.returncode == 0, f"ts build failed:\n{r.stderr}\n{r.stdout}"
         node_js = HERE / "ts_node" / "dist" / "interop_node.js"
@@ -212,6 +254,13 @@ def test_interop_request_reply(commands, requester, responder):
         body = payload["reply_body"]
         assert body["responder"] == responder, f"reply should come from the {responder} responder"
         assert body["echo"]["token"] == token, "responder must echo the request body"
+        # Payload-permutation fidelity: the canonical `types` object must survive the full round-trip
+        # (requester serialize -> responder parse + re-serialize -> requester parse) for every pair.
+        echoed_types = body["echo"].get("types")
+        assert echoed_types is not None, f"{requester}->{responder}: request 'types' missing from echo"
+        assert _payload_eq(EXPECTED_TYPES, echoed_types), (
+            f"payload permutations must round-trip {requester}->{responder}; got {echoed_types}"
+        )
     finally:
         resp_proc.terminate()
         try:

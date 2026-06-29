@@ -395,7 +395,7 @@ const COMPONENT_NAME = "com.example.MyComponent";
 async function main(): Promise<void> {
   const gg = await new GGCommonsBuilder(COMPONENT_NAME).args(process.argv.slice(2)).build();
   logger.info(`starting: thing=${gg.config().thingName}`);
-  process.on("SIGTERM", () => void gg.close().then(() => process.exit(0)));
+  // The runtime owns SIGTERM/SIGINT (FR-HB-2) — don't add your own handler or call process.exit().
   // ... business logic ...
 }
 

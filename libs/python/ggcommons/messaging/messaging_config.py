@@ -102,7 +102,10 @@ class MessagingConfiguration:
                     logger.debug(f"Local broker authentication methods: {', '.join(auth_methods) if auth_methods else 'none'}")
                 
                 local_config = LocalMqttConfig(
-                    type=local_data['type'],
+                    # `type` is an unvalidated broker tag (no schema enum) that nothing consumes; it is
+                    # set by the Java/Python samples and ignored by Rust/TS. Default it to "mqtt" so a
+                    # config without it is accepted (parity with Rust/TS, which don't require it).
+                    type=local_data.get('type', 'mqtt'),
                     host=local_data['host'],
                     port=local_data['port'],
                     client_id=local_data['clientId'],

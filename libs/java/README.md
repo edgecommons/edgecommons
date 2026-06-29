@@ -1,7 +1,7 @@
 # GGCommons Java Library
 
 The **canonical** implementation of the Greengrass Commons library (Maven artifact
-`com.breissinger:ggcommons`) for building AWS IoT Greengrass v2 components with built-in
+`com.mbreissi:ggcommons`) for building AWS IoT Greengrass v2 components with built-in
 configuration management, messaging, metrics, heartbeat, logging, credentials (encrypted vault),
 parameters (externalized config), and telemetry streaming. It is one of four parallel
 implementations (Java, Python, Rust, TypeScript); Java is the reference the others mirror. See the
@@ -64,7 +64,7 @@ Add the GGCommons library to your Maven project:
 
 ```xml
 <dependency>
-    <groupId>com.breissinger</groupId>
+    <groupId>com.mbreissi</groupId>
     <artifactId>ggcommons</artifactId>
     <version>1.3.2-SNAPSHOT</version>
 </dependency>
@@ -198,9 +198,11 @@ GGCommons supports several command line options for configuration and messaging:
 ### Configuration Source (`-c, --config`)
 - `FILE [path]` - Load from JSON file (default: current directory)
 - `ENV [var_name]` - Load from environment variable (default: GGCOMMONS_CONFIG)
-- `GG_CONFIG [component] [key]` - Load from Greengrass deployment (default)
+- `GG_CONFIG [component] [key]` - Load from Greengrass deployment (the default on the GREENGRASS platform)
 - `SHADOW [name]` - Load from IoT Device Shadow
 - `CONFIG_COMPONENT` - Load from configuration management component
+
+The default source comes from the resolved platform profile (GREENGRASS → GG_CONFIG, HOST → FILE, KUBERNETES → CONFIGMAP).
 
 ### Platform (`--platform`)
 - `GREENGRASS` - Greengrass runtime; uses Greengrass IPC by default

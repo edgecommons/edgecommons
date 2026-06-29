@@ -63,7 +63,7 @@ ComponentConfiguration:
         instances: []
     accessControl:
       aws.greengrass.ipc.pubsub:
-        "com.breissinger.greengrass.PythonComponentSkeleton:pubsub:1":
+        "com.mbreissi.greengrass.PythonComponentSkeleton:pubsub:1":
           policyDescription: Allows access to publish/subscribe to all topics.
           operations:
             - "aws.greengrass#PublishToTopic"
@@ -71,7 +71,7 @@ ComponentConfiguration:
           resources:
             - "*"
       aws.greengrass.ipc.mqttproxy:
-        "com.breissinger.greengrass.JavaComponentSkeleton:iotcore:1":
+        "com.mbreissi.greengrass.JavaComponentSkeleton:iotcore:1":
           policyDescription: Allows access to publish/subscribe to all topics on IoT Core.
           operations:
             - "aws.greengrass#PublishToIoTCore"
@@ -79,7 +79,7 @@ ComponentConfiguration:
           resources:
             - "*"
       aws.greengrass.ShadowManager:
-        "com.breissinger.greengrass.PythonComponentSkeleton:shadow:1":
+        "com.mbreissi.greengrass.PythonComponentSkeleton:shadow:1":
           policyDescription: Allows access to shadows.
           operations:
             - 'aws.greengrass#GetThingShadow'

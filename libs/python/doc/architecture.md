@@ -59,9 +59,12 @@ subclassing `ConfigManager`:
 |--------|---------|
 | `FILE` | `FileConfigManager` |
 | `ENV` | `EnvironmentConfigManager` |
-| `GG_CONFIG` (default) | `GreengrassConfigManager` |
+| `GG_CONFIG` | `GreengrassConfigManager` |
 | `SHADOW` | `ShadowConfigManager` |
 | `CONFIG_COMPONENT` | `ConfigComponentManager` |
+
+The default source comes from the resolved platform profile (GREENGRASS → GG_CONFIG,
+HOST → FILE, KUBERNETES → CONFIGMAP).
 
 Config supports template-variable substitution (component / thing / custom tags), hot reload via
 `ConfigurationChangeListener`, multi-instance components (global + per-instance config), and

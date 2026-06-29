@@ -32,16 +32,18 @@ cargo run -- \
 
 ## CLI contract
 
-- `-c/--config <SOURCE> [args...]` — `FILE | ENV | GG_CONFIG (default) | SHADOW | CONFIG_COMPONENT`
+- `-c/--config <SOURCE> [args...]` — `FILE | ENV | GG_CONFIG | SHADOW | CONFIG_COMPONENT` (default: from the resolved platform profile — GREENGRASS → GG_CONFIG, HOST → FILE, KUBERNETES → CONFIGMAP)
 - `--platform <PLATFORM>` — `GREENGRASS | HOST | KUBERNETES | auto` (default `auto`)
 - `--transport <TRANSPORT> [path]` — `IPC | MQTT [messaging_config.json]` (default: from the platform; IPC only valid on GREENGRASS)
 - `-t/--thing <name>` — IoT Thing name
 
-## Build & publish with the GDK (on-device)
+## Deploy to Greengrass
 
 The on-device build uses the GDK **custom** build system (`gdk-config.json` →
 `custom_build_command: bash build.sh`). `build.sh` compiles the binary with the
-`greengrass` feature (Greengrass IPC) and stages it per the GDK contract.
+`greengrass` feature (Greengrass IPC) and stages it per the GDK contract, then
+`gdk component publish` uploads the artifact + recipe and registers the component
+version in your account.
 
 ```bash
 gdk component build
@@ -51,6 +53,29 @@ gdk component publish
 > **Linux-only device build:** the `greengrass` feature compiles a C-FFI SDK and
 > only builds on Linux (with `libclang`). Build on a Linux host, or cross-compile:
 > `GGCOMMONS_TARGET=x86_64-unknown-linux-gnu gdk component build`.
+
+## Deploy to Kubernetes
+
+Generated only when KUBERNETES is a selected target. The `Dockerfile` builds the
+standalone binary into a slim, non-root image; `k8s/` holds the manifests. With
+`--platform auto` the library detects KUBERNETES from the ServiceAccount token, so
+no args are needed — config source defaults to CONFIGMAP, transport to MQTT (broker
+config from the mounted ConfigMap), identity from the Downward API.
+
+```bash
+# 1. Build the image (the cargo git dep needs network + git auth — see Dockerfile).
+docker build -t ghcr.io/<owner>/<<COMPONENTNAME>>:latest .
+
+# 2. Make it available to the cluster: push to your registry, or load into a local kind cluster.
+docker push ghcr.io/<owner>/<<COMPONENTNAME>>:latest
+#   kind load docker-image ghcr.io/<owner>/<<COMPONENTNAME>>:latest
+
+# 3. Set `image:` in k8s/deployment.yaml to that reference (replace REPLACE_ME), then apply.
+kubectl apply -f k8s/
+```
+
+The ConfigMap is mounted as a **directory** at `/etc/ggcommons`; edit `k8s/configmap.yaml`
+and `kubectl apply -f k8s/` again to hot-reload the component config in-process (no restart).
 
 ## The ggcommons dependency
 

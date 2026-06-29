@@ -497,10 +497,12 @@ platform reality:
 - **Java** — a JVM shutdown hook (`Runtime.addShutdownHook`) catches `SIGTERM`/`SIGINT`; the JVM exits
   0 after the hook. An app-driven `shutdown()` deregisters the hook; a `shutdownComplete`
   `AtomicBoolean` CAS makes it idempotent.
-- **Python** — `signal.signal(SIGTERM, ...)` is installed **only on the main thread**; the handler
-  flips readiness, calls `shutdown()`, and `sys.exit(0)`. `SIGINT` is not hooked by the library.
-- **Rust** — a tokio signal-watcher task calls `state.begin_shutdown()` on the first signal; teardown
-  is RAII.
+- **Python** — `signal.signal(SIGTERM, ...)` **and `signal.signal(SIGINT, ...)`** are installed
+  **only on the main thread**; the handler flips readiness, calls `shutdown()`, and `sys.exit(0)`.
+  Both previous handlers are saved and restored on shutdown.
+- **Rust** — a tokio signal-watcher task calls `state.begin_shutdown()` on the first signal and
+  resolves the library-owned `gg.shutdown_signal()` future (which the app awaits to leave its run
+  loop); teardown is RAII on drop.
 - **TypeScript** — `process.on("SIGTERM" | "SIGINT", ...)` flips readiness, awaits `close()`, then
   `process.exit(0)`; handlers are removed in `close()`.
 

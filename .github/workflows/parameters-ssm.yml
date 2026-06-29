@@ -10,7 +10,7 @@ on:
       - "libs/rust/src/parameters/**"
       - "libs/python/ggcommons/parameters/**"
       - "libs/ts/src/parameters/**"
-      - "libs/java/src/main/java/com/breissinger/ggcommons/parameters/**"
+      - "libs/java/src/main/java/com/mbreissi/ggcommons/parameters/**"
       - "libs/*/**/test*parameters*"
       - ".github/workflows/parameters-ssm.yml"
   pull_request:
@@ -18,7 +18,7 @@ on:
       - "libs/rust/src/parameters/**"
       - "libs/python/ggcommons/parameters/**"
       - "libs/ts/src/parameters/**"
-      - "libs/java/src/main/java/com/breissinger/ggcommons/parameters/**"
+      - "libs/java/src/main/java/com/mbreissi/ggcommons/parameters/**"
       - "libs/*/**/test*parameters*"
       - ".github/workflows/parameters-ssm.yml"
 

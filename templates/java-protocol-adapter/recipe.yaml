@@ -1,0 +1,77 @@
+---
+RecipeFormatVersion: "2020-01-25"
+ComponentName: "<<COMPONENTFULLNAME>>"
+ComponentVersion: "1.0.0"
+ComponentDescription: "<<DESCRIPTION>>"
+ComponentPublisher: "<<AUTHOR>>"
+ComponentDependencies:
+  aws.greengrass.TokenExchangeService:
+    VersionRequirement: ">=2.0.0"
+    DependencyType: "HARD"
+ComponentConfiguration:
+  DefaultConfiguration:
+    ComponentConfig:
+      logging:
+        level: "INFO"
+        java_format: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%-5p] %C{1} (%L) [%t] : %m%n"
+      heartbeat:
+        intervalSecs: 5
+        targets:
+          - type: "messaging"
+            config:
+              destination: "ipc"
+              topic: "heartbeat/{ThingName}/{ComponentName}"
+        measures:
+          cpu: true
+          memory: true
+          disk: false
+          fds: true
+          files: true
+      tags: {}
+      metricEmission:
+        target: "log"
+        targetConfig:
+          logFileName: "/greengrass/v2/logs/{ComponentFullName}.metric.log"
+      component:
+        global: {}
+        instances: []
+    accessControl:
+      aws.greengrass.ipc.pubsub:
+        "<<COMPONENTFULLNAME>>:ipc:1":
+          policyDescription: Allows access to publish/subscribe to all topics on IPC
+          operations:
+            - "aws.greengrass#PublishToTopic"
+            - "aws.greengrass#SubscribeToTopic"
+          resources:
+            - "*"
+      aws.greengrass.ipc.mqttproxy:
+        "<<COMPONENTFULLNAME>>:iotcore:1":
+          policyDescription: Allows access to publish/subscribe to all topics on IoT Core.
+          operations:
+            - "aws.greengrass#PublishToIoTCore"
+            - "aws.greengrass#SubscribeToIoTCore"
+          resources:
+            - "*"
+      aws.greengrass.ShadowManager:
+        "<<COMPONENTFULLNAME>>:shadow:1":
+          policyDescription: Allows access to shadows.
+          operations:
+            - 'aws.greengrass#GetThingShadow'
+            - 'aws.greengrass#UpdateThingShadow'
+            - 'aws.greengrass#DeleteThingShadow'
+          resources:
+            - "*"
+Manifests:
+  - Platform:
+      os: all
+    Artifacts:
+      - URI: "s3://BUCKET_NAME/COMPONENT_NAME/COMPONENT_VERSION/<<JARNAME>>-1.0.0.jar"
+    Lifecycle:
+      # Runs as the default component user (ggc_user) — no elevated privilege needed (GG IPC,
+      # TES-backed AWS, and the work dir are all accessible unprivileged). Add RequiresPrivilege
+      # only if your component genuinely requires root.
+      Run:
+        Setenv:
+          CONFIG: "{configuration:/ComponentConfig}"
+        Script:
+          "java -cp {artifacts:path}/<<JARNAME>>-1.0.0.jar <<MAINCLASSNAME>> --platform GREENGRASS"

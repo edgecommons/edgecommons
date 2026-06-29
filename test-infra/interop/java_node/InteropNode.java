@@ -1,8 +1,8 @@
-import com.breissinger.ggcommons.config.ConfigManager;
-import com.breissinger.ggcommons.messaging.Message;
-import com.breissinger.ggcommons.messaging.MessageBuilder;
-import com.breissinger.ggcommons.messaging.MessagingConfiguration;
-import com.breissinger.ggcommons.messaging.providers.standalone.StandaloneMessagingProvider;
+import com.mbreissi.ggcommons.config.ConfigManager;
+import com.mbreissi.ggcommons.messaging.Message;
+import com.mbreissi.ggcommons.messaging.MessageBuilder;
+import com.mbreissi.ggcommons.messaging.MessagingConfiguration;
+import com.mbreissi.ggcommons.messaging.providers.standalone.StandaloneMessagingProvider;
 import com.google.gson.Gson;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -52,6 +52,31 @@ public class InteropNode {
         return GSON.toJsonTree(o);
     }
 
+    /**
+     * Canonical cross-language payload permutations, built as a plain {@link java.util.Map} (NOT a
+     * JsonObject) so the Java sender exercises issue #13's {@code withPayload(Map)} -> Gson
+     * serialization across the wire. {@code null} is tested inside an array (Gson drops null-valued
+     * MAP entries — a documented divergence), so there is no top-level null key.
+     */
+    static java.util.Map<String, Object> typesMap() {
+        java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
+        m.put("b", true);
+        m.put("bf", false);
+        m.put("i", 42);
+        m.put("ni", -7);
+        m.put("fl", 3.5);
+        m.put("slash", "a/b");
+        m.put("quote", "x\"y");
+        m.put("arr", java.util.Arrays.asList(1, "two", false, null));
+        m.put("nullv", null);
+        java.util.Map<String, Object> inner = new java.util.LinkedHashMap<>();
+        inner.put("d", 2);
+        m.put("nested", java.util.Collections.singletonMap("k", java.util.Arrays.asList(1, inner)));
+        m.put("ea", java.util.Collections.emptyList());
+        m.put("eo", java.util.Collections.emptyMap());
+        return m;
+    }
+
     public static void main(String[] args) throws Exception {
         String role = args[0];
         ConfigManager cfg = new InteropConfig("interop-java");
@@ -74,9 +99,12 @@ public class InteropNode {
             String topic = args[1];
             String token = args[2];
             StandaloneMessagingProvider prov = provider("req");
-            JsonObject reqBody = new JsonObject();
-            reqBody.addProperty("token", token);
-            reqBody.addProperty("from", LANG);
+            // Issue #13: build the request body as a plain Map (NOT a JsonObject) so the Java sender
+            // exercises the withPayload(Map) -> Gson serialization path end-to-end across the wire.
+            java.util.Map<String, Object> reqBody = new java.util.LinkedHashMap<>();
+            reqBody.put("token", token);
+            reqBody.put("from", LANG);
+            reqBody.put("types", typesMap());
             Message req = MessageBuilder.create("InteropRequest", "1.0")
                     .withPayload(reqBody).withConfig(cfg).build();
             String corr = req.getCorrelationId();

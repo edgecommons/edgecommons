@@ -178,4 +178,25 @@ describe("FR-MSG-2: Kubernetes Service-DNS broker host", () => {
     expect(hoisted.connectCalls[0].options.rejectUnauthorized).toBeUndefined();
     await provider.disconnect();
   });
+
+  it("a local broker with certPath but no caPath stays plaintext (issue #11 parity with Java/Python/Rust)", async () => {
+    const certPath = tmpFile("client.pem", "CERT");
+    const keyPath = tmpFile("client.key", "KEY");
+    const cfg = await loadMessagingConfig(
+      tmpFile(
+        "local-cert-no-ca.json",
+        JSON.stringify({
+          messaging: {
+            local: { host: "localhost", port: 1883, clientId: "c-cert-no-ca", credentials: { certPath, keyPath } },
+          },
+        }),
+      ),
+    );
+    const provider = await StandaloneMqttProvider.connect(cfg);
+    // `caPath` is the sole local-TLS trigger (matches Java/Python/Rust): no CA -> plaintext, and the
+    // client cert is not loaded. Previously TS used mqtts here (caPath || certPath).
+    expect(hoisted.connectCalls[0].url).toBe("mqtt://localhost:1883");
+    expect(hoisted.connectCalls[0].options.cert).toBeUndefined();
+    await provider.disconnect();
+  });
 });

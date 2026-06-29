@@ -144,7 +144,7 @@ python3 main.py --platform HOST --transport MQTT ./standalone-messaging.json -c 
 
 ### CLI contract
 
-- `-c/--config <SOURCE> [args]` — `FILE`, `ENV`, `GG_CONFIG` (default), `SHADOW`, `CONFIG_COMPONENT`.
+- `-c/--config <SOURCE> [args]` — `FILE`, `ENV`, `GG_CONFIG`, `SHADOW`, `CONFIG_COMPONENT` (default: from the resolved platform profile — GREENGRASS → GG_CONFIG, HOST → FILE, KUBERNETES → CONFIGMAP).
 - `--platform <PLATFORM>` — `GREENGRASS` | `HOST` | `KUBERNETES` | `auto` (default `auto`).
 - `--transport <TRANSPORT> [path]` — `IPC` | `MQTT [messaging_config.json]` (default derived from the
   platform; `IPC` is valid only on `GREENGRASS`).

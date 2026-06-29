@@ -84,6 +84,24 @@ class TestMessage:
         m.raw = "raw-string"
         assert m.to_dict() == {"raw": "raw-string"}
 
+    def test_bytes_body_serializes_as_base64_string(self):
+        # #16: a bytes body travels as a base64 JSON string (portable cross-language interim), not a
+        # Python-specific form (json.dumps(bytes) would otherwise raise). The canonical vector
+        # {0,1,2,254,255} base64-encodes to "AAEC/v8=" — the same string Java/TS produce.
+        m = Message()
+        m.body = bytes([0, 1, 2, 254, 255])
+        d = m.to_dict()
+        assert d["body"] == "AAEC/v8="
+        # And it must be JSON-serializable end-to-end (it was not before the fix).
+        assert json.loads(str(m))["body"] == "AAEC/v8="
+
+    def test_to_dict_preserves_explicit_null_map_entry(self):
+        # #15 parity: an explicit None entry in a dict body round-trips as JSON null (Python already
+        # did this; asserted here as the cross-language contract alongside the Java fix).
+        m = Message()
+        m.body = {"present": 1, "nullv": None}
+        assert json.loads(str(m))["body"] == {"present": 1, "nullv": None}
+
     def test_str_serializes(self):
         m = Message()
         m.body = {"a": 1}

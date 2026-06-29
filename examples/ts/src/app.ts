@@ -29,7 +29,7 @@ import {
   Qos,
   StreamHandle,
   logger,
-} from "@breissinger/ggcommons";
+} from "@mbreissi/ggcommons";
 
 /** Default publish interval (seconds) when `component.global.publish_interval` is absent. */
 const DEFAULT_PUBLISH_INTERVAL_SECS = 3;

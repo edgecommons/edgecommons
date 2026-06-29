@@ -220,7 +220,7 @@ where
     // without a positional path. Computed from parse-time inputs only (the resolved transport +
     // config source) — never by reading the ConfigMap via the config source first (that runs after
     // messaging init). The explicit-path behavior is unchanged; HOST is unaffected (it defaults to
-    // GG_CONFIG, not CONFIGMAP, so no default is synthesized and MQTT still requires a path).
+    // FILE, not CONFIGMAP, so no default is synthesized and MQTT still requires a path).
     let messaging_config_path = default_messaging_config_path(
         messaging_config_path,
         resolved.transport,
@@ -405,10 +405,11 @@ mod tests {
 
     #[test]
     fn host_mqtt_does_not_synthesize_a_messaging_path() {
-        // HOST defaults to GG_CONFIG (not CONFIGMAP), so no default messaging path is synthesized;
-        // HOST+MQTT still requires an explicit path (enforced later, at messaging init).
+        // Only CONFIGMAP synthesizes a default messaging path; HOST defaults to FILE (not CONFIGMAP),
+        // so HOST+MQTT still requires an explicit path (enforced later, at messaging init).
         let a = parse(&["--platform", "HOST"]).unwrap();
         assert_eq!(a.transport, Transport::Mqtt);
+        assert_eq!(a.config, ConfigSourceSpec::File { path: PathBuf::from("config.json") });
         assert_eq!(a.messaging_config_path, None);
     }
 

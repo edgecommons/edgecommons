@@ -44,9 +44,9 @@
       <scope>test</scope>
     </dependency>
     <dependency>
-      <groupId>com.breissinger</groupId>
+      <groupId>com.mbreissi</groupId>
       <artifactId>ggcommons</artifactId>
-      <version>1.1.9-SNAPSHOT</version>
+      <version><<GGCOMMONS_VERSION>></version>
     </dependency>
     <dependency>
       <groupId>com.google.code.gson</groupId>
@@ -70,6 +70,7 @@
             <configuration>
               <transformers>
                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                  <mainClass><<MAINCLASSNAME>></mainClass>
                 </transformer>
               </transformers>
               <filters>
@@ -100,21 +101,20 @@
 
 
   <repositories>
+    <!-- Resolve com.mbreissi:ggcommons from GitHub Packages. Auth via ~/.m2/settings.xml:
+         a <server> with <id>github</id> and a GitHub token (read:packages). For a local
+         monorepo build use `mvn install` on libs/java instead (then ~/.m2 satisfies it). -->
     <repository>
-      <id>gitlab-maven</id>
-      <url>https://gitlab.aws.dev/api/v4/projects/83110/packages/maven</url>
+      <id>github</id>
+      <url>https://maven.pkg.github.com/mbreissi/ggcommons</url>
     </repository>
   </repositories>
 
   <distributionManagement>
+    <!-- Where THIS component would publish — edit to your own GitHub Packages repo. -->
     <repository>
-      <id>gitlab-maven</id>
-      <url>https://gitlab.aws.dev/api/v4/projects/83110/packages/maven</url>
+      <id>github</id>
+      <url>https://maven.pkg.github.com/OWNER/REPO</url>
     </repository>
-
-    <snapshotRepository>
-      <id>gitlab-maven</id>
-      <url>https://gitlab.aws.dev/api/v4/projects/83110/packages/maven</url>
-    </snapshotRepository>
   </distributionManagement>
 </project>

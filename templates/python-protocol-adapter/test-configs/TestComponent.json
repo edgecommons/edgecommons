@@ -1,0 +1,18 @@
+{
+  "tags": { "appId": "dev", "site": "site1", "shop": "shop1", "line": "line1" },
+  "logging": { "level": "INFO" },
+  "metricEmission": { "target": "messaging", "targetConfig": { "topic": "metrics/{ThingName}/{ComponentName}" } },
+  "component": {
+    "global": { "defaults": { "pollIntervalMs": 1000 } },
+    "instances": [
+      {
+        "id": "device1",
+        "adapter": "example",
+        "connection": { "_comment": "TODO: your protocol endpoint, e.g. host/port/unitId or an OPC UA endpoint" },
+        "publish": { "topic": "southbound/{site}/{ComponentName}/{InstanceId}/{tagId}", "batchMs": 0 },
+        "write": { "enabled": true, "topic": "southbound/{ComponentName}/{InstanceId}/write" },
+        "read": { "topic": "southbound/{ComponentName}/{InstanceId}/read" }
+      }
+    ]
+  }
+}

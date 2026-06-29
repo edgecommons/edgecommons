@@ -17,6 +17,7 @@ import {
   ENV_THING_NAME,
   JSON_LOG_FORMAT,
   K8S_SA_TOKEN_PATH,
+  LOCAL_METRIC_LOG_PATH,
   PROFILES,
   PROMETHEUS_METRIC_TARGET,
   Platform,
@@ -25,6 +26,7 @@ import {
   profileCredentialsKeyProvider,
   profileLoggingFormat,
   profileHealthEnabled,
+  profileMetricLogPath,
   profileMetricTarget,
   resolveIdentity,
   resolveProfile,
@@ -82,11 +84,11 @@ describe("resolveProfile: profile defaults", () => {
     expect(r.identity).toBe(DEFAULT_IDENTITY);
   });
 
-  it("explicit HOST -> MQTT + GG_CONFIG in Phase 0 (not FILE)", () => {
+  it("explicit HOST -> MQTT + FILE (Phase 1, §12 #1)", () => {
     const r = resolveProfile({ platform: Platform.HOST }, {});
     expect(r.platform).toBe(Platform.HOST);
     expect(r.transport).toBe(Transport.MQTT);
-    expect(r.configSource).toEqual(["GG_CONFIG"]);
+    expect(r.configSource).toEqual(["FILE"]);
   });
 
   it("auto with no signals detects HOST", () => {
@@ -374,6 +376,20 @@ describe("profile metric-target default (Phase 1c prometheus / FR-MET-4)", () =>
     expect(PROFILES.get(Platform.HOST)!.metricTarget).toBeUndefined();
     expect(profileMetricTarget(Platform.GREENGRASS)).toBeUndefined();
     expect(profileMetricTarget(Platform.HOST)).toBeUndefined();
+  });
+});
+
+describe("profile metric-log path default (HOST-aware default)", () => {
+  it("HOST/KUBERNETES default the metric-log path to a local path", () => {
+    expect(PROFILES.get(Platform.HOST)!.metricLogPath).toBe(LOCAL_METRIC_LOG_PATH);
+    expect(PROFILES.get(Platform.KUBERNETES)!.metricLogPath).toBe(LOCAL_METRIC_LOG_PATH);
+    expect(profileMetricLogPath(Platform.HOST)).toBe(LOCAL_METRIC_LOG_PATH);
+    expect(profileMetricLogPath(Platform.KUBERNETES)).toBe(LOCAL_METRIC_LOG_PATH);
+  });
+
+  it("GREENGRASS pins no metric-log path default (library /greengrass default stays)", () => {
+    expect(PROFILES.get(Platform.GREENGRASS)!.metricLogPath).toBeUndefined();
+    expect(profileMetricLogPath(Platform.GREENGRASS)).toBeUndefined();
   });
 });
 

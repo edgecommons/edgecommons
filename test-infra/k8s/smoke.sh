@@ -101,12 +101,11 @@ log "Waiting for the component rollout"
 "${KUBECTL}" -n "${NAMESPACE}" rollout status deploy/"${RELEASE}"-ggcommons-component --timeout="${TIMEOUT}s"
 
 # --- Core assertions: CONFIGMAP source + broker connect (FR-MSG-1) + identity (FR-RT-7) -------
-# NOTE: the resolver's "Resolved platform=KUBERNETES" and messaging's "Successfully connected" logs
-# are emitted BEFORE the component configures logging (both precede config load), so they are dropped
-# and not assertable from pod logs. The stdout-JSON sink (1c-logging) is now in place, but the
-# early-logging-bootstrap that would make those pre-config startup lines visible is still deferred, so
-# we keep asserting on reliably-emitted logs. (Human-readable messages still match here because they
-# appear verbatim as the "message" field inside each JSON log line.)
+# NOTE: the platform-resolver summary and the messaging connection were historically emitted BEFORE
+# the component configured logging (both precede config load), so they were dropped from pod logs.
+# That early-logging-bootstrap gap is now CLOSED: those startup facts are re-emitted by the
+# orchestrator immediately after logging is configured (see the "platform resolved:" assertion below),
+# so they reach the stdout-JSON sink as ordinary JSON log lines.
 #
 # FR-MSG-1: the chart `args` pass NO positional `--transport MQTT <path>` (and no --transport at all);
 # the KUBERNETES profile derives transport=MQTT and the messaging-config path DEFAULTS to the mounted
@@ -128,6 +127,12 @@ assert_log "Component identity .thing name.: ${POD}" "Downward-API identity reso
 # correlation equals this pod's POD_NAME — this proves the json sink is the k8s default AND that the
 # correlation fields are wired (one assertion covers both). (json.dumps emits `: ` with a space.)
 assert_log "\"thing\": *\"${POD}\"" "stdout-JSON logging sink with Downward-API correlation (FR-LOG-1/3)"
+
+# Early-logging-bootstrap (gap closed): the deferred "platform resolved: ..." line is emitted AFTER
+# logging is configured, so it now reaches the JSON sink. Asserting it proves the previously-dropped
+# startup summary is captured. Case-insensitive so platform/transport value casing (KUBERNETES vs
+# Kubernetes across language renderings) doesn't matter; the configSource token is CONFIGMAP in all.
+assert_log "platform resolved:.*configSource=CONFIGMAP" "deferred startup summary reaches the log (early-logging-bootstrap closed)"
 
 # --- FR-HB-1: HTTP health endpoint -------------------------------------------------
 # The chart wires httpGet startup/liveness/readiness probes to the component's health server

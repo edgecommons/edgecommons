@@ -9,11 +9,11 @@ import { GgError } from "../src/errors";
 const NO_ENV = {} as Record<string, string | undefined>;
 
 describe("parseArgs", () => {
-  it("with no platform flag auto-detects (HOST here -> MQTT) and defaults config to GG_CONFIG", () => {
+  it("with no platform flag auto-detects (HOST here -> MQTT) and defaults config to FILE", () => {
     const parsed = parseArgs([], NO_ENV);
     expect(parsed.platform).toBe(Platform.HOST);
     expect(parsed.transport).toBe(Transport.MQTT);
-    expect(parsed.config).toEqual({ kind: "GG_CONFIG", key: "ComponentConfig" });
+    expect(parsed.config).toEqual({ kind: "FILE", path: "config.json" });
     expect(parsed.thing).toBe("NOT_GREENGRASS");
   });
 
@@ -250,12 +250,12 @@ describe("parseArgs", () => {
     expect(parsed.messagingConfigPath).toBe("/custom/messaging.json");
   });
 
-  it("HOST + MQTT does NOT get a default path (HOST defaults to GG_CONFIG, not CONFIGMAP)", () => {
-    // HOST keeps the old behavior: MQTT requires an explicit messaging-config path (enforced later
-    // at provider build), so parseArgs leaves it undefined here.
+  it("HOST + MQTT does NOT get a default messaging path (HOST defaults to FILE, not CONFIGMAP)", () => {
+    // Only CONFIGMAP+MQTT synthesizes a messaging path: HOST defaults to FILE, so MQTT still requires
+    // an explicit messaging-config path (enforced later at provider build); parseArgs leaves it undefined.
     const parsed = parseArgs(["--platform", "HOST"], NO_ENV);
     expect(parsed.transport).toBe(Transport.MQTT);
-    expect(parsed.config).toEqual({ kind: "GG_CONFIG", key: "ComponentConfig" });
+    expect(parsed.config).toEqual({ kind: "FILE", path: "config.json" });
     expect(parsed.messagingConfigPath).toBeUndefined();
   });
 

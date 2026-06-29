@@ -44,7 +44,7 @@ The Rust port targets **feature parity with the Java library** (the canonical re
   takes an optional messaging-config JSON path.
 
 **Standard CLI contract** (must match Java/Python exactly):
-- `-c/--config <SOURCE> [args...]` — `FILE | ENV | GG_CONFIG (default) | SHADOW | CONFIG_COMPONENT`
+- `-c/--config <SOURCE> [args...]` — `FILE | ENV | GG_CONFIG | SHADOW | CONFIG_COMPONENT` (default: from the resolved platform profile — GREENGRASS → GG_CONFIG, HOST → FILE, KUBERNETES → CONFIGMAP)
 - `--platform <PLATFORM>` — `GREENGRASS | HOST | KUBERNETES | auto` (default `auto`)
 - `--transport <TRANSPORT> [path]` — `IPC | MQTT [messaging_config.json]` (IPC only valid on GREENGRASS)
 - `-t/--thing <name>` — IoT Thing name; must take the **full** string value

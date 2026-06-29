@@ -64,7 +64,7 @@ Object construction goes through fluent builders, not raw constructors: `GGCommo
 
 ### Configuration (`ggcommons/config/`)
 `ConfigManagerBuilder.build()` dispatches on the `-c/--config` source to one of five managers, all subclassing `ConfigManager`:
-`FILE` → `FileConfigManager`, `ENV` → `EnvironmentConfigManager`, `GG_CONFIG` → `GreengrassConfigManager` (default), `SHADOW` → `ShadowConfigManager`, `CONFIG_COMPONENT` → `ConfigComponentManager`.
+`FILE` → `FileConfigManager`, `ENV` → `EnvironmentConfigManager`, `GG_CONFIG` → `GreengrassConfigManager`, `SHADOW` → `ShadowConfigManager`, `CONFIG_COMPONENT` → `ConfigComponentManager`. The default source comes from the resolved platform profile (GREENGRASS → GG_CONFIG, HOST → FILE, KUBERNETES → CONFIGMAP).
 Config supports template-variable substitution (component/thing/custom tags), hot reload via `ConfigurationChangeListener`, multi-instance components (global + per-instance config), and JSON-schema validation (`ggcommons/validation/configuration_validator.py`).
 
 ### Messaging (`ggcommons/messaging/`)
@@ -82,7 +82,7 @@ Config supports template-variable substitution (component/thing/custom tags), ho
 ## CLI contract
 
 Components accept these standard arguments (custom `argparse` parsers can be merged in via the builder):
-- `-c/--config <SOURCE> [args...]` — one of `FILE`, `ENV`, `GG_CONFIG`, `SHADOW`, `CONFIG_COMPONENT` (default `GG_CONFIG`).
+- `-c/--config <SOURCE> [args...]` — one of `FILE`, `ENV`, `GG_CONFIG`, `SHADOW`, `CONFIG_COMPONENT` (default: from the resolved platform profile — GREENGRASS → GG_CONFIG, HOST → FILE, KUBERNETES → CONFIGMAP).
 - `--platform <PLATFORM>` — `GREENGRASS` | `HOST` | `KUBERNETES` | `auto` (default `auto`, which auto-detects from the environment). `KUBERNETES` is declared but not yet wired (Phase 1) and fails fast if selected.
 - `--transport <TRANSPORT> [path]` — `IPC` | `MQTT [messaging_config.json]` (default derived from the resolved platform: `GREENGRASS` ⇒ `IPC`, `HOST`/`KUBERNETES` ⇒ `MQTT`). `IPC` is valid **only** on `--platform GREENGRASS`. The `MQTT` messaging-config path is required when the MQTT provider is actually built.
 - `-t/--thing <name>` — IoT Thing name. Note the historical bug where this was truncated to one character; `-t`/`--thing` must take a full string value.

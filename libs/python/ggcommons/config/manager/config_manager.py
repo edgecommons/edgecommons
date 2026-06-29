@@ -271,7 +271,14 @@ class ConfigManager:
         return self._config_source
         
     def _validate_configuration(self, config: Dict[str, Any]) -> None:
-        """Validates configuration. Override in subclasses for specific validation."""
+        """Validates configuration; raises on a schema-invalid config so the caller rejects it.
+
+        A schema-invalid config raises in **both** the init and the hot-reload paths. ``__init__``
+        aborts startup; a hot reload is rejected by :meth:`configuration_changed`, which keeps the
+        last-good config and does **not** notify listeners (reject-and-keep) — at parity with the
+        Java/Rust/TS libraries. A missing validator dependency (``ImportError``) is a soft skip, not
+        a failure. Override in subclasses for specific validation.
+        """
         try:
             from ggcommons.validation.configuration_validator import (
                 ConfigurationValidator,
@@ -279,15 +286,12 @@ class ConfigManager:
             )
             ConfigurationValidator.validate(config)
             logger.debug("Configuration validation passed")
-            
+
         except ImportError:
             logger.debug("Configuration validator not available, skipping validation")
         except Exception as e:
-            logger.error(f"Configuration validation failed: {e}")
-            if self._initializing:
-                raise
-            else:
-                logger.warning("Continuing with invalid configuration")
+            logger.error(f"Configuration validation failed; rejecting configuration: {e}")
+            raise
                 
     def complete_initialization(self) -> None:
         """Marks initialization as complete."""

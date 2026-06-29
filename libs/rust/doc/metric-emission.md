@@ -94,8 +94,13 @@ Java/Python/TS Prometheus clients impose). A later emit mapping to the same gaug
 
 | Key | Target(s) | Default |
 |-----|-----------|---------|
-| `logFileName` | `log` | `/greengrass/v2/logs/{ComponentFullName}.metric.log` |
+| `logFileName` | `log` | platform-aware: `/greengrass/v2/logs/{ComponentFullName}.metric.log` on GREENGRASS; `./logs/{ComponentFullName}.metric.log` on HOST/KUBERNETES |
 | `maxFileSize` | `log` | `10MB` |
+
+> The `logFileName` default is **platform-aware**: HOST and KUBERNETES (which lack the Greengrass
+> `/greengrass/v2/logs` directory) default to a local `./logs/...` path; an explicit `logFileName`
+> always overrides it. The `log` target is fail-soft — if the file cannot be opened it warns and
+> drops metrics rather than failing.
 | `topic` | `messaging`, `cloudwatchcomponent` | `{ThingName}/{ComponentName}/metric` (or `cloudwatch/metric/put`) |
 | `destination` | `messaging` | `ipc` |
 | `intervalSecs` | `cloudwatch` | `5` (min 1) |

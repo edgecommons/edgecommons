@@ -29,7 +29,7 @@ has been removed):
 
 - `--platform <PLATFORM>` — `GREENGRASS | HOST | KUBERNETES | auto` (default `auto`)
 - `--transport <TRANSPORT> [path]` — `IPC | MQTT <messaging_config.json>` (default: derived from the platform)
-- `-c/--config <SOURCE> [args...]` — `FILE | ENV | GG_CONFIG | SHADOW | CONFIG_COMPONENT` (default: from the resolved platform profile)
+- `-c/--config <SOURCE> [args...]` — `FILE | ENV | GG_CONFIG | SHADOW | CONFIG_COMPONENT` (default: from the resolved platform profile — GREENGRASS → GG_CONFIG, HOST → FILE, KUBERNETES → CONFIGMAP)
 - `-t/--thing <name>` — IoT Thing name
 
 The legacy `-m/--mode` mapping: `-m STANDALONE <path>` becomes

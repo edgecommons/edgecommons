@@ -385,12 +385,11 @@ The top level of the schema is strict (`additionalProperties: false`, `required:
 an unknown or mistyped top-level section is rejected. The `component.global`, `component.instances`,
 and `tags` subtrees are intentionally open so you can put arbitrary application keys there.
 
-<Aside type="caution" title="Invalid-reload behavior is not uniform">
-On a **hot reload** that produces a schema-invalid document, Java, Rust, and TypeScript reject the
-new config and keep the previously-loaded one. Python is different: it logs the validation failure
-but then **applies the invalid config and notifies listeners anyway** (the failure is only fatal
-during the initial load). If you rely on reject-and-keep semantics, do not assume it on Python.
-{/* NEEDS REVIEW: confirm whether Python's apply-invalid-on-reload behavior is intended or a parity bug before publishing — the fact sheet flags it as a likely defect, not a documented contract. */}
+<Aside type="note" title="Invalid reload is reject-and-keep">
+On a **hot reload** that produces a schema-invalid document, all four SDKs reject the new config and
+keep the previously-loaded one — the validation failure is logged, listeners are not notified, and
+the reload reports failure. A schema-invalid document is only fatal (aborts the process) during the
+initial load. You can rely on reject-and-keep semantics on every language.
 </Aside>
 
 Python is also the only SDK that can opt out of validation, by constructing the config manager with

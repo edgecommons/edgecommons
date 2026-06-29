@@ -78,6 +78,8 @@ class GGCommons:
         self._health_server = None
         self._sigterm_installed = False
         self._prev_sigterm_handler = None
+        self._sigint_installed = False
+        self._prev_sigint_handler = None
 
         try:
             # Process command line arguments
@@ -90,6 +92,20 @@ class GGCommons:
 
             # Initialize configuration manager
             self._init_config_manager(component_name, parsed_args)
+
+            # Logging is configured inside _init_config_manager (via the config manager's
+            # _apply_config -> configure_logging). Defer the startup-fact lines to here so they
+            # land AFTER logging is configured rather than being dropped during early bootstrap.
+            from ggcommons.messaging.messaging_client import MessagingClient
+            logger.info(
+                "platform resolved: platform=%s transport=%s configSource=%s identity=%s",
+                parsed_args.platform.value,
+                parsed_args.transport.value,
+                parsed_args.config[0],
+                parsed_args.identity,
+            )
+            if MessagingClient.connected():
+                logger.info("messaging connected (transport=%s)", parsed_args.transport.value)
 
             # Initialize metric emitter
             self._init_metrics()
@@ -167,7 +183,7 @@ class GGCommons:
             help='Configuration source. One of: ENV, GG_CONFIG, FILE, CONFIGMAP, SHADOW, '
                  'CONFIG_COMPONENT. CONFIGMAP takes [mount_dir] [key] (defaults /etc/ggcommons, '
                  'config.json). Default: from the resolved platform profile '
-                 '(GREENGRASS/HOST -> GG_CONFIG, KUBERNETES -> CONFIGMAP)'
+                 '(GREENGRASS -> GG_CONFIG, HOST -> FILE, KUBERNETES -> CONFIGMAP)'
         )
         parser.add_argument(
             '--platform',
@@ -514,15 +530,22 @@ class GGCommons:
             self._readiness.set_ready(ready)
 
     def _install_signal_handlers(self) -> None:
-        """Wire SIGTERM to the graceful-shutdown path (FR-HB-2).
+        """Wire SIGTERM **and SIGINT** to the graceful-shutdown path (FR-HB-2).
+
+        Both termination signals route to :meth:`_handle_termination_signal`, at parity with the
+        Java/Rust/TS libraries (Java's JVM hook fires on SIGTERM+SIGINT, TS wires both
+        ``process.on`` signals, Rust awaits SIGTERM and Ctrl-C). SIGTERM is what orchestrators send
+        (Kubernetes, ``docker stop``, the Nucleus); SIGINT is interactive ``Ctrl-C`` on a local/host
+        run.
 
         Installed only on the main thread — ``signal.signal`` raises ``ValueError`` off the main
         thread (e.g. when a component is embedded in a worker thread or under some test runners), in
-        which case the app keeps responsibility for calling :meth:`shutdown`. The previous SIGTERM
-        handler is saved and restored on shutdown so the library does not permanently hijack signals.
+        which case the app keeps responsibility for calling :meth:`shutdown`. The previous handler
+        for each signal is saved and restored on shutdown so the library does not permanently hijack
+        signals.
         """
         if threading.current_thread() is not threading.main_thread():
-            logger.debug("Not on the main thread; skipping library SIGTERM handler install")
+            logger.debug("Not on the main thread; skipping library SIGTERM/SIGINT handler install")
             return
         try:
             self._prev_sigterm_handler = signal.signal(signal.SIGTERM, self._handle_termination_signal)
@@ -530,9 +553,15 @@ class GGCommons:
             logger.debug("Installed library SIGTERM handler for graceful shutdown")
         except (ValueError, OSError, RuntimeError) as e:
             logger.warning(f"Could not install SIGTERM handler (app must call shutdown itself): {e}")
+        try:
+            self._prev_sigint_handler = signal.signal(signal.SIGINT, self._handle_termination_signal)
+            self._sigint_installed = True
+            logger.debug("Installed library SIGINT handler for graceful shutdown")
+        except (ValueError, OSError, RuntimeError) as e:
+            logger.warning(f"Could not install SIGINT handler (app must call shutdown itself): {e}")
 
     def _handle_termination_signal(self, signum, frame) -> None:
-        """SIGTERM handler: flip readiness to 503, run the idempotent shutdown, then exit 0."""
+        """SIGTERM/SIGINT handler: flip readiness to 503, run the idempotent shutdown, then exit 0."""
         logger.info(f"Received signal {signum}; beginning graceful shutdown")
         # Flip /readyz to 503 immediately, before draining (FR-HB-2 acceptance).
         if self._readiness is not None:
@@ -669,9 +698,9 @@ class GGCommons:
         except Exception as e:
             logger.error(f"Error stopping health server during shutdown: {e}")
 
-        # Restore the previous SIGTERM handler so the library does not permanently hijack signals
-        # (matters for tests and embedding apps). Only if we installed ours, and only on the main
-        # thread (signal.signal raises elsewhere).
+        # Restore the previous SIGTERM/SIGINT handlers so the library does not permanently hijack
+        # signals (matters for tests and embedding apps). Only restore a signal we installed, and
+        # only on the main thread (signal.signal raises elsewhere).
         if self._sigterm_installed and threading.current_thread() is threading.main_thread():
             try:
                 signal.signal(signal.SIGTERM, self._prev_sigterm_handler or signal.SIG_DFL)
@@ -679,5 +708,12 @@ class GGCommons:
                 logger.debug(f"Could not restore previous SIGTERM handler: {e}")
             finally:
                 self._sigterm_installed = False
+        if self._sigint_installed and threading.current_thread() is threading.main_thread():
+            try:
+                signal.signal(signal.SIGINT, self._prev_sigint_handler or signal.SIG_DFL)
+            except (ValueError, OSError, RuntimeError) as e:
+                logger.debug(f"Could not restore previous SIGINT handler: {e}")
+            finally:
+                self._sigint_installed = False
 
         logger.info("GGCommons shutdown completed")

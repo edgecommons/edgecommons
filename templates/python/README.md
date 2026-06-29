@@ -25,7 +25,7 @@ On the GREENGRASS platform the component reads its config from the deployment:
 python3 main.py --platform GREENGRASS -c GG_CONFIG -t my-thing-name
 ```
 
-## Build & publish
+## Deploy to Greengrass
 
 Packaged with the **GDK (Greengrass Development Kit)** using `gdk-config.json` and `recipe.yaml`:
 
@@ -34,9 +34,33 @@ gdk component build
 gdk component publish
 ```
 
+## Deploy to Kubernetes
+
+The Kubernetes artifacts (`Dockerfile`, `k8s/`) exist only when this component was scaffolded
+with **KUBERNETES** as a target platform. Build the image from `./Dockerfile`, make it available
+to the cluster, point `image:` at it, then apply the manifests:
+
+```bash
+# 1. Build the image (requirements.txt resolves the published ggcommons library).
+docker build -t ghcr.io/<owner>/<<COMPONENTNAME>>:latest .
+
+# 2. Make it available to the cluster — push to a registry...
+docker push ghcr.io/<owner>/<<COMPONENTNAME>>:latest
+#    ...or, for a local kind cluster, load it directly:
+# kind load docker-image ghcr.io/<owner>/<<COMPONENTNAME>>:latest
+
+# 3. Set `image:` in k8s/deployment.yaml (replace REPLACE_ME) to that image, then:
+kubectl apply -f k8s/
+```
+
+With `--platform auto` the library detects KUBERNETES from the ServiceAccount token, reads its
+config from the mounted ConfigMap (`CONFIGMAP` source, hot-reloaded on `kubectl apply`), uses the
+MQTT transport from that same ConfigMap, and resolves identity from the Downward API — so the
+Deployment needs no command-line args.
+
 ## CLI contract
 
-- `-c/--config <SOURCE> [args]` — `FILE`, `ENV`, `GG_CONFIG` (default), `SHADOW`, `CONFIG_COMPONENT`.
+- `-c/--config <SOURCE> [args]` — `FILE`, `ENV`, `GG_CONFIG`, `SHADOW`, `CONFIG_COMPONENT` (default: from the resolved platform profile — GREENGRASS → GG_CONFIG, HOST → FILE, KUBERNETES → CONFIGMAP).
 - `--platform <PLATFORM>` — `GREENGRASS`, `HOST`, `KUBERNETES`, or `auto` (default `auto`).
 - `--transport <TRANSPORT> [path]` — `IPC` or `MQTT [messaging_config.json]` (default: from the platform; IPC only valid on GREENGRASS).
 - `-t/--thing <name>` — IoT Thing name.

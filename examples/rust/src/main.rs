@@ -27,7 +27,7 @@ mod app;
 use ggcommons::prelude::*;
 
 /// The component's full name (matches `recipe.yaml` / `gdk-config.json`).
-const COMPONENT_NAME: &str = "com.breissinger.greengrass.RustComponentSkeleton";
+const COMPONENT_NAME: &str = "com.mbreissi.greengrass.RustComponentSkeleton";
 
 /// Boot the component: build the runtime from CLI args, run the app, shut down cleanly.
 ///
@@ -52,7 +52,7 @@ async fn main() -> anyhow::Result<()> {
     );
 
     let app = app::SkeletonApp::new(&gg)?;
-    app.run().await?;
+    app.run(&gg).await?;
 
     tracing::info!("Rust Component Skeleton stopped");
     Ok(())

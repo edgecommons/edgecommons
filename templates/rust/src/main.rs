@@ -35,7 +35,7 @@ async fn main() -> anyhow::Result<()> {
     );
 
     let app = app::App::new(&gg)?;
-    app.run().await?;
+    app.run(&gg).await?;
 
     tracing::info!("<<COMPONENTNAME>> stopped");
     Ok(())

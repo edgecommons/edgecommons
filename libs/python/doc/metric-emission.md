@@ -81,7 +81,12 @@ Writes metrics to a local log file using Python logging with EMF format and file
 - Keeps up to 5 historical files (`.1`, `.2`, etc.)
 
 **Configuration options:**
-- **`logFileName`**: Template for log file naming (Default: "/greengrass/v2/logs/{ComponentFullName}.metric.log")
+- **`logFileName`**: Template for log file naming. The default is **platform-aware**:
+  `/greengrass/v2/logs/{ComponentFullName}_metric.log` on `GREENGRASS`, and a local
+  `./logs/{ComponentFullName}_metric.log` on `HOST`/`KUBERNETES` (which lack the Greengrass logs
+  directory). An explicit value always overrides the default. The target is **fail-soft**: if the
+  file cannot be opened it logs a warning and drops file metrics rather than aborting initialization
+  (parity with Java/Rust/TypeScript).
 - **`maxFileSize`**: Maximum file size before rotation (Default: "10MB")
 
 **Template variables supported:**

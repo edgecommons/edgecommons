@@ -1,0 +1,22 @@
+{
+  "language": "PYTHON",
+  "description": "Python protocol-adapter component (southbound device->cloud bridge) built on the ggcommons (greengrass-commons) library and the southbound contract (docs/SOUTHBOUND.md).",
+  "substitutions": {
+    "recipe.yaml": ["DESCRIPTION", "COMPONENTFULLNAME", "AUTHOR", "COMPONENTNAME"],
+    "gdk-config.json": ["COMPONENTFULLNAME", "AUTHOR", "BUCKET", "REGION"],
+    "main.py": ["COMPONENTNAME"],
+    "app/adapter.py": ["COMPONENTNAME"],
+    "README.md": ["COMPONENTNAME", "COMPONENTFULLNAME"],
+    "Dockerfile": ["COMPONENTNAME"],
+    "k8s/configmap.yaml": ["COMPONENTNAME", "COMPONENTFULLNAME"],
+    "k8s/deployment.yaml": ["COMPONENTNAME"],
+    "test-configs/TestComponent.json": ["COMPONENTFULLNAME"]
+  },
+  "renames": [
+    { "from": "app/adapter.py", "to": "app/{COMPONENTNAME}.py" },
+    { "from": "test-configs/TestComponent.json", "to": "test-configs/{COMPONENTNAME}.json" }
+  ],
+  "conditional": [
+    { "when": "platform:KUBERNETES", "paths": ["Dockerfile", "k8s"] }
+  ]
+}

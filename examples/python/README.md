@@ -6,7 +6,7 @@ A worked-example AWS IoT Greengrass v2 component written in Python on top of the
 configuration, logging, messaging (publish + request/reply), metrics, and heartbeat — so a component
 author writes only business logic (in [`app/greengrass_app.py`](app/greengrass_app.py)).
 
-The component is `com.breissinger.greengrass.PythonComponentSkeleton` and is bootstrapped via
+The component is `com.mbreissi.greengrass.PythonComponentSkeleton` and is bootstrapped via
 `GGCommonsBuilder.create(...)` in [`main.py`](main.py).
 
 ## Run locally (HOST platform, MQTT transport)
@@ -39,7 +39,7 @@ gdk component publish
 
 ## CLI contract
 
-- `-c/--config <SOURCE> [args]` — `FILE`, `ENV`, `GG_CONFIG` (default), `SHADOW`, `CONFIG_COMPONENT`.
+- `-c/--config <SOURCE> [args]` — `FILE`, `ENV`, `GG_CONFIG`, `SHADOW`, `CONFIG_COMPONENT` (default: from the resolved platform profile — GREENGRASS → GG_CONFIG, HOST → FILE, KUBERNETES → CONFIGMAP).
 - `--platform <PLATFORM>` — `GREENGRASS`, `HOST`, `KUBERNETES`, or `auto` (default `auto`).
 - `--transport <TRANSPORT> [path]` — `IPC` or `MQTT [messaging_config.json]` (default: from the platform; IPC only valid on GREENGRASS).
 - `-t/--thing <name>` — IoT Thing name.

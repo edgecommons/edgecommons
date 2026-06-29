@@ -39,6 +39,17 @@ export interface MessageHeader {
 export type MessageTags = Record<string, unknown>;
 
 /**
+ * #16: a binary body (`Buffer`/`Uint8Array`) travels as a base64 JSON string — the portable
+ * cross-language interim for binary bodies (otherwise `JSON.stringify(Buffer)` emits a non-portable
+ * `{ "type": "Buffer", "data": [...] }`). Matches Java `byte[]` -> base64 and Python `bytes` ->
+ * base64, scoped to a top-level binary body, pending a first-class binary message type. Non-binary
+ * bodies pass through unchanged.
+ */
+function encodeBody(value: unknown): unknown {
+  return value instanceof Uint8Array ? Buffer.from(value).toString("base64") : value;
+}
+
+/**
  * A message: either an **envelope** (header + tags + body) or a **raw**
  * (non-envelope) payload. For a raw message {@link isRaw} is `true` and
  * {@link getRaw} returns the original value; the envelope fields are unset.
@@ -106,7 +117,7 @@ export class Message {
    */
   toObject(): Record<string, unknown> {
     if (this.rawSet) {
-      return { raw: this.raw };
+      return { raw: encodeBody(this.raw) };
     }
     const header: Record<string, unknown> = {
       name: this.header.name,
@@ -118,7 +129,7 @@ export class Message {
     if (this.header.reply_to !== undefined && this.header.reply_to !== "") {
       header.reply_to = this.header.reply_to;
     }
-    return { header, tags: { ...this.tags }, body: this.body };
+    return { header, tags: { ...this.tags }, body: encodeBody(this.body) };
   }
 
   /** Serialize this message to a JSON string for the wire. */

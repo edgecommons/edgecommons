@@ -33,8 +33,9 @@ logic runs unchanged across deployment targets:
   an optional messaging-config JSON path (`--transport MQTT <messaging_config.json>`).
 
 The standard CLI contract is identical across all four languages:
-`-c/--config <SOURCE> [args]` (one of `FILE`, `ENV`, `GG_CONFIG` (default), `SHADOW`,
-`CONFIG_COMPONENT`), `--platform <PLATFORM>`, `--transport <TRANSPORT> [path]`, and
+`-c/--config <SOURCE> [args]` (one of `FILE`, `ENV`, `GG_CONFIG`, `SHADOW`,
+`CONFIG_COMPONENT`; default: from the resolved platform profile — GREENGRASS → GG_CONFIG,
+HOST → FILE, KUBERNETES → CONFIGMAP), `--platform <PLATFORM>`, `--transport <TRANSPORT> [path]`, and
 `-t/--thing <name>`.
 
 > **Migrating from the old `-m/--mode` flag (removed).** `-m GREENGRASS` → `--platform GREENGRASS`;
@@ -47,7 +48,7 @@ The standard CLI contract is identical across all four languages:
 
 | Path | What it is | Stack |
 |------|-----------|-------|
-| `libs/java/` | The **canonical**, most complete library. Maven artifact `com.breissinger:ggcommons`. | Java 25, Maven |
+| `libs/java/` | The **canonical**, most complete library. Maven artifact `com.mbreissi:ggcommons`. | Java 25, Maven |
 | `libs/python/` | The Python port (PyPI `greengrass-commons`). | Python 3.9+, setuptools |
 | `libs/rust/` | The Rust port (crate `ggcommons`). | Rust (edition 2024), Cargo |
 | `libs/ts/` | The TypeScript port (npm `ggcommons`). | TypeScript 5 / Node 18+ |

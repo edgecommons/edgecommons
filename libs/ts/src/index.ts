@@ -8,7 +8,7 @@
  *
  * Typical entry point:
  * ```ts
- * import { GGCommonsBuilder } from "@breissinger/ggcommons";
+ * import { GGCommonsBuilder } from "@mbreissi/ggcommons";
  * const gg = await new GGCommonsBuilder("com.example.MyComponent").build();
  * const cfg = gg.config();
  * ```

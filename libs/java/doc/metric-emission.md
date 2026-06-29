@@ -113,7 +113,11 @@ Writes metrics to a local log file using Log4j2 with EMF format and file rotatio
 - Keeps up to 5 historical files (`.1`, `.2`, etc.)
 
 **Configuration options:**
-- **`logFileName`**: Template for log file naming (Default: "/greengrass/v2/logs/{ComponentFullName}.metric.log")
+- **`logFileName`**: Template for log file naming. The default is **platform-aware**:
+  `/greengrass/v2/logs/{ComponentFullName}.metric.log` on `GREENGRASS`, and a local
+  `./logs/{ComponentFullName}.metric.log` on `HOST`/`KUBERNETES` (which lack the Greengrass logs
+  directory). An explicit value always overrides the default. The target is fail-soft: if the file
+  cannot be opened it logs a warning and drops file metrics rather than failing startup.
 - **`maxFileSize`**: Maximum file size before rotation (Default: "10MB")
 
 **Template variables supported:**

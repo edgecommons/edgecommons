@@ -4,9 +4,9 @@
     "java_format": "%d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %-5level %logger{36} - %msg%n",
     "globalControl": true,
     "loggers": {
-      "com.breissinger.javacomponentskeleton": "DEBUG",
-      "com.breissinger.ggcommons": "DEBUG",
-      "com.breissinger.ggcommons.messaging": "INFO",
+      "com.mbreissi.javacomponentskeleton": "DEBUG",
+      "com.mbreissi.ggcommons": "DEBUG",
+      "com.mbreissi.ggcommons.messaging": "INFO",
       "org.apache.http": "WARN"
     }
   },

@@ -18,7 +18,7 @@ envelope. **Java is the canonical reference.**
 
 | Path | What it is | Stack |
 |------|-----------|-------|
-| `libs/java/` | The canonical, most complete library. Maven artifact `com.breissinger:ggcommons`. | Java 25 (LTS), Maven |
+| `libs/java/` | The canonical, most complete library. Maven artifact `com.mbreissi:ggcommons`. | Java 25 (LTS), Maven |
 | `libs/python/` | The Python port (PyPI `greengrass-commons`). **Has its own `CLAUDE.md` — read it before working here.** | Python 3.9+, setuptools |
 | `libs/rust/` | The Rust port (crate `ggcommons`). | Rust (edition 2024, MSRV 1.85), Cargo |
 | `libs/ts/` | The TypeScript port (npm `ggcommons`). | TypeScript 5 / Node 18+ |
@@ -58,7 +58,7 @@ exists to abstract these differences away so the same business logic runs everyw
   k8s service-account token → HOST fallback); always overridable by an explicit `--platform`.
 
 **Standard CLI contract** (identical across all four languages — keep them aligned):
-- `-c/--config <SOURCE> [args...]` — one of `FILE`, `ENV`, `GG_CONFIG` (default), `SHADOW`, `CONFIG_COMPONENT`.
+- `-c/--config <SOURCE> [args...]` — one of `FILE`, `ENV`, `GG_CONFIG`, `SHADOW`, `CONFIG_COMPONENT` (default: from the resolved platform profile — GREENGRASS → GG_CONFIG, HOST → FILE, KUBERNETES → CONFIGMAP).
 - `--platform <PLATFORM>` — `GREENGRASS`, `HOST`, `KUBERNETES`, or `auto` (default `auto`); the primary axis.
 - `--transport <TRANSPORT> [path]` — `IPC` or `MQTT [messaging_config.json]`; defaults from the
   platform (GREENGRASS→IPC, HOST→MQTT) and is validated (IPC is only valid on GREENGRASS). The
@@ -136,10 +136,15 @@ npm run coverage     # vitest run --coverage
 pipx install ./cli           # or: python -m pip install ./cli  → gives `ggcommons` / `ggcommons-cli`
 ggcommons doctor             # check prerequisites (git, gdk, cargo, mvn, python3, aws)
 ggcommons create-component -n com.example.MyComponent -l PYTHON   # JAVA|PYTHON|RUST|TYPESCRIPT
+ggcommons create-component -i                                     # interactive wizard (prompts for inputs)
 ggcommons list-templates | validate | deploy | upgrade
 ```
 Templates are **manifest-driven**: each ships a `ggcommons-template.json` declaring placeholder
-substitutions and file renames, so adding a language needs a template, not CLI code.
+`substitutions`, file `renames`, and optional **`conditional`** (platform-gated) artifacts, so adding
+a language needs a template, not CLI code. `create-component` supports an **interactive wizard**
+(`-i`, auto when `-n` is omitted on a TTY) and gates optional artifacts by `--platforms`
+(e.g. the k8s `Dockerfile`+`k8s/` manifests emit only when `KUBERNETES` is selected) and
+`--dep-source` (`local` path dep vs `registry`).
 
 ### Config schema (single source — `schema/`)
 The canonical config schema lives **only** in `schema/ggcommons-config-schema.json`. After editing

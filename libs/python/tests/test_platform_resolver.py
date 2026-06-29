@@ -90,13 +90,13 @@ def test_resolve_greengrass_explicit_gives_ipc_and_gg_config():
     assert r.identity == DEFAULT_IDENTITY
 
 
-def test_resolve_host_explicit_gives_mqtt_and_gg_config_in_phase0():
-    # Phase 0 deliberately keeps HOST's default config source at GG_CONFIG (not FILE).
+def test_resolve_host_explicit_gives_mqtt_and_file():
+    # Phase 1 (sec 12 #1): HOST defaults its config source to FILE (GG_CONFIG needs Nucleus IPC).
     inputs = ResolverInputs(Platform.HOST, None, None, None)
     r = resolve_profile(inputs, {})
     assert r.platform == Platform.HOST
     assert r.transport == Transport.MQTT
-    assert r.config_source == ["GG_CONFIG"]
+    assert r.config_source == ["FILE"]
 
 
 def test_resolve_auto_with_no_signals_detects_host():

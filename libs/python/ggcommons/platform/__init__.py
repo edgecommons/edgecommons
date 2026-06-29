@@ -4,7 +4,7 @@ The platform x transport runtime model (DESIGN-core / docs/platform).
 Exposes the two runtime axes (:class:`Platform`, :class:`Transport`), the
 platform-profile table and the pure precedence resolver / auto-detector that
 maps parse-time inputs to a single :class:`ResolvedProfile` consumed by every
-subsystem initializer. Mirrors the canonical Java ``com.breissinger.ggcommons.platform``.
+subsystem initializer. Mirrors the canonical Java ``com.mbreissi.ggcommons.platform``.
 """
 
 from ggcommons.platform.platform import Platform

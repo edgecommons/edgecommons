@@ -100,6 +100,39 @@ describe("MetricEmitter.buildTarget selection", () => {
   });
 });
 
+describe("MetricEmitter log-path precedence (HOST-aware default)", () => {
+  /** Reach the LogTarget's resolved file path. */
+  function pathOf(e: MetricEmitter): string {
+    return (targetOf(e) as { filePath: string }).filePath;
+  }
+
+  it("uses the platform-profile default path when no explicit logFileName", async () => {
+    const e = await MetricEmitter.create(
+      cfg({ target: "log" }),
+      undefined,
+      undefined,
+      "/tmp/plat-default/{ComponentFullName}.metric.log",
+    );
+    expect(pathOf(e)).toBe("/tmp/plat-default/com.example.C.metric.log");
+  });
+
+  it("an explicit logFileName wins over the platform-profile default", async () => {
+    const explicit = tmpLog();
+    const e = await MetricEmitter.create(
+      cfg({ target: "log", targetConfig: { logFileName: explicit } }),
+      undefined,
+      undefined,
+      "/tmp/should-not-be-used/{ComponentFullName}.metric.log",
+    );
+    expect(pathOf(e)).toBe(explicit);
+  });
+
+  it("falls back to the library default when neither explicit nor platform default is set", async () => {
+    const e = await MetricEmitter.create(cfg({ target: "log" }));
+    expect(pathOf(e)).toContain("/greengrass/v2/logs/");
+  });
+});
+
 describe("MetricEmitter lifecycle", () => {
   it("defineMetric/isMetricDefined and undefined-metric no-op", async () => {
     const e = await MetricEmitter.create(cfg({ target: "log", targetConfig: { logFileName: tmpLog() } }));
