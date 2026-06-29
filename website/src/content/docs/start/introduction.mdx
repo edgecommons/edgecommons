@@ -1,18 +1,18 @@
 ---
 title: Introduction
-description: GGCommons is one SDK in four languages for AWS IoT Greengrass v2 components — config, messaging, metrics, and more behind one builder.
+description: EdgeCommons is one SDK in four languages for edge components — config, messaging, metrics, and more behind one builder.
 sidebar:
   order: 1
 ---
 
 import { Tabs, TabItem, Aside, CardGrid, LinkCard } from "@astrojs/starlight/components";
 
-**GGCommons** (Greengrass Commons) is one SDK that gives every AWS IoT Greengrass v2
+**EdgeCommons** is one SDK that gives every edge
 component the cross-cutting plumbing it would otherwise rewrite by hand — configuration,
 messaging, metrics, heartbeat, and logging — plus opt-in **credentials**, **parameters**, and
 **telemetry streaming**. You wire it up once at startup and write only business logic.
 
-The unusual part: GGCommons is implemented **four times**, in **Java, Python, Rust, and
+The unusual part: the `ggcommons` library is implemented **four times**, in **Java, Python, Rust, and
 TypeScript**, as deliberate mirrors of one another. The same config schema, the same CLI
 contract, the same subsystem boundaries, and the same on-wire message envelope apply to all four.
 **Java is the canonical reference**; the other three track it.

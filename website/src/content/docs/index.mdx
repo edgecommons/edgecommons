@@ -1,24 +1,24 @@
 ---
-title: GGCommons
-description: One SDK, four languages — Java, Python, Rust, and TypeScript — for building AWS IoT Greengrass v2 components.
+title: EdgeCommons
+description: One SDK, four languages — Java, Python, Rust, and TypeScript — for building edge components that run on AWS IoT Greengrass, Docker, or Kubernetes.
 template: splash
 hero:
-  tagline: The Greengrass Commons SDK. The same library in Java, Python, Rust, and TypeScript — so your components carry only business logic.
+  tagline: EdgeCommons — the same library in Java, Python, Rust, and TypeScript, so your components carry only business logic.
   actions:
     - text: Get started
       link: /start/introduction/
       icon: right-arrow
     - text: View on GitHub
-      link: https://github.com/mbreissi/ggcommons
+      link: https://github.com/edgecommons/ggcommons
       icon: external
       variant: minimal
 ---
 
 import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
 
-GGCommons bundles the cross-cutting concerns every edge component needs — configuration,
+EdgeCommons bundles the cross-cutting concerns every edge component needs — configuration,
 messaging, metrics, heartbeat, logging, credentials, parameters, and telemetry streaming — behind
-clean interfaces, implemented as deliberate mirrors across **four languages**.
+clean interfaces, implemented as deliberate mirrors across **four languages** in the `ggcommons` library.
 
 <CardGrid stagger>
 	<Card title="One API, four languages" icon="seti:default">
@@ -42,7 +42,7 @@ clean interfaces, implemented as deliberate mirrors across **four languages**.
 ## Start here
 
 <CardGrid>
-	<LinkCard title="Introduction" href="/start/introduction/" description="What GGCommons is and how the pieces fit together." />
+	<LinkCard title="Introduction" href="/start/introduction/" description="What EdgeCommons is and how the pieces fit together." />
 	<LinkCard title="Quickstart" href="/start/quickstart/" description="Scaffold, build, and run your first component in your language." />
 	<LinkCard title="Guides" href="/guides/components/" description="Conceptual guides for every subsystem, in all four languages." />
 	<LinkCard title="API Reference" href="/reference/overview/" description="The public API surface, verified against source." />
