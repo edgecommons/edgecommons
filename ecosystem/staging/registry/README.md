@@ -9,8 +9,10 @@ library.
 
 ## Consumers
 
-- **CLI:** `ggcommons list-components` reads this catalog (defaults to the `main` branch raw URL;
-  override with `--source` or `$GGCOMMONS_REGISTRY_URL`).
+- **CLI:** `ggcommons list-components` reads this catalog. This repo is **private**, so by default the
+  CLI fetches it with authentication via the GitHub CLI (`gh api .../contents/components.json`).
+  Override with `--source <url|path>` or `$GGCOMMONS_REGISTRY_URL` (e.g. a local clone, or a raw URL
+  if this repo is later made public).
 - **Docs site:** renders a "Components" page from `components.json`.
 
 ## Adding or updating a component
@@ -18,5 +20,5 @@ library.
 Open a pull request editing `components.json` — see [`CONTRIBUTING.md`](CONTRIBUTING.md). CI validates
 the file against the schema before merge.
 
-This repository is intentionally **public** so the catalog is readable without authentication, even
-while individual component repositories may be private.
+This repository is **private** (matching the rest of the ecosystem for now); consumers read the
+catalog with their GitHub credentials. If you later want tokenless reads, make just this repo public.

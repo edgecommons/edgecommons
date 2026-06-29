@@ -46,7 +46,7 @@ edgecommons (GitHub org)
 ├─ ggcommons        ← this monorepo, transferred from mbreissi/ggcommons (auto-redirects)
 ├─ .github          ← org profile README (front door) + shared health files
 │                     + reusable CI/publish/deploy workflows
-├─ registry         ← machine-readable component catalog (public)
+├─ registry         ← machine-readable component catalog (private; read via gh auth)
 ├─ opcua-adapter    ← from source/java/gg-opcua-adapter
 ├─ modbus-adapter   ← from source/python/gg-modbus-adapter
 └─ …future components
@@ -102,14 +102,14 @@ truth for "what components exist." Each entry:
 }
 ```
 
-The registry repo is **public** even while components stay private, so the CLI and docs site read it
-without auth. (If listing private component names publicly is unwanted, make it private and have the
-CLI authenticate; flagged as a choice.)
+The registry repo is **private** (matching the rest of the ecosystem). The CLI reads it with
+authentication via `gh`; the docs site reads it with a token at build time. (Flip just this repo to
+public later if you want tokenless reads — the CLI's URL/path override already supports that.)
 
 **Consumers:**
-- CLI: `ggcommons list-components [--language …] [--category …] [--json] [--source URL|path]`
-  (defaults to the published catalog; `$GGCOMMONS_REGISTRY_URL` overrides). Implemented in
-  `cli/ggcommons_cli/commands/list_components.py`.
+- CLI: `ggcommons list-components [--language …] [--category …] [--json] [--source URL|path]`.
+  Default: fetch the private catalog via `gh api` (authenticated). `--source`/`$GGCOMMONS_REGISTRY_URL`
+  override with a URL or local path. Implemented in `cli/ggcommons_cli/commands/list_components.py`.
 - Docs site: a build-time fetch of `components.json` → a "Components" reference page.
 
 ## Realization plan
@@ -142,10 +142,11 @@ CLI authenticate; flagged as a choice.)
 3. Create `edgecommons/.github` from `ecosystem/staging/org-dotgithub/` (profile README, health
    files, reusable workflows).
 
-### Phase 2 — Stand up the registry
-- Create `edgecommons/registry` from `ecosystem/staging/registry/` (catalog + schema + validation
-  workflow + CONTRIBUTING), public.
-- Ship the CLI `list-components` command (already in this branch); add `ggcommons add <name>` later.
+### Phase 2 — Stand up the registry ✅ (done 2026-06-29)
+- Created `edgecommons/registry` (private) from `ecosystem/staging/registry/` (catalog + schema +
+  validation workflow + CONTRIBUTING); `validate-registry` CI green.
+- Shipped the CLI `list-components` command (reads the private catalog via `gh`); add `ggcommons
+  add <name>` later.
 - Add the docs-site "Components" page that renders the catalog.
 
 ### Phase 3 — Migrate the two adapters

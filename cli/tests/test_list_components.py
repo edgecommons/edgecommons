@@ -1,7 +1,9 @@
 import json
+from types import SimpleNamespace
 
 import pytest
 
+import ggcommons_cli.commands.list_components as lc
 from ggcommons_cli.commands.list_components import ListComponents, _filter, _load_catalog
 
 SAMPLE = {
@@ -84,3 +86,28 @@ class TestListComponents:
         assert len(_filter(SAMPLE["components"], "JAVA", None)) == 1
         assert len(_filter(SAMPLE["components"], None, "adapter")) == 2
         assert len(_filter(SAMPLE["components"], None, None)) == 3
+
+    def test_default_reads_private_registry_via_gh(self, monkeypatch, capsys):
+        # No --source / env → the gh-authenticated path is used.
+        monkeypatch.delenv("GGCOMMONS_REGISTRY_URL", raising=False)
+        monkeypatch.setattr(lc, "_load_text_via_gh", lambda repo, path, ref: json.dumps(SAMPLE))
+        ListComponents().execute_command({})
+        out = capsys.readouterr().out
+        assert "opcua-adapter" in out
+        assert "gh:edgecommons/registry" in out
+
+    def test_gh_not_installed_raises(self, monkeypatch):
+        def _missing(*a, **k):
+            raise FileNotFoundError()
+
+        monkeypatch.setattr(lc.subprocess, "run", _missing)
+        with pytest.raises(RuntimeError, match="GitHub CLI"):
+            lc._load_text_via_gh("edgecommons/registry", "components.json", "main")
+
+    def test_gh_error_returncode_raises(self, monkeypatch):
+        monkeypatch.setattr(
+            lc.subprocess, "run",
+            lambda *a, **k: SimpleNamespace(returncode=1, stdout="", stderr="HTTP 404: Not Found"),
+        )
+        with pytest.raises(RuntimeError, match="gh api"):
+            lc._load_text_via_gh("edgecommons/registry", "components.json", "main")
