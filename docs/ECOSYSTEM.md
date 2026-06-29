@@ -122,8 +122,10 @@ CLI authenticate; flagged as a choice.)
 - Create `edgecommons` at `github.com/account/organizations/new` (Free plan to start; org creation
   is **not** available via `gh`/API).
 - Set: new repos default **private**, enable GitHub Packages, set base member permissions.
-- Pick a CI-minutes path (see below) — recommended: register an **org-level self-hosted runner on
-  lab-5950x** (you already run all validation there → unlimited minutes regardless of plan).
+- CI minutes: stay on **GitHub-hosted runners** and **accept the Free-org 2,000 private min/mo cap
+  for now** (no self-hosted runner — local runners are intentionally avoided initially). Keep usage
+  under the cap with path filters / lean matrices / caching (see `ecosystem/RUNBOOK.md` § Phase 0b),
+  and add a self-hosted runner only later if the cap actually bites (§ Phase 0c).
 
 ### Phase 1 — Move the library + stand up shared infra
 1. **Transfer** `mbreissi/ggcommons` → `edgecommons/ggcommons` (repo Settings → Transfer). GitHub
@@ -172,10 +174,10 @@ only the org's plan (or a self-hosted runner / public visibility) does.
 
 | Path | Private Actions min/mo | Notes |
 |------|------------------------|-------|
-| Free org | 2,000 | default |
-| **Self-hosted runner** (lab-5950x / WSL) | **unlimited** | recommended — infra already exists |
+| **Free org** | **2,000** | **chosen for now** — private, GitHub-hosted; manage with path filters/lean matrices/caching |
+| Self-hosted runner (lab-5950x / WSL) | unlimited | deferred fallback if the 2,000 cap bites (RUNBOOK § Phase 0c) |
 | Team org | 3,000 | $4 / user / mo, billed separately from personal Pro |
-| Public repos | unlimited | erases the concern; aligns with the public docs site |
+| Public repos | unlimited | considered then declined — keeping the ecosystem private for now |
 
 ## Migration checklist / risks
 

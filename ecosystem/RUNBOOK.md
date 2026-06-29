@@ -17,15 +17,33 @@ republish.**
 
 ---
 
-## Phase 0b — Self-hosted CI runner on lab-5950x (detailed)
+## Phase 0b — Staying under the 2,000-min Actions cap
 
-A self-hosted runner gives the org **unlimited** Actions minutes (a Free org is capped at 2,000
-private min/mo). lab-5950x already runs your validation, so it's the natural host.
+The org stays **private** and we **accept the Free-org 2,000 private Actions min/mo cap for now** —
+GitHub-hosted runners only, no self-hosted runner (that's deferred to Phase 0c). To stay comfortably
+under the cap:
+
+- **Scope component CI with `paths:`** so a workflow runs only when relevant files change.
+- **Cancel superseded runs**: `concurrency: { group: ${{ github.workflow }}-${{ github.ref }}, cancel-in-progress: true }`.
+- **Keep matrices lean** — most component repos are single-language; build the four-language matrix
+  only where a change actually spans languages.
+- **Cache** (`actions/setup-*` with `cache:`, plus cargo/maven caches) to cut minutes per run.
+- **Gate the expensive jobs** (interop, the streaming native matrix, multi-arch) behind tags / manual
+  `workflow_dispatch` / a schedule rather than every push — `release.yml` already does this.
+- Watch **org Settings → Billing → Actions**; revisit Phase 0c only if you approach the cap.
+
+---
+
+## Phase 0c — Self-hosted CI runner *(DEFERRED — add later only if the cap bites)*
+
+> **Not a Phase 0 step.** Local runners are intentionally avoided for now; default to GitHub-hosted.
+> Keep this as a fallback for when the 2,000-min cap actually constrains CI. A self-hosted runner on
+> lab-5950x gives **unlimited** minutes, but adds an operational/security surface on a box that also
+> runs your nucleus + k3s — only worth it once the cap is a real problem.
 
 > ⚠️ **Security: never let a self-hosted runner build a _public_ repo.** Anyone can open a PR that
 > then executes arbitrary code on lab-5950x (which also runs your Greengrass nucleus + k3s). Keep
-> repos using this runner **private**, or use GitHub-hosted runners (free + unlimited) for any public
-> repo. Keep *fork PR approvals required* (Phase 0a step 3).
+> repos using this runner **private**, and keep *fork PR approvals required* (Phase 0a step 3).
 
 ### 1. Get the registration token + commands (org-level)
 
