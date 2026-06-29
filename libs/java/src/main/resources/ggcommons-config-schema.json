@@ -302,11 +302,11 @@
     },
     "messaging": {
       "type": "object",
-      "description": "STANDALONE dual-MQTT broker configuration (local broker + optional AWS IoT Core). The same shape is used as the separate messaging-config JSON file passed via `-m STANDALONE <file>`. In GREENGRASS mode messaging uses IPC and this section is typically absent.",
+      "description": "Dual-MQTT broker configuration (local broker + optional AWS IoT Core) for the HOST/MQTT transport. The same shape is used as the separate messaging-config JSON file passed via `--platform HOST --transport MQTT <file>`. In GREENGRASS mode messaging uses IPC and this section is typically absent.",
       "properties": {
         "local": {
           "$ref": "#/definitions/mqttBroker",
-          "description": "The local MQTT broker connection (required for STANDALONE)."
+          "description": "The local MQTT broker connection (required for the HOST/MQTT transport)."
         },
         "iotCore": {
           "$ref": "#/definitions/mqttBroker",
