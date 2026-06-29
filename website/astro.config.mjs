@@ -4,7 +4,7 @@ import starlight from '@astrojs/starlight';
 
 // https://astro.build/config
 export default defineConfig({
-	site: 'https://docs.ggcommons.mbreissi.com',
+	site: 'https://docs.edgecommons.mbreissi.com',
 	integrations: [
 		starlight({
 			title: 'GGCommons',
