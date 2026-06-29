@@ -114,6 +114,10 @@ CLI authenticate; flagged as a choice.)
 
 ## Realization plan
 
+> Operational step-by-step for Phases 0–1 (org + self-hosted runner setup, repo transfer, and the
+> package-coordinate repointing) lives in **`ecosystem/RUNBOOK.md`**, with a dry-run-by-default
+> script at `ecosystem/repoint-to-edgecommons.ps1` (and `.sh`).
+
 ### Phase 0 — Create the org *(manual, web UI)*
 - Create `edgecommons` at `github.com/account/organizations/new` (Free plan to start; org creation
   is **not** available via `gh`/API).
@@ -190,3 +194,5 @@ Branch `feat/ecosystem-edgecommons` carries everything that can be prepared befo
 - `cli/ggcommons_cli/commands/list_components.py` (+ test) — the registry-reading CLI command.
 - `ecosystem/staging/` — content for the future `edgecommons/.github` and `edgecommons/registry`
   repos; see `ecosystem/staging/README.md` for the extraction steps.
+- `ecosystem/RUNBOOK.md` — Phase 0–1 operational runbook (org + self-hosted runner, transfer,
+  repoint) + `ecosystem/repoint-to-edgecommons.ps1`/`.sh` (dry-run-by-default coordinate repointing).
