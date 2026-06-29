@@ -66,11 +66,15 @@ jobs:
           server-id: github
           server-username: MAVEN_USERNAME
           server-password: MAVEN_PASSWORD
+      # MAVEN_PASSWORD prefers a read-only PAT (org/repo secret GGCOMMONS_READ_TOKEN) so the
+      # private com.mbreissi:ggcommons resolves cross-repo without a per-package UI grant. Falls
+      # back to the repo GITHUB_TOKEN, which works only if you instead add this repo to the
+      # package's "Manage Actions access" list in the UI (no REST API exists for that).
       - if: inputs.language == 'JAVA'
         run: mvn -B verify
         env:
           MAVEN_USERNAME: ${{ github.actor }}
-          MAVEN_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+          MAVEN_PASSWORD: ${{ secrets.GGCOMMONS_READ_TOKEN || secrets.GITHUB_TOKEN }}
 
       # ----- PYTHON -----
       - if: inputs.language == 'PYTHON'
