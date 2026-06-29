@@ -106,7 +106,7 @@
          monorepo build use `mvn install` on libs/java instead (then ~/.m2 satisfies it). -->
     <repository>
       <id>github</id>
-      <url>https://maven.pkg.github.com/mbreissi/ggcommons</url>
+      <url>https://maven.pkg.github.com/edgecommons/ggcommons</url>
     </repository>
   </repositories>
 

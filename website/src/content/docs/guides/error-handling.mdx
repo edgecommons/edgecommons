@@ -123,7 +123,7 @@ match startup {
 <TabItem label="TypeScript">
 
 ```typescript
-import { GgError } from "@mbreissi/ggcommons";
+import { GgError } from "@edgecommons/ggcommons";
 
 try {
   start(); // building/initializing GGCommons loads and validates the config
@@ -206,7 +206,7 @@ match messaging.publish(topic, &message).await {
 <TabItem label="TypeScript">
 
 ```typescript
-import { GgError } from "@mbreissi/ggcommons";
+import { GgError } from "@edgecommons/ggcommons";
 
 try {
   // messaging() throws GgError.messaging(...) if the service is unavailable.
@@ -296,7 +296,7 @@ match creds.get_string("db-password") {        // Result<Option<String>>
 <TabItem label="TypeScript">
 
 ```typescript
-import { CredentialError } from "@mbreissi/ggcommons";
+import { CredentialError } from "@edgecommons/ggcommons";
 
 const creds = gg.credentials();   // undefined if no `credentials` section
 if (!creds) {
@@ -381,7 +381,7 @@ match params.get("api-endpoint") {      // Result<Option<String>>
 <TabItem label="TypeScript">
 
 ```typescript
-import { ParameterError } from "@mbreissi/ggcommons";
+import { ParameterError } from "@edgecommons/ggcommons";
 
 const params = gg.parameters();   // undefined if no `parameters` section
 if (params) {
@@ -482,7 +482,7 @@ match handle.append(record) {
 <TabItem label="TypeScript">
 
 ```typescript
-import { GgStreamError } from "@mbreissi/ggcommons";
+import { GgStreamError } from "@edgecommons/ggcommons";
 
 const streams = gg.streams();   // undefined if no `streaming` section
 if (streams) {

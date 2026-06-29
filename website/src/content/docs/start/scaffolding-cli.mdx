@@ -282,7 +282,7 @@ greengrass-commons
 ggcommons = { path = "/abs/path/to/libs/rust", default-features = false }
 
 # Cargo.toml — registry: git tag
-ggcommons = { git = "https://github.com/mbreissi/ggcommons", tag = "rust-lib/v0.1.0", default-features = false }
+ggcommons = { git = "https://github.com/edgecommons/ggcommons", tag = "rust-lib/v0.1.0", default-features = false }
 ```
 
 </TabItem>
@@ -290,10 +290,10 @@ ggcommons = { git = "https://github.com/mbreissi/ggcommons", tag = "rust-lib/v0.
 
 ```json
 // package.json — local (default): file: dependency on your --ggcommons-path
-"@mbreissi/ggcommons": "file:/abs/path/to/libs/ts"
+"@edgecommons/ggcommons": "file:/abs/path/to/libs/ts"
 
 // package.json — registry: version range (plus a generated .npmrc pointing at GitHub Packages)
-"@mbreissi/ggcommons": "^0.1.0"
+"@edgecommons/ggcommons": "^0.1.0"
 ```
 
 </TabItem>
@@ -388,7 +388,7 @@ async fn main() -> anyhow::Result<()> {
 <TabItem label="TypeScript">
 
 ```typescript
-import { GGCommonsBuilder, logger } from "@mbreissi/ggcommons";
+import { GGCommonsBuilder, logger } from "@edgecommons/ggcommons";
 
 const COMPONENT_NAME = "com.example.MyComponent";
 
@@ -539,10 +539,10 @@ A Rust `path` dependency is deliberately left untouched: `upgrade` reports it as
 version-bump" rather than rewriting it.
 
 For TypeScript, `upgrade` keys on the bare dependency name `ggcommons` and does **not** match the
-scoped `@mbreissi/ggcommons` key the TS template generates. As a result, for a generated TS
+scoped `@edgecommons/ggcommons` key the TS template generates. As a result, for a generated TS
 component `upgrade` reports `package.json: no ggcommons dependency found` — for both a local
 (`file:`) and a registry (`^0.1.0`) dependency — and the `file:`/`link:` "nothing to version-bump"
-branch is never reached. {/* NEEDS REVIEW: this reflects upgrade.py keying on "ggcommons" while the TS template emits "@mbreissi/ggcommons"; the CLI should be fixed to recognize the scoped package name for parity. */}
+branch is never reached. {/* NEEDS REVIEW: this reflects upgrade.py keying on "ggcommons" while the TS template emits "@edgecommons/ggcommons"; the CLI should be fixed to recognize the scoped package name for parity. */}
 
 <Aside type="tip" title="Watch the -t short flag">
 `-t` means different things per command: it is `--to` (a version) for `upgrade`, `--target` (a

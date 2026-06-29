@@ -268,7 +268,7 @@ Pick your language with the tabs in each code block — the tabs stay in sync ac
 <TabItem label="TypeScript">
 
      ```typescript
-     import { GGCommonsBuilder, logger } from "@mbreissi/ggcommons";
+     import { GGCommonsBuilder, logger } from "@edgecommons/ggcommons";
 
      const COMPONENT_NAME = "com.example.MyComponent";
 
@@ -289,7 +289,7 @@ Pick your language with the tabs in each code block — the tabs stay in sync ac
      main().catch((err) => { console.error("fatal:", err); process.exit(1); });
      ```
 
-     The npm package is `@mbreissi/ggcommons` (not a bare `ggcommons`). `close()` is idempotent and
+     The npm package is `@edgecommons/ggcommons` (not a bare `ggcommons`). `close()` is idempotent and
      the library calls it on a stop signal.
 
 </TabItem>
@@ -452,9 +452,9 @@ Pick your language with the tabs in each code block — the tabs stay in sync ac
 
 
 <Aside type="caution" title="Resolving the published library">
-Whether a bare `pip install greengrass-commons`, `npm i @mbreissi/ggcommons`, or the Rust registry
+Whether a bare `pip install greengrass-commons`, `npm i @edgecommons/ggcommons`, or the Rust registry
 git tag resolve from public registries (versus requiring GitHub Packages authentication) is not yet
-confirmed. {/* NEEDS REVIEW: verify published availability of greengrass-commons, @mbreissi/ggcommons,
+confirmed. {/* NEEDS REVIEW: verify published availability of greengrass-commons, @edgecommons/ggcommons,
 and the Rust git tag before telling readers a plain registry install works. */} Until then, the
 default `--dep-source local` (Rust/TS) and a local `mvn install` / editable Python install are the
 reliable paths — see the [Installation guide](/start/installation/).

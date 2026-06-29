@@ -273,11 +273,11 @@ private by default; resolved 2026-06-26):
 
 | Artifact | Private channel (now) | Coordinate / ref | Public later (low-cost swap) |
 |----------|-----------------------|------------------|------------------------------|
-| Component **images** | **ghcr.io** | `ghcr.io/mbreissi/<component>` | same |
+| Component **images** | **ghcr.io** | `ghcr.io/edgecommons/<component>` | same |
 | **Java** lib | GitHub Packages **Maven** | `com.mbreissi:ggcommons` | Maven Central (same coord; add GPG signing) |
-| **TypeScript** lib | GitHub Packages **npm** | **`@mbreissi/ggcommons`** (renamed from `@breissinger`) | public npm under `@mbreissi` |
-| **Python** lib | `pip git+https` | `git+https://github.com/mbreissi/ggcommons.git#subdirectory=libs/python` | PyPI `greengrass-commons==x.y` |
-| **Rust** lib | cargo **git dep** | `ggcommons = { git = "https://github.com/mbreissi/ggcommons", tag = "rust-lib/vX.Y.Z" }` | crates.io `ggcommons = "x.y"` (⚠ verify name free before first public release) |
+| **TypeScript** lib | GitHub Packages **npm** | **`@edgecommons/ggcommons`** (renamed from `@breissinger`) | public npm under `@mbreissi` |
+| **Python** lib | `pip git+https` | `git+https://github.com/edgecommons/ggcommons.git#subdirectory=libs/python` | PyPI `greengrass-commons==x.y` |
+| **Rust** lib | cargo **git dep** | `ggcommons = { git = "https://github.com/edgecommons/ggcommons", tag = "rust-lib/vX.Y.Z" }` | crates.io `ggcommons = "x.y"` (⚠ verify name free before first public release) |
 
 GitHub Packages has **no native PyPI/crates registry**, hence the git-based deps for Python/Rust; both resolve
 against the private repo with the built-in `GITHUB_TOKEN`. Going public is a registry URL/credential change in

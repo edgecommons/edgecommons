@@ -1,5 +1,5 @@
 # Container image for a ggcommons TypeScript component, for the KUBERNETES (and HOST/Docker) platform.
-# Requires @mbreissi/ggcommons resolvable from GitHub Packages npm (an .npmrc with the registry
+# Requires @edgecommons/ggcommons resolvable from GitHub Packages npm (an .npmrc with the registry
 # + a GITHUB_TOKEN at build time); see docs/platform/DESIGN-packaging.md §13.
 #
 # Multi-stage: stage 1 installs deps and compiles the TypeScript to dist/; stage 2 is a slim

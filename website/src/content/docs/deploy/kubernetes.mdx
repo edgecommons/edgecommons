@@ -155,7 +155,7 @@ ENTRYPOINT ["/usr/local/bin/component"]
 <TabItem label="TypeScript">
 
 ```dockerfile
-# Multi-stage: install @mbreissi/ggcommons from GitHub Packages npm, compile to dist/, run non-root.
+# Multi-stage: install @edgecommons/ggcommons from GitHub Packages npm, compile to dist/, run non-root.
 # The npm install needs an .npmrc pointing at GitHub Packages + a GITHUB_TOKEN at build time.
 FROM node:20 AS build
 WORKDIR /app
@@ -184,7 +184,7 @@ The image-build prerequisites differ by language — make sure the library is re
 | Java | `com.mbreissi:ggcommons` from GitHub Packages Maven | a `settings.xml` / token for the private Maven registry |
 | Python | `greengrass-commons` via `requirements.txt` (registry or `git+https`) | usually none (public/registry) |
 | Rust | the `ggcommons` crate as a **git dependency** | `GITHUB_TOKEN` or SSH (the build sets `CARGO_NET_GIT_FETCH_WITH_CLI=true`) |
-| TypeScript | `@mbreissi/ggcommons` from GitHub Packages npm | an `.npmrc` + `GITHUB_TOKEN` |
+| TypeScript | `@edgecommons/ggcommons` from GitHub Packages npm | an `.npmrc` + `GITHUB_TOKEN` |
 
 <Aside type="tip" title="Rust on Kubernetes needs a registry/git dep">
   The Rust template's default library dependency is a local `path` dep, but the Rust Dockerfile

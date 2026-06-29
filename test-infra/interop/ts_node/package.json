@@ -9,7 +9,7 @@
     "build": "tsc"
   },
   "dependencies": {
-    "@mbreissi/ggcommons": "*"
+    "@edgecommons/ggcommons": "*"
   },
   "devDependencies": {
     "@types/node": "^20",

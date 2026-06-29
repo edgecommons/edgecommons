@@ -66,17 +66,17 @@ jobs:
           MAVEN_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
         run: mvn -B -ntp -DskipTests deploy
 
-      # ts-lib -> GitHub Packages npm (@mbreissi/ggcommons). Built via the npm WORKSPACE at the
+      # ts-lib -> GitHub Packages npm (@edgecommons/ggcommons). Built via the npm WORKSPACE at the
       # repo root (mirrors ts.yml): the native streaming binding is a workspace member, so it must
       # be built + linked locally — `npm ci` in libs/ts alone would 404 trying to fetch it. Publish
-      # only the @mbreissi/ggcommons package; the binding is an optional dep consumers may skip.
+      # only the @edgecommons/ggcommons package; the binding is an optional dep consumers may skip.
       - name: Set up Node (ts-lib)
         if: ${{ steps.which.outputs.artifact == 'ts-lib' }}
         uses: actions/setup-node@v4
         with:
           node-version: "20"
           registry-url: "https://npm.pkg.github.com"
-          scope: "@mbreissi"
+          scope: "@edgecommons"
       - name: Set up Rust (ts-lib native binding)
         if: ${{ steps.which.outputs.artifact == 'ts-lib' }}
         uses: dtolnay/rust-toolchain@stable
@@ -90,8 +90,8 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           npm ci || npm install
-          npm run build --workspace=@mbreissi/ggcommons
-          npm publish --workspace=@mbreissi/ggcommons
+          npm run build --workspace=@edgecommons/ggcommons
+          npm publish --workspace=@edgecommons/ggcommons
 
       # python-lib / cli -> build the dist (consumed via pip git+https@<tag>; add twine upload when a
       # PyPI/CodeArtifact token is configured — DESIGN-packaging §13).

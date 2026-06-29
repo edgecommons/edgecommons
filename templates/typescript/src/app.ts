@@ -12,7 +12,7 @@ import {
   IMessagingService,
   MetricService,
   logger,
-} from "@mbreissi/ggcommons";
+} from "@edgecommons/ggcommons";
 
 /** The component's business logic and the `ggcommons` service handles it operates over. */
 export class App {

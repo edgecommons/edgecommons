@@ -170,7 +170,7 @@ project by hand. The current published version is `0.1.0` (the value the CLI sub
   <repositories>
     <repository>
       <id>github</id>
-      <url>https://maven.pkg.github.com/mbreissi/ggcommons</url>
+      <url>https://maven.pkg.github.com/edgecommons/ggcommons</url>
     </repository>
   </repositories>
   ```
@@ -212,7 +212,7 @@ project by hand. The current published version is `0.1.0` (the value the CLI sub
   ggcommons = { path = "/abs/path/to/libs/rust", default-features = false }
 
   # registry: the published artifact via a git tag
-  # ggcommons = { git = "https://github.com/mbreissi/ggcommons", tag = "rust-lib/v0.1.0", default-features = false }
+  # ggcommons = { git = "https://github.com/edgecommons/ggcommons", tag = "rust-lib/v0.1.0", default-features = false }
   ```
 
   For the `local` form, the CLI fills the path from `--ggcommons-path` (defaulting to the in-repo
@@ -224,13 +224,13 @@ project by hand. The current published version is `0.1.0` (the value the CLI sub
 </TabItem>
 <TabItem label="TypeScript">
 
-  Package `@mbreissi/ggcommons` (note the scope — it is **not** a bare `ggcommons`). The dependency
+  Package `@edgecommons/ggcommons` (note the scope — it is **not** a bare `ggcommons`). The dependency
   form is chosen by `--dep-source`; in `package.json`:
 
   ```json
   {
     "dependencies": {
-      "@mbreissi/ggcommons": "file:/abs/path/to/libs/ts"
+      "@edgecommons/ggcommons": "file:/abs/path/to/libs/ts"
     }
   }
   ```
@@ -246,18 +246,18 @@ project by hand. The current published version is `0.1.0` (the value the CLI sub
   ```json
   {
     "dependencies": {
-      "@mbreissi/ggcommons": "^0.1.0"
+      "@edgecommons/ggcommons": "^0.1.0"
     }
   }
   ```
 
   ```text
   // .npmrc
-  @mbreissi:registry=https://npm.pkg.github.com
+  @edgecommons:registry=https://npm.pkg.github.com
   //npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}
   ```
 
-  {/* NEEDS REVIEW: confirm whether `npm i @mbreissi/ggcommons` resolves from public npm, or only from auth-gated GitHub Packages, before documenting a token-free install. */}
+  {/* NEEDS REVIEW: confirm whether `npm i @edgecommons/ggcommons` resolves from public npm, or only from auth-gated GitHub Packages, before documenting a token-free install. */}
 
 </TabItem>
 </Tabs>
