@@ -1,45 +1,49 @@
-# edgecommons
+<div align="center">
 
-**Build edge & IIoT components once — run them on AWS IoT Greengrass, Docker/bare hosts, or
-Kubernetes.**
+# ⚡ EdgeCommons
 
-`edgecommons` is an ecosystem around the [`ggcommons`](https://github.com/edgecommons/ggcommons)
-library: a four-language (Java · Python · Rust · TypeScript) toolkit that bundles the cross-cutting
-concerns every edge component needs — config, messaging, metrics, heartbeat, logging, credentials,
-parameters, and telemetry streaming — behind clean interfaces, plus a scaffolding CLI and component
-templates. Write your business logic; the library handles the rest, on any platform.
+**Build an edge component once — run it on AWS IoT Greengrass, Docker, or Kubernetes.**
 
-## Core
+[📖 Docs](https://docs.edgecommons.mbreissi.com) · [🚀 Get started](#-get-started) · [🔌 Components](#-components)
+
+![Languages](https://img.shields.io/badge/languages-Java_·_Python_·_Rust_·_TypeScript-blue)
+![License](https://img.shields.io/badge/license-Apache--2.0-green)
+![Platforms](https://img.shields.io/badge/platforms-Greengrass_·_Host_·_Kubernetes-555)
+
+</div>
+
+---
+
+EdgeCommons is an ecosystem built on **`ggcommons`** — one library, four languages implemented as
+deliberate mirrors. It bundles the cross-cutting concerns every edge component needs — configuration,
+messaging, metrics, heartbeat, logging, credentials, parameters, and telemetry streaming — so you
+write only business logic and deploy the same component anywhere.
+
+### 🧩 Core
 
 | Repo | What it is |
-|------|-----------|
-| [`ggcommons`](https://github.com/edgecommons/ggcommons) | The library (4 languages), the `ggcommons` CLI, templates, and schema. |
-| [`registry`](https://github.com/edgecommons/registry) | Machine-readable catalog of all components below. |
+|------|------------|
+| [**ggcommons**](https://github.com/edgecommons/ggcommons) | The library (Java · Python · Rust · TypeScript), the `ggcommons` CLI, templates, and config schema |
+| [**registry**](https://github.com/edgecommons/registry) | Machine-readable catalog of every component |
 
-## Components
+### 🔌 Components
 
-Discover them from the CLI (`ggcommons list-components`) or browse the [registry](https://github.com/edgecommons/registry).
-
-### Adapters (southbound — field-device & protocol ingestion)
+**Adapters** — southbound, field-device & protocol ingestion
 
 | Component | Lang | Protocol | Platforms |
 |-----------|------|----------|-----------|
-| [`opcua-adapter`](https://github.com/edgecommons/opcua-adapter) | Java | OPC UA | Greengrass · Host · Kubernetes |
-| [`modbus-adapter`](https://github.com/edgecommons/modbus-adapter) | Python | Modbus (TCP / RTU / RTU-over-TCP) | Greengrass · Host · Kubernetes |
+| [**opcua-adapter**](https://github.com/edgecommons/opcua-adapter) | Java | OPC UA | Greengrass · Host · K8s |
+| [**modbus-adapter**](https://github.com/edgecommons/modbus-adapter) | Python | Modbus (TCP / RTU / RTU-over-TCP) | Greengrass · Host · K8s |
 
-### Processors (edge compute)
-_Coming soon._
+*Processors (edge compute) and sinks (northbound) — coming soon.*
 
-### Sinks (northbound forwarding)
-_Coming soon._
-
-## Get started
+### 🚀 Get started
 
 ```bash
 pipx install ggcommons          # the scaffolding CLI
-ggcommons list-components       # see what exists
-ggcommons create-component -n com.example.MyAdapter -l PYTHON   # scaffold your own
+ggcommons list-components       # browse the ecosystem
+ggcommons create-component -n com.example.MyAdapter -l PYTHON
 ```
 
-Docs: **https://docs.ggcommons.mbreissi.com** · Build a component:
-[CONTRIBUTING](https://github.com/edgecommons/.github/blob/main/CONTRIBUTING.md)
+📖 Full documentation: **[docs.edgecommons.mbreissi.com](https://docs.edgecommons.mbreissi.com)**
+🤝 Building a component? See [CONTRIBUTING](https://github.com/edgecommons/.github/blob/main/CONTRIBUTING.md).
