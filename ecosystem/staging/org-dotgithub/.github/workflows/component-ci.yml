@@ -53,14 +53,24 @@ jobs:
       - uses: actions/checkout@v4
 
       # ----- JAVA -----
+      # setup-java writes ~/.m2/settings.xml with a <server id="github"> so Maven can resolve the
+      # private com.mbreissi:ggcommons from GitHub Packages. The consuming repo's GITHUB_TOKEN must
+      # be granted read access to the edgecommons/ggcommons package (Package settings -> Manage
+      # Actions access) for cross-repo resolution to succeed.
       - if: inputs.language == 'JAVA'
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: ${{ inputs.java-version }}
           cache: maven
+          server-id: github
+          server-username: MAVEN_USERNAME
+          server-password: MAVEN_PASSWORD
       - if: inputs.language == 'JAVA'
         run: mvn -B verify
+        env:
+          MAVEN_USERNAME: ${{ github.actor }}
+          MAVEN_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
 
       # ----- PYTHON -----
       - if: inputs.language == 'PYTHON'
