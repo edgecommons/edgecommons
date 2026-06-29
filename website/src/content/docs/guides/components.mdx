@@ -386,8 +386,10 @@ gg.shutdown()
 ```rust
 // Rust has NO close()/shutdown(): teardown is pure RAII — dropping `gg`
 // aborts the heartbeat, hot-reload, signal-watcher and health-server tasks.
-// The library's signal watcher ONLY flips readiness to "shutting down"; it does
-// NOT exit the process, so YOUR app must await the signal and then return/drop.
+// The library's signal watcher flips readiness to "shutting down" AND resolves
+// the library-owned `gg.shutdown_signal()` future; it does NOT exit the process,
+// so YOUR app awaits that future (instead of hand-rolling `tokio::signal`) and
+// then returns/drops.
 
 let gg = GgCommonsBuilder::new("com.example.SkeletonComponent")
     .args(std::env::args_os())
@@ -396,7 +398,7 @@ let gg = GgCommonsBuilder::new("com.example.SkeletonComponent")
 
 tokio::select! {
     // ... your run loops ...
-    _ = shutdown_signal() => tracing::info!("shutdown signal received"),
+    _ = gg.shutdown_signal() => tracing::info!("shutdown signal received"),
 }
 // falling out of scope drops `gg` -> all resources released (RAII)
 Ok(())
@@ -415,14 +417,12 @@ await gg.close();   // idempotent
 </TabItem>
 </Tabs>
 
-<Aside type="note" title="Two lifecycle asymmetries">
-- **Rust must drive its own run loop to shutdown.** The library watcher only flips readiness — it
-  never tears down or exits. Await a terminate signal yourself (Ctrl-C / SIGTERM), then return so
-  `gg` drops. There is no `close()` to call.
-- **Python wires SIGTERM only.** Java's hook covers both SIGTERM and SIGINT, and TypeScript wires
-  both explicitly, but Python installs a **SIGTERM-only** handler (this matches how Greengrass and
-  Kubernetes stop a process). Ctrl-C is not routed through the graceful path the same way — rely on
-  the context manager or an explicit `shutdown()` for interactive runs.
+<Aside type="note" title="Rust drives its own run loop">
+**Rust must drive its own run loop to shutdown.** The library watcher flips readiness to 503 and
+resolves the library-owned `gg.shutdown_signal()` future, but never tears down or exits the process.
+Await `gg.shutdown_signal()` in your run loop, then return so `gg` drops (there is no `close()` to
+call). Signals are otherwise uniform: all four SDKs wire **both SIGTERM and SIGINT** to the graceful
+path.
 </Aside>
 
 ## Receiving your own messages

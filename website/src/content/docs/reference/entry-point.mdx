@@ -573,7 +573,7 @@ TypeScript is **builder-only** — there is no public direct constructor and no 
 | Opt-in absent value | `null` | `None` | `Option` `None` (`streams()` empty service) | `undefined` |
 | Readiness setter | `setReady(b)` | `set_ready(b)` | `set_ready(b)` | `setReady(b)` |
 | Teardown | `shutdown()` + JVM hook | `shutdown()` + context mgr | RAII `Drop` (no method) | `close()` |
-| Signals wired | SIGTERM + SIGINT | SIGTERM only | watcher flips readiness only | SIGTERM + SIGINT |
+| Signals wired | SIGTERM + SIGINT | SIGTERM + SIGINT | SIGTERM + Ctrl-C (watcher → readiness + `shutdown_signal()`) | SIGTERM + SIGINT |
 | Direct construction | deprecated ctors | public ctor | builder-only | builder-only |
 
 <LinkCard

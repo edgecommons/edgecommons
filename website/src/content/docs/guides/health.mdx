@@ -156,7 +156,7 @@ if (gg.ready()) { /* serving */ }   // TS also exposes a public ready() getter
 
 ## Graceful shutdown
 
-When the library receives `SIGTERM` (and, in some SDKs, `SIGINT`), it runs a fixed drain sequence:
+When the library receives `SIGTERM` or `SIGINT`, it runs a fixed drain sequence:
 
 
 1. **Readiness flips to 503 first.** The `shuttingDown` flag is set before anything is torn down, so
