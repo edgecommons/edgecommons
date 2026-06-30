@@ -187,7 +187,7 @@ gg.shutdown();
 <TabItem label="Python">
 
 ```python
-# A SIGTERM handler (installed on the main thread) flips readiness, drains, and exits 0.
+# SIGTERM and SIGINT handlers (installed on the main thread) flip readiness, drain, and exit 0.
 # You can also drive it explicitly — it is idempotent:
 gg.shutdown()
 ```

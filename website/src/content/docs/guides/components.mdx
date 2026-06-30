@@ -371,7 +371,7 @@ gg.shutdown();   // idempotent (guarded by an atomic CAS)
 <TabItem label="Python">
 
 ```python
-# The library installs a SIGTERM handler (main thread only) that runs shutdown()
+# The library installs SIGTERM and SIGINT handlers (main thread only) that run shutdown()
 # then sys.exit(0). Prefer the context manager so teardown is automatic:
 with GGCommonsBuilder.create("ggcommons_python").with_args(args).build() as gg:
     ...  # business logic; gg.shutdown() runs on exit

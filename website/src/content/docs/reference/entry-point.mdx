@@ -208,7 +208,7 @@ follow the [opt-in return contract](#opt-in-return-contract) below.
 
 ```java
 // com.mbreissi.ggcommons.GGCommons — accessors
-ConfigManager     getConfigManager();   // concrete; throws if not initialized
+ConfigManager     getConfigManager();   // concrete instance (returns the wired field; no init guard)
 MessagingClient   getMessaging();       // concrete instance
 MetricEmitter     getMetrics();         // concrete instance
 StreamService     getStreams();         // null when no `streaming` config section

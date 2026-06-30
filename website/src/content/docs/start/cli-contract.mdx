@@ -17,7 +17,7 @@ The contract is **identical in all four languages** — the same flags, the same
 validation. Only the launcher in front of the flags (`java -jar`, `python3`, the Rust binary,
 `node`) differs.
 
-## The four flags
+## The five flags
 
 | Flag | Values | Default |
 |------|--------|---------|
@@ -25,9 +25,11 @@ validation. Only the launcher in front of the flags (`java -jar`, `python3`, the
 | `--platform <PLATFORM>` | `GREENGRASS` \| `HOST` \| `KUBERNETES` \| `auto` | `auto` (auto-detected) |
 | `--transport <TRANSPORT> [path]` | `IPC` \| `MQTT [messaging_config.json]` | derived from the platform |
 | `-t` / `--thing <name>` | IoT Thing name (full string) | resolved from env (see below) |
+| `-h` / `--help` | *(takes no value)* | prints the usage banner and exits 0 |
 
-Platform tokens parse case-insensitively. `auto` (or an absent `--platform`) lets the resolver
-auto-detect the platform from the environment.
+Platform, transport, and `-c` config-source tokens all parse case-insensitively (each token is
+upper-cased before it is matched). `auto` (or an absent `--platform`) lets the resolver auto-detect
+the platform from the environment.
 
 ### `-c` / `--config` — the config source
 

@@ -369,9 +369,22 @@ identity).
 
 ### Hot reload
 
-The `FILE` source watches the config file (and its parent directory, to handle atomic-rename saves)
-and reloads on change in every language. The `CONFIGMAP` source reloads in place via the kubelet
-`..data` directory swap. On every reload the new document is **re-validated** against the schema.
+Four of the six sources hot-reload; two are read once at startup:
+
+- **`FILE`** watches the config file (and its parent directory, to handle atomic-rename saves) and
+  reloads on change in every language.
+- **`CONFIGMAP`** reloads in place via the kubelet `..data` directory swap.
+- **`SHADOW`** subscribes to the device shadow's update topics over IPC and reapplies the config when
+  the shadow's `desired` state changes (`update/accepted`).
+- **`CONFIG_COMPONENT`** subscribes to `ggcommons/{ThingName}/config/{ComponentName}/updated` over
+  IPC and reapplies the config the shared config component pushes.
+- **`GG_CONFIG`** and **`ENV`** do **not** hot-reload — the document is read once at startup. (A
+  Greengrass deployment that revises the `GG_CONFIG` configuration restarts the component, so the new
+  values are picked up on the next start rather than in place.)
+
+Every reloading source funnels through the same `applyConfig` seam, so the re-validation and
+reject-and-keep behavior below applies uniformly: on each reload the new document is **re-validated**
+against the schema before it is applied.
 
 ### Schema validation
 
@@ -408,7 +421,10 @@ Python is also the only SDK that can opt out of validation, by constructing the 
   is async.
 - **Missing instance**: `null` (Java) / `None` (Rust) / `undefined` (TypeScript) / `KeyError`
   (Python).
-- **Invalid reload**: reject-and-keep in Java/Rust/TypeScript; apply-and-notify in Python.
+- **Invalid reload**: reject-and-keep in **all four** SDKs — a schema-invalid hot reload is logged,
+  the previous config is kept, and listeners are not notified (Python was brought to parity; its
+  `applyConfig`/`apply_config` re-validates and keeps the prior config on failure, just like the
+  others). It is only fatal during the initial load.
 
 ## Next steps
 

@@ -161,6 +161,17 @@ After a metric is defined, emit values by passing the metric name and a map of
 language-specific: `Map<String, Float>` (Java — note `Float`, not `double`), a plain `dict`
 (Python), `HashMap<String, f64>` (Rust), and `Record<string, number>` (TypeScript).
 
+<Aside type="note" title="“Buffered” only matters for the in-memory CloudWatch target">
+The buffered-vs-immediate split is **only real for the `cloudwatch` target in in-memory mode** — the
+one target that accumulates datums and flushes them on a timer (`targetConfig.intervalSecs`, default
+5s). For `log`, `messaging`, and `cloudwatchcomponent`, `emitMetric` is a direct **synchronous** call
+that delivers immediately — identical to `emitMetricNow`, with no buffering — so `flushMetrics` has
+nothing to drain on those targets. The `prometheus` target treats both calls the same way too (each
+just updates the in-process gauge registry; a scrape pulls the value). In the `cloudwatch`
+**durable** buffer both `emitMetric` and `emitMetricNow` append to the disk buffer and the background
+engine drains it, so neither delivers synchronously there.
+</Aside>
+
 <Tabs syncKey="lang">
 <TabItem label="Java">
 
@@ -263,6 +274,30 @@ gracefully falls back to `log` (with a warning) when `metrics-prometheus` is not
 without its feature is likewise an error. Java, Python, and TypeScript always bundle these targets.
 </Aside>
 
+## Configuring a target
+
+Two keys live directly under `metricEmission`: `target` (above) and `namespace`. Everything else is
+target-specific and lives under `metricEmission.targetConfig` — one block whose relevant keys depend
+on the selected target:
+
+| Target | `targetConfig` keys | Defaults and notes |
+|--------|---------------------|--------------------|
+| `log` | `logFileName`, `maxFileSize` | `maxFileSize` default `10MB`; the rotated-backup count is **fixed at 5** (not configurable). When `logFileName` is unset the path falls back to the platform default (a local path on HOST/Kubernetes, which lack the on-device `/greengrass/v2/logs`). |
+| `messaging` | `topic`, `destination` | `topic` default `{ThingName}/{ComponentName}/metric`; `destination` default `ipc` (set `iot_core` / `iotcore` to publish to AWS IoT Core at QoS at-least-once). |
+| `cloudwatchcomponent` | `topic` | `topic` default `cloudwatch/metric/put` — the topic the AWS-managed CloudWatch metrics Greengrass component listens on. |
+| `cloudwatch` | `intervalSecs`, `buffer` | `intervalSecs` default `5` (a value `< 1` is reset to `5`) is the in-memory batch-flush period; it is **ignored by the durable buffer**, which the background engine drains. `buffer` selects durable vs in-memory — see [Durable CloudWatch buffer](#durable-cloudwatch-buffer). |
+| `prometheus` | `port`, `path` | `port` default `9090`, `path` default `/metrics`. |
+
+### Fleet-wide aggregate (`largeFleetWorkaround`)
+
+`metricEmission.largeFleetWorkaround` (boolean, default `false`) is a **top-level** `metricEmission`
+key, not a `targetConfig` one. When `true`, the `log`, `messaging`, and `cloudwatch` targets emit a
+**second copy** of every datum with its `coreName` dimension overwritten to the literal string
+`"ALL"` — a fleet-wide aggregate series alongside the per-core one, so a large fleet can roll a metric
+up across all cores without a per-device dimension explosion. The `cloudwatchcomponent` target
+ignores the flag (its `coreName` dimension is implicit and cannot be overridden) and the `prometheus`
+target ignores it entirely. On the targets that honor it, expect roughly **double** the datum volume.
+
 ## Prometheus pull endpoint
 
 The `prometheus` target inverts the usual lifecycle. Instead of pushing, `emit`/`emitNow` only
@@ -270,7 +305,9 @@ update an in-process **latest-value gauge registry**; `flush` is a no-op (a scra
 `shutdown`/`close` stops the HTTP listener. A Prometheus server (or any scraper) pulls the current
 values on its own schedule.
 
-- The HTTP server binds on `0.0.0.0`, default port **9090**, default path **`/metrics`**.
+- The HTTP server binds on `0.0.0.0`. The port and path come from
+  `metricEmission.targetConfig.port` (default **9090**) and `metricEmission.targetConfig.path`
+  (default **`/metrics`**).
 - `GET <path>` returns `200` with the OpenMetrics text exposition; any other path returns `404`
   (and, on Java, a non-`GET` on the metrics path returns `405`).
 - A bind/start failure is logged and **swallowed** — the component keeps running and emits keep
@@ -281,8 +318,6 @@ Gauge naming: the gauge name is `sanitize(lowercase("{namespace}_{measureName}")
 label name sanitized to `[a-zA-Z_][a-zA-Z0-9_]*`. The namespace used is the **configured**
 `metricEmission.namespace` (not the per-metric namespace), defaulting to `ggcommons`.
 
-{/* NEEDS REVIEW: exact JSON config keys for the Prometheus listener port/path were not confirmed against schema source in the fact sheet — only the default values (9090, /metrics). Verify the key names before documenting them. */}
-
 <Aside type="tip">
 This is why `prometheus` is the Kubernetes default: a sidecar or the cluster Prometheus scrapes the
 pod's `/metrics` endpoint rather than the component pushing out.
@@ -291,21 +326,24 @@ pod's `/metrics` endpoint rather than the component pushing out.
 ## Durable CloudWatch buffer
 
 The `cloudwatch` target is backed by a **durable, disk-backed store-and-forward buffer by default**
-(`buffer.type` defaults to `durable`). Datums are written to local disk first and drained to
-CloudWatch in batches, so metrics survive process restarts and cloud disconnects — the edge-first
-default. Set `buffer.type` to `memory` to opt back into in-memory batching only.
+(`targetConfig.buffer.type` defaults to `durable`). Datums are written to local disk first and drained
+to CloudWatch in batches, so metrics survive process restarts and cloud disconnects — the edge-first
+default. Set `targetConfig.buffer.type` to `memory` to opt back into in-memory batching only (the
+in-memory path flushes every `targetConfig.intervalSecs`, default 5s).
 
 ```json
 {
   "metricEmission": {
     "target": "cloudwatch",
     "namespace": "MyApp/Metrics",
-    "buffer": {
-      "type": "durable",
-      "maxDiskBytes": 134217728,
-      "path": "/var/lib/ggcommons/metrics/{ComponentName}/cw",
-      "onFull": "dropOldest",
-      "fsync": "perBatch"
+    "targetConfig": {
+      "buffer": {
+        "type": "durable",
+        "maxDiskBytes": 134217728,
+        "path": "/var/lib/ggcommons/metrics/{ComponentName}/cw",
+        "onFull": "dropOldest",
+        "fsync": "perBatch"
+      }
     }
   }
 }
@@ -313,6 +351,13 @@ default. Set `buffer.type` to `memory` to opt back into in-memory batching only.
 
 The defaults shown above (`128 MiB` cap, the per-component `cw` path, `dropOldest` when full,
 `fsync` per batch) apply when the `buffer` block is omitted.
+
+<Aside type="caution" title="buffer lives under targetConfig">
+The buffer block is read **only** at `metricEmission.targetConfig.buffer`. `metricEmission` is
+strict (`additionalProperties: false`), so a `buffer` placed directly under `metricEmission` both
+**fails schema validation** and is silently ignored at runtime — nest it under `targetConfig` as
+shown.
+</Aside>
 
 Behavior to be aware of:
 

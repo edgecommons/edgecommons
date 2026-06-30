@@ -345,7 +345,9 @@ is **not part of the JSON schema** — a config with `sink.type: "callback"` fai
 Callback streams are reachable only programmatically: Java `StreamService.registerSink(SinkFunction)`
 (static, before `open`), Python `StreamService.open_with_callback(config, callback)`, TypeScript
 `registerSinkCallback(streamName, cb)` (with the async `resolveSinkOutcome`, not re-exported from the
-public entry point), and Rust `DefaultStreamService::open_with(config, &SinkFactory)`.
+public entry point), and Rust `DefaultStreamService::open_with(config, &SinkFactory)`. The
+`SinkConfig::Callback` variant carries an optional `id` (`{ "type": "callback", "id": "metrics-cw" }`)
+that routes a stream to a specific host callback when several callback streams coexist.
 </Aside>
 
 For the full `buffer`, `batch`, and `delivery` config (with defaults and validation), see the

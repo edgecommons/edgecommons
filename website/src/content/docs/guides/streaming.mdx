@@ -34,8 +34,18 @@ server-to-device path. For command-and-control or low-rate messaging, use the
 
 
 1. **Add a `streaming` section to your component config.** Each entry under `streaming.streams[]`
-   requires a `name` and a `sink`; `buffer`, `batch`, and `delivery` are optional and default to
-   sensible values.
+   requires a `name`, a `sink`, **and a `buffer`**; `batch` and `delivery` are optional and default
+   to sensible values.
+
+   <Aside type="caution" title="buffer is required by the core (but the schema doesn't enforce it)">
+   The shared `ggstreamlog` core deserializes `buffer` as a **required** field. A stream with no
+   `buffer` **fails to open** — the core reports a missing `buffer` field and the whole streaming
+   subsystem fails to start. The JSON schema, however, only requires `["name", "sink"]`, so a
+   buffer-less config **passes schema validation and then fails at runtime**. This is a known
+   schema ↔ core gap: always supply `buffer`. (`batch` and `delivery` genuinely are optional — they
+   have defaults. Inside `buffer`, the only field the core itself requires is `path`, and only for a
+   `disk` buffer; the rest of the buffer fields default.)
+   </Aside>
 
    ```json
    {
@@ -337,8 +347,9 @@ The core also supports a `callback` sink for bring-your-own delivery, but it is 
 JSON schema** — a config with `sink.type: "callback"` fails schema validation. Callback streams are
 reachable only programmatically (Java `StreamService.registerSink`, Python
 `StreamService.open_with_callback`, TypeScript `registerSinkCallback`, Rust
-`DefaultStreamService::open_with`). Treat it as an internal extension point, not a config-declarable
-sink.
+`DefaultStreamService::open_with`). A `callback` sink also accepts an optional `id`
+(`{ "type": "callback", "id": "metrics-cw" }`) used to route to a specific host callback when several
+callback streams coexist. Treat it as an internal extension point, not a config-declarable sink.
 </Aside>
 
 ## The buffer
@@ -359,11 +370,19 @@ under `buffer`.
 | `path` | — | Required for `disk`; must be omitted for `memory`. |
 | `segmentBytes` | `67108864` (64 MiB) | On-disk segment size. |
 | `maxDiskBytes` | `1073741824` (1 GiB) | Total buffer budget (on disk, or in RAM for `memory`). Must be `>= segmentBytes`. |
-| `maxAgeSecs` | _null_ | Records older than this become eligible for `dropOldest`. |
+| `maxAgeSecs` | _null_ | **No effect today** (see below). Intended as an age cap for `dropOldest`. |
 | `onFull` | `dropOldest` | Behavior when the budget is reached (below). |
 | `fsync` | `perBatch` | Durability flush policy: `always`, `perBatch`, or `interval`. |
 | `fsyncIntervalMs` | `1000` | Flush cadence when `fsync: interval`. |
 | `maxBufferedRecords` | `10000` | In-memory ingest-queue bound — the actual backpressure point. |
+
+<Aside type="caution" title="maxAgeSecs has no effect today">
+There is **no age-based retention**. The buffer enforces its budget purely by **bytes**: `dropOldest`
+reclaims the oldest segment (disk) or record (memory) only when an append would push the buffer past
+`maxDiskBytes`. `maxAgeSecs` is parsed but never read, so records are **never dropped because of
+age** — a buffer that stays under `maxDiskBytes` retains its data indefinitely no matter how old it
+gets. Treat `maxAgeSecs` as not-yet-implemented and size retention with `maxDiskBytes`.
+</Aside>
 
 ### onFull semantics
 
@@ -396,16 +415,33 @@ production-ready; tune only when you have a reason.
 |---------------|---------|---------|
 | `batch.maxRecords` | `500` | Max records per export batch. |
 | `batch.maxBytes` | `4194304` (4 MiB) | Max bytes per export batch. |
-| `batch.maxLatencyMs` | `1000` | Max time to wait before flushing a partial batch. |
-| `batch.compression` | `none` | `none` or `zstd`. |
-| `delivery.maxRetries` | `-1` | `-1` = retry forever. |
+| `batch.maxLatencyMs` | `1000` | **No effect today** (see below). Intended max wait before flushing a partial batch. |
+| `batch.compression` | `none` | `none` or `zstd` (`zstd` is a no-op today — see below). |
+| `delivery.maxRetries` | `-1` | Max attempts for a whole-batch `Failed` send before abandoning it (`-1` = retry forever). Bounds **only** whole-batch failures — per-record partial failures retry indefinitely (see [Delivery semantics](#delivery-semantics)). |
 | `delivery.backoffBaseMs` | `50` | Initial retry backoff. |
 | `delivery.backoffMaxMs` | `30000` | Backoff ceiling. |
-| `delivery.pollIntervalMs` | `100` | Export poll cadence. |
+| `delivery.pollIntervalMs` | `100` | Export poll cadence — also the effective partial-batch drain interval (see below). |
+
+<Aside type="caution" title="batch.maxLatencyMs has no effect today">
+The export loop reads each batch with `read_batch(maxRecords, maxBytes)` only — `maxLatencyMs` is
+parsed and defaulted but never consulted. `read_batch` returns immediately with whatever is buffered
+(it never waits to fill a batch), so a partial batch drains on the engine's next poll. The effective
+partial-batch latency is therefore governed by **`delivery.pollIntervalMs`**: a low-rate stream
+drains roughly every `pollIntervalMs` regardless of `maxLatencyMs`. Treat `maxLatencyMs` as
+not-yet-implemented.
+</Aside>
 
 <Aside type="caution" title="compression: zstd is a no-op today">
 `zstd` is accepted by the schema and the core, but in this phase it is treated as `none` until the
 sink implements it. Do not rely on compression being applied yet.
+</Aside>
+
+<Aside type="note" title="Numeric fields accept integer-valued floats">
+Every numeric `buffer` / `batch` / `delivery` field accepts an integer **or** an integer-valued float
+— `1048576` and `1048576.0` are equivalent. Greengrass stores all config numbers as doubles, so
+values delivered through `GG_CONFIG` arrive as floats; the core's lenient deserializers accept both,
+so the same config parses whether it comes from `GG_CONFIG`, a `FILE`, or a ConfigMap. (A
+non-integer float like `1.5` for an integer field is still rejected.)
 </Aside>
 
 ## Delivery semantics
@@ -417,6 +453,12 @@ when every record is acknowledged:
 - Partial ack → only the failed offsets are re-delivered.
 - Retryable failure (or a sink callback that throws/raises) → the **whole batch** is re-delivered and
   the checkpoint is not advanced, so a transient outage cannot lose buffered data.
+
+`delivery.maxRetries` bounds **only** the whole-batch `Failed` path: after that many failed attempts
+the engine abandons the batch — it advances the checkpoint past it (so the data is lost), increments
+`failedTotal`, and moves on, so one poison batch can't wedge the stream forever. The default `-1`
+never gives up. Per-record **partial** failures are *not* bounded by `maxRetries`: the failed offsets
+are re-delivered indefinitely (each attempt counts toward `retriesTotal`) until they ack.
 
 Records carry `(partitionKey, timestampMs, payload)`; the engine assigns each one an internal log
 **offset**. De-duplicate downstream on `partitionKey` plus that offset — there is no

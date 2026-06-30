@@ -333,14 +333,19 @@ cache already holds under a prefix.
 
 Refresh is designed to never take a healthy component down:
 
-- A **per-item failure** is logged and increments the `refresh_failures` counter. The error only
-  propagates when the cache is still **empty** (the bootstrap case) — otherwise the previously cached
-  values are kept.
+- A **failure on any synced name or path** is logged (one warning per failing item) and the previous
+  cached values are kept. The `refresh_failures` counter then increments **once for the whole
+  `refresh()` cycle** if at least one item failed — *not* once per failing item: three items failing
+  in a single refresh add `1` to the counter, not `3` (the implementation tracks a single
+  "any error" flag and bumps the counter once at the end). The error only propagates when the cache is
+  still **empty** (the bootstrap case) — otherwise the cycle is swallowed and reads keep serving the
+  last-known values.
 - A **missing** parameter (an unset env var, an SSM `ParameterNotFound`) is **not** an error; the
   read just returns nothing.
 - Only a **fully-clean** refresh updates the last-refresh timestamp.
-- **`bootstrapOnStart`** (default `true`) runs one `refresh()` inside the accessor at startup; if it
-  fails it is caught and logged, and the service is still returned.
+- **`bootstrapOnStart`** (default `true`) runs one `refresh()` inside the `open` factory when the
+  service is constructed at library-init time (not later, inside the accessor); if it fails it is
+  caught and logged, and the service is still returned so the component can start and retry.
 - **`refreshIntervalSecs`** (default `300`; `0` disables) drives a background daemon that refreshes
   periodically.
 
@@ -399,8 +404,13 @@ library `file` key provider unless you set `cache.keyProvider` explicitly.
 </Aside>
 
 When the `gg` accessor builds the service, it resolves template variables like `{ComponentFullName}`
-and `{ThingName}` in `cache.path` and the key path before opening the cache. (Calling the low-level
-`open` factory directly does no templating — the raw default really is `"param-cache"`.)
+and `{ThingName}` across the **entire `parameters` config section** before opening the cache — not
+just `cache.path` and the key path, but also `source.root`, `source.prefix`, and every entry in
+`sync.names` / `sync.paths`. (Internally the accessor templates the section's JSON *text*, then
+re-parses it, so any `{...}` token anywhere in the section is substituted.) This is what lets a
+mounted-file `root` or an SSM name carry per-thing/per-component placeholders. (Calling the low-level
+`open` factory directly does no templating — the raw default really is `"param-cache"`, and any
+`{...}` tokens are passed through literally.)
 
 ## ParamValue and secure values
 

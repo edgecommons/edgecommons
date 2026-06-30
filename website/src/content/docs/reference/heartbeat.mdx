@@ -480,6 +480,11 @@ portable approach is to set `intervalSecs`, `measures`, and `targets` **explicit
 | `targets[].config.destination` | string | `messaging` only. `ipc` / `local` or `iot_core` / `iotcore`. Default `ipc`. |
 | `targets[].config.topic` | string | `messaging` only. Default `ggcommons/{ThingName}/{ComponentName}/heartbeat`; `{ThingName}` and `{ComponentName}` are resolved at publish time. |
 
+The schema marks only `targets[].type` as required, but a `messaging` target should always carry a
+`config` object: in Java a `messaging` target with a missing `config` throws on the tick (the error
+is caught and logged, so that tick publishes nothing and any later target is skipped). A `metric`
+target needs no `config`. See the [guide](/guides/heartbeat/#destination-and-topic).
+
 The metric target's `storageResolution` is `1` when `intervalSecs` is under `60`, otherwise `60`
 (all four languages). See the [Configuration guide](/guides/configuration/) for how the schema is
 synced and validated.

@@ -96,8 +96,9 @@ Working with GGCommons is the same three steps in every language:
    subsystems down on shutdown — you do **not** register your own signal handler.
 
 <Aside type="caution" title="Don't wire your own shutdown hook">
-  The library owns `SIGTERM`/`SIGINT` itself (Java installs a JVM shutdown hook; Python installs a
-  `SIGTERM` handler; TypeScript installs `SIGTERM` and `SIGINT` handlers). Registering another hook
+  The library owns `SIGTERM`/`SIGINT` itself (Java installs a JVM shutdown hook that fires on both;
+  Python installs `SIGTERM` and `SIGINT` handlers; TypeScript installs `SIGTERM` and `SIGINT`
+  handlers). Registering another hook
   just double-runs teardown. Rust has no `close()`/`shutdown()` at all — teardown is RAII: dropping
   the runtime aborts its background tasks. You may still call the explicit `shutdown()` (Java/Python)
   or `close()` (TypeScript) yourself; both are idempotent.

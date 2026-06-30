@@ -23,7 +23,7 @@ defaults, and migration notes, see the [CLI contract](/start/cli-contract/) page
 
 ## Accepted flags
 
-The parser recognizes the four standard flags (identical across all four SDKs). Any
+The parser recognizes the five standard flags (identical across all four SDKs). Any
 application-specific options are merged in alongside them (Java `Options`, Python an
 `argparse.ArgumentParser`, Rust/TS by composing onto the base command).
 
@@ -33,10 +33,13 @@ application-specific options are merged in alongside them (Java `Options`, Pytho
 | `--platform <PLATFORM>` | `GREENGRASS` \| `HOST` \| `KUBERNETES` \| `auto` | `auto` (auto-detected) |
 | `--transport <TRANSPORT> [path]` | `IPC` \| `MQTT [messaging_config.json]` | derived from the platform |
 | `-t` / `--thing <name>` | IoT Thing name (full string) | resolved from the environment |
+| `-h` / `--help` | *(takes no value)* | prints the usage banner and exits 0 |
 
-Platform and transport tokens parse case-insensitively. The removed `-m` / `--mode` flag is rejected
-with guidance to `--platform` / `--transport`. See the [CLI contract](/start/cli-contract/) for the
-per-source extra-argument defaults, the auto-detection order, and the `IPC`-on-GREENGRASS-only rule.
+Platform, transport, and `-c` config-source tokens all parse case-insensitively (each is upper-cased
+before it is matched, so `file`, `File`, and `FILE` are equivalent). The removed `-m` / `--mode` flag
+is rejected with guidance to `--platform` / `--transport`. See the [CLI contract](/start/cli-contract/)
+for the per-source extra-argument defaults, the auto-detection order, and the
+`IPC`-on-GREENGRASS-only rule.
 
 ## Parse entry point
 

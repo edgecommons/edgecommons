@@ -77,8 +77,12 @@ IoT Core directly and take a QoS.
 
 `MessagingClient` — instance methods. Built internally via
 `MessagingClientBuilder.create(parsedCommandLine).withReceiveOwnMessages(boolean).build()`
-(`receiveOwnMessages` defaults to `true`); you normally obtain it from `gg.getMessaging()`. The IoT-Core method casing is intentionally
-inconsistent: `publishToIotCore` / `publishToIotCoreRaw` use "Iot", the rest use "IoT".
+(`receiveOwnMessages` defaults to `true`); you normally obtain it from `gg.getMessaging()`.
+`receiveOwnMessages` is consumed **only by the Greengrass IPC provider** (it selects the IPC
+`ReceiveMode` — `RECEIVE_ALL_MESSAGES` vs `RECEIVE_MESSAGES_FROM_OTHERS`); the standalone/MQTT
+provider takes no such flag and **ignores it** (an MQTT broker has no own-message filter). The
+IoT-Core method casing is intentionally inconsistent: `publishToIotCore` / `publishToIotCoreRaw`
+use "Iot", the rest use "IoT".
 
 ```java
 public static final int DEFAULT_MAX_MESSAGES = 10_000;
@@ -387,7 +391,7 @@ a `"thing"` key, emitted only when set). The reply-topic prefix is the literal s
 
 ```java
 class MessageHeader {
-    String name; String version; long timestamp;
+    String name; String version; String timestamp;   // ISO-8601 / RFC3339 (ISO_INSTANT)
     String correlationId; String uuid; String replyTo;
     static final String REPLY_MESSAGE_TOPIC_PREFIX = "ggcommons/reply-";
     JsonObject toDict();   // emits name, version, timestamp, uuid, correlation_id, [reply_to]
@@ -410,7 +414,7 @@ class MessageHeader:
     name: str
     version: str
     correlation_id: Optional[str] = None
-    timestamp: Optional[int] = None
+    timestamp: Optional[str] = None   # ISO-8601 / RFC3339 string
     uuid: Optional[str] = None
     reply_to: Optional[str] = None
     REPLY_MESSAGE_TOPIC_PREFIX = "ggcommons/reply-"
@@ -431,7 +435,7 @@ class MessageTags:
 pub struct MessageHeader {
     pub name: String,
     pub version: String,
-    pub timestamp: i64,
+    pub timestamp: String,   // RFC3339 string
     pub correlation_id: String,
     pub uuid: String,
     pub reply_to: Option<String>,   // serde skips when None
@@ -450,7 +454,7 @@ pub struct MessageTags {
 interface MessageHeader {
   name: string;
   version: string;
-  timestamp: number;
+  timestamp: string;   // ISO-8601 string (Date.toISOString())
   correlation_id: string;
   uuid: string;
   reply_to?: string;
@@ -628,6 +632,12 @@ Two QoS levels — at-most-once and at-least-once — which the MQTT provider ma
 exists in Rust/TS as a `Local` / `IotCore` selector used by the lower-level provider; Java/Python do
 not expose an equivalent enum (they have the per-destination method pairs instead).
 
+QoS is a parameter only on the explicit `*ToIotCore` mirror methods. The **local** methods use a
+fixed, implicit QoS: on the standalone (dual-MQTT) provider, local `publish` / `subscribe` / `request`
+(and the ephemeral reply subscription) use **QoS 1 (`AT_LEAST_ONCE`)**, while the IoT-Core
+request/reply path (`requestFromIoTCore` / `replyToIoTCore` and their reply subscription) is forced to
+**QoS 0 (`AT_MOST_ONCE`)**.
+
 <Tabs syncKey="lang">
 <TabItem label="Java">
 
@@ -793,13 +803,18 @@ Field reference (verified, identical across all four languages):
 
 Rules:
 
-- **Local-broker TLS is keyed on `caPath` presence.** `caPath` only ⇒ server-only TLS;
-  `caPath` + `certPath` + `keyPath` ⇒ mutual TLS; a `certPath`/`keyPath` **without** `caPath` stays
-  plaintext. Username/password auth is independent of TLS.
+- **Local-broker TLS is keyed solely on `caPath` presence** (`useSSL = credentials != null && caPath != null`).
+  `caPath` only ⇒ server-only TLS; `caPath` + `certPath` + `keyPath` ⇒ mutual TLS; a `certPath`/`keyPath`
+  **without** `caPath` stays plaintext (the cert is ignored). **`username`/`password` apply only to a
+  plaintext (no-`caPath`) local broker** — they are set in the `else` branch under `if (!useSSL)`, so
+  they are mutually exclusive with TLS and ignored once `caPath` is present.
 - **IoT Core requires full mutual-TLS credentials** (`caPath` + `certPath` + `keyPath`) or it refuses
   to connect.
 - **`host` is an opaque string** — a Kubernetes `Service` DNS name works unchanged.
-- **`local.type` is optional and ignored** (defaults to `"mqtt"` where read).
+- **`local.type` is optional and ignored** — parsed into the config record but never read; there is no
+  defaulting to `"mqtt"`.
+- The broker file is parsed **leniently** (plain Gson in Java) and is **not** schema-validated at
+  runtime; unknown/mistyped keys are silently ignored.
 
 ## End-to-end example
 

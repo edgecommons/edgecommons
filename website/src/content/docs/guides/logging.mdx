@@ -405,11 +405,12 @@ bootstrap facts, formatted consistently with the rest of your output.
 
 ## `globalControl`
 
-`globalControl` (boolean, default `false`) is **only meaningful on Java**, where `true` switches to a
-manager that rebuilds the entire Log4j2 configuration (every configured logger gets its own
-appenders) instead of just the root and per-logger configs. Python parses the flag but never acts on
-it, and Rust/TypeScript have no equivalent — those SDKs always rebuild/replace the root logger
-regardless. Leave it `false` unless you specifically need Java's whole-config rebuild.
+`globalControl` (boolean, default `false`) is **only meaningful on Java**, where `true` routes logging
+setup through `GlobalLoggingManager` instead of the default reconfigurer. In practice the two paths do
+nearly the same thing — **both** replace the entire Log4j2 configuration and build a per-logger config
+(each with its own appenders) for every `logging.loggers` entry — so the functional difference is
+minimal. Python parses the flag but never acts on it, and Rust/TypeScript have no equivalent (those
+SDKs always rebuild/replace the root logger regardless). You can safely leave it `false`.
 
 ## Hot reload
 

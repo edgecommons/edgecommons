@@ -36,7 +36,7 @@ the current platform, the value falls back as noted.
 |---------|------|----------------------------|
 | `cpu` | Percent | All languages, all platforms. |
 | `memory` | MB (resident set) | All languages, all platforms. Java reports whole-number MB (integer division); Python, Rust, and TypeScript report fractional MB. |
-| `disk` | Gigabytes (`disk_total`, `disk_used`, `disk_free`; `disk_used = disk_total − disk_free`) | All languages, all platforms. Measured for the current working directory's mount. |
+| `disk` | Gigabytes (`disk_total`, `disk_used`, `disk_free`; `disk_used = disk_total − disk_free`) | All languages, all platforms. Java and Python measure the filesystem holding the **parent** of the working directory (`..`); Rust and TypeScript measure the current working directory's filesystem. (Usually the same mount, so the numbers match.) |
 | `threads` | Count | Java and Python: all platforms. Rust: Linux and Windows. TypeScript: **Linux only** (returns `0` elsewhere). |
 | `files` | Count (open files) | Java and Python: all platforms. Rust: Linux (regular-file descriptors) and Windows (total handles). TypeScript: **Linux only** (returns `0` elsewhere). |
 | `fds` | Count (open file descriptors) | Java: Unix only (**`-1` on Windows**). Python: all platforms (Windows reports handle count). Rust: Linux and Windows. TypeScript: **Linux only** (returns `0` elsewhere). |
@@ -80,6 +80,15 @@ The `messaging` target's `config` accepts:
   default is `ipc`. Any other value is logged as unrecognized and skipped.
 - **`topic`** — the publish topic. The default is `ggcommons/{ThingName}/{ComponentName}/heartbeat`.
   The `{ThingName}` and `{ComponentName}` template variables are resolved at publish time.
+
+<Aside type="caution" title="A messaging target must carry a config object">
+Always give a `messaging` target a `config` object (an empty `{}` is enough to fall back to the
+defaults above). In **Java**, a `messaging` target with no `config` throws a `NullPointerException`
+when the tick reads `destination`/`topic`; the tick is exception-guarded, so the error is caught and
+logged, **that tick publishes nothing**, and any later target in the same `targets` array is skipped
+for that tick. The other SDKs tolerate a missing `config`, but the portable form always includes one.
+A `metric` target needs no `config`.
+</Aside>
 
 ## Configuration
 

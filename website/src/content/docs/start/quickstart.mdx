@@ -231,8 +231,8 @@ Pick your language with the tabs in each code block — the tabs stay in sync ac
          main()
      ```
 
-     The library installs a SIGTERM handler that calls `shutdown()` for you; calling `shutdown()`
-     yourself is safe and idempotent.
+     The library installs SIGTERM and SIGINT handlers (main thread only) that call `shutdown()` for
+     you; calling `shutdown()` yourself is safe and idempotent.
 
 </TabItem>
 <TabItem label="Rust">

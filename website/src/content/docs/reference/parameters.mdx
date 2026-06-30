@@ -246,7 +246,7 @@ variables); call them directly only when wiring the service yourself.
 
 | SDK | Signature |
 |-----|-----------|
-| Java | `static DefaultParameterService open(JsonObject parametersConfig)` · `static DefaultParameterService open(JsonObject parametersConfig, String namespace)` |
+| Java | `Parameters.open(JsonObject parametersConfig)` · `Parameters.open(JsonObject parametersConfig, String namespace)` — `static` methods on the dedicated factory class **`Parameters`** (not on `DefaultParameterService`); both return `DefaultParameterService` |
 | Python | `open_from_config(parameters_cfg: dict, namespace: str = "") -> DefaultParameterService` |
 | Rust | `pub fn open(config: &ParametersConfig) -> Result<DefaultParameterService>` |
 | TypeScript | `async function openFromConfig(cfg: ParametersConfig = {}): Promise<DefaultParameterService>` |
@@ -259,9 +259,11 @@ Notes:
   `openFromConfig` take no namespace argument.
 - **TypeScript `openFromConfig` is async** (`Promise`) because building a remote source or KMS key
   provider is promise-based. The other three are synchronous.
-- The default `cache.path` when unset is the relative `"param-cache"`. The accessor path substitutes
-  template variables such as `{ComponentFullName}` and `{ThingName}` before calling the factory; the
-  raw factory does no templating.
+- The default `cache.path` when unset is the relative `"param-cache"`. Before calling the factory, the
+  `gg` accessor substitutes template variables such as `{ComponentFullName}` and `{ThingName}` across
+  the **entire `parameters` config section** — `source.root`, `source.prefix`, `sync.names`,
+  `sync.paths`, `cache.path`, and so on — by templating the section's JSON text and re-parsing it. The
+  raw factory itself does **no** templating, so a direct `open` call sees any `{...}` tokens literally.
 
 ## DefaultParameterService factories and lifecycle
 
@@ -393,7 +395,7 @@ A non-sensitive observability snapshot returned by `stats()` — safe to log.
 |-----------------------------------|------|---------|
 | `parameterCount` · `parameter_count` | `long` / `u64` / int | Number of parameters currently cached. |
 | `lastRefreshAgeMs` · `last_refresh_age_ms` | nullable `Long` / `Option<u64>` / int | Age of the last fully-clean refresh. **`null` / `None` / `undefined` until the first fully-successful refresh.** |
-| `refreshFailures` · `refresh_failures` | `long` / `u64` / int | Cumulative per-item refresh-failure count. |
+| `refreshFailures` · `refresh_failures` | `long` / `u64` / int | Number of refresh **cycles** in which at least one synced item or path failed — incremented **at most once per `refresh()`**, *not* once per failing item (so three items failing in one cycle add `1`, not `3`). |
 | `source` | `String` | The active source id (`env` / `mountedDir` / `awsSsm`). |
 
 Type definitions:

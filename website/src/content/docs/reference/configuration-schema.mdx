@@ -221,8 +221,8 @@ Availability of individual measures varies by language and platform.
 | `type` | string | (**required**) | `metric`, `messaging` | Target type. |
 | `config` | object (strict) | — | — | Target-specific config (below). |
 | `config.destination` | string | `ipc` | `ipc`, `local`, `iotcore`, `iot_core` | Messaging destination (for `messaging` targets). |
-| `config.topic` | string | `ggcommons/{ThingName}/{ComponentName}/heartbeat` | — | Topic template (for `messaging` targets). |
-| `topic` | string | (none) | — | Alternative to `config.topic`. |
+| `config.topic` | string | `ggcommons/{ThingName}/{ComponentName}/heartbeat` | — | Topic template (for `messaging` targets). The **only** topic key the library reads. |
+| `topic` | string | (none) | — | Accepted by the schema (sibling of `config`) but **ignored by the library** — the code reads only `config.topic`. Put the topic under `config.topic`, not here. |
 
 ## `tags`
 
@@ -269,8 +269,9 @@ A single MQTT broker connection. Object, strict.
 
 ### `mqttCredentials`
 
-Broker authentication. Object, strict. There is **no boolean TLS flag**: TLS is triggered purely by
-the **presence** of the certificate fields.
+Broker authentication. Object, strict. There is **no boolean TLS flag**. For the **local** broker,
+TLS is triggered **solely by the presence of `caPath`** (`useSSL = credentials != null && caPath != null`),
+not by the client certificate fields.
 
 | Field | Type | Default | Meaning |
 |-------|------|---------|---------|
@@ -280,10 +281,12 @@ the **presence** of the certificate fields.
 | `keyPath` | string | (none) | Client private-key path (TLS / mutual TLS). |
 | `caPath` | string | (none) | CA bundle path (server-trust / mutual TLS). |
 
-**TLS trigger rules:** provide `username`/`password` for a plaintext local broker. Supplying
-`certPath` + `keyPath` (+ `caPath`) switches the connection to TLS / mutual TLS — used for IoT Core,
-and supported for the local broker too. A `caPath`-only local connection enables server-trust TLS
-without a client certificate.
+**TLS trigger rules (local broker):** TLS is keyed **only on `caPath`**. `caPath` alone ⇒ server-trust
+TLS (no client cert); `caPath` + `certPath` + `keyPath` ⇒ mutual TLS. A `certPath`/`keyPath` supplied
+**without** `caPath` stays **plaintext** — the client cert is ignored. `username`/`password` apply
+**only** to a plaintext (no-`caPath`) local broker and are **ignored under TLS** (they sit in the
+`else` branch of `if (!useSSL)`, so they are mutually exclusive with TLS). The `iotCore` broker is
+always full mutual TLS (`caPath` + `certPath` + `keyPath` all required).
 
 ## `streaming`
 
@@ -443,7 +446,7 @@ Parameter source, tagged by `type`. Fields not used by the selected type are ign
 
 | Field | Type | Default | Allowed values | Meaning |
 |-------|------|---------|----------------|---------|
-| `type` | string | `none` | `none`, `env`, `mountedDir`, `awsSsm` | Source kind. |
+| `type` | string | `none` (schema default — see note) | `env`, `mountedDir`, `awsSsm` | Source kind. **`none` is *not* selectable**: although the schema declares it the default, the source factory has no `none` case and **throws at startup** (`ParameterException`, "supported: env, mountedDir, awsSsm"). So if you add a `parameters` section, you must set `source.type` to one of `env` / `mountedDir` / `awsSsm`. |
 | `prefix` | string | (none) | — | `env`: variable-name prefix (e.g. `GG_PARAM_`). |
 | `root` | string | (none) | — | `mountedDir`: root directory of the mounted tree. |
 | `securePaths` | array of string | (none) | — | `mountedDir`: path prefixes whose values are sensitive. |

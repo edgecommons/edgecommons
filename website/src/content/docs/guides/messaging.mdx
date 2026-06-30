@@ -13,8 +13,11 @@ that connects to a local broker and, optionally, AWS IoT Core. The same publish/
 request/reply, and message envelope work identically across Java, Python, Rust, and TypeScript, so
 components written in any language interoperate on the same topics.
 
-Connections and subscriptions **block until confirmed** — when `publish` or `subscribe` returns, the
-broker has acknowledged it.
+Connections and subscriptions are **synchronous** — `connect`, `publish`, and `subscribe` run inline
+rather than returning a pending promise. Be aware, though, that the standalone (dual-MQTT) provider
+**swallows the underlying Paho `MqttException`** (it logs the error and returns), so a normal return
+does **not** by itself guarantee the broker accepted the publish/subscribe — check the logs (and
+`connected()`) when diagnosing a missing message.
 
 ## Reaching the messaging service
 
@@ -71,7 +74,7 @@ are **identical across all four languages** so they interoperate.
   "header": {
     "name": "TemperatureReading",
     "version": "1.0",
-    "timestamp": 1719500000000,
+    "timestamp": "2026-06-29T12:00:00Z",
     "uuid": "5f6c...",
     "correlation_id": "a1b2...",
     "reply_to": "ggcommons/reply-..."
@@ -447,6 +450,12 @@ The Java IoT-Core method casing is intentionally inconsistent in the SDK: `publi
 (`AT_MOST_ONCE` / `AT_LEAST_ONCE`), while **Rust and TypeScript define their own** `Qos` enum
 (`AtMostOnce` / `AtLeastOnce`).
 
+QoS is only a parameter on the explicit `*ToIotCore` mirror methods; the **local** methods use a
+fixed, implicit QoS. On the dual-MQTT provider, local `publish` / `subscribe` / `request` (and the
+ephemeral reply subscription `request` creates) use **QoS 1 (at-least-once)**, whereas the IoT-Core
+request/reply path (`requestFromIoTCore` / `replyToIoTCore`, and their reply subscription) is forced
+to **QoS 0 (at-most-once)** regardless of any QoS you pass elsewhere.
+
 <Tabs syncKey="lang">
 <TabItem label="Java">
 
@@ -506,8 +515,14 @@ disconnects.
 ## The dual-MQTT standalone config
 
 On the **HOST** platform (and for local testing) the MQTT transport reads a JSON `messaging` section
-that describes the brokers. Supply it either as the positional argument to
-`--transport MQTT <messaging_config.json>` or from the active config source (`-c`).
+that describes the brokers. It is loaded from the **positional argument** to
+`--transport MQTT <messaging_config.json>` (on `KUBERNETES`, from the mounted ConfigMap default) —
+**not** from the active config source (`-c`); an embedded `messaging` section in a `-c` source is not
+read by the MQTT transport.
+
+This separate broker file is parsed **leniently** (plain Gson / the equivalent JSON decoder in each
+language) and is **not** validated against the config JSON Schema at runtime — unknown or mistyped
+keys are silently ignored rather than rejected, so double-check the field names below.
 
 ```json
 {
@@ -540,16 +555,20 @@ Key rules (all verified, identical across the four languages):
 
 - **`iotCore` is optional.** Omit it for a **local-only** ("single-broker") deployment — the IoT Core
   mirror methods are simply unused.
-- **Local-broker TLS is keyed on `caPath` presence.** If the local `credentials.caPath` is set, the
-  connection uses TLS; if it is absent, the connection is plaintext.
+- **Local-broker TLS is keyed solely on `caPath` presence.** TLS is enabled when (and only when) the
+  local `credentials.caPath` is set (`useSSL = credentials != null && caPath != null`); if `caPath` is
+  absent, the connection is plaintext.
   - `caPath` only ⇒ **server-only** TLS.
   - `caPath` + `certPath` + `keyPath` ⇒ **mutual** TLS.
   - A client `certPath`/`keyPath` **without** a `caPath` stays **plaintext** (the cert is ignored).
-  - Username/password auth is independent of TLS for the local broker.
+  - **`username`/`password` apply only to a plaintext (no-`caPath`) local broker.** They are set in the
+    `else` branch under `if (!useSSL)`, so they are **mutually exclusive with TLS**: once `caPath` is
+    present the connection goes TLS-only and any username/password is ignored.
 - **IoT Core requires full mutual-TLS credentials** (`caPath` + `certPath` + `keyPath`) or it refuses
   to connect.
 - **`host` is an opaque string** — a Kubernetes `Service` DNS name works unchanged.
-- **`local.type` is optional and ignored** (it defaults to `"mqtt"` where read).
+- **`local.type` is optional and ignored** — it is parsed into the config record but never read; there
+  is **no** defaulting to `"mqtt"`.
 
 <Aside type="tip">
 For local development, bring up the bundled EMQX broker (plaintext `1883`, mutual-TLS `8883`):
