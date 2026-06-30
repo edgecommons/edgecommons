@@ -2,11 +2,15 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import starlightLinksValidator from 'starlight-links-validator';
+import mermaid from 'astro-mermaid';
 
 // https://astro.build/config
 export default defineConfig({
 	site: 'https://docs.edgecommons.mbreissi.com',
 	integrations: [
+		// Renders ```mermaid code blocks as diagrams (client-side; follows the light/dark theme).
+		// Must come BEFORE starlight() so its markdown transform runs ahead of Expressive Code.
+		mermaid({ autoTheme: true, enableLog: false }),
 		starlight({
 			// Fails the build on broken internal links / heading anchors — guards against the
 			// stale-slug class of bug (e.g. the old /reference/configuration/ links).
