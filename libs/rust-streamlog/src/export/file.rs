@@ -7,11 +7,18 @@
 //! `*.inprogress` temp path, and are atomically renamed to their final partitioned path when
 //! finalized (on a size/time roll, or on a clean shutdown via [`Drop`]).
 //!
-//! Two body schemas are supported (see [`FileMode`]):
-//! - **rows** (default): each `SouthboundTagUpdate` envelope is flattened to one row per
-//!   `body.samples[]` element, with the polymorphic sample value landing in sparse typed columns
-//!   (Parquet) or a true `["null","double","long","boolean","string"]` union (Avro). A payload that
-//!   is not a `SouthboundTagUpdate` is written to a sibling `_unmapped` raw file — never dropped.
+//! Two body schemas are supported (see [`FileMode`]), and `rows` mode has two projections:
+//! - **rows / default projection** (`rows` mode, no `rows` config block): each
+//!   `SouthboundSignalUpdate` envelope is flattened to one row per `body.samples[]` element. The
+//!   envelope `tags` object is captured as a single compact-JSON column, and the polymorphic sample
+//!   value lands in sparse typed columns (Parquet) or a true
+//!   `["null","double","long","boolean","string"]` union (Avro). A payload that is not a
+//!   `SouthboundSignalUpdate` is written to a sibling `_unmapped` raw file — never dropped.
+//! - **rows / user projection** (`rows` mode with a `rows` config block): a caller-declared set of
+//!   typed columns, each resolved from a dotted JSON path into the message, with an optional
+//!   `explode` of an array to one row per element. A user projection never routes to `_unmapped` —
+//!   a missing/incompatible value becomes a null cell — and the file's schema is fixed from the
+//!   config at open time.
 //! - **raw**: one row per message (`offset`, `partitionKey`, `tsMs`, `payload`); format-agnostic.
 //!
 //! # Feature gating
@@ -35,7 +42,7 @@
 //! `*.inprogress` file is recoverable up to its last written block. Because the buffer offset is
 //! committed only after the sink acks, a record re-delivered after a crash that happened between
 //! the sink write and the buffer commit can appear twice (at-least-once); dedup downstream on
-//! `(tagId, sourceTs)`.
+//! `(signalId, sourceTs)`.
 
 use std::collections::VecDeque;
 use std::fs;
@@ -45,7 +52,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde_json::Value;
 
 use super::{ExportRecord, SendOutcome, Sink};
-use crate::config::{FileCompression, FileFormat, FileMode, FileOnFull, FileSinkConfig};
+use crate::config::{
+    ColumnSpec, ColumnType, FileCompression, FileFormat, FileMode, FileOnFull, FileSinkConfig,
+    RowsConfig,
+};
 use crate::error::{GgStreamError, Result};
 
 // ----------------------------------------------------------------------------------------------
@@ -55,9 +65,9 @@ use crate::error::{GgStreamError, Result};
 /// A [`Sink`] that writes batches to rolling Parquet/Avro files under a directory.
 ///
 /// One `FileSink` owns at most two open files at a time: the `main` file (rows or raw, per
-/// [`FileMode`]) and — in `rows` mode only — an `unmapped` raw file for payloads that aren't a
-/// `SouthboundTagUpdate`. It tracks the files it has finalized in an in-memory ring to enforce
-/// `maxFiles`.
+/// [`FileMode`]) and — in `rows` mode with the default projection only — an `unmapped` raw file for
+/// payloads that aren't a `SouthboundSignalUpdate`. It tracks the files it has finalized in an
+/// in-memory ring to enforce `maxFiles`.
 pub struct FileSink {
     /// Stream/sink name (for log context).
     name: String,
@@ -128,6 +138,25 @@ impl FileSink {
                 let rows: Vec<RawRow> = batch.iter().map(raw_row).collect();
                 self.write_to_slot(Slot::Main, RowSchema::Raw, WriteRows::Raw(&rows))?;
             }
+            // User projection: a caller-declared set of typed columns. Never routes to `_unmapped`
+            // — every message yields at least one row (missing/incompatible values → null cells).
+            // (Cloned out of `cfg` so the borrow doesn't overlap the `&mut self` slot write.)
+            FileMode::Rows if self.cfg.rows.is_some() => {
+                let rows_cfg = self.cfg.rows.clone().expect("rows config present");
+                let mut proj_rows: Vec<ProjRow> = Vec::new();
+                for r in batch {
+                    proj_rows.append(&mut project_rows(r.payload, &rows_cfg));
+                }
+                if !proj_rows.is_empty() {
+                    self.write_to_slot(
+                        Slot::Main,
+                        RowSchema::Proj(&rows_cfg.columns),
+                        WriteRows::Proj(&proj_rows),
+                    )?;
+                }
+            }
+            // Default projection: flatten each `SouthboundSignalUpdate` to one row per sample;
+            // non-matching payloads fall back to the sibling `_unmapped` raw file.
             FileMode::Rows => {
                 let mut main_rows: Vec<MainRow> = Vec::new();
                 let mut unmapped: Vec<RawRow> = Vec::new();
@@ -150,7 +179,7 @@ impl FileSink {
 
     /// Append `rows` to the given slot's open file (opening it lazily), then roll it if it now
     /// exceeds `maxFileBytes`.
-    fn write_to_slot(&mut self, slot: Slot, schema: RowSchema, rows: WriteRows<'_>) -> Result<()> {
+    fn write_to_slot(&mut self, slot: Slot, schema: RowSchema<'_>, rows: WriteRows<'_>) -> Result<()> {
         if self.slot_ref(slot).is_none() {
             let af = self.open_file(schema, matches!(slot, Slot::Unmapped))?;
             *self.slot_mut(slot) = Some(af);
@@ -199,7 +228,7 @@ impl FileSink {
     /// Open a fresh file for `schema` under the (time-resolved) partition directory. Enforces the
     /// `Stop` retention policy: at the `maxFiles` cap it refuses to open a new file (so the buffer
     /// applies backpressure instead of the ring deleting data).
-    fn open_file(&mut self, schema: RowSchema, unmapped: bool) -> Result<ActiveFile> {
+    fn open_file(&mut self, schema: RowSchema<'_>, unmapped: bool) -> Result<ActiveFile> {
         if matches!(self.cfg.on_full, FileOnFull::Stop)
             && self.cfg.max_files > 0
             && self.finalized.len() as u64 >= self.cfg.max_files
@@ -313,11 +342,14 @@ enum Slot {
 
 /// Which body schema an open file holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RowSchema {
-    /// Normalized typed telemetry rows (rows mode main file).
+enum RowSchema<'a> {
+    /// Normalized typed telemetry rows (rows mode default-projection main file).
     Rows,
     /// Opaque-payload raw rows (raw mode main file, or any `_unmapped` file).
     Raw,
+    /// User-projection rows whose schema is built from these column specs (rows mode with a `rows`
+    /// config block).
+    Proj(&'a [ColumnSpec]),
 }
 
 /// Rows handed to an open file for one write (borrows the caller's row buffers).
@@ -326,6 +358,7 @@ enum RowSchema {
 enum WriteRows<'a> {
     Rows(&'a [MainRow]),
     Raw(&'a [RawRow]),
+    Proj(&'a [ProjRow]),
 }
 
 /// One open output file plus the bookkeeping the ring/roller needs.
@@ -400,7 +433,7 @@ impl OpenFile {
 /// [`FileSink::new`]).
 fn create_open_file(
     format: FileFormat,
-    schema: RowSchema,
+    schema: RowSchema<'_>,
     compression: FileCompression,
     path: &Path,
 ) -> Result<OpenFile> {
@@ -439,18 +472,15 @@ fn create_open_file(
 // Row models (built from each ExportRecord; read by the encoders)
 // ----------------------------------------------------------------------------------------------
 
-/// One flattened telemetry row (one `body.samples[]` element of a `SouthboundTagUpdate`).
+/// One flattened telemetry row (one `body.samples[]` element of a `SouthboundSignalUpdate`).
 #[cfg_attr(not(any(feature = "parquet", feature = "avro")), allow(dead_code))]
 struct MainRow {
-    thing: Option<String>,
-    app_id: Option<String>,
-    site: Option<String>,
-    shop: Option<String>,
-    line: Option<String>,
+    /// The whole envelope `tags` object serialized as a compact JSON string (`None` when absent).
+    tags: Option<String>,
+    signal_id: Option<String>,
+    signal_name: Option<String>,
     adapter: Option<String>,
     instance: Option<String>,
-    tag_id: Option<String>,
-    tag_name: Option<String>,
     value: SampleValue,
     quality: Option<String>,
     quality_raw: Option<String>,
@@ -458,6 +488,22 @@ struct MainRow {
     server_ts: Option<String>,
     ts_ms: i64,
     offset: i64,
+}
+
+/// One row of a user projection: cells aligned positionally with the configured columns.
+#[cfg_attr(not(any(feature = "parquet", feature = "avro")), allow(dead_code))]
+struct ProjRow {
+    cells: Vec<ProjCell>,
+}
+
+/// One projected cell, already resolved + coerced to its column's target type (or null).
+#[cfg_attr(not(any(feature = "parquet", feature = "avro")), allow(dead_code))]
+enum ProjCell {
+    Str(String),
+    Long(i64),
+    Double(f64),
+    Bool(bool),
+    Null,
 }
 
 /// One opaque-message row (raw mode, or an `_unmapped` payload).
@@ -502,29 +548,26 @@ fn raw_row(r: &ExportRecord<'_>) -> RawRow {
     }
 }
 
-/// Parse a `SouthboundTagUpdate` payload into one [`MainRow`] per sample, or `None` if the payload
-/// is not JSON or has no `body.samples` array (→ caller routes it to the `_unmapped` raw file).
+/// Parse a `SouthboundSignalUpdate` payload into one [`MainRow`] per sample, or `None` if the
+/// payload is not JSON or has no `body.samples` array (→ caller routes it to the `_unmapped` raw
+/// file). The whole envelope `tags` object is captured once as a compact-JSON string.
 fn extract_rows(payload: &[u8], ts_ms: i64, offset: i64) -> Option<Vec<MainRow>> {
     let v: Value = serde_json::from_slice(payload).ok()?;
     let body = v.get("body")?;
     let samples = body.get("samples")?.as_array()?;
-    let tags = v.get("tags");
+    // The entire `tags` object as compact JSON (`None` when there is no tags object).
+    let tags = v.get("tags").filter(|t| t.is_object()).map(|t| t.to_string());
     let device = body.get("device");
-    let tag = body.get("tag");
-    let from_tags = |k: &str| tags.and_then(|t| json_str(t, k));
+    let signal = body.get("signal");
 
     let mut rows = Vec::with_capacity(samples.len());
     for s in samples {
         rows.push(MainRow {
-            thing: from_tags("thing"),
-            app_id: from_tags("appId"),
-            site: from_tags("site"),
-            shop: from_tags("shop"),
-            line: from_tags("line"),
+            tags: tags.clone(),
+            signal_id: signal.and_then(|t| json_str(t, "id")),
+            signal_name: signal.and_then(|t| json_str(t, "name")),
             adapter: device.and_then(|d| json_str(d, "adapter")),
             instance: device.and_then(|d| json_str(d, "instance")),
-            tag_id: tag.and_then(|t| json_str(t, "id")),
-            tag_name: tag.and_then(|t| json_str(t, "name")),
             value: s.get("value").map(sample_value).unwrap_or(SampleValue::Null),
             quality: json_str(s, "quality"),
             quality_raw: json_str(s, "qualityRaw"),
@@ -540,6 +583,107 @@ fn extract_rows(payload: &[u8], ts_ms: i64, offset: i64) -> Option<Vec<MainRow>>
 /// String value of `obj[key]`, or `None` if absent / not a string.
 fn json_str(obj: &Value, key: &str) -> Option<String> {
     obj.get(key).and_then(|x| x.as_str()).map(|s| s.to_string())
+}
+
+// ----------------------------------------------------------------------------------------------
+// User projection (rows mode with a `rows` config block)
+// ----------------------------------------------------------------------------------------------
+
+/// Project one message payload into user-projection rows. The payload is parsed as JSON (a non-JSON
+/// payload coerces to `Null`, yielding all-null cells rather than routing to `_unmapped`). When
+/// `explode` resolves to an array, emits one row per element (columns whose path starts with
+/// `<explode>[]` see the current element); otherwise emits a single row per message.
+fn project_rows(payload: &[u8], cfg: &RowsConfig) -> Vec<ProjRow> {
+    let msg: Value = serde_json::from_slice(payload).unwrap_or(Value::Null);
+    let explode = cfg.explode.as_deref();
+    match explode.and_then(|p| resolve_path(&msg, p)).and_then(Value::as_array) {
+        Some(elems) => {
+            elems.iter().map(|e| project_one(&msg, Some(e), explode, &cfg.columns)).collect()
+        }
+        None => vec![project_one(&msg, None, explode, &cfg.columns)],
+    }
+}
+
+/// Resolve + coerce every column for one output row against the message (and, for `<explode>[]…`
+/// paths, the current exploded `elem`).
+fn project_one(
+    msg: &Value,
+    elem: Option<&Value>,
+    explode: Option<&str>,
+    columns: &[ColumnSpec],
+) -> ProjRow {
+    let cells = columns
+        .iter()
+        .map(|c| coerce_cell(resolve_column(msg, elem, explode, &c.path), c.col_type))
+        .collect();
+    ProjRow { cells }
+}
+
+/// Resolve a column path to a JSON value. A path beginning with `<explode>[]` is element-relative
+/// (resolved against the current exploded element, or `None` when the explode target was not an
+/// array); every other path resolves against the whole message.
+fn resolve_column<'a>(
+    msg: &'a Value,
+    elem: Option<&'a Value>,
+    explode: Option<&str>,
+    path: &str,
+) -> Option<&'a Value> {
+    if let Some(exp) = explode {
+        let prefix = format!("{exp}[]");
+        if let Some(rest) = path.strip_prefix(prefix.as_str()) {
+            let rest = rest.strip_prefix('.').unwrap_or(rest);
+            return elem.and_then(|e| resolve_path(e, rest));
+        }
+    }
+    resolve_path(msg, path)
+}
+
+/// Navigate a dotted path (`a.b.c`) through nested JSON objects. Empty segments are skipped (so a
+/// leading/trailing `.`, or an empty path, resolves to the root). Returns `None` at the first
+/// missing key or non-object hop.
+fn resolve_path<'a>(root: &'a Value, path: &str) -> Option<&'a Value> {
+    let mut cur = root;
+    for seg in path.split('.') {
+        if seg.is_empty() {
+            continue;
+        }
+        cur = cur.get(seg)?;
+    }
+    Some(cur)
+}
+
+/// Coerce a resolved JSON value to one [`ProjCell`] of `t`. A missing/`null` value, or a scalar
+/// incompatible with the target type, becomes [`ProjCell::Null`].
+fn coerce_cell(v: Option<&Value>, t: ColumnType) -> ProjCell {
+    let v = match v {
+        Some(v) if !v.is_null() => v,
+        _ => return ProjCell::Null,
+    };
+    match t {
+        // JSON string → its contents; number/bool → its literal; object/array → compact JSON.
+        ColumnType::String => match v {
+            Value::String(s) => ProjCell::Str(s.clone()),
+            Value::Bool(b) => ProjCell::Str(b.to_string()),
+            Value::Number(n) => ProjCell::Str(n.to_string()),
+            other => ProjCell::Str(other.to_string()),
+        },
+        // Integral as-is; a non-integral number is truncated; non-numbers are null.
+        ColumnType::Long => {
+            if let Some(i) = v.as_i64() {
+                ProjCell::Long(i)
+            } else if let Some(u) = v.as_u64() {
+                ProjCell::Long(u as i64)
+            } else if let Some(f) = v.as_f64() {
+                ProjCell::Long(f as i64)
+            } else {
+                ProjCell::Null
+            }
+        }
+        ColumnType::Double => v.as_f64().map_or(ProjCell::Null, ProjCell::Double),
+        ColumnType::Bool => v.as_bool().map_or(ProjCell::Null, ProjCell::Bool),
+        // The resolved value serialized as compact JSON (objects/arrays included).
+        ColumnType::Json => ProjCell::Str(v.to_string()),
+    }
 }
 
 /// Narrow a JSON value to a typed [`SampleValue`] (integral numbers → `Long`, else `Double`;
@@ -618,39 +762,44 @@ mod parquet_impl {
     use parquet::basic::{Compression, GzipLevel, ZstdLevel};
     use parquet::file::properties::WriterProperties;
 
-    use super::{MainRow, RawRow, RowSchema, SampleValue, WriteRows};
+    use super::{ColumnSpec, ColumnType, MainRow, ProjCell, ProjRow, RawRow, RowSchema, SampleValue, WriteRows};
     use crate::config::FileCompression;
     use crate::error::{GgStreamError, Result};
 
     /// An open Parquet file: the Arrow writer plus a cloned handle for fsync (the writer owns its
-    /// own copy of the underlying `File`).
+    /// own copy of the underlying `File`). For a user projection, the column specs are retained so
+    /// each write builds the dynamic batch in column order.
     pub(super) struct ParquetFile {
         writer: ArrowWriter<std::fs::File>,
         pub(super) sync_handle: std::fs::File,
+        /// User-projection columns (empty for the built-in `rows`/`raw` layouts).
+        proj_columns: Vec<ColumnSpec>,
     }
 
     impl ParquetFile {
         pub(super) fn create(
-            schema: RowSchema,
+            schema: RowSchema<'_>,
             compression: FileCompression,
             path: &std::path::Path,
         ) -> Result<Self> {
-            let arrow_schema = match schema {
-                RowSchema::Rows => rows_schema(),
-                RowSchema::Raw => raw_schema(),
+            let (arrow_schema, proj_columns) = match schema {
+                RowSchema::Rows => (rows_schema(), Vec::new()),
+                RowSchema::Raw => (raw_schema(), Vec::new()),
+                RowSchema::Proj(cols) => (proj_schema(cols), cols.to_vec()),
             };
             let file = std::fs::File::create(path)?;
             let sync_handle = file.try_clone()?;
             let props = WriterProperties::builder().set_compression(map_compression(compression)).build();
             let writer = ArrowWriter::try_new(file, arrow_schema, Some(props))
                 .map_err(|e| GgStreamError::Sink(format!("parquet open: {e}")))?;
-            Ok(Self { writer, sync_handle })
+            Ok(Self { writer, sync_handle, proj_columns })
         }
 
         pub(super) fn write(&mut self, rows: WriteRows<'_>) -> Result<()> {
             let batch = match rows {
                 WriteRows::Rows(r) => rows_batch(r)?,
                 WriteRows::Raw(r) => raw_batch(r)?,
+                WriteRows::Proj(r) => proj_batch(&self.proj_columns, r)?,
             };
             self.writer
                 .write(&batch)
@@ -662,7 +811,7 @@ mod parquet_impl {
         }
 
         pub(super) fn close(self) -> Result<()> {
-            let Self { writer, sync_handle } = self;
+            let Self { writer, sync_handle, .. } = self;
             writer.close().map_err(|e| GgStreamError::Sink(format!("parquet close: {e}")))?;
             sync_handle.sync_all()?;
             Ok(())
@@ -675,20 +824,17 @@ mod parquet_impl {
         }
     }
 
-    /// The normalized-rows Arrow schema (sparse typed value columns).
+    /// The normalized-rows Arrow schema (envelope `tags` as one JSON column; sparse typed value
+    /// columns).
     fn rows_schema() -> SchemaRef {
         static S: OnceLock<SchemaRef> = OnceLock::new();
         S.get_or_init(|| {
             Arc::new(Schema::new(vec![
-                Field::new("thing", DataType::Utf8, true),
-                Field::new("appId", DataType::Utf8, true),
-                Field::new("site", DataType::Utf8, true),
-                Field::new("shop", DataType::Utf8, true),
-                Field::new("line", DataType::Utf8, true),
+                Field::new("tags", DataType::Utf8, true),
+                Field::new("signalId", DataType::Utf8, true),
+                Field::new("signalName", DataType::Utf8, true),
                 Field::new("adapter", DataType::Utf8, true),
                 Field::new("instance", DataType::Utf8, true),
-                Field::new("tagId", DataType::Utf8, true),
-                Field::new("tagName", DataType::Utf8, true),
                 Field::new("valueDouble", DataType::Float64, true),
                 Field::new("valueLong", DataType::Int64, true),
                 Field::new("valueBool", DataType::Boolean, true),
@@ -703,6 +849,26 @@ mod parquet_impl {
             ]))
         })
         .clone()
+    }
+
+    /// Build the Arrow schema for a user projection: one nullable field per configured column.
+    fn proj_schema(columns: &[ColumnSpec]) -> SchemaRef {
+        Arc::new(Schema::new(
+            columns
+                .iter()
+                .map(|c| Field::new(&c.name, proj_arrow_type(c.col_type), true))
+                .collect::<Vec<_>>(),
+        ))
+    }
+
+    /// Arrow data type for a projected column's target [`ColumnType`] (`String`/`Json` → `Utf8`).
+    fn proj_arrow_type(t: ColumnType) -> DataType {
+        match t {
+            ColumnType::String | ColumnType::Json => DataType::Utf8,
+            ColumnType::Long => DataType::Int64,
+            ColumnType::Double => DataType::Float64,
+            ColumnType::Bool => DataType::Boolean,
+        }
     }
 
     /// The opaque-message Arrow schema.
@@ -720,15 +886,13 @@ mod parquet_impl {
     }
 
     fn rows_batch(rows: &[MainRow]) -> Result<RecordBatch> {
-        let thing: ArrayRef = Arc::new(rows.iter().map(|r| r.thing.clone()).collect::<StringArray>());
-        let app_id: ArrayRef = Arc::new(rows.iter().map(|r| r.app_id.clone()).collect::<StringArray>());
-        let site: ArrayRef = Arc::new(rows.iter().map(|r| r.site.clone()).collect::<StringArray>());
-        let shop: ArrayRef = Arc::new(rows.iter().map(|r| r.shop.clone()).collect::<StringArray>());
-        let line: ArrayRef = Arc::new(rows.iter().map(|r| r.line.clone()).collect::<StringArray>());
+        let tags: ArrayRef = Arc::new(rows.iter().map(|r| r.tags.clone()).collect::<StringArray>());
+        let signal_id: ArrayRef =
+            Arc::new(rows.iter().map(|r| r.signal_id.clone()).collect::<StringArray>());
+        let signal_name: ArrayRef =
+            Arc::new(rows.iter().map(|r| r.signal_name.clone()).collect::<StringArray>());
         let adapter: ArrayRef = Arc::new(rows.iter().map(|r| r.adapter.clone()).collect::<StringArray>());
         let instance: ArrayRef = Arc::new(rows.iter().map(|r| r.instance.clone()).collect::<StringArray>());
-        let tag_id: ArrayRef = Arc::new(rows.iter().map(|r| r.tag_id.clone()).collect::<StringArray>());
-        let tag_name: ArrayRef = Arc::new(rows.iter().map(|r| r.tag_name.clone()).collect::<StringArray>());
         let value_double: ArrayRef = Arc::new(
             rows.iter()
                 .map(|r| if let SampleValue::Double(d) = &r.value { Some(*d) } else { None })
@@ -762,12 +926,59 @@ mod parquet_impl {
         RecordBatch::try_new(
             rows_schema(),
             vec![
-                thing, app_id, site, shop, line, adapter, instance, tag_id, tag_name, value_double,
-                value_long, value_bool, value_string, value_type, quality, quality_raw, source_ts,
-                server_ts, ts_ms, offset,
+                tags, signal_id, signal_name, adapter, instance, value_double, value_long,
+                value_bool, value_string, value_type, quality, quality_raw, source_ts, server_ts,
+                ts_ms, offset,
             ],
         )
         .map_err(|e| GgStreamError::Sink(format!("parquet rows batch: {e}")))
+    }
+
+    /// Build the user-projection record batch: one Arrow column per configured column, in order.
+    fn proj_batch(columns: &[ColumnSpec], rows: &[ProjRow]) -> Result<RecordBatch> {
+        let arrays: Vec<ArrayRef> =
+            columns.iter().enumerate().map(|(j, c)| proj_array(rows, j, c.col_type)).collect();
+        RecordBatch::try_new(proj_schema(columns), arrays)
+            .map_err(|e| GgStreamError::Sink(format!("parquet projection batch: {e}")))
+    }
+
+    /// Build one Arrow array from cell `j` of each row, typed by the column's target [`ColumnType`]
+    /// (a cell that isn't the column's type — including [`ProjCell::Null`] — becomes a null slot).
+    fn proj_array(rows: &[ProjRow], j: usize, t: ColumnType) -> ArrayRef {
+        match t {
+            ColumnType::String | ColumnType::Json => Arc::new(
+                rows.iter()
+                    .map(|r| match &r.cells[j] {
+                        ProjCell::Str(s) => Some(s.clone()),
+                        _ => None,
+                    })
+                    .collect::<StringArray>(),
+            ),
+            ColumnType::Long => Arc::new(
+                rows.iter()
+                    .map(|r| match &r.cells[j] {
+                        ProjCell::Long(l) => Some(*l),
+                        _ => None,
+                    })
+                    .collect::<Int64Array>(),
+            ),
+            ColumnType::Double => Arc::new(
+                rows.iter()
+                    .map(|r| match &r.cells[j] {
+                        ProjCell::Double(d) => Some(*d),
+                        _ => None,
+                    })
+                    .collect::<Float64Array>(),
+            ),
+            ColumnType::Bool => Arc::new(
+                rows.iter()
+                    .map(|r| match &r.cells[j] {
+                        ProjCell::Bool(b) => Some(*b),
+                        _ => None,
+                    })
+                    .collect::<BooleanArray>(),
+            ),
+        }
     }
 
     fn raw_batch(rows: &[RawRow]) -> Result<RecordBatch> {
@@ -806,24 +1017,24 @@ mod avro_impl {
     use apache_avro::types::Value as AvroValue;
     use apache_avro::{Codec, Schema, Writer};
 
-    use super::{MainRow, RawRow, RowSchema, SampleValue, WriteRows};
+    use super::{
+        ColumnSpec, ColumnType, MainRow, ProjCell, ProjRow, RawRow, RowSchema, SampleValue,
+        WriteRows,
+    };
     use crate::config::FileCompression;
     use crate::error::{GgStreamError, Result};
 
-    /// Normalized-rows Avro schema. `value` is a true union; the metadata fields are plain strings
-    /// (defaulting to empty) to keep the schema small.
+    /// Normalized-rows Avro schema. `value` is a true union and `tags` is a nullable string (the
+    /// compact-JSON envelope tags); the other metadata fields are plain strings (defaulting to
+    /// empty) to keep the schema small.
     const ROWS_SCHEMA: &str = r#"{
-      "type":"record","name":"TagSample","namespace":"ggstreamlog",
+      "type":"record","name":"SignalSample","namespace":"ggstreamlog",
       "fields":[
-        {"name":"thing","type":"string","default":""},
-        {"name":"appId","type":"string","default":""},
-        {"name":"site","type":"string","default":""},
-        {"name":"shop","type":"string","default":""},
-        {"name":"line","type":"string","default":""},
+        {"name":"tags","type":["null","string"],"default":null},
+        {"name":"signalId","type":"string","default":""},
+        {"name":"signalName","type":"string","default":""},
         {"name":"adapter","type":"string","default":""},
         {"name":"instance","type":"string","default":""},
-        {"name":"tagId","type":"string","default":""},
-        {"name":"tagName","type":"string","default":""},
         {"name":"value","type":["null","double","long","boolean","string"],"default":null},
         {"name":"valueType","type":"string","default":"null"},
         {"name":"quality","type":"string","default":""},
@@ -855,27 +1066,73 @@ mod avro_impl {
         S.get_or_init(|| Schema::parse_str(RAW_SCHEMA).expect("valid avro raw schema"))
     }
 
+    /// The Avro schema for a user projection: a record whose every field is a `["null", <type>]`
+    /// union (`Json` → string). The `Writer<'static>` borrows its schema, so each distinct
+    /// projection is parsed once and leaked (cached by its schema text); a component has one fixed
+    /// projection, so the leak is bounded and constant — mirroring the `OnceLock` built-in schemas.
+    fn proj_schema(columns: &[ColumnSpec]) -> &'static Schema {
+        static CACHE: OnceLock<std::sync::Mutex<std::collections::HashMap<String, &'static Schema>>> =
+            OnceLock::new();
+        let json = proj_schema_json(columns);
+        let mut map = CACHE
+            .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+            .lock()
+            .expect("avro projection schema cache");
+        if let Some(&s) = map.get(&json) {
+            return s;
+        }
+        let schema: &'static Schema =
+            Box::leak(Box::new(Schema::parse_str(&json).expect("valid avro projection schema")));
+        map.insert(json, schema);
+        schema
+    }
+
+    /// The Avro JSON schema text for a user projection (one `["null", <type>]` union field per
+    /// column, in order).
+    fn proj_schema_json(columns: &[ColumnSpec]) -> String {
+        let fields: Vec<String> = columns
+            .iter()
+            .map(|c| {
+                let t = match c.col_type {
+                    ColumnType::String | ColumnType::Json => "string",
+                    ColumnType::Long => "long",
+                    ColumnType::Double => "double",
+                    ColumnType::Bool => "boolean",
+                };
+                let name = serde_json::to_string(&c.name).expect("json-encodable column name");
+                format!(r#"{{"name":{name},"type":["null","{t}"],"default":null}}"#)
+            })
+            .collect();
+        format!(
+            r#"{{"type":"record","name":"Projection","namespace":"ggstreamlog","fields":[{}]}}"#,
+            fields.join(",")
+        )
+    }
+
     /// An open Avro Object Container File: the writer (borrowing a `'static` schema) plus a cloned
     /// handle for fsync.
     pub(super) struct AvroFile {
         writer: Writer<'static, std::fs::File>,
         pub(super) sync_handle: std::fs::File,
+        /// User-projection columns (empty for the built-in `rows`/`raw` layouts).
+        proj_columns: Vec<ColumnSpec>,
     }
 
     impl AvroFile {
         pub(super) fn create(
-            schema: RowSchema,
+            schema: RowSchema<'_>,
             compression: FileCompression,
             path: &std::path::Path,
         ) -> Result<Self> {
-            let avro_schema = match schema {
-                RowSchema::Rows => rows_schema(),
-                RowSchema::Raw => raw_schema(),
+            let (avro_schema, proj_columns) = match schema {
+                RowSchema::Rows => (rows_schema(), Vec::new()),
+                RowSchema::Raw => (raw_schema(), Vec::new()),
+                RowSchema::Proj(cols) => (proj_schema(cols), cols.to_vec()),
             };
             let file = std::fs::File::create(path)?;
             let sync_handle = file.try_clone()?;
             let writer = Writer::with_codec(avro_schema, file, map_codec(compression));
-            Ok(Self { writer, sync_handle })
+            Ok(Self { writer, sync_handle, proj_columns })
         }
 
         pub(super) fn write(&mut self, rows: WriteRows<'_>) -> Result<()> {
@@ -894,6 +1151,13 @@ mod avro_impl {
                             .map_err(|e| GgStreamError::Sink(format!("avro append: {e}")))?;
                     }
                 }
+                WriteRows::Proj(r) => {
+                    for row in r {
+                        self.writer
+                            .append(proj_value(&self.proj_columns, row))
+                            .map_err(|e| GgStreamError::Sink(format!("avro append: {e}")))?;
+                    }
+                }
             }
             // Flush the current block so an AllAcked batch is recoverable to here.
             self.writer.flush().map_err(|e| GgStreamError::Sink(format!("avro flush: {e}")))?;
@@ -902,7 +1166,7 @@ mod avro_impl {
         }
 
         pub(super) fn close(self) -> Result<()> {
-            let Self { writer, sync_handle } = self;
+            let Self { writer, sync_handle, .. } = self;
             let file =
                 writer.into_inner().map_err(|e| GgStreamError::Sink(format!("avro close: {e}")))?;
             file.sync_all()?;
@@ -911,10 +1175,15 @@ mod avro_impl {
         }
     }
 
-    /// Build the Avro record for one normalized row (the `value` field as an explicit union).
+    /// Build the Avro record for one normalized row (`tags` and `value` as explicit unions).
     fn rows_value(r: &MainRow) -> AvroValue {
         let s = |o: &Option<String>| AvroValue::String(o.clone().unwrap_or_default());
-        // Union branch order: ["null","double","long","boolean","string"].
+        // tags union branch order: ["null","string"].
+        let tags = match &r.tags {
+            None => AvroValue::Union(0, Box::new(AvroValue::Null)),
+            Some(t) => AvroValue::Union(1, Box::new(AvroValue::String(t.clone()))),
+        };
+        // value union branch order: ["null","double","long","boolean","string"].
         let value = match &r.value {
             SampleValue::Null => AvroValue::Union(0, Box::new(AvroValue::Null)),
             SampleValue::Double(d) => AvroValue::Union(1, Box::new(AvroValue::Double(*d))),
@@ -923,15 +1192,11 @@ mod avro_impl {
             SampleValue::Str(st) => AvroValue::Union(4, Box::new(AvroValue::String(st.clone()))),
         };
         AvroValue::Record(vec![
-            ("thing".into(), s(&r.thing)),
-            ("appId".into(), s(&r.app_id)),
-            ("site".into(), s(&r.site)),
-            ("shop".into(), s(&r.shop)),
-            ("line".into(), s(&r.line)),
+            ("tags".into(), tags),
+            ("signalId".into(), s(&r.signal_id)),
+            ("signalName".into(), s(&r.signal_name)),
             ("adapter".into(), s(&r.adapter)),
             ("instance".into(), s(&r.instance)),
-            ("tagId".into(), s(&r.tag_id)),
-            ("tagName".into(), s(&r.tag_name)),
             ("value".into(), value),
             ("valueType".into(), AvroValue::String(r.value.type_str().to_string())),
             ("quality".into(), s(&r.quality)),
@@ -941,6 +1206,26 @@ mod avro_impl {
             ("tsMs".into(), AvroValue::Long(r.ts_ms)),
             ("offset".into(), AvroValue::Long(r.offset)),
         ])
+    }
+
+    /// Build the Avro record for one user-projection row: each field a `["null", <type>]` union
+    /// (branch 0 = null, branch 1 = the cell's value; `Json` cells are written as the string branch).
+    fn proj_value(columns: &[ColumnSpec], row: &ProjRow) -> AvroValue {
+        let fields = columns
+            .iter()
+            .enumerate()
+            .map(|(j, c)| {
+                let v = match &row.cells[j] {
+                    ProjCell::Null => AvroValue::Union(0, Box::new(AvroValue::Null)),
+                    ProjCell::Str(st) => AvroValue::Union(1, Box::new(AvroValue::String(st.clone()))),
+                    ProjCell::Long(l) => AvroValue::Union(1, Box::new(AvroValue::Long(*l))),
+                    ProjCell::Double(d) => AvroValue::Union(1, Box::new(AvroValue::Double(*d))),
+                    ProjCell::Bool(b) => AvroValue::Union(1, Box::new(AvroValue::Boolean(*b))),
+                };
+                (c.name.clone(), v)
+            })
+            .collect();
+        AvroValue::Record(fields)
     }
 
     fn raw_value(r: &RawRow) -> AvroValue {
@@ -985,6 +1270,7 @@ mod tests {
             roll_every_secs: 0,
             on_full: FileOnFull::DropOldest,
             compression: FileCompression::Snappy,
+            rows: None,
         }
     }
 
@@ -992,16 +1278,32 @@ mod tests {
         ExportRecord { offset, partition_key: b"pk", ts_ms: 111, payload }
     }
 
-    /// A `SouthboundTagUpdate` payload carrying a single sample with `value`.
-    fn southbound(tag_id: &str, value: serde_json::Value) -> Vec<u8> {
+    /// A `SouthboundSignalUpdate` payload carrying a single sample with `value`.
+    fn southbound(signal_id: &str, value: serde_json::Value) -> Vec<u8> {
         serde_json::to_vec(&serde_json::json!({
-            "header": {"name":"SouthboundTagUpdate","version":"1.0","timestamp":"t"},
-            "tags": {"thing":"th","appId":"app","site":"s1","shop":"sh1","line":"ln1"},
+            "header": {"name":"SouthboundSignalUpdate","version":"1.0","timestamp":"t"},
+            "tags": {"thing":"th","site":"s1"},
             "body": {
                 "device": {"adapter":"opcua","instance":"inst1","endpoint":"e"},
-                "tag": {"id": tag_id, "name":"Temp"},
+                "signal": {"id": signal_id, "name":"Temp"},
                 "samples": [
                     {"value": value, "quality":"GOOD","qualityRaw":"0","sourceTs":"st","serverTs":"sv"}
+                ]
+            }
+        }))
+        .unwrap()
+    }
+
+    /// A `SouthboundSignalUpdate` payload with two samples (for explode / user-projection tests).
+    fn two_sample_msg() -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "tags": {"thing":"th","site":"s1"},
+            "body": {
+                "device": {"adapter":"opcua","instance":"inst1"},
+                "signal": {"id":"sig1","name":"Temp"},
+                "samples": [
+                    {"value": 21.5, "quality":"GOOD"},
+                    {"value": 22.5, "quality":"BAD"}
                 ]
             }
         }))
@@ -1074,14 +1376,22 @@ mod tests {
         let vl = col("valueLong").as_any().downcast_ref::<Int64Array>().unwrap();
         let vb = col("valueBool").as_any().downcast_ref::<BooleanArray>().unwrap();
         let vs = col("valueString").as_any().downcast_ref::<StringArray>().unwrap();
-        let tag = col("tagId").as_any().downcast_ref::<StringArray>().unwrap();
+        let sig = col("signalId").as_any().downcast_ref::<StringArray>().unwrap();
+        let tags = col("tags").as_any().downcast_ref::<StringArray>().unwrap();
+
+        // The envelope `tags` object is captured as one compact-JSON column; the dropped per-tag
+        // columns (`thing`/`site`/…) no longer exist.
+        assert!(tags.value(0).contains("\"thing\":\"th\""));
+        assert!(tags.value(0).contains("\"site\":\"s1\""));
+        assert!(b.column_by_name("thing").is_none());
+        assert!(b.column_by_name("site").is_none());
 
         // row 0: double
         assert_eq!(vt.value(0), "double");
         assert!(!vd.is_null(0));
         assert_eq!(vd.value(0), 3.5);
         assert!(vl.is_null(0) && vb.is_null(0) && vs.is_null(0));
-        assert_eq!(tag.value(0), "ns=1");
+        assert_eq!(sig.value(0), "ns=1");
         // row 1: long
         assert_eq!(vt.value(1), "long");
         assert!(!vl.is_null(1));
@@ -1202,6 +1512,106 @@ mod tests {
         assert!(mains.is_empty());
     }
 
+    // -------- User projection --------
+
+    /// A `RowsConfig` with `explode` over `body.samples` and mixed-type columns.
+    #[cfg(any(feature = "parquet", feature = "avro"))]
+    fn explode_projection() -> RowsConfig {
+        RowsConfig {
+            explode: Some("body.samples".into()),
+            columns: vec![
+                ColumnSpec { name: "sig".into(), path: "body.signal.id".into(), col_type: ColumnType::String },
+                ColumnSpec { name: "v".into(), path: "body.samples[].value".into(), col_type: ColumnType::Double },
+                ColumnSpec { name: "q".into(), path: "body.samples[].quality".into(), col_type: ColumnType::String },
+                ColumnSpec { name: "tags".into(), path: "tags".into(), col_type: ColumnType::Json },
+            ],
+        }
+    }
+
+    #[cfg(feature = "parquet")]
+    #[test]
+    fn parquet_user_projection_explode() {
+        use arrow::array::{Array, Float64Array, StringArray};
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut c = cfg(dir.path(), FileFormat::Parquet, FileMode::Rows);
+        c.rows = Some(explode_projection());
+        let mut sink = FileSink::new("t", c).unwrap();
+        let msg = two_sample_msg();
+        assert!(matches!(sink.send(&[rec(0, &msg)]), SendOutcome::AllAcked));
+        drop(sink);
+
+        let files = list_files(dir.path(), ".parquet");
+        assert_eq!(files.len(), 1);
+        let batches = read_parquet(&files[0]);
+        let b = &batches[0];
+        // Two samples → two rows.
+        assert_eq!(b.num_rows(), 2);
+
+        let col = |n: &str| b.column_by_name(n).unwrap();
+        let sig = col("sig").as_any().downcast_ref::<StringArray>().unwrap();
+        let v = col("v").as_any().downcast_ref::<Float64Array>().unwrap();
+        let q = col("q").as_any().downcast_ref::<StringArray>().unwrap();
+        let tags = col("tags").as_any().downcast_ref::<StringArray>().unwrap();
+
+        // Element-relative columns differ per row.
+        assert_eq!(v.value(0), 21.5);
+        assert_eq!(v.value(1), 22.5);
+        assert_eq!(q.value(0), "GOOD");
+        assert_eq!(q.value(1), "BAD");
+        // Message-level columns repeat across the exploded rows.
+        assert_eq!(sig.value(0), "sig1");
+        assert_eq!(sig.value(1), "sig1");
+        assert!(tags.value(0).contains("\"thing\":\"th\""));
+        assert_eq!(tags.value(0), tags.value(1));
+        // Types: `v` is a real Float64 column (a `Long`/`String` would have failed the downcast).
+        assert!(!v.is_null(0) && !v.is_null(1));
+    }
+
+    #[cfg(feature = "parquet")]
+    #[test]
+    fn parquet_user_projection_no_explode() {
+        use arrow::array::{Array, Int64Array, StringArray};
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut c = cfg(dir.path(), FileFormat::Parquet, FileMode::Rows);
+        c.rows = Some(RowsConfig {
+            explode: None,
+            columns: vec![
+                ColumnSpec { name: "sig".into(), path: "body.signal.id".into(), col_type: ColumnType::String },
+                ColumnSpec { name: "adapter".into(), path: "body.device.adapter".into(), col_type: ColumnType::String },
+                ColumnSpec { name: "n".into(), path: "body.signal.count".into(), col_type: ColumnType::Long },
+            ],
+        });
+        let mut sink = FileSink::new("t", c).unwrap();
+        // No explode → one row per message; two messages → two rows.
+        let m1 = serde_json::to_vec(&serde_json::json!({
+            "body": {"device": {"adapter":"opcua"}, "signal": {"id":"a","count":3}}
+        }))
+        .unwrap();
+        let m2 = serde_json::to_vec(&serde_json::json!({
+            "body": {"device": {"adapter":"modbus"}, "signal": {"id":"b"}}
+        }))
+        .unwrap();
+        assert!(matches!(sink.send(&[rec(0, &m1), rec(1, &m2)]), SendOutcome::AllAcked));
+        drop(sink);
+
+        let files = list_files(dir.path(), ".parquet");
+        let b = &read_parquet(&files[0])[0];
+        assert_eq!(b.num_rows(), 2);
+        let col = |n: &str| b.column_by_name(n).unwrap();
+        let sig = col("sig").as_any().downcast_ref::<StringArray>().unwrap();
+        let adapter = col("adapter").as_any().downcast_ref::<StringArray>().unwrap();
+        let n = col("n").as_any().downcast_ref::<Int64Array>().unwrap();
+        assert_eq!(sig.value(0), "a");
+        assert_eq!(sig.value(1), "b");
+        assert_eq!(adapter.value(0), "opcua");
+        assert_eq!(adapter.value(1), "modbus");
+        assert_eq!(n.value(0), 3);
+        // A missing path → a null cell (never `_unmapped`).
+        assert!(n.is_null(1));
+    }
+
     // -------- Avro --------
 
     #[cfg(feature = "avro")]
@@ -1264,7 +1674,16 @@ mod tests {
             }
             other => panic!("expected union, got {other:?}"),
         }
-        assert!(matches!(field(&values[2], "tagId"), V::String(s) if s == "ns=3"));
+        assert!(matches!(field(&values[2], "signalId"), V::String(s) if s == "ns=3"));
+
+        // The envelope `tags` object decodes as the non-null branch of a nullable string union.
+        match field(&values[0], "tags") {
+            V::Union(idx, inner) => {
+                assert_eq!(*idx, 1);
+                assert!(matches!(&**inner, V::String(s) if s.contains("\"thing\":\"th\"")));
+            }
+            other => panic!("expected union, got {other:?}"),
+        }
     }
 
     #[cfg(feature = "avro")]
@@ -1284,5 +1703,56 @@ mod tests {
         assert!(matches!(field(&values[0], "offset"), V::Long(5)));
         assert!(matches!(field(&values[0], "payload"), V::String(s) if s == "alpha"));
         assert!(matches!(field(&values[1], "payload"), V::String(s) if s == "beta"));
+    }
+
+    #[cfg(feature = "avro")]
+    #[test]
+    fn avro_user_projection_roundtrip() {
+        use apache_avro::types::Value as V;
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut c = cfg(dir.path(), FileFormat::Avro, FileMode::Rows);
+        c.rows = Some(explode_projection());
+        let mut sink = FileSink::new("t", c).unwrap();
+        let msg = two_sample_msg();
+        assert!(matches!(sink.send(&[rec(0, &msg)]), SendOutcome::AllAcked));
+        drop(sink);
+
+        let files = list_files(dir.path(), ".avro");
+        assert_eq!(files.len(), 1);
+        let values = read_avro(&files[0]);
+        // Two samples → two rows.
+        assert_eq!(values.len(), 2);
+
+        // Every projected field is a `["null", <type>]` union. Element-relative `v` differs per row.
+        match field(&values[0], "v") {
+            V::Union(idx, inner) => {
+                assert_eq!(*idx, 1);
+                assert!(matches!(**inner, V::Double(d) if (d - 21.5).abs() < 1e-9));
+            }
+            other => panic!("expected union, got {other:?}"),
+        }
+        match field(&values[1], "v") {
+            V::Union(_, inner) => assert!(matches!(**inner, V::Double(d) if (d - 22.5).abs() < 1e-9)),
+            other => panic!("expected union, got {other:?}"),
+        }
+        // Message-level `sig` repeats; `tags` (a Json column) lands as the string branch.
+        match field(&values[0], "sig") {
+            V::Union(idx, inner) => {
+                assert_eq!(*idx, 1);
+                assert!(matches!(&**inner, V::String(s) if s == "sig1"));
+            }
+            other => panic!("expected union, got {other:?}"),
+        }
+        match field(&values[1], "sig") {
+            V::Union(_, inner) => assert!(matches!(&**inner, V::String(s) if s == "sig1")),
+            other => panic!("expected union, got {other:?}"),
+        }
+        match field(&values[0], "tags") {
+            V::Union(_, inner) => {
+                assert!(matches!(&**inner, V::String(s) if s.contains("\"thing\":\"th\"")))
+            }
+            other => panic!("expected union, got {other:?}"),
+        }
     }
 }

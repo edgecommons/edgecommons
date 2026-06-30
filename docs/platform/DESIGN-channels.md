@@ -21,7 +21,7 @@ This design generalizes the model to three first-class channels a component can 
 | **2** | **Northbound control plane** | **always MQTT**, may be IoT Core | lower-throughput, lower-QoS commands/status/alarms | `publishToIotCore`/… — **hardwired to IoT Core** in names, config, and TLS |
 | **3** | **Northbound streaming** | native durable buffer → Kinesis/Kafka | high-throughput, high-durability telemetry | `gg.streams()` — a fully independent subsystem |
 
-The skeleton of all three already exists. The work is (a) **decoupling channel 2 from "IoT Core"** into a generic northbound MQTT broker, and (b) **positioning channel 3 as a first-class peer** with a clean per-tag routing story so components can split traffic across 2 and 3.
+The skeleton of all three already exists. The work is (a) **decoupling channel 2 from "IoT Core"** into a generic northbound MQTT broker, and (b) **positioning channel 3 as a first-class peer** with a clean per-signal routing story so components can split traffic across 2 and 3.
 
 ## Current state (grounded)
 
@@ -30,7 +30,7 @@ The skeleton of all three already exists. The work is (a) **decoupling channel 2
 - **Channel 3 is clean and disjoint.** Streaming shares no code, transport, envelope, or topic with messaging. Records are opaque (`append(partitionKey, timestampMs, byte[])` to a named sink stream), it's opt-in (only when a top-level `streaming` section exists), and a component can already configure `messaging` **and** `streaming` together.
 - **A channel selector already exists** for framework-emitted messages: metrics/heartbeat use a `destination` string (`ipc`/`local` vs `iotcore`/`iot_core`) to pick channel 1 vs 2.
 - **Readiness is already channel-aware:** `connected()` reports only the *local* broker — a dropped cloud link must not flip `/readyz`. (Preserve this.)
-- **The reference adapters use channel 1 only.** Both OPC UA and Modbus publish via local `publish()` with config-driven topic templates (`southbound/{ComponentName}/{InstanceId}/{tagId}`) and per-tag topic overrides; neither calls IoT Core (their recipes grant the IPC IoT-Core policy but the code never uses it) and neither streams. Their per-tag batching buffer (`samples[]` + `batchMs`) is the natural seam to divert high-rate tags to channel 3.
+- **The reference adapters use channel 1 only.** Both OPC UA and Modbus publish via local `publish()` with config-driven topic templates (`southbound/{ComponentName}/{InstanceId}/{signalId}`) and per-signal topic overrides; neither calls IoT Core (their recipes grant the IPC IoT-Core policy but the code never uses it) and neither streams. Their per-signal batching buffer (`samples[]` + `batchMs`) is the natural seam to divert high-rate signals to channel 3.
 
 ## Proposed design — library level
 
@@ -67,7 +67,7 @@ Generalize the existing per-target `destination` selector to a uniform **`{ loca
 Both adapters today publish every tag to channel 1. The model lets an integrator split a device's tags across channels **by config**, which is exactly the OT pattern (bulk process data ≠ alarms/commands):
 
 - **`publish.channel`** (global + per-subscription/poll-group/tag): route high-rate process tags to **`stream:<name>`** (channel 3), and alarms/status/command replies to **`northbound`** or **`local`** (channels 2/1).
-- The adapters open a `streaming` section when any tag routes to a stream, and in the per-tag publish path call `gg.streams().stream(name).append(partitionKey = tagId, ts, payloadBytes)` for `stream:`-routed tags instead of `publish(topic, msg)`. The stable `tag.id` is a natural partition key; the existing `samples[]`/`batchMs` batching seam is where the split happens.
+- The adapters open a `streaming` section when any signal routes to a stream, and in the per-signal publish path call `gg.streams().stream(name).append(partitionKey = signalId, ts, payloadBytes)` for `stream:`-routed signals instead of `publish(topic, msg)`. The stable `signal.id` is a natural partition key; the existing `samples[]`/`batchMs` batching seam is where the split happens.
 - This realizes the data-plane/control-plane split the adapters already approximate *by topic on one channel*, promoting it to *by channel*. `docs/SOUTHBOUND.md` already anticipates this (the deferred `gg.devices()` Tier-3 seam is described as "northbound publishing — symmetric with the northbound messaging transport abstraction").
 
 ## Phasing

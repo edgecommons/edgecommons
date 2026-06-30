@@ -337,7 +337,7 @@ A tagged union on `type` (exactly one variant). Strict.
 |-------|------|---------|----------------|---------|
 | `type` | string | — | `file` | Selects the rolling Parquet/AVRO file sink. |
 | `format` | string | `parquet` | `parquet`, `avro` | Output encoding (columnar vs row-oriented). |
-| `mode` | string | `rows` | `rows`, `raw` | `rows` = normalized typed telemetry columns flattened from `SouthboundTagUpdate`; `raw` = opaque-payload archival. |
+| `mode` | string | `rows` | `rows`, `raw` | `rows` = typed columns via the `rows` projection (default = the `SouthboundSignalUpdate` layout, envelope `tags` as one JSON column); `raw` = opaque-payload archival. |
 | `dir` | string | (**required**) | — | Output directory root (template variables). |
 | `partitionBy` | string \| null | (none) | — | Hive-style partition sub-path; UTC time tokens `{yyyy}`/`{MM}`/`{dd}`/`{HH}`/`{yyyy-MM-dd}`. |
 | `maxFileBytes` | number (min 0) | `134217728` (128 MiB) | — | Roll past this size (soft cap, at row-group granularity). |
@@ -345,6 +345,7 @@ A tagged union on `type` (exactly one variant). Strict.
 | `rollEverySecs` | number (min 0) | `0` | — | Also roll after this many seconds (`0` = disabled). |
 | `onFull` | string | `dropOldest` | `dropOldest`, `stop` | Retention when `maxFiles` is reached. |
 | `compression` | string | `snappy` | `none`, `snappy`, `zstd`, `gzip` | File compression codec. |
+| `rows` | object | (none) | — | `rows`-mode column projection: `explode` (string, optional) + `columns[]` (each `name`, `path`, `type` ∈ `string`/`long`/`double`/`bool`/`json`). Absent → the built-in `SouthboundSignalUpdate` default projection. |
 
 ### `stream.buffer`
 

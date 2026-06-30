@@ -492,14 +492,37 @@
           "properties": {
             "type": { "const": "file" },
             "format": { "enum": ["parquet", "avro"], "description": "Output encoding (default parquet)." },
-            "mode": { "enum": ["rows", "raw"], "description": "rows = normalized typed telemetry columns flattened from SouthboundTagUpdate; raw = opaque-payload archival (default rows)." },
+            "mode": { "enum": ["rows", "raw"], "description": "rows = normalized typed telemetry columns flattened from SouthboundSignalUpdate; raw = opaque-payload archival (default rows)." },
             "dir": { "type": "string", "description": "Output directory root (supports template vars)." },
             "partitionBy": { "type": "string", "description": "Hive-style partition sub-path with UTC time tokens {yyyy}/{MM}/{dd}/{HH}/{yyyy-MM-dd}, e.g. \"dt={yyyy-MM-dd}/hr={HH}\"." },
             "maxFileBytes": { "type": "number", "description": "Roll a new file once it would exceed this size (default 134217728 = 128 MiB)." },
             "maxFiles": { "type": "number", "description": "Keep at most this many finalized files under `dir` (0 = unbounded)." },
             "rollEverySecs": { "type": "number", "description": "Roll the current file after this many seconds (0 = time-roll disabled)." },
             "onFull": { "enum": ["dropOldest", "stop"], "description": "Retention policy when maxFiles is reached (default dropOldest)." },
-            "compression": { "enum": ["none", "snappy", "zstd", "gzip"], "description": "File compression codec (default snappy)." }
+            "compression": { "enum": ["none", "snappy", "zstd", "gzip"], "description": "File compression codec (default snappy)." },
+            "rows": {
+              "type": "object",
+              "description": "rows-mode column projection. Absent → the built-in SouthboundSignalUpdate default projection (one row per body.samples[]; envelope tags as a single JSON column).",
+              "properties": {
+                "explode": { "type": "string", "description": "Path to an array; emit one output row per element. Columns referencing <explode>[]… resolve against the current element." },
+                "columns": {
+                  "type": "array",
+                  "description": "Declared columns, in order.",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": { "type": "string", "description": "Output column name." },
+                      "path": { "type": "string", "description": "Dotted JSON path into the message (body./tags./header.; supports [] under the exploded array)." },
+                      "type": { "enum": ["string", "long", "double", "bool", "json"], "description": "Target column type (default string; json serializes objects/arrays)." }
+                    },
+                    "required": ["name", "path"],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": ["columns"],
+              "additionalProperties": false
+            }
           },
           "required": ["type", "dir"],
           "additionalProperties": false
