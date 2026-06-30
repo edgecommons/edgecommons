@@ -197,6 +197,14 @@ fn resolve_sink(config: &Config, sink: SinkConfig) -> SinkConfig {
             topic: resolve(config, &topic),
             properties,
         },
+        SinkConfig::File(mut f) => {
+            // Resolve config templates ({ThingName} etc.) in the output dir + partition path; any
+            // remaining tokens (UTC time tokens like {yyyy-MM-dd}) are left for the sink to resolve
+            // per file at roll time.
+            f.dir = resolve(config, &f.dir);
+            f.partition_by = f.partition_by.map(|p| resolve(config, &p));
+            SinkConfig::File(f)
+        }
         // A host-callback sink has no templated fields; pass it through unchanged.
         SinkConfig::Callback { id } => SinkConfig::Callback { id },
     }

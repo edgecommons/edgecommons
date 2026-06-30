@@ -12,12 +12,13 @@ repo and live in their own repositories (the OPC UA and Modbus reference adapter
 document defines how those repositories are organized and associated on GitHub, and the plan to get
 there.
 
-The two seed components:
+The seed components:
 
 | Component | Lang | Repo (target) | What it is |
 |-----------|------|---------------|-----------|
 | `opcua-adapter` | Java | `edgecommons/opcua-adapter` | Southbound OPC UA adapter (Eclipse Milo), subscribe-based. Republishes node changes as `SouthboundTagUpdate`; serves reads/writes; emits `southbound_health`. |
 | `modbus-adapter` | Python | `edgecommons/modbus-adapter` | Southbound Modbus adapter (pymodbus), poll-based. TCP / serial RTU / RTU-over-TCP. Same southbound contract as the OPC UA adapter. |
+| `telemetry-processor` | Rust | `edgecommons/telemetry-processor` | Reference **processor**. Subscribes to local telemetry topics, runs a per-route filter/sample/aggregate/project/Rhai pipeline, and forwards to local / northbound MQTT / a durable stream (Kinesis / Kafka / rolling Parquet-AVRO files). See `docs/TELEMETRY_PROCESSOR.md`. |
 
 Both implement the southbound contract in `docs/SOUTHBOUND.md` and run on GREENGRASS, HOST, or
 KUBERNETES.
