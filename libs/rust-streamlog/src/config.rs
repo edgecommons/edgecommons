@@ -180,7 +180,113 @@ impl Default for DeliveryConfig {
     }
 }
 
-/// Where a stream's export engine delivers (`{"type": "kinesis", ...}` / `{"type": "kafka", ...}`).
+/// File-sink output encoding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FileFormat {
+    /// Columnar Parquet (default): query-ready in Athena/BigQuery/Synapse, best compression +
+    /// column pruning. Requires the `parquet` feature.
+    #[default]
+    Parquet,
+    /// Row-oriented Avro: append-friendly landing format with true union value typing and
+    /// recover-to-last-sync-block durability. Requires the `avro` feature.
+    Avro,
+}
+
+/// What the file sink writes per record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FileMode {
+    /// Normalized typed telemetry rows flattened from a `SouthboundTagUpdate` envelope (one row per
+    /// sample; the polymorphic value lands in sparse typed columns). Payloads that aren't a
+    /// `SouthboundTagUpdate` fall back to a sibling `_unmapped` raw file (never dropped).
+    #[default]
+    Rows,
+    /// One row per message: minimal envelope columns (`topic`, `recvTs`, `name`, `version`) plus the
+    /// opaque payload. Format-agnostic; works for any message.
+    Raw,
+}
+
+/// Retention policy when `maxFiles` finalized files already exist under the sink directory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FileOnFull {
+    /// Delete the oldest finalized file to stay within the ring (default).
+    #[default]
+    DropOldest,
+    /// Stop writing (the sink reports a non-retryable failure) so the export engine stops advancing
+    /// the checkpoint and the durable buffer applies backpressure / retention instead.
+    Stop,
+}
+
+/// File-sink compression codec (mapped to the format's native codec at write time).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FileCompression {
+    None,
+    /// Snappy (default): fast and splittable — the conventional Parquet analytics default.
+    #[default]
+    Snappy,
+    Zstd,
+    Gzip,
+}
+
+fn default_max_file_bytes() -> u64 {
+    128 * 1024 * 1024
+}
+
+/// Local rolling-file sink settings: write processed telemetry to Parquet/AVRO files (bounded by
+/// max size + max file count) for later bulk upload to a cloud data lake (S3/Glue/Athena, ADLS,
+/// GCS/BigQuery). Files are written to `<dir>/<partitionBy>/` and rolled on size or time.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileSinkConfig {
+    /// Output encoding (`parquet` default | `avro`).
+    #[serde(default)]
+    pub format: FileFormat,
+    /// Row schema (`rows` default, normalized typed telemetry | `raw`, opaque-payload archival).
+    #[serde(default)]
+    pub mode: FileMode,
+    /// Output directory root. Config templates (`{ThingName}` etc.) are resolved upstream by the
+    /// library before this reaches the core.
+    pub dir: String,
+    /// Optional Hive-style partition sub-path appended to `dir`, e.g. `dt={yyyy-MM-dd}/hr={HH}`.
+    /// Supports UTC time tokens `{yyyy}` / `{MM}` / `{dd}` / `{HH}` and the compound `{yyyy-MM-dd}`,
+    /// resolved per file at roll time. (Per-message-field partition directories are a future
+    /// enhancement — those dimensions are available as columns today.)
+    #[serde(default)]
+    pub partition_by: Option<String>,
+    /// Roll a new file once the current one would exceed this many bytes (default 128 MiB — large
+    /// enough to avoid the analytics "small files" problem).
+    #[serde(default = "default_max_file_bytes", deserialize_with = "lenient_u64")]
+    pub max_file_bytes: u64,
+    /// Keep at most this many finalized files under `dir` (0 = unbounded). When exceeded, [`FileOnFull`] applies.
+    #[serde(default, deserialize_with = "lenient_u64")]
+    pub max_files: u64,
+    /// Roll the current file after this many seconds, evaluated on the next send (0 = time-roll disabled).
+    #[serde(default, deserialize_with = "lenient_u64")]
+    pub roll_every_secs: u64,
+    #[serde(default)]
+    pub on_full: FileOnFull,
+    #[serde(default)]
+    pub compression: FileCompression,
+}
+
+impl FileSinkConfig {
+    /// Validate required fields.
+    pub fn validate(&self) -> Result<()> {
+        if self.dir.trim().is_empty() {
+            return Err(GgStreamError::Config("file sink: `dir` is required".into()));
+        }
+        if self.max_file_bytes == 0 {
+            return Err(GgStreamError::Config("file sink: `maxFileBytes` must be > 0".into()));
+        }
+        Ok(())
+    }
+}
+
+/// Where a stream's export engine delivers (`{"type": "kinesis", ...}` / `{"type": "kafka", ...}` /
+/// `{"type": "file", ...}`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum SinkConfig {
@@ -200,6 +306,9 @@ pub enum SinkConfig {
         #[serde(default)]
         properties: std::collections::BTreeMap<String, String>,
     },
+    /// Local rolling Parquet/AVRO files (bounded by max size + max file count) for later bulk
+    /// upload to a cloud data lake. Built only with the `file` feature (+ `parquet`/`avro`).
+    File(FileSinkConfig),
     /// A host-provided sink (the CloudWatch metrics drain, or a caller's "bring-your-own-sink").
     /// The send logic lives in the host; the engine drives it through a
     /// [`crate::export::CallbackSink`]. The actual callback is bound at `open_with` time (Rust lib)

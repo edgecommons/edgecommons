@@ -1,7 +1,18 @@
 {
   "schemaVersion": 1,
-  "updated": "2026-06-29",
+  "updated": "2026-06-30",
   "components": [
+    {
+      "name": "telemetry-processor",
+      "repo": "edgecommons/telemetry-processor",
+      "language": "RUST",
+      "category": "processor",
+      "description": "Rust reference processing component. Subscribes to configured (wildcard, templated) local telemetry topics, runs a declarative per-route pipeline (filter / sample / aggregate / project / Rhai), and forwards results to a target: local republish, northbound MQTT/IoT Core, or a durable stream (Kinesis / Kafka / rolling Parquet-AVRO files). The high-throughput northbound seam between southbound adapters and the cloud.",
+      "status": "experimental",
+      "platforms": ["GREENGRASS", "HOST", "KUBERNETES"],
+      "library": "ggcommons",
+      "topics": ["edgecommons", "aws-iot-greengrass", "iiot", "telemetry", "stream-processing", "edgecommons-processor"]
+    },
     {
       "name": "opcua-adapter",
       "repo": "edgecommons/opcua-adapter",

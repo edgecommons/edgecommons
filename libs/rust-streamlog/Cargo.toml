@@ -16,6 +16,12 @@ kafka = ["dep:rdkafka", "dep:tokio"]
 # C ABI (src/ffi.rs) for the language bindings (Java/Panama, Python, Node). Build a cdylib with
 # this feature; pair with `kinesis` to get the real export sink in the shared library.
 cabi = ["dep:tracing-subscriber"]
+# File sink: rolling Parquet/AVRO files (bounded by max size + max file count) for later bulk upload
+# to a cloud data lake. `file` is the umbrella that gates the `File` factory arm + `export::file`;
+# pick at least one encoder with `parquet` and/or `avro`. Off by default (pulls arrow/parquet/avro).
+file = []
+parquet = ["file", "dep:arrow", "dep:parquet"]
+avro = ["file", "dep:apache-avro"]
 
 # Build an rlib (for the Rust consumers: libs/rust, benches, tests) AND a cdylib (the C-ABI shared
 # library for the bindings, when built with --features cabi).
@@ -39,6 +45,13 @@ aws-sdk-kinesis = { version = "1", optional = true }
 # KafkaSink (feature = "kafka"). cmake-build vendors + builds librdkafka (needs cmake + a C
 # compiler); no system librdkafka required.
 rdkafka = { version = "0.36", features = ["cmake-build"], optional = true }
+
+# File sink (features = "parquet" / "avro"). Pure-Rust, cross-platform. `arrow` provides the
+# RecordBatch/array builders; `parquet` writes columnar files (with the snappy/zstd/gzip codecs);
+# `apache-avro` writes row-oriented Object Container Files. arrow + parquet are version-locked.
+arrow = { version = "54", optional = true, default-features = false }
+parquet = { version = "54", optional = true, default-features = false, features = ["arrow", "snap", "zstd", "flate2"] }
+apache-avro = { version = "0.17", optional = true, features = ["snappy", "zstandard"] }
 
 [dev-dependencies]
 proptest = "1"

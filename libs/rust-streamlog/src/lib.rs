@@ -25,8 +25,8 @@ pub mod record;
 pub mod service;
 
 pub use config::{
-    BatchConfig, BufferConfig, Compression, DeliveryConfig, FsyncPolicy, OnFull, SinkConfig,
-    StreamConfig, StreamingConfig,
+    BatchConfig, BufferConfig, Compression, DeliveryConfig, FileCompression, FileFormat, FileMode,
+    FileOnFull, FileSinkConfig, FsyncPolicy, OnFull, SinkConfig, StreamConfig, StreamingConfig,
 };
 pub use error::{GgStreamError, Result};
 pub use export::{
@@ -37,6 +37,8 @@ pub use export::{
 pub use export::KinesisSink;
 #[cfg(feature = "kafka")]
 pub use export::KafkaSink;
+#[cfg(feature = "file")]
+pub use export::FileSink;
 pub use log::{EmbeddedLog, LogStats};
 pub use record::Record;
 pub use service::{ServiceStats, SinkFactory, StreamService};

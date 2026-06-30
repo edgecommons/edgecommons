@@ -187,6 +187,20 @@ fn default_sink_factory(name: &str, sink: &SinkConfig) -> Result<Option<Box<dyn 
                 Ok(None)
             }
         }
+        SinkConfig::File(file_cfg) => {
+            #[cfg(feature = "file")]
+            {
+                let s = crate::export::file::FileSink::new(name, file_cfg.clone())?;
+                Ok(Some(Box::new(s)))
+            }
+            #[cfg(not(feature = "file"))]
+            {
+                // No file encoder compiled in (build with `parquet` and/or `avro`); the stream is
+                // buffer-only — records persist but are not written to files.
+                let _ = file_cfg;
+                Ok(None)
+            }
+        }
         SinkConfig::Callback { id } => {
             // The default factory has no host callback bound; a callback stream is buffer-only
             // unless opened via `open_with` with a callback-aware factory (the metrics layer) or the

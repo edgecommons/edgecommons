@@ -342,6 +342,43 @@ and `kafka`. The same config is used by all four languages.
 | `topic` | yes | Target Kafka topic; supports template variables. |
 | `properties` | no | Open map of librdkafka producer properties passed through verbatim. |
 
+### File
+
+Rolling **Parquet/AVRO** files on local disk, for later bulk upload to a cloud data lake (S3/Glue/Athena, Azure ADLS/Synapse, GCS/BigQuery). Build with the `streaming-file-parquet` and/or `streaming-file-avro` feature.
+
+```json
+{
+  "name": "archive",
+  "sink": {
+    "type": "file",
+    "format": "parquet",
+    "mode": "rows",
+    "dir": "/data/{ThingName}/archive",
+    "partitionBy": "dt={yyyy-MM-dd}/hr={HH}",
+    "maxFileBytes": 134217728,
+    "maxFiles": 64,
+    "rollEverySecs": 300,
+    "compression": "snappy"
+  }
+}
+```
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| `format` | no | `parquet` (default) or `avro`. |
+| `mode` | no | `rows` (default) = normalized typed columns flattened from `SouthboundTagUpdate`; `raw` = one opaque row per message. Non-southbound payloads in `rows` mode land in a sibling `_unmapped` file. |
+| `dir` | yes | Output directory root; template variables resolved before the stream opens. |
+| `partitionBy` | no | Hive-style sub-path with UTC time tokens (`{yyyy-MM-dd}`, `{HH}`, …) resolved per file at roll time. |
+| `maxFileBytes` | no | Roll past this size (default 128 MiB). Soft cap at row-group granularity; keep `batch.maxBytes` below it for tight files. |
+| `maxFiles` | no | Ring cap of finalized files (`0` = unbounded). |
+| `rollEverySecs` | no | Also roll on this interval (`0` = disabled). |
+| `onFull` | no | `dropOldest` (default) or `stop` when `maxFiles` is reached. |
+| `compression` | no | `none` / `snappy` (default) / `zstd` / `gzip`. |
+
+<Aside type="note" title="rows mode vs raw mode">
+`rows` mode produces a query-ready columnar schema (one row per sample, with the polymorphic value in sparse typed columns plus a `valueType` discriminator; Avro uses a true union) — ideal for Athena/BigQuery/Synapse. `raw` mode is format-agnostic archival (topic, timestamp, opaque payload) for messages that aren't `SouthboundTagUpdate`. Delivery is at-least-once: a clean shutdown finalizes the open file; on a hard crash Avro recovers to its last block while an unclosed Parquet file is discarded. The [telemetry-processor component](/components/telemetry-processor/) is the reference producer for this sink.
+</Aside>
+
 <Aside type="note" title="Callback sinks are programmatic only">
 The core also supports a `callback` sink for bring-your-own delivery, but it is **not part of the
 JSON schema** — a config with `sink.type: "callback"` fails schema validation. Callback streams are

@@ -26,6 +26,11 @@ pub mod kafka;
 #[cfg(feature = "kafka")]
 pub use kafka::KafkaSink;
 
+#[cfg(feature = "file")]
+pub mod file;
+#[cfg(feature = "file")]
+pub use file::FileSink;
+
 /// One record handed to a sink (borrows from the read batch).
 pub struct ExportRecord<'a> {
     pub offset: u64,

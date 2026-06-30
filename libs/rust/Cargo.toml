@@ -40,6 +40,11 @@ metrics-cloudwatch-durable = ["streaming"]
 streaming = ["dep:ggstreamlog"]
 streaming-kinesis = ["streaming", "ggstreamlog/kinesis"]
 streaming-kafka = ["streaming", "ggstreamlog/kafka"]
+# File sink: rolling Parquet/AVRO files for later bulk upload to a data lake. `streaming-file` is the
+# umbrella (no encoder — not useful alone); pick `streaming-file-parquet` and/or `streaming-file-avro`.
+streaming-file = ["streaming", "ggstreamlog/file"]
+streaming-file-parquet = ["streaming", "ggstreamlog/parquet"]
+streaming-file-avro = ["streaming", "ggstreamlog/avro"]
 # Credentials / local vault: encrypted-at-rest secret store + FileKeyProvider (pure-Rust crypto,
 # builds everywhere). The AWS Secrets Manager central source is a later, separately-gated add.
 credentials = [
