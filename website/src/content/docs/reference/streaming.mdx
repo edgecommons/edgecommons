@@ -301,8 +301,8 @@ additional field.
 
 ## Sink config types
 
-A stream's `sink` is tagged by `type`. Two sink types are declarable in component config — `kinesis`
-and `kafka` — and the same JSON is used by all four languages. See the
+A stream's `sink` is tagged by `type`. Three sink types are declarable in component config — `kinesis`,
+`kafka`, and `file` — and the same JSON is used by all four languages. See the
 [Streaming guide](/guides/streaming/#sinks) for context.
 
 ### `kinesis`
@@ -338,6 +338,41 @@ and `kafka` — and the same JSON is used by all four languages. See the
 | `bootstrapServers` | yes | `host:port[,host:port...]`; supports template variables. |
 | `topic` | yes | Target Kafka topic; supports template variables. |
 | `properties` | no | Open map of librdkafka producer properties, passed through verbatim. |
+
+### `file`
+
+Rolling **Parquet/AVRO** files for later bulk upload to a cloud data lake (S3/Glue/Athena, ADLS, GCS/BigQuery). Built only with the `streaming-file-parquet` and/or `streaming-file-avro` cargo feature; absent the feature, a `file` stream is buffer-only.
+
+```json
+{
+  "type": "file",
+  "format": "parquet",
+  "mode": "rows",
+  "dir": "/data/{ThingName}/archive",
+  "partitionBy": "dt={yyyy-MM-dd}/hr={HH}",
+  "maxFileBytes": 134217728,
+  "maxFiles": 64,
+  "rollEverySecs": 300,
+  "onFull": "dropOldest",
+  "compression": "snappy"
+}
+```
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| `format` | no | `parquet` (default, columnar/query-ready) or `avro` (append-friendly, true union value type). |
+| `mode` | no | `rows` (default) flattens `SouthboundTagUpdate` samples into normalized typed columns; `raw` writes one row per message (opaque payload). In `rows` mode a non-`SouthboundTagUpdate` payload is written to a sibling `_unmapped` file rather than dropped. |
+| `dir` | yes | Output directory root; supports template variables (`{ThingName}`, `{ComponentName}`). |
+| `partitionBy` | no | Hive-style sub-path appended to `dir`, with UTC time tokens `{yyyy}` / `{MM}` / `{dd}` / `{HH}` and the compound `{yyyy-MM-dd}`, resolved per file at roll time. |
+| `maxFileBytes` | no | Roll a new file once it passes this size (default `134217728` = 128 MiB). **Soft cap** evaluated at row-group boundaries — a finalized file may exceed it by up to one row group plus the Parquet footer; keep `batch.maxBytes` well below it for tight files. |
+| `maxFiles` | no | Keep at most this many finalized files under `dir` (`0` = unbounded). |
+| `rollEverySecs` | no | Also roll after this many seconds, evaluated on the next write (`0` = time-roll disabled). |
+| `onFull` | no | When `maxFiles` is reached: `dropOldest` (default) deletes the oldest finalized file, or `stop` halts writing. |
+| `compression` | no | `none`, `snappy` (default), `zstd`, or `gzip`. |
+
+<Aside type="note" title="file-sink durability">
+Delivery is **at-least-once**. A clean shutdown finalizes the open file (no loss). On a hard crash, Avro recovers up to its last written block while Parquet discards the unclosed, footer-less file (loss bounded by the open-file window — shrink it with `rollEverySecs`/`maxFileBytes`). Files are written `*.inprogress` and atomically renamed on finalize; de-duplicate downstream on `(tagId, sourceTs)`.
+</Aside>
 
 <Aside type="note" title="callback sinks are programmatic only">
 The core also supports a `callback` sink (`SinkConfig::Callback`) for bring-your-own delivery, but it
