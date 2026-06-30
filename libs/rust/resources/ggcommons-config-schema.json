@@ -492,7 +492,7 @@
           "properties": {
             "type": { "const": "file" },
             "format": { "enum": ["parquet", "avro"], "description": "Output encoding (default parquet)." },
-            "mode": { "enum": ["rows", "raw"], "description": "rows = normalized typed telemetry columns flattened from SouthboundTagUpdate; raw = opaque-payload archival (default rows)." },
+            "mode": { "enum": ["rows", "raw"], "description": "rows = normalized typed telemetry columns flattened from SouthboundSignalUpdate; raw = opaque-payload archival (default rows)." },
             "dir": { "type": "string", "description": "Output directory root (supports template vars)." },
             "partitionBy": { "type": "string", "description": "Hive-style partition sub-path with UTC time tokens {yyyy}/{MM}/{dd}/{HH}/{yyyy-MM-dd}, e.g. \"dt={yyyy-MM-dd}/hr={HH}\"." },
             "maxFileBytes": { "type": "number", "description": "Roll a new file once it would exceed this size (default 134217728 = 128 MiB)." },

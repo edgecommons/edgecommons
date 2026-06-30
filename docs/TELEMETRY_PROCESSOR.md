@@ -2,17 +2,17 @@
 
 > Status: **design proposal** (2026-06-30). Code-grounded against the current Rust messaging + streaming subsystems.
 
-Southbound **protocol adapters** (OPC UA, Modbus, …) publish every tag update to the **local bus
-(channel 1)** as a `SouthboundTagUpdate` envelope on config-driven topics
-(`southbound/{site}/{ComponentName}/{InstanceId}/{tagId}` — see `docs/SOUTHBOUND.md` §2). That
+Southbound **protocol adapters** (OPC UA, Modbus, …) publish every signal update to the **local bus
+(channel 1)** as a `SouthboundSignalUpdate` envelope on config-driven topics
+(`southbound/{site}/{ComponentName}/{InstanceId}/{signalId}` — see `docs/SOUTHBOUND.md` §2). That
 high-rate telemetry then needs a way **northbound**, but a raw firehose-to-cloud is wrong: integrators
-want to **filter** (drop BAD quality, uninteresting tags), **sample/downsample** (1 kHz → 1 Hz), and
-**aggregate** (per-tag windowed min/max/avg) *before* it leaves the edge — then route each result to
+want to **filter** (drop BAD quality, uninteresting signals), **sample/downsample** (1 kHz → 1 Hz), and
+**aggregate** (per-signal windowed min/max/avg) *before* it leaves the edge — then route each result to
 the right channel: low-rate control/alarm data to **northbound MQTT / IoT Core (channel 2)**, bulk
 process telemetry to a **durable stream → Kinesis/Kafka (channel 3)**, or **local Parquet/Avro files**
 (bounded by max size + max file count) for later bulk upload to a cloud data lake.
 `docs/platform/DESIGN-channels.md` explicitly anticipates this seam (high-rate telemetry "belongs on
-the streaming channel"; per-tag `publish.channel ∈ {local, northbound, stream:<name>}`) but nothing
+the streaming channel"; per-signal `publish.channel ∈ {local, northbound, stream:<name>}`) but nothing
 implements the **processing/forwarding** stage that sits between the adapters' local publish and those
 channels. The **Telemetry Processor** is that stage — the **first-class reference Rust component**,
 living in its own `edgecommons/telemetry-processor` repo. The monorepo carries only this doc, a new
@@ -65,7 +65,7 @@ shared **file sink** in the streaming core, and the registry entry.
 ## 3. Architecture
 
 ```
- adapters ──publish(local)──▶  southbound/{site}/{Comp}/{Inst}/{tagId}   (channel 1, MQTT/IPC)
+ adapters ──publish(local)──▶  southbound/{site}/{Comp}/{Inst}/{signalId}   (channel 1, MQTT/IPC)
                                           │
                                           ▼
                           ┌──────────────────────────────────┐
@@ -113,16 +113,16 @@ Each route (instance) entry:
 | Field | Meaning |
 |-------|---------|
 | `id` (required by `instances[]`) | route id — used for logs, the `processor_health` dimension, and hot-reload diffing |
-| `subscribe` | `[string]` topic filters. MQTT `+`/`#` wildcards allowed; each filter is run through `ggcommons::config::template::resolve(&cfg, filter)` so `{ThingName}` / `{ComponentName}` / `{tag}` substitution works |
+| `subscribe` | `[string]` topic filters. MQTT `+`/`#` wildcards allowed; each filter is run through `ggcommons::config::template::resolve(&cfg, filter)` so `{ThingName}` / `{ComponentName}` / `{signal}` substitution works |
 | `pipeline` | `[stage]` ordered stages (§5) |
 | `target` | `"local"` \| `"northbound"` \| `"stream:<name>"` (§6) |
-| `publish` | target topic template (for `local`/`northbound`) and `partitionKey` source (for `stream`; default `body.tag.id`) |
+| `publish` | target topic template (for `local`/`northbound`) and `partitionKey` source (for `stream`; default `body.signal.id`) |
 | `maxQueue` | subscribe / internal-mpsc queue depth |
-| `key` | aggregation / dedup key path (default `body.tag.id`) |
+| `key` | aggregation / dedup key path (default `body.signal.id`) |
 
 Topic filters MUST support MQTT `+`/`#` wildcards and MUST be resolved through the existing
 `ggcommons::config::template::resolve` so an operator can write
-`southbound/{site}/{ComponentName}/+/{tag}` and have it expand against the active config. A route MAY
+`southbound/{site}/{ComponentName}/+/{signal}` and have it expand against the active config. A route MAY
 omit any field present in `component.global`; the resolved route is `global ⊕ instance` with the
 instance winning per key.
 
@@ -131,8 +131,8 @@ instance winning per key.
   "component": {
     "global": {                                  // cross-route defaults (global ⊕ instance)
       "maxQueue": 10000,
-      "key": "body.tag.id",
-      "publish": { "topic": "telemetry/{site}/{ComponentName}/{tag}" }
+      "key": "body.signal.id",
+      "publish": { "topic": "telemetry/{site}/{ComponentName}/{signal}" }
     },
     "instances": [
       {
@@ -149,16 +149,16 @@ instance winning per key.
         "subscribe": [ "southbound/{site}/+/+/+" ],
         "pipeline": [
           { "filter": { "field": "body.samples[].quality", "op": "eq", "value": "GOOD" } },
-          { "aggregate": { "window": "10s", "by": "tag.id", "fn": [ "avg", "max", "count" ] } }
+          { "aggregate": { "window": "10s", "by": "signal.id", "fn": [ "avg", "max", "count" ] } }
         ],
         "target": "stream:hot",
-        "publish": { "partitionKey": "body.tag.id" }
+        "publish": { "partitionKey": "body.signal.id" }
       },
       {
         "id": "archive-raw",                      // route 3: project → file sink (via stream)
         "subscribe": [ "southbound/{site}/+/+/+" ],
         "pipeline": [
-          { "project": { "keep": [ "tag.id", "tag.name", "samples" ] } }
+          { "project": { "keep": [ "signal.id", "signal.name", "samples" ] } }
         ],
         "target": "stream:archive"
       }
@@ -197,19 +197,19 @@ config, the resolved `key` accessor, and the health counters.
 
 - **`filter`** — keep/drop. Two forms:
   - **built-in (fast path):** `{ "filter": { "field": "body.samples[].quality", "op": "eq",
-    "value": "GOOD" } }` plus shorthands (`quality`, numeric range, topic-glob, tag-set membership).
+    "value": "GOOD" } }` plus shorthands (`quality`, numeric range, topic-glob, signal-set membership).
     Compiled to a closure **once at startup** — no per-message parsing.
   - **Rhai:** `{ "filter": { "script": "samples.all(|s| s.quality == \"GOOD\" && s.value < 100.0)" } }`
     — an arbitrary boolean predicate over a read-only message view.
 - **`sample`** — downsample, per key. `{ "sample": { "everyMs": 1000 } }` (time) or
   `{ "sample": { "everyN": 100 } }` (count). Stateful per key → runs in the single route worker.
-- **`aggregate`** — windowed reduction. `{ "aggregate": { "window": "10s", "by": "tag.id",
+- **`aggregate`** — windowed reduction. `{ "aggregate": { "window": "10s", "by": "signal.id",
   "fn": [ "avg", "max", "min", "sum", "count", "first", "last" ] } }`. **Tumbling** windows (time or
   count) for MVP — sliding deferred (§12). Per-key state lives in a `HashMap<KeyHash, Accum>` with
   eviction on flush. On the worker's flush tick it emits **one message per (key, window)**, shaped as a
-  `SouthboundTagUpdate`-compatible envelope whose `samples[]` carry the aggregates plus a `window`
+  `SouthboundSignalUpdate`-compatible envelope whose `samples[]` carry the aggregates plus a `window`
   block (`{ start, end, count }`) so downstream consumers parse it like any other southbound message.
-- **`project`** — reshape/whitelist: `{ "project": { "keep": [ "tag.id", "samples" ],
+- **`project`** — reshape/whitelist: `{ "project": { "keep": [ "signal.id", "samples" ],
   "set": { "tags.appId": "rollup" } } }`.
 - **`script`** (Rhai) — full transform: input message view → returns a new body (or `()` to drop). For
   arbitrary enrichment/reshaping the built-ins don't cover.
@@ -251,7 +251,7 @@ Net-new code is only the dispatch glue; every target reuses an existing API.
 | `northbound` | publish to IoT Core / northbound MQTT, QoS configurable | `publish_to_iot_core` |
 | `stream:<name>` | append to a durable stream (→ kinesis / kafka / **file**) | `gg.streams().stream(n).append(Record)` |
 
-For a `stream:` target the partition key defaults to **`body.tag.id`** — the southbound contract's
+For a `stream:` target the partition key defaults to **`body.signal.id`** — the southbound contract's
 stable canonical id (`docs/SOUTHBOUND.md` §2) — exactly as `docs/platform/DESIGN-channels.md`
 recommends; it is overridable via `publish.partitionKey`.
 
@@ -286,7 +286,7 @@ Phase 1) — see §12.
 
 ### 7.2 rows mode — normalized typed telemetry
 
-Each `ExportRecord.payload` is decoded as a `SouthboundTagUpdate` and **each `samples[]` element is
+Each `ExportRecord.payload` is decoded as a `SouthboundSignalUpdate` and **each `samples[]` element is
 flattened into one row**. The polymorphic `value` (numbers / booleans / strings / ISO-8601, per
 `docs/SOUTHBOUND.md` §2) is written as **sparse typed columns** —
 `valueDouble | valueLong | valueBool | valueString` — with a `valueType` discriminator naming which
@@ -297,7 +297,7 @@ fidelity (§8). Columns:
 ```
 thing, appId, site, shop, line,            -- from envelope tags{}
 adapter, instance,                         -- from body.device
-tagId, tagName,                            -- from body.tag
+signalId, signalName,                            -- from body.signal
 valueDouble, valueLong, valueBool, valueString, valueType,   -- polymorphic sample value
 quality, qualityRaw,                       -- normalized + native (SOUTHBOUND §3)
 sourceTs, serverTs                         -- ISO-8601 UTC
@@ -332,7 +332,7 @@ The file sink is part of the at-least-once streaming pipeline; the exact guarant
   favor as a landing format). **Parquet discards the unclosed, footer-less `*.inprogress` file** →
   loss is **bounded by the open-file window** (`rollEverySecs` / `maxFileBytes`).
 - **Duplicates (at-least-once).** Records re-delivered after a crash that occurred **between sink-write
-  and buffer-commit** MAY appear twice. Consumers MUST de-duplicate downstream on **`(tagId, sourceTs)`**.
+  and buffer-commit** MAY appear twice. Consumers MUST de-duplicate downstream on **`(signalId, sourceTs)`**.
 - **Recommendation.** When strict no-loss matters, choose **Avro** as the landing format **or** a small
   `rollEverySecs` so the Parquet open-file window stays small.
 
@@ -366,21 +366,21 @@ A full example — `component.instances[]` routes plus a `streaming` section who
 {
   "component": {
     "name": "com.mbreissi.greengrass.TelemetryProcessor",
-    "global": { "maxQueue": 10000, "key": "body.tag.id" },
+    "global": { "maxQueue": 10000, "key": "body.signal.id" },
     "instances": [
       {
         "id": "windowed-avg",
         "subscribe": [ "southbound/{site}/+/+/+" ],
         "pipeline": [
           { "filter": { "field": "body.samples[].quality", "op": "eq", "value": "GOOD" } },
-          { "aggregate": { "window": "10s", "by": "tag.id", "fn": [ "avg", "max", "count" ] } }
+          { "aggregate": { "window": "10s", "by": "signal.id", "fn": [ "avg", "max", "count" ] } }
         ],
         "target": "stream:hot"
       },
       {
         "id": "archive",
         "subscribe": [ "southbound/{site}/+/+/+" ],
-        "pipeline": [ { "project": { "keep": [ "tag.id", "tag.name", "samples" ] } } ],
+        "pipeline": [ { "project": { "keep": [ "signal.id", "signal.name", "samples" ] } } ],
         "target": "stream:archive"
       }
     ]
@@ -447,7 +447,7 @@ core), not the processor.
 - File sink in the shared `ggstreamlog` core (both rows + raw modes; Parquet default, Avro option);
   the **only** canonical schema edit is the `file` `streamSink` variant.
 - Durability: clean shutdown loses nothing; hard-crash loss bounded by the open-file window for
-  Parquet, none for Avro to its last sync block; at-least-once with `(tagId, sourceTs)` dedup.
+  Parquet, none for Avro to its last sync block; at-least-once with `(signalId, sourceTs)` dedup.
 
 **Open / deferred:**
 - **Per-message-field partition directories** (one open writer per distinct `site=…/adapter=…`) — Phase 1
