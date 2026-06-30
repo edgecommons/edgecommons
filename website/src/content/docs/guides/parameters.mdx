@@ -28,7 +28,7 @@ environment, a mounted volume, or AWS SSM Parameter Store — and that may chang
 
 Add a `parameters` section to your component config. The minimum is a `source`. This config is
 identical across all four languages (it validates against the single
-[config schema](/reference/configuration/#parameters)).
+[config schema](/reference/configuration-schema/#parameters)).
 
 ```json
 {
@@ -473,7 +473,7 @@ when the service is dropped (RAII — there is no `close()`).
 
 <CardGrid>
   <LinkCard title="API reference: Parameters" href="/reference/parameters/" description="The full ParameterService surface, verified against source." />
-  <LinkCard title="Config schema: parameters" href="/reference/configuration/#parameters" description="Every key in the parameters config section." />
+  <LinkCard title="Config schema: parameters" href="/reference/configuration-schema/#parameters" description="Every key in the parameters config section." />
   <LinkCard title="Credentials guide" href="/guides/credentials/" description="The secrets sibling — the encrypted vault parameters reuses for its cache." />
   <LinkCard title="Configuration guide" href="/guides/configuration/" description="The component's own deployment-shipped config." />
 </CardGrid>
