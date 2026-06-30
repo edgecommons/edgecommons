@@ -361,7 +361,7 @@ Rolling **Parquet/AVRO** files for later bulk upload to a cloud data lake (S3/Gl
 | Field | Required | Notes |
 |-------|----------|-------|
 | `format` | no | `parquet` (default, columnar/query-ready) or `avro` (append-friendly, true union value type). |
-| `mode` | no | `rows` (default) flattens `SouthboundTagUpdate` samples into normalized typed columns; `raw` writes one row per message (opaque payload). In `rows` mode a non-`SouthboundTagUpdate` payload is written to a sibling `_unmapped` file rather than dropped. |
+| `mode` | no | `rows` (default) writes typed columns (see **Rows projection** below); `raw` writes one row per message (opaque payload + `partitionKey`/`tsMs`/`offset`). |
 | `dir` | yes | Output directory root; supports template variables (`{ThingName}`, `{ComponentName}`). |
 | `partitionBy` | no | Hive-style sub-path appended to `dir`, with UTC time tokens `{yyyy}` / `{MM}` / `{dd}` / `{HH}` and the compound `{yyyy-MM-dd}`, resolved per file at roll time. |
 | `maxFileBytes` | no | Roll a new file once it passes this size (default `134217728` = 128 MiB). **Soft cap** evaluated at row-group boundaries — a finalized file may exceed it by up to one row group plus the Parquet footer; keep `batch.maxBytes` well below it for tight files. |
@@ -369,9 +369,36 @@ Rolling **Parquet/AVRO** files for later bulk upload to a cloud data lake (S3/Gl
 | `rollEverySecs` | no | Also roll after this many seconds, evaluated on the next write (`0` = time-roll disabled). |
 | `onFull` | no | When `maxFiles` is reached: `dropOldest` (default) deletes the oldest finalized file, or `stop` halts writing. |
 | `compression` | no | `none`, `snappy` (default), `zstd`, or `gzip`. |
+| `rows` | no | Column projection for `rows` mode (below). Absent → the built-in default projection. |
+
+#### Rows projection
+
+`rows` columns are **declared by config**, so you map *any* message shape to a typed table — `SouthboundSignalUpdate` is just the default, not a requirement.
+
+- **Default projection** (when `rows` is omitted): one row per `body.samples[]` element, with columns `tags` (the entire ggcommons envelope `tags` object as a JSON string), `signalId`, `signalName`, `adapter`, `instance`, the value in sparse typed columns (`valueDouble`/`valueLong`/`valueBool`/`valueString` + `valueType`), `quality`, `qualityRaw`, `sourceTs`, `serverTs`, `tsMs`, `offset`. A payload that isn't a `SouthboundSignalUpdate` (not JSON, or no `body.samples`) goes to a sibling `_unmapped` raw file rather than being dropped.
+- **Config-driven projection** (`rows.columns` [+ `rows.explode`]): you declare the columns and types.
+
+```json
+"rows": {
+  "explode": "body.readings",
+  "columns": [
+    { "name": "sensor", "path": "body.id",           "type": "string" },
+    { "name": "temp_c", "path": "body.readings[].c", "type": "double" },
+    { "name": "ts",     "path": "header.timestamp",  "type": "string" },
+    { "name": "tags",   "path": "tags",              "type": "json"   }
+  ]
+}
+```
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| `explode` | no | Path to an array; emit one row per element. A column path under `<explode>[]…` resolves against the current element; other paths repeat per row. |
+| `columns[].name` | yes | Output column name. |
+| `columns[].path` | yes | Dotted JSON path (`body.` / `tags.` / `header.`; `[]` under the exploded array). |
+| `columns[].type` | no | `string` (default), `long`, `double`, `bool`, or `json` (serializes objects/arrays). A value that doesn't match the type is null. |
 
 <Aside type="note" title="file-sink durability">
-Delivery is **at-least-once**. A clean shutdown finalizes the open file (no loss). On a hard crash, Avro recovers up to its last written block while Parquet discards the unclosed, footer-less file (loss bounded by the open-file window — shrink it with `rollEverySecs`/`maxFileBytes`). Files are written `*.inprogress` and atomically renamed on finalize; de-duplicate downstream on `(tagId, sourceTs)`.
+Delivery is **at-least-once**. A clean shutdown finalizes the open file (no loss). On a hard crash, Avro recovers up to its last written block while Parquet discards the unclosed, footer-less file (loss bounded by the open-file window — shrink it with `rollEverySecs`/`maxFileBytes`). Files are written `*.inprogress` and atomically renamed on finalize; de-duplicate downstream on `(signalId, sourceTs)`.
 </Aside>
 
 <Aside type="note" title="callback sinks are programmatic only">

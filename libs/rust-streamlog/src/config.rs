@@ -197,13 +197,16 @@ pub enum FileFormat {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum FileMode {
-    /// Normalized typed telemetry rows flattened from a `SouthboundTagUpdate` envelope (one row per
-    /// sample; the polymorphic value lands in sparse typed columns). Payloads that aren't a
-    /// `SouthboundTagUpdate` fall back to a sibling `_unmapped` raw file (never dropped).
+    /// Typed columnar rows. By default (no [`RowsConfig`]) the columns are the built-in
+    /// `SouthboundSignalUpdate` projection — one row per `body.samples[]` element, with the envelope
+    /// `tags` captured as a single JSON column and the polymorphic value in sparse typed columns; a
+    /// payload that isn't a `SouthboundSignalUpdate` falls back to a sibling `_unmapped` raw file
+    /// (never dropped). With a [`RowsConfig`] you declare the columns (`name`/`path`/`type`) plus an
+    /// optional `explode`, mapping any message shape to a typed table.
     #[default]
     Rows,
-    /// One row per message: minimal envelope columns (`topic`, `recvTs`, `name`, `version`) plus the
-    /// opaque payload. Format-agnostic; works for any message.
+    /// One row per message: `offset`, `partitionKey`, `tsMs`, and the opaque `payload`.
+    /// Format-agnostic; works for any message.
     Raw,
 }
 
@@ -233,6 +236,51 @@ pub enum FileCompression {
 
 fn default_max_file_bytes() -> u64 {
     128 * 1024 * 1024
+}
+
+/// Target type for a projected file-sink column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ColumnType {
+    /// UTF-8 string (the default); non-string JSON scalars are stringified.
+    #[default]
+    String,
+    /// 64-bit signed integer; non-integral numbers are truncated, non-numbers null.
+    Long,
+    /// 64-bit float; non-numbers null.
+    Double,
+    /// Boolean; non-booleans null.
+    Bool,
+    /// The resolved value serialized as a JSON string (for objects/arrays, e.g. the envelope `tags`).
+    Json,
+}
+
+/// One column in the `rows`-mode projection: a `name`, a dotted JSON `path` into the message
+/// (`body.signal.id`, `tags.site`, `header.timestamp`, …), and a target `type`. With an
+/// [`RowsConfig::explode`], a path under the exploded array (`body.samples[].value`) resolves
+/// against the current element; other paths resolve against the message and repeat per row.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ColumnSpec {
+    pub name: String,
+    pub path: String,
+    #[serde(rename = "type", default)]
+    pub col_type: ColumnType,
+}
+
+/// The `rows`-mode projection: optionally explode an array (one output row per element) and the
+/// declared columns. When the whole `rows` block is absent, the file sink uses its built-in
+/// **default projection** (the SouthboundSignalUpdate layout: one row per `body.samples[]` element,
+/// with the envelope `tags` captured as a single JSON column).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RowsConfig {
+    /// Path to an array; emit one row per element. Columns referencing `<explode>[]…` see the
+    /// current element. Absent → one row per message.
+    #[serde(default)]
+    pub explode: Option<String>,
+    /// The columns to write (in order).
+    pub columns: Vec<ColumnSpec>,
 }
 
 /// Local rolling-file sink settings: write processed telemetry to Parquet/AVRO files (bounded by
@@ -270,6 +318,10 @@ pub struct FileSinkConfig {
     pub on_full: FileOnFull,
     #[serde(default)]
     pub compression: FileCompression,
+    /// Optional `rows`-mode column projection. Absent → the built-in SouthboundSignalUpdate default
+    /// projection (one row per `body.samples[]`, envelope `tags` as a single JSON column).
+    #[serde(default)]
+    pub rows: Option<RowsConfig>,
 }
 
 impl FileSinkConfig {

@@ -13,7 +13,7 @@ credentials, and streaming, so the author writes only the protocol code. ggcommo
 the protocols.
 
 But if every adapter is built independently on just the generic plumbing, the result is N adapters
-that each invent their own tag model, normalization, quality/timestamp semantics, payload shape, and
+that each invent their own signal model, normalization, quality/timestamp semantics, payload shape, and
 health metrics — and the cloud side has to special-case each one. The framework's leverage is to
 define the **southbound contract** so the *ecosystem* of adapters is consistent and interoperable,
 even though it implements none of the protocols.
@@ -29,16 +29,16 @@ Three tiers, increasing in framework involvement (this doc specifies **Tier-1**)
 ## 2. The normalized telemetry envelope
 
 Adapters reuse the existing `Message` envelope (header + tags + body) **unchanged**. The contract
-standardizes only the **body**, published with header `name = "SouthboundTagUpdate"`, `version =
+standardizes only the **body**, published with header `name = "SouthboundSignalUpdate"`, `version =
 "1.0"`:
 
 ```json
 {
-  "header": { "name": "SouthboundTagUpdate", "version": "1.0", "timestamp": "...", "uuid": "...", "correlation_id": null },
+  "header": { "name": "SouthboundSignalUpdate", "version": "1.0", "timestamp": "...", "uuid": "...", "correlation_id": null },
   "tags":   { "thing": "...", "appId": "...", "site": "...", "shop": "...", "line": "..." },
   "body": {
     "device":  { "adapter": "opcua", "instance": "<instanceId>", "endpoint": "opc.tcp://host:4840" },
-    "tag":     { "id": "<canonical stable id>", "name": "<human label>", "address": { /* protocol-native, opaque */ } },
+    "signal":  { "id": "<canonical stable id>", "name": "<human label>", "address": { /* protocol-native, opaque */ } },
     "samples": [
       { "value": <any>, "quality": "GOOD|BAD|UNCERTAIN", "qualityRaw": "<native status code>",
         "sourceTs": "<ISO-8601 UTC>", "serverTs": "<ISO-8601 UTC>" }
@@ -47,27 +47,35 @@ standardizes only the **body**, published with header `name = "SouthboundTagUpda
 }
 ```
 
+> **Terminology — envelope `tags` vs `signal`.** The word "tag" is overloaded in IoT, so this contract
+> keeps the two senses apart. The envelope **`tags`** are arbitrary message metadata — there are *no*
+> mandated keys; `thing` / `site` / `shop` / `line` above are only examples (the existing
+> `MessageBuilder.withConfig(...)` mechanism). A **`signal`** is a single data point — one measured
+> value with identity, quality, and timestamps (what OPC UA calls a "tag" and Modbus calls a
+> "register"). Earlier revisions of this doc called the data point a "tag"; it is now uniformly
+> **`signal`**, leaving `tags` to mean envelope metadata only.
+
 Design rules:
 
 - **Quality is first-class.** Every sample carries a `quality` normalized to `GOOD | BAD | UNCERTAIN`
   (see §3), plus `qualityRaw` retaining the native code for diagnostics. Consumers gate on `quality`
   without knowing the protocol.
-- **Identity is split.** `tag.id` is a **canonical, stable** string the cloud keys on (e.g.
-  `ns=3;i=1001`); `tag.address` is the **protocol-native** identity for round-tripping back to the
+- **Identity is split.** `signal.id` is a **canonical, stable** string the cloud keys on (e.g.
+  `ns=3;i=1001`); `signal.address` is the **protocol-native** identity for round-tripping back to the
   device (OPC UA `{ns, namespaceUri, nodeId}`, Modbus `{unitId, register, type}`, MQTT `{topic}`).
   Where a protocol's index-style handle is unstable, the address SHOULD also carry the stable form —
   e.g. OPC UA's namespace **URI** alongside the volatile namespace **index** — so consumers and
-  round-trip reads/writes need not depend on the index. `tag.name` is the human label.
+  round-trip reads/writes need not depend on the index. `signal.name` is the human label.
 - **Site hierarchy lives in `tags`, not the body.** `thing` + the configured `tags{}` (appId / site /
   shop / line / …) ride in the envelope's `tags`, so routing and partitioning never require parsing
   the body. This is the existing tag mechanism (`MessageBuilder.withConfig(...)`).
-- **Batching.** `samples` is an array so an adapter can coalesce multiple updates for one tag into one
+- **Batching.** `samples` is an array so an adapter can coalesce multiple updates for one signal into one
   message (deadband/publish-interval driven).
 - **Timestamps** are ISO-8601 UTC. `sourceTs` (device/field) and `serverTs` (protocol server) are
   kept distinct; both optional but at least one SHOULD be present.
 - **Value typing.** `value` is JSON-native: numbers (including unsigned integers) as JSON numbers,
   booleans as JSON booleans, strings as strings, and **date/time as an ISO-8601 string**. An
-  **array-valued tag is a JSON array**, each element following these same rules (and writes accept a
+  **array-valued signal is a JSON array**, each element following these same rules (and writes accept a
   JSON array, coerced to the element type). A value an adapter cannot model as one of these (e.g. an
   opaque blob or a structure) MAY be rendered as a string; adapters SHOULD document such fallbacks.
 
@@ -81,9 +89,9 @@ It maps onto the contract as:
 | `device.adapter` | `"opcua"` |
 | `device.instance` | the component instance id |
 | `device.endpoint` | `connectionInfo.url` |
-| `tag.address` | `{ ns, namespaceUri, nodeId: id }` — `namespaceUri` is the stable identity; `ns` (index) can change between servers/restarts |
-| `tag.id` | `"ns=<ns>;i=<id>"` (or `s=<id>` for string node ids) |
-| `tag.name` | `displayName` if non-empty, else `browseName` |
+| `signal.address` | `{ ns, namespaceUri, nodeId: id }` — `namespaceUri` is the stable identity; `ns` (index) can change between servers/restarts |
+| `signal.id` | `"ns=<ns>;i=<id>"` (or `s=<id>` for string node ids) |
+| `signal.name` | `displayName` if non-empty, else `browseName` |
 | `samples[]` | `updates[]` → `value`→`value`; `quality`→`qualityRaw` + normalized `quality`; `serverTs`/`sourceTs` preserved |
 
 **Cutover safety:** an adapter MAY support a per-instance `bodySchema: "legacy-<protocol>"` toggle to
@@ -102,33 +110,33 @@ order, scale/offset, single-bit extraction).
 | `device.adapter` | `"modbus"` |
 | `device.instance` | the component instance id |
 | `device.endpoint` | e.g. `tcp://host:502 unit=1` (also serial `rtu` / `rtutcp`) |
-| `tag.address` | `{ unitId, table, address, type, wordOrder?, byteOrder?, bit?, count? }` — `table` ∈ `coil`/`discrete`/`holding`/`input` |
-| `tag.id` | `"u<unitId>/<table>/<address>/<type>"` (stable canonical id) |
-| `tag.name` | the configured tag name |
-| `samples[]` | one per poll publish (deadband-gated); `value` decoded per the tag's type; `quality` `GOOD`, or `BAD` with the exception/timeout in `qualityRaw` |
+| `signal.address` | `{ unitId, table, address, type, wordOrder?, byteOrder?, bit?, count? }` — `table` ∈ `coil`/`discrete`/`holding`/`input` |
+| `signal.id` | `"u<unitId>/<table>/<address>/<type>"` (stable canonical id) |
+| `signal.name` | the configured signal name |
+| `samples[]` | one per poll publish (deadband-gated); `value` decoded per the signal's type; `quality` `GOOD`, or `BAD` with the exception/timeout in `qualityRaw` |
 
-There is no namespace or discovery — tags are **declared explicitly** in config (no regex matching
-against a browsed address space). For the command surface (§2.2), a Modbus `<tag-ref>` is either
-`{ "name": "<configured tag>" }` (the friendly, stable form) or an explicit
+There is no namespace or discovery — signals are **declared explicitly** in config (no regex matching
+against a browsed address space). For the command surface (§2.2), a Modbus `<signal-ref>` is either
+`{ "name": "<configured signal>" }` (the friendly, stable form) or an explicit
 `{ "unitId"?, "table", "address", "type", ... }` for arbitrary access.
 
 ### 2.2 Command surface (on-demand read + write)
 
 Beyond streaming subscriptions, an adapter MAY expose a request/reply **command surface** so clients
-can read or write arbitrary tags at any time, on per-instance topics:
+can read or write arbitrary signals at any time, on per-instance topics:
 
-- **Batch write** (fire-and-forget) — body `{ "writes": [ { <tag-ref>, "value": <any>,
+- **Batch write** (fire-and-forget) — body `{ "writes": [ { <signal-ref>, "value": <any>,
   "status": "GOOD|BAD|UNCERTAIN"?, "sourceTs": "<iso>"? }, ... ] }`. A single object (no `writes`
-  array) is also accepted. One round-trip writes many tags.
-- **On-demand read** (request/reply) — request body `{ "tags": [ { <tag-ref> }, ... ] }`; the reply
-  (`SouthboundReadResult`) body is `{ "id": "<instance>", "reads": [ { "tag": {id, address}, "value",
+  array) is also accepted. One round-trip writes many signals.
+- **On-demand read** (request/reply) — request body `{ "signals": [ { <signal-ref> }, ... ] }`; the reply
+  (`SouthboundReadResult`) body is `{ "id": "<instance>", "reads": [ { "signal": {id, address}, "value",
   "quality", "qualityRaw", "sourceTs", "serverTs" }, ... ] }`.
 
-`<tag-ref>` addresses a tag by its **stable** identity where possible — for OPC UA, `"namespaceUri":
-"<uri>"` (preferred, resolved to the current index) or a literal `"ns": <int>`, plus `"tagId":
+`<signal-ref>` addresses a signal by its **stable** identity where possible — for OPC UA, `"namespaceUri":
+"<uri>"` (preferred, resolved to the current index) or a literal `"ns": <int>`, plus `"signalId":
 "<id>"`. This keeps request inputs, like the published `address`, independent of a volatile index.
 
-Both batch (one round-trip for many tags) and reuse the §2 value/quality encoding. Topic templates
+Both batch (one round-trip for many signals) and reuse the §2 value/quality encoding. Topic templates
 are per-instance config (`write.topic`, `read.topic`).
 
 ## 3. Quality normalization
@@ -174,7 +182,7 @@ Convention — protocol-agnostic keys at the top, protocol-native detail nested:
         "adapter": "opcua",
         "connection":  { "endpoint": "opc.tcp://host:4840/", "securityPolicy": "Basic256Sha256", "messageMode": "SignAndEncrypt" },
         "defaults":    { "publishIntervalMs": 1000, "samplingRateMs": 500, "queueSize": 100 },
-        "publish":     { "topic": "southbound/{site}/{ComponentName}/{InstanceId}/{tagId}", "batchMs": 1000 },
+        "publish":     { "topic": "southbound/{site}/{ComponentName}/{InstanceId}/{signalId}", "batchMs": 1000 },
         "write":       { "enabled": true, "topic": "southbound/{ComponentName}/{InstanceId}/write" },
         "subscriptions": [
           {
@@ -190,8 +198,8 @@ Convention — protocol-agnostic keys at the top, protocol-native detail nested:
 ```
 
 Keys that are protocol-agnostic (`connection`, `defaults`, `publish`, `write`, `subscriptions` with
-`include`/`exclude` tag specs, deadband) form the convention every adapter follows; anything
-protocol-specific nests under `connection` or a tag spec's matcher. Security config is detailed in
+`include`/`exclude` signal specs, deadband) form the convention every adapter follows; anything
+protocol-specific nests under `connection` or a signal spec's matcher. Security config is detailed in
 the OPC UA adapter's own doc (cert sources: `vault` / `file` / `pkcs11`).
 
 ## 5. Standard adapter health metrics
@@ -207,7 +215,7 @@ code change is needed to route it.
 | `publishLatencyMs` | Milliseconds | 1 | northbound publish latency |
 | `pollLatencyMs` | Milliseconds | 1 | read/poll round-trip |
 | `readErrors` | Count | 60 | read errors over the interval |
-| `staleTags` | Count | 60 | tags with no update past `healthThresholds.staleTagSecs` |
+| `staleTags` | Count | 60 | signals with no update past `healthThresholds.staleTagSecs` |
 
 Optional: `reconnects`, `writeErrors`, `tagsSubscribed`. Emit on connect/disconnect transitions
 (`emitMetricNow`) and on a periodic sampler.
@@ -241,7 +249,7 @@ small, optional CLI follow-up once the pattern is proven.
 The first consumer is the **OPC UA bridge** (Eclipse Milo, standalone component repo) — migrated from
 a pre-refactor build, upgraded to Milo 1.1.x, with secure connections sourced from the credentials
 vault. It demonstrates the full contract end-to-end and is the template for future adapters. See that
-component's README for protocol-specific configuration (security policies, cert sources, tag-match
+component's README for protocol-specific configuration (security policies, cert sources, signal-match
 syntax).
 
 The **Modbus adapter** (pymodbus, **Python**, standalone repo) is the second reference and the

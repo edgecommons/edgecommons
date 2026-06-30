@@ -25,8 +25,9 @@ pub mod record;
 pub mod service;
 
 pub use config::{
-    BatchConfig, BufferConfig, Compression, DeliveryConfig, FileCompression, FileFormat, FileMode,
-    FileOnFull, FileSinkConfig, FsyncPolicy, OnFull, SinkConfig, StreamConfig, StreamingConfig,
+    BatchConfig, BufferConfig, ColumnSpec, ColumnType, Compression, DeliveryConfig, FileCompression,
+    FileFormat, FileMode, FileOnFull, FileSinkConfig, FsyncPolicy, OnFull, RowsConfig, SinkConfig,
+    StreamConfig, StreamingConfig,
 };
 pub use error::{GgStreamError, Result};
 pub use export::{
