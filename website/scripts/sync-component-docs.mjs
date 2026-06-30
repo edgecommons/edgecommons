@@ -39,23 +39,57 @@ function jsonStr(s) {
   return JSON.stringify(String(s));
 }
 
-function rewriteLinks(body) {
-  // reference/<x>.md(#a) -> reference-<x>(#a) ; reference/ -> reference-configuration
-  body = body.replace(/\]\(\.?\/?reference\/([A-Za-z0-9_-]+)\.md(#[^)]*)?\)/g, "](reference-$1$2)");
-  body = body.replace(/\]\(\.?\/?reference\/\)/g, "](reference-configuration)");
-  // generic: foo.md(#a) -> foo(#a)  (README.md -> index handled via slug, but rewrite stray links too)
-  body = body.replace(/\]\(\.?\/?([A-Za-z0-9_-]+)\.md(#[^)]*)?\)/g, (m, p, a) =>
-    `](${p === "README" ? "index" : p}${a || ""})`,
-  );
-  return body;
+function normalizeSegs(segs) {
+  const out = [];
+  for (const s of segs) {
+    if (s === "" || s === ".") continue;
+    if (s === "..") {
+      if (out.length && out[out.length - 1] !== "..") out.pop();
+      else out.push("..");
+    } else out.push(s);
+  }
+  return out;
 }
 
-function toStarlight(raw, { title, description, order }) {
+// Resolve one relative doc link to a site route, resolving it relative to the source file's
+// location within docs/ (so within-reference/ siblings flatten to reference-<x>, and links that
+// escape docs/ become GitHub repo URLs). Returns null to leave the link unchanged.
+function resolveDocLink(target, { name, repo, fileDir }) {
+  const h = target.indexOf("#");
+  const anchor = h >= 0 ? target.slice(h) : "";
+  const path = h >= 0 ? target.slice(0, h) : target;
+  const segs = normalizeSegs([...(fileDir ? fileDir.split("/") : []), ...path.split("/")]);
+  if (segs[0] === "..") {
+    // escapes docs/ (docs is one level under the repo root) -> a repo file on GitHub
+    return repo ? `https://github.com/${repo}/blob/main/${segs.slice(1).join("/")}${anchor}` : null;
+  }
+  const last = segs.length ? segs[segs.length - 1] : "";
+  if (!last.endsWith(".md")) {
+    // a directory link (reference/, the docs root, …)
+    if (segs.includes("reference")) return `/components/${name}/reference-configuration/${anchor}`;
+    if (segs.length === 0) return `/components/${name}/${anchor}`;
+    return null; // unknown non-.md relative link — leave as-is
+  }
+  const baseName = last.replace(/\.md$/i, "");
+  if (/^(readme|index)$/i.test(baseName)) return `/components/${name}/${anchor}`;
+  if (segs.includes("reference")) return `/components/${name}/reference-${baseName}/${anchor}`;
+  return `/components/${name}/${baseName}/${anchor}`;
+}
+
+function rewriteLinks(body, opts) {
+  return body.replace(/\]\(([^)\s]+)\)/g, (m, target) => {
+    if (/^(https?:|\/|#|mailto:|tel:|data:)/i.test(target)) return m; // absolute / anchor / external
+    const r = resolveDocLink(target, opts);
+    return r ? `](${r})` : m;
+  });
+}
+
+function toStarlight(raw, { title, description, order, name, repo, fileDir }) {
   let body = raw;
   const h1 = raw.match(/^\s*#\s+(.+?)\s*$/m);
   if (!title) title = h1 ? h1[1].replace(/`/g, "") : "Untitled";
   if (h1) body = raw.slice(0, h1.index) + raw.slice(h1.index + h1[0].length).replace(/^\n+/, "\n");
-  body = rewriteLinks(body).replace(/^\s+/, "");
+  body = rewriteLinks(body, { name, repo, fileDir }).replace(/^\s+/, "");
   let fm = `---\ntitle: ${jsonStr(title)}\n`;
   if (description) fm += `description: ${jsonStr(description)}\n`;
   fm += `sidebar:\n  order: ${order}\n---\n\n`;
@@ -102,6 +136,9 @@ function syncComponent(c) {
         const md = toStarlight(readFileSync(join(src, ref), "utf8"), {
           title: `Reference — ${titleCase(name)}`,
           order: 30 + i++,
+          name: c.name,
+          repo: c.repo,
+          fileDir: "reference",
         });
         writeFileSync(join(dest, `reference-${name}.md`), md);
       }
@@ -114,6 +151,9 @@ function syncComponent(c) {
       title: isIndex ? c.name : undefined,
       description: isIndex ? c.description : undefined,
       order: ORDER[slug] ?? 50,
+      name: c.name,
+      repo: c.repo,
+      fileDir: "",
     });
     writeFileSync(join(dest, `${slug}.md`), md);
   }
