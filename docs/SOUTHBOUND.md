@@ -174,7 +174,7 @@ Convention — protocol-agnostic keys at the top, protocol-native detail nested:
   "component": {
     "global": {
       "defaults":        { "publishIntervalMs": 1000, "samplingRateMs": 500, "queueSize": 100 },
-      "healthThresholds":{ "staleTagSecs": 30 }
+      "healthThresholds":{ "staleSignalSecs": 30 }
     },
     "instances": [
       {
@@ -215,9 +215,9 @@ code change is needed to route it.
 | `publishLatencyMs` | Milliseconds | 1 | northbound publish latency |
 | `pollLatencyMs` | Milliseconds | 1 | read/poll round-trip |
 | `readErrors` | Count | 60 | read errors over the interval |
-| `staleTags` | Count | 60 | signals with no update past `healthThresholds.staleTagSecs` |
+| `staleSignals` | Count | 60 | signals with no update past `healthThresholds.staleSignalSecs` |
 
-Optional: `reconnects`, `writeErrors`, `tagsSubscribed`. Emit on connect/disconnect transitions
+Optional: `reconnects`, `writeErrors`, `signalsSubscribed`. Emit on connect/disconnect transitions
 (`emitMetricNow`) and on a periodic sampler.
 
 ## 6. The `protocol-adapter` scaffold template

@@ -14,8 +14,8 @@ markers in `src/main/java/.../<<COMPONENTNAME>>.java`.
 
 - Constructs the runtime via `GGCommonsBuilder`, reads config, and starts **one worker per configured
   device instance** (`component.instances[].id`).
-- Publishes each tag update with the standard **`SouthboundTagUpdate`** envelope — `body.device`,
-  `body.tag` (canonical `id` + opaque protocol-native `address`), and `body.samples[]` with a
+- Publishes each signal update with the standard **`SouthboundSignalUpdate`** envelope — `body.device`,
+  `body.signal` (canonical `id` + opaque protocol-native `address`), and `body.samples[]` with a
   **normalized `quality`** (`GOOD|BAD|UNCERTAIN`) plus the native `qualityRaw`.
 - Defines and emits the standard **`southbound_health`** metric (connection state, poll/publish
   latency, read errors, stale tags).
@@ -32,7 +32,7 @@ synthetic value so the scaffold runs end-to-end; replace it with your protocol l
 2. In `<<COMPONENTNAME>>.java`, at the `TODO(adapter)` markers:
    - `runInstance(...)` — open the connection (with retry/backoff), then subscribe or poll per
      `instance.subscriptions[]`.
-   - on each value received, call `publishUpdate(...)` with the tag identity, value, and normalized
+   - on each value received, call `publishUpdate(...)` with the signal identity, value, and normalized
      quality.
    - map your native status codes → `GOOD|BAD|UNCERTAIN` (+ `qualityRaw`).
    - `onConfigurationChanged()` — re-apply subscription config on hot reload.
@@ -45,11 +45,11 @@ change needed). See `test-configs/<<COMPONENTNAME>>.json` for a full example. Sh
 ```jsonc
 "component": {
   "global":    { "defaults": { "publishIntervalMs": 1000, "samplingRateMs": 500, "queueSize": 100 },
-                 "healthThresholds": { "staleTagSecs": 30 } },
+                 "healthThresholds": { "staleSignalSecs": 30 } },
   "instances": [ {
     "id": "device-1", "adapter": "<protocol>",
     "connection":  { "endpoint": "..." },
-    "publish":     { "topic": "southbound/{site}/{ComponentName}/{InstanceId}/{tagId}", "batchMs": 1000 },
+    "publish":     { "topic": "southbound/{site}/{ComponentName}/{InstanceId}/{signalId}", "batchMs": 1000 },
     "write":       { "enabled": false, "topic": "..." },
     "subscriptions":[ { "id": "...", "include": [ { "namespace": 0, "match": "<regex>", "deadband": {"type":"Absolute","value":0.0} } ], "exclude": [] } ]
   } ]
@@ -65,7 +65,7 @@ java -jar target/<<JARNAME>>-1.0.0.jar --platform HOST --transport MQTT ./standa
 ```
 
 Needs a local MQTT broker (e.g. `docker run -d -p 1883:1883 emqx/emqx:latest`). Subscribe to
-`heartbeat/+/+` for heartbeats and `southbound/#` to see tag updates.
+`heartbeat/+/+` for heartbeats and `southbound/#` to see signal updates.
 
 ## Run under Greengrass
 

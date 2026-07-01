@@ -58,7 +58,7 @@
          Examples:
            OPC UA  ->  org.eclipse.milo:milo-sdk-client:1.1.4   (pulls in BouncyCastle for security)
            Modbus  ->  a Modbus client library of your choice
-         Then implement the connect / subscribe-or-poll / value->SouthboundTagUpdate mapping in the
+         Then implement the connect / subscribe-or-poll / value->SouthboundSignalUpdate mapping in the
          App class where the TODO(adapter) markers are. -->
   </dependencies>
 

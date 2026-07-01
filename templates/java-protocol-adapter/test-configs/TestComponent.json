@@ -15,7 +15,7 @@
   "component": {
     "global": {
       "defaults": { "publishIntervalMs": 1000, "samplingRateMs": 500, "queueSize": 100 },
-      "healthThresholds": { "staleTagSecs": 30 }
+      "healthThresholds": { "staleSignalSecs": 30 }
     },
     "instances": [
       {
@@ -23,7 +23,7 @@
         "adapter": "example",
         "connection": { "endpoint": "example://localhost:0/" },
         "defaults": { "publishIntervalMs": 1000, "samplingRateMs": 500, "queueSize": 100 },
-        "publish": { "topic": "southbound/{site}/{ComponentName}/{InstanceId}/{tagId}", "batchMs": 1000 },
+        "publish": { "topic": "southbound/{site}/{ComponentName}/{InstanceId}/{signalId}", "batchMs": 1000 },
         "write": { "enabled": false, "topic": "southbound/{ComponentName}/{InstanceId}/write" },
         "subscriptions": [
           {
