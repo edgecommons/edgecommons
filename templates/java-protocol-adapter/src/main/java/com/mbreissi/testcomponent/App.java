@@ -26,7 +26,7 @@ import java.util.concurrent.CountDownLatch;
  * <p>This is a <b>southbound adapter</b>: it talks to field devices/servers over some protocol
  * (OPC UA, Modbus, EtherNet/IP, …) and republishes their values northbound on the GGCommons
  * messaging bus using the standard <b>southbound contract</b> (see {@code docs/SOUTHBOUND.md}):
- * the {@code SouthboundTagUpdate} envelope and the {@code southbound_health} metric.
+ * the {@code SouthboundSignalUpdate} envelope and the {@code southbound_health} metric.
  *
  * <p>The framework gives you config, messaging, metrics, credentials, and lifecycle for free —
  * you write only the protocol code where the {@code TODO(adapter)} markers are.
@@ -36,7 +36,7 @@ public class <<COMPONENTNAME>> implements ConfigurationChangeListener {
     private static final Logger LOGGER = LogManager.getLogger(<<COMPONENTNAME>>.class);
 
     /** Standard southbound message name + version (the contract; do not rename). */
-    private static final String SOUTHBOUND_MSG = "SouthboundTagUpdate";
+    private static final String SOUTHBOUND_MSG = "SouthboundSignalUpdate";
     private static final String SOUTHBOUND_VER = "1.0";
     /** Standard adapter health metric (the contract). */
     private static final String HEALTH_METRIC = "southbound_health";
@@ -97,7 +97,7 @@ public class <<COMPONENTNAME>> implements ConfigurationChangeListener {
             // TODO(adapter): open the protocol connection to `endpoint` (with retry/backoff), then
             // establish subscriptions / start polling per instance.subscriptions[]. On each value
             // received, call publishUpdate(...). Emit connectionState=1 once connected.
-            emitHealth(instanceId, /*connected*/ true, /*pollLatencyMs*/ 0, /*readErrors*/ 0, /*staleTags*/ 0);
+            emitHealth(instanceId, /*connected*/ true, /*pollLatencyMs*/ 0, /*readErrors*/ 0, /*staleSignals*/ 0);
 
             // --- placeholder so the scaffold runs end-to-end; replace with real device events ---
             while (true) {
@@ -117,20 +117,20 @@ public class <<COMPONENTNAME>> implements ConfigurationChangeListener {
     }
 
     /**
-     * Publish one tag update using the standard SouthboundTagUpdate envelope (docs/SOUTHBOUND.md §2).
+     * Publish one signal update using the standard SouthboundSignalUpdate envelope (docs/SOUTHBOUND.md §2).
      * Quality is normalized to GOOD|BAD|UNCERTAIN with the native code retained in qualityRaw.
      */
-    private void publishUpdate(String instanceId, String endpoint, String tagId, String tagName,
+    private void publishUpdate(String instanceId, String endpoint, String signalId, String signalName,
                                JsonObject address, Object value, String quality, String qualityRaw, String sourceTs) {
         JsonObject device = new JsonObject();
         device.addProperty("adapter", ADAPTER_KIND);
         device.addProperty("instance", instanceId);
         device.addProperty("endpoint", endpoint);
 
-        JsonObject tag = new JsonObject();
-        tag.addProperty("id", tagId);
-        tag.addProperty("name", tagName);
-        tag.add("address", address);
+        JsonObject signal = new JsonObject();
+        signal.addProperty("id", signalId);
+        signal.addProperty("name", signalName);
+        signal.add("address", address);
 
         JsonObject sample = new JsonObject();
         sample.addProperty("value", String.valueOf(value));   // TODO(adapter): preserve native JSON type
@@ -142,7 +142,7 @@ public class <<COMPONENTNAME>> implements ConfigurationChangeListener {
 
         JsonObject body = new JsonObject();
         body.add("device", device);
-        body.add("tag", tag);
+        body.add("signal", signal);
         body.add("samples", samples);
 
         Message msg = MessageBuilder.create(SOUTHBOUND_MSG, SOUTHBOUND_VER)
@@ -151,7 +151,7 @@ public class <<COMPONENTNAME>> implements ConfigurationChangeListener {
                 .build();
 
         // TODO(adapter): resolve the publish topic from instance.publish.topic (template-substituted).
-        String topic = "southbound/" + config.getComponentName() + "/" + instanceId + "/" + tagId;
+        String topic = "southbound/" + config.getComponentName() + "/" + instanceId + "/" + signalId;
         messaging.publish(topic, msg);
     }
 
@@ -162,17 +162,17 @@ public class <<COMPONENTNAME>> implements ConfigurationChangeListener {
                 .addMeasure("publishLatencyMs", "Milliseconds", 1)
                 .addMeasure("pollLatencyMs", "Milliseconds", 1)
                 .addMeasure("readErrors", "Count", 60)
-                .addMeasure("staleTags", "Count", 60)
+                .addMeasure("staleSignals", "Count", 60)
                 .build();
         metrics.defineMetric(health);
     }
 
-    private void emitHealth(String instanceId, boolean connected, long pollLatencyMs, int readErrors, int staleTags) {
+    private void emitHealth(String instanceId, boolean connected, long pollLatencyMs, int readErrors, int staleSignals) {
         Map<String, Float> m = new HashMap<>();
         m.put("connectionState", connected ? 1.0f : 0.0f);
         m.put("pollLatencyMs", (float) pollLatencyMs);
         m.put("readErrors", (float) readErrors);
-        m.put("staleTags", (float) staleTags);
+        m.put("staleSignals", (float) staleSignals);
         metrics.emitMetric(HEALTH_METRIC, m);
     }
 
