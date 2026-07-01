@@ -33,7 +33,7 @@ const TOKEN = process.env.EDGECOMMONS_READ_TOKEN || "";
 const LOCAL_MAP = JSON.parse(process.env.COMPONENT_DOCS_MAP || "{}");
 
 // Sidebar order by source filename (Diátaxis). reference/* are flattened to reference-<x> at 30+.
-const ORDER = { index: 0, tutorial: 10, "how-to-guides": 20, "sample-configurations": 25, explanation: 40 };
+const ORDER = { index: 0, tutorial: 10, "how-to-guides": 20, scripting: 22, "sample-configurations": 25, explanation: 40 };
 
 function jsonStr(s) {
   return JSON.stringify(String(s));
@@ -64,13 +64,13 @@ function resolveDocLink(target, { name, repo, fileDir }) {
     return repo ? `https://github.com/${repo}/blob/main/${segs.slice(1).join("/")}${anchor}` : null;
   }
   const last = segs.length ? segs[segs.length - 1] : "";
-  if (!last.endsWith(".md")) {
+  if (!/\.mdx?$/i.test(last)) {
     // a directory link (reference/, the docs root, …)
     if (segs.includes("reference")) return `/components/${name}/reference-configuration/${anchor}`;
     if (segs.length === 0) return `/components/${name}/${anchor}`;
-    return null; // unknown non-.md relative link — leave as-is
+    return null; // unknown non-.md/.mdx relative link — leave as-is
   }
-  const baseName = last.replace(/\.md$/i, "");
+  const baseName = last.replace(/\.mdx?$/i, "");
   if (/^(readme|index)$/i.test(baseName)) return `/components/${name}/${anchor}`;
   if (segs.includes("reference")) return `/components/${name}/reference-${baseName}/${anchor}`;
   return `/components/${name}/${baseName}/${anchor}`;
@@ -84,7 +84,7 @@ function rewriteLinks(body, opts) {
   });
 }
 
-function toStarlight(raw, { title, description, order, name, repo, fileDir }) {
+function toStarlight(raw, { title, description, order, name, repo, fileDir, mdx }) {
   let body = raw;
   const h1 = raw.match(/^\s*#\s+(.+?)\s*$/m);
   if (!title) title = h1 ? h1[1].replace(/`/g, "") : "Untitled";
@@ -93,6 +93,11 @@ function toStarlight(raw, { title, description, order, name, repo, fileDir }) {
   let fm = `---\ntitle: ${jsonStr(title)}\n`;
   if (description) fm += `description: ${jsonStr(description)}\n`;
   fm += `sidebar:\n  order: ${order}\n---\n\n`;
+  // An .mdx page may use Starlight's <Tabs>/<TabItem> (e.g. per-script-engine cookbook tabs);
+  // inject the component import once so the source page doesn't have to carry Starlight specifics.
+  if (mdx && /<Tabs[\s>]/.test(body) && !/@astrojs\/starlight\/components/.test(body)) {
+    fm += `import { Tabs, TabItem } from '@astrojs/starlight/components';\n\n`;
+  }
   return fm + body;
 }
 
@@ -144,9 +149,10 @@ function syncComponent(c) {
       }
       continue;
     }
-    if (!entry.endsWith(".md")) continue;
+    const isMdx = entry.endsWith(".mdx");
+    if (!entry.endsWith(".md") && !isMdx) continue;
     const isIndex = entry.toLowerCase() === "readme.md";
-    const slug = isIndex ? "index" : entry.replace(/\.md$/, "");
+    const slug = isIndex ? "index" : entry.replace(/\.mdx?$/, "");
     const md = toStarlight(readFileSync(src, "utf8"), {
       title: isIndex ? c.name : undefined,
       description: isIndex ? c.description : undefined,
@@ -154,8 +160,9 @@ function syncComponent(c) {
       name: c.name,
       repo: c.repo,
       fileDir: "",
+      mdx: isMdx,
     });
-    writeFileSync(join(dest, `${slug}.md`), md);
+    writeFileSync(join(dest, `${slug}.${isMdx ? "mdx" : "md"}`), md);
   }
   return true;
 }
