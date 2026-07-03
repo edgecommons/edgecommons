@@ -425,6 +425,48 @@ sequenceDiagram
   Note over Con: cache hydrated; consumers snapshot from it
 ```
 
+### 9.4 The `_bcast` republish listener — normative behavior (slice G-S1; Java canonical shipped)
+
+Layer 2 of §9.3, made concrete. **Every** ggcommons component runs a library-owned republish
+listener (Java: `uns/RepublishListener`, wired by the `GGCommons` runtime after init completes) —
+the answering half of the `uns-bridge`'s reconnect-rehydration broadcast (DESIGN-uns-bridge §2.5)
+and the lever the edge-console's config-review pulls. The wire contract is pinned by
+**`uns-test-vectors/bcast.json`** (topics byte-for-byte, envelope structural, behavior constants);
+the Python/Rust/TS mirrors must replicate ALL of the following:
+
+- **Subscriptions** — at startup, on the component's **primary** (local/IPC) connection, the two
+  exact own-device topics `ecv1/{device}/_bcast/main/cmd/republish-state` and
+  `…/republish-cfg`, built through the topic builder with the reserved `_bcast` pseudo-component
+  identity (single-level hierarchy `[{device}]`, instance `main` — so the topic is **rootless by
+  D-U25 regardless of the component's own hierarchy/root mode**, matching what the bridge
+  publishes). Unsubscribed on shutdown, before messaging closes. (When the Phase-3 `commands()`
+  facade lands its full `ecv1/{device}/_bcast/main/cmd/#` inbox, it may absorb these two
+  subscriptions — the observable behavior below is what's normative, not the subscription count.)
+- **Trigger** — an envelope whose `header.name` equals the topic's verb. `version`, `body` and any
+  `reply_to` are ignored; there is **no reply** (fire-and-forget notification). Malformed or
+  foreign payloads (headerless/raw JSON, mismatched name, garbage) are ignored at DEBUG and must
+  never crash the component.
+- **Jitter** — an accepted trigger re-announces after a uniformly random delay in
+  **[0, 2000] ms** (`jitterWindowMs = 2000`, the §9.3 anti-stampede window: a whole fleet receives
+  the broadcast at once). The RNG and clock are injected seams (no inline
+  `random()`/`now()` calls) so every language's listener unit-tests deterministically — the same
+  injected-clock discipline the bridge uses.
+- **Coalescing / cooldown** — per verb, independently: a trigger is accepted only when no
+  re-announce for that verb is pending AND at least **5000 ms** (`cooldownMs`) have elapsed since
+  the last **accepted** trigger for that verb (measured from acceptance, not the jittered fire).
+  Everything else coalesces — a looping or duplicated broadcast amplifies to at most one
+  re-announce per verb per cooldown window.
+- **Actions** (both through the reserved-class publish seam — library-internal by construction):
+  - `republish-state` → re-emit the heartbeat `state` keepalive immediately, out of band from the
+    periodic schedule: the exact tick payload `{"status":"RUNNING","uptimeSecs":n}`, same
+    `heartbeat.destination` routing (Java: `Heartbeat.publishStateNow()`). **Respects
+    `heartbeat.enabled`** — a component whose operator disabled the state keepalive does not
+    re-announce state (the broadcast cannot re-enable an opted-out state surface).
+  - `republish-cfg` → re-run the effective-config publisher (the standard redacted `cfg` push;
+    Java: `EffectiveConfigPublisher.publishNow()`). Always on.
+  - Both best-effort: a failing publish is logged and swallowed.
+- **No config surface** — always on; core plumbing, not a feature toggle. No schema change.
+
 ---
 
 ## 10. Migration is a hard cut

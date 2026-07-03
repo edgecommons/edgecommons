@@ -1,0 +1,57 @@
+{
+  "description": "ggcommons UNS _bcast republish (reconnect-rehydration) vectors - the late-join lever (DESIGN-uns 9.3 layer 2 / 9.4, DESIGN-uns-bridge 2.5). Topics byte-for-byte; envelopes structural (D-U22); the behavior constants are normative for every language's republish listener",
+  "device": "gw-01",
+  "commands": [
+    {
+      "name": "republish-state",
+      "republishes": "state",
+      "topic": "ecv1/gw-01/_bcast/main/cmd/republish-state",
+      "input": {
+        "device": "gw-01",
+        "component": "_bcast",
+        "instance": "main",
+        "includeRoot": false,
+        "class": "cmd",
+        "channel": "republish-state"
+      },
+      "envelope": {
+        "header": {
+          "name": "republish-state",
+          "version": "1.0",
+          "timestamp": "2026-07-01T12:00:00Z",
+          "uuid": "00000000-0000-4000-8000-00000000b101",
+          "correlation_id": "00000000-0000-4000-8000-00000000b102"
+        },
+        "body": {}
+      }
+    },
+    {
+      "name": "republish-cfg",
+      "republishes": "cfg",
+      "topic": "ecv1/gw-01/_bcast/main/cmd/republish-cfg",
+      "input": {
+        "device": "gw-01",
+        "component": "_bcast",
+        "instance": "main",
+        "includeRoot": false,
+        "class": "cmd",
+        "channel": "republish-cfg"
+      },
+      "envelope": {
+        "header": {
+          "name": "republish-cfg",
+          "version": "1.0",
+          "timestamp": "2026-07-01T12:00:00Z",
+          "uuid": "00000000-0000-4000-8000-00000000b201",
+          "correlation_id": "00000000-0000-4000-8000-00000000b202"
+        },
+        "body": {}
+      }
+    }
+  ],
+  "behavior": {
+    "jitterWindowMs": 2000,
+    "cooldownMs": 5000,
+    "replyTo": false
+  }
+}

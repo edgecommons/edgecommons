@@ -40,6 +40,12 @@ class UnsTestVectorsLoaderTest {
         UnsTestVectors.assertEnvelopesDocument(doc);
     }
 
+    @Test
+    void crossLanguageBcastConformance() throws Exception {
+        JsonObject doc = load(UnsTestVectors.DIR.resolve("bcast.json"));
+        UnsTestVectors.assertBcastDocument(doc);
+    }
+
     /** Skips (never fails) when the shared vector files have not been generated yet. */
     private static JsonObject load(Path path) throws Exception {
         assumeTrue(Files.exists(path), "uns-test-vectors not present (" + path + ")");

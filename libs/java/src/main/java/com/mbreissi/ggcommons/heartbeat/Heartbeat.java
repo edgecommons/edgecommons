@@ -216,6 +216,34 @@ public class Heartbeat implements ConfigurationChangeListener
     }
 
     /**
+     * Re-emits the RUNNING {@code state} keepalive immediately, out of band from the periodic
+     * schedule — the {@code republish-state} broadcast re-announce (DESIGN-uns §9.3/§9.4, the
+     * late-join lever): same payload as a tick's keepalive
+     * ({@code {"status":"RUNNING","uptimeSecs":n}}), same {@link ReservedPublisher} seam, same
+     * {@code heartbeat.destination} routing. Respects {@code heartbeat.enabled}: a component
+     * whose operator disabled the state keepalive does not re-announce state (the broadcast
+     * cannot re-enable an opted-out state surface). Best-effort — failures are logged and
+     * swallowed; the periodic schedule is unaffected.
+     */
+    public void publishStateNow()
+    {
+        if (!configurationService.getHeartbeatConfig().isEnabled())
+        {
+            LOGGER.debug("republish-state re-announce skipped: the heartbeat state keepalive is"
+                    + " disabled (heartbeat.enabled=false)");
+            return;
+        }
+        try
+        {
+            publishState("RUNNING", true);
+        }
+        catch (Exception e)
+        {
+            LOGGER.warn("Out-of-band state re-announce failed: {}", e.toString());
+        }
+    }
+
+    /**
      * Emits the enabled measures as the {@value #SYS_METRIC_NAME} metric through the normal
      * metric subsystem (its configured target: messaging/cloudwatch/EMF/log/prometheus).
      */

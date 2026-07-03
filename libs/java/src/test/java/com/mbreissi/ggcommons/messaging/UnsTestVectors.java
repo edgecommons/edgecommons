@@ -5,6 +5,7 @@
 package com.mbreissi.ggcommons.messaging;
 
 import com.mbreissi.ggcommons.config.ConfigManager;
+import com.mbreissi.ggcommons.uns.RepublishListener;
 import com.mbreissi.ggcommons.uns.Uns;
 import com.mbreissi.ggcommons.uns.UnsClass;
 import com.mbreissi.ggcommons.uns.UnsScope;
@@ -128,6 +129,72 @@ final class UnsTestVectors {
                     .build();
             assertEquals(envelope, rebuilt.toDict(), "envelope '" + name + "'");
         }
+    }
+
+    /**
+     * Replays a {@code bcast.json} document — the {@code _bcast} republish (reconnect-rehydration)
+     * contract (DESIGN-uns §9.3/§9.4): the two broadcast command topics are rebuilt byte-for-byte
+     * through the topic builder with the {@code _bcast} pseudo-component identity; the golden
+     * notification envelopes ({@code {header, body:{}}} — no identity, no tags, no
+     * {@code reply_to}) are rebuilt via {@link MessageBuilder} and compared structurally; and the
+     * normative listener behavior constants (jitter window, cooldown) must equal the live
+     * {@link RepublishListener} implementation's.
+     */
+    static void assertBcastDocument(JsonObject doc) {
+        String device = doc.get("device").getAsString();
+        JsonElement[] cases = doc.getAsJsonArray("commands").asList().toArray(new JsonElement[0]);
+        assertEquals(2, cases.length, "bcast.json must pin exactly the two republish commands");
+        String[] expectedVerbs = {RepublishListener.REPUBLISH_STATE, RepublishListener.REPUBLISH_CFG};
+        for (int i = 0; i < cases.length; i++) {
+            JsonObject c = cases[i].getAsJsonObject();
+            String name = c.get("name").getAsString();
+            assertEquals(expectedVerbs[i], name, "bcast command #" + i + " verb");
+
+            // Topic reproduction, byte-for-byte, through the real builder with the reserved
+            // _bcast pseudo-component identity (single-level -> rootless by D-U25).
+            JsonObject input = c.getAsJsonObject("input");
+            assertEquals(device, input.get("device").getAsString(), "'" + name + "' input device");
+            assertEquals(RepublishListener.BCAST_COMPONENT, input.get("component").getAsString(),
+                    "'" + name + "' pseudo-component token");
+            MessageIdentity bcast = new MessageIdentity(
+                    List.of(new MessageIdentity.HierEntry("device", input.get("device").getAsString())),
+                    input.get("component").getAsString(), input.get("instance").getAsString());
+            String topic = new Uns(bcast, input.get("includeRoot").getAsBoolean())
+                    .topic(UnsClass.fromToken(input.get("class").getAsString()),
+                            input.get("channel").getAsString());
+            assertEquals(c.get("topic").getAsString(), topic, "'" + name + "' topic");
+
+            // Envelope reproduction: a notification-style cmd envelope - no identity, no tags,
+            // no reply_to, empty body; header.name = the verb, version pinned to 1.0.
+            JsonObject envelope = c.getAsJsonObject("envelope");
+            JsonObject header = envelope.getAsJsonObject("header");
+            assertEquals(name, header.get("name").getAsString(), "'" + name + "' header name");
+            assertEquals("1.0", header.get("version").getAsString(), "'" + name + "' header version");
+            assertEquals(false, header.has("reply_to"),
+                    "'" + name + "' is fire-and-forget - no reply_to");
+            assertEquals(false, envelope.has("identity"),
+                    "'" + name + "' is built without a config-bound builder - no identity");
+            assertEquals(false, envelope.has("tags"), "'" + name + "' carries no tags");
+            assertEquals(new JsonObject(), envelope.getAsJsonObject("body"),
+                    "'" + name + "' body is the empty object");
+            Message rebuilt = MessageBuilder
+                    .create(header.get("name").getAsString(), header.get("version").getAsString())
+                    .withUuid(header.get("uuid").getAsString())
+                    .withTimestamp(header.get("timestamp").getAsString())
+                    .withCorrelationId(header.get("correlation_id").getAsString())
+                    .withPayload(envelope.get("body"))
+                    .build();
+            assertEquals(envelope, rebuilt.toDict(), "'" + name + "' envelope");
+        }
+
+        // The normative listener behavior constants (all four languages).
+        JsonObject behavior = doc.getAsJsonObject("behavior");
+        assertEquals(RepublishListener.JITTER_WINDOW_MS, behavior.get("jitterWindowMs").getAsLong(),
+                "jitterWindowMs must equal the implementation's window");
+        assertEquals(RepublishListener.COOLDOWN_MS, behavior.get("cooldownMs").getAsLong(),
+                "cooldownMs must equal the implementation's cooldown");
+        assertEquals(false, behavior.get("replyTo").getAsBoolean(),
+                "the republish broadcast never carries a reply_to");
     }
 
     // ===================== per-case runners (the language binding under test) ===================

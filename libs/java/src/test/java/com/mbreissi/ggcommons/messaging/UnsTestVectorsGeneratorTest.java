@@ -63,26 +63,32 @@ class UnsTestVectorsGeneratorTest {
     void generateAndVerifyCrossLanguageVectors() throws Exception {
         JsonObject topics = topicsDocument();
         JsonObject envelopes = envelopesDocument();
+        JsonObject bcast = bcastDocument();
 
         // Self-check BEFORE writing: the documents must be exactly what the implementation does.
         UnsTestVectors.assertTopicsDocument(topics);
         UnsTestVectors.assertEnvelopesDocument(envelopes);
+        UnsTestVectors.assertBcastDocument(bcast);
 
         String topicsJson = UnsTestVectors.GSON.toJson(topics) + "\n";
         String envelopesJson = UnsTestVectors.GSON.toJson(envelopes) + "\n";
+        String bcastJson = UnsTestVectors.GSON.toJson(bcast) + "\n";
 
         Files.createDirectories(UnsTestVectors.DIR);
         Path topicsPath = UnsTestVectors.DIR.resolve("topics.json");
         Path envelopesPath = UnsTestVectors.DIR.resolve("envelopes.json");
+        Path bcastPath = UnsTestVectors.DIR.resolve("bcast.json");
         Path readmePath = UnsTestVectors.DIR.resolve("README.md");
         writeIfAbsent(topicsPath, topicsJson);
         writeIfAbsent(envelopesPath, envelopesJson);
+        writeIfAbsent(bcastPath, bcastJson);
         writeIfAbsent(readmePath, README);
 
         // Determinism lock (verify-in-place): the on-disk vectors must equal the reference
         // computation - re-running is a clean verify, never a rewrite.
         verifyInPlace(topicsPath, topicsJson);
         verifyInPlace(envelopesPath, envelopesJson);
+        verifyInPlace(bcastPath, bcastJson);
         verifyInPlace(readmePath, README);
     }
 
@@ -461,6 +467,70 @@ class UnsTestVectorsGeneratorTest {
         return c;
     }
 
+    // ===================== bcast.json =====================
+
+    /**
+     * The {@code _bcast} republish (reconnect-rehydration) contract — DESIGN-uns §9.3 layer 2 /
+     * §9.4, DESIGN-uns-bridge §2.5: the two per-device broadcast command topics, the golden
+     * notification envelopes the {@code uns-bridge} publishes (no identity/tags/reply_to, empty
+     * body), and the normative listener behavior constants (jitter window / coalescing cooldown)
+     * every language's republish listener must implement.
+     */
+    private static JsonObject bcastDocument() {
+        JsonObject doc = new JsonObject();
+        doc.addProperty("description", "ggcommons UNS _bcast republish (reconnect-rehydration)"
+                + " vectors - the late-join lever (DESIGN-uns 9.3 layer 2 / 9.4,"
+                + " DESIGN-uns-bridge 2.5). Topics byte-for-byte; envelopes structural (D-U22);"
+                + " the behavior constants are normative for every language's republish listener");
+        doc.addProperty("device", "gw-01");
+        JsonArray commands = new JsonArray();
+        commands.add(bcastCommand("republish-state", "state",
+                "00000000-0000-4000-8000-00000000b101", "00000000-0000-4000-8000-00000000b102"));
+        commands.add(bcastCommand("republish-cfg", "cfg",
+                "00000000-0000-4000-8000-00000000b201", "00000000-0000-4000-8000-00000000b202"));
+        doc.add("commands", commands);
+        JsonObject behavior = new JsonObject();
+        behavior.addProperty("jitterWindowMs", com.mbreissi.ggcommons.uns.RepublishListener.JITTER_WINDOW_MS);
+        behavior.addProperty("cooldownMs", com.mbreissi.ggcommons.uns.RepublishListener.COOLDOWN_MS);
+        behavior.addProperty("replyTo", false);
+        doc.add("behavior", behavior);
+        return doc;
+    }
+
+    /**
+     * One republish command vector: the topic is produced by the REAL topic builder with the
+     * reserved {@code _bcast} pseudo-component identity, and the envelope by the REAL
+     * {@link MessageBuilder} with no identity (the bridge builds it without a config-bound
+     * builder), so the file is Java-implementation output by construction (D-U12).
+     */
+    private static JsonObject bcastCommand(String verb, String republishes,
+            String uuid, String correlationId) {
+        MessageIdentity bcast = new MessageIdentity(
+                List.of(new MessageIdentity.HierEntry("device", "gw-01")), "_bcast", "main");
+        String topic = new com.mbreissi.ggcommons.uns.Uns(bcast, false)
+                .topic(com.mbreissi.ggcommons.uns.UnsClass.CMD, verb);
+        Message message = MessageBuilder.create(verb, "1.0")
+                .withUuid(uuid)
+                .withTimestamp(TIMESTAMP)
+                .withCorrelationId(correlationId)
+                .withPayload(new JsonObject())
+                .build();
+        JsonObject input = new JsonObject();
+        input.addProperty("device", "gw-01");
+        input.addProperty("component", "_bcast");
+        input.addProperty("instance", "main");
+        input.addProperty("includeRoot", false);
+        input.addProperty("class", "cmd");
+        input.addProperty("channel", verb);
+        JsonObject c = new JsonObject();
+        c.addProperty("name", verb);
+        c.addProperty("republishes", republishes);
+        c.addProperty("topic", topic);
+        c.add("input", input);
+        c.add("envelope", message.toDict());
+        return c;
+    }
+
     // ===================== case builders =====================
 
     private static JsonObject buildCase(String name, String[] levels, String[] values,
@@ -613,6 +683,7 @@ class UnsTestVectorsGeneratorTest {
             |------|------------|
             | `topics.json` | `build` / `validate` / `filter` / `guard` case groups (inputs + expected outputs or error codes). |
             | `envelopes.json` | One golden **full canonical JSON** envelope per UNS class, with pinned `uuid`/`correlation_id`/`timestamp`. |
+            | `bcast.json` | The `_bcast` **republish** (reconnect-rehydration) contract: the two broadcast command topics, the golden notification envelopes, and the normative listener behavior constants. |
 
             Both files are UTF-8; some inputs deliberately contain raw C1 control bytes
             (U+0085 etc.) — parse them as JSON, do not preprocess.
@@ -669,6 +740,35 @@ class UnsTestVectorsGeneratorTest {
             are pinned to `"1.0"`. Bodies of the other classes are representative payloads (the
             envelope structure is the contract, not the body schema). No envelope carries `tags`
             (built without a config-bound builder) or `reply_to`.
+
+            ## bcast.json republish contract
+
+            Pins the `_bcast` **republish** (reconnect-rehydration) surface — the DESIGN-uns
+            §9.3-layer-2 / §9.4 late-join lever the `uns-bridge` drives on every site-reconnect
+            rising edge. The document is `{device, commands[], behavior}`:
+
+            - **commands** — exactly two, in order `republish-state`, `republish-cfg`. Each is
+              `{name, republishes, topic, input, envelope}`:
+              - `topic` is rebuilt **byte-for-byte** from `input`
+                (`{device, component: "_bcast", instance: "main", includeRoot: false,
+                class: "cmd", channel: <name>}`) through the language's topic builder — the
+                reserved `_bcast` pseudo-component pinned to the device, single-level hierarchy,
+                so the topic is rootless by D-U25:
+                `ecv1/{device}/_bcast/main/cmd/republish-state|republish-cfg`.
+              - `envelope` is the golden **notification** the bridge publishes: header
+                `{name: <verb>, version: "1.0", timestamp, uuid, correlation_id}`, body `{}` —
+                **no `identity`, no `tags`, no `reply_to`** (fire-and-forget). Rebuild through the
+                message builder (pinned setters, no identity) and compare **structurally**
+                (D-U22).
+            - **behavior** — the normative republish-listener constants every language implements:
+              `jitterWindowMs` (an accepted broadcast re-announces after a uniformly random delay
+              in `[0, jitterWindowMs]`), `cooldownMs` (per verb, at most one re-announce per
+              cooldown window, measured from the last **accepted** trigger; everything else
+              coalesces), `replyTo: false` (never reply). The listener triggers only when the
+              envelope `header.name` equals the topic's verb; malformed/foreign payloads are
+              ignored, never crash. `republish-state` re-emits the heartbeat `state` keepalive
+              (respecting `heartbeat.enabled`); `republish-cfg` re-runs the effective-config
+              (`cfg`) publisher. See `docs/platform/DESIGN-uns.md` §9.4.
 
             Generated by the Java canonical generator test (D-U12):
             `mvn -f libs/java/pom.xml test -Dtest=UnsTestVectorsGeneratorTest`.

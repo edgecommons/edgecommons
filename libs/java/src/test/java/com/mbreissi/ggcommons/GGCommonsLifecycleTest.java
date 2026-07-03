@@ -207,6 +207,59 @@ class GGCommonsLifecycleTest {
     }
 
     @Test
+    void republishBroadcastsReAnnounceStateAndCfg() throws Exception {
+        // End-to-end late-join lever (DESIGN-uns §9.3/§9.4): a republish-state/-cfg broadcast on
+        // the own-device _bcast topics makes the runtime re-announce the state keepalive and the
+        // effective config, out of band. Interval 3600 s isolates the re-announce from the
+        // periodic schedule (only the startup tick fires, before we subscribe).
+        File appCfg = new File(tmp.toFile(), "repub-config.json");
+        Files.write(appCfg.toPath(), """
+                { "logging": {"level": "INFO"}, "heartbeat": {"intervalSecs": 3600},
+                  "component": {"global": {}} }"""
+                .getBytes(StandardCharsets.UTF_8));
+        File msgCfg = writeMessagingConfig("repub-messaging.json");
+
+        gg = bringUp("com.test.RepubComponent", "repub-thing", appCfg, msgCfg);
+
+        String stateTopic = "ecv1/repub-thing/RepubComponent/main/state";
+        String cfgTopic = "ecv1/repub-thing/RepubComponent/main/cfg";
+        java.util.List<com.mbreissi.ggcommons.messaging.Message> states =
+                new java.util.concurrent.CopyOnWriteArrayList<>();
+        java.util.List<com.mbreissi.ggcommons.messaging.Message> cfgs =
+                new java.util.concurrent.CopyOnWriteArrayList<>();
+        gg.getMessaging().subscribe(stateTopic, (topic, message) -> states.add(message));
+        gg.getMessaging().subscribe(cfgTopic, (topic, message) -> cfgs.add(message));
+        try {
+            com.google.gson.JsonObject empty = new com.google.gson.JsonObject();
+            gg.getMessaging().publish("ecv1/repub-thing/_bcast/main/cmd/republish-state",
+                    com.mbreissi.ggcommons.messaging.MessageBuilder
+                            .create("republish-state", "1.0").withPayload(empty).build());
+            gg.getMessaging().publish("ecv1/repub-thing/_bcast/main/cmd/republish-cfg",
+                    com.mbreissi.ggcommons.messaging.MessageBuilder
+                            .create("republish-cfg", "1.0").withPayload(empty).build());
+
+            // The re-announces land after a jitter of at most JITTER_WINDOW_MS (2 s).
+            long deadline = System.currentTimeMillis() + 10_000;
+            while ((states.isEmpty() || cfgs.isEmpty()) && System.currentTimeMillis() < deadline) {
+                Thread.sleep(50);
+            }
+
+            assertEquals(1, states.size(), "republish-state must re-announce exactly one keepalive");
+            com.google.gson.JsonObject stateBody =
+                    states.get(0).toDict().getAsJsonObject("body");
+            assertEquals("RUNNING", stateBody.get("status").getAsString());
+            assertNotNull(stateBody.get("uptimeSecs"), "the re-announce is the RUNNING keepalive");
+
+            assertEquals(1, cfgs.size(), "republish-cfg must re-run the effective-config publisher");
+            assertNotNull(cfgs.get(0).toDict().getAsJsonObject("body").get("config"),
+                    "the cfg re-announce carries the effective (redacted) config");
+        } finally {
+            gg.getMessaging().unsubscribe(stateTopic);
+            gg.getMessaging().unsubscribe(cfgTopic);
+        }
+    }
+
+    @Test
     void shutdownIsIdempotentlySafeOnMinimalBringUp() throws Exception {
         File appCfg = new File(tmp.toFile(), "min-config.json");
         Files.write(appCfg.toPath(), """

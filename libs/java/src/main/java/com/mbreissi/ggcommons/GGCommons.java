@@ -28,6 +28,7 @@ import com.mbreissi.ggcommons.platform.Platform;
 import com.mbreissi.ggcommons.platform.PlatformResolver;
 import com.mbreissi.ggcommons.platform.ResolvedProfile;
 import com.mbreissi.ggcommons.platform.Transport;
+import com.mbreissi.ggcommons.uns.RepublishListener;
 import com.mbreissi.ggcommons.uns.Uns;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonParser;
@@ -63,6 +64,13 @@ public class GGCommons
      * every configuration change.
      */
     protected EffectiveConfigPublisher effectiveConfigPublisher;
+    /**
+     * The library-owned {@code _bcast} republish listener (DESIGN-uns §9.3/§9.4, the late-join
+     * lever): subscribes {@code ecv1/{device}/_bcast/main/cmd/republish-state|republish-cfg} on
+     * the primary connection and re-announces {@code state}/{@code cfg} out of band (jittered,
+     * coalesced) when the {@code uns-bridge} — or a console — broadcasts a republish command.
+     */
+    protected RepublishListener republishListener;
 
     /**
      * The component-identity-bound UNS topic builder (instance
@@ -228,6 +236,14 @@ public class GGCommons
             // (publishNow never throws).
             effectiveConfigPublisher = new EffectiveConfigPublisher(configManager, messagingClient);
             effectiveConfigPublisher.publishNow();
+
+            // §9.3/§9.4: subscribe the own-device _bcast republish topics on the primary
+            // connection so the uns-bridge's reconnect-rehydration broadcast (and a console's
+            // explicit republish) gets a jittered, coalesced state/cfg re-announce. Always on
+            // (no config surface); best-effort start (a failure disables the listener only).
+            republishListener = new RepublishListener(configManager, messagingClient,
+                    heartbeat::publishStateNow, effectiveConfigPublisher::publishNow);
+            republishListener.start();
 
             // FR-HB-1: start the HTTP health endpoint (default-on for KUBERNETES; opt-in elsewhere),
             // and FR-HB-2: wire SIGTERM/SIGINT to the graceful, idempotent shutdown so a kubelet (or
@@ -630,6 +646,12 @@ public class GGCommons
         if (healthServer != null)
         {
             healthServer.close();
+        }
+        // Unsubscribe the _bcast republish topics while messaging is still up (the
+        // unsubscribe-before-exit rule) and stop reacting to republish broadcasts mid-teardown.
+        if (republishListener != null)
+        {
+            republishListener.close();
         }
         if (credentialMetricsBridge != null)
         {

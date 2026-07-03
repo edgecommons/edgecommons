@@ -213,6 +213,56 @@ class HeartbeatPublishTest {
     }
 
     @Test
+    void publishStateNowReEmitsTheRunningKeepaliveOutOfBand() {
+        // The republish-state re-announce seam (DESIGN-uns §9.3/§9.4): same payload and seam as a
+        // periodic tick, emitted immediately and in addition to the schedule.
+        MockConfigurationService config = configWithHeartbeat("{\"intervalSecs\":3600}");
+        MockMessagingService messaging = new MockMessagingService();
+
+        Heartbeat heartbeat = HeartbeatBuilder.create(config)
+                .withMessagingService(messaging)
+                .withMetricService(new MockMetricService())
+                .build();
+        try {
+            awaitAtLeastOnePublish(messaging); // the startup tick
+            messaging.clearPublishedMessages();
+
+            heartbeat.publishStateNow();
+
+            List<MockMessagingService.PublishedMessage> published = messaging.getPublishedMessages();
+            assertEquals(1, published.size(), "publishStateNow must emit exactly one keepalive");
+            assertEquals(STATE_TOPIC, published.get(0).topic);
+            assertTrue(published.get(0).reserved,
+                    "the re-announce must go through the privileged ReservedPublisher seam");
+            JsonObject body = published.get(0).message.toDict().getAsJsonObject("body");
+            assertEquals("RUNNING", body.get("status").getAsString());
+            assertTrue(body.has("uptimeSecs"), "the re-announce is the RUNNING keepalive payload");
+        } finally {
+            heartbeat.close();
+        }
+    }
+
+    @Test
+    void publishStateNowRespectsHeartbeatDisabled() {
+        // heartbeat.enabled=false opts the component out of the state surface - the broadcast
+        // re-announce must not re-enable it.
+        MockConfigurationService config = configWithHeartbeat("{\"enabled\":false}");
+        MockMessagingService messaging = new MockMessagingService();
+
+        Heartbeat heartbeat = HeartbeatBuilder.create(config)
+                .withMessagingService(messaging)
+                .withMetricService(new MockMetricService())
+                .build();
+        try {
+            heartbeat.publishStateNow();
+            assertTrue(messaging.getPublishedMessages().isEmpty(),
+                    "enabled:false must suppress the out-of-band re-announce too");
+        } finally {
+            heartbeat.close();
+        }
+    }
+
+    @Test
     void onConfigurationChangedReinitializesTimer() {
         MockConfigurationService config = configWithHeartbeat("{\"intervalSecs\":3600}");
         MockMessagingService messaging = new MockMessagingService();

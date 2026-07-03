@@ -208,6 +208,11 @@ public class MockMessagingService extends MessagingClient {
         publishedMessages.clear();
     }
 
+    /** The topic filters currently subscribed (for subscribe/unsubscribe lifecycle assertions). */
+    public java.util.Set<String> getSubscribedTopics() {
+        return new java.util.HashSet<>(subscriptions.keySet());
+    }
+
     public void simulateMessage(String topic, Message message) {
         BiConsumer<String, Message> handler = subscriptions.get(topic);
         if (handler != null) {
