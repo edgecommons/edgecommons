@@ -178,6 +178,7 @@ fail fast. The programmatic builder API is free to evolve (it gains platform/tra
 | [DESIGN-packaging.md](DESIGN-packaging.md) | Helm chart shape, liveness/readiness/startup probes, graceful shutdown, ServiceMonitor/Prometheus, RBAC/ServiceAccount, PVC, sidecar/init patterns, and edge/on-prem AWS identity wiring. |
 | [DESIGN-operator.md](DESIGN-operator.md) | The optional `GgcommonsComponent` CRD sketch and the explicit "don't build it yet / build it when…" recommendation. |
 | [DESIGN-uns.md](DESIGN-uns.md) | The **Unified Namespace**: topic grammar, message classes, configurable hierarchy + top-level identity (distributed via `../SHARED_CONFIG.md`), the `messaging()`/`uns()`/facade API, streaming enrichment, and the `uns-bridge` site-bus realization. Concretizes [DESIGN-channels.md](DESIGN-channels.md); consumed by the `edgecommons/edge-console` component. |
+| [UNS-CANONICAL-DESIGN.md](UNS-CANONICAL-DESIGN.md) | **Implementation companion to DESIGN-uns**: concrete Java-canonical API shapes (`MessageIdentity`, `Uns`, the instance handle, the reserved-class guard + privileged-publish seam, the `request()` deadline, MQTT LWT) with per-language mirror notes, plus the running **decisions register (D‑U1…D‑U24)** and the phased build checklist. Source of truth for the build. |
 | [PARITY.md](PARITY.md) | Per-language implementation plan and four-way parity deltas (Java canonical; Python/Rust/TS specifics, Rust cargo features, service-interface seams). |
 
 > Design claims are backed by inline `file:line` citations to the source tree (e.g.

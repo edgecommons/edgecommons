@@ -8,7 +8,9 @@
 > TS) with identical semantics. It is a deliberate, **pre-1.0 breaking change** — there is no production
 > installed base to preserve.
 >
-> **Companion docs:** [`DESIGN-channels.md`](DESIGN-channels.md) (the local/northbound/stream channel
+> **Companion docs:** [`UNS-CANONICAL-DESIGN.md`](UNS-CANONICAL-DESIGN.md) (**the implementation
+> companion** — concrete API shapes, per-language mirror notes, and the D‑U1…D‑U24 decisions register),
+> [`DESIGN-channels.md`](DESIGN-channels.md) (the local/northbound/stream channel
 > model this concretizes), [`DESIGN-core.md`](DESIGN-core.md) (platform/transport resolution & identity
 > chain), [`../SHARED_CONFIG.md`](../SHARED_CONFIG.md) (how the hierarchy + shared identity are
 > distributed), [`../TELEMETRY_STREAMING.md`](../TELEMETRY_STREAMING.md) (the streaming service enriched
@@ -471,11 +473,21 @@ a precise error — silent coexistence of old and new topics is the worst outcom
 ## 13. Phasing
 
 1. **Grammar + classes + top-level `identity` + `messaging()`/`uns()`** (Java-canonical first, mirrors
-   before merge) + `uns-test-vectors`.
-2. **Reserved-class guard, `request()` hardening, MQTT LWT (retain deferred), named MessagingClient.**
+   before merge) + `uns-test-vectors` + **heartbeat-default parity (M11)** + the library-owned
+   state/metric/cfg publishers + the config-component rendezvous remap. *(M11 moved up from step 5: the
+   hard cut retires the legacy heartbeat topic here, and `heartbeat.targets[]` — where the topic drift
+   knobs live — is dropped in the same schema break; deferring it would break the heartbeat config
+   twice. See [`UNS-CANONICAL-DESIGN.md`](UNS-CANONICAL-DESIGN.md) Risks #1.)*
+2. **Reserved-class guard, `request()` hardening, MQTT LWT (retain deferred), named MessagingClient
+   (Rust only — D‑U17), IoTCore casing normalization.**
 3. **`uns-bridge` + site-broker recipes** (the site-bus realization) + reachability/late-join.
 4. **Streaming enrichment** (M15) + **southbound command family** (M9).
-5. **Heartbeat-default parity** (M11) + docs/recipes/scaffold updates; retire the legacy schemes.
+5. **Docs/recipes/scaffold updates; retire the legacy schemes** (incl. the stale `SouthboundTagUpdate`
+   python-protocol-adapter template) + component adoption.
+
+> **Implementation companion:** [`UNS-CANONICAL-DESIGN.md`](UNS-CANONICAL-DESIGN.md) turns this design
+> into concrete Java-canonical API shapes + per-language mirror notes and carries the running decisions
+> register (D‑U1…D‑U24) — the source of truth for the build.
 
 > The **`edge-console`** component consumes this design; see its design doc for the console-side FleetModel,
 > WebSocket bridge, screens, dynamic panels, and console-specific mandates (M10/M12/M13).
