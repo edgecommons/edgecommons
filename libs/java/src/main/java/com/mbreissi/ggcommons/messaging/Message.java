@@ -41,6 +41,7 @@ public class Message
     private static final Gson NULL_SERIALIZING_GSON = new GsonBuilder().serializeNulls().create();
 
     MessageHeader header;
+    MessageIdentity identity;
     MessageTags tags;
     Object body;
     Object raw;
@@ -52,6 +53,7 @@ public class Message
     Message()
     {
         header = null;
+        identity = null;
         tags = null;
         body = null;
         raw = null;
@@ -69,6 +71,9 @@ public class Message
         {
             if (header != null)
                 retVal.add("header", header.toDict());
+            // Canonical envelope member order: header, identity, tags, body.
+            if (identity != null)
+                retVal.add("identity", identity.toDict());
             if (tags != null)
                 retVal.add("tags", new Gson().toJsonTree(tags.toDict()).getAsJsonObject());
             retVal.add("body", toJsonElement(body));
@@ -143,6 +148,18 @@ public class Message
     }
 
     /**
+     * Gets the UNS identity element of this message ({@code hier}/{@code path}/{@code component}/
+     * {@code instance}), or {@code null} when the message carries none (raw messages, messages
+     * built without a config-bound builder, or a malformed inbound identity).
+     *
+     * @return The MessageIdentity object, or {@code null}
+     */
+    public MessageIdentity getIdentity()
+    {
+        return identity;
+    }
+
+    /**
      * Gets the tags associated with this message.
      *
      * @return The MessageTags object
@@ -161,7 +178,7 @@ public class Message
     public void injectTag(String key, String value)
     {
         if (tags == null)
-            tags = new MessageTags(null);
+            tags = new MessageTags();
         tags.injectTag(key, value);
     }
 
@@ -288,6 +305,12 @@ public class Message
                 retVal.header = MessageHeader.fromDict(msgJsonObj.getAsJsonObject("header"));
                 LOGGER.trace("header deserialized");
             }
+            if (msgJsonObj.has("identity"))
+            {
+                LOGGER.trace("processing identity");
+                retVal.identity = parseIdentity(msgJsonObj.get("identity"));
+                LOGGER.trace("identity deserialized");
+            }
             if (msgJsonObj.has("tags"))
             {
                 LOGGER.trace("processing tags");
@@ -300,7 +323,8 @@ public class Message
                 retVal.body = msgJsonObj.get("body");
                 LOGGER.trace("body desiralized");
             }
-            if (!(msgJsonObj.has("header") || msgJsonObj.has("tags") || msgJsonObj.has("body")))
+            if (!(msgJsonObj.has("header") || msgJsonObj.has("identity")
+                    || msgJsonObj.has("tags") || msgJsonObj.has("body")))
             {
                 LOGGER.trace("Json contained raw string: Assigning to raw");
                 retVal.raw = msgJsonObj;
@@ -312,6 +336,24 @@ public class Message
             retVal.raw = msgContents;
         }
         return retVal;
+    }
+
+    /**
+     * Leniently parses an envelope {@code identity} member: a non-object element or a malformed
+     * identity yields {@code null} plus a WARN (the message still delivers). Shared by the
+     * deprecated {@link #build(Object)} and {@link MessageBuilder#fromObject(Object)}.
+     *
+     * @param identityElement the raw {@code identity} JSON element
+     * @return the parsed identity, or {@code null} when malformed
+     */
+    static MessageIdentity parseIdentity(JsonElement identityElement)
+    {
+        if (identityElement == null || !identityElement.isJsonObject())
+        {
+            LOGGER.warn("Malformed message identity: 'identity' is not an object; dropping identity");
+            return null;
+        }
+        return MessageIdentity.fromDict(identityElement.getAsJsonObject());
     }
 
 }

@@ -9,38 +9,40 @@ import com.mbreissi.ggcommons.config.ConfigManager;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-import com.google.gson.JsonPrimitive;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.util.Map;
 
 /**
- * Manages tags associated with Greengrass messages.
+ * Manages the business-context tags associated with Greengrass messages.
  * Provides functionality for tag storage, inheritance, and manipulation.
+ *
+ * <p>UNS hard cut: the synthesized {@code thing} tag is gone — the device now travels in the
+ * top-level {@code identity} envelope element (its last {@code hier} entry). A stray inbound
+ * {@code thing} key is treated as an ordinary tag (no special-casing, no legacy shim).
  */
 public class MessageTags
 {
     protected static final Logger LOGGER = LogManager.getLogger(MessageTags.class);
 
-    String thingName;
-
     JsonObject tags;
 
     /**
-     * Creates a new message tags instance for the specified thing.
-     *
-     * @param thingName The name of the AWS IoT thing
+     * Creates a new, empty message tags instance.
      */
-    public MessageTags(String thingName)
+    public MessageTags()
     {
-        this.thingName = thingName;
         tags = new JsonObject();
     }
 
-    public MessageTags(String thingName, JsonObject tags)
+    /**
+     * Creates a message tags instance wrapping the supplied tag object.
+     *
+     * @param tags The backing tag object
+     */
+    public MessageTags(JsonObject tags)
     {
-        this.thingName = thingName;
         this.tags = tags;
     }
 
@@ -55,11 +57,11 @@ public class MessageTags
         TagConfiguration sourceConfig = configService.getTagConfig();
         if (sourceConfig != null)
         {
-            return new MessageTags(configService.getThingName(), sourceConfig.toDict());
+            return new MessageTags(sourceConfig.toDict());
         }
         else
         {
-            return new MessageTags(configService.getThingName(), new JsonObject());
+            return new MessageTags(new JsonObject());
         }
     }
 
@@ -70,23 +72,17 @@ public class MessageTags
 
     public static MessageTags fromDict(JsonObject src)
     {
-        String thing = src.has("thing") ? src.get("thing").getAsString() : null;
         JsonObject tagsDict = new JsonObject();
         for (Map.Entry<String, JsonElement> entry : src.entrySet())
         {
-            if (!entry.getKey().equals("thing"))
-                tagsDict.add(entry.getKey(), entry.getValue());
+            tagsDict.add(entry.getKey(), entry.getValue());
         }
-        return new MessageTags(thing, tagsDict);
+        return new MessageTags(tagsDict);
     }
 
     public Map<String, JsonElement> toDict()
     {
-        final Map<String, JsonElement> retVal = new java.util.LinkedHashMap<>(tags.asMap());
-        if (thingName != null) {
-            retVal.put("thing", new JsonPrimitive(thingName));
-        }
-        return retVal;
+        return new java.util.LinkedHashMap<>(tags.asMap());
     }
 
     @Override

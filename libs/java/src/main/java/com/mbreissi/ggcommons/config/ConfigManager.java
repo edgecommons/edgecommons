@@ -7,6 +7,7 @@ package com.mbreissi.ggcommons.config;
 import com.mbreissi.ggcommons.ParsedCommandLine;
 import com.mbreissi.ggcommons.config.provider.ConfigProvider;
 import com.mbreissi.ggcommons.config.provider.ConfigProviderBuilder;
+import com.mbreissi.ggcommons.messaging.MessageIdentity;
 import com.mbreissi.ggcommons.platform.Platform;
 import com.mbreissi.ggcommons.platform.PlatformResolver;
 
@@ -23,11 +24,16 @@ import org.apache.logging.log4j.core.config.Configurator;
 import org.apache.logging.log4j.core.config.builder.api.*;
 import org.apache.logging.log4j.core.config.builder.impl.BuiltConfiguration;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.regex.Pattern;
 
 import static org.apache.logging.log4j.core.config.builder.api.ConfigurationBuilderFactory.newConfigurationBuilder;
 
@@ -53,6 +59,14 @@ public class ConfigManager
      * {@code logging.java_format}. See {@link #reconfigureLogging()}.
      */
     protected final Platform platform;
+    /**
+     * The component's resolved UNS identity (hierarchy + identity values + device + component
+     * token, instance {@value MessageIdentity#DEFAULT_INSTANCE}), resolved <b>once at
+     * construction</b> from the component's OWN config (no shared config) — see
+     * {@link #getComponentIdentity()}. {@code null} only on the protected test/subclass
+     * bring-up constructor.
+     */
+    private final MessageIdentity componentIdentity;
     protected final CopyOnWriteArrayList<ConfigurationChangeListener> configChangeListeners = new CopyOnWriteArrayList<>();
     private boolean initializing = true;
     protected final JsonObject fullConfig;
@@ -80,6 +94,7 @@ public class ConfigManager
         this.thingName = null;
         this.fullConfig = null;
         this.platform = null;
+        this.componentIdentity = null;
     }
 
     ConfigManager(String componentFullName, String componentName, String thingName,
@@ -97,7 +112,11 @@ public class ConfigManager
         this.platform = platform;
 
         applyConfig(fullConfig);
-        
+
+        // Resolve the component's UNS identity ONCE, from this component's own config
+        // (top-level `hierarchy` + `identity`), fail-fast on any inconsistency.
+        this.componentIdentity = resolveComponentIdentity();
+
         // Register logging configuration change listener
         addConfigChangeListener(new LoggingConfigChangeListener(this));
         
@@ -275,6 +294,168 @@ public class ConfigManager
     public String getThingName()
     {
         return thingName;
+    }
+
+    /**
+     * Returns the component's resolved UNS identity (instance
+     * {@value MessageIdentity#DEFAULT_INSTANCE}), resolved once at construction from the
+     * component's OWN config:
+     * <ol>
+     *   <li>{@code levels} = top-level {@code hierarchy.levels} when present, else the
+     *       zero-config default {@code ["device"]}.</li>
+     *   <li>Level names must match {@code ^[A-Za-z0-9_-]+$}, be unique and non-empty.</li>
+     *   <li>Every level except the last takes its value from the top-level {@code identity}
+     *       config object (a missing value is a startup error naming the level); the LAST
+     *       level's value is the resolved thing name (the existing identity chain).</li>
+     *   <li>An {@code identity} key equal to the last level name, or not among the declared
+     *       non-device levels, is a startup error (typo protection the schema cannot express).</li>
+     *   <li>Every value and the component short name pass through the template sanitizer.</li>
+     * </ol>
+     *
+     * @return the resolved identity, or {@code null} only on the protected test/subclass
+     *         bring-up constructor (which resolves no config)
+     */
+    public MessageIdentity getComponentIdentity()
+    {
+        return componentIdentity;
+    }
+
+    /** Strict UNS hierarchy level-name rule (future Parquet columns — keep it tight). */
+    private static final Pattern HIERARCHY_LEVEL_NAME = Pattern.compile("^[A-Za-z0-9_-]+$");
+
+    /**
+     * Resolves the component identity from the already-applied {@link #fullConfig} (see
+     * {@link #getComponentIdentity()} for the algorithm). Called once from the constructor;
+     * fail-fast with a precise {@link IllegalStateException} (wrapped into a
+     * {@code ConfigurationException} by {@link ConfigManagerFactory}).
+     */
+    private MessageIdentity resolveComponentIdentity()
+    {
+        // 1. levels = hierarchy.levels if present, else the zero-config default ["device"].
+        List<String> levels = new ArrayList<>();
+        if (fullConfig != null && fullConfig.has("hierarchy"))
+        {
+            JsonElement hierarchyEl = fullConfig.get("hierarchy");
+            if (!hierarchyEl.isJsonObject() || !hierarchyEl.getAsJsonObject().has("levels"))
+            {
+                throw identityError("'hierarchy' must be an object with a 'levels' array");
+            }
+            JsonElement levelsEl = hierarchyEl.getAsJsonObject().get("levels");
+            if (!levelsEl.isJsonArray() || levelsEl.getAsJsonArray().isEmpty())
+            {
+                throw identityError("'hierarchy.levels' must be a non-empty array of level names");
+            }
+            for (JsonElement levelEl : levelsEl.getAsJsonArray())
+            {
+                if (!levelEl.isJsonPrimitive() || !levelEl.getAsJsonPrimitive().isString())
+                {
+                    throw identityError("'hierarchy.levels' entries must be strings");
+                }
+                levels.add(levelEl.getAsString());
+            }
+        }
+        else
+        {
+            levels.add("device");
+        }
+
+        // 2. Level names: strict charset, unique, non-empty.
+        Set<String> seen = new LinkedHashSet<>();
+        for (String level : levels)
+        {
+            if (level == null || !HIERARCHY_LEVEL_NAME.matcher(level).matches())
+            {
+                throw identityError("invalid hierarchy level name '" + level
+                        + "' (must match ^[A-Za-z0-9_-]+$)");
+            }
+            if (!seen.add(level))
+            {
+                throw identityError("duplicate hierarchy level name '" + level + "'");
+            }
+        }
+        String deviceLevel = levels.get(levels.size() - 1);
+        List<String> valueLevels = levels.subList(0, levels.size() - 1);
+
+        // 3/4. The `identity` config object supplies every level's value except the last;
+        //      keys must be exactly (a subset of) the non-device levels.
+        JsonObject identityConfig = new JsonObject();
+        if (fullConfig != null && fullConfig.has("identity"))
+        {
+            JsonElement identityEl = fullConfig.get("identity");
+            if (!identityEl.isJsonObject())
+            {
+                throw identityError("'identity' must be an object of level-name -> value");
+            }
+            identityConfig = identityEl.getAsJsonObject();
+        }
+        for (String key : identityConfig.keySet())
+        {
+            if (key.equals(deviceLevel))
+            {
+                throw identityError("'identity." + key + "' must not be set: '" + deviceLevel
+                        + "' is the last hierarchy level (the device) and its value is always the"
+                        + " resolved thing name");
+            }
+            if (!valueLevels.contains(key))
+            {
+                throw identityError("'identity." + key + "' is not a declared hierarchy level;"
+                        + " expected keys: " + valueLevels);
+            }
+        }
+
+        List<MessageIdentity.HierEntry> hier = new ArrayList<>();
+        List<String> missing = new ArrayList<>();
+        for (String level : valueLevels)
+        {
+            JsonElement valueEl = identityConfig.get(level);
+            if (valueEl == null || !valueEl.isJsonPrimitive() || valueEl.getAsString().isEmpty())
+            {
+                missing.add(level);
+                continue;
+            }
+            hier.add(new MessageIdentity.HierEntry(level, sanitizedIdentityValue(level, valueEl.getAsString())));
+        }
+        if (!missing.isEmpty())
+        {
+            throw identityError("the top-level 'identity' config object is missing value(s) for"
+                    + " hierarchy level(s) " + missing + " (hierarchy.levels = " + levels
+                    + "; the last level '" + deviceLevel + "' is the resolved thing name and must"
+                    + " not be configured)");
+        }
+
+        // The device (last level) value is the resolved thing name (PlatformResolver chain).
+        if (thingName == null || thingName.isEmpty())
+        {
+            throw identityError("the device level '" + deviceLevel + "' value (the resolved thing"
+                    + " name) is not available");
+        }
+        hier.add(new MessageIdentity.HierEntry(deviceLevel, sanitizedIdentityValue(deviceLevel, thingName)));
+
+        // 5. component = sanitized short name.
+        if (componentName == null || componentName.isEmpty())
+        {
+            throw identityError("the component short name is not available");
+        }
+        String componentToken = sanitizedIdentityValue("component", componentName);
+        return new MessageIdentity(hier, componentToken, MessageIdentity.DEFAULT_INSTANCE);
+    }
+
+    /** Sanitizes an identity value via the template sanitizer, WARN-logging when it changed. */
+    private static String sanitizedIdentityValue(String what, String rawValue)
+    {
+        String sanitized = sanitize(rawValue);
+        if (!sanitized.equals(rawValue))
+        {
+            LOGGER.warn("Identity value for '{}' contained reserved characters and was sanitized:"
+                    + " '{}' -> '{}'", what, rawValue, sanitized);
+        }
+        return sanitized;
+    }
+
+    /** Builds the uniform fail-fast identity-resolution startup error. */
+    private static IllegalStateException identityError(String detail)
+    {
+        return new IllegalStateException("Component identity resolution failed: " + detail);
     }
 
     /**

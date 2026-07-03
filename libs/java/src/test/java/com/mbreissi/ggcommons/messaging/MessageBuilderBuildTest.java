@@ -29,10 +29,18 @@ class MessageBuilderBuildTest {
     }
 
     @Test
-    void buildWithoutConfigThrows() {
-        MessageBuilder builder = MessageBuilder.create("NoConfig", "1.0")
-                .withPayload("hello");
-        assertThrows(IllegalStateException.class, builder::build);
+    void buildWithoutConfigLeavesTagsAndIdentityNull() {
+        // UNS §1.4: a config-less build is legal (bootstrap/raw cases) — the envelope simply
+        // carries no tags and no identity.
+        Message message = MessageBuilder.create("NoConfig", "1.0")
+                .withPayload("hello")
+                .build();
+
+        assertNotNull(message.getHeader());
+        assertEquals("NoConfig", message.getHeader().getName());
+        assertNull(message.getTags());
+        assertNull(message.getIdentity());
+        assertEquals("hello", message.getBody());
     }
 
     @Test

@@ -273,6 +273,39 @@
       },
       "additionalProperties": false
     },
+    "hierarchy": {
+      "type": "object",
+      "description": "UNS enterprise-hierarchy declaration: an ordered, freely-named list of levels whose LAST level is the physical node (the resolved thing name). Absent => the zero-config default [\"device\"]. Level names are strict (^[A-Za-z0-9_-]+$, unique) because they become identity keys and, later, Parquet columns.",
+      "properties": {
+        "levels": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1,
+          "description": "Ordered hierarchy level names, deepest (the device) last, e.g. [\"site\", \"factory\", \"zone\", \"device\"]."
+        }
+      },
+      "additionalProperties": false
+    },
+    "identity": {
+      "type": "object",
+      "description": "UNS identity values for every hierarchy level EXCEPT the last (the last level's value is always the resolved thing name). Keys must match hierarchy.levels[0..n-2]; a key equal to the last level name (or not a declared level) is a startup error.",
+      "patternProperties": {
+        "^[A-Za-z0-9_-]+$": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "topic": {
+      "type": "object",
+      "description": "UNS topic-building options.",
+      "properties": {
+        "includeRoot": {
+          "type": "boolean",
+          "default": false,
+          "description": "Insert the first hierarchy value (the site) after the ecv1 root in built topics (multi-site broker deployments): ecv1/{site}/{device}/... Default false (rootless grammar)."
+        }
+      },
+      "additionalProperties": false
+    },
     "component": {
       "type": "object",
       "description": "Component-specific configuration",
@@ -311,6 +344,34 @@
         "iotCore": {
           "$ref": "#/definitions/mqttBroker",
           "description": "The optional AWS IoT Core connection (mutual-TLS)."
+        },
+        "requestTimeoutSeconds": {
+          "type": "number",
+          "minimum": 0,
+          "default": 30,
+          "description": "Default request() deadline in seconds; on expiry the reply future completes exceptionally and the ephemeral reply subscription is cleaned up. 0 disables the default deadline. An explicit per-call timeout always wins."
+        },
+        "lwt": {
+          "type": "object",
+          "description": "MQTT Last-Will-and-Testament registered on the local-broker connection at CONNECT (re-registered on reconnect). Applies to the local MQTT connection only; the IPC transport ignores it. The will is broker-published on ungraceful disconnect; it never passes through publish(). No retain option by design.",
+          "properties": {
+            "topic": {
+              "type": "string",
+              "description": "The will topic (e.g. the component's UNS state topic)."
+            },
+            "payload": {
+              "type": ["string", "object"],
+              "description": "The will payload, published VERBATIM (a string or a JSON object)."
+            },
+            "qos": {
+              "type": "number",
+              "enum": [0, 1],
+              "default": 1,
+              "description": "Will QoS (0 or 1)."
+            }
+          },
+          "required": ["topic"],
+          "additionalProperties": false
         }
       },
       "additionalProperties": false

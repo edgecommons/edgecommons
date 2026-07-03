@@ -74,8 +74,9 @@ class MessagingLegacyAndHandlerTest {
         assertEquals("3.0", m.getHeader().getVersion());
         assertNotNull(m.getCorrelationId());
         assertEquals("b", m.toDict().getAsJsonObject("body").get("a").getAsString());
-        // no tag config -> only the thing tag is present
-        assertEquals("thing-A", m.getTags().toDict().get("thing").getAsString());
+        // no tag config -> empty tags (the thing now travels in identity, not tags)
+        assertNotNull(m.getTags());
+        assertTrue(m.getTags().toDict().isEmpty());
     }
 
     @SuppressWarnings("deprecation")
@@ -114,9 +115,8 @@ class MessagingLegacyAndHandlerTest {
         ConfigManager cm = configWithoutTags();
         MessageTags tags = MessageTags.fromConfig(cm);
 
-        // thing is present, but no other tags
-        assertEquals("thing-A", tags.toDict().get("thing").getAsString());
-        assertEquals(1, tags.toDict().size());
+        // no tag config -> empty tags (no synthesized thing tag anymore)
+        assertTrue(tags.toDict().isEmpty());
     }
 
     @Test
@@ -127,11 +127,10 @@ class MessagingLegacyAndHandlerTest {
         td.addProperty("env", "prod");
         when(tagConfig.toDict()).thenReturn(td);
         when(cm.getTagConfig()).thenReturn(tagConfig);
-        when(cm.getThingName()).thenReturn("thing-B");
 
         MessageTags tags = MessageTags.fromConfig(cm);
         assertEquals("prod", tags.toDict().get("env").getAsString());
-        assertEquals("thing-B", tags.toDict().get("thing").getAsString());
+        assertEquals(1, tags.toDict().size());
     }
 
     @Test

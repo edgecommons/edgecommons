@@ -5,26 +5,27 @@ import java.util.Map;
 
 /**
  * Builder for creating MessageTags instances with fluent API.
+ *
+ * <p>UNS hard cut: the thing name is no longer a tag concern — the device travels in the
+ * top-level {@code identity} envelope element, so this builder only assembles business tags.
  */
 public class MessageTagsBuilder {
-    private String thingName;
     private JsonObject tags = new JsonObject();
-    
-    private MessageTagsBuilder(String thingName) {
-        this.thingName = thingName;
+
+    private MessageTagsBuilder() {
     }
-    
-    public static MessageTagsBuilder create(String thingName) {
-        return new MessageTagsBuilder(thingName);
+
+    public static MessageTagsBuilder create() {
+        return new MessageTagsBuilder();
     }
-    
+
     public MessageTagsBuilder addTag(String key, String value) {
         if (key != null && value != null) {
             tags.addProperty(key, value);
         }
         return this;
     }
-    
+
     public MessageTagsBuilder addTags(Map<String, String> tagMap) {
         if (tagMap != null) {
             for (Map.Entry<String, String> entry : tagMap.entrySet()) {
@@ -35,7 +36,7 @@ public class MessageTagsBuilder {
         }
         return this;
     }
-    
+
     public MessageTagsBuilder addTags(JsonObject tagObject) {
         if (tagObject != null) {
             for (Map.Entry<String, com.google.gson.JsonElement> entry : tagObject.entrySet()) {
@@ -46,8 +47,8 @@ public class MessageTagsBuilder {
         }
         return this;
     }
-    
+
     public MessageTags build() {
-        return new MessageTags(thingName, tags);
+        return new MessageTags(tags);
     }
 }

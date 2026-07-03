@@ -22,11 +22,11 @@ class MessageSerializationTest {
 
     /**
      * {@code MessageTags.toDict()} previously mutated the backing tags object (via the live
-     * {@code JsonObject.asMap()} view), leaking a "thing" key into it on every call.
+     * {@code JsonObject.asMap()} view), leaking synthesized keys into it on every call.
      */
     @Test
     void toDictDoesNotMutateInternalTags() {
-        MessageTags tags = new MessageTags("thing-1");
+        MessageTags tags = new MessageTags();
         tags.injectTag("a", "1");
 
         tags.toDict();
