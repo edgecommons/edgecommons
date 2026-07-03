@@ -9,11 +9,10 @@
 > schema + components + interop). The **Decisions register** below is the running tracker for later
 > review.
 >
-> **Flagged for review** (proceeding on the recommendation per the ultracode directive, tracked here —
-> override any at will): **D‑U17** (M8 named client Rust-only — the one deliberate, additive API-scope
-> divergence), **D‑U18** (`identity.component` = sanitized short name — hard to reverse post-deploy),
-> **D‑U19** (config-component rendezvous remap), **D‑U20** (heartbeat `targets[]` removed / **M11 pulled
-> into Phase 1**).
+> **Review status (updated 2026-07-02):** all four flagged decisions **resolved with the user**. **D‑U17
+> → uniform config-driven named connection, no divergence** (§2.3); **D‑U18 ✅** (component = short name);
+> **D‑U19 → component-inbox + broadcast** (§4.3); **D‑U20 ✅** (heartbeat `targets[]` removed; measures
+> keep full sink routing via the metric subsystem). **M11 is pulled into Phase 1.**
 
 **Conformance vocabulary:** *topics are byte-identical* across languages; *envelopes are structurally
 identical* (same key set, same values; JSON member order is **not** normative — the four serializers
@@ -257,25 +256,27 @@ errors as `GgError::UnsValidation { code, detail }` (new variant); `topic()` ret
 TS: `src/uns.ts` — `enum UnsClass`, `interface UnsScope` + factory object, `class Uns`, `class
 UnsValidationError extends Error { code }`.
 
-#### 2.3 (M8) Named/secondary messaging client — Rust only, flagged (D‑U17)
+#### 2.3 (M8) Named/secondary messaging connection — uniform, config-driven (D‑U17, resolved 2026-07-02)
 
-The `uns-bridge` needs two concurrent connections (device bus + site broker) in one process. **Rust gets
-it now; the other three languages defer until a component needs it** — the one deliberate API divergence,
-flagged per the standing rule:
+The `uns-bridge` needs two concurrent connections in one process (device bus + site broker). Rather than a
+Rust-only imperative API (the original proposal — a flagged divergence), this is a **uniform,
+config-declared library capability in all four languages** (user direction): the bridge declares its
+site-broker uplink as a **named messaging connection** in config — conceptually its "external system,"
+reusing the same `MessagingProvider`/MQTT stack — and the library provisions + manages it, retrievable by
+name:
 
-```rust
-impl GgCommons {
-    /// Open an additional, independently-connected messaging service (own MqttProvider +
-    /// DefaultMessagingService), registered for shutdown. `name` used for logging/metrics only.
-    pub async fn messaging_named(&self, name: &str, cfg: MessagingConfig)
-        -> Result<Arc<dyn MessagingService>>;
-}
+```
+gg.messaging()          // the primary/default connection (unnamed)
+gg.messaging("site")    // a config-declared secondary connection — same API surface
 ```
 
-Programmatic only — **no schema change** (the bridge supplies the site-broker `MessagingConfig` from its
-own component config section). The named client gets the same reserved-class guard and request-deadline
-default as the primary. When Java/Python/TS need it, the mirrored shape is `gg.openMessaging(name,
-MessagingConfiguration)`.
+Both connections get the same reserved-class guard + request-deadline default. Python's static/global
+`MessagingClient` becomes a **keyed registry** (default + named). This **eliminates the D‑U17
+divergence** — it is config, not a per-language imperative API. It is only needed by the bridge, so it
+**lands in Phase 3**; the config shape (a dedicated `messaging.connections[]`-style section vs reusing
+`component.instances[]`) is finalized then. Lean: a dedicated named-connections section, kept **distinct**
+from the per-message `instance` token and the `gg.instance()` handle (§3 / D‑U3) — those address *message
+identity*, this addresses *transport*.
 
 ---
 
@@ -394,6 +395,27 @@ Hard-cut topic map, replacing the four legacy sites in this same phase:
 | config-get (CONFIG_COMPONENT) | `ggcommons/{ThingName}/config/get/{ComponentName}` (`ConfigComponentProvider.java:22`) | request to `ecv1/{device}/config/main/cmd/get-configuration` — `config` is a **reserved-by-convention logical component name**; requester identified by the envelope (or body `{"component"}` in the pre-config bootstrap §1.5). `cmd` is not reserved — no seam needed |
 | config push | `ggcommons/{ThingName}/config/{ComponentName}/updated` (`:23`) | fire-and-forget `cmd`: `ecv1/{device}/{component}/main/cmd/set-config`, body = new config (a `cmd` without `reply_to` is a notification-style command — normative) |
 | cloudwatch-component target | `cloudwatch/metric/put` | **unchanged** — external AWS Greengrass component contract (D‑U21) |
+
+**Command addressing — the two config flows + broadcast (D‑U19, resolved 2026-07-02 → component-inbox +
+broadcast):**
+- **Flow A — config *source* fetch** (a `CONFIG_COMPONENT` client pulls *its own* config): a request to
+  `ecv1/{device}/config/main/cmd/get-configuration`; the **config server is the sole subscriber** and
+  replies via `reply_to`; the requester self-identifies (envelope, or body `{"component"}` pre-config).
+  `config` is a reserved-by-convention **logical component name**.
+- **Flow B — console→component commands** (the built-in verbs `get-configuration`, `reload-config`,
+  `set-log-level`, `describe`, `sb/*`): addressed to the **target component's own inbox**
+  `ecv1/{device}/{component}/{instance}/cmd/{verb}`. A component's single `ecv1/{device}/{me}/+/cmd/#`
+  subscription is therefore topic-selective — it never receives another component's commands, no
+  body-filtering. `set-config` push (server→component) uses this same inbox.
+- **Broadcast** — a reserved pseudo-component token **`_bcast`**: a command to *all* components on a
+  device goes to `ecv1/{device}/_bcast/main/cmd/{verb}`, and every component also subscribes to
+  `ecv1/{device}/_bcast/main/cmd/#`. This standardizes (and fixes) the malformed
+  `ecv1/bcast/cmd/republish-state` in DESIGN-uns §9.3 → `ecv1/{device}/_bcast/main/cmd/republish-state`.
+  (Site-wide broadcast across devices = the console publishing per-device from its FleetModel, or a
+  `+`-device refinement — deferred to Phase 3.) **Reserved tokens:** logical component `config`;
+  pseudo-component `_bcast`; the `_`-prefix is reserved for system pseudo-components. Flow-B verb handlers
+  + broadcast land in Phase 3 (facade `commands()`); **Phase 1 implements only Flow A + the `set-config`
+  push.**
 
 Heartbeat config reshape (resolves #33 / M11 in this phase — Risks #1): `heartbeat.targets[]` is
 **removed** (where the topic drift knobs live); replaced by `heartbeat: { enabled (bool, default true),
@@ -523,10 +545,10 @@ internal `IotCoreSubscriptionHandler → IoTCoreSubscriptionHandler` (cosmetic).
 | D‑U14 | Heartbeat #33 → on/5s/local `state` | flips Rust/TS off→on, Java metric→state, Python legacy→state; measures → metric `sys`; graceful `STOPPED` state; validate on HOST smoke. Pulled into Phase 1 (Risks #1) | High | Moderate (fleet-wide behavior) | no (pre-approved; **review the STOPPED addition**) |
 | D‑U15 | signalId → sanitized `data/{channel}`, raw id in body | provisional, **Phase 5** — no work now; token rule (§2.2) = the same sanitizer | Med | Easy (deferred) | no |
 | D‑U16 | `writes.allow[]` matches stable `signal.id` | provisional, **Phase 5** (adapter-contract change, M9) | Med | Easy (deferred) | no |
-| **D‑U17** | **M8 named client: Rust now, others deferred** | the one deliberate violation of "no API divergence without asking". Programmatic-only (`messaging_named`), no schema change, guard+deadline apply. Reserved mirror: `gg.openMessaging(name, cfg)` | Med | Easy | **YES — explicit sign-off on the divergence** |
-| **D‑U18** | `identity.component` = **sanitized short name** (existing `{ComponentName}` semantics), not reverse-DNS full name | matches every existing topic site + the design examples; dots legal in-level so full name stays possible later; cross-vendor collision on one device accepted pre-1.0 | Med | **Hard once fleets deploy** | **review recommended** |
-| **D‑U19** | Config rendezvous remap: GET → `ecv1/{device}/config/main/cmd/get-configuration` (requester in envelope, or body `{"component"}` in bootstrap); push → `…/{comp}/main/cmd/set-config` (fire-and-forget cmd); `config` = reserved-by-convention logical name | envelope self-identification is what lets `{Comp}` leave the topic; `cmd` without `reply_to` = notification-style command (normative) | Med | Moderate | **review recommended** |
-| **D‑U20** | Heartbeat `targets[]` REMOVED → `enabled/intervalSecs/measures/destination`; measures emit metric **`sys`** via normal metric subsystem | `targets[]` is exactly where the topic drift knobs live; a state keepalive is not a routable "target" | Med-High | Moderate (schema break, intended) | **review recommended** (supersedes letter of D‑U9 for heartbeat) |
+| **D‑U17** | M8 named/secondary messaging connection | ✅ **resolved 2026-07-02 → NO divergence.** Reframed (user) from a Rust-only imperative `messaging_named()` into a **uniform, config-declared named connection** in all four langs: the bridge declares its site-broker uplink in config (its "external system," reusing the MQTT provider), retrieved via `gg.messaging("<name>")`; Python's static client → keyed registry. Lands **Phase 3** (with the bridge); config shape finalized then, kept distinct from the per-message `instance`/`gg.instance()` (D‑U3). §2.3 | High | Moderate | resolved |
+| **D‑U18** | `identity.component` = **sanitized short name** (existing `{ComponentName}` semantics), not reverse-DNS full name | ✅ **confirmed 2026-07-02** (user agreed). Matches every existing topic site + the design examples; dots legal in-level so full name stays possible later; cross-vendor collision on one device accepted pre-1.0 | High | Hard once fleets deploy | resolved |
+| **D‑U19** | Config-command addressing | ✅ **resolved 2026-07-02 → component-inbox + broadcast** (user). **Flow A** (config-source fetch) stays a request to `config/main` (server is sole subscriber, requester self-IDs). **Flow B** (console→component verbs incl. `get-configuration`) → the target component's OWN inbox `ecv1/{device}/{component}/{instance}/cmd/{verb}` (topic-selective, uniform for all verbs, no body-filtering); **broadcast** via reserved `_bcast` (`ecv1/{device}/_bcast/main/cmd/{verb}`). `set-config` push = component inbox. §4.3 | High | Moderate | resolved |
+| **D‑U20** | Heartbeat `targets[]` REMOVED → `enabled/intervalSecs/measures/destination`; measures emit metric **`sys`** via normal metric subsystem | ✅ **confirmed 2026-07-02** (user). The measures **keep full sink flexibility** — they now flow through the metric subsystem's own targets (messaging/cloudwatch-component/EMF/local-log), which `heartbeat.targets[]` did not provide for measures; `heartbeat.destination` (local\|iotcore) governs only the lightweight `state` keepalive. Supersedes the letter of D‑U9 for heartbeat | High | Moderate (schema break, intended) | resolved |
 | D‑U21 | `cloudwatch/metric/put` unchanged | external AWS Greengrass component contract; non-`ecv1` so guard-exempt | High | Easy | no |
 | D‑U22 | Topics byte-identical; envelopes structurally identical (member order not normative) | the four serializers already differ in order + the interop harness compares structurally; byte order would churn all four for zero consumer value | High | Easy | no |
 | D‑U23 | Error identities: `UnsValidationException`(+code)/`ReservedTopicException`/`TimeoutException`(Java std)/`RequestTimeoutError`(Py/TS)/`GgError::{UnsValidation,ReservedTopic,RequestTimeout}`(Rust); Python `Iou.get()` now raises on deadline | confirmed; the Python `Iou` contract change is the sharpest edge (pre-1.0 accepted) | High | Easy | no |
@@ -561,9 +583,10 @@ internal `IotCoreSubscriptionHandler → IoTCoreSubscriptionHandler` (cosmetic).
 7. **Sanitizer/validator coupling is normative**: the `uns()` token rule = *exactly* the sanitizer's
    blacklist (§2.2). If anyone later tightens one, they must tighten both. Pin with vector cases (a thing
    name with a space must build; one with `+` must have been sanitized to `_`).
-8. **Reserved names to document (not enforce this phase):** logical component `config` (D‑U19), future
-   broadcast device token `bcast` (§9.3 of the design), and the `ecv1` root itself. Put the warning in
-   the identity docs now.
+8. **Reserved names to document:** logical component `config` (Flow A, §4.3/D‑U19), pseudo-component
+   `_bcast` (broadcast fan-out, §4.3), the `_`-prefix for system pseudo-components, and the `ecv1` root.
+   This supersedes the malformed `ecv1/bcast/cmd/...` in DESIGN-uns §9.3 (now
+   `ecv1/{device}/_bcast/main/cmd/...`). Put the reserved-token warning in the identity docs now.
 9. **Docs/templates surface is large**: schema-sync copies, CLI templates, examples, website
    config-schema reference + both "Sample Configurations" pages, and the "subscribe `heartbeat/+/+`"
    instructions in CLAUDE.md/README must all move to the six-wildcard set in the same train, or the

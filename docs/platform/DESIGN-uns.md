@@ -400,7 +400,8 @@ boundaries.
 
 Because retain and consumer-side miss-detection don't exist, correctness rests on three layers, in
 priority: (1) the periodic **keepalive** `state` (both transports); (2) a **broadcast re-announce**
-(`ecv1/bcast/cmd/republish-state`) for an instant snapshot on a consumer's (re)connect, with jittered
+(`ecv1/{device}/_bcast/main/cmd/republish-state` — the reserved `_bcast` pseudo-component, see
+UNS-CANONICAL-DESIGN §4.3) for an instant snapshot on a consumer's (re)connect, with jittered
 replies; (3) the consumer's own **last-known-value cache** — each entry **timestamped**, so a late joiner
 gets the value *and* its age (the application-layer "retained value" pattern; the console realizes this in
 its FleetModel). MQTT **LWT** is added to the library (§7 / D9) as an *accelerator* — IPC no-ops it, so
@@ -417,7 +418,7 @@ sequenceDiagram
   participant SB as site broker
   participant C1 as component
   Con->>SB: subscribe the six UNS patterns
-  Con->>SB: publish ecv1/bcast/cmd/republish-state
+  Con->>SB: publish ecv1/{device}/_bcast/main/cmd/republish-state
   SB->>C1: deliver broadcast
   Note over C1: wait a random 0 to 2s to avoid a stampede
   C1-->>Con: state
