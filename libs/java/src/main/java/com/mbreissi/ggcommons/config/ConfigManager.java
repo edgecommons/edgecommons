@@ -82,9 +82,13 @@ public class ConfigManager
      * Whether UNS topics carry the first hierarchy value ({@code site}) after the {@code ecv1}
      * root — the top-level {@code topic.includeRoot} setting (UNS-CANONICAL-DESIGN §2.2 rule 6 /
      * D-U11), default {@code false}. Parsed by {@link #applyConfig} (so a hot reload refreshes
-     * it) and read via {@link #isTopicIncludeRoot()}.
+     * it) and read via {@link #isTopicIncludeRoot()}. Effective in {@code Uns} only with a
+     * multi-level hierarchy (D-U25) — a single-level hierarchy makes it a no-op (WARN once).
      */
     protected boolean topicIncludeRoot;
+
+    /** One-shot flag for the D-U25 includeRoot-with-single-level-hierarchy config WARN. */
+    private boolean warnedIncludeRootSingleLevel = false;
     /**
      * The default {@code request()} deadline in seconds — {@code messaging.requestTimeoutSeconds}
      * (UNS-CANONICAL-DESIGN §5 / D-U5), default {@value #DEFAULT_REQUEST_TIMEOUT_SECONDS};
@@ -177,6 +181,17 @@ public class ConfigManager
         metricConfig = ConfigurationFactory.createMetricConfiguration(config);
         healthConfig = ConfigurationFactory.createHealthConfiguration(config);
         topicIncludeRoot = parseTopicIncludeRoot(config);
+        // D-U25: includeRoot needs a level ABOVE the device to prepend — with a single-level
+        // hierarchy (the zero-config ["device"] default) hier[0] IS the device, so the setting
+        // is a no-op in Uns (prepending would duplicate the device). Tell the user once.
+        if (topicIncludeRoot && !warnedIncludeRootSingleLevel && hierarchyLevelCount(config) == 1)
+        {
+            warnedIncludeRootSingleLevel = true;
+            LOGGER.warn("topic.includeRoot=true has no effect with a single-level hierarchy"
+                    + " (hierarchy.levels resolves to one level - the device): the site position"
+                    + " requires a level above the device, so UNS topics stay rootless (D-U25)."
+                    + " Declare a multi-level hierarchy.levels or remove topic.includeRoot.");
+        }
         messagingRequestTimeoutSeconds = parseMessagingRequestTimeoutSeconds(config);
         reconfigureLogging();
 
@@ -211,13 +226,34 @@ public class ConfigManager
     /**
      * Whether UNS topics built by {@code gg.getUns()} / {@code gg.instance(id).uns()} carry the
      * first hierarchy value ({@code site}) between the {@code ecv1} root and the device — the
-     * top-level {@code topic.includeRoot} setting, default {@code false}.
+     * top-level {@code topic.includeRoot} setting, default {@code false}. Note that {@code Uns}
+     * applies it only when the hierarchy is multi-level (D-U25).
      *
      * @return the resolved {@code topic.includeRoot} value
      */
     public boolean isTopicIncludeRoot()
     {
         return topicIncludeRoot;
+    }
+
+    /**
+     * Lenient {@code hierarchy.levels} entry count for the D-U25 config WARN: a missing/malformed
+     * {@code hierarchy} section counts as the zero-config single-level default ({@code ["device"]}).
+     * Strict validation of the section happens in {@code resolveComponentIdentity} (fail-fast at
+     * construction); this helper must never throw on shapes the WARN check sees first.
+     */
+    private static int hierarchyLevelCount(JsonObject config)
+    {
+        if (config == null || !config.has("hierarchy") || !config.get("hierarchy").isJsonObject())
+        {
+            return 1;
+        }
+        JsonElement levels = config.getAsJsonObject("hierarchy").get("levels");
+        if (levels == null || !levels.isJsonArray() || levels.getAsJsonArray().isEmpty())
+        {
+            return 1;
+        }
+        return levels.getAsJsonArray().size();
     }
 
     /**

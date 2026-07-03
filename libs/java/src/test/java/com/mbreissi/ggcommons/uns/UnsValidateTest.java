@@ -59,6 +59,12 @@ class UnsValidateTest {
                 codeOf(() -> ROOTLESS.validate("ecv1/gw" + (char) 0x01 + "01/c/m/state")));
         assertEquals(UnsValidationException.Code.BAD_CHAR,
                 codeOf(() -> ROOTLESS.validate("ecv1/gw" + (char) 0x7F + "01/c/m/state")));
+        // D-U26: C1 controls (U+0080-U+009F) are rejected too — the sanitizer's exact
+        // Character.isISOControl predicate, so "sanitized => valid" is a true equivalence.
+        assertEquals(UnsValidationException.Code.BAD_CHAR,
+                codeOf(() -> ROOTLESS.validate("ecv1/gw" + (char) 0x85 + "01/c/m/state")));
+        assertEquals(UnsValidationException.Code.BAD_CHAR,
+                codeOf(() -> ROOTLESS.validate("ecv1/gw" + (char) 0x9F + "01/c/m/state")));
     }
 
     @Test
@@ -169,6 +175,20 @@ class UnsValidateTest {
         // unless it accidentally parses; here 'dallas'-shifted tokens put 'main' at the class slot.
         assertEquals(UnsValidationException.Code.BAD_CLASS,
                 codeOf(() -> ROOTLESS.validate("ecv1/dallas/gw-01/opcua-adapter/main")));
+    }
+
+    @Test
+    void singleLevelHierarchyValidatorIsEffectivelyRootless() {
+        // D-U25: includeRoot=true with a single-level bound hierarchy is a no-op, so validate()
+        // expects the ROOTLESS grammar (class at position 4) — matching what topic() builds.
+        MessageIdentity single = new MessageIdentity(
+                List.of(new MessageIdentity.HierEntry("device", "gw-01")), "opcua-adapter", "main");
+        Uns uns = new Uns(single, true);
+        assertDoesNotThrow(() -> uns.validate(uns.topic(UnsClass.STATE)));
+        assertDoesNotThrow(() -> uns.validate("ecv1/gw-01/opcua-adapter/main/state"));
+        // A rooted-shaped topic is one level too deep for the effective grammar's leaf class.
+        assertEquals(UnsValidationException.Code.CHANNEL_ON_LEAF,
+                codeOf(() -> uns.validate("ecv1/dallas/gw-01/opcua-adapter/state/x")));
     }
 
     // ----- build/validate round-trips -----

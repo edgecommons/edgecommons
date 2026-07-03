@@ -98,6 +98,18 @@ class UnsFilterTest {
                 ROOTLESS.filter(UnsClass.DATA, new UnsScope("dallas", null, null, null)));
     }
 
+    @Test
+    void singleLevelHierarchyFilterHasNoSitePositionEvenWhenRooted() {
+        // D-U25: includeRoot=true with a single-level bound hierarchy is a no-op — the filter
+        // must match the (rootless) topics such a component actually builds.
+        MessageIdentity single = new MessageIdentity(
+                List.of(new MessageIdentity.HierEntry("device", "gw-01")), "opcua-adapter", "main");
+        Uns uns = new Uns(single, true);
+        assertEquals("ecv1/+/+/+/data/#", uns.filter(UnsClass.DATA, UnsScope.all()));
+        assertEquals("ecv1/+/+/+/data/#",
+                uns.filter(UnsClass.DATA, new UnsScope("dallas", null, null, null)));
+    }
+
     // ----- token validation of pinned fields -----
 
     @Test

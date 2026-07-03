@@ -179,8 +179,14 @@ public class GGCommons
             messagingClient.setDefaultRequestTimeout(configManager.getMessagingRequestTimeout());
 
             // §4.1 / D-U24: late-bind the reserved-class guard's topic.includeRoot flag the same
-            // way (default false pre-bind - nothing publishes rooted topics pre-config).
-            messagingClient.setGuardIncludeRoot(configManager.isTopicIncludeRoot());
+            // way (default false pre-bind - nothing publishes rooted topics pre-config). D-U27: bind
+            // the EFFECTIVE root (includeRoot AND a multi-level hierarchy) so the guard's position-5
+            // check agrees with topic-building, which no-ops includeRoot on a single-level hierarchy
+            // (D-U25); otherwise a warned single-level+includeRoot misconfig would false-positive on a
+            // legit app/evt/data channel whose first token is a reserved word.
+            messagingClient.setGuardIncludeRoot(
+                    configManager.isTopicIncludeRoot()
+                            && configManager.getComponentIdentity().getHier().size() >= 2);
 
             // Logging is now (re)configured (the ConfigManager constructor applied the config and
             // reconfigured Log4j2). Re-emit the startup facts that were resolved/connected BEFORE

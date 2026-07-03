@@ -1,0 +1,310 @@
+{
+  "description": "ggcommons UNS golden canonical envelopes - one full canonical JSON envelope per UNS class, pinned uuid/correlation_id/timestamp (D-U13); compare STRUCTURALLY, member order is not normative (D-U22)",
+  "envelopes": [
+    {
+      "name": "state-running",
+      "class": "state",
+      "topic": "ecv1/gw-01/opcua-adapter/main/state",
+      "envelope": {
+        "header": {
+          "name": "state",
+          "version": "1.0",
+          "timestamp": "2026-07-01T12:00:00Z",
+          "uuid": "00000000-0000-4000-8000-000000000101",
+          "correlation_id": "00000000-0000-4000-8000-000000000102"
+        },
+        "identity": {
+          "hier": [
+            {
+              "level": "site",
+              "value": "dallas"
+            },
+            {
+              "level": "factory",
+              "value": "finishing"
+            },
+            {
+              "level": "zone",
+              "value": "zone-3"
+            },
+            {
+              "level": "device",
+              "value": "gw-01"
+            }
+          ],
+          "path": "dallas/finishing/zone-3/gw-01",
+          "component": "opcua-adapter",
+          "instance": "main"
+        },
+        "body": {
+          "status": "RUNNING",
+          "uptimeSecs": 42
+        }
+      }
+    },
+    {
+      "name": "state-stopped",
+      "class": "state",
+      "topic": "ecv1/gw-01/opcua-adapter/main/state",
+      "envelope": {
+        "header": {
+          "name": "state",
+          "version": "1.0",
+          "timestamp": "2026-07-01T12:00:00Z",
+          "uuid": "00000000-0000-4000-8000-000000000201",
+          "correlation_id": "00000000-0000-4000-8000-000000000202"
+        },
+        "identity": {
+          "hier": [
+            {
+              "level": "site",
+              "value": "dallas"
+            },
+            {
+              "level": "factory",
+              "value": "finishing"
+            },
+            {
+              "level": "zone",
+              "value": "zone-3"
+            },
+            {
+              "level": "device",
+              "value": "gw-01"
+            }
+          ],
+          "path": "dallas/finishing/zone-3/gw-01",
+          "component": "opcua-adapter",
+          "instance": "main"
+        },
+        "body": {
+          "status": "STOPPED"
+        }
+      }
+    },
+    {
+      "name": "metric-sys",
+      "class": "metric",
+      "channel": "sys",
+      "topic": "ecv1/gw-01/opcua-adapter/main/metric/sys",
+      "envelope": {
+        "header": {
+          "name": "Metric",
+          "version": "1.0",
+          "timestamp": "2026-07-01T12:00:00Z",
+          "uuid": "00000000-0000-4000-8000-000000000301",
+          "correlation_id": "00000000-0000-4000-8000-000000000302"
+        },
+        "identity": {
+          "hier": [
+            {
+              "level": "device",
+              "value": "gw-01"
+            }
+          ],
+          "path": "gw-01",
+          "component": "opcua-adapter",
+          "instance": "main"
+        },
+        "body": {
+          "name": "sys",
+          "values": {
+            "cpu": 12.5,
+            "memoryUsedPct": 31.4
+          }
+        }
+      }
+    },
+    {
+      "name": "cfg-effective-config",
+      "class": "cfg",
+      "topic": "ecv1/gw-01/opcua-adapter/main/cfg",
+      "envelope": {
+        "header": {
+          "name": "cfg",
+          "version": "1.0",
+          "timestamp": "2026-07-01T12:00:00Z",
+          "uuid": "00000000-0000-4000-8000-000000000401",
+          "correlation_id": "00000000-0000-4000-8000-000000000402"
+        },
+        "identity": {
+          "hier": [
+            {
+              "level": "device",
+              "value": "gw-01"
+            }
+          ],
+          "path": "gw-01",
+          "component": "opcua-adapter",
+          "instance": "main"
+        },
+        "body": {
+          "config": {
+            "component": {
+              "name": "opcua-adapter"
+            },
+            "messaging": {
+              "local": {
+                "credentials": "***"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "log-tail",
+      "class": "log",
+      "channel": "tail",
+      "topic": "ecv1/gw-01/opcua-adapter/main/log/tail",
+      "envelope": {
+        "header": {
+          "name": "log",
+          "version": "1.0",
+          "timestamp": "2026-07-01T12:00:00Z",
+          "uuid": "00000000-0000-4000-8000-000000000501",
+          "correlation_id": "00000000-0000-4000-8000-000000000502"
+        },
+        "identity": {
+          "hier": [
+            {
+              "level": "device",
+              "value": "gw-01"
+            }
+          ],
+          "path": "gw-01",
+          "component": "opcua-adapter",
+          "instance": "main"
+        },
+        "body": {
+          "level": "INFO",
+          "logger": "com.example.App",
+          "message": "component started"
+        }
+      }
+    },
+    {
+      "name": "data-signal",
+      "class": "data",
+      "channel": "temp",
+      "topic": "ecv1/gw-01/opcua-adapter/kep1/data/temp",
+      "envelope": {
+        "header": {
+          "name": "data",
+          "version": "1.0",
+          "timestamp": "2026-07-01T12:00:00Z",
+          "uuid": "00000000-0000-4000-8000-000000000601",
+          "correlation_id": "00000000-0000-4000-8000-000000000602"
+        },
+        "identity": {
+          "hier": [
+            {
+              "level": "device",
+              "value": "gw-01"
+            }
+          ],
+          "path": "gw-01",
+          "component": "opcua-adapter",
+          "instance": "kep1"
+        },
+        "body": {
+          "signalId": "ns=2;s=Line1.Temp",
+          "value": 21.5,
+          "quality": "GOOD"
+        }
+      }
+    },
+    {
+      "name": "evt-door-open",
+      "class": "evt",
+      "channel": "door-open",
+      "topic": "ecv1/gw-01/opcua-adapter/main/evt/door-open",
+      "envelope": {
+        "header": {
+          "name": "evt",
+          "version": "1.0",
+          "timestamp": "2026-07-01T12:00:00Z",
+          "uuid": "00000000-0000-4000-8000-000000000701",
+          "correlation_id": "00000000-0000-4000-8000-000000000702"
+        },
+        "identity": {
+          "hier": [
+            {
+              "level": "device",
+              "value": "gw-01"
+            }
+          ],
+          "path": "gw-01",
+          "component": "opcua-adapter",
+          "instance": "main"
+        },
+        "body": {
+          "event": "door-open",
+          "severity": "info"
+        }
+      }
+    },
+    {
+      "name": "cmd-set-log-level",
+      "class": "cmd",
+      "channel": "set-log-level",
+      "topic": "ecv1/gw-01/opcua-adapter/main/cmd/set-log-level",
+      "envelope": {
+        "header": {
+          "name": "cmd",
+          "version": "1.0",
+          "timestamp": "2026-07-01T12:00:00Z",
+          "uuid": "00000000-0000-4000-8000-000000000801",
+          "correlation_id": "00000000-0000-4000-8000-000000000802"
+        },
+        "identity": {
+          "hier": [
+            {
+              "level": "device",
+              "value": "gw-01"
+            }
+          ],
+          "path": "gw-01",
+          "component": "opcua-adapter",
+          "instance": "main"
+        },
+        "body": {
+          "verb": "set-log-level",
+          "args": {
+            "level": "DEBUG"
+          }
+        }
+      }
+    },
+    {
+      "name": "app-hello",
+      "class": "app",
+      "channel": "hello",
+      "topic": "ecv1/gw-01/opcua-adapter/main/app/hello",
+      "envelope": {
+        "header": {
+          "name": "app",
+          "version": "1.0",
+          "timestamp": "2026-07-01T12:00:00Z",
+          "uuid": "00000000-0000-4000-8000-000000000901",
+          "correlation_id": "00000000-0000-4000-8000-000000000902"
+        },
+        "identity": {
+          "hier": [
+            {
+              "level": "device",
+              "value": "gw-01"
+            }
+          ],
+          "path": "gw-01",
+          "component": "opcua-adapter",
+          "instance": "main"
+        },
+        "body": {
+          "greeting": "hello",
+          "count": 3
+        }
+      }
+    }
+  ]
+}

@@ -125,11 +125,33 @@ class UnsTopicTest {
     }
 
     @Test
-    void includeRootWithSingleLevelHierarchyRepeatsTheDevice() {
-        // §2.2 rule 6 literally inserts hier[0].value; with the zero-config ["device"] hierarchy
-        // that IS the device value.
-        assertEquals("ecv1/gw-01/gw-01/opcua-adapter/main/state",
+    void includeRootWithSingleLevelHierarchyIsANoOp() {
+        // D-U25: with the zero-config ["device"] hierarchy, hier[0] IS the device — prepending
+        // it would duplicate the device level (ecv1/gw-01/gw-01/…), so includeRoot is a no-op.
+        assertEquals("ecv1/gw-01/opcua-adapter/main/state",
                 new Uns(SINGLE, true).topic(UnsClass.STATE));
+        assertEquals("ecv1/gw-01/opcua-adapter/main/data/temp",
+                new Uns(SINGLE, true).topic(UnsClass.DATA, "temp"));
+    }
+
+    @Test
+    void includeRootNoOpRestoresTheRootlessChannelBudget() {
+        // D-U25: the effective root mode is rootless, so the channel budget is 3 tokens again.
+        assertEquals("ecv1/gw-01/opcua-adapter/main/data/a/b/c",
+                new Uns(SINGLE, true).topic(UnsClass.DATA, "a/b/c"));
+        assertEquals(UnsValidationException.Code.DEPTH_EXCEEDED,
+                codeOf(() -> new Uns(SINGLE, true).topic(UnsClass.DATA, "a/b/c/d")));
+    }
+
+    @Test
+    void topicForSingleLevelTargetUnderARootedInstanceIsAlsoANoOp() {
+        // D-U25 is a property of the identity being minted: a rooted (multi-level) component
+        // addressing a single-level-hierarchy peer must not duplicate the peer's device.
+        MessageIdentity peer = new MessageIdentity(
+                List.of(new MessageIdentity.HierEntry("device", "gw-02")),
+                "modbus-adapter", "main");
+        assertEquals("ecv1/gw-02/modbus-adapter/main/cmd/set-config",
+                ROOTED.topicFor(peer, UnsClass.CMD, "set-config"));
     }
 
     // ----- leaf / channel rules -----
@@ -173,13 +195,23 @@ class UnsTopicTest {
                 codeOf(() -> ROOTLESS.topic(UnsClass.DATA, "#")));
         assertEquals(UnsValidationException.Code.BAD_CHAR,
                 codeOf(() -> ROOTLESS.topic(UnsClass.DATA, "a\\b")));
-        // Control characters: U+0000-U+001F and U+007F (DEL).
+        // ISO control characters (D-U26, the exact sanitizer predicate): C0 U+0000-U+001F,
+        // U+007F (DEL), AND C1 U+0080-U+009F.
         assertEquals(UnsValidationException.Code.BAD_CHAR,
                 codeOf(() -> ROOTLESS.topic(UnsClass.DATA, "a" + (char) 0x01 + "b")));
         assertEquals(UnsValidationException.Code.BAD_CHAR,
                 codeOf(() -> ROOTLESS.topic(UnsClass.DATA, "a" + (char) 0x7F + "b")));
         assertEquals(UnsValidationException.Code.BAD_CHAR,
                 codeOf(() -> ROOTLESS.topic(UnsClass.DATA, "a\nb")));
+        assertEquals(UnsValidationException.Code.BAD_CHAR,
+                codeOf(() -> ROOTLESS.topic(UnsClass.DATA, "a" + (char) 0x80 + "b")));
+        assertEquals(UnsValidationException.Code.BAD_CHAR,
+                codeOf(() -> ROOTLESS.topic(UnsClass.DATA, "a" + (char) 0x85 + "b"))); // NEL
+        assertEquals(UnsValidationException.Code.BAD_CHAR,
+                codeOf(() -> ROOTLESS.topic(UnsClass.DATA, "a" + (char) 0x9F + "b")));
+        // The first char OUTSIDE the C1 range (U+00A0 NBSP) must pass again (the boundary).
+        assertEquals("ecv1/gw-01/opcua-adapter/main/data/a" + (char) 0xA0 + "b",
+                ROOTLESS.topic(UnsClass.DATA, "a" + (char) 0xA0 + "b"));
     }
 
     @Test

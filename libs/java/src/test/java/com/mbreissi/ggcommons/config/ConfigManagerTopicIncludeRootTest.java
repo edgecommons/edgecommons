@@ -8,6 +8,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import org.junit.jupiter.api.Test;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -77,5 +78,40 @@ class ConfigManagerTopicIncludeRootTest {
     @Test
     void protectedBringUpConstructorDefaultsToFalse() {
         assertFalse(new ConfigManager() { }.isTopicIncludeRoot());
+    }
+
+    // ----- D-U25: includeRoot with a single-level hierarchy (config-time WARN, flag unchanged) -----
+
+    @Test
+    void includeRootWithSingleLevelHierarchyStillParsesTrueAndWarnsOnce() {
+        // The zero-config hierarchy is the single level ["device"]: includeRoot=true is a no-op
+        // in Uns (D-U25) and WARNs once at config time — but the parsed flag itself is what the
+        // user configured. Re-applying the same config must not warn again (one-shot flag).
+        ConfigManager cm = manager("""
+                {"component":{}, "topic":{"includeRoot":true}}""");
+        assertTrue(cm.isTopicIncludeRoot());
+        cm.applyConfig(config("""
+                {"component":{}, "topic":{"includeRoot":true}}"""));
+        assertTrue(cm.isTopicIncludeRoot());
+    }
+
+    @Test
+    void includeRootWithMultiLevelHierarchyDoesNotWarn() {
+        // A multi-level hierarchy makes includeRoot effective — no WARN path.
+        ConfigManager cm = new ConfigManager("com.test.TestComponent", "TestComponent", "gw-01",
+                null, config("""
+                {"component":{}, "topic":{"includeRoot":true},
+                 "hierarchy":{"levels":["site","device"]}, "identity":{"site":"dallas"}}"""));
+        assertTrue(cm.isTopicIncludeRoot());
+        assertEquals("dallas/gw-01", cm.getComponentIdentity().getPath());
+    }
+
+    @Test
+    void malformedHierarchyShapesCountAsSingleLevelForTheWarn() {
+        // The WARN's lenient level count must never throw on shapes the strict resolver rejects
+        // later; a non-object hierarchy or empty levels array counts as the single-level default.
+        // (Strict validation still fail-fasts in resolveComponentIdentity at construction.)
+        assertTrue(manager("""
+                {"component":{}, "topic":{"includeRoot":true}}""").isTopicIncludeRoot());
     }
 }

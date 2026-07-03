@@ -20,7 +20,11 @@ public class UnsValidationException extends IllegalArgumentException {
     public enum Code {
         /** A topic level / channel token / instance id is empty (or the whole topic is). */
         EMPTY_TOKEN,
-        /** A token contains a blacklisted character: {@code / + # \} or a control character (U+0000–U+001F, U+007F). */
+        /**
+         * A token contains a blacklisted character: {@code / + # \} or an ISO control character
+         * ({@link Character#isISOControl(char)} — C0 U+0000–U+001F, U+007F, and C1 U+0080–U+009F;
+         * the exact {@code ConfigManager.sanitize} predicate, D‑U26).
+         */
         BAD_CHAR,
         /** A token contains the path-traversal sequence {@code ..}. */
         TRAVERSAL,

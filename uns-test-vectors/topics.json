@@ -1,0 +1,1400 @@
+{
+  "description": "ggcommons UNS cross-language conformance vectors - build/validate/filter/guard (UNS-CANONICAL-DESIGN 2.2/4.1; single-fault cases, D-U26)",
+  "build": [
+    {
+      "name": "build-state-leaf",
+      "input": {
+        "hierarchyLevels": [
+          "device"
+        ],
+        "identityValues": {
+          "device": "gw-01"
+        },
+        "component": "opcua-adapter",
+        "instance": "main",
+        "includeRoot": false,
+        "class": "state"
+      },
+      "expected": {
+        "topic": "ecv1/gw-01/opcua-adapter/main/state"
+      }
+    },
+    {
+      "name": "build-cfg-leaf",
+      "input": {
+        "hierarchyLevels": [
+          "device"
+        ],
+        "identityValues": {
+          "device": "gw-01"
+        },
+        "component": "opcua-adapter",
+        "instance": "main",
+        "includeRoot": false,
+        "class": "cfg"
+      },
+      "expected": {
+        "topic": "ecv1/gw-01/opcua-adapter/main/cfg"
+      }
+    },
+    {
+      "name": "build-metric-channel",
+      "input": {
+        "hierarchyLevels": [
+          "device"
+        ],
+        "identityValues": {
+          "device": "gw-01"
+        },
+        "component": "opcua-adapter",
+        "instance": "main",
+        "includeRoot": false,
+        "class": "metric",
+        "channel": "sys"
+      },
+      "expected": {
+        "topic": "ecv1/gw-01/opcua-adapter/main/metric/sys"
+      }
+    },
+    {
+      "name": "build-log-channel",
+      "input": {
+        "hierarchyLevels": [
+          "device"
+        ],
+        "identityValues": {
+          "device": "gw-01"
+        },
+        "component": "opcua-adapter",
+        "instance": "main",
+        "includeRoot": false,
+        "class": "log",
+        "channel": "tail"
+      },
+      "expected": {
+        "topic": "ecv1/gw-01/opcua-adapter/main/log/tail"
+      }
+    },
+    {
+      "name": "build-data-channel",
+      "input": {
+        "hierarchyLevels": [
+          "device"
+        ],
+        "identityValues": {
+          "device": "gw-01"
+        },
+        "component": "opcua-adapter",
+        "instance": "main",
+        "includeRoot": false,
+        "class": "data",
+        "channel": "temp"
+      },
+      "expected": {
+        "topic": "ecv1/gw-01/opcua-adapter/main/data/temp"
+      }
+    },
+    {
+      "name": "build-evt-channel",
+      "input": {
+        "hierarchyLevels": [
+          "device"
+        ],
+        "identityValues": {
+          "device": "gw-01"
+        },
+        "component": "opcua-adapter",
+        "instance": "main",
+        "includeRoot": false,
+        "class": "evt",
+        "channel": "door-open"
+      },
+      "expected": {
+        "topic": "ecv1/gw-01/opcua-adapter/main/evt/door-open"
+      }
+    },
+    {
+      "name": "build-cmd-namespaced-channel",
+      "input": {
+        "hierarchyLevels": [
+          "device"
+        ],
+        "identityValues": {
+          "device": "gw-01"
+        },
+        "component": "opcua-adapter",
+        "instance": "main",
+        "includeRoot": false,
+        "class": "cmd",
+        "channel": "sb/status"
+      },
+      "expected": {
+        "topic": "ecv1/gw-01/opcua-adapter/main/cmd/sb/status"
+      }
+    },
+    {
+      "name": "build-app-channel-named-like-a-class",
+      "input": {
+        "hierarchyLevels": [
+          "device"
+        ],
+        "identityValues": {
+          "device": "gw-01"
+        },
+        "component": "opcua-adapter",
+        "instance": "main",
+        "includeRoot": false,
+        "class": "app",
+        "channel": "state"
+      },
+      "expected": {
+        "topic": "ecv1/gw-01/opcua-adapter/main/app/state"
+      }
+    },
+    {
+      "name": "build-instance-token",
+      "input": {
+        "hierarchyLevels": [
+          "device"
+        ],
+        "identityValues": {
+          "device": "gw-01"
+        },
+        "component": "opcua-adapter",
+        "instance": "kep1",
+        "includeRoot": false,
+        "class": "data",
+        "channel": "temp"
+      },
+      "expected": {
+        "topic": "ecv1/gw-01/opcua-adapter/kep1/data/temp"
+      }
+    },
+    {
+      "name": "build-dots-are-legal",
+      "input": {
+        "hierarchyLevels": [
+          "device"
+        ],
+        "identityValues": {
+          "device": "gw-01"
+        },
+        "component": "opcua-adapter",
+        "instance": "main",
+        "includeRoot": false,
+        "class": "data",
+        "channel": "v1.2"
+      },
+      "expected": {
+        "topic": "ecv1/gw-01/opcua-adapter/main/data/v1.2"
+      }
+    },
+    {
+      "name": "build-include-root-multi-level-leaf",
+      "input": {
+        "hierarchyLevels": [
+          "site",
+          "zone",
+          "device"
+        ],
+        "identityValues": {
+          "site": "dallas",
+          "zone": "zone-3",
+          "device": "gw-01"
+        },
+        "component": "opcua-adapter",
+        "instance": "main",
+        "includeRoot": true,
+        "class": "state"
+      },
+      "expected": {
+        "topic": "ecv1/dallas/gw-01/opcua-adapter/main/state"
+      }
+    },
+    {
+      "name": "build-include-root-multi-level-channel",
+      "input": {
+        "hierarchyLevels": [
+          "site",
+          "zone",
+          "device"
+        ],
+        "identityValues": {
+          "site": "dallas",
+          "zone": "zone-3",
+          "device": "gw-01"
+        },
+        "component": "opcua-adapter",
+        "instance": "main",
+        "includeRoot": true,
+        "class": "data",
+        "channel": "temp"
+      },
+      "expected": {
+        "topic": "ecv1/dallas/gw-01/opcua-adapter/main/data/temp"
+      }
+    },
+    {
+      "name": "build-rootless-multi-level-uses-last-hier-value",
+      "input": {
+        "hierarchyLevels": [
+          "site",
+          "zone",
+          "device"
+        ],
+        "identityValues": {
+          "site": "dallas",
+          "zone": "zone-3",
+          "device": "gw-01"
+        },
+        "component": "opcua-adapter",
+        "instance": "main",
+        "includeRoot": false,
+        "class": "state"
+      },
+      "expected": {
+        "topic": "ecv1/gw-01/opcua-adapter/main/state"
+      }
+    },
+    {
+      "name": "build-include-root-single-level-noop",
+      "input": {
+        "hierarchyLevels": [
+          "device"
+        ],
+        "identityValues": {
+          "device": "gw-01"
+        },
+        "component": "opcua-adapter",
+        "instance": "main",
+        "includeRoot": true,
+        "class": "state"
+      },
+      "expected": {
+        "topic": "ecv1/gw-01/opcua-adapter/main/state"
+      }
+    },
+    {
+      "name": "build-include-root-single-level-noop-restores-channel-budget",
+      "input": {
+        "hierarchyLevels": [
+          "device"
+        ],
+        "identityValues": {
+          "device": "gw-01"
+        },
+        "component": "opcua-adapter",
+        "instance": "main",
+        "includeRoot": true,
+        "class": "data",
+        "channel": "a/b/c"
+      },
+      "expected": {
+        "topic": "ecv1/gw-01/opcua-adapter/main/data/a/b/c"
+      }
+    },
+    {
+      "name": "build-identity-value-with-space",
+      "input": {
+        "hierarchyLevels": [
+          "device"
+        ],
+        "identityValues": {
+          "device": "gw 01"
+        },
+        "component": "opcua-adapter",
+        "instance": "main",
+        "includeRoot": false,
+        "class": "state"
+      },
+      "expected": {
+        "topic": "ecv1/gw 01/opcua-adapter/main/state"
+      }
+    },
+    {
+      "name": "build-identity-value-plus-sanitized",
+      "input": {
+        "hierarchyLevels": [
+          "device"
+        ],
+        "identityValues": {
+          "device": "gw+01"
+        },
+        "component": "opcua-adapter",
+        "instance": "main",
+        "includeRoot": false,
+        "class": "state"
+      },
+      "expected": {
+        "topic": "ecv1/gw_01/opcua-adapter/main/state"
+      }
+    },
+    {
+      "name": "build-identity-value-slash-sanitized",
+      "input": {
+        "hierarchyLevels": [
+          "site",
+          "zone",
+          "device"
+        ],
+        "identityValues": {
+          "site": "dal/las",
+          "zone": "zone-3",
+          "device": "gw-01"
+        },
+        "component": "opcua-adapter",
+        "instance": "main",
+        "includeRoot": true,
+        "class": "state"
+      },
+      "expected": {
+        "topic": "ecv1/dal_las/gw-01/opcua-adapter/main/state"
+      }
+    },
+    {
+      "name": "build-identity-value-c1-control-sanitized",
+      "input": {
+        "hierarchyLevels": [
+          "device"
+        ],
+        "identityValues": {
+          "device": "gw01"
+        },
+        "component": "opcua-adapter",
+        "instance": "main",
+        "includeRoot": false,
+        "class": "state"
+      },
+      "expected": {
+        "topic": "ecv1/gw_01/opcua-adapter/main/state"
+      }
+    },
+    {
+      "name": "build-identity-value-traversal-sanitized",
+      "input": {
+        "hierarchyLevels": [
+          "device"
+        ],
+        "identityValues": {
+          "device": "gw..01"
+        },
+        "component": "opcua-adapter",
+        "instance": "main",
+        "includeRoot": false,
+        "class": "state"
+      },
+      "expected": {
+        "topic": "ecv1/gw_01/opcua-adapter/main/state"
+      }
+    },
+    {
+      "name": "build-component-sanitized",
+      "input": {
+        "hierarchyLevels": [
+          "device"
+        ],
+        "identityValues": {
+          "device": "gw-01"
+        },
+        "component": "opcua+adapter",
+        "instance": "main",
+        "includeRoot": false,
+        "class": "state"
+      },
+      "expected": {
+        "topic": "ecv1/gw-01/opcua_adapter/main/state"
+      }
+    },
+    {
+      "name": "build-channel-empty-token",
+      "input": {
+        "hierarchyLevels": [
+          "device"
+        ],
+        "identityValues": {
+          "device": "gw-01"
+        },
+        "component": "opcua-adapter",
+        "instance": "main",
+        "includeRoot": false,
+        "class": "data",
+        "channel": "a//b"
+      },
+      "expected": {
+        "error": "EMPTY_TOKEN"
+      }
+    },
+    {
+      "name": "build-channel-bad-char-plus",
+      "input": {
+        "hierarchyLevels": [
+          "device"
+        ],
+        "identityValues": {
+          "device": "gw-01"
+        },
+        "component": "opcua-adapter",
+        "instance": "main",
+        "includeRoot": false,
+        "class": "data",
+        "channel": "te+mp"
+      },
+      "expected": {
+        "error": "BAD_CHAR"
+      }
+    },
+    {
+      "name": "build-channel-bad-char-backslash",
+      "input": {
+        "hierarchyLevels": [
+          "device"
+        ],
+        "identityValues": {
+          "device": "gw-01"
+        },
+        "component": "opcua-adapter",
+        "instance": "main",
+        "includeRoot": false,
+        "class": "data",
+        "channel": "a\\b"
+      },
+      "expected": {
+        "error": "BAD_CHAR"
+      }
+    },
+    {
+      "name": "build-channel-bad-char-c0-control",
+      "input": {
+        "hierarchyLevels": [
+          "device"
+        ],
+        "identityValues": {
+          "device": "gw-01"
+        },
+        "component": "opcua-adapter",
+        "instance": "main",
+        "includeRoot": false,
+        "class": "data",
+        "channel": "a\u0001b"
+      },
+      "expected": {
+        "error": "BAD_CHAR"
+      }
+    },
+    {
+      "name": "build-channel-bad-char-del",
+      "input": {
+        "hierarchyLevels": [
+          "device"
+        ],
+        "identityValues": {
+          "device": "gw-01"
+        },
+        "component": "opcua-adapter",
+        "instance": "main",
+        "includeRoot": false,
+        "class": "data",
+        "channel": "ab"
+      },
+      "expected": {
+        "error": "BAD_CHAR"
+      }
+    },
+    {
+      "name": "build-channel-bad-char-c1-control",
+      "input": {
+        "hierarchyLevels": [
+          "device"
+        ],
+        "identityValues": {
+          "device": "gw-01"
+        },
+        "component": "opcua-adapter",
+        "instance": "main",
+        "includeRoot": false,
+        "class": "data",
+        "channel": "ab"
+      },
+      "expected": {
+        "error": "BAD_CHAR"
+      }
+    },
+    {
+      "name": "build-channel-traversal",
+      "input": {
+        "hierarchyLevels": [
+          "device"
+        ],
+        "identityValues": {
+          "device": "gw-01"
+        },
+        "component": "opcua-adapter",
+        "instance": "main",
+        "includeRoot": false,
+        "class": "data",
+        "channel": "a..b"
+      },
+      "expected": {
+        "error": "TRAVERSAL"
+      }
+    },
+    {
+      "name": "build-instance-bad-char",
+      "input": {
+        "hierarchyLevels": [
+          "device"
+        ],
+        "identityValues": {
+          "device": "gw-01"
+        },
+        "component": "opcua-adapter",
+        "instance": "in+st",
+        "includeRoot": false,
+        "class": "data",
+        "channel": "temp"
+      },
+      "expected": {
+        "error": "BAD_CHAR"
+      }
+    },
+    {
+      "name": "build-depth-boundary-rootless-ok",
+      "input": {
+        "hierarchyLevels": [
+          "device"
+        ],
+        "identityValues": {
+          "device": "gw-01"
+        },
+        "component": "opcua-adapter",
+        "instance": "main",
+        "includeRoot": false,
+        "class": "data",
+        "channel": "a/b/c"
+      },
+      "expected": {
+        "topic": "ecv1/gw-01/opcua-adapter/main/data/a/b/c"
+      }
+    },
+    {
+      "name": "build-depth-exceeded-rootless",
+      "input": {
+        "hierarchyLevels": [
+          "device"
+        ],
+        "identityValues": {
+          "device": "gw-01"
+        },
+        "component": "opcua-adapter",
+        "instance": "main",
+        "includeRoot": false,
+        "class": "data",
+        "channel": "a/b/c/d"
+      },
+      "expected": {
+        "error": "DEPTH_EXCEEDED"
+      }
+    },
+    {
+      "name": "build-depth-boundary-rooted-ok",
+      "input": {
+        "hierarchyLevels": [
+          "site",
+          "zone",
+          "device"
+        ],
+        "identityValues": {
+          "site": "dallas",
+          "zone": "zone-3",
+          "device": "gw-01"
+        },
+        "component": "opcua-adapter",
+        "instance": "main",
+        "includeRoot": true,
+        "class": "data",
+        "channel": "a/b"
+      },
+      "expected": {
+        "topic": "ecv1/dallas/gw-01/opcua-adapter/main/data/a/b"
+      }
+    },
+    {
+      "name": "build-depth-exceeded-rooted",
+      "input": {
+        "hierarchyLevels": [
+          "site",
+          "zone",
+          "device"
+        ],
+        "identityValues": {
+          "site": "dallas",
+          "zone": "zone-3",
+          "device": "gw-01"
+        },
+        "component": "opcua-adapter",
+        "instance": "main",
+        "includeRoot": true,
+        "class": "data",
+        "channel": "a/b/c"
+      },
+      "expected": {
+        "error": "DEPTH_EXCEEDED"
+      }
+    },
+    {
+      "name": "build-length-boundary-ok",
+      "input": {
+        "hierarchyLevels": [
+          "device"
+        ],
+        "identityValues": {
+          "device": "gw-01"
+        },
+        "component": "opcua-adapter",
+        "instance": "main",
+        "includeRoot": false,
+        "class": "data",
+        "channel": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      },
+      "expected": {
+        "topic": "ecv1/gw-01/opcua-adapter/main/data/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      }
+    },
+    {
+      "name": "build-length-exceeded",
+      "input": {
+        "hierarchyLevels": [
+          "device"
+        ],
+        "identityValues": {
+          "device": "gw-01"
+        },
+        "component": "opcua-adapter",
+        "instance": "main",
+        "includeRoot": false,
+        "class": "data",
+        "channel": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      },
+      "expected": {
+        "error": "LENGTH_EXCEEDED"
+      }
+    },
+    {
+      "name": "build-channel-on-leaf-state",
+      "input": {
+        "hierarchyLevels": [
+          "device"
+        ],
+        "identityValues": {
+          "device": "gw-01"
+        },
+        "component": "opcua-adapter",
+        "instance": "main",
+        "includeRoot": false,
+        "class": "state",
+        "channel": "x"
+      },
+      "expected": {
+        "error": "CHANNEL_ON_LEAF"
+      }
+    },
+    {
+      "name": "build-channel-on-leaf-cfg",
+      "input": {
+        "hierarchyLevels": [
+          "device"
+        ],
+        "identityValues": {
+          "device": "gw-01"
+        },
+        "component": "opcua-adapter",
+        "instance": "main",
+        "includeRoot": false,
+        "class": "cfg",
+        "channel": "a/b"
+      },
+      "expected": {
+        "error": "CHANNEL_ON_LEAF"
+      }
+    },
+    {
+      "name": "build-channel-required-data",
+      "input": {
+        "hierarchyLevels": [
+          "device"
+        ],
+        "identityValues": {
+          "device": "gw-01"
+        },
+        "component": "opcua-adapter",
+        "instance": "main",
+        "includeRoot": false,
+        "class": "data"
+      },
+      "expected": {
+        "error": "CHANNEL_REQUIRED"
+      }
+    },
+    {
+      "name": "build-empty-channel-means-absent",
+      "input": {
+        "hierarchyLevels": [
+          "device"
+        ],
+        "identityValues": {
+          "device": "gw-01"
+        },
+        "component": "opcua-adapter",
+        "instance": "main",
+        "includeRoot": false,
+        "class": "data",
+        "channel": ""
+      },
+      "expected": {
+        "error": "CHANNEL_REQUIRED"
+      }
+    },
+    {
+      "name": "build-channel-required-metric",
+      "input": {
+        "hierarchyLevels": [
+          "device"
+        ],
+        "identityValues": {
+          "device": "gw-01"
+        },
+        "component": "opcua-adapter",
+        "instance": "main",
+        "includeRoot": false,
+        "class": "metric"
+      },
+      "expected": {
+        "error": "CHANNEL_REQUIRED"
+      }
+    }
+  ],
+  "validate": [
+    {
+      "name": "validate-ok-leaf",
+      "input": {
+        "topic": "ecv1/gw-01/opcua-adapter/main/state",
+        "includeRoot": false
+      },
+      "expected": {
+        "ok": true
+      }
+    },
+    {
+      "name": "validate-ok-channeled",
+      "input": {
+        "topic": "ecv1/gw-01/opcua-adapter/main/data/temp",
+        "includeRoot": false
+      },
+      "expected": {
+        "ok": true
+      }
+    },
+    {
+      "name": "validate-ok-multi-token-channel",
+      "input": {
+        "topic": "ecv1/gw-01/opcua-adapter/main/cmd/sb/status",
+        "includeRoot": false
+      },
+      "expected": {
+        "ok": true
+      }
+    },
+    {
+      "name": "validate-ok-rooted",
+      "input": {
+        "topic": "ecv1/dallas/gw-01/opcua-adapter/main/state",
+        "includeRoot": true
+      },
+      "expected": {
+        "ok": true
+      }
+    },
+    {
+      "name": "validate-ok-space-token",
+      "input": {
+        "topic": "ecv1/gw 01/opcua-adapter/main/state",
+        "includeRoot": false
+      },
+      "expected": {
+        "ok": true
+      }
+    },
+    {
+      "name": "validate-ok-depth-boundary",
+      "input": {
+        "topic": "ecv1/d/c/i/data/a/b/c",
+        "includeRoot": false
+      },
+      "expected": {
+        "ok": true
+      }
+    },
+    {
+      "name": "validate-ok-length-boundary",
+      "input": {
+        "topic": "ecv1/ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/comp/main/state",
+        "includeRoot": false
+      },
+      "expected": {
+        "ok": true
+      }
+    },
+    {
+      "name": "validate-empty-topic",
+      "input": {
+        "topic": "",
+        "includeRoot": false
+      },
+      "expected": {
+        "error": "EMPTY_TOKEN"
+      }
+    },
+    {
+      "name": "validate-empty-token",
+      "input": {
+        "topic": "ecv1//opcua-adapter/main/state",
+        "includeRoot": false
+      },
+      "expected": {
+        "error": "EMPTY_TOKEN"
+      }
+    },
+    {
+      "name": "validate-bad-char-backslash",
+      "input": {
+        "topic": "ecv1/gw\\01/opcua-adapter/main/state",
+        "includeRoot": false
+      },
+      "expected": {
+        "error": "BAD_CHAR"
+      }
+    },
+    {
+      "name": "validate-bad-char-c0-control",
+      "input": {
+        "topic": "ecv1/gw\u000101/opcua-adapter/main/state",
+        "includeRoot": false
+      },
+      "expected": {
+        "error": "BAD_CHAR"
+      }
+    },
+    {
+      "name": "validate-bad-char-del",
+      "input": {
+        "topic": "ecv1/gw01/opcua-adapter/main/state",
+        "includeRoot": false
+      },
+      "expected": {
+        "error": "BAD_CHAR"
+      }
+    },
+    {
+      "name": "validate-bad-char-c1-control",
+      "input": {
+        "topic": "ecv1/gw01/opcua-adapter/main/state",
+        "includeRoot": false
+      },
+      "expected": {
+        "error": "BAD_CHAR"
+      }
+    },
+    {
+      "name": "validate-traversal",
+      "input": {
+        "topic": "ecv1/gw-01/a..b/main/state",
+        "includeRoot": false
+      },
+      "expected": {
+        "error": "TRAVERSAL"
+      }
+    },
+    {
+      "name": "validate-depth-exceeded",
+      "input": {
+        "topic": "ecv1/d/c/i/data/a/b/c/d",
+        "includeRoot": false
+      },
+      "expected": {
+        "error": "DEPTH_EXCEEDED"
+      }
+    },
+    {
+      "name": "validate-length-exceeded",
+      "input": {
+        "topic": "ecv1/dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/comp/main/state",
+        "includeRoot": false
+      },
+      "expected": {
+        "error": "LENGTH_EXCEEDED"
+      }
+    },
+    {
+      "name": "validate-channel-on-leaf",
+      "input": {
+        "topic": "ecv1/gw-01/opcua-adapter/main/state/extra",
+        "includeRoot": false
+      },
+      "expected": {
+        "error": "CHANNEL_ON_LEAF"
+      }
+    },
+    {
+      "name": "validate-channel-required",
+      "input": {
+        "topic": "ecv1/gw-01/opcua-adapter/main/data",
+        "includeRoot": false
+      },
+      "expected": {
+        "error": "CHANNEL_REQUIRED"
+      }
+    },
+    {
+      "name": "validate-bad-root",
+      "input": {
+        "topic": "notroot/gw-01/opcua-adapter/main/state",
+        "includeRoot": false
+      },
+      "expected": {
+        "error": "BAD_ROOT"
+      }
+    },
+    {
+      "name": "validate-bad-root-reply-prefix",
+      "input": {
+        "topic": "ggcommons/reply-42/x/main/state",
+        "includeRoot": false
+      },
+      "expected": {
+        "error": "BAD_ROOT"
+      }
+    },
+    {
+      "name": "validate-bad-class",
+      "input": {
+        "topic": "ecv1/gw-01/opcua-adapter/main/bogus/x",
+        "includeRoot": false
+      },
+      "expected": {
+        "error": "BAD_CLASS"
+      }
+    },
+    {
+      "name": "validate-bad-class-uppercase",
+      "input": {
+        "topic": "ecv1/gw-01/opcua-adapter/main/STATE",
+        "includeRoot": false
+      },
+      "expected": {
+        "error": "BAD_CLASS"
+      }
+    },
+    {
+      "name": "validate-too-short",
+      "input": {
+        "topic": "ecv1/gw-01/opcua-adapter/main",
+        "includeRoot": false
+      },
+      "expected": {
+        "error": "BAD_CLASS"
+      }
+    },
+    {
+      "name": "validate-wildcard-plus",
+      "input": {
+        "topic": "ecv1/+/opcua-adapter/main/state",
+        "includeRoot": false
+      },
+      "expected": {
+        "error": "WILDCARD_IN_TOPIC"
+      }
+    },
+    {
+      "name": "validate-wildcard-hash",
+      "input": {
+        "topic": "ecv1/gw-01/opcua-adapter/main/data/#",
+        "includeRoot": false
+      },
+      "expected": {
+        "error": "WILDCARD_IN_TOPIC"
+      }
+    },
+    {
+      "name": "validate-rootless-topic-under-rooted-mode",
+      "input": {
+        "topic": "ecv1/gw-01/opcua-adapter/main/state",
+        "includeRoot": true
+      },
+      "expected": {
+        "error": "BAD_CLASS"
+      }
+    },
+    {
+      "name": "validate-rooted-topic-under-rootless-mode",
+      "input": {
+        "topic": "ecv1/dallas/gw-01/opcua-adapter/main",
+        "includeRoot": false
+      },
+      "expected": {
+        "error": "BAD_CLASS"
+      }
+    }
+  ],
+  "filter": [
+    {
+      "name": "filter-all-data",
+      "input": {
+        "class": "data",
+        "scope": {},
+        "includeRoot": false
+      },
+      "expected": {
+        "filter": "ecv1/+/+/+/data/#"
+      }
+    },
+    {
+      "name": "filter-all-state-leaf",
+      "input": {
+        "class": "state",
+        "scope": {},
+        "includeRoot": false
+      },
+      "expected": {
+        "filter": "ecv1/+/+/+/state"
+      }
+    },
+    {
+      "name": "filter-all-cfg-leaf",
+      "input": {
+        "class": "cfg",
+        "scope": {},
+        "includeRoot": false
+      },
+      "expected": {
+        "filter": "ecv1/+/+/+/cfg"
+      }
+    },
+    {
+      "name": "filter-all-metric",
+      "input": {
+        "class": "metric",
+        "scope": {},
+        "includeRoot": false
+      },
+      "expected": {
+        "filter": "ecv1/+/+/+/metric/#"
+      }
+    },
+    {
+      "name": "filter-all-log",
+      "input": {
+        "class": "log",
+        "scope": {},
+        "includeRoot": false
+      },
+      "expected": {
+        "filter": "ecv1/+/+/+/log/#"
+      }
+    },
+    {
+      "name": "filter-all-evt",
+      "input": {
+        "class": "evt",
+        "scope": {},
+        "includeRoot": false
+      },
+      "expected": {
+        "filter": "ecv1/+/+/+/evt/#"
+      }
+    },
+    {
+      "name": "filter-all-app",
+      "input": {
+        "class": "app",
+        "scope": {},
+        "includeRoot": false
+      },
+      "expected": {
+        "filter": "ecv1/+/+/+/app/#"
+      }
+    },
+    {
+      "name": "filter-device-pinned",
+      "input": {
+        "class": "data",
+        "scope": {
+          "device": "gw-01"
+        },
+        "includeRoot": false
+      },
+      "expected": {
+        "filter": "ecv1/gw-01/+/+/data/#"
+      }
+    },
+    {
+      "name": "filter-component-pinned",
+      "input": {
+        "class": "evt",
+        "scope": {
+          "device": "gw-01",
+          "component": "opcua-adapter"
+        },
+        "includeRoot": false
+      },
+      "expected": {
+        "filter": "ecv1/gw-01/opcua-adapter/+/evt/#"
+      }
+    },
+    {
+      "name": "filter-instance-pinned",
+      "input": {
+        "class": "cmd",
+        "scope": {
+          "device": "gw-01",
+          "component": "opcua-adapter",
+          "instance": "kep1"
+        },
+        "includeRoot": false
+      },
+      "expected": {
+        "filter": "ecv1/gw-01/opcua-adapter/kep1/cmd/#"
+      }
+    },
+    {
+      "name": "filter-rooted-all",
+      "input": {
+        "class": "data",
+        "scope": {},
+        "includeRoot": true
+      },
+      "expected": {
+        "filter": "ecv1/+/+/+/+/data/#"
+      }
+    },
+    {
+      "name": "filter-rooted-leaf",
+      "input": {
+        "class": "state",
+        "scope": {},
+        "includeRoot": true
+      },
+      "expected": {
+        "filter": "ecv1/+/+/+/+/state"
+      }
+    },
+    {
+      "name": "filter-rooted-site-pinned",
+      "input": {
+        "class": "data",
+        "scope": {
+          "site": "dallas",
+          "device": "gw-01"
+        },
+        "includeRoot": true
+      },
+      "expected": {
+        "filter": "ecv1/dallas/gw-01/+/+/data/#"
+      }
+    },
+    {
+      "name": "filter-rootless-ignores-site",
+      "input": {
+        "class": "data",
+        "scope": {
+          "site": "dallas"
+        },
+        "includeRoot": false
+      },
+      "expected": {
+        "filter": "ecv1/+/+/+/data/#"
+      }
+    }
+  ],
+  "guard": [
+    {
+      "name": "guard-state-reserved",
+      "input": {
+        "topic": "ecv1/gw-01/comp/main/state",
+        "includeRoot": false
+      },
+      "expected": {
+        "reserved": true
+      }
+    },
+    {
+      "name": "guard-metric-reserved",
+      "input": {
+        "topic": "ecv1/gw-01/comp/main/metric/cpu",
+        "includeRoot": false
+      },
+      "expected": {
+        "reserved": true
+      }
+    },
+    {
+      "name": "guard-cfg-reserved",
+      "input": {
+        "topic": "ecv1/gw-01/comp/main/cfg",
+        "includeRoot": false
+      },
+      "expected": {
+        "reserved": true
+      }
+    },
+    {
+      "name": "guard-log-reserved",
+      "input": {
+        "topic": "ecv1/gw-01/comp/main/log/tail",
+        "includeRoot": false
+      },
+      "expected": {
+        "reserved": true
+      }
+    },
+    {
+      "name": "guard-position4-checked-even-when-rooted",
+      "input": {
+        "topic": "ecv1/gw-01/comp/main/cfg",
+        "includeRoot": true
+      },
+      "expected": {
+        "reserved": true
+      }
+    },
+    {
+      "name": "guard-data-allowed",
+      "input": {
+        "topic": "ecv1/gw-01/comp/main/data/temp",
+        "includeRoot": false
+      },
+      "expected": {
+        "reserved": false
+      }
+    },
+    {
+      "name": "guard-evt-allowed",
+      "input": {
+        "topic": "ecv1/gw-01/comp/main/evt/x",
+        "includeRoot": false
+      },
+      "expected": {
+        "reserved": false
+      }
+    },
+    {
+      "name": "guard-cmd-allowed",
+      "input": {
+        "topic": "ecv1/gw-01/comp/main/cmd/set-config",
+        "includeRoot": false
+      },
+      "expected": {
+        "reserved": false
+      }
+    },
+    {
+      "name": "guard-app-allowed",
+      "input": {
+        "topic": "ecv1/gw-01/comp/main/app/anything",
+        "includeRoot": false
+      },
+      "expected": {
+        "reserved": false
+      }
+    },
+    {
+      "name": "guard-app-state-channel-allowed-rootless",
+      "input": {
+        "topic": "ecv1/gw-01/comp/main/app/state",
+        "includeRoot": false
+      },
+      "expected": {
+        "reserved": false
+      }
+    },
+    {
+      "name": "guard-position5-checked-when-rooted",
+      "input": {
+        "topic": "ecv1/dallas/gw-01/comp/main/state",
+        "includeRoot": true
+      },
+      "expected": {
+        "reserved": true
+      }
+    },
+    {
+      "name": "guard-position5-unchecked-when-rootless",
+      "input": {
+        "topic": "ecv1/dallas/gw-01/comp/main/state",
+        "includeRoot": false
+      },
+      "expected": {
+        "reserved": false
+      }
+    },
+    {
+      "name": "guard-rooted-metric-reserved",
+      "input": {
+        "topic": "ecv1/dallas/gw-01/comp/main/metric/cpu",
+        "includeRoot": true
+      },
+      "expected": {
+        "reserved": true
+      }
+    },
+    {
+      "name": "guard-rooted-app-state-channel-allowed",
+      "input": {
+        "topic": "ecv1/dallas/gw-01/comp/main/app/state",
+        "includeRoot": true
+      },
+      "expected": {
+        "reserved": false
+      }
+    },
+    {
+      "name": "guard-non-uns-reply-passes",
+      "input": {
+        "topic": "ggcommons/reply-8400f2",
+        "includeRoot": false
+      },
+      "expected": {
+        "reserved": false
+      }
+    },
+    {
+      "name": "guard-cloudwatch-passes",
+      "input": {
+        "topic": "cloudwatch/metric/put",
+        "includeRoot": false
+      },
+      "expected": {
+        "reserved": false
+      }
+    },
+    {
+      "name": "guard-root-prefix-but-different-token",
+      "input": {
+        "topic": "ecv1x/gw-01/comp/main/state",
+        "includeRoot": false
+      },
+      "expected": {
+        "reserved": false
+      }
+    },
+    {
+      "name": "guard-short-topic-passes",
+      "input": {
+        "topic": "ecv1/gw-01/state",
+        "includeRoot": false
+      },
+      "expected": {
+        "reserved": false
+      }
+    }
+  ]
+}

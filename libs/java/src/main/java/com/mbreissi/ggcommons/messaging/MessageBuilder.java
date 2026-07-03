@@ -19,6 +19,8 @@ public class MessageBuilder {
     private String name;
     private String version;
     private String correlationId;
+    private String uuid;
+    private String timestamp;
     private Object payload;
     private ConfigManager configService;
     private String instance;
@@ -73,6 +75,28 @@ public class MessageBuilder {
         return this;
     }
 
+    /**
+     * Pins the header {@code uuid} instead of the generated random one — deterministic envelopes
+     * for tests and the cross-language {@code uns-test-vectors} golden envelopes (D-U13).
+     *
+     * @param uuid the header uuid to stamp verbatim
+     */
+    public MessageBuilder withUuid(String uuid) {
+        this.uuid = uuid;
+        return this;
+    }
+
+    /**
+     * Pins the header {@code timestamp} instead of the generated "now" — deterministic envelopes
+     * for tests and the cross-language {@code uns-test-vectors} golden envelopes (D-U13).
+     *
+     * @param timestamp the header timestamp to stamp verbatim (ISO-8601 instant by convention)
+     */
+    public MessageBuilder withTimestamp(String timestamp) {
+        this.timestamp = timestamp;
+        return this;
+    }
+
     public MessageBuilder withPayload(Object payload) {
         this.payload = payload;
         return this;
@@ -116,6 +140,12 @@ public class MessageBuilder {
         MessageHeaderBuilder headerBuilder = MessageHeaderBuilder.create(name, version);
         if (correlationId != null) {
             headerBuilder.withCorrelationId(correlationId);
+        }
+        if (uuid != null) {
+            headerBuilder.withUuid(uuid);
+        }
+        if (timestamp != null) {
+            headerBuilder.withTimestamp(timestamp);
         }
         message.header = headerBuilder.build();
         if (configService != null) {

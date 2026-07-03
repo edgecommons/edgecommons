@@ -20,16 +20,21 @@ import java.util.Objects;
  *
  * <p>Grammar (§2.2): {@code ecv1 [/ {site}]? / {device} / {component} / {instance} / {class}
  * [/ {channel…}]} — the optional {@code site} position (the first hierarchy value) is emitted
- * only when {@code topic.includeRoot} is {@code true}.
+ * only when {@code topic.includeRoot} is {@code true} <b>and</b> the identity carries a
+ * multi-level hierarchy (≥ 2 {@code hier} entries — D‑U25). With a single-level hierarchy
+ * ({@code ["device"]}) {@code hier[0]} <i>is</i> the device, so includeRoot is a no-op
+ * (prepending would duplicate the device: {@code ecv1/gw-01/gw-01/…}).
  *
  * <p>Normative rules enforced here (each violation throws {@link UnsValidationException} with a
  * machine-readable {@link UnsValidationException.Code}):
  * <ol>
- *   <li><b>Token rule</b> — identical to the config template sanitizer's blacklist, so any
- *       sanitized value builds a publishable topic: a token is non-empty, contains no
- *       {@code / + # \}, no control characters (U+0000–U+001F, U+007F), and no {@code ..}
- *       substring. Dots are legal (a literal within a level). The validator deliberately imposes
- *       no stricter whitelist than the sanitizer.</li>
+ *   <li><b>Token rule</b> — identical to the config template sanitizer's blacklist
+ *       ({@code ConfigManager.sanitize}), so "sanitized ⇒ valid" is a true equivalence (D‑U26):
+ *       a token is non-empty, contains no {@code / + # \}, no ISO control characters
+ *       ({@link Character#isISOControl(char)} — C0 U+0000–U+001F, U+007F, <b>and C1
+ *       U+0080–U+009F</b>), and no {@code ..} substring. Dots are legal (a literal within a
+ *       level). The validator deliberately imposes no stricter whitelist than the
+ *       sanitizer.</li>
  *   <li><b>Depth guard</b> — at most {@value #MAX_TOPIC_SLASHES} {@code /} separators total (AWS
  *       IoT Core's 8-level limit), so the channel budget is 3 tokens rootless / 2 tokens
  *       rooted; enforced at build time (an over-deep channel throws, it is never silently
@@ -63,7 +68,8 @@ public final class Uns {
      * @param identity    the identity whose tokens {@link #topic(UnsClass)} emits (non-null)
      * @param includeRoot whether topics/filters carry the first hierarchy value ({@code site})
      *                    between the {@value #ROOT} root and the device ({@code topic.includeRoot},
-     *                    default {@code false})
+     *                    default {@code false}). Effective only for identities with a multi-level
+     *                    hierarchy (≥ 2 {@code hier} entries) — a no-op otherwise (D‑U25)
      */
     public Uns(MessageIdentity identity, boolean includeRoot) {
         this.identity = Objects.requireNonNull(identity, "identity must not be null");
@@ -118,9 +124,12 @@ public final class Uns {
     public String topicFor(MessageIdentity target, UnsClass cls, String channel) {
         Objects.requireNonNull(target, "target identity must not be null");
         Objects.requireNonNull(cls, "class must not be null");
+        // D-U25: the site position exists only for a multi-level hierarchy — with a single-level
+        // hierarchy hier[0] IS the device, so prepending it would duplicate the device level.
+        boolean rooted = rooted(target);
         List<String> segments = new ArrayList<>(MAX_TOPIC_SLASHES + 1);
         segments.add(ROOT);
-        if (includeRoot) {
+        if (rooted) {
             segments.add(checkedToken(target.getHier().get(0).value(), "site (hier[0]) value"));
         }
         segments.add(checkedToken(target.getDevice(), "device"));
@@ -150,8 +159,8 @@ public final class Uns {
             throw new UnsValidationException(UnsValidationException.Code.DEPTH_EXCEEDED,
                     "topic '" + topic + "' has " + slashes + " '/' separators (max "
                             + MAX_TOPIC_SLASHES + "; the channel budget is "
-                            + (includeRoot ? 2 : 3) + " token(s) with topic.includeRoot="
-                            + includeRoot + ")");
+                            + (rooted ? 2 : 3) + " token(s) with an effective root mode of "
+                            + rooted + ")");
         }
         checkLength(topic);
         return topic;
@@ -161,7 +170,8 @@ public final class Uns {
      * Builds a subscription filter for a class over a wildcard {@link UnsScope}: {@code null}
      * scope fields render as {@code +}; channeled classes get a trailing {@code /#} (all
      * channels); leaf classes end at the class token. The {@code site} position exists (and
-     * {@link UnsScope#site()} is consulted) only when {@code topic.includeRoot} is {@code true}.
+     * {@link UnsScope#site()} is consulted) only when {@code topic.includeRoot} is {@code true}
+     * AND the bound identity carries a multi-level hierarchy (D‑U25).
      *
      * <p>The output is correct by construction and is NOT passed through {@link #validate}
      * (filters legitimately carry wildcards).
@@ -176,7 +186,7 @@ public final class Uns {
         Objects.requireNonNull(scope, "scope must not be null (use UnsScope.all())");
         List<String> segments = new ArrayList<>(MAX_TOPIC_SLASHES + 1);
         segments.add(ROOT);
-        if (includeRoot) {
+        if (rooted(identity)) {
             segments.add(wildcardOr(scope.site(), "site"));
         }
         segments.add(wildcardOr(scope.device(), "device"));
@@ -192,9 +202,10 @@ public final class Uns {
      * mode: wildcards are rejected ({@code WILDCARD_IN_TOPIC}); every token passes the token
      * rule; the first token must be the {@value #ROOT} root literal; depth ≤
      * {@value #MAX_TOPIC_SLASHES} separators; length ≤ {@value #MAX_TOPIC_UTF8_BYTES} UTF-8
-     * bytes; the class position (5th token rootless, 6th rooted) must hold a {@link UnsClass}
-     * token; leaf classes must end at the class token and channeled classes must carry at least
-     * one channel token.
+     * bytes; the class position (5th token rootless, 6th rooted — the root mode is effective
+     * only with a multi-level bound hierarchy, D‑U25) must hold a {@link UnsClass} token; leaf
+     * classes must end at the class token and channeled classes must carry at least one channel
+     * token.
      *
      * @param topic the concrete topic to validate
      * @throws UnsValidationException with the precise {@link UnsValidationException.Code} on the
@@ -226,12 +237,12 @@ public final class Uns {
                             + MAX_TOPIC_SLASHES + ")");
         }
         checkLength(topic);
-        int classPosition = includeRoot ? 5 : 4;
+        int classPosition = rooted(identity) ? 5 : 4;
         if (tokens.length <= classPosition) {
             throw new UnsValidationException(UnsValidationException.Code.BAD_CLASS,
                     "topic '" + topic + "' has too few levels (" + tokens.length + "): the class"
                             + " token is expected at position " + classPosition
-                            + " (topic.includeRoot=" + includeRoot + ")");
+                            + " (effective root mode " + rooted(identity) + ")");
         }
         UnsClass cls = UnsClass.fromToken(tokens[classPosition]);
         if (cls == null) {
@@ -253,10 +264,13 @@ public final class Uns {
     }
 
     /**
-     * The §2.2 <b>token rule</b> — deliberately the SAME blacklist as the config template
-     * sanitizer ({@code ConfigManager.sanitize}), so any sanitized value passes: non-empty, no
-     * {@code / + # \}, no control characters (U+0000–U+001F, U+007F), no {@code ..} substring.
-     * Also the validation gate for {@code GGCommons.instance(id)} instance tokens.
+     * The §2.2 <b>token rule</b> — deliberately the EXACT SAME blacklist as the config template
+     * sanitizer ({@code ConfigManager.sanitize}), so "sanitized ⇒ valid" is a true equivalence
+     * (D‑U26): non-empty, no {@code / + # \}, no ISO control characters
+     * ({@link Character#isISOControl(char)} — C0 U+0000–U+001F, U+007F, and C1 U+0080–U+009F),
+     * no {@code ..} substring. Also the validation gate for {@code GGCommons.instance(id)}
+     * instance tokens. If anyone later tightens the sanitizer, this rule must tighten with it
+     * (and vice versa).
      *
      * @param token the token to check
      * @param what  what the token is, for the error message (e.g. {@code "instance id"})
@@ -269,16 +283,28 @@ public final class Uns {
         }
         for (int i = 0; i < token.length(); i++) {
             char c = token.charAt(i);
-            if (c == '/' || c == '+' || c == '#' || c == '\\' || c < 0x20 || c == 0x7F) {
+            // D-U26: Character.isISOControl == the sanitizer's control-char predicate (covers
+            // C0 U+0000-U+001F, U+007F DEL, and C1 U+0080-U+009F).
+            if (c == '/' || c == '+' || c == '#' || c == '\\' || Character.isISOControl(c)) {
                 throw new UnsValidationException(UnsValidationException.Code.BAD_CHAR,
                         what + " '" + token + "' contains a forbidden character at index " + i
-                                + " (no '/', '+', '#', '\\' or control characters)");
+                                + " (no '/', '+', '#', '\\' or ISO control characters)");
             }
         }
         if (token.contains("..")) {
             throw new UnsValidationException(UnsValidationException.Code.TRAVERSAL,
                     what + " '" + token + "' contains the traversal sequence '..'");
         }
+    }
+
+    /**
+     * The effective root mode for an identity (D‑U25): {@code topic.includeRoot} applies only
+     * when the identity carries a multi-level hierarchy — with a single-level hierarchy
+     * {@code hier[0]} <i>is</i> the device, so the site position does not exist and includeRoot
+     * is a no-op ({@code ConfigManager} WARNs once at config time).
+     */
+    private boolean rooted(MessageIdentity target) {
+        return includeRoot && target.getHier().size() >= 2;
     }
 
     /** {@link #checkToken} that returns the (valid) token, for inline segment assembly. */
