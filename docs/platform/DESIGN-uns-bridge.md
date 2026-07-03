@@ -645,3 +645,18 @@ broker *and* a site broker:
 9. **EMQX version drift** — recipes pin the image tag; the ACL file syntax is EMQX-5-specific.
    Alternate brokers (Mosquitto etc.) are out of scope for M2; note the LWT + wildcard + mTLS
    requirements for anyone substituting one.
+
+---
+
+## 9. Future enhancements
+
+- **Optional site broker for single-device sites (deferred).** A single-device site has nothing to
+  aggregate — one device bus, no fan-in — so the entire site-broker + bridge-uplink layer is dead weight
+  there. Future enhancement: a **single-device mode** in which NO separate site broker (and no bridge
+  uplink) is deployed; the edge-console attaches **directly to that one device's local broker**. The
+  console already anticipates this (its topology decision falls back to the local bus for a single device);
+  this formalizes it on the deployment side so a single-device site is not forced to run an extra MQTT
+  broker. The `uns-bridge` remains required only when **≥2 device buses** must fan into one site view.
+  Work when taken up: a "single-device / no-site-broker" recipe variant + docs making the console's
+  device-bus connection the default for that topology. No core/library change — it's a deployment + wiring
+  simplification.
