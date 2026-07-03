@@ -1,7 +1,12 @@
 {
+  "hierarchy": {
+    "levels": ["site", "device"]
+  },
+  "identity": {
+    "site": "site1"
+  },
   "tags": {
     "appId": "adapter",
-    "site": "site1",
     "shop": "shop1",
     "line": "line1"
   },
@@ -10,7 +15,7 @@
   },
   "metricEmission": {
     "target": "messaging",
-    "targetConfig": { "topic": "metrics/{ThingName}/{ComponentName}" }
+    "targetConfig": { "destination": "local" }
   },
   "component": {
     "global": {
@@ -23,8 +28,8 @@
         "adapter": "example",
         "connection": { "endpoint": "example://localhost:0/" },
         "defaults": { "publishIntervalMs": 1000, "samplingRateMs": 500, "queueSize": 100 },
-        "publish": { "topic": "southbound/{site}/{ComponentName}/{InstanceId}/{signalId}", "batchMs": 1000 },
-        "write": { "enabled": false, "topic": "southbound/{ComponentName}/{InstanceId}/write" },
+        "publish": { "batchMs": 1000 },
+        "write": { "enabled": false },
         "subscriptions": [
           {
             "id": "all",

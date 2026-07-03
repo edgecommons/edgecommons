@@ -2,14 +2,15 @@ package <<PACKAGE>>;
 
 import com.mbreissi.ggcommons.GGCommons;
 import com.mbreissi.ggcommons.GGCommonsBuilder;
+import com.mbreissi.ggcommons.GgInstance;
 import com.mbreissi.ggcommons.config.ConfigManager;
 import com.mbreissi.ggcommons.config.ConfigurationChangeListener;
 import com.mbreissi.ggcommons.messaging.Message;
-import com.mbreissi.ggcommons.messaging.MessageBuilder;
 import com.mbreissi.ggcommons.messaging.MessagingClient;
 import com.mbreissi.ggcommons.metrics.Metric;
 import com.mbreissi.ggcommons.metrics.MetricBuilder;
 import com.mbreissi.ggcommons.metrics.MetricEmitter;
+import com.mbreissi.ggcommons.uns.UnsClass;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import org.apache.logging.log4j.LogManager;
@@ -27,6 +28,23 @@ import java.util.concurrent.CountDownLatch;
  * (OPC UA, Modbus, EtherNet/IP, …) and republishes their values northbound on the GGCommons
  * messaging bus using the standard <b>southbound contract</b> (see {@code docs/SOUTHBOUND.md}):
  * the {@code SouthboundSignalUpdate} envelope and the {@code southbound_health} metric.
+ *
+ * <p><b>UNS data plane</b>: each signal update is published on a UNS {@code data} topic minted
+ * per device instance — {@code ecv1/{device}/{component}/{instanceId}/data/{signalPath}} via
+ * {@code gg.instance(instanceId).uns().topic(UnsClass.DATA, signalPath)} — and its envelope is
+ * identity-stamped via {@code gg.instance(instanceId).newMessage(...)}. Identity is config-driven
+ * (top-level {@code hierarchy} + {@code identity} blocks; the last hierarchy level is always the
+ * resolved thing name). Never hand-write topic strings. Consumers subscribe to
+ * {@code ecv1/+/+/+/data/#}.
+ *
+ * <p>The {@code state} heartbeat keepalive is <b>automatic</b> (library-owned, on / 5 s / local
+ * by default) on {@code ecv1/{device}/{component}/main/state} — no heartbeat code here.
+ *
+ * <p><b>Phase 5 (M9) note</b>: the southbound <i>command</i> family — write/read/control toward
+ * the device — is not part of this scaffold yet. When you add such handlers, expect them to be
+ * reworked onto UNS {@code cmd/sb/*} verbs on the component inbox
+ * ({@code ecv1/{device}/{component}/{instance}/cmd/sb/write} etc.) when the library's Phase-5
+ * command facade lands; keep them isolated so the retarget stays mechanical.
  *
  * <p>The framework gives you config, messaging, metrics, credentials, and lifecycle for free —
  * you write only the protocol code where the {@code TODO(adapter)} markers are.
@@ -67,7 +85,9 @@ public class <<COMPONENTNAME>> implements ConfigurationChangeListener {
     }
 
     public void run() {
-        LOGGER.info("Starting adapter '{}' (thing={})", "<<COMPONENTFULLNAME>>", config.getThingName());
+        LOGGER.info("Starting adapter '{}' (thing={}, UNS identity path={})",
+                "<<COMPONENTFULLNAME>>", config.getThingName(),
+                ggCommons.getUns().identity().getPath());
 
         // One worker per configured instance (component.instances[].id). Each instance is one
         // device/endpoint with its own connection + subscriptions (see the southbound config convention).
@@ -145,13 +165,21 @@ public class <<COMPONENTNAME>> implements ConfigurationChangeListener {
         body.add("signal", signal);
         body.add("samples", samples);
 
-        Message msg = MessageBuilder.create(SOUTHBOUND_MSG, SOUTHBOUND_VER)
+        // The instance handle pre-binds the component.instances[].id token into both the topic
+        // builder and the message builder, so topic and envelope carry the same identity.
+        GgInstance instance = ggCommons.instance(instanceId);
+
+        // newMessage(...) stamps the envelope's `identity` block (hierarchy + device + component
+        // + this instance) automatically from config — no manual thing/tag wiring.
+        Message msg = instance.newMessage(SOUTHBOUND_MSG, SOUTHBOUND_VER)
                 .withPayload(body)
-                .withConfig(config)   // stamps header + tags (thing + configured tags{})
                 .build();
 
-        // TODO(adapter): resolve the publish topic from instance.publish.topic (template-substituted).
-        String topic = "southbound/" + config.getComponentName() + "/" + instanceId + "/" + signalId;
+        // UNS data topic: ecv1/{device}/{component}/{instanceId}/data/{signalPath}. The signal id
+        // is used directly as the channel path here; its tokens must satisfy the UNS token rule
+        // (no '/'-traversal, '+', '#', '\', control chars — the config sanitizer's blacklist).
+        // Phase 5 (D-U15) will formalize sanitized data/{channel} with the raw id in the body.
+        String topic = instance.uns().topic(UnsClass.DATA, signalId);
         messaging.publish(topic, msg);
     }
 

@@ -17,8 +17,18 @@ markers in `src/main/java/.../<<COMPONENTNAME>>.java`.
 - Publishes each signal update with the standard **`SouthboundSignalUpdate`** envelope — `body.device`,
   `body.signal` (canonical `id` + opaque protocol-native `address`), and `body.samples[]` with a
   **normalized `quality`** (`GOOD|BAD|UNCERTAIN`) plus the native `qualityRaw`.
+- Publishes on the **UNS data plane**: each update goes to
+  `ecv1/{device}/{component}/{instanceId}/data/{signalPath}`, minted per instance via
+  `gg.instance(instanceId).uns().topic(UnsClass.DATA, signalPath)` — never a hand-written topic.
+  The envelope's `identity` block is stamped automatically by
+  `gg.instance(instanceId).newMessage(...)` from the config-driven identity (top-level `hierarchy`
+  + `identity`; the last hierarchy level is always the resolved thing name).
 - Defines and emits the standard **`southbound_health`** metric (connection state, poll/publish
-  latency, read errors, stale tags).
+  latency, read errors, stale tags). The `messaging` metric target publishes to the UNS metric
+  topic (`ecv1/{device}/{component}/main/metric/{metricName}`) automatically — no topic config.
+- Heartbeat is **automatic**: the library publishes the `state` keepalive to
+  `ecv1/{device}/{component}/main/state` (on / 5 s / local by default; optional
+  `heartbeat: {enabled, intervalSecs, measures, destination}` to tune).
 - Relies on the library's SIGTERM/SIGINT hook for graceful shutdown (no manual hook;
   `main()` blocks on a latch).
 
@@ -39,22 +49,30 @@ synthetic value so the scaffold runs end-to-end; replace it with your protocol l
 
 ## Config convention (southbound)
 
-Adapter config lives under the **permissive** `component.global` / `component.instances[]` (no schema
-change needed). See `test-configs/<<COMPONENTNAME>>.json` for a full example. Shape:
+The **UNS identity** is declared at the top level (`hierarchy` + `identity`); adapter config lives
+under the **permissive** `component.global` / `component.instances[]` (no schema change needed).
+See `test-configs/<<COMPONENTNAME>>.json` for a full example. Shape:
 
 ```jsonc
+"hierarchy": { "levels": ["site", "device"] },   // last level = the resolved thing name
+"identity":  { "site": "site1" },                // a value for every level above the last
 "component": {
   "global":    { "defaults": { "publishIntervalMs": 1000, "samplingRateMs": 500, "queueSize": 100 },
                  "healthThresholds": { "staleSignalSecs": 30 } },
   "instances": [ {
-    "id": "device-1", "adapter": "<protocol>",
+    "id": "device-1", "adapter": "<protocol>",   // id = the UNS instance token in data topics
     "connection":  { "endpoint": "..." },
-    "publish":     { "topic": "southbound/{site}/{ComponentName}/{InstanceId}/{signalId}", "batchMs": 1000 },
-    "write":       { "enabled": false, "topic": "..." },
+    "publish":     { "batchMs": 1000 },          // NO topic key: data topics are minted via uns()
+    "write":       { "enabled": false },         // Phase 5 (M9): reworked to UNS cmd/sb/* verbs
     "subscriptions":[ { "id": "...", "include": [ { "namespace": 0, "match": "<regex>", "deadband": {"type":"Absolute","value":0.0} } ], "exclude": [] } ]
   } ]
 }
 ```
+
+> **Phase 5 (M9) note:** the southbound *command* family (write/read/control toward the device)
+> will arrive as UNS `cmd/sb/*` verbs on the component inbox
+> (`ecv1/{device}/{component}/{instance}/cmd/sb/write` …). Keep any interim command handlers
+> isolated so that retarget stays mechanical.
 
 ## Run locally (HOST platform, MQTT transport)
 
@@ -65,7 +83,7 @@ java -jar target/<<JARNAME>>-1.0.0.jar --platform HOST --transport MQTT ./standa
 ```
 
 Needs a local MQTT broker (e.g. `docker run -d -p 1883:1883 emqx/emqx:latest`). Subscribe to
-`heartbeat/+/+` for heartbeats and `southbound/#` to see signal updates.
+`ecv1/+/+/+/state` for the heartbeat keepalives and `ecv1/+/+/+/data/#` to see signal updates.
 
 ## Run under Greengrass
 

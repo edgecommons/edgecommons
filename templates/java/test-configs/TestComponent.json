@@ -1,4 +1,10 @@
 {
+  "hierarchy": {
+    "levels": ["site", "device"]
+  },
+  "identity": {
+    "site": "site1"
+  },
   "tags": {},
   "component": {
     "global": {},

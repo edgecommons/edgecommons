@@ -4,7 +4,9 @@
     "java_format": "%d{yyyy-MM-dd HH:mm:ss.SSS} [%-5p] %C{1} (%L) [%t] : %m%n"
   },
   "heartbeat": {
+    "enabled": true,
     "intervalSecs": 5,
+    "destination": "local",
     "measures": {
       "cpu": true,
       "memory": true,
@@ -14,9 +16,14 @@
       "fds": true
     }
   },
+  "hierarchy": {
+    "levels": ["site", "device"]
+  },
+  "identity": {
+    "site": "site1"
+  },
   "tags": {
     "appId": "IntelliJIdea",
-    "site": "site1",
     "shop": "shop1",
     "line": "line1"
   },

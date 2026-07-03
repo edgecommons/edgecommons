@@ -36,7 +36,11 @@ java -jar target/java-component-skeleton-1.0.0.jar --platform HOST --transport M
 ### Component Configuration (`config_2.json`)
 The component uses a JSON configuration file that includes:
 - Logging configuration with per-logger levels
-- Heartbeat monitoring settings
+- **UNS identity** — top-level `hierarchy` (ordered levels; the last is always the resolved thing
+  name) + `identity` (a value for every level above the last). The library stamps this identity
+  into every envelope built with `.withConfig(...)` and into every topic minted via `gg.getUns()`
+- Heartbeat settings (`{enabled, intervalSecs, measures, destination}` — the heartbeat is the
+  library-owned `state` keepalive on `ecv1/{device}/{component}/main/state`, on/5s/local by default)
 - Metric emission configuration
 - Component-specific settings (publish interval, etc.)
 
@@ -70,7 +74,9 @@ For non-Greengrass deployments, create a messaging configuration file:
 
 ## Component Behavior
 
-1. **Initialization**: Sets up services, configuration, and subscriptions
+1. **Initialization**: Sets up services, configuration, and subscriptions; mints its publish and
+   request topics via the UNS topic builder (`gg.getUns().topic(UnsClass.APP, ...)` →
+   `ecv1/{device}/{component}/main/app/hello-world` and `.../app/request`)
 2. **Request-Reply Demo**: Sends sample requests and processes replies
 3. **Message Publishing**: Continuously publishes hello world messages to both local and IoT Core
 4. **Metrics Emission**: Emits performance metrics including message count and latency
@@ -163,7 +169,8 @@ mvn clean package
 ### Monitoring
 - Check logs for component activity
 - Monitor metrics emission in configured target (CloudWatch, logs, etc.)
-- Use MQTT client tools to observe message flow
+- Use MQTT client tools to observe message flow on the UNS topics: subscribe to
+  `ecv1/+/+/+/state` for heartbeat keepalives and `ecv1/+/+/+/app/#` for the demo app messages
 
 ## Best Practices Demonstrated
 

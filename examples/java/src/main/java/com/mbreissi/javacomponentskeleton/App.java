@@ -19,6 +19,7 @@ import com.mbreissi.ggcommons.metrics.Metric;
 import com.mbreissi.ggcommons.metrics.MetricBuilder;
 import com.mbreissi.ggcommons.streaming.StreamHandle;
 import com.mbreissi.ggcommons.streaming.StreamService;
+import com.mbreissi.ggcommons.uns.UnsClass;
 import com.google.gson.JsonObject;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -34,8 +35,14 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * Sample Java component demonstrating GGCommons library usage.
- * Shows configuration management, messaging patterns, metrics emission,
+ * Shows configuration management, UNS (unified-namespace) messaging patterns, metrics emission,
  * and proper resource cleanup using modern service-oriented architecture.
+ *
+ * <p><b>UNS model</b>: the component's identity is config-driven (top-level {@code hierarchy} +
+ * {@code identity} blocks; the last hierarchy level is always the resolved thing name). Every
+ * topic is minted through {@code gg.getUns()} — never hand-written — and every envelope built
+ * with {@code .withConfig(...)} carries the stamped {@code identity} block automatically. The
+ * {@code state} heartbeat keepalive is library-owned and automatic (on / 5 s / local transport).
  */
 public class App implements ConfigurationChangeListener
 {
@@ -51,8 +58,14 @@ public class App implements ConfigurationChangeListener
     /** Whether the IoT Core command subscription was established (so shutdown only unsubscribes it then). */
     private volatile boolean iotCoreSubscribed = false;
 
-    private static final String PUB_TOPIC = "ggcommons/test/java/hello_world";
-    private static final String REQ_TOPIC = "ggcommons/test/java/request";
+    /**
+     * UNS-minted app topics (never hand-write topic strings): the {@code app} class is the free
+     * application namespace — {@code ecv1/{device}/{component}/main/app/{channel…}}. Minted from
+     * {@code gg.getUns()} in the constructor (the builder is bound to the component's resolved
+     * identity, so the topics carry the same tokens the envelope's {@code identity} block does).
+     */
+    private final String pubTopic;
+    private final String reqTopic;
 
     /** Config key (under {@code component.global}) naming the secret the component reads. */
     private static final String DEMO_SECRET_KEY = "demo_secret";
@@ -92,7 +105,7 @@ public class App implements ConfigurationChangeListener
             .withConfig(configService)
             .build();
         
-        final ReplyFuture pending = messagingService.request(REQ_TOPIC, request);
+        final ReplyFuture pending = messagingService.request(reqTopic, request);
         pending
             .orTimeout(10, TimeUnit.SECONDS)
             .thenAccept(reply -> {
@@ -174,6 +187,14 @@ public class App implements ConfigurationChangeListener
         configService = ggCommons.getConfigManager();
         messagingService = ggCommons.getMessaging();
         metricService = ggCommons.getMetrics();
+
+        // Mint every topic this component publishes/subscribes on through the UNS topic builder
+        // (gg.getUns(), bound to the resolved config-driven identity: top-level `hierarchy` +
+        // `identity`, last level = the resolved thing name). APP is the free application class;
+        // the library-owned classes (state/metric/cfg/log) are reserved — the heartbeat `state`
+        // keepalive (on / 5 s / local by default) is published automatically, no code needed here.
+        pubTopic = ggCommons.getUns().topic(UnsClass.APP, "hello-world");
+        reqTopic = ggCommons.getUns().topic(UnsClass.APP, "request");
 
         // Durable telemetry stream (null unless the config has a `streaming` section with a stream
         // named "telemetry"). The publish loop appends each message; the library's export engine
@@ -260,30 +281,33 @@ public class App implements ConfigurationChangeListener
     
     private void setupSubscriptions() {
         // Subscribe to request topic for request-reply pattern
-        messagingService.subscribe(REQ_TOPIC, requestHandler, 1);
-        LOGGER.info("Subscribed to request topic: {}", REQ_TOPIC);
+        messagingService.subscribe(reqTopic, requestHandler, 1);
+        LOGGER.info("Subscribed to request topic: {}", reqTopic);
         
         // Subscribe to hello world topic on both local and IoT Core. The IoT Core subscribe is
         // non-fatal: builds/modes without an IoT Core transport (e.g. local-only STANDALONE) skip
         // the bridge instead of failing component startup.
-        messagingService.subscribe(PUB_TOPIC, ipcHelloWorldHandler, 3);
+        messagingService.subscribe(pubTopic, ipcHelloWorldHandler, 3);
         try {
-            messagingService.subscribeToIoTCore(PUB_TOPIC, iotCoreHelloWorldHandler, QOS.AT_LEAST_ONCE, 2);
+            messagingService.subscribeToIoTCore(pubTopic, iotCoreHelloWorldHandler, QOS.AT_LEAST_ONCE, 2);
             iotCoreSubscribed = true;
         } catch (Exception e) {
             LOGGER.warn("IoT Core unavailable; skipping IoT Core subscribe: {}", e.getMessage());
         }
-        LOGGER.info("Subscribed to hello world topic: {}", PUB_TOPIC);
+        LOGGER.info("Subscribed to hello world topic: {}", pubTopic);
     }
     
     public void run() {
         LOGGER.info("Starting component execution...");
 
-        // Log the resolved component identity (thing name) once at startup. On KUBERNETES this is the
-        // Downward-API value (GGCOMMONS_THING_NAME -> POD_NAME, FR-RT-7); elsewhere it is -t/--thing or
-        // AWS_IOT_THING_NAME. Logging it here (after logging is configured) makes the resolved identity
-        // observable in pod/container logs.
+        // Log the resolved component identity once at startup. The thing name is the LAST hierarchy
+        // level (on KUBERNETES the Downward-API value GGCOMMONS_THING_NAME -> POD_NAME, FR-RT-7;
+        // elsewhere -t/--thing or AWS_IOT_THING_NAME); the levels above it come from the config's
+        // top-level `hierarchy` + `identity` blocks. The same identity is stamped into every
+        // envelope built with .withConfig(...) and into every UNS topic minted via gg.getUns().
         LOGGER.info("Component identity (thing name): {}", configService.getThingName());
+        LOGGER.info("UNS identity path: {} (publish topic: {})",
+            ggCommons.getUns().identity().getPath(), pubTopic);
 
         // Demonstrate encrypted-vault secret access once at startup (non-fatal).
         demonstrateCredentials(ggCommons);
@@ -437,9 +461,9 @@ public class App implements ConfigurationChangeListener
             .build();
         
         // Publish to both local and IoT Core to demonstrate dual connectivity (IoT Core non-fatal).
-        messagingService.publish(PUB_TOPIC, msg);
+        messagingService.publish(pubTopic, msg);
         try {
-            messagingService.publishToIoTCore(PUB_TOPIC, msg, QOS.AT_LEAST_ONCE);
+            messagingService.publishToIoTCore(pubTopic, msg, QOS.AT_LEAST_ONCE);
         } catch (Exception e) {
             LOGGER.warn("failed to publish to IoT Core: {}", e.getMessage());
         }
@@ -493,9 +517,9 @@ public class App implements ConfigurationChangeListener
         ReplyFuture requestFuture;
         try {
             if ("LOCAL".equals(brokerType)) {
-                requestFuture = messagingService.request(REQ_TOPIC, request);
+                requestFuture = messagingService.request(reqTopic, request);
             } else {
-                requestFuture = messagingService.requestFromIoTCore(REQ_TOPIC, request);
+                requestFuture = messagingService.requestFromIoTCore(reqTopic, request);
             }
         } catch (Exception e) {
             LOGGER.warn("latency request dispatch failed for {} broker: {}", brokerType, e.getMessage());
@@ -550,10 +574,10 @@ public class App implements ConfigurationChangeListener
         
         try {
             // Unsubscribe from topics (only unsubscribe IoT Core if we subscribed).
-            messagingService.unsubscribe(PUB_TOPIC);
-            messagingService.unsubscribe(REQ_TOPIC);
+            messagingService.unsubscribe(pubTopic);
+            messagingService.unsubscribe(reqTopic);
             if (iotCoreSubscribed) {
-                messagingService.unsubscribeFromIoTCore(PUB_TOPIC);
+                messagingService.unsubscribeFromIoTCore(pubTopic);
             }
             LOGGER.info("Unsubscribed from all topics");
         } catch (Exception e) {

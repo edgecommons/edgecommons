@@ -11,7 +11,9 @@
     }
   },
   "heartbeat": {
+    "enabled": true,
     "intervalSecs": 5,
+    "destination": "local",
     "measures": {
       "cpu": true,
       "memory": true,
@@ -21,9 +23,14 @@
       "fds": true
     }
   },
+  "hierarchy": {
+    "levels": ["site", "device"]
+  },
+  "identity": {
+    "site": "site1"
+  },
   "tags": {
     "appId": "IntelliJIdea",
-    "site": "site1",
     "shop": "shop1",
     "line": "line1"
   },

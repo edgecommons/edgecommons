@@ -15,8 +15,16 @@ java -jar target/<<JARNAME>>-1.0.0.jar --platform HOST --transport MQTT ./standa
 ```
 
 Needs a local MQTT broker (e.g. `docker run -d -p 1883:1883 emqx/emqx:latest`). Subscribe to
-`heartbeat/+/+` to see the component's heartbeats. If you enable the telemetry-streaming subsystem,
-add `--enable-native-access=ALL-UNNAMED` (the FFM/Panama binding to `ggstreamlog`).
+`ecv1/+/+/+/state` to see the component's heartbeat keepalives (the library publishes them
+automatically to `ecv1/{device}/{component}/main/state`) and `ecv1/+/+/+/app/#` for the scaffold's
+status messages. If you enable the telemetry-streaming subsystem, add
+`--enable-native-access=ALL-UNNAMED` (the FFM/Panama binding to `ggstreamlog`).
+
+The component's **UNS identity** is config-driven: the top-level `hierarchy` block declares the
+ordered levels (the last is always the resolved thing name, from `-t/--thing` or the platform) and
+`identity` supplies a value for every level above it — see `test-configs/<<COMPONENTNAME>>.json`.
+Topics are minted via `gg.getUns()`; envelopes built with `.withConfig(...)` carry the identity
+automatically.
 
 ## Run under Greengrass
 
