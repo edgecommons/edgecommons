@@ -78,6 +78,13 @@ public class ConfigManager
     protected JsonObject globalConfig;
     protected LoggingConfiguration loggingConfig;
     protected HashMap<String, JsonObject> instanceConfigs;
+    /**
+     * Whether UNS topics carry the first hierarchy value ({@code site}) after the {@code ecv1}
+     * root — the top-level {@code topic.includeRoot} setting (UNS-CANONICAL-DESIGN §2.2 rule 6 /
+     * D-U11), default {@code false}. Parsed by {@link #applyConfig} (so a hot reload refreshes
+     * it) and read via {@link #isTopicIncludeRoot()}.
+     */
+    protected boolean topicIncludeRoot;
 
 
     /**
@@ -149,6 +156,7 @@ public class ConfigManager
         heartbeatConfig = ConfigurationFactory.createHeartbeatConfiguration(config);
         metricConfig = ConfigurationFactory.createMetricConfiguration(config);
         healthConfig = ConfigurationFactory.createHealthConfiguration(config);
+        topicIncludeRoot = parseTopicIncludeRoot(config);
         reconfigureLogging();
 
         componentConfig = config.get("component").getAsJsonObject();
@@ -161,6 +169,35 @@ public class ConfigManager
         }
     }
 
+
+    /**
+     * Parses the top-level {@code topic.includeRoot} flag (default {@code false}). Minimal
+     * config-model support for the {@code topic} section — lenient like the other permissive
+     * subsystem sections: a missing/non-object {@code topic} or a missing/non-boolean
+     * {@code includeRoot} yields the default.
+     */
+    private static boolean parseTopicIncludeRoot(JsonObject config)
+    {
+        if (config == null || !config.has("topic") || !config.get("topic").isJsonObject())
+        {
+            return false;
+        }
+        JsonElement includeRoot = config.getAsJsonObject("topic").get("includeRoot");
+        return includeRoot != null && includeRoot.isJsonPrimitive()
+                && includeRoot.getAsJsonPrimitive().isBoolean() && includeRoot.getAsBoolean();
+    }
+
+    /**
+     * Whether UNS topics built by {@code gg.getUns()} / {@code gg.instance(id).uns()} carry the
+     * first hierarchy value ({@code site}) between the {@code ecv1} root and the device — the
+     * top-level {@code topic.includeRoot} setting, default {@code false}.
+     *
+     * @return the resolved {@code topic.includeRoot} value
+     */
+    public boolean isTopicIncludeRoot()
+    {
+        return topicIncludeRoot;
+    }
 
     /**
      * Generates a map of instance configurations from the full configuration.

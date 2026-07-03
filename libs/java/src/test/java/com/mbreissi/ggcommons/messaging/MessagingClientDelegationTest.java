@@ -53,9 +53,9 @@ class MessagingClientDelegationTest {
     }
 
     @Test
-    void publishToIotCoreDelegates() {
+    void publishToIoTCoreDelegates() {
         Message msg = loggableMessage();
-        client.publishToIotCore("topic/a", msg, QOS.AT_LEAST_ONCE);
+        client.publishToIoTCore("topic/a", msg, QOS.AT_LEAST_ONCE);
         verify(provider).publishToIoTCore("topic/a", msg, QOS.AT_LEAST_ONCE);
     }
 
@@ -68,9 +68,9 @@ class MessagingClientDelegationTest {
     }
 
     @Test
-    void publishToIotCoreRawDelegates() {
+    void publishToIoTCoreRawDelegates() {
         JsonObject obj = new JsonObject();
-        client.publishToIotCoreRaw("topic/raw", obj, QOS.AT_MOST_ONCE);
+        client.publishToIoTCoreRaw("topic/raw", obj, QOS.AT_MOST_ONCE);
         verify(provider).publishToIoTCoreRaw("topic/raw", obj, QOS.AT_MOST_ONCE);
     }
 

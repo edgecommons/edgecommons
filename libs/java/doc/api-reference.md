@@ -276,7 +276,7 @@ public static void publish(String topic, Message message)
 Publishes message via IPC.
 
 ```java
-public static void publishToIotCore(String topic, Message message, QOS qos)
+public static void publishToIoTCore(String topic, Message message, QOS qos)
 ```
 Publishes message to IoT Core.
 

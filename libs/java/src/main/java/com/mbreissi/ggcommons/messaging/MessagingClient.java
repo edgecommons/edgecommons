@@ -81,7 +81,7 @@ public class MessagingClient
      * @param msg The message to publish
      * @param qos The quality of service level for message delivery
      */
-    public void publishToIotCore(String topic, Message msg, QOS qos)
+    public void publishToIoTCore(String topic, Message msg, QOS qos)
     {
         messagingProvider.publishToIoTCore(topic, msg, qos);
         LOGGER.debug("Published IoT Core message on topic '{}': {}", topic, msg.toString());
@@ -104,7 +104,7 @@ public class MessagingClient
      * @param topic The topic to publish to
      * @param metricObject The JSON object to publish
      */
-    public void publishToIotCoreRaw(String topic, JsonObject metricObject, QOS qos)
+    public void publishToIoTCoreRaw(String topic, JsonObject metricObject, QOS qos)
     {
         messagingProvider.publishToIoTCoreRaw(topic, metricObject, qos);
     }

@@ -69,7 +69,7 @@ class MessagingMetricTargetTest {
             emit(target);
 
             verify(client, times(1)).publish(anyString(), any(Message.class));
-            verify(client, never()).publishToIotCore(anyString(), any(Message.class), any(QOS.class));
+            verify(client, never()).publishToIoTCore(anyString(), any(Message.class), any(QOS.class));
         }
     }
 
@@ -82,7 +82,7 @@ class MessagingMetricTargetTest {
 
             emit(target);
 
-            verify(client, times(1)).publishToIotCore(anyString(), any(Message.class), any(QOS.class));
+            verify(client, times(1)).publishToIoTCore(anyString(), any(Message.class), any(QOS.class));
             verify(client, never()).publish(anyString(), any(Message.class));
         }
     }

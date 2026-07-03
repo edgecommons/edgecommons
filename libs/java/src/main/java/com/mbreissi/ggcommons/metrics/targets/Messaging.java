@@ -62,7 +62,7 @@ public final class Messaging extends MetricTarget {
         if (sendToIpc)
             messagingService.publish(topic, message);
         else
-            messagingService.publishToIotCore(topic, message, QOS.AT_LEAST_ONCE);
+            messagingService.publishToIoTCore(topic, message, QOS.AT_LEAST_ONCE);
         LOGGER.trace("Metric emitted for {} emitted", metric);
     }
 

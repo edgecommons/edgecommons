@@ -185,7 +185,7 @@ class GGCommonsTest
                 .withPayload(jsonPayload)
                 .withConfig(configService)
                 .build();
-        messagingService.publishToIotCore(topic, msg, QOS.AT_LEAST_ONCE);
+        messagingService.publishToIoTCore(topic, msg, QOS.AT_LEAST_ONCE);
         Utils.sleep(200);
         assertNotNull(receivedMessage);
         assertEquals("IoTCoreMessage", receivedMessage.getHeader().getName());
@@ -299,7 +299,7 @@ class GGCommonsTest
                 .withConfig(configService)
                 .build();
         LOGGER.info("Publishing message to IOT CORE on topic");
-        messagingService.publishToIotCore(topic, iotMsg, QOS.AT_LEAST_ONCE);
+        messagingService.publishToIoTCore(topic, iotMsg, QOS.AT_LEAST_ONCE);
         
         Utils.sleep(500);
         

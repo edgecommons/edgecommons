@@ -162,7 +162,7 @@ public class Heartbeat implements ConfigurationChangeListener
                     }
                     else if (destination.equalsIgnoreCase("iot_core") || destination.equalsIgnoreCase("iotcore"))
                     {
-                        messagingService.publishToIotCore(topic, heartbeatMessage, QOS.AT_LEAST_ONCE);
+                        messagingService.publishToIoTCore(topic, heartbeatMessage, QOS.AT_LEAST_ONCE);
                     }
                     else
                     {

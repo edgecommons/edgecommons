@@ -439,7 +439,7 @@ public class App implements ConfigurationChangeListener
         // Publish to both local and IoT Core to demonstrate dual connectivity (IoT Core non-fatal).
         messagingService.publish(PUB_TOPIC, msg);
         try {
-            messagingService.publishToIotCore(PUB_TOPIC, msg, QOS.AT_LEAST_ONCE);
+            messagingService.publishToIoTCore(PUB_TOPIC, msg, QOS.AT_LEAST_ONCE);
         } catch (Exception e) {
             LOGGER.warn("failed to publish to IoT Core: {}", e.getMessage());
         }

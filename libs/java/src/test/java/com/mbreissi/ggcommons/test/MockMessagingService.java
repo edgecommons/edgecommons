@@ -78,7 +78,7 @@ public class MockMessagingService extends MessagingClient {
     }
 
     @Override
-    public void publishToIotCore(String topic, Message message, QOS qos) {
+    public void publishToIoTCore(String topic, Message message, QOS qos) {
         publishedMessages.add(new PublishedMessage(topic, message, qos));
     }
 
@@ -88,7 +88,7 @@ public class MockMessagingService extends MessagingClient {
     }
 
     @Override
-    public void publishToIotCoreRaw(String topic, JsonObject payload, QOS qos) {
+    public void publishToIoTCoreRaw(String topic, JsonObject payload, QOS qos) {
         publishedMessages.add(new PublishedMessage(topic, payload));
     }
 
@@ -102,7 +102,7 @@ public class MockMessagingService extends MessagingClient {
 
     @Override
     public ReplyFuture requestFromIoTCore(String topic, Message message) {
-        publishToIotCore(topic, message, QOS.AT_LEAST_ONCE);
+        publishToIoTCore(topic, message, QOS.AT_LEAST_ONCE);
         var future = new ReplyFuture(topic);
         future.complete(message); // Echo back for testing
         return future;

@@ -21,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * {@code publishHeartbeat()} "messaging" branches:
  *
  * <ul>
- *   <li>destination {@code iot_core} -> {@code messagingService.publishToIotCore(...)} (Heartbeat L153)</li>
+ *   <li>destination {@code iot_core} -> {@code messagingService.publishToIoTCore(...)} (Heartbeat L153)</li>
  *   <li>an unrecognized destination -> the "Unrecognized messaging destination" warn branch (Heartbeat L157)</li>
  *   <li>{@code onConfigurationChanged()} -> re-init, which cancels/purges the existing timer
  *       (Heartbeat L74-75, L189-191)</li>
@@ -74,10 +74,10 @@ class HeartbeatPublishTest {
         try {
             awaitAtLeastOnePublish(messaging);
             assertFalse(messaging.getPublishedMessages().isEmpty(),
-                    "iot_core target must publish a heartbeat via publishToIotCore");
-            // publishToIotCore records a QOS; publish() (ipc) records null QOS.
+                    "iot_core target must publish a heartbeat via publishToIoTCore");
+            // publishToIoTCore records a QOS; publish() (ipc) records null QOS.
             assertNotNull(messaging.getPublishedMessages().get(0).qos,
-                    "iot_core publish must carry a QOS (publishToIotCore path)");
+                    "iot_core publish must carry a QOS (publishToIoTCore path)");
         } finally {
             heartbeat.close();
         }

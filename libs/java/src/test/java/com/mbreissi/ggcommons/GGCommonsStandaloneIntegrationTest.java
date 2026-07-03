@@ -178,10 +178,10 @@ class GGCommonsStandaloneIntegrationTest {
 
         // IoT Core is not configured in this standalone config -> delegation must throw.
         Message m = MessageBuilder.create("X", "1.0").withPayload(raw).withConfig(gg.getConfigManager()).build();
-        assertThrows(IllegalStateException.class, () -> mc.publishToIotCore("iot/t", m, QOS.AT_LEAST_ONCE));
+        assertThrows(IllegalStateException.class, () -> mc.publishToIoTCore("iot/t", m, QOS.AT_LEAST_ONCE));
         assertThrows(IllegalStateException.class, () -> mc.subscribeToIoTCore("iot/t", (t, msg) -> {}, QOS.AT_LEAST_ONCE));
         assertThrows(IllegalStateException.class, () -> mc.unsubscribeFromIoTCore("iot/t"));
-        assertThrows(IllegalStateException.class, () -> mc.publishToIotCoreRaw("iot/t", raw, QOS.AT_LEAST_ONCE));
+        assertThrows(IllegalStateException.class, () -> mc.publishToIoTCoreRaw("iot/t", raw, QOS.AT_LEAST_ONCE));
         assertThrows(IllegalStateException.class, () -> mc.replyToIoTCore(m, m));
         assertThrows(IllegalStateException.class, () -> mc.cancelRequestFromIoTCore(new ReplyFuture("x")));
 

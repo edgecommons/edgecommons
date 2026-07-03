@@ -230,7 +230,7 @@ class GGCommonsUnitTest {
                 .withConfig(mockConfigService)
                 .build();
 
-        mockMessagingService.publishToIotCore(topic, message, QOS.AT_LEAST_ONCE);
+        mockMessagingService.publishToIoTCore(topic, message, QOS.AT_LEAST_ONCE);
 
         assertEquals(1, mockMessagingService.getPublishedMessages().size());
         MockMessagingService.PublishedMessage published = mockMessagingService.getPublishedMessages().get(0);

@@ -27,6 +27,7 @@ import com.mbreissi.ggcommons.platform.Platform;
 import com.mbreissi.ggcommons.platform.PlatformResolver;
 import com.mbreissi.ggcommons.platform.ResolvedProfile;
 import com.mbreissi.ggcommons.platform.Transport;
+import com.mbreissi.ggcommons.uns.Uns;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonObject;
@@ -34,7 +35,9 @@ import org.apache.commons.cli.*;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.util.Collection;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 
@@ -53,6 +56,18 @@ public class GGCommons
     protected ParameterService parameters;
     protected StreamMetricsBridge streamMetricsBridge;
     protected CredentialMetricsBridge credentialMetricsBridge;
+
+    /**
+     * The component-identity-bound UNS topic builder (instance
+     * {@code MessageIdentity.DEFAULT_INSTANCE}), lazily bound on first {@link #getUns()} from the
+     * resolved component identity + {@code topic.includeRoot} (UNS-CANONICAL-DESIGN §2).
+     */
+    private volatile Uns uns;
+    /**
+     * Cached per-id instance handles (UNS-CANONICAL-DESIGN §3, D-U3): {@link #instance(String)}
+     * returns the same {@link GgInstance} for the same id.
+     */
+    private final ConcurrentHashMap<String, GgInstance> instanceHandles = new ConcurrentHashMap<>();
 
     /**
      * The HTTP health/readiness server (FR-HB-1). Non-null only when the health server is enabled
@@ -224,6 +239,72 @@ public class GGCommons
     public MetricEmitter getMetrics()
     {
         return metricEmitter;
+    }
+
+    /**
+     * Returns the UNS topic builder + validator bound to this component's resolved identity
+     * (instance {@code "main"}) and its {@code topic.includeRoot} setting
+     * (UNS-CANONICAL-DESIGN §2). For instance-scoped topics use
+     * {@link #instance(String)}{@code .uns()}.
+     *
+     * @return the component-bound {@link Uns}
+     * @throws IllegalStateException when called before initialization completes (no resolved
+     *                               component identity yet)
+     */
+    public Uns getUns()
+    {
+        Uns bound = uns;
+        if (bound == null)
+        {
+            ConfigManager cm = requireResolvedIdentity();
+            bound = new Uns(cm.getComponentIdentity(), cm.isTopicIncludeRoot());
+            uns = bound;
+        }
+        return bound;
+    }
+
+    /**
+     * Returns the instance-scoped handle for an instance token (UNS-CANONICAL-DESIGN §3, D-U3):
+     * a {@link GgInstance} whose {@code uns()} mints topics with — and whose
+     * {@code newMessage(...)} stamps envelopes with — this instance token. The token is validated
+     * against the §2.2 token rule; handles are cached per id, so repeated calls return the same
+     * object. The id is deliberately NOT verified against the configured
+     * {@code component.instances[]} (instances may be created dynamically) — an unknown id is
+     * only logged at DEBUG as a diagnostic aid.
+     *
+     * @param instanceId the instance token (e.g. {@code "kep1"})
+     * @return the cached handle for this instance token
+     * @throws com.mbreissi.ggcommons.uns.UnsValidationException when the token violates the
+     *                                                           §2.2 token rule
+     * @throws IllegalStateException when called before initialization completes
+     */
+    public GgInstance instance(String instanceId)
+    {
+        Uns.checkToken(instanceId, "instance id");
+        ConfigManager cm = requireResolvedIdentity();
+        return instanceHandles.computeIfAbsent(instanceId, id -> {
+            Collection<String> configured = cm.getInstanceIds();
+            if (configured == null || !configured.contains(id))
+            {
+                LOGGER.debug("instance('{}'): id is not among the configured component.instances[]"
+                        + " ids {} - creating a dynamic instance handle", id, configured);
+            }
+            return new GgInstance(id, cm, cm.isTopicIncludeRoot());
+        });
+    }
+
+    /**
+     * Guards the UNS accessors: they need the config manager and its resolved component identity,
+     * which exist only after {@link #init} has constructed the {@link ConfigManager}.
+     */
+    private ConfigManager requireResolvedIdentity()
+    {
+        if (configManager == null || configManager.getComponentIdentity() == null)
+        {
+            throw new IllegalStateException("GGCommons is not initialized: the component"
+                    + " configuration (and its resolved UNS identity) is not available yet");
+        }
+        return configManager;
     }
 
     /**
