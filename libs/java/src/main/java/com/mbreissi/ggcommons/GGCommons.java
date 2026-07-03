@@ -164,6 +164,13 @@ public class GGCommons
             // Initialize the config manager (passing messaging for IPC-backed config sources).
             configManager = ConfigManagerFactory.create(componentName, parsedCommandLine, messagingClient);
 
+            // UNS-CANONICAL-DESIGN §5 / D-U5 (§1.5 init order): late-bind the request() default
+            // deadline from messaging.requestTimeoutSeconds now that the ConfigManager exists.
+            // The messaging client is built BEFORE config loads (the IPC-backed config sources
+            // need it), so until this bind the provider's built-in 30 s applied — deliberately,
+            // giving the CONFIG_COMPONENT bootstrap request a deadline instead of hanging forever.
+            messagingClient.setDefaultRequestTimeout(configManager.getMessagingRequestTimeout());
+
             // Logging is now (re)configured (the ConfigManager constructor applied the config and
             // reconfigured Log4j2). Re-emit the startup facts that were resolved/connected BEFORE
             // logging was ready, so they actually reach the log: the resolver summary and, if the

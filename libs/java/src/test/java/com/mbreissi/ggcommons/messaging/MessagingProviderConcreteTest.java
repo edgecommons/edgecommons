@@ -50,9 +50,11 @@ class MessagingProviderConcreteTest {
         @Override public void unsubscribe(String topicFilter) { }
         @Override public void unsubscribeFromIoTCore(String topicFilter) { }
         @Override public ReplyFuture request(String topic, Message message) { return null; }
+        @Override public ReplyFuture request(String topic, Message message, java.time.Duration timeout) { return null; }
         @Override public void cancelRequest(ReplyFuture future) { }
         @Override public void reply(Message request, Message reply) { }
         @Override public ReplyFuture requestFromIoTCore(String topic, Message request) { return null; }
+        @Override public ReplyFuture requestFromIoTCore(String topic, Message request, java.time.Duration timeout) { return null; }
         @Override public void cancelRequestFromIoTCore(ReplyFuture future) { }
         @Override public void replyToIoTCore(Message request, Message reply) { }
         @Override public Object getNativeLocalClient() { return null; }

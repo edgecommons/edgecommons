@@ -43,37 +43,54 @@ public final class ConfigComponentProvider extends ConfigProvider {
 
     @Override
     public JsonObject loadConfiguration() {
-
-        JsonObject requestPayload = new JsonObject();
-        Message request = MessageBuilder.create("GetConfiguration", "1.0")
-                .withPayload(requestPayload)
-                .withConfig(this.parentConfigManager)
-                .build();
-        final ReplyFuture replyFuture = messagingClient.request(source, request);
-        Message replyMessage = null;
+        // This bootstrap request now carries the framework-owned request() deadline
+        // (UNS-CANONICAL-DESIGN §5; the provider's built-in 30 s, since the config-model default
+        // is not loaded yet). When the deadline fires it settles the request — the reply
+        // subscription is unsubscribed and the future completes exceptionally with a
+        // TimeoutException — so a retry must issue a FRESH request (waiting again on the settled
+        // future could never succeed). Both timeout signals (the framework deadline surfacing as
+        // ExecutionException(TimeoutException) and get()'s own TimeoutException when the deadline
+        // is disabled) take the same 3-attempt retry path the previous implementation had.
         int attemptCount = 0;
-        boolean retry =true;
-        do {
+        while (true) {
+            JsonObject requestPayload = new JsonObject();
+            Message request = MessageBuilder.create("GetConfiguration", "1.0")
+                    .withPayload(requestPayload)
+                    .withConfig(this.parentConfigManager)
+                    .build();
+            final ReplyFuture replyFuture = messagingClient.request(source, request);
             try {
-                replyMessage = replyFuture.get(30, TimeUnit.SECONDS);
-                retry = false;
+                Message replyMessage = replyFuture.get(30, TimeUnit.SECONDS);
+                return (JsonObject) replyMessage.getBody();
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 LOGGER.fatal("Encountered InterruptedException. Unable to load configuration using Greengrass IPC.");
                 throw new RuntimeException("Interrupted while loading configuration using Greengrass IPC.", e);
             } catch (ExecutionException e) {
-                LOGGER.fatal("Encountered ExecutionException. Unable to load configuration using Greengrass IPC.");
-                throw new RuntimeException("Failed to load configuration using Greengrass IPC.", e);
-            } catch (TimeoutException e) {
-                attemptCount++;
-                if (attemptCount == 3) {
-                    LOGGER.fatal("Failed to retrieve configuration from configuration manager component after {} tries.", attemptCount);
-                    throw new RuntimeException("Failed to retrieve configuration from configuration manager component after " + attemptCount + " tries.", e);
+                if (!(e.getCause() instanceof TimeoutException)) {
+                    LOGGER.fatal("Encountered ExecutionException. Unable to load configuration using Greengrass IPC.");
+                    throw new RuntimeException("Failed to load configuration using Greengrass IPC.", e);
                 }
-                LOGGER.warn("Failed to retrieve configuration from configuration manager component.  Retrying ({})", attemptCount);
+                // The framework deadline fired (and already cleaned up the reply subscription).
+                attemptCount = onTimeout(attemptCount, e);
+            } catch (TimeoutException e) {
+                // get() expired before any framework deadline (e.g. deadline disabled): settle and
+                // clean up the abandoned request before re-issuing.
+                messagingClient.cancelRequest(replyFuture);
+                attemptCount = onTimeout(attemptCount, e);
             }
-        }while(retry) ;
-        return (JsonObject) replyMessage.getBody();
+        }
+    }
+
+    /** The shared 3-attempt timeout policy: increments, throws on the 3rd attempt, else warns. */
+    private static int onTimeout(int attemptCount, Exception e) {
+        attemptCount++;
+        if (attemptCount == 3) {
+            LOGGER.fatal("Failed to retrieve configuration from configuration manager component after {} tries.", attemptCount);
+            throw new RuntimeException("Failed to retrieve configuration from configuration manager component after " + attemptCount + " tries.", e);
+        }
+        LOGGER.warn("Failed to retrieve configuration from configuration manager component.  Retrying ({})", attemptCount);
+        return attemptCount;
     }
 
     @Override

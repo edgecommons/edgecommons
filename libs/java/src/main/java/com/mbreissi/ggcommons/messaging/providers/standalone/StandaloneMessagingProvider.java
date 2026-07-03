@@ -25,6 +25,7 @@ import java.nio.file.Files;
 import java.security.KeyStore;
 import java.security.PrivateKey;
 import java.security.cert.CertificateFactory;
+import java.time.Duration;
 import java.util.UUID;
 import java.util.concurrent.*;
 import java.util.function.BiConsumer;
@@ -61,10 +62,19 @@ public final class StandaloneMessagingProvider extends MessagingProvider
         public LinkedBlockingQueue<QueueEntry> queue;
         ExecutorService executor;
         private final Semaphore concurrencyLimit;
+        /** The MQTT client this subscription lives on (local vs IoT Core) — reply-settle cleanup
+         *  must unsubscribe on the owning side, never the other one. */
+        private final MqttClient owningClient;
+        private final ConcurrentHashMap<String, SubscriptionProcessor> owningMap;
 
-        SubscriptionProcessor(String topicFilter, BiConsumer<String, Message> callback, int maxConcurrency, int maxMessages)
+        SubscriptionProcessor(MqttClient owningClient,
+                              ConcurrentHashMap<String, SubscriptionProcessor> owningMap,
+                              String topicFilter, BiConsumer<String, Message> callback,
+                              int maxConcurrency, int maxMessages)
         {
             super();
+            this.owningClient = owningClient;
+            this.owningMap = owningMap;
             this.topicFilter = topicFilter;
             this.callback = callback;
             this.maxConcurrency = maxConcurrency;
@@ -96,11 +106,23 @@ public final class StandaloneMessagingProvider extends MessagingProvider
                         break;
                     }
                     final String topic = entry.topic.replaceFirst("^iotcore/", "");
-                    if (responseFutures.containsKey(topic)) {
-                        ReplyFuture future = responseFutures.get(topic);
-                        future.complete(entry.message);
-                        responseFutures.remove(topic);
-                        unsubscribe(topic);
+                    final ReplyFuture future = responseFutures.get(topic);
+                    if (future != null) {
+                        // Reply arrival: race the single idempotent settle path (§5.1) against the
+                        // framework deadline and cancelRequest. The winner owns the cleanup
+                        // (unsubscribe on the OWNING client + pending-entry removal) and completes
+                        // the future; a loser (straggler reply after settle) is dropped at DEBUG.
+                        if (future.trySettle()) {
+                            internalUnsubscribe(owningClient, topic, owningMap);
+                            responseFutures.remove(topic);
+                            future.complete(entry.message);
+                        } else {
+                            LOGGER.debug("Dropping straggler reply on '{}' (request already settled)", topic);
+                        }
+                    } else if (callback == null) {
+                        // A reply-topic subscription whose pending entry is already gone (the
+                        // deadline or cancel settled + cleaned up): drop the straggler.
+                        LOGGER.debug("Dropping straggler reply on '{}' (no pending request)", topic);
                     } else {
                         if (concurrencyLimit != null)
                         {
@@ -236,19 +258,7 @@ public final class StandaloneMessagingProvider extends MessagingProvider
             String localBrokerUrl = protocol + "://" + localConfig.getHost() + ":" + localConfig.getPort();
             localMqttClient = new MqttClient(localBrokerUrl, localConfig.getClientId());
 
-            MqttConnectOptions localOptions = new MqttConnectOptions();
-            localOptions.setAutomaticReconnect(true);
-            if (localConfig.getCredentials() != null) {
-                if (useSSL) {
-                    // TLS: server trust via CA, with optional client-certificate (mutual) auth
-                    localOptions.setSocketFactory(createSslContext(localConfig.getCredentials()).getSocketFactory());
-                } else if (localConfig.getCredentials().getUsername() != null
-                        && localConfig.getCredentials().getPassword() != null) {
-                    // Use username/password authentication
-                    localOptions.setUserName(localConfig.getCredentials().getUsername());
-                    localOptions.setPassword(localConfig.getCredentials().getPassword().toCharArray());
-                }
-            }
+            MqttConnectOptions localOptions = buildLocalConnectOptions(localConfig, config.getMessaging().getLwt());
             localMqttClient.setCallback(new EventCallback(localMqttClient, localSubscriptionProcessors));
             localMqttClient.connect(localOptions);
             LOGGER.info("Connected to local broker at {}", localBrokerUrl);
@@ -267,6 +277,73 @@ public final class StandaloneMessagingProvider extends MessagingProvider
             LOGGER.error("Failed to initialize MQTT clients", e);
             throw new RuntimeException("Failed to initialize MQTT clients", e);
         }
+    }
+
+    /**
+     * Builds the connect options for the <em>local-broker</em> connection: automatic reconnect,
+     * the TLS / username-password credential wiring, and — when a {@code messaging.lwt} section is
+     * present — the MQTT Last-Will-and-Testament (UNS-CANONICAL-DESIGN §6). Package-private as the
+     * connect-options test seam: tests assert the produced options directly, without a broker.
+     * Paho re-sends these options on every automatic reconnect, so the will is re-registered on
+     * reconnect for free.
+     */
+    static MqttConnectOptions buildLocalConnectOptions(MessagingConfiguration.LocalMqttConfig localConfig,
+                                                       MessagingConfiguration.LwtConfig lwt) throws Exception {
+        boolean useSSL = localConfig.getCredentials() != null && localConfig.getCredentials().getCaPath() != null;
+        MqttConnectOptions localOptions = new MqttConnectOptions();
+        localOptions.setAutomaticReconnect(true);
+        if (localConfig.getCredentials() != null) {
+            if (useSSL) {
+                // TLS: server trust via CA, with optional client-certificate (mutual) auth
+                localOptions.setSocketFactory(createSslContext(localConfig.getCredentials()).getSocketFactory());
+            } else if (localConfig.getCredentials().getUsername() != null
+                    && localConfig.getCredentials().getPassword() != null) {
+                // Use username/password authentication
+                localOptions.setUserName(localConfig.getCredentials().getUsername());
+                localOptions.setPassword(localConfig.getCredentials().getPassword().toCharArray());
+            }
+        }
+        applyLwt(localOptions, lwt);
+        return localOptions;
+    }
+
+    /**
+     * Registers the configured MQTT Last-Will-and-Testament on the given connect options
+     * (UNS-CANONICAL-DESIGN §6, D-U9/M7). Local-broker connection only; retain is hard-wired to
+     * {@code false} (there is no retain knob by design). A String payload is published verbatim as
+     * UTF-8 bytes; an object payload is serialized to compact JSON bytes. No-op when {@code lwt}
+     * is null (section absent).
+     *
+     * @throws IllegalArgumentException on a missing/empty topic or a QoS outside {0, 1}
+     */
+    static void applyLwt(MqttConnectOptions options, MessagingConfiguration.LwtConfig lwt) {
+        if (lwt == null) {
+            return;
+        }
+        String topic = lwt.getTopic();
+        if (topic == null || topic.isEmpty()) {
+            throw new IllegalArgumentException("messaging.lwt.topic is required when an lwt section is present");
+        }
+        int qos = lwt.getQosOrDefault();
+        if (qos != 0 && qos != 1) {
+            throw new IllegalArgumentException("messaging.lwt.qos must be 0 or 1 (got " + qos + ")");
+        }
+        options.setWill(topic, lwtPayloadBytes(lwt.getPayload()), qos, false);  // retain=false, hard
+        LOGGER.info("Registered MQTT LWT on the local connection: topic='{}', qos={}, retain=false", topic, qos);
+    }
+
+    /**
+     * Serializes the {@code messaging.lwt.payload} value: a JSON string verbatim as UTF-8 bytes; a
+     * JSON object (or any other JSON value) as its compact JSON bytes; absent/null as empty bytes.
+     */
+    static byte[] lwtPayloadBytes(com.google.gson.JsonElement payload) {
+        if (payload == null || payload.isJsonNull()) {
+            return new byte[0];
+        }
+        if (payload.isJsonPrimitive() && payload.getAsJsonPrimitive().isString()) {
+            return payload.getAsString().getBytes(StandardCharsets.UTF_8);
+        }
+        return payload.toString().getBytes(StandardCharsets.UTF_8);
     }
 
     static SSLContext createSslContext(MessagingConfiguration.CredentialsConfig credentials) throws Exception {
@@ -348,6 +425,7 @@ public final class StandaloneMessagingProvider extends MessagingProvider
     @Override
     public void close()
     {
+        super.close();  // shuts down the shared request-deadline scheduler
         for (SubscriptionProcessor p : localSubscriptionProcessors.values()) { p.shutdown(); }
         for (SubscriptionProcessor p : iotCoreSubscriptionProcessors.values()) { p.shutdown(); }
         localSubscriptionProcessors.clear();
@@ -500,7 +578,7 @@ public final class StandaloneMessagingProvider extends MessagingProvider
 
     private void internalSubscribe(MqttClient client, String topicFilter, BiConsumer<String, Message> callback, QOS qos, int maxConcurrency, int maxMessages, ConcurrentHashMap<String,SubscriptionProcessor> subscriptionMap)
     {
-        SubscriptionProcessor subProcessor = new SubscriptionProcessor(topicFilter, callback, maxConcurrency, maxMessages);
+        SubscriptionProcessor subProcessor = new SubscriptionProcessor(client, subscriptionMap, topicFilter, callback, maxConcurrency, maxMessages);
         subProcessor.qos = qos.ordinal();
         subscriptionMap.put(topicFilter, subProcessor);
         try
@@ -558,10 +636,23 @@ public final class StandaloneMessagingProvider extends MessagingProvider
     @Override
     public ReplyFuture request(String topic, Message message)
     {
+        return request(topic, message, null);
+    }
+
+    @Override
+    public ReplyFuture request(String topic, Message message, Duration timeout)
+    {
         String replyTo = message.makeRequest();
         ReplyFuture future = new ReplyFuture(replyTo);
         responseFutures.put(replyTo, future);
         subscribe(replyTo, null, 1, -1); // one-shot reply sub: unbounded is fine
+        // Arm the framework-owned deadline at send time (§5): on expiry the timer unsubscribes the
+        // ephemeral reply topic, removes the pending entry and completes the future exceptionally
+        // (TimeoutException) — even when the caller never awaits the future.
+        armRequestDeadline(future, effectiveRequestTimeout(timeout), () -> {
+            unsubscribe(replyTo);
+            responseFutures.remove(replyTo);
+        });
         publish(topic, message);
         return future;
     }
@@ -569,6 +660,10 @@ public final class StandaloneMessagingProvider extends MessagingProvider
     @Override
     public void cancelRequest(ReplyFuture future)
     {
+        if (!future.trySettle())
+        {
+            return;  // reply or deadline already settled + cleaned up this request
+        }
         unsubscribe(future.replyTopic);
         responseFutures.remove(future.replyTopic);
         future.complete(null);
@@ -584,10 +679,20 @@ public final class StandaloneMessagingProvider extends MessagingProvider
     @Override
     public ReplyFuture requestFromIoTCore(String topic, Message message)
     {
+        return requestFromIoTCore(topic, message, null);
+    }
+
+    @Override
+    public ReplyFuture requestFromIoTCore(String topic, Message message, Duration timeout)
+    {
         String replyTo = message.makeRequest();
         ReplyFuture future = new ReplyFuture(replyTo);
         responseFutures.put(replyTo, future);
         internalSubscribe(requireIotCore(), replyTo, null, QOS.AT_MOST_ONCE, 1, -1, iotCoreSubscriptionProcessors);
+        armRequestDeadline(future, effectiveRequestTimeout(timeout), () -> {
+            unsubscribeFromIoTCore(replyTo);
+            responseFutures.remove(replyTo);
+        });
         publishToIoTCore(topic, message, QOS.AT_MOST_ONCE);
         return future;
     }
@@ -595,6 +700,10 @@ public final class StandaloneMessagingProvider extends MessagingProvider
     @Override
     public void cancelRequestFromIoTCore(ReplyFuture future)
     {
+        if (!future.trySettle())
+        {
+            return;  // reply or deadline already settled + cleaned up this request
+        }
         unsubscribeFromIoTCore(future.replyTopic);
         responseFutures.remove(future.replyTopic);
         future.complete(null);
@@ -605,6 +714,26 @@ public final class StandaloneMessagingProvider extends MessagingProvider
     {
         reply.setCorrelationId(request.getHeader().getCorrelationId());
         publishToIoTCore(request.getHeader().getReplyTo(), reply, QOS.AT_MOST_ONCE);
+    }
+
+    // --- test seams (package-private): observe subscription / pending-request state ------------
+
+    /** Whether a local-broker subscription is currently registered for this filter (test seam). */
+    boolean hasLocalSubscription(String topicFilter)
+    {
+        return localSubscriptionProcessors.containsKey(topicFilter);
+    }
+
+    /** Whether an IoT Core subscription is currently registered for this filter (test seam). */
+    boolean hasIotCoreSubscription(String topicFilter)
+    {
+        return iotCoreSubscriptionProcessors.containsKey(topicFilter);
+    }
+
+    /** Whether a request is still pending on this reply topic (test seam). */
+    boolean hasPendingRequest(String replyTopic)
+    {
+        return responseFutures.containsKey(replyTopic);
     }
 
     @Override

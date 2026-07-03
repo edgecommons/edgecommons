@@ -85,6 +85,17 @@ public class ConfigManager
      * it) and read via {@link #isTopicIncludeRoot()}.
      */
     protected boolean topicIncludeRoot;
+    /**
+     * The default {@code request()} deadline in seconds — {@code messaging.requestTimeoutSeconds}
+     * (UNS-CANONICAL-DESIGN §5 / D-U5), default {@value #DEFAULT_REQUEST_TIMEOUT_SECONDS};
+     * {@code 0} disables the default deadline. Parsed by {@link #applyConfig}; read via
+     * {@link #getMessagingRequestTimeout()}. Late-bound onto the messaging client by
+     * {@code GGCommons} right after this manager is constructed (§1.5 init order).
+     */
+    protected double messagingRequestTimeoutSeconds = DEFAULT_REQUEST_TIMEOUT_SECONDS;
+
+    /** The schema default for {@code messaging.requestTimeoutSeconds} (seconds). */
+    public static final int DEFAULT_REQUEST_TIMEOUT_SECONDS = 30;
 
 
     /**
@@ -157,6 +168,7 @@ public class ConfigManager
         metricConfig = ConfigurationFactory.createMetricConfiguration(config);
         healthConfig = ConfigurationFactory.createHealthConfiguration(config);
         topicIncludeRoot = parseTopicIncludeRoot(config);
+        messagingRequestTimeoutSeconds = parseMessagingRequestTimeoutSeconds(config);
         reconfigureLogging();
 
         componentConfig = config.get("component").getAsJsonObject();
@@ -197,6 +209,44 @@ public class ConfigManager
     public boolean isTopicIncludeRoot()
     {
         return topicIncludeRoot;
+    }
+
+    /**
+     * Parses {@code messaging.requestTimeoutSeconds} (§5 / D-U5): a non-negative number of seconds
+     * (fractions allowed by the schema), default {@value #DEFAULT_REQUEST_TIMEOUT_SECONDS}.
+     * Lenient like the other permissive sections — a missing/non-object {@code messaging} section,
+     * a missing/non-number value, or a negative value (which the schema rejects at startup anyway)
+     * all yield the default. {@code 0} is a valid explicit value meaning "disabled".
+     */
+    private static double parseMessagingRequestTimeoutSeconds(JsonObject config)
+    {
+        if (config == null || !config.has("messaging") || !config.get("messaging").isJsonObject())
+        {
+            return DEFAULT_REQUEST_TIMEOUT_SECONDS;
+        }
+        JsonElement value = config.getAsJsonObject("messaging").get("requestTimeoutSeconds");
+        if (value == null || !value.isJsonPrimitive() || !value.getAsJsonPrimitive().isNumber())
+        {
+            return DEFAULT_REQUEST_TIMEOUT_SECONDS;
+        }
+        double seconds = value.getAsDouble();
+        return seconds < 0 ? DEFAULT_REQUEST_TIMEOUT_SECONDS : seconds;
+    }
+
+    /**
+     * The default {@code request()} deadline resolved from {@code messaging.requestTimeoutSeconds}
+     * (UNS-CANONICAL-DESIGN §5 / D-U5), default 30 s. Returns {@link java.time.Duration#ZERO} when
+     * the configured value is {@code 0} (default deadline disabled). {@code GGCommons} late-binds
+     * this onto the messaging client right after this manager is constructed; an explicit per-call
+     * timeout on {@code request()} always wins over this default.
+     *
+     * @return the default request deadline ({@code Duration.ZERO} = disabled)
+     */
+    public java.time.Duration getMessagingRequestTimeout()
+    {
+        return messagingRequestTimeoutSeconds <= 0
+                ? java.time.Duration.ZERO
+                : java.time.Duration.ofMillis(Math.round(messagingRequestTimeoutSeconds * 1000.0));
     }
 
     /**

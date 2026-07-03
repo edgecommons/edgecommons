@@ -19,6 +19,7 @@ import software.amazon.awssdk.aws.greengrass.model.*;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiConsumer;
@@ -42,6 +43,7 @@ public final class GreengrassMessagingProvider extends MessagingProvider
             ipcClient = GreengrassCoreIPCClientV2.builder().build();
             ipcSubscriptionStreams = new ConcurrentHashMap<>();
             iotCoreSubscriptionStreams = new ConcurrentHashMap<>();
+            logLwtNoOp();
         }
         catch (IOException e)
         {
@@ -50,9 +52,22 @@ public final class GreengrassMessagingProvider extends MessagingProvider
         }
     }
 
+    /**
+     * MQTT LWT is an explicit <b>no-op</b> on the Greengrass IPC transport
+     * (UNS-CANONICAL-DESIGN §6): IPC has no CONNECT packet to register a will on, so any
+     * {@code messaging.lwt} config is ignored (the LWT applies to the MQTT local-broker connection
+     * only). Logged at DEBUG once at construction.
+     */
+    static void logLwtNoOp()
+    {
+        LOGGER.debug("MQTT LWT (messaging.lwt) is not supported over Greengrass IPC; "
+                + "any configured lwt section is ignored (no-op)");
+    }
+
     @Override
     public void close()
     {
+        super.close();  // shuts down the shared request-deadline scheduler
         try
         {
             if (ipcClient != null)
@@ -203,19 +218,36 @@ public final class GreengrassMessagingProvider extends MessagingProvider
     @Override
     public ReplyFuture request(String topic, Message message)
     {
+        return request(topic, message, null);
+    }
+
+    @Override
+    public ReplyFuture request(String topic, Message message, Duration timeout)
+    {
         String replyTo = message.makeRequest();
         ReplyFuture future = new ReplyFuture(replyTo);
         responseFutures.put(replyTo, future);
         subscribe(replyTo, (t, m) -> {
+            // Reply arrival: race the single idempotent settle path (§5.1) against the framework
+            // deadline and cancelRequest. The winner owns the cleanup and the completion; a loser
+            // (straggler / duplicate reply after settle) is dropped at DEBUG — never a double
+            // unsubscribe or double completion.
             ReplyFuture f = responseFutures.get(t);
-            // A late or duplicate reply can arrive after the future was completed + removed;
-            // guard against the NPE (f.complete on null) — it must never escape this callback.
-            if (f != null) {
-                f.complete(m);
+            if (f == null || !f.trySettle()) {
+                LOGGER.debug("Dropping straggler reply on '{}' (request already settled)", t);
+                return;
             }
             unsubscribe(t);
             responseFutures.remove(t);
+            f.complete(m);
         }, 1, -1); // one-shot reply sub: unbounded is fine (exactly one reply, then unsubscribe)
+        // Arm the framework-owned deadline at send time (§5): on expiry the timer unsubscribes the
+        // ephemeral reply topic, removes the pending entry and completes the future exceptionally
+        // (TimeoutException) — even when the caller never awaits the future.
+        armRequestDeadline(future, effectiveRequestTimeout(timeout), () -> {
+            unsubscribe(replyTo);
+            responseFutures.remove(replyTo);
+        });
         publish(topic, message);
         return future;
     }
@@ -223,6 +255,10 @@ public final class GreengrassMessagingProvider extends MessagingProvider
     @Override
     public void cancelRequest(ReplyFuture future)
     {
+        if (!future.trySettle())
+        {
+            return;  // reply or deadline already settled + cleaned up this request
+        }
         unsubscribe(future.replyTopic);
         responseFutures.remove(future.replyTopic);
         future.complete(null);
@@ -238,18 +274,30 @@ public final class GreengrassMessagingProvider extends MessagingProvider
     @Override
     public ReplyFuture requestFromIoTCore(String topic, Message request)
     {
+        return requestFromIoTCore(topic, request, null);
+    }
+
+    @Override
+    public ReplyFuture requestFromIoTCore(String topic, Message request, Duration timeout)
+    {
         String replyTo = request.makeRequest();
         ReplyFuture future = new ReplyFuture(replyTo);
         responseFutures.put(replyTo, future);
         subscribeToIoTCore(replyTo, (t, m) -> {
+            // Same single idempotent settle path as request() (§5.1).
             ReplyFuture f = responseFutures.get(t);
-            // Guard against a late/duplicate reply after the future was completed + removed.
-            if (f != null) {
-                f.complete(m);
+            if (f == null || !f.trySettle()) {
+                LOGGER.debug("Dropping straggler reply on '{}' (request already settled)", t);
+                return;
             }
             unsubscribeFromIoTCore(t);
             responseFutures.remove(t);
+            f.complete(m);
         }, QOS.AT_MOST_ONCE, 1, -1); // one-shot reply sub: unbounded is fine
+        armRequestDeadline(future, effectiveRequestTimeout(timeout), () -> {
+            unsubscribeFromIoTCore(replyTo);
+            responseFutures.remove(replyTo);
+        });
         publishToIoTCore(topic, request, QOS.AT_MOST_ONCE);
         return future;
     }
@@ -257,6 +305,10 @@ public final class GreengrassMessagingProvider extends MessagingProvider
     @Override
     public void cancelRequestFromIoTCore(ReplyFuture future)
     {
+        if (!future.trySettle())
+        {
+            return;  // reply or deadline already settled + cleaned up this request
+        }
         unsubscribeFromIoTCore(future.replyTopic);
         responseFutures.remove(future.replyTopic);
         future.complete(null);

@@ -71,6 +71,61 @@ class ConfigurationValidatorTest {
     }
 
     @Test
+    void messagingRequestTimeoutAndLwtValidate() {
+        // UNS slice 1a/1c: messaging.requestTimeoutSeconds (number, min 0) and messaging.lwt
+        // (topic required; payload string|object; qos enum [0,1]) must pass schema validation.
+        JsonObject valid = obj("""
+                {"component":{"global":{}},\
+                "messaging":{"requestTimeoutSeconds":30,\
+                "lwt":{"topic":"ecv1/gw-01/bridge/main/state",\
+                "payload":{"status":"UNREACHABLE"},"qos":1}}}""");
+        assertDoesNotThrow(() -> ConfigurationValidator.validate(valid));
+
+        JsonObject stringPayloadQos0 = obj("""
+                {"component":{"global":{}},\
+                "messaging":{"lwt":{"topic":"t","payload":"OFFLINE","qos":0}}}""");
+        assertDoesNotThrow(() -> ConfigurationValidator.validate(stringPayloadQos0));
+    }
+
+    @Test
+    void lwtQosAsLosslessDoubleValidates() {
+        // The flagged 1b case: the schema types qos as "number" with enum [0,1]; a source that
+        // delivers 1.0 (e.g. a numeric round-trip through a double) must still validate, since
+        // JSON-Schema numeric comparison is mathematical, not lexical.
+        JsonObject qosDouble = obj("""
+                {"component":{"global":{}},\
+                "messaging":{"lwt":{"topic":"t","qos":1.0}}}""");
+        assertDoesNotThrow(() -> ConfigurationValidator.validate(qosDouble));
+    }
+
+    @Test
+    void lwtRejectsBadQosMissingTopicAndRetain() {
+        // qos outside the enum
+        JsonObject badQos = obj("""
+                {"component":{"global":{}},"messaging":{"lwt":{"topic":"t","qos":2}}}""");
+        assertThrows(ConfigurationValidator.ConfigurationValidationException.class,
+                () -> ConfigurationValidator.validate(badQos));
+        // topic is required
+        JsonObject noTopic = obj("""
+                {"component":{"global":{}},"messaging":{"lwt":{"payload":"x"}}}""");
+        assertThrows(ConfigurationValidator.ConfigurationValidationException.class,
+                () -> ConfigurationValidator.validate(noTopic));
+        // NO retain knob by design (additionalProperties:false inside lwt)
+        JsonObject retain = obj("""
+                {"component":{"global":{}},"messaging":{"lwt":{"topic":"t","retain":true}}}""");
+        assertThrows(ConfigurationValidator.ConfigurationValidationException.class,
+                () -> ConfigurationValidator.validate(retain));
+    }
+
+    @Test
+    void negativeRequestTimeoutIsRejected() {
+        JsonObject negative = obj("""
+                {"component":{"global":{}},"messaging":{"requestTimeoutSeconds":-1}}""");
+        assertThrows(ConfigurationValidator.ConfigurationValidationException.class,
+                () -> ConfigurationValidator.validate(negative));
+    }
+
+    @Test
     void validationExceptionConstructorsAreUsable() {
         ConfigurationValidator.ConfigurationValidationException e1 =
                 new ConfigurationValidator.ConfigurationValidationException("msg");

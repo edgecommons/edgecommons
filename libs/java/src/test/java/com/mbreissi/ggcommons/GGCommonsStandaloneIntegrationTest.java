@@ -87,6 +87,7 @@ class GGCommonsStandaloneIntegrationTest {
                 "heartbeat": {"intervalSecs": 3600, "measures": {"cpu": true, "memory": true},\
                   "targets": [{"type":"metric"},{"type":"messaging","config":{"topic":"heartbeat/test","destination":"ipc"}}]},\
                 "tags": {"env": "test"},\
+                "messaging": {"requestTimeoutSeconds": 7},\
                 "component": {"global": {"setting": "value"}}\
                 }"""
                 .formatted(metricLog).getBytes());
@@ -116,6 +117,17 @@ class GGCommonsStandaloneIntegrationTest {
         assertNotNull(gg.getMetrics());
         assertEquals("test-thing", gg.getConfigManager().getThingName());
         assertEquals("StandaloneComponent", gg.getConfigManager().getComponentName());
+    }
+
+    @Test
+    void lateBindsTheRequestTimeoutDefaultFromConfig() {
+        // UNS-CANONICAL-DESIGN §5 / D-U5 (§1.5 init order): init() binds
+        // messaging.requestTimeoutSeconds onto the messaging client right after the ConfigManager
+        // exists — the config above sets 7, overriding the provider's built-in 30 s.
+        assertEquals(java.time.Duration.ofSeconds(7),
+                gg.getConfigManager().getMessagingRequestTimeout());
+        assertEquals(java.time.Duration.ofSeconds(7),
+                gg.getMessaging().getDefaultRequestTimeout());
     }
 
     @Test

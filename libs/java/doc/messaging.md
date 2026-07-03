@@ -60,6 +60,26 @@ future.thenAccept(response -> { /* Handle response */ }); // Async
 MessagingClient.reply(requestMessage, replyMessage);
 ```
 
+##### Request deadline (`messaging.requestTimeoutSeconds`)
+Every `request()` carries a **framework-owned deadline** (default **30 s**, configurable via
+`messaging.requestTimeoutSeconds`; `0` disables). When it expires the library unsubscribes the
+ephemeral reply topic, removes the pending entry and completes the `ReplyFuture`
+**exceptionally** with a `java.util.concurrent.TimeoutException` — even if the caller never
+awaits the future, so an unanswered request can no longer leak its reply subscription.
+Reply-arrival, the deadline and `cancelRequest` settle a request exactly once (idempotent);
+a straggler reply after settle is dropped with a DEBUG log.
+
+```java
+// Per-call deadline: an explicit value always wins over the configured default.
+ReplyFuture f1 = client.request(topic, msg, Duration.ofSeconds(5));
+// Duration.ZERO disables the deadline for this one call.
+ReplyFuture f2 = client.request(topic, msg, Duration.ZERO);
+```
+
+Note (init order): the messaging client is built before the config loads, so the configured
+default is late-bound right after the `ConfigManager` exists; until then the built-in 30 s
+applies (deliberately — the CONFIG_COMPONENT bootstrap request gets a deadline too).
+
 ### Providers
 The library includes three messaging providers:
 
@@ -227,6 +247,31 @@ The MQTT transport (used by the `HOST` and `KUBERNETES` platforms) requires a me
 ### Local Broker Authentication
 - **Username/Password**: For development or brokers with basic auth
 - **Certificate-based**: For production with mutual TLS authentication
+
+### MQTT Last-Will-and-Testament (`messaging.lwt`)
+An optional `lwt` section registers an MQTT will on the **local-broker connection only** at
+CONNECT (re-registered automatically on reconnect). The broker publishes it if the component
+disconnects ungracefully — it never passes through `publish()`. There is **no retain option by
+design** (the will is always registered with `retain=false`). The IPC (GREENGRASS) transport has
+no CONNECT packet, so `lwt` is an explicit no-op there (DEBUG log).
+
+```json
+{
+  "messaging": {
+    "local":  { "host": "mqtt-broker.local", "port": 1883, "clientId": "bridge" },
+    "lwt": {
+      "topic":   "ecv1/gw-01/uns-bridge/main/state",
+      "payload": { "status": "UNREACHABLE" },
+      "qos": 1
+    }
+  }
+}
+```
+
+- `topic` (required): the will topic.
+- `payload`: a **string** is published verbatim as UTF-8 bytes; an **object** is serialized to
+  compact JSON bytes; absent ⇒ empty payload.
+- `qos`: `0` or `1`, default `1`.
 
 ### Dual Connectivity Benefits
 1. **Local Communication**: Fast, low-latency messaging for edge processing

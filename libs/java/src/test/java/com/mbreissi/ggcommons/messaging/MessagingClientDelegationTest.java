@@ -133,6 +133,47 @@ class MessagingClientDelegationTest {
     }
 
     @Test
+    void requestWithTimeoutDelegatesAndReturnsFuture() {
+        Message req = MessageBuilder.fromObject("q");
+        ReplyFuture rf = new ReplyFuture("reply/x");
+        java.time.Duration t = java.time.Duration.ofSeconds(5);
+        when(provider.request("topic/req", req, t)).thenReturn(rf);
+        assertSame(rf, client.request("topic/req", req, t));
+        verify(provider).request("topic/req", req, t);
+    }
+
+    @Test
+    void requestFromIoTCoreWithTimeoutDelegatesAndReturnsFuture() {
+        Message req = MessageBuilder.fromObject("q");
+        ReplyFuture rf = new ReplyFuture("reply/x");
+        when(provider.requestFromIoTCore("topic/req", req, java.time.Duration.ZERO)).thenReturn(rf);
+        assertSame(rf, client.requestFromIoTCore("topic/req", req, java.time.Duration.ZERO));
+    }
+
+    @Test
+    void setDefaultRequestTimeoutDelegates() {
+        client.setDefaultRequestTimeout(java.time.Duration.ofSeconds(7));
+        verify(provider).setDefaultRequestTimeout(java.time.Duration.ofSeconds(7));
+    }
+
+    @Test
+    void getDefaultRequestTimeoutDelegates() {
+        when(provider.getDefaultRequestTimeout()).thenReturn(java.time.Duration.ofSeconds(9));
+        assertEquals(java.time.Duration.ofSeconds(9), client.getDefaultRequestTimeout());
+    }
+
+    @Test
+    void requestTimeoutAccessorsAreSafeWhenProviderNull() throws Exception {
+        // The late-bind call must be a safe no-op on a provider-less client (mock/test subclass).
+        MessagingClient bare = new MessagingClient() { };
+        Field f = MessagingClient.class.getDeclaredField("messagingProvider");
+        f.setAccessible(true);
+        f.set(bare, null);
+        assertDoesNotThrow(() -> bare.setDefaultRequestTimeout(java.time.Duration.ofSeconds(3)));
+        assertNull(bare.getDefaultRequestTimeout());
+    }
+
+    @Test
     void cancelRequestDelegates() {
         ReplyFuture rf = new ReplyFuture("reply/x");
         client.cancelRequest(rf);

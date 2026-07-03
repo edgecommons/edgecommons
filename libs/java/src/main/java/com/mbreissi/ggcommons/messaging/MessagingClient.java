@@ -12,6 +12,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import software.amazon.awssdk.aws.greengrass.model.QOS;
 
+import java.time.Duration;
 import java.util.function.BiConsumer;
 
 /**
@@ -161,7 +162,11 @@ public class MessagingClient
     }
 
     /**
-     * Sends a request message and returns a future for handling the reply.
+     * Sends a request message and returns a future for handling the reply. The reply future
+     * carries the framework-owned default deadline ({@code messaging.requestTimeoutSeconds},
+     * default 30 s, UNS-CANONICAL-DESIGN §5): on expiry the ephemeral reply subscription is
+     * cleaned up and the future completes exceptionally with a
+     * {@link java.util.concurrent.TimeoutException} — even if the caller never awaits it.
      *
      * @param topic The topic to send the request to
      * @param request The request message
@@ -173,7 +178,23 @@ public class MessagingClient
     }
 
     /**
-     * Sends a request message to IoT Core and returns a future for handling the reply.
+     * {@link #request(String, Message)} with an explicit per-call deadline (§5, D-U5): an explicit
+     * value always wins over the configured default; {@code null} uses the default;
+     * {@link Duration#ZERO} disables the deadline for this call.
+     *
+     * @param topic The topic to send the request to
+     * @param request The request message
+     * @param timeout The per-call deadline ({@code null} = default, zero = disabled)
+     * @return A ReplyFuture for handling the response
+     */
+    public ReplyFuture request(String topic, Message request, Duration timeout)
+    {
+        return messagingProvider.request(topic, request, timeout);
+    }
+
+    /**
+     * Sends a request message to IoT Core and returns a future for handling the reply. Carries the
+     * same framework-owned default deadline as {@link #request(String, Message)}.
      *
      * @param topic The IoT Core topic to send the request to
      * @param request The request message
@@ -182,6 +203,52 @@ public class MessagingClient
     public ReplyFuture requestFromIoTCore(String topic, Message request)
     {
         return messagingProvider.requestFromIoTCore(topic, request);
+    }
+
+    /**
+     * {@link #requestFromIoTCore(String, Message)} with an explicit per-call deadline (§5, D-U5):
+     * an explicit value wins over the configured default; {@code null} uses the default;
+     * {@link Duration#ZERO} disables the deadline for this call.
+     *
+     * @param topic The IoT Core topic to send the request to
+     * @param request The request message
+     * @param timeout The per-call deadline ({@code null} = default, zero = disabled)
+     * @return A ReplyFuture for handling the response
+     */
+    public ReplyFuture requestFromIoTCore(String topic, Message request, Duration timeout)
+    {
+        return messagingProvider.requestFromIoTCore(topic, request, timeout);
+    }
+
+    /**
+     * Late-binds the default {@code request()} deadline from the config model
+     * ({@code messaging.requestTimeoutSeconds}, §5/D-U5). Called by the runtime right after the
+     * {@code ConfigManager} exists (the messaging client is constructed first because the
+     * IPC-backed config sources need it); until then the built-in 30 s applies — deliberately, so
+     * the CONFIG_COMPONENT bootstrap request gets a deadline instead of hanging. {@code null} or
+     * {@link Duration#ZERO} disables the default deadline. Safe no-op when no provider is wired
+     * (test/subclass constructor).
+     *
+     * @param timeout the new default deadline ({@code null}/zero = disabled)
+     */
+    public void setDefaultRequestTimeout(Duration timeout)
+    {
+        if (messagingProvider != null)
+        {
+            messagingProvider.setDefaultRequestTimeout(timeout);
+            LOGGER.debug("Default request timeout bound to {}", timeout);
+        }
+    }
+
+    /**
+     * The default {@code request()} deadline currently in effect on the underlying provider, or
+     * {@code null} when no provider is wired.
+     *
+     * @return the default deadline (zero/{@code null} = disabled)
+     */
+    public Duration getDefaultRequestTimeout()
+    {
+        return messagingProvider == null ? null : messagingProvider.getDefaultRequestTimeout();
     }
 
     /**

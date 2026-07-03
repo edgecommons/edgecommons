@@ -5,6 +5,7 @@
 package com.mbreissi.ggcommons.messaging;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
 import java.io.FileReader;
@@ -21,9 +22,30 @@ import java.io.IOException;
 public class MessagingConfiguration {
     private MessagingConfig messaging;
 
-    public record MessagingConfig(LocalMqttConfig local, IoTCoreConfig iotCore) {
+    public record MessagingConfig(LocalMqttConfig local, IoTCoreConfig iotCore, LwtConfig lwt) {
         public LocalMqttConfig getLocal() { return local; }
         public IoTCoreConfig getIotCore() { return iotCore; }
+        /** The optional MQTT Last-Will-and-Testament section ({@code messaging.lwt}), or null. */
+        public LwtConfig getLwt() { return lwt; }
+    }
+
+    /**
+     * The optional {@code messaging.lwt} section (UNS-CANONICAL-DESIGN §6, D-U9/M7): an MQTT
+     * Last-Will-and-Testament registered on the <em>local-broker</em> connection at CONNECT
+     * (re-registered automatically on reconnect, since Paho reuses the same connect options).
+     * There is deliberately NO retain field — the will is always registered with retain=false.
+     *
+     * <p>{@code payload} is kept as a raw {@link JsonElement}: a JSON string is published verbatim
+     * as UTF-8 bytes; a JSON object is serialized to compact JSON bytes. {@code qos} accepts 0 or 1
+     * (schema enum) and defaults to 1 when absent; Gson parses both {@code 1} and a lossless
+     * {@code 1.0} into the {@link Integer} component.
+     */
+    public record LwtConfig(String topic, JsonElement payload, Integer qos) {
+        public String getTopic() { return topic; }
+        public JsonElement getPayload() { return payload; }
+        public Integer getQos() { return qos; }
+        /** The effective QoS: the configured value, or the schema default 1 when absent. */
+        public int getQosOrDefault() { return qos == null ? 1 : qos; }
     }
 
     public record LocalMqttConfig(String type, String host, int port, String clientId,
