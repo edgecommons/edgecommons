@@ -17,6 +17,22 @@ public abstract sealed class ConfigProvider
        this.parentConfigManager=configManager  ;
    }
 
+    /**
+     * Back-fills the parent {@link ConfigManager} after bootstrap. Providers are constructed by
+     * {@code ConfigManagerFactory} <b>before</b> the {@code ConfigManager} exists (it is built
+     * from the config the provider loads), so the constructor receives {@code null}; the
+     * {@code ConfigManager} constructor calls this to attach itself as the hot-reload/push
+     * target ({@code applyConfig}). Library-internal wiring — public only because
+     * {@code ConfigManager} lives in the parent package.
+     *
+     * @param configManager the freshly constructed parent config manager (non-null)
+     */
+    public final void attachConfigManager(ConfigManager configManager)
+    {
+        this.parentConfigManager = java.util.Objects.requireNonNull(configManager,
+                "configManager must not be null");
+    }
+
    protected Gson gson=new Gson();
     protected ConfigManager parentConfigManager;
     public abstract JsonObject loadConfiguration();

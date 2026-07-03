@@ -61,7 +61,10 @@ public class ConfigProviderBuilder {
                 if (messagingClient == null) {
                     throw new IllegalStateException("MessagingClient required for CONFIG_COMPONENT config provider but not available during initialization");
                 }
-                yield new ConfigComponentProvider(configManager, messagingClient);
+                // The provider mints its UNS rendezvous topics from the platform inputs handed to
+                // this builder (resolved thing name + component name) because configManager is
+                // null during bootstrap — it is built FROM the config this provider loads (§1.5).
+                yield new ConfigComponentProvider(configManager, componentName, thingName, messagingClient);
             }
             default -> {
                 LOGGER.fatal("Unrecognized config source '{}'.  Valid values are 'FILE', 'CONFIGMAP', 'ENV', 'SHADOW', 'GG_CONFIG', 'CONFIG_COMPONENT'", configArgs[0]);

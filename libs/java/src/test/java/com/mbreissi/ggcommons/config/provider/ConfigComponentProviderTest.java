@@ -20,22 +20,41 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Behavior tests for {@link ConfigComponentProvider#loadConfiguration()} under the framework
- * request deadline (UNS-CANONICAL-DESIGN §5): the CONFIG_COMPONENT bootstrap request keeps its
- * 3-attempt retry contract — but because the deadline settles a timed-out request (reply
- * subscription unsubscribed, future completed exceptionally with {@link TimeoutException}), each
- * retry issues a FRESH request instead of re-awaiting the dead future.
+ * Behavior tests for {@link ConfigComponentProvider} on the UNS config rendezvous
+ * (UNS-CANONICAL-DESIGN §4.3, D-U19 Flow A + the set-config push) and the pre-identity
+ * bootstrap contract (§1.5):
+ *
+ * <ul>
+ *   <li>The GET request goes to {@code ecv1/{device}/config/main/cmd/get-configuration} and
+ *       self-identifies in the body with {@code {"component": "<short name>"}} — the envelope
+ *       carries no identity because the {@code ConfigManager} does not exist yet.</li>
+ *   <li>Every test builds the provider with a <b>null</b> {@code ConfigManager}, exactly like the
+ *       production bootstrap ({@code ConfigManagerFactory} passes null) — the slice-1a flagged
+ *       NPE regression guard.</li>
+ *   <li>A pushed {@code set-config} on the component's own inbox
+ *       {@code ecv1/{device}/{component}/main/cmd/set-config} applies via
+ *       {@code applyConfig} once the manager is attached, and is dropped (not an NPE) before.</li>
+ *   <li>The 3-attempt retry contract from the framework request deadline (§5) is unchanged:
+ *       each retry issues a FRESH request (a settled future can never complete).</li>
+ * </ul>
  */
 class ConfigComponentProviderTest {
+
+    private static final String EXPECTED_GET_TOPIC = "ecv1/test-thing/config/main/cmd/get-configuration";
+    private static final String EXPECTED_SET_CONFIG_TOPIC = "ecv1/test-thing/Comp/main/cmd/set-config";
 
     /** MockMessagingService whose request() futures are scripted per attempt. */
     private static final class ScriptedMessaging extends MockMessagingService {
         final List<ReplyFuture> scripted = new ArrayList<>();
+        final List<String> requestTopics = new ArrayList<>();
+        final List<Message> requestMessages = new ArrayList<>();
         final AtomicInteger requests = new AtomicInteger();
         final AtomicInteger cancels = new AtomicInteger();
 
         @Override
         public ReplyFuture request(String topic, Message message) {
+            requestTopics.add(topic);
+            requestMessages.add(message);
             int n = requests.getAndIncrement();
             return scripted.get(Math.min(n, scripted.size() - 1));
         }
@@ -46,6 +65,16 @@ class ConfigComponentProviderTest {
             if (replyFuture.trySettle()) {
                 replyFuture.complete(null);
             }
+        }
+    }
+
+    /** A ConfigManager stand-in recording what the set-config push handler applies. */
+    private static final class CapturingConfigManager extends MockConfigurationService {
+        final List<JsonObject> applied = new ArrayList<>();
+
+        @Override
+        public void applyConfig(JsonObject config) {
+            applied.add(config);
         }
     }
 
@@ -66,10 +95,42 @@ class ConfigComponentProviderTest {
         return f;
     }
 
+    /**
+     * Builds the provider through the production path: a NULL ConfigManager (it does not exist
+     * yet during config bootstrap) with the thing/component names from the platform inputs.
+     */
     private static ConfigComponentProvider provider(ScriptedMessaging messaging) {
+        return provider(messaging, "com.test.Comp", "test-thing");
+    }
+
+    private static ConfigComponentProvider provider(ScriptedMessaging messaging,
+                                                    String componentName, String thingName) {
         return (ConfigComponentProvider) ConfigProviderBuilder.build(
-                new MockConfigurationService(), "com.test.Comp", "thing",
+                null, componentName, thingName,
                 new String[]{"CONFIG_COMPONENT"}, messaging);
+    }
+
+    /** A fire-and-forget set-config push message whose body is the new configuration. */
+    private static Message setConfigPush(JsonObject newConfig) {
+        return MessageBuilder.create("SetConfig", "1.0").withPayload(newConfig).build();
+    }
+
+    // ----- Flow A: the GET rendezvous (D-U19) -----
+
+    @Test
+    void getRequestUsesTheUnsConfigRendezvousAndSelfIdentifiesInTheBody() {
+        ScriptedMessaging messaging = new ScriptedMessaging();
+        JsonObject cfg = new JsonObject();
+        cfg.addProperty("component", "x");
+        messaging.scripted.add(replied(cfg));
+
+        provider(messaging).loadConfiguration();
+
+        assertEquals(EXPECTED_GET_TOPIC, messaging.requestTopics.get(0),
+                "the GET must target the reserved-by-convention 'config' logical component");
+        JsonObject body = (JsonObject) messaging.requestMessages.get(0).getBody();
+        assertEquals("Comp", body.get("component").getAsString(),
+                "the requester must self-identify in the body with the SHORT component name");
     }
 
     @Test
@@ -84,6 +145,70 @@ class ConfigComponentProviderTest {
         assertEquals("x", loaded.get("component").getAsString());
         assertEquals(1, messaging.requests.get(), "one request suffices on the happy path");
     }
+
+    @Test
+    void topicsAreMintedFromSanitizedThingAndShortComponentTokens() {
+        // Reserved topic characters (/ + #) in the platform inputs must be neutralized by the
+        // normative token sanitizer, resolved WITHOUT any ConfigManager.
+        ScriptedMessaging messaging = new ScriptedMessaging();
+        JsonObject cfg = new JsonObject();
+        messaging.scripted.add(replied(cfg));
+        ConfigComponentProvider p = provider(messaging, "com.test.My/Comp+1", "plant#7/east");
+
+        p.loadConfiguration();
+        assertEquals("ecv1/plant_7_east/config/main/cmd/get-configuration",
+                messaging.requestTopics.get(0));
+        JsonObject body = (JsonObject) messaging.requestMessages.get(0).getBody();
+        assertEquals("My_Comp_1", body.get("component").getAsString());
+
+        // The set-config inbox uses the same sanitized tokens: an exact-topic push must land.
+        CapturingConfigManager manager = new CapturingConfigManager();
+        p.attachConfigManager(manager);
+        JsonObject pushed = new JsonObject();
+        pushed.addProperty("v", 2);
+        messaging.simulateMessage("ecv1/plant_7_east/My_Comp_1/main/cmd/set-config", setConfigPush(pushed));
+        assertEquals(1, manager.applied.size(), "the push must arrive on the sanitized inbox topic");
+    }
+
+    // ----- the set-config push (component's own inbox) -----
+
+    @Test
+    void pushedSetConfigAppliesOnceTheConfigManagerIsAttached() {
+        ScriptedMessaging messaging = new ScriptedMessaging();
+        ConfigComponentProvider p = provider(messaging);
+        CapturingConfigManager manager = new CapturingConfigManager();
+        p.attachConfigManager(manager); // what the ConfigManager constructor does post-bootstrap
+
+        JsonObject newConfig = new JsonObject();
+        newConfig.addProperty("component", "pushed");
+        messaging.simulateMessage(EXPECTED_SET_CONFIG_TOPIC, setConfigPush(newConfig));
+
+        assertEquals(1, manager.applied.size(), "a set-config push on the component inbox must apply");
+        assertEquals("pushed", manager.applied.get(0).get("component").getAsString());
+    }
+
+    @Test
+    void pushedSetConfigBeforeAttachIsDroppedWithoutNPE() {
+        // The provider exists BEFORE the ConfigManager (production bootstrap). A push racing
+        // ahead of the attach must be dropped, not dereference the null manager.
+        ScriptedMessaging messaging = new ScriptedMessaging();
+        ConfigComponentProvider p = provider(messaging);
+
+        JsonObject early = new JsonObject();
+        assertDoesNotThrow(() ->
+                messaging.simulateMessage(EXPECTED_SET_CONFIG_TOPIC, setConfigPush(early)));
+
+        // After the attach, pushes flow normally.
+        CapturingConfigManager manager = new CapturingConfigManager();
+        p.attachConfigManager(manager);
+        JsonObject late = new JsonObject();
+        late.addProperty("component", "late");
+        messaging.simulateMessage(EXPECTED_SET_CONFIG_TOPIC, setConfigPush(late));
+        assertEquals(1, manager.applied.size(), "only the post-attach push applies");
+        assertEquals("late", manager.applied.get(0).get("component").getAsString());
+    }
+
+    // ----- the 3-attempt retry contract under the framework deadline (§5, slice 1c) -----
 
     @Test
     void frameworkDeadlineTimeoutsRetryWithFreshRequestsThenFailAfterThree() {

@@ -22,8 +22,9 @@ import static org.junit.jupiter.api.Assertions.*;
  * </ul>
  *
  * Both provider constructors do only cheap, broker-free work
- * (GreengrassConfigProvider stores fields; ConfigComponentProvider resolves topic templates
- * and registers a no-op subscription on the mock client), so no Nucleus/AWS is needed.
+ * (GreengrassConfigProvider stores fields; ConfigComponentProvider mints its UNS rendezvous
+ * topics from the thing/component names and registers a no-op subscription on the mock client),
+ * so no Nucleus/AWS is needed.
  * The {@code SHADOW} success path is intentionally not covered here because its constructor
  * casts the native client to a real IPC client (requires a live Nucleus).
  */
@@ -55,13 +56,19 @@ class ConfigProviderBuilderMessagingTest {
 
     @Test
     void buildConfigComponentProviderWithMessagingClient() {
+        // A NULL ConfigManager, exactly like the production bootstrap (ConfigManagerFactory
+        // passes null — the manager is built FROM the config this provider loads, §1.5). The
+        // provider must mint its topics from the thing/component names alone.
         MockMessagingService messaging = new MockMessagingService();
         ConfigProvider provider = ConfigProviderBuilder.build(
-                new MockConfigurationService(), "com.test.Comp", "thing",
+                null, "com.test.Comp", "thing",
                 new String[]{"CONFIG_COMPONENT"}, messaging);
 
         assertNotNull(provider);
         assertTrue(provider instanceof ConfigComponentProvider);
-        assertNotNull(provider.getConfigSource());
+        assertTrue(provider.getConfigSource().contains("ecv1/thing/config/main/cmd/get-configuration"),
+                "getConfigSource must report the UNS GET rendezvous: " + provider.getConfigSource());
+        assertTrue(provider.getConfigSource().contains("ecv1/thing/Comp/main/cmd/set-config"),
+                "getConfigSource must report the set-config inbox: " + provider.getConfigSource());
     }
 }

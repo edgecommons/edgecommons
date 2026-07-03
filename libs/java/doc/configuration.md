@@ -60,6 +60,35 @@ The configuration system supports multiple sources, specified via command line a
 - Centralized configuration for multiple components
 - Advanced deployment pattern for complex systems
 
+The rendezvous with the config server rides the UNS command grammar (Flow A of the config
+addressing, UNS-CANONICAL-DESIGN §4.3 / D-U19):
+
+| Flow | Topic | Direction |
+|---|---|---|
+| get-configuration (request/reply) | `ecv1/{device}/config/main/cmd/get-configuration` | component → config server |
+| set-config push (fire-and-forget `cmd`, no `reply_to`) | `ecv1/{device}/{component}/main/cmd/set-config` | config server → component |
+
+- **`config` is a reserved-by-convention logical component name** — the config server is the
+  *sole subscriber* of the `get-configuration` rendezvous under it. Do not name a component
+  `config`.
+- `{device}` is the resolved thing name and `{component}` the short component name, both passed
+  through the normative token sanitizer (`/ \ + #`, control characters and `..` become `_`).
+- **The requester self-identifies in the request body** with `{"component": "<short name>"}`.
+  The GET runs during config bootstrap — *before* the `ConfigManager` (and the component
+  identity) exists — so the envelope carries **no** `identity` element; the server must route on
+  the body field. The server replies via the envelope's `reply_to` with the configuration as the
+  message body. The request keeps the framework request deadline and is retried up to 3 times
+  (a fresh request per attempt).
+- **A pushed `set-config`** is a notification-style command (a `cmd` without `reply_to`)
+  delivered to the component's *own* inbox; its body is the complete new configuration, applied
+  exactly like a hot reload (schema-validated, reject-and-keep).
+
+**Server side (convention, not implemented by this library):** an external config-manager
+component must subscribe to `ecv1/{device}/config/main/cmd/get-configuration`, reply to each
+request with the requesting component's configuration as the body, and push configuration
+changes as `set-config` commands to each component's inbox
+`ecv1/{device}/{component}/main/cmd/set-config`.
+
 ## 3. Configuration Structure
 
 The configuration is organized into distinct sections:

@@ -143,7 +143,7 @@ class ReservedTopicGuardTest {
         String[] topics = {
                 "ggcommons/reply-abc123",                       // reply topics (D-U6)
                 "cloudwatch/metric/put",                        // the external AWS contract (D-U21)
-                "ggcommons/thing-1/config/get/MyComponent",     // legacy config rendezvous (slice 1e)
+                "ggcommons/thing-1/config/get/MyComponent",     // pre-UNS legacy topic shape (retired in slice 1e) — non-ecv1, passes untouched
                 "some/foreign/broker/topic/state",              // foreign bridging
                 "ecv1x/a/b/c/state/d",                          // ecv1-prefixed but not the root token
         };

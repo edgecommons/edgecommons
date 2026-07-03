@@ -137,7 +137,16 @@ public class ConfigManager
 
         // Register logging configuration change listener
         addConfigChangeListener(new LoggingConfigChangeListener(this));
-        
+
+        // Back-fill this manager onto the provider: providers are constructed during config
+        // bootstrap with a null ConfigManager (ConfigManagerFactory builds this manager FROM the
+        // provider's loaded config), so their hot-reload/push paths (applyConfig) need the
+        // reference attached here. Fixes the CONFIG_COMPONENT set-config push (and the file/
+        // ConfigMap watcher reload) dereferencing a forever-null parentConfigManager.
+        if (configProvider != null) {
+            configProvider.attachConfigManager(this);
+        }
+
         // Note: initializing flag will be set to false by GGCommons after all initialization is complete
     }
 
