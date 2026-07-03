@@ -226,7 +226,8 @@ to that instance (§3). `topicFor` takes a `MessageIdentity` — typically from 
 
 1. **Token rule** (identical to the template sanitizer's blacklist, so any sanitized value passes — this
    is the reconciliation): a token is non-empty, contains no `/`, `+`, `#`, `\`, no control characters
-   (U+0000–U+001F, U+007F), and no `..` substring. Dots are legal (D5: literal-within-a-level). The
+   (the sanitizer's `Character.isISOControl`, which also covers C1 U+0080–U+009F — **D‑U26**), and no
+   `..` substring. Dots are legal (D5: literal-within-a-level). The
    validator deliberately does **not** impose a stricter whitelist than the sanitizer, or sanitized
    values (thing names with spaces, etc.) would build unpublishable topics.
 2. **Depth guard**: total `/` count ≤ 7 (AWS IoT Core's 8-level limit) ⇒ channel ≤ **3 tokens** without
@@ -240,7 +241,9 @@ to that instance (§3). `topicFor` takes a `MessageIdentity` — typically from 
    literal, minimum 5 tokens (6 rooted), class ∈ enum, leaf-class tail absence, depth, length.
    `filter()` output is correct by construction and not passed through `validate`.
 6. **Root** (D‑U11, low priority): `topic.includeRoot` (top-level `topic` config block, default `false`)
-   inserts `hier[0].value` after `ecv1` in `topic()`/`topicFor()` and a `site` position in `filter()`.
+   inserts `hier[0].value` after `ecv1` in `topic()`/`topicFor()` and a `site` position in `filter()` —
+   **only when `hierarchy.levels` has ≥2 entries (D‑U25)**; with a single-level hierarchy it is a no-op +
+   config WARN (hier[0] is the device; prepending would duplicate it).
 7. Reply topics (`ggcommons/reply-…`, `MessageHeader.REPLY_MESSAGE_TOPIC_PREFIX`) are **non-UNS** and
    never pass through `uns()`; the guard ignores them because they are not `ecv1/`-rooted (D‑U6).
 
@@ -553,6 +556,8 @@ internal `IotCoreSubscriptionHandler → IoTCoreSubscriptionHandler` (cosmetic).
 | D‑U22 | Topics byte-identical; envelopes structurally identical (member order not normative) | the four serializers already differ in order + the interop harness compares structurally; byte order would churn all four for zero consumer value | High | Easy | no |
 | D‑U23 | Error identities: `UnsValidationException`(+code)/`ReservedTopicException`/`TimeoutException`(Java std)/`RequestTimeoutError`(Py/TS)/`GgError::{UnsValidation,ReservedTopic,RequestTimeout}`(Rust); Python `Iou.get()` now raises on deadline | confirmed; the Python `Iou` contract change is the sharpest edge (pre-1.0 accepted) | High | Easy | no |
 | D‑U24 | Guard checks class position 4 always, position 5 only when own `includeRoot=true`; residual rooted-forgery gap accepted (broker ACL closes it) | the alternative (both positions unconditionally) false-positives on legit `app/...` channels | High | Easy | no |
+| D‑U25 | `topic.includeRoot` requires a **multi-level hierarchy** | ✅ **resolved 2026-07-03** (slice-1b finding): `includeRoot` prepends `hier[0].value` (the top/site level) **only when `hierarchy.levels` has ≥2 entries**; with a single-level hierarchy (`["device"]`) it is a **no-op + config WARN** (hier[0] *is* the device — prepending would duplicate it: `ecv1/gw-01/gw-01/…`). includeRoot exists to disambiguate multi-site brokers by the top level; meaningless without a level above the device. Fix Java in 1e; pin in vectors | High | Easy | no |
+| D‑U26 | `uns()` char-rule ≡ the sanitizer's blacklist **exactly** | ✅ **resolved 2026-07-03** (slice-1b finding): the validator's bad-char check uses the SAME predicate as `ConfigManager.sanitize()` — `Character.isISOControl` (incl. C1 U+0080–U+009F) + `/ + # \` + `..` — so "sanitized ⇒ valid" is a true equivalence, not one-directional. Slice 1b used the spec-literal U+0000–U+001F/U+007F range (accepts C1); align Java to the sanitizer (reject C1) in 1e. **Vector guidance:** single-fault cases (or pin the `validate()` code-precedence order slice 1b documented); `validate` cases carry the `includeRoot` input; empty channel = absent; too-short topic → `BAD_CLASS` | High | Easy | no |
 
 ---
 
