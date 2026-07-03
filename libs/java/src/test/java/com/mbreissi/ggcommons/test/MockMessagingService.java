@@ -36,19 +36,31 @@ public class MockMessagingService extends MessagingClient {
         public final Message message;
         public final JsonObject rawPayload;
         public final QOS qos;
+        /** Whether the publish came through the privileged {@code ReservedPublisher} seam. */
+        public final boolean reserved;
 
         public PublishedMessage(String topic, Message message, QOS qos) {
+            this(topic, message, qos, false);
+        }
+
+        public PublishedMessage(String topic, Message message, QOS qos, boolean reserved) {
             this.topic = topic;
             this.message = message;
             this.rawPayload = null;
             this.qos = qos;
+            this.reserved = reserved;
         }
 
         public PublishedMessage(String topic, JsonObject rawPayload) {
+            this(topic, rawPayload, false);
+        }
+
+        public PublishedMessage(String topic, JsonObject rawPayload, boolean reserved) {
             this.topic = topic;
             this.message = null;
             this.rawPayload = rawPayload;
             this.qos = null;
+            this.reserved = reserved;
         }
     }
 
@@ -90,6 +102,24 @@ public class MockMessagingService extends MessagingClient {
     @Override
     public void publishToIoTCoreRaw(String topic, JsonObject payload, QOS qos) {
         publishedMessages.add(new PublishedMessage(topic, payload));
+    }
+
+    // The privileged ReservedPublisher seam delegates to these protected hooks; record them like
+    // regular publishes (flagged reserved) so tests can assert the library publishers' output.
+
+    @Override
+    protected void publishReserved(String topic, Message message) {
+        publishedMessages.add(new PublishedMessage(topic, message, null, true));
+    }
+
+    @Override
+    protected void publishReservedRaw(String topic, JsonObject payload) {
+        publishedMessages.add(new PublishedMessage(topic, payload, true));
+    }
+
+    @Override
+    protected void publishReservedToIoTCore(String topic, Message message, QOS qos) {
+        publishedMessages.add(new PublishedMessage(topic, message, qos, true));
     }
 
     @Override

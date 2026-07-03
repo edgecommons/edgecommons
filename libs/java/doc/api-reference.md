@@ -157,14 +157,20 @@ Returns the value for a specific tag key.
 #### HeartbeatConfiguration
 
 ```java
+public boolean isEnabled()
+```
+Whether the heartbeat (state keepalive + `sys` measures metric) runs (default `true`).
+
+```java
 public int getIntervalSecs()
 ```
 Returns the heartbeat interval in seconds.
 
 ```java
-public List<HeartbeatTarget> getTargets()
+public String getDestination()
 ```
-Returns list of heartbeat targets.
+The state keepalive's publish destination — `"local"` (default) or `"iotcore"`. (The legacy
+`targets[]` array is removed; the measures route through the metric subsystem as the `sys` metric.)
 
 ```java
 public HeartbeatMeasures getMeasures()
@@ -196,7 +202,9 @@ Returns the maximum file size for log rotation.
 ```java
 public String getTopic()
 ```
-Returns the topic template (for messaging targets).
+Returns the fixed `cloudwatch/metric/put` contract topic for the `cloudwatchcomponent` target, or
+`null` otherwise. (The `messaging` target publishes to the UNS metric topic
+`ecv1/{device}/{component}/main/metric/{metricName}` — no configured topic.)
 
 ```java
 public int getIntervalSecs()

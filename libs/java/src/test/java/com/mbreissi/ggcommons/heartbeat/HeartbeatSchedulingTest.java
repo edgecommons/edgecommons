@@ -34,9 +34,8 @@ class HeartbeatSchedulingTest {
 
         @Override
         public HeartbeatConfiguration getHeartbeatConfig() {
-            String json = "{\"heartbeat\":{\"intervalSecs\":" + intervalSecs
-                    + ",\"targets\":[{\"type\":\"messaging\",\"config\":"
-                    + "{\"destination\":\"ipc\",\"topic\":\"hb/{ThingName}/{ComponentName}\"}}]}}";
+            // §4.3 shape: every tick publishes the state keepalive (counted by the mock).
+            String json = "{\"heartbeat\":{\"intervalSecs\":" + intervalSecs + "}}";
             return ConfigurationFactory.createHeartbeatConfiguration(
                     JsonParser.parseString(json).getAsJsonObject());
         }

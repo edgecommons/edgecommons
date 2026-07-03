@@ -12,6 +12,7 @@ import com.mbreissi.ggcommons.config.HeartbeatConfiguration;
 import com.mbreissi.ggcommons.config.LoggingConfiguration;
 import com.mbreissi.ggcommons.config.MetricConfiguration;
 import com.mbreissi.ggcommons.config.TagConfiguration;
+import com.mbreissi.ggcommons.messaging.MessageIdentity;
 import com.google.gson.JsonObject;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -30,6 +31,14 @@ public class MockConfigurationService extends ConfigManager {
     private String componentName = "TestComponent";
     private String componentFullName = "com.test.TestComponent";
     private List<ConfigurationChangeListener> listeners = new ArrayList<>();
+    /**
+     * The mock's resolved UNS identity — a real ConfigManager always resolves one, so the default
+     * mirrors the zero-config resolution (single 'device' level = thing name, component = short
+     * name, instance 'main'). Settable (incl. to null) for identity-edge-case tests.
+     */
+    private MessageIdentity componentIdentity = new MessageIdentity(
+            List.of(new MessageIdentity.HierEntry("device", thingName)),
+            componentName, MessageIdentity.DEFAULT_INSTANCE);
     
     public void setFullConfig(JsonObject config) {
         this.fullConfig = config;
@@ -76,6 +85,16 @@ public class MockConfigurationService extends ConfigManager {
     
     public void setThingName(String thingName) {
         this.thingName = thingName;
+    }
+
+    @Override
+    public MessageIdentity getComponentIdentity() {
+        return componentIdentity;
+    }
+
+    /** Injects a custom resolved identity ({@code null} = the unresolved/bring-up case). */
+    public void setComponentIdentity(MessageIdentity componentIdentity) {
+        this.componentIdentity = componentIdentity;
     }
     
     @Override

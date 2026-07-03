@@ -13,7 +13,6 @@ import com.mbreissi.ggcommons.test.MockMessagingService;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import org.junit.jupiter.api.Test;
-import software.amazon.awssdk.aws.greengrass.model.QOS;
 
 import java.util.HashMap;
 import java.util.List;
@@ -22,18 +21,24 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Unit tests for the {@link Messaging} metric target using {@link MockMessagingService}
- * to capture published messages without a broker.
+ * Unit tests for the {@link Messaging} metric target on its UNS topic scheme (UNS-CANONICAL-DESIGN
+ * §4.3): each metric publishes to {@code ecv1/{device}/{component}/main/metric/{metricName}} (the
+ * name sanitized as a channel token) through the privileged {@code ReservedPublisher} seam, with
+ * {@code targetConfig.destination} still selecting local vs IoT Core (D-U9). Uses
+ * {@link MockMessagingService} to capture publishes without a broker.
  */
 class MessagingTest {
 
-    /** Config that selects the messaging target with a caller-supplied topic and destination. */
+    /** The default mock identity's UNS metric topic prefix (device=test-thing, component=TestComponent). */
+    private static final String METRIC_TOPIC_PREFIX = "ecv1/test-thing/TestComponent/main/metric/";
+
+    /** Config that selects the messaging target with a caller-supplied destination. */
     private static class MsgConfig extends MockConfigurationService {
         private final MetricConfiguration metricConfig;
 
-        MsgConfig(String topic, String destination, boolean largeFleet) {
+        MsgConfig(String destination, boolean largeFleet) {
             String json = "{\"target\":\"messaging\",\"namespace\":\"ns1\",\"largeFleetWorkaround\":" + largeFleet
-                    + ",\"targetConfig\":{\"topic\":\"" + topic + "\",\"destination\":\"" + destination + "\"}}";
+                    + ",\"targetConfig\":{\"destination\":\"" + destination + "\"}}";
             var root = new JsonObject();
             root.add("metricEmission", JsonParser.parseString(json).getAsJsonObject());
             this.metricConfig = ConfigurationFactory.createMetricConfiguration(root);
@@ -46,7 +51,11 @@ class MessagingTest {
     }
 
     private static Metric metric() {
-        return MetricBuilder.create("m1")
+        return metric("m1");
+    }
+
+    private static Metric metric(String name) {
+        return MetricBuilder.create(name)
                 .withNamespace("ns1")
                 .addMeasure("value", "Count", 60)
                 .build();
@@ -59,8 +68,8 @@ class MessagingTest {
     }
 
     @Test
-    void emitMetricPublishesToIpc() {
-        var messaging = new Messaging(new MsgConfig("metrics/topic", "ipc", false));
+    void emitMetricPublishesToTheUnsMetricTopic() {
+        var messaging = new Messaging(new MsgConfig("ipc", false));
         var mock = new MockMessagingService();
         messaging.setMessagingService(mock);
 
@@ -68,15 +77,18 @@ class MessagingTest {
 
         List<MockMessagingService.PublishedMessage> published = mock.getPublishedMessages();
         assertEquals(1, published.size());
-        assertEquals("metrics/topic", published.get(0).topic);
+        assertEquals(METRIC_TOPIC_PREFIX + "m1", published.get(0).topic,
+                "the metric topic is ecv1/{device}/{component}/main/metric/{metricName}");
         assertNotNull(published.get(0).message);
+        assertTrue(published.get(0).reserved,
+                "metric publishes must go through the privileged ReservedPublisher seam");
         // IPC publish path uses no QOS.
         assertNull(published.get(0).qos);
     }
 
     @Test
-    void emitMetricNowPublishesToIotCoreWhenDestinationNotIpc() {
-        var messaging = new Messaging(new MsgConfig("metrics/topic", "iotcore", false));
+    void emitMetricNowPublishesToIotCoreWhenDestinationIotCore() {
+        var messaging = new Messaging(new MsgConfig("iotcore", false));
         var mock = new MockMessagingService();
         messaging.setMessagingService(mock);
 
@@ -84,44 +96,61 @@ class MessagingTest {
 
         List<MockMessagingService.PublishedMessage> published = mock.getPublishedMessages();
         assertEquals(1, published.size());
-        assertEquals(QOS.AT_LEAST_ONCE, published.get(0).qos);
+        assertEquals(METRIC_TOPIC_PREFIX + "m1", published.get(0).topic);
+        assertNotNull(published.get(0).qos, "iotcore destination publishes via publishToIoTCore");
+        assertTrue(published.get(0).reserved);
+    }
+
+    @Test
+    void metricNameIsSanitizedAsAChannelToken() {
+        var messaging = new Messaging(new MsgConfig("ipc", false));
+        var mock = new MockMessagingService();
+        messaging.setMessagingService(mock);
+
+        // '/', '+', '#' are the sanitizer's blacklist -> '_'; spaces and dots survive (§2.2).
+        messaging.emitMetric(metric("api/errors+5xx #hot v1.2"), values());
+
+        assertEquals(METRIC_TOPIC_PREFIX + "api_errors_5xx _hot v1.2",
+                mock.getPublishedMessages().get(0).topic);
     }
 
     @Test
     void largeFleetWorkaroundPublishesTwice() {
-        var messaging = new Messaging(new MsgConfig("metrics/topic", "ipc", true));
+        var messaging = new Messaging(new MsgConfig("ipc", true));
         var mock = new MockMessagingService();
         messaging.setMessagingService(mock);
 
         messaging.emitMetricNow(metric(), values());
 
         assertEquals(2, mock.getPublishedMessages().size());
+        assertEquals(METRIC_TOPIC_PREFIX + "m1", mock.getPublishedMessages().get(1).topic);
     }
 
     @Test
-    void onConfigurationChangedRecomputesTopicAndDestination() {
-        var messaging = new Messaging(new MsgConfig("metrics/topic", "ipc", false));
+    void onConfigurationChangedRecomputesDestination() {
+        var messaging = new Messaging(new MsgConfig("ipc", false));
         var mock = new MockMessagingService();
         messaging.setMessagingService(mock);
 
         assertTrue(messaging.onConfigurationChanged());
 
-        // Topic/destination re-resolved from config; publishing still works.
+        // Destination re-resolved from config; publishing still works on the UNS topic.
         messaging.emitMetricNow(metric(), values());
         assertEquals(1, mock.getPublishedMessages().size());
-        assertEquals("metrics/topic", mock.getPublishedMessages().get(0).topic);
+        assertEquals(METRIC_TOPIC_PREFIX + "m1", mock.getPublishedMessages().get(0).topic);
     }
 
     @Test
-    void templateInTopicIsResolved() {
-        // MockConfigurationService.resolveTemplate replaces {ComponentName} / {ThingName}.
-        var messaging = new Messaging(new MsgConfig("{ThingName}/{ComponentName}/metric", "ipc", false));
+    void missingIdentityDropsTheMetric() {
+        var config = new MsgConfig("ipc", false);
+        config.setComponentIdentity(null); // the test/subclass bring-up case
+        var messaging = new Messaging(config);
         var mock = new MockMessagingService();
         messaging.setMessagingService(mock);
 
-        messaging.emitMetric(metric(), values());
+        messaging.emitMetricNow(metric(), values());
 
-        String topic = mock.getPublishedMessages().get(0).topic;
-        assertEquals("test-thing/TestComponent/metric", topic);
+        assertTrue(mock.getPublishedMessages().isEmpty(),
+                "no resolved identity -> no UNS metric topic -> the metric is dropped");
     }
 }

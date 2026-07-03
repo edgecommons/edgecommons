@@ -19,12 +19,7 @@
       "files": true,
       "threads": true,
       "fds": true
-    },
-    "targets": [
-      {
-        "type": "metric"
-      }
-    ]
+    }
   },
   "tags": {
     "appId": "IntelliJIdea",
@@ -42,7 +37,10 @@
   "credentials": {
     "vault": {
       "path": "./.vault/vault",
-      "keyProvider": { "type": "file", "keyPath": "./.vault/vault.key" }
+      "keyProvider": {
+        "type": "file",
+        "keyPath": "./.vault/vault.key"
+      }
     }
   },
   "parameters": {
@@ -53,7 +51,10 @@
     "refreshIntervalSecs": 0,
     "bootstrapOnStart": true,
     "sync": {
-      "names": [ "/skeleton/region", "/skeleton/poolSize" ]
+      "names": [
+        "/skeleton/region",
+        "/skeleton/poolSize"
+      ]
     }
   },
   "component": {
@@ -61,7 +62,6 @@
       "publish_interval": 1,
       "message": "Hello world config_2!"
     },
-    "instances": [
-    ]
+    "instances": []
   }
 }

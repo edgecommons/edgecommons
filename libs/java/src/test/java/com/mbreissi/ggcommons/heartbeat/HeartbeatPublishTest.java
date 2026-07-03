@@ -13,57 +13,58 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Unit tests for {@link Heartbeat} built via {@link HeartbeatBuilder} with the shared
- * test mocks (no broker / Nucleus / AWS). These exercise the previously-uncovered
- * {@code publishHeartbeat()} "messaging" branches:
+ * Unit tests for the reshaped {@link Heartbeat} (UNS-CANONICAL-DESIGN §4.3, D-U14/D-U20) with the
+ * shared test mocks (no broker / Nucleus / AWS):
  *
  * <ul>
- *   <li>destination {@code iot_core} -> {@code messagingService.publishToIoTCore(...)} (Heartbeat L153)</li>
- *   <li>an unrecognized destination -> the "Unrecognized messaging destination" warn branch (Heartbeat L157)</li>
- *   <li>{@code onConfigurationChanged()} -> re-init, which cancels/purges the existing timer
- *       (Heartbeat L74-75, L189-191)</li>
+ *   <li>each tick publishes a {@code state} keepalive to the component's UNS state topic
+ *       ({@code ecv1/{device}/{component}/main/state}) through the privileged
+ *       {@code ReservedPublisher} seam — header name {@code "state"}, body
+ *       {@code {"status":"RUNNING","uptimeSecs":n}};</li>
+ *   <li>the measures are emitted as the metric {@code sys} through the metric subsystem;</li>
+ *   <li>{@code destination: iotcore} routes the keepalive via {@code publishToIoTCore};</li>
+ *   <li>{@code close()} publishes a best-effort {@code {"status":"STOPPED"}} state (once);</li>
+ *   <li>{@code enabled: false} disables everything;</li>
+ *   <li>no resolved identity -> the keepalive is skipped but the {@code sys} metric still flows.</li>
  * </ul>
- *
- * The heartbeat {@link java.util.Timer} fires its first task at delay 0, so constructing the
- * {@code Heartbeat} triggers {@code publishHeartbeat()} once synchronously-ish; we await briefly
- * for the published message and then {@code close()} the heartbeat.
  */
 class HeartbeatPublishTest {
 
-    /** A config whose heartbeat targets are messaging with the given destinations. */
-    private static MockConfigurationService configWithMessagingTargets(String... destinations) {
-        StringBuilder targets = new StringBuilder("[");
-        for (int i = 0; i < destinations.length; i++) {
-            if (i > 0) targets.append(',');
-            targets.append("{\"type\":\"messaging\",\"config\":{\"destination\":\"")
-                    .append(destinations[i])
-                    .append("\",\"topic\":\"hb/{ThingName}/{ComponentName}\"}}");
-        }
-        targets.append("]");
-        final String heartbeatJson =
-                "{\"heartbeat\":{\"intervalSecs\":3600,\"targets\":" + targets + "}}";
+    /** The default mock identity's UNS state topic (device=test-thing, component=TestComponent). */
+    private static final String STATE_TOPIC = "ecv1/test-thing/TestComponent/main/state";
 
+    /** A config whose heartbeat section is the given §4.3-shape JSON (or "{}" for pure defaults). */
+    private static MockConfigurationService configWithHeartbeat(String heartbeatJson) {
+        final String json = "{\"heartbeat\":" + heartbeatJson + "}";
         return new MockConfigurationService() {
             @Override
             public HeartbeatConfiguration getHeartbeatConfig() {
-                JsonObject cfg = JsonParser.parseString(heartbeatJson).getAsJsonObject();
+                JsonObject cfg = JsonParser.parseString(json).getAsJsonObject();
                 return ConfigurationFactory.createHeartbeatConfiguration(cfg);
             }
         };
     }
 
     private static void awaitAtLeastOnePublish(MockMessagingService messaging) {
-        for (int i = 0; i < 50 && messaging.getPublishedMessages().isEmpty(); i++) {
+        for (int i = 0; i < 100 && messaging.getPublishedMessages().isEmpty(); i++) {
+            try { Thread.sleep(20); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        }
+    }
+
+    private static void awaitAtLeastOneEmit(MockMetricService metrics) {
+        for (int i = 0; i < 100 && metrics.getEmittedMetrics().isEmpty(); i++) {
             try { Thread.sleep(20); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
         }
     }
 
     @Test
-    void iotCoreDestinationPublishesToIotCore() {
-        MockConfigurationService config = configWithMessagingTargets("iot_core");
+    void publishesStateKeepaliveOnTheUnsStateTopic() {
+        MockConfigurationService config = configWithHeartbeat("{\"intervalSecs\":3600}");
         MockMessagingService messaging = new MockMessagingService();
         MockMetricService metrics = new MockMetricService();
 
@@ -73,19 +74,28 @@ class HeartbeatPublishTest {
                 .build();
         try {
             awaitAtLeastOnePublish(messaging);
-            assertFalse(messaging.getPublishedMessages().isEmpty(),
-                    "iot_core target must publish a heartbeat via publishToIoTCore");
-            // publishToIoTCore records a QOS; publish() (ipc) records null QOS.
-            assertNotNull(messaging.getPublishedMessages().get(0).qos,
-                    "iot_core publish must carry a QOS (publishToIoTCore path)");
+            List<MockMessagingService.PublishedMessage> published = messaging.getPublishedMessages();
+            assertFalse(published.isEmpty(), "the heartbeat must publish a state keepalive");
+            MockMessagingService.PublishedMessage keepalive = published.get(0);
+            assertEquals(STATE_TOPIC, keepalive.topic);
+            assertTrue(keepalive.reserved,
+                    "the state keepalive must go through the privileged ReservedPublisher seam");
+            assertNull(keepalive.qos, "the default destination 'local' publishes locally (no QOS)");
+
+            // Envelope: header name "state"; body {"status":"RUNNING","uptimeSecs":<n>}.
+            assertEquals("state", keepalive.message.getHeader().getName());
+            JsonObject body = keepalive.message.toDict().getAsJsonObject("body");
+            assertEquals("RUNNING", body.get("status").getAsString());
+            assertTrue(body.has("uptimeSecs"), "the RUNNING keepalive carries uptimeSecs");
+            assertTrue(body.get("uptimeSecs").getAsLong() >= 0);
         } finally {
             heartbeat.close();
         }
     }
 
     @Test
-    void unrecognizedDestinationDoesNotPublish() {
-        MockConfigurationService config = configWithMessagingTargets("totally_bogus_destination");
+    void emitsTheMeasuresAsTheSysMetric() {
+        MockConfigurationService config = configWithHeartbeat("{\"intervalSecs\":3600}");
         MockMessagingService messaging = new MockMessagingService();
         MockMetricService metrics = new MockMetricService();
 
@@ -94,10 +104,109 @@ class HeartbeatPublishTest {
                 .withMetricService(metrics)
                 .build();
         try {
-            // Give the timer a moment to fire; the unrecognized branch only logs a warning.
-            try { Thread.sleep(150); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            awaitAtLeastOneEmit(metrics);
+            List<MockMetricService.EmittedMetric> emitted = metrics.getEmittedMetrics();
+            assertFalse(emitted.isEmpty(), "the heartbeat must emit the measures as a metric");
+            assertEquals("sys", emitted.get(0).name,
+                    "the measures are the metric 'sys' (D6/D-U20), not 'heartbeat'");
+            assertTrue(emitted.get(0).immediate, "the measures are emitted with emitMetricNow");
+            // Default measures: cpu + memory.
+            assertTrue(emitted.get(0).measureValues.containsKey("cpu_usage"));
+            assertTrue(emitted.get(0).measureValues.containsKey("memory_usage"));
+            // The 'sys' metric is defined up front too.
+            assertTrue(metrics.isMetricDefined("sys"));
+        } finally {
+            heartbeat.close();
+        }
+    }
+
+    @Test
+    void iotCoreDestinationPublishesTheKeepaliveToIotCore() {
+        MockConfigurationService config =
+                configWithHeartbeat("{\"intervalSecs\":3600,\"destination\":\"iotcore\"}");
+        MockMessagingService messaging = new MockMessagingService();
+
+        Heartbeat heartbeat = HeartbeatBuilder.create(config)
+                .withMessagingService(messaging)
+                .withMetricService(new MockMetricService())
+                .build();
+        try {
+            awaitAtLeastOnePublish(messaging);
+            List<MockMessagingService.PublishedMessage> published = messaging.getPublishedMessages();
+            assertFalse(published.isEmpty(), "iotcore destination must still publish the keepalive");
+            assertEquals(STATE_TOPIC, published.get(0).topic);
+            assertNotNull(published.get(0).qos,
+                    "destination iotcore must publish via publishToIoTCore (carries a QOS)");
+            assertTrue(published.get(0).reserved);
+        } finally {
+            heartbeat.close();
+        }
+    }
+
+    @Test
+    void closePublishesABestEffortStoppedStateOnce() {
+        MockConfigurationService config = configWithHeartbeat("{\"intervalSecs\":3600}");
+        MockMessagingService messaging = new MockMessagingService();
+
+        Heartbeat heartbeat = HeartbeatBuilder.create(config)
+                .withMessagingService(messaging)
+                .withMetricService(new MockMetricService())
+                .build();
+        awaitAtLeastOnePublish(messaging);
+        messaging.clearPublishedMessages();
+
+        heartbeat.close();
+        heartbeat.close(); // idempotent - the STOPPED state must go out at most once
+
+        List<MockMessagingService.PublishedMessage> published = messaging.getPublishedMessages();
+        assertEquals(1, published.size(), "close() must publish the STOPPED state exactly once");
+        assertEquals(STATE_TOPIC, published.get(0).topic);
+        assertTrue(published.get(0).reserved);
+        JsonObject body = published.get(0).message.toDict().getAsJsonObject("body");
+        assertEquals("STOPPED", body.get("status").getAsString());
+        assertFalse(body.has("uptimeSecs"), "the STOPPED state body is {\"status\":\"STOPPED\"}");
+    }
+
+    @Test
+    void disabledHeartbeatPublishesNothing() {
+        MockConfigurationService config = configWithHeartbeat("{\"enabled\":false}");
+        MockMessagingService messaging = new MockMessagingService();
+        MockMetricService metrics = new MockMetricService();
+
+        Heartbeat heartbeat = HeartbeatBuilder.create(config)
+                .withMessagingService(messaging)
+                .withMetricService(metrics)
+                .build();
+        try {
+            try { Thread.sleep(200); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
             assertTrue(messaging.getPublishedMessages().isEmpty(),
-                    "an unrecognized destination must not publish anything");
+                    "enabled:false must not publish a state keepalive");
+            assertTrue(metrics.getEmittedMetrics().isEmpty(),
+                    "enabled:false must not emit the sys metric");
+        } finally {
+            heartbeat.close();
+        }
+        // And close() after a disabled run must NOT publish a STOPPED state (nothing was running).
+        assertTrue(messaging.getPublishedMessages().isEmpty());
+    }
+
+    @Test
+    void missingIdentitySkipsTheKeepaliveButKeepsTheSysMetric() {
+        MockConfigurationService config = configWithHeartbeat("{\"intervalSecs\":3600}");
+        config.setComponentIdentity(null); // the test/subclass bring-up case
+        MockMessagingService messaging = new MockMessagingService();
+        MockMetricService metrics = new MockMetricService();
+
+        Heartbeat heartbeat = HeartbeatBuilder.create(config)
+                .withMessagingService(messaging)
+                .withMetricService(metrics)
+                .build();
+        try {
+            awaitAtLeastOneEmit(metrics);
+            assertFalse(metrics.getEmittedMetrics().isEmpty(),
+                    "the sys metric must still flow without a resolved identity");
+            assertTrue(messaging.getPublishedMessages().isEmpty(),
+                    "no resolved identity -> no UNS state topic -> keepalive skipped");
         } finally {
             heartbeat.close();
         }
@@ -105,16 +214,14 @@ class HeartbeatPublishTest {
 
     @Test
     void onConfigurationChangedReinitializesTimer() {
-        MockConfigurationService config = configWithMessagingTargets("iot_core");
+        MockConfigurationService config = configWithHeartbeat("{\"intervalSecs\":3600}");
         MockMessagingService messaging = new MockMessagingService();
-        MockMetricService metrics = new MockMetricService();
 
         Heartbeat heartbeat = HeartbeatBuilder.create(config)
                 .withMessagingService(messaging)
-                .withMetricService(metrics)
+                .withMetricService(new MockMetricService())
                 .build();
         try {
-            // Re-init: cancels/purges the existing timer (L74-75) and reschedules (L189-191).
             assertTrue(heartbeat.onConfigurationChanged(),
                     "onConfigurationChanged must return true");
             awaitAtLeastOnePublish(messaging);

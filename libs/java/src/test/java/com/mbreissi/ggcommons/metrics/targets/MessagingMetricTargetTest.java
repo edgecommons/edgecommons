@@ -6,29 +6,24 @@ package com.mbreissi.ggcommons.metrics.targets;
 
 import com.mbreissi.ggcommons.config.ConfigurationFactory;
 import com.mbreissi.ggcommons.config.MetricConfiguration;
-import com.mbreissi.ggcommons.messaging.Message;
-import com.mbreissi.ggcommons.messaging.MessagingClient;
 import com.mbreissi.ggcommons.metrics.Metric;
 import com.mbreissi.ggcommons.metrics.MetricBuilder;
 import com.mbreissi.ggcommons.test.MockConfigurationService;
+import com.mbreissi.ggcommons.test.MockMessagingService;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import org.junit.jupiter.api.Test;
-import software.amazon.awssdk.aws.greengrass.model.QOS;
 
 import java.util.HashMap;
+import java.util.List;
 
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
+import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Verifies the {@link Messaging} metric target routes by destination: IoT Core only
  * for {@code iot_core}/{@code iotcore}, otherwise the local/IPC transport (incl. the
- * canonical {@code ipc} and the legacy {@code local}).
+ * canonical {@code ipc} and the legacy {@code local}). Both routes carry the UNS metric
+ * topic and go through the privileged reserved-publish seam (§4.3).
  */
 class MessagingMetricTargetTest {
 
@@ -38,7 +33,7 @@ class MessagingMetricTargetTest {
         MsgConfig(String destination) {
             var root = new JsonObject();
             String json = "{\"target\":\"messaging\",\"namespace\":\"ns\","
-                    + "\"targetConfig\":{\"topic\":\"m/t\",\"destination\":\"" + destination + "\"}}";
+                    + "\"targetConfig\":{\"destination\":\"" + destination + "\"}}";
             root.add("metricEmission", JsonParser.parseString(json).getAsJsonObject());
             this.metricConfig = ConfigurationFactory.createMetricConfiguration(root);
         }
@@ -63,13 +58,16 @@ class MessagingMetricTargetTest {
     void localDestinationsPublishLocally() {
         for (String dest : new String[]{"ipc", "local"}) {
             Messaging target = new Messaging(new MsgConfig(dest));
-            MessagingClient client = mock(MessagingClient.class);
+            MockMessagingService client = new MockMessagingService();
             target.setMessagingService(client);
 
             emit(target);
 
-            verify(client, times(1)).publish(anyString(), any(Message.class));
-            verify(client, never()).publishToIoTCore(anyString(), any(Message.class), any(QOS.class));
+            List<MockMessagingService.PublishedMessage> published = client.getPublishedMessages();
+            assertEquals(1, published.size(), "destination " + dest);
+            assertNull(published.get(0).qos, "local/IPC publishes carry no QOS (destination " + dest + ")");
+            assertTrue(published.get(0).reserved);
+            assertEquals("ecv1/test-thing/TestComponent/main/metric/m", published.get(0).topic);
         }
     }
 
@@ -77,13 +75,17 @@ class MessagingMetricTargetTest {
     void iotCoreDestinationsPublishToIotCore() {
         for (String dest : new String[]{"iot_core", "iotcore"}) {
             Messaging target = new Messaging(new MsgConfig(dest));
-            MessagingClient client = mock(MessagingClient.class);
+            MockMessagingService client = new MockMessagingService();
             target.setMessagingService(client);
 
             emit(target);
 
-            verify(client, times(1)).publishToIoTCore(anyString(), any(Message.class), any(QOS.class));
-            verify(client, never()).publish(anyString(), any(Message.class));
+            List<MockMessagingService.PublishedMessage> published = client.getPublishedMessages();
+            assertEquals(1, published.size(), "destination " + dest);
+            assertNotNull(published.get(0).qos,
+                    "IoT Core publishes carry a QOS (destination " + dest + ")");
+            assertTrue(published.get(0).reserved);
+            assertEquals("ecv1/test-thing/TestComponent/main/metric/m", published.get(0).topic);
         }
     }
 }

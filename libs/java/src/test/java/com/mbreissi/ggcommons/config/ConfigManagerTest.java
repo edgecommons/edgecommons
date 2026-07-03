@@ -223,11 +223,12 @@ class ConfigManagerTest {
 
     @Test
     void testHeartbeatConfiguration() throws IOException {
+        // §4.3 heartbeat shape: enabled/intervalSecs/measures/destination (targets[] removed).
         String configJson = """
                 {
                   "logging": {"level": "INFO"},
                   "metricEmission": {"target": "log"},
-                  "heartbeat": {"intervalSecs": 60, "targets": [{"type": "metric"}, {"type": "messaging", "topic": "heartbeat/status"}]},
+                  "heartbeat": {"enabled": true, "intervalSecs": 60, "destination": "iotcore"},
                   "tags": {},
                   "component": {"global": {}}
                 }""";
@@ -235,9 +236,9 @@ class ConfigManagerTest {
         runWithTempConfig(configJson, configManager -> {
             HeartbeatConfiguration heartbeatConfig = configManager.getHeartbeatConfig();
             assertNotNull(heartbeatConfig);
+            assertTrue(heartbeatConfig.isEnabled());
             assertEquals(60, heartbeatConfig.getIntervalSecs());
-            assertNotNull(heartbeatConfig.getTargets());
-            assertEquals(2, heartbeatConfig.getTargets().size());
+            assertEquals("iotcore", heartbeatConfig.getDestination());
         });
     }
 

@@ -12,15 +12,7 @@
       "files": true,
       "threads": true,
       "fds": true
-    },
-    "targets": [
-      {
-        "type": "messaging",
-        "config": {
-          "destination": "ipc"
-        }
-      }
-    ]
+    }
   },
   "tags": {
     "appId": "IntelliJIdea",
@@ -39,7 +31,6 @@
       "publish_interval": 3,
       "message": "Hello world config_2!"
     },
-    "instances": [
-    ]
+    "instances": []
   }
 }

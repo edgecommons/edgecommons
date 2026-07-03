@@ -26,13 +26,17 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class CloudWatchComponentTest {
 
-    /** Config that selects the cloudwatchcomponent target with a caller-supplied topic. */
+    /**
+     * Config that selects the cloudwatchcomponent target. Its topic is the fixed external
+     * Greengrass contract (cloudwatch/metric/put, D-U21) — the targetConfig.topic override is
+     * removed with the schema key.
+     */
     private static class CwcConfig extends MockConfigurationService {
         private final MetricConfiguration metricConfig;
 
-        CwcConfig(String topic) {
+        CwcConfig() {
             String json = """
-                    {"target":"cloudwatchcomponent","namespace":"ns1","targetConfig":{"topic":"%s"}}""".formatted(topic);
+                    {"target":"cloudwatchcomponent","namespace":"ns1"}""";
             var root = new JsonObject();
             root.add("metricEmission", JsonParser.parseString(json).getAsJsonObject());
             this.metricConfig = ConfigurationFactory.createMetricConfiguration(root);
@@ -53,7 +57,7 @@ class CloudWatchComponentTest {
 
     @Test
     void emitMetricPublishesRawPerMeasure() {
-        var target = new CloudWatchComponent(new CwcConfig("cloudwatch/metric/put"));
+        var target = new CloudWatchComponent(new CwcConfig());
         var mock = new MockMessagingService();
         target.setMessagingService(mock);
 
@@ -79,7 +83,7 @@ class CloudWatchComponentTest {
 
     @Test
     void emitMetricNowPublishesOnePerMeasure() {
-        var target = new CloudWatchComponent(new CwcConfig("cloudwatch/metric/put"));
+        var target = new CloudWatchComponent(new CwcConfig());
         var mock = new MockMessagingService();
         target.setMessagingService(mock);
 
@@ -99,8 +103,8 @@ class CloudWatchComponentTest {
     }
 
     @Test
-    void onConfigurationChangedReturnsFalseAndReresolvesTopic() {
-        var target = new CloudWatchComponent(new CwcConfig("{ThingName}/cw"));
+    void onConfigurationChangedReturnsFalseAndKeepsTheContractTopic() {
+        var target = new CloudWatchComponent(new CwcConfig());
         var mock = new MockMessagingService();
         target.setMessagingService(mock);
 
@@ -110,6 +114,6 @@ class CloudWatchComponentTest {
         var values = new LinkedHashMap<String, Float>();
         values.put("cpu", 1.0f);
         target.emitMetricNow(metric(), values);
-        assertEquals("test-thing/cw", mock.getPublishedMessages().get(0).topic);
+        assertEquals("cloudwatch/metric/put", mock.getPublishedMessages().get(0).topic);
     }
 }

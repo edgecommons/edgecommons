@@ -7,6 +7,8 @@ package com.mbreissi.ggcommons.messaging;
 import com.mbreissi.ggcommons.ParsedCommandLine;
 import com.mbreissi.ggcommons.messaging.providers.standalone.StandaloneMessagingProvider;
 import com.mbreissi.ggcommons.messaging.providers.greengrass.GreengrassMessagingProvider;
+import com.mbreissi.ggcommons.uns.Uns;
+import com.mbreissi.ggcommons.uns.UnsClass;
 import com.google.gson.JsonObject;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -28,6 +30,18 @@ public class MessagingClient
     public static final int DEFAULT_MAX_MESSAGES = 10_000;
 
     private MessagingProvider messagingProvider;
+
+    /**
+     * Whether the reserved-class publish guard also checks the class token at topic position 5 —
+     * this component's {@code topic.includeRoot} setting (UNS-CANONICAL-DESIGN §4.1, D-U24).
+     * Late-bound from the {@code ConfigManager} via {@link #setGuardIncludeRoot(boolean)} right
+     * after config loads (the messaging client is constructed BEFORE config because the IPC-backed
+     * config sources need it); {@code false} pre-bind — nothing publishes rooted topics pre-config.
+     */
+    private volatile boolean guardIncludeRoot = false;
+
+    /** Lazily-created privileged internal-publish seam ({@link #reservedPublisher()}, §4.2). */
+    private volatile ReservedPublisher reservedPublisher;
 
     /**
      * Protected no-arg constructor for testing/subclassing (e.g. mock messaging clients).
@@ -64,49 +78,62 @@ public class MessagingClient
     }
 
     /**
-     * Publishes a message to a specified topic.
+     * Publishes a message to a specified topic. Client-chosen topics targeting a reserved UNS
+     * class ({@code state | metric | cfg | log}) are rejected (§4.1) — the library publishers own
+     * those classes.
      *
      * @param topic The topic to publish the message to
      * @param msg The message to publish
+     * @throws ReservedTopicException when the topic targets a reserved UNS class
      */
     public void publish(String topic, Message msg)
     {
+        checkReservedTopic(topic);
         messagingProvider.publish(topic, msg);
         LOGGER.debug("Published IPC message on topic '{}': {}", topic, msg.toString());
     }
 
     /**
-     * Publishes a message to AWS IoT Core with specified quality of service.
+     * Publishes a message to AWS IoT Core with specified quality of service. Reserved-class UNS
+     * topics are rejected (§4.1).
      *
      * @param topic The IoT Core topic to publish to
      * @param msg The message to publish
      * @param qos The quality of service level for message delivery
+     * @throws ReservedTopicException when the topic targets a reserved UNS class
      */
     public void publishToIoTCore(String topic, Message msg, QOS qos)
     {
+        checkReservedTopic(topic);
         messagingProvider.publishToIoTCore(topic, msg, qos);
         LOGGER.debug("Published IoT Core message on topic '{}': {}", topic, msg.toString());
     }
 
     /**
-     * Publishes a raw JSON object to a topic without wrapping it in a Message.
+     * Publishes a raw JSON object to a topic without wrapping it in a Message. Reserved-class UNS
+     * topics are rejected (§4.1, D-U8).
      *
      * @param topic The topic to publish to
      * @param metricObject The JSON object to publish
+     * @throws ReservedTopicException when the topic targets a reserved UNS class
      */
     public void publishRaw(String topic, JsonObject metricObject)
     {
+        checkReservedTopic(topic);
         messagingProvider.publishRaw(topic, metricObject);
     }
 
     /**
-     * Publishes a raw JSON object to a topic without wrapping it in a Message.
+     * Publishes a raw JSON object to a topic without wrapping it in a Message. Reserved-class UNS
+     * topics are rejected (§4.1, D-U8).
      *
      * @param topic The topic to publish to
      * @param metricObject The JSON object to publish
+     * @throws ReservedTopicException when the topic targets a reserved UNS class
      */
     public void publishToIoTCoreRaw(String topic, JsonObject metricObject, QOS qos)
     {
+        checkReservedTopic(topic);
         messagingProvider.publishToIoTCoreRaw(topic, metricObject, qos);
     }
 
@@ -174,6 +201,7 @@ public class MessagingClient
      */
     public ReplyFuture request(String topic, Message request)
     {
+        checkReservedTopic(topic);
         return messagingProvider.request(topic, request);
     }
 
@@ -189,6 +217,7 @@ public class MessagingClient
      */
     public ReplyFuture request(String topic, Message request, Duration timeout)
     {
+        checkReservedTopic(topic);
         return messagingProvider.request(topic, request, timeout);
     }
 
@@ -202,6 +231,7 @@ public class MessagingClient
      */
     public ReplyFuture requestFromIoTCore(String topic, Message request)
     {
+        checkReservedTopic(topic);
         return messagingProvider.requestFromIoTCore(topic, request);
     }
 
@@ -217,6 +247,7 @@ public class MessagingClient
      */
     public ReplyFuture requestFromIoTCore(String topic, Message request, Duration timeout)
     {
+        checkReservedTopic(topic);
         return messagingProvider.requestFromIoTCore(topic, request, timeout);
     }
 
@@ -267,20 +298,158 @@ public class MessagingClient
     }
 
     /**
-     * Sends a reply to a received request message.
+     * Sends a reply to a received request message. The request's {@code reply_to} topic is
+     * guarded like a client-chosen topic (§4.1, D-U8): a hostile requester could otherwise set
+     * {@code header.reply_to} to a victim's reserved topic and turn an innocent responder into a
+     * forger.
      *
      * @param request The original request message
      * @param reply The reply message
+     * @throws ReservedTopicException when the request's reply topic targets a reserved UNS class
      */
     public void reply(Message request, Message reply)
     {
+        checkReservedTopic(replyTopicOf(request));
         messagingProvider.reply(request, reply);
         LOGGER.debug("Published reply on topic '{}: {}", request.getHeader().getReplyTo(), reply.toString());
     }
 
+    /**
+     * IoT Core variant of {@link #reply(Message, Message)} — the request's {@code reply_to} topic
+     * is guarded the same way.
+     *
+     * @throws ReservedTopicException when the request's reply topic targets a reserved UNS class
+     */
     public void replyToIoTCore(Message request, Message reply)
     {
+        checkReservedTopic(replyTopicOf(request));
         messagingProvider.replyToIoTCore(request, reply);
+    }
+
+    /** The request's {@code reply_to} topic, or {@code null} when it has no header/reply-to. */
+    private static String replyTopicOf(Message request)
+    {
+        return request == null || request.getHeader() == null ? null : request.getHeader().getReplyTo();
+    }
+
+    /**
+     * Late-binds the reserved-class guard's {@code topic.includeRoot} flag from the config model
+     * (§4.1, D-U24). Called by the runtime right after the {@code ConfigManager} exists; before
+     * the bind only the always-checked class position 4 applies.
+     *
+     * @param includeRoot this component's resolved {@code topic.includeRoot} setting
+     */
+    public void setGuardIncludeRoot(boolean includeRoot)
+    {
+        this.guardIncludeRoot = includeRoot;
+        LOGGER.debug("Reserved-topic guard includeRoot bound to {}", includeRoot);
+    }
+
+    /**
+     * The reserved-class publish guard (UNS-CANONICAL-DESIGN §4.1): rejects a client-chosen topic
+     * whose class position holds a reserved token ({@code state | metric | cfg | log}). The class
+     * position is topic level 4 (0-based) always — the rootless grammar
+     * {@code ecv1/{device}/{component}/{instance}/{class}} — and level 5 <b>only when this
+     * component's {@code topic.includeRoot} is true</b> (checking it unconditionally would
+     * false-positive on legitimate app channels like {@code ecv1/d/c/i/app/state}). Non-
+     * {@code ecv1} topics pass untouched ({@code ggcommons/reply-…}, {@code cloudwatch/metric/put},
+     * foreign MQTT bridging). {@code subscribe*} is never guarded (consumers must read reserved
+     * classes).
+     *
+     * @param topic the client-chosen topic ({@code null} passes — provider-level validation owns it)
+     * @throws ReservedTopicException when the topic targets a reserved UNS class
+     */
+    private void checkReservedTopic(String topic)
+    {
+        UnsClass reserved = reservedClassOf(topic, guardIncludeRoot);
+        if (reserved != null)
+        {
+            throw new ReservedTopicException(topic, reserved.token);
+        }
+    }
+
+    /**
+     * The §4.1 guard predicate: the reserved class the topic targets, or {@code null} when the
+     * topic is allowed. Static and package-visible for the guard's unit tests.
+     *
+     * @param topic       the topic to test
+     * @param includeRoot whether the position-5 check applies (this component's
+     *                    {@code topic.includeRoot})
+     * @return the reserved {@link UnsClass}, or {@code null} when the topic passes
+     */
+    static UnsClass reservedClassOf(String topic, boolean includeRoot)
+    {
+        if (topic == null || !topic.startsWith(Uns.ROOT))
+        {
+            return null;
+        }
+        String[] tokens = topic.split("/", -1);
+        if (!Uns.ROOT.equals(tokens[0]))
+        {
+            return null;
+        }
+        if (tokens.length >= 5)
+        {
+            UnsClass cls = UnsClass.fromToken(tokens[4]);
+            if (cls != null && UnsClass.RESERVED.contains(cls))
+            {
+                return cls;
+            }
+        }
+        if (includeRoot && tokens.length >= 6)
+        {
+            UnsClass cls = UnsClass.fromToken(tokens[5]);
+            if (cls != null && UnsClass.RESERVED.contains(cls))
+            {
+                return cls;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Returns the privileged internal-publish seam (UNS-CANONICAL-DESIGN §4.2, D-U4): a
+     * {@link ReservedPublisher} whose publishes BYPASS the reserved-class guard.
+     *
+     * <p><b>Library-internal.</b> Public only because the library's own publishers (heartbeat
+     * state keepalive, the {@code Messaging} metric target, the effective-config publisher) live
+     * in other packages. Component code should not call this — the guard it bypasses is there to
+     * keep the library-owned UNS classes consistent (broker ACLs are the security boundary).
+     *
+     * @return the reserved publisher bound to this client
+     */
+    public ReservedPublisher reservedPublisher()
+    {
+        ReservedPublisher publisher = reservedPublisher;
+        if (publisher == null)
+        {
+            publisher = new ReservedPublisher(this);
+            reservedPublisher = publisher;
+        }
+        return publisher;
+    }
+
+    /**
+     * Unguarded local/IPC publish — the {@link ReservedPublisher} delegate (§4.2). Protected so
+     * mock messaging clients can record reserved publishes like regular ones.
+     */
+    protected void publishReserved(String topic, Message msg)
+    {
+        messagingProvider.publish(topic, msg);
+        LOGGER.debug("Published reserved message on topic '{}'", topic);
+    }
+
+    /** Unguarded raw local/IPC publish — the {@link ReservedPublisher} delegate (§4.2). */
+    protected void publishReservedRaw(String topic, JsonObject payload)
+    {
+        messagingProvider.publishRaw(topic, payload);
+    }
+
+    /** Unguarded IoT Core publish — the {@link ReservedPublisher} delegate (§4.2). */
+    protected void publishReservedToIoTCore(String topic, Message msg, QOS qos)
+    {
+        messagingProvider.publishToIoTCore(topic, msg, qos);
+        LOGGER.debug("Published reserved IoT Core message on topic '{}'", topic);
     }
 
     /**

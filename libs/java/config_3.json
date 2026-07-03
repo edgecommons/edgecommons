@@ -12,12 +12,7 @@
       "files": true,
       "threads": true,
       "fds": true
-    },
-    "targets": [
-      {
-        "type": "metric"
-      }
-    ]
+    }
   },
   "tags": {
     "appId": "IntelliJIdea",
@@ -28,13 +23,11 @@
   "metricEmission": {
     "target": "messaging",
     "targetConfig": {
-      "topic": "metrics/{ThingName}/data",
       "destination": "ipc"
     }
   },
   "component": {
-    "global": {
-    },
+    "global": {},
     "instances": [
       {
         "id": "kep1-right",

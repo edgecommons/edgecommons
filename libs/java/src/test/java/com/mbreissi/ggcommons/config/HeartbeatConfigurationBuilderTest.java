@@ -31,17 +31,26 @@ class HeartbeatConfigurationBuilderTest {
     }
     
     @Test
-    void testTargets() {
+    void testEnabledAndDestination() {
+        // The §4.3 heartbeat shape: enabled/intervalSecs/measures/destination — targets[] is gone.
         HeartbeatConfiguration config = HeartbeatConfigurationBuilder.create()
-                .addMetricTarget()
-                .addMessagingTarget("heartbeat/topic", "ipc")
+                .withEnabled(false)
+                .withDestination("iotcore")
                 .build();
-        
-        assertEquals(2, config.getTargets().size());
-        assertEquals("metric", config.getTargets().get(0).getType());
-        assertEquals("messaging", config.getTargets().get(1).getType());
+
+        assertFalse(config.isEnabled());
+        assertEquals("iotcore", config.getDestination());
     }
-    
+
+    @Test
+    void testDefaultsAreOnFiveSecondsLocal() {
+        // D-U14/M11: the heartbeat defaults are on / 5 s / local.
+        HeartbeatConfiguration config = HeartbeatConfigurationBuilder.create().build();
+        assertTrue(config.isEnabled());
+        assertEquals(5, config.getIntervalSecs());
+        assertEquals("local", config.getDestination());
+    }
+
     @Test
     void testBuilderChaining() {
         HeartbeatConfiguration config = HeartbeatConfigurationBuilder.create()
@@ -49,23 +58,32 @@ class HeartbeatConfigurationBuilderTest {
                 .includeCpu(true)
                 .includeMemory(true)
                 .includeThreads(false)
-                .addMetricTarget()
-                .addMessagingTarget("test/heartbeat", "iotcore")
+                .withEnabled(true)
+                .withDestination("local")
                 .build();
-        
+
         assertNotNull(config);
         assertEquals(30, config.getIntervalSecs());
         assertTrue(config.includeCpu());
         assertTrue(config.includeMemory());
         assertFalse(config.includeThreads());
-        assertEquals(2, config.getTargets().size());
+        assertTrue(config.isEnabled());
+        assertEquals("local", config.getDestination());
     }
-    
+
     @Test
     void testIntervalValidation() {
-        assertThrows(IllegalArgumentException.class, () -> 
+        assertThrows(IllegalArgumentException.class, () ->
             HeartbeatConfigurationBuilder.create().withInterval(0));
-        assertThrows(IllegalArgumentException.class, () -> 
+        assertThrows(IllegalArgumentException.class, () ->
             HeartbeatConfigurationBuilder.create().withInterval(-1));
+    }
+
+    @Test
+    void testDestinationValidation() {
+        assertThrows(IllegalArgumentException.class, () ->
+            HeartbeatConfigurationBuilder.create().withDestination("iot_core"));
+        assertThrows(IllegalArgumentException.class, () ->
+            HeartbeatConfigurationBuilder.create().withDestination("bogus"));
     }
 }

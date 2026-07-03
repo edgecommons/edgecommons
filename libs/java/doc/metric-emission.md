@@ -79,23 +79,18 @@ Sends metrics to CloudWatch through the Greengrass CloudWatch Metrics component 
 
 **Implementation details:**
 - Uses MessagingClient for IPC communication with CloudWatch component
-- Default topic: "cloudwatch/metric/put"
+- Topic: `cloudwatch/metric/put` — the external AWS Greengrass component contract (fixed; the
+  former `targetConfig.topic` override was removed with the UNS hard cut, D-U21)
 - Sends each measure as a separate message (no batching)
 - Does not support `largeFleetWorkaround` due to component limitations
 - Lighter weight than direct CloudWatch target
-
-**Configuration options:**
-- **`topic`**: Override the default CloudWatch component topic (supports templates)
 
 **Example:**
 ```json
 {
   "metricEmission": {
     "target": "cloudwatchcomponent",
-    "namespace": "MyComponent/Metrics",
-    "targetConfig": {
-      "topic": "custom/cloudwatch/metrics"
-    }
+    "namespace": "MyComponent/Metrics"
   }
 }
 ```
@@ -143,18 +138,20 @@ Writes metrics to a local log file using Log4j2 with EMF format and file rotatio
 Publishes metrics through the messaging system in EMF format, supporting both local IPC and IoT Core destinations.
 
 **Implementation details:**
-- Uses MessagingClient for both IPC and IoT Core publishing
-- Default topic template: "{ThingName}/{ComponentName}/metric"
+- Uses MessagingClient for both local/IPC and IoT Core publishing
+- Topic: the library-owned **UNS metric topic**
+  `ecv1/{device}/{component}/main/metric/{metricName}` (rooted form when `topic.includeRoot` is
+  true; the metric name is sanitized as a channel token). The former `targetConfig.topic` override
+  was removed with the UNS hard cut — the `metric` class is reserved and published through the
+  library-internal `ReservedPublisher` seam (see [messaging.md](messaging.md)).
 - Uses QoS AT_LEAST_ONCE for IoT Core publishing
 - Immediate message publishing (no batching)
 - Messages formatted as EMF with Message wrapper including version and metadata
-- Supports template variable substitution in topic names
 
 **Configuration options:**
-- **`topic`**: Override the default topic template (supports template variables)
 - **`destination`**: Specify message destination (Default: "ipc")
-  - `"ipc"`: Local Greengrass IPC communication
-  - Any other value: Publish to IoT Core
+  - `"ipc"` / `"local"`: local bus (Greengrass IPC or the local MQTT broker)
+  - `"iotcore"` / `"iot_core"`: publish to AWS IoT Core
 
 **Example:**
 ```json
@@ -163,8 +160,7 @@ Publishes metrics through the messaging system in EMF format, supporting both lo
     "target": "messaging",
     "namespace": "MyApp/Metrics",
     "targetConfig": {
-      "topic": "metrics/{ThingName}/{ComponentName}",
-      "destination": "cloud"
+      "destination": "iotcore"
     }
   }
 }
@@ -275,12 +271,12 @@ ship the client, so their KUBERNETES default is unconditionally `prometheus`.
     "target": "messaging",
     "namespace": "Telemetry/Sensors",
     "targetConfig": {
-      "topic": "telemetry/{ThingName}/metrics",
-      "destination": "cloud"
+      "destination": "iotcore"
     }
   }
 }
 ```
+Metrics publish to `ecv1/{device}/{component}/main/metric/{metricName}` on IoT Core.
 
 ## EMF (Embedded Metric Format)
 

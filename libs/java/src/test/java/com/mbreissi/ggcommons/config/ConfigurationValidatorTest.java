@@ -118,6 +118,51 @@ class ConfigurationValidatorTest {
     }
 
     @Test
+    void heartbeatNewShapeValidatesAndDriftKnobsAreRejected() {
+        // UNS slice 1d (§4.3, D-U14/D-U20): heartbeat = enabled/intervalSecs/measures/destination.
+        JsonObject valid = obj("""
+                {"component":{"global":{}},\
+                "heartbeat":{"enabled":true,"intervalSecs":5,\
+                "measures":{"cpu":true,"memory":true},"destination":"local"}}""");
+        assertDoesNotThrow(() -> ConfigurationValidator.validate(valid));
+
+        JsonObject iotcore = obj("""
+                {"component":{"global":{}},"heartbeat":{"destination":"iotcore"}}""");
+        assertDoesNotThrow(() -> ConfigurationValidator.validate(iotcore));
+
+        // The legacy targets[] array (the topic-override drift knobs) is REMOVED - a stale config
+        // must fail with a precise error (§10 hard cut).
+        JsonObject staleTargets = obj("""
+                {"component":{"global":{}},\
+                "heartbeat":{"intervalSecs":5,"targets":[{"type":"metric"}]}}""");
+        assertThrows(ConfigurationValidator.ConfigurationValidationException.class,
+                () -> ConfigurationValidator.validate(staleTargets));
+
+        // destination is a closed enum: local | iotcore (no legacy ipc/iot_core aliases).
+        JsonObject badDestination = obj("""
+                {"component":{"global":{}},"heartbeat":{"destination":"iot_core"}}""");
+        assertThrows(ConfigurationValidator.ConfigurationValidationException.class,
+                () -> ConfigurationValidator.validate(badDestination));
+    }
+
+    @Test
+    void metricEmissionTopicOverrideIsRejected() {
+        // UNS slice 1d (§4.3, D-U9): metricEmission.targetConfig.topic is REMOVED (the messaging
+        // target publishes to the UNS metric topic); destination survives.
+        JsonObject destinationOnly = obj("""
+                {"component":{"global":{}},\
+                "metricEmission":{"target":"messaging","targetConfig":{"destination":"ipc"}}}""");
+        assertDoesNotThrow(() -> ConfigurationValidator.validate(destinationOnly));
+
+        JsonObject staleTopic = obj("""
+                {"component":{"global":{}},\
+                "metricEmission":{"target":"messaging",\
+                "targetConfig":{"topic":"a/b/c","destination":"ipc"}}}""");
+        assertThrows(ConfigurationValidator.ConfigurationValidationException.class,
+                () -> ConfigurationValidator.validate(staleTopic));
+    }
+
+    @Test
     void negativeRequestTimeoutIsRejected() {
         JsonObject negative = obj("""
                 {"component":{"global":{}},"messaging":{"requestTimeoutSeconds":-1}}""");

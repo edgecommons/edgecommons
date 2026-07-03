@@ -15,7 +15,6 @@ import org.apache.logging.log4j.Logger;
 public class MetricConfiguration
 {
     protected static final Logger LOGGER = LogManager.getLogger(MetricConfiguration.class);
-    private final static String DEFAULT_MESSAGING_TOPIC = "{ThingName}/{ComponentName}/metric";
     private final static String DEFAULT_CLOUDWATCH_COMPONENT_TOPIC = "cloudwatch/metric/put";
     private final static String DEFAULT_TARGET = "log";
     private final static String DEFAULT_METRIC_NAMESPACE = "ggcommons";
@@ -84,26 +83,23 @@ public class MetricConfiguration
                 }
             }
 
+            // UNS-CANONICAL-DESIGN §4.3 / D-U9: the messaging target's topic is no longer
+            // configurable (targetConfig.topic is removed from the schema) — the Messaging target
+            // builds the UNS metric topic ecv1/{device}/{component}/main/metric/{metricName}
+            // itself. Only the destination survives.
             if (target.equalsIgnoreCase("messaging")) {
-                topic = DEFAULT_MESSAGING_TOPIC;
                 if (jsonConfig.has("targetConfig"))
                 {
                     JsonObject targetConfig = jsonConfig.get("targetConfig").getAsJsonObject();
-                    if (targetConfig.has("topic"))
-                        topic = targetConfig.get("topic").getAsString();
                     if (targetConfig.has("destination"))
                         destination = targetConfig.get("destination").getAsString();
                 }
             }
 
+            // The cloudwatchcomponent topic is the external AWS Greengrass component contract
+            // (cloudwatch/metric/put, D-U21) — fixed, no override.
             if (target.equalsIgnoreCase("cloudwatchcomponent")) {
                 topic = DEFAULT_CLOUDWATCH_COMPONENT_TOPIC;
-                if (jsonConfig.has("targetConfig"))
-                {
-                    JsonObject targetConfig = jsonConfig.get("targetConfig").getAsJsonObject();
-                    if (targetConfig.has("topic"))
-                        topic = targetConfig.get("topic").getAsString();
-                }
             }
 
             if (target.equalsIgnoreCase("cloudwatch")) {
@@ -146,7 +142,6 @@ public class MetricConfiguration
         JsonObject targetConfig = new JsonObject();
         switch (target) {
             case "messaging":
-                targetConfig.addProperty("topic", topic);
                 targetConfig.addProperty("destination", destination);
                 break;
 
@@ -221,6 +216,12 @@ public class MetricConfiguration
         return explicitLogFileName;
     }
 
+    /**
+     * The fixed topic of the {@code cloudwatchcomponent} target ({@code cloudwatch/metric/put},
+     * the external AWS Greengrass component contract — D-U21), or {@code null} for every other
+     * target. The {@code messaging} target no longer carries a configured topic: it publishes to
+     * the UNS metric topic {@code ecv1/{device}/{component}/main/metric/{metricName}} (§4.3).
+     */
     public String getTopic() {
         return topic;
     }

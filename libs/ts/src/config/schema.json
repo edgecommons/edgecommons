@@ -110,10 +110,6 @@
               "type": "string",
               "description": "Maximum log file size (for log target)"
             },
-            "topic": {
-              "type": "string",
-              "description": "Topic template (for messaging/cloudwatch component targets)"
-            },
             "destination": {
               "type": "string",
               "enum": ["ipc", "local", "iotcore", "iot_core"],
@@ -176,8 +172,13 @@
     },
     "heartbeat": {
       "type": "object",
-      "description": "Component heartbeat and health monitoring configuration",
+      "description": "Component heartbeat: a library-owned UNS `state` keepalive published to ecv1/{device}/{component}/main/state each tick (body {\"status\":\"RUNNING\",\"uptimeSecs\":n}, best-effort {\"status\":\"STOPPED\"} on graceful shutdown), with the enabled system measures emitted as the metric 'sys' through the metric subsystem (UNS-CANONICAL-DESIGN §4.3, D-U14/D-U20).",
       "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether the heartbeat (state keepalive + 'sys' measures metric) runs"
+        },
         "intervalSecs": {
           "type": "integer",
           "minimum": 1,
@@ -221,44 +222,11 @@
           },
           "additionalProperties": false
         },
-        "targets": {
-          "type": "array",
-          "description": "Heartbeat publishing targets",
-          "items": {
-            "type": "object",
-            "properties": {
-              "type": {
-                "type": "string",
-                "enum": ["metric", "messaging"],
-                "description": "Target type for heartbeat data"
-              },
-              "config": {
-                "type": "object",
-                "description": "Target-specific configuration",
-                "properties": {
-                  "destination": {
-                    "type": "string",
-                    "enum": ["ipc", "local", "iotcore", "iot_core"],
-                    "default": "ipc",
-                    "description": "Messaging destination (for messaging targets). 'ipc'/'local' are aliases for the local/IPC transport; 'iotcore'/'iot_core' are aliases for IoT Core."
-                  },
-                  "topic": {
-                    "type": "string",
-                    "default": "ggcommons/{ThingName}/{ComponentName}/heartbeat",
-                    "description": "Topic template (for messaging targets)"
-                  }
-                },
-                "additionalProperties": false
-              },
-              "topic": {
-                "type": "string",
-                "description": "Topic template (alternative to config.topic)"
-              }
-            },
-            "required": ["type"],
-            "additionalProperties": false
-          },
-          "default": [{"type": "metric"}]
+        "destination": {
+          "type": "string",
+          "enum": ["local", "iotcore"],
+          "default": "local",
+          "description": "Publish destination of the state keepalive only ('local' = the local/IPC transport, 'iotcore' = AWS IoT Core). The measures route through the metric subsystem's own target (metricEmission)."
         }
       },
       "additionalProperties": false

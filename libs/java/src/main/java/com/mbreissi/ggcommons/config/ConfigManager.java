@@ -671,10 +671,15 @@ public class ConfigManager
      * values, never to the surrounding template, so structural separators in the
      * template are preserved. Mirrors the Rust library's {@code config::template::sanitize}.
      *
+     * <p>Public because it is also the normative UNS channel-token sanitizer (UNS-CANONICAL-DESIGN
+     * §2.2 rule 1 / D-U26): the {@code uns()} token rule is exactly this blacklist, so
+     * "sanitized ⇒ publishable" holds. The metric {@code Messaging} target uses it to turn a
+     * metric name into the {@code metric/{metricName}} channel token (§4.3).
+     *
      * @param value The raw value to be interpolated (may be null)
      * @return The sanitized value, or an empty string if {@code value} is null
      */
-    private static String sanitize(String value)
+    public static String sanitize(String value)
     {
         if (value == null)
         {

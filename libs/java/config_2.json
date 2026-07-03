@@ -12,15 +12,7 @@
       "files": true,
       "threads": true,
       "fds": true
-    },
-    "targets": [
-      {
-        "type": "messaging",
-        "config": {
-          "destination": "ipc"
-        }
-      }
-    ]
+    }
   },
   "tags": {
     "appId": "IntelliJIdea",
@@ -36,8 +28,7 @@
     }
   },
   "component": {
-    "global": {
-    },
+    "global": {},
     "instances": [
       {
         "id": "kep1-right",

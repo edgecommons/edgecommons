@@ -9,10 +9,14 @@ import com.mbreissi.ggcommons.config.ConfigurationChangeListener;
 import com.mbreissi.ggcommons.config.HeartbeatConfiguration;
 import com.mbreissi.ggcommons.messaging.Message;
 import com.mbreissi.ggcommons.messaging.MessageBuilder;
+import com.mbreissi.ggcommons.messaging.MessageIdentity;
 import com.mbreissi.ggcommons.messaging.MessagingClient;
+import com.mbreissi.ggcommons.messaging.ReservedPublisher;
 import com.mbreissi.ggcommons.metrics.Metric;
 import com.mbreissi.ggcommons.metrics.MetricBuilder;
 import com.mbreissi.ggcommons.metrics.MetricEmitter;
+import com.mbreissi.ggcommons.uns.Uns;
+import com.mbreissi.ggcommons.uns.UnsClass;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import org.apache.logging.log4j.LogManager;
@@ -27,19 +31,36 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Implements heartbeat functionality for Greengrass components to monitor their health status.
- * This class periodically publishes heartbeat messages and handles configuration changes.
+ * The component heartbeat (UNS-CANONICAL-DESIGN §4.3, D-U14/D-U20). Each tick it publishes a UNS
+ * {@code state} keepalive to {@code ecv1/{device}/{component}/main/state} — header name
+ * {@value #STATE_MESSAGE_NAME}, body {@code {"status":"RUNNING","uptimeSecs":<n>}} — through the
+ * privileged {@link ReservedPublisher} seam (the {@code state} class is reserved), and emits the
+ * enabled system measures (cpu/memory/disk/…) as a metric named {@value #SYS_METRIC_NAME} through
+ * the normal metric subsystem (D6 — the measures keep the metric subsystem's full sink routing).
+ * On graceful shutdown ({@link #close()}) a best-effort {@code {"status":"STOPPED"}} state is
+ * published. {@code heartbeat.destination} ({@code local}|{@code iotcore}) selects the keepalive's
+ * transport only. Defaults: on / 5 s / local (M11).
  */
 public class Heartbeat implements ConfigurationChangeListener
 {
     protected static final Logger LOGGER = LogManager.getLogger(Heartbeat.class);
 
-    private static final String MESSAGE_NAME = "heartbeat";
-    private static final String MESSAGE_VERSION = "1.0.0";
+    /** The state keepalive's envelope header name (§4.3). */
+    static final String STATE_MESSAGE_NAME = "state";
+    static final String STATE_MESSAGE_VERSION = "1.0";
+    /** The metric the heartbeat measures are emitted as (§4.3, D-U20/D6). */
+    static final String SYS_METRIC_NAME = "sys";
+
     private final ConfigManager configurationService;
     private MessagingClient messagingService;
     private MetricEmitter metricService;
     private HeartbeatMonitor heartbeatMonitor;
+    /** Monotonic start reference for the keepalive's {@code uptimeSecs}. */
+    private final long startNanos = System.nanoTime();
+    /** Ensures the best-effort STOPPED state is published at most once. */
+    private volatile boolean stoppedPublished = false;
+    /** WARN-once flag for the no-resolved-identity (test/subclass bring-up) case. */
+    private volatile boolean warnedNoIdentity = false;
     private final ScheduledExecutorService scheduler =
             Executors.newSingleThreadScheduledExecutor(runnable -> {
                 Thread thread = new Thread(runnable, "Heartbeat-scheduler");
@@ -58,11 +79,11 @@ public class Heartbeat implements ConfigurationChangeListener
         this.configurationService = configurationService;
         this.messagingService = messagingService;
         this.metricService = metricService;
-        
+
         configurationService.addConfigChangeListener(this);
         initialize();
     }
-    
+
     /**
      * Initializes the heartbeat after all dependencies are set.
      */
@@ -72,8 +93,9 @@ public class Heartbeat implements ConfigurationChangeListener
     }
 
     /**
-     * Initializes the heartbeat mechanism based on the current configuration.
-     * Sets up the timer for periodic heartbeat publishing.
+     * (Re)initializes the heartbeat from the current configuration: cancels any running task and,
+     * when {@code heartbeat.enabled} (the default), schedules the periodic tick at
+     * {@code heartbeat.intervalSecs}.
      */
     private void initHeartbeat()
     {
@@ -83,22 +105,29 @@ public class Heartbeat implements ConfigurationChangeListener
             // the executor is kept alive across reconfigures and only shut down in close().
             if (heartbeatTask != null) {
                 heartbeatTask.cancel(false);
+                heartbeatTask = null;
             }
-            heartbeatMonitor = new HeartbeatMonitor(configurationService.getHeartbeatConfig());
-            long periodMs = configurationService.getHeartbeatConfig().getIntervalSecs() * 1000L;
+            HeartbeatConfiguration config = configurationService.getHeartbeatConfig();
+            if (!config.isEnabled()) {
+                LOGGER.info("Heartbeat disabled by configuration (heartbeat.enabled=false)");
+                return;
+            }
+            heartbeatMonitor = new HeartbeatMonitor(config);
+            long periodMs = config.getIntervalSecs() * 1000L;
             heartbeatTask = scheduler.scheduleAtFixedRate(this::runHeartbeat, 0, periodMs, TimeUnit.MILLISECONDS);
-            LOGGER.info("Heartbeat initialized at {} second interval", configurationService.getHeartbeatConfig().getIntervalSecs());
+            LOGGER.info("Heartbeat initialized at {} second interval (state keepalive -> {})",
+                    config.getIntervalSecs(), config.getDestination());
         }
     }
 
     /**
-     * Defines the heartbeat metric in the metrics system.
-     * This metric is used to track the component's health status.
+     * Defines the {@value #SYS_METRIC_NAME} metric (the heartbeat measures) in the metric
+     * subsystem.
      */
     private void defineMetric()
     {
         int storageResolution = configurationService.getHeartbeatConfig().getIntervalSecs() < 60 ? 1 : 60;
-        Metric metric = MetricBuilder.create("heartbeat")
+        Metric metric = MetricBuilder.create(SYS_METRIC_NAME)
                 .withNamespace(configurationService.getMetricConfig().getNamespace())
                 .withConfig(configurationService)
                 .addMeasure("disk_total", "Gigabytes", storageResolution)
@@ -114,73 +143,107 @@ public class Heartbeat implements ConfigurationChangeListener
     }
 
     /**
-     * Publishes a heartbeat message to indicate the component is alive and functioning.
-     * The message includes the current timestamp and component information.
+     * One heartbeat tick (§4.3): the {@code state} keepalive
+     * ({@code {"status":"RUNNING","uptimeSecs":n}}) plus the measures as the
+     * {@value #SYS_METRIC_NAME} metric. Each half is best-effort — a failure in one must not
+     * suppress the other.
      */
     private void publishHeartbeat()
     {
-        JsonObject data = heartbeatMonitor.getStats();
-        for (HeartbeatConfiguration.HeartbeatTarget target : configurationService.getHeartbeatConfig().getTargets())
+        try
         {
-            switch (target.getType().toLowerCase())
-            {
-                case "metric":
-                    var measureValues = new HashMap<String, Float>();
-                    for (Map.Entry<String, JsonElement> entry : data.entrySet())
-                    {
-                        for (String measureName : entry.getValue().getAsJsonObject().keySet())
-                        {
-                            measureValues.put(measureName, entry.getValue().getAsJsonObject().get(measureName).getAsFloat());
-                        }
-                    }
-                    metricService.emitMetricNow("heartbeat", measureValues);
-                    break;
-
-                case "messaging":
-                    String topic = configurationService.resolveTemplate(HeartbeatConfiguration.DEFAULT_TOPIC);
-                    String destination = HeartbeatConfiguration.DEFAULT_MESSAGING_DESTINATION;
-
-                    if (target.getConfig().has("destination"))
-                    {
-                        destination = target.getConfig().get("destination").getAsString();
-                    }
-                    if (target.getConfig().has("topic"))
-                    {
-                        topic = configurationService.resolveTemplate(target.getConfig().get("topic").getAsString());
-                    }
-
-                    Message heartbeatMessage = MessageBuilder.create(MESSAGE_NAME, MESSAGE_VERSION)
-                            .withPayload(heartbeatMonitor.getStats())
-                            .withConfig(configurationService)
-                            .build();
-                    
-                    // Canonical "ipc"/"iot_core"; the legacy "local"/"iotcore" spellings
-                    // are accepted too (parity with the Python/Rust heartbeat targets).
-                    if (destination.equalsIgnoreCase("ipc") || destination.equalsIgnoreCase("local"))
-                    {
-                        messagingService.publish(topic, heartbeatMessage);
-                    }
-                    else if (destination.equalsIgnoreCase("iot_core") || destination.equalsIgnoreCase("iotcore"))
-                    {
-                        messagingService.publishToIoTCore(topic, heartbeatMessage, QOS.AT_LEAST_ONCE);
-                    }
-                    else
-                    {
-                        LOGGER.warn("Unrecognized messaging destination: '{}'. Ignoring.", destination);
-                    }
-                    break;
-            }
+            publishState("RUNNING", true);
         }
-
+        catch (Exception e)
+        {
+            LOGGER.warn("Heartbeat state keepalive failed: {}", e.toString());
+        }
+        try
+        {
+            emitSysMetric();
+        }
+        catch (Exception e)
+        {
+            LOGGER.warn("Heartbeat '{}' metric emit failed: {}", SYS_METRIC_NAME, e.toString());
+        }
     }
 
     /**
-     * Stops the heartbeat, cancelling its periodic timer.
+     * Publishes one {@code state} envelope to the component's UNS state topic through the
+     * privileged seam. No-op (WARN once) when the component identity is not resolved (mock/test
+     * bring-up — a real {@code ConfigManager} always resolves one).
+     *
+     * @param status        {@code "RUNNING"} or {@code "STOPPED"}
+     * @param includeUptime whether the body carries {@code uptimeSecs} (the RUNNING keepalive)
+     */
+    private void publishState(String status, boolean includeUptime)
+    {
+        MessageIdentity identity = configurationService.getComponentIdentity();
+        if (identity == null)
+        {
+            if (!warnedNoIdentity)
+            {
+                warnedNoIdentity = true;
+                LOGGER.warn("No resolved component identity - the heartbeat state keepalive is disabled");
+            }
+            return;
+        }
+        String topic = new Uns(identity, configurationService.isTopicIncludeRoot())
+                .topic(UnsClass.STATE);
+
+        JsonObject body = new JsonObject();
+        body.addProperty("status", status);
+        if (includeUptime)
+        {
+            body.addProperty("uptimeSecs", (System.nanoTime() - startNanos) / 1_000_000_000L);
+        }
+        Message stateMessage = MessageBuilder.create(STATE_MESSAGE_NAME, STATE_MESSAGE_VERSION)
+                .withPayload(body)
+                .withConfig(configurationService)
+                .build();
+
+        ReservedPublisher publisher = messagingService.reservedPublisher();
+        String destination = configurationService.getHeartbeatConfig().getDestination();
+        if (destination != null && (destination.equalsIgnoreCase("iotcore")
+                || destination.equalsIgnoreCase("iot_core")))
+        {
+            publisher.publishToIoTCore(topic, stateMessage, QOS.AT_LEAST_ONCE);
+        }
+        else
+        {
+            publisher.publish(topic, stateMessage);
+        }
+    }
+
+    /**
+     * Emits the enabled measures as the {@value #SYS_METRIC_NAME} metric through the normal
+     * metric subsystem (its configured target: messaging/cloudwatch/EMF/log/prometheus).
+     */
+    private void emitSysMetric()
+    {
+        JsonObject data = heartbeatMonitor.getStats();
+        var measureValues = new HashMap<String, Float>();
+        for (Map.Entry<String, JsonElement> entry : data.entrySet())
+        {
+            for (String measureName : entry.getValue().getAsJsonObject().keySet())
+            {
+                measureValues.put(measureName, entry.getValue().getAsJsonObject().get(measureName).getAsFloat());
+            }
+        }
+        metricService.emitMetricNow(SYS_METRIC_NAME, measureValues);
+    }
+
+    /**
+     * Stops the heartbeat: cancels the periodic timer and publishes the best-effort
+     * {@code {"status":"STOPPED"}} state (§4.3/D-U14 — at most once; failures are swallowed, the
+     * shutdown must proceed).
      */
     public void close()
     {
+        boolean wasRunning;
         synchronized (timerLock)
         {
+            wasRunning = heartbeatTask != null;
             if (heartbeatTask != null)
             {
                 heartbeatTask.cancel(false);
@@ -188,12 +251,24 @@ public class Heartbeat implements ConfigurationChangeListener
             }
             scheduler.shutdownNow();
         }
+        if (wasRunning && !stoppedPublished)
+        {
+            stoppedPublished = true;
+            try
+            {
+                publishState("STOPPED", false);
+            }
+            catch (Exception e)
+            {
+                LOGGER.debug("Best-effort STOPPED state publish failed: {}", e.toString());
+            }
+        }
     }
 
     @Override
     /**
      * Handles configuration changes by reinitializing the heartbeat mechanism.
-     * 
+     *
      * @return true if the configuration change was handled successfully
      */
     public boolean onConfigurationChanged()
@@ -203,10 +278,6 @@ public class Heartbeat implements ConfigurationChangeListener
         return true;
     }
 
-    /**
-     * Inner class that implements the periodic heartbeat task.
-     * Executes the heartbeat publishing operation at configured intervals.
-     */
     /**
      * The periodic heartbeat task. Guarded so an exception in one run cannot
      * propagate to the scheduler and silently cancel future heartbeats.

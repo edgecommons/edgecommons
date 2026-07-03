@@ -5,43 +5,40 @@
 package com.mbreissi.ggcommons.config;
 
 
-import com.google.gson.JsonArray;
-import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import java.util.ArrayList;
-import java.util.List;
-
 //{
+//    "enabled": true,
 //    "intervalSecs": 5,
 //    "measures": {
 //        "cpu": true,
 //        "memory": true
 //        "disk": false
 //    },
-//    "targets": [
-//        {
-//            "type": "metric"
-//        },
-//        {
-//            "type": "messaging",
-//            "config": {
-//                "destination": "ipc",
-//                "topic": "{ThingName}/{ComponentName}/heartbeat"
-//             }
-//        }
-//    ]
+//    "destination": "local"
 //}
 
 /**
- * Configuration class for managing component heartbeat settings.
- * Controls heartbeat intervals, monitoring parameters, and health check settings.
+ * Configuration model for the component heartbeat (UNS-CANONICAL-DESIGN §4.3, D-U14/D-U20).
+ *
+ * <p>The heartbeat is a library-owned UNS {@code state} keepalive published each tick to
+ * {@code ecv1/{device}/{component}/main/state} (body {@code {"status":"RUNNING","uptimeSecs":n}},
+ * best-effort {@code {"status":"STOPPED"}} on graceful shutdown), with the enabled system measures
+ * emitted as the metric {@code sys} through the normal metric subsystem. The legacy
+ * {@code targets[]} array (the heartbeat topic-override drift knobs) is removed — hard cut;
+ * {@link #getDestination()} governs only the state keepalive's transport ({@code local} vs
+ * {@code iotcore}); the measures route through the metric subsystem's own target.
  */
 public class HeartbeatConfiguration
 {
     protected static final Logger LOGGER = LogManager.getLogger(HeartbeatConfiguration.class);
+
+    /** The schema default for {@code heartbeat.destination} — the local/IPC transport. */
+    public final static String DEFAULT_DESTINATION = "local";
+
+    boolean enabled = true;
     int intervalSecs = 5;
     boolean includeCpu = true;
     boolean includeMemory = true;
@@ -49,28 +46,7 @@ public class HeartbeatConfiguration
     boolean includeThreads = false;
     boolean includeFiles = false;
     boolean includeFds = false;
-    final List<HeartbeatTarget> targets = new ArrayList<>();
-    public final static String DEFAULT_TOPIC = "ggcommons/{ThingName}/{ComponentName}/heartbeat";
-    public final static String DEFAULT_MESSAGING_DESTINATION = "ipc";
-
-    /**
-     * Inner class representing a heartbeat publishing target.
-     * Contains type and configuration settings for where heartbeats should be sent.
-     */
-    public static class HeartbeatTarget {
-        String type;
-        JsonObject config;
-
-        public String getType()
-        {
-            return type;
-        }
-
-        public JsonObject getConfig()
-        {
-            return config;
-        }
-    }
+    String destination = DEFAULT_DESTINATION;
 
     /**
      * Creates a new heartbeat configuration from a JSON configuration object.
@@ -81,6 +57,10 @@ public class HeartbeatConfiguration
     {
         if (jsonConfig != null)
         {
+            if (jsonConfig.has("enabled"))
+            {
+                enabled = jsonConfig.get("enabled").getAsBoolean();
+            }
             if (jsonConfig.has("intervalSecs"))
             {
                 intervalSecs = (jsonConfig.get("intervalSecs").getAsBigDecimal()).intValue();
@@ -103,38 +83,17 @@ public class HeartbeatConfiguration
                 if (metricObj.has("fds"))
                     includeFds =  metricObj.get("fds").getAsBoolean();
             }
-            if (jsonConfig.has("targets"))
+            if (jsonConfig.has("destination"))
             {
-                JsonArray targetArray = jsonConfig.get("targets").getAsJsonArray();
-                for (JsonElement targetElem : targetArray)
-                {
-                    JsonObject targetObj = targetElem.getAsJsonObject();
-                    HeartbeatTarget target = new HeartbeatTarget();
-                    target.type = targetObj.get("type").getAsString();
-                    if (target.type.equalsIgnoreCase("messaging") || target.type.equalsIgnoreCase("metric"))
-                    {
-                        if (targetObj.has("config"))
-                            target.config = targetObj.get("config").getAsJsonObject();
-                        targets.add(target);
-                    }
-                    else
-                    {
-                        LOGGER.warn("Unrecognized heartbeat target '{}'. Ignoring", target.type);
-                    }
-                }
+                destination = jsonConfig.get("destination").getAsString();
             }
-        }
-        if (targets.isEmpty())
-        {
-            HeartbeatTarget target = new HeartbeatTarget();
-            target.type = "metric";
-            targets.add(target);
         }
     }
 
     public JsonObject toDict()
     {
         JsonObject retVal = new JsonObject();
+        retVal.addProperty("enabled", enabled);
         retVal.addProperty("intervalSecs", intervalSecs);
         JsonObject metricObj = new JsonObject();
         metricObj.addProperty("cpu", includeCpu);
@@ -144,16 +103,7 @@ public class HeartbeatConfiguration
         metricObj.addProperty("files", includeFiles);
         metricObj.addProperty("fds", includeFds);
         retVal.add("measures", metricObj);
-        JsonArray targetArray = new JsonArray();
-        for (HeartbeatTarget target : targets)
-        {
-            JsonObject targetObj = new JsonObject();
-            targetObj.addProperty("type", target.type);
-            if (target.config != null)
-                targetObj.add("config", target.config);
-            targetArray.add(targetObj);
-        }
-        retVal.add("targets", targetArray);
+        retVal.addProperty("destination", destination);
         return retVal;
     }
 
@@ -161,6 +111,15 @@ public class HeartbeatConfiguration
     public String toString()
     {
         return toDict().toString();
+    }
+
+    /**
+     * Whether the heartbeat (state keepalive + {@code sys} measures metric) runs. Default
+     * {@code true} — on / 5 s / local (D-U14).
+     */
+    public boolean isEnabled()
+    {
+        return enabled;
     }
 
     public int getIntervalSecs()
@@ -195,9 +154,14 @@ public class HeartbeatConfiguration
 
     public boolean includeFds() { return includeFds; }
 
-    public List<HeartbeatTarget> getTargets()
+    /**
+     * The publish destination of the {@code state} keepalive only — {@code "local"} (the
+     * local/IPC transport, the default) or {@code "iotcore"} (AWS IoT Core). The measures route
+     * through the metric subsystem's own target and are unaffected.
+     */
+    public String getDestination()
     {
-        return targets;
+        return destination;
     }
 
 }

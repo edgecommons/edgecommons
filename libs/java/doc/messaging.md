@@ -80,6 +80,32 @@ Note (init order): the messaging client is built before the config loads, so the
 default is late-bound right after the `ConfigManager` exists; until then the built-in 30 s
 applies (deliberately — the CONFIG_COMPONENT bootstrap request gets a deadline too).
 
+### Reserved-class publish guard (UNS)
+
+The UNS classes `state`, `metric`, `cfg` and `log` are **library-owned** (UNS-CANONICAL-DESIGN
+§4.1): the heartbeat publishes the `state` keepalive, the metric subsystem publishes `metric`,
+and the effective-config publisher announces `cfg`. Every publish path that takes a client-chosen
+topic — `publish`, `publishRaw`, `publishToIoTCore`, `publishToIoTCoreRaw`, `request`,
+`requestFromIoTCore`, and `reply`/`replyToIoTCore` (via the request's `reply_to`) — rejects a
+topic whose UNS class position holds a reserved token with a `ReservedTopicException`:
+
+```
+ecv1/{device}/{component}/{instance}/{class}          // class position 4 — always checked
+ecv1/{site}/{device}/{component}/{instance}/{class}   // position 5 — only when topic.includeRoot=true
+```
+
+Position 5 is checked only when *this component's* `topic.includeRoot` is `true` (late-bound from
+the config, like the request-deadline default) — checking it unconditionally would false-positive
+on legitimate `app` channels such as `ecv1/d/c/i/app/state`. Non-`ecv1` topics pass untouched
+(`ggcommons/reply-…` reply topics, `cloudwatch/metric/put`, foreign-broker bridging), and
+`subscribe*` is never guarded — consumers must read the reserved classes.
+
+The guard is **misuse prevention, not a security boundary** (per-device broker ACLs are). The
+library's own publishers reach the reserved classes through `MessagingClient.reservedPublisher()`
+— a `ReservedPublisher` (`publish` / `publishRaw` / `publishToIoTCore`) that bypasses the guard.
+It is public only because the library publishers live in other packages; component code should
+not use it.
+
 ### Providers
 The library includes three messaging providers:
 

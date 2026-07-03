@@ -68,7 +68,7 @@ The configuration is organized into distinct sections:
 These sections are managed by ggcommons and configure framework behavior:
 
 - **`logging`**: Logging system configuration
-- **`heartbeat`**: Component health monitoring configuration  
+- **`heartbeat`**: Component health monitoring — a UNS `state` keepalive plus system measures as the `sys` metric (see [heartbeat.md](heartbeat.md))
 - **`metricEmission`**: Metrics collection and emission configuration
 - **`tags`**: Component tagging for organization and templating
 
@@ -160,8 +160,7 @@ String resolvedPath = configManager.resolveTemplate("/data/{ThingName}/{site}/lo
     "level": "INFO"
   },
   "heartbeat": {
-    "intervalSecs": 30,
-    "targets": [{"type": "metric"}]
+    "intervalSecs": 30
   },
   "tags": {
     "environment": "production",
@@ -254,19 +253,9 @@ String resolvedPath = configManager.resolveTemplate("/data/{ThingName}/{site}/lo
     "intervalSecs": 60,
     "measures": {
       "cpu": true,
-      "memory": true,
-      "connections": true
+      "memory": true
     },
-    "targets": [
-      {"type": "metric"},
-      {
-        "type": "messaging",
-        "config": {
-          "topic": "health/{site}/{ComponentName}",
-          "destination": "iot_core"
-        }
-      }
-    ]
+    "destination": "iotcore"
   },
   "tags": {
     "site": "plant-a",
@@ -335,7 +324,7 @@ String resolvedPath = configManager.resolveTemplate("/data/{ThingName}/{site}/lo
   },
   "heartbeat": {
     "intervalSecs": 5,
-    "targets": [{"type": "messaging", "config": {"destination": "ipc"}}]
+    "destination": "local"
   },
   "metricEmission": {
     "target": "log",

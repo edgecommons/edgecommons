@@ -6,6 +6,7 @@ package com.mbreissi.ggcommons;
 
 import com.mbreissi.ggcommons.config.ConfigManager;
 import com.mbreissi.ggcommons.config.ConfigManagerFactory;
+import com.mbreissi.ggcommons.config.EffectiveConfigPublisher;
 import com.mbreissi.ggcommons.config.HealthConfiguration;
 import com.mbreissi.ggcommons.health.HealthServer;
 import com.mbreissi.ggcommons.heartbeat.Heartbeat;
@@ -56,6 +57,12 @@ public class GGCommons
     protected ParameterService parameters;
     protected StreamMetricsBridge streamMetricsBridge;
     protected CredentialMetricsBridge credentialMetricsBridge;
+    /**
+     * The library-owned {@code cfg} publisher (UNS-CANONICAL-DESIGN §4.3): announces the effective
+     * (redacted) configuration on {@code ecv1/{device}/{component}/main/cfg} at startup and on
+     * every configuration change.
+     */
+    protected EffectiveConfigPublisher effectiveConfigPublisher;
 
     /**
      * The component-identity-bound UNS topic builder (instance
@@ -171,6 +178,10 @@ public class GGCommons
             // giving the CONFIG_COMPONENT bootstrap request a deadline instead of hanging forever.
             messagingClient.setDefaultRequestTimeout(configManager.getMessagingRequestTimeout());
 
+            // §4.1 / D-U24: late-bind the reserved-class guard's topic.includeRoot flag the same
+            // way (default false pre-bind - nothing publishes rooted topics pre-config).
+            messagingClient.setGuardIncludeRoot(configManager.isTopicIncludeRoot());
+
             // Logging is now (re)configured (the ConfigManager constructor applied the config and
             // reconfigured Log4j2). Re-emit the startup facts that were resolved/connected BEFORE
             // logging was ready, so they actually reach the log: the resolver summary and, if the
@@ -205,6 +216,12 @@ public class GGCommons
             // Complete initialization - this must be the very last step
             // After this point, configuration changes will trigger listener notifications
             configManager.completeInitialization();
+
+            // §4.3: announce the effective (redacted) configuration on the UNS cfg topic - the
+            // startup push; the publisher re-announces on every configuration change. Best-effort
+            // (publishNow never throws).
+            effectiveConfigPublisher = new EffectiveConfigPublisher(configManager, messagingClient);
+            effectiveConfigPublisher.publishNow();
 
             // FR-HB-1: start the HTTP health endpoint (default-on for KUBERNETES; opt-in elsewhere),
             // and FR-HB-2: wire SIGTERM/SIGINT to the graceful, idempotent shutdown so a kubelet (or

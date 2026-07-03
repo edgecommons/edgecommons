@@ -20,18 +20,7 @@
   },
   "heartbeat": {
     "intervalSecs": 60,
-    "targets": [
-      {
-        "type": "metric"
-      },
-      {
-        "type": "messaging",
-        "config": {
-          "destination": "iot_core",
-          "topic": "heartbeat/{ThingName}/{ComponentName}"
-        }
-      }
-    ]
+    "destination": "iotcore"
   },
   "metricEmission": {
     "target": "cloudwatch",

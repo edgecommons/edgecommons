@@ -129,23 +129,25 @@ class ConfigModelTest {
 
     @Test
     void metricConfigurationMessagingTarget() {
+        // §4.3/D-U9: targetConfig.topic is removed — only the destination survives; the
+        // Messaging target builds the UNS metric topic itself.
         MetricConfiguration cfg = new MetricConfiguration(obj("""
                 {"target":"messaging",\
-                "targetConfig":{"topic":"a/b/c","destination":"iotcore"}}"""));
+                "targetConfig":{"destination":"iotcore"}}"""));
         assertEquals("messaging", cfg.getTarget());
-        assertEquals("a/b/c", cfg.getTopic());
+        assertNull(cfg.getTopic(), "the messaging target no longer carries a configured topic");
         assertEquals("iotcore", cfg.getDestination());
 
         JsonObject tc = cfg.toDict().getAsJsonObject("targetConfig");
-        assertEquals("a/b/c", tc.get("topic").getAsString());
+        assertFalse(tc.has("topic"), "toDict must not emit a topic for the messaging target");
         assertEquals("iotcore", tc.get("destination").getAsString());
     }
 
     @Test
-    void metricConfigurationMessagingTargetUsesDefaultTopic() {
+    void metricConfigurationMessagingTargetDefaults() {
         MetricConfiguration cfg = new MetricConfiguration(obj("""
                 {"target":"messaging"}"""));
-        assertEquals("{ThingName}/{ComponentName}/metric", cfg.getTopic());
+        assertNull(cfg.getTopic());
         assertEquals("ipc", cfg.getDestination());
     }
 
@@ -169,16 +171,12 @@ class ConfigModelTest {
 
     @Test
     void metricConfigurationCloudwatchComponentTarget() {
-        // Default topic for cloudwatchcomponent when no targetConfig.topic supplied.
-        MetricConfiguration deflt = new MetricConfiguration(obj("""
-                {"target":"cloudwatchcomponent"}"""));
-        assertEquals("cloudwatchcomponent", deflt.getTarget());
-        assertEquals("cloudwatch/metric/put", deflt.getTopic());
-
-        // Overridden topic.
+        // The cloudwatchcomponent topic is the fixed external Greengrass contract (D-U21);
+        // the former targetConfig.topic override is removed with the schema key.
         MetricConfiguration cfg = new MetricConfiguration(obj("""
-                {"target":"cloudwatchcomponent","targetConfig":{"topic":"cw/custom"}}"""));
-        assertEquals("cw/custom", cfg.getTopic());
+                {"target":"cloudwatchcomponent"}"""));
+        assertEquals("cloudwatchcomponent", cfg.getTarget());
+        assertEquals("cloudwatch/metric/put", cfg.getTopic());
 
         // toDict() has no switch case for cloudwatchcomponent -> empty targetConfig block.
         JsonObject dict = cfg.toDict();
@@ -192,18 +190,18 @@ class ConfigModelTest {
 
     @Test
     void heartbeatConfigurationDefaultsWhenNullJson() {
+        // D-U14/M11: the heartbeat defaults are on / 5 s / local (the injected legacy
+        // "metric" default target is gone with targets[]).
         HeartbeatConfiguration cfg = new HeartbeatConfiguration(null);
+        assertTrue(cfg.isEnabled());
         assertEquals(5, cfg.getIntervalSecs());
+        assertEquals("local", cfg.getDestination());
         assertTrue(cfg.includeCpu());
         assertTrue(cfg.includeMemory());
         assertFalse(cfg.includeDisk());
         assertFalse(cfg.includeThreads());
         assertFalse(cfg.includeFiles());
         assertFalse(cfg.includeFds());
-        // No targets supplied -> default single "metric" target is injected.
-        assertEquals(1, cfg.getTargets().size());
-        assertEquals("metric", cfg.getTargets().get(0).getType());
-        assertNull(cfg.getTargets().get(0).getConfig());
     }
 
     @Test
@@ -214,16 +212,15 @@ class ConfigModelTest {
     }
 
     @Test
-    void heartbeatConfigurationMeasuresAndTargets() {
+    void heartbeatConfigurationMeasuresEnabledAndDestination() {
         HeartbeatConfiguration cfg = new HeartbeatConfiguration(obj("""
-                {"intervalSecs":15,\
+                {"enabled":false,"intervalSecs":15,\
                 "measures":{"cpu":false,"memory":true,"disk":true,"threads":true,"files":true,"fds":true},\
-                "targets":[\
-                {"type":"metric"},\
-                {"type":"messaging","config":{"destination":"ipc","topic":"hb/t"}},\
-                {"type":"bogus"}]}"""));
+                "destination":"iotcore"}"""));
 
+        assertFalse(cfg.isEnabled());
         assertEquals(15, cfg.getIntervalSecs());
+        assertEquals("iotcore", cfg.getDestination());
         assertFalse(cfg.includeCpu());
         assertTrue(cfg.includeMemory());
         // disk/fds are now honored in Java (collected via File + Unix OS MXBean).
@@ -232,18 +229,12 @@ class ConfigModelTest {
         assertTrue(cfg.includeThreads());
         assertTrue(cfg.includeFiles());
 
-        // bogus target dropped; metric + messaging retained.
-        List<HeartbeatConfiguration.HeartbeatTarget> targets = cfg.getTargets();
-        assertEquals(2, targets.size());
-        assertEquals("metric", targets.get(0).getType());
-        assertEquals("messaging", targets.get(1).getType());
-        assertNotNull(targets.get(1).getConfig());
-        assertEquals("hb/t", targets.get(1).getConfig().get("topic").getAsString());
-
-        // toDict reflects measures + targets and toString mirrors it.
+        // toDict reflects enabled + measures + destination and toString mirrors it.
         JsonObject dict = cfg.toDict();
+        assertFalse(dict.get("enabled").getAsBoolean());
         assertEquals(15, dict.get("intervalSecs").getAsInt());
-        assertEquals(2, dict.getAsJsonArray("targets").size());
+        assertEquals("iotcore", dict.get("destination").getAsString());
+        assertFalse(dict.has("targets"), "the legacy targets[] array is removed (D-U20)");
         assertEquals(dict.toString(), cfg.toString());
     }
 

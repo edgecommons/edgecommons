@@ -213,15 +213,17 @@ class MetricEmitterTest {
 
     @Test
     void cloudwatchComponentTargetUsesInjectedMessaging() {
+        // The cloudwatchcomponent topic is the fixed external Greengrass contract
+        // (cloudwatch/metric/put, D-U21); the targetConfig.topic override is removed.
         var config = new EmitterConfig("""
-                {"target":"cloudwatchcomponent","namespace":"ns1","targetConfig":{"topic":"cw/put"}}""");
+                {"target":"cloudwatchcomponent","namespace":"ns1"}""");
         var mock = new MockMessagingService();
         var emitter = new MetricEmitter(config, mock);
 
         emitter.defineMetric(metric("m1"));
         emitter.emitMetricNow("m1", values());
         assertEquals(1, mock.getPublishedMessages().size());
-        assertEquals("cw/put", mock.getPublishedMessages().get(0).topic);
+        assertEquals("cloudwatch/metric/put", mock.getPublishedMessages().get(0).topic);
 
         emitter.close();
     }

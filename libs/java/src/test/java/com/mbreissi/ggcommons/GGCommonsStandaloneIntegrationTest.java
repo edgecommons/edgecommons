@@ -85,7 +85,7 @@ class GGCommonsStandaloneIntegrationTest {
                 "logging": {"level": "INFO"},\
                 "metricEmission": {"target": "log", "targetConfig": {"logFileName": "%s"}},\
                 "heartbeat": {"intervalSecs": 3600, "measures": {"cpu": true, "memory": true},\
-                  "targets": [{"type":"metric"},{"type":"messaging","config":{"topic":"heartbeat/test","destination":"ipc"}}]},\
+                  "destination": "local"},\
                 "tags": {"env": "test"},\
                 "messaging": {"requestTimeoutSeconds": 7},\
                 "component": {"global": {"setting": "value"}}\
