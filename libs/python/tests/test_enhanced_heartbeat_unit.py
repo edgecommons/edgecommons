@@ -193,6 +193,26 @@ class TestPublishStateNow:
         hb.publish_state_now()  # no exception
 
 
+class TestGetUptimeSecs:
+    """``get_uptime_secs()`` (DESIGN-uns §9.5): the command inbox's ``ping`` built-in
+    verb's uptime source - must agree with the value the RUNNING state keepalive body
+    carries as ``uptimeSecs`` (one shared uptime source)."""
+
+    def test_returns_a_non_negative_int(self, hb):
+        uptime = hb.get_uptime_secs()
+        assert isinstance(uptime, int)
+        assert uptime >= 0
+
+    def test_agrees_with_the_state_keepalive_body(self, hb):
+        msg = MagicMock()
+        hb.set_messaging_service(msg)
+        hb._publish_state("RUNNING", include_uptime=True)
+        _, message = msg._publish_reserved.call_args[0]
+        # Both reads happen back-to-back (monotonic clock) so they must be equal or,
+        # at worst, one second apart across a tick boundary.
+        assert abs(message.get_body()["uptimeSecs"] - hb.get_uptime_secs()) <= 1
+
+
 class TestEmitSysMetric:
     def test_no_metric_service_returns(self, hb):
         hb._emit_sys_metric()  # no exception

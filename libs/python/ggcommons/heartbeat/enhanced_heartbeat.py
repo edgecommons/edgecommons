@@ -297,7 +297,7 @@ class EnhancedHeartbeat(ConfigurationChangeListener):
 
         body: Dict[str, Any] = {"status": status}
         if include_uptime:
-            body["uptimeSecs"] = int(time.monotonic() - self._start_monotonic)
+            body["uptimeSecs"] = self.get_uptime_secs()
         message = MessageBuilder.create(self.STATE_MESSAGE_NAME, self.STATE_MESSAGE_VERSION) \
             .with_payload(body) \
             .with_config(self._config_service) \
@@ -313,6 +313,16 @@ class EnhancedHeartbeat(ConfigurationChangeListener):
         else:
             self._messaging_service._publish_reserved(topic, message)
         logger.debug(f"Published heartbeat state '{status}' on topic: {topic}")
+
+    def get_uptime_secs(self) -> int:
+        """The component's monotonic uptime in whole seconds — the same value the
+        RUNNING ``state`` keepalive carries as ``uptimeSecs``. Consumed by the
+        command inbox's ``ping`` built-in verb (DESIGN-uns §9.5) so ping replies and
+        keepalives agree on one uptime source.
+
+        :returns: seconds since this heartbeat (i.e. the runtime) was constructed
+        """
+        return int(time.monotonic() - self._start_monotonic)
 
     def publish_state_now(self) -> None:
         """Re-emits the RUNNING ``state`` keepalive immediately, out of band from the

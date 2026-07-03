@@ -295,6 +295,15 @@ export class Heartbeat {
   }
 
   /**
+   * The component's monotonic uptime in whole seconds — the same value the RUNNING `state`
+   * keepalive carries as `uptimeSecs`. Consumed by the command inbox's `ping` built-in verb
+   * (DESIGN-uns §9.5) so ping replies and keepalives agree on one uptime source.
+   */
+  getUptimeSecs(): number {
+    return Number((process.hrtime.bigint() - this.startHr) / 1_000_000_000n);
+  }
+
+  /**
    * Publishes one `state` envelope to the component's UNS state topic through the privileged
    * seam (§4.3).
    *
@@ -308,7 +317,7 @@ export class Heartbeat {
     const topic = new Uns(cfg.componentIdentity, cfg.topicIncludeRoot).topic(UnsClass.State);
     const body: Record<string, unknown> = { status };
     if (includeUptime) {
-      body.uptimeSecs = Number((process.hrtime.bigint() - this.startHr) / 1_000_000_000n);
+      body.uptimeSecs = this.getUptimeSecs();
     }
     const stateMessage = MessageBuilder.create(STATE_MESSAGE_NAME, STATE_MESSAGE_VERSION)
       .withPayload(body)

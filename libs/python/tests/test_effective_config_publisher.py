@@ -134,3 +134,44 @@ class TestPublish:
             EffectiveConfigPublisher(None, _FakeMessaging())
         with pytest.raises(ValueError):
             EffectiveConfigPublisher(_FakeConfigManager(), None)
+
+
+class TestRedactedEffectiveConfig:
+    """``redacted_effective_config()`` (DESIGN-uns §9.5): the shared snapshot source
+    for both the ``cfg`` push and the command inbox's ``get-configuration`` verb -
+    both surfaces must always agree byte-for-byte."""
+
+    def test_returns_the_redacted_deep_copy(self):
+        cm = _FakeConfigManager({"component": {"name": "x"},
+                                 "messaging": {"local": {"credentials": "c"}}})
+        pub = EffectiveConfigPublisher(cm, _FakeMessaging())
+        redacted = pub.redacted_effective_config()
+        assert redacted["component"] == {"name": "x"}
+        assert redacted["messaging"]["local"]["credentials"] == REDACTED
+
+    def test_none_when_no_effective_config(self):
+        cm = _FakeConfigManager()
+        cm._effective = None
+        pub = EffectiveConfigPublisher(cm, _FakeMessaging())
+        assert pub.redacted_effective_config() is None
+
+    def test_agrees_with_the_cfg_push_body_byte_for_byte(self):
+        """The single shared snapshot: the cfg push's body.config must equal a
+        standalone redacted_effective_config() call."""
+        cm = _FakeConfigManager({"component": {"name": "x"},
+                                 "messaging": {"local": {"credentials": "c"}}})
+        messaging = _FakeMessaging()
+        pub = EffectiveConfigPublisher(cm, messaging)
+        pub.publish_now()
+        _, cfg_message = messaging.reserved[0]
+        assert cfg_message.get_body()["config"] == pub.redacted_effective_config()
+
+    def test_reflects_a_reload_immediately(self):
+        """The fullConfig-staleness regression guard: once the config manager's
+        effective config changes (e.g. via reload_from_provider), the next call must
+        see the NEW document, not a cached/stale one."""
+        cm = _FakeConfigManager({"component": {"name": "before"}})
+        pub = EffectiveConfigPublisher(cm, _FakeMessaging())
+        assert pub.redacted_effective_config()["component"] == {"name": "before"}
+        cm._effective = {"component": {"name": "after"}}
+        assert pub.redacted_effective_config()["component"] == {"name": "after"}

@@ -192,6 +192,76 @@ class TestConfigManagerBase:
         assert cm.is_validation_enabled() is False
 
 
+class TestReloadFromProvider:
+    """``reload_from_provider`` (DESIGN-uns §9.5 ``reload-config`` command verb
+    action): re-fetches via ``_load_configuration`` and re-applies via
+    ``configuration_changed``. Also the fullConfig-staleness regression guard: a
+    successful reload must be immediately visible on ``get_effective_config()`` (the
+    source the effective-config publisher / ``get-configuration`` verb read), not the
+    startup snapshot."""
+
+    def test_success_refetches_and_applies(self):
+        cm = DictConfigManager({"component": {"global": {"v": 1}}})
+        cm.complete_initialization()
+        cm._cfg = {"component": {"global": {"v": 2}}}  # what the "source" now holds
+        assert cm.reload_from_provider() is True
+        assert cm.get_global_config() == {"v": 2}
+
+    def test_success_refreshes_the_effective_config_snapshot_immediately(self):
+        """The fullConfig-staleness bug Java's fix addressed: get_effective_config()
+        (the cfg publisher / get-configuration verb's source) must reflect the
+        reloaded document right after reload_from_provider() returns, not the
+        startup snapshot forever."""
+        cm = DictConfigManager({"component": {"global": {"v": 1}}})
+        cm.complete_initialization()
+        assert cm.get_effective_config() == {"component": {"global": {"v": 1}}}
+        cm._cfg = {"component": {"global": {"v": 2}}}
+        assert cm.reload_from_provider() is True
+        assert cm.get_effective_config() == {"component": {"global": {"v": 2}}}
+
+    def test_fetch_exception_returns_false_and_keeps_previous(self):
+        cm = DictConfigManager({"component": {"global": {"v": 1}}})
+        cm.complete_initialization()
+
+        def boom():
+            raise RuntimeError("source unreachable")
+
+        cm._load_configuration = boom
+        assert cm.reload_from_provider() is False
+        assert cm.get_global_config() == {"v": 1}
+        assert cm.get_effective_config() == {"component": {"global": {"v": 1}}}
+
+    def test_none_result_returns_false_and_keeps_previous(self):
+        cm = DictConfigManager({"component": {"global": {"v": 1}}})
+        cm.complete_initialization()
+        cm._load_configuration = lambda: None
+        assert cm.reload_from_provider() is False
+        assert cm.get_global_config() == {"v": 1}
+
+    def test_schema_invalid_document_returns_false_and_keeps_previous(self):
+        cm = DictConfigManager({"component": {"global": {"v": 1}}}, validate_config=True)
+        cm.complete_initialization()
+        cm._cfg = {"component": {"global": {"v": 2}}, "bogusTopLevelKey": 1}
+        assert cm.reload_from_provider() is False
+        assert cm.get_global_config() == {"v": 1}
+        assert cm.get_effective_config() == {"component": {"global": {"v": 1}}}
+
+    def test_success_notifies_listeners(self):
+        cm = DictConfigManager({"component": {"global": {"v": 1}}})
+        cm.complete_initialization()
+        notified = []
+
+        class L(ConfigurationChangeListener):
+            def on_configuration_change(self, cfg):
+                notified.append(cfg)
+                return True
+
+        cm.add_config_change_listener(L())
+        cm._cfg = {"component": {"global": {"v": 2}}}
+        assert cm.reload_from_provider() is True
+        assert len(notified) == 1
+
+
 class TestSanitize:
     def test_sanitize_none_is_empty(self):
         assert _sanitize(None) == ""

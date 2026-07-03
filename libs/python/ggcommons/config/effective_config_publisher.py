@@ -14,6 +14,7 @@ key named ``password`` or ``pin`` (case-insensitive) anywhere, is replaced with
 """
 import copy
 import logging
+from typing import Optional
 
 from ggcommons.config.manager.configuration_change_listener import ConfigurationChangeListener
 from ggcommons.uns import Uns, UnsClass
@@ -65,8 +66,8 @@ class EffectiveConfigPublisher(ConfigurationChangeListener):
                         " publisher is disabled"
                     )
                 return
-            effective_config = self._config_manager.get_effective_config()
-            if effective_config is None:
+            redacted = self.redacted_effective_config()
+            if redacted is None:
                 logger.warning("No effective configuration available - skipping cfg publish")
                 return
 
@@ -74,7 +75,7 @@ class EffectiveConfigPublisher(ConfigurationChangeListener):
             from ggcommons.messaging.message_builder import MessageBuilder
 
             topic = Uns(identity, self._config_manager.is_topic_include_root()).topic(UnsClass.CFG)
-            body = {"config": redact(effective_config)}
+            body = {"config": redacted}
             cfg_message = MessageBuilder.create(CFG_MESSAGE_NAME, CFG_MESSAGE_VERSION) \
                 .with_payload(body) \
                 .with_config(self._config_manager) \
@@ -87,6 +88,19 @@ class EffectiveConfigPublisher(ConfigurationChangeListener):
     def on_configuration_change(self, configuration) -> bool:
         self.publish_now()
         return True
+
+    def redacted_effective_config(self) -> Optional[dict]:
+        """The current effective configuration, redacted (redaction v1) — the single
+        snapshot source shared by the ``cfg`` push (:meth:`publish_now`) and the
+        ``get-configuration`` command verb's reply (DESIGN-uns §9.5 Flow B), so both
+        surfaces always agree byte-for-byte.
+
+        :returns: the redacted deep copy of the effective config, or ``None`` when no
+            effective configuration is available (mock/test bring-up, or before any
+            config was applied)
+        """
+        effective_config = self._config_manager.get_effective_config()
+        return None if effective_config is None else redact(effective_config)
 
 
 def redact(config: dict) -> dict:

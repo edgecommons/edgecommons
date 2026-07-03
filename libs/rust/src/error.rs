@@ -70,6 +70,12 @@ pub enum GgError {
         detail: String,
     },
 
+    /// Command-inbox registration error (DESIGN-uns §9.5, the `commands()` facade): a verb
+    /// collides with a built-in, a delegated verb (e.g. `set-config`), or an
+    /// already-registered custom verb ([`crate::commands::CommandInbox::register`]).
+    #[error("command error: {0}")]
+    Command(String),
+
     /// Reserved-class publish-guard rejection (UNS-CANONICAL-DESIGN §4.1, D-U4/D-U8/D-U24):
     /// a client-chosen topic targeted a library-owned UNS class
     /// (`state | metric | cfg | log`). The message names the topic and class and points

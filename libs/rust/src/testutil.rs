@@ -44,8 +44,16 @@ pub(crate) struct RecordingMessaging {
     /// destinations subscribed to the same filter), keyed by filter: inserted by
     /// `subscribe`/`subscribe_to_iot_core`, removed by `unsubscribe`/`unsubscribe_from_iot_core`.
     /// Backs [`Self::subscribed_topics`] / [`Self::simulate_message`] for tests exercising a
-    /// `MessageHandler` (e.g. [`crate::uns::RepublishListener`]).
+    /// `MessageHandler` (e.g. [`crate::uns::RepublishListener`], [`crate::commands::CommandInbox`]).
     pub handlers: Mutex<HashMap<String, Arc<dyn MessageHandler>>>,
+    /// `(reply_to topic, reply message)` recorded by [`MessagingService::reply`] /
+    /// `reply_to_iot_core` — the correlation id is stamped from the request first, mirroring
+    /// [`crate::messaging::service::DefaultMessagingService`]'s real `reply()`. Backs
+    /// [`Self::replies`] (the command-inbox tests' reply assertions).
+    pub replied: Mutex<Vec<(String, Message)>>,
+    /// When `true`, `reply`/`reply_to_iot_core` return an error instead of recording — drives
+    /// the "a failing reply publish is swallowed" tests. Set via [`Self::set_fail_reply`].
+    pub fail_reply: AtomicBool,
     /// Monotonic timestamps of each publish (any path), for timing tests.
     pub publish_times: Mutex<Vec<Instant>>,
     /// The value [`MessagingService::connected`] returns (default `false`); set via
@@ -97,15 +105,34 @@ impl RecordingMessaging {
         self.handlers.lock().unwrap().keys().cloned().collect()
     }
 
-    /// Invoke the handler currently registered for `topic` with `message`, as if it had
-    /// arrived off the wire. A no-op when nothing is subscribed to `topic` (e.g. after
-    /// `unsubscribe`, or a topic never subscribed) — mirrors the Java
-    /// `MockMessagingService.simulateMessage`.
+    /// Deliver `message` on `topic` to every subscription whose filter matches it (an
+    /// exact-topic subscription matches itself, so plain-topic tests behave as before;
+    /// wildcard subscriptions — e.g. the command inbox's `.../cmd/#` — receive concrete
+    /// topics), via MQTT-style [`crate::messaging::topic_matches`]. A no-op when nothing
+    /// matches. Mirrors the Java `MockMessagingService.simulateMessage`.
     pub async fn simulate_message(&self, topic: &str, message: Message) {
-        let handler = self.handlers.lock().unwrap().get(topic).cloned();
-        if let Some(handler) = handler {
-            handler.handle(topic.to_string(), message).await;
+        let matched: Vec<Arc<dyn MessageHandler>> = {
+            let handlers = self.handlers.lock().unwrap();
+            handlers
+                .iter()
+                .filter(|(filter, _)| crate::messaging::topic_matches(filter, topic))
+                .map(|(_, handler)| handler.clone())
+                .collect()
+        };
+        for handler in matched {
+            handler.handle(topic.to_string(), message.clone()).await;
         }
+    }
+
+    /// All `(reply_to topic, reply message)` pairs recorded via `reply`/`reply_to_iot_core`.
+    pub fn replies(&self) -> Vec<(String, Message)> {
+        self.replied.lock().unwrap().clone()
+    }
+
+    /// Make the next (and every subsequent) `reply`/`reply_to_iot_core` call fail instead of
+    /// recording — simulates a broker/publish failure so tests can assert it is swallowed.
+    pub fn set_fail_reply(&self, fail: bool) {
+        self.fail_reply.store(fail, Ordering::SeqCst);
     }
 }
 
@@ -219,12 +246,21 @@ impl MessagingService for RecordingMessaging {
         Err(GgError::Messaging("request not supported by RecordingMessaging".into()))
     }
 
-    async fn reply(&self, _request: &Message, _reply: Message) -> Result<()> {
+    async fn reply(&self, request: &Message, reply: Message) -> Result<()> {
+        if self.fail_reply.load(Ordering::SeqCst) {
+            return Err(GgError::Messaging("simulated reply failure".to_string()));
+        }
+        let topic = request.header.reply_to.clone().ok_or_else(|| {
+            GgError::Messaging("cannot reply: request has no reply_to".to_string())
+        })?;
+        let mut reply = reply;
+        reply.header.correlation_id = request.header.correlation_id.clone();
+        self.replied.lock().unwrap().push((topic, reply));
         Ok(())
     }
 
-    async fn reply_to_iot_core(&self, _request: &Message, _reply: Message) -> Result<()> {
-        Ok(())
+    async fn reply_to_iot_core(&self, request: &Message, reply: Message) -> Result<()> {
+        self.reply(request, reply).await
     }
 
     fn cancel_request(&self, _reply_future: ReplyFuture) {}

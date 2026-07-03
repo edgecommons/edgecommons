@@ -61,6 +61,18 @@ export class EffectiveConfigPublisher implements ConfigurationChangeListener {
     await this.publishNow();
     return true;
   }
+
+  /**
+   * The current effective configuration, redacted (redaction v1) — the single snapshot source
+   * shared by the `cfg` push (this publisher) and the `get-configuration` command verb's reply
+   * (DESIGN-uns §9.5 Flow B), so both surfaces always agree byte-for-byte. Unlike the Java
+   * `redactedEffectiveConfig()`, this never returns `undefined`: the TS `Config` snapshot is
+   * always resolved (fail-fast at construction, UNS-CANONICAL-DESIGN §1.5), so there is no
+   * mock/test bring-up state with no effective configuration.
+   */
+  redactedEffectiveConfig(): Record<string, unknown> {
+    return redact(this.configProvider().raw);
+  }
 }
 
 /**

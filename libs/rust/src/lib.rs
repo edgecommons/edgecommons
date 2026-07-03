@@ -29,6 +29,7 @@
 //! ```
 
 pub mod cli;
+pub mod commands;
 pub mod config;
 pub mod error;
 pub mod health;
@@ -58,6 +59,7 @@ use std::ffi::OsString;
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
+use serde_json::Value;
 
 use crate::cli::ParsedArgs;
 use crate::config::model::Config;
@@ -112,13 +114,22 @@ pub struct GgCommons {
     /// `heartbeat.close()` — struct fields drop in declaration order). `None` when no messaging
     /// transport was wired.
     _republish_listener: Option<Arc<uns::RepublishListener>>,
+    /// The library-owned command inbox (DESIGN-uns §9.5, slice S2, the minimal `commands()`
+    /// facade); dropping `GgCommons` unsubscribes it (RAII). Declared BEFORE `_heartbeat` so it
+    /// tears down before the heartbeat (mirrors the Java canonical's shutdown order:
+    /// `commandInbox.close()` before `heartbeat.close()`), and AFTER `_republish_listener`
+    /// (mirrors `republishListener.close()` before `commandInbox.close()`). `None` when no
+    /// messaging transport was wired.
+    commands: Option<Arc<commands::CommandInbox>>,
     /// Owns the heartbeat task; dropping `GgCommons` stops it (RAII). `Arc`-shared with the
-    /// republish listener's `republish-state` action ([`heartbeat::Heartbeat::publish_state_now`]).
+    /// republish listener's `republish-state` action ([`heartbeat::Heartbeat::publish_state_now`])
+    /// and the command inbox's `ping` uptime source ([`heartbeat::Heartbeat::uptime_secs`]).
     _heartbeat: Arc<heartbeat::Heartbeat>,
     /// Owns the hot-reload task; aborted on drop. `None` if the source can't watch.
     _reload_task: Option<AbortOnDrop>,
-    /// Keeps the config source (and its OS file watcher) alive for hot reload.
-    _config_source: Box<dyn config::source::ConfigSource>,
+    /// Keeps the config source (and its OS file watcher) alive for hot reload; also cloned into
+    /// the command inbox's `reload-config` action ([`reload_from_provider`]).
+    _config_source: Arc<dyn config::source::ConfigSource>,
 }
 
 /// Shared, mutable set of config-change listeners.
@@ -193,6 +204,17 @@ impl GgCommons {
     /// The metric service for this component (the testable seam).
     pub fn metrics(&self) -> Arc<dyn metrics::MetricService> {
         self.metrics.clone()
+    }
+
+    /// The command-inbox facade (DESIGN-uns §9.5, slice S2 — the minimal `commands()` facade):
+    /// register custom command verbs with `gg.commands().register(verb, handler)`. The built-in
+    /// verbs (`ping`, `reload-config`, `get-configuration`) are registered by the library and
+    /// cannot be shadowed. `None` only when no messaging transport was wired (which the builder
+    /// never leaves unset in practice — every supported transport either wires messaging or fails
+    /// `build()` outright), mirroring `GGCommons.getCommands()`, which is `null` only on a
+    /// mock/subclass bring-up that never ran `init`.
+    pub fn commands(&self) -> Option<Arc<commands::CommandInbox>> {
+        self.commands.clone()
     }
 
     /// The UNS topic builder + validator bound to this component's resolved
@@ -373,12 +395,14 @@ impl GgCommonsBuilder {
         let reserved: Option<Arc<dyn messaging::ReservedMessaging>> =
             messaging_impl.clone().map(|s| s as Arc<dyn messaging::ReservedMessaging>);
 
-        let source = config::source::build(
+        // `Arc`, not `Box`: the `reload-config` command action (below) needs a long-lived clone
+        // alongside the final `_config_source` field.
+        let source: Arc<dyn config::source::ConfigSource> = Arc::from(config::source::build(
             &parsed.config,
             messaging.clone(),
             &thing_name,
             &self.component_name,
-        )?;
+        )?);
         let raw = source.load().await?;
         config::validation::validate(&raw)?;
         let cfg = Config::from_value(self.component_name.clone(), thing_name.clone(), raw)?;
@@ -636,6 +660,58 @@ impl GgCommonsBuilder {
             }
         }
 
+        // §9.5 (slice S2): the component's own command inbox
+        // (ecv1/{device}/{component}/main/cmd/#) — built-ins ping / reload-config /
+        // get-configuration answer the console out of the box; apps add custom verbs via
+        // `GgCommons::commands()`. Always on (no config surface); best-effort start (a failure
+        // disables the inbox only). Wired right after the republish listener (needs only the
+        // messaging service, not the privileged reserved-publish seam).
+        let commands = if let Some(messaging_svc) = &messaging {
+            let uptime_secs: Arc<dyn Fn() -> u64 + Send + Sync> = {
+                let hb = heartbeat.clone();
+                Arc::new(move || hb.uptime_secs())
+            };
+            let reload_action: commands::ReloadAction = {
+                let source = source.clone();
+                let config = config.clone();
+                let listeners = listeners.clone();
+                let component_name = self.component_name.clone();
+                let thing_name = thing_name.clone();
+                Arc::new(move || {
+                    let source = source.clone();
+                    let config = config.clone();
+                    let listeners = listeners.clone();
+                    let component_name = component_name.clone();
+                    let thing_name = thing_name.clone();
+                    Box::pin(async move {
+                        reload_from_provider(
+                            source.as_ref(),
+                            &config,
+                            &listeners,
+                            &component_name,
+                            &thing_name,
+                        )
+                        .await
+                    })
+                })
+            };
+            let redacted_config: Arc<dyn Fn() -> Option<Value> + Send + Sync> = {
+                let config = config.clone();
+                Arc::new(move || Some(config::effective::redact(&config.load_full().raw)))
+            };
+            let inbox = commands::CommandInbox::new(
+                messaging_svc.clone(),
+                config.clone(),
+                uptime_secs,
+                reload_action,
+                redacted_config,
+            );
+            inbox.clone().start().await;
+            Some(inbox)
+        } else {
+            None
+        };
+
         let reload_task = source.watch().map(|updates| {
             spawn_config_reload(
                 updates,
@@ -668,6 +744,7 @@ impl GgCommonsBuilder {
             _health_server: health_server,
             _signal_task: signal_task,
             _republish_listener: republish_listener,
+            commands,
             _heartbeat: heartbeat,
             _reload_task: reload_task,
             _config_source: source,
@@ -686,26 +763,76 @@ fn spawn_config_reload(
 ) -> AbortOnDrop {
     AbortOnDrop(tokio::spawn(async move {
         while let Some(raw) = updates.recv().await {
-            if let Err(e) = config::validation::validate(&raw) {
-                tracing::warn!(error = %e, "reloaded config failed validation; keeping previous");
-                continue;
-            }
-            match Config::from_value(component_name.clone(), thing_name.clone(), raw) {
-                Ok(new_config) => {
-                    let snapshot = Arc::new(new_config);
-                    config.store(snapshot.clone());
-                    tracing::info!("configuration reloaded");
-                    let current = listeners.lock().map(|l| l.clone()).unwrap_or_default();
-                    for listener in current {
-                        let _ = listener.on_configuration_change(snapshot.clone()).await;
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(error = %e, "reloaded config could not be parsed; keeping previous")
-                }
-            }
+            apply_reloaded_config(raw, &config, &listeners, &component_name, &thing_name).await;
         }
     }))
+}
+
+/// Validates and applies a raw config document: validate against the schema, parse, atomically
+/// swap the live snapshot, and notify listeners. Returns `true` on success (the previous
+/// configuration is kept on any failure — a reload/push must never crash the component).
+///
+/// Shared by the watch-driven hot-reload loop ([`spawn_config_reload`]) and the pull-based
+/// `reload-config` command action ([`reload_from_provider`]), so BOTH paths funnel through the
+/// exact same apply site: `config` (the `ArcSwap` read by [`GgCommons::config`],
+/// [`config::effective::redact`], and every subsystem) is always the freshly applied snapshot the
+/// instant either path returns `true` — there is no separate "full config" copy that could go
+/// stale, unlike a design that caches the applied document in a second field.
+async fn apply_reloaded_config(
+    raw: serde_json::Value,
+    config: &Arc<ArcSwap<Config>>,
+    listeners: &ConfigListeners,
+    component_name: &str,
+    thing_name: &str,
+) -> bool {
+    if let Err(e) = config::validation::validate(&raw) {
+        tracing::warn!(error = %e, "reloaded config failed validation; keeping previous");
+        return false;
+    }
+    match Config::from_value(component_name.to_string(), thing_name.to_string(), raw) {
+        Ok(new_config) => {
+            let snapshot = Arc::new(new_config);
+            config.store(snapshot.clone());
+            tracing::info!("configuration reloaded");
+            let current = listeners.lock().map(|l| l.clone()).unwrap_or_default();
+            for listener in current {
+                let _ = listener.on_configuration_change(snapshot.clone()).await;
+            }
+            true
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "reloaded config could not be parsed; keeping previous");
+            false
+        }
+    }
+}
+
+/// Re-fetches the configuration from the active config source and re-applies it — the
+/// `reload-config` command verb's action (DESIGN-uns §9.5, [`commands::CommandInbox`]).
+/// Re-invokes the source's [`config::source::ConfigSource::load`] (re-reads the file/ConfigMap/
+/// env, or re-requests from `CONFIG_COMPONENT`), then delegates validation + apply +
+/// listener-notification to [`apply_reloaded_config`] — the SAME apply path a watched hot-reload
+/// uses, so the `cfg` publisher and `get-configuration` always observe the freshly applied
+/// snapshot afterward. Best-effort: any failure is logged and `false` returned — a reload never
+/// crashes a running component.
+async fn reload_from_provider(
+    source: &dyn config::source::ConfigSource,
+    config: &Arc<ArcSwap<Config>>,
+    listeners: &ConfigListeners,
+    component_name: &str,
+    thing_name: &str,
+) -> bool {
+    match source.load().await {
+        Ok(raw) => apply_reloaded_config(raw, config, listeners, component_name, thing_name).await,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                source = source.source_name(),
+                "reload-config: re-fetch from the active config source failed"
+            );
+            false
+        }
+    }
 }
 
 /// Spawn the SIGTERM/Ctrl-C watcher (FR-HB-2).
@@ -859,6 +986,7 @@ async fn init_messaging(
 /// Common imports for component authors.
 pub mod prelude {
     pub use crate::cli::{ConfigSourceSpec, ParsedArgs};
+    pub use crate::commands::{command_handler, CommandError, CommandHandler, CommandInbox};
     pub use crate::config::model::Config;
     pub use crate::config::ConfigurationChangeListener;
     pub use crate::platform::{Platform, Transport};
@@ -902,5 +1030,153 @@ mod shutdown_tests {
         tokio::time::timeout(Duration::from_millis(200), wait_for_shutdown(&mut rx))
             .await
             .expect("shutdown_signal should return immediately when already shutting down");
+    }
+}
+
+#[cfg(test)]
+mod reload_tests {
+    //! Tests for [`apply_reloaded_config`]/[`reload_from_provider`] — the `reload-config`
+    //! command action's plumbing (DESIGN-uns §9.5, [`commands::CommandInbox`]). In particular,
+    //! these pin that BOTH the watch-driven hot-reload path and the pull-based `reload-config`
+    //! path leave `config` (the single `ArcSwap` read by [`GgCommons::config`], the `cfg`
+    //! publisher, and `get-configuration`) holding the freshly applied snapshot immediately on
+    //! success — the historical Java `fullConfig`-staleness bug has no Rust analog because there
+    //! is no second cached copy of the applied document to go stale; see the parity report.
+    use super::*;
+    use crate::config::source::ConfigSource;
+    use crate::error::GgError;
+    use async_trait::async_trait;
+    use serde_json::json;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex as StdMutex;
+
+    /// A [`ConfigSource`] whose `load()` replays a scripted sequence of results.
+    struct FakeSource {
+        results: StdMutex<Vec<Result<Value>>>,
+    }
+
+    impl FakeSource {
+        fn new(results: Vec<Result<Value>>) -> Self {
+            Self { results: StdMutex::new(results) }
+        }
+    }
+
+    #[async_trait]
+    impl ConfigSource for FakeSource {
+        async fn load(&self) -> Result<Value> {
+            let mut results = self.results.lock().unwrap();
+            if results.is_empty() {
+                Err(GgError::Config("FakeSource exhausted".to_string()))
+            } else {
+                results.remove(0)
+            }
+        }
+
+        fn source_name(&self) -> &str {
+            "FAKE"
+        }
+    }
+
+    fn empty_listeners() -> ConfigListeners {
+        Arc::new(std::sync::Mutex::new(Vec::new()))
+    }
+
+    struct CountingListener(Arc<AtomicUsize>);
+
+    #[async_trait]
+    impl config::ConfigurationChangeListener for CountingListener {
+        async fn on_configuration_change(&self, _config: Arc<Config>) -> bool {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            true
+        }
+    }
+
+    #[tokio::test]
+    async fn apply_reloaded_config_rejects_schema_invalid_and_keeps_previous() {
+        let original = Arc::new(Config::from_value("C", "t", json!({ "component": {} })).unwrap());
+        let config = Arc::new(ArcSwap::from(original.clone()));
+        // No "component" key: fails the schema's `required: [component]`.
+        let applied = apply_reloaded_config(
+            json!({ "metricEmission": { "target": "nope" } }),
+            &config,
+            &empty_listeners(),
+            "C",
+            "t",
+        )
+        .await;
+        assert!(!applied);
+        assert!(
+            Arc::ptr_eq(&config.load_full(), &original),
+            "the previous config must be kept on validation failure"
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_reloaded_config_stores_the_new_snapshot_and_notifies_listeners() {
+        let original = Config::from_value("C", "t", json!({ "component": {} })).unwrap();
+        let config = Arc::new(ArcSwap::from_pointee(original));
+        let notified = Arc::new(AtomicUsize::new(0));
+        let listeners = empty_listeners();
+        listeners.lock().unwrap().push(Arc::new(CountingListener(notified.clone())) as _);
+
+        let applied = apply_reloaded_config(
+            json!({ "component": { "global": { "v": 2 } } }),
+            &config,
+            &listeners,
+            "C",
+            "t",
+        )
+        .await;
+
+        assert!(applied);
+        assert_eq!(notified.load(Ordering::SeqCst), 1, "the listener must fire on a successful apply");
+        // The fullConfig-staleness check: the live snapshot (what get-configuration / the cfg
+        // publisher read) reflects the reload immediately.
+        assert_eq!(config.load_full().raw["component"]["global"]["v"], 2);
+        assert_eq!(
+            config::effective::redact(&config.load_full().raw)["component"]["global"]["v"],
+            2,
+            "the redacted snapshot get-configuration serves must also see the fresh value"
+        );
+    }
+
+    #[tokio::test]
+    async fn reload_from_provider_keeps_previous_on_fetch_failure() {
+        let original = Arc::new(Config::from_value("C", "t", json!({ "component": {} })).unwrap());
+        let config = Arc::new(ArcSwap::from(original.clone()));
+        let source = FakeSource::new(vec![Err(GgError::Config("broker down".to_string()))]);
+
+        let ok = reload_from_provider(&source, &config, &empty_listeners(), "C", "t").await;
+
+        assert!(!ok);
+        assert!(Arc::ptr_eq(&config.load_full(), &original));
+    }
+
+    #[tokio::test]
+    async fn reload_from_provider_keeps_previous_when_the_refetched_document_is_invalid() {
+        let original = Arc::new(Config::from_value("C", "t", json!({ "component": {} })).unwrap());
+        let config = Arc::new(ArcSwap::from(original.clone()));
+        // Fetches successfully, but the document fails schema validation (no "component").
+        let source = FakeSource::new(vec![Ok(json!({ "metricEmission": { "target": "nope" } }))]);
+
+        let ok = reload_from_provider(&source, &config, &empty_listeners(), "C", "t").await;
+
+        assert!(!ok);
+        assert!(Arc::ptr_eq(&config.load_full(), &original));
+    }
+
+    #[tokio::test]
+    async fn reload_from_provider_re_fetches_validates_and_applies_via_the_shared_apply_path() {
+        let original =
+            Config::from_value("C", "t", json!({ "component": { "global": { "v": 1 } } })).unwrap();
+        let config = Arc::new(ArcSwap::from_pointee(original));
+        let source = FakeSource::new(vec![Ok(json!({ "component": { "global": { "v": 99 } } }))]);
+
+        let ok = reload_from_provider(&source, &config, &empty_listeners(), "C", "t").await;
+
+        assert!(ok);
+        // Same fullConfig-staleness guarantee as above, exercised through the reload-config
+        // command's actual entry point (re-fetch -> validate -> apply -> notify).
+        assert_eq!(config.load_full().raw["component"]["global"]["v"], 99);
     }
 }

@@ -262,6 +262,38 @@ class ConfigManager:
             logger.error(f"Failed to process configuration change: {e}")
             return False
 
+    def reload_from_provider(self) -> bool:
+        """Re-fetches the configuration from the active config source and re-applies
+        it - the ``reload-config`` command verb's action (DESIGN-uns §9.5).
+        Re-invokes :meth:`_load_configuration` (re-reads the file / ConfigMap / env /
+        shadow, or re-requests from the config component) and applies the result via
+        :meth:`configuration_changed`, which re-validates against the schema and
+        notifies the change listeners on success (so a successful reload also
+        re-announces the ``cfg`` push, since :class:`~ggcommons.config.effective_config_publisher.EffectiveConfigPublisher`
+        is a registered listener) - reject-and-keep on a schema-invalid document.
+        Best-effort: any re-fetch failure is logged and reported as ``False`` - a
+        reload must never crash a running component.
+
+        :returns: ``True`` when a document was fetched, validated and applied;
+            ``False`` when the fetch failed / returned nothing, or the document was
+            schema-invalid (the previous configuration is kept)
+        """
+        try:
+            new_config = self._load_configuration()
+        except Exception as e:
+            logger.warning(
+                f"reload-config: re-fetch from the '{self._config_source}' source"
+                f" failed: {e}"
+            )
+            return False
+        if new_config is None:
+            logger.warning(
+                f"reload-config: the '{self._config_source}' source returned no"
+                " configuration - keeping the previous configuration"
+            )
+            return False
+        return self.configuration_changed(new_config)
+
     @staticmethod
     def _parse_topic_include_root(config: dict) -> bool:
         """Parses the top-level ``topic.includeRoot`` flag (default ``False``). Lenient

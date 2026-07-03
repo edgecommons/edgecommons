@@ -132,6 +132,10 @@ export type { ConfigProvider } from "./heartbeat";
 export { RepublishListener } from "./republish_listener";
 export type { Delayer as RepublishDelayer, ClockMillis as RepublishClockMillis, JitterFn as RepublishJitterFn } from "./republish_listener";
 
+// Command inbox — the minimal `commands()` facade (DESIGN-uns §7.3/§9.5, edge-console slice S2)
+export { CommandInbox, CommandException } from "./commands";
+export type { CommandHandler, CommandResult } from "./commands";
+
 // Health (HTTP /livez · /readyz · /startupz + readiness state)
 export { HealthServer, ReadinessState, evaluateHealth } from "./health";
 export type { HealthServerOptions, HealthPaths, HealthResponse } from "./health";

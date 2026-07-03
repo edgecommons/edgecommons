@@ -76,6 +76,13 @@ class GGCommons:
         # band (jittered, coalesced) when the uns-bridge - or a console - broadcasts a
         # republish command.
         self._republish_listener = None
+        # The library-owned command inbox (DESIGN-uns §7.3/§9.5, the minimal
+        # commands() facade - edge-console slice S2): subscribes the own-inbox
+        # wildcard ecv1/{device}/{component}/main/cmd/# on the primary connection
+        # and dispatches cmd envelopes by verb - built-ins ping / reload-config /
+        # get-configuration answer the console out of the box; apps add custom
+        # verbs via get_commands().register().
+        self._command_inbox = None
         # The component-identity-bound UNS topic builder (instance "main"), lazily
         # bound on first uns() from the resolved component identity +
         # topic.includeRoot (UNS-CANONICAL-DESIGN §2).
@@ -205,6 +212,21 @@ class GGCommons:
                 self._effective_config_publisher.publish_now,
             )
             self._republish_listener.start()
+
+            # §9.5 (slice S2): subscribe the component's own command inbox
+            # (ecv1/{device}/{component}/main/cmd/#) on the primary connection and
+            # dispatch cmd envelopes by verb - built-ins ping / reload-config /
+            # get-configuration answer the console out of the box; apps add custom
+            # verbs via get_commands().register(). Always on (no config surface);
+            # best-effort start (a failure disables the inbox only).
+            from ggcommons.command_inbox import CommandInbox
+            self._command_inbox = CommandInbox(
+                self._config_manager, _MC2,
+                self._heartbeat.get_uptime_secs,
+                self._config_manager.reload_from_provider,
+                self._effective_config_publisher.redacted_effective_config,
+            )
+            self._command_inbox.start()
 
             logger.info("GGCommons initialized successfully")
             
@@ -682,6 +704,21 @@ class GGCommons:
         from ggcommons.metrics.metric_emitter import MetricEmitter
         return MetricEmitter
 
+    def get_commands(self):
+        """
+        Get the command-inbox facade — the minimal ``commands()`` surface
+        (DESIGN-uns §9.5): register custom command verbs with
+        ``get_commands().register(verb, handler)``; the built-in verbs (``ping``,
+        ``reload-config``, ``get-configuration``) are registered by the library and
+        cannot be shadowed. Mirrors Java's ``getCommands()`` / Rust's/TS's
+        ``gg.commands()``. ``None`` on a mock/subclass bring-up that never ran
+        ``__init__``.
+
+        Returns:
+            The :class:`~ggcommons.command_inbox.CommandInbox` facade
+        """
+        return self._command_inbox
+
     def uns(self):
         """The UNS topic builder + validator bound to this component's resolved
         identity (instance ``"main"``) and its ``topic.includeRoot`` setting
@@ -767,6 +804,14 @@ class GGCommons:
                 self._republish_listener.close()
         except Exception as e:
             logger.error(f"Error closing republish listener during shutdown: {e}")
+
+        try:
+            # Unsubscribe the command inbox while messaging is still up (same rule)
+            # and stop dispatching command verbs mid-teardown.
+            if self._command_inbox is not None:
+                self._command_inbox.close()
+        except Exception as e:
+            logger.error(f"Error closing command inbox during shutdown: {e}")
 
         try:
             # Stop the streaming stats bridge + close the native service (flush + stop engines).

@@ -180,6 +180,16 @@ impl Heartbeat {
         }
         publish_state(&cfg, reserved, "RUNNING", Some(self.start_instant.elapsed().as_secs())).await;
     }
+
+    /// The heartbeat's monotonic uptime in seconds (Java: `Heartbeat.getUptimeSecs()`) — the
+    /// `ping` command verb's uptime source (DESIGN-uns §9.5,
+    /// [`crate::commands::CommandInbox`]), the same series the state keepalive reports.
+    /// Available even when `heartbeat.enabled` is `false` (the ticks stop, but the monotonic
+    /// clock keeps running): `ping` must always answer, proving the component is responsive
+    /// to addressed commands independent of the (possibly disabled) keepalive.
+    pub(crate) fn uptime_secs(&self) -> u64 {
+        self.start_instant.elapsed().as_secs()
+    }
 }
 
 /// The configured heartbeat interval in seconds (default 5, minimum 1).

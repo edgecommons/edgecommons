@@ -25,6 +25,7 @@ import { validate } from "./config/validation";
 import { buildConfigSource, ConfigSource, ConfigWatch } from "./config/source";
 import { ConfigurationChangeListener } from "./config";
 import { EffectiveConfigPublisher } from "./config/effective_config";
+import { CommandInbox } from "./commands";
 import { GgError } from "./errors";
 import { Heartbeat } from "./heartbeat";
 import { initLogging, reconfigureLogging, LoggingReconfigurer, logger } from "./logging";
@@ -115,6 +116,15 @@ export class GGCommons {
    * Always wired when messaging is available (no config surface); undefined otherwise.
    */
   private republishListener?: RepublishListener;
+  /**
+   * The library-owned command inbox — the minimal `commands()` facade (DESIGN-uns §9.5, slice
+   * S2): subscribes `ecv1/{device}/{component}/main/cmd/#` on the primary connection,
+   * dispatches `cmd` envelopes by verb (built-ins `ping` / `reload-config` /
+   * `get-configuration` + custom registrations via {@link commands}), and replies to
+   * `header.reply_to`. Always wired when messaging is available (no config surface); undefined
+   * otherwise.
+   */
+  private commandInbox?: CommandInbox;
   /**
    * The component-identity-bound UNS topic builder (instance
    * {@link MessageIdentity.DEFAULT_INSTANCE}), lazily bound on first {@link uns} from the
@@ -211,6 +221,22 @@ export class GGCommons {
   /** @internal Attach the `_bcast` republish listener after construction. */
   _setRepublishListener(listener: RepublishListener | undefined): void {
     this.republishListener = listener;
+  }
+
+  /** @internal Attach the command inbox after construction. */
+  _setCommandInbox(inbox: CommandInbox | undefined): void {
+    this.commandInbox = inbox;
+  }
+
+  /**
+   * The command-inbox facade — the minimal `gg.commands()` surface (DESIGN-uns §9.5): register
+   * custom command verbs with `commands().register(verb, handler)`; the built-in verbs (`ping`,
+   * `reload-config`, `get-configuration`) are registered by the library and cannot be shadowed.
+   * `undefined` when no messaging is available in this runtime mode (mirrors the Java
+   * `getCommands()`, which may be `null` on a mock/subclass bring-up).
+   */
+  commands(): CommandInbox | undefined {
+    return this.commandInbox;
   }
 
   /**
@@ -323,6 +349,9 @@ export class GGCommons {
     // Unsubscribe the _bcast republish topics while messaging is still up (the
     // unsubscribe-before-exit rule) and stop reacting to republish broadcasts mid-teardown.
     await this.republishListener?.close().catch(() => undefined);
+    // Unsubscribe the command inbox while messaging is still up (same rule) and stop
+    // dispatching command verbs mid-teardown.
+    await this.commandInbox?.close().catch(() => undefined);
     (this.parametersService as { close?: () => void } | undefined)?.close?.();
     this.credentialMetrics?.close();
     this.streamMetrics?.close();
@@ -461,19 +490,27 @@ export class GGCommonsBuilder {
 
     // Build the runtime first so the reload closure can update its snapshot.
     let runtime: GGCommons;
-    const onUpdate = (rawUpdate: unknown): void => {
+    // The single validate/parse/apply/notify path for a reloaded raw config document, shared by
+    // the config source's push-based hot reload (`onUpdate`, below) AND the `reload-config`
+    // command verb's pull-based reload (DESIGN-uns §9.5) — one code path means both can never
+    // drift out of sync on which snapshot `current`/`runtime.current` reflects (the Java
+    // `fullConfig`-staleness fix's TS equivalent: `current`/`runtime._applyReload` are updated
+    // HERE, before any config-change listener — including the effective-config publisher and
+    // the `get-configuration` verb's redacted-config supplier — runs). Returns whether the
+    // document was applied.
+    const applyRawConfig = (rawUpdate: unknown): boolean => {
       try {
         validate(rawUpdate);
       } catch (e) {
         logger.warn(`reloaded config failed validation; keeping previous: ${String(e)}`);
-        return;
+        return false;
       }
       let next: Config;
       try {
         next = Config.fromValue(this.componentNameValue, thingName, rawUpdate);
       } catch (e) {
         logger.warn(`reloaded config could not be parsed; keeping previous: ${String(e)}`);
-        return;
+        return false;
       }
       current = next;
       runtime._applyReload(next);
@@ -490,6 +527,10 @@ export class GGCommonsBuilder {
           logger.warn(`config change listener threw: ${String(e)}`);
         }
       }
+      return true;
+    };
+    const onUpdate = (rawUpdate: unknown): void => {
+      applyRawConfig(rawUpdate);
     };
 
     runtime = new GGCommons(
@@ -582,6 +623,30 @@ export class GGCommonsBuilder {
       );
       await republishListener.start();
       runtime._setRepublishListener(republishListener);
+
+      // §9.5 (slice S2): subscribe the component's own command inbox
+      // (ecv1/{device}/{component}/main/cmd/#) on the primary connection and dispatch cmd
+      // envelopes by verb - built-ins ping / reload-config / get-configuration answer the
+      // console out of the box; apps add custom verbs via gg.commands().register(). Always on
+      // (no config surface); best-effort start (a failure disables the inbox only).
+      const commandInbox = new CommandInbox(
+        () => current,
+        messaging,
+        () => heartbeat.getUptimeSecs(),
+        async () => {
+          let raw: unknown;
+          try {
+            raw = await source.load();
+          } catch (e) {
+            logger.warn(`reload-config: re-fetch from the '${source.sourceName()}' source failed: ${String(e)}`);
+            return false;
+          }
+          return applyRawConfig(raw);
+        },
+        () => effectiveConfigPublisher.redactedEffectiveConfig(),
+      );
+      await commandInbox.start();
+      runtime._setCommandInbox(commandInbox);
     }
 
     // HTTP health endpoint (FR-HB-1). Precedence (FR-RT-3): explicit `health.enabled` ▸ platform

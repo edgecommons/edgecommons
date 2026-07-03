@@ -31,7 +31,9 @@ export interface PublishRecord {
     | "publishRaw"
     | "publishToIoTCoreRaw"
     | "publishReserved"
-    | "publishReservedToIoTCore";
+    | "publishReservedToIoTCore"
+    | "reply"
+    | "replyToIoTCore";
   topic: string;
   message?: Message;
   payload?: unknown;
@@ -109,8 +111,19 @@ export class RecordingMessagingService implements IMessagingService {
   requestFromIoTCore(topic: string, msg: Message, timeoutMs = 0): ReplyFuture {
     return this.request(topic, msg, timeoutMs);
   }
-  async reply(): Promise<void> {}
-  async replyToIoTCore(): Promise<void> {}
+  /**
+   * Records the reply like the real `DefaultMessagingService.reply`: stamps the request's
+   * `correlation_id` onto the reply and files it under the request's `reply_to` topic, so tests
+   * can assert on `published` (e.g. the {@link CommandInbox} command-reply tests).
+   */
+  async reply(request: Message, reply: Message): Promise<void> {
+    reply.header.correlation_id = request.getCorrelationId();
+    this.published.push({ kind: "reply", topic: request.getReplyTo() ?? "", message: reply });
+  }
+  async replyToIoTCore(request: Message, reply: Message): Promise<void> {
+    reply.header.correlation_id = request.getCorrelationId();
+    this.published.push({ kind: "replyToIoTCore", topic: request.getReplyTo() ?? "", message: reply });
+  }
   cancelRequest(reply: ReplyFuture): void {
     reply.cancel();
   }
