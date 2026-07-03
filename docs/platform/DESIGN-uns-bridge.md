@@ -18,11 +18,11 @@
 | Seam | Where (committed source) | What it gives Phase 3 |
 |---|---|---|
 | Service-over-provider layering | `DefaultMessagingService::new(Arc<dyn MessagingProvider>)` (`libs/rust/src/messaging/service.rs:299`) | A second, fully independent `MessagingService` is just a second `DefaultMessagingService` over a second `MqttProvider` — no new abstraction needed. |
-| Reserved-class guard | `check_reserved` on every `publish*`/`request*`/`reply*` (`service.rs:341–353`, predicate `uns::reserved_class_of`, `uns.rs:585`) | Per-*instance* state — a named connection **automatically inherits the guard** (and needs a per-connection opt-out for the relay, §2.4). |
+| Reserved-class guard | `check_reserved` on every `publish*`/`request*`/`reply*` (`service.rs:341–353`, predicate `uns::reserved_class_of`, `uns.rs:585`) | The bridge relays at the **raw `MessagingProvider` level** (§1.3), so the guard is **not in the relay path** — no per-connection opt-out is needed. |
 | Request deadline | `set_default_request_timeout` (`service.rs:314`), late-bound from `messaging.requestTimeoutSeconds` (`lib.rs:386–389`, `config/model.rs:497`) | Also per-instance — named connections get the same deadline default bound at build. |
 | Guard root binding | `set_guard_include_root` bound to `Config::effective_include_root()` (`service.rs:333`, `model.rs:489`) | Same late-bind applies to each named connection. |
-| MQTT provider | `MqttProvider::connect(&MessagingConfig)` — dual-broker, blocks ≤ 10 s for the local CONNACK (`provider/mqtt.rs:153`, `CONNECT_TIMEOUT` `mqtt.rs:64`); re-subscribes every filter on each CONNACK (`mqtt.rs:318–329`) | A named connection reuses this provider verbatim; the CONNACK re-subscribe machinery is what makes a **background** (non-blocking) connect safe (§2.3). |
-| LWT | `messaging.lwt` (`messaging/config.rs:52–82`), applied to the provider's **local** connection at CONNECT, retain hard-wired `false`, re-registered on reconnect (`mqtt.rs:156–161`, `build_last_will` `mqtt.rs:398–419`); never routed through `publish()` | A named connection's `lwt` lands on **its** broker — i.e. the bridge's site broker. Exactly the load-bearing D9/§9.3 use. |
+| MQTT provider | `MqttProvider::connect(&MessagingConfig)` — dual-broker, blocks ≤ 10 s for the local CONNACK (`provider/mqtt.rs:153`, `CONNECT_TIMEOUT` `mqtt.rs:64`); re-subscribes every filter on each CONNACK (`mqtt.rs:318–329`) | The bridge **reuses this provider verbatim** for its site connection (§1.1); the CONNACK re-subscribe machinery makes the bridge's own reconnect loop transparent (§1.4). |
+| LWT | `messaging.lwt` (`messaging/config.rs:52–82`), applied to the provider's **local** connection at CONNECT, retain hard-wired `false`, re-registered on reconnect (`mqtt.rs:156–161`, `build_last_will` `mqtt.rs:398–419`); never routed through `publish()` | The bridge sets `lwt` on **its site connection** (`MessagingConfig.lwt`, reused verbatim), landing on the site broker — exactly the load-bearing D9/§9.3 use. |
 | Reply topics | `ggcommons/reply-<uuid>` (`request_reply.rs:44`), non-`ecv1` ⇒ structurally guard-exempt (D‑U6) | The bridge mints device-side reply topics with the same prefix (§3.5). |
 | Envelope tags | `MessageTags { extra: BTreeMap<String, serde_json::Value> }` (`message.rs:302–306`) — arbitrary JSON values | The hop tag `tags._relay` can be a JSON array (§3.4). |
 | Filters | `Uns::filter(cls, &UnsScope)` appends `/#` for channeled classes (`uns.rs:392–404`); `UnsScope::all()/device()` (`uns.rs:214–222`) | The bridge builds its six uplink filters and its pinned downlink filter through the library, never by hand. |
@@ -32,204 +32,79 @@
 
 ---
 
-## 1. The named/secondary messaging connection (M8 — the D‑U17 implementation)
+## 1. The site-broker uplink — a bridge-owned external connection (reusing the core MQTT objects)
 
-D‑U17 was resolved 2026-07-02: **a uniform, config-declared named connection in all four
-languages — no per-language imperative divergence** (`UNS-CANONICAL-DESIGN.md` §2.3). This section
-fixes the three open sub-decisions: the config shape and where it lives, the runtime API, and the
-per-language scope for Phase 3.
+> **Revised 2026-07-03 (user).** The earlier draft made the second connection a *core* feature — a
+> shared-schema `messaging.connections` map + a `gg.messaging("name")` API in all four languages. That
+> is **dropped**. No component other than the `uns-bridge` needs a second connection, and the bridge is
+> Rust — so there is no reason to change the core messaging contract in any language. Per the original
+> D‑U17 intent, the site broker is the bridge's **"external system"** (exactly as an OPC UA server is the
+> opcua-adapter's), configured in the bridge's OWN component config and built by **reusing the core's
+> already-public MQTT objects** — a Rust-component concern, not a library API.
 
-### 1.1 Config shape — a shared-schema `messaging.connections` map (D‑B1)
+### 1.1 The core already exposes everything the bridge needs (zero contract change)
 
-**Recommendation: a new `connections` object inside the SHARED `messaging` section, keyed by
-connection name, each value having the *same shape as the `messaging` section itself* (minus
-`connections`).** A named connection is literally "another `MessagingConfig`":
-
-```jsonc
-"messaging": {
-  "local":   { "host": "localhost", "port": 1883, "clientId": "uns-bridge-{ThingName}" },
-  "requestTimeoutSeconds": 30,
-
-  "connections": {
-    "site": {                                       // the name passed to gg.messaging("site")
-      "local": {                                    // the named connection's broker
-        "host": "site-broker.dallas.example", "port": 8883,
-        "clientId": "uns-bridge-{ThingName}",
-        "credentials": { "certPath": "…", "keyPath": "…", "caPath": "…" }
-      },
-      "lwt": {                                      // per-connection LWT — lands on THIS broker
-        "topic": "ecv1/{ThingName}/uns-bridge/main/state",
-        "payload": { "status": "UNREACHABLE" },
-        "qos": 1
-      },
-      "requestTimeoutSeconds": 30,                  // optional; default = the component's value
-      "guardReservedClasses": false                 // §2.4 — relay uplinks NEED this (default true)
-    }
-  }
-}
-```
-
-Rationale, and why **not** the alternatives:
-
-- **vs the bridge's own component config (DESIGN-uns §9.1's original "no schema change")** — that
-  was the pre-resolution position; D‑U17's resolution explicitly supersedes it ("*the bridge
-  declares its site-broker uplink as a named messaging connection in config … the library
-  provisions + manages it*"). A component-private shape would also mean the bridge hand-constructs
-  a `MessagingConfig` + `MqttProvider` + `DefaultMessagingService` itself — bypassing the library's
-  connect/LWT/guard/deadline wiring and re-creating it in component code. The library-managed path
-  is 20 lines of `build()` wiring; the component-managed path is a copy of the library's
-  transport-injection site living outside the library.
-- **Map vs array (`connections[]` / `uplinks[]`)** — a map keyed by name gives collision-free names
-  for free (a JSON object cannot carry duplicate keys), direct lookup, and reads naturally in
-  config review. Names validate against `^[A-Za-z0-9_-]+$` (the D‑U10 level-name rule); the name
-  `default` is **reserved** (startup error) so nobody shadows the unnamed primary.
-- **Distinct from `component.instances[]` / `gg.instance()` (D‑U3)** — stated normatively: the
-  per-message **instance** token addresses *message identity* (who a message is about); a named
-  **connection** addresses *transport* (which broker it rides). They never interact: an
-  instance-scoped envelope publishes over whichever connection the caller chose. The schema keeps
-  them in different sections (`component.instances[]` vs `messaging.connections`) and the docs must
-  say this sentence verbatim.
-- **Reuse of the existing shape** — each connection value deserializes into the existing
-  `Messaging` struct (`messaging/config.rs:52`): `local` (required), `iotCore` (optional, rarely
-  used on a named connection), `lwt` (optional). Two additive per-connection keys:
-  `requestTimeoutSeconds` (override; absent = inherit the component-level value) and
-  `guardReservedClasses` (§2.4). Nothing else is invented.
-- **Template substitution is normative**: every string in a connection object passes the standard
-  template resolution (`{ThingName}`, `{ComponentName}`, … — `config::template::resolve`, already
-  used for vault/cache paths at `lib.rs:469,501`) before use. That is what makes the LWT topic
-  (`ecv1/{ThingName}/…`) and per-device `clientId` writable once in a fleet-shared config. Note the
-  sanitizer caveat: `{ThingName}` substitutes the **sanitized** thing name, which is also the UNS
-  device token — so the substituted LWT topic matches the bridge's real state topic (§3.7 adds a
-  startup cross-check).
-
-Schema delta (canonical `schema/ggcommons-config-schema.json`, then `schema/sync-schema.sh`):
-`messaging.properties` += `connections` (type object, `patternProperties` `^[A-Za-z0-9_-]+$` →
-`$ref: #/definitions/namedConnection`, `additionalProperties:false`); new definition
-`namedConnection` = `{ local (required, $ref mqttBroker), iotCore, lwt (same shape as
-messaging.lwt), requestTimeoutSeconds, guardReservedClasses (boolean, default true) }`,
-`additionalProperties:false`. The `messaging` section's own `additionalProperties:false`
-(`schema:345`) stays — the drift gate keeps all four copies identical.
-
-### 1.2 Runtime API (Rust now) — config-declared retrieval, not an imperative open (D‑B2)
-
-**Recommendation: retrieval-by-name of a config-declared connection.** There is **no**
-`gg.messaging_named(name, cfg)`-style imperative open: passing a `MessagingConfig` at runtime is
-exactly the per-language imperative API D‑U17 rejected, and it would create connections the
-library cannot describe from config alone (breaking the "config-review shows the topology"
-property the `cfg` publisher provides).
-
-Cross-language contract: `gg.messaging()` = the primary (unnamed) connection, unchanged;
-`gg.messaging("<name>")` = the named connection. In Rust (no overloading):
+The Rust lib builds its *primary* connection from two already-`pub` calls (`lib.rs:756–768`):
 
 ```rust
-impl GgCommons {
-    /// The primary/default messaging connection (unchanged). lib.rs:176
-    pub fn messaging(&self) -> Result<Arc<dyn MessagingService>>;
+let provider = Arc::new(MqttProvider::connect(&mc).await?);   // mqtt.rs:124 (pub struct) / :153 (pub connect)
+let service  = DefaultMessagingService::new(provider);        // service.rs:280 (pub) / :299 (pub new)
+```
 
-    /// A config-declared named connection (messaging.connections.<name>), fully
-    /// independent of the primary: its own MqttProvider (own broker, own LWT), its
-    /// own guard + request-deadline state. Errors when the name is not declared.
-    pub fn messaging_named(&self, name: &str) -> Result<Arc<dyn MessagingService>>;
+The `uns-bridge`, a Rust component depending on the `ggcommons` crate, constructs its **site connection
+the same way**, from its own config — no new library API, no schema section, no cross-language change.
+The only thing possibly owed is a **one-line Rust-only `pub use`** re-export so the paths
+(`ggcommons::messaging::provider::mqtt::MqttProvider`, `…::service::DefaultMessagingService`) are
+reachable from an external crate (verify the module-path visibility during P3‑1; add the re-export only
+if the modules aren't `pub` all the way down). That is a Rust ergonomics tweak, **not** a contract
+change, and touches no other language. **No `messaging.connections`. No `gg.messaging_named()`. No
+canonical-schema delta. No Java/Python/TS change.**
+
+### 1.2 Config — the site broker lives in the bridge's own `component.instances[]`
+
+The bridge declares its site broker as an entry in its **own `component.instances[]`** — the existing
+per-instance config surface every component already has, exactly how the opcua-adapter configures its
+OPC UA endpoints — reusing the existing `MessagingConfig`/`mqttBroker` shape (`messaging/config.rs`),
+which already carries `lwt` (Phase 1). **No canonical-schema change** (`component.instances[]` exists
+and its per-instance body is permissive). Sketch (finalized in §2.7):
+
+```jsonc
+"component": {
+  "name": "com.edgecommons.UnsBridge",
+  "instances": [
+    { "id": "site",
+      "siteBroker": { "host": "site-broker.dallas.example", "port": 8883,
+                      "credentials": { "certPath": "…", "keyPath": "…", "caPath": "…" } },
+      "lwt": { "topic": "ecv1/{ThingName}/uns-bridge/main/state",
+               "payload": { "status": "UNREACHABLE" }, "qos": 1 },
+      "uplink": { "classes": ["state","cfg","evt","metric","data","log"], "rateCaps": { } } }
+  ]
 }
 ```
 
-Java: `getMessaging()` / `getMessaging(String name)`. Python: `gg.messaging(name: str | None =
-None)` — the static/global `MessagingClient` becomes a keyed registry (default + named), exactly
-as §2.3 of the canonical doc anticipates. TS: `gg.messaging(name?: string)`.
+Template substitution (`{ThingName}` → the sanitized device token) applies as usual, so the LWT topic
+matches the bridge's real state topic.
 
-Error contract: an undeclared name is `GgError::Messaging("no named messaging connection '<x>' —
-declare it under messaging.connections")` (Java `IllegalArgumentException`, Python `KeyError`-style
-`ValueError`, TS `Error`) — **fail loud at retrieval**, not a silent `None`.
+### 1.3 The reserved-class guard is simply not in the path (raw-provider relay)
 
-### 1.3 Construction, lifecycle, shutdown (D‑B3)
+A relay republishes other components' `state`/`metric`/`cfg`/`log` verbatim — which the
+`DefaultMessagingService` guard would reject. There is **no conflict**, because the bridge relays at the
+raw `MessagingProvider` level (`provider.publish(topic, bytes)` / `subscribe`), which carries no guard —
+byte relay, not a client-chosen enveloped publish. The bridge holds `Arc<MqttProvider>` (site) plus its
+device-bus provider and moves bytes between them; the guard (a `DefaultMessagingService` concern) never
+sees the relay. **No per-connection guard flag, no `guardReservedClasses` config, no `ReservedMessaging`
+seam change.** The site broker's per-device ACL (§5.4) remains the durable boundary.
 
-Named connections are built inside `GgCommonsBuilder::build()` **immediately after
-`Config::from_value` + the existing UNS late-binds** (`lib.rs:377–389`) — they are config-declared,
-so unlike the primary they *cannot* exist before config:
+### 1.4 Connect semantics — non-fatal uplink (bridge-owned)
 
-1. Parse `messaging.connections` from the typed section (`MessagingSectionConfig` gains
-   `connections: Option<BTreeMap<String, Value>>`; each value → template-resolve → deserialize as
-   `Messaging` + the two extra keys).
-2. For each entry, build an `MqttProvider` and wrap it in a `DefaultMessagingService`, then bind
-   the same knobs the primary gets: `set_default_request_timeout(connection override ▸ component
-   value)` and `set_guard_include_root(cfg.effective_include_root())`.
-3. Store as `named_messaging: HashMap<String, Arc<DefaultMessagingService>>` on `GgCommons`.
-   **Shutdown registration is RAII, same as everything else in the runtime**: dropping `GgCommons`
-   drops the map → `DefaultMessagingService::drop` aborts all dispatchers (`service.rs:511`) →
-   `BrokerConn::drop` aborts the event-loop task (`mqtt.rs:110`) → the socket closes **without an
-   MQTT DISCONNECT**, so a registered LWT fires (§3.7 makes this a feature, not a bug).
-
-**Connect semantics differ from the primary (deliberately):** `MqttProvider::connect` blocks up to
-10 s for the CONNACK and errors out (`mqtt.rs:369–388`) — right for the device-local bus (a
-component without its local bus is useless), wrong for an **uplink**: the site link is
-intermittent by definition (edge-first, `README.md` §connectivity), and a bridge must come up and
-serve the local bus while the WAN is down. So named connections use a new
-`MqttProvider::connect_background(&MessagingConfig)` that starts the event loop and returns
-**without waiting for CONNACK**. This is safe with zero new machinery: subscriptions register in
-the routing registry immediately and the existing CONNACK handler re-subscribes every registered
-filter on (each) connect (`mqtt.rs:318–329`); the SUBACK waiter already degrades to a warning
-(`mqtt.rs:241–244`). `MessagingService::connected()` (`service.rs:666`) exposes the live state —
-the bridge's uplink policy keys off it (§3.6). Publishes while disconnected fail/drop with the
-existing error path — counted, never buffered by the transport (§3.6 owns that policy).
-
-**MQTT-only, and why that's fine on GREENGRASS:** a named connection is always an `MqttProvider`
-(requires the `standalone` cargo feature — the default). There is no "second IPC bus" to name: IPC
-is per-Nucleus and singular. On GREENGRASS the primary is IPC and the named connection is MQTT —
-exactly the bridge's topology (§3.1). A GREENGRASS bridge build composes
-`--features greengrass` (Linux/WSL) with the default `standalone`.
-
-**Hot reload:** v1 resolves connections **once at build**. A changed `messaging.connections` on
-hot reload logs `WARN named messaging connections changed — restart required` (the internal
-config-change listener that already reconfigures metrics/logging, `lib.rs:579–583`, gains this
-check). Dynamic connection add/remove is deferred with the dynamic-streams precedent.
-
-### 1.4 Per-connection guard opt-out — `guardReservedClasses` (D‑B4)
-
-The relay has a structural collision with the reserved-class guard: the bridge republishes **other
-components' `state`/`metric`/`cfg`/`log` messages verbatim** to the site broker, and every
-`DefaultMessagingService` rejects client-chosen reserved topics (`service.rs:341–353`). The
-crate-private `ReservedMessaging` seam (`service.rs:166`) is deliberately unreachable from another
-crate — the bridge is a separate component and **must not** get a public forgery API.
-
-**Recommendation: a per-connection config key `guardReservedClasses` (default `true`);
-`false` builds that one `DefaultMessagingService` with the guard disabled.** Grounds:
-
-- The guard is **misuse prevention, not a security boundary** (D‑U4/D‑U24; broker ACLs are the
-  durable enforcement, DESIGN-uns §7.5 pt 3). A relay uplink is the one legitimate "publishes
-  other components' reserved classes" role, and it is *declared in config* — visible in config
-  review and in the `cfg` effective-config announcement, not hidden in code.
-- Scope is minimal: the **primary connection never gets the opt-out** (the key exists only under
-  `connections.<name>`), so no component can quietly forge on the device bus it shares with
-  others. On the site broker the bridge's ACL (§5.4) confines it to `ecv1/{device}/#` — it can
-  relay its own device, never forge another's.
-- Implementation: `DefaultMessagingService` gains a `guard_enabled: AtomicBool` (default `true`);
-  `check_reserved` short-circuits when disabled; the named-connection wiring is the **only** caller
-  that sets it, from config. The `ReservedMessaging` seam is untouched.
-
-Flagged **needs-user** in the register (security-adjacent knob), with the recommendation to accept.
-
-### 1.5 Language scope — schema uniform now, runtime Rust now, mirrors fast-follow (D‑B5)
-
-- **The config contract ships uniform, immediately and unavoidably**: there is one canonical
-  schema synced into all four libraries (`schema/sync-schema.sh`; drift-gated in CI) — adding
-  `messaging.connections` for Rust *is* adding it for all four. All four validators accept it from
-  day one.
-- **The runtime lands in Rust now** (the bridge is Rust and is the only consumer in Phase 3).
-- **Java/Python/TS runtime wiring is a deferred fast-follow parity slice** — a tracked parity item
-  (the four-way-parity rule applies; it is *sequenced by need*, not waived): Java
-  `getMessaging(String)`, Python keyed registry, TS `messaging(name?)`. Until wired, each of the
-  three logs a startup **WARN** when `messaging.connections` is present: *"named messaging
-  connections are declared but not yet supported in this library — declared connections are
-  inert"*. Silent acceptance of a schema-valid-but-ignored section is the one dishonest outcome
-  this design refuses.
-
-**Honest reconciliation with D‑U17 "no divergence":** the resolution's substance was *no API-shape
-divergence* — one uniform config-declared mechanism, identical retrieval surface. This design
-keeps that: the shape, names, semantics, and schema are identical 4-ways from day one; only the
-*implementation order* is staggered, with an explicit WARN in the unwired languages and a named
-parity slice (P3-L, §8) to close it. If the user wants strict simultaneity instead, slice P3-L
-moves before the bridge — at the cost of ~3 language-ports of work with zero consumers. Flagged
-**needs-user**.
+The site link is intermittent by design (edge-first): the bridge must come up and serve the device bus
+while the WAN is down. `MqttProvider::connect` blocks up to 10 s for CONNACK and errors
+(`mqtt.rs:369–388`) — fine for the device bus, wrong for an uplink. The bridge **retries the site
+connect in its own loop** (pure component code, no library change); the existing CONNACK handler
+re-subscribes every registered filter on each connect (`mqtt.rs:318–329`), so reconnection is
+transparent. `MessagingProvider::connected()` (`service.rs:666`) drives the uplink policy (§2.6). *(If a
+non-blocking `MqttProvider::connect_background` later proves cleaner, it is an additive Rust-only helper —
+still no contract change; but the component-owned retry loop needs nothing new.)*
 
 ---
 
@@ -241,7 +116,7 @@ it scaffolds, configures, health-checks, and observes itself like any other.
 
 ### 2.1 The two connections, per platform
 
-| Platform | PRIMARY = `gg.messaging()` (device bus) | NAMED = `gg.messaging_named("site")` |
+| Platform | PRIMARY = `gg.messaging()` (device bus) | SITE = the bridge's own `Arc<MqttProvider>` (reused core MQTT, from `component.instances[]`) |
 |---|---|---|
 | **GREENGRASS** | Greengrass IPC (`--platform GREENGRASS --transport IPC`) | site EMQX over MQTT(S) |
 | **HOST** | device-local MQTT broker (`--transport MQTT <local.json>`) | site EMQX over MQTT(S) |
@@ -464,34 +339,32 @@ verbatim (`config.rs:64–82`, `mqtt.rs:279–297,398–419`):
 
   "messaging": {
     // PRIMARY: HOST = the device-local broker (this section doubles as the
-    // --transport MQTT file shape); GREENGRASS = absent (IPC).
+    // --transport MQTT file shape); GREENGRASS = absent (IPC). No `connections` — the
+    // site broker is NOT a core messaging feature (§1).
     "local": { "host": "localhost", "port": 1883, "clientId": "uns-bridge-{ThingName}" },
-    "requestTimeoutSeconds": 30,
-    "connections": {
-      "site": {
-        "local": { "host": "site-broker.dallas.example", "port": 8883,
-                   "clientId": "uns-bridge-{ThingName}",
-                   "credentials": { "certPath": "…", "keyPath": "…", "caPath": "…" } },
-        "lwt": { "topic": "ecv1/{ThingName}/uns-bridge/main/state",
-                 "payload": { "status": "UNREACHABLE" }, "qos": 1 },
-        "guardReservedClasses": false
-      }
-    }
+    "requestTimeoutSeconds": 30
   },
 
   "heartbeat": { "enabled": true, "intervalSecs": 5 },
   "metricEmission": { "target": "messaging" },
 
   "component": {
-    "global": {
-      "bridge": {
-        "siteConnection": "site",          // which named connection is the uplink
-        "maxHops": 4,                      // hop-tag cap (§3.4)
-        "reply": { "ttlSecs": 60, "maxPending": 1024 },   // §3.5
+    "name": "com.edgecommons.uns-bridge",
+    // The SITE broker is the bridge's EXTERNAL SYSTEM, declared as an instance (like an
+    // adapter's OPC UA endpoints). The bridge builds it via the reused core MqttProvider
+    // (§1.1) — NOT a core `messaging.connections` feature; no shared-schema change.
+    "instances": [
+      { "id": "site",
+        "siteBroker": { "host": "site-broker.dallas.example", "port": 8883,
+                        "clientId": "uns-bridge-{ThingName}",
+                        "credentials": { "certPath": "…", "keyPath": "…", "caPath": "…" } },
+        "lwt": { "topic": "ecv1/{ThingName}/uns-bridge/main/state",
+                 "payload": { "status": "UNREACHABLE" }, "qos": 1 },
         "uplink": { /* §3.6 policy block */ },
-        "queue":  { "data": 512, "default": 64 }          // per-class max_messages
-      }
-    }
+        "reply":  { "ttlSecs": 60, "maxPending": 1024 },   // §3.5
+        "maxHops": 4,                                       // hop-tag cap (§3.4)
+        "queue":  { "data": 512, "default": 64 } }          // per-class max_messages
+    ]
   }
 }
 ```
@@ -616,9 +489,9 @@ Two principals; usernames from mTLS cert CN. EMQX 5 authz file sketch:
 {deny, all}.
 ```
 
-This is what makes `guardReservedClasses: false` (§1.4) safe: a bridge can relay **its own
-device's** reserved classes and nothing else. (Reply topics are 2-level — `ggcommons/reply-…` —
-hence the `ggcommons/+` grants.)
+This ACL is what makes the raw-provider relay (§1.3) safe: a bridge can relay **its own device's**
+reserved classes and nothing else. (Reply topics are 2-level — `ggcommons/reply-…` — hence the
+`ggcommons/+` grants.)
 
 ---
 
@@ -677,11 +550,11 @@ broker *and* a site broker:
 
 | ID | Decision | Resolution (recommended) | Conf. | Reversible? | Needs user? |
 |---|---|---|---|---|---|
-| D‑B1 | Named-connection config location + shape | **Shared schema**: `messaging.connections` — an object map keyed by name; each value = the existing `Messaging` shape (`local`/`iotCore`/`lwt`) + `requestTimeoutSeconds` + `guardReservedClasses`; name `default` reserved; values template-resolved. Distinct from `component.instances[]` (identity vs transport, D‑U3). Supersedes DESIGN-uns §9.1's pre-D‑U17 "no schema change" note | High | Moderate (schema key, pre-1.0) | no — direction pre-resolved by D‑U17; shape is the lean reading of it |
-| D‑B2 | Retrieval API | Config-declared retrieval only: `gg.messaging("<name>")` (Rust `messaging_named(&str)`); **no** imperative `messaging_named(name, cfg)` open; undeclared name fails loud | High | Easy | no |
-| D‑B3 | Named-connection lifecycle | Built in `build()` post-config; **background connect** (never fails the build; CONNACK re-subscribe machinery makes it safe, `mqtt.rs:318`); MQTT-only; knobs (`deadline`, guard root) bound like the primary; RAII shutdown via the `GgCommons` map; hot-reload = WARN restart-required | High | Easy | no |
-| D‑B4 | Guard vs relay | Per-connection `guardReservedClasses: false` (named connections only, never the primary); guard = misuse prevention, broker ACL (§5.4) = boundary; `ReservedMessaging` seam untouched | High | Easy | **yes** — security-adjacent knob; recommend accept |
-| D‑B5 | Language scope of M8 | Schema + contract uniform now (single synced schema makes this automatic); **runtime Rust now**; Java/Python/TS wiring = named fast-follow parity slice P3-L with an interim startup WARN when `connections` is declared | Med-High | Easy | **yes** — confirm the staggered-wiring window honors D‑U17's intent (or pull P3-L earlier) |
+| D‑B1 | Where the site-broker connection is configured | ✅ **REVISED 2026-07-03 (user): the bridge's OWN `component.instances[]`** — the site broker is the bridge's external system (like the opcua-adapter's OPC UA endpoints), reusing the existing `MessagingConfig`/`mqttBroker` shape (with `lwt`). **No shared-schema `messaging.connections`; no canonical-schema change.** §1.2 | High | Easy | resolved |
+| D‑B2 | How the bridge obtains the 2nd connection | ✅ **REVISED: reuse the core's already-`pub` MQTT objects directly** — `MqttProvider::connect(&site_cfg)` (`mqtt.rs:153`) + raw `MessagingProvider` relay, inside the bridge. **No `gg.messaging_named()`/`gg.messaging("name")` core API in any language.** At most a one-line Rust-only `pub use` re-export for path ergonomics. §1.1 | High | Easy | resolved |
+| D‑B3 | Site-connection lifecycle | ✅ **REVISED: bridge-owned.** The bridge builds `MqttProvider::connect(&site_cfg)` and retries in its own loop (non-fatal uplink; CONNACK re-subscribe `mqtt.rs:318` makes reconnection transparent); shutdown = the bridge dropping its handle. **No library lifecycle change.** §1.4 | High | Easy | resolved |
+| D‑B4 | Guard vs relay | ✅ **REVISED: no guard flag needed** — the bridge relays at the raw `MessagingProvider` level (byte relay), which carries no reserved-class guard. **No `guardReservedClasses` config, no `ReservedMessaging` seam change.** Site-broker ACL = the durable boundary. §1.3 | High | Easy | resolved |
+| D‑B5 | Cross-language impact | ✅ **REVISED: NONE.** No core messaging-contract change in ANY language, no schema change, no Java/Python/TS work, no fast-follow — the whole "named connection in the core" surface is dropped (user, 2026-07-03). Fully honors D‑U17 "no divergence": there is nothing to diverge. §1 | High | Easy | resolved |
 | D‑B6 | Where the bridge lives | New sibling repo `edgecommons/uns-bridge` (org model; registry/clone.sh/docs-sync/CI all key on it); monorepo holds no components; `.cargo` paths override for local dev | High | Hard once published | **yes** — repo creation + registry entry are org actions |
 | D‑B7 | Relay matrix | Uplink = the six classes (`app` optional, default off) with `+` device; downlink = `cmd` only, **pinned to own `{device}`** (covers `_bcast` via the `+` component position); no cross-device request/reply v1; relay is topic-verbatim | High | Easy | no |
 | D‑B8 | Loop protection | Reserved tag key `tags._relay` = JSON array of hop ids (`{device}/uns-bridge`), drop-if-self + `maxHops` (default 4); raw messages covered by uplink/downlink class disjointness; `_`-prefixed tag keys become library-reserved; same-tier broker-to-broker cycles unsupported (documented residual) | Med-High | Easy | no |
@@ -699,26 +572,21 @@ broker *and* a site broker:
 
 | Slice | Contents | Where |
 |---|---|---|
-| **P3-1 named connection** | Canonical schema `messaging.connections` (+`namedConnection` def) + `sync-schema.sh`; Rust: typed section, template resolution, `MqttProvider::connect_background`, `DefaultMessagingService` guard flag, `GgCommons::messaging_named` + RAII map + knob binding + hot-reload WARN; unit tests vs fakes + one dual-broker MQTT integration test; Java/Python/TS: the `connections`-declared-but-inert startup WARN (3 tiny diffs) | monorepo |
+| **P3-1 site-connection reuse (minimal, Rust-only if anything)** | Verify `MqttProvider`/`DefaultMessagingService`/`MessagingProvider` module paths are reachable from an external crate; add a one-line `pub use` re-export ONLY if needed; smoke-test that a second `MqttProvider::connect` + raw relay works. **No schema, no core API, no other-language change.** Folds into P3-2 if nothing is owed | monorepo (if any) |
 | **P3-2 bridge core** | Repo scaffold (`edgecommons/uns-bridge`, rev-pinned, `.cargo` override); relay engine over two `MessagingService` handles: six uplink filters + pinned downlink filter, topic-verbatim republish, hop tag (`_relay`, maxHops); unit (fakes) + dual-EMQX relay/loop e2e | uns-bridge |
 | **P3-3 reply_to rewrite** | Correlation map + TTL sweep + maxPending eviction + reply back-haul; round-trip + expiry e2e | uns-bridge |
 | **P3-4 uplink policy + LWT** | Per-class enable/rate caps/evt buffer; drop-counter metrics; reconnect `republish-*` broadcast (+ the library's Phase-3 `_bcast` listener if not yet landed); `connections.site.lwt` config + startup cross-check; rate-cap/disconnect/LWT e2e | uns-bridge (+ small monorepo bit for the `_bcast` listener) |
 | **P3-5 recipes (M2)** | `deploy/site-broker/`: HOST compose, GG DockerApplicationManager recipe, k8s notes + boundary-bridge Deployment, ACL file, TLS notes; docs pages | uns-bridge |
 | **P3-6 org integration + validation** | Registry entry (`category: bridge`) → profile regen; docs-site sync; validation matrix: HOST dual-broker on dev box, GREENGRASS on lab-5950x (site broker = dev box), kind boundary case | registry / .github / website |
-| **P3-L parity fast-follow** | Java/Python/TS named-connection runtime (keyed registry etc.), replacing the WARN; parity tests | monorepo |
-
 ---
 
 ## 8. Risks
 
-1. **Staggered M8 wiring (D‑B5)** — three languages accept `messaging.connections` but ignore it
-   until P3-L. Mitigated by the startup WARN and the named parity slice; the residual risk is a
-   non-Rust component author reading the (uniform) docs and expecting it to work. Call it out in
-   the config-schema reference page ("Rust-only until P3-L").
-2. **`guardReservedClasses` is a forgery knob if the broker ACL is skipped** — a misconfigured
-   site broker (no per-device ACL) plus an opted-out connection lets one device publish another's
-   reserved classes. The recipe ships ACL-on by default and the docs say plainly: the ACL, not the
-   guard, is the boundary (this is already the D‑U4 posture; the bridge just raises the stakes).
+1. **The site broker MUST enforce a per-device ACL** — the bridge relays other components'
+   `state`/`metric`/`cfg`/`log` verbatim to the site broker at the raw `MessagingProvider` level (no
+   in-process guard is in the relay path, by design — §1.3). The per-device ACL, not any in-process
+   guard, is what confines the bridge to its own `ecv1/{device}/#` subtree (the D‑U4/§7.5 posture).
+   The recipe ships ACL-on by default; the docs say plainly: the ACL is the boundary.
 3. **Live-path loss during WAN outages is by design** — `data`/`metric`/`log` gaps on the site
    view are permanent (streaming owns durability); only `evt` gets the bounded replay buffer and
    only `state`/`cfg` rehydrate via the broadcast. If site-side historians need lossless

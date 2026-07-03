@@ -259,27 +259,21 @@ errors as `GgError::UnsValidation { code, detail }` (new variant); `topic()` ret
 TS: `src/uns.ts` — `enum UnsClass`, `interface UnsScope` + factory object, `class Uns`, `class
 UnsValidationError extends Error { code }`.
 
-#### 2.3 (M8) Named/secondary messaging connection — uniform, config-driven (D‑U17, resolved 2026-07-02)
+#### 2.3 (M8) The uns-bridge's site connection — a bridge-owned external connection (D‑U17, FINAL 2026-07-03)
 
-The `uns-bridge` needs two concurrent connections in one process (device bus + site broker). Rather than a
-Rust-only imperative API (the original proposal — a flagged divergence), this is a **uniform,
-config-declared library capability in all four languages** (user direction): the bridge declares its
-site-broker uplink as a **named messaging connection** in config — conceptually its "external system,"
-reusing the same `MessagingProvider`/MQTT stack — and the library provisions + manages it, retrievable by
-name:
-
-```
-gg.messaging()          // the primary/default connection (unnamed)
-gg.messaging("site")    // a config-declared secondary connection — same API surface
-```
-
-Both connections get the same reserved-class guard + request-deadline default. Python's static/global
-`MessagingClient` becomes a **keyed registry** (default + named). This **eliminates the D‑U17
-divergence** — it is config, not a per-language imperative API. It is only needed by the bridge, so it
-**lands in Phase 3**; the config shape (a dedicated `messaging.connections[]`-style section vs reusing
-`component.instances[]`) is finalized then. Lean: a dedicated named-connections section, kept **distinct**
-from the per-message `instance` token and the `gg.instance()` handle (§3 / D‑U3) — those address *message
-identity*, this addresses *transport*.
+The `uns-bridge` needs two concurrent connections in one process (device bus + site broker). **Final
+resolution (user, 2026-07-03): there is NO core change — in any language — for this.** The earlier
+"uniform config-driven named connection in the core" reading (a shared-schema `messaging.connections` +
+`gg.messaging("site")` + a Python keyed registry) is **dropped**: no component other than the bridge needs a
+second connection, and the bridge is Rust. Per the original D‑U17 intent, the **site broker is the bridge's
+"external system"** (exactly as an OPC UA server is the opcua-adapter's), configured in the bridge's OWN
+`component.instances[]` and built by **reusing the core's already-`pub` MQTT objects** (`MqttProvider::connect`
++ `DefaultMessagingService::new` / raw `MessagingProvider`), inside the bridge — a Rust-component concern, not
+a library API. **No `messaging.connections` schema, no `gg.messaging()` contract change, no Java/Python/TS
+change, no keyed registry** (at most a one-line Rust-only `pub use` re-export). This fully honors "no
+divergence": there is nothing to diverge. The per-message `instance` token / `gg.instance()` handle (§3 / D‑U3)
+is unrelated (that addresses *message identity*; this is *transport*). See
+[`DESIGN-uns-bridge.md`](DESIGN-uns-bridge.md) §1 for the Phase-3 implementation design.
 
 ---
 
@@ -548,7 +542,7 @@ internal `IotCoreSubscriptionHandler → IoTCoreSubscriptionHandler` (cosmetic).
 | D‑U14 | Heartbeat #33 → on/5s/local `state` | flips Rust/TS off→on, Java metric→state, Python legacy→state; measures → metric `sys`; graceful `STOPPED` state; validate on HOST smoke. Pulled into Phase 1 (Risks #1) | High | Moderate (fleet-wide behavior) | no (pre-approved; **review the STOPPED addition**) |
 | D‑U15 | signalId → sanitized `data/{channel}`, raw id in body | provisional, **Phase 5** — no work now; token rule (§2.2) = the same sanitizer | Med | Easy (deferred) | no |
 | D‑U16 | `writes.allow[]` matches stable `signal.id` | provisional, **Phase 5** (adapter-contract change, M9) | Med | Easy (deferred) | no |
-| **D‑U17** | M8 named/secondary messaging connection | ✅ **resolved 2026-07-02 → NO divergence.** Reframed (user) from a Rust-only imperative `messaging_named()` into a **uniform, config-declared named connection** in all four langs: the bridge declares its site-broker uplink in config (its "external system," reusing the MQTT provider), retrieved via `gg.messaging("<name>")`; Python's static client → keyed registry. Lands **Phase 3** (with the bridge); config shape finalized then, kept distinct from the per-message `instance`/`gg.instance()` (D‑U3). §2.3 | High | Moderate | resolved |
+| **D‑U17** | M8 the bridge's site connection | ✅ **FINAL 2026-07-03 → NO CORE CHANGE (any language).** The site broker is the uns-bridge's **external system** (like the opcua-adapter's OPC UA endpoints), configured in the bridge's own `component.instances[]` and built by **reusing the core's already-`pub` MQTT objects** (`MqttProvider::connect` + `DefaultMessagingService`/raw `MessagingProvider`), inside the bridge. **No `messaging.connections` schema, no `gg.messaging()` API change, no keyed registry, no Java/Python/TS change** (at most a 1-line Rust `pub use`). Supersedes the earlier "named connection in the core" reading. §2.3, DESIGN-uns-bridge §1 | High | Easy | resolved |
 | **D‑U18** | `identity.component` = **sanitized short name** (existing `{ComponentName}` semantics), not reverse-DNS full name | ✅ **confirmed 2026-07-02** (user agreed). Matches every existing topic site + the design examples; dots legal in-level so full name stays possible later; cross-vendor collision on one device accepted pre-1.0 | High | Hard once fleets deploy | resolved |
 | **D‑U19** | Config-command addressing | ✅ **resolved 2026-07-02 → component-inbox + broadcast** (user). **Flow A** (config-source fetch) stays a request to `config/main` (server is sole subscriber, requester self-IDs). **Flow B** (console→component verbs incl. `get-configuration`) → the target component's OWN inbox `ecv1/{device}/{component}/{instance}/cmd/{verb}` (topic-selective, uniform for all verbs, no body-filtering); **broadcast** via reserved `_bcast` (`ecv1/{device}/_bcast/main/cmd/{verb}`). `set-config` push = component inbox. §4.3 | High | Moderate | resolved |
 | **D‑U20** | Heartbeat `targets[]` REMOVED → `enabled/intervalSecs/measures/destination`; measures emit metric **`sys`** via normal metric subsystem | ✅ **confirmed 2026-07-02** (user). The measures **keep full sink flexibility** — they now flow through the metric subsystem's own targets (messaging/cloudwatch-component/EMF/local-log), which `heartbeat.targets[]` did not provide for measures; `heartbeat.destination` (local\|iotcore) governs only the lightweight `state` keepalive. Supersedes the letter of D‑U9 for heartbeat | High | Moderate (schema break, intended) | resolved |
