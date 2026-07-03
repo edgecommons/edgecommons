@@ -3,14 +3,25 @@
  *
  * {@link SkeletonApp} wires the concerns that every real component needs,
  * mirroring the Rust/Python/Java skeletons:
- * 1. **Request/reply** — subscribes to a request topic and replies to each request.
- * 2. **Periodic publish** — publishes a data message on an interval read from
- *    configuration (`component.global.publish_interval`), emitting a metric each time.
+ * 1. **Request/reply** — subscribes to its UNS `cmd` inbox verb
+ *    (`ecv1/{device}/{component}/main/cmd/echo`) and replies to each request.
+ * 2. **Periodic publish** — publishes a data message on the UNS `data` channel
+ *    (`…/data/seq`) on an interval read from configuration
+ *    (`component.global.publish_interval`), emitting a metric each time.
  * 3. **Dynamic config** — registers a `ConfigurationChangeListener` so the publish
  *    interval updates live on a config hot-reload, without a restart.
- * 4. **IoT Core telemetry** — mirrors each data message to AWS IoT Core.
+ * 4. **IoT Core telemetry** — mirrors each data message to AWS IoT Core on the SAME
+ *    UNS topic (a UNS address is broker-independent; the destination picks the broker).
  * 5. **Graceful shutdown** — runs until SIGINT / SIGTERM, then unsubscribes and lets
  *    `gg.close()` (in `main.ts`) release the runtime.
+ *
+ * Every topic is minted through the UNS topic builder (`gg.uns()`), which is bound to the
+ * component's config-resolved identity (the top-level `hierarchy` + `identity` config blocks;
+ * the last hierarchy level's value is always the resolved thing name) — never hand-written
+ * topic strings. Instance-scoped topics/messages come from `gg.instance(id).uns()` /
+ * `.newMessage(...)` instead. The library also publishes an automatic heartbeat — a `state`
+ * keepalive on `ecv1/{device}/{component}/main/state` every `heartbeat.intervalSecs` (5 s
+ * default) — so the app never publishes liveness itself (`state` is a reserved class).
  *
  * Messaging is available on both the HOST platform (MQTT) and the GREENGRASS platform (IPC).
  * If it is unavailable for the resolved platform, `gg.messaging()` throws — the app catches that
@@ -28,6 +39,8 @@ import {
   ParameterService,
   Qos,
   StreamHandle,
+  Uns,
+  UnsClass,
   logger,
 } from "@edgecommons/ggcommons";
 
@@ -64,6 +77,12 @@ function intervalFrom(config: Config): number {
 export class SkeletonApp {
   private readonly config: Config;
   private readonly metrics: MetricService;
+  /**
+   * The UNS topic builder bound to the component's config-resolved identity (instance
+   * `main`). Every topic this app publishes or subscribes on is minted here — never a
+   * hand-written topic string.
+   */
+  private readonly uns: Uns;
   /** `undefined` only when no messaging transport is available for the runtime mode. */
   private readonly messaging?: IMessagingService;
   /** Live publish interval (seconds), updated by the config-change listener on reload. */
@@ -93,6 +112,7 @@ export class SkeletonApp {
   constructor(gg: GGCommons) {
     this.config = gg.config();
     this.metrics = gg.metrics();
+    this.uns = gg.uns();
 
     // Define the metric emitted on each periodic publish.
     this.metrics.defineMetric(
@@ -256,7 +276,6 @@ export class SkeletonApp {
    */
   async run(): Promise<void> {
     this.running = true;
-    const thing = this.config.thingName;
 
     // Demonstrate encrypted-vault secret access once at startup (non-fatal).
     this.demonstrateCredentials();
@@ -270,10 +289,16 @@ export class SkeletonApp {
       return;
     }
 
-    this.requestTopic = `${thing}/skeleton/request`;
-    this.cmdTopic = `${thing}/skeleton/cmd`;
-    const dataTopic = `${thing}/skeleton/data`;
-    const telemetryTopic = `${thing}/skeleton/telemetry`;
+    // Mint every topic through the identity-bound UNS builder (§2 of the UNS design):
+    //   cmd inbox verbs:  ecv1/{device}/{component}/main/cmd/{verb}
+    //   data channels:    ecv1/{device}/{component}/main/data/{channel}
+    //   event channels:   ecv1/{device}/{component}/main/evt/{channel}
+    // The builder validates every token and throws UnsValidationError on a grammar
+    // violation, so a bad topic fails here at startup — never at the broker.
+    this.requestTopic = this.uns.topic(UnsClass.Cmd, "echo");
+    this.cmdTopic = this.uns.topic(UnsClass.Cmd, "run-demo");
+    const dataTopic = this.uns.topic(UnsClass.Data, "seq");
+    const ackTopic = this.uns.topic(UnsClass.Evt, "cmd-ack");
 
     // 1. Respond to requests on the request topic (local pub/sub).
     await messaging.subscribe(
@@ -296,9 +321,9 @@ export class SkeletonApp {
     logger.info(`subscribed for requests on ${this.requestTopic}`);
 
     // 2. Subscribe to commands from AWS IoT Core (the IoT Core bridge); ack each one
-    //    back to IoT Core (exercises subscribeToIoTCore + publishToIoTCore). Non-fatal:
-    //    builds/modes without an IoT Core transport (e.g. local-only STANDALONE) skip the
-    //    bridge instead of failing the whole component.
+    //    back to IoT Core on the `evt/cmd-ack` channel (exercises subscribeToIoTCore +
+    //    publishToIoTCore). Non-fatal: builds/modes without an IoT Core transport
+    //    (e.g. local-only STANDALONE) skip the bridge instead of failing the whole component.
     try {
       await messaging.subscribeToIoTCore(
         this.cmdTopic,
@@ -309,7 +334,7 @@ export class SkeletonApp {
             .withPayload({ ack: msg.getBody() })
             .build();
           try {
-            await messaging.publishToIoTCore(telemetryTopic, ack, Qos.AtLeastOnce);
+            await messaging.publishToIoTCore(ackTopic, ack, Qos.AtLeastOnce);
           } catch (e) {
             logger.warn(`failed to ack IoT Core command: ${String(e)}`);
           }
@@ -326,25 +351,27 @@ export class SkeletonApp {
 
     // 3. Start the periodic publisher. It reschedules itself each tick from the live
     //    publish interval, so a config hot-reload takes effect on the next tick.
-    this.scheduleNextPublish(messaging, dataTopic, telemetryTopic);
+    this.scheduleNextPublish(messaging, dataTopic);
   }
 
   /** Schedule the next periodic publish using the live publish interval. */
-  private scheduleNextPublish(messaging: IMessagingService, dataTopic: string, telemetryTopic: string): void {
+  private scheduleNextPublish(messaging: IMessagingService, dataTopic: string): void {
     if (!this.running) return;
     const intervalMs = Math.max(this.publishInterval, 1) * 1000;
     this.publishTimer = setTimeout(() => {
-      void this.publishOnce(messaging, dataTopic, telemetryTopic).finally(() =>
-        this.scheduleNextPublish(messaging, dataTopic, telemetryTopic),
+      void this.publishOnce(messaging, dataTopic).finally(() =>
+        this.scheduleNextPublish(messaging, dataTopic),
       );
     }, intervalMs);
   }
 
   /**
    * Publish one data message, mirror it to AWS IoT Core, and emit the publish metric.
-   * Demonstrates config-driven periodic publishing plus metric emission.
+   * Demonstrates config-driven periodic publishing plus metric emission. The mirror uses
+   * the SAME UNS topic — a UNS address is broker-independent; `publish` vs
+   * `publishToIoTCore` picks the broker.
    */
-  private async publishOnce(messaging: IMessagingService, dataTopic: string, telemetryTopic: string): Promise<void> {
+  private async publishOnce(messaging: IMessagingService, dataTopic: string): Promise<void> {
     this.seq += 1;
     const msg = MessageBuilder.create("SkeletonData", "1.0")
       .withConfig(this.config)
@@ -354,7 +381,7 @@ export class SkeletonApp {
       await messaging.publish(dataTopic, msg);
       // Also mirror to AWS IoT Core (exercises the IoT Core bridge / publishToIoTCore).
       try {
-        await messaging.publishToIoTCore(telemetryTopic, msg, Qos.AtLeastOnce);
+        await messaging.publishToIoTCore(dataTopic, msg, Qos.AtLeastOnce);
       } catch (e) {
         logger.warn(`failed to publish telemetry to IoT Core: ${String(e)}`);
       }

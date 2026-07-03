@@ -7,6 +7,8 @@
     "destination": "local"
   },
   "metricEmission": { "target": "log", "namespace": "ggcommons" },
+  "hierarchy": { "levels": [ "site", "device" ] },
+  "identity": { "site": "factory-1" },
   "tags": { "site": "factory-1" },
   "component": {
     "global": { "publish_interval": 3 },

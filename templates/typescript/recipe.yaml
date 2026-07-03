@@ -27,6 +27,13 @@ ComponentConfiguration:
         # Component work dir — writable by a non-root (ggc_user) component.
         targetConfig:
           logFileName: "/greengrass/v2/work/{ComponentFullName}/metric.log"
+      # UNS identity: an ordered hierarchy whose LAST level is always the resolved thing
+      # name; every other level's value comes from `identity`. Topics built by gg.uns()
+      # carry {device}/{component}/{instance} under the ecv1 root (rootless by default).
+      hierarchy:
+        levels: ["site", "device"]
+      identity:
+        site: "Chantilly"
       tags:
         appId: "Test"
         site: "Chantilly"

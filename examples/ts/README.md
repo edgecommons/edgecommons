@@ -8,13 +8,22 @@ heartbeat — so a component author writes only business logic.
 
 ## What it does
 
-- **Request/reply** — subscribes to `<thing>/skeleton/request` and replies to each request.
-- **Periodic publish** — publishes `<thing>/skeleton/data` every
+Every topic is minted through the **UNS topic builder** (`gg.uns()`), bound to the component's
+config-resolved identity — the top-level `hierarchy` + `identity` config blocks; the last
+hierarchy level's value is always the resolved thing name (the *device*). With `-t my-thing`
+the topics below render as `ecv1/my-thing/TsComponentSkeleton/main/…`.
+
+- **Request/reply** — subscribes to its `cmd` inbox verb
+  `ecv1/{device}/TsComponentSkeleton/main/cmd/echo` and replies to each request.
+- **Periodic publish** — publishes `ecv1/{device}/TsComponentSkeleton/main/data/seq` every
   `component.global.publish_interval` seconds, emitting a `messages_published` metric per send.
-- **IoT Core telemetry** — mirrors each data message to AWS IoT Core (`<thing>/skeleton/telemetry`)
-  and acks IoT Core commands received on `<thing>/skeleton/cmd`.
+- **IoT Core telemetry** — mirrors each data message to AWS IoT Core on the *same* UNS topic
+  (a UNS address is broker-independent), and acks IoT Core commands received on
+  `…/cmd/run-demo` to `…/evt/cmd-ack`.
 - **Dynamic config** — a config-change listener updates the publish interval live on a hot-reload.
-- **Heartbeat** — periodic CPU/memory system metrics (configured in `recipe.yaml` / `config.json`).
+- **Heartbeat** — automatic: the library publishes a `state` keepalive on
+  `ecv1/{device}/TsComponentSkeleton/main/state` every `heartbeat.intervalSecs` (default 5 s),
+  and emits the enabled CPU/memory measures as the `sys` metric through `metricEmission`.
 - **Graceful shutdown** — runs until SIGINT / SIGTERM, unsubscribes, and awaits `gg.close()`.
 
 > The messaging features above work on both the **HOST** platform (MQTT transport,
@@ -47,9 +56,10 @@ node dist/main.js \
   -t my-thing
 ```
 
-Subscribe to `my-thing/skeleton/data` in an MQTT client to see published messages,
-and publish to `my-thing/skeleton/request` (with a `reply_to` header) to exercise
-request/reply.
+Subscribe to `ecv1/my-thing/TsComponentSkeleton/main/data/seq` in an MQTT client to see
+published messages (or `ecv1/my-thing/+/+/state` for the automatic heartbeat keepalives),
+and publish to `ecv1/my-thing/TsComponentSkeleton/main/cmd/echo` (with a `reply_to`
+header) to exercise request/reply.
 
 ## CLI contract
 

@@ -18,6 +18,8 @@
     "refreshIntervalSecs": 30,
     "sync": { "names": [ "/skeleton/region", "/skeleton/poolSize" ] }
   },
+  "hierarchy": { "levels": [ "site", "device" ] },
+  "identity": { "site": "factory-1" },
   "tags": { "site": "factory-1" },
   "component": {
     "global": { "publish_interval": 3 },

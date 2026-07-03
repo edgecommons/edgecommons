@@ -33,6 +33,23 @@ node dist/main.js \
   -t my-thing
 ```
 
+## Topics & identity (UNS)
+
+Components address the bus through the **unified namespace**: every topic is minted by the
+identity-bound UNS builder — `gg.uns().topic(UnsClass.Data, "my-channel")` →
+`ecv1/{device}/{component}/{instance}/data/my-channel` — never hand-written strings. The
+identity comes from the config's top-level `hierarchy` + `identity` blocks (see
+`test-configs/config.json`): the **last** hierarchy level's value is always the resolved
+thing name (the *device*); every other level's value comes from `identity`. Omitting
+`hierarchy` gives the zero-config default `["device"]`. Instance-scoped topics and messages
+come from `gg.instance(id).uns()` / `.newMessage(...)`.
+
+The library also publishes an automatic **heartbeat**: a `state` keepalive on
+`ecv1/{device}/{component}/main/state` every `heartbeat.intervalSecs` (default 5 s; subscribe
+to `ecv1/+/+/+/state` to watch every component's keepalive), with the enabled system measures emitted as the
+`sys` metric. The classes `state | metric | cfg | log` are library-owned (reserved) — a direct
+publish to them is rejected.
+
 ## CLI contract
 
 - `-c/--config <SOURCE> [args...]` — `FILE | ENV | GG_CONFIG | SHADOW | CONFIG_COMPONENT` (default: from the resolved platform profile — GREENGRASS → GG_CONFIG, HOST → FILE, KUBERNETES → CONFIGMAP)

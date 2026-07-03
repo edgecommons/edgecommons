@@ -52,6 +52,13 @@ ComponentConfiguration:
           names:
             - "/skeleton/region"
             - "/skeleton/poolSize"
+      # UNS identity: an ordered hierarchy whose LAST level is always the resolved thing
+      # name; every other level's value comes from `identity`. Topics built by gg.uns()
+      # carry {device}/{component}/{instance} under the ecv1 root (rootless by default).
+      hierarchy:
+        levels: ["site", "device"]
+      identity:
+        site: "Chantilly"
       tags:
         appId: "Test"
         site: "Chantilly"
