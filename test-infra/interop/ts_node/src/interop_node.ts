@@ -8,8 +8,23 @@
  *   interop_node request   <request_topic> <token>
  *   interop_node raw-sub   <topic> <token>
  *   interop_node raw-pub   <topic> <token>
+ *   interop_node uns-pub   <identityJson> <class> [channel]
+ *   interop_node uns-sub   <topic>
+ *   interop_node uns-guard
+ *
+ * Messages are built without a config — the envelope legally omits `identity` unless
+ * one is stamped explicitly (the UNS roles); `tags.thing` no longer exists (UNS hard cut).
  */
-import { Message, MessageBuilder, DefaultMessagingService, StandaloneMqttProvider } from "@edgecommons/ggcommons";
+import {
+  Message,
+  MessageBuilder,
+  MessageIdentity,
+  DefaultMessagingService,
+  StandaloneMqttProvider,
+  ReservedTopicError,
+  Uns,
+  unsClassFromToken,
+} from "@edgecommons/ggcommons";
 import type { MessagingConfig } from "@edgecommons/ggcommons";
 
 const LANG = "ts";
@@ -118,8 +133,87 @@ async function runRawPub(topic: string, token: string): Promise<number> {
   }
 }
 
+/**
+ * uns-pub <identityJson> <class> [channel] — mint the topic with the real Uns builder
+ * (includeRoot=false), stamp the identity via the real MessageBuilder, publish, and
+ * print {"ok":true,"topic":...,"envelope":...}.
+ */
+async function runUnsPub(identityJson: string, clsToken: string, channel?: string): Promise<number> {
+  const identity = MessageIdentity.fromObject(JSON.parse(identityJson));
+  if (!identity) {
+    emit({ ok: false, error: `bad identity: ${identityJson}` });
+    return 2;
+  }
+  const cls = unsClassFromToken(clsToken);
+  if (cls === undefined) {
+    emit({ ok: false, error: `bad class: ${clsToken}` });
+    return 2;
+  }
+  const topic = new Uns(identity, false).topic(cls, channel);
+  const svc = await service("unspub");
+  try {
+    const msg = MessageBuilder.create("UnsInterop", "1.0")
+      .withPayload({ from: LANG })
+      .withIdentity(identity)
+      .build();
+    await svc.publish(topic, msg);
+    await new Promise((r) => setTimeout(r, 500));
+    emit({ ok: true, topic, envelope: msg.toObject() });
+    return 0;
+  } finally {
+    await svc.disconnect();
+  }
+}
+
+/** uns-sub <topic> — receive one envelope and print its parsed identity. */
+async function runUnsSub(topic: string): Promise<number> {
+  const svc = await service("unssub");
+  try {
+    const got = new Promise<Message>((resolve) => {
+      void svc.subscribe(topic, (_t, m) => resolve(m)).then(() => process.stdout.write("READY\n"));
+    });
+    const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 10_000));
+    const m = await Promise.race([got, timeout]);
+    if (m === null) {
+      emit({ ok: false, error: "timeout" });
+      return 1;
+    }
+    const identity = m.getIdentity();
+    const ok = identity !== undefined;
+    emit({ ok, identity: identity ? identity.toObject() : null, body: m.getBody() });
+    return ok ? 0 : 1;
+  } finally {
+    await svc.disconnect();
+  }
+}
+
+/**
+ * uns-guard — attempt a raw publish to a reserved-class topic through the guarded
+ * public service; must fail with ReservedTopicError (§4.1).
+ */
+async function runUnsGuard(): Promise<number> {
+  const svc = await service("guard");
+  try {
+    const topic = "ecv1/dev1/comp1/main/state";
+    try {
+      await svc.publishRaw(topic, { from: LANG });
+    } catch (e) {
+      if (e instanceof ReservedTopicError) {
+        emit({ error: "ReservedTopicError", class: e.classToken, topic: e.topic });
+        return 3;
+      }
+      emit({ error: String(e) });
+      return 4;
+    }
+    emit({ ok: true });
+    return 0;
+  } finally {
+    await svc.disconnect();
+  }
+}
+
 async function main(): Promise<void> {
-  const [role, a, b] = process.argv.slice(2);
+  const [role, a, b, c] = process.argv.slice(2);
   switch (role) {
     case "responder":
       await runResponder(a);
@@ -130,6 +224,12 @@ async function main(): Promise<void> {
       process.exit(await runRawSub(a, b));
     case "raw-pub":
       process.exit(await runRawPub(a, b));
+    case "uns-pub":
+      process.exit(await runUnsPub(a, b, c));
+    case "uns-sub":
+      process.exit(await runUnsSub(a));
+    case "uns-guard":
+      process.exit(await runUnsGuard());
     default:
       process.stderr.write(`unknown role: ${role}\n`);
       process.exit(2);

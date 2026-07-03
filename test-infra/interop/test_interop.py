@@ -308,3 +308,102 @@ def test_interop_raw_publish(commands, publisher, subscriber):
                 sub_proc.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 sub_proc.kill()
+
+
+# --- UNS suite (M14 — UNS-CANONICAL-DESIGN §7, D-U22/D-U24) --------------------------
+
+# The fixed conformance identity every language's `uns-pub` is handed (wire form). The
+# topic below is what the real `uns()` builder must mint from it, byte-for-byte, in all
+# four languages (includeRoot=false; instance defaults through the identity itself).
+UNS_IDENTITY = {
+    "hier": [
+        {"level": "site", "value": "dallas"},
+        {"level": "zone", "value": "zone-3"},
+        {"level": "device", "value": "gw-01"},
+    ],
+    "path": "dallas/zone-3/gw-01",
+    "component": "interop",
+    "instance": "main",
+}
+UNS_CLASS = "data"
+UNS_CHANNEL = "temp"
+EXPECTED_UNS_TOPIC = "ecv1/gw-01/interop/main/data/temp"
+
+
+@pytest.mark.parametrize("subscriber", LANGS)
+@pytest.mark.parametrize("publisher", LANGS)
+def test_uns_topic_parity(commands, publisher, subscriber):
+    """Every language's `uns-pub` must mint the SAME topic byte-for-byte from the fixed
+    identity, and a subscriber in any language must parse a structurally-identical
+    top-level `identity` element out of the received envelope (D-U22: topics compare
+    byte-for-byte, envelopes structurally)."""
+    for lang in (publisher, subscriber):
+        if lang not in commands:
+            pytest.skip(f"{lang} toolchain/artifact unavailable")
+
+    sub_proc, lines, ready = _launch(commands[subscriber]("uns-sub", EXPECTED_UNS_TOPIC))
+    try:
+        assert ready.wait(20), f"{subscriber} uns-sub never signalled READY"
+
+        pub = subprocess.run(
+            commands[publisher]("uns-pub", json.dumps(UNS_IDENTITY), UNS_CLASS, UNS_CHANNEL),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=30,
+            cwd=str(RUN_DIR))
+        assert pub.returncode == 0, f"{publisher} uns-pub failed: {pub.stdout}\n{pub.stderr}"
+        pub_out = _last_json(pub.stdout.splitlines())
+        assert pub_out is not None, f"no JSON from {publisher} uns-pub: {pub.stdout}"
+        assert pub_out["ok"] is True
+
+        # Byte-identical topic across all four languages (each publisher is asserted
+        # against the same pinned constant, so all pairs are transitively identical).
+        assert pub_out["topic"] == EXPECTED_UNS_TOPIC, (
+            f"{publisher} minted '{pub_out['topic']}', expected '{EXPECTED_UNS_TOPIC}'")
+
+        # The sent envelope carries the top-level identity (structural equality; JSON
+        # member order is not normative) and no tags.thing (hard cut).
+        envelope = pub_out["envelope"]
+        assert envelope.get("identity") == UNS_IDENTITY, (
+            f"{publisher} envelope identity mismatch: {envelope.get('identity')}")
+        assert "thing" not in (envelope.get("tags") or {}), "tags.thing must be gone"
+
+        # The subscriber exits after receiving (or its own 10s timeout).
+        try:
+            sub_proc.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            pass
+
+        received = _last_json(lines)
+        assert received is not None, f"no JSON from {subscriber} uns-sub; lines={lines}"
+        assert received["ok"] is True, f"{publisher}->{subscriber} uns failed: {received}"
+        assert received["identity"] == UNS_IDENTITY, (
+            f"{subscriber} parsed identity {received['identity']}, expected {UNS_IDENTITY}")
+        assert received["body"]["from"] == publisher, "envelope body must name the publisher"
+    finally:
+        if sub_proc.poll() is None:
+            sub_proc.terminate()
+            try:
+                sub_proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                sub_proc.kill()
+
+
+@pytest.mark.parametrize("lang", LANGS)
+def test_uns_guard(commands, lang):
+    """Each language's `uns-guard` attempts a raw publish to the reserved-class topic
+    ecv1/dev1/comp1/main/state through its guarded public surface and must exit
+    NON-ZERO printing the reserved-topic error name (Java ReservedTopicException /
+    Python+TS ReservedTopicError / Rust GgError::ReservedTopic — all carry the
+    common 'ReservedTopic' stem)."""
+    if lang not in commands:
+        pytest.skip(f"{lang} toolchain/artifact unavailable")
+
+    result = subprocess.run(commands[lang]("uns-guard"),
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                            timeout=30, cwd=str(RUN_DIR))
+    assert result.returncode != 0, (
+        f"{lang} uns-guard must exit non-zero (the guard must reject the reserved"
+        f" topic): {result.stdout}\n{result.stderr}")
+    payload = _last_json(result.stdout.splitlines())
+    assert payload is not None, f"no JSON from {lang} uns-guard: {result.stdout}\n{result.stderr}"
+    assert "ReservedTopic" in str(payload.get("error")), (
+        f"{lang} uns-guard must name the reserved-topic error, got: {payload}")

@@ -1,8 +1,12 @@
-import com.mbreissi.ggcommons.config.ConfigManager;
 import com.mbreissi.ggcommons.messaging.Message;
 import com.mbreissi.ggcommons.messaging.MessageBuilder;
+import com.mbreissi.ggcommons.messaging.MessageIdentity;
+import com.mbreissi.ggcommons.messaging.MessagingClient;
 import com.mbreissi.ggcommons.messaging.MessagingConfiguration;
+import com.mbreissi.ggcommons.messaging.ReservedTopicException;
 import com.mbreissi.ggcommons.messaging.providers.standalone.StandaloneMessagingProvider;
+import com.mbreissi.ggcommons.uns.Uns;
+import com.mbreissi.ggcommons.uns.UnsClass;
 import com.google.gson.Gson;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -14,18 +18,16 @@ import java.util.concurrent.TimeUnit;
  * Cross-language interop node (Java) for ggcommons. Shared CLI contract:
  *   InteropNode responder &lt;request_topic&gt;
  *   InteropNode request   &lt;request_topic&gt; &lt;token&gt;
- * Local-only MQTT transport against localhost:1883.
+ *   InteropNode uns-pub   &lt;identityJson&gt; &lt;class&gt; [channel]
+ *   InteropNode uns-sub   &lt;topic&gt;
+ *   InteropNode uns-guard
+ * Local-only MQTT transport against localhost:1883. Messages are built WITHOUT a
+ * config service — the envelope legally omits {@code identity} unless an explicit
+ * identity is stamped (the UNS roles), and {@code tags.thing} no longer exists.
  */
 public class InteropNode {
     static final String LANG = "java";
     static final Gson GSON = new Gson();
-
-    /** Minimal ConfigManager so MessageBuilder.withConfig(...) works standalone. */
-    static class InteropConfig extends ConfigManager {
-        private final String thing;
-        InteropConfig(String thing) { super(); this.thing = thing; }
-        @Override public String getThingName() { return thing; }
-    }
 
     static String host() {
         String h = System.getenv("GGCOMMONS_IT_MQTT_HOST");
@@ -79,7 +81,6 @@ public class InteropNode {
 
     public static void main(String[] args) throws Exception {
         String role = args[0];
-        ConfigManager cfg = new InteropConfig("interop-java");
 
         if (role.equals("responder")) {
             String topic = args[1];
@@ -89,7 +90,7 @@ public class InteropNode {
                 body.add("echo", asElement(request.getBody()));
                 body.addProperty("responder", LANG);
                 Message reply = MessageBuilder.create("InteropReply", "1.0")
-                        .withPayload(body).withConfig(cfg).build();
+                        .withPayload(body).build();
                 prov.reply(request, reply);
             }, 1);
             System.out.println("READY");
@@ -106,7 +107,7 @@ public class InteropNode {
             reqBody.put("from", LANG);
             reqBody.put("types", typesMap());
             Message req = MessageBuilder.create("InteropRequest", "1.0")
-                    .withPayload(reqBody).withConfig(cfg).build();
+                    .withPayload(reqBody).build();
             String corr = req.getCorrelationId();
             JsonObject out = new JsonObject();
             try {
@@ -174,6 +175,87 @@ public class InteropNode {
             prov.publishRaw(topic, payload);
             Thread.sleep(500);
             prov.close();
+        } else if (role.equals("uns-pub")) {
+            // uns-pub <identityJson> <class> [channel] — mint the topic with the real Uns
+            // builder (includeRoot=false), stamp the identity via the real MessageBuilder,
+            // publish, and print {"ok":true,"topic":...,"envelope":...}.
+            MessageIdentity identity =
+                    MessageIdentity.fromDict(GSON.fromJson(args[1], JsonObject.class));
+            if (identity == null) {
+                System.err.println("bad identity: " + args[1]);
+                System.exit(2);
+            }
+            UnsClass cls = UnsClass.fromToken(args[2]);
+            if (cls == null) {
+                System.err.println("bad class: " + args[2]);
+                System.exit(2);
+            }
+            String channel = args.length > 3 ? args[3] : null;
+            Uns uns = new Uns(identity, false);
+            String topic = channel == null ? uns.topic(cls) : uns.topic(cls, channel);
+            StandaloneMessagingProvider prov = provider("unspub");
+            JsonObject body = new JsonObject();
+            body.addProperty("from", LANG);
+            Message msg = MessageBuilder.create("UnsInterop", "1.0")
+                    .withPayload(body).withIdentity(identity).build();
+            prov.publish(topic, msg);
+            Thread.sleep(500);
+            JsonObject out = new JsonObject();
+            out.addProperty("ok", true);
+            out.addProperty("topic", topic);
+            out.add("envelope", msg.toDict());
+            System.out.println(out);
+            prov.close();
+        } else if (role.equals("uns-sub")) {
+            // uns-sub <topic> — receive one envelope and print its parsed identity.
+            String topic = args[1];
+            StandaloneMessagingProvider prov = provider("unssub");
+            final CountDownLatch latch = new CountDownLatch(1);
+            final Message[] box = new Message[1];
+            prov.subscribe(topic, (t, m) -> {
+                box[0] = m;
+                latch.countDown();
+            }, 1);
+            System.out.println("READY");
+            System.out.flush();
+            JsonObject out = new JsonObject();
+            if (!latch.await(10, TimeUnit.SECONDS)) {
+                out.addProperty("ok", false);
+                out.addProperty("error", "timeout");
+                System.out.println(out);
+                System.exit(1);
+            }
+            MessageIdentity identity = box[0].getIdentity();
+            boolean ok = identity != null;
+            out.addProperty("ok", ok);
+            out.add("identity", identity == null ? null : identity.toDict());
+            out.add("body", asElement(box[0].getBody()));
+            System.out.println(out);
+            prov.close();
+            System.exit(ok ? 0 : 1);
+        } else if (role.equals("uns-guard")) {
+            // uns-guard — the reserved-class guard lives on MessagingClient (§4.1) and
+            // fires BEFORE the underlying provider is touched, so the protected test
+            // constructor (null provider, guard intact) proves the real guard without a
+            // broker connection.
+            MessagingClient client = new MessagingClient() { };
+            String topic = "ecv1/dev1/comp1/main/state";
+            JsonObject payload = new JsonObject();
+            payload.addProperty("from", LANG);
+            try {
+                client.publishRaw(topic, payload);
+            } catch (ReservedTopicException e) {
+                JsonObject out = new JsonObject();
+                out.addProperty("error", "ReservedTopicException");
+                out.addProperty("class", e.getClassToken());
+                out.addProperty("topic", e.getTopic());
+                System.out.println(out);
+                System.exit(3);
+            }
+            JsonObject out = new JsonObject();
+            out.addProperty("ok", true);
+            System.out.println(out);
+            System.exit(0);
         } else {
             System.err.println("unknown role: " + role);
             System.exit(2);

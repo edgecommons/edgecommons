@@ -12,16 +12,37 @@ local-only MQTT transport:
   python_node.py request <request_topic> <token>
       Send a request {"token": <token>, "from": "python"} and wait for the reply.
       Prints one JSON line and exits 0 on a correlated, well-formed reply, else 1.
+
+UNS roles (M14 — UNS-CANONICAL-DESIGN §7):
+
+  python_node.py uns-pub <identityJson> <class> [channel]
+      Parse the wire-form identity with the lib's lenient parser, mint the topic
+      with the real Uns builder (includeRoot=false), build a message stamped with
+      that identity via the real MessageBuilder, publish it, and print one JSON
+      line {"ok": true, "topic": <topic>, "envelope": <wire JSON>}.
+
+  python_node.py uns-sub <topic>
+      Subscribe to <topic> (prints READY), wait for one envelope, and print
+      {"ok": <identity parsed>, "identity": <identity dict|null>, "body": <body>}.
+
+  python_node.py uns-guard
+      Attempt a raw publish to the reserved-class topic ecv1/dev1/comp1/main/state
+      through the guarded public MessagingClient surface; exits NON-ZERO printing
+      the reserved-topic error name. (The guard fires before the provider is
+      touched, so this role needs no broker connection.)
 """
 import json
 import os
 import sys
 import tempfile
+import threading
 import time
 
 from ggcommons.messaging.messaging_config import MessagingConfiguration
 from ggcommons.messaging.providers.standalone_provider import StandaloneProvider
 from ggcommons.messaging.message_builder import MessageBuilder
+from ggcommons.messaging.identity import MessageIdentity
+from ggcommons.uns import Uns, UnsClass
 
 LANG = "python"
 HOST = os.environ.get("GGCOMMONS_IT_MQTT_HOST", "localhost")
@@ -148,6 +169,85 @@ def run_raw_pub(topic, token):
         prov.disconnect()
 
 
+def run_uns_pub(identity_json, cls_token, channel=None):
+    """Publish one envelope stamped with the given identity on the Uns-minted topic."""
+    identity = MessageIdentity.from_dict(json.loads(identity_json))
+    if identity is None:
+        print(json.dumps({"ok": False, "error": "bad identity"}), flush=True)
+        return 2
+    cls = UnsClass.from_token(cls_token)
+    if cls is None:
+        print(json.dumps({"ok": False, "error": f"bad class '{cls_token}'"}), flush=True)
+        return 2
+    # The real topic builder, rootless (includeRoot=false) like the vectors/interop suite.
+    topic = Uns(identity, False).topic(cls, channel if channel else None)
+    prov = _provider("unspub")
+    try:
+        msg = (
+            MessageBuilder.create("UnsInterop", "1.0")
+            .with_payload({"from": LANG})
+            .with_identity(identity)
+            .build()
+        )
+        prov.publish(topic, msg)
+        time.sleep(0.5)  # let the QoS-0 publish drain before disconnect
+        print(json.dumps({"ok": True, "topic": topic, "envelope": msg.to_dict()}),
+              flush=True)
+        return 0
+    finally:
+        prov.disconnect()
+
+
+def run_uns_sub(topic):
+    """Receive one envelope on <topic> and print its parsed top-level identity."""
+    prov = _provider("unssub")
+    state = {}
+    got = threading.Event()
+
+    def handler(_t, m):
+        state["msg"] = m
+        got.set()
+
+    prov.subscribe(topic, handler)
+    print("READY", flush=True)
+    try:
+        if not got.wait(10):
+            print(json.dumps({"ok": False, "error": "timeout"}), flush=True)
+            return 1
+        msg = state["msg"]
+        identity = msg.get_identity()
+        ok = identity is not None
+        print(json.dumps({
+            "ok": ok,
+            "identity": identity.to_dict() if identity else None,
+            "body": msg.get_body(),
+        }), flush=True)
+        return 0 if ok else 1
+    finally:
+        prov.disconnect()
+
+
+def run_uns_guard():
+    """Attempt a reserved-class publish through the guarded public surface (must fail)."""
+    from ggcommons.messaging.errors import ReservedTopicError
+    from ggcommons.messaging.messaging_client import MessagingClient
+
+    topic = "ecv1/dev1/comp1/main/state"
+    try:
+        # The guard (§4.1) fires before the provider is dereferenced, so no broker
+        # connection (and no MessagingClient.init) is needed to prove it.
+        MessagingClient.publish_raw(topic, {"from": LANG})
+    except ReservedTopicError as e:
+        print(json.dumps({
+            "error": "ReservedTopicError",
+            "class": e.class_token,
+            "topic": e.topic,
+        }), flush=True)
+        return 3
+    print(json.dumps({"ok": True, "error": None}), flush=True)
+    return 0
+
+
 if __name__ == "__main__":
     role = sys.argv[1]
     if role == "responder":
@@ -158,6 +258,13 @@ if __name__ == "__main__":
         sys.exit(run_raw_sub(sys.argv[2], sys.argv[3]))
     elif role == "raw-pub":
         sys.exit(run_raw_pub(sys.argv[2], sys.argv[3]))
+    elif role == "uns-pub":
+        sys.exit(run_uns_pub(sys.argv[2], sys.argv[3],
+                             sys.argv[4] if len(sys.argv) > 4 else None))
+    elif role == "uns-sub":
+        sys.exit(run_uns_sub(sys.argv[2]))
+    elif role == "uns-guard":
+        sys.exit(run_uns_guard())
     else:
         sys.stderr.write(f"unknown role: {role}\n")
         sys.exit(2)
