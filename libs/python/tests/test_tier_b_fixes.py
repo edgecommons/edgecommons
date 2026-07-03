@@ -2,7 +2,6 @@
 
 Covers:
 - heartbeat_config.to_dict() no longer crashes and round-trips
-- HeartbeatConfiguration default targets are not shared across instances
 - MessageHeader.from_dict() without a reply_to does not raise UnboundLocalError
 - ConfigManager rebuilds the instance map on reload (stale instances removed)
 """
@@ -13,27 +12,31 @@ from ggcommons.messaging.message import MessageHeader
 
 def test_heartbeat_to_dict_round_trips():
     src = {
+        "enabled": True,
         "intervalSecs": 7,
         "measures": {
             "cpu": True, "memory": False, "disk": True,
             "files": True, "threads": False, "fds": True,
         },
-        "targets": [{"type": "metric"}],
+        "destination": "iotcore",
     }
     hb = HeartbeatConfiguration(src)
     d = hb.to_dict()  # previously raised AttributeError/TypeError
+    assert d["enabled"] is True
     assert d["intervalSecs"] == 7
     assert d["measures"] == src["measures"]
-    assert d["targets"] == src["targets"]
+    assert d["destination"] == "iotcore"
     # Feeding to_dict() output back in reproduces the same dict.
     assert HeartbeatConfiguration(d).to_dict() == d
 
 
-def test_heartbeat_default_targets_not_shared():
-    a = HeartbeatConfiguration(None)
-    b = HeartbeatConfiguration(None)
-    a.get_targets().append({"type": "extra"})
-    assert len(b.get_targets()) == 1, "mutating one instance must not corrupt the default"
+def test_heartbeat_defaults_on_5s_local():
+    # UNS-CANONICAL-DESIGN §4.3 / D-U14: on / 5 s / local; targets[] is removed.
+    hb = HeartbeatConfiguration(None)
+    assert hb.is_enabled() is True
+    assert hb.get_interval_secs() == 5
+    assert hb.get_destination() == "local"
+    assert not hasattr(hb, "get_targets")
 
 
 def test_message_header_from_dict_without_reply_to():

@@ -2,180 +2,104 @@
 
 ## 1. Overview
 
-The heartbeat system is a component monitoring solution that provides real-time health and status information for Greengrass components. It enables operational visibility by regularly emitting metrics about component health, resource utilization, and system status. This system is essential for:
-- Monitoring component health and liveness
-- Tracking resource utilization
-- Early detection of potential issues
-- Facilitating component observability in distributed systems
+The heartbeat is the library-owned liveness signal of every component (UNS-CANONICAL-DESIGN §4.3).
+Each tick it does two independent things:
+
+1. **State keepalive** — publishes a `state` envelope to the component's UNS state topic
+   `ecv1/{device}/{component}/main/state` (rooted form `ecv1/{site}/{device}/…` when
+   `topic.includeRoot` is true). Header `name` is `"state"`; the body is
+   `{"status": "RUNNING", "uptimeSecs": <seconds since start>}`. On graceful shutdown
+   (`GGCommons.shutdown()` / SIGTERM, or `EnhancedHeartbeat.stop()`) a best-effort
+   `{"status": "STOPPED"}` state is published once.
+2. **System measures** — the enabled measures (CPU, memory, disk, threads, files, fds) are emitted
+   as a metric named **`sys`** through the normal metric subsystem, so they route to whatever
+   `metricEmission` target is configured (log, messaging, CloudWatch, EMF, prometheus). See the
+   [metric emission documentation](metric-emission.md).
+
+The `state` UNS class is **reserved** (library-owned): components cannot publish to it directly —
+the reserved-class publish guard on `MessagingClient` rejects it (`ReservedTopicError`); the
+heartbeat publishes through the library-internal `MessagingClient._publish_reserved*` seam. See
+[messaging.md](messaging.md).
 
 ## 2. Behavior
 
-When a component utilizes the heartbeat system:
-
-- Heartbeats automatically begin at component initialization
-- Heartbeats are emitted on a configurable schedule (default: every 30 seconds)
-- Each heartbeat can include the following metrics:
-  - CPU usage (percentage)
-  - Memory usage (megabytes)
-  - Thread count
-  - Open file count
-  - File descriptor count (handles on Windows)
-  - Disk usage (total, used, free in gigabytes)
-  - System timestamps
-  - Component identification information
-
-The system automatically manages the timing and collection of these metrics, requiring minimal intervention once configured.
+- The heartbeat starts automatically at component initialization and is **on by default**
+  (`enabled: true`, every 5 seconds, keepalive to the local bus — D-U14/M11).
+- The keepalive and the `sys` metric are each best-effort per tick: a failure in one never
+  suppresses the other, and a failed tick never cancels future ticks.
+- Configuration hot-reloads reschedule the loop (interval/enabled/measures/destination changes
+  apply live).
 
 ## 3. Configuration
 
-The heartbeat system supports flexible configuration through JSON, with two main target types and various metric collection options.
+The legacy `heartbeat.targets[]` array (per-target topic/destination overrides) is **removed** —
+hard cut. The section is now:
 
-### Target Types
-
-1. **Metric Target** (`"type": "metric"`)
-   - Emits heartbeats through the metric emission system
-   - No additional configuration required
-   - For detailed metric emission configuration, see [metric emission documentation](metric-emission.md)
-
-2. **Messaging Target** (`"type": "messaging"`)
-   - Publishes heartbeats through the messaging system
-   - Configuration options:
-     - `destination`: Specifies the message destination ("ipc" by default)
-     - `topic`: Topic pattern for message publishing (default: "heartbeat/{ThingName}/{ComponentName}")
-
-### Metric Collection Options
-
-Configure which metrics to collect using the `measures` object:
-- `cpu`: CPU usage monitoring (default: true)
-- `memory`: Memory usage monitoring (default: true)
-- `disk`: Disk usage monitoring (default: false)
-- `threads`: Thread count monitoring (default: false)
-- `files`: Open file count monitoring (default: false)
-- `fds`: File descriptor count monitoring (default: false)
-
-Additional configuration:
-- `intervalSecs`: Heartbeat emission interval in seconds (default: 30, minimum: 1)
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `enabled` | boolean | `true` | Whether the heartbeat (keepalive + `sys` metric) runs. |
+| `intervalSecs` | integer ≥ 1 | `5` | Tick interval in seconds. |
+| `measures` | object | cpu+memory on | Which system measures the `sys` metric carries: `cpu`, `memory`, `disk`, `threads`, `files`, `fds` (booleans). |
+| `destination` | `"local"` \| `"iotcore"` | `"local"` | Transport of the **state keepalive only**. The measures always route through the metric subsystem's own target. |
 
 ## 4. Sample Configurations
 
-### Sample 1: Basic Metric Monitoring
+### Sample 1: Defaults (on / 5 s / local)
+
 ```json
 {
-  "heartbeat": {
-    "intervalSecs": 30,
-    "measures": {
-      "cpu": true,
-      "memory": true,
-      "disk": false,
-      "threads": false,
-      "files": false,
-      "fds": false
-    },
-    "targets": [
-      {
-        "type": "metric"
-      }
-    ]
-  }
+    "heartbeat": {}
 }
 ```
-This configuration provides basic component monitoring with CPU and memory metrics emitted every 30 seconds through the metric emission system.
 
-### Sample 2: Comprehensive Monitoring with Multiple Targets
+Publishes the `RUNNING` keepalive to `ecv1/{device}/{component}/main/state` every 5 seconds and
+emits `sys` with CPU + memory through the configured metric target. (Omitting the section entirely
+behaves the same.)
+
+### Sample 2: Comprehensive measures at 30 s
+
 ```json
 {
-  "heartbeat": {
-    "intervalSecs": 60,
-    "measures": {
-      "cpu": true,
-      "memory": true,
-      "disk": true,
-      "threads": true,
-      "files": true,
-      "fds": true
-    },
-    "targets": [
-      {
-        "type": "metric"
-      },
-      {
-        "type": "messaging",
-        "config": {
-          "destination": "ipc",
-          "topic": "heartbeat/{ThingName}/{ComponentName}/detailed"
+    "heartbeat": {
+        "intervalSecs": 30,
+        "measures": {
+            "cpu": true,
+            "memory": true,
+            "disk": true,
+            "threads": true,
+            "files": true,
+            "fds": true
         }
-      }
-    ]
-  }
+    }
 }
 ```
-This configuration enables comprehensive monitoring with all available metrics, emitted every 60 seconds to both the metric system and a custom messaging topic.
 
-### Sample 3: High-Frequency Memory Monitoring
+### Sample 3: Keepalive to AWS IoT Core
+
 ```json
 {
-  "heartbeat": {
-    "intervalSecs": 5,
-    "measures": {
-      "cpu": false,
-      "memory": true,
-      "disk": false,
-      "threads": false,
-      "files": false,
-      "fds": false
-    },
-    "targets": [
-      {
-        "type": "messaging",
-        "config": {
-          "destination": "ipc",
-          "topic": "monitoring/{ThingName}/{ComponentName}/memory"
-        }
-      }
-    ]
-  }
+    "heartbeat": {
+        "intervalSecs": 60,
+        "destination": "iotcore"
+    }
 }
 ```
-This configuration focuses on memory monitoring with high-frequency updates (every 5 seconds) published to a dedicated messaging topic.
 
-### Sample 4: Multi-Target Resource Monitoring
+The state keepalive goes to IoT Core (QoS 1); the `sys` measures still follow `metricEmission`.
+
+### Sample 4: Disabled
+
 ```json
 {
-  "heartbeat": {
-    "intervalSecs": 15,
-    "measures": {
-      "cpu": true,
-      "memory": true,
-      "disk": true,
-      "threads": true,
-      "files": false,
-      "fds": false
-    },
-    "targets": [
-      {
-        "type": "metric"
-      },
-      {
-        "type": "messaging",
-        "config": {
-          "destination": "ipc",
-          "topic": "monitoring/component-health"
-        }
-      },
-      {
-        "type": "messaging",
-        "config": {
-          "destination": "iot_core",
-          "topic": "device/{ThingName}/health"
-        }
-      }
-    ]
-  }
+    "heartbeat": {
+        "enabled": false
+    }
 }
 ```
-This configuration monitors CPU, memory, disk, and threads every 15 seconds, publishing to the metric system and two different messaging destinations (local IPC and IoT Core) for comprehensive monitoring coverage.
 
-## 5. Metric Details
+No keepalive, no `sys` metric (and no `STOPPED` state on shutdown — nothing was running).
+
+## 5. Measure Details
 
 ### CPU Usage
 - **Unit**: Percent
@@ -190,7 +114,7 @@ This configuration monitors CPU, memory, disk, and threads every 15 seconds, pub
 
 ### Disk Usage
 - **Units**: Gigabytes (GB)
-- **Metrics**: 
+- **Metrics**:
   - `disk_total`: Total disk space
   - `disk_used`: Used disk space
   - `disk_free`: Available disk space
@@ -211,119 +135,25 @@ This configuration monitors CPU, memory, disk, and threads every 15 seconds, pub
 - **Description**: Number of file descriptors (Linux/Mac) or handles (Windows)
 - **Implementation**: Uses `psutil.Process.num_fds()` or `psutil.Process.num_handles()`
 
-## 6. Integration with Other Systems
+## 6. Consuming heartbeats
 
-### Metric Emission Integration
-The heartbeat system integrates seamlessly with the metric emission system. When using the "metric" target, heartbeats are processed through the same metric emission pipeline as custom application metrics.
+Subscribe to the UNS state class, e.g. all components on all devices:
 
-### Messaging Integration
-When using messaging targets, heartbeats are published as structured messages through the messaging system, supporting both local IPC and IoT Core destinations.
+```
+ecv1/+/+/+/state
+```
 
-### Configuration Change Support
-The heartbeat system responds to configuration changes through the configuration change listener system, allowing dynamic reconfiguration without component restart.
+or via the topic builder:
+
+```python
+from ggcommons import UnsClass, UnsScope
+
+gg.uns().filter(UnsClass.STATE, UnsScope.all())   # -> "ecv1/+/+/+/state"
+```
 
 ## 7. Usage in Code
 
-### Accessing Heartbeat Service
-```python
-from ggcommons.builders import GGCommonsBuilder
-from ggcommons.interfaces import IConfigurationService
-
-# Initialize GGCommons (heartbeat starts automatically)
-ggcommons = GGCommonsBuilder.create("com.example.MyComponent") \
-    .with_args(args) \
-    .build()
-
-# Heartbeat is automatically initialized and started
-# No additional code required for basic operation
-```
-
-### Custom Heartbeat Handling
-```python
-from ggcommons.heartbeat.heartbeat import Heartbeat
-from ggcommons.config.manager.configuration_change_listener import ConfigurationChangeListener
-
-class CustomHeartbeatListener(ConfigurationChangeListener):
-    def on_configuration_change(self, configuration):
-        # Handle heartbeat configuration changes
-        print("Heartbeat configuration updated")
-        return True
-
-# The heartbeat system is automatically managed by GGCommons
-# Custom listeners can be added for configuration changes
-config_service = ggcommons.get_service(IConfigurationService)
-config_service.add_config_change_listener(CustomHeartbeatListener())
-```
-
-## 8. Best Practices
-
-### Interval Selection
-- **Development**: Use shorter intervals (5-10 seconds) for debugging
-- **Production**: Use longer intervals (30-60 seconds) to reduce overhead
-- **High-frequency monitoring**: Only enable specific metrics needed
-- **Resource-constrained environments**: Increase intervals to reduce CPU/network usage
-
-### Metric Selection
-- **Basic monitoring**: Enable CPU and memory only
-- **Comprehensive monitoring**: Enable all metrics for troubleshooting
-- **Performance-sensitive**: Disable file and thread counting for better performance
-- **Disk monitoring**: Enable only if disk usage is a concern
-
-### Target Configuration
-- **Development**: Use messaging targets for real-time visibility
-- **Production**: Use metric targets for CloudWatch integration
-- **Hybrid**: Use both targets for comprehensive monitoring
-- **Network-constrained**: Prefer local messaging over IoT Core
-
-### Template Variables
-- Use `{ThingName}` and `{ComponentName}` in topic patterns
-- Leverage custom tags for environment-specific routing
-- Test template resolution in development environments
-
-## 9. Troubleshooting
-
-### Common Issues
-- **Heartbeats not appearing**: Check target configuration and metric emission setup
-- **High CPU usage**: Reduce heartbeat frequency or disable expensive metrics
-- **Memory leaks**: Monitor memory usage trends over time
-- **Network issues**: Check IoT Core connectivity for messaging targets
-
-### Debug Configuration
-```json
-{
-  "logging": {
-    "level": "DEBUG",
-    "loggers": {
-      "ggcommons.heartbeat": "DEBUG"
-    }
-  },
-  "heartbeat": {
-    "intervalSecs": 5,
-    "measures": {
-      "cpu": true,
-      "memory": true
-    },
-    "targets": [
-      {
-        "type": "messaging",
-        "config": {
-          "destination": "ipc",
-          "topic": "debug/heartbeat"
-        }
-      }
-    ]
-  }
-}
-```
-
-### Monitoring Heartbeat Health
-- Monitor heartbeat message timestamps for component liveness
-- Set up alerts for missing heartbeats in production
-- Use heartbeat data for capacity planning and resource optimization
-- Track trends in resource usage over time
-
-### Performance Considerations
-- File and thread counting can be expensive on some systems
-- Disk usage monitoring involves filesystem operations
-- Network publishing adds latency and bandwidth usage
-- Consider the trade-off between monitoring detail and system performance
+The heartbeat is automatically initialized and started by `GGCommonsBuilder…build()` — no
+additional code is required for basic operation. It reacts to configuration hot reloads through
+the configuration-change listener system, so `enabled`/`intervalSecs`/`measures`/`destination`
+changes apply without a restart.

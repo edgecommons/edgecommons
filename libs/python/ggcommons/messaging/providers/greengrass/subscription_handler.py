@@ -89,7 +89,7 @@ class SubscriptionHandler(metaclass=abc.ABCMeta):
                 f"Exception {error} decoding payload: {event.binary_message.message}"
             )
             logger.error(
-                f"Probable cause: common messaging library supports only json data"
+                "Probable cause: common messaging library supports only json data"
             )
 
     def _process_queue(self):

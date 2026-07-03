@@ -1,8 +1,16 @@
 """
 Enhanced heartbeat system with service injection and improved lifecycle management.
 
-This module provides an enhanced heartbeat implementation with dependency injection,
-better error handling, and improved timer management.
+The component heartbeat (UNS-CANONICAL-DESIGN §4.3, D-U14/D-U20): each tick it
+publishes a UNS ``state`` keepalive to ``ecv1/{device}/{component}/main/state`` —
+header name ``state``, body ``{"status":"RUNNING","uptimeSecs":<n>}`` — through the
+privileged ``MessagingClient._publish_reserved*`` seam (the ``state`` class is
+reserved), and emits the enabled system measures (cpu/memory/disk/...) as a metric
+named ``sys`` through the normal metric subsystem (D6 — the measures keep the metric
+subsystem's full sink routing). On graceful shutdown (:meth:`EnhancedHeartbeat.stop`)
+a best-effort ``{"status":"STOPPED"}`` state is published. ``heartbeat.destination``
+(``local`` | ``iotcore``) selects the keepalive's transport only. Defaults: on / 5 s /
+local (M11).
 """
 
 import logging
@@ -11,6 +19,7 @@ import time
 from typing import Optional, Dict, Any, TYPE_CHECKING
 from ggcommons.config.manager.configuration_change_listener import ConfigurationChangeListener
 from ggcommons.heartbeat.heartbeat_monitor import HeartbeatMonitor
+from ggcommons.uns import Uns, UnsClass
 
 if TYPE_CHECKING:
     from ggcommons.config.manager.config_manager import ConfigManager
@@ -21,7 +30,7 @@ logger = logging.getLogger(__name__)
 class EnhancedHeartbeat(ConfigurationChangeListener):
     """
     Enhanced heartbeat implementation with service injection and improved lifecycle management.
-    
+
     Features:
     - Dependency injection for messaging and metric services
     - Better timer lifecycle management
@@ -29,10 +38,13 @@ class EnhancedHeartbeat(ConfigurationChangeListener):
     - Thread-safe configuration updates
     - Proper resource cleanup
     """
-    
-    MESSAGE_NAME = "Heartbeat"
-    MESSAGE_VERSION = "1.0.0"
-    
+
+    #: The state keepalive's envelope header name (§4.3).
+    STATE_MESSAGE_NAME = "state"
+    STATE_MESSAGE_VERSION = "1.0"
+    #: The metric the heartbeat measures are emitted as (§4.3, D-U20/D6).
+    SYS_METRIC_NAME = "sys"
+
     def __init__(self, config_service: "ConfigManager"):
         """
         Initialize enhanced heartbeat with the configuration manager.
@@ -62,10 +74,16 @@ class EnhancedHeartbeat(ConfigurationChangeListener):
         self._heartbeat_monitor: Optional[HeartbeatMonitor] = None
         self._timer_lock = threading.RLock()
         self._running = False
-        
+        # Monotonic start reference for the keepalive's uptimeSecs.
+        self._start_monotonic = time.monotonic()
+        # Ensures the best-effort STOPPED state is published at most once.
+        self._stopped_published = False
+        # WARN-once flag for the no-resolved-identity (test/subclass bring-up) case.
+        self._warned_no_identity = False
+
         # Register for configuration changes
         self._config_service.add_config_change_listener(self)
-        
+
         # Initialize heartbeat
         self._initialize_heartbeat()
         
@@ -97,28 +115,39 @@ class EnhancedHeartbeat(ConfigurationChangeListener):
         self._define_heartbeat_metric()
         
     def _initialize_heartbeat(self) -> None:
-        """Initialize the heartbeat system with current configuration."""
+        """(Re)initialize the heartbeat from the current configuration: stops any
+        running loop and, when ``heartbeat.enabled`` (the default), starts the periodic
+        tick at ``heartbeat.intervalSecs``."""
         try:
             # Get heartbeat configuration
             heartbeat_config = self._get_heartbeat_config()
             if heartbeat_config is None:
                 logger.warning("No heartbeat configuration found, using defaults")
                 return
-                
-            # Create heartbeat monitor
-            self._heartbeat_monitor = HeartbeatMonitor(self._config_service)
-            
-            # Define metrics
-            self._define_heartbeat_metric()
-            
-            # Start heartbeat timer
-            self._start_heartbeat_timer()
-            
+
+            with self._timer_lock:
+                if not heartbeat_config.is_enabled():
+                    self._stop_heartbeat_timer()
+                    logger.info("Heartbeat disabled by configuration (heartbeat.enabled=false)")
+                    return
+
+                # Create heartbeat monitor
+                self._heartbeat_monitor = HeartbeatMonitor(self._config_service)
+
+                # Define metrics
+                self._define_heartbeat_metric()
+
+                # Start heartbeat timer
+                self._start_heartbeat_timer()
+
             interval = heartbeat_config.get_interval_secs() if heartbeat_config else 5
-            logger.info(f"Enhanced heartbeat initialized with {interval}s interval")
+            logger.info(
+                f"Enhanced heartbeat initialized with {interval}s interval"
+                f" (state keepalive -> {heartbeat_config.get_destination()})"
+            )
             logger.debug(f"Messaging service available: {self._messaging_service is not None}")
             logger.debug(f"Metric service available: {self._metric_service is not None}")
-            
+
         except Exception as e:
             logger.error(f"Failed to initialize enhanced heartbeat: {e}")
             raise
@@ -158,8 +187,8 @@ class EnhancedHeartbeat(ConfigurationChangeListener):
             except Exception:
                 namespace = "GGCommons/Heartbeat"
 
-            # Build heartbeat metric
-            metric = MetricBuilder.create("heartbeat") \
+            # Build the `sys` metric — the heartbeat measures (§4.3, D-U20/D6).
+            metric = MetricBuilder.create(self.SYS_METRIC_NAME) \
                 .with_namespace(namespace) \
                 .with_thing_name(self._config_service.get_thing_name()) \
                 .with_component_name(self._config_service.get_component_name()) \
@@ -174,8 +203,8 @@ class EnhancedHeartbeat(ConfigurationChangeListener):
                 .build()
                 
             self._metric_service.define_metric(metric)
-            logger.debug("Heartbeat metric defined successfully")
-            
+            logger.debug(f"Heartbeat '{self.SYS_METRIC_NAME}' metric defined successfully")
+
         except Exception as e:
             logger.error(f"Failed to define heartbeat metric: {e}")
             
@@ -227,116 +256,89 @@ class EnhancedHeartbeat(ConfigurationChangeListener):
                 logger.error(f"Error in heartbeat loop: {e}")
 
     def _publish_heartbeat(self) -> None:
-        """Publish heartbeat data to configured targets."""
+        """One heartbeat tick (§4.3): the ``state`` keepalive
+        (``{"status":"RUNNING","uptimeSecs":n}``) plus the measures as the ``sys``
+        metric. Each half is best-effort — a failure in one must not suppress the
+        other."""
         try:
-            if self._heartbeat_monitor is None:
-                logger.warning("Heartbeat monitor not initialized")
-                return
-                
-            # Get system stats
-            stats = self._heartbeat_monitor.get_stats()
-            
-            # Get heartbeat configuration
-            heartbeat_config = self._get_heartbeat_config()
-            if heartbeat_config is None:
-                return
-                
-            targets = heartbeat_config.get_targets() if heartbeat_config else []
-            logger.debug(f"Publishing heartbeat to {len(targets)} targets")
-            
-            # Publish to each configured target
-            for target in targets:
-                target_type = target.get('type', 'messaging')
-                logger.debug(f"Processing heartbeat target type: {target_type}")
-                
-                if target_type == 'messaging':
-                    self._publish_to_messaging(stats, target)
-                elif target_type == 'metric':
-                    self._publish_to_metrics(stats)
-                else:
-                    logger.warning(f"Unknown heartbeat target type: {target_type}")
-                    
-        except Exception as e:
-            logger.error(f"Failed to publish heartbeat: {e}")
-            
-    def _publish_to_messaging(self, stats: Dict[str, Any], target_config: Dict[str, Any]) -> None:
-        """
-        Publish heartbeat data to messaging target.
-        
-        Args:
-            stats: System statistics data
-            target_config: Target configuration
-        """
+            self._publish_state("RUNNING", include_uptime=True)
+        except Exception as e:  # noqa: BLE001 - each half is best-effort
+            logger.warning(f"Heartbeat state keepalive failed: {e}")
         try:
-            if self._messaging_service is None:
-                logger.warning("No messaging service available for heartbeat - service not injected yet")
-                return
-            
-            logger.debug("Publishing heartbeat via messaging service")
-                
-            # Import here to avoid circular imports
-            from ggcommons.messaging.message_builder import MessageBuilder
-            
-            # Get topic and destination from config
-            config = target_config.get('config', {})
-            topic = config.get('topic', 'ggcommons/{ThingName}/{ComponentName}/heartbeat')
-            destination = config.get('destination', 'ipc')
+            self._emit_sys_metric()
+        except Exception as e:  # noqa: BLE001 - each half is best-effort
+            logger.warning(f"Heartbeat '{self.SYS_METRIC_NAME}' metric emit failed: {e}")
 
-            # Resolve template variables
-            resolved_topic = self._config_service.resolve_template(topic)
+    def _publish_state(self, status: str, include_uptime: bool) -> None:
+        """Publishes one ``state`` envelope to the component's UNS state topic through
+        the privileged seam. No-op (WARN once) when the component identity is not
+        resolved (mock/test bring-up — a real ``ConfigManager`` always resolves one).
 
-            # Build heartbeat message (the config service IS the ConfigManager).
-            message = MessageBuilder.create(self.MESSAGE_NAME, self.MESSAGE_VERSION) \
-                .with_payload(stats) \
-                .with_config(self._config_service) \
-                .build()
-
-            # Route on destination. Canonical values are "ipc" (local/IPC transport)
-            # and "iot_core" (IoT Core); the legacy "local"/"iotcore" spellings are
-            # also accepted, for parity with Java/Rust and the config schema.
-            dest = destination.lower()
-            if dest in ('ipc', 'local'):
-                self._messaging_service.publish(resolved_topic, message)
-            elif dest in ('iot_core', 'iotcore'):
-                from awsiot.greengrasscoreipc.model import QOS
-                self._messaging_service.publish_to_iot_core(resolved_topic, message, QOS.AT_LEAST_ONCE)
-            else:
-                logger.warning(f"Unrecognized heartbeat messaging destination: {destination}")
-                return
-
-            logger.info(f"Published heartbeat to {destination} topic: {resolved_topic}")
-            
-        except Exception as e:
-            logger.error(f"Failed to publish heartbeat to messaging: {e}")
-            
-    def _publish_to_metrics(self, stats: Dict[str, Any]) -> None:
+        :param status: ``"RUNNING"`` or ``"STOPPED"``
+        :param include_uptime: whether the body carries ``uptimeSecs`` (the RUNNING
+            keepalive)
         """
-        Publish heartbeat data to metrics target.
-        
-        Args:
-            stats: System statistics data
-        """
-        try:
-            if self._metric_service is None:
-                logger.debug("No metric service available for heartbeat")
-                return
-                
-            # Flatten stats for metric emission
-            measure_values = {}
-            for category, values in stats.items():
-                if isinstance(values, dict):
-                    for measure_name, measure_value in values.items():
-                        try:
-                            measure_values[measure_name] = float(measure_value)
-                        except (ValueError, TypeError):
-                            logger.warning(f"Invalid metric value for {measure_name}: {measure_value}")
-                            
-            if measure_values:
-                self._metric_service.emit_metric_now("heartbeat", measure_values)
-                logger.debug(f"Published heartbeat metrics: {list(measure_values.keys())}")
-                
-        except Exception as e:
-            logger.error(f"Failed to publish heartbeat to metrics: {e}")
+        if self._messaging_service is None:
+            logger.warning("No messaging service available for heartbeat - service not injected yet")
+            return
+        identity = self._config_service.get_component_identity()
+        if identity is None:
+            if not self._warned_no_identity:
+                self._warned_no_identity = True
+                logger.warning(
+                    "No resolved component identity - the heartbeat state keepalive is disabled"
+                )
+            return
+
+        # Import here to avoid circular imports
+        from ggcommons.messaging.message_builder import MessageBuilder
+
+        topic = Uns(identity, self._config_service.is_topic_include_root()).topic(UnsClass.STATE)
+
+        body: Dict[str, Any] = {"status": status}
+        if include_uptime:
+            body["uptimeSecs"] = int(time.monotonic() - self._start_monotonic)
+        message = MessageBuilder.create(self.STATE_MESSAGE_NAME, self.STATE_MESSAGE_VERSION) \
+            .with_payload(body) \
+            .with_config(self._config_service) \
+            .build()
+
+        # The state class is reserved (§4.1) - publish through the privileged seam
+        # (§4.2). heartbeat.destination selects the keepalive's transport only.
+        heartbeat_config = self._get_heartbeat_config()
+        destination = heartbeat_config.get_destination() if heartbeat_config else "local"
+        if destination and destination.lower() in ("iotcore", "iot_core"):
+            from awsiot.greengrasscoreipc.model import QOS
+            self._messaging_service._publish_reserved_to_iot_core(topic, message, QOS.AT_LEAST_ONCE)
+        else:
+            self._messaging_service._publish_reserved(topic, message)
+        logger.debug(f"Published heartbeat state '{status}' on topic: {topic}")
+
+    def _emit_sys_metric(self) -> None:
+        """Emits the enabled measures as the ``sys`` metric through the normal metric
+        subsystem (its configured target: messaging/cloudwatch/EMF/log/prometheus)."""
+        if self._metric_service is None:
+            logger.debug("No metric service available for heartbeat")
+            return
+        if self._heartbeat_monitor is None:
+            logger.warning("Heartbeat monitor not initialized")
+            return
+
+        stats = self._heartbeat_monitor.get_stats()
+
+        # Flatten stats for metric emission
+        measure_values = {}
+        for category, values in stats.items():
+            if isinstance(values, dict):
+                for measure_name, measure_value in values.items():
+                    try:
+                        measure_values[measure_name] = float(measure_value)
+                    except (ValueError, TypeError):
+                        logger.warning(f"Invalid metric value for {measure_name}: {measure_value}")
+
+        if measure_values:
+            self._metric_service.emit_metric_now(self.SYS_METRIC_NAME, measure_values)
+            logger.debug(f"Published heartbeat measures: {list(measure_values.keys())}")
             
     def on_configuration_change(self, configuration: Any) -> bool:
         """
@@ -378,17 +380,27 @@ class EnhancedHeartbeat(ConfigurationChangeListener):
             raise
             
     def stop(self) -> None:
-        """Stop the heartbeat system and cleanup resources."""
+        """Stop the heartbeat system and cleanup resources, publishing the best-effort
+        ``{"status":"STOPPED"}`` state (§4.3/D-U14 — at most once; failures are
+        swallowed, the shutdown must proceed)."""
         try:
             with self._timer_lock:
+                was_running = self._running
                 self._stop_heartbeat_timer()
-                
+
+            if was_running and not self._stopped_published:
+                self._stopped_published = True
+                try:
+                    self._publish_state("STOPPED", include_uptime=False)
+                except Exception as e:  # noqa: BLE001 - best-effort by design
+                    logger.debug(f"Best-effort STOPPED state publish failed: {e}")
+
             # Remove configuration listener
             if self._config_service:
                 self._config_service.remove_config_change_listener(self)
-                
+
             logger.info("Heartbeat stopped and cleaned up")
-            
+
         except Exception as e:
             logger.error(f"Error stopping heartbeat: {e}")
             

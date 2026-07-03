@@ -6,10 +6,11 @@
 import base64
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from uuid import uuid4
 from typing import Any, Optional, TYPE_CHECKING
 
+from ggcommons.messaging.identity import MessageIdentity
 from ggcommons.utils import Utils
 
 
@@ -88,8 +89,14 @@ class MessageHeader:
 
 @dataclass
 class MessageTags:
-    thing_name: Optional[str]
-    tags: Optional[dict] = None
+    """Free-form message metadata tags.
+
+    The legacy ``thing`` special-casing is removed (UNS-CANONICAL-DESIGN §1.1 — hard
+    cut): the publisher's device now travels in the top-level ``identity`` element. A
+    stray inbound ``thing`` key just lands in the generic tag map — no legacy shim.
+    """
+
+    tags: dict = field(default_factory=dict)
 
     def __post_init__(self):
         if self.tags is None:
@@ -99,31 +106,25 @@ class MessageTags:
     def from_config(config_service: 'ConfigManager'):
         tag_config = config_service.get_tag_config()
         if tag_config is not None:
-            return MessageTags(config_service.get_thing_name(), tag_config.to_dict())
+            return MessageTags(tag_config.to_dict())
         else:
-            return MessageTags(config_service.get_thing_name(), {})
+            return MessageTags({})
 
     @staticmethod
     def from_dict(src: dict):
-        thing = src.get("thing")
-        tags_dict = {k: v for k, v in src.items() if k != "thing"}
-        return MessageTags(thing, tags_dict)
+        return MessageTags(dict(src))
 
     def inject_tag(self, key: str, value: str):
         self.tags[key] = value
 
     def to_dict(self) -> dict:
-        result = dict(self.tags)
-        # Omit the "thing" key entirely when there is no thing name (rather than
-        # emitting "thing": null), matching the Java/Rust serialization.
-        if self.thing_name is not None:
-            result["thing"] = self.thing_name
-        return result
+        return dict(self.tags)
 
 
 @dataclass
 class Message:
     header: Optional[MessageHeader] = None
+    identity: Optional[MessageIdentity] = None
     tags: Optional[MessageTags] = None
     body: Any = None
     raw: Any = None
@@ -133,6 +134,9 @@ class Message:
             msg = {}
             if self.header is not None:
                 msg["header"] = self.header.to_dict()
+            # Canonical envelope member order: header, identity, tags, body.
+            if self.identity is not None:
+                msg["identity"] = self.identity.to_dict()
             if self.tags is not None:
                 msg["tags"] = self.tags.to_dict()
             msg["body"] = _encode_body(self.body)
@@ -147,6 +151,8 @@ class Message:
         msg = {}
         if self.header is not None:
             msg["header"] = self.header.to_dict()
+        if self.identity is not None:
+            msg["identity"] = self.identity.to_dict()
         if self.tags is not None:
             msg["tags"] = self.tags.to_dict()
         msg["body"] = _encode_body(self.body)
@@ -159,6 +165,13 @@ class Message:
 
     def get_header(self) -> MessageHeader:
         return self.header
+
+    def get_identity(self) -> Optional[MessageIdentity]:
+        """The UNS identity element of this message (``hier``/``path``/``component``/
+        ``instance``), or ``None`` when the message carries none (raw messages,
+        messages built without a config-bound builder, or a malformed inbound
+        identity)."""
+        return self.identity
 
     def get_tags(self) -> MessageTags:
         return self.tags
@@ -203,11 +216,15 @@ class Message:
             logger.debug(f"Message contents: {msg_contents}")
             if "header" in msg_contents:
                 message.header = MessageHeader.from_dict(msg_contents["header"])
+            if "identity" in msg_contents:
+                # Lenient: a malformed identity yields None + a WARN and the message
+                # still delivers (UNS-CANONICAL-DESIGN §1.2).
+                message.identity = MessageIdentity.from_dict(msg_contents["identity"])
             if "tags" in msg_contents:
                 message.tags = MessageTags.from_dict(msg_contents["tags"])
             if "body" in msg_contents:
                 message.body = msg_contents["body"]
-            if not any(key in msg_contents for key in ["header", "tags", "body"]):
+            if not any(key in msg_contents for key in ["header", "identity", "tags", "body"]):
                 logger.debug("Dict contained raw data: Assigning to raw")
                 message.raw = msg_contents
         else:

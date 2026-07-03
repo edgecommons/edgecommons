@@ -15,7 +15,7 @@ credentials module's style.
 """
 import logging
 import threading
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 
 from ..credentials import LocalVault, build_key_provider
 from .errors import ParameterError

@@ -1,8 +1,10 @@
 import logging
 import os
+import re
 import time
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
+from ggcommons.messaging.identity import HierEntry, MessageIdentity
 from ggcommons.platform.resolver import (
     ENV_K8S_NODE_NAME,
     ENV_K8S_POD_NAME,
@@ -40,6 +42,18 @@ def _sanitize(value: str) -> str:
     return "".join(result).replace("..", "_")
 
 
+# Strict UNS hierarchy level-name rule (future Parquet columns — keep it tight).
+_HIERARCHY_LEVEL_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
+
+# The schema default for messaging.requestTimeoutSeconds (seconds).
+DEFAULT_REQUEST_TIMEOUT_SECONDS = 30.0
+
+
+def _identity_error(detail: str) -> ValueError:
+    """The uniform fail-fast identity-resolution startup error."""
+    return ValueError(f"Component identity resolution failed: {detail}")
+
+
 class ConfigManager:
     def __init__(
         self,
@@ -72,7 +86,27 @@ class ConfigManager:
         self._validate_config = validate_config
         self._initializing = True
         self._config_source = "unknown"
-        
+        # The component's resolved UNS identity (hierarchy + identity values + device +
+        # component token, instance "main"), resolved ONCE by init() from the
+        # component's OWN config (no shared config) — see get_component_identity().
+        # None until init() runs (test/subclass bring-up without init keeps it None,
+        # mirroring the Java protected constructor).
+        self._component_identity: Optional[MessageIdentity] = None
+        # The raw effective config exactly as applied (get_effective_config()); the
+        # source for identity resolution and the cfg publisher.
+        self._raw_config: Optional[Dict[str, Any]] = None
+        # Whether UNS topics carry the first hierarchy value (site) after the ecv1 root
+        # — the top-level topic.includeRoot setting (UNS-CANONICAL-DESIGN §2.2 rule 6 /
+        # D-U11), default False. Parsed by _apply_config (a hot reload refreshes it).
+        # Effective in Uns only with a multi-level hierarchy (D-U25).
+        self._topic_include_root = False
+        # One-shot flag for the D-U25 includeRoot-with-single-level-hierarchy WARN.
+        self._warned_include_root_single_level = False
+        # The default request() deadline in seconds — messaging.requestTimeoutSeconds
+        # (UNS-CANONICAL-DESIGN §5 / D-U5), default 30; 0 disables. Late-bound onto the
+        # messaging client by GGCommons right after this manager is constructed.
+        self._messaging_request_timeout_seconds = DEFAULT_REQUEST_TIMEOUT_SECONDS
+
         if "." in component_name:
             self._component_name = component_name.rpartition(".")[-1]
         else:
@@ -83,19 +117,52 @@ class ConfigManager:
             config = self._load_configuration()
             if config is None:
                 config = {"component": {}}
-                
+
             # Validate configuration if enabled
             if self._validate_config:
                 self._validate_configuration(config)
-                
+
             self._apply_config(config)
+
+            # Resolve the component's UNS identity ONCE, from this component's own
+            # config (top-level `hierarchy` + `identity`), fail-fast on any
+            # inconsistency (UNS-CANONICAL-DESIGN §1.5).
+            self._component_identity = self._resolve_component_identity(config)
+
             logger.info("Configuration manager initialized successfully")
-            
+
         except Exception as e:
             logger.error(f"Failed to initialize configuration manager: {e}")
             raise
 
     def _apply_config(self, config: dict):
+        # Retain the raw effective config verbatim: the source for identity resolution
+        # and the effective-config (cfg) publisher (UNS-CANONICAL-DESIGN §4.3).
+        self._raw_config = config
+
+        # UNS topic options + the request() deadline default (re-parsed on hot reload).
+        self._topic_include_root = self._parse_topic_include_root(config)
+        # D-U25: includeRoot needs a level ABOVE the device to prepend — with a
+        # single-level hierarchy (the zero-config ["device"] default) hier[0] IS the
+        # device, so the setting is a no-op in Uns (prepending would duplicate the
+        # device). Tell the user once.
+        if (
+            self._topic_include_root
+            and not self._warned_include_root_single_level
+            and self._hierarchy_level_count(config) == 1
+        ):
+            self._warned_include_root_single_level = True
+            logger.warning(
+                "topic.includeRoot=true has no effect with a single-level hierarchy"
+                " (hierarchy.levels resolves to one level - the device): the site"
+                " position requires a level above the device, so UNS topics stay"
+                " rootless (D-U25). Declare a multi-level hierarchy.levels or remove"
+                " topic.includeRoot."
+            )
+        self._messaging_request_timeout_seconds = (
+            self._parse_messaging_request_timeout_seconds(config)
+        )
+
         # Tags first: the log file path template ({ThingName}/{ComponentName}/{tag})
         # is resolved during logging setup below, so tag_config must already exist.
         tag_json = config.get("tags")
@@ -195,6 +262,211 @@ class ConfigManager:
             logger.error(f"Failed to process configuration change: {e}")
             return False
 
+    @staticmethod
+    def _parse_topic_include_root(config: dict) -> bool:
+        """Parses the top-level ``topic.includeRoot`` flag (default ``False``). Lenient
+        like the other permissive subsystem sections: a missing/non-object ``topic`` or
+        a missing/non-boolean ``includeRoot`` yields the default."""
+        if not isinstance(config, dict):
+            return False
+        topic = config.get("topic")
+        if not isinstance(topic, dict):
+            return False
+        include_root = topic.get("includeRoot")
+        return include_root is True
+
+    @staticmethod
+    def _hierarchy_level_count(config: dict) -> int:
+        """Lenient ``hierarchy.levels`` entry count for the D-U25 config WARN: a
+        missing/malformed ``hierarchy`` section counts as the zero-config single-level
+        default (``["device"]``). Strict validation happens in
+        :meth:`_resolve_component_identity` (fail-fast at init); this helper must never
+        throw on shapes the WARN check sees first."""
+        if not isinstance(config, dict):
+            return 1
+        hierarchy = config.get("hierarchy")
+        if not isinstance(hierarchy, dict):
+            return 1
+        levels = hierarchy.get("levels")
+        if not isinstance(levels, list) or not levels:
+            return 1
+        return len(levels)
+
+    @staticmethod
+    def _parse_messaging_request_timeout_seconds(config: dict) -> float:
+        """Parses ``messaging.requestTimeoutSeconds`` (§5 / D-U5): a non-negative
+        number of seconds (fractions allowed), default 30. Lenient — a missing/
+        non-object ``messaging`` section, a missing/non-number value, or a negative
+        value (which the schema rejects at startup anyway) all yield the default.
+        ``0`` is a valid explicit value meaning "disabled"."""
+        if not isinstance(config, dict):
+            return DEFAULT_REQUEST_TIMEOUT_SECONDS
+        messaging = config.get("messaging")
+        if not isinstance(messaging, dict):
+            return DEFAULT_REQUEST_TIMEOUT_SECONDS
+        value = messaging.get("requestTimeoutSeconds")
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return DEFAULT_REQUEST_TIMEOUT_SECONDS
+        return DEFAULT_REQUEST_TIMEOUT_SECONDS if value < 0 else float(value)
+
+    def is_topic_include_root(self) -> bool:
+        """Whether UNS topics built by ``gg.uns()`` / ``gg.instance(id).uns()`` carry
+        the first hierarchy value (``site``) between the ``ecv1`` root and the device —
+        the top-level ``topic.includeRoot`` setting, default ``False``. Note that
+        ``Uns`` applies it only when the hierarchy is multi-level (D-U25)."""
+        return self._topic_include_root
+
+    def get_messaging_request_timeout(self) -> float:
+        """The default ``request()`` deadline resolved from
+        ``messaging.requestTimeoutSeconds`` (UNS-CANONICAL-DESIGN §5 / D-U5), in
+        seconds; ``0`` when disabled. ``GGCommons`` late-binds this onto the messaging
+        client right after this manager is constructed; an explicit per-call timeout on
+        ``request()`` always wins over this default."""
+        return (
+            0.0
+            if self._messaging_request_timeout_seconds <= 0
+            else self._messaging_request_timeout_seconds
+        )
+
+    def get_component_identity(self) -> Optional[MessageIdentity]:
+        """The component's resolved UNS identity (instance ``"main"``), resolved once
+        by ``init()`` from the component's OWN config:
+
+        1. ``levels`` = top-level ``hierarchy.levels`` when present, else the
+           zero-config default ``["device"]``.
+        2. Level names must match ``^[A-Za-z0-9_-]+$``, be unique and non-empty.
+        3. Every level except the last takes its value from the top-level ``identity``
+           config object (a missing value is a startup error naming the level); the
+           LAST level's value is the resolved thing name (the existing identity chain).
+        4. An ``identity`` key equal to the last level name, or not among the declared
+           non-device levels, is a startup error (typo protection the schema cannot
+           express).
+        5. Every value and the component short name pass through the template
+           sanitizer.
+
+        :returns: the resolved identity, or ``None`` when this manager was constructed
+            without ``init()`` (test/subclass bring-up — no config was resolved)
+        """
+        return self._component_identity
+
+    def _resolve_component_identity(self, config: dict) -> MessageIdentity:
+        """Resolves the component identity from the applied config (see
+        :meth:`get_component_identity` for the algorithm). Called once from ``init()``;
+        fail-fast with a precise ``ValueError``."""
+        # 1. levels = hierarchy.levels if present, else the zero-config default.
+        levels = []
+        if isinstance(config, dict) and "hierarchy" in config:
+            hierarchy = config.get("hierarchy")
+            if not isinstance(hierarchy, dict) or "levels" not in hierarchy:
+                raise _identity_error("'hierarchy' must be an object with a 'levels' array")
+            raw_levels = hierarchy.get("levels")
+            if not isinstance(raw_levels, list) or not raw_levels:
+                raise _identity_error(
+                    "'hierarchy.levels' must be a non-empty array of level names"
+                )
+            for level in raw_levels:
+                if not isinstance(level, str):
+                    raise _identity_error("'hierarchy.levels' entries must be strings")
+                levels.append(level)
+        else:
+            levels.append("device")
+
+        # 2. Level names: strict charset, unique, non-empty.
+        seen = set()
+        for level in levels:
+            if not level or not _HIERARCHY_LEVEL_NAME.match(level):
+                raise _identity_error(
+                    f"invalid hierarchy level name '{level}' (must match ^[A-Za-z0-9_-]+$)"
+                )
+            if level in seen:
+                raise _identity_error(f"duplicate hierarchy level name '{level}'")
+            seen.add(level)
+        device_level = levels[-1]
+        value_levels = levels[:-1]
+
+        # 3/4. The `identity` config object supplies every level's value except the
+        #      last; keys must be exactly (a subset of) the non-device levels.
+        identity_config = {}
+        if isinstance(config, dict) and "identity" in config:
+            identity_raw = config.get("identity")
+            if not isinstance(identity_raw, dict):
+                raise _identity_error("'identity' must be an object of level-name -> value")
+            identity_config = identity_raw
+        for key in identity_config:
+            if key == device_level:
+                raise _identity_error(
+                    f"'identity.{key}' must not be set: '{device_level}' is the last"
+                    " hierarchy level (the device) and its value is always the resolved"
+                    " thing name"
+                )
+            if key not in value_levels:
+                raise _identity_error(
+                    f"'identity.{key}' is not a declared hierarchy level; expected"
+                    f" keys: {value_levels}"
+                )
+
+        hier = []
+        missing = []
+        for level in value_levels:
+            value = identity_config.get(level)
+            if not isinstance(value, str) or value == "":
+                missing.append(level)
+                continue
+            hier.append(HierEntry(level, self._sanitized_identity_value(level, value)))
+        if missing:
+            raise _identity_error(
+                f"the top-level 'identity' config object is missing value(s) for"
+                f" hierarchy level(s) {missing} (hierarchy.levels = {levels}; the last"
+                f" level '{device_level}' is the resolved thing name and must not be"
+                " configured)"
+            )
+
+        # The device (last level) value is the resolved thing name (PlatformResolver
+        # chain).
+        if not self._thing_name:
+            raise _identity_error(
+                f"the device level '{device_level}' value (the resolved thing name) is"
+                " not available"
+            )
+        hier.append(HierEntry(device_level,
+                              self._sanitized_identity_value(device_level, self._thing_name)))
+
+        # 5. component = sanitized short name.
+        if not self._component_name:
+            raise _identity_error("the component short name is not available")
+        component_token = self._sanitized_identity_value("component", self._component_name)
+        return MessageIdentity(hier, component_token, MessageIdentity.DEFAULT_INSTANCE)
+
+    @staticmethod
+    def _sanitized_identity_value(what: str, raw_value: str) -> str:
+        """Sanitizes an identity value via the template sanitizer, WARN-logging when it
+        changed."""
+        sanitized = _sanitize(raw_value)
+        if sanitized != raw_value:
+            logger.warning(
+                f"Identity value for '{what}' contained reserved characters and was"
+                f" sanitized: '{raw_value}' -> '{sanitized}'"
+            )
+        return sanitized
+
+    @staticmethod
+    def sanitize(value: str) -> str:
+        """The template-value sanitizer (``/ \\ + #``, control chars incl. C1 -> ``_``;
+        remaining ``..`` -> ``_``). Public because it is also the normative UNS
+        channel-token sanitizer (UNS-CANONICAL-DESIGN §2.2 rule 1 / D-U26): the
+        ``uns()`` token rule is exactly this blacklist, so "sanitized => publishable"
+        holds. The metric ``messaging`` target uses it to turn a metric name into the
+        ``metric/{metricName}`` channel token (§4.3)."""
+        return _sanitize(value)
+
+    def get_effective_config(self) -> Optional[Dict[str, Any]]:
+        """The raw effective configuration exactly as last applied (init or hot
+        reload), or ``None`` before any config was applied. The source the
+        effective-config (``cfg``) publisher redacts + announces (UNS-CANONICAL-DESIGN
+        §4.3). Distinct from :meth:`get_full_config`, which reconstructs a normalized
+        view from the typed config models."""
+        return self._raw_config
+
     def resolve_template(self, template: str) -> str:
         ret_val = template
         if "{ThingName}" in template:
@@ -282,7 +554,6 @@ class ConfigManager:
         try:
             from ggcommons.validation.configuration_validator import (
                 ConfigurationValidator,
-                ConfigurationValidationException
             )
             ConfigurationValidator.validate(config)
             logger.debug("Configuration validation passed")

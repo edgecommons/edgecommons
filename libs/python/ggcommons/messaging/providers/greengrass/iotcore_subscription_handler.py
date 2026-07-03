@@ -6,10 +6,10 @@ from ggcommons.messaging.providers.greengrass.subscription_handler import (
     SubscriptionHandler,
 )
 
-logger = logging.getLogger("IotCoreSubscriptionHandler")
+logger = logging.getLogger("IoTCoreSubscriptionHandler")
 
 
-class IotCoreSubscriptionHandler(SubscriptionHandler):
+class IoTCoreSubscriptionHandler(SubscriptionHandler):
     def __init__(
         self,
         topic_filter,

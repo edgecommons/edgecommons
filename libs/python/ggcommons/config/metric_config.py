@@ -4,7 +4,6 @@ import logging
 
 class MetricConfiguration:
     # Default configuration values
-    DEFAULT_MESSAGING_TOPIC = "{ThingName}/{ComponentName}/metric"
     DEFAULT_CLOUDWATCH_COMPONENT_TOPIC = "cloudwatch/metric/put"
     DEFAULT_TARGET = "log"
     DEFAULT_METRIC_NAMESPACE = "ggcommons"
@@ -36,7 +35,12 @@ class MetricConfiguration:
         # "absent" from an explicit value lets the `log` target apply the HOST-aware path precedence
         # (explicit config ▸ platform-profile default ▸ library default) — mirroring _explicit_target.
         self._explicit_log_file_name = None
-        self._topic = self.DEFAULT_MESSAGING_TOPIC
+        # UNS-CANONICAL-DESIGN §4.3 / D-U9: the messaging target's topic is no longer
+        # configurable (targetConfig.topic is removed from the schema) — the Messaging
+        # target builds the UNS metric topic
+        # ecv1/{device}/{component}/main/metric/{metricName} itself. Only the
+        # cloudwatchcomponent target carries a (fixed) topic.
+        self._topic = None
         self._interval_secs = self.DEFAULT_INTERVAL_SECS
         self._destination = self.DEFAULT_MESSAGING_DESTINATION
         self._large_fleet_workaround = self.DEFAULT_LARGE_FLEET_WORKAROUND
@@ -80,14 +84,16 @@ class MetricConfiguration:
                     "maxFileSize", self.DEFAULT_METRIC_MAX_FILE_SIZE
                 )
 
+            # §4.3 / D-U9: only the destination survives for the messaging target; the
+            # legacy targetConfig.topic override is removed (the topic is the UNS
+            # metric topic, built per-metric by the target).
             if target == "messaging":
-                self._topic = self.DEFAULT_MESSAGING_TOPIC
-                self._topic = target_config.get("topic", self._topic)
                 self._destination = target_config.get("destination", self._destination)
 
+            # The cloudwatchcomponent topic is the external AWS Greengrass component
+            # contract (cloudwatch/metric/put, D-U21) — fixed, no override.
             if target == "cloudwatchcomponent":
                 self._topic = self.DEFAULT_CLOUDWATCH_COMPONENT_TOPIC
-                self._topic = target_config.get("topic", self._topic)
 
             if target == "cloudwatch":
                 cw_config = target_config.get("cloudwatch", target_config)
@@ -109,11 +115,10 @@ class MetricConfiguration:
 
         if self._target == "messaging":
             config["targetConfig"] = {
-                "topic": self._topic,
                 "destination": self._destination,
             }
         elif self._target == "cloudwatchcomponent":
-            config["targetConfig"] = {"topic": self._topic}
+            config["targetConfig"] = {}
         elif self._target == "cloudwatch":
             config["targetConfig"] = {"intervalSecs": self._interval_secs}
         elif self._target == "prometheus":
@@ -168,6 +173,11 @@ class MetricConfiguration:
         return self._explicit_log_file_name
 
     def get_topic(self) -> str:
+        """The fixed topic of the ``cloudwatchcomponent`` target
+        (``cloudwatch/metric/put``, the external AWS Greengrass component contract —
+        D-U21), or ``None`` for every other target. The ``messaging`` target no longer
+        carries a configured topic: it publishes to the UNS metric topic
+        ``ecv1/{device}/{component}/main/metric/{metricName}`` (§4.3)."""
         return self._topic
 
     def get_interval_secs(self) -> int:

@@ -464,6 +464,11 @@ def _run_init_credentials(full_config: dict, platform):
     gg._credentials = None
     gg._credential_metrics = None
     gg._init_credentials()
+    # Stop the background credential-metrics poller immediately: these tests assert
+    # vault behavior only, and a leaked 30 s bridge thread would later emit a
+    # "credentials" metric into an unrelated test's patched MetricEmitter statics.
+    if gg._credential_metrics is not None:
+        gg._credential_metrics.close()
     return gg
 
 

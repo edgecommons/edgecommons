@@ -60,6 +60,35 @@ The configuration system supports multiple sources, specified via command line a
 - Centralized configuration for multiple components
 - Advanced deployment pattern for complex systems
 
+The rendezvous with the config server rides the UNS command grammar (Flow A of the config
+addressing, UNS-CANONICAL-DESIGN §4.3 / D-U19):
+
+| Flow | Topic | Direction |
+|---|---|---|
+| get-configuration (request/reply) | `ecv1/{device}/config/main/cmd/get-configuration` | component -> config server |
+| set-config push (fire-and-forget `cmd`, no `reply_to`) | `ecv1/{device}/{component}/main/cmd/set-config` | config server -> component |
+
+- **`config` is a reserved-by-convention logical component name** — the config server is the
+  *sole subscriber* of the `get-configuration` rendezvous under it. Do not name a component
+  `config`.
+- `{device}` is the resolved thing name and `{component}` the short component name, both passed
+  through the normative token sanitizer (`/ \ + #`, control characters and `..` become `_`).
+- **The requester self-identifies in the request body** with `{"component": "<short name>"}`.
+  The GET runs during config bootstrap — *before* the `ConfigManager` (and the component
+  identity) exists — so the envelope carries **no** `identity` element; the server must route on
+  the body field. The server replies via the envelope's `reply_to` with the configuration as the
+  message body. The request keeps the framework request deadline and is retried up to 3 times
+  (a fresh request per attempt).
+- **A pushed `set-config`** is a notification-style command (a `cmd` without `reply_to`)
+  delivered to the component's *own* inbox; its body is the complete new configuration, applied
+  exactly like a hot reload (schema-validated, reject-and-keep).
+
+**Server side (convention, not implemented by this library):** an external config-manager
+component must subscribe to `ecv1/{device}/config/main/cmd/get-configuration`, reply to each
+request with the requesting component's configuration as the body, and push configuration
+changes as `set-config` commands to each component's inbox
+`ecv1/{device}/{component}/main/cmd/set-config`.
+
 ## 3. Configuration Structure
 
 The configuration is organized into distinct sections:
@@ -68,7 +97,9 @@ The configuration is organized into distinct sections:
 These sections are managed by ggcommons and configure framework behavior:
 
 - **`logging`**: Logging system configuration
-- **`heartbeat`**: Component health monitoring configuration  
+- **`heartbeat`**: Component health monitoring — a UNS `state` keepalive plus system measures as the `sys` metric (see [heartbeat.md](heartbeat.md))
+- **`hierarchy`** / **`identity`** / **`topic`**: the UNS enterprise hierarchy (`hierarchy.levels`, last level = the device), the per-level identity values (all levels except the last; the device value is always the resolved thing name), and `topic.includeRoot` (default `false`; effective only with a multi-level hierarchy)
+- **`messaging`**: `requestTimeoutSeconds` (default 30, `0` disables — the framework request deadline) and the optional `lwt` MQTT last-will section (see [messaging.md](messaging.md))
 - **`metricEmission`**: Metrics collection and emission configuration
 - **`tags`**: Component tagging for organization and templating
 
@@ -165,8 +196,7 @@ resolved_path = config_service.resolve_template("/data/{ThingName}/{site}/logs")
     "level": "INFO"
   },
   "heartbeat": {
-    "intervalSecs": 30,
-    "targets": [{"type": "metric"}]
+    "intervalSecs": 30
   },
   "tags": {
     "environment": "production",
@@ -261,19 +291,9 @@ resolved_path = config_service.resolve_template("/data/{ThingName}/{site}/logs")
     "intervalSecs": 60,
     "measures": {
       "cpu": true,
-      "memory": true,
-      "connections": true
+      "memory": true
     },
-    "targets": [
-      {"type": "metric"},
-      {
-        "type": "messaging",
-        "config": {
-          "topic": "health/{site}/{ComponentName}",
-          "destination": "iot_core"
-        }
-      }
-    ]
+    "destination": "iotcore"
   },
   "tags": {
     "site": "plant-a",
@@ -343,8 +363,7 @@ resolved_path = config_service.resolve_template("/data/{ThingName}/{site}/logs")
     }
   },
   "heartbeat": {
-    "intervalSecs": 5,
-    "targets": [{"type": "messaging", "config": {"destination": "ipc"}}]
+    "intervalSecs": 5
   },
   "metricEmission": {
     "target": "log",

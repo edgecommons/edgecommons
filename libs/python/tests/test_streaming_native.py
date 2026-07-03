@@ -88,11 +88,18 @@ def test_metrics_bridge_defines_and_emits(tmp_path, monkeypatch):
         bridge = StreamMetricsBridge(StubConfig(), svc, ["telemetry"], interval_secs=1)
         try:
             assert len(defined) == 1
+
+            # Filter on the stream metric name: MetricEmitter is a process-global
+            # static, so a background poller leaked by an unrelated test (e.g. a
+            # credentials metrics bridge) can interleave its own emits here.
+            def _stream_emits():
+                return [(n, v) for n, v in emitted if n == "stream:telemetry"]
+
             deadline = time.time() + 5
-            while not emitted and time.time() < deadline:
+            while not _stream_emits() and time.time() < deadline:
                 time.sleep(0.1)
-            assert emitted, "bridge should emit at least once"
-            name, values = emitted[0]
+            assert _stream_emits(), "bridge should emit at least once"
+            name, values = _stream_emits()[0]
             assert name == "stream:telemetry"
             assert "backlog" in values and "diskBytes" in values
         finally:

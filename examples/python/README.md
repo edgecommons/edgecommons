@@ -19,7 +19,7 @@ pip install -r requirements.txt
 python3 main.py --platform HOST --transport MQTT test-configs/standalone-local.json -c FILE test-configs/config_2.json -t my-thing-name
 ```
 
-Subscribe to `heartbeat/+/+` (e.g. with MQTTX) to see the component's heartbeats, and to its
+Subscribe to `ecv1/+/+/+/state` (e.g. with MQTTX) to see the component's heartbeats, and to its
 request/response topics to drive it.
 
 ## Run under Greengrass

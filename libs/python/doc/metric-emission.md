@@ -112,18 +112,20 @@ Writes metrics to a local log file using Python logging with EMF format and file
 Publishes metrics through the messaging system in EMF format, supporting both local IPC and IoT Core destinations.
 
 **Implementation details:**
-- Uses MessagingClient for both IPC and IoT Core publishing
-- Default topic template: "{ThingName}/{ComponentName}/metric"
+- Uses MessagingClient for both local/IPC and IoT Core publishing
+- Topic: the library-owned **UNS metric topic**
+  `ecv1/{device}/{component}/main/metric/{metricName}` (rooted form when `topic.includeRoot` is
+  true; the metric name is sanitized as a channel token). The former `targetConfig.topic` override
+  was removed with the UNS hard cut — the `metric` class is reserved and published through the
+  library-internal `MessagingClient._publish_reserved*` seam (see [messaging.md](messaging.md)).
 - Uses QoS AT_LEAST_ONCE for IoT Core publishing
 - Immediate message publishing (no batching)
 - Messages formatted as EMF with Message wrapper including version and metadata
-- Supports template variable substitution in topic names
 
 **Configuration options:**
-- **`topic`**: Override the default topic template (supports template variables)
 - **`destination`**: Specify message destination (Default: "ipc")
-  - `"ipc"`: Local Greengrass IPC communication
-  - Any other value: Publish to IoT Core
+  - `"ipc"` / `"local"`: local bus (Greengrass IPC or the local MQTT broker)
+  - `"iotcore"` / `"iot_core"`: publish to AWS IoT Core
 
 **Example:**
 ```json
@@ -132,7 +134,6 @@ Publishes metrics through the messaging system in EMF format, supporting both lo
     "target": "messaging",
     "namespace": "MyApp/Metrics",
     "targetConfig": {
-      "topic": "metrics/{ThingName}/{ComponentName}",
       "destination": "iot_core"
     }
   }
@@ -241,12 +242,12 @@ platform default.
     "target": "messaging",
     "namespace": "Telemetry/Sensors",
     "targetConfig": {
-      "topic": "telemetry/{ThingName}/metrics",
       "destination": "iot_core"
     }
   }
 }
 ```
+Metrics publish to `ecv1/{device}/{component}/main/metric/{metricName}` on IoT Core.
 
 ## Using Metrics in Code
 

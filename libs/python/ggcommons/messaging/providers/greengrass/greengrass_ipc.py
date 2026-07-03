@@ -1,7 +1,7 @@
 import logging
 import json
 import time
-from typing import Callable
+from typing import Callable, Optional
 from ggcommons.messaging.messaging_client import MessagingProvider
 from ggcommons.messaging.message import Message
 import awsiot.greengrasscoreipc
@@ -14,7 +14,7 @@ from awsiot.greengrasscoreipc.model import (
     JsonMessage,
 )
 from ggcommons.messaging.providers.greengrass.iotcore_subscription_handler import (
-    IotCoreSubscriptionHandler,
+    IoTCoreSubscriptionHandler,
 )
 from ggcommons.messaging.providers.greengrass.ipc_subscription_handler import (
     IpcSubscriptionHandler,
@@ -35,6 +35,14 @@ class GreengrassIpcProvider(MessagingProvider):
         self._receive_mode = "RECEIVE_MESSAGES_FROM_OTHERS"
         if receive_own_messages:
             self._receive_mode = "RECEIVE_ALL_MESSAGES"
+        # MQTT LWT is an explicit no-op on the Greengrass IPC transport
+        # (UNS-CANONICAL-DESIGN §6): IPC has no CONNECT packet to register a will on,
+        # so any messaging.lwt config is ignored (the LWT applies to the MQTT
+        # local-broker connection only).
+        logger.debug(
+            "MQTT LWT (messaging.lwt) is not supported over Greengrass IPC; "
+            "any configured lwt section is ignored (no-op)"
+        )
         self._ipc_client = self._connect_with_retry()
 
     @staticmethod
@@ -145,7 +153,7 @@ class GreengrassIpcProvider(MessagingProvider):
         max_messages: int = None,
     ):
         logger.info(f"Subscribing to iot core messages on topic {topic_filter}")
-        handler = IotCoreSubscriptionHandler(topic_filter, callback, max_concurrency, max_messages)
+        handler = IoTCoreSubscriptionHandler(topic_filter, callback, max_concurrency, max_messages)
         try:
             _, operation = self._ipc_client.subscribe_to_iot_core(
                 topic_name=topic_filter,
@@ -190,48 +198,75 @@ class GreengrassIpcProvider(MessagingProvider):
                 f"Attempt to unsubscribe from unknown IoT Core topic {topic_filter}"
             )
 
-    def request(self, topic: str, msg: Message) -> Iou:
+    def request(self, topic: str, msg: Message, timeout_secs: Optional[float] = None) -> Iou:
         reply_to = msg.make_request()
         iou = Iou(reply_to)
         self._response_ious[reply_to] = iou
         self.subscribe(reply_to, self._on_reply_received, 1)
+
+        # Arm the framework-owned deadline at send time (UNS-CANONICAL-DESIGN §5): on
+        # expiry the timer unsubscribes the ephemeral reply topic, removes the pending
+        # entry and completes the future exceptionally (RequestTimeoutError).
+        def _deadline_cleanup():
+            self._response_ious.pop(reply_to, None)
+            self.unsubscribe(reply_to)
+
+        self._arm_request_deadline(iou, self._effective_request_timeout(timeout_secs),
+                                   _deadline_cleanup)
         self.publish(topic, msg)
         return iou
 
     def cancel_request(self, iou: Iou):
+        if not iou.try_settle():
+            return  # reply or deadline already settled + cleaned up this request
         reply_to = iou.get_user_data()
         self.unsubscribe(reply_to)
-        del self._response_ious[reply_to]
+        self._response_ious.pop(reply_to, None)
+        iou.set_result(None)
 
     def reply(self, request: Message, reply: Message):
         reply.set_correlation_id(request.get_correlation_id())
         self.publish(request.get_header().get_reply_to(), reply)
 
     def _on_reply_received(self, topic: str, reply: Message) -> None:
-        # Null-guard against a late/duplicate reply: the Iou may already have been
-        # completed and removed by an earlier reply on the same topic. Use pop() so the
-        # lookup-and-remove is idempotent and never raises a KeyError, then clean up.
-        iou = self._response_ious.pop(topic, None)
-        if iou is not None:
-            logger.debug(f"Received reply message on topic: {topic}")
-            self.unsubscribe(topic)
-            iou.set_result(reply)
+        # Reply arrival: race the single idempotent settle path (§5.1) against the
+        # framework deadline and cancel_request. The winner owns the cleanup and the
+        # completion; a loser (straggler/duplicate reply after settle) is dropped.
+        iou = self._response_ious.get(topic)
+        if iou is None or not iou.try_settle():
+            logger.debug(f"Dropping straggler reply on '{topic}' (request already settled)")
+            return
+        logger.debug(f"Received reply message on topic: {topic}")
+        self.unsubscribe(topic)
+        self._response_ious.pop(topic, None)
+        iou.set_result(reply)
 
     def _on_iot_core_reply_received(self, topic: str, reply: Message) -> None:
-        # Null-guard against a late/duplicate reply (see _on_reply_received).
-        iou = self._response_ious.pop(topic, None)
-        if iou is not None:
-            logger.debug(f"Received IoT Core reply message on topic: {topic}")
-            self.unsubscribe_from_iot_core(topic)
-            iou.set_result(reply)
+        # Same single idempotent settle path as _on_reply_received (§5.1).
+        iou = self._response_ious.get(topic)
+        if iou is None or not iou.try_settle():
+            logger.debug(f"Dropping straggler reply on '{topic}' (request already settled)")
+            return
+        logger.debug(f"Received IoT Core reply message on topic: {topic}")
+        self.unsubscribe_from_iot_core(topic)
+        self._response_ious.pop(topic, None)
+        iou.set_result(reply)
 
-    def request_from_iot_core(self, topic: str, msg: Message) -> Iou:
+    def request_from_iot_core(self, topic: str, msg: Message,
+                              timeout_secs: Optional[float] = None) -> Iou:
         reply_to = msg.make_request()
         iou = Iou(reply_to)
         self._response_ious[reply_to] = iou
         self.subscribe_to_iot_core(
             reply_to, self._on_iot_core_reply_received, QOS.AT_MOST_ONCE, 1
         )
+
+        def _deadline_cleanup():
+            self._response_ious.pop(reply_to, None)
+            self.unsubscribe_from_iot_core(reply_to)
+
+        self._arm_request_deadline(iou, self._effective_request_timeout(timeout_secs),
+                                   _deadline_cleanup)
         self.publish_to_iot_core(topic, msg, QOS.AT_MOST_ONCE)
         return iou
 
@@ -242,9 +277,12 @@ class GreengrassIpcProvider(MessagingProvider):
         )
 
     def cancel_request_from_iot_core(self, iou: Iou):
+        if not iou.try_settle():
+            return  # reply or deadline already settled + cleaned up this request
         reply_to = iou.get_user_data()
         self.unsubscribe_from_iot_core(reply_to)
-        del self._response_ious[reply_to]
+        self._response_ious.pop(reply_to, None)
+        iou.set_result(None)
 
     def get_native_client(self):
         return self._ipc_client

@@ -1,46 +1,37 @@
-import copy
 import json
 
 
 # {
+#     "enabled": true,
 #     "intervalSecs": 5,
 #     "measures": {
 #         "cpu": true,
-#         "memory": true
+#         "memory": true,
 #         "disk": false
 #     },
-#     "targets": [
-#         {
-#             "type": "metric"
-#         },
-#         {
-#             "type": "messaging",
-#             "config": {
-#                 "destination": "ipc",
-#                 "topic": "{ThingName}/{ComponentName}/heartbeat"
-#              }
-#         }
-#     ]
+#     "destination": "local"
 # }
 
 
 class HeartbeatConfiguration:
-    DEFAULT_HEARTBEAT_MESSAGING_TOPIC = (
-        "ggcommons/{ThingName}/{ComponentName}/heartbeat"
-    )
-    DEFAULT_HEARTBEAT_MESSAGING_DESTINATION = "ipc"
+    """Configuration model for the component heartbeat (UNS-CANONICAL-DESIGN §4.3,
+    D-U14/D-U20).
+
+    The heartbeat is a library-owned UNS ``state`` keepalive published each tick to
+    ``ecv1/{device}/{component}/main/state`` (body
+    ``{"status":"RUNNING","uptimeSecs":n}``, best-effort ``{"status":"STOPPED"}`` on
+    graceful shutdown), with the enabled system measures emitted as the metric ``sys``
+    through the normal metric subsystem. The legacy ``targets[]`` array (the heartbeat
+    topic-override drift knobs) is removed — hard cut; :meth:`get_destination` governs
+    only the state keepalive's transport (``local`` vs ``iotcore``); the measures route
+    through the metric subsystem's own target. Defaults: on / 5 s / local (M11)."""
+
+    #: The schema default for ``heartbeat.destination`` — the local/IPC transport.
+    DEFAULT_DESTINATION = "local"
     __DEFAULT_HEARTBEAT_INTERVAL_SECS = 5
-    __DEFAULT_HEARTBEAT_TARGETS = [
-        {
-            "type": "messaging",
-            "config": {
-                "destination": DEFAULT_HEARTBEAT_MESSAGING_DESTINATION,
-                "topic": DEFAULT_HEARTBEAT_MESSAGING_TOPIC,
-            },
-        }
-    ]
 
     def __init__(self, heartbeat_json):
+        self._enabled = True
         self._interval_secs = HeartbeatConfiguration.__DEFAULT_HEARTBEAT_INTERVAL_SECS
         self._include_cpu = True
         self._include_memory = True
@@ -48,12 +39,13 @@ class HeartbeatConfiguration:
         self._include_files = False
         self._include_fds = False
         self._include_threads = False
-        # Deep-copy the class-level default so a caller mutating get_targets() can
-        # never corrupt the shared default for other instances.
-        self._targets = copy.deepcopy(self.__DEFAULT_HEARTBEAT_TARGETS)
+        self._destination = HeartbeatConfiguration.DEFAULT_DESTINATION
 
         if heartbeat_json is not None:
+            self._enabled = heartbeat_json.get("enabled", self._enabled)
             self._interval_secs = heartbeat_json.get("intervalSecs", self._interval_secs)
+            if not isinstance(self._interval_secs, (int, float)) or self._interval_secs < 1:
+                self._interval_secs = HeartbeatConfiguration.__DEFAULT_HEARTBEAT_INTERVAL_SECS
             measures = heartbeat_json.get("measures", {})
             self._include_cpu = measures.get("cpu", self._include_cpu)
             self._include_memory = measures.get("memory", self._include_memory)
@@ -61,12 +53,13 @@ class HeartbeatConfiguration:
             self._include_files = measures.get("files", self._include_files)
             self._include_threads = measures.get("threads", self._include_threads)
             self._include_fds = measures.get("fds", self._include_fds)
-            self._targets = heartbeat_json.get("targets", self._targets)
+            self._destination = heartbeat_json.get("destination", self._destination)
 
     def to_dict(self):
         # Mirrors the parsed input structure so the config round-trips:
-        # {intervalSecs, measures: {...}, targets: [...]}.
+        # {enabled, intervalSecs, measures: {...}, destination}.
         return {
+            "enabled": self._enabled,
             "intervalSecs": self._interval_secs,
             "measures": {
                 "cpu": self.include_cpu(),
@@ -76,11 +69,16 @@ class HeartbeatConfiguration:
                 "threads": self.include_threads(),
                 "fds": self.include_fds(),
             },
-            "targets": self._targets,
+            "destination": self._destination,
         }
 
     def __str__(self):
         return json.dumps(self.to_dict(), indent=2)
+
+    def is_enabled(self) -> bool:
+        """Whether the heartbeat (state keepalive + ``sys`` measures metric) runs.
+        Default ``True`` — on / 5 s / local (D-U14)."""
+        return self._enabled
 
     def get_interval_secs(self) -> int:
         return self._interval_secs
@@ -103,5 +101,8 @@ class HeartbeatConfiguration:
     def include_fds(self) -> bool:
         return self._include_fds
 
-    def get_targets(self) -> list[dict]:
-        return self._targets
+    def get_destination(self) -> str:
+        """The publish destination of the ``state`` keepalive only — ``"local"`` (the
+        local/IPC transport, the default) or ``"iotcore"`` (AWS IoT Core). The measures
+        route through the metric subsystem's own target and are unaffected."""
+        return self._destination

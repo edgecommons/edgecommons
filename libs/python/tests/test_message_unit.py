@@ -45,38 +45,36 @@ class TestMessageHeader:
 
 class TestMessageTags:
     def test_default_tags_empty(self):
-        t = MessageTags("thing-1")
+        t = MessageTags()
         assert t.tags == {}
 
-    def test_to_dict_includes_thing(self):
-        t = MessageTags("thing-1", {"env": "prod"})
-        d = t.to_dict()
-        assert d["thing"] == "thing-1" and d["env"] == "prod"
+    def test_to_dict_returns_generic_map(self):
+        t = MessageTags({"env": "prod"})
+        assert t.to_dict() == {"env": "prod"}
 
-    def test_to_dict_omits_thing_when_none(self):
-        t = MessageTags(None, {"env": "prod"})
-        assert "thing" not in t.to_dict()
+    def test_no_thing_special_casing(self):
+        # UNS hard cut (§1.1): tags.thing is removed — the device travels in the
+        # top-level identity element. A stray inbound "thing" key just lands in the
+        # generic tag map (no legacy shim).
+        t = MessageTags.from_dict({"thing": "thing-1", "a": "b"})
+        assert t.tags == {"thing": "thing-1", "a": "b"}
+        assert not hasattr(t, "thing_name")
 
     def test_inject_tag(self):
-        t = MessageTags("thing-1")
+        t = MessageTags()
         t.inject_tag("k", "v")
         assert t.tags["k"] == "v"
-
-    def test_from_dict_extracts_thing(self):
-        t = MessageTags.from_dict({"thing": "thing-1", "a": "b"})
-        assert t.thing_name == "thing-1"
-        assert t.tags == {"a": "b"}
 
 
 class TestMessage:
     def test_to_dict_structured(self):
         m = Message()
         m.header = MessageHeader("N", "1")
-        m.tags = MessageTags("thing-1", {"a": "b"})
+        m.tags = MessageTags({"a": "b"})
         m.body = {"v": 1}
         d = m.to_dict()
         assert d["header"]["name"] == "N"
-        assert d["tags"]["thing"] == "thing-1"
+        assert d["tags"] == {"a": "b"}
         assert d["body"] == {"v": 1}
 
     def test_to_dict_raw(self):
@@ -124,7 +122,7 @@ class TestMessage:
 
     def test_get_source_alias(self):
         m = Message()
-        m.tags = MessageTags("thing-1")
+        m.tags = MessageTags()
         assert m.get_source() is m.get_tags()
 
     def test_get_payload_alias(self):
@@ -160,9 +158,9 @@ class TestMessage:
         assert m.header.correlation_id == "c10"
 
     def test_from_object_envelope(self):
-        m = Message.from_object({"header": {"name": "N", "version": "1"}, "tags": {"thing": "t"}, "body": {"v": 1}})
+        m = Message.from_object({"header": {"name": "N", "version": "1"}, "tags": {"site": "s1"}, "body": {"v": 1}})
         assert m.header.name == "N"
-        assert m.tags.thing_name == "t"
+        assert m.tags.tags == {"site": "s1"}
         assert m.body == {"v": 1}
 
     def test_from_object_raw_dict(self):
@@ -175,14 +173,18 @@ class TestMessage:
 
 
 class TestMessageBuilder:
-    def test_build_requires_config_or_tags(self):
-        with pytest.raises(ValueError):
-            MessageBuilder.create("N", "1").build()
+    def test_build_without_config_omits_identity_and_tags(self):
+        # Bootstrap/raw messages legally omit identity and tags (UNS §1.4): a builder
+        # with neither a config service nor tags builds a header+body-only envelope.
+        m = MessageBuilder.create("N", "1").with_payload({"a": 1}).build()
+        assert m.identity is None and m.tags is None
+        d = m.to_dict()
+        assert "identity" not in d and "tags" not in d
 
     def test_build_with_tags_and_dict_payload(self):
-        m = MessageBuilder.create("N", "1").with_payload({"a": 1}).with_tags({"thing": "t"}).build()
+        m = MessageBuilder.create("N", "1").with_payload({"a": 1}).with_tags({"env": "t"}).build()
         assert m.body == {"a": 1}
-        assert m.tags.thing_name == "t"
+        assert m.tags.tags == {"env": "t"}
         assert m.header.name == "N"
 
     def test_build_with_str_json_payload_parsed(self):
@@ -214,13 +216,13 @@ class TestMessageBuilder:
             "header": {"name": "N", "version": "2", "correlation_id": "c", "uuid": "u",
                        "timestamp": "ts", "reply_to": "r"},
             "body": {"v": 1},
-            "tags": {"thing": "t"},
+            "tags": {"env": "t"},
         })
         m = builder.build()
         assert m.header.name == "N" and m.header.version == "2"
         assert m.header.correlation_id == "c"
         assert m.body == {"v": 1}
-        assert m.tags.thing_name == "t"
+        assert m.tags.tags == {"env": "t"}
 
     def test_from_object_raw(self):
         builder = MessageBuilder.from_object("raw-payload")

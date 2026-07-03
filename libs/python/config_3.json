@@ -4,16 +4,8 @@
     "python_format": "%(asctime)s [%(levelname)s] %(filename)s %(funcName)s(%(lineno)d) [%(threadName)s]: %(message)s"
   },
   "heartbeat": {
+    "enabled": true,
     "intervalSecs": 1,
-    "targets": [
-      {
-        "type": "messaging",
-        "config": {
-          "destination": "ipc",
-          "topic": "{ThingName}/{ComponentName}/heartbeat"
-        }
-      }
-    ],
     "measures": {
       "cpu": true,
       "memory": true,
@@ -21,13 +13,14 @@
       "files": true,
       "threads": true,
       "fds": false
-    }
+    },
+    "destination": "local"
   },
   "metricEmission": {
-	"target" : "log",
+    "target": "log",
     "namespace": "ggcommons",
     "largeFleetWorkaround": true,
-	"targetConfig" : {
+    "targetConfig": {
       "logFileName": "../{ComponentFullName}.metric.log"
     }
   },
@@ -38,8 +31,7 @@
     "line": "line1"
   },
   "component": {
-    "global": {
-    },
+    "global": {},
     "instances": [
       {
         "id": "kep1-right",

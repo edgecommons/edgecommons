@@ -4,16 +4,8 @@
     "python_format": "%(asctime)s [%(levelname)s] %(filename)s %(funcName)s(%(lineno)d) [%(threadName)s]: %(message)s"
   },
   "heartbeat": {
+    "enabled": true,
     "intervalSecs": 1,
-    "targets": [
-      {
-        "type": "messaging",
-        "config": {
-          "destination": "ipc",
-          "topic": "{ThingName}/{ComponentName}/heartbeat"
-        }
-      }
-    ],
     "measures": {
       "cpu": true,
       "memory": true,
@@ -21,12 +13,13 @@
       "files": true,
       "threads": true,
       "fds": false
-    }
+    },
+    "destination": "local"
   },
   "metricEmission": {
-	"target" : "messaging",
+    "target": "messaging",
     "namespace": "ggcommons",
-	"targetConfig" : {
+    "targetConfig": {
       "destination": "ipc",
       "intervalSecs": 10
     }
@@ -41,7 +34,6 @@
     "global": {
       "publish_interval": 2
     },
-    "instances": [
-    ]
+    "instances": []
   }
 }

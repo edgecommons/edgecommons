@@ -26,21 +26,23 @@ def test_header_to_dict_and_roundtrip():
     assert "reply_to" not in h3.to_dict()
 
 
-def test_tags_omit_thing_when_none():
-    assert MessageTags(None, {"a": "b"}).to_dict() == {"a": "b"}
-    assert MessageTags("thing", {"a": "b"}).to_dict() == {"a": "b", "thing": "thing"}
+def test_tags_have_no_thing_special_casing():
+    # UNS hard cut (§1.1): tags.thing is removed — the device travels in the
+    # top-level identity element; a stray "thing" key is just a generic tag.
+    assert MessageTags({"a": "b"}).to_dict() == {"a": "b"}
+    assert MessageTags.from_dict({"a": "b", "thing": "t"}).to_dict() == {"a": "b", "thing": "t"}
     assert MessageTags(None).tags == {}  # default tags
 
 
 def test_message_serialization_shape():
     m = Message()
     m.header = MessageHeader("N", "1.0", correlation_id="c", timestamp="t", uuid="u")
-    m.tags = MessageTags("thing", {"site": "s"})
+    m.tags = MessageTags({"site": "s"})
     m.body = {"x": 1}
     d = json.loads(m.dumps())
     assert set(d.keys()) == {"header", "tags", "body"}
     assert d["body"] == {"x": 1}
-    assert d["tags"] == {"site": "s", "thing": "thing"}
+    assert d["tags"] == {"site": "s"}
     assert d["header"]["name"] == "N"
 
 
@@ -54,12 +56,11 @@ def test_from_object_roundtrip():
     src = {
         "header": {"name": "N", "version": "1.0", "correlation_id": "c",
                    "timestamp": "t", "uuid": "u"},
-        "tags": {"site": "s", "thing": "thing"},
+        "tags": {"site": "s"},
         "body": {"x": 1},
     }
     m = Message.from_object(src)
     assert m.get_body() == {"x": 1}
-    assert m.get_tags().thing_name == "thing"
     assert m.get_tags().tags == {"site": "s"}
     assert m.get_header().name == "N"
 

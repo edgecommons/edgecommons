@@ -73,6 +73,61 @@ success, response = future.get(timeout_seconds)  # Blocking
 messaging_service.reply(request_message, reply_message)
 ```
 
+##### Request deadline (`messaging.requestTimeoutSeconds`)
+Every `request()` carries a **framework-owned deadline** (default **30 s**, configurable via
+`messaging.requestTimeoutSeconds` in the component config; `0` disables). When it expires the
+library unsubscribes the ephemeral reply topic, removes the pending entry and completes the `Iou`
+**exceptionally** — a waiting (or later) `iou.get()` **raises** `RequestTimeoutError`
+(`ggcommons.messaging.errors`) instead of blocking forever, even if the caller never calls
+`get()`, so an unanswered request can no longer leak its reply subscription. Reply-arrival, the
+deadline and `cancel_request` settle a request exactly once (idempotent); a straggler reply after
+settle is dropped with a DEBUG log.
+
+```python
+from ggcommons import RequestTimeoutError
+
+# Per-call deadline: an explicit value always wins over the configured default.
+iou = MessagingClient.request(topic, msg, timeout_secs=5)
+# 0 disables the deadline for this one call.
+iou = MessagingClient.request(topic, msg, timeout_secs=0)
+
+try:
+    done, reply = iou.get(timeout=10)
+except RequestTimeoutError:
+    ...  # the framework deadline fired; issue a FRESH request to retry
+```
+
+Note (init order): the messaging client is initialized before the config loads, so the configured
+default is late-bound right after the `ConfigManager` exists; until then the built-in 30 s applies
+(deliberately — the CONFIG_COMPONENT bootstrap request gets a deadline too).
+
+### Reserved-class publish guard (UNS)
+
+The UNS classes `state`, `metric`, `cfg` and `log` are **library-owned** (UNS-CANONICAL-DESIGN
+§4.1): the heartbeat publishes the `state` keepalive, the metric subsystem publishes `metric`,
+and the effective-config publisher announces `cfg`. Every publish path that takes a client-chosen
+topic — `publish`, `publish_raw`, `publish_to_iot_core`, `publish_to_iot_core_raw`, `request`,
+`request_from_iot_core`, and `reply`/`reply_to_iot_core` (via the request's `reply_to`) — rejects
+a topic whose UNS class position holds a reserved token with a `ReservedTopicError`:
+
+```
+ecv1/{device}/{component}/{instance}/{class}          # class position 4 - always checked
+ecv1/{site}/{device}/{component}/{instance}/{class}   # position 5 - only when topic.includeRoot=true
+```
+
+Position 5 is checked only when *this component's* effective root mode is on
+(`topic.includeRoot` AND a multi-level hierarchy; late-bound from the config, like the
+request-deadline default) — checking it unconditionally would false-positive on legitimate `app`
+channels such as `ecv1/d/c/i/app/state`. Non-`ecv1` topics pass untouched (`ggcommons/reply-…`
+reply topics, `cloudwatch/metric/put`, foreign-broker bridging), and `subscribe*` is never
+guarded — consumers must read the reserved classes.
+
+The guard is **misuse prevention, not a security boundary** (per-device broker ACLs are). The
+library's own publishers reach the reserved classes through the
+`MessagingClient._publish_reserved` / `_publish_reserved_raw` / `_publish_reserved_to_iot_core`
+staticmethods, which bypass the guard. The underscore marks them library-internal — component
+code should not use them.
+
 ### Providers
 The library includes three messaging providers:
 
@@ -204,6 +259,27 @@ python3 main.py --platform HOST --transport MQTT ./messaging-config.json -c FILE
    - Distributing configuration changes
    - Component coordination
 
+## Message Identity (UNS)
+
+Messages built with a config-bound builder carry a top-level **`identity`** element
+(UNS-CANONICAL-DESIGN §1) between `header` and `tags`: the ordered enterprise hierarchy (`hier`,
+whose **last entry is the device**), the precomputed `path`, the publishing `component` token and
+the per-message `instance` (default `"main"`).
+
+```python
+identity = message.get_identity()      # MessageIdentity or None
+if identity is not None:
+    identity.device                    # last hier entry's value (computed, not a wire field)
+    identity.path                      # "dallas/zone-3/gw-01"
+    identity.component, identity.instance
+```
+
+`MessageBuilder.build()` is the single stamping site: an explicit `with_identity(...)` override
+wins; otherwise a `with_config(...)` builder stamps the component's resolved identity with the
+`with_instance(...)` token (default `"main"`); with neither, `identity` stays `None`
+(bootstrap/raw messages legally omit it). Inbound parsing is lenient: a malformed `identity`
+yields `None` plus a WARN and the message still delivers.
+
 ## Message Tags
 Tags provide contextual information about messages and can be used for:
 - Source identification
@@ -211,12 +287,14 @@ Tags provide contextual information about messages and can be used for:
 - Filtering and processing logic
 - Debugging and tracking
 
-Tags are automatically populated from configuration and can be accessed via:
+Tags are automatically populated from the `tags` config section and exposed as a plain dict:
 ```python
 message_tags = message.get_tags()
-component_name = message_tags.get_component_name()
-thing_name = message_tags.get_thing_name()
+site = message_tags.tags.get("site")
 ```
+
+The legacy `tags.thing` special-casing is **removed** (hard cut): the publisher's device now
+travels in the top-level `identity` element; a stray inbound `thing` key is just a generic tag.
 
 ## MQTT transport configuration
 
@@ -258,6 +336,31 @@ The `MQTT` transport (e.g. the `HOST` platform) requires a messaging configurati
 - **Certificate-based**: Required for production
 - Must provide `certPath`, `keyPath`, and `caPath`
 - No username/password option available
+
+### MQTT Last-Will-and-Testament (`messaging.lwt`)
+An optional `lwt` section registers an MQTT will on the **local-broker connection only** at
+CONNECT (re-registered automatically on reconnect). The broker publishes it if the component
+disconnects ungracefully — it never passes through `publish()`. There is **no retain option by
+design** (the will is always registered with `retain=False`). The IPC (GREENGRASS) transport has
+no CONNECT packet, so `lwt` is an explicit no-op there (DEBUG log).
+
+```json
+{
+  "messaging": {
+    "local":  { "host": "mqtt-broker.local", "port": 1883, "clientId": "bridge" },
+    "lwt": {
+      "topic":   "ecv1/gw-01/uns-bridge/main/state",
+      "payload": { "status": "UNREACHABLE" },
+      "qos": 1
+    }
+  }
+}
+```
+
+- `topic` (required): the will topic.
+- `payload`: a **string** is published verbatim as UTF-8 bytes; an **object** is serialized to
+  compact JSON bytes; absent => empty payload.
+- `qos`: `0` or `1`, default `1`.
 
 ### Dual Connectivity Benefits
 1. **Local Communication**: Fast, low-latency messaging for edge processing

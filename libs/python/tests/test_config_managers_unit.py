@@ -426,14 +426,23 @@ class TestConfigComponentManager:
         reply = Message()
         reply.body = {"component": {"global": {"k": "from-component"}}}
 
+        requested = {}
+
         def fake_request(topic, msg):
+            requested.update(topic=topic, msg=msg)
             return SimpleNamespace(get=lambda timeout=None: (True, reply))
 
         monkeypatch.setattr(ccm.MessagingClient, "request", staticmethod(fake_request))
 
         mgr = ccm.ConfigComponentManager("thing-1", "com.example.C")
         assert mgr.get_global_config() == {"k": "from-component"}
-        assert "ggcommons/thing-1/" in subscribed["topic"]
+        # UNS Flow A (D-U19): the GET rides the config server's rendezvous; the pushed
+        # set-config lands on this component's OWN inbox.
+        assert requested["topic"] == "ecv1/thing-1/config/main/cmd/get-configuration"
+        assert subscribed["topic"] == "ecv1/thing-1/C/main/cmd/set-config"
+        # The bootstrap request self-identifies in the body and carries no identity.
+        assert requested["msg"].get_body() == {"component": "C"}
+        assert requested["msg"].get_identity() is None
 
     def test_load_with_str_body(self, monkeypatch):
         import ggcommons.config.manager.config_component_manager as ccm

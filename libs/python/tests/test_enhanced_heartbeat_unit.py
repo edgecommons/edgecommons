@@ -1,8 +1,14 @@
 """Deterministic unit tests for EnhancedHeartbeat publish/lifecycle paths.
 
-Drives _publish_heartbeat / _publish_to_messaging / _publish_to_metrics directly with
-mock services (long interval so the loop never ticks during a test), so no broker or
-real timing is needed. Complements the timing-based test_heartbeat_loop.py.
+Drives _publish_heartbeat / _publish_state / _emit_sys_metric directly with mock
+services (long interval so the loop never ticks during a test), so no broker or real
+timing is needed. Complements the timing-based test_heartbeat_loop.py.
+
+The heartbeat is the UNS ``state`` keepalive (UNS-CANONICAL-DESIGN §4.3, D-U14/D-U20):
+``ecv1/{device}/{component}/main/state`` with body
+``{"status":"RUNNING","uptimeSecs":n}`` through the privileged ``_publish_reserved*``
+seam, plus the measures as the ``sys`` metric through the metric subsystem; a
+best-effort ``{"status":"STOPPED"}`` is published once on stop().
 """
 from unittest.mock import MagicMock
 
@@ -11,15 +17,18 @@ import pytest
 from ggcommons.config.heartbeat_config import HeartbeatConfiguration
 from ggcommons.config.metric_config import MetricConfiguration
 from ggcommons.heartbeat.enhanced_heartbeat import EnhancedHeartbeat
+from ggcommons.messaging.identity import HierEntry, MessageIdentity
 
 
 class FakeConfig:
-    def __init__(self, heartbeat_json=None):
+    def __init__(self, heartbeat_json=None, identity=True):
         self._hb_json = heartbeat_json if heartbeat_json is not None else {
             "intervalSecs": 3600,  # effectively no ticks during the test
-            "targets": [{"type": "messaging", "config": {"topic": "hb/{ThingName}", "destination": "ipc"}}],
             "measures": {"cpu": True, "memory": True},
         }
+        self._identity = (
+            MessageIdentity([HierEntry("device", "thing-1")], "comp") if identity else None
+        )
         self.listeners = []
 
     def get_heartbeat_config(self):
@@ -27,6 +36,12 @@ class FakeConfig:
 
     def get_metric_config(self):
         return MetricConfiguration()
+
+    def get_component_identity(self):
+        return self._identity
+
+    def is_topic_include_root(self):
+        return False
 
     def get_thing_name(self):
         return "thing-1"
@@ -52,6 +67,7 @@ class FakeConfig:
 def hb():
     h = EnhancedHeartbeat(FakeConfig())
     h.stop()  # kill the loop thread; we call methods directly
+    h._stopped_published = False  # re-arm; tests drive publish paths directly
     yield h
     h.stop()
 
@@ -71,6 +87,14 @@ class TestConstruction:
             h.stop()
         assert h.is_running() is False
 
+    def test_disabled_by_configuration_does_not_start(self):
+        cfg = FakeConfig({"enabled": False, "intervalSecs": 3600})
+        h = EnhancedHeartbeat(cfg)
+        try:
+            assert h.is_running() is False
+        finally:
+            h.stop()
+
     def test_get_last_heartbeat_time_none(self, hb):
         assert hb.get_last_heartbeat_time() is None
 
@@ -81,78 +105,93 @@ class TestServiceInjection:
         hb.set_messaging_service(msg)
         assert hb._messaging_service is msg
 
-    def test_set_metric_service_defines_metric(self, hb):
+    def test_set_metric_service_defines_sys_metric(self, hb):
         metric = MagicMock()
         hb.set_metric_service(metric)
         assert hb._metric_service is metric
-        # injecting the metric service triggers a (re)definition of the heartbeat metric
+        # injecting the metric service triggers a (re)definition of the `sys` metric
         metric.define_metric.assert_called_once()
+        defined = metric.define_metric.call_args[0][0]
+        assert defined.get_name() == "sys"
 
 
-class TestPublishMessaging:
+class TestPublishState:
     def test_no_service_warns_and_returns(self, hb):
         # no messaging service injected -> no exception, nothing published
-        hb._publish_to_messaging({"cpu": {"cpu_usage": 1.0}}, {"config": {"destination": "ipc"}})
+        hb._publish_state("RUNNING", include_uptime=True)
 
-    def test_ipc_destination_publishes_local(self, hb):
+    def test_no_identity_warns_once_and_skips(self):
+        h = EnhancedHeartbeat(FakeConfig(identity=False))
+        h.stop()
+        try:
+            msg = MagicMock()
+            h.set_messaging_service(msg)
+            h._publish_state("RUNNING", include_uptime=True)
+            h._publish_state("RUNNING", include_uptime=True)
+            msg._publish_reserved.assert_not_called()
+            msg._publish_reserved_to_iot_core.assert_not_called()
+        finally:
+            h.stop()
+
+    def test_running_state_publishes_uns_topic_with_uptime(self, hb):
         msg = MagicMock()
         hb.set_messaging_service(msg)
-        hb._publish_to_messaging(
-            {"cpu": {"cpu_usage": 1.0}},
-            {"config": {"topic": "hb/{ThingName}", "destination": "ipc"}},
-        )
-        msg.publish.assert_called_once()
-        assert msg.publish.call_args[0][0] == "hb/thing-1"
+        hb._publish_state("RUNNING", include_uptime=True)
+        msg._publish_reserved.assert_called_once()
+        topic, message = msg._publish_reserved.call_args[0]
+        assert topic == "ecv1/thing-1/comp/main/state"
+        assert message.get_header().name == "state"
+        assert message.get_header().version == "1.0"
+        body = message.get_body()
+        assert body["status"] == "RUNNING"
+        assert isinstance(body["uptimeSecs"], int)
+        # the config-bound builder stamps the component identity (instance main)
+        assert message.get_identity().component == "comp"
+        assert message.get_identity().instance == "main"
 
-    def test_iot_core_destination_publishes_iot(self, hb):
+    def test_stopped_state_has_no_uptime(self, hb):
         msg = MagicMock()
         hb.set_messaging_service(msg)
-        hb._publish_to_messaging(
-            {"cpu": {"cpu_usage": 1.0}},
-            {"config": {"topic": "hb", "destination": "iot_core"}},
-        )
-        msg.publish_to_iot_core.assert_called_once()
-
-    def test_unrecognized_destination_skips(self, hb):
-        msg = MagicMock()
-        hb.set_messaging_service(msg)
-        hb._publish_to_messaging({"cpu": {"cpu_usage": 1.0}}, {"config": {"destination": "weird"}})
-        msg.publish.assert_not_called()
-        msg.publish_to_iot_core.assert_not_called()
+        hb._publish_state("STOPPED", include_uptime=False)
+        _, message = msg._publish_reserved.call_args[0]
+        assert message.get_body() == {"status": "STOPPED"}
 
 
-class TestPublishMetrics:
+class TestEmitSysMetric:
     def test_no_metric_service_returns(self, hb):
-        hb._publish_to_metrics({"cpu": {"cpu_usage": 1.0}})  # no exception
+        hb._emit_sys_metric()  # no exception
 
-    def test_flattens_and_emits(self, hb):
+    def test_flattens_and_emits_sys(self, hb):
         metric = MagicMock()
         hb.set_metric_service(metric)
         metric.reset_mock()
-        hb._publish_to_metrics({"cpu": {"cpu_usage": 1.5}, "memory": {"memory_usage": 10.0}})
+        hb._heartbeat_monitor = MagicMock()
+        hb._heartbeat_monitor.get_stats.return_value = {
+            "cpu": {"cpu_usage": 1.5}, "memory": {"memory_usage": 10.0},
+        }
+        hb._emit_sys_metric()
         metric.emit_metric_now.assert_called_once()
         name, values = metric.emit_metric_now.call_args[0]
-        assert name == "heartbeat"
+        assert name == "sys"
         assert values == {"cpu_usage": 1.5, "memory_usage": 10.0}
 
     def test_non_numeric_values_skipped(self, hb):
         metric = MagicMock()
         hb.set_metric_service(metric)
         metric.reset_mock()
+        hb._heartbeat_monitor = MagicMock()
         # non-numeric measure is skipped; non-dict category ignored
-        hb._publish_to_metrics({"cpu": {"cpu_usage": "NaNstr"}, "scalar": 5})
+        hb._heartbeat_monitor.get_stats.return_value = {
+            "cpu": {"cpu_usage": "NaNstr"}, "scalar": 5,
+        }
+        hb._emit_sys_metric()
         metric.emit_metric_now.assert_not_called()
 
 
 class TestPublishHeartbeat:
-    def test_monitor_none_warns(self, hb):
-        hb._heartbeat_monitor = None
-        hb._publish_heartbeat()  # no exception
-
-    def test_dispatches_to_messaging_and_metric(self):
+    def test_tick_publishes_state_and_sys_metric(self):
         cfg = FakeConfig({
             "intervalSecs": 3600,
-            "targets": [{"type": "messaging", "config": {"destination": "ipc"}}, {"type": "metric"}],
             "measures": {"cpu": True, "memory": True},
         })
         h = EnhancedHeartbeat(cfg)
@@ -163,23 +202,63 @@ class TestPublishHeartbeat:
             h.set_metric_service(metric)
             metric.reset_mock()
             h._publish_heartbeat()
-            assert msg.publish.called
+            assert msg._publish_reserved.called
+            assert metric.emit_metric_now.called
+            assert metric.emit_metric_now.call_args[0][0] == "sys"
+        finally:
+            h.stop()
+
+    def test_state_failure_does_not_suppress_metric(self):
+        h = EnhancedHeartbeat(FakeConfig())
+        h.stop()
+        try:
+            msg, metric = MagicMock(), MagicMock()
+            msg._publish_reserved.side_effect = RuntimeError("broker down")
+            h.set_messaging_service(msg)
+            h.set_metric_service(metric)
+            metric.reset_mock()
+            h._heartbeat_monitor = MagicMock()
+            h._heartbeat_monitor.get_stats.return_value = {"cpu": {"cpu_usage": 1.0}}
+            h._publish_heartbeat()  # no exception; the sys half still runs
             assert metric.emit_metric_now.called
         finally:
             h.stop()
 
-    def test_unknown_target_type_warns(self):
-        cfg = FakeConfig({
-            "intervalSecs": 3600,
-            "targets": [{"type": "carrier-pigeon"}],
-            "measures": {"cpu": True},
-        })
+
+class TestStoppedState:
+    def test_stop_publishes_stopped_once(self):
+        cfg = FakeConfig()
         h = EnhancedHeartbeat(cfg)
+        msg = MagicMock()
+        h.set_messaging_service(msg)
         h.stop()
-        try:
-            h._publish_heartbeat()  # logs unknown target warning, no exception
-        finally:
-            h.stop()
+        stopped_calls = [
+            c for c in msg._publish_reserved.call_args_list
+            if c[0][1].get_body().get("status") == "STOPPED"
+        ]
+        assert len(stopped_calls) == 1
+        # a second stop() must not publish STOPPED again
+        h.stop()
+        stopped_calls = [
+            c for c in msg._publish_reserved.call_args_list
+            if c[0][1].get_body().get("status") == "STOPPED"
+        ]
+        assert len(stopped_calls) == 1
+
+    def test_stop_when_never_running_does_not_publish(self):
+        cfg = FakeConfig({"enabled": False})
+        h = EnhancedHeartbeat(cfg)
+        msg = MagicMock()
+        h.set_messaging_service(msg)
+        h.stop()
+        msg._publish_reserved.assert_not_called()
+
+    def test_stopped_publish_failure_is_swallowed(self):
+        h = EnhancedHeartbeat(FakeConfig())
+        msg = MagicMock()
+        msg._publish_reserved.side_effect = RuntimeError("gone")
+        h.set_messaging_service(msg)
+        h.stop()  # no exception
 
 
 class TestLifecycle:

@@ -66,6 +66,17 @@ class GGCommons:
         self._component_name = component_name
         self._config_manager: Optional[ConfigManager] = None
         self._heartbeat = None
+        # The library-owned cfg publisher (UNS-CANONICAL-DESIGN §4.3): announces the
+        # effective (redacted) configuration on ecv1/{device}/{component}/main/cfg at
+        # startup and on every configuration change.
+        self._effective_config_publisher = None
+        # The component-identity-bound UNS topic builder (instance "main"), lazily
+        # bound on first uns() from the resolved component identity +
+        # topic.includeRoot (UNS-CANONICAL-DESIGN §2).
+        self._uns = None
+        # Cached per-id instance handles (UNS-CANONICAL-DESIGN §3, D-U3): instance(id)
+        # returns the same GgInstance for the same id.
+        self._instance_handles = {}
         self._streams = None
         self._stream_metrics = None
         self._credentials = None
@@ -92,6 +103,32 @@ class GGCommons:
 
             # Initialize configuration manager
             self._init_config_manager(component_name, parsed_args)
+
+            # UNS-CANONICAL-DESIGN §5 / D-U5 (§1.5 init order): late-bind the request()
+            # default deadline from messaging.requestTimeoutSeconds now that the
+            # ConfigManager exists. Messaging is initialized BEFORE config loads (the
+            # IPC-backed config sources need it), so until this bind the provider's
+            # built-in 30 s applied — deliberately, giving the CONFIG_COMPONENT
+            # bootstrap request a deadline instead of hanging forever.
+            #
+            # §4.1 / D-U24: late-bind the reserved-class guard's topic.includeRoot flag
+            # the same way (default False pre-bind - nothing publishes rooted topics
+            # pre-config). D-U27: bind the EFFECTIVE root (includeRoot AND a
+            # multi-level hierarchy) so the guard's position-5 check agrees with
+            # topic-building, which no-ops includeRoot on a single-level hierarchy
+            # (D-U25); otherwise a warned single-level+includeRoot misconfig would
+            # false-positive on a legit app/evt/data channel whose first token is a
+            # reserved word.
+            from ggcommons.messaging.messaging_client import MessagingClient as _MC
+            _MC.set_default_request_timeout(
+                self._config_manager.get_messaging_request_timeout()
+            )
+            _identity = self._config_manager.get_component_identity()
+            _MC.set_guard_include_root(
+                self._config_manager.is_topic_include_root()
+                and _identity is not None
+                and len(_identity.hier) >= 2
+            )
 
             # Logging is configured inside _init_config_manager (via the config manager's
             # _apply_config -> configure_logging). Defer the startup-fact lines to here so they
@@ -139,7 +176,17 @@ class GGCommons:
             # Complete initialization
             if hasattr(self._config_manager, 'complete_initialization'):
                 self._config_manager.complete_initialization()
-                
+
+            # §4.3: announce the effective (redacted) configuration on the UNS cfg
+            # topic - the startup push; the publisher re-announces on every
+            # configuration change. Best-effort (publish_now never throws).
+            from ggcommons.config.effective_config_publisher import EffectiveConfigPublisher
+            from ggcommons.messaging.messaging_client import MessagingClient as _MC2
+            self._effective_config_publisher = EffectiveConfigPublisher(
+                self._config_manager, _MC2
+            )
+            self._effective_config_publisher.publish_now()
+
             logger.info("GGCommons initialized successfully")
             
         except Exception as e:
@@ -615,6 +662,66 @@ class GGCommons:
         """
         from ggcommons.metrics.metric_emitter import MetricEmitter
         return MetricEmitter
+
+    def uns(self):
+        """The UNS topic builder + validator bound to this component's resolved
+        identity (instance ``"main"``) and its ``topic.includeRoot`` setting
+        (UNS-CANONICAL-DESIGN §2). For instance-scoped topics use
+        ``instance(id).uns()``. Mirrors Java's ``getUns()``.
+
+        :raises RuntimeError: when called before initialization completes (no resolved
+            component identity yet)
+        """
+        from ggcommons.uns import Uns
+
+        if self._uns is None:
+            cm = self._require_resolved_identity()
+            self._uns = Uns(cm.get_component_identity(), cm.is_topic_include_root())
+        return self._uns
+
+    def instance(self, instance_id: str):
+        """The instance-scoped handle for an instance token (UNS-CANONICAL-DESIGN §3,
+        D-U3): a :class:`~ggcommons.gg_instance.GgInstance` whose ``uns()`` mints
+        topics with — and whose ``new_message(...)`` stamps envelopes with — this
+        instance token. The token is validated against the §2.2 token rule; handles
+        are cached per id, so repeated calls return the same object. The id is
+        deliberately NOT verified against the configured ``component.instances[]``
+        (instances may be created dynamically) — an unknown id is only logged at DEBUG
+        as a diagnostic aid.
+
+        :raises ggcommons.uns.UnsValidationError: when the token violates the §2.2
+            token rule
+        :raises RuntimeError: when called before initialization completes
+        """
+        from ggcommons.gg_instance import GgInstance
+        from ggcommons.uns import Uns
+
+        Uns.check_token(instance_id, "instance id")
+        cm = self._require_resolved_identity()
+        handle = self._instance_handles.get(instance_id)
+        if handle is None:
+            configured = cm.get_instance_ids()
+            if not configured or instance_id not in configured:
+                logger.debug(
+                    "instance('%s'): id is not among the configured"
+                    " component.instances[] ids %s - creating a dynamic instance handle",
+                    instance_id,
+                    configured,
+                )
+            handle = GgInstance(instance_id, cm, cm.is_topic_include_root())
+            self._instance_handles[instance_id] = handle
+        return handle
+
+    def _require_resolved_identity(self) -> ConfigManager:
+        """Guards the UNS accessors: they need the config manager and its resolved
+        component identity, which exist only after init has constructed the
+        ConfigManager."""
+        if self._config_manager is None or self._config_manager.get_component_identity() is None:
+            raise RuntimeError(
+                "GGCommons is not initialized: the component configuration (and its"
+                " resolved UNS identity) is not available yet"
+            )
+        return self._config_manager
 
 
     def shutdown(self) -> None:

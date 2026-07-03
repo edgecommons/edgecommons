@@ -15,6 +15,7 @@ from ggcommons.metrics.targets.metric_log import MetricLog, _parse_size
 from ggcommons.metrics.targets.messaging import Messaging, _is_local_destination
 from ggcommons.metrics.targets.cloudwatch_component import CloudWatchComponent
 from ggcommons.metrics.targets.emf_helper import build_metric_data_emf, get_metrics_metadata_emf
+from ggcommons.messaging.identity import HierEntry, MessageIdentity
 import ggcommons.metrics.targets.messaging as messaging_mod
 import ggcommons.metrics.targets.cloudwatch_component as cwc_mod
 
@@ -22,13 +23,22 @@ import ggcommons.metrics.targets.cloudwatch_component as cwc_mod
 class FakeConfigManager:
     """Minimal ConfigManager stand-in for metric targets."""
 
-    def __init__(self, metric_config, thing="thing-1", component="comp"):
+    def __init__(self, metric_config, thing="thing-1", component="comp", identity=True):
         self._mc = metric_config
         self._thing = thing
         self._component = component
+        self._identity = (
+            MessageIdentity([HierEntry("device", thing)], component) if identity else None
+        )
 
     def get_metric_config(self):
         return self._mc
+
+    def get_component_identity(self):
+        return self._identity
+
+    def is_topic_include_root(self):
+        return False
 
     def resolve_template(self, template):
         return (
@@ -173,68 +183,100 @@ class TestMessagingTarget:
         assert _is_local_destination("iotcore") is False
         assert _is_local_destination("IoTCore") is False
 
-    def test_emit_publishes_local(self, monkeypatch):
+    def test_emit_publishes_local_on_uns_metric_topic(self, monkeypatch):
+        # UNS-CANONICAL-DESIGN par. 4.3: the messaging target publishes to
+        # ecv1/{device}/{component}/main/metric/{metricName} through the privileged
+        # seam (the metric class is reserved).
         published = []
         monkeypatch.setattr(
-            messaging_mod.MessagingClient, "publish",
+            messaging_mod.MessagingClient, "_publish_reserved",
             staticmethod(lambda topic, msg: published.append((topic, msg))),
         )
         mc = MetricConfiguration({
             "target": "messaging",
-            "targetConfig": {"topic": "m/{ComponentName}/{ThingName}", "destination": "local"},
+            "targetConfig": {"destination": "local"},
         })
         target = Messaging(FakeConfigManager(mc))
-        assert target.topic == "m/comp/thing-1"
         assert target.send_to_local is True
         target.emit_metric_now(_metric(), {"latency": 5.0})
         assert len(published) == 1
         topic, msg = published[0]
-        assert topic == "m/comp/thing-1"
+        assert topic == "ecv1/thing-1/comp/main/metric/perf"
         assert "_aws" in msg.get_body()
 
     def test_emit_publishes_iot_core(self, monkeypatch):
         published = []
         monkeypatch.setattr(
-            messaging_mod.MessagingClient, "publish_to_iot_core",
+            messaging_mod.MessagingClient, "_publish_reserved_to_iot_core",
             staticmethod(lambda topic, msg, qos: published.append((topic, msg, qos))),
         )
         mc = MetricConfiguration({
             "target": "messaging",
-            "targetConfig": {"topic": "iot/metrics", "destination": "iot_core"},
+            "targetConfig": {"destination": "iot_core"},
         })
         target = Messaging(FakeConfigManager(mc))
         assert target.send_to_local is False
         target.emit_metric_now(_metric(), {"latency": 5.0})
-        assert len(published) == 1 and published[0][0] == "iot/metrics"
+        assert len(published) == 1
+        assert published[0][0] == "ecv1/thing-1/comp/main/metric/perf"
+
+    def test_metric_name_sanitized_into_channel_token(self, monkeypatch):
+        published = []
+        monkeypatch.setattr(
+            messaging_mod.MessagingClient, "_publish_reserved",
+            staticmethod(lambda topic, msg: published.append((topic, msg))),
+        )
+        mc = MetricConfiguration({"target": "messaging"})
+        target = Messaging(FakeConfigManager(mc))
+        metric = (
+            MetricBuilder.create("per+f")
+            .with_thing_name("thing-1")
+            .with_component_name("comp")
+            .with_namespace("App/NS")
+            .add_measure("latency", "Milliseconds", 1)
+            .build()
+        )
+        target.emit_metric_now(metric, {"latency": 5.0})
+        assert published[0][0] == "ecv1/thing-1/comp/main/metric/per_f"
+
+    def test_no_identity_warns_once_and_drops(self, monkeypatch):
+        published = []
+        monkeypatch.setattr(
+            messaging_mod.MessagingClient, "_publish_reserved",
+            staticmethod(lambda topic, msg: published.append((topic, msg))),
+        )
+        mc = MetricConfiguration({"target": "messaging"})
+        target = Messaging(FakeConfigManager(mc, identity=False))
+        target.emit_metric_now(_metric(), {"latency": 5.0})
+        target.emit_metric_now(_metric(), {"latency": 6.0})
+        assert published == []
 
     def test_large_fleet_workaround_publishes_twice(self, monkeypatch):
         published = []
         monkeypatch.setattr(
-            messaging_mod.MessagingClient, "publish",
+            messaging_mod.MessagingClient, "_publish_reserved",
             staticmethod(lambda topic, msg: published.append(msg)),
         )
         mc = MetricConfiguration({
             "target": "messaging",
             "largeFleetWorkaround": True,
-            "targetConfig": {"topic": "m", "destination": "local"},
+            "targetConfig": {"destination": "local"},
         })
         target = Messaging(FakeConfigManager(mc))
         target.emit_metric_now(_metric(), {"latency": 5.0})
         assert len(published) == 2
 
-    def test_on_configuration_change_updates_topic(self, monkeypatch):
+    def test_on_configuration_change_updates_destination(self, monkeypatch):
         mc = MetricConfiguration({
             "target": "messaging",
-            "targetConfig": {"topic": "old/topic", "destination": "local"},
+            "targetConfig": {"destination": "local"},
         })
         cm = FakeConfigManager(mc)
         target = Messaging(cm)
-        assert target.topic == "old/topic"
+        assert target.send_to_local is True
         # mutate the underlying metric config and re-apply
-        mc._topic = "new/topic"
         mc._destination = "iot_core"
         assert target.on_configuration_change(None) is True
-        assert target.topic == "new/topic"
         assert target.send_to_local is False
 
 
@@ -248,15 +290,16 @@ class TestCloudWatchComponent:
         mc = MetricConfiguration({
             "target": "cloudwatchcomponent",
             "namespace": "App/NS",
-            "targetConfig": {"topic": "cw/put"},
         })
         target = CloudWatchComponent(FakeConfigManager(mc))
-        assert target.topic == "cw/put"
+        # D-U21: the cloudwatchcomponent topic is the fixed external AWS Greengrass
+        # component contract - no override.
+        assert target.topic == "cloudwatch/metric/put"
         target.emit_metric_now(_metric(), {"latency": 9.0, "count": 2})
         # one publish per measure value
         assert len(published) == 2
         topic, data = published[0]
-        assert topic == "cw/put"
+        assert topic == "cloudwatch/metric/put"
         req = data["request"]
         assert req["namespace"] == "App/NS"
         assert req["metricData"]["metricName"] in ("latency", "count")
@@ -265,7 +308,7 @@ class TestCloudWatchComponent:
         assert "coreName" not in dim_names
 
     def test_on_configuration_change_updates_topic(self):
-        mc = MetricConfiguration({"target": "cloudwatchcomponent", "targetConfig": {"topic": "a"}})
+        mc = MetricConfiguration({"target": "cloudwatchcomponent"})
         target = CloudWatchComponent(FakeConfigManager(mc))
         mc._topic = "b"
         assert target.on_configuration_change(None) is True

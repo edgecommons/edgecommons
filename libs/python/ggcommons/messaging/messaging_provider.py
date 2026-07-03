@@ -1,6 +1,9 @@
 import abc
+import logging
+import threading
 from abc import abstractmethod
-from typing import Callable
+from typing import Callable, Optional
+from ggcommons.messaging.errors import RequestTimeoutError
 from ggcommons.messaging.message import Message
 from ggcommons.utils.iou import Iou
 from awsiot.greengrasscoreipc.model import QOS
@@ -8,10 +11,80 @@ from awsiot.greengrasscoreipc.model import QOS
 # Default per-subscription queue bound (drop on overflow) when a caller doesn't specify one.
 DEFAULT_MAX_MESSAGES = 10000
 
+# The built-in request() deadline (seconds) that applies until the config-model default
+# (messaging.requestTimeoutSeconds) is late-bound after ConfigManager construction
+# (UNS-CANONICAL-DESIGN §5 / D-U5). Deliberately non-zero so the CONFIG_COMPONENT
+# bootstrap request gets a deadline instead of hanging forever.
+DEFAULT_REQUEST_TIMEOUT_SECONDS = 30.0
+
+_logger = logging.getLogger("MessagingProvider")
+
 
 class MessagingProvider(metaclass=abc.ABCMeta):
+    # Class-level default so instances constructed via __new__ (test seams) still carry
+    # the built-in deadline; set_default_request_timeout shadows it per instance.
+    _default_request_timeout: float = DEFAULT_REQUEST_TIMEOUT_SECONDS
+
     def __init__(self):
         pass
+
+    # ----- framework-owned request() deadline (UNS-CANONICAL-DESIGN §5) ----------------
+
+    def set_default_request_timeout(self, timeout_secs: Optional[float]) -> None:
+        """Sets the default ``request()`` deadline (the late-bind hook for
+        ``messaging.requestTimeoutSeconds``, §5/D-U5). ``None`` or a zero/negative value
+        disables the default deadline; an explicit per-call timeout always wins over
+        this default."""
+        self._default_request_timeout = (
+            float(timeout_secs) if timeout_secs and timeout_secs > 0 else 0.0
+        )
+
+    def get_default_request_timeout(self) -> float:
+        """The current default ``request()`` deadline in seconds (``0`` = disabled)."""
+        return self._default_request_timeout
+
+    def _effective_request_timeout(self, per_call: Optional[float]) -> Optional[float]:
+        """Resolves the deadline for one ``request()`` call: an explicit per-call
+        timeout wins (including ``0`` = disabled for that call); ``None`` falls back to
+        the provider default. A zero/negative resolution yields ``None`` (no
+        deadline)."""
+        chosen = per_call if per_call is not None else self._default_request_timeout
+        if chosen is None or chosen <= 0:
+            return None
+        return float(chosen)
+
+    def _arm_request_deadline(self, iou: Iou, timeout_secs: Optional[float],
+                              cleanup: Callable[[], None]) -> None:
+        """Arms the framework-owned deadline timer for a request at send time (§5).
+        When the deadline fires and wins the request's settle CAS
+        (:meth:`~ggcommons.utils.iou.Iou.try_settle`), it (1) runs the provider-supplied
+        cleanup (unsubscribe the ephemeral reply topic, remove the pending entry) and
+        (2) completes the future **exceptionally** with a
+        :class:`~ggcommons.messaging.errors.RequestTimeoutError` — even if the caller
+        never ``get()``'s the future (the reply-subscription leak fix). No-op when
+        ``timeout_secs`` is ``None`` (deadline disabled)."""
+        if timeout_secs is None:
+            return
+
+        def _on_deadline():
+            if not iou.try_settle():
+                return  # reply or cancel won the settle race — the deadline no-ops
+            try:
+                cleanup()
+            except Exception as e:  # noqa: BLE001 - cleanup must not mask the timeout
+                _logger.warning(
+                    f"Request-deadline cleanup for reply topic '{iou.get_user_data()}'"
+                    f" failed: {e}"
+                )
+            iou.set_error(RequestTimeoutError(
+                f"request timed out after {timeout_secs} s waiting for a reply on"
+                f" '{iou.get_user_data()}'"
+            ))
+
+        timer = threading.Timer(timeout_secs, _on_deadline)
+        timer.daemon = True
+        timer.start()
+        iou._set_deadline_timer(timer)
 
     @abstractmethod
     def disconnect(self):
@@ -74,11 +147,17 @@ class MessagingProvider(metaclass=abc.ABCMeta):
         pass
 
     @abstractmethod
-    def request(self, topic: str, msg: Message) -> Iou:
+    def request(self, topic: str, msg: Message, timeout_secs: Optional[float] = None) -> Iou:
+        """Sends a request; the returned Iou carries the framework-owned deadline
+        (UNS-CANONICAL-DESIGN §5): ``None`` uses the configured default
+        (``messaging.requestTimeoutSeconds``), ``0`` disables the deadline for this
+        call, an explicit value always wins over the default."""
         pass
 
     @abstractmethod
-    def request_from_iot_core(self, topic: str, msg: Message) -> Iou:
+    def request_from_iot_core(self, topic: str, msg: Message,
+                              timeout_secs: Optional[float] = None) -> Iou:
+        """IoT Core variant of :meth:`request` (same deadline semantics)."""
         pass
 
     @abstractmethod

@@ -17,9 +17,11 @@ from ggcommons.config.manager.file_config_manager import (
 )
 
 
-def test_message_tags_omits_null_thing():
-    assert "thing" not in MessageTags(None, {"a": "b"}).to_dict()
-    assert MessageTags("t", {}).to_dict()["thing"] == "t"
+def test_message_tags_no_thing_special_casing():
+    # UNS hard cut (§1.1): the thing field is removed from MessageTags in all four
+    # languages; a stray inbound "thing" key is a generic tag.
+    assert MessageTags({"a": "b"}).to_dict() == {"a": "b"}
+    assert MessageTags.from_dict({"thing": "t"}).to_dict() == {"thing": "t"}
 
 
 def test_metric_emitter_shutdown_closes_target_and_resets():

@@ -4,21 +4,14 @@
     "python_format": "%(asctime)s [%(levelname)s] %(name)s %(lineno)d: %(message)s"
   },
   "heartbeat": {
+    "enabled": true,
     "intervalSecs": 2,
     "measures": {
       "cpu": true,
       "memory": true,
       "disk": false
     },
-    "targets": [
-      {
-          "type": "messaging",
-          "config": {
-              "destination": "local",
-              "topic": "heartbeat/{ComponentName}/{ThingName}"
-          }
-      }
-    ]
+    "destination": "local"
   },
   "metricEmission": {
     "target": "messaging",

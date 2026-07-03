@@ -15,7 +15,7 @@ python3 main.py --platform HOST --transport MQTT ./standalone-messaging.json -c 
 ```
 
 Needs a local MQTT broker (e.g. `docker run -d -p 1883:1883 emqx/emqx:latest`). Subscribe to
-`heartbeat/+/+` to see the component's heartbeats.
+`ecv1/+/+/+/state` to see the component's heartbeats.
 
 ## Run under Greengrass
 

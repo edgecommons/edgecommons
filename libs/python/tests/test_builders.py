@@ -119,13 +119,15 @@ def test_message_builder_with_correlation_id():
     assert builder.correlation_id == "test-123"
 
 
-def test_message_builder_build_requires_config():
-    """Test build method requires config."""
+def test_message_builder_build_without_config_is_bootstrap_shape():
+    """Without a config service the builder produces a bootstrap-style envelope:
+    header + body only (no identity, no tags) — UNS-CANONICAL-DESIGN §1.4."""
     builder = MessageBuilder.create("TestMessage", "1.0") \
         .with_payload({"data": "test"})
-    
-    with pytest.raises(ValueError):
-        builder.build()
+
+    m = builder.build()
+    assert m.identity is None and m.tags is None
+    assert m.get_body() == {"data": "test"}
 
 
 def test_message_builder_build_with_config():
@@ -134,6 +136,7 @@ def test_message_builder_build_with_config():
     config.get_thing_name.return_value = "test-thing"
     config.get_tag_config.return_value = Mock()
     config.get_tag_config.return_value.to_dict.return_value = {}
+    config.get_component_identity.return_value = None
     
     builder = MessageBuilder.create("TestMessage", "1.0") \
         .with_payload({"data": "test"}) \

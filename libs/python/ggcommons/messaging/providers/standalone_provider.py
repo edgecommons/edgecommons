@@ -112,6 +112,13 @@ class StandaloneProvider(MessagingProvider):
 
         client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
 
+        # MQTT Last-Will-and-Testament (UNS-CANONICAL-DESIGN §6): registered at CONNECT
+        # on the LOCAL-broker connection only (paho re-sends it on every automatic
+        # reconnect). Never routed through publish(), so the reserved-class guard does
+        # not (cannot) apply — broker ACLs govern wills.
+        if broker_type == "local":
+            self._apply_lwt(client, getattr(self._messaging_config, "lwt", None))
+
         # Configure TLS for IoT Core (required) or the local broker (when a CA is
         # configured — server-only or, with a client cert, mutual TLS).
         if broker_type == "iotcore":
@@ -135,6 +142,39 @@ class StandaloneProvider(MessagingProvider):
 
         logger.debug(f"Successfully created and configured {broker_type} MQTT client")
         return client
+
+    @staticmethod
+    def _apply_lwt(client: mqtt.Client, lwt) -> None:
+        """Registers the configured MQTT Last-Will-and-Testament on a client
+        (UNS-CANONICAL-DESIGN §6, D-U9/M7). Local-broker connection only; retain is
+        hard-wired to ``False`` (there is no retain knob by design). A string payload
+        is published verbatim as UTF-8 bytes; an object payload is serialized to
+        compact JSON bytes. No-op when ``lwt`` is None (section absent).
+
+        :raises ValueError: on a missing/empty topic or a QoS outside {0, 1}
+        """
+        if lwt is None:
+            return
+        topic = lwt.topic
+        if not topic:
+            raise ValueError("messaging.lwt.topic is required when an lwt section is present")
+        qos = lwt.qos if lwt.qos is not None else 1
+        # Coerce a JSON float (1.0) to its integral QoS value.
+        if isinstance(qos, float) and qos.is_integer():
+            qos = int(qos)
+        if qos not in (0, 1):
+            raise ValueError(f"messaging.lwt.qos must be 0 or 1 (got {lwt.qos})")
+        payload = lwt.payload
+        if payload is None:
+            payload_bytes = b""
+        elif isinstance(payload, str):
+            payload_bytes = payload.encode("utf-8")
+        else:
+            payload_bytes = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        client.will_set(topic, payload_bytes, qos=qos, retain=False)  # retain=false, hard
+        logger.info(
+            f"Registered MQTT LWT on the local connection: topic='{topic}', qos={qos}, retain=False"
+        )
 
     def _generate_client_id(self, broker_config, broker_type: str) -> str:
         """Generate client ID for MQTT connection."""
@@ -306,16 +346,25 @@ class StandaloneProvider(MessagingProvider):
                 msg = Message()
                 msg.raw = payload
 
-            # Resolve a pending request/reply first.
+            # Resolve a pending request/reply first. Reply arrival races the single
+            # idempotent settle path (UNS-CANONICAL-DESIGN §5.1) against the framework
+            # deadline and cancel_request: the winner owns the cleanup (unsubscribe on
+            # the OWNING channel + pending-entry removal) and completes the future; a
+            # loser (straggler reply after settle) is dropped at DEBUG.
             with self._lock:
-                pending = self._response_ious.pop(topic, None)
+                pending = self._response_ious.get(topic)
             if pending is not None:
-                logger.debug(f"Message from {channel.name} broker matches pending request on {topic}")
-                # Tear down the one-shot reply subscription so it does not leak on the broker
-                # (mirrors the IPC path and _cancel_request); otherwise every timed-out-or-served
-                # request orphans a subscription and eventually trips the broker's sub quota.
-                self._unsubscribe(channel, topic)
-                pending.set_result(msg)
+                if pending.try_settle():
+                    logger.debug(f"Message from {channel.name} broker matches pending request on {topic}")
+                    # Tear down the one-shot reply subscription so it does not leak on the broker
+                    # (mirrors the IPC path and _cancel_request); otherwise every timed-out-or-served
+                    # request orphans a subscription and eventually trips the broker's sub quota.
+                    self._unsubscribe(channel, topic)
+                    with self._lock:
+                        self._response_ious.pop(topic, None)
+                    pending.set_result(msg)
+                else:
+                    logger.debug(f"Dropping straggler reply on '{topic}' (request already settled)")
                 return
 
             # Otherwise dispatch to the first matching subscription.
@@ -452,7 +501,8 @@ class StandaloneProvider(MessagingProvider):
             del channel.subscriptions[topic]
 
     def _request(self, channel: _BrokerChannel, topic: str, msg: Message,
-                 reply_qos: int, publish_qos: int) -> Iou:
+                 reply_qos: int, publish_qos: int,
+                 timeout_secs: Optional[float] = None) -> Iou:
         reply_topic = f"ggcommons/reply-{uuid.uuid4()}"
         # Carry the reply topic as the Iou's user_data so cancel_request() can
         # find and tear down the right subscription/pending entry.
@@ -462,6 +512,19 @@ class StandaloneProvider(MessagingProvider):
 
         msg.get_header().reply_to = reply_topic
         self._subscribe(channel, reply_topic, None, reply_qos, None)
+
+        # Arm the framework-owned deadline at send time (UNS-CANONICAL-DESIGN §5): on
+        # expiry the timer unsubscribes the ephemeral reply topic (on the owning
+        # channel), removes the pending entry and completes the future exceptionally
+        # (RequestTimeoutError) — even when the caller never get()'s the future.
+        def _deadline_cleanup():
+            with self._lock:
+                self._response_ious.pop(reply_topic, None)
+            self._unsubscribe(channel, reply_topic)
+
+        self._arm_request_deadline(iou, self._effective_request_timeout(timeout_secs),
+                                   _deadline_cleanup)
+
         self._publish(channel, topic, msg, publish_qos)
         logger.debug(f"Request sent to {channel.name} broker, awaiting response on {reply_topic}")
         return iou
@@ -477,10 +540,13 @@ class StandaloneProvider(MessagingProvider):
         self._publish(channel, reply_topic, reply, publish_qos)
 
     def _cancel_request(self, channel: _BrokerChannel, iou: Iou):
+        if not iou.try_settle():
+            return  # reply or deadline already settled + cleaned up this request
         topic = iou.get_user_data()
         with self._lock:
             self._response_ious.pop(topic, None)
         self._unsubscribe(channel, topic)
+        iou.set_result(None)
 
     # ----- public messaging API (local transport) -------------------------------------
 
@@ -493,9 +559,14 @@ class StandaloneProvider(MessagingProvider):
         """Subscribe to topic on local broker and wait for confirmation."""
         self._subscribe(self._local, topic, callback, 0, max_concurrency, max_messages)
 
-    def request(self, topic: str, msg: Message) -> Iou:
-        """Send request to local broker and wait for response."""
-        return self._request(self._local, topic, msg, reply_qos=0, publish_qos=0)
+    def request(self, topic: str, msg: Message, timeout_secs: Optional[float] = None) -> Iou:
+        """Send request to local broker and wait for response.
+
+        ``timeout_secs``: the per-call deadline (UNS-CANONICAL-DESIGN §5) — ``None``
+        uses the configured default; ``0`` disables the deadline for this call.
+        """
+        return self._request(self._local, topic, msg, reply_qos=0, publish_qos=0,
+                             timeout_secs=timeout_secs)
 
     def reply(self, request: Message, reply: Message):
         """Send reply to local broker."""
@@ -524,11 +595,14 @@ class StandaloneProvider(MessagingProvider):
         """Subscribe to topic on IoT Core broker and wait for confirmation."""
         self._subscribe(self._iot_core, topic, callback, self._mqtt_qos(qos), max_concurrency, max_messages)
 
-    def request_from_iot_core(self, topic: str, msg: Message) -> Iou:
-        """Send request to IoT Core broker and wait for response."""
+    def request_from_iot_core(self, topic: str, msg: Message,
+                              timeout_secs: Optional[float] = None) -> Iou:
+        """Send request to IoT Core broker and wait for response (same deadline
+        semantics as :meth:`request`)."""
         # Subscribe to the reply at QoS 0 (AT_MOST_ONCE); publish the request at
         # QoS 1 (AT_LEAST_ONCE) — matching the previous behavior.
-        return self._request(self._iot_core, topic, msg, reply_qos=0, publish_qos=1)
+        return self._request(self._iot_core, topic, msg, reply_qos=0, publish_qos=1,
+                             timeout_secs=timeout_secs)
 
     def reply_to_iot_core(self, request: Message, reply: Message):
         """Send reply to IoT Core broker."""

@@ -3,12 +3,8 @@
     "level": "INFO"
   },
   "heartbeat": {
+    "enabled": true,
     "intervalSecs": 1,
-    "targets": [
-      {
-        "type": "metric"
-      }
-    ],
     "measures": {
       "cpu": true,
       "memory": true,
@@ -16,7 +12,8 @@
       "files": false,
       "threads": true,
       "fds": false
-    }
+    },
+    "destination": "local"
   },
   "metricEmission": {
     "target": "log",

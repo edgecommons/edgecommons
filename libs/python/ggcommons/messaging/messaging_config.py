@@ -6,7 +6,7 @@ that matches the Java implementation schema and behavior.
 """
 
 from dataclasses import dataclass
-from typing import Optional, Dict, Any
+from typing import Optional, Any
 import logging
 import json
 
@@ -46,11 +46,28 @@ class IoTCoreConfig:
 
 
 @dataclass
+class LwtConfig:
+    """The optional ``messaging.lwt`` section (UNS-CANONICAL-DESIGN §6): an MQTT
+    Last-Will-and-Testament registered on the **local-broker** connection at CONNECT
+    (re-registered automatically on reconnect — paho re-sends the will). There is
+    deliberately NO retain field — the will is always registered with retain=False.
+
+    ``payload`` is kept raw: a string is published verbatim as UTF-8 bytes; an object
+    is serialized to compact JSON bytes. ``qos`` accepts 0 or 1 (schema enum) and
+    defaults to 1 when absent (a JSON ``1.0`` is coerced at registration time)."""
+
+    topic: Optional[str] = None
+    payload: Any = None
+    qos: Optional[Any] = None
+
+
+@dataclass
 class MessagingConfigData:
     """Inner messaging configuration data."""
-    
+
     local: Optional[LocalMqttConfig] = None
     iot_core: Optional[IoTCoreConfig] = None
+    lwt: Optional[LwtConfig] = None
 
 
 class MessagingConfiguration:
@@ -69,7 +86,7 @@ class MessagingConfiguration:
             with open(config_path, 'r') as f:
                 data = json.load(f)
             
-            logger.debug(f"Successfully parsed JSON from configuration file")
+            logger.debug("Successfully parsed JSON from configuration file")
             config = cls()
             messaging_data = data.get('messaging', {})
             
@@ -145,9 +162,22 @@ class MessagingConfiguration:
             else:
                 logger.info("No IoT Core configuration found (local-only standalone)")
 
+            # Parse the optional MQTT Last-Will-and-Testament section (UNS §6). Kept
+            # lenient here (the provider validates topic/qos at CONNECT registration).
+            lwt_config = None
+            if 'lwt' in messaging_data:
+                lwt_data = messaging_data['lwt']
+                lwt_config = LwtConfig(
+                    topic=lwt_data.get('topic'),
+                    payload=lwt_data.get('payload'),
+                    qos=lwt_data.get('qos'),
+                )
+                logger.info(f"MQTT LWT configured for the local connection: topic={lwt_config.topic}")
+
             config.messaging = MessagingConfigData(
                 local=local_config,
-                iot_core=iot_config
+                iot_core=iot_config,
+                lwt=lwt_config
             )
             
             logger.info(f"Successfully loaded messaging configuration from {config_path}")

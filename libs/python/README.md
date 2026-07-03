@@ -123,7 +123,7 @@ metrics.emit_metric("data_processed", {"count": 100.0})
     "python_format": "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     "fileLogging": { "enabled": true, "filePath": "/var/log/{ComponentName}.log", "maxFileSize": "10MB", "backupCount": 5 }
   },
-  "heartbeat": { "intervalSecs": 30, "measures": { "cpu": true, "memory": true, "disk": false }, "targets": [{"type": "metric"}] },
+  "heartbeat": { "intervalSecs": 30, "measures": { "cpu": true, "memory": true, "disk": false } },
   "metricEmission": { "target": "cloudwatch", "namespace": "MyApplication" },
   "tags": { "site": "factory-1" },
   "component": { "global": { "timeout": 5000 }, "instances": [ { "id": "main" } ] }
@@ -159,8 +159,8 @@ The legacy `-m/--mode` flag has been removed: `-m GREENGRASS` → `--platform GR
 docker compose -f ../../test-infra/compose.yaml up -d   # EMQX broker (or `docker run … emqx/emqx`)
 python3 main.py --platform HOST --transport MQTT standalone-messaging.json -c FILE config.json -t my-device
 ```
-Subscribe to `heartbeat/+/+` (e.g. with MQTTX) to see heartbeats; subscribe to the component's topics
-to see its messages and publish to drive request/response.
+Subscribe to `ecv1/+/+/+/state` (e.g. with MQTTX) to see the UNS state keepalives (heartbeats);
+subscribe to the component's topics to see its messages and publish to drive request/response.
 
 ## Testing
 

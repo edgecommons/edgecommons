@@ -42,7 +42,7 @@ except ConfigurationValidationException as e:
 heartbeat_config = {
     "intervalSecs": 30,
     "measures": {"cpu": True, "memory": True},
-    "targets": [{"type": "messaging"}]
+    "destination": "local"
 }
 
 try:
@@ -100,6 +100,7 @@ The validation schema covers all ggcommons configuration sections:
 ```json
 {
   "heartbeat": {
+    "enabled": true,
     "intervalSecs": 30,
     "measures": {
       "cpu": true,
@@ -109,27 +110,17 @@ The validation schema covers all ggcommons configuration sections:
       "threads": true,
       "fds": false
     },
-    "targets": [
-      {
-        "type": "messaging",
-        "config": {
-          "destination": "ipc",
-          "topic": "{ThingName}/{ComponentName}/heartbeat"
-        }
-      },
-      {
-        "type": "metric"
-      }
-    ]
+    "destination": "local"
   }
 }
 ```
 
 **Validation Rules:**
-- `intervalSecs`: Must be positive integer
+- `enabled`: Must be boolean (default true)
+- `intervalSecs`: Must be a positive integer (minimum 1)
 - `measures`: All properties must be boolean
-- `targets[].type`: Must be "messaging" or "metric"
-- `targets[].config.destination`: Must be "ipc" or "iot_core"
+- `destination`: Must be "local" or "iotcore" (the state keepalive's transport only)
+- The legacy `targets[]` array is removed (UNS hard cut) and now fails validation
 
 ### Metric Emission Configuration
 
@@ -142,7 +133,6 @@ The validation schema covers all ggcommons configuration sections:
     "largeFleetWorkaround": false,
     "targetConfig": {
       "logFileName": "metrics.log",
-      "topic": "metrics/{ComponentName}",
       "destination": "ipc"
     }
   }
@@ -150,9 +140,12 @@ The validation schema covers all ggcommons configuration sections:
 ```
 
 **Validation Rules:**
-- `target`: Must be "cloudwatch", "log", or "messaging"
+- `target`: Must be "cloudwatch", "log", "messaging", "cloudwatchcomponent" or "prometheus"
 - `intervalSecs`: Must be positive integer
-- `targetConfig.destination`: Must be "ipc" or "iot_core"
+- `targetConfig.destination`: Must be one of "ipc", "local", "iotcore", "iot_core"
+- The former `targetConfig.topic` override is removed (UNS hard cut): the messaging target
+  publishes to the UNS metric topic `ecv1/{device}/{component}/main/metric/{metricName}` and
+  the cloudwatchcomponent topic is the fixed external contract `cloudwatch/metric/put`
 
 ### Tags Configuration
 

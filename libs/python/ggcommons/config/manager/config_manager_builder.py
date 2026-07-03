@@ -1,7 +1,6 @@
 import logging
 import os
 from argparse import Namespace
-from typing import List
 
 from ggcommons.config.manager.config_component_manager import ConfigComponentManager
 from ggcommons.config.manager.config_manager import ConfigManager
