@@ -11,6 +11,8 @@ data:
   config.json: |-
     {
       "logging": { "level": "INFO" },
+      "hierarchy": { "levels": ["site", "device"] },
+      "identity": { "site": "site1" },
       "messaging": {
         "local": { "type": "mqtt", "host": "emqx.default.svc.cluster.local", "port": 1883, "clientId": "<<COMPONENTNAME>>" }
       },

@@ -11,10 +11,11 @@ from ggcommons.metrics.metric_builder import MetricBuilder
 from ggcommons.config.manager.configuration_change_listener import (
     ConfigurationChangeListener,
 )
-from ggcommons.config.manager.config_manager import ConfigManager
+from ggcommons.messaging.errors import RequestTimeoutError
 from ggcommons.messaging.message import Message
 from ggcommons.messaging.message_builder import MessageBuilder
 from ggcommons.messaging.messaging_client import MessagingClient
+from ggcommons.uns import UnsClass
 
 logger = logging.getLogger("GreengrassApp")
 
@@ -25,18 +26,27 @@ DEMO_SECRET_KEY = "demo_secret"
 DEFAULT_DEMO_SECRET = "skeleton/demo-secret"
 
 
-# This sample application subscribes to messages on the topic "hello/world" and
-# then publishes a message every n seconds on that topic, where "n" comes from the
-# app specific configuration section in the config file/recipe.  The message is output
-# to the log.  The application inherits configuration management, heartbeats, logging
-# and switching between local MQTT and GG IPC from ggcommons.
+# This sample application subscribes to messages on its unified-namespace (UNS) `app`
+# topic and then publishes a message every n seconds on that topic, where "n" comes
+# from the app specific configuration section in the config file/recipe. The message
+# is output to the log. All topics are minted through `gg.uns()` (never hand-written),
+# so they carry the component's config-resolved identity
+# (ecv1/{device}/{component}/{instance}/{class}/...). The application inherits
+# configuration management, heartbeats (the automatic `state` keepalive), logging and
+# switching between local MQTT and GG IPC from ggcommons.
 
 
 class GreengrassApp(ConfigurationChangeListener, ABC):
-    def __init__(self, config_manager: ConfigManager, streams=None):
+    def __init__(self, gg, streams=None):
         super().__init__()
-        self._config_manager = config_manager
+        self._gg = gg
+        self._config_manager = gg.get_config_manager()
         self._config_manager.add_config_change_listener(self)
+        # UNS topics, minted from the config-resolved identity (topic.includeRoot-aware).
+        # `app` is the free application class; `cmd/echo` is this component's own
+        # command-inbox verb used by the request/reply demo below.
+        self._hello_topic = gg.uns().topic(UnsClass.APP, "hello-world")
+        self._request_topic = gg.uns().topic(UnsClass.CMD, "echo")
         global_config = self._config_manager.get_global_config()
         self._publish_interval = (
             global_config["publish_interval"]
@@ -137,8 +147,13 @@ class GreengrassApp(ConfigurationChangeListener, ABC):
             logger.warning(f"parameter error; skipping parameter demo: {e}")
 
     def ipc_hello_world_handler(self, topic: str, msg: Message):
+        # Every config-built message carries the publisher's identity element —
+        # consumers read who/where it came from without parsing topics.
+        sender = msg.get_identity()
+        sender_path = sender.path if sender is not None else "<no identity>"
         logger.info(
-            f"Received an ipc hello world message on topic {topic}: {msg.get_body()['msg_id']}"
+            f"Received an ipc hello world message on topic {topic} from {sender_path}: "
+            f"{msg.get_body()['msg_id']}"
         )
         time.sleep(5)
         logger.info(
@@ -178,12 +193,20 @@ class GreengrassApp(ConfigurationChangeListener, ABC):
             .with_config(self._config_manager)
             .build()
         )
-        return MessagingClient.request("ggcommons/test/python/request", request)
+        return MessagingClient.request(self._request_topic, request)
 
     def wait_for_reply(self, msg_instance: str, iou: Iou, timeout: float):
         logger.info(f"Waiting for reply for {msg_instance}")
-        done, reply = iou.get(timeout)
+        try:
+            done, reply = iou.get(timeout)
+        except RequestTimeoutError as e:
+            # The framework-owned request deadline (messaging.requestTimeoutSeconds,
+            # default 30 s) fired: the library already unsubscribed the reply topic and
+            # removed the pending entry — a retry must issue a FRESH request.
+            logger.warning(f"Request for {msg_instance} hit the framework deadline: {e}")
+            return
         if done is False:
+            # Our own (shorter) wait elapsed but the request is still pending.
             logger.warning(
                 f"Reply for {msg_instance} timed out (took more than {timeout} seconds). Cancelling."
             )
@@ -202,32 +225,33 @@ class GreengrassApp(ConfigurationChangeListener, ABC):
         return metric
 
     def run(self):
-        # Log the resolved component identity (thing name) once at startup. On KUBERNETES this is the
-        # Downward-API value (GGCOMMONS_THING_NAME ▸ POD_NAME, FR-RT-7); elsewhere it is -t/--thing or
-        # AWS_IOT_THING_NAME. Logging it here (after logging is configured) makes the resolved identity
-        # observable in pod/container logs.
+        # Log the resolved UNS identity once at startup: the full hierarchy path (from the
+        # top-level `hierarchy` + `identity` config; the last level is always the resolved
+        # thing name — Downward API on KUBERNETES, -t/--thing or AWS_IOT_THING_NAME
+        # elsewhere). Logging it here (after logging is configured) makes the resolved
+        # identity observable in pod/container logs.
+        identity = self._config_manager.get_component_identity()
         logger.info(
-            f"Component identity (thing name): {self._config_manager.get_thing_name()}"
+            f"Component identity: path={identity.path} component={identity.component}"
+            f" (thing name: {self._config_manager.get_thing_name()})"
         )
         i = 1
         try:
             measure_values = {}
             MessagingClient.subscribe(
-                "ggcommons/test/python/hello_world", self.ipc_hello_world_handler, True
+                self._hello_topic, self.ipc_hello_world_handler, True
             )
             # Non-fatal: setups without an IoT Core transport (e.g. a local-only MQTT broker)
             # skip the IoT Core bridge instead of failing the whole component.
             try:
                 MessagingClient.subscribe_to_iot_core(
-                    "ggcommons/test/python/hello_world",
+                    self._hello_topic,
                     self.iot_core_hello_world_handler,
                     QOS.AT_LEAST_ONCE,
                 )
             except Exception as e:
                 logger.warning(f"IoT Core unavailable; skipping IoT Core subscribe: {e}")
-            MessagingClient.subscribe(
-                "ggcommons/test/python/request", self.request_callback
-            )
+            MessagingClient.subscribe(self._request_topic, self.request_callback)
 
             iou_1 = self.publish_request(msg_id="1", execution_time=0)
             iou_2 = self.publish_request(msg_id="2", execution_time=1)
@@ -245,13 +269,11 @@ class GreengrassApp(ConfigurationChangeListener, ABC):
                     .build()
                 )
                 logger.info(f"Publishing message {i} to ipc")
-                MessagingClient.publish(
-                    "ggcommons/test/python/hello_world", test_message
-                )
+                MessagingClient.publish(self._hello_topic, test_message)
                 logger.info(f"Publishing message {i} to iot core")
                 try:
                     MessagingClient.publish_to_iot_core(
-                        "ggcommons/test/python/hello_world", test_message, QOS.AT_LEAST_ONCE
+                        self._hello_topic, test_message, QOS.AT_LEAST_ONCE
                     )
                 except Exception as e:
                     logger.warning(f"failed to publish to IoT Core: {e}")

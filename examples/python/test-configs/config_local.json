@@ -2,6 +2,12 @@
   "logging": {
     "level": "INFO"
   },
+  "hierarchy": {
+    "levels": ["site", "device"]
+  },
+  "identity": {
+    "site": "site1"
+  },
   "heartbeat": {
     "enabled": true,
     "intervalSecs": 1,

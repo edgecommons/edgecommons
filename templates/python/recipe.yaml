@@ -15,12 +15,11 @@ ComponentConfiguration:
         level: "INFO"
         python_format: "%(asctime)s [%(levelname)s] %(filename)s %(funcName)s(%(lineno)d) [%(threadName)s]: %(message)s"
       heartbeat:
+        enabled: true
         intervalSecs: 5
-        targets:
-          - type: "messaging"
-            config:
-              destination: "ipc"
-              topic: "heartbeat/{ThingName}/{ComponentName}"
+        # The state keepalive publishes to ecv1/{device}/{component}/main/state; the
+        # measures are emitted as the 'sys' metric through metricEmission.
+        destination: "local"
         measures:
           cpu: true
           memory: true

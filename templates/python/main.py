@@ -21,8 +21,9 @@ def main():
         .receive_own_messages(True)
         .build()
     )
-    config_manager = gg.get_config_manager()
-    app = <<COMPONENTNAME>>(config_manager=config_manager)
+    # The app receives the framework facade: it mints its topics via gg.uns() (the UNS
+    # topic builder bound to the config-resolved identity) and reaches config through it.
+    app = <<COMPONENTNAME>>(gg)
     try:
         app.run()
     finally:

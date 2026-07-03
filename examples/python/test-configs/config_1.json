@@ -3,6 +3,14 @@
     "level": "INFO",
     "python_format": "%(asctime)s [%(levelname)s] %(filename)s %(funcName)s(%(lineno)d) [%(threadName)s]: %(message)s"
   },
+  "hierarchy": {
+    "levels": ["site", "shop", "line", "device"]
+  },
+  "identity": {
+    "site": "site1",
+    "shop": "shop1",
+    "line": "line1"
+  },
   "heartbeat": {
     "enabled": true,
     "intervalSecs": 1,

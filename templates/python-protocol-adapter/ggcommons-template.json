@@ -4,7 +4,7 @@
   "substitutions": {
     "recipe.yaml": ["DESCRIPTION", "COMPONENTFULLNAME", "AUTHOR", "COMPONENTNAME"],
     "gdk-config.json": ["COMPONENTFULLNAME", "AUTHOR", "BUCKET", "REGION"],
-    "main.py": ["COMPONENTNAME"],
+    "main.py": ["COMPONENTNAME", "COMPONENTFULLNAME"],
     "app/adapter.py": ["COMPONENTNAME"],
     "README.md": ["COMPONENTNAME", "COMPONENTFULLNAME"],
     "Dockerfile": ["COMPONENTNAME"],

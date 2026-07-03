@@ -15,7 +15,11 @@ python3 main.py --platform HOST --transport MQTT ./standalone-messaging.json -c 
 ```
 
 Needs a local MQTT broker (e.g. `docker run -d -p 1883:1883 emqx/emqx:latest`). Subscribe to
-`ecv1/+/+/+/state` to see the component's heartbeats.
+`ecv1/+/+/+/state` to see the component's heartbeats. Topics follow the unified namespace
+(`ecv1/{device}/{component}/{instance}/{class}/...`): the component's place in it comes from the
+top-level `hierarchy` + `identity` config blocks (see `test-configs/config_1.json`; the last
+hierarchy level is always the resolved thing name), and application topics are minted in code via
+`gg.uns()` — never hand-written.
 
 ## Run under Greengrass
 

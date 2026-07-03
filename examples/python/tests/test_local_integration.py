@@ -63,6 +63,88 @@ def test_config_manager_surface(gg):
     assert resolved == f"{COMPONENT}/{THING}/site1"
 
 
+def test_uns_identity_resolved_from_config(gg):
+    """The component's UNS identity resolves from the top-level `hierarchy` +
+    `identity` config blocks; the last hierarchy level is always the resolved thing."""
+    identity = gg.get_config_manager().get_component_identity()
+    assert identity is not None
+    assert [e.level for e in identity.hier] == ["site", "device"]
+    assert identity.path == f"site1/{THING}"
+    assert identity.device == THING
+    assert identity.component == COMPONENT
+    assert identity.instance == "main"
+
+
+def test_uns_minted_topic_round_trip_carries_identity(gg):
+    """A topic minted via gg.uns() round-trips through the broker, and the envelope
+    carries the config-stamped identity element."""
+    from ggcommons import MessagingClient
+    from ggcommons.messaging.message_builder import MessageBuilder
+    from ggcommons.uns import UnsClass
+
+    topic = gg.uns().topic(UnsClass.APP, "it-uns-roundtrip")
+    assert topic == f"ecv1/{THING}/{COMPONENT}/main/app/it-uns-roundtrip"
+
+    received = []
+    done = threading.Event()
+
+    def handler(_t, m):
+        received.append(m)
+        done.set()
+
+    MessagingClient.subscribe(topic, handler)
+    msg = (
+        MessageBuilder.create("UnsRoundTrip", "1.0")
+        .with_payload({"n": 1})
+        .with_config(gg.get_config_manager())
+        .build()
+    )
+    MessagingClient.publish(topic, msg)
+    assert done.wait(5), "UNS-minted topic should round-trip through the local broker"
+    identity = received[0].get_identity()
+    assert identity is not None
+    assert identity.path == f"site1/{THING}"
+    assert identity.component == COMPONENT
+    MessagingClient.unsubscribe(topic)
+
+
+def test_reserved_class_publish_is_guarded(gg):
+    """Publishing to a library-owned UNS class (state|metric|cfg|log) raises: those
+    topics belong to the library publishers (heartbeat keepalive, metrics, cfg)."""
+    from ggcommons import MessagingClient
+    from ggcommons.messaging.errors import ReservedTopicError
+    from ggcommons.messaging.message_builder import MessageBuilder
+    from ggcommons.uns import UnsClass
+
+    state_topic = gg.uns().topic(UnsClass.STATE)
+    msg = (
+        MessageBuilder.create("Forged", "1.0")
+        .with_payload({})
+        .with_config(gg.get_config_manager())
+        .build()
+    )
+    with pytest.raises(ReservedTopicError):
+        MessagingClient.publish(state_topic, msg)
+
+
+def test_request_framework_deadline_raises(gg):
+    """A request whose framework-owned deadline fires completes exceptionally:
+    Iou.get() raises RequestTimeoutError (UNS-CANONICAL-DESIGN §5, D-U23)."""
+    from ggcommons import MessagingClient
+    from ggcommons.messaging.errors import RequestTimeoutError
+    from ggcommons.messaging.message_builder import MessageBuilder
+
+    req = (
+        MessageBuilder.create("Req", "1.0")
+        .with_payload({"q": "x"})
+        .with_config(gg.get_config_manager())
+        .build()
+    )
+    iou = MessagingClient.request("skeleton/test/never-answered-deadline", req, 0.5)
+    with pytest.raises(RequestTimeoutError):
+        iou.get(5)
+
+
 def test_messaging_round_trip(gg):
     from ggcommons import MessagingClient
     from ggcommons.messaging.message_builder import MessageBuilder
@@ -203,9 +285,12 @@ def test_raw_publish_delivers_non_envelope_payload(gg):
 def test_greengrass_app_constructs_and_defines_metric(gg):
     from app.greengrass_app import GreengrassApp
 
-    app = GreengrassApp(config_manager=gg.get_config_manager())
+    app = GreengrassApp(gg)
     metric = app.define_metric()
     assert metric is not None
+    # The app minted its topics through gg.uns() from the config-resolved identity.
+    assert app._hello_topic == f"ecv1/{THING}/{COMPONENT}/main/app/hello-world"
+    assert app._request_topic == f"ecv1/{THING}/{COMPONENT}/main/cmd/echo"
 
 
 def test_metric_emits_to_log(gg):

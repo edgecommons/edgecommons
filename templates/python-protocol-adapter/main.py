@@ -30,7 +30,7 @@ def main():
 
     def worker(instance_id):
         try:
-            device = <<COMPONENTNAME>>(config_manager, instance_id)
+            device = <<COMPONENTNAME>>(gg, instance_id)
             devices.append(device)
             gg.set_ready(True)
             device.run()

@@ -1,7 +1,9 @@
 {
-  "tags": { "appId": "dev", "site": "site1", "shop": "shop1", "line": "line1" },
+  "hierarchy": { "levels": ["site", "device"] },
+  "identity": { "site": "site1" },
+  "tags": { "appId": "dev" },
   "logging": { "level": "INFO" },
-  "metricEmission": { "target": "messaging", "targetConfig": { "topic": "metrics/{ThingName}/{ComponentName}" } },
+  "metricEmission": { "target": "messaging", "targetConfig": { "destination": "local" } },
   "component": {
     "global": { "defaults": { "pollIntervalMs": 1000 } },
     "instances": [
@@ -9,9 +11,9 @@
         "id": "device1",
         "adapter": "example",
         "connection": { "_comment": "TODO: your protocol endpoint, e.g. host/port/unitId or an OPC UA endpoint" },
-        "publish": { "topic": "southbound/{site}/{ComponentName}/{InstanceId}/{tagId}", "batchMs": 0 },
-        "write": { "enabled": true, "topic": "southbound/{ComponentName}/{InstanceId}/write" },
-        "read": { "topic": "southbound/{ComponentName}/{InstanceId}/read" }
+        "publish": { "_comment": "data topics are minted in code via gg.instance(id).uns() — ecv1/{device}/{component}/{instance}/data/{signalPath}", "batchMs": 0 },
+        "write": { "enabled": true, "topic": "southbound/{ComponentName}/{InstanceId}/write", "_comment": "moves to the UNS cmd/sb/* inbox in Phase 5 (M9)" },
+        "read": { "topic": "southbound/{ComponentName}/{InstanceId}/read", "_comment": "moves to the UNS cmd/sb/* inbox in Phase 5 (M9)" }
       }
     ]
   }

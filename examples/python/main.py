@@ -27,7 +27,6 @@ def main():
         .receive_own_messages(True)
         .build()
     )
-    config_manager = gg.get_config_manager()
     # Telemetry streaming service (None unless the config has a `streaming` section); the app
     # appends durable records to it and the library's export engine drains them to the sink.
     streams = gg.get_streams()
@@ -35,7 +34,9 @@ def main():
     GreengrassApp.demonstrate_credentials(gg)
     # Demonstrate externalized-parameter access once at startup (non-fatal).
     GreengrassApp.demonstrate_parameters(gg)
-    app = GreengrassApp(config_manager=config_manager, streams=streams)
+    # The app receives the framework facade: it mints its topics via gg.uns() (the UNS
+    # topic builder bound to the config-resolved identity) and reaches config through it.
+    app = GreengrassApp(gg, streams=streams)
     try:
         app.run()
     finally:

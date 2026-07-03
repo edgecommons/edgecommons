@@ -3,6 +3,12 @@
     "level": "INFO",
     "python_format": "%(asctime)s [%(levelname)s] %(filename)s %(funcName)s(%(lineno)d) [%(threadName)s]: %(message)s"
   },
+  "hierarchy": {
+    "levels": ["site", "device"]
+  },
+  "identity": {
+    "site": "site1"
+  },
   "heartbeat": {
     "enabled": true,
     "intervalSecs": 1,
