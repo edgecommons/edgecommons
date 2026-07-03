@@ -1,5 +1,13 @@
 # Telemetry Streaming — Phase 1 implementation spec (`ggstreamlog` core)
 
+> Status: **Phase 1 shipped, and so has most of Phase 2/3** (see [TELEMETRY_STREAMING.md](./TELEMETRY_STREAMING.md)
+> for the current subsystem-wide status). In particular: the C-ABI is now fully implemented (not just
+> designed) and language bindings for Java/Python/Node all exist, and a `KafkaSink` has shipped. What
+> genuinely remains out: the SiteWise sink, RocksDB/LMDB `BlockStore` backends, credential providers
+> beyond the AWS default chain, stream priorities, compression beyond an accepted-but-unapplied
+> `zstd` flag, GREENGRASS local-pubsub fan-in, and hot-reload of the streaming `batch.*`/
+> `max_disk_bytes`/`on_full` settings.
+
 Implementation-ready spec for **Phase 1** of [TELEMETRY_STREAMING.md](./TELEMETRY_STREAMING.md):
 the Rust `ggstreamlog` core + `KinesisSink`, HOST, wired into the Rust ggcommons lib,
 with crash/fuzz/bench tests. **Pure Rust first** — language bindings, Kafka, SiteWise,
@@ -12,12 +20,14 @@ RocksDB/LMDB backends, and GREENGRASS fan-in are later phases.
   + stats; config types; the `BlockStore`/`Sink`/`CredentialProvider` traits.
 - Rust-native `IStreamService` in `libs/rust` (`gg.streams()`), bridging stats → ggcommons metrics.
 - The **C-ABI surface designed** (header) so Phase 2 bindings aren't painted into a corner;
-  its implementation is deferred to Phase 2.
+  its implementation was deferred to Phase 2 — **and has since shipped** (`src/ffi.rs`), along with
+  the Java/Python/Node bindings that consume it (see the status note above).
 - Tests: unit, property, crash-injection, fuzz, concurrency, bench, golden format vectors.
 
-**Out (later phases):** Kafka/SiteWise sinks, Java/Python/Node bindings, RocksDB/LMDB
-`BlockStore`, credential providers beyond the AWS default chain, stream priorities,
-compression beyond optional zstd, GREENGRASS local-pubsub fan-in.
+**Out (later phases):** ~~Kafka sink, Java/Python/Node bindings~~ (**both have since shipped** — see
+the status note above). Still out: the **SiteWise sink**, RocksDB/LMDB `BlockStore`, credential
+providers beyond the AWS default chain, stream priorities, compression beyond optional zstd, and
+GREENGRASS local-pubsub fan-in.
 
 ## 2. Crate layout
 
@@ -240,8 +250,9 @@ pub struct DeliveryConfig { pub max_retries: i64 /*-1*/, pub backoff_max_ms: u64
 pub enum SinkConfig { Kinesis { stream_name: String, region: Option<String> } }  // Kafka/SiteWise later
 ```
 `validate()`: `segment_bytes>0`, `max_disk_bytes>=segment_bytes`, Kinesis batch caps not exceeded, path
-writable. Hot-reload (Phase 2+) can change `batch.*`/`max_disk_bytes`/`on_full` live; `path`/
-`segment_bytes` are immutable for an open stream.
+writable. Hot-reload of `batch.*`/`max_disk_bytes`/`on_full` remains **not implemented** (still
+tracked as Phase 2+, confirmed against the shipped `libs/rust/src/streaming/` binding — no reload
+wiring found there); `path`/`segment_bytes` are immutable for an open stream.
 
 ## 10. Stats / observability
 
@@ -254,7 +265,7 @@ pub struct Stats { pub appended_total: u64, pub exported_total: u64, pub dropped
 The Rust lib bridges these into the existing `metrics`/`heartbeat` targets (incl. CloudWatch).
 `dropped_total > 0` makes `DropOldest` visible.
 
-## 11. C-ABI (designed P1, implemented P2)
+## 11. C-ABI (designed P1, implemented P2 — shipped)
 
 > Supersedes the read_batch/commit sketch in TELEMETRY_STREAMING.md §5.3: because the **export
 > engine + sinks live in the core**, the host does **not** drive export. The ABI is just
@@ -278,7 +289,8 @@ void ggsl_str_free(char*);
 **ABI rules:** inputs are borrowed (caller owns); outputs are caller-struct or core-allocated +
 explicit free; `append` is thread-safe; **every entry point wraps `catch_unwind`** so a Rust panic
 never crosses the boundary (returns an error instead). Bindings: Panama (Java 21), PyO3/maturin
-(Python), napi-rs (Node) in Phase 2.
+(Python), napi-rs (Node) — **all shipped** (`libs/rust-streamlog/bindings/{node,python}`,
+`libs/java/.../streaming/GgStreamNative.java`).
 
 ## 12. Test plan
 

@@ -6,7 +6,13 @@ for **Kinesis Data Streams** and **Apache Kafka** (SiteWise a likely later sink)
 on both the HOST and GREENGRASS platforms. New subsystem, peer to
 `messaging`/`metrics`/`heartbeat`; opt-in; does not change existing APIs.
 
-> Status: **design proposal**. Not yet implemented.
+> Status: **the core has shipped.** `ggstreamlog` (`libs/rust-streamlog/`) is built and used by all
+> four languages via `gg.streams()` — Rust natively, Java via Panama/the C-ABI, Python via PyO3, and
+> Node via napi-rs — with the durable segment log, `KinesisSink`, and `KafkaSink` all implemented and
+> tested (see `libs/rust-streamlog/README.md`). What's still genuinely deferred: the **SiteWise
+> sink** (§6, tracked separately as roadmap item RM-008), **UNS identity enrichment** (§10.1),
+> `ICredentialProvider` implementations beyond the AWS default chain (§7), stream priorities,
+> RocksDB/LMDB `BlockStore` backends, and GREENGRASS local-pubsub fan-in.
 
 ## 1. Decisions (settled)
 
@@ -357,16 +363,21 @@ When it lands:
 
 ## 11. Phasing
 
-1. **MVP**: Rust `ggstreamlog` core (append/read/commit/retention/recovery, fsync policies,
-   `dropOldest`) + fuzz/crash tests + bench; `KinesisSink`; HOST; metrics. Pure-Rust
+1. ✅ **MVP** (shipped): Rust `ggstreamlog` core (append/read/commit/retention/recovery, fsync
+   policies, `dropOldest`) + fuzz/crash tests + bench; `KinesisSink`; HOST; metrics. Pure-Rust
    first proves the core before bindings.
    → **Implementation-ready spec: [TELEMETRY_STREAMING_PHASE1.md](./TELEMETRY_STREAMING_PHASE1.md).**
-2. Bindings (napi-rs / PyO3 / Panama) + `IStreamService` in TS/Python/Java.
-3. `KafkaSink` (core, librdkafka) + `ICredentialProvider` (File + SecretsManager-via-SDK
-   refresh) + the host-language sink-override hook (enables Java `kafka-clients`).
-4. Stream priorities; compression; GREENGRASS fan-in (local pub/sub) + TES creds.
-5. (Later) additional `BlockStore` backends (RocksDB/LMDB); SiteWise sink with its own
-   topic→asset/property mapping.
+2. ✅ **Bindings** (shipped): napi-rs / PyO3 / Panama + `IStreamService` in TS/Python/Java.
+3. ✅/◻ `KafkaSink` **shipped** (core, librdkafka), and the host-language sink-override hook
+   **shipped** too (`SinkConfig::Callback` + `ggsl_set_sink_callback`, used today to drive the
+   durable CloudWatch metrics buffer — see `docs/CLOUDWATCH_DURABLE_METRICS.md`) — though no one has
+   used it yet for a Java `kafka-clients` override specifically. `ICredentialProvider` (File +
+   SecretsManager-via-SDK refresh) remains **not implemented** — Kinesis/Kafka creds still come from
+   the plain AWS SDK chain / literal librdkafka properties.
+4. **Not yet implemented:** stream priorities; compression beyond an accepted-but-unapplied
+   `zstd` batch-compression flag; GREENGRASS fan-in (local pub/sub) + TES creds.
+5. **Not yet implemented:** additional `BlockStore` backends (RocksDB/LMDB); SiteWise sink with its
+   own topic→asset/property mapping (RM-008).
 
 ## 12. Settled / open
 

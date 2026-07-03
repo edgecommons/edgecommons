@@ -11,8 +11,14 @@ subsystem is required for Tier-1.**
 > [`platform/UNS-CANONICAL-DESIGN.md`](platform/UNS-CANONICAL-DESIGN.md)): the envelope carries a
 > top-level **`identity`** element (`tags.thing` is removed), and signal updates ride the UNS
 > **`data`** class instead of the legacy `southbound/…` topic templates. The **command surface**
-> (§2.2, the `cmd/sb/*` family) is the approved **Phase 5 target design and is NOT yet built** —
-> the shipping adapters still use their legacy per-instance control topics.
+> (§2.2, the `cmd/sb/*` family — the UNS-addressed topics plus the cross-adapter `writes.allow[]`
+> convention) is the approved **Phase 5 target design and is NOT yet built** — the shipping adapters
+> still use their legacy per-instance control topics (`.../control/status|subscriptions|nodes`). The
+> **capabilities** that family targets are no longer purely aspirational, though: `opcua-adapter`
+> landed paged address-space browse, a confirmed write with per-entry acknowledgment, and
+> regex-matched on-demand reads on its own legacy topics (merged 2026-07-02, "command-surface-parity",
+> `opcua-adapter@5dbb789`) — a first per-adapter proof of the target *behavior*, not yet the UNS
+> `cmd/sb/*` topic family or a shared cross-adapter facade. See §2.2 and §7.
 
 ## 1. Why a contract, not a subsystem
 
@@ -179,12 +185,20 @@ against a browsed address space). For the command surface (§2.2), a Modbus `<si
 
 ### 2.2 Command surface — the `cmd/sb/*` family (Phase 5 / M9 — target design, NOT yet shipped)
 
-> **Status: roadmap.** This section is the approved **target design** for the southbound command
-> family (DESIGN-uns §11 mandate **M9**; decisions D‑U15/D‑U16), scheduled for **Phase 5** of the
-> UNS train. **It is not built.** The shipping adapters currently still expose their **legacy
-> per-instance control topics** — config-template `write.topic` / `read.topic` for batch write and
-> on-demand read, plus the `southbound/{ComponentName}/{InstanceId}/control/{status|subscriptions|signals}`
-> topics.
+> **Status: roadmap for the UNS topic family and the cross-adapter facade; a first per-adapter
+> capability precedent already exists.** This section is the approved **target design** for the
+> southbound command family (DESIGN-uns §11 mandate **M9**; decisions D‑U15/D‑U16), scheduled for
+> **Phase 5** of the UNS train. The `cmd/sb/*` **topic family**, the `writes.allow[]` config
+> convention, and a generalized cross-adapter `commands()` facade are **not built**. The shipping
+> adapters currently still expose their **legacy per-instance control topics** — config-template
+> `write.topic` / `read.topic` for batch write and on-demand read, plus the
+> `southbound/{ComponentName}/{InstanceId}/control/{status|subscriptions|nodes}` topics. That said,
+> `opcua-adapter` has already landed the **capabilities** this family targets — paged address-space
+> browse (`control/nodes`), a confirmed write with per-entry `SouthboundWriteResult` acknowledgment,
+> and regex include/exclude matchers for on-demand reads (merged 2026-07-02,
+> "command-surface-parity", `opcua-adapter@5dbb789`) — on its own legacy topics, ahead of the UNS
+> migration. Treat this as a validated reference implementation of the *behavior* §2.2 specifies,
+> not as the family itself being shipped.
 
 Beyond streaming subscriptions, an adapter exposes an on-demand command surface as **built-in `cmd`
 verbs on its UNS inbox**, family-namespaced under `sb/` and addressed to
@@ -337,9 +351,11 @@ small, optional CLI follow-up once the pattern is proven.
 
 The first consumer is the **OPC UA bridge** (Eclipse Milo, standalone component repo) — migrated from
 a pre-refactor build, upgraded to Milo 1.1.x, with secure connections sourced from the credentials
-vault. It demonstrates the full contract end-to-end and is the template for future adapters. See that
-component's README for protocol-specific configuration (security policies, cert sources, signal-match
-syntax).
+vault. It demonstrates the full contract end-to-end and is the template for future adapters. It has
+also landed the Phase-5 command-surface *capabilities* early — paged address-space browse, a
+confirmed write with per-entry acknowledgment, and regex-matched on-demand reads (§2.2) — on its own
+legacy control topics, ahead of the UNS `cmd/sb/*` migration. See that component's README for
+protocol-specific configuration (security policies, cert sources, signal-match syntax).
 
 The **Modbus adapter** (pymodbus, **Python**, standalone repo) is the second reference and the
 **poll-based** counterpart to OPC UA's subscribe model. It validates that the contract is
@@ -353,7 +369,9 @@ extraction). Its mapping is §2.1.1; protocol-specific configuration is in its o
   their publish paths onto the UNS `data` class (§2.0) and gain the `cmd/sb/*` command family +
   `writes.allow[]` (§2.2) — an adapter-contract change tracked in
   [`platform/DESIGN-uns.md`](platform/DESIGN-uns.md) §13 (with D‑U15/D‑U16 pinned there). Until it
-  lands, deployed adapters use the legacy topics.
+  lands, deployed adapters use the legacy topics. `opcua-adapter`'s 2026-07-02
+  command-surface-parity work (browse/write-ack/regex-read, on its legacy topics) is a head start on
+  the *behavior* this migration re-platforms onto UNS — it does not by itself close M9.
 - With the OPC UA (subscribe-based, Java) and Modbus (poll-based, Python) adapters now landed, the
   two-adapter precondition for **Tier-2** (shared helpers: poll/subscribe scheduler with
   backpressure + deadbanding, connection lifecycle, quality/timestamp stamping, store-and-forward) is

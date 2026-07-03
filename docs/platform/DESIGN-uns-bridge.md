@@ -1,7 +1,20 @@
-# ggcommons UNS Phase 3 — named messaging connections, the `uns-bridge`, and the site-broker recipe (PROPOSED)
+# ggcommons UNS Phase 3 — named messaging connections, the `uns-bridge`, and the site-broker recipe
 
-> **Status: PROPOSED — design for review. No code.** Phase-3 companion to
-> [`DESIGN-uns.md`](DESIGN-uns.md) (§9 the site-bus realization) and
+> **Status (2026-07-03): SHIPPED.** This design has been implemented and tested, not merely reviewed.
+> The `uns-bridge` component (Rust; sibling repo, local-only — see §3 for its exact status) implements
+> the full relay engine described below — P3-2 (relay core + hop-tag loop protection) through P3-6
+> (dual-EMQX end-to-end proof, 9/9 assertions green) — plus the site-broker deploy recipes (P3-5:
+> HOST compose, GREENGRASS `DockerApplicationManager` recipe, KUBERNETES manifests, the per-device
+> ACL file). See §7 for the
+> per-slice status and the repo's own README for the up-to-date slice table. **What's still open
+> before general release** (the repo's own "Remaining release-time items"): it isn't pushed to
+> GitHub yet, its `Cargo.toml` `ggcommons` git-rev pin is a pre-UNS placeholder (a pure git-rev build
+> doesn't compile until it's bumped to a rev on/after `feat/unified-namespace` lands on `main` —
+> today it builds only via the local sibling `[patch]` override), it has no `registry/components.json`
+> entry yet, and the edge-console (its first site-side client) hasn't been built. The GREENGRASS/IPC
+> variant (today only the HOST/KUBERNETES dual-MQTT variant is built) is also a documented follow-up.
+>
+> Phase-3 companion to [`DESIGN-uns.md`](DESIGN-uns.md) (§9 the site-bus realization) and
 > [`UNS-CANONICAL-DESIGN.md`](UNS-CANONICAL-DESIGN.md) (§2.3 the named connection, §6 LWT, the
 > D‑U register). It turns **M8** (named/secondary messaging connection), **M1** (the `uns-bridge`
 > component), and **M2** (site-broker deploy recipes) into an implementation-ready design, and
@@ -416,18 +429,25 @@ monorepo.
   override pointing at `../ggcommons/libs/rust`, so local builds use the sibling library while CI
   uses the pinned rev.
 
-**Creation checklist** (org actions — the repo does not exist yet):
-1. `git init` + GitHub repo `edgecommons/uns-bridge` (scaffold via
-   `ggcommons create-component -n com.mbreissi.uns-bridge -l RUST --platforms GREENGRASS,HOST,KUBERNETES`,
-   then the bridge-specific code).
-2. Registry entry in `registry/components.json`: `name: uns-bridge`, `repo: edgecommons/uns-bridge`,
+**Status update (2026-07-03): the repo now exists** — `git init`'d locally at
+`C:\Users\breis\source\edgecommons\uns-bridge`, fully scaffolded and implemented through P3-6 (relay
+engine, reply proxy, uplink policy, observability, deploy recipes, a passing dual-EMQX e2e suite).
+The remaining items below are genuinely still **org actions, not yet done**:
+1. Push to **GitHub** as `edgecommons/uns-bridge` (the local repo has no remote configured yet).
+2. **Registry entry** in `registry/components.json`: `name: uns-bridge`, `repo: edgecommons/uns-bridge`,
    `language: RUST`, **`category: "bridge"`** (new category; the profile generator renders
    categories generically), `platforms: [GREENGRASS, HOST, KUBERNETES]`, `library: ggcommons`,
-   topics `[edgecommons, aws-iot-greengrass, iiot, uns, mqtt-bridge, edgecommons-bridge]`.
-3. `clone.sh` needs **no change** (registry-driven). Reusable CI: `component-ci.yml` from
-   `edgecommons/.github`, plus the two-broker compose for the integration job (§6).
-4. `Cargo.toml`: `ggcommons = { git = "https://github.com/edgecommons/ggcommons", rev = "<pin>" }`,
-   default features + `greengrass` behind a feature for the GG build.
+   topics `[edgecommons, aws-iot-greengrass, iiot, uns, mqtt-bridge, edgecommons-bridge]` — not yet
+   added.
+3. `clone.sh` needs **no change** (registry-driven) once the entry above lands. Reusable CI:
+   `component-ci.yml` from `edgecommons/.github`, plus the two-broker compose for the integration
+   job (§6) — not yet wired up (the repo has no CI workflow of its own yet).
+4. `Cargo.toml` already has the dependency shape — `ggcommons = { git =
+   "https://github.com/edgecommons/ggcommons.git", rev = "<pin>", default-features = false }` — but
+   the pin is a **pre-UNS placeholder** on remote `main` (today's `feat/unified-namespace` HEAD isn't
+   pushed there yet); local dev builds against the sibling checkout via a gitignored
+   `.cargo/config.toml` `[patch]` override. Bumping the pin to a UNS-core rev and regenerating
+   `Cargo.lock` — once that branch lands on `main` — is still genuinely open.
 
 ---
 
@@ -578,14 +598,21 @@ broker *and* a site broker:
 
 ## 7. Phasing — build slices (each independently green: build + tests + gate)
 
-| Slice | Contents | Where |
-|---|---|---|
-| **P3-1 site-connection reuse (minimal, Rust-only if anything)** | Verify `MqttProvider`/`DefaultMessagingService`/`MessagingProvider` module paths are reachable from an external crate; add a one-line `pub use` re-export ONLY if needed; smoke-test that a second `MqttProvider::connect` + raw relay works. **No schema, no core API, no other-language change.** Folds into P3-2 if nothing is owed | monorepo (if any) |
-| **P3-2 bridge core** | Repo scaffold (`edgecommons/uns-bridge`, rev-pinned, `.cargo` override); relay engine over two `MessagingService` handles: six uplink filters + pinned downlink filter, topic-verbatim republish, hop tag (`_relay`, maxHops); unit (fakes) + dual-EMQX relay/loop e2e | uns-bridge |
-| **P3-3 reply_to rewrite** | Correlation map + TTL sweep + maxPending eviction + reply back-haul; round-trip + expiry e2e | uns-bridge |
-| **P3-4 uplink policy + LWT** | Per-class enable/rate caps/evt buffer; drop-counter metrics; reconnect `republish-*` broadcast (+ the library's Phase-3 `_bcast` listener if not yet landed); `connections.site.lwt` config + startup cross-check; rate-cap/disconnect/LWT e2e | uns-bridge (+ small monorepo bit for the `_bcast` listener) |
-| **P3-5 recipes (M2)** | `deploy/site-broker/`: HOST compose, GG DockerApplicationManager recipe, k8s notes + boundary-bridge Deployment, ACL file, TLS notes; docs pages | uns-bridge |
-| **P3-6 org integration + validation** | Registry entry (`category: bridge`) → profile regen; docs-site sync; validation matrix: HOST dual-broker on dev box, GREENGRASS on lab-5950x (site broker = dev box), kind boundary case | registry / .github / website |
+> **Status (2026-07-03):** P3-2 through P3-6 are **done** in the `uns-bridge` repo (folded slightly
+> differently than first planned — the repo split P3-4 into P3-4 "uplink policy" and a P3-4b "bridge's
+> own observability" slice; see its README for the exact breakdown). What genuinely remains from
+> P3-6's "org integration" is **not** done: no GitHub repo, no `registry/components.json` entry, no
+> CI wiring, no docs-site sync. P3-1 folded into P3-2 as anticipated (no core/other-language change
+> was owed).
+
+| Slice | Contents | Where | Status |
+|---|---|---|---|
+| **P3-1 site-connection reuse (minimal, Rust-only if anything)** | Verify `MqttProvider`/`DefaultMessagingService`/`MessagingProvider` module paths are reachable from an external crate; add a one-line `pub use` re-export ONLY if needed; smoke-test that a second `MqttProvider::connect` + raw relay works. **No schema, no core API, no other-language change.** Folds into P3-2 if nothing is owed | monorepo (if any) | done (folded into P3-2; nothing was owed) |
+| **P3-2 bridge core** | Repo scaffold (`edgecommons/uns-bridge`, rev-pinned, `.cargo` override); relay engine over two `MessagingService` handles: six uplink filters + pinned downlink filter, topic-verbatim republish, hop tag (`_relay`, maxHops); unit (fakes) + dual-EMQX relay/loop e2e | uns-bridge | **done** |
+| **P3-3 reply_to rewrite** | Correlation map + TTL sweep + maxPending eviction + reply back-haul; round-trip + expiry e2e | uns-bridge | **done** |
+| **P3-4 uplink policy + LWT** | Per-class enable/rate caps/evt buffer; drop-counter metrics; reconnect `republish-*` broadcast (+ the library's Phase-3 `_bcast` listener if not yet landed); `connections.site.lwt` config + startup cross-check; rate-cap/disconnect/LWT e2e | uns-bridge (+ small monorepo bit for the `_bcast` listener) | **done** (the `_bcast` listener also shipped, all four languages) |
+| **P3-5 recipes (M2)** | `deploy/site-broker/`: HOST compose, GG DockerApplicationManager recipe, k8s notes + boundary-bridge Deployment, ACL file, TLS notes; docs pages | uns-bridge | **done** |
+| **P3-6 org integration + validation** | Registry entry (`category: bridge`) → profile regen; docs-site sync; validation matrix: HOST dual-broker on dev box, GREENGRASS on lab-5950x (site broker = dev box), kind boundary case | registry / .github / website | **the bridge-level dual-EMQX e2e proof is done** (9/9 assertions); the registry entry, docs-site sync, and lab/kind validation are **not yet done** |
 ---
 
 ## 8. Risks

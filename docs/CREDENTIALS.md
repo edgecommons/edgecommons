@@ -216,7 +216,9 @@ The HSM/TPM provider is treated as a first-class custodian from the start (not a
 add-on): the `KeyProvider` interface and the on-disk envelope are designed so a PKCS#11
 backend slots in without a format change. Hardware keys give the property a cloud KMS can't —
 **hardware-grade protection with fully-offline unlock** — which is the right posture for an
-unattended edge device. (Phase 1 ships `file`; `hsm/tpm` + `kms` land in phase 2, §12.)
+unattended edge device. (**Shipped**: `file` in phase 1; `hsm/tpm` (`Pkcs11KeyProvider`) + `kms`
+landed in phase 2, at parity across all four languages and verified on-device vs SoftHSM2 —
+see status in §12.)
 
 ## 6. Central vault & sync
 
@@ -340,9 +342,10 @@ credentials:
   re-fetch on a rotation listener. The streaming sink-credential config becomes a `secretRef`.
 - **Messaging.** The MQTT transport's mTLS to IoT Core can pull its cert/key/CA via `getTlsBundle(...)`
   instead of plaintext file paths in the messaging config.
-- **Config `secretRef` indirection (later).** A config value may be `{ "$secret": "name" }`,
-  resolved **lazily at use-time** by the lib — so the secret is never substituted into the
-  logged/templated config snapshot. Keeps secrets out of logs and shadow documents.
+- **Config `secretRef` indirection** *(shipped, all 4 langs)*. A config value may be
+  `{ "$secret": "name" }`, resolved **lazily at use-time** by the lib (`SecretRefs.resolve` /
+  Rust `resolve_secret_refs`) — so the secret is never substituted into the logged/templated
+  config snapshot. Keeps secrets out of logs and shadow documents.
 - **Observability.** A `CredentialMetricsBridge` (mirrors `StreamMetricsBridge`) emits
   non-sensitive metrics through the existing metric service: cached-secret count, last-sync
   age, sync failures, refreshes, decrypt failures, rotation events. **Never values.**
@@ -398,14 +401,13 @@ spec + cross-language test vectors get the same byte-compatibility with lighter 
 (Revisit only if test-vector drift proves unmanageable.)
 
 **Open / to confirm:**
-- **Target devices' PKCS#11 module(s)** — which HSM/TPM the fleet actually exposes, so phase 2
-  tests against the right module(s) (and SoftHSM for CI). The abstraction is settled (PKCS#11);
-  only the concrete backend list is open.
+- **Target devices' PKCS#11 module(s)** — which specific HSM/TPM the production fleet exposes.
+  The abstraction (PKCS#11) and its implementation are settled and shipped, verified on-device
+  against SoftHSM2 across all four languages (§12); only the concrete production hardware
+  backend list is open.
 - **Namespace ACLs** (per-namespace sub-DEKs) — ship v1 flat (device trust boundary) and add
   later, or design the sub-DEK split into the phase-1 format now? (Lean: reserve format room
   now, implement later.)
-- Whether **`config.secretRef`** indirection is in scope early (keeps secrets out of
-  logs/shadow) or deferred to phase 4.
 
 ## 12. Phasing
 
@@ -434,5 +436,6 @@ spec + cross-language test vectors get the same byte-compatibility with lighter 
 3. **Typed credential views** (AWS creds, basic-auth, TLS bundle, Kafka SASL) and **wire
    streaming + messaging to consume them** — closes `TELEMETRY_STREAMING.md` §7. Validate on
    the lab Nucleus with **real Secrets Manager + TES** (the leg streaming never exercised).
-4. **Breadth**: SSM Parameter Store + HashiCorp/Azure sources, OS-keyring `KeyProvider`,
-   `config.secretRef` indirection, audit log, optional push/bidirectional sync.
+4. **Breadth** (remaining): SSM Parameter Store + HashiCorp/Azure sources, OS-keyring
+   `KeyProvider`, optional push/bidirectional sync. (`config.secretRef` indirection and the
+   access audit log — also originally scoped here — have already shipped; see status above.)

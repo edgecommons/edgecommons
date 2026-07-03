@@ -266,16 +266,27 @@ pinned by the cross-language `uns-test-vectors/` conformance suite):
   `metric` topics, and the `cfg` effective-config announcements.
 - The `request()` internal deadline, MQTT [Last Will](/guides/messaging/#mqtt-last-will-lwt), and
   the `CONFIG_COMPONENT` command remap.
+- The `_bcast` `republish-state`/`republish-cfg` broadcast listener every component runs (the
+  late-join lever the `uns-bridge`, below, triggers on reconnect).
 
-<Aside type="caution" title="Roadmap — designed, not yet shipped">
-The following are **design-complete but not built** (see `docs/platform/DESIGN-uns.md`); don't code
-against them yet:
+<Aside type="caution" title="Roadmap — some built, most not yet shipped">
+These are at different stages (see `docs/platform/DESIGN-uns.md` /
+`docs/platform/DESIGN-uns-bridge.md`); don't build against any of them yet:
 
 - **`uns-bridge` + the site broker** — one envelope-aware bridge per device bus relaying onto a
-  site-wide UNS broker (EMQX), with whole-device UNREACHABLE detection and the
-  `republish-state` late-join broadcast.
+  site-wide UNS broker (EMQX), with whole-device UNREACHABLE detection and the `republish-state`
+  late-join broadcast. **Built and passing a live two-broker end-to-end test suite** (the relay,
+  the reply-rewrite proxy, per-class uplink policy, and the site-broker deploy recipes are all
+  implemented), but not yet available as an installable component — it isn't published to a public
+  repo or listed in the component registry yet. The device-side half it depends on (the
+  `republish-state`/`republish-cfg` listener every component runs) has shipped in all four
+  languages.
 - **The southbound `sb/*` command family** — `sb/browse`, `sb/read`, confirmed `sb/write`,
-  `sb/subscribe-preview` on the adapter contract.
+  `sb/subscribe-preview` on the adapter contract. Still not built as a UNS-addressed topic family or
+  a shared cross-adapter facade — but the **capabilities** it targets already exist in the
+  `opcua-adapter` reference component (paged address-space browse, a confirmed write with per-entry
+  acknowledgment, regex-matched on-demand reads), shipped on that adapter's own legacy topics ahead
+  of the UNS migration.
 - **The richer facades** — `telemetry()`, `events()`, `commands()`, `discovery()`, `status()`, and
   the `log`-tail publisher. Today components publish `data`/`evt`/`cmd`/`app` themselves via
   `messaging()` + `uns()` as shown above.
