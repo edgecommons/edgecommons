@@ -57,10 +57,11 @@ fakes in tests rather than driving process-global state.
 | Subsystem | Module | Guide |
 |-----------|--------|-------|
 | CLI contract | `cli` | [command-line-options.md](command-line-options.md) |
-| Configuration (sources, hot-reload, validation, templating) | `config` | [configuration.md](configuration.md) |
-| Messaging (providers + service, request/reply) | `messaging` | [messaging.md](messaging.md) |
+| Configuration (sources, hot-reload, validation, templating, UNS `hierarchy`/`identity`) | `config` | [configuration.md](configuration.md) |
+| Messaging (providers + service, request/reply w/ deadline, reserved-class guard) | `messaging` | [messaging.md](messaging.md) |
+| UNS (topic builder/validator, `gg.uns()` / `gg.instance(id)`) | `uns`, `instance` | [messaging.md](messaging.md); design: [`DESIGN-uns.md`](../../../docs/platform/DESIGN-uns.md) |
 | Metrics (EMF + targets) | `metrics` | [metric-emission.md](metric-emission.md) |
-| Heartbeat (system metrics) | `heartbeat` | [heartbeat.md](heartbeat.md) |
+| Heartbeat (UNS `state` keepalive + `sys` measures metric) | `heartbeat` | [heartbeat.md](heartbeat.md) |
 | Logging (`tracing`, runtime reconfiguration) | `logging` | [logging.md](logging.md) |
 
 ## Design principles (vs. the Java baseline)

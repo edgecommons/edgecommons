@@ -332,6 +332,29 @@ Both platforms run the **same EmbeddedLog + sinks**. Differences are only enviro
   depth, oldest-unacked age, bytes-on-disk, export throughput, retry/throttle counts, and
   **records-dropped** (so `dropOldest` is visible).
 
+## 10.1 UNS identity enrichment — designed, NOT built (UNS Phase 4, mandate M15)
+
+> **Status: roadmap.** The Unified Namespace ([`platform/DESIGN-uns.md`](platform/DESIGN-uns.md) §8,
+> decision D11 / mandate M15) extends this subsystem so streamed records carry the same
+> **self-identifying identity** the bus envelope now carries (`{hier, path, component, instance}`).
+> The UNS *core* (envelope `identity`, `hierarchy.levels`, `gg.uns()`) has shipped in the libraries;
+> **this streaming enrichment has not** — it is scheduled as Phase 4 of the UNS train.
+
+When it lands:
+
+- **Auto-enrichment**: the streaming facade stamps every record with the identity block + a header
+  subset (event `timestamp`, message `name`/`version`) + `tags` — exactly as the bus facades stamp
+  the envelope.
+- **Columnar sinks (Parquet/AVRO)**: identity levels become **first-class columns** derived from
+  `hierarchy.levels` (e.g. `site`, `factory`, `zone`, `device`) plus `component`/`instance` and a
+  `tags` map column — hierarchy-queryable and **Hive-partitionable**
+  (`…/site=dallas/device=gw-01/…`). Default partition-by = `site` + `device`, overridable via
+  `stream.partitionBy`.
+- **Broker sinks (Kinesis/Kafka)**: identity/header/tags ride in the payload; the partition key
+  defaults to `device` for shard locality/ordering.
+- **Provenance**: a processor's `stream:<name>` route keeps the **originating** identity (the device
+  that produced the signal) plus a lightweight processing stamp.
+
 ## 11. Phasing
 
 1. **MVP**: Rust `ggstreamlog` core (append/read/commit/retention/recovery, fsync policies,

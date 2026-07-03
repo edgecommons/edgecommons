@@ -1,9 +1,18 @@
 # Southbound — design (protocol-adapter contract)
 
-**Status: Tier-1 PROPOSED.** This doc defines the cross-language *contract* that protocol-adapter
-components build to. The reference adapter (an OPC UA bridge on Eclipse Milo) is the first consumer.
-Java is canonical; the contract is language-agnostic and carried entirely by the existing message
-envelope, config schema, and metrics subsystems — **no new runtime subsystem is required for Tier-1.**
+**Status: Tier-1, updated for the Unified Namespace (2026-07).** This doc defines the cross-language
+*contract* that protocol-adapter components build to. The reference adapter (an OPC UA bridge on
+Eclipse Milo) is the first consumer. Java is canonical; the contract is language-agnostic and carried
+entirely by the existing message envelope, config schema, and metrics subsystems — **no new runtime
+subsystem is required for Tier-1.**
+
+> **UNS alignment.** The envelope and the data-plane topic below reflect the **shipped** UNS core
+> ([`platform/DESIGN-uns.md`](platform/DESIGN-uns.md) /
+> [`platform/UNS-CANONICAL-DESIGN.md`](platform/UNS-CANONICAL-DESIGN.md)): the envelope carries a
+> top-level **`identity`** element (`tags.thing` is removed), and signal updates ride the UNS
+> **`data`** class instead of the legacy `southbound/…` topic templates. The **command surface**
+> (§2.2, the `cmd/sb/*` family) is the approved **Phase 5 target design and is NOT yet built** —
+> the shipping adapters still use their legacy per-instance control topics.
 
 ## 1. Why a contract, not a subsystem
 
@@ -28,14 +37,23 @@ Three tiers, increasing in framework involvement (this doc specifies **Tier-1**)
 
 ## 2. The normalized telemetry envelope
 
-Adapters reuse the existing `Message` envelope (header + tags + body) **unchanged**. The contract
-standardizes only the **body**, published with header `name = "SouthboundSignalUpdate"`, `version =
-"1.0"`:
+Adapters reuse the standard `Message` envelope — since the UNS change, `{header, identity, tags,
+body}` — with the library stamping `identity` automatically. The contract standardizes only the
+**body**, published with header `name = "SouthboundSignalUpdate"`, `version = "1.0"`:
 
 ```json
 {
   "header": { "name": "SouthboundSignalUpdate", "version": "1.0", "timestamp": "...", "uuid": "...", "correlation_id": null },
-  "tags":   { "thing": "...", "appId": "...", "site": "...", "shop": "...", "line": "..." },
+  "identity": {
+    "hier": [
+      { "level": "site",   "value": "dallas" },
+      { "level": "device", "value": "gw-01" }
+    ],
+    "path":      "dallas/gw-01",
+    "component": "opcua-adapter",
+    "instance":  "kep1"
+  },
+  "tags":   { "appId": "..." },
   "body": {
     "device":  { "adapter": "opcua", "instance": "<instanceId>", "endpoint": "opc.tcp://host:4840" },
     "signal":  { "id": "<canonical stable id>", "name": "<human label>", "address": { /* protocol-native, opaque */ } },
@@ -48,12 +66,13 @@ standardizes only the **body**, published with header `name = "SouthboundSignalU
 ```
 
 > **Terminology — envelope `tags` vs `signal`.** The word "tag" is overloaded in IoT, so this contract
-> keeps the two senses apart. The envelope **`tags`** are arbitrary message metadata — there are *no*
-> mandated keys; `thing` / `site` / `shop` / `line` above are only examples (the existing
-> `MessageBuilder.withConfig(...)` mechanism). A **`signal`** is a single data point — one measured
-> value with identity, quality, and timestamps (what OPC UA calls a "tag" and Modbus calls a
-> "register"). Earlier revisions of this doc called the data point a "tag"; it is now uniformly
-> **`signal`**, leaving `tags` to mean envelope metadata only.
+> keeps the two senses apart. The envelope **`tags`** are arbitrary *business* metadata — there are
+> *no* mandated keys; `appId` above is only an example (the existing `MessageBuilder.withConfig(...)`
+> mechanism). Location/identity does **not** ride in `tags` anymore: `tags.thing` is **removed** (hard
+> cut) and the site hierarchy lives in the top-level **`identity`** element. A **`signal`** is a
+> single data point — one measured value with identity, quality, and timestamps (what OPC UA calls a
+> "tag" and Modbus calls a "register"). Earlier revisions of this doc called the data point a "tag";
+> it is now uniformly **`signal`**, leaving `tags` to mean envelope business metadata only.
 
 Design rules:
 
@@ -66,9 +85,12 @@ Design rules:
   Where a protocol's index-style handle is unstable, the address SHOULD also carry the stable form —
   e.g. OPC UA's namespace **URI** alongside the volatile namespace **index** — so consumers and
   round-trip reads/writes need not depend on the index. `signal.name` is the human label.
-- **Site hierarchy lives in `tags`, not the body.** `thing` + the configured `tags{}` (appId / site /
-  shop / line / …) ride in the envelope's `tags`, so routing and partitioning never require parsing
-  the body. This is the existing tag mechanism (`MessageBuilder.withConfig(...)`).
+- **Identity is the top-level `identity` element, not the body (and not `tags`).** Every publish is
+  stamped with `{hier, path, component, instance}`: the enterprise hierarchy (from the top-level
+  `hierarchy`/`identity` config blocks — the last `hier` entry is the device, i.e. the resolved thing
+  name), the adapter's component token, and the **instance** the update pertains to (stamped
+  per-message via `gg.instance(id)` — see DESIGN-uns §5.3). Routing and partitioning never require
+  parsing the body *or* the topic. The former `tags.thing` field is removed.
 - **Batching.** `samples` is an array so an adapter can coalesce multiple updates for one signal into one
   message (deadband/publish-interval driven).
 - **Timestamps** are ISO-8601 UTC. `sourceTs` (device/field) and `serverTs` (protocol server) are
@@ -78,6 +100,41 @@ Design rules:
   **array-valued signal is a JSON array**, each element following these same rules (and writes accept a
   JSON array, coerced to the element type). A value an adapter cannot model as one of these (e.g. an
   opaque blob or a structure) MAY be rendered as a string; adapters SHOULD document such fallbacks.
+
+### 2.0 The data-plane topic — the UNS `data` class
+
+Signal updates are published on the component's UNS **`data`** topic
+([`platform/DESIGN-uns.md`](platform/DESIGN-uns.md) §3–§4):
+
+```text
+ecv1/{device}/{component}/{instance}/data/{signalPath}
+```
+
+minted via the instance-scoped topic builder — never a hand-assembled string:
+
+```java
+GgInstance kep1 = gg.instance("kep1");
+String topic = kep1.uns().topic(UnsClass.DATA, "press12/temperature");
+// -> ecv1/gw-01/opcua-adapter/kep1/data/press12/temperature
+gg.messaging().publish(topic,
+    kep1.newMessage("SouthboundSignalUpdate", "1.0").withPayload(body).build());
+```
+
+- The message name stays **`SouthboundSignalUpdate`** — only the addressing changed. The legacy
+  config-template scheme `southbound/{site}/{ComponentName}/{InstanceId}/{signalId}` is **retired**
+  (DESIGN-uns §6): the topic addresses the endpoint (`device`/`component`/`instance`), and the site
+  hierarchy rides in the envelope `identity`, not the topic.
+- `{signalPath}` is the signal's channel form, subject to the UNS token rule and the IoT-Core depth
+  guard (≤ 3 channel tokens rootless, 2 rooted — enforced by `uns()` at build time). The stable
+  `signal.id` in the body remains the identity consumers key on; the exact
+  sanitized-`signalId`-as-channel rule is pinned in Phase 5 (D‑U15).
+- A fleet consumer subscribes **one wildcard** — `ecv1/+/+/+/data/#` — instead of per-adapter topic
+  templates (one of the six-wildcard UNS consumer set).
+- **Adapter adoption status:** the library surface this rides on (`identity` stamping,
+  `gg.instance(id)`, the `uns()` builder, the `data` class) is **shipped in all four languages**;
+  the reference adapters (`opcua-adapter`, `modbus-adapter`) re-point their publish paths in the UNS
+  **component-adoption train (Phase 5)** — until those migration PRs land, the deployed adapters
+  still publish on their legacy config-template topics.
 
 ### 2.1 Mapping a protocol onto the contract (OPC UA reference)
 
@@ -120,24 +177,47 @@ against a browsed address space). For the command surface (§2.2), a Modbus `<si
 `{ "name": "<configured signal>" }` (the friendly, stable form) or an explicit
 `{ "unitId"?, "table", "address", "type", ... }` for arbitrary access.
 
-### 2.2 Command surface (on-demand read + write)
+### 2.2 Command surface — the `cmd/sb/*` family (Phase 5 / M9 — target design, NOT yet shipped)
 
-Beyond streaming subscriptions, an adapter MAY expose a request/reply **command surface** so clients
-can read or write arbitrary signals at any time, on per-instance topics:
+> **Status: roadmap.** This section is the approved **target design** for the southbound command
+> family (DESIGN-uns §11 mandate **M9**; decisions D‑U15/D‑U16), scheduled for **Phase 5** of the
+> UNS train. **It is not built.** The shipping adapters currently still expose their **legacy
+> per-instance control topics** — config-template `write.topic` / `read.topic` for batch write and
+> on-demand read, plus the `southbound/{ComponentName}/{InstanceId}/control/{status|subscriptions|signals}`
+> topics.
 
-- **Batch write** (fire-and-forget) — body `{ "writes": [ { <signal-ref>, "value": <any>,
-  "status": "GOOD|BAD|UNCERTAIN"?, "sourceTs": "<iso>"? }, ... ] }`. A single object (no `writes`
-  array) is also accepted. One round-trip writes many signals.
-- **On-demand read** (request/reply) — request body `{ "signals": [ { <signal-ref> }, ... ] }`; the reply
-  (`SouthboundReadResult`) body is `{ "id": "<instance>", "reads": [ { "signal": {id, address}, "value",
-  "quality", "qualityRaw", "sourceTs", "serverTs" }, ... ] }`.
+Beyond streaming subscriptions, an adapter exposes an on-demand command surface as **built-in `cmd`
+verbs on its UNS inbox**, family-namespaced under `sb/` and addressed to
 
-`<signal-ref>` addresses a signal by its **stable** identity where possible — for OPC UA, `"namespaceUri":
-"<uri>"` (preferred, resolved to the current index) or a literal `"ns": <int>`, plus `"signalId":
-"<id>"`. This keeps request inputs, like the published `address`, independent of a volatile index.
+```text
+ecv1/{device}/{component}/{instance}/cmd/sb/{verb}
+```
 
-Both batch (one round-trip for many signals) and reuse the §2 value/quality encoding. Topic templates
-are per-instance config (`write.topic`, `read.topic`).
+(the `cmd` class is the one class whose identity path names the **recipient**; the verbs are
+registered through the `commands()` facade and advertised in `describe`):
+
+| Verb (`cmd/sb/…`) | Kind | Purpose |
+|---|---|---|
+| `sb/status` | request/reply | instance/connection status (replaces the legacy `…/control/status`) |
+| `sb/browse` | request/reply, **paged** | enumerate the address space / configured signals |
+| `sb/read` | request/reply | on-demand read of arbitrary signals (ref-accepting) |
+| `sb/write` | request/reply, **confirmed** | write signals; the reply reports per-write success/failure, with an **optional read-back** |
+| `sb/subscribe-preview` | request/reply | evaluate a subscription spec without subscribing |
+
+- **`<signal-ref>`** addresses a signal by its **stable** identity where possible — for OPC UA,
+  `"namespaceUri": "<uri>"` (preferred, resolved to the current index) or a literal `"ns": <int>`,
+  plus `"signalId": "<id>"`; for Modbus, `{ "name": "<configured signal>" }` or an explicit
+  `{ "unitId"?, "table", "address", "type", ... }`. This keeps request inputs, like the published
+  `address`, independent of a volatile index.
+- **Writes are confirmed and allow-listed.** Request body
+  `{ "writes": [ { <signal-ref>, "value": <any>, "sourceTs": "<iso>"? }, ... ] }` (a single object
+  without the `writes` array is also accepted); one round-trip writes many signals, and the reply
+  confirms each write (optionally with the read-back value). An adapter accepts a write **only**
+  when the target matches its **`writes.allow[]`** config allow-list, matched against the stable
+  `signal.id` (D‑U16).
+- **Reads** reuse the §2 value/quality encoding: request `{ "signals": [ { <signal-ref> }, ... ] }` →
+  reply body `{ "id": "<instance>", "reads": [ { "signal": {id, address}, "value", "quality",
+  "qualityRaw", "sourceTs", "serverTs" }, ... ] }`.
 
 ## 3. Quality normalization
 
@@ -168,8 +248,10 @@ Convention — protocol-agnostic keys at the top, protocol-native detail nested:
 
 ```jsonc
 {
-  "tags":            { "appId": "...", "site": "...", "shop": "...", "line": "..." },   // replaces legacy source{}
-  "messaging":       { "local": { "host": "...", "port": 1883 } },                      // replaces legacy mqtt{}
+  "hierarchy":       { "levels": ["site", "device"] },              // UNS enterprise hierarchy (last level = the device)
+  "identity":        { "site": "dallas" },                          // values for every level except the last (= thing name)
+  "tags":            { "appId": "..." },                            // business metadata only (location moved to identity)
+  "messaging":       { "local": { "host": "...", "port": 1883 } },  // replaces legacy mqtt{}
   "metricEmission":  { "target": "messaging" },
   "component": {
     "global": {
@@ -182,8 +264,8 @@ Convention — protocol-agnostic keys at the top, protocol-native detail nested:
         "adapter": "opcua",
         "connection":  { "endpoint": "opc.tcp://host:4840/", "securityPolicy": "Basic256Sha256", "messageMode": "SignAndEncrypt" },
         "defaults":    { "publishIntervalMs": 1000, "samplingRateMs": 500, "queueSize": 100 },
-        "publish":     { "topic": "southbound/{site}/{ComponentName}/{InstanceId}/{signalId}", "batchMs": 1000 },
-        "write":       { "enabled": true, "topic": "southbound/{ComponentName}/{InstanceId}/write" },
+        "publish":     { "batchMs": 1000 },              // topic is UNS-minted (§2.0), no longer a config template
+        "writes":      { "allow": [ "ns=3;i=1001" ] },   // Phase 5 (M9): write allow-list by stable signal.id — NOT yet shipped
         "subscriptions": [
           {
             "id": "sine",
@@ -197,10 +279,17 @@ Convention — protocol-agnostic keys at the top, protocol-native detail nested:
 }
 ```
 
-Keys that are protocol-agnostic (`connection`, `defaults`, `publish`, `write`, `subscriptions` with
+Keys that are protocol-agnostic (`connection`, `defaults`, `publish`, `writes`, `subscriptions` with
 `include`/`exclude` signal specs, deadband) form the convention every adapter follows; anything
 protocol-specific nests under `connection` or a signal spec's matcher. Security config is detailed in
 the OPC UA adapter's own doc (cert sources: `vault` / `file` / `pkcs11`).
+
+> **Transition note.** `hierarchy` / `identity` / `topic.includeRoot` are top-level **schema**
+> sections (shipped — see DESIGN-uns §5 and the canonical `schema/ggcommons-config-schema.json`).
+> Until the Phase-5 adapter migration lands, the **shipping** reference adapters still accept their
+> legacy `publish.topic` / `write.topic` template keys under `component.*`; those keys disappear
+> with the migration (the data-plane topic is minted by `uns()`, and `write` is replaced by the
+> `cmd/sb/*` family + `writes.allow[]`).
 
 ## 5. Standard adapter health metrics
 
@@ -260,6 +349,11 @@ extraction). Its mapping is §2.1.1; protocol-specific configuration is in its o
 
 ## 8. Roadmap
 
+- **UNS Phase 5 — adapter adoption + the command family (M9).** The reference adapters re-point
+  their publish paths onto the UNS `data` class (§2.0) and gain the `cmd/sb/*` command family +
+  `writes.allow[]` (§2.2) — an adapter-contract change tracked in
+  [`platform/DESIGN-uns.md`](platform/DESIGN-uns.md) §13 (with D‑U15/D‑U16 pinned there). Until it
+  lands, deployed adapters use the legacy topics.
 - With the OPC UA (subscribe-based, Java) and Modbus (poll-based, Python) adapters now landed, the
   two-adapter precondition for **Tier-2** (shared helpers: poll/subscribe scheduler with
   backpressure + deadbanding, connection lifecycle, quality/timestamp stamping, store-and-forward) is

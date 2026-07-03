@@ -29,7 +29,8 @@ envelope. **Java is the canonical reference.**
 | `schema/` | **Single source of truth** for the config JSON schema (`ggcommons-config-schema.json`) + sync scripts. | JSON |
 | `test-infra/` | Shared integration-test infra: EMQX broker (`compose.yaml`), TLS cert generation, and the cross-language **interop** harness (`interop/`). | Docker + Python |
 | `vault-test-vectors/` | Shared credentials/vault encryption conformance vectors used by all four languages. | JSON |
-| `docs/` | Cross-language design docs (`CREDENTIALS.md`, `PARAMETERS.md`, `TELEMETRY_STREAMING*.md`, `GGCOMMONS_RUST_PORT.md`). | Markdown |
+| `uns-test-vectors/` | Shared **UNS** conformance vectors (topic-building/validation cases + golden envelopes with the top-level `identity`), generated from the Java canonical and consumed by all four suites + the interop UNS suite. | JSON |
+| `docs/` | Cross-language design docs (`CREDENTIALS.md`, `PARAMETERS.md`, `TELEMETRY_STREAMING*.md`, `GGCOMMONS_RUST_PORT.md`, `SOUTHBOUND.md`) + the platform/UNS set under `docs/platform/` (`DESIGN-uns.md` + `UNS-CANONICAL-DESIGN.md` are the UNS source of truth). | Markdown |
 | `.github/workflows/` | Per-language CI + `interop`, `streaming`, `parameters-ssm`, `release`. | GitHub Actions |
 
 **Maintain four-way parity.** The libraries mirror each other intentionally. When changing public
@@ -70,10 +71,29 @@ exists to abstract these differences away so the same business logic runs everyw
   template-variable substitution (`{ComponentName}`, `{ThingName}`, custom tags) with sanitization,
   hot reload, multi-instance config, and JSON-schema validation against the canonical `schema/`.
 - **messaging** — one interface over two transports (Greengrass IPC vs dual-MQTT);
-  connections/subscriptions block until confirmed; request/reply with correlation; per-subscription
-  concurrency cap; the message envelope is identical across languages.
-- **metrics** — pluggable targets: CloudWatch EMF, cloudwatch-component, messaging, local log.
-- **heartbeat** — periodic system metrics (CPU/memory/disk/threads/FDs) via the metric or messaging subsystem.
+  connections/subscriptions block until confirmed; request/reply with correlation **and a
+  framework-owned deadline** (`messaging.requestTimeoutSeconds`, default 30 s); per-subscription
+  concurrency cap; optional MQTT LWT (`messaging.lwt`, local connection, never retained; IPC no-ops).
+  The message envelope — `{header, identity, tags, body}` — is identical across languages: every
+  config-built message is stamped with the top-level **`identity`** element
+  (`{hier, path, component, instance}`, from the top-level `hierarchy`/`identity` config; the old
+  `tags.thing` is removed).
+- **uns** — the **Unified Namespace** (`docs/platform/DESIGN-uns.md` + `UNS-CANONICAL-DESIGN.md`,
+  the D‑U1…D‑U27 register): all topics follow `ecv1/{device}/{component}/{instance}/{class}[/channel]`
+  (classes `state`/`metric`/`cfg`/`log` are **reserved**, library-owned — a raw publish to them is
+  rejected — plus open `data`/`evt`/`cmd`/`app`). `gg.uns()` is the topic builder/validator
+  (char-set + IoT-Core 7-slash depth guard at build time); `gg.instance(id)` pre-binds the
+  per-message instance token; a consumer covers the whole fleet with six wildcards
+  (`ecv1/+/+/+/{state|cfg|evt|metric|data|log}`). Cross-language conformance is pinned by
+  `uns-test-vectors/`. (The `uns-bridge`/site-broker realization is Phase 3 roadmap; the richer
+  `telemetry()/events()/commands()/discovery()` facades are deferred — use `messaging()` + `uns()`.)
+- **metrics** — pluggable targets: CloudWatch EMF, cloudwatch-component, messaging (publishes on the
+  UNS `metric` class), local log, prometheus.
+- **heartbeat** — the automatic UNS **`state` keepalive** (`ecv1/{device}/{component}/main/state`,
+  on by default / 5 s / local; best-effort `STOPPED` on shutdown) plus system measures
+  (CPU/memory/disk/threads/FDs) emitted as the **`sys` metric** through the metric subsystem.
+  Config is `heartbeat: {enabled, intervalSecs, measures, destination}` — the legacy `targets[]`
+  array is removed.
 - **logging** — console + optional size-rotated file logging; per-language format token (`logging.<lang>_format`).
 - **credentials** — `gg.credentials()`: an encrypted local vault (envelope encryption) with optional
   central sync from AWS Secrets Manager over TES. Conformance vectors in `vault-test-vectors/`; design in `docs/CREDENTIALS.md`.
@@ -170,7 +190,14 @@ The HOST platform with the MQTT transport (and local testing) uses a local MQTT 
 ```bash
 docker compose -f test-infra/compose.yaml up -d   # EMQX (plaintext 1883 + mutual-TLS 8883)
 ```
-Subscribe to `heartbeat/+/+` (e.g. with MQTTX) to see component heartbeats and to drive request/response topics.
+Subscribe to `ecv1/+/+/+/state` (e.g. with MQTTX) to see component state keepalives (the heartbeat),
+and to drive request/response topics. The full six-wildcard UNS consumer set (fleet-wide, zero
+per-component knowledge) is:
+
+```text
+ecv1/+/+/+/state        ecv1/+/+/+/cfg        ecv1/+/+/+/evt/#
+ecv1/+/+/+/metric/#     ecv1/+/+/+/data/#     ecv1/+/+/+/log/#
+```
 
 ### Testing & validation matrix (where each path is exercised)
 All of these run from the dev machine — none is "manual / can't automate":

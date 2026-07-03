@@ -14,7 +14,11 @@ is permissive, so component-specific keys pass through untouched.
 ```
 logging:        { level, format, fileLogging: { enabled, filePath }, loggers, globalControl }
 metricEmission: { target, namespace, largeFleetWorkaround, targetConfig: {...} }
-heartbeat:      { intervalSecs, measures: { cpu, memory, disk, threads, files, fds }, targets: [{type, config}] }
+heartbeat:      { enabled, intervalSecs, measures: { cpu, memory, disk, threads, files, fds }, destination }
+hierarchy:      { levels: [ "site", ..., "device" ] }    # UNS hierarchy — last level = the node (thing name)
+identity:       { <level>: <value>, ... }                # values for every level except the last
+topic:          { includeRoot }                          # UNS topic-building options
+messaging:      { local, iotCore, requestTimeoutSeconds, lwt }
 tags:           { <key>: <value>, ... }
 component:      { global: {...}, instances: [ { id, ... }, ... ] }
 ```

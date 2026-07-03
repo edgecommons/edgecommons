@@ -85,8 +85,10 @@ except ConfigurationValidationException as e:
 (`IPC` transport) or `StandaloneProvider` (`MQTT` transport — dual local-MQTT + IoT Core). Both
 implement `MessagingProvider`. Connections
 and subscriptions are **blocking** — they wait for confirmation (e.g. SUBACK) before proceeding, to
-avoid IoT Core connection races. Supports request/reply with correlation; the on-wire envelope is
-identical across all four languages.
+avoid IoT Core connection races. Supports request/reply with correlation (framework deadline via
+`messaging.requestTimeoutSeconds`, default 30 s); the on-wire envelope
+(`header`/`identity`/`tags`/`body`) is identical across all four languages, and topics follow the
+UNS grammar `ecv1/{device}/{component}/{instance}/{class}` (see [messaging.md](messaging.md)).
 
 ### Metrics (`ggcommons/metrics/`)
 `MetricEmitter` (static `init`) emits to pluggable `MetricTarget`s under `targets/`: `cloudwatch`
@@ -94,9 +96,12 @@ identical across all four languages.
 are configured, not hardcoded.
 
 ### Heartbeat (`ggcommons/heartbeat/`)
-`EnhancedHeartbeat` periodically emits system metrics (CPU/memory/disk/threads/FDs via `psutil`). It
-has its messaging + metric services passed in (not reached for via globals) and can route health data
-through either the metric or messaging target.
+`EnhancedHeartbeat` is the library-owned liveness signal (UNS model — on by default, every 5 s): each
+tick it publishes the **`state` keepalive** to `ecv1/{device}/{component}/main/state` (via the
+reserved-publish seam) and emits the enabled system measures (CPU/memory/disk/threads/FDs via
+`psutil`) as the **`sys` metric** through the metric subsystem. It has its messaging + metric services
+passed in (not reached for via globals). The legacy `heartbeat.targets[]` routing is removed; see
+[heartbeat.md](heartbeat.md).
 
 ### Logging (`ggcommons/logging/`)
 Built on Python's standard `logging`, with file rotation, per-logger levels, and a `python_format`

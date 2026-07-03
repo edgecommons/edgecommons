@@ -103,8 +103,12 @@ the vault on-disk format/conformance vectors.
   topology (in-cluster broker only — required for air-gapped) and the dual-broker topology (local
   broker + IoT Core when egress exists); IoT Core **MUST** retain mutual TLS with SNI and no insecure
   fallback. *Acceptance:* both topologies connect; air-gapped config needs no IoT Core endpoint.
-- **FR-MSG-4 (envelope unchanged).** The message envelope (header/tags/body, snake_case wire keys)
-  **MUST** be byte-identical to today. *Acceptance:* the interop harness passes unchanged.
+- **FR-MSG-4 (envelope unchanged *by this rearch*).** The platform rearch itself **MUST NOT** change
+  the message envelope. *Acceptance:* the interop harness passes unchanged. *(Superseded in part by
+  the separate UNS hard cut — [DESIGN-uns.md](DESIGN-uns.md) M5, since shipped — which deliberately
+  added the top-level `identity` element and removed `tags.thing`; the envelope is now
+  `header`/`identity`/`tags`/`body`, conformance-pinned by `uns-test-vectors/` + the interop UNS
+  suite. The intent stands: no *incidental* envelope change from platform work.)*
 
 ### 1.4 Metrics (FR-MET)
 
@@ -295,8 +299,11 @@ the vault on-disk format/conformance vectors.
   invocations **MUST** fail fast with guidance. *Acceptance:* `-m STANDALONE …` errors with a message
   pointing to `--platform/--transport`.
 - **NFR-COMPAT-3 (data contracts).** The message envelope, vault on-disk format + conformance vectors,
-  and config-schema semantics **MUST NOT** change (additive schema only). *Acceptance:* interop 32/32
-  and vault vectors pass unchanged.
+  and config-schema semantics **MUST NOT** change *as part of this rearch* (additive schema only).
+  *Acceptance:* interop 32/32 and vault vectors pass unchanged. *(The envelope + schema have since
+  changed under the separate, deliberate UNS hard cut — top-level `identity`, `hierarchy`/`identity`/
+  `topic` schema sections, `heartbeat.targets[]` removal — see [DESIGN-uns.md](DESIGN-uns.md); those
+  changes carry their own conformance vectors, `uns-test-vectors/`.)*
 - **NFR-PARITY-1 (four-way).** Every public behavior change **MUST** land in all four languages or be
   explicitly deferred with a tracked parity note (Java canonical first). *Acceptance:* parity register
   updated; no silent divergence.

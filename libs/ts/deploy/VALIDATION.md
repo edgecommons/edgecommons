@@ -6,6 +6,14 @@ coverage; the cross-language interop matrix 32/32 over MQTT). Performed against 
 real AWS IoT Greengrass v2 **Nucleus 2.17.0** on Ubuntu `lab-5950x`
 (thing `arn:aws:iot:us-east-1:162499689067:thing/lab-5950x`), components run as root.
 
+> **Note (2026-07): this run predates the UNS hard cut.** The topics recorded below are the
+> **legacy** scheme: the heartbeat is now the UNS `state` keepalive on
+> `ecv1/{device}/{component}/main/state` (subscribe `ecv1/+/+/+/state`, not
+> `ggcommons/<thing>/<comp>/heartbeat`), and the CONFIG_COMPONENT rendezvous moved to
+> `ecv1/{device}/config/main/cmd/get-configuration`. The TS IoT-Core API family was also renamed
+> `Iot → IoT` (`publishToIoTCore`, `subscribeToIoTCore`, …), and the envelope gained a top-level
+> `identity` element (`tags.thing` removed). A future run re-validates against the UNS surface.
+
 Harnesses (under `src/`, compiled to `dist/`):
 - `gg_verify.ts` — full `GGCommonsBuilder` runtime; one component covers `GG_CONFIG`,
   `SHADOW`, and `CONFIG_COMPONENT` (config source from the recipe Run args). Checks

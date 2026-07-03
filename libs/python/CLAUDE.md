@@ -74,7 +74,7 @@ Config supports template-variable substitution (component/thing/custom tags), ho
 `MetricEmitter` (static `init`) emits to pluggable `MetricTarget`s under `targets/`: `cloudwatch` (EMF format via `emf_helper`), `cloudwatch_component`, `messaging`, `metric_log`. Targets and component/thing dimensions are configured, not hardcoded.
 
 ### Heartbeat (`ggcommons/heartbeat/`)
-`EnhancedHeartbeat` periodically emits system metrics (CPU/memory/disk/threads/FDs via `psutil`). It has services *injected* (messaging + metric) rather than reaching for globals, and can route health data through either the metric or messaging target.
+`EnhancedHeartbeat` is the library-owned liveness signal (UNS model — on by default, every 5 s): each tick it publishes the **`state` keepalive** to the UNS topic `ecv1/{device}/{component}/main/state` (through the library-internal `MessagingClient._publish_reserved*` seam — the `state` class is reserved) and emits the enabled system measures (CPU/memory/disk/threads/FDs via `psutil`) as the **`sys` metric** through the metric subsystem. It has services *injected* (messaging + metric) rather than reaching for globals. The legacy `heartbeat.targets[]` config is removed — the section is `{enabled, intervalSecs, measures, destination}` (`destination` governs only the keepalive: `local`|`iotcore`). Consume heartbeats by subscribing `ecv1/+/+/+/state`.
 
 ### Singleton/static lifecycle caveat
 `MessagingClient` and `MetricEmitter` use class-level static state (`init`/`shutdown`). This is process-global, so be careful in tests — state leaks across tests unless reset. The DI/interface layer is the testable seam; prefer injecting mock services over driving these statics.

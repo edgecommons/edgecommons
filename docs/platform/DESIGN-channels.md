@@ -1,8 +1,13 @@
 # DESIGN — the three-channel messaging/telemetry model
 
-> Status: **proposal for review** (2026-06-29). Code-grounded against the current Java/Python/Rust/TS
-> messaging + streaming subsystems and both reference adapters. Nothing here is implemented yet; it
-> defines the target model and the touch-points so the change can be scoped and phased.
+> Status: **proposal for review** (2026-06-29) — **concretized by the Unified Namespace**
+> ([`DESIGN-uns.md`](DESIGN-uns.md) / [`UNS-CANONICAL-DESIGN.md`](UNS-CANONICAL-DESIGN.md)), whose
+> **core has since shipped**. The UNS supplies the concrete topic grammar
+> (`ecv1/{device}/{component}/{instance}/{class}`), message classes, top-level `identity`, the
+> `gg.uns()` builder, and (as designed roadmap) the streaming identity-enrichment for channel 3
+> (DESIGN-uns §8 / M15). What this doc calls "today" is the **pre-UNS** state it was grounded
+> against; overtaken specifics are flagged inline. The channel-2 "northbound ≠ IoT Core"
+> generalization itself (Phase A/B below) remains an open proposal.
 
 ## Motivation
 
@@ -18,7 +23,7 @@ This design generalizes the model to three first-class channels a component can 
 | # | Channel | Transport | Profile | Today |
 |---|---------|-----------|---------|-------|
 | **1** | **Local bus** | IPC (Greengrass only) **or** MQTT | in-process / on-host pub-sub | `publish`/`subscribe`/`request`/`reply` (generic) |
-| **2** | **Northbound control plane** | **always MQTT**, may be IoT Core | lower-throughput, lower-QoS commands/status/alarms | `publishToIotCore`/… — **hardwired to IoT Core** in names, config, and TLS |
+| **2** | **Northbound control plane** | **always MQTT**, may be IoT Core | lower-throughput, lower-QoS commands/status/alarms | `publishToIoTCore`/… (casing normalized by the UNS train; Rust keeps `IotCore`) — **hardwired to IoT Core** in names, config, and TLS |
 | **3** | **Northbound streaming** | native durable buffer → Kinesis/Kafka | high-throughput, high-durability telemetry | `gg.streams()` — a fully independent subsystem |
 
 The skeleton of all three already exists. The work is (a) **decoupling channel 2 from "IoT Core"** into a generic northbound MQTT broker, and (b) **positioning channel 3 as a first-class peer** with a clean per-signal routing story so components can split traffic across 2 and 3.
@@ -30,7 +35,7 @@ The skeleton of all three already exists. The work is (a) **decoupling channel 2
 - **Channel 3 is clean and disjoint.** Streaming shares no code, transport, envelope, or topic with messaging. Records are opaque (`append(partitionKey, timestampMs, byte[])` to a named sink stream), it's opt-in (only when a top-level `streaming` section exists), and a component can already configure `messaging` **and** `streaming` together.
 - **A channel selector already exists** for framework-emitted messages: metrics/heartbeat use a `destination` string (`ipc`/`local` vs `iotcore`/`iot_core`) to pick channel 1 vs 2.
 - **Readiness is already channel-aware:** `connected()` reports only the *local* broker — a dropped cloud link must not flip `/readyz`. (Preserve this.)
-- **The reference adapters use channel 1 only.** Both OPC UA and Modbus publish via local `publish()` with config-driven topic templates (`southbound/{ComponentName}/{InstanceId}/{signalId}`) and per-signal topic overrides; neither calls IoT Core (their recipes grant the IPC IoT-Core policy but the code never uses it) and neither streams. Their per-signal batching buffer (`samples[]` + `batchMs`) is the natural seam to divert high-rate signals to channel 3.
+- **The reference adapters use channel 1 only.** Both OPC UA and Modbus publish via local `publish()` with config-driven topic templates (`southbound/{ComponentName}/{InstanceId}/{signalId}`) and per-signal topic overrides; neither calls IoT Core (their recipes grant the IPC IoT-Core policy but the code never uses it) and neither streams. Their per-signal batching buffer (`samples[]` + `batchMs`) is the natural seam to divert high-rate signals to channel 3. *(Overtaken: the UNS retires those topic templates — channel-1 data now rides `ecv1/{device}/{component}/{instance}/data/{signalPath}`, minted via `gg.instance(id).uns()`; the adapters re-point in UNS Phase 5. See `../SOUTHBOUND.md` §2.0.)*
 
 ## Proposed design — library level
 
@@ -58,7 +63,7 @@ Generalize the existing per-target `destination` selector to a uniform **`{ loca
 
 ### Backward compatibility (hard requirements)
 - Existing `messaging.iotCore` configs keep working (alias for `northbound`).
-- Existing `publishToIotCore(...)` / `*_to_iot_core(...)` callers keep working (deprecated delegators).
+- Existing `publishToIoTCore(...)` / `*_to_iot_core(...)` callers keep working (deprecated delegators).
 - `destination: "iotcore"/"iot_core"` keeps routing to the northbound broker.
 - `connected()` stays local-only; a northbound/stream outage must not flip readiness.
 

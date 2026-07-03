@@ -39,8 +39,8 @@ Selected by `metricEmission.target` (default `log`):
 | Target | Behavior | Notes |
 |--------|----------|-------|
 | `log` | Append EMF JSON lines to a file | Size-based rotation (5 backups); `largeFleetWorkaround` double-emits (normal + `coreName=ALL`) |
-| `messaging` | Publish EMF wrapped in a `Metric` message envelope (header/tags/body) | `targetConfig.destination`: `ipc`/`local` or `iotcore` |
-| `cloudwatchcomponent` | Publish a `{request:{namespace,metricData}}` PutMetricData message **per measure** | Default topic `cloudwatch/metric/put` |
+| `messaging` | Publish EMF in a `Metric` message envelope on the library-owned UNS metric topic `ecv1[/{site}]/{device}/{component}/main/metric/{metricName}` (via the reserved-publish seam; the legacy `targetConfig.topic` override is removed) | `targetConfig.destination`: `ipc`/`local` or `iotcore` |
+| `cloudwatchcomponent` | Publish a `{request:{namespace,metricData}}` PutMetricData message **per measure** | Fixed topic `cloudwatch/metric/put` (external Greengrass component contract — unchanged by the UNS, D‑U21) |
 | `cloudwatch` | Send to CloudWatch via the AWS SDK (`PutMetricData`) | Requires the `cloudwatch` cargo feature; batched on an interval. **Validated on-device.** |
 | `prometheus` | **Pull-based**: maintain an in-process registry and serve it as OpenMetrics text at an HTTP `/metrics` endpoint | Requires the `metrics-prometheus` cargo feature; the **default on KUBERNETES**. See below. |
 
@@ -96,16 +96,20 @@ Java/Python/TS Prometheus clients impose). A later emit mapping to the same gaug
 |-----|-----------|---------|
 | `logFileName` | `log` | platform-aware: `/greengrass/v2/logs/{ComponentFullName}.metric.log` on GREENGRASS; `./logs/{ComponentFullName}.metric.log` on HOST/KUBERNETES |
 | `maxFileSize` | `log` | `10MB` |
+| `destination` | `messaging` | `ipc` |
+| `intervalSecs` | `cloudwatch` | `5` (min 1) |
+| `port` | `prometheus` | `9090` |
+| `path` | `prometheus` | `/metrics` |
 
 > The `logFileName` default is **platform-aware**: HOST and KUBERNETES (which lack the Greengrass
 > `/greengrass/v2/logs` directory) default to a local `./logs/...` path; an explicit `logFileName`
 > always overrides it. The `log` target is fail-soft — if the file cannot be opened it warns and
 > drops metrics rather than failing.
-| `topic` | `messaging`, `cloudwatchcomponent` | `{ThingName}/{ComponentName}/metric` (or `cloudwatch/metric/put`) |
-| `destination` | `messaging` | `ipc` |
-| `intervalSecs` | `cloudwatch` | `5` (min 1) |
-| `port` | `prometheus` | `9090` |
-| `path` | `prometheus` | `/metrics` |
+
+> The legacy `targetConfig.topic` override is **removed** (UNS hard cut — the drift knob is gone):
+> the `messaging` target's topic is always the UNS-minted
+> `ecv1[/{site}]/{device}/{component}/main/metric/{metricName}`, and `cloudwatchcomponent` always
+> publishes to `cloudwatch/metric/put`.
 
 String values support template substitution (`{ThingName}`, `{ComponentName}`,
 `{ComponentFullName}`).

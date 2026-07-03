@@ -1,10 +1,25 @@
 # Telemetry Processor — design
 
-> Status: **design proposal** (2026-06-30). Code-grounded against the current Rust messaging + streaming subsystems.
+> Status: **design proposal** (2026-06-30), **built** — the component ships at
+> `edgecommons/telemetry-processor`. Code-grounded against the Rust messaging + streaming subsystems
+> as of that date.
+>
+> **UNS adoption status (2026-07).** The library's UNS core has since shipped
+> ([`platform/DESIGN-uns.md`](platform/DESIGN-uns.md)): the envelope gained a top-level **`identity`**
+> element (`tags.thing` removed), and the southbound data plane's contract topic is now the UNS
+> **`data`** class — `ecv1/{device}/{component}/{instance}/data/{signalPath}` (`docs/SOUTHBOUND.md`
+> §2.0) — with the six-wildcard consumer set (`ecv1/+/+/+/data/#` for telemetry). **The processor and
+> the adapters have NOT yet adopted it** — that is **Phase 5 (component adoption)** of the UNS train.
+> The `southbound/{site}/…` topics throughout this doc are the **legacy scheme the shipping processor
+> still subscribes**; its migration re-points the route `subscribe[]` filters at the UNS `data` class
+> and keys routing on envelope `identity` instead of topic segments. Likewise, rows-mode identity
+> columns move to the UNS identity/hierarchy model with streaming enrichment (M15, Phase 4 — see §7.2
+> note).
 
 Southbound **protocol adapters** (OPC UA, Modbus, …) publish every signal update to the **local bus
 (channel 1)** as a `SouthboundSignalUpdate` envelope on config-driven topics
-(`southbound/{site}/{ComponentName}/{InstanceId}/{signalId}` — see `docs/SOUTHBOUND.md` §2). That
+(`southbound/{site}/{ComponentName}/{InstanceId}/{signalId}` — the legacy scheme; see the UNS
+adoption note above and `docs/SOUTHBOUND.md` §2). That
 high-rate telemetry then needs a way **northbound**, but a raw firehose-to-cloud is wrong: integrators
 want to **filter** (drop BAD quality, uninteresting signals), **sample/downsample** (1 kHz → 1 Hz), and
 **aggregate** (per-signal windowed min/max/avg) *before* it leaves the edge — then route each result to
@@ -295,13 +310,22 @@ column is populated (the proven historian / EAV pattern; crawls cleanly in Glue/
 fidelity (§8). Columns:
 
 ```
-thing, appId, site, shop, line,            -- from envelope tags{}
+thing, appId, site, shop, line,            -- from envelope tags{} (legacy pre-UNS envelope; see note)
 adapter, instance,                         -- from body.device
 signalId, signalName,                            -- from body.signal
 valueDouble, valueLong, valueBool, valueString, valueType,   -- polymorphic sample value
 quality, qualityRaw,                       -- normalized + native (SOUTHBOUND §3)
 sourceTs, serverTs                         -- ISO-8601 UTC
 ```
+
+> **UNS note (roadmap — not built).** Under the shipped UNS envelope, `thing`/`site`/`shop`/`line`
+> no longer ride in `tags` (`tags.thing` is removed; location lives in the top-level `identity`
+> element with configurable `hierarchy.levels`). The designed replacement is the **streaming
+> identity-enrichment (M15, UNS Phase 4)**: identity levels become first-class Parquet/AVRO columns
+> derived from `hierarchy.levels` (+ `component`/`instance` + a `tags` map column), with default
+> Hive partitioning by `site`+`device` (`stream.partitionBy` override) — see
+> [`platform/DESIGN-uns.md`](platform/DESIGN-uns.md) §8. Until Phase 4/5 land, the shipping file
+> sink keeps the column set above (with envelope `tags` as a JSON column per the v2 redesign).
 
 A **non-southbound** payload in rows mode MUST NOT be dropped — it is routed to a `_unmapped` **raw**
 file (§7.3) so nothing is silently lost.

@@ -157,7 +157,8 @@ Only the two orange boxes are new. Everything else already exists.
 
 - **object ⊕ object** → recursive key-by-key merge.
 - **scalar / array / null** in a later layer → **replaces** the earlier value (D2). Arrays are *not*
-  concatenated (a component setting `heartbeat.targets` fully replaces the shared list — predictable).
+  concatenated (a component setting `component.instances` — or any array like `hierarchy.levels` —
+  fully replaces the shared list — predictable).
 - A key present only in the base is inherited; a key present in the component overrides just that key
   (this is what enables "device-wide `logging.level=INFO`, override one component to `DEBUG` while
   keeping the shared `logging.<lang>_format`").
@@ -472,5 +473,5 @@ shared on-disk cache file is required.
 1. **D7/D8/D9** base-location mechanisms — accept the recommended defaults?
 2. **D11 (reframed)** — verified cross-read works *only* under the single-`ggc_user` model, so a shared on-disk vault file is rejected as primary (§9). Confirm the path: **option (3)** per-component vault + shared central as the near-term default, and **option (2)** served manager as the robust later phase? (And: is per-component duplicate central fetching acceptable near-term, or do you want option (2) sooner?)
 3. **D4** opt-out knob naming (`sharedConfig` / `--no-shared-config`) acceptable?
-4. **D2** arrays replace (not concat) — OK for `heartbeat.targets` etc.?
+4. **D2** arrays replace (not concat) — OK for `component.instances`, `hierarchy.levels`, etc.?
 5. Naming of the shared-config component (`com.mbreissi.greengrass.GGCommonsSharedConfig`) and whether it doubles as the credentials sync owner.

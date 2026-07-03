@@ -57,8 +57,11 @@ edits (benign for ConfigMap swaps); identity falling back to `NOT_GREENGRASS` if
 **Seam today.** `MessagingClient` chooses the provider once at init from `mode`
 (`MessagingClient.java:42-61`): GREENGRASS→IPC; STANDALONE→`StandaloneMessagingProvider` with a
 `MessagingConfiguration.loadFromFile(<positional path>)` holding a **required `local`** broker + optional
-`iotCore` (mutual TLS, no insecure fallback). The wire envelope (header/tags/body, snake_case keys) is
-identical across languages and **must not change**.
+`iotCore` (mutual TLS, no insecure fallback). The wire envelope — `header`/`identity`/`tags`/`body`
+(snake_case keys) since the UNS change added the top-level `identity` element and removed `tags.thing`
+([DESIGN-uns.md](DESIGN-uns.md) §5) — is identical across languages and **must not change** further
+here; topics follow the UNS grammar `ecv1/{device}/{component}/{instance}/{class}` with the reserved
+platform classes library-owned.
 
 **Kubernetes addition (no provider rewrite — only how config is supplied and what brokers point at).**
 1. **Drop the positional path.** Source MQTT config from the active config source: endpoints/ports/clientIDs
@@ -84,8 +87,10 @@ selects, messaging configures* (DESIGN-core §8). Existing STANDALONE `messaging
   via a PrivateLink interface VPC endpoint on private clusters).
 - For private clusters, support pointing `iotCore.endpoint` at an interface VPC endpoint
   (PrivateLink) so the cloud path doesn't depend on NAT egress.
-- Known gaps to track: TLS certs load once at init (rotation needs restart); no per-call timeout in
-  Java/Python `request()` (Rust/TS have `timeoutMs`). Flagged, not fixed here.
+- Known gap to track: TLS certs load once at init (rotation needs restart). *(The former
+  request-timeout gap is closed: the UNS train gave `request()` a framework-owned internal deadline
+  in all four languages — `messaging.requestTimeoutSeconds`, default 30 s, `0` disables, per-call
+  override — with guaranteed reply-topic cleanup. See UNS-CANONICAL-DESIGN §5.)*
 
 **Parity.** Rust/TS have a `MessagingService`/`IMessagingService` trait seam; Java/Python wire concrete
 providers (no service interface) — config-supply change is localized in all four. `receiveOwnMessages`
@@ -209,22 +214,28 @@ follow-ups are recorded for a deliberate later decision:
   **restart-survival**. It should **subsume the FR-MET-5 CloudWatch buffer**; bigger, best as its own phase.
   Note: for the *pull* path this does **not** add lossless-between-scrapes (the scraper still samples — that
   durability is the collector WAL's job); its value is restart-durability + unifying push/pull behind one buffer.
-- **(D) Heartbeat in a pull world.** The heartbeat is a metric *producer* that already routes through the
-  metric target (so on KUBERNETES its samples land in the prometheus registry — not "folded in"). But its
-  internal **interval timer is partly redundant with the scrape interval**; the idiomatic pull pattern is a
-  **scrape-time collector** (sample lazily when pulled). And k8s already exposes per-container CPU/mem via
-  cAdvisor/kubelet, so per-pod heartbeat resource metrics are partly redundant at the infra layer (app-level
-  heartbeat still adds self-reported liveness + the `thing` identity + off-k8s value). Ties into FR-HB-4
-  (cgroup-aware heartbeat).
+- **(D) Heartbeat in a pull world.** The heartbeat's system measures are a metric *producer* routed
+  through the metric target — since the UNS change they are emitted as the **`sys` metric** through the
+  normal metric subsystem (so on KUBERNETES they land in the prometheus registry — not "folded in"),
+  while the heartbeat itself is the UNS **`state` keepalive** on
+  `ecv1/{device}/{component}/main/state` (a bus liveness beacon, orthogonal to scraping). The measure
+  timer is partly redundant with the scrape interval; the idiomatic pull pattern is a **scrape-time
+  collector** (sample lazily when pulled). And k8s already exposes per-container CPU/mem via
+  cAdvisor/kubelet, so per-pod heartbeat resource metrics are partly redundant at the infra layer
+  (app-level heartbeat still adds self-reported liveness + identity + off-k8s value). Ties into
+  FR-HB-4 (cgroup-aware heartbeat).
 
 ---
 
 ## 4. Heartbeat — an HTTP health endpoint + graceful shutdown
 
-**Seam today.** Heartbeat samples CPU/mem/disk/threads/FDs on an interval and routes flattened stats to a
-metric or messaging target via a string switch (`Heartbeat.publishHeartbeat()` Java `:125-173`). There is
-**no HTTP health endpoint** and **no auto-wired SIGTERM** — `GGCommons.shutdown()` exists but the app must
-call it from its own signal handler.
+**Seam today.** The heartbeat is the library-owned liveness signal (reshaped by the UNS train —
+UNS-CANONICAL-DESIGN §4.3): each tick it publishes the **`state` keepalive** to
+`ecv1/{device}/{component}/main/state` (on by default, 5 s, `heartbeat.destination: local|iotcore`;
+best-effort `STOPPED` on graceful shutdown) and emits the enabled CPU/mem/disk/threads/FDs measures as
+the **`sys` metric** through the metric subsystem. The legacy `heartbeat.targets[]` array is removed.
+At the time this design was grounded there was **no HTTP health endpoint** and **no auto-wired
+SIGTERM** — `GGCommons.shutdown()` existed but the app had to call it from its own signal handler.
 
 **Kubernetes addition.**
 1. **HTTP health server** (opt-in `health` config section; on by default on KUBERNETES):

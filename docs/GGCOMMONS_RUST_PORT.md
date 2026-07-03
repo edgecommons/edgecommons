@@ -3,6 +3,18 @@
 Status: **Complete — all phases delivered and validated on-device** (HOST platform, cross-language parity, and Greengrass IPC incl. `GG_CONFIG`/`SHADOW`/`CONFIG_COMPONENT` and the real-time device-shadow round-trip, validated against a live Greengrass core, non-root) · Target: feature parity with `ggcommons-java-lib`
 
 > The "Phases 0–3" framing and the dated **Decisions (2026-06-15)** below are the original plan, preserved as a historical record. Phase-by-phase results (including Phase 2's on-device validation) are captured in the implementation sections later in this document.
+>
+> **Post-completion evolution (2026-07): the Unified Namespace.** Since this plan completed, the Rust
+> library (with the other three) adopted the **UNS core** ([`platform/DESIGN-uns.md`](platform/DESIGN-uns.md) /
+> [`platform/UNS-CANONICAL-DESIGN.md`](platform/UNS-CANONICAL-DESIGN.md)): the envelope gained a
+> top-level `identity` element (`tags.thing` removed), topics follow
+> `ecv1/{device}/{component}/{instance}/{class}` via the `gg.uns()` builder (`ggcommons::uns`), the
+> reserved classes (`state`/`metric`/`cfg`/`log`) are guarded (`GgError::ReservedTopic`), `request()`
+> arms a framework deadline (`messaging.requestTimeoutSeconds`, default 30 s;
+> `GgError::RequestTimeout`), MQTT LWT is configurable (`messaging.lwt`), and the heartbeat became the
+> UNS `state` keepalive + `sys` metric (`heartbeat.targets[]` removed). Per D‑U7, Rust deliberately
+> keeps the `IotCore`/`_iot_core` spelling (RFC-430 idiom) where Java/TS normalized to `IoTCore`.
+> Sections below describe the pre-UNS surface where they differ.
 
 This document is the full design and delivery plan for a Rust implementation of the Greengrass Commons library. It assumes familiarity with the existing Java (`ggcommons-java-lib`, canonical) and Python (`ggcommons-python-lib`) libraries; see the workspace `CLAUDE.md` for ecosystem context.
 
@@ -272,7 +284,15 @@ pub trait MetricTarget: Send + Sync {
 
 ### 9.4 Heartbeat
 
-A `tokio` interval task collecting system metrics via `sysinfo` (CPU %, memory RSS, disk, threads; FDs via `/proc/self/fd` on Linux / `sysinfo` handles elsewhere). Targets: `metric` (via `MetricService`) and/or `messaging`. The tick body is wrapped so a transient failure logs and the next tick still fires (fixes Java C4/C5 — the heartbeat can't be permanently killed by one error, and a missing target `config` is handled, not a panic). Reconfigures itself off the config watch channel. Memory reported with correct units (fixes Java H4 unit/precision bug).
+A `tokio` interval task. Since the UNS change it does two things per tick: publishes the **`state`
+keepalive** to `ecv1/{device}/{component}/main/state` through the crate-private reserved-publish seam
+(on by default, 5 s, `heartbeat.destination: local|iotcore`; best-effort `STOPPED` on graceful
+shutdown), and emits the enabled system measures (via `sysinfo`: CPU %, memory RSS, disk, threads;
+FDs via `/proc/self/fd` on Linux / `sysinfo` handles elsewhere) as the **`sys` metric** through
+`MetricService` (the legacy `heartbeat.targets[]` routing is removed). The tick body is wrapped so a
+transient failure logs and the next tick still fires (fixes Java C4/C5 — the heartbeat can't be
+permanently killed by one error). Reconfigures itself off the config watch channel. Memory reported
+with correct units (fixes Java H4 unit/precision bug).
 
 ### 9.5 Logging
 
@@ -359,20 +379,27 @@ This is the core argument: a faithful idiomatic port is not just equivalent to t
 
 ---
 
-## 12. Configuration schema (carried over verbatim)
+## 12. Configuration schema (shared canonical schema)
 
-Same keys as Java/Python; modeled with `serde` structs (loose subtrees as `serde_json::Value`):
+Same keys as Java/Python; modeled with `serde` structs (loose subtrees as `serde_json::Value`).
+Current shape (post-UNS — the `heartbeat.targets[]` and `targetConfig.topic` drift knobs are removed,
+and the UNS sections are added):
 
 ```
 logging:        { level, format, fileLogging: { enabled, filePath }, loggers: {name: level}, globalControl }
-metricEmission: { target: log|messaging|cloudwatch|cloudwatchcomponent, namespace, largeFleetWorkaround,
-                  targetConfig: { logFileName, maxFileSize, topic, destination, intervalSecs } }
-heartbeat:      { intervalSecs, measures: { cpu, memory, disk, threads, files, fds }, targets: [{type, config}] }
+metricEmission: { target: log|messaging|cloudwatch|cloudwatchcomponent|prometheus, namespace, largeFleetWorkaround,
+                  targetConfig: { logFileName, maxFileSize, destination, intervalSecs, buffer, port, path } }
+heartbeat:      { enabled, intervalSecs, measures: { cpu, memory, disk, threads, files, fds }, destination: local|iotcore }
+hierarchy:      { levels: [ "site", ..., "device" ] }        # UNS enterprise hierarchy (last level = the node)
+identity:       { <level>: <value>, ... }                    # values for every level except the last
+topic:          { includeRoot }                              # UNS topic-building options
+messaging:      { local, iotCore, requestTimeoutSeconds, lwt: { topic, payload, qos } }
 tags:           { <key>: <value>, ... }
 component:      { global: {...}, instances: [ { id, ... }, ... ] }
 ```
 
-The embedded JSON schema is shared in spirit with the Java `/ggcommons-config-schema.json` to keep cross-language validation aligned.
+The embedded JSON schema is the synced copy of the canonical `schema/ggcommons-config-schema.json`
+(single source of truth, CI drift-gated) to keep cross-language validation aligned.
 
 ---
 

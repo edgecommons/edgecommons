@@ -26,9 +26,36 @@ argument):
 | `publish_raw` | `publish_to_iot_core_raw` (+ `qos`) |
 | `subscribe` | `subscribe_to_iot_core` (+ `qos`) |
 | `unsubscribe` | `unsubscribe_from_iot_core` |
-| `request` | `request_from_iot_core` |
+| `request` / `request_with_timeout` | `request_from_iot_core` / `request_from_iot_core_with_timeout` |
 | `reply` | `reply_to_iot_core` |
 | `cancel_request` | `cancel_request_from_iot_core` |
+
+(Per the cross-language casing decision D‑U7, Rust keeps the `_iot_core` / `IotCore` spelling —
+RFC-430 idiom — where Java/TS renamed to `IoTCore`.)
+
+## UNS topics & the reserved-class guard
+
+Topics follow the Unified Namespace grammar `ecv1/{device}/{component}/{instance}/{class}[/channel]`
+(see `docs/platform/DESIGN-uns.md`). Build them with the validating builder rather than by hand:
+
+```rust
+use ggcommons::uns::UnsClass;
+
+let topic = gg.uns().topic_with_channel(UnsClass::App, "order/received")?;
+// -> ecv1/gw-01/my-component/main/app/order/received
+svc.publish(&topic, &msg).await?;
+
+let inst = gg.instance("kep1")?;              // instance-scoped handle
+let data = inst.uns().topic_with_channel(UnsClass::Data, "press12/temperature")?;
+```
+
+The four **reserved platform classes** — `state`, `metric`, `cfg`, `log` — are library-owned: every
+publish-side method (`publish`, `publish_raw`, `request*`, `reply*`, and their IoT Core variants)
+rejects a client-chosen reserved-class `ecv1/…` topic with `GgError::ReservedTopic`. Use
+`gg.uns()` / the heartbeat/metric subsystems instead; `subscribe*` is never guarded. Non-`ecv1`
+topics (the `ggcommons/reply-…` prefix, `cloudwatch/metric/put`, external/legacy MQTT) pass
+untouched. The library's own publishers go through the crate-private `ReservedMessaging` seam —
+in Rust the guard is compiler-enforced.
 
 ## Messages
 
@@ -41,7 +68,7 @@ use ggcommons::messaging::message::MessageBuilder;
 use serde_json::json;
 
 let msg = MessageBuilder::new("ProcessData", "1.0")
-    .from_config(&cfg)               // copies thing name + tags
+    .from_config(&cfg)               // stamps the UNS identity (+ tags) from config
     .payload(json!({ "value": 42 }))
     .build();
 svc.publish("plant/line-a/data", &msg).await?;
@@ -51,9 +78,14 @@ svc.publish("plant/line-a/data", &msg).await?;
 
 ### Wire format & parity
 
-Header keys are **snake_case** (`correlation_id`, `reply_to`) and request/reply uses
-the `ggcommons/reply-` topic prefix — both matching the Java/Python/TypeScript `MessageHeader`
-exactly so the four libraries interoperate on the same topics.
+The envelope is `{header, identity, tags, body}`: `from_config` stamps the top-level **`identity`**
+element (`{hier, path, component, instance}`, resolved from the `hierarchy`/`identity` config
+blocks; `instance` defaults to `"main"` — override per message with `.instance("kep1")` or via
+`gg.instance(id).message(...)`). The former `tags.thing` field is **removed** (hard cut); `tags`
+carries business metadata only. Header keys are **snake_case** (`correlation_id`, `reply_to`) and
+request/reply uses the `ggcommons/reply-` topic prefix — matching the Java/Python/TypeScript
+`MessageHeader` exactly so the four libraries interoperate on the same topics (byte-identical
+topics and structurally identical envelopes are pinned by the shared `uns-test-vectors/`).
 
 A received payload that is **not an envelope** (no `header`/`tags`/`body`, or not even
 JSON) is delivered as a **raw** message rather than dropped: check `Message::is_raw()`
@@ -94,17 +126,21 @@ svc.subscribe("events/+", message_handler(|topic, msg| async move {
 ## Request / reply
 
 `request` returns a [`ReplyFuture`] (the Rust analog of Java `CompletableFuture` /
-Python `Iou`). Await it directly, or wrap it in `tokio::time::timeout` for a
-deadline. **Completion, timeout, and `cancel_request` all UNSUBSCRIBE the ephemeral
-reply topic** — no leaks (fixing the Java H2 class of bug).
+Python `Iou`). Every request arms a **framework-owned internal deadline** at send time
+(`messaging.requestTimeoutSeconds`, default **30 s**, `0` disables): when it fires, the
+pending entry is removed, the ephemeral reply topic is unsubscribed, and the future
+resolves `Err(GgError::RequestTimeout { topic, secs })` — **even if the future is
+never polled** (a supervisor task owns the reply subscription). Completion, deadline,
+and `cancel_request` all UNSUBSCRIBE the reply topic — no leaks (fixing the Java H2
+class of bug). Use `request_with_timeout(topic, msg, Some(duration))` for a per-call
+override (`None` = the config default).
 
 ```rust
 use std::time::Duration;
 
-let reply = tokio::time::timeout(
-    Duration::from_secs(5),
-    svc.request("svc/op", request_msg).await?,
-).await??;
+let reply = svc.request("svc/op", request_msg).await?.await?;          // config-default deadline
+let fast  = svc.request_with_timeout("svc/op", msg2,
+                Some(Duration::from_secs(5))).await?.await?;           // per-call override
 ```
 
 The responder side correlates automatically:
@@ -156,3 +192,9 @@ The MQTT transport requires a messaging-config JSON file (passed after
   local broker enables local TLS.
 - Connections and subscriptions block until confirmed (CONNACK/SUBACK); the provider
   auto-reconnects and re-subscribes on disconnect.
+- The `messaging` section also takes **`requestTimeoutSeconds`** (the request-deadline
+  default, 30; `0` disables) and **`lwt`** (`{ topic, payload, qos }` — an MQTT
+  Last-Will registered on the **local** connection at CONNECT, published verbatim by
+  the broker on ungraceful disconnect; never retained, and the IPC provider no-ops it).
+  The will is registered at CONNECT, not routed through `publish()`, so the
+  reserved-class guard does not apply to it — broker ACLs govern wills.

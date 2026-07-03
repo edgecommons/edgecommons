@@ -29,10 +29,13 @@ The old `-m STANDALONE` is now `--platform HOST` (dual-MQTT); the old `-m GREENG
   template-variable substitution, hot reload, multi-instance config, and JSON-schema validation.
   [doc](doc/configuration.md)
 - **Messaging** — one interface over the `IPC` or `MQTT` (dual-MQTT) transport; request/reply with
-  correlation; connections/subscriptions block until confirmed. [doc](doc/messaging.md)
-- **Metrics** — pluggable targets: CloudWatch (EMF), cloudwatch-component, messaging, local log.
-  [doc](doc/metric-emission.md)
-- **Heartbeat** — periodic system metrics (CPU/memory/disk/threads/FDs). [doc](doc/heartbeat.md)
+  correlation (framework deadline, `messaging.requestTimeoutSeconds`); connections/subscriptions
+  block until confirmed. Envelope `{header, identity, tags, body}`; UNS topics via `gg.uns()` /
+  `gg.instance(id)` with the reserved classes guarded. [doc](doc/messaging.md)
+- **Metrics** — pluggable targets: CloudWatch (EMF), cloudwatch-component, messaging (UNS `metric`
+  topic), local log, prometheus. [doc](doc/metric-emission.md)
+- **Heartbeat** — the UNS `state` keepalive (`ecv1/{device}/{component}/main/state`, on/5 s/local)
+  plus system measures (CPU/memory/disk/threads/FDs) emitted as the `sys` metric. [doc](doc/heartbeat.md)
 - **Logging** — Python `logging` with file rotation and per-logger levels. [doc](doc/logging.md)
 - **Credentials** (`get_credentials()`) — encrypted local vault with optional AWS Secrets Manager
   sync. Opt-in: returns `None` unless a `credentials` config section is present. See `docs/CREDENTIALS.md`.

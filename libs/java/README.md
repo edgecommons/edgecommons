@@ -123,7 +123,7 @@ Create a configuration file (e.g., `config.json`):
   },
   "heartbeat": {
     "intervalSecs": 30,
-    "targets": [{"type": "metric"}]
+    "measures": { "cpu": true, "memory": true }
   },
   "metricEmission": {
     "target": "cloudwatch",
@@ -355,10 +355,10 @@ Key dependencies included:
 #### Messaging
 - **Dual Subscriptions**: Under `--transport MQTT`, you can subscribe to the same topic on both local and IoT Core
 - **Authentication**: Use certificates for production, username/password for development
-- **Topic Design**: Design topics to work across both Greengrass IPC and MQTT
+- **Topic Design**: Use the UNS grammar `ecv1/{device}/{component}/{instance}/{class}[/channel]` via `gg.getUns()` (builder + validator); it works identically over Greengrass IPC and MQTT. The `state`/`metric`/`cfg`/`log` classes are library-owned (a raw publish to them is rejected).
 
 #### Monitoring
-- Monitor component health through heartbeat metrics
+- Monitor component health through the UNS `state` keepalives — subscribe `ecv1/+/+/+/state` (system measures arrive as the `sys` metric via the configured metric target)
 - Use structured logging with appropriate log levels
 - Configure metrics emission for your target environment (CloudWatch, local logs, etc.)
 
