@@ -66,11 +66,18 @@ pub fn resolve(config: &Config, template: &str) -> String {
 
 /// Neutralize characters in a substituted value that are dangerous in a file path
 /// or MQTT topic: path separators (`/`, `\`), traversal dots, MQTT wildcards
-/// (`+`, `#`), and control characters are each replaced with `_`.
+/// (`+`, `#`), and control characters (Unicode `Cc` — C0, DEL, and C1) are each
+/// replaced with `_`.
 ///
 /// Applied only to interpolated values, never to the surrounding template, so
 /// structural separators in the template are preserved.
-fn sanitize(value: &str) -> String {
+///
+/// Public because it is also the **normative UNS token sanitizer**
+/// (UNS-CANONICAL-DESIGN §2.2 rule 1 / D-U26): the [`crate::uns`] token rule is
+/// exactly this blacklist, so "sanitized ⇒ publishable" holds. The identity
+/// resolution ([`crate::config::model::Config::identity`]) and the metric
+/// `messaging` target (metric name → `metric/{name}` channel token) use it.
+pub fn sanitize(value: &str) -> String {
     value
         .chars()
         .map(|c| match c {

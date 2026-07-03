@@ -46,12 +46,64 @@ pub struct MessagingConfig {
     pub messaging: Messaging,
 }
 
-/// The `messaging` object: a required local broker and an optional IoT Core.
+/// The `messaging` object: a required local broker, an optional IoT Core, and an
+/// optional MQTT Last-Will-and-Testament.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Messaging {
     pub local: BrokerConfig,
     #[serde(rename = "iotCore", default)]
     pub iot_core: Option<BrokerConfig>,
+    /// The optional `messaging.lwt` section (UNS-CANONICAL-DESIGN §6): an MQTT
+    /// Last-Will-and-Testament registered on the **local-broker** connection at
+    /// CONNECT (rumqttc re-sends the same options on reconnect, so the will is
+    /// re-registered for free). The IPC transport DEBUG-logs and ignores it.
+    #[serde(default)]
+    pub lwt: Option<LwtConfig>,
+}
+
+/// The `messaging.lwt` section (UNS-CANONICAL-DESIGN §6, D-U9/M7).
+///
+/// There is deliberately NO retain field — the will is always registered with
+/// `retain=false` (D9). `payload` is kept as a raw JSON value: a string is
+/// published verbatim as UTF-8 bytes; any other JSON value is serialized to
+/// compact JSON bytes; absent = empty bytes. `qos` accepts `0`/`1` (number-tolerant:
+/// Greengrass-style `1.0` parses too) and defaults to `1`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LwtConfig {
+    /// The will topic (e.g. the component's UNS state topic). Required.
+    pub topic: String,
+    /// The will payload, published VERBATIM (a string or a JSON object).
+    #[serde(default)]
+    pub payload: Option<serde_json::Value>,
+    /// Will QoS (0 or 1), default 1. Number-tolerant (accepts `1` and `1.0`).
+    #[serde(default)]
+    pub qos: Option<serde_json::Value>,
+}
+
+impl LwtConfig {
+    /// The effective QoS: the configured value, or the schema default 1 when
+    /// absent. Non-numeric shapes surface as the raw value at validation time
+    /// (see the provider's `build_last_will`).
+    pub fn qos_or_default(&self) -> i64 {
+        match &self.qos {
+            None => 1,
+            Some(v) => v
+                .as_i64()
+                .or_else(|| v.as_f64().filter(|f| f.fract() == 0.0).map(|f| f as i64))
+                .unwrap_or(-1), // out-of-domain sentinel — rejected by build_last_will
+        }
+    }
+
+    /// The will payload bytes: a JSON string verbatim as UTF-8 bytes; any other
+    /// JSON value as its compact JSON bytes; absent/null as empty bytes.
+    pub fn payload_bytes(&self) -> Vec<u8> {
+        match &self.payload {
+            None | Some(serde_json::Value::Null) => Vec::new(),
+            Some(serde_json::Value::String(s)) => s.clone().into_bytes(),
+            Some(other) => other.to_string().into_bytes(),
+        }
+    }
 }
 
 /// Connection settings for a single broker.
@@ -232,5 +284,36 @@ mod tests {
     async fn load_missing_file_is_error() {
         let result = MessagingConfig::load("/no/such/messaging.json").await;
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn parses_lwt_section_with_defaults() {
+        let json = r#"{ "messaging": {
+            "local": { "host": "h", "port": 1883, "clientId": "c" },
+            "lwt": { "topic": "ecv1/gw-01/uns-bridge/main/state" } } }"#;
+        let mc: MessagingConfig = serde_json::from_str(json).unwrap();
+        let lwt = mc.messaging.lwt.expect("lwt parsed");
+        assert_eq!(lwt.topic, "ecv1/gw-01/uns-bridge/main/state");
+        assert_eq!(lwt.qos_or_default(), 1, "qos defaults to 1");
+        assert!(lwt.payload_bytes().is_empty(), "absent payload => empty bytes");
+    }
+
+    #[test]
+    fn lwt_string_payload_is_verbatim_and_object_is_compact_json() {
+        let json = r#"{ "messaging": {
+            "local": { "host": "h", "port": 1883, "clientId": "c" },
+            "lwt": { "topic": "t", "payload": "gone", "qos": 0 } } }"#;
+        let mc: MessagingConfig = serde_json::from_str(json).unwrap();
+        let lwt = mc.messaging.lwt.unwrap();
+        assert_eq!(lwt.payload_bytes(), b"gone");
+        assert_eq!(lwt.qos_or_default(), 0);
+
+        let json = r#"{ "messaging": {
+            "local": { "host": "h", "port": 1883, "clientId": "c" },
+            "lwt": { "topic": "t", "payload": { "status": "UNREACHABLE" }, "qos": 1.0 } } }"#;
+        let mc: MessagingConfig = serde_json::from_str(json).unwrap();
+        let lwt = mc.messaging.lwt.unwrap();
+        assert_eq!(lwt.payload_bytes(), br#"{"status":"UNREACHABLE"}"#);
+        assert_eq!(lwt.qos_or_default(), 1, "number-tolerant qos (1.0 == 1)");
     }
 }

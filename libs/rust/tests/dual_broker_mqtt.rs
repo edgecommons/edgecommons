@@ -92,7 +92,7 @@ async fn connect_dual() -> Option<Arc<DefaultMessagingService>> {
 }
 
 fn msg(name: &str, payload: serde_json::Value) -> ggcommons::messaging::message::Message {
-    MessageBuilder::new(name, "1.0").payload(payload).thing_name("dual-thing").build()
+    MessageBuilder::new(name, "1.0").payload(payload).tag("origin", serde_json::json!("dual-thing")).build()
 }
 
 #[tokio::test]

@@ -49,7 +49,7 @@ async fn standalone_runtime_exposes_all_services_and_accessors() {
         serde_json::json!({
             "logging": { "level": "DEBUG" },
             "metricEmission": { "target": "log", "targetConfig": { "logFileName": metric_log.to_string_lossy() } },
-            "heartbeat": { "intervalSecs": 1, "measures": { "cpu": true }, "targets": [ { "type": "metric" } ] },
+            "heartbeat": { "intervalSecs": 1, "measures": { "cpu": true } },
             // Streaming section: buffer-only here (no streaming-kinesis), exercised below only when
             // the `streaming` feature is built. The buffer path uses a {ThingName} template.
             "streaming": { "streams": [ {

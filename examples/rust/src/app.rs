@@ -342,17 +342,17 @@ impl SkeletonApp {
 
         // 1. Respond to requests on the request topic (local pub/sub).
         let responder = messaging.clone();
-        let responder_thing = thing.clone();
+        let responder_config = self.config.clone();
         messaging
             .subscribe(
                 &request_topic,
                 message_handler(move |topic, msg| {
                     let responder = responder.clone();
-                    let responder_thing = responder_thing.clone();
+                    let responder_config = responder_config.clone();
                     async move {
                         tracing::info!(topic = %topic, request = %msg.header.name, "received request");
                         let reply = MessageBuilder::new("SkeletonReply", "1.0")
-                            .thing_name(&responder_thing)
+                            .from_config(&responder_config)
                             .payload(json!({ "echo": msg.body, "ok": true }))
                             .build();
                         if let Err(e) = responder.reply(&msg, reply).await {
@@ -372,19 +372,19 @@ impl SkeletonApp {
         //    simply skip the command bridge instead of failing the whole component — matching the
         //    already-non-fatal publish_to_iot_core in the publish loop.
         let acker = messaging.clone();
-        let ack_thing = thing.clone();
+        let ack_config = self.config.clone();
         let ack_topic = telemetry_topic.clone();
         let iot_core_subscribed = messaging
             .subscribe_to_iot_core(
                 &cmd_topic,
                 message_handler(move |topic, msg| {
                     let acker = acker.clone();
-                    let ack_thing = ack_thing.clone();
+                    let ack_config = ack_config.clone();
                     let ack_topic = ack_topic.clone();
                     async move {
                         tracing::info!(topic = %topic, "received IoT Core command");
                         let ack = MessageBuilder::new("CmdAck", "1.0")
-                            .thing_name(&ack_thing)
+                            .from_config(&ack_config)
                             .payload(json!({ "ack": msg.body }))
                             .build();
                         if let Err(e) = acker.publish_to_iot_core(&ack_topic, &ack, Qos::AtLeastOnce).await {

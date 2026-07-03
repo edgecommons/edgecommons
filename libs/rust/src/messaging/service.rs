@@ -2,73 +2,59 @@
 //!
 //! **One-liner purpose**: The user-facing [`MessagingService`] — explicit local /
 //! IoT Core method pairs for publish, subscribe, request/reply — over any
-//! [`MessagingProvider`].
+//! [`MessagingProvider`], with the UNS reserved-class publish guard and the
+//! framework-owned request deadline.
 //!
 //! ## Overview
 //! [`DefaultMessagingService`] wraps an `Arc<dyn MessagingProvider>` and adds
-//! message (de)serialization, the callback dispatch model, and request/reply
-//! correlation. The surface mirrors the Java/Python `IMessagingService`:
+//! message (de)serialization, the callback dispatch model, request/reply
+//! correlation, the reserved-class publish guard (UNS-CANONICAL-DESIGN §4.1), and
+//! the `request()` deadline (§5). The surface mirrors the Java `MessagingClient`:
 //! `publish`/`publish_to_iot_core`, `publish_raw`/`publish_to_iot_core_raw`,
 //! `subscribe`/`subscribe_to_iot_core`, `unsubscribe`/`unsubscribe_from_iot_core`,
-//! `request`/`request_from_iot_core`, `reply`/`reply_to_iot_core`,
-//! `cancel_request`/`cancel_request_from_iot_core`.
+//! `request`/`request_from_iot_core` (+ `_with_timeout` variants),
+//! `reply`/`reply_to_iot_core`, `cancel_request`/`cancel_request_from_iot_core`.
 //!
-//! ## Semantics & Architecture
-//! - **Callback delivery**: `subscribe*` registers a [`MessageHandler`] and returns
-//!   `()`; the service tracks each subscription internally by `(destination, filter)`.
-//! - **Two settings**: `max_messages` bounds the client-side queue (the provider
-//!   drops on overflow with a warning); `max_concurrency` bounds simultaneous
-//!   handler invocations (`1` = serial, ordered).
-//! - **Stopping**: only `unsubscribe*` stops a subscription (aborts the dispatcher
-//!   AND UNSUBSCRIBEs at the broker). Dropping the service stops all dispatchers.
-//! - **Request/reply**: `request*` returns a [`ReplyFuture`] (await it, or wrap in
-//!   `tokio::time::timeout`); `cancel_request*` abandons it. All paths
-//!   (completion, timeout, cancel) UNSUBSCRIBE the ephemeral reply topic.
-//! - Async (`tokio`); object-safe via `async_trait`.
-//! - Error handling: [`crate::error::Result`]; never panics.
+//! ## Reserved-class publish guard (§4.1, D-U4/D-U8/D-U24/D-U27)
+//! Every public path that emits a **client-chosen topic** — `publish*`, `request*`,
+//! and `reply*` (a hostile requester could set `header.reply_to` to a victim's
+//! reserved topic) — rejects topics targeting a library-owned UNS class
+//! (`state | metric | cfg | log`) with [`GgError::ReservedTopic`]. `subscribe*` is
+//! never guarded (consumers must read reserved classes); non-`ecv1` topics pass
+//! untouched. The guard's `includeRoot` flag is late-bound to the **effective**
+//! root ([`DefaultMessagingService::set_guard_include_root`], D-U27) once the
+//! configuration exists.
 //!
-//! ## Usage Example
-//! ```no_run
-//! # async fn demo(provider: std::sync::Arc<dyn ggcommons::messaging::MessagingProvider>) -> ggcommons::Result<()> {
-//! use ggcommons::messaging::service::{DefaultMessagingService, MessagingService};
-//! use ggcommons::messaging::{message_handler, message::MessageBuilder};
-//! use std::time::Duration;
+//! The library's own publishers (heartbeat `state` keepalive, the `messaging`
+//! metric target, the effective-config `cfg` publisher) reach the reserved classes
+//! through the crate-private [`ReservedMessaging`] seam (§4.2, D-U4) — the only
+//! compiler-enforced privileged seam across the four language libraries.
 //!
-//! let svc = DefaultMessagingService::new(provider);
-//! svc.subscribe("events/+", message_handler(|t, m| async move {
-//!     println!("{t}: {}", m.header.name);
-//! }), 32, 4).await?;
-//!
-//! let reply = tokio::time::timeout(
-//!     Duration::from_secs(5),
-//!     svc.request("svc/ping", MessageBuilder::new("Ping", "1.0").thing_name("t").build()).await?,
-//! ).await;
-//! # let _ = reply;
-//! # Ok(())
-//! # }
-//! ```
-//!
-//! ## Design Choices
-//! - Subscription lifecycle handles are kept internal; callers stop via
-//!   `unsubscribe*` so a broker subscription can't be orphaned.
-//! - `request*` returns a `ReplyFuture` (Rust analog of Java `CompletableFuture` /
-//!   Python `Iou`) rather than taking a timeout argument, matching both libraries.
-//!
-//! ## Safety & Panics
-//! None in normal operation.
+//! ## Request deadline (§5, D-U5)
+//! `request*` arms a **framework-owned deadline at send time** (default
+//! `messaging.requestTimeoutSeconds`, built-in 30 s until late-bound). Each request
+//! is owned by a **spawned supervisor task** that holds the ephemeral reply
+//! subscription and `select!`s over reply / deadline / cancel — the single
+//! idempotent settle site. On ANY settle it unsubscribes the reply topic and sends
+//! the outcome down a oneshot, so the deadline fires cleanup (and the
+//! [`GgError::RequestTimeout`] error) **even if the returned [`ReplyFuture`] is
+//! never polled** — the reply-subscription-leak fix. Dropping the `ReplyFuture`
+//! still cancels the request (today's contract, preserved).
 //!
 //! ## Related Modules
-//! - [`crate::messaging::provider`], [`crate::messaging::message`].
+//! - [`crate::messaging::provider`], [`crate::messaging::message`], [`crate::uns`].
 
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use serde_json::Value;
-use tokio::sync::Semaphore;
+use tokio::sync::{oneshot, Semaphore};
 use tokio::task::JoinHandle;
 
 use super::message::Message;
@@ -80,6 +66,10 @@ use crate::error::{GgError, Result};
 const LOCAL_QOS: Qos = Qos::AtLeastOnce;
 /// Reply subscriptions only ever receive one message.
 const REPLY_QUEUE_SIZE: usize = 1;
+/// The built-in `request()` deadline (ms) that applies until the config-model
+/// default (`messaging.requestTimeoutSeconds`) is late-bound. Deliberately non-zero
+/// so the CONFIG_COMPONENT bootstrap request gets a deadline instead of hanging.
+const BUILT_IN_REQUEST_TIMEOUT_MS: u64 = 30_000;
 
 /// A handler invoked for each message delivered to a subscription.
 ///
@@ -122,18 +112,23 @@ where
     Arc::new(FnHandler(f))
 }
 
-/// A pending request's reply, the Rust analog of Java's `CompletableFuture<Message>`
-/// / Python's `Iou`.
+/// A pending request's reply, the Rust analog of Java's
+/// `ReplyFuture extends CompletableFuture<Message>` / Python's `Iou`.
 ///
-/// Await it directly for the reply, or wrap it in `tokio::time::timeout` for a
-/// deadline. Completing, timing out (the outer future is dropped), or passing it to
-/// [`MessagingService::cancel_request`] all UNSUBSCRIBE the ephemeral reply topic at
-/// the broker, so no reply subscription is orphaned.
+/// The request is owned by a spawned **supervisor task** (see the module docs):
+/// this handle wraps the supervisor's result oneshot plus a cancel handle. Await it
+/// for the reply; on the framework deadline it resolves
+/// `Err(`[`GgError::RequestTimeout`]`)`. Dropping it (or passing it to
+/// [`MessagingService::cancel_request`]) cancels the request; every settle path —
+/// reply, deadline, cancel — UNSUBSCRIBEs the ephemeral reply topic at the broker
+/// exactly once, so no reply subscription is orphaned **even if this future is
+/// never polled**.
 pub struct ReplyFuture {
-    sub: Subscription,
-    provider: Arc<dyn MessagingProvider>,
-    reply_topic: String,
-    dest: Destination,
+    /// The supervisor's settled outcome.
+    rx: oneshot::Receiver<Result<Message>>,
+    /// Cancel handle: consumed (or dropped) to signal the supervisor. Dropping the
+    /// sender is itself the cancel signal, so `Drop` needs no explicit send.
+    cancel: Option<oneshot::Sender<()>>,
 }
 
 impl Future for ReplyFuture {
@@ -141,10 +136,11 @@ impl Future for ReplyFuture {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut(); // ReplyFuture is Unpin
-        match this.sub.poll_recv(cx) {
-            Poll::Ready(Some((_topic, bytes))) => Poll::Ready(Message::from_slice(&bytes)),
-            Poll::Ready(None) => Poll::Ready(Err(GgError::Messaging(
-                "reply channel closed before a reply arrived".to_string(),
+        match Pin::new(&mut this.rx).poll(cx) {
+            Poll::Ready(Ok(outcome)) => Poll::Ready(outcome),
+            // The supervisor vanished without settling (runtime shutdown).
+            Poll::Ready(Err(_)) => Poll::Ready(Err(GgError::Messaging(
+                "request supervisor ended before a reply arrived".to_string(),
             ))),
             Poll::Pending => Poll::Pending,
         }
@@ -153,37 +149,58 @@ impl Future for ReplyFuture {
 
 impl Drop for ReplyFuture {
     fn drop(&mut self) {
-        // Best-effort broker cleanup on completion, timeout, or cancel. (Local queue
-        // routing is removed by the Subscription's own Drop.)
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            let provider = self.provider.clone();
-            let topic = self.reply_topic.clone();
-            let dest = self.dest;
-            handle.spawn(async move {
-                let _ = provider.unsubscribe(&topic, dest).await;
-            });
-        }
+        // Dropping the cancel sender resolves the supervisor's cancel arm, which
+        // unsubscribes the reply topic (idempotent: a no-op if already settled).
+        drop(self.cancel.take());
     }
+}
+
+/// The privileged internal-publish seam (UNS-CANONICAL-DESIGN §4.2, D-U4): the
+/// library's own publishers — the heartbeat `state` keepalive, the `messaging`
+/// metric target, and the effective-config (`cfg`) publisher — publish reserved
+/// UNS classes through this **crate-private** trait, which BYPASSES the
+/// reserved-class guard. Being `pub(crate)`, component code cannot name it: Rust is
+/// the only language where the seam is compiler-enforced. Test fakes implement both
+/// this and [`MessagingService`].
+#[async_trait]
+pub(crate) trait ReservedMessaging: Send + Sync {
+    /// Publish a message to a reserved topic on the local broker, without the guard.
+    async fn publish_reserved(&self, topic: &str, msg: &Message) -> Result<()>;
+
+    /// Publish a message to a reserved topic on AWS IoT Core, without the guard.
+    async fn publish_reserved_to_iot_core(
+        &self,
+        topic: &str,
+        msg: &Message,
+        qos: Qos,
+    ) -> Result<()>;
 }
 
 /// Transport-agnostic messaging operations over [`Message`]s, with explicit local /
 /// IoT Core method pairs (mirroring the Java/Python `IMessagingService`).
+///
+/// Client-chosen publish topics are subject to the reserved-class guard (see the
+/// [module docs](self)); `subscribe*` is never guarded.
 #[async_trait]
 pub trait MessagingService: Send + Sync {
     /// Publish a message to `topic` on the local broker.
+    ///
+    /// # Errors
+    /// [`GgError::ReservedTopic`] when `topic` targets a reserved UNS class (§4.1).
     async fn publish(&self, topic: &str, msg: &Message) -> Result<()>;
-    /// Publish a message to `topic` on AWS IoT Core at `qos`.
+    /// Publish a message to `topic` on AWS IoT Core at `qos` (guarded like
+    /// [`Self::publish`]).
     async fn publish_to_iot_core(&self, topic: &str, msg: &Message, qos: Qos) -> Result<()>;
 
-    /// Publish a raw JSON payload to `topic` on the local broker.
+    /// Publish a raw JSON payload to `topic` on the local broker (guarded — D-U8).
     async fn publish_raw(&self, topic: &str, payload: &Value) -> Result<()>;
-    /// Publish a raw JSON payload to `topic` on AWS IoT Core at `qos`.
+    /// Publish a raw JSON payload to `topic` on AWS IoT Core at `qos` (guarded).
     async fn publish_to_iot_core_raw(&self, topic: &str, payload: &Value, qos: Qos) -> Result<()>;
 
     /// Register a callback for `filter` on the local broker.
     ///
     /// `max_messages` bounds the client-side queue; `max_concurrency` bounds
-    /// simultaneous handler invocations (`1` = serial, ordered).
+    /// simultaneous handler invocations (`1` = serial, ordered). Never guarded.
     async fn subscribe(
         &self,
         filter: &str,
@@ -192,7 +209,7 @@ pub trait MessagingService: Send + Sync {
         max_concurrency: usize,
     ) -> Result<()>;
 
-    /// Register a callback for `filter` on AWS IoT Core at `qos`.
+    /// Register a callback for `filter` on AWS IoT Core at `qos`. Never guarded.
     async fn subscribe_to_iot_core(
         &self,
         filter: &str,
@@ -208,13 +225,42 @@ pub trait MessagingService: Send + Sync {
     async fn unsubscribe_from_iot_core(&self, filter: &str) -> Result<()>;
 
     /// Send a request on the local broker; await the returned [`ReplyFuture`].
+    ///
+    /// Carries the framework-owned default deadline (`messaging.requestTimeoutSeconds`,
+    /// default 30 s, UNS-CANONICAL-DESIGN §5): on expiry the ephemeral reply
+    /// subscription is cleaned up and the future resolves
+    /// `Err(`[`GgError::RequestTimeout`]`)` — even if it is never polled.
+    ///
+    /// # Errors
+    /// [`GgError::ReservedTopic`] when `topic` targets a reserved UNS class.
     async fn request(&self, topic: &str, msg: Message) -> Result<ReplyFuture>;
-    /// Send a request on AWS IoT Core; await the returned [`ReplyFuture`].
+    /// Send a request on AWS IoT Core; await the returned [`ReplyFuture`]. Same
+    /// deadline + guard semantics as [`Self::request`].
     async fn request_from_iot_core(&self, topic: &str, msg: Message) -> Result<ReplyFuture>;
 
-    /// Reply to a received request on the local broker.
+    /// [`Self::request`] with an explicit per-call deadline (§5, D-U5): an explicit
+    /// value always wins over the configured default; `None` uses the default;
+    /// `Some(Duration::ZERO)` disables the deadline for this call.
+    async fn request_with_timeout(
+        &self,
+        topic: &str,
+        msg: Message,
+        timeout: Option<Duration>,
+    ) -> Result<ReplyFuture>;
+    /// IoT Core variant of [`Self::request_with_timeout`].
+    async fn request_from_iot_core_with_timeout(
+        &self,
+        topic: &str,
+        msg: Message,
+        timeout: Option<Duration>,
+    ) -> Result<ReplyFuture>;
+
+    /// Reply to a received request on the local broker. The request's `reply_to`
+    /// topic is guarded like a client-chosen topic (§4.1, D-U8): a hostile
+    /// requester could otherwise set it to a victim's reserved topic and turn an
+    /// innocent responder into a forger.
     async fn reply(&self, request: &Message, reply: Message) -> Result<()>;
-    /// Reply to a received request on AWS IoT Core.
+    /// Reply to a received request on AWS IoT Core (guarded the same way).
     async fn reply_to_iot_core(&self, request: &Message, reply: Message) -> Result<()>;
 
     /// Abandon a pending local request, cleaning up its reply subscription.
@@ -236,6 +282,16 @@ pub struct DefaultMessagingService {
     /// Internal dispatcher handles, keyed by `(destination, filter)`. Not exposed —
     /// callers stop subscriptions via `unsubscribe*`.
     subscriptions: Mutex<HashMap<(Destination, String), JoinHandle<()>>>,
+    /// The default `request()` deadline in milliseconds; `0` = disabled. Starts at
+    /// the built-in 30 s; late-bound from `messaging.requestTimeoutSeconds` via
+    /// [`Self::set_default_request_timeout`] once the config exists (§5/D-U5).
+    default_request_timeout_ms: AtomicU64,
+    /// Whether the reserved-class guard also checks the class token at topic
+    /// position 5 — this component's EFFECTIVE `topic.includeRoot`
+    /// (UNS-CANONICAL-DESIGN §4.1, D-U24/D-U27). Late-bound via
+    /// [`Self::set_guard_include_root`]; `false` pre-bind — nothing publishes
+    /// rooted topics pre-config.
+    guard_include_root: AtomicBool,
 }
 
 impl DefaultMessagingService {
@@ -244,7 +300,56 @@ impl DefaultMessagingService {
         Self {
             provider,
             subscriptions: Mutex::new(HashMap::new()),
+            default_request_timeout_ms: AtomicU64::new(BUILT_IN_REQUEST_TIMEOUT_MS),
+            guard_include_root: AtomicBool::new(false),
         }
+    }
+
+    /// Late-binds the default `request()` deadline from the config model
+    /// (`messaging.requestTimeoutSeconds`, §5/D-U5). Called by the runtime right
+    /// after the configuration loads (the messaging service is constructed first
+    /// because the CONFIG_COMPONENT source needs it); until then the built-in 30 s
+    /// applies — deliberately, so the bootstrap request gets a deadline instead of
+    /// hanging. `None` or a zero duration disables the default deadline.
+    pub fn set_default_request_timeout(&self, timeout: Option<Duration>) {
+        let ms = timeout.map(|d| d.as_millis().min(u128::from(u64::MAX)) as u64).unwrap_or(0);
+        self.default_request_timeout_ms.store(ms, Ordering::Relaxed);
+        tracing::debug!(timeout_ms = ms, "default request timeout bound (0 = disabled)");
+    }
+
+    /// The default `request()` deadline currently in effect (`None` = disabled).
+    pub fn default_request_timeout(&self) -> Option<Duration> {
+        match self.default_request_timeout_ms.load(Ordering::Relaxed) {
+            0 => None,
+            ms => Some(Duration::from_millis(ms)),
+        }
+    }
+
+    /// Late-binds the reserved-class guard's `topic.includeRoot` flag (§4.1,
+    /// D-U24). Bind the **effective** root — `includeRoot && hier.len() >= 2`
+    /// (D-U27) — so the guard's position-5 check agrees with topic building, which
+    /// no-ops includeRoot on a single-level hierarchy (D-U25). Before the bind only
+    /// the always-checked class position 4 applies.
+    pub fn set_guard_include_root(&self, include_root: bool) {
+        self.guard_include_root.store(include_root, Ordering::Relaxed);
+        tracing::debug!(include_root, "reserved-topic guard includeRoot bound");
+    }
+
+    /// The §4.1 reserved-class publish guard: rejects a client-chosen topic whose
+    /// class position holds a reserved token (`state | metric | cfg | log`).
+    /// `None` topics pass (no reply_to — provider-level validation owns that).
+    fn check_reserved(&self, topic: Option<&str>) -> Result<()> {
+        let Some(topic) = topic else { return Ok(()) };
+        let include_root = self.guard_include_root.load(Ordering::Relaxed);
+        if let Some(cls) = crate::uns::reserved_class_of(topic, include_root) {
+            return Err(GgError::ReservedTopic(format!(
+                "topic '{topic}' targets the reserved UNS class '{}' (state|metric|cfg|log are \
+                 library-owned): use the library publishers instead (heartbeat/state keepalive, \
+                 the metric subsystem via gg.metrics(), the effective-config publisher)",
+                cls.token()
+            )));
+        }
+        Ok(())
     }
 
     /// Open a provider subscription, spawn its dispatcher, and record the handle.
@@ -288,32 +393,106 @@ impl DefaultMessagingService {
         self.provider.unsubscribe(filter, dest).await
     }
 
+    /// Resolve the deadline for one `request()` call: an explicit per-call timeout
+    /// wins (`Some(ZERO)` = disabled for that call); `None` falls back to the
+    /// service default (§5/D-U5).
+    fn effective_request_timeout(&self, per_call: Option<Duration>) -> Option<Duration> {
+        match per_call {
+            Some(d) if d.is_zero() => None,
+            Some(d) => Some(d),
+            None => self.default_request_timeout(),
+        }
+    }
+
     /// Issue a request on `dest` and return its reply handle.
+    ///
+    /// **The §5 supervisor**: a spawned task OWNS the ephemeral reply subscription
+    /// and `select!`s over reply-arrival / the framework deadline / cancel. The
+    /// select is the **single idempotent settle site** — exactly one arm wins; the
+    /// task then unsubscribes the reply topic (on the correct destination) and
+    /// sends the outcome down a oneshot. Cleanup therefore runs on every settle
+    /// path even when the returned [`ReplyFuture`] is never polled (the historical
+    /// stored-but-never-polled leak), and a straggler reply after settle is dropped
+    /// by the closed channel (logged at debug by the provider router).
     async fn start_request(
         &self,
         topic: &str,
         msg: Message,
         dest: Destination,
         qos: Qos,
+        timeout: Option<Duration>,
     ) -> Result<ReplyFuture> {
         let reply_topic = request_reply::new_reply_topic();
-        let sub = self
+        let mut sub = self
             .provider
             .subscribe(&reply_topic, dest, qos, REPLY_QUEUE_SIZE)
             .await?;
 
         let mut request = msg;
         request.header.reply_to = Some(reply_topic.clone());
-        self.provider
-            .publish(topic, request.to_vec()?, dest, qos)
-            .await?;
+        let payload = match request.to_vec() {
+            Ok(p) => p,
+            Err(e) => {
+                // Failed before send: tear the reply subscription back down.
+                drop(sub);
+                let _ = self.provider.unsubscribe(&reply_topic, dest).await;
+                return Err(e);
+            }
+        };
+        if let Err(e) = self.provider.publish(topic, payload, dest, qos).await {
+            drop(sub);
+            let _ = self.provider.unsubscribe(&reply_topic, dest).await;
+            return Err(e);
+        }
 
-        Ok(ReplyFuture {
-            sub,
-            provider: self.provider.clone(),
-            reply_topic,
-            dest,
-        })
+        let effective = self.effective_request_timeout(timeout);
+        let (result_tx, result_rx) = oneshot::channel::<Result<Message>>();
+        let (cancel_tx, mut cancel_rx) = oneshot::channel::<()>();
+        let provider = self.provider.clone();
+        let request_topic = topic.to_string();
+
+        tokio::spawn(async move {
+            // The deadline arm: sleeps for the effective timeout, or pends forever
+            // when the deadline is disabled.
+            let deadline = async {
+                match effective {
+                    Some(d) => tokio::time::sleep(d).await,
+                    None => std::future::pending::<()>().await,
+                }
+            };
+            // Single idempotent settle: exactly one select arm wins.
+            let outcome: Result<Message> = tokio::select! {
+                reply = sub.recv() => match reply {
+                    Some((_topic, bytes)) => Message::from_slice(&bytes),
+                    None => Err(GgError::Messaging(
+                        "reply channel closed before a reply arrived".to_string(),
+                    )),
+                },
+                _ = deadline => Err(GgError::RequestTimeout {
+                    topic: request_topic.clone(),
+                    secs: effective.map(|d| d.as_secs_f64()).unwrap_or(0.0),
+                }),
+                // Resolves on explicit cancel AND on ReplyFuture drop (sender dropped).
+                _ = &mut cancel_rx => Err(GgError::Messaging(format!(
+                    "request on '{request_topic}' was cancelled before a reply arrived"
+                ))),
+            };
+            if matches!(outcome, Err(GgError::RequestTimeout { .. })) {
+                tracing::warn!(
+                    topic = %request_topic,
+                    reply_topic = %reply_topic,
+                    "request deadline fired; cleaning up the reply subscription"
+                );
+            }
+            // Cleanup BEFORE settling the caller: drop the local routing entry, then
+            // UNSUBSCRIBE at the broker on the SAME destination the request used.
+            drop(sub);
+            let _ = provider.unsubscribe(&reply_topic, dest).await;
+            // The caller may be gone (future dropped) — a failed send is fine.
+            let _ = result_tx.send(outcome);
+        });
+
+        Ok(ReplyFuture { rx: result_rx, cancel: Some(cancel_tx) })
     }
 
     /// Publish a reply correlated with `request` on `dest`.
@@ -340,26 +519,52 @@ impl Drop for DefaultMessagingService {
 }
 
 #[async_trait]
+impl ReservedMessaging for DefaultMessagingService {
+    /// §4.2: the privileged local publish — bypasses the reserved-class guard.
+    async fn publish_reserved(&self, topic: &str, msg: &Message) -> Result<()> {
+        self.provider
+            .publish(topic, msg.to_vec()?, Destination::Local, LOCAL_QOS)
+            .await
+    }
+
+    /// §4.2: the privileged IoT Core publish — bypasses the reserved-class guard.
+    async fn publish_reserved_to_iot_core(
+        &self,
+        topic: &str,
+        msg: &Message,
+        qos: Qos,
+    ) -> Result<()> {
+        self.provider
+            .publish(topic, msg.to_vec()?, Destination::IotCore, qos)
+            .await
+    }
+}
+
+#[async_trait]
 impl MessagingService for DefaultMessagingService {
     async fn publish(&self, topic: &str, msg: &Message) -> Result<()> {
+        self.check_reserved(Some(topic))?;
         self.provider
             .publish(topic, msg.to_vec()?, Destination::Local, LOCAL_QOS)
             .await
     }
 
     async fn publish_to_iot_core(&self, topic: &str, msg: &Message, qos: Qos) -> Result<()> {
+        self.check_reserved(Some(topic))?;
         self.provider
             .publish(topic, msg.to_vec()?, Destination::IotCore, qos)
             .await
     }
 
     async fn publish_raw(&self, topic: &str, payload: &Value) -> Result<()> {
+        self.check_reserved(Some(topic))?;
         self.provider
             .publish(topic, serde_json::to_vec(payload)?, Destination::Local, LOCAL_QOS)
             .await
     }
 
     async fn publish_to_iot_core_raw(&self, topic: &str, payload: &Value, qos: Qos) -> Result<()> {
+        self.check_reserved(Some(topic))?;
         self.provider
             .publish(topic, serde_json::to_vec(payload)?, Destination::IotCore, qos)
             .await
@@ -411,24 +616,47 @@ impl MessagingService for DefaultMessagingService {
     }
 
     async fn request(&self, topic: &str, msg: Message) -> Result<ReplyFuture> {
-        self.start_request(topic, msg, Destination::Local, LOCAL_QOS).await
+        self.request_with_timeout(topic, msg, None).await
     }
 
     async fn request_from_iot_core(&self, topic: &str, msg: Message) -> Result<ReplyFuture> {
-        self.start_request(topic, msg, Destination::IotCore, Qos::AtLeastOnce)
+        self.request_from_iot_core_with_timeout(topic, msg, None).await
+    }
+
+    async fn request_with_timeout(
+        &self,
+        topic: &str,
+        msg: Message,
+        timeout: Option<Duration>,
+    ) -> Result<ReplyFuture> {
+        self.check_reserved(Some(topic))?;
+        self.start_request(topic, msg, Destination::Local, LOCAL_QOS, timeout)
+            .await
+    }
+
+    async fn request_from_iot_core_with_timeout(
+        &self,
+        topic: &str,
+        msg: Message,
+        timeout: Option<Duration>,
+    ) -> Result<ReplyFuture> {
+        self.check_reserved(Some(topic))?;
+        self.start_request(topic, msg, Destination::IotCore, Qos::AtLeastOnce, timeout)
             .await
     }
 
     async fn reply(&self, request: &Message, reply: Message) -> Result<()> {
+        self.check_reserved(request.header.reply_to.as_deref())?;
         self.send_reply(request, reply, Destination::Local).await
     }
 
     async fn reply_to_iot_core(&self, request: &Message, reply: Message) -> Result<()> {
+        self.check_reserved(request.header.reply_to.as_deref())?;
         self.send_reply(request, reply, Destination::IotCore).await
     }
 
     fn cancel_request(&self, reply_future: ReplyFuture) {
-        drop(reply_future); // Drop runs the broker cleanup.
+        drop(reply_future); // Drop signals the supervisor's cancel arm.
     }
 
     fn cancel_request_from_iot_core(&self, reply_future: ReplyFuture) {
@@ -491,6 +719,10 @@ mod tests {
     struct FakeProvider {
         sender: Mutex<Option<Sender<RawMessage>>>,
         unsubscribed: AtomicUsize,
+        /// Destinations of each unsubscribe call (wrong-side-unsubscribe guard).
+        unsubscribed_dests: Mutex<Vec<Destination>>,
+        /// `(topic, payload)` of each publish.
+        published: Mutex<Vec<RawMessage>>,
     }
 
     impl FakeProvider {
@@ -498,6 +730,8 @@ mod tests {
             Self {
                 sender: Mutex::new(None),
                 unsubscribed: AtomicUsize::new(0),
+                unsubscribed_dests: Mutex::new(Vec::new()),
+                published: Mutex::new(Vec::new()),
             }
         }
         fn push(&self, topic: &str, msg: &Message) {
@@ -509,7 +743,8 @@ mod tests {
 
     #[async_trait]
     impl MessagingProvider for FakeProvider {
-        async fn publish(&self, _t: &str, _p: Vec<u8>, _d: Destination, _q: Qos) -> Result<()> {
+        async fn publish(&self, t: &str, p: Vec<u8>, _d: Destination, _q: Qos) -> Result<()> {
+            self.published.lock().unwrap().push((t.to_string(), p));
             Ok(())
         }
         async fn subscribe(
@@ -523,8 +758,9 @@ mod tests {
             *self.sender.lock().unwrap() = Some(tx);
             Ok(Subscription::new(rx, Box::new(())))
         }
-        async fn unsubscribe(&self, _f: &str, _d: Destination) -> Result<()> {
+        async fn unsubscribe(&self, _f: &str, d: Destination) -> Result<()> {
             self.unsubscribed.fetch_add(1, Ordering::SeqCst);
+            self.unsubscribed_dests.lock().unwrap().push(d);
             Ok(())
         }
         fn connected(&self) -> bool {
@@ -690,8 +926,7 @@ mod tests {
         let reply = reply_future.await.unwrap();
         assert_eq!(reply.body.as_u64().unwrap(), 99);
 
-        // Completing the request drops the ReplyFuture, which UNSUBSCRIBEs the
-        // ephemeral reply topic at the broker (no orphan).
+        // The supervisor unsubscribes the reply topic on settle (no orphan).
         wait_for(&provider.unsubscribed, 1).await;
     }
 
@@ -709,16 +944,224 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn request_timeout_unsubscribes_reply_topic() {
+    async fn dropping_the_reply_future_unsubscribes_reply_topic() {
+        // Preserves today's Drop-cleans-up contract (e.g. a caller-side
+        // tokio::time::timeout dropping the future).
         let provider = Arc::new(FakeProvider::new());
         let svc = DefaultMessagingService::new(provider.clone());
 
         let reply_future = svc.request("svc/op", msg(1)).await.unwrap();
-        // No reply pushed; the await times out and drops the ReplyFuture.
         let result = tokio::time::timeout(Duration::from_millis(50), reply_future).await;
-        assert!(result.is_err(), "expected the await to time out");
+        assert!(result.is_err(), "expected the caller-side await to time out");
 
-        // Timing out cleans up the reply subscription at the broker.
         wait_for(&provider.unsubscribed, 1).await;
+    }
+
+    // ---------- §5 framework-owned request deadline ----------
+
+    fn timeout_code(err: GgError) -> (String, f64) {
+        match err {
+            GgError::RequestTimeout { topic, secs } => (topic, secs),
+            other => panic!("expected RequestTimeout, got {other}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn deadline_fires_even_if_the_future_is_never_polled() {
+        let provider = Arc::new(FakeProvider::new());
+        let svc = DefaultMessagingService::new(provider.clone());
+
+        // Short explicit deadline; store the future WITHOUT polling it.
+        let reply_future = svc
+            .request_with_timeout("svc/op", msg(1), Some(Duration::from_millis(50)))
+            .await
+            .unwrap();
+
+        // The supervisor cleans up on the deadline with zero polls of the future.
+        wait_for(&provider.unsubscribed, 1).await;
+
+        // Polling afterwards yields the timeout error immediately.
+        let (topic, secs) = timeout_code(reply_future.await.unwrap_err());
+        assert_eq!(topic, "svc/op");
+        assert!((secs - 0.05).abs() < 1e-9);
+    }
+
+    #[tokio::test]
+    async fn deadline_resolves_an_awaited_future_with_request_timeout() {
+        let provider = Arc::new(FakeProvider::new());
+        let svc = DefaultMessagingService::new(provider.clone());
+        svc.set_default_request_timeout(Some(Duration::from_millis(40)));
+
+        let reply_future = svc.request("svc/op", msg(1)).await.unwrap();
+        let err = reply_future.await.unwrap_err();
+        assert!(matches!(err, GgError::RequestTimeout { .. }), "got {err}");
+        wait_for(&provider.unsubscribed, 1).await;
+    }
+
+    #[tokio::test]
+    async fn per_call_zero_disables_the_deadline() {
+        let provider = Arc::new(FakeProvider::new());
+        let svc = DefaultMessagingService::new(provider.clone());
+        svc.set_default_request_timeout(Some(Duration::from_millis(30)));
+
+        let reply_future = svc
+            .request_with_timeout("svc/op", msg(1), Some(Duration::ZERO))
+            .await
+            .unwrap();
+        // Well past the default deadline the request is still pending (no unsubscribe).
+        tokio::time::sleep(Duration::from_millis(120)).await;
+        assert_eq!(provider.unsubscribed.load(Ordering::SeqCst), 0);
+
+        // A late reply still completes it.
+        provider.push("reply", &msg(7));
+        let reply = reply_future.await.unwrap();
+        assert_eq!(reply.body.as_u64().unwrap(), 7);
+        wait_for(&provider.unsubscribed, 1).await;
+    }
+
+    #[tokio::test]
+    async fn reply_beats_deadline() {
+        let provider = Arc::new(FakeProvider::new());
+        let svc = DefaultMessagingService::new(provider.clone());
+
+        let reply_future = svc
+            .request_with_timeout("svc/op", msg(1), Some(Duration::from_secs(5)))
+            .await
+            .unwrap();
+        provider.push("reply", &msg(42));
+        let reply = reply_future.await.unwrap();
+        assert_eq!(reply.body.as_u64().unwrap(), 42);
+        // Exactly one settle => exactly one unsubscribe.
+        wait_for(&provider.unsubscribed, 1).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(provider.unsubscribed.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn default_timeout_getter_and_setter() {
+        let provider = Arc::new(FakeProvider::new());
+        let svc = DefaultMessagingService::new(provider);
+        // Built-in 30 s until late-bound (so the bootstrap request has a deadline).
+        assert_eq!(svc.default_request_timeout(), Some(Duration::from_secs(30)));
+        svc.set_default_request_timeout(Some(Duration::from_secs(5)));
+        assert_eq!(svc.default_request_timeout(), Some(Duration::from_secs(5)));
+        svc.set_default_request_timeout(None);
+        assert_eq!(svc.default_request_timeout(), None);
+        svc.set_default_request_timeout(Some(Duration::ZERO));
+        assert_eq!(svc.default_request_timeout(), None, "zero disables");
+    }
+
+    #[tokio::test]
+    async fn request_unsubscribes_on_the_request_destination() {
+        // Wrong-side-unsubscribe guard: an IoT Core request must clean up its reply
+        // subscription on the IoT Core side, not the local side.
+        let provider = Arc::new(FakeProvider::new());
+        let svc = DefaultMessagingService::new(provider.clone());
+        let reply_future = svc
+            .request_from_iot_core_with_timeout("svc/op", msg(1), Some(Duration::from_millis(30)))
+            .await
+            .unwrap();
+        let _ = reply_future.await;
+        wait_for(&provider.unsubscribed, 1).await;
+        assert_eq!(
+            provider.unsubscribed_dests.lock().unwrap().as_slice(),
+            &[Destination::IotCore]
+        );
+    }
+
+    // ---------- §4.1 reserved-class publish guard ----------
+
+    fn assert_reserved(err: GgError) {
+        assert!(matches!(err, GgError::ReservedTopic(_)), "expected ReservedTopic, got {err}");
+    }
+
+    #[tokio::test]
+    async fn guard_rejects_reserved_topics_on_every_publish_path() {
+        let provider = Arc::new(FakeProvider::new());
+        let svc = DefaultMessagingService::new(provider.clone());
+        let reserved = "ecv1/gw-01/comp/main/state";
+
+        assert_reserved(svc.publish(reserved, &msg(1)).await.unwrap_err());
+        assert_reserved(
+            svc.publish_to_iot_core(reserved, &msg(1), Qos::AtLeastOnce).await.unwrap_err(),
+        );
+        assert_reserved(svc.publish_raw(reserved, &json!({})).await.unwrap_err());
+        assert_reserved(
+            svc.publish_to_iot_core_raw(reserved, &json!({}), Qos::AtLeastOnce)
+                .await
+                .unwrap_err(),
+        );
+        assert_reserved(svc.request(reserved, msg(1)).await.err().unwrap());
+        assert_reserved(svc.request_from_iot_core(reserved, msg(1)).await.err().unwrap());
+        assert!(provider.published.lock().unwrap().is_empty(), "nothing reached the provider");
+    }
+
+    #[tokio::test]
+    async fn guard_rejects_hostile_reply_to() {
+        // D-U8: a hostile requester setting reply_to to a reserved topic must not
+        // turn an innocent responder into a forger.
+        let provider = Arc::new(FakeProvider::new());
+        let svc = DefaultMessagingService::new(provider.clone());
+        let request = MessageBuilder::new("Req", "1.0")
+            .reply_to("ecv1/victim/comp/main/cfg")
+            .build();
+        assert_reserved(svc.reply(&request, msg(1)).await.unwrap_err());
+        assert_reserved(svc.reply_to_iot_core(&request, msg(1)).await.unwrap_err());
+        assert!(provider.published.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn guard_allows_app_topics_and_non_uns_topics() {
+        let provider = Arc::new(FakeProvider::new());
+        let svc = DefaultMessagingService::new(provider.clone());
+        svc.publish("ecv1/gw-01/comp/main/data/temp", &msg(1)).await.unwrap();
+        svc.publish("ecv1/gw-01/comp/main/app/state", &msg(1)).await.unwrap();
+        svc.publish("ggcommons/reply-42", &msg(1)).await.unwrap();
+        svc.publish("cloudwatch/metric/put", &msg(1)).await.unwrap();
+        assert_eq!(provider.published.lock().unwrap().len(), 4);
+    }
+
+    #[tokio::test]
+    async fn guard_position_five_applies_only_when_root_bound() {
+        let provider = Arc::new(FakeProvider::new());
+        let svc = DefaultMessagingService::new(provider.clone());
+        let rooted_state = "ecv1/dallas/gw-01/comp/main/state";
+        // Pre-bind (rootless): position 5 is NOT checked.
+        svc.publish(rooted_state, &msg(1)).await.unwrap();
+        // Bound to effective root: position 5 IS checked.
+        svc.set_guard_include_root(true);
+        assert_reserved(svc.publish(rooted_state, &msg(1)).await.unwrap_err());
+        // Position 4 stays checked either way.
+        assert_reserved(svc.publish("ecv1/d/c/i/metric/x", &msg(1)).await.unwrap_err());
+    }
+
+    #[tokio::test]
+    async fn reserved_seam_bypasses_the_guard() {
+        // §4.2: the crate-private seam is how the library's own publishers reach
+        // the reserved classes.
+        let provider = Arc::new(FakeProvider::new());
+        let svc = DefaultMessagingService::new(provider.clone());
+        let reserved: &dyn ReservedMessaging = &svc;
+        reserved.publish_reserved("ecv1/gw-01/comp/main/state", &msg(1)).await.unwrap();
+        reserved
+            .publish_reserved_to_iot_core("ecv1/gw-01/comp/main/metric/sys", &msg(1), Qos::AtLeastOnce)
+            .await
+            .unwrap();
+        assert_eq!(provider.published.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn subscribe_is_never_guarded() {
+        let provider = Arc::new(FakeProvider::new());
+        let svc = DefaultMessagingService::new(provider.clone());
+        // Consumers must be able to read reserved classes.
+        svc.subscribe(
+            "ecv1/+/+/+/state",
+            message_handler(|_t, _m| async {}),
+            4,
+            1,
+        )
+        .await
+        .unwrap();
     }
 }

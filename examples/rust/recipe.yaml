@@ -20,11 +20,12 @@ ComponentConfiguration:
         # Per-language log format (token template): {timestamp} {level} {target} {message}.
         rust_format: "{timestamp} [{level}] {target} - {message}"
       heartbeat:
+        enabled: true
         intervalSecs: 5
-        # Heartbeat publishes via the metric service. (A messaging-target heartbeat
-        # is also available — it uses the mode's messaging service.)
-        targets:
-          - type: "metric"
+        # The heartbeat is a UNS `state` keepalive on ecv1/{device}/{component}/main/state;
+        # `destination` selects its transport ("local" | "iotcore"). The enabled
+        # measures are emitted as the metric 'sys' through metricEmission.
+        destination: "local"
         measures:
           cpu: true
           memory: true

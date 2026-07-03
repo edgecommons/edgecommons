@@ -69,7 +69,13 @@ mod tests {
         let cfg = json!({
             "logging": { "level": "INFO" },
             "metricEmission": { "target": "cloudwatch", "namespace": "ns" },
-            "heartbeat": { "intervalSecs": 5, "targets": [ { "type": "metric" } ] },
+            "heartbeat": { "enabled": true, "intervalSecs": 5,
+                           "measures": { "cpu": true }, "destination": "local" },
+            "hierarchy": { "levels": ["site", "device"] },
+            "identity": { "site": "dallas" },
+            "topic": { "includeRoot": true },
+            "messaging": { "requestTimeoutSeconds": 30,
+                           "lwt": { "topic": "ecv1/d/c/main/state", "qos": 1 } },
             "component": { "global": {}, "instances": [] }
         });
         assert!(validate(&cfg).is_ok());
@@ -78,6 +84,27 @@ mod tests {
     #[test]
     fn rejects_a_bad_metric_target() {
         let cfg = json!({ "metricEmission": { "target": "not-a-target" } });
+        assert!(validate(&cfg).is_err());
+    }
+
+    #[test]
+    fn rejects_the_removed_heartbeat_targets_drift_knob() {
+        // UNS hard cut (D-U20): heartbeat.targets[] is gone from the schema — a
+        // stale config must fail with a precise error, not silently drift.
+        let cfg = json!({
+            "heartbeat": { "targets": [ { "type": "metric" } ] },
+            "component": {}
+        });
+        assert!(validate(&cfg).is_err());
+    }
+
+    #[test]
+    fn rejects_the_removed_metric_topic_override() {
+        // UNS hard cut (D-U9): metricEmission.targetConfig.topic is gone.
+        let cfg = json!({
+            "metricEmission": { "target": "messaging", "targetConfig": { "topic": "x/y" } },
+            "component": {}
+        });
         assert!(validate(&cfg).is_err());
     }
 

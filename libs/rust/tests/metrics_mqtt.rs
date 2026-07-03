@@ -1,4 +1,7 @@
-//! Integration test for the `messaging` metric target against a live broker.
+//! Integration test for the `messaging` metric target against a live broker
+//! (UNS-CANONICAL-DESIGN §4.3): the full runtime publishes each metric to the
+//! library-owned UNS topic `ecv1/{device}/{component}/main/metric/{metricName}`
+//! through the privileged reserved-publish seam.
 //!
 //! Gated: no-op unless `GGCOMMONS_IT_MQTT=1` is set. See `messaging_mqtt.rs` for the
 //! broker/env conventions. Logs go to console (`--nocapture`) and to
@@ -13,12 +16,11 @@ use tracing::info;
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 use uuid::Uuid;
 
-use ggcommons::config::model::Config;
 use ggcommons::messaging::config::MessagingConfig;
+use ggcommons::messaging::message::Message;
 use ggcommons::messaging::provider::mqtt::MqttProvider;
-use ggcommons::messaging::service::DefaultMessagingService;
 use ggcommons::messaging::{Destination, MessagingProvider, Qos};
-use ggcommons::metrics::{MetricBuilder, MetricEmitter, MetricService};
+use ggcommons::prelude::*;
 
 fn skipped() -> bool {
     if std::env::var("GGCOMMONS_IT_MQTT").is_ok() {
@@ -45,9 +47,14 @@ fn init_logs() {
     });
 }
 
-fn messaging_config(client_id: &str) -> MessagingConfig {
+fn broker() -> (String, String) {
     let host = std::env::var("GGCOMMONS_IT_MQTT_HOST").unwrap_or_else(|_| "localhost".to_string());
     let port = std::env::var("GGCOMMONS_IT_MQTT_PORT").unwrap_or_else(|_| "1883".to_string());
+    (host, port)
+}
+
+fn messaging_config(client_id: &str) -> MessagingConfig {
+    let (host, port) = broker();
     let json = format!(
         r#"{{ "messaging": {{ "local": {{ "host": "{host}", "port": {port}, "clientId": "{client_id}" }} }} }}"#
     );
@@ -55,61 +62,113 @@ fn messaging_config(client_id: &str) -> MessagingConfig {
 }
 
 #[tokio::test]
-async fn messaging_metric_target_publishes_emf() {
+async fn messaging_metric_target_publishes_emf_on_the_uns_topic() {
     if skipped() {
         return;
     }
     init_logs();
-    info!("=== TEST messaging_metric_target_publishes_emf ===");
+    info!("=== TEST messaging_metric_target_publishes_emf_on_the_uns_topic ===");
 
-    let topic = format!("itest/metric/{}", Uuid::new_v4());
-    let mc = messaging_config(&format!("it-metric-{}", Uuid::new_v4()));
-    let provider = Arc::new(MqttProvider::connect(&mc).await.expect("connect"));
+    // A unique thing name isolates this run's UNS topics on the shared broker.
+    let thing = format!("metric-thing-{}", Uuid::new_v4());
+    let metric_topic = format!("ecv1/{thing}/MetricIt/main/metric/requests");
 
-    // Raw subscription so we can read the published EMF JSON directly.
-    info!(topic, "subscribing (raw) to the metric topic");
-    let mut raw_sub = provider
-        .subscribe(&topic, Destination::Local, Qos::AtLeastOnce, 16)
+    // Raw observer subscription so we can read the published envelope directly.
+    let mc = messaging_config(&format!("it-metric-obs-{}", Uuid::new_v4()));
+    let observer = Arc::new(MqttProvider::connect(&mc).await.expect("connect"));
+    info!(topic = %metric_topic, "subscribing (raw) to the UNS metric topic");
+    let mut raw_sub = observer
+        .subscribe(&metric_topic, Destination::Local, Qos::AtLeastOnce, 16)
         .await
         .expect("raw subscribe");
     tokio::time::sleep(Duration::from_millis(300)).await;
 
-    // Metric emitter configured to publish to the messaging target on that topic.
-    let svc = Arc::new(DefaultMessagingService::new(provider.clone()));
-    let raw = json!({
-        "metricEmission": {
-            "target": "messaging",
-            "namespace": "demo",
-            "targetConfig": { "topic": topic, "destination": "ipc" }
-        }
-    });
-    let config = Config::from_value("com.example.C", "thing-1", raw).unwrap();
-    let emitter = MetricEmitter::new(&config, Some(svc)).await.expect("emitter");
+    // Full runtime configured for the messaging metric target.
+    let dir = std::env::temp_dir().join(format!("ggcommons-metric-{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let config_path = dir.join("config.json");
+    let messaging_path = dir.join("messaging.json");
+    let (host, port) = broker();
+    std::fs::write(
+        &config_path,
+        json!({
+            "heartbeat": { "enabled": false },
+            "metricEmission": {
+                "target": "messaging",
+                "namespace": "demo",
+                "targetConfig": { "destination": "ipc" }
+            },
+            "tags": { "site": "factory-1" },
+            "component": { "global": {} }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        &messaging_path,
+        format!(
+            r#"{{ "messaging": {{ "local": {{ "host": "{host}", "port": {port}, "clientId": "it-metric-{}" }} }} }}"#,
+            Uuid::new_v4()
+        ),
+    )
+    .unwrap();
 
-    emitter.define_metric(
+    let gg = GgCommonsBuilder::new("com.example.MetricIt")
+        .args([
+            "prog".to_string(),
+            "--platform".to_string(),
+            "HOST".to_string(),
+            "--transport".to_string(),
+            "MQTT".to_string(),
+            messaging_path.to_string_lossy().into_owned(),
+            "-c".to_string(),
+            "FILE".to_string(),
+            config_path.to_string_lossy().into_owned(),
+            "-t".to_string(),
+            thing.clone(),
+        ])
+        .build()
+        .await
+        .expect("build runtime");
+
+    let metrics = gg.metrics();
+    metrics.define_metric(
         MetricBuilder::create("requests")
-            .with_config(&config)
+            .with_config(&gg.config())
             .add_measure("count", "Count", 60)
             .build(),
     );
 
     let mut values = HashMap::new();
     values.insert("count".to_string(), 5.0);
-    info!(topic, "emitting metric");
-    emitter.emit_metric_now("requests", values).await.expect("emit");
+    info!(topic = %metric_topic, "emitting metric");
+    metrics.emit_metric_now("requests", values).await.expect("emit");
 
     let (recv_topic, bytes) = tokio::time::timeout(Duration::from_secs(5), raw_sub.recv())
         .await
         .expect("did not time out")
         .expect("a message");
-    let emf: serde_json::Value = serde_json::from_slice(&bytes).expect("valid JSON");
-    info!(topic = %recv_topic, emf = %emf, "received EMF");
+    let envelope = Message::from_slice(&bytes).expect("valid envelope");
+    info!(topic = %recv_topic, "received metric envelope");
 
-    assert_eq!(recv_topic, topic);
+    assert_eq!(recv_topic, metric_topic, "metric lands on the UNS metric topic");
+    assert_eq!(envelope.header.name, "Metric");
+    assert_eq!(envelope.header.version, "1.0");
+    // The EMF object travels in the envelope BODY.
+    let emf = &envelope.body;
     assert_eq!(emf["count"], 5.0);
     assert_eq!(emf["category"], "requests");
-    assert_eq!(emf["coreName"], "thing-1");
+    assert_eq!(emf["coreName"], thing.as_str());
     assert_eq!(emf["_aws"]["CloudWatchMetrics"][0]["Namespace"], "demo");
     assert!(emf["_aws"]["Timestamp"].as_u64().unwrap() > 1_000_000_000_000);
-    info!("=== PASS messaging_metric_target_publishes_emf ===");
+    // Identity + tags are stamped from the config.
+    let identity = envelope.identity.as_ref().expect("identity stamped");
+    assert_eq!(identity.device(), thing);
+    assert_eq!(identity.component(), "MetricIt");
+    let tags = envelope.tags.as_ref().expect("tags stamped");
+    assert_eq!(tags.extra.get("site"), Some(&json!("factory-1")));
+
+    drop(gg);
+    let _ = std::fs::remove_dir_all(&dir);
+    info!("=== PASS messaging_metric_target_publishes_emf_on_the_uns_topic ===");
 }

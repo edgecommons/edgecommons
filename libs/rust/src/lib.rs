@@ -33,12 +33,14 @@ pub mod config;
 pub mod error;
 pub mod health;
 pub mod heartbeat;
+mod instance;
 #[cfg(feature = "greengrass")]
 pub mod ipc;
 pub mod logging;
 pub mod messaging;
 pub mod metrics;
 pub mod platform;
+pub mod uns;
 #[cfg(feature = "credentials")]
 pub mod credentials;
 #[cfg(feature = "parameters")]
@@ -50,6 +52,7 @@ pub mod streaming;
 mod testutil;
 
 pub use error::{GgError, Result};
+pub use instance::GgInstance;
 
 use std::ffi::OsString;
 use std::sync::Arc;
@@ -185,6 +188,40 @@ impl GgCommons {
         self.metrics.clone()
     }
 
+    /// The UNS topic builder + validator bound to this component's resolved
+    /// identity (instance `"main"`) and its `topic.includeRoot` setting
+    /// (UNS-CANONICAL-DESIGN §2 — [`uns::Uns`] applies the root per-target only for
+    /// multi-level hierarchies, D-U25). Built over the CURRENT config snapshot; for
+    /// instance-scoped topics use [`Self::instance`]`?.uns()`.
+    pub fn uns(&self) -> uns::Uns {
+        let cfg = self.config.load_full();
+        uns::Uns::new(cfg.identity().clone(), cfg.topic_include_root())
+    }
+
+    /// The instance-scoped handle for an instance token (UNS-CANONICAL-DESIGN §3,
+    /// D-U3): a [`GgInstance`] whose `uns()` mints topics with — and whose
+    /// `message(...)` stamps envelopes with — this instance token. The token is
+    /// validated against the §2.2 token rule; the id is deliberately NOT verified
+    /// against the configured `component.instances[]` (instances may be created
+    /// dynamically) — an unknown id is only logged at DEBUG as a diagnostic aid.
+    ///
+    /// # Errors
+    /// [`GgError::UnsValidation`] when the token violates the §2.2 token rule.
+    pub fn instance(&self, instance_id: &str) -> Result<GgInstance> {
+        uns::check_token(instance_id, "instance id")?;
+        let cfg = self.config.load_full();
+        let configured = cfg.instance_ids();
+        if !configured.iter().any(|id| id == instance_id) {
+            tracing::debug!(
+                instance = %instance_id,
+                configured = ?configured,
+                "instance id is not among the configured component.instances[] ids - \
+                 creating a dynamic instance handle"
+            );
+        }
+        GgInstance::new(instance_id.to_string(), cfg)
+    }
+
     /// The telemetry-streaming service for this component (the `streaming` feature).
     ///
     /// Returns the wired [`streaming::StreamService`]; obtain a stream with
@@ -314,13 +351,20 @@ impl GgCommonsBuilder {
         // MQTT messaging config / IPC socket), not on the component config — and the
         // CONFIG_COMPONENT source needs a messaging handle to fetch the config. The
         // transport-injection site (DESIGN-core §4.2) branches on the resolved Transport,
-        // not a legacy mode enum.
-        let messaging = init_messaging(
+        // not a legacy mode enum. The CONCRETE service handle is kept so the UNS knobs
+        // (guard includeRoot, request-deadline default) can be late-bound after the
+        // config loads, and so the crate-private reserved-publish seam (§4.2) can be
+        // handed to the library's own publishers.
+        let messaging_impl = init_messaging(
             parsed.transport,
             parsed.messaging_config_path.as_deref(),
             self.receive_own_messages,
         )
         .await?;
+        let messaging: Option<Arc<dyn messaging::MessagingService>> =
+            messaging_impl.clone().map(|s| s as Arc<dyn messaging::MessagingService>);
+        let reserved: Option<Arc<dyn messaging::ReservedMessaging>> =
+            messaging_impl.clone().map(|s| s as Arc<dyn messaging::ReservedMessaging>);
 
         let source = config::source::build(
             &parsed.config,
@@ -331,6 +375,27 @@ impl GgCommonsBuilder {
         let raw = source.load().await?;
         config::validation::validate(&raw)?;
         let cfg = Config::from_value(self.component_name.clone(), thing_name.clone(), raw)?;
+
+        // UNS late-binds (§1.5 init order — messaging exists BEFORE config): the
+        // request() deadline default (messaging.requestTimeoutSeconds, §5/D-U5;
+        // until now the built-in 30 s applied, deliberately, so the CONFIG_COMPONENT
+        // bootstrap request had a deadline) and the reserved-class guard's
+        // includeRoot flag — bound to the EFFECTIVE root (includeRoot AND a
+        // multi-level hierarchy, D-U27) so the guard's position-5 check agrees with
+        // topic building, which no-ops includeRoot on a single-level hierarchy (D-U25).
+        if let Some(service) = &messaging_impl {
+            service.set_default_request_timeout(cfg.messaging_request_timeout());
+            service.set_guard_include_root(cfg.effective_include_root());
+        }
+        // §6: the MQTT LWT is registered at CONNECT by the MQTT provider; the IPC
+        // transport has no CONNECT-time will — a configured messaging.lwt is a
+        // documented no-op there (DEBUG, not a failure).
+        if parsed.transport == Transport::Ipc && cfg.parsed.messaging.lwt.is_some() {
+            tracing::debug!(
+                "messaging.lwt is configured but the IPC transport has no MQTT \
+                 Last-Will-and-Testament; ignoring it (LWT applies to the local MQTT connection)"
+            );
+        }
 
         // Logging is configured from the component CONFIG, which loads after the resolver. The
         // resolved platform is already known, so its profile's default logging format (json on
@@ -377,11 +442,18 @@ impl GgCommonsBuilder {
         // target is `explicit metricEmission.target ▸ profile default (prometheus on KUBERNETES) ▸
         // log`. No resolver→ConfigManager dependency is added — the platform is already known here.
         let emitter = Arc::new(
-            metrics::MetricEmitter::new_for_platform(&snapshot, messaging.clone(), parsed.platform)
-                .await?,
+            metrics::MetricEmitter::new_internal(
+                &snapshot,
+                messaging.clone(),
+                reserved.clone(),
+                parsed.platform,
+            )
+            .await?,
         );
         let metrics: Arc<dyn metrics::MetricService> = emitter.clone();
-        let heartbeat = heartbeat::Heartbeat::start(config.clone(), metrics.clone(), messaging.clone());
+        // §4.3: the heartbeat is the UNS state keepalive + sys metric; the state
+        // class is reserved, so it publishes through the crate-private seam.
+        let heartbeat = heartbeat::Heartbeat::start(config.clone(), metrics.clone(), reserved.clone());
 
         // Credentials / local vault (feature-gated): open the shared vault when the config has a
         // `credentials` section, resolving path templates ({ThingName}/{ComponentFullName}) first.
@@ -508,6 +580,18 @@ impl GgCommonsBuilder {
         if let Ok(mut l) = listeners.lock() {
             l.push(emitter as Arc<dyn config::ConfigurationChangeListener>);
             l.push(Arc::new(logging::LoggingReconfigurer) as Arc<dyn config::ConfigurationChangeListener>);
+        }
+
+        // §4.3: announce the effective (redacted) configuration on the UNS cfg topic
+        // — the startup push; registered as a listener so every hot reload
+        // re-announces. Best-effort (publish_now never fails the build).
+        if let Some(reserved) = &reserved {
+            let cfg_publisher =
+                Arc::new(config::effective::EffectiveConfigPublisher::new(reserved.clone()));
+            cfg_publisher.publish_now(&snapshot).await;
+            if let Ok(mut l) = listeners.lock() {
+                l.push(cfg_publisher as Arc<dyn config::ConfigurationChangeListener>);
+            }
         }
 
         let reload_task = source.watch().map(|updates| {
@@ -663,7 +747,7 @@ async fn init_messaging(
     transport: Transport,
     messaging_config_path: Option<&std::path::Path>,
     receive_own_messages: bool,
-) -> Result<Option<Arc<dyn messaging::MessagingService>>> {
+) -> Result<Option<Arc<messaging::DefaultMessagingService>>> {
     match transport {
         Transport::Mqtt => {
             #[cfg(feature = "standalone")]
@@ -681,9 +765,7 @@ async fn init_messaging(
                 })?;
                 let mc = MessagingConfig::load(path).await?;
                 let provider = Arc::new(MqttProvider::connect(&mc).await?);
-                let service: Arc<dyn messaging::MessagingService> =
-                    Arc::new(DefaultMessagingService::new(provider));
-                Ok(Some(service))
+                Ok(Some(Arc::new(DefaultMessagingService::new(provider))))
             }
             #[cfg(not(feature = "standalone"))]
             {
@@ -711,9 +793,7 @@ async fn init_messaging(
                     );
                 }
                 let provider = Arc::new(IpcProvider::connect().await?);
-                let service: Arc<dyn messaging::MessagingService> =
-                    Arc::new(DefaultMessagingService::new(provider));
-                Ok(Some(service))
+                Ok(Some(Arc::new(DefaultMessagingService::new(provider))))
             }
             #[cfg(not(feature = "greengrass"))]
             {
@@ -740,12 +820,13 @@ pub mod prelude {
     pub use crate::config::ConfigurationChangeListener;
     pub use crate::platform::{Platform, Transport};
     pub use crate::messaging::{
-        message_handler, MessageHandler, MessagingService, Qos, ReplyFuture,
+        message_handler, MessageHandler, MessageIdentity, MessagingService, Qos, ReplyFuture,
     };
     pub use crate::metrics::{Measure, Metric, MetricBuilder, MetricService};
+    pub use crate::uns::{Uns, UnsClass, UnsScope};
     #[cfg(feature = "streaming")]
     pub use crate::streaming::{StreamHandle, StreamRecord, StreamService, Stats as StreamStats};
-    pub use crate::{GgCommons, GgCommonsBuilder, GgError, Result};
+    pub use crate::{GgCommons, GgCommonsBuilder, GgError, GgInstance, Result};
 }
 
 #[cfg(test)]

@@ -82,7 +82,7 @@ async fn tls_publish_subscribe_roundtrip() {
     .expect("subscribe over TLS");
     tokio::time::sleep(Duration::from_millis(300)).await;
 
-    let msg = MessageBuilder::new("Evt", "1.0").payload(json!({ "n": 7 })).thing_name("t").build();
+    let msg = MessageBuilder::new("Evt", "1.0").payload(json!({ "n": 7 })).build();
     svc.publish(&topic, &msg).await.expect("publish over TLS");
 
     for _ in 0..50 {

@@ -1,4 +1,7 @@
-//! Integration test for the heartbeat `messaging` target against a live broker.
+//! Integration test for the heartbeat UNS `state` keepalive against a live broker
+//! (UNS-CANONICAL-DESIGN §4.3, D-U14): the full runtime publishes
+//! `ecv1/{device}/{component}/main/state` each tick through the privileged
+//! reserved-publish seam.
 //!
 //! Gated: no-op unless `GGCOMMONS_IT_MQTT=1` is set. Logs go to console
 //! (`--nocapture`) and to `target/test-logs/heartbeat_mqtt.log`.
@@ -12,14 +15,12 @@ use tracing::info;
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 use uuid::Uuid;
 
-use ggcommons::config::model::Config;
-use ggcommons::heartbeat::Heartbeat;
 use ggcommons::messaging::config::MessagingConfig;
 use ggcommons::messaging::message::Message;
 use ggcommons::messaging::message_handler;
 use ggcommons::messaging::provider::mqtt::MqttProvider;
 use ggcommons::messaging::service::{DefaultMessagingService, MessagingService};
-use ggcommons::metrics::{MetricEmitter, MetricService};
+use ggcommons::prelude::*;
 
 fn skipped() -> bool {
     if std::env::var("GGCOMMONS_IT_MQTT").is_ok() {
@@ -46,9 +47,14 @@ fn init_logs() {
     });
 }
 
-fn messaging_config(client_id: &str) -> MessagingConfig {
+fn broker() -> (String, String) {
     let host = std::env::var("GGCOMMONS_IT_MQTT_HOST").unwrap_or_else(|_| "localhost".to_string());
     let port = std::env::var("GGCOMMONS_IT_MQTT_PORT").unwrap_or_else(|_| "1883".to_string());
+    (host, port)
+}
+
+fn messaging_config(client_id: &str) -> MessagingConfig {
+    let (host, port) = broker();
     let json = format!(
         r#"{{ "messaging": {{ "local": {{ "host": "{host}", "port": {port}, "clientId": "{client_id}" }} }} }}"#
     );
@@ -56,80 +62,132 @@ fn messaging_config(client_id: &str) -> MessagingConfig {
 }
 
 #[tokio::test]
-async fn heartbeat_publishes_to_messaging_target() {
+async fn heartbeat_publishes_uns_state_keepalive() {
     if skipped() {
         return;
     }
     init_logs();
-    info!("=== TEST heartbeat_publishes_to_messaging_target ===");
+    info!("=== TEST heartbeat_publishes_uns_state_keepalive ===");
 
-    let topic = format!("itest/heartbeat/{}", Uuid::new_v4());
-    let mc = messaging_config(&format!("it-hb-{}", Uuid::new_v4()));
+    // A unique thing name isolates this run's UNS topics on the shared broker.
+    let thing = format!("hb-thing-{}", Uuid::new_v4());
+    let state_topic = format!("ecv1/{thing}/HbIt/main/state");
+
+    // Observer client on the state topic.
+    let mc = messaging_config(&format!("it-hb-obs-{}", Uuid::new_v4()));
     let provider = Arc::new(MqttProvider::connect(&mc).await.expect("connect"));
-    let svc = Arc::new(DefaultMessagingService::new(provider));
-
-    // Capture heartbeat messages arriving on the topic.
-    let received: Arc<Mutex<Option<Message>>> = Arc::new(Mutex::new(None));
+    let observer = Arc::new(DefaultMessagingService::new(provider));
+    let received: Arc<Mutex<Vec<Message>>> = Arc::new(Mutex::new(Vec::new()));
     let count = Arc::new(AtomicUsize::new(0));
     let (received_h, count_h) = (received.clone(), count.clone());
-    info!(topic, "subscribing to heartbeat topic");
-    svc.subscribe(
-        &topic,
-        message_handler(move |t, msg| {
-            let (received_h, count_h) = (received_h.clone(), count_h.clone());
-            async move {
-                info!(topic = %t, name = %msg.header.name, "received heartbeat message");
-                *received_h.lock().unwrap() = Some(msg);
-                count_h.fetch_add(1, Ordering::SeqCst);
-            }
-        }),
-        16,
-        1,
-    )
-    .await
-    .expect("subscribe");
+    info!(topic = %state_topic, "subscribing to the UNS state topic");
+    observer
+        .subscribe(
+            &state_topic,
+            message_handler(move |t, msg| {
+                let (received_h, count_h) = (received_h.clone(), count_h.clone());
+                async move {
+                    info!(topic = %t, name = %msg.header.name, "received state keepalive");
+                    received_h.lock().unwrap().push(msg);
+                    count_h.fetch_add(1, Ordering::SeqCst);
+                }
+            }),
+            16,
+            1,
+        )
+        .await
+        .expect("subscribe");
     tokio::time::sleep(Duration::from_millis(300)).await;
 
-    // Config: 1s heartbeat to the messaging target on our topic. Metrics target is a
-    // temp log file (the heartbeat defines its metric regardless of targets).
-    let metric_log = std::env::temp_dir().join(format!("ggcommons-hb-{}.log", Uuid::new_v4()));
-    let raw = json!({
-        "heartbeat": {
-            "intervalSecs": 1,
-            "measures": { "cpu": true, "memory": true },
-            "targets": [ { "type": "messaging", "config": { "topic": topic, "destination": "ipc" } } ]
-        },
-        "metricEmission": { "target": "log", "targetConfig": { "logFileName": metric_log.to_string_lossy() } }
-    });
-    let config = Config::from_value("com.example.C", "thing-1", raw).unwrap();
-    let metrics: Arc<dyn MetricService> =
-        Arc::new(MetricEmitter::new(&config, Some(svc.clone())).await.expect("metrics"));
+    // Full runtime: 1s heartbeat; metrics to a temp log file.
+    let dir = std::env::temp_dir().join(format!("ggcommons-hb-{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let config_path = dir.join("config.json");
+    let messaging_path = dir.join("messaging.json");
+    let metric_log = dir.join("metric.log");
+    let (host, port) = broker();
+    std::fs::write(
+        &config_path,
+        json!({
+            "heartbeat": { "intervalSecs": 1, "measures": { "cpu": true, "memory": true } },
+            "metricEmission": { "target": "log", "targetConfig": { "logFileName": metric_log.to_string_lossy() } },
+            "component": { "global": {} }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        &messaging_path,
+        format!(
+            r#"{{ "messaging": {{ "local": {{ "host": "{host}", "port": {port}, "clientId": "it-hb-{}" }} }} }}"#,
+            Uuid::new_v4()
+        ),
+    )
+    .unwrap();
 
-    let config_handle = Arc::new(arc_swap::ArcSwap::from_pointee(config));
-    info!("starting heartbeat");
-    let _heartbeat = Heartbeat::start(config_handle, metrics, Some(svc.clone()));
+    info!("building the runtime (starts the heartbeat)");
+    let gg = GgCommonsBuilder::new("com.example.HbIt")
+        .args([
+            "prog".to_string(),
+            "--platform".to_string(),
+            "HOST".to_string(),
+            "--transport".to_string(),
+            "MQTT".to_string(),
+            messaging_path.to_string_lossy().into_owned(),
+            "-c".to_string(),
+            "FILE".to_string(),
+            config_path.to_string_lossy().into_owned(),
+            "-t".to_string(),
+            thing.clone(),
+        ])
+        .build()
+        .await
+        .expect("build runtime");
 
-    // Wait for the SECOND heartbeat: the first sample primes the CPU baseline (and
-    // reports 0); the second measures CPU over the real ~1s interval.
+    // Wait for at least two keepalives (~1s apart).
     for _ in 0..80 {
         if count.load(Ordering::SeqCst) >= 2 {
             break;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+    assert!(count.load(Ordering::SeqCst) >= 2, "expected >=2 state keepalives");
 
-    let msg = received.lock().unwrap().clone().expect("a heartbeat message arrived");
-    let cpu = msg.body["cpu"]["cpu_usage"].as_f64().unwrap();
-    let mem = msg.body["memory"]["memory_usage"].as_f64().unwrap();
-    info!(cpu_usage = cpu, memory_mb = mem, "asserting heartbeat payload");
-    assert_eq!(msg.header.name, "heartbeat");
-    assert_eq!(msg.header.version, "1.0.0");
-    assert!(mem > 0.0, "memory should be positive MB");
-    // CPU is measured over the interval; for a near-idle process it should be a
-    // small, finite, non-negative percentage (100% == one core) — never a spike.
-    assert!(cpu.is_finite() && cpu >= 0.0, "cpu must be finite and non-negative, got {cpu}");
-    assert!(cpu < 100.0, "near-idle cpu should be well under one full core, got {cpu}");
+    {
+        let messages = received.lock().unwrap();
+        let msg = &messages[0];
+        assert_eq!(msg.header.name, "state");
+        assert_eq!(msg.header.version, "1.0");
+        assert_eq!(msg.body["status"], "RUNNING");
+        assert!(msg.body["uptimeSecs"].is_u64(), "RUNNING carries uptimeSecs");
+        let identity = msg.identity.as_ref().expect("state envelope carries identity");
+        assert_eq!(identity.device(), thing);
+        assert_eq!(identity.component(), "HbIt");
+        assert_eq!(identity.instance(), "main");
+    }
 
-    let _ = std::fs::remove_file(&metric_log);
-    info!("=== PASS heartbeat_publishes_to_messaging_target ===");
+    // Dropping the runtime publishes the best-effort STOPPED state.
+    info!("dropping the runtime (expect a STOPPED state)");
+    drop(gg);
+    let mut saw_stopped = false;
+    for _ in 0..60 {
+        if received.lock().unwrap().iter().any(|m| m.body["status"] == "STOPPED") {
+            saw_stopped = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(saw_stopped, "a STOPPED state should be published on graceful shutdown");
+    let stopped: Vec<_> = received
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|m| m.body["status"] == "STOPPED")
+        .cloned()
+        .collect();
+    assert_eq!(stopped.len(), 1, "STOPPED is published at most once");
+    assert!(stopped[0].body.get("uptimeSecs").is_none(), "STOPPED omits uptimeSecs");
+
+    let _ = std::fs::remove_dir_all(&dir);
+    info!("=== PASS heartbeat_publishes_uns_state_keepalive ===");
 }

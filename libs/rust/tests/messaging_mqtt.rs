@@ -137,7 +137,7 @@ async fn publish_subscribe_invokes_handler() {
 
     let msg = MessageBuilder::new("Evt", "1.0")
         .payload(json!({ "n": 1 }))
-        .thing_name("test-thing")
+        .tag("origin", json!("test-thing"))
         .build();
     info!(topic, message = %as_json(&msg), "publishing message");
     svc.publish(&topic, &msg).await.expect("publish");
@@ -176,7 +176,7 @@ async fn request_reply_roundtrip() {
                 info!(topic = %topic, request = %as_json(&request), "responder received request");
                 let reply = MessageBuilder::new("Pong", "1.0")
                     .payload(json!({ "ok": true }))
-                    .thing_name("test-thing")
+                    .tag("origin", json!("test-thing"))
                     .build();
                 info!(reply_to = ?request.header.reply_to, reply = %as_json(&reply), "responder sending reply");
                 if let Err(e) = responder_svc.reply(&request, reply).await {
@@ -193,7 +193,7 @@ async fn request_reply_roundtrip() {
 
     let request = MessageBuilder::new("Ping", "1.0")
         .payload(json!({ "ping": 1 }))
-        .thing_name("test-thing")
+        .tag("origin", json!("test-thing"))
         .build();
     let correlation = request.header.correlation_id.clone();
 
@@ -249,7 +249,7 @@ async fn serial_subscription_preserves_order() {
     tokio::time::sleep(Duration::from_millis(300)).await;
 
     for n in 0..4u64 {
-        let m = MessageBuilder::new("Seq", "1.0").payload(json!(n)).thing_name("t").build();
+        let m = MessageBuilder::new("Seq", "1.0").payload(json!(n)).build();
         info!(topic, n, message = %as_json(&m), "publishing message");
         svc.publish(&topic, &m).await.expect("publish");
     }
@@ -276,7 +276,7 @@ async fn request_times_out_with_no_responder() {
     let svc = connect_service(&format!("it-timeout-{}", Uuid::new_v4())).await;
     let topic = format!("itest/noone/{}", Uuid::new_v4());
 
-    let request = MessageBuilder::new("Ping", "1.0").thing_name("test-thing").build();
+    let request = MessageBuilder::new("Ping", "1.0").build();
     info!(topic, request = %as_json(&request), "sending request expecting timeout (no responder)");
     let reply_future = svc.request(&topic, request).await.expect("request issued");
     let result = tokio::time::timeout(Duration::from_millis(400), reply_future).await;

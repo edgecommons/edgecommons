@@ -1,27 +1,44 @@
 //! # Configuration source — CONFIG_COMPONENT
 //!
 //! **One-liner purpose**: Load (and hot-reload) configuration from a dedicated
-//! configuration-manager component via request/reply over messaging.
+//! configuration-manager component over the UNS config rendezvous
+//! (UNS-CANONICAL-DESIGN §4.3, D-U19 Flow A).
 //!
-//! ## Overview
-//! Transport-agnostic: it works over whichever [`crate::messaging::MessagingService`]
-//! the runtime wired (Greengrass IPC in GREENGRASS mode, dual-broker MQTT in
-//! STANDALONE mode). The topic contract matches the Java/Python libraries verbatim
-//! (cross-language parity):
-//! - request: `ggcommons/{ThingName}/config/get/{ComponentName}`
-//! - updated: `ggcommons/{ThingName}/config/{ComponentName}/updated`
+//! ## Wire contract (a convention shared with the config server)
+//! - **Flow A — GET**: a request to
+//!   `ecv1/{device}/config/main/cmd/get-configuration` (with `{device}` = the
+//!   sanitized resolved thing name). `config` is a **reserved-by-convention logical
+//!   component name** — the config server is the sole subscriber and replies via
+//!   `reply_to` with the configuration as the message body. Because this request
+//!   runs during config bootstrap — *before* the [`Config`] snapshot (and therefore
+//!   the component identity) exists — it carries **no envelope identity**; the
+//!   requester **self-identifies in the body** with `{"component": "<short name>"}`
+//!   (§1.5).
+//! - **set-config push**: the server pushes a fire-and-forget `cmd` (no `reply_to`
+//!   — a notification-style command) to the component's own inbox
+//!   `ecv1/{device}/{component}/main/cmd/set-config`; the body is the new
+//!   configuration, forwarded through [`ConfigSource::watch`] into the runtime's
+//!   validate-and-swap reload path.
+//!
+//! The topics are minted locally from the resolved thing name and the component
+//! name handed to the constructor (the same inputs the config layer later uses for
+//! identity resolution) — never from a `Config`/`Uns`, which do not exist yet. Both
+//! tokens pass the normative UNS token sanitizer
+//! ([`crate::config::template::sanitize`]). These are `cmd`-class topics — not
+//! library-reserved — so they ride the ordinary messaging surface (no
+//! reserved-publish seam) and pass the reserved-topic guard.
 //!
 //! ## Semantics & Architecture
-//! - `load` sends a `GetConfiguration` v1.0 request and awaits the reply (30s
-//!   timeout, up to 3 attempts), returning the reply body as the config document.
-//! - `watch` subscribes to the updated topic and forwards each message body.
+//! - `load` sends a `GetConfiguration` v1.0 request with an explicit 30 s per-call
+//!   deadline (the §5 framework deadline — the reply subscription is cleaned up on
+//!   expiry), retrying up to 3 attempts with a FRESH request each time (a settled
+//!   future can never complete later).
+//! - `watch` subscribes to the component's `set-config` inbox and forwards each
+//!   message body. (Unlike the Java port's historical never-back-filled
+//!   `parentConfigManager` bug, this path holds no config-manager reference at all —
+//!   the runtime's reload task owns validation and the snapshot swap.)
 //! - `Send + Sync`; async via `async_trait`. Errors map to
 //!   [`crate::error::GgError::Config`].
-//!
-//! ## Status
-//! Implemented over the shared messaging service. The underlying request/reply
-//! mechanism is validated on a live Greengrass core (via the local request/reply
-//! path); a standalone configuration-manager component was not separately deployed.
 //!
 //! ## Related Modules
 //! - [`super`], [`crate::messaging`].
@@ -34,15 +51,19 @@ use serde_json::{json, Value};
 use tokio::sync::mpsc;
 
 use super::ConfigSource;
+use crate::config::identity::short_component_name;
+use crate::config::template::sanitize;
 use crate::error::{GgError, Result};
 use crate::messaging::message::MessageBuilder;
 use crate::messaging::{message_handler, MessagingService};
 
-/// Request-topic template (parity with Java/Python).
-const GET_TOPIC_TEMPLATE: &str = "ggcommons/{ThingName}/config/get/{ComponentName}";
-/// Updated-topic template (parity with Java/Python).
-const UPDATED_TOPIC_TEMPLATE: &str = "ggcommons/{ThingName}/config/{ComponentName}/updated";
-/// Per-attempt reply timeout.
+/// Flow-A GET request topic template (§4.3): the config server's rendezvous under
+/// the reserved-by-convention logical component name `config`, instance `main`.
+const GET_TOPIC_TEMPLATE: &str = "ecv1/{device}/config/main/cmd/get-configuration";
+/// The pushed `set-config` command's topic template — this component's OWN inbox
+/// (§4.3): the server-to-component push replacing the legacy `.../updated` topic.
+const SET_CONFIG_TOPIC_TEMPLATE: &str = "ecv1/{device}/{component}/main/cmd/set-config";
+/// Per-attempt reply deadline (the §5 framework deadline, passed per-call).
 const REPLY_TIMEOUT: Duration = Duration::from_secs(30);
 /// Maximum request attempts before giving up.
 const MAX_ATTEMPTS: usize = 3;
@@ -50,30 +71,37 @@ const MAX_ATTEMPTS: usize = 3;
 /// Messaging-backed configuration-component source.
 pub struct ConfigComponentSource {
     messaging: Arc<dyn MessagingService>,
-    thing_name: String,
+    /// The sanitized short component name — the body self-identification token (§1.5).
+    component_token: String,
     get_topic: String,
-    updated_topic: String,
+    set_config_topic: String,
 }
 
-/// Substitute `{ThingName}` / `{ComponentName}` into a topic template.
-fn resolve_topic(template: &str, thing: &str, component: &str) -> String {
+/// Substitute the pre-sanitized `{device}` / `{component}` tokens into a topic
+/// template. Deliberately local: the UNS builder is unavailable during config
+/// bootstrap (§1.5), and these `cmd` topics need no reserved-class seam.
+fn mint_topic(template: &str, device: &str, component: &str) -> String {
     template
-        .replace("{ThingName}", thing)
-        .replace("{ComponentName}", component)
+        .replace("{device}", device)
+        .replace("{component}", component)
 }
 
 impl ConfigComponentSource {
-    /// Create a source bound to a messaging service and the component identity.
+    /// Create a source bound to a messaging service and the component identity
+    /// inputs (the resolved thing name + the full-or-short component name).
     pub fn new(
         messaging: Arc<dyn MessagingService>,
         thing_name: impl Into<String>,
         component_name: &str,
     ) -> Self {
-        let thing_name = thing_name.into();
+        // Mint the UNS tokens locally (§1.5 steps 4-5): device = sanitized resolved
+        // thing name, component = sanitized short name.
+        let device_token = sanitize(&thing_name.into());
+        let component_token = sanitize(short_component_name(component_name));
         Self {
-            get_topic: resolve_topic(GET_TOPIC_TEMPLATE, &thing_name, component_name),
-            updated_topic: resolve_topic(UPDATED_TOPIC_TEMPLATE, &thing_name, component_name),
-            thing_name,
+            get_topic: mint_topic(GET_TOPIC_TEMPLATE, &device_token, &component_token),
+            set_config_topic: mint_topic(SET_CONFIG_TOPIC_TEMPLATE, &device_token, &component_token),
+            component_token,
             messaging,
         }
     }
@@ -84,18 +112,30 @@ impl ConfigSource for ConfigComponentSource {
     async fn load(&self) -> Result<Value> {
         let mut last_err = String::from("no attempts made");
         for attempt in 1..=MAX_ATTEMPTS {
+            // The requester self-identifies in the BODY (§1.5): during bootstrap
+            // there is no Config snapshot, so the envelope carries no identity
+            // element — the config server routes on {"component"} instead.
             let request = MessageBuilder::new("GetConfiguration", "1.0")
-                .thing_name(&self.thing_name)
-                .payload(json!({}))
+                .payload(json!({ "component": self.component_token }))
                 .build();
-            let reply_future = self.messaging.request(&self.get_topic, request).await?;
-            match tokio::time::timeout(REPLY_TIMEOUT, reply_future).await {
-                Ok(Ok(reply)) => return Ok(reply.body),
-                Ok(Err(e)) => last_err = e.to_string(),
-                Err(_) => {
+            // Explicit per-call §5 deadline: on expiry the supervisor has already
+            // unsubscribed the ephemeral reply topic, so a retry must (and does)
+            // issue a FRESH request.
+            let reply_future = self
+                .messaging
+                .request_with_timeout(&self.get_topic, request, Some(REPLY_TIMEOUT))
+                .await?;
+            match reply_future.await {
+                Ok(reply) => return Ok(reply.body),
+                Err(GgError::RequestTimeout { .. }) => {
                     last_err = format!("timed out after {}s", REPLY_TIMEOUT.as_secs());
-                    tracing::warn!(attempt, topic = %self.get_topic, "config component request timed out; retrying");
+                    tracing::warn!(
+                        attempt,
+                        topic = %self.get_topic,
+                        "config component request timed out; retrying"
+                    );
                 }
+                Err(e) => last_err = e.to_string(),
             }
         }
         Err(GgError::Config(format!(
@@ -110,7 +150,7 @@ impl ConfigSource for ConfigComponentSource {
     fn watch(&self) -> Option<mpsc::UnboundedReceiver<Value>> {
         let (tx, rx) = mpsc::unbounded_channel();
         let messaging = self.messaging.clone();
-        let topic = self.updated_topic.clone();
+        let topic = self.set_config_topic.clone();
         tokio::spawn(async move {
             let handler = message_handler(move |_topic, msg| {
                 let tx = tx.clone();
@@ -119,7 +159,7 @@ impl ConfigSource for ConfigComponentSource {
                 }
             });
             if let Err(e) = messaging.subscribe(&topic, handler, 16, 1).await {
-                tracing::warn!(error = %e, topic = %topic, "failed to subscribe to config-updated topic");
+                tracing::warn!(error = %e, topic = %topic, "failed to subscribe to the set-config inbox");
             }
         });
         Some(rx)
@@ -140,17 +180,22 @@ mod tests {
     /// Bounded delivery channel for one fake subscription.
     type SubSender = tokio::sync::mpsc::Sender<(String, Vec<u8>)>;
 
-    /// A provider that (optionally) auto-replies to any request, and lets a test push
-    /// messages into live subscriptions — enough to exercise request/reply + watch
-    /// without a broker.
+    /// A provider that (optionally) auto-replies to any request, records request
+    /// payloads, and lets a test push messages into live subscriptions — enough to
+    /// exercise request/reply + watch without a broker.
     struct FakeProvider {
         subs: Mutex<HashMap<String, SubSender>>,
         reply_body: Option<Value>,
+        requests: Mutex<Vec<(String, Message)>>,
     }
 
     impl FakeProvider {
         fn new(reply_body: Option<Value>) -> Arc<Self> {
-            Arc::new(Self { subs: Mutex::new(HashMap::new()), reply_body })
+            Arc::new(Self {
+                subs: Mutex::new(HashMap::new()),
+                reply_body,
+                requests: Mutex::new(Vec::new()),
+            })
         }
         fn has_sub(&self, topic: &str) -> bool {
             self.subs.lock().unwrap().contains_key(topic)
@@ -164,9 +209,10 @@ mod tests {
 
     #[async_trait]
     impl MessagingProvider for FakeProvider {
-        async fn publish(&self, _t: &str, payload: Vec<u8>, _d: Destination, _q: Qos) -> Result<()> {
-            if let Some(body) = &self.reply_body {
-                if let Ok(req) = Message::from_slice(&payload) {
+        async fn publish(&self, t: &str, payload: Vec<u8>, _d: Destination, _q: Qos) -> Result<()> {
+            if let Ok(req) = Message::from_slice(&payload) {
+                self.requests.lock().unwrap().push((t.to_string(), req.clone()));
+                if let Some(body) = &self.reply_body {
                     if let Some(reply_to) = req.header.reply_to.clone() {
                         let reply = crate::messaging::message::MessageBuilder::new("Config", "1.0")
                             .correlation_id(req.header.correlation_id.clone())
@@ -201,27 +247,46 @@ mod tests {
     }
 
     #[test]
-    fn topic_templates_resolve() {
+    fn topics_are_the_uns_rendezvous_and_own_inbox() {
         assert_eq!(
-            resolve_topic(GET_TOPIC_TEMPLATE, "T", "C"),
-            "ggcommons/T/config/get/C"
+            mint_topic(GET_TOPIC_TEMPLATE, "gw-01", "MyComp"),
+            "ecv1/gw-01/config/main/cmd/get-configuration"
         );
         assert_eq!(
-            resolve_topic(UPDATED_TOPIC_TEMPLATE, "T", "C"),
-            "ggcommons/T/config/C/updated"
+            mint_topic(SET_CONFIG_TOPIC_TEMPLATE, "gw-01", "MyComp"),
+            "ecv1/gw-01/MyComp/main/cmd/set-config"
         );
     }
 
     #[tokio::test]
-    async fn load_fetches_config_via_request_reply() {
+    async fn load_fetches_config_and_self_identifies_in_the_body() {
         let provider = FakeProvider::new(Some(serde_json::json!({ "feature": "on", "n": 5 })));
-        let svc: Arc<dyn MessagingService> = Arc::new(DefaultMessagingService::new(provider));
-        let src = ConfigComponentSource::new(svc, "thing-1", "com.example.C");
+        let svc: Arc<dyn MessagingService> = Arc::new(DefaultMessagingService::new(provider.clone()));
+        let src = ConfigComponentSource::new(svc, "thing-1", "com.example.MyComp");
 
         let doc = src.load().await.unwrap();
         assert_eq!(doc["feature"], "on");
         assert_eq!(doc["n"], 5);
         assert_eq!(src.source_name(), "CONFIG_COMPONENT");
+
+        // The Flow-A request went to the config server's rendezvous, with the
+        // requester self-identified in the BODY and NO envelope identity (§1.5).
+        let requests = provider.requests.lock().unwrap();
+        let (topic, request) = &requests[0];
+        assert_eq!(topic, "ecv1/thing-1/config/main/cmd/get-configuration");
+        assert_eq!(request.body["component"], "MyComp", "sanitized short name in the body");
+        assert!(request.identity.is_none(), "bootstrap request carries no identity");
+    }
+
+    #[tokio::test]
+    async fn tokens_are_sanitized_into_the_topics() {
+        let provider = FakeProvider::new(Some(serde_json::json!({})));
+        let svc: Arc<dyn MessagingService> = Arc::new(DefaultMessagingService::new(provider.clone()));
+        let src = ConfigComponentSource::new(svc, "thing+1", "com.example.My/Comp");
+        let _ = src.load().await.unwrap();
+        let requests = provider.requests.lock().unwrap();
+        assert_eq!(requests[0].0, "ecv1/thing_1/config/main/cmd/get-configuration");
+        assert_eq!(requests[0].1.body["component"], "My_Comp");
     }
 
     #[tokio::test]
@@ -233,25 +298,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn watch_forwards_updated_config_messages() {
+    async fn watch_forwards_set_config_pushes_from_the_own_inbox() {
         let provider = FakeProvider::new(None);
         let svc: Arc<dyn MessagingService> = Arc::new(DefaultMessagingService::new(provider.clone()));
-        let src = ConfigComponentSource::new(svc, "thing-1", "com.example.C");
+        let src = ConfigComponentSource::new(svc, "thing-1", "com.example.MyComp");
 
         let mut rx = src.watch().unwrap();
-        let updated = "ggcommons/thing-1/config/com.example.C/updated";
+        let inbox = "ecv1/thing-1/MyComp/main/cmd/set-config";
         for _ in 0..100 {
-            if provider.has_sub(updated) {
+            if provider.has_sub(inbox) {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
-        assert!(provider.has_sub(updated), "watch should subscribe to the updated topic");
+        assert!(provider.has_sub(inbox), "watch should subscribe to the set-config inbox");
 
-        let update = crate::messaging::message::MessageBuilder::new("ConfigUpdated", "1.0")
+        let update = crate::messaging::message::MessageBuilder::new("cmd", "1.0")
             .payload(serde_json::json!({ "v": 9 }))
             .build();
-        provider.push(updated, &update);
+        provider.push(inbox, &update);
 
         let body = tokio::time::timeout(Duration::from_secs(2), rx.recv())
             .await

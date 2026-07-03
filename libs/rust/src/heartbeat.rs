@@ -1,94 +1,88 @@
 //! # Heartbeat
 //!
-//! **One-liner purpose**: Periodically sample system health and publish it to the
-//! metric and/or messaging targets, mirroring the Java/Python heartbeat.
+//! **One-liner purpose**: The library-owned UNS `state` keepalive + system-measures
+//! metric (UNS-CANONICAL-DESIGN §4.3, D-U14/D-U20), mirroring the Java canonical
+//! `Heartbeat`.
 //!
 //! ## Overview
-//! A background `tokio` task ticks at `heartbeat.intervalSecs` and, for each
-//! configured target, either emits the `heartbeat` metric (target `metric`) or
-//! publishes a `heartbeat` message (target `messaging`). Stats are collected by
-//! [`HeartbeatMonitor`] for the enabled `heartbeat.measures`.
+//! A background `tokio` task ticks at `heartbeat.intervalSecs` (default 5 s) and,
+//! when `heartbeat.enabled` (the default), publishes each tick:
+//! 1. a **`state` keepalive** to `ecv1/{device}/{component}/main/state` — header
+//!    name `state`, body `{"status":"RUNNING","uptimeSecs":<n>}` — through the
+//!    privileged [`ReservedMessaging`] seam (the `state` class is reserved).
+//!    `heartbeat.destination` (`local` | `iotcore`) selects the keepalive's
+//!    transport only;
+//! 2. the enabled system measures (cpu/memory/disk/…) as a metric named
+//!    [`SYS_METRIC_NAME`] through the normal metric subsystem (D6 — the measures
+//!    keep the metric subsystem's full sink routing).
+//!
+//! On drop (graceful shutdown) a best-effort `{"status":"STOPPED"}` state is
+//! published at most once. The legacy `heartbeat.targets[]` array is removed —
+//! hard cut (D-U20).
 //!
 //! ## Semantics & Architecture
 //! - The tick body is wrapped so a transient failure logs and the next tick still
-//!   fires — the heartbeat can't be permanently killed by one error (unlike the
-//!   Java `Timer`-based version), and a missing target `config` is handled.
-//! - Stats shape matches Java/Python: a nested object `{ cpu: {cpu_usage}, memory:
-//!   {memory_usage}, disk: {disk_total,disk_used,disk_free}, threads: {threads},
-//!   files: {files}, fds: {fds} }`. The metric target flattens it to measure→value;
-//!   the messaging target sends it as the message payload.
+//!   fires; each half (state / metric) is best-effort — a failure in one must not
+//!   suppress the other.
+//! - The task re-reads the live config snapshot each tick, so hot reloads of
+//!   `enabled`/`measures`/`destination` apply immediately and an `intervalSecs`
+//!   change rebuilds the ticker.
 //! - **Measure sources**: cpu/memory/disk via `sysinfo` (all platforms);
-//!   threads/fds/files via Linux `/proc` and Windows `windows-sys`
-//!   (`GetProcessHandleCount` for fds/files — total handles, as psutil uses
-//!   `num_handles`; thread count via a Toolhelp snapshot). On unsupported platforms
-//!   an enabled-but-unavailable measure reports `0`.
-//! - Reacting to runtime config changes is wired in the config hot-reload increment
-//!   (the heartbeat currently uses the snapshot taken at start).
-//! - Error handling: per-tick failures are logged, never a panic.
-//!
-//! ## Usage Example
-//! ```no_run
-//! # async fn demo(gg: &ggcommons::GgCommons) {
-//! // GgCommons starts the heartbeat automatically; it stops when GgCommons is dropped.
-//! let _ = gg;
-//! # }
-//! ```
-//!
-//! ## Safety & Panics
-//! The Windows measure helpers use `unsafe` FFI (`windows-sys`); failures return
-//! `None` rather than panicking.
+//!   threads/fds/files via Linux `/proc` and Windows `windows-sys`. On unsupported
+//!   platforms an enabled-but-unavailable measure reports `0`.
 //!
 //! ## Related Modules
-//! - [`crate::metrics`], [`crate::messaging`].
+//! - [`crate::metrics`], [`crate::messaging`], [`crate::uns`].
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwap;
 use serde_json::{json, Map, Value};
 use tokio::task::JoinHandle;
 
 use crate::config::model::{Config, Measures};
-use crate::config::template::resolve;
 use crate::messaging::message::MessageBuilder;
-use crate::messaging::{MessagingService, Qos};
+use crate::messaging::{Qos, ReservedMessaging};
 use crate::metrics::{MetricBuilder, MetricService};
+use crate::uns::{Uns, UnsClass};
 
-const MESSAGE_NAME: &str = "heartbeat";
-const MESSAGE_VERSION: &str = "1.0.0";
+/// The state keepalive's envelope header name (§4.3).
+const STATE_MESSAGE_NAME: &str = "state";
+const STATE_MESSAGE_VERSION: &str = "1.0";
+/// The metric the heartbeat measures are emitted as (§4.3, D-U20/D6).
+pub const SYS_METRIC_NAME: &str = "sys";
 const DEFAULT_INTERVAL_SECS: u64 = 5;
-const DEFAULT_TOPIC: &str = "ggcommons/{ThingName}/{ComponentName}/heartbeat";
-const DEFAULT_DESTINATION: &str = "ipc";
 
-/// Owns the heartbeat background task. Dropping it stops the heartbeat (RAII).
+/// Owns the heartbeat background task. Dropping it stops the heartbeat (RAII) and
+/// publishes the best-effort `STOPPED` state (at most once).
 pub struct Heartbeat {
     task: Option<JoinHandle<()>>,
+    config: Arc<ArcSwap<Config>>,
+    reserved: Option<Arc<dyn ReservedMessaging>>,
+    /// Ensures the best-effort STOPPED state is published at most once.
+    stopped_published: Arc<AtomicBool>,
 }
 
 impl Heartbeat {
-    /// Define the `heartbeat` metric and start the periodic publishing task.
+    /// Define the [`SYS_METRIC_NAME`] metric and start the periodic keepalive task.
     ///
-    /// # Semantics & Syntax
-    /// - **Signature**: `pub fn start(config: Arc<ArcSwap<Config>>, metrics: Arc<dyn MetricService>, messaging: Option<Arc<dyn MessagingService>>) -> Heartbeat`
-    /// - Takes the live config handle so it reacts to hot reloads: each tick re-reads
-    ///   the current snapshot (measures, targets, topic), and the tick interval is
-    ///   rebuilt when `intervalSecs` changes.
-    /// - `messaging` is required only by the `messaging` target; a `messaging`
-    ///   target with no service logs a warning and is skipped.
-    ///
-    /// # Post-conditions
-    /// The `heartbeat` metric is defined and a background task is running.
-    pub fn start(
+    /// Crate-private (§4.2): the `state` class is reserved, so the heartbeat
+    /// publishes through the crate-private [`ReservedMessaging`] seam handed in by
+    /// the runtime builder. `reserved = None` (no messaging transport) skips the
+    /// keepalive; the `sys` metric still flows through the metric subsystem.
+    pub(crate) fn start(
         config: Arc<ArcSwap<Config>>,
         metrics: Arc<dyn MetricService>,
-        messaging: Option<Arc<dyn MessagingService>>,
+        reserved: Option<Arc<dyn ReservedMessaging>>,
     ) -> Heartbeat {
         let initial = config.load_full();
         let interval = heartbeat_interval(&initial);
 
-        // Define the heartbeat metric (all measures, like the Java/Python libs).
+        // Define the sys metric (all measures, like the Java/Python libs).
         let storage_resolution = if interval < 60 { 1 } else { 60 };
-        let metric = MetricBuilder::create("heartbeat")
+        let metric = MetricBuilder::create(SYS_METRIC_NAME)
             .with_config(initial.as_ref())
             .add_measure("disk_total", "Gigabytes", storage_resolution)
             .add_measure("disk_used", "Gigabytes", storage_resolution)
@@ -101,13 +95,17 @@ impl Heartbeat {
             .build();
         metrics.define_metric(metric);
 
+        let start_instant = Instant::now();
+        let task_config = config.clone();
+        let task_reserved = reserved.clone();
+        let initial_measures = initial.parsed.heartbeat.measures.clone();
         let task = tokio::spawn(async move {
-            let mut monitor = HeartbeatMonitor::new(initial.parsed.heartbeat.measures.clone());
+            let mut monitor = HeartbeatMonitor::new(initial_measures);
             let mut current_interval = interval;
             let mut ticker = tokio::time::interval(Duration::from_secs(current_interval));
             loop {
                 ticker.tick().await;
-                let cfg = config.load_full();
+                let cfg = task_config.load_full();
 
                 // React to an interval change by rebuilding the ticker.
                 let new_interval = heartbeat_interval(&cfg);
@@ -117,14 +115,42 @@ impl Heartbeat {
                     ticker.tick().await; // consume the immediate first tick
                 }
 
+                if !cfg.parsed.heartbeat.enabled {
+                    continue; // disabled by config (hot-reloadable) — keep ticking
+                }
+
+                // §4.3: each half is best-effort — a failure in one must not
+                // suppress the other.
+                if let Some(reserved) = &task_reserved {
+                    publish_state(
+                        &cfg,
+                        reserved.as_ref(),
+                        "RUNNING",
+                        Some(start_instant.elapsed().as_secs()),
+                    )
+                    .await;
+                }
                 monitor.set_measures(cfg.parsed.heartbeat.measures.clone());
                 let stats = monitor.get_stats();
-                publish(&cfg, &metrics, &messaging, &stats).await;
+                let values = flatten(&stats);
+                if let Err(e) = metrics.emit_metric_now(SYS_METRIC_NAME, values).await {
+                    tracing::warn!(error = %e, "heartbeat '{SYS_METRIC_NAME}' metric emit failed");
+                }
             }
         });
 
-        tracing::info!(interval_secs = interval, "heartbeat started");
-        Heartbeat { task: Some(task) }
+        tracing::info!(
+            interval_secs = interval,
+            enabled = initial.parsed.heartbeat.enabled,
+            destination = initial.parsed.heartbeat.destination(),
+            "heartbeat started (UNS state keepalive + sys metric)"
+        );
+        Heartbeat {
+            task: Some(task),
+            config,
+            reserved,
+            stopped_published: Arc::new(AtomicBool::new(false)),
+        }
     }
 }
 
@@ -138,69 +164,73 @@ fn heartbeat_interval(config: &Config) -> u64 {
         .max(1)
 }
 
+/// Publishes one `state` envelope to the component's UNS state topic through the
+/// privileged seam (§4.3). Best-effort: failures are logged, never propagated.
+///
+/// `uptime_secs = Some(n)` is the RUNNING keepalive shape
+/// (`{"status":"RUNNING","uptimeSecs":n}`); `None` omits `uptimeSecs` (the STOPPED
+/// shape — pinned by the `uns-test-vectors` golden envelopes).
+async fn publish_state(
+    config: &Config,
+    reserved: &dyn ReservedMessaging,
+    status: &str,
+    uptime_secs: Option<u64>,
+) {
+    // The RAW includeRoot flag (Java parity): Uns applies D-U25 internally.
+    let uns = Uns::new(config.identity().clone(), config.topic_include_root());
+    let topic = match uns.topic(UnsClass::State) {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::warn!(error = %e, "heartbeat state keepalive failed to build its UNS topic");
+            return;
+        }
+    };
+    let mut body = Map::new();
+    body.insert("status".to_string(), json!(status));
+    if let Some(uptime) = uptime_secs {
+        body.insert("uptimeSecs".to_string(), json!(uptime));
+    }
+    let message = MessageBuilder::new(STATE_MESSAGE_NAME, STATE_MESSAGE_VERSION)
+        .payload(Value::Object(body))
+        .from_config(config)
+        .build();
+
+    let destination = config.parsed.heartbeat.destination();
+    let result = if destination.eq_ignore_ascii_case("iotcore")
+        || destination.eq_ignore_ascii_case("iot_core")
+    {
+        reserved
+            .publish_reserved_to_iot_core(&topic, &message, Qos::AtLeastOnce)
+            .await
+    } else {
+        reserved.publish_reserved(&topic, &message).await
+    };
+    if let Err(e) = result {
+        tracing::warn!(error = %e, topic = %topic, "heartbeat state keepalive publish failed");
+    }
+}
+
 impl Drop for Heartbeat {
+    /// Stops the periodic task and publishes the best-effort
+    /// `{"status":"STOPPED"}` state (§4.3/D-U14 — at most once; spawned
+    /// fire-and-forget when a Tokio runtime is available, and skipped when the
+    /// heartbeat is disabled or no messaging seam exists).
     fn drop(&mut self) {
         if let Some(task) = self.task.take() {
             task.abort();
         }
-    }
-}
-
-/// Publish `stats` to each configured heartbeat target (best-effort; logs failures).
-async fn publish(
-    config: &Config,
-    metrics: &Arc<dyn MetricService>,
-    messaging: &Option<Arc<dyn MessagingService>>,
-    stats: &Value,
-) {
-    for target in &config.parsed.heartbeat.targets {
-        match target.target_type.to_ascii_lowercase().as_str() {
-            "metric" => {
-                let values = flatten(stats);
-                if let Err(e) = metrics.emit_metric_now("heartbeat", values).await {
-                    tracing::warn!(error = %e, "heartbeat metric emit failed");
-                }
-            }
-            "messaging" => {
-                let Some(messaging) = messaging else {
-                    tracing::warn!("heartbeat messaging target configured but no messaging service");
-                    continue;
-                };
-                let cfg = target.config.as_ref();
-                let topic_template = cfg
-                    .and_then(|c| c.get("topic"))
-                    .and_then(Value::as_str)
-                    .unwrap_or(DEFAULT_TOPIC);
-                let topic = resolve(config, topic_template);
-                let destination = cfg
-                    .and_then(|c| c.get("destination"))
-                    .and_then(Value::as_str)
-                    .unwrap_or(DEFAULT_DESTINATION);
-
-                let message = MessageBuilder::new(MESSAGE_NAME, MESSAGE_VERSION)
-                    .payload(stats.clone())
-                    .from_config(config)
-                    .build();
-
-                let result = if destination.eq_ignore_ascii_case("iot_core")
-                    || destination.eq_ignore_ascii_case("iotcore")
-                {
-                    messaging
-                        .publish_to_iot_core(&topic, &message, Qos::AtLeastOnce)
-                        .await
-                } else if destination.eq_ignore_ascii_case("ipc")
-                    || destination.eq_ignore_ascii_case("local")
-                {
-                    messaging.publish(&topic, &message).await
-                } else {
-                    tracing::warn!(destination, "unrecognized heartbeat messaging destination");
-                    continue;
-                };
-                if let Err(e) = result {
-                    tracing::warn!(error = %e, "heartbeat publish failed");
-                }
-            }
-            other => tracing::warn!(target = %other, "unknown heartbeat target type"),
+        let Some(reserved) = self.reserved.clone() else { return };
+        let config = self.config.load_full();
+        if !config.parsed.heartbeat.enabled {
+            return;
+        }
+        if self.stopped_published.swap(true, Ordering::SeqCst) {
+            return; // already published
+        }
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                publish_state(&config, reserved.as_ref(), "STOPPED", None).await;
+            });
         }
     }
 }
@@ -447,6 +477,8 @@ mod windows_counters {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testutil::{RecordingMessaging, RecordingMetrics};
+    use serde_json::json;
 
     fn all_measures() -> Measures {
         Measures {
@@ -457,6 +489,15 @@ mod tests {
             files: true,
             fds: true,
         }
+    }
+
+    fn heartbeat_config(heartbeat: Value) -> Config {
+        Config::from_value(
+            "com.example.MyComp",
+            "thing-1",
+            json!({ "heartbeat": heartbeat }),
+        )
+        .unwrap()
     }
 
     #[test]
@@ -507,154 +548,166 @@ mod tests {
         assert_eq!(flat.len(), 5);
     }
 
-    fn config_with_target(measures: Value, target: Value) -> Config {
-        let raw = json!({
-            "heartbeat": { "intervalSecs": 1, "measures": measures, "targets": [ target ] }
-        });
-        Config::from_value("com.example.C", "thing-1", raw).unwrap()
+    /// One RUNNING keepalive publish: the UNS state topic, the pinned envelope
+    /// header, the `{status, uptimeSecs}` body shape, and the identity element.
+    #[tokio::test]
+    async fn publish_state_running_shape_and_topic() {
+        let config = heartbeat_config(json!({ "intervalSecs": 1 }));
+        let recorder = RecordingMessaging::new();
+
+        publish_state(&config, recorder.as_ref(), "RUNNING", Some(42)).await;
+
+        let published = recorder.reserved_local();
+        assert_eq!(published.len(), 1, "one state keepalive through the seam");
+        let (topic, msg) = &published[0];
+        assert_eq!(topic, "ecv1/thing-1/MyComp/main/state");
+        assert_eq!(msg.header.name, "state");
+        assert_eq!(msg.header.version, "1.0");
+        assert_eq!(msg.body["status"], "RUNNING");
+        assert_eq!(msg.body["uptimeSecs"], 42);
+        let identity = msg.identity.as_ref().expect("state envelope carries identity");
+        assert_eq!(identity.device(), "thing-1");
+        assert_eq!(identity.instance(), "main");
+        assert!(recorder.reserved_iot().is_empty(), "local destination must not hit IoT Core");
+        assert!(recorder.local().is_empty(), "the keepalive must use the SEAM, not publish()");
     }
 
-    /// The messaging target publishes a heartbeat whose body carries EVERY enabled
-    /// measure category — the gap the integration test (cpu/memory only) left open.
+    /// The STOPPED shape omits uptimeSecs (pinned by the golden envelopes).
     #[tokio::test]
-    async fn messaging_target_publishes_all_measures() {
-        let config = config_with_target(
-            json!({ "cpu": true, "memory": true, "disk": true, "threads": true, "files": true, "fds": true }),
-            json!({ "type": "messaging", "config": { "topic": "hb/{ThingName}", "destination": "ipc" } }),
-        );
-        let recorder = crate::testutil::RecordingMessaging::new();
-        let metrics: Arc<dyn MetricService> = crate::testutil::RecordingMetrics::new();
-        let messaging: Option<Arc<dyn MessagingService>> = Some(recorder.clone());
-
-        let mut monitor = HeartbeatMonitor::new(config.parsed.heartbeat.measures.clone());
-        let stats = monitor.get_stats();
-        publish(&config, &metrics, &messaging, &stats).await;
-
-        let local = recorder.local();
-        assert_eq!(local.len(), 1, "one heartbeat published locally");
-        let (topic, msg) = &local[0];
-        assert_eq!(topic, "hb/thing-1", "topic template resolved");
-        assert_eq!(msg.header.name, "heartbeat");
-        assert_eq!(msg.header.version, "1.0.0");
-        for category in ["cpu", "memory", "disk", "threads", "files", "fds"] {
-            assert!(
-                msg.body.get(category).is_some(),
-                "heartbeat body should include the '{category}' measure"
-            );
-        }
-        assert!(recorder.iot().is_empty(), "ipc destination must not hit IoT Core");
+    async fn publish_state_stopped_omits_uptime() {
+        let config = heartbeat_config(json!({}));
+        let recorder = RecordingMessaging::new();
+        publish_state(&config, recorder.as_ref(), "STOPPED", None).await;
+        let (_, msg) = &recorder.reserved_local()[0];
+        assert_eq!(msg.body["status"], "STOPPED");
+        assert!(msg.body.get("uptimeSecs").is_none());
     }
 
-    /// The `iotcore` destination routes the heartbeat to the IoT Core publish path.
+    /// `heartbeat.destination: iotcore` routes the keepalive to IoT Core.
     #[tokio::test]
-    async fn messaging_target_iot_core_destination() {
-        let config = config_with_target(
-            json!({ "cpu": true, "memory": true }),
-            json!({ "type": "messaging", "config": { "topic": "hb/core", "destination": "iotcore" } }),
-        );
-        let recorder = crate::testutil::RecordingMessaging::new();
-        let metrics: Arc<dyn MetricService> = crate::testutil::RecordingMetrics::new();
-        let messaging: Option<Arc<dyn MessagingService>> = Some(recorder.clone());
-
-        let stats = HeartbeatMonitor::new(config.parsed.heartbeat.measures.clone()).get_stats();
-        publish(&config, &metrics, &messaging, &stats).await;
-
-        assert!(recorder.local().is_empty(), "iotcore must not publish locally");
-        let iot = recorder.iot();
-        assert_eq!(iot.len(), 1);
-        assert_eq!(iot[0].0, "hb/core");
+    async fn state_destination_iotcore_routes_to_iot_core() {
+        let config = heartbeat_config(json!({ "destination": "iotcore" }));
+        let recorder = RecordingMessaging::new();
+        publish_state(&config, recorder.as_ref(), "RUNNING", Some(1)).await;
+        assert!(recorder.reserved_local().is_empty());
+        assert_eq!(recorder.reserved_iot().len(), 1);
+        assert_eq!(recorder.reserved_iot()[0].0, "ecv1/thing-1/MyComp/main/state");
     }
 
-    /// The `metric` target flattens the stats and emits them through the metric service.
+    /// includeRoot with a multi-level hierarchy prepends the site level (D-U25).
     #[tokio::test]
-    async fn metric_target_emits_flattened_measures() {
-        let config = config_with_target(
-            json!({ "cpu": true, "memory": true, "disk": true }),
-            json!({ "type": "metric" }),
-        );
-        let recorder = crate::testutil::RecordingMetrics::new();
-        let metrics: Arc<dyn MetricService> = recorder.clone();
-        let messaging: Option<Arc<dyn MessagingService>> = None;
-
-        let stats = HeartbeatMonitor::new(config.parsed.heartbeat.measures.clone()).get_stats();
-        publish(&config, &metrics, &messaging, &stats).await;
-
-        let emissions = recorder.emissions();
-        assert_eq!(emissions.len(), 1);
-        let (name, values) = &emissions[0];
-        assert_eq!(name, "heartbeat");
-        // Flattened: disk contributes three measures, plus cpu_usage + memory_usage.
-        assert!(values.contains_key("cpu_usage"));
-        assert!(values.contains_key("memory_usage"));
-        assert!(values.contains_key("disk_total"));
+    async fn state_topic_carries_effective_root() {
+        let config = Config::from_value(
+            "com.example.MyComp",
+            "gw-01",
+            json!({
+                "topic": { "includeRoot": true },
+                "hierarchy": { "levels": ["site", "device"] },
+                "identity": { "site": "dallas" }
+            }),
+        )
+        .unwrap();
+        let recorder = RecordingMessaging::new();
+        publish_state(&config, recorder.as_ref(), "RUNNING", Some(1)).await;
+        assert_eq!(recorder.reserved_local()[0].0, "ecv1/dallas/gw-01/MyComp/main/state");
     }
 
-    /// A messaging target configured without a messaging service is skipped (warned),
-    /// not a panic — and nothing is published.
+    /// The running heartbeat publishes the state keepalive AND emits the `sys`
+    /// metric on its interval.
     #[tokio::test]
-    async fn messaging_target_without_service_is_skipped() {
-        let config = config_with_target(
-            json!({ "cpu": true }),
-            json!({ "type": "messaging", "config": { "topic": "hb", "destination": "ipc" } }),
-        );
-        let metrics: Arc<dyn MetricService> = crate::testutil::RecordingMetrics::new();
-        let messaging: Option<Arc<dyn MessagingService>> = None;
-        let stats = HeartbeatMonitor::new(config.parsed.heartbeat.measures.clone()).get_stats();
-        // Must not panic.
-        publish(&config, &metrics, &messaging, &stats).await;
-    }
-
-    /// The running heartbeat fires on its configured interval: the gap between
-    /// consecutive published heartbeats is ~`intervalSecs` (within tolerance).
-    #[tokio::test]
-    async fn heartbeat_fires_on_its_interval() {
-        let raw = json!({
-            "heartbeat": {
-                "intervalSecs": 1,
-                "measures": { "cpu": true, "memory": true },
-                "targets": [ { "type": "messaging", "config": { "topic": "hb", "destination": "ipc" } } ]
-            }
-        });
-        let config = Config::from_value("com.example.C", "thing-1", raw).unwrap();
-        let recorder = crate::testutil::RecordingMessaging::new();
-        let metrics: Arc<dyn MetricService> = crate::testutil::RecordingMetrics::new();
+    async fn heartbeat_ticks_state_and_sys_metric() {
+        let config = heartbeat_config(json!({ "intervalSecs": 1, "measures": { "cpu": true } }));
+        let recorder = RecordingMessaging::new();
+        let metrics_recorder = RecordingMetrics::new();
+        let metrics: Arc<dyn MetricService> = metrics_recorder.clone();
         let config_handle = Arc::new(ArcSwap::from_pointee(config));
 
-        let _hb = Heartbeat::start(config_handle, metrics, Some(recorder.clone()));
+        let hb = Heartbeat::start(config_handle, metrics, Some(recorder.clone()));
 
-        // Collect at least 3 heartbeats (t≈0, ≈1s, ≈2s).
         for _ in 0..40 {
-            if recorder.times().len() >= 3 {
+            if recorder.reserved_local().len() >= 2 && metrics_recorder.emissions().len() >= 2 {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        let times = recorder.times();
-        assert!(times.len() >= 3, "expected >=3 heartbeats, got {}", times.len());
+        let states = recorder.reserved_local();
+        assert!(states.len() >= 2, "expected >=2 keepalives, got {}", states.len());
+        assert!(states.iter().all(|(t, _)| t == "ecv1/thing-1/MyComp/main/state"));
+        assert!(states.iter().all(|(_, m)| m.body["status"] == "RUNNING"));
+        // uptimeSecs is present and non-decreasing.
+        let uptimes: Vec<u64> =
+            states.iter().map(|(_, m)| m.body["uptimeSecs"].as_u64().unwrap()).collect();
+        assert!(uptimes.windows(2).all(|w| w[0] <= w[1]), "uptime must not decrease: {uptimes:?}");
 
-        // Gap between the 2nd and 3rd heartbeat should be ~1s (avoid the first,
-        // which fires immediately on interval start).
-        let gap = times[2].duration_since(times[1]).as_secs_f64();
-        assert!(
-            (0.6..=1.6).contains(&gap),
-            "interval gap should be ~1s, measured {gap:.3}s"
-        );
+        let emissions = metrics_recorder.emissions();
+        assert!(emissions.len() >= 2);
+        let (name, values) = &emissions[0];
+        assert_eq!(name, SYS_METRIC_NAME);
+        assert!(values.contains_key("cpu_usage"));
+
+        // Dropping publishes the best-effort STOPPED state (at most once).
+        drop(hb);
+        for _ in 0..40 {
+            if recorder
+                .reserved_local()
+                .iter()
+                .any(|(_, m)| m.body["status"] == "STOPPED")
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let stopped: Vec<_> = recorder
+            .reserved_local()
+            .into_iter()
+            .filter(|(_, m)| m.body["status"] == "STOPPED")
+            .collect();
+        assert_eq!(stopped.len(), 1, "exactly one best-effort STOPPED state");
+        assert!(stopped[0].1.body.get("uptimeSecs").is_none(), "STOPPED omits uptimeSecs");
     }
 
-    /// Raising `intervalSecs` via hot-reload rebuilds the ticker so later heartbeats
+    /// `heartbeat.enabled: false` publishes nothing (and drop publishes no STOPPED).
+    #[tokio::test]
+    async fn disabled_heartbeat_publishes_nothing() {
+        let config = heartbeat_config(json!({ "enabled": false, "intervalSecs": 1 }));
+        let recorder = RecordingMessaging::new();
+        let metrics: Arc<dyn MetricService> = RecordingMetrics::new();
+        let config_handle = Arc::new(ArcSwap::from_pointee(config));
+
+        let hb = Heartbeat::start(config_handle, metrics, Some(recorder.clone()));
+        tokio::time::sleep(Duration::from_millis(1300)).await;
+        assert!(recorder.reserved_local().is_empty());
+        assert!(recorder.reserved_iot().is_empty());
+        drop(hb);
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(recorder.reserved_local().is_empty(), "no STOPPED when disabled");
+    }
+
+    /// No messaging seam (no transport) — the sys metric still flows.
+    #[tokio::test]
+    async fn no_messaging_still_emits_sys_metric() {
+        let config = heartbeat_config(json!({ "intervalSecs": 1, "measures": { "cpu": true } }));
+        let metrics_recorder = RecordingMetrics::new();
+        let metrics: Arc<dyn MetricService> = metrics_recorder.clone();
+        let config_handle = Arc::new(ArcSwap::from_pointee(config));
+
+        let _hb = Heartbeat::start(config_handle, metrics, None);
+        for _ in 0..40 {
+            if !metrics_recorder.emissions().is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert!(!metrics_recorder.emissions().is_empty(), "sys metric emitted without messaging");
+    }
+
+    /// Raising `intervalSecs` via hot-reload rebuilds the ticker so later keepalives
     /// are spaced by the new interval.
     #[tokio::test]
     async fn heartbeat_reacts_to_interval_change() {
-        let raw = json!({
-            "heartbeat": {
-                "intervalSecs": 1,
-                "measures": { "cpu": true },
-                "targets": [ { "type": "messaging", "config": { "topic": "hb", "destination": "ipc" } } ]
-            }
-        });
-        let config = Config::from_value("com.example.C", "thing-1", raw).unwrap();
-        let recorder = crate::testutil::RecordingMessaging::new();
-        let metrics: Arc<dyn MetricService> = crate::testutil::RecordingMetrics::new();
+        let config = heartbeat_config(json!({ "intervalSecs": 1, "measures": { "cpu": true } }));
+        let recorder = RecordingMessaging::new();
+        let metrics: Arc<dyn MetricService> = RecordingMetrics::new();
         let handle = Arc::new(ArcSwap::from_pointee(config));
 
         let _hb = Heartbeat::start(handle.clone(), metrics, Some(recorder.clone()));
@@ -666,21 +719,12 @@ mod tests {
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        let raw2 = json!({
-            "heartbeat": {
-                "intervalSecs": 3,
-                "measures": { "cpu": true },
-                "targets": [ { "type": "messaging", "config": { "topic": "hb", "destination": "ipc" } } ]
-            }
-        });
-        handle.store(Arc::new(
-            Config::from_value("com.example.C", "thing-1", raw2).unwrap(),
-        ));
+        handle.store(Arc::new(heartbeat_config(json!({ "intervalSecs": 3, "measures": { "cpu": true } }))));
         let before = recorder.times().len();
-        // Within ~1.5s the old 1s cadence would have added multiple heartbeats; the
+        // Within ~1.5s the old 1s cadence would have added multiple keepalives; the
         // new 3s cadence should add at most one.
         tokio::time::sleep(Duration::from_millis(1500)).await;
         let added = recorder.times().len() - before;
-        assert!(added <= 1, "after widening to 3s, expected <=1 new heartbeat in 1.5s, got {added}");
+        assert!(added <= 1, "after widening to 3s, expected <=1 new keepalive in 1.5s, got {added}");
     }
 }

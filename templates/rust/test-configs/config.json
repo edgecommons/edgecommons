@@ -1,9 +1,10 @@
 {
   "logging": { "level": "DEBUG", "rust_format": "{timestamp} [{level}] {target} - {message}" },
   "heartbeat": {
+    "enabled": true,
     "intervalSecs": 5,
     "measures": { "cpu": true, "memory": true },
-    "targets": [ { "type": "metric" } ]
+    "destination": "local"
   },
   "metricEmission": { "target": "log", "namespace": "ggcommons" },
   "tags": { "site": "factory-1" },

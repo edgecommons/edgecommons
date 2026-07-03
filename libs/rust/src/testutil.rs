@@ -22,20 +22,25 @@ use serde_json::Value;
 
 use crate::error::{GgError, Result};
 use crate::messaging::message::Message;
-use crate::messaging::service::{MessageHandler, MessagingService, ReplyFuture};
+use crate::messaging::service::{MessageHandler, MessagingService, ReplyFuture, ReservedMessaging};
 use crate::messaging::Qos;
 use crate::metrics::{Metric, MetricService};
 
-/// A [`MessagingService`] that records published messages for assertions.
+/// A [`MessagingService`] (+ crate-private [`ReservedMessaging`] seam) that records
+/// published messages for assertions — test fakes implement both traits (§4.2).
 #[derive(Default)]
 pub(crate) struct RecordingMessaging {
     /// `(topic, message)` published to the local broker.
     pub published: Mutex<Vec<(String, Message)>>,
     /// `(topic, message)` published to IoT Core.
     pub iot_published: Mutex<Vec<(String, Message)>>,
+    /// `(topic, message)` published locally through the privileged seam.
+    pub reserved_published: Mutex<Vec<(String, Message)>>,
+    /// `(topic, message)` published to IoT Core through the privileged seam.
+    pub reserved_iot_published: Mutex<Vec<(String, Message)>>,
     /// Topics subscribed to locally.
     pub subscribed: Mutex<Vec<String>>,
-    /// Monotonic timestamps of each publish (local or IoT Core), for timing tests.
+    /// Monotonic timestamps of each publish (any path), for timing tests.
     pub publish_times: Mutex<Vec<Instant>>,
     /// The value [`MessagingService::connected`] returns (default `false`); set via
     /// [`RecordingMessaging::set_connected`] to drive readiness tests.
@@ -54,8 +59,19 @@ impl RecordingMessaging {
     }
 
     /// All `(topic, message)` pairs published to IoT Core so far.
+    #[allow(dead_code)] // parity accessor with local(); kept for future tests
     pub fn iot(&self) -> Vec<(String, Message)> {
         self.iot_published.lock().unwrap().clone()
+    }
+
+    /// All `(topic, message)` pairs published locally through the privileged seam.
+    pub fn reserved_local(&self) -> Vec<(String, Message)> {
+        self.reserved_published.lock().unwrap().clone()
+    }
+
+    /// All `(topic, message)` pairs published to IoT Core through the privileged seam.
+    pub fn reserved_iot(&self) -> Vec<(String, Message)> {
+        self.reserved_iot_published.lock().unwrap().clone()
     }
 
     /// Monotonic timestamps of each publish, in order.
@@ -66,6 +82,26 @@ impl RecordingMessaging {
     /// Set the value reported by [`MessagingService::connected`] (drives `/readyz` tests).
     pub fn set_connected(&self, connected: bool) {
         self.connected.store(connected, Ordering::SeqCst);
+    }
+}
+
+#[async_trait]
+impl ReservedMessaging for RecordingMessaging {
+    async fn publish_reserved(&self, topic: &str, msg: &Message) -> Result<()> {
+        self.publish_times.lock().unwrap().push(Instant::now());
+        self.reserved_published.lock().unwrap().push((topic.to_string(), msg.clone()));
+        Ok(())
+    }
+
+    async fn publish_reserved_to_iot_core(
+        &self,
+        topic: &str,
+        msg: &Message,
+        _qos: Qos,
+    ) -> Result<()> {
+        self.publish_times.lock().unwrap().push(Instant::now());
+        self.reserved_iot_published.lock().unwrap().push((topic.to_string(), msg.clone()));
+        Ok(())
     }
 }
 
@@ -134,6 +170,24 @@ impl MessagingService for RecordingMessaging {
     }
 
     async fn request_from_iot_core(&self, _topic: &str, _msg: Message) -> Result<ReplyFuture> {
+        Err(GgError::Messaging("request not supported by RecordingMessaging".into()))
+    }
+
+    async fn request_with_timeout(
+        &self,
+        _topic: &str,
+        _msg: Message,
+        _timeout: Option<std::time::Duration>,
+    ) -> Result<ReplyFuture> {
+        Err(GgError::Messaging("request not supported by RecordingMessaging".into()))
+    }
+
+    async fn request_from_iot_core_with_timeout(
+        &self,
+        _topic: &str,
+        _msg: Message,
+        _timeout: Option<std::time::Duration>,
+    ) -> Result<ReplyFuture> {
         Err(GgError::Messaging("request not supported by RecordingMessaging".into()))
     }
 

@@ -35,6 +35,8 @@
 //! ## Related Modules
 //! - [`model`], [`validation`], [`template`], [`source`].
 
+pub(crate) mod effective;
+pub(crate) mod identity;
 pub mod model;
 pub mod source;
 pub mod template;

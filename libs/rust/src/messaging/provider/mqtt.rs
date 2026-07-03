@@ -51,13 +51,13 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS, TlsConfiguration, Transport};
+use rumqttc::{AsyncClient, Event, LastWill, MqttOptions, Packet, QoS, TlsConfiguration, Transport};
 use tokio::sync::mpsc::{self, error::TrySendError, Sender};
 use tokio::sync::{oneshot, watch};
 use tokio::task::JoinHandle;
 
 use crate::error::{GgError, Result};
-use crate::messaging::config::{BrokerConfig, Credentials, MessagingConfig};
+use crate::messaging::config::{BrokerConfig, Credentials, LwtConfig, MessagingConfig};
 use crate::messaging::{topic_matches, Destination, MessagingProvider, Qos, Subscription};
 
 /// How long [`MqttProvider::connect`] waits for the first `CONNACK`.
@@ -151,9 +151,16 @@ impl MqttProvider {
     /// (caPath + certPath + keyPath, all required). Missing/unreadable credential
     /// files are a hard error — there is no insecure fallback.
     pub async fn connect(config: &MessagingConfig) -> Result<MqttProvider> {
-        let local = connect_broker(&config.messaging.local, BrokerRole::Local).await?;
+        // §6: the MQTT Last-Will-and-Testament applies to the LOCAL-broker
+        // connection only (IoT Core LWT is deferred; IPC no-ops it).
+        let local = connect_broker(
+            &config.messaging.local,
+            BrokerRole::Local,
+            config.messaging.lwt.as_ref(),
+        )
+        .await?;
         let iot_core = match &config.messaging.iot_core {
-            Some(broker) => Some(connect_broker(broker, BrokerRole::IotCore).await?),
+            Some(broker) => Some(connect_broker(broker, BrokerRole::IotCore, None).await?),
             None => None,
         };
         Ok(MqttProvider { local, iot_core })
@@ -262,12 +269,25 @@ impl MessagingProvider for MqttProvider {
     }
 }
 
-/// Establish one broker connection over plain TCP and block until its first CONNACK.
-async fn connect_broker(broker: &BrokerConfig, role: BrokerRole) -> Result<BrokerConn> {
+/// Establish one broker connection and block until its first CONNACK. When an
+/// `lwt` is supplied (local-broker connection only, UNS-CANONICAL-DESIGN §6), the
+/// MQTT Last-Will-and-Testament is registered on the CONNECT options — rumqttc
+/// re-sends the same options on every automatic reconnect, so the will is
+/// re-registered for free. The will is registered at CONNECT, **not routed through
+/// `publish()`** — the reserved-class guard does not (cannot) apply; broker ACLs
+/// govern wills.
+async fn connect_broker(
+    broker: &BrokerConfig,
+    role: BrokerRole,
+    lwt: Option<&LwtConfig>,
+) -> Result<BrokerConn> {
     let host = broker.resolved_host()?.to_string();
     let mut options = MqttOptions::new(broker.client_id.clone(), host.clone(), broker.port);
     options.set_keep_alive(Duration::from_secs(30));
     options.set_clean_session(true);
+    if let Some(lwt) = lwt {
+        options.set_last_will(build_last_will(lwt)?);
+    }
 
     match build_tls(broker.credentials.as_ref(), role)? {
         Some(tls) => {
@@ -368,7 +388,36 @@ async fn connect_broker(broker: &BrokerConfig, role: BrokerRole) -> Result<Broke
     }
 }
 
-/// Map the library QoS to the `rumqttc` QoS.
+/// Build the rumqttc [`LastWill`] from a validated `messaging.lwt` section
+/// (UNS-CANONICAL-DESIGN §6): retain is hard-wired to `false` (there is no retain
+/// knob by design, D9); a string payload is published verbatim as UTF-8 bytes and
+/// an object payload as compact JSON bytes.
+///
+/// # Errors
+/// [`GgError::Config`] on a missing/empty topic or a QoS outside `{0, 1}`.
+fn build_last_will(lwt: &LwtConfig) -> Result<LastWill> {
+    if lwt.topic.is_empty() {
+        return Err(GgError::Config(
+            "messaging.lwt.topic is required when an lwt section is present".to_string(),
+        ));
+    }
+    let qos = match lwt.qos_or_default() {
+        0 => QoS::AtMostOnce,
+        1 => QoS::AtLeastOnce,
+        other => {
+            return Err(GgError::Config(format!(
+                "messaging.lwt.qos must be 0 or 1 (got {other})"
+            )));
+        }
+    };
+    tracing::info!(
+        topic = %lwt.topic,
+        qos = ?qos,
+        "registering MQTT LWT on the local connection (retain=false)"
+    );
+    Ok(LastWill::new(lwt.topic.clone(), lwt.payload_bytes(), qos, false))
+}
+
 /// Build the TLS configuration for a broker, or `None` for a plain connection.
 ///
 /// # Algorithmic Choices
@@ -528,6 +577,49 @@ mod tests {
         assert!(
             build_tls(Some(&c), BrokerRole::Local).is_err(),
             "an unreadable CA must error, never silently connect"
+        );
+    }
+
+    // ---------- MQTT LWT (UNS-CANONICAL-DESIGN §6) ----------
+
+    fn lwt(topic: &str, payload: Option<serde_json::Value>, qos: Option<serde_json::Value>) -> LwtConfig {
+        LwtConfig { topic: topic.to_string(), payload, qos }
+    }
+
+    #[test]
+    fn last_will_is_registered_with_retain_false_and_defaults() {
+        let will = build_last_will(&lwt(
+            "ecv1/gw-01/uns-bridge/main/state",
+            Some(serde_json::json!({ "status": "UNREACHABLE" })),
+            None,
+        ))
+        .unwrap();
+        assert_eq!(will.topic, "ecv1/gw-01/uns-bridge/main/state");
+        assert_eq!(will.qos, QoS::AtLeastOnce, "qos defaults to 1");
+        assert!(!will.retain, "retain is hard-wired to false (no knob by design)");
+        assert_eq!(&will.message[..], br#"{"status":"UNREACHABLE"}"#);
+    }
+
+    #[test]
+    fn last_will_string_payload_is_verbatim_and_qos_zero_accepted() {
+        let will =
+            build_last_will(&lwt("t", Some(serde_json::json!("gone")), Some(serde_json::json!(0))))
+                .unwrap();
+        assert_eq!(&will.message[..], b"gone", "string payload published verbatim (no JSON quoting)");
+        assert_eq!(will.qos, QoS::AtMostOnce);
+        // Number-tolerant qos: Greengrass-style 1.0.
+        let will = build_last_will(&lwt("t", None, Some(serde_json::json!(1.0)))).unwrap();
+        assert_eq!(will.qos, QoS::AtLeastOnce);
+        assert!(will.message.is_empty(), "absent payload => empty bytes");
+    }
+
+    #[test]
+    fn last_will_rejects_bad_topic_and_qos() {
+        assert!(build_last_will(&lwt("", None, None)).is_err(), "empty topic");
+        assert!(build_last_will(&lwt("t", None, Some(serde_json::json!(2)))).is_err(), "qos 2");
+        assert!(
+            build_last_will(&lwt("t", None, Some(serde_json::json!("one")))).is_err(),
+            "non-numeric qos"
         );
     }
 }

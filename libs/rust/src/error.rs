@@ -59,6 +59,36 @@ pub enum GgError {
     #[error("messaging error: {0}")]
     Messaging(String),
 
+    /// UNS topic/token validation failure (UNS-CANONICAL-DESIGN §2.2). Carries the
+    /// machine-readable [`crate::uns::UnsValidationCode`] pinned in
+    /// `uns-test-vectors/topics.json` so all four languages fail identically.
+    #[error("UNS validation failed [{code}]: {detail}")]
+    UnsValidation {
+        /// The machine-readable failure code (the exact §2.2 set).
+        code: crate::uns::UnsValidationCode,
+        /// Human-readable detail (never parsed by tests — the code is the contract).
+        detail: String,
+    },
+
+    /// Reserved-class publish-guard rejection (UNS-CANONICAL-DESIGN §4.1, D-U4/D-U8/D-U24):
+    /// a client-chosen topic targeted a library-owned UNS class
+    /// (`state | metric | cfg | log`). The message names the topic and class and points
+    /// at the library publishers. The guard is misuse prevention, not a security
+    /// boundary — per-device broker ACLs are the durable enforcement.
+    #[error("reserved UNS topic: {0}")]
+    ReservedTopic(String),
+
+    /// The framework-owned `request()` deadline fired before a reply arrived
+    /// (UNS-CANONICAL-DESIGN §5, D-U5). The ephemeral reply subscription has already
+    /// been cleaned up when this surfaces; a retry must issue a fresh request.
+    #[error("request timed out after {secs}s waiting for a reply (request topic '{topic}')")]
+    RequestTimeout {
+        /// The topic the request was published to.
+        topic: String,
+        /// The deadline that fired, in seconds.
+        secs: f64,
+    },
+
     /// Metrics emission error.
     #[error("metrics error: {0}")]
     Metrics(String),

@@ -28,10 +28,18 @@
 //!   [`MessagingService::unsubscribe_from_iot_core`] abort the dispatcher **and**
 //!   UNSUBSCRIBE at the broker; the service stops all dispatchers on drop.
 //! - **Request/reply** returns a [`service::ReplyFuture`] handle (the Rust analog of
-//!   Java's `CompletableFuture` / Python's `Iou`): await it (wrap in
-//!   `tokio::time::timeout` for a deadline) or cancel via
-//!   [`MessagingService::cancel_request`]. Completing, cancelling, or timing out all
-//!   clean up the ephemeral reply subscription at the broker.
+//!   Java's `CompletableFuture` / Python's `Iou`) carrying a **framework-owned
+//!   deadline** (`messaging.requestTimeoutSeconds`, default 30 s,
+//!   UNS-CANONICAL-DESIGN §5): await it for the reply or
+//!   `Err(GgError::RequestTimeout)`, or cancel via
+//!   [`MessagingService::cancel_request`]. Completing, cancelling, timing out, or
+//!   dropping the future all clean up the ephemeral reply subscription at the
+//!   broker — even when the future is never polled. Per-call override:
+//!   [`MessagingService::request_with_timeout`] (`Some(ZERO)` disables).
+//! - **Reserved-class publish guard** (§4.1): every client-chosen publish topic
+//!   (`publish*`, `request*`, `reply*`) is rejected when it targets a library-owned
+//!   UNS class (`state | metric | cfg | log`); `subscribe*` is never guarded. The
+//!   library's own publishers use the crate-private reserved seam (§4.2).
 //! - Async throughout (`tokio`); traits are object-safe via `async_trait`.
 //! - Error handling: [`crate::error::Result`]; never panics on transport errors.
 //!
@@ -75,10 +83,13 @@ pub mod provider;
 pub mod request_reply;
 pub mod service;
 
-pub use message::{Message, MessageBuilder};
+pub use message::{Message, MessageBuilder, MessageIdentity};
 pub use service::{
     message_handler, DefaultMessagingService, MessageHandler, MessagingService, ReplyFuture,
 };
+/// The crate-private reserved-publish seam (UNS-CANONICAL-DESIGN §4.2, D-U4) —
+/// re-exported for the library's own publishers (heartbeat/metrics/cfg).
+pub(crate) use service::ReservedMessaging;
 
 use std::task::{Context, Poll};
 

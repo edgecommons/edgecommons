@@ -131,8 +131,7 @@ async fn builds_full_runtime_against_inprocess_broker() {
             "logging": { "level": "DEBUG" },
             "metricEmission": { "target": "log",
                 "targetConfig": { "logFileName": metric_log.to_string_lossy() } },
-            "heartbeat": { "intervalSecs": 1, "measures": { "cpu": true },
-                "targets": [ { "type": "metric" } ] },
+            "heartbeat": { "intervalSecs": 1, "measures": { "cpu": true } },
             "streaming": { "streams": [ {
                 "name": "telemetry",
                 "sink": { "type": "kinesis", "streamName": "ts-{ThingName}" },

@@ -58,8 +58,12 @@ use async_trait::async_trait;
 use crate::config::model::{Config, MetricConfig};
 use crate::config::template::resolve;
 use crate::error::{GgError, Result};
-use crate::messaging::MessagingService;
+use crate::messaging::{MessagingService, ReservedMessaging};
 use crate::platform::Platform;
+
+/// The external AWS Greengrass CloudWatch-component contract topic — unchanged by
+/// the UNS migration (non-`ecv1`, guard-exempt; D-U21).
+const CLOUDWATCH_COMPONENT_TOPIC: &str = "cloudwatch/metric/put";
 
 /// Define and emit metrics. Mirrors the Java/Python `IMetricService`.
 #[async_trait]
@@ -92,6 +96,11 @@ pub struct MetricEmitter {
     target: Mutex<Arc<dyn MetricTarget>>,
     metrics: Mutex<HashMap<String, Metric>>,
     messaging: Option<Arc<dyn MessagingService>>,
+    /// The crate-private reserved-publish seam (UNS-CANONICAL-DESIGN §4.2): the
+    /// `messaging` metric target publishes the reserved `metric` class through it.
+    /// `None` outside the library runtime — selecting the `messaging` target then
+    /// fails with a clear error.
+    reserved: Option<Arc<dyn ReservedMessaging>>,
     /// The resolved runtime platform, retained so the metric target can be rebuilt with the same
     /// platform-profile default on config hot-reload (mirrors how logging/health thread it).
     platform: Platform,
@@ -102,26 +111,28 @@ impl MetricEmitter {
     ///
     /// # Semantics & Syntax
     /// - **Signature**: `pub async fn new(config: &Config, messaging: Option<Arc<dyn MessagingService>>) -> Result<MetricEmitter>`
-    /// - `messaging` is required by the `messaging` and `cloudwatchcomponent` targets;
-    ///   it is retained so the target can be rebuilt on config change.
+    /// - `messaging` is required by the `cloudwatchcomponent` target; it is retained
+    ///   so the target can be rebuilt on config change. The `messaging` target
+    ///   additionally requires the library runtime's privileged reserved-publish
+    ///   seam (its topics are the reserved UNS `metric` class), so it is available
+    ///   only through `GgCommonsBuilder::build()` — not this standalone constructor.
     ///
     /// # Errors
     /// | Error Variant | Condition | Recovery |
     /// |---------------|-----------|----------|
-    /// | `GgError::Metrics` | A messaging target was selected without a messaging service, or `cloudwatch` selected without the feature | Provide messaging / enable the `cloudwatch` feature |
+    /// | `GgError::Metrics` | A messaging/cloudwatchcomponent target lacks its messaging dependency, or `cloudwatch` selected without the feature | Build via the runtime / enable the `cloudwatch` feature |
     ///
     /// The `log` target is fail-soft: an unwritable `logFileName` does not error
     /// here (it warns and drops metrics on emit), matching the Java target.
     ///
     /// This convenience defaults the platform to [`Platform::Host`] (no profile metric-target
     /// default, so the effective target is `explicit config ▸ log`). The runtime builder uses
-    /// [`Self::new_for_platform`] to thread the resolved platform so the KUBERNETES profile default
-    /// (`prometheus`) applies.
+    /// [`Self::new_internal`] to thread the resolved platform + the reserved seam.
     pub async fn new(
         config: &Config,
         messaging: Option<Arc<dyn MessagingService>>,
     ) -> Result<MetricEmitter> {
-        Self::new_for_platform(config, messaging, Platform::Host).await
+        Self::new_internal(config, messaging, None, Platform::Host).await
     }
 
     /// Build an emitter from configuration for a specific resolved `platform`, applying the
@@ -137,11 +148,24 @@ impl MetricEmitter {
         messaging: Option<Arc<dyn MessagingService>>,
         platform: Platform,
     ) -> Result<MetricEmitter> {
-        let target = build_target(config, messaging.clone(), platform).await?;
+        Self::new_internal(config, messaging, None, platform).await
+    }
+
+    /// The library-runtime constructor (§4.2): additionally threads the
+    /// crate-private [`ReservedMessaging`] seam so the `messaging` metric target
+    /// can publish the reserved UNS `metric` class.
+    pub(crate) async fn new_internal(
+        config: &Config,
+        messaging: Option<Arc<dyn MessagingService>>,
+        reserved: Option<Arc<dyn ReservedMessaging>>,
+        platform: Platform,
+    ) -> Result<MetricEmitter> {
+        let target = build_target(config, messaging.clone(), reserved.clone(), platform).await?;
         Ok(MetricEmitter {
             target: Mutex::new(target),
             metrics: Mutex::new(HashMap::new()),
             messaging,
+            reserved,
             platform,
         })
     }
@@ -213,6 +237,7 @@ fn log_path_template(metric_config: &MetricConfig, platform: Platform) -> String
 async fn build_target(
     config: &Config,
     messaging: Option<Arc<dyn MessagingService>>,
+    reserved: Option<Arc<dyn ReservedMessaging>>,
     platform: Platform,
 ) -> Result<Arc<dyn MetricTarget>> {
     let metric_config = &config.parsed.metric_emission;
@@ -233,29 +258,39 @@ async fn build_target(
     let target: Arc<dyn MetricTarget> = match target_name.as_str() {
         "log" => log_target()?,
         "messaging" => {
-            let messaging = require_messaging(messaging, "messaging")?;
-            let topic = resolve(config, &metric_config.topic());
+            // UNS §4.3: the messaging target publishes the reserved `metric` class
+            // on ecv1/{device}/{component}/main/metric/{name} — it needs the
+            // crate-private reserved-publish seam (§4.2), wired by the runtime.
+            let reserved = reserved.ok_or_else(|| {
+                GgError::Metrics(
+                    "metric target 'messaging' requires the library runtime's privileged \
+                     reserved-publish seam (its topics are the reserved UNS 'metric' class); \
+                     build via GgCommonsBuilder"
+                        .to_string(),
+                )
+            })?;
             // Canonical "iot_core" (schema) plus the legacy "iotcore" spelling both
             // select IoT Core; everything else (e.g. "ipc"/"local") is the local
-            // transport. Matches the heartbeat target's destination handling.
+            // transport. Matches the heartbeat destination handling.
             let dest = metric_config.destination();
             let iot_core =
                 dest.eq_ignore_ascii_case("iot_core") || dest.eq_ignore_ascii_case("iotcore");
             Arc::new(target::messaging::MessagingMetricTarget::new(
-                messaging,
-                topic,
+                reserved,
                 iot_core,
                 namespace,
                 large_fleet,
-                config.thing_name.clone(),
-                config.parsed.tags.clone(),
+                config.clone(),
             ))
         }
         "cloudwatchcomponent" => {
             let messaging = require_messaging(messaging, "cloudwatchcomponent")?;
-            let topic = resolve(config, &metric_config.topic());
+            // D-U21: the external Greengrass CloudWatch-component contract topic is
+            // unchanged (non-ecv1, guard-exempt); the topic override is removed.
             Arc::new(target::cloudwatch_component::CloudWatchComponentTarget::new(
-                messaging, topic, namespace,
+                messaging,
+                CLOUDWATCH_COMPONENT_TOPIC,
+                namespace,
             ))
         }
         "cloudwatch" => {
@@ -437,7 +472,9 @@ impl MetricService for MetricEmitter {
 impl crate::config::ConfigurationChangeListener for MetricEmitter {
     /// Rebuild the metric target from the new config (keeping the previous one on error).
     async fn on_configuration_change(&self, config: Arc<Config>) -> bool {
-        match build_target(&config, self.messaging.clone(), self.platform).await {
+        match build_target(&config, self.messaging.clone(), self.reserved.clone(), self.platform)
+            .await
+        {
             Ok(target) => {
                 if let Ok(mut slot) = self.target.lock() {
                     *slot = target;
@@ -489,10 +526,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn messaging_target_requires_messaging_service() {
+    async fn messaging_target_requires_the_reserved_seam() {
+        // The messaging target publishes the reserved `metric` class; without the
+        // runtime's privileged seam (§4.2) it is a clear error, even with a
+        // messaging service present.
         let raw = json!({ "metricEmission": { "target": "messaging" } });
         let config = Config::from_value("c", "t", raw).unwrap();
-        let result = MetricEmitter::new(&config, None).await;
+        let recorder = crate::testutil::RecordingMessaging::new();
+        let result = MetricEmitter::new(&config, Some(recorder)).await;
         assert!(matches!(result, Err(GgError::Metrics(_))));
     }
 
@@ -507,14 +548,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn messaging_target_builds_and_emits() {
-        let raw = json!({ "metricEmission": { "target": "messaging", "targetConfig": { "topic": "m/t", "destination": "ipc" } } });
-        let config = Config::from_value("c", "t", raw).unwrap();
+    async fn messaging_target_builds_and_emits_on_the_uns_topic() {
+        let raw = json!({ "metricEmission": { "target": "messaging", "targetConfig": { "destination": "ipc" } } });
+        let config = Config::from_value("com.example.C", "t", raw).unwrap();
         let recorder = crate::testutil::RecordingMessaging::new();
-        let emitter = MetricEmitter::new(&config, Some(recorder.clone())).await.unwrap();
+        let emitter = MetricEmitter::new_internal(
+            &config,
+            Some(recorder.clone()),
+            Some(recorder.clone()),
+            Platform::Host,
+        )
+        .await
+        .unwrap();
         define(&emitter);
         emitter.emit_metric("m", one_value()).await.unwrap();
-        assert_eq!(recorder.local().len(), 1, "messaging target should publish EMF");
+        let published = recorder.reserved_local();
+        assert_eq!(published.len(), 1, "messaging target should publish EMF via the seam");
+        assert_eq!(published[0].0, "ecv1/t/C/main/metric/m");
     }
 
     #[tokio::test]
@@ -522,14 +572,21 @@ mod tests {
         // The schema-valid "iot_core" (underscore) must select the IoT Core
         // transport, not only the legacy "iotcore" spelling.
         for dest in ["iot_core", "iotcore"] {
-            let raw = json!({ "metricEmission": { "target": "messaging", "targetConfig": { "topic": "m/t", "destination": dest } } });
+            let raw = json!({ "metricEmission": { "target": "messaging", "targetConfig": { "destination": dest } } });
             let config = Config::from_value("c", "t", raw).unwrap();
             let recorder = crate::testutil::RecordingMessaging::new();
-            let emitter = MetricEmitter::new(&config, Some(recorder.clone())).await.unwrap();
+            let emitter = MetricEmitter::new_internal(
+                &config,
+                Some(recorder.clone()),
+                Some(recorder.clone()),
+                Platform::Host,
+            )
+            .await
+            .unwrap();
             define(&emitter);
             emitter.emit_metric_now("m", one_value()).await.unwrap();
-            assert_eq!(recorder.iot().len(), 1, "dest {dest} should publish to IoT Core");
-            assert!(recorder.local().is_empty(), "dest {dest} must not publish locally");
+            assert_eq!(recorder.reserved_iot().len(), 1, "dest {dest} should publish to IoT Core");
+            assert!(recorder.reserved_local().is_empty(), "dest {dest} must not publish locally");
         }
     }
 
@@ -580,18 +637,25 @@ mod tests {
         let path = dir.join("m.log");
         let raw_log = json!({ "metricEmission": { "target": "log", "targetConfig": { "logFileName": path.to_string_lossy() } } });
         let config = Config::from_value("c", "t", raw_log).unwrap();
-        // Build with messaging available so the rebuilt messaging target can be created.
+        // Build with messaging + the seam so the rebuilt messaging target can be created.
         let recorder = crate::testutil::RecordingMessaging::new();
-        let emitter = MetricEmitter::new(&config, Some(recorder.clone())).await.unwrap();
+        let emitter = MetricEmitter::new_internal(
+            &config,
+            Some(recorder.clone()),
+            Some(recorder.clone()),
+            Platform::Host,
+        )
+        .await
+        .unwrap();
         define(&emitter);
 
         // Reconfigure to a messaging target.
-        let raw_msg = json!({ "metricEmission": { "target": "messaging", "targetConfig": { "topic": "mt", "destination": "ipc" } } });
+        let raw_msg = json!({ "metricEmission": { "target": "messaging", "targetConfig": { "destination": "ipc" } } });
         let new_cfg = Arc::new(Config::from_value("c", "t", raw_msg).unwrap());
         assert!(emitter.on_configuration_change(new_cfg).await, "rebuild should succeed");
 
         emitter.emit_metric_now("m", one_value()).await.unwrap();
-        assert_eq!(recorder.local().len(), 1, "metrics now flow to the messaging target");
+        assert_eq!(recorder.reserved_local().len(), 1, "metrics now flow to the messaging target");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
