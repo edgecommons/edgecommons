@@ -83,7 +83,7 @@ describe("FR-MSG-3: single-broker (air-gapped) topology", () => {
 
     // No IoT Core channel exists: publishing to IoT Core throws synchronously.
     expect(() =>
-      provider.publishBytes("t", Buffer.from("x"), Destination.IotCore, Qos.AtLeastOnce),
+      provider.publishBytes("t", Buffer.from("x"), Destination.IoTCore, Qos.AtLeastOnce),
     ).toThrow(GgError);
     await provider.disconnect();
   });
@@ -132,7 +132,7 @@ describe("FR-MSG-3: dual-MQTT topology + IoT Core mutual TLS", () => {
 
     // The IoT Core channel is reachable (no throw on a publish attempt).
     await expect(
-      provider.publishBytes("t", Buffer.from("x"), Destination.IotCore, Qos.AtLeastOnce),
+      provider.publishBytes("t", Buffer.from("x"), Destination.IoTCore, Qos.AtLeastOnce),
     ).resolves.toBeUndefined();
     await provider.disconnect();
   });

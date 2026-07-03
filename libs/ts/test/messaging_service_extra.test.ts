@@ -66,48 +66,48 @@ describe("DefaultMessagingService extra coverage", () => {
     await expect(svc.reply(req, reply)).rejects.toThrow(/no reply_to/);
   });
 
-  it("publishToIotCore / publishToIotCoreRaw route to the IoT Core destination", async () => {
+  it("publishToIoTCore / publishToIoTCoreRaw route to the IoT Core destination", async () => {
     const provider = new FakeMessagingProvider();
     const svc = new DefaultMessagingService(provider);
-    await svc.publishToIotCore("iot/t", MessageBuilder.create("m", "1").withPayload({ a: 1 }).build(), Qos.AtMostOnce);
-    await svc.publishToIotCoreRaw("iot/raw", { b: 2 });
+    await svc.publishToIoTCore("iot/t", MessageBuilder.create("m", "1").withPayload({ a: 1 }).build(), Qos.AtMostOnce);
+    await svc.publishToIoTCoreRaw("iot/raw", { b: 2 });
     expect(provider.published).toHaveLength(2);
-    expect(provider.published[0].dest).toBe(Destination.IotCore);
+    expect(provider.published[0].dest).toBe(Destination.IoTCore);
     expect(provider.published[0].qos).toBe(Qos.AtMostOnce);
-    expect(provider.published[1].dest).toBe(Destination.IotCore);
+    expect(provider.published[1].dest).toBe(Destination.IoTCore);
   });
 
   it("IoT Core subscribe + request/reply round-trips", async () => {
     const provider = new FakeMessagingProvider();
     const svc = new DefaultMessagingService(provider);
-    await svc.subscribeToIotCore("rpc/iot", async (_t, req) => {
+    await svc.subscribeToIoTCore("rpc/iot", async (_t, req) => {
       const reply = MessageBuilder.create("reply", "1").withPayload({ echoed: req.getBody() }).build();
-      await svc.replyToIotCore(req, reply);
+      await svc.replyToIoTCore(req, reply);
     });
     const req = MessageBuilder.create("ask", "1").withPayload({ q: 7 }).build();
-    const reply = await svc.requestFromIotCore("rpc/iot", req, 1000);
+    const reply = await svc.requestFromIoTCore("rpc/iot", req, 1000);
     expect(reply.getBody()).toEqual({ echoed: { q: 7 } });
     expect(reply.getCorrelationId()).toBe(req.getCorrelationId());
   });
 
-  it("cancelRequestFromIotCore rejects the IoT Core request", async () => {
+  it("cancelRequestFromIoTCore rejects the IoT Core request", async () => {
     const provider = new FakeMessagingProvider();
     const svc = new DefaultMessagingService(provider);
-    const fut = svc.requestFromIotCore("noresp", MessageBuilder.create("x", "1").build(), 0);
+    const fut = svc.requestFromIoTCore("noresp", MessageBuilder.create("x", "1").build(), 0);
     await tick();
-    svc.cancelRequestFromIotCore(fut);
+    svc.cancelRequestFromIoTCore(fut);
     await expect(fut).rejects.toThrow(/canceled/);
   });
 
-  it("unsubscribeFromIotCore stops IoT Core delivery", async () => {
+  it("unsubscribeFromIoTCore stops IoT Core delivery", async () => {
     const provider = new FakeMessagingProvider();
     const svc = new DefaultMessagingService(provider);
     const got: number[] = [];
-    await svc.subscribeToIotCore("iot/evt", (_t, m) => got.push((m.getBody() as { n: number }).n));
-    await svc.publishToIotCore("iot/evt", MessageBuilder.create("e", "1").withPayload({ n: 1 }).build());
+    await svc.subscribeToIoTCore("iot/evt", (_t, m) => got.push((m.getBody() as { n: number }).n));
+    await svc.publishToIoTCore("iot/evt", MessageBuilder.create("e", "1").withPayload({ n: 1 }).build());
     await tick();
-    await svc.unsubscribeFromIotCore("iot/evt");
-    await svc.publishToIotCore("iot/evt", MessageBuilder.create("e", "1").withPayload({ n: 2 }).build());
+    await svc.unsubscribeFromIoTCore("iot/evt");
+    await svc.publishToIoTCore("iot/evt", MessageBuilder.create("e", "1").withPayload({ n: 2 }).build());
     await tick();
     expect(got).toEqual([1]);
   });

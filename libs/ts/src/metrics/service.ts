@@ -25,6 +25,12 @@ import type { ConfigurationChangeListener } from "../config";
 import type { IMessagingService } from "../messaging/types";
 import { GgError } from "../errors";
 
+/**
+ * The `cloudwatchcomponent` target's fixed publish topic — the external AWS Greengrass
+ * CloudWatch-component contract (UNS-CANONICAL-DESIGN D-U21): unchanged by the UNS remap.
+ */
+const CLOUDWATCH_COMPONENT_TOPIC = "cloudwatch/metric/put";
+
 /** Require a messaging service for targets that need one. Matches Rust `require_messaging`. */
 function requireMessaging(
   messaging: IMessagingService | undefined,
@@ -68,25 +74,19 @@ async function buildTarget(
       return logTarget();
     case "messaging": {
       const svc = requireMessaging(messaging, "messaging");
-      const topic = resolve(config, mc.topic());
       // Canonical "iot_core" (schema) plus legacy "iotcore" both select IoT Core;
-      // everything else (e.g. "ipc"/"local") is the local transport.
+      // everything else (e.g. "ipc"/"local") is the local transport. The topic is minted per
+      // metric on the library-owned UNS metric class (UNS-CANONICAL-DESIGN §4.3) — the legacy
+      // `targetConfig.topic` override is removed (D-U9).
       const dest = mc.destination().toLowerCase();
       const iotCore = dest === "iot_core" || dest === "iotcore";
-      return new MessagingMetricTarget(
-        svc,
-        topic,
-        iotCore,
-        namespace,
-        largeFleet,
-        config.thingName,
-        config.parsed.tags,
-      );
+      return new MessagingMetricTarget(svc, config, iotCore, namespace, largeFleet);
     }
     case "cloudwatchcomponent": {
       const svc = requireMessaging(messaging, "cloudwatchcomponent");
-      const topic = resolve(config, mc.topic());
-      return new CloudWatchComponentTarget(svc, topic, namespace);
+      // The cloudwatch-component rendezvous is an EXTERNAL AWS Greengrass component contract
+      // (D-U21): non-`ecv1`, guard-exempt, deliberately NOT a UNS topic.
+      return new CloudWatchComponentTarget(svc, CLOUDWATCH_COMPONENT_TOPIC, namespace);
     }
     case "cloudwatch": {
       // The cloudwatch target defaults to a durable (disk-backed) store-and-forward buffer that

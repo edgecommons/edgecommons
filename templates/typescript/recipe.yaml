@@ -12,9 +12,11 @@ ComponentConfiguration:
         # Per-language log format (token template): {timestamp} {level} {logger} {message}.
         ts_format: "{timestamp} [{level}] {logger}: {message}"
       heartbeat:
+        enabled: true
         intervalSecs: 5
-        targets:
-          - type: "metric"
+        # The state keepalive publishes to ecv1/{device}/{component}/main/state; the
+        # measures are emitted as the 'sys' metric through metricEmission.
+        destination: "local"
         measures:
           cpu: true
           memory: true

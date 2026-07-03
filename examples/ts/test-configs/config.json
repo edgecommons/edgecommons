@@ -1,9 +1,10 @@
 {
   "logging": { "level": "DEBUG", "ts_format": "{timestamp} [{level}] {logger}: {message}" },
   "heartbeat": {
+    "enabled": true,
     "intervalSecs": 5,
     "measures": { "cpu": true, "memory": true },
-    "targets": [ { "type": "metric" } ]
+    "destination": "local"
   },
   "metricEmission": { "target": "log", "namespace": "ggcommons" },
   "credentials": {

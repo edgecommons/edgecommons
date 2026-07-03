@@ -24,9 +24,11 @@ import { resolve } from "./config/template";
 import { validate } from "./config/validation";
 import { buildConfigSource, ConfigSource, ConfigWatch } from "./config/source";
 import { ConfigurationChangeListener } from "./config";
+import { EffectiveConfigPublisher } from "./config/effective_config";
 import { GgError } from "./errors";
 import { Heartbeat } from "./heartbeat";
 import { initLogging, reconfigureLogging, LoggingReconfigurer, logger } from "./logging";
+import { MessageBuilder, MessageIdentity } from "./message";
 import { DefaultMessagingService } from "./messaging/service";
 import { IMessagingService } from "./messaging/types";
 import { StandaloneMqttProvider } from "./messaging/standalone-provider";
@@ -34,9 +36,54 @@ import { IpcMessagingProvider } from "./messaging/ipc-provider";
 import { loadMessagingConfig } from "./messaging/config";
 import { MetricEmitter } from "./metrics/service";
 import { MetricService } from "./metrics/types";
+import { Uns, checkToken } from "./uns";
 import type { StreamMetricsBridge, StreamService } from "./streaming";
 import type { CredentialMetricsBridge, CredentialService } from "./credentials";
 import type { ParameterService } from "./parameters";
+
+/**
+ * The per-instance seam (UNS-CANONICAL-DESIGN §3, D-U3): an instance-scoped handle whose only
+ * job is to pre-bind the instance token into (a) the {@link Uns} topic builder and (b) the
+ * {@link MessageBuilder}. The messaging service stays instance-agnostic — `publish(topic,
+ * msg)` already receives both the topic (minted by this handle's instance-bound `uns()`) and
+ * the envelope (stamped by its instance-bound builder).
+ *
+ * Obtain handles from {@link GGCommons.instance} (validated + cached per id). Component-level
+ * messages (everything not built through a handle) default to instance
+ * {@link MessageIdentity.DEFAULT_INSTANCE}.
+ */
+export class GgInstance {
+  private readonly unsValue: Uns;
+
+  /** @internal Created by {@link GGCommons.instance}, which validates + caches per id. */
+  constructor(
+    private readonly idValue: string,
+    private readonly configProvider: () => Config,
+    componentIdentity: MessageIdentity,
+    includeRoot: boolean,
+  ) {
+    this.unsValue = new Uns(componentIdentity.withInstance(idValue), includeRoot);
+  }
+
+  /** This handle's instance token. */
+  id(): string {
+    return this.idValue;
+  }
+
+  /** The topic builder bound to this instance (topics minted with this instance token). */
+  uns(): Uns {
+    return this.unsValue;
+  }
+
+  /**
+   * Starts a message pre-bound to this instance — equivalent to
+   * `MessageBuilder.create(name, version).withConfig(gg.config()).withInstance(id())`, so
+   * `build()` stamps the component identity with this handle's instance token.
+   */
+  newMessage(name: string, version: string): MessageBuilder {
+    return MessageBuilder.create(name, version).withConfig(this.configProvider()).withInstance(this.idValue);
+  }
+}
 
 /** The initialized component runtime: wired services + the current config snapshot. */
 export class GGCommons {
@@ -61,6 +108,15 @@ export class GGCommons {
   private credentialsService?: CredentialService;
   private credentialMetrics?: CredentialMetricsBridge;
   private parametersService?: ParameterService;
+  /**
+   * The component-identity-bound UNS topic builder (instance
+   * {@link MessageIdentity.DEFAULT_INSTANCE}), lazily bound on first {@link uns} from the
+   * initial config's resolved identity + `topic.includeRoot` (both fixed at startup, like the
+   * Java facade).
+   */
+  private unsValue?: Uns;
+  /** Cached per-id instance handles (UNS-CANONICAL-DESIGN §3, D-U3). */
+  private readonly instanceHandles = new Map<string, GgInstance>();
 
   /** @internal Attach the config-watch handle after construction. */
   _setWatch(watch: ConfigWatch | undefined): void {
@@ -182,6 +238,50 @@ export class GGCommons {
     return this.metricsService;
   }
 
+  /**
+   * The UNS topic builder + validator bound to this component's resolved identity (instance
+   * `"main"`) and its `topic.includeRoot` setting (UNS-CANONICAL-DESIGN §2). For
+   * instance-scoped topics use {@link instance}`.uns()`.
+   */
+  uns(): Uns {
+    if (this.unsValue === undefined) {
+      this.unsValue = new Uns(this.current.componentIdentity, this.current.topicIncludeRoot);
+    }
+    return this.unsValue;
+  }
+
+  /**
+   * The instance-scoped handle for an instance token (UNS-CANONICAL-DESIGN §3, D-U3): a
+   * {@link GgInstance} whose `uns()` mints topics with — and whose `newMessage(...)` stamps
+   * envelopes with — this instance token. The token is validated against the §2.2 token rule;
+   * handles are cached per id, so repeated calls return the same object. The id is
+   * deliberately NOT verified against the configured `component.instances[]` (instances may be
+   * created dynamically) — an unknown id is only logged at DEBUG as a diagnostic aid.
+   *
+   * @throws UnsValidationError when the token violates the §2.2 token rule
+   */
+  instance(instanceId: string): GgInstance {
+    checkToken(instanceId, "instance id");
+    let handle = this.instanceHandles.get(instanceId);
+    if (handle === undefined) {
+      const configured = this.current.instanceIds();
+      if (!configured.includes(instanceId)) {
+        logger.debug(
+          `instance('${instanceId}'): id is not among the configured component.instances[] ids` +
+            ` [${configured.join(", ")}] - creating a dynamic instance handle`,
+        );
+      }
+      handle = new GgInstance(
+        instanceId,
+        () => this.current,
+        this.current.componentIdentity,
+        this.current.topicIncludeRoot,
+      );
+      this.instanceHandles.set(instanceId, handle);
+    }
+    return handle;
+  }
+
   /** Register a listener invoked after the configuration is hot-reloaded. */
   addConfigChangeListener(listener: ConfigurationChangeListener): void {
     this.listeners.push(listener);
@@ -212,7 +312,9 @@ export class GGCommons {
     this.credentialMetrics?.close();
     this.streamMetrics?.close();
     this.streamsService?.close();
-    this.heartbeat.stop();
+    // Stop the heartbeat BEFORE messaging disconnects so its best-effort STOPPED state
+    // (UNS-CANONICAL-DESIGN §4.3 / D-U14) can still leave over the live transport.
+    await this.heartbeat.stop().catch(() => undefined);
     if (this.configWatch) await this.configWatch.close().catch(() => undefined);
     await this.metricsService.shutdown().catch(() => undefined);
     if (this.messagingService instanceof DefaultMessagingService) {
@@ -280,6 +382,29 @@ export class GGCommonsBuilder {
     const raw = await source.load();
     validate(raw);
     let current = Config.fromValue(this.componentNameValue, thingName, raw);
+
+    if (messaging instanceof DefaultMessagingService) {
+      // UNS-CANONICAL-DESIGN §5 / D-U5: late-bind the request() default deadline from
+      // messaging.requestTimeoutSeconds now that the config exists. Messaging is built BEFORE
+      // config loads (the IPC/messaging-backed config sources need it), so until this bind the
+      // built-in 30 s applied — deliberately, giving the CONFIG_COMPONENT bootstrap request a
+      // deadline instead of hanging forever.
+      messaging.setDefaultRequestTimeout(current.messagingRequestTimeoutMs());
+      // §4.1 / D-U24: late-bind the reserved-class guard's topic.includeRoot flag the same way
+      // (default false pre-bind - nothing publishes rooted topics pre-config). D-U27: bind the
+      // EFFECTIVE root (includeRoot AND a multi-level hierarchy) so the guard's position-5
+      // check agrees with topic-building, which no-ops includeRoot on a single-level hierarchy
+      // (D-U25); otherwise a warned single-level+includeRoot misconfig would false-positive on
+      // a legit app/evt/data channel whose first token is a reserved word.
+      messaging.setGuardIncludeRoot(
+        current.topicIncludeRoot && current.componentIdentity.hier.length >= 2,
+      );
+    }
+    // The MQTT LWT (§6) is a CONNECT-time, MQTT-only facility: on the IPC transport a
+    // configured messaging.lwt section is ignored (log DEBUG and no-op, per the design).
+    if (transportIsIpc(parsed.transport) && hasLwtSection(current.raw)) {
+      logger.debug("messaging.lwt is MQTT-only; the IPC provider ignores it (no-op)");
+    }
 
     // Thread the resolved platform's default logging format into the configurator (Phase 1c / FR-LOG-1):
     // a KUBERNETES pod with no `logging.ts_format` logs structured stdout-JSON, while explicit config
@@ -422,6 +547,15 @@ export class GGCommonsBuilder {
       logger.info(`Telemetry streaming initialized with ${names.length} stream(s)`);
     }
 
+    // §4.3: announce the effective (redacted) configuration on the UNS cfg topic - the startup
+    // push; the publisher re-announces on every configuration change (it is registered as a
+    // config-change listener). Best-effort (publishNow never throws).
+    if (messaging) {
+      const effectiveConfigPublisher = new EffectiveConfigPublisher(() => current, messaging);
+      listeners.push(effectiveConfigPublisher);
+      await effectiveConfigPublisher.publishNow();
+    }
+
     // HTTP health endpoint (FR-HB-1). Precedence (FR-RT-3): explicit `health.enabled` ▸ platform
     // default (on for KUBERNETES, off for GREENGRASS/HOST). The platform is known here (resolved at
     // parse time), reusing the same threading as the logging default — no resolver→ConfigManager dep.
@@ -457,6 +591,22 @@ export class GGCommonsBuilder {
     runtime._setWatch(await source.watch(onUpdate));
     return runtime;
   }
+}
+
+/** Whether the resolved transport is Greengrass IPC. */
+function transportIsIpc(transport: Transport): boolean {
+  return transport === Transport.IPC;
+}
+
+/** Whether the component config document carries a `messaging.lwt` section. */
+function hasLwtSection(raw: Record<string, unknown>): boolean {
+  const messaging = raw.messaging;
+  return (
+    messaging !== null &&
+    typeof messaging === "object" &&
+    !Array.isArray(messaging) &&
+    (messaging as Record<string, unknown>).lwt !== undefined
+  );
 }
 
 /**

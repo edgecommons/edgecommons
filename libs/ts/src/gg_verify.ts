@@ -141,10 +141,10 @@ async function main(): Promise<void> {
     }
 
     // --- heartbeat actually fires over IPC (the library publishes it per config) ---
-    const hbFilter = "ggcommons/+/+/heartbeat";
+    const hbFilter = "ecv1/+/+/+/state";
     const shortName = gg.componentName().split(".").pop() ?? gg.componentName();
     void svc.subscribe(hbFilter, (topic, m) => {
-      if (m.isRaw() || m.header.name !== "heartbeat") return;
+      if (m.isRaw() || m.header.name !== "state") return;
       if (!topic.includes(shortName)) return; // our own component's heartbeat
       if (!(results.heartbeat_over_ipc as { ok?: boolean })?.ok) {
         results.heartbeat_over_ipc = {
@@ -161,7 +161,7 @@ async function main(): Promise<void> {
     const cmdTopic = `ggcommons/${thing}/tsverify/cmd`;
     const telemetryTopic = `ggcommons/${thing}/tsverify/telemetry`;
     try {
-      await svc.subscribeToIotCore(
+      await svc.subscribeToIoTCore(
         cmdTopic,
         (_t, m) => {
           results.iot_command_received = { ok: true, body: m.isRaw() ? m.getRaw() : m.getBody() };
@@ -169,13 +169,13 @@ async function main(): Promise<void> {
         },
         Qos.AtLeastOnce,
       );
-      cleanups.push(() => svc.unsubscribeFromIotCore(cmdTopic));
+      cleanups.push(() => svc.unsubscribeFromIoTCore(cmdTopic));
       results.iot_subscribe = { ok: true, topic: cmdTopic };
     } catch (e) {
       results.iot_subscribe = { ok: false, error: errDetail(e) };
     }
     try {
-      await svc.publishToIotCore(
+      await svc.publishToIoTCore(
         telemetryTopic,
         MessageBuilder.create("Telemetry", "1.0").withConfig(cfg).withPayload({ seq: 1 }).build(),
         Qos.AtLeastOnce,

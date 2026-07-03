@@ -1,53 +1,56 @@
 /**
- * Heartbeat — periodically sample system health and publish it to the metric
- * and/or messaging targets.
+ * Heartbeat — the component's UNS `state` keepalive + system measures
+ * (UNS-CANONICAL-DESIGN §4.3, D-U14/D-U20).
  *
- * **One-liner purpose**: A `setInterval` loop that ticks at
- * `heartbeat.intervalSecs` and, for each configured target, either emits the
- * `heartbeat` metric (target `metric`) or publishes a `heartbeat` message
- * (target `messaging`). Stats are collected by {@link HeartbeatMonitor} for the
- * enabled `heartbeat.measures`. Mirrors the Rust `heartbeat.rs`.
+ * **One-liner purpose**: a timer loop that ticks at `heartbeat.intervalSecs` (default 5 s,
+ * default ON) and, each tick:
+ * 1. publishes a UNS **state keepalive** to `ecv1[/{site}]/{device}/{component}/main/state` —
+ *    header name `state`, body `{"status":"RUNNING","uptimeSecs":n}` — through the privileged
+ *    reserved-publish seam (the `state` class is library-owned); `heartbeat.destination`
+ *    (`local`|`iotcore`) selects the keepalive's transport only;
+ * 2. emits the enabled system measures (cpu/memory/disk/…) as a metric named **`sys`** through
+ *    the normal metric subsystem (D6/D-U20 — the measures keep the metric subsystem's full
+ *    sink routing).
+ *
+ * On graceful shutdown ({@link Heartbeat.stop}) a best-effort `{"status":"STOPPED"}` state is
+ * published at most once. The legacy `heartbeat.targets[]` topic-override knobs are removed —
+ * hard cut (M11).
  *
  * ## Parity notes
- * - The tick body is wrapped so a transient failure logs and the next tick still
- *   fires — the heartbeat can't be permanently killed by one error.
- * - Stats shape matches Java/Python/Rust: a nested object `{ cpu: {cpu_usage},
- *   memory: {memory_usage}, disk: {disk_total,disk_used,disk_free}, threads:
- *   {threads}, files: {files}, fds: {fds} }`, only including enabled measures.
- *   The metric target flattens it to measure→value; the messaging target sends
- *   it as the message payload.
- * - The live config handle is modeled as a {@link ConfigProvider} getter so each
- *   tick re-reads the latest snapshot (mirrors Rust's `Arc<ArcSwap<Config>>`);
- *   the ticker is rebuilt when `intervalSecs` changes.
- * - Defaults: topic `ggcommons/{ThingName}/{ComponentName}/heartbeat`,
- *   destination `ipc`, interval 5s (minimum 1), message name `heartbeat`,
- *   version `1.0.0`.
+ * - The tick body is wrapped so a transient failure logs and the next tick still fires; the
+ *   state and metric halves are individually best-effort (a failure in one must not suppress
+ *   the other).
+ * - Stats shape matches Java/Python/Rust: a nested object `{ cpu: {cpu_usage}, memory:
+ *   {memory_usage}, disk: {disk_total,disk_used,disk_free}, threads: {threads}, files:
+ *   {files}, fds: {fds} }`, only including enabled measures; the `sys` metric flattens it to
+ *   measure→value.
+ * - The live config handle is modeled as a {@link ConfigProvider} getter so each tick re-reads
+ *   the latest snapshot; the ticker is rebuilt when `intervalSecs` changes and no-ops while
+ *   `heartbeat.enabled` is `false`.
  *
  * ## Platform fallbacks (deviations from Rust)
  * Node has no portable disk/thread/fd APIs. cpu/memory use Node built-ins on all
  * platforms; disk uses `fs.statfsSync` (Node 18+) for the cwd filesystem; threads
  * and fds/files read `/proc/self/*` on Linux only. On any platform where a source
- * is unavailable an enabled measure reports `0` (Rust additionally supports
- * Windows via FFI — there is no Windows-native equivalent here, so threads/fds on
- * Windows report `0`). All fallbacks are graceful and never throw.
+ * is unavailable an enabled measure reports `0`. All fallbacks are graceful and never throw.
  */
 import * as fs from "fs";
 import * as os from "os";
 
 import type { Config, Measures } from "./config/model";
-import { resolve } from "./config/template";
 import type { MetricService, MeasureValues } from "./metrics/types";
 import { MetricBuilder } from "./metrics/metric";
 import type { IMessagingService } from "./messaging/types";
-import { Qos } from "./messaging/types";
+import { publishReservedVia } from "./messaging/service";
 import { MessageBuilder } from "./message";
+import { Uns, UnsClass } from "./uns";
 import { logger } from "./logging";
 
-const MESSAGE_NAME = "heartbeat";
-const MESSAGE_VERSION = "1.0.0";
-const DEFAULT_INTERVAL_SECS = 5;
-const DEFAULT_TOPIC = "ggcommons/{ThingName}/{ComponentName}/heartbeat";
-const DEFAULT_DESTINATION = "ipc";
+/** The state keepalive's envelope header name (§4.3). */
+const STATE_MESSAGE_NAME = "state";
+const STATE_MESSAGE_VERSION = "1.0";
+/** The metric the heartbeat measures are emitted as (§4.3, D-U20/D6). */
+const SYS_METRIC_NAME = "sys";
 
 /**
  * A live config handle: a getter returning the current {@link Config} snapshot.
@@ -56,10 +59,9 @@ const DEFAULT_DESTINATION = "ipc";
  */
 export type ConfigProvider = () => Config;
 
-/** The configured heartbeat interval in seconds (default 5, minimum 1). */
+/** The configured heartbeat interval in seconds (default 5, minimum 1 — enforced at parse). */
 function heartbeatInterval(config: Config): number {
-  const secs = config.parsed.heartbeat.intervalSecs ?? DEFAULT_INTERVAL_SECS;
-  return Math.max(1, secs);
+  return config.parsed.heartbeat.intervalSecs;
 }
 
 /** Flatten the nested stats object into a flat `measure -> value` map. */
@@ -205,75 +207,22 @@ function openFileCount(): number | undefined {
   return fdCount();
 }
 
-/**
- * Publish `stats` to each configured heartbeat target (best-effort; logs
- * failures). Mirrors the Rust `publish`.
- */
-async function publish(
-  config: Config,
-  metrics: MetricService,
-  messaging: IMessagingService | undefined,
-  stats: Record<string, unknown>,
-): Promise<void> {
-  for (const target of config.parsed.heartbeat.targets) {
-    const type = target.type.toLowerCase();
-    if (type === "metric") {
-      try {
-        await metrics.emitMetricNow("heartbeat", flatten(stats));
-      } catch (e) {
-        logger.warn(`heartbeat metric emit failed: ${errMsg(e)}`);
-      }
-    } else if (type === "messaging") {
-      if (!messaging) {
-        logger.warn("heartbeat messaging target configured but no messaging service");
-        continue;
-      }
-      const cfg = target.config;
-      const topicTemplate = strConfig(cfg, "topic") ?? DEFAULT_TOPIC;
-      const topic = resolve(config, topicTemplate);
-      const destination = (strConfig(cfg, "destination") ?? DEFAULT_DESTINATION).toLowerCase();
-
-      const message = MessageBuilder.create(MESSAGE_NAME, MESSAGE_VERSION)
-        .withPayload(stats)
-        .withConfig(config)
-        .build();
-
-      try {
-        if (destination === "iot_core" || destination === "iotcore") {
-          await messaging.publishToIotCore(topic, message, Qos.AtLeastOnce);
-        } else if (destination === "ipc" || destination === "local") {
-          await messaging.publish(topic, message);
-        } else {
-          logger.warn(`unrecognized heartbeat messaging destination: ${destination}`);
-          continue;
-        }
-      } catch (e) {
-        logger.warn(`heartbeat publish failed: ${errMsg(e)}`);
-      }
-    } else {
-      logger.warn(`unknown heartbeat target type: ${target.type}`);
-    }
-  }
-}
-
-/** Read a string field from a target's `config`, if present. */
-function strConfig(cfg: Record<string, unknown> | undefined, key: string): string | undefined {
-  const v = cfg?.[key];
-  return typeof v === "string" ? v : undefined;
-}
-
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
 /**
- * Owns the heartbeat background timer. Call {@link stop} to clear it (the RAII
- * analog of dropping the Rust `Heartbeat`).
+ * Owns the heartbeat background timer. Call {@link stop} to clear it and publish the
+ * best-effort STOPPED state (the RAII analog of Java `Heartbeat.close()`).
  */
 export class Heartbeat {
   private timer?: NodeJS.Timeout;
   private stopped = false;
   private currentInterval: number;
+  /** Monotonic start reference for the keepalive's `uptimeSecs`. */
+  private readonly startHr = process.hrtime.bigint();
+  /** Ensures the best-effort STOPPED state is published at most once. */
+  private stoppedPublished = false;
 
   private constructor(
     private readonly configProvider: ConfigProvider,
@@ -286,14 +235,13 @@ export class Heartbeat {
   }
 
   /**
-   * Define the `heartbeat` metric and start the periodic publishing task.
+   * Define the `sys` metric (the heartbeat measures) and start the periodic task.
    *
-   * On start the `heartbeat` metric is defined with all 8 measures (storage
-   * resolution `1` when interval `< 60`, else `60`), then a `setInterval` loop at
-   * the configured interval (default 5, minimum 1 secs) reads the latest config,
-   * rebuilds the timer if `intervalSecs` changed, collects stats for the enabled
-   * measures, and publishes to each configured target. Per-tick errors are caught
-   * and logged, never killing the loop.
+   * On start the `sys` metric is defined with all 8 measures (storage resolution `1` when
+   * interval `< 60`, else `60`), then a `setInterval` loop at the configured interval reads
+   * the latest config, rebuilds the timer if `intervalSecs` changed, and — while
+   * `heartbeat.enabled` (the default) — publishes the state keepalive and the `sys` metric.
+   * Per-tick errors are caught and logged, never killing the loop.
    */
   static start(
     configProvider: ConfigProvider,
@@ -303,9 +251,9 @@ export class Heartbeat {
     const initial = configProvider();
     const interval = heartbeatInterval(initial);
 
-    // Define the heartbeat metric (all measures, like the Java/Python/Rust libs).
+    // Define the sys metric (all measures, like the Java/Python/Rust libs).
     const storageResolution = interval < 60 ? 1 : 60;
-    const metric = MetricBuilder.create("heartbeat")
+    const metric = MetricBuilder.create(SYS_METRIC_NAME)
       .withConfig(initial)
       .addMeasure("disk_total", "Gigabytes", storageResolution)
       .addMeasure("disk_used", "Gigabytes", storageResolution)
@@ -321,11 +269,17 @@ export class Heartbeat {
     const monitor = new HeartbeatMonitor(initial.parsed.heartbeat.measures);
     const hb = new Heartbeat(configProvider, metrics, messaging, monitor, interval);
     hb.arm();
-    // Fire the first tick immediately, matching Rust's `tokio::time::interval`
-    // which yields its first tick at t=0 (then every `interval` thereafter).
+    // Fire the first tick immediately, matching the Java scheduleAtFixedRate initial delay 0
+    // and Rust's `tokio::time::interval` first tick at t=0.
     void hb.tick();
 
-    logger.info(`heartbeat started (interval_secs=${interval})`);
+    if (initial.parsed.heartbeat.enabled) {
+      logger.info(
+        `heartbeat started (interval_secs=${interval}, state keepalive -> ${initial.parsed.heartbeat.destination})`,
+      );
+    } else {
+      logger.info("heartbeat disabled by configuration (heartbeat.enabled=false)");
+    }
     return hb;
   }
 
@@ -340,7 +294,35 @@ export class Heartbeat {
     }
   }
 
-  /** One heartbeat cycle. Never throws (errors are caught and logged). */
+  /**
+   * Publishes one `state` envelope to the component's UNS state topic through the privileged
+   * seam (§4.3).
+   *
+   * @param status        `"RUNNING"` or `"STOPPED"`
+   * @param includeUptime whether the body carries `uptimeSecs` (the RUNNING keepalive)
+   */
+  private async publishState(cfg: Config, status: string, includeUptime: boolean): Promise<void> {
+    if (!this.messaging) {
+      return;
+    }
+    const topic = new Uns(cfg.componentIdentity, cfg.topicIncludeRoot).topic(UnsClass.State);
+    const body: Record<string, unknown> = { status };
+    if (includeUptime) {
+      body.uptimeSecs = Number((process.hrtime.bigint() - this.startHr) / 1_000_000_000n);
+    }
+    const stateMessage = MessageBuilder.create(STATE_MESSAGE_NAME, STATE_MESSAGE_VERSION)
+      .withPayload(body)
+      .withConfig(cfg)
+      .build();
+    const destination = cfg.parsed.heartbeat.destination.toLowerCase();
+    const dest = destination === "iotcore" || destination === "iot_core" ? "iotcore" : "local";
+    await publishReservedVia(this.messaging, topic, stateMessage, dest);
+  }
+
+  /**
+   * One heartbeat cycle (§4.3): the `state` keepalive plus the measures as the `sys` metric.
+   * Each half is best-effort — a failure in one must not suppress the other. Never throws.
+   */
   private async tick(): Promise<void> {
     if (this.stopped) {
       return;
@@ -358,20 +340,49 @@ export class Heartbeat {
         this.arm();
       }
 
-      this.monitor.setMeasures(cfg.parsed.heartbeat.measures);
-      const stats = this.monitor.getStats();
-      await publish(cfg, this.metrics, this.messaging, stats);
+      if (!cfg.parsed.heartbeat.enabled) {
+        return;
+      }
+
+      try {
+        await this.publishState(cfg, "RUNNING", true);
+      } catch (e) {
+        logger.warn(`heartbeat state keepalive failed: ${errMsg(e)}`);
+      }
+      try {
+        this.monitor.setMeasures(cfg.parsed.heartbeat.measures);
+        const stats = this.monitor.getStats();
+        await this.metrics.emitMetricNow(SYS_METRIC_NAME, flatten(stats));
+      } catch (e) {
+        logger.warn(`heartbeat '${SYS_METRIC_NAME}' metric emit failed: ${errMsg(e)}`);
+      }
     } catch (e) {
       logger.warn(`heartbeat tick failed: ${errMsg(e)}`);
     }
   }
 
-  /** Stop the heartbeat, clearing the timer (the RAII analog). Idempotent. */
-  stop(): void {
+  /**
+   * Stop the heartbeat: clear the timer and publish the best-effort `{"status":"STOPPED"}`
+   * state (§4.3/D-U14 — at most once; failures are swallowed, the shutdown must proceed).
+   * Idempotent. Await it BEFORE disconnecting messaging so the STOPPED state can leave.
+   */
+  async stop(): Promise<void> {
+    const wasRunning = this.timer !== undefined && !this.stopped;
     this.stopped = true;
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = undefined;
+    }
+    if (wasRunning && !this.stoppedPublished) {
+      this.stoppedPublished = true;
+      try {
+        const cfg = this.configProvider();
+        if (cfg.parsed.heartbeat.enabled) {
+          await this.publishState(cfg, "STOPPED", false);
+        }
+      } catch (e) {
+        logger.debug(`best-effort STOPPED state publish failed: ${errMsg(e)}`);
+      }
     }
   }
 }

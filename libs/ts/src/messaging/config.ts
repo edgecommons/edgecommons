@@ -42,10 +42,31 @@ export interface BrokerConfig {
   credentials?: Credentials;
 }
 
+/**
+ * The optional `messaging.lwt` section (UNS-CANONICAL-DESIGN §6, D-U9/M7): an MQTT
+ * Last-Will-and-Testament registered on the **local-broker** connection at CONNECT
+ * (re-registered automatically on reconnect — mqtt.js reuses the same connect options).
+ * There is deliberately NO retain field — the will is always registered with retain=false.
+ *
+ * `payload` is kept raw: a JSON string is published verbatim as UTF-8 bytes; a JSON object is
+ * serialized to compact JSON bytes. The will is registered at CONNECT, not routed through
+ * `publish()` — the reserved-class guard does not (cannot) apply; broker ACLs govern wills.
+ */
+export interface LwtConfig {
+  /** The will topic (required). */
+  topic: string;
+  /** The will payload, published VERBATIM (a string or a JSON object). */
+  payload?: unknown;
+  /** Will QoS: 0 or 1 (default 1). */
+  qos: 0 | 1;
+}
+
 /** The full STANDALONE messaging configuration. */
 export interface MessagingConfig {
   local: BrokerConfig;
   iotCore?: BrokerConfig;
+  /** Optional MQTT Last-Will-and-Testament for the local connection (§6). */
+  lwt?: LwtConfig;
 }
 
 /** Resolve a broker's host (prefers `host`, then `endpoint`). */
@@ -87,5 +108,38 @@ export async function loadMessagingConfig(path: string): Promise<MessagingConfig
   return {
     local: parseBroker(messaging.local, 1883),
     iotCore: messaging.iotCore ? parseBroker(messaging.iotCore, 8883) : undefined,
+    lwt: messaging.lwt !== undefined ? parseLwt(messaging.lwt) : undefined,
   };
+}
+
+/**
+ * Parse (and validate) a `messaging.lwt` section (§6): `topic` is required; `qos` accepts a
+ * numeric 0/1 (coerced from a lossless float like `1.0`) and defaults to 1; any other value is
+ * rejected. No retain field exists by design (hard omit, D9).
+ */
+export function parseLwt(raw: unknown): LwtConfig {
+  const o = (raw ?? {}) as Record<string, unknown>;
+  const topic = typeof o.topic === "string" ? o.topic : "";
+  if (topic === "") {
+    throw GgError.messaging("messaging.lwt.topic is required when an lwt section is present");
+  }
+  let qos: 0 | 1 = 1;
+  if (o.qos !== undefined) {
+    const n = typeof o.qos === "number" && Number.isInteger(o.qos) ? o.qos : NaN;
+    if (n !== 0 && n !== 1) {
+      throw GgError.messaging(`messaging.lwt.qos must be 0 or 1 (got ${String(o.qos)})`);
+    }
+    qos = n as 0 | 1;
+  }
+  return { topic, payload: o.payload, qos };
+}
+
+/**
+ * Serialize an LWT payload to will bytes: a string verbatim as UTF-8; anything else (object,
+ * number, …) as compact JSON; absent -> empty bytes.
+ */
+export function lwtPayloadBytes(payload: unknown): Buffer {
+  if (payload === undefined) return Buffer.alloc(0);
+  if (typeof payload === "string") return Buffer.from(payload, "utf8");
+  return Buffer.from(JSON.stringify(payload), "utf8");
 }

@@ -4,7 +4,7 @@ import * as os from "os";
 import * as path from "path";
 
 import { GgError } from "../src/errors";
-import { loadMessagingConfig, resolvedHost } from "../src/messaging/config";
+import { loadMessagingConfig, lwtPayloadBytes, parseLwt, resolvedHost } from "../src/messaging/config";
 import { StandaloneMqttProvider, topicMatches } from "../src/messaging/standalone-provider";
 import { Destination, Qos } from "../src/messaging/types";
 import { brokerReachable, tick } from "./_fakes";
@@ -79,6 +79,41 @@ describe("loadMessagingConfig", () => {
     expect(resolvedHost({ endpoint: "e.example", port: 8883, clientId: "x" })).toBe("e.example");
     expect(() => resolvedHost({ port: 1, clientId: "x" })).toThrow(GgError);
   });
+
+  it("parses a messaging.lwt section (UNS-CANONICAL-DESIGN §6)", async () => {
+    const p = tmpFile(
+      JSON.stringify({
+        messaging: {
+          local: { host: "localhost", port: 1883, clientId: "c1" },
+          lwt: { topic: "ecv1/gw-01/bridge/main/state", payload: { status: "UNREACHABLE" }, qos: 1 },
+        },
+      }),
+    );
+    const cfg = await loadMessagingConfig(p);
+    expect(cfg.lwt).toEqual({
+      topic: "ecv1/gw-01/bridge/main/state",
+      payload: { status: "UNREACHABLE" },
+      qos: 1,
+    });
+  });
+});
+
+describe("parseLwt / lwtPayloadBytes (§6)", () => {
+  it("requires a topic; defaults qos to 1; coerces a lossless numeric qos", () => {
+    expect(() => parseLwt({})).toThrow(GgError);
+    expect(() => parseLwt({ payload: "x" })).toThrow(/lwt.topic is required/);
+    expect(parseLwt({ topic: "t" }).qos).toBe(1);
+    expect(parseLwt({ topic: "t", qos: 0 }).qos).toBe(0);
+    expect(parseLwt({ topic: "t", qos: 1.0 }).qos).toBe(1); // JSON 1.0 parses to integer 1
+    expect(() => parseLwt({ topic: "t", qos: 2 })).toThrow(/qos must be 0 or 1/);
+    expect(() => parseLwt({ topic: "t", qos: "one" })).toThrow(/qos must be 0 or 1/);
+  });
+
+  it("serializes the payload: string verbatim, object as compact JSON, absent as empty", () => {
+    expect(lwtPayloadBytes("offline").toString("utf8")).toBe("offline");
+    expect(lwtPayloadBytes({ status: "UNREACHABLE" }).toString("utf8")).toBe('{"status":"UNREACHABLE"}');
+    expect(lwtPayloadBytes(undefined).length).toBe(0);
+  });
 });
 
 describe("StandaloneMqttProvider against the live broker", () => {
@@ -151,7 +186,48 @@ describe("StandaloneMqttProvider against the live broker", () => {
     );
     const provider = await StandaloneMqttProvider.connect(cfg);
     // channel() throws synchronously (before the Promise is created).
-    expect(() => provider.publishBytes("t", Buffer.from("x"), Destination.IotCore, Qos.AtLeastOnce)).toThrow(GgError);
+    expect(() => provider.publishBytes("t", Buffer.from("x"), Destination.IoTCore, Qos.AtLeastOnce)).toThrow(GgError);
     await provider.disconnect();
+  });
+
+  it("registers the MQTT LWT at CONNECT: the broker publishes the will on an ungraceful drop (§6)", async (ctx) => {
+    if (!up) ctx.skip();
+    const willTopic = `ecv1/gw-lwt/${Math.random().toString(36).slice(2)}/main/state`;
+
+    // Watcher connection (no LWT) subscribes to the will topic.
+    const watcher = await StandaloneMqttProvider.connect(
+      await loadMessagingConfig(
+        tmpFile(JSON.stringify({ messaging: { local: { host: "127.0.0.1", port: 1883, clientId: `ggc-lwt-w-${Date.now()}` } } })),
+      ),
+    );
+    const received: string[] = [];
+    await watcher.subscribeRaw(willTopic, Destination.Local, Qos.AtLeastOnce, (_t, p) => {
+      received.push(p.toString("utf8"));
+    });
+
+    // Victim connection registers the will (object payload -> compact JSON, retain=false).
+    const victimCfg = await loadMessagingConfig(
+      tmpFile(
+        JSON.stringify({
+          messaging: {
+            local: { host: "127.0.0.1", port: 1883, clientId: `ggc-lwt-v-${Date.now()}` },
+            lwt: { topic: willTopic, payload: { status: "UNREACHABLE" }, qos: 1 },
+          },
+        }),
+      ),
+    );
+    const victim = await StandaloneMqttProvider.connect(victimCfg);
+
+    // Force an UNGRACEFUL drop: destroy the underlying socket so no DISCONNECT packet is sent
+    // and the broker fires the will. (A clean end() would suppress it.)
+    const victimClient = (victim as unknown as { local: { client: { stream: { destroy(): void }; end(force: boolean): void } } })
+      .local.client;
+    victimClient.stream.destroy();
+
+    for (let i = 0; i < 60 && received.length === 0; i++) await tick(100);
+    expect(received).toEqual(['{"status":"UNREACHABLE"}']);
+
+    victimClient.end(true);
+    await watcher.disconnect();
   });
 });

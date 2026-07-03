@@ -2,7 +2,7 @@
  * Shared test fakes/helpers reused across the new coverage suites.
  *
  * - {@link RecordingMessagingService}: an `IMessagingService` that records every
- *   publish / publishToIotCore / publishRaw call and supports a scripted request
+ *   publish / publishToIoTCore / publishRaw call and supports a scripted request
  *   reply, for asserting routing + envelope shape without a transport.
  * - {@link FakeMessagingProvider}: an in-memory `MessagingProvider` (topic->subscribers
  *   with MQTT wildcard matching) that loops published messages back to matching
@@ -25,7 +25,13 @@ import { topicMatches } from "../src/messaging/standalone-provider";
 
 /** A recorded publish call. */
 export interface PublishRecord {
-  kind: "publish" | "publishToIotCore" | "publishRaw" | "publishToIotCoreRaw";
+  kind:
+    | "publish"
+    | "publishToIoTCore"
+    | "publishRaw"
+    | "publishToIoTCoreRaw"
+    | "publishReserved"
+    | "publishReservedToIoTCore";
   topic: string;
   message?: Message;
   payload?: unknown;
@@ -35,7 +41,9 @@ export interface PublishRecord {
 /**
  * An `IMessagingService` that records publishes and serves a scripted reply for
  * `request()` (resolving on the next microtask with `replyBody` wrapped in a
- * Message). Subscriptions are recorded and can be driven via {@link emit}.
+ * Message). Subscriptions are recorded and can be driven via {@link emit}. Also
+ * implements the privileged reserved-publish seam (recorded with distinct kinds)
+ * so the library publishers' UNS routing can be asserted.
  */
 export class RecordingMessagingService implements IMessagingService {
   readonly published: PublishRecord[] = [];
@@ -47,27 +55,34 @@ export class RecordingMessagingService implements IMessagingService {
   async publish(topic: string, msg: Message): Promise<void> {
     this.published.push({ kind: "publish", topic, message: msg });
   }
-  async publishToIotCore(topic: string, msg: Message, qos: Qos = Qos.AtLeastOnce): Promise<void> {
-    this.published.push({ kind: "publishToIotCore", topic, message: msg, qos });
+  async publishToIoTCore(topic: string, msg: Message, qos: Qos = Qos.AtLeastOnce): Promise<void> {
+    this.published.push({ kind: "publishToIoTCore", topic, message: msg, qos });
   }
   async publishRaw(topic: string, payload: unknown): Promise<void> {
     this.published.push({ kind: "publishRaw", topic, payload });
   }
-  async publishToIotCoreRaw(topic: string, payload: unknown, qos: Qos = Qos.AtLeastOnce): Promise<void> {
-    this.published.push({ kind: "publishToIotCoreRaw", topic, payload, qos });
+  async publishToIoTCoreRaw(topic: string, payload: unknown, qos: Qos = Qos.AtLeastOnce): Promise<void> {
+    this.published.push({ kind: "publishToIoTCoreRaw", topic, payload, qos });
+  }
+  /** The privileged reserved seam (mirrors DefaultMessagingService.publishReserved). */
+  async publishReserved(topic: string, msg: Message): Promise<void> {
+    this.published.push({ kind: "publishReserved", topic, message: msg });
+  }
+  async publishReservedToIoTCore(topic: string, msg: Message, qos: Qos = Qos.AtLeastOnce): Promise<void> {
+    this.published.push({ kind: "publishReservedToIoTCore", topic, message: msg, qos });
   }
 
   async subscribe(filter: string, handler: MessageHandler): Promise<void> {
     this.subscriptions.set(filter, handler);
   }
-  async subscribeToIotCore(filter: string, handler: MessageHandler): Promise<void> {
+  async subscribeToIoTCore(filter: string, handler: MessageHandler): Promise<void> {
     this.subscriptions.set(filter, handler);
   }
   async unsubscribe(filter: string): Promise<void> {
     this.unsubscribed.push(filter);
     this.subscriptions.delete(filter);
   }
-  async unsubscribeFromIotCore(filter: string): Promise<void> {
+  async unsubscribeFromIoTCore(filter: string): Promise<void> {
     this.unsubscribed.push(filter);
     this.subscriptions.delete(filter);
   }
@@ -91,15 +106,15 @@ export class RecordingMessagingService implements IMessagingService {
     });
     return new ReplyFuture(promise, () => undefined);
   }
-  requestFromIotCore(topic: string, msg: Message, timeoutMs = 0): ReplyFuture {
+  requestFromIoTCore(topic: string, msg: Message, timeoutMs = 0): ReplyFuture {
     return this.request(topic, msg, timeoutMs);
   }
   async reply(): Promise<void> {}
-  async replyToIotCore(): Promise<void> {}
+  async replyToIoTCore(): Promise<void> {}
   cancelRequest(reply: ReplyFuture): void {
     reply.cancel();
   }
-  cancelRequestFromIotCore(reply: ReplyFuture): void {
+  cancelRequestFromIoTCore(reply: ReplyFuture): void {
     reply.cancel();
   }
   /** Toggle to drive the /readyz readiness signal in tests. */

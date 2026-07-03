@@ -36,4 +36,31 @@ describe("config validation", () => {
       expect((e as GgError).kind).toBe("Validation");
     }
   });
+
+  it("accepts the UNS sections (hierarchy/identity/topic + messaging additions)", () => {
+    expect(() =>
+      validate({
+        component: { global: {} },
+        hierarchy: { levels: ["site", "zone", "device"] },
+        identity: { site: "dallas", zone: "zone-3" },
+        topic: { includeRoot: true },
+        heartbeat: { enabled: true, intervalSecs: 5, measures: { cpu: true }, destination: "local" },
+        messaging: {
+          requestTimeoutSeconds: 30,
+          lwt: { topic: "ecv1/gw/c/main/state", payload: { status: "UNREACHABLE" }, qos: 1 },
+        },
+      }),
+    ).not.toThrow();
+  });
+
+  it("rejects the removed drift knobs (heartbeat.targets / metricEmission.targetConfig.topic)", () => {
+    // The UNS hard cut removed these from the schema; stale configs must fail with a precise error.
+    expect(() => validate({ component: {}, heartbeat: { targets: [{ type: "metric" }] } })).toThrow(GgError);
+    expect(() => validate({ component: {}, metricEmission: { targetConfig: { topic: "x/y" } } })).toThrow(GgError);
+  });
+
+  it("rejects an lwt without a topic and an out-of-range lwt qos", () => {
+    expect(() => validate({ component: {}, messaging: { lwt: { payload: "x" } } })).toThrow(GgError);
+    expect(() => validate({ component: {}, messaging: { lwt: { topic: "t", qos: 2 } } })).toThrow(GgError);
+  });
 });

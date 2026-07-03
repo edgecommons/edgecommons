@@ -55,8 +55,9 @@ vi.mock("../src/metrics/service", () => ({
   },
 }));
 
-// Heartbeat: capture the started instance so close() can be observed.
-const heartbeatStop = vi.fn();
+// Heartbeat: capture the started instance so close() can be observed. stop() is async now
+// (it publishes the best-effort STOPPED state before resolving).
+const heartbeatStop = vi.fn(async () => undefined);
 vi.mock("../src/heartbeat", () => ({
   Heartbeat: { start: vi.fn(() => ({ stop: heartbeatStop })) },
 }));
@@ -440,6 +441,60 @@ describe("GGCommons lifecycle (mocked)", () => {
     await gg.close();
     expect(healthStop).toHaveBeenCalledTimes(1);
     expect(heartbeatStop).toHaveBeenCalledTimes(1);
+  });
+
+  // ---- UNS facade: gg.uns() + gg.instance() (UNS-CANONICAL-DESIGN §2/§3) ----
+
+  it("gg.uns() is bound to the resolved component identity + topic.includeRoot", async () => {
+    const gg = await buildWith({
+      ...BASE,
+      hierarchy: { levels: ["site", "device"] },
+      identity: { site: "dallas" },
+      topic: { includeRoot: true },
+    });
+    try {
+      const { UnsClass } = await import("../src/uns");
+      expect(gg.uns().topic(UnsClass.State)).toBe("ecv1/dallas/lc-thing/Lc/main/state");
+      expect(gg.uns()).toBe(gg.uns()); // cached
+      expect(gg.uns().identity().component).toBe("Lc");
+      // The messaging guard was late-bound to the EFFECTIVE root (D-U27): a rooted reserved
+      // topic is now rejected at position 5.
+      const { ReservedTopicError } = await import("../src/messaging/types");
+      const { MessageBuilder } = await import("../src/message");
+      await expect(
+        gg.messaging().publish("ecv1/dallas/gw/c/i/state", MessageBuilder.create("x", "1").build()),
+      ).rejects.toBeInstanceOf(ReservedTopicError);
+    } finally {
+      await gg.close();
+    }
+  });
+
+  it("gg.instance(id) validates the token, caches handles, and pre-binds uns()/newMessage()", async () => {
+    const gg = await buildWith({ ...BASE, component: { global: {}, instances: [{ id: "kep1" }] } });
+    try {
+      const { UnsClass, UnsValidationError } = await import("../src/uns");
+      const handle = gg.instance("kep1");
+      expect(handle.id()).toBe("kep1");
+      expect(gg.instance("kep1")).toBe(handle); // cached per id
+      expect(handle.uns().topic(UnsClass.Data, "temp")).toBe("ecv1/lc-thing/Lc/kep1/data/temp");
+      const msg = handle.newMessage("data", "1.0").withPayload({ v: 1 }).build();
+      expect(msg.getIdentity()?.instance).toBe("kep1");
+      // Dynamic (unconfigured) ids are allowed — token charset is the only gate.
+      expect(gg.instance("dynamic-9").id()).toBe("dynamic-9");
+      expect(() => gg.instance("bad+token")).toThrow(UnsValidationError);
+    } finally {
+      await gg.close();
+    }
+  });
+
+  it("the request-deadline default is late-bound from messaging.requestTimeoutSeconds", async () => {
+    const gg = await buildWith({ ...BASE, messaging: { requestTimeoutSeconds: 7 } });
+    try {
+      const { DefaultMessagingService } = await import("../src/messaging/service");
+      expect((gg.messaging() as InstanceType<typeof DefaultMessagingService>).getDefaultRequestTimeout()).toBe(7000);
+    } finally {
+      await gg.close();
+    }
   });
 
   it("the library wires SIGTERM and removes the handler on close (FR-HB-2)", async () => {

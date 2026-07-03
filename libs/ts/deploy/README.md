@@ -9,9 +9,9 @@ to `/tmp/ts_ipc_verify_result.json` (and stdout / the component log):
 
 1. **request/reply** over IPC (correlation id round-trips, body echoed),
 2. **raw** publish/ingest over IPC,
-3. **cross-language** — ingests the heartbeat envelope published over IPC by a
-   peer ggcommons component (e.g. the deployed Java skeleton on
-   `ggcommons/<thing>/<ComponentName>/heartbeat`).
+3. **cross-language** — ingests the UNS `state` keepalive envelope published over
+   IPC by a peer ggcommons component (e.g. the deployed Java skeleton on
+   `ecv1/<device>/<component>/main/state`).
 
 ## Prerequisites
 

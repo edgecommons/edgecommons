@@ -27,6 +27,9 @@ function cfg(heartbeat: Record<string, unknown>): Config {
   return Config.fromValue("com.example.C", "thing-1", { heartbeat });
 }
 
+/** The component's UNS state topic for the test identity (thing-1 / C, rootless). */
+const STATE_TOPIC = "ecv1/thing-1/C/main/state";
+
 beforeEach(() => {
   vi.useFakeTimers();
 });
@@ -59,88 +62,96 @@ describe("HeartbeatMonitor extra coverage", () => {
   });
 });
 
-describe("Heartbeat.start dispatch", () => {
-  it("metric target -> emitMetricNow('heartbeat', flattened)", async () => {
+describe("Heartbeat.start (UNS state keepalive + sys metric, §4.3)", () => {
+  it("each tick publishes the state keepalive through the reserved seam AND emits the 'sys' metric", async () => {
     const metrics = new RecordingMetricService();
-    const config = cfg({ intervalSecs: 5, measures: { memory: true }, targets: [{ type: "metric" }] });
-    const hb = Heartbeat.start(() => config, metrics);
+    const svc = new RecordingMessagingService();
+    const config = cfg({ intervalSecs: 5, measures: { memory: true } });
+    const hb = Heartbeat.start(() => config, metrics, svc);
     // start() fires the first tick immediately (async). Let microtasks run.
     await vi.advanceTimersByTimeAsync(0);
-    expect(metrics.defined).toContain("heartbeat");
-    expect(metrics.emittedNow.length).toBeGreaterThanOrEqual(1);
-    expect(metrics.emittedNow[0].name).toBe("heartbeat");
-    expect(typeof metrics.emittedNow[0].values.memory_usage).toBe("number");
-    hb.stop();
-  });
 
-  it("messaging target destination ipc -> publish with name 'heartbeat' v'1.0.0'", async () => {
-    const metrics = new RecordingMetricService();
-    const svc = new RecordingMessagingService();
-    const config = cfg({
-      intervalSecs: 5,
-      measures: { memory: true },
-      targets: [{ type: "messaging", config: { destination: "ipc", topic: "hb/{ThingName}/x" } }],
-    });
-    const hb = Heartbeat.start(() => config, metrics, svc);
-    await vi.advanceTimersByTimeAsync(0);
+    // The measures metric is now named 'sys' (D-U20/D6).
+    expect(metrics.defined).toContain("sys");
+    expect(metrics.emittedNow.length).toBeGreaterThanOrEqual(1);
+    expect(metrics.emittedNow[0].name).toBe("sys");
+    expect(typeof metrics.emittedNow[0].values.memory_usage).toBe("number");
+
+    // The state keepalive rides the privileged reserved seam (the state class is reserved).
     expect(svc.published.length).toBeGreaterThanOrEqual(1);
     const rec = svc.published[0];
-    expect(rec.kind).toBe("publish");
-    expect(rec.topic).toBe("hb/thing-1/x");
-    expect(rec.message!.header.name).toBe("heartbeat");
-    expect(rec.message!.header.version).toBe("1.0.0");
-    hb.stop();
+    expect(rec.kind).toBe("publishReserved");
+    expect(rec.topic).toBe(STATE_TOPIC);
+    expect(rec.message!.header.name).toBe("state");
+    expect(rec.message!.header.version).toBe("1.0");
+    const body = rec.message!.getBody() as Record<string, unknown>;
+    expect(body.status).toBe("RUNNING");
+    expect(typeof body.uptimeSecs).toBe("number");
+    // The envelope carries the component identity (single stamping site, §1.4).
+    expect(rec.message!.getIdentity()?.device).toBe("thing-1");
+    expect(rec.message!.getIdentity()?.component).toBe("C");
+    expect(rec.message!.getIdentity()?.instance).toBe("main");
+    await hb.stop();
   });
 
-  it("messaging target destination iot_core -> publishToIotCore", async () => {
+  it("destination iotcore routes the keepalive to IoT Core (measures unaffected)", async () => {
     const metrics = new RecordingMetricService();
     const svc = new RecordingMessagingService();
-    const config = cfg({
-      measures: { memory: true },
-      targets: [{ type: "messaging", config: { destination: "iot_core" } }],
-    });
+    const config = cfg({ measures: { memory: true }, destination: "iotcore" });
     const hb = Heartbeat.start(() => config, metrics, svc);
     await vi.advanceTimersByTimeAsync(0);
-    expect(svc.published[0].kind).toBe("publishToIotCore");
-    hb.stop();
+    expect(svc.published[0].kind).toBe("publishReservedToIoTCore");
+    expect(svc.published[0].topic).toBe(STATE_TOPIC);
+    expect(metrics.emittedNow[0].name).toBe("sys");
+    await hb.stop();
   });
 
-  it("messaging target with NO messaging service is skipped (no throw)", async () => {
+  it("with NO messaging service the sys metric still emits (no throw)", async () => {
     const metrics = new RecordingMetricService();
-    const config = cfg({ measures: { memory: true }, targets: [{ type: "messaging", config: {} }] });
+    const config = cfg({ measures: { memory: true } });
     const hb = Heartbeat.start(() => config, metrics, undefined);
     await vi.advanceTimersByTimeAsync(0);
-    // No crash; the only assertion is that ticking did not throw and metric was defined.
-    expect(metrics.defined).toContain("heartbeat");
-    hb.stop();
+    expect(metrics.defined).toContain("sys");
+    expect(metrics.emittedNow[0].name).toBe("sys");
+    await hb.stop();
   });
 
-  it("unknown destination and unknown type are skipped", async () => {
+  it("heartbeat.enabled=false publishes nothing (and no STOPPED on stop)", async () => {
     const metrics = new RecordingMetricService();
     const svc = new RecordingMessagingService();
-    const config = cfg({
-      measures: { memory: true },
-      targets: [
-        { type: "messaging", config: { destination: "carrier-pigeon" } },
-        { type: "telepathy" },
-      ],
-    });
+    const config = cfg({ enabled: false, measures: { memory: true } });
     const hb = Heartbeat.start(() => config, metrics, svc);
     await vi.advanceTimersByTimeAsync(0);
     expect(svc.published).toHaveLength(0);
-    hb.stop();
+    expect(metrics.emittedNow).toHaveLength(0);
+    await hb.stop();
+    expect(svc.published).toHaveLength(0);
+  });
+
+  it("a keepalive failure does not suppress the sys metric (each half best-effort)", async () => {
+    const metrics = new RecordingMetricService();
+    const svc = new RecordingMessagingService();
+    svc.publishReserved = async () => {
+      throw new Error("broker down");
+    };
+    const config = cfg({ measures: { memory: true } });
+    const hb = Heartbeat.start(() => config, metrics, svc);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(metrics.emittedNow.length).toBeGreaterThanOrEqual(1);
+    expect(metrics.emittedNow[0].name).toBe("sys");
+    await hb.stop();
   });
 
   it("an interval change rebuilds the timer cadence", async () => {
     const metrics = new RecordingMetricService();
-    let config = cfg({ intervalSecs: 5, measures: { memory: true }, targets: [{ type: "metric" }] });
+    let config = cfg({ intervalSecs: 5, measures: { memory: true } });
     const hb = Heartbeat.start(() => config, metrics);
     await vi.advanceTimersByTimeAsync(0); // first immediate tick
     const afterStart = metrics.emittedNow.length;
 
     // Advance one 5s period -> one more tick. That tick sees the new interval (1s)
     // and rebuilds the timer.
-    config = cfg({ intervalSecs: 1, measures: { memory: true }, targets: [{ type: "metric" }] });
+    config = cfg({ intervalSecs: 1, measures: { memory: true } });
     await vi.advanceTimersByTimeAsync(5000);
     const afterInterval = metrics.emittedNow.length;
     expect(afterInterval).toBeGreaterThan(afterStart);
@@ -148,17 +159,41 @@ describe("Heartbeat.start dispatch", () => {
     // Now ticks should fire every 1s.
     await vi.advanceTimersByTimeAsync(3000);
     expect(metrics.emittedNow.length).toBeGreaterThan(afterInterval + 1);
-    hb.stop();
+    await hb.stop();
   });
 
-  it("stop() halts ticks", async () => {
+  it("stop() halts ticks and publishes the best-effort STOPPED state exactly once", async () => {
     const metrics = new RecordingMetricService();
-    const config = cfg({ intervalSecs: 1, measures: { memory: true }, targets: [{ type: "metric" }] });
-    const hb = Heartbeat.start(() => config, metrics);
+    const svc = new RecordingMessagingService();
+    const config = cfg({ intervalSecs: 1, measures: { memory: true } });
+    const hb = Heartbeat.start(() => config, metrics, svc);
     await vi.advanceTimersByTimeAsync(0);
-    hb.stop();
-    const count = metrics.emittedNow.length;
+    await hb.stop();
+    const stopped = svc.published.filter(
+      (r) => (r.message?.getBody() as Record<string, unknown> | undefined)?.status === "STOPPED",
+    );
+    expect(stopped).toHaveLength(1);
+    expect(stopped[0].topic).toBe(STATE_TOPIC);
+    // STOPPED body carries no uptimeSecs (the golden-envelope contract).
+    expect("uptimeSecs" in (stopped[0].message!.getBody() as object)).toBe(false);
+
+    // Idempotent: a second stop publishes nothing more and ticks stay halted.
+    const count = svc.published.length;
+    await hb.stop();
     await vi.advanceTimersByTimeAsync(5000);
-    expect(metrics.emittedNow.length).toBe(count);
+    expect(svc.published.length).toBe(count);
+    expect(metrics.emittedNow.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("a STOPPED publish failure is swallowed (shutdown proceeds)", async () => {
+    const metrics = new RecordingMetricService();
+    const svc = new RecordingMessagingService();
+    const config = cfg({ intervalSecs: 1, measures: { memory: true } });
+    const hb = Heartbeat.start(() => config, metrics, svc);
+    await vi.advanceTimersByTimeAsync(0);
+    svc.publishReserved = async () => {
+      throw new Error("transport already closed");
+    };
+    await expect(hb.stop()).resolves.toBeUndefined();
   });
 });

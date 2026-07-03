@@ -155,7 +155,7 @@ describe("graceful shutdown semantics (readiness wired to the real messaging ser
     // Connected + readyFlag default true + not shutting down -> ready.
     expect(svc.connected()).toBe(true);
     await svc.subscribe("a/+", () => {});
-    await svc.subscribeToIotCore("b/#", () => {});
+    await svc.subscribeToIoTCore("b/#", () => {});
     expect(provider.subs.length).toBe(2);
     expect(readiness.isReady()).toBe(true);
 

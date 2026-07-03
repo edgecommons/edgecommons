@@ -28,7 +28,7 @@ describe("IpcMessagingProvider (fake client)", () => {
   it("publishBytes iotcore -> publishToIoTCore", async () => {
     const client = new FakeIpcClient();
     const p = provider(client);
-    await p.publishBytes("iot/topic", Buffer.from("x"), Destination.IotCore, Qos.AtMostOnce);
+    await p.publishBytes("iot/topic", Buffer.from("x"), Destination.IoTCore, Qos.AtMostOnce);
     expect(client.publishedIot).toHaveLength(1);
     expect(client.publishedIot[0].topicName).toBe("iot/topic");
   });
@@ -59,7 +59,7 @@ describe("IpcMessagingProvider (fake client)", () => {
     const client = new FakeIpcClient();
     const p = provider(client);
     const got: Array<{ topic: string; payload: string }> = [];
-    await p.subscribeRaw("iot/#", Destination.IotCore, Qos.AtLeastOnce, (topic, payload) => {
+    await p.subscribeRaw("iot/#", Destination.IoTCore, Qos.AtLeastOnce, (topic, payload) => {
       got.push({ topic, payload: payload.toString("utf8") });
     });
     client.iotStreams[0].fire("message", {
@@ -105,7 +105,7 @@ describe("IpcMessagingProvider (fake client)", () => {
     const client = new FakeIpcClient();
     const p = provider(client);
     await p.subscribeRaw("a/+", Destination.Local, Qos.AtLeastOnce, () => undefined);
-    await p.subscribeRaw("b/#", Destination.IotCore, Qos.AtLeastOnce, () => undefined);
+    await p.subscribeRaw("b/#", Destination.IoTCore, Qos.AtLeastOnce, () => undefined);
     await p.disconnect();
     expect(client.topicStreams[0].closed).toBe(true);
     expect(client.iotStreams[0].closed).toBe(true);

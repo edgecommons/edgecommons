@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 
 import { Config } from "../src/config/model";
-import { resolve } from "../src/config/template";
+import { isIsoControl, resolve, sanitize } from "../src/config/template";
 
 describe("template resolve", () => {
   it("substitutes builtins and tags", () => {
@@ -42,5 +42,24 @@ describe("template resolve", () => {
     expect(resolve(cfg, "{ThingName}/{ComponentName}/metric")).toBe(
       "thing-7/MyComponent/metric",
     );
+  });
+});
+
+describe("sanitize (the normative UNS token sanitizer, D-U26)", () => {
+  it("replaces the blacklist chars and traversal with '_'", () => {
+    expect(sanitize("a/b\\c+d#e")).toBe("a_b_c_d_e");
+    expect(sanitize("gw..01")).toBe("gw_01");
+    expect(sanitize("gw 01")).toBe("gw 01"); // spaces are legal
+    expect(sanitize("v1.2")).toBe("v1.2"); // single dots are legal
+  });
+
+  it("treats C0, DEL and C1 (U+0080-U+009F) as control characters (D-U26)", () => {
+    expect(sanitize("ab")).toBe("a_b"); // C0
+    expect(sanitize("ab")).toBe("a_b"); // DEL
+    expect(sanitize("ab")).toBe("a_b"); // C1 NEL
+    expect(sanitize("ab")).toBe("a_b"); // C1 upper bound
+    expect(sanitize("a b")).toBe("a b"); // U+00A0 NBSP is NOT a control char
+    expect(isIsoControl(0x85)).toBe(true);
+    expect(isIsoControl(0xa0)).toBe(false);
   });
 });

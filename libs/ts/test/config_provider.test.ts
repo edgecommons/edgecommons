@@ -85,28 +85,33 @@ describe("config_provider harness", () => {
     expect(connectMock).toHaveBeenCalledWith({ receiveOwnMessages: false });
     expect(subscribeMock).toHaveBeenCalledTimes(1);
     const topic = subscribeMock.mock.calls[0][0] as string;
-    // Defaults: thing=lab-5950x, consumer=com.ggcommons.TsGgVerify.
-    expect(topic).toBe("ggcommons/lab-5950x/config/get/com.ggcommons.TsGgVerify");
+    // Default thing=lab-5950x; the rendezvous is the UNS Flow-A topic (D-U19) — the consumer
+    // no longer appears in the topic (it self-identifies in the request body).
+    expect(topic).toBe("ecv1/lab-5950x/config/main/cmd/get-configuration");
     expect((stdoutSpy.mock.calls[0][0] as string)).toContain(`config provider ready on ${topic}`);
     expect(intervalSpy).toHaveBeenCalled();
   });
 
-  it("builds the request topic from the consumer arg and AWS_IOT_THING_NAME", async () => {
+  it("builds the rendezvous topic from AWS_IOT_THING_NAME (sanitized)", async () => {
     process.argv = ["node", "config_provider.js", "com.example.Consumer"];
-    process.env.AWS_IOT_THING_NAME = "edge-thing-7";
+    process.env.AWS_IOT_THING_NAME = "edge/thing+7";
     await loadHarness();
 
     const topic = subscribeMock.mock.calls[0][0] as string;
-    expect(topic).toBe("ggcommons/edge-thing-7/config/get/com.example.Consumer");
+    expect(topic).toBe("ecv1/edge_thing_7/config/main/cmd/get-configuration");
   });
 
-  it("replies to a GetConfiguration request with the served config document", async () => {
+  it("replies to a GetConfiguration request whose body matches the served component", async () => {
     process.argv = ["node", "config_provider.js", "com.example.Consumer"];
     process.env.AWS_IOT_THING_NAME = "t1";
     await loadHarness();
 
     expect(subscribeHandler).toBeDefined();
-    const fakeRequest = { header: { name: "GetConfiguration" } } as unknown as Message;
+    // Flow A (§1.5): the requester self-identifies in the body with its sanitized short name.
+    const fakeRequest = {
+      header: { name: "GetConfiguration" },
+      getBody: () => ({ component: "Consumer" }),
+    } as unknown as Message;
     subscribeHandler!("ignored-topic", fakeRequest);
     await new Promise((r) => setTimeout(r, 0));
 
@@ -121,6 +126,20 @@ describe("config_provider harness", () => {
     expect(body).toHaveProperty("tags");
     expect(body).toHaveProperty("component");
     expect((body.logging as Record<string, unknown>).level).toBe("INFO");
+  });
+
+  it("ignores a GetConfiguration request for a different component (topic is shared)", async () => {
+    process.argv = ["node", "config_provider.js", "com.example.Consumer"];
+    process.env.AWS_IOT_THING_NAME = "t1";
+    await loadHarness();
+
+    const otherRequest = {
+      header: { name: "GetConfiguration" },
+      getBody: () => ({ component: "SomeoneElse" }),
+    } as unknown as Message;
+    subscribeHandler!("ignored-topic", otherRequest);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(replyMock).not.toHaveBeenCalled();
   });
 
   it("SIGTERM unsubscribes, disconnects (in order), then exits", async () => {

@@ -3,6 +3,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 
+import { Config } from "../src/config/model";
 import { LogTarget, parseSize } from "../src/metrics/target/log";
 import { MessagingMetricTarget } from "../src/metrics/target/messaging";
 import { CloudWatchComponentTarget } from "../src/metrics/target/cloudwatch_component";
@@ -90,34 +91,52 @@ describe("LogTarget", () => {
   });
 });
 
-describe("MessagingMetricTarget", () => {
-  it("wraps EMF in a Metric/1.0 envelope and publishes locally", async () => {
+describe("MessagingMetricTarget (UNS metric topics, §4.3)", () => {
+  const config = Config.fromValue("com.example.C", "thing-1", { tags: { site: "f1" } });
+  const METRIC_TOPIC = "ecv1/thing-1/C/main/metric/requests";
+
+  it("wraps EMF in a Metric/1.0 envelope and publishes the UNS topic through the reserved seam", async () => {
     const svc = new RecordingMessagingService();
-    const t = new MessagingMetricTarget(svc, "metric/topic", false, "ns", false, "thing-1", { site: "f1" });
+    const t = new MessagingMetricTarget(svc, config, false, "ns", false);
     await t.emit(metric(), { count: 3 });
     expect(svc.published).toHaveLength(1);
     const rec = svc.published[0];
-    expect(rec.kind).toBe("publish");
-    expect(rec.topic).toBe("metric/topic");
+    expect(rec.kind).toBe("publishReserved");
+    expect(rec.topic).toBe(METRIC_TOPIC);
     expect(rec.message!.header.name).toBe("Metric");
     expect(rec.message!.header.version).toBe("1.0");
-    expect(rec.message!.tags.thing).toBe("thing-1");
-    expect(rec.message!.tags.site).toBe("f1");
+    expect(rec.message!.tags?.site).toBe("f1");
+    // The envelope carries the resolved component identity (no legacy tags.thing).
+    expect(rec.message!.getIdentity()?.device).toBe("thing-1");
+    expect(rec.message!.getIdentity()?.component).toBe("C");
+    expect("thing" in (rec.message!.tags ?? {})).toBe(false);
     const body = rec.message!.getBody() as Record<string, unknown>;
     expect(body.count).toBe(3);
   });
 
   it("routes to IoT Core with AtLeastOnce when iotCore is set", async () => {
     const svc = new RecordingMessagingService();
-    const t = new MessagingMetricTarget(svc, "iot/topic", true, "ns", false, "thing-1", {});
+    const t = new MessagingMetricTarget(svc, config, true, "ns", false);
     await t.emitNow(metric(), { count: 1 });
-    expect(svc.published[0].kind).toBe("publishToIotCore");
+    expect(svc.published[0].kind).toBe("publishReservedToIoTCore");
+    expect(svc.published[0].topic).toBe(METRIC_TOPIC);
     expect(svc.published[0].qos).toBe(Qos.AtLeastOnce);
+  });
+
+  it("sanitizes the metric name into the channel token", async () => {
+    const svc = new RecordingMessagingService();
+    const t = new MessagingMetricTarget(svc, config, false, "ns", false);
+    const weird = MetricBuilder.create("req/count+all")
+      .withThingName("thing-1")
+      .addMeasure("count", "Count", 60)
+      .build();
+    await t.emit(weird, { count: 1 });
+    expect(svc.published[0].topic).toBe("ecv1/thing-1/C/main/metric/req_count_all");
   });
 
   it("largeFleetWorkaround emits 2 variants (coreName ALL on the 2nd)", async () => {
     const svc = new RecordingMessagingService();
-    const t = new MessagingMetricTarget(svc, "topic", false, "ns", true, "thing-1", {});
+    const t = new MessagingMetricTarget(svc, config, false, "ns", true);
     await t.emit(metric(), { count: 1 });
     expect(svc.published).toHaveLength(2);
     const b0 = svc.published[0].message!.getBody() as Record<string, unknown>;

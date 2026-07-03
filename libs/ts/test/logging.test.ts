@@ -283,7 +283,12 @@ describe("stdout-JSON correlation fields (FR-LOG-3)", () => {
   });
 
   it("omits correlation fields that are absent or empty (no null/empty noise)", () => {
-    initLogging(Config.fromValue("c", "", { logging: { level: "INFO", ts_format: "json" } }), {
+    // An empty thing name is no longer constructible through Config.fromValue (UNS identity
+    // resolution fails fast on it), so blank the snapshot's thingName after construction to
+    // exercise the logger's empty-identity omission branch.
+    const cfg = Config.fromValue("c", "t", { logging: { level: "INFO", ts_format: "json" } });
+    (cfg as unknown as { thingName: string }).thingName = "";
+    initLogging(cfg, {
       env: { [ENV_K8S_POD_NAME]: "only-pod", [ENV_K8S_POD_NAMESPACE]: "" /* empty == absent */ },
     });
     const obj = jsonLines(captureStdio(() => logger.info("c")).out)[0];

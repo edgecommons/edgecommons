@@ -18,7 +18,8 @@ same CLI contract, the same subsystem boundaries, the same on-wire message envel
 | Config | `src/config/` | Typed model + defaulting accessors, template substitution (sanitized), embedded JSON schema + `ajv` validation, all 5 sources, hot reload. |
 | Messaging | `src/messaging/` | Transport/service split: `MessagingProvider` (`StandaloneMqttProvider` dual-broker, `IpcMessagingProvider` Greengrass IPC) + `DefaultMessagingService` (envelope, dispatch, request/reply). |
 | Metrics | `src/metrics/` | `Metric`/`MetricBuilder`, EMF (ms timestamps), targets (log w/ rotation, messaging, cloudwatchcomponent, cloudwatch via optional `@aws-sdk/client-cloudwatch`, **prometheus** pull-based registry served over HTTP via optional `prom-client` — default on KUBERNETES), `MetricEmitter`. |
-| Heartbeat | `src/heartbeat.ts` | Periodic cpu/mem/disk/threads/files/fds to metric/messaging targets; reacts to config reload. |
+| Heartbeat | `src/heartbeat.ts` | The UNS `state` keepalive (`ecv1/{device}/{component}/main/state`, `{"status":"RUNNING","uptimeSecs":n}`, best-effort `STOPPED` on shutdown) + the enabled cpu/mem/disk/… measures emitted as the `sys` metric through the metric subsystem; on/5 s/local by default; reacts to config reload. |
+| UNS | `src/uns.ts` | `gg.uns()` / `gg.instance(id).uns()` — the unified-namespace topic builder + validator (`ecv1[/{site}]/{device}/{component}/{instance}/{class}[/{channel…}]`), `UnsScope` filters, machine-readable `UnsValidationError` codes, and the reserved-class predicate behind the publish guard (`state|metric|cfg|log` are library-owned). |
 | Health | `src/health.ts` | Dependency-free HTTP `GET /livez` (process alive; never checks the broker), `/readyz` + `/startupz` (200 only when messaging-connected && `setReady` && not shutting down); on by default on KUBERNETES, opt-in via `health.enabled` elsewhere. |
 | Logging | `src/logging.ts` | Leveled logger with file rotation; reconfigures on reload; per-logger levels via `getLogger(name)`. |
 | Message | `src/message.ts` | The cross-language `Message` envelope + `MessageBuilder`. |
@@ -100,5 +101,7 @@ KUBERNETES | auto`, default `auto`, which auto-detects from the environment) and
 
 Maintained intentionally with the Java/Python/Rust libraries: identical config
 schema, CLI flags, subsystem boundaries, message envelope (snake_case header keys,
-`thing` tag, `{raw}` for non-envelope payloads), EMF layout, and heartbeat stats
-shape. Change public behavior here only alongside the matching change in the mirrors.
+the top-level UNS `identity` element, `{raw}` for non-envelope payloads), EMF
+layout, heartbeat stats shape, and byte-identical UNS topics (pinned by the shared
+`uns-test-vectors/` conformance suite). Change public behavior here only alongside
+the matching change in the mirrors.

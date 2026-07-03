@@ -1,70 +1,76 @@
 /**
  * Metrics target — messaging (TypeScript).
  *
- * Publishes EMF metrics over the messaging service (local broker or AWS IoT Core).
- * Mirrors the Rust `metrics::target::messaging::MessagingMetricTarget` (and the
- * Java/Python `messaging` target):
+ * Publishes each metric to the library-owned UNS metric topic
+ * `ecv1[/{site}]/{device}/{component}/main/metric/{metricName}` (UNS-CANONICAL-DESIGN §4.3;
+ * the metric name sanitized as a channel token) through the privileged reserved-publish seam —
+ * the `metric` class is reserved (§4.1). Mirrors the Java `metrics.targets.Messaging`:
  *  - `emit` and `emitNow` both publish immediately (no batching).
  *  - For each EMF variant the object is wrapped in a `Message` envelope
- *    (`name = "Metric"`, `version = "1.0"`, body = EMF, tags = thing name + the
- *    configured tags) and sent via `publish` (local) or `publishToIotCore`
- *    (`Qos.AtLeastOnce`) when `iotCore` is set.
+ *    (`name = "Metric"`, `version = "1.0"`, body = EMF, identity + tags from the config-bound
+ *    builder) and sent to the local transport or AWS IoT Core per
+ *    `metricEmission.targetConfig.destination` (D-U9; the legacy `targetConfig.topic` override
+ *    is removed).
  *  - `largeFleetWorkaround` emits both the normal and the `coreName="ALL"` record.
  */
 import type { MetricTarget } from "../types";
 import type { MeasureValues } from "../types";
 import type { Metric } from "../metric";
 import { buildEmfVariants } from "../emf";
+import type { Config } from "../../config/model";
+import { sanitize } from "../../config/template";
 import type { IMessagingService } from "../../messaging/types";
-import { Qos } from "../../messaging/types";
+import { publishReservedVia } from "../../messaging/service";
 import { MessageBuilder } from "../../message";
+import { Uns, UnsClass } from "../../uns";
 
-/** Publishes EMF metrics over messaging, wrapped in a `Metric` message envelope. */
+/** Publishes EMF metrics to UNS metric topics, wrapped in a `Metric` message envelope. */
 export class MessagingMetricTarget implements MetricTarget {
   private readonly messaging: IMessagingService;
-  private readonly topic: string;
+  private readonly config: Config;
   private readonly iotCore: boolean;
   private readonly namespace: string;
   private readonly largeFleetWorkaround: boolean;
-  private readonly thingName: string;
-  private readonly tags: Record<string, unknown>;
+  private readonly uns: Uns;
 
   /**
-   * Create the target. `iotCore` selects AWS IoT Core over the local broker.
-   * `thingName` and `tags` populate the message envelope (mirroring `withConfig`).
+   * Create the target. `iotCore` selects AWS IoT Core over the local broker for the metric
+   * envelopes; the topic is minted per metric from the config's resolved UNS identity.
    */
   constructor(
     messaging: IMessagingService,
-    topic: string,
+    config: Config,
     iotCore: boolean,
     namespace: string,
     largeFleetWorkaround: boolean,
-    thingName: string,
-    tags: Record<string, unknown>,
   ) {
     this.messaging = messaging;
-    this.topic = topic;
+    this.config = config;
     this.iotCore = iotCore;
     this.namespace = namespace;
     this.largeFleetWorkaround = largeFleetWorkaround;
-    this.thingName = thingName;
-    this.tags = tags;
+    this.uns = new Uns(config.componentIdentity, config.topicIncludeRoot);
   }
 
-  /** Wrap each EMF variant in a `Metric` envelope and publish it. */
+  /**
+   * The metric's UNS topic — `ecv1[/{site}]/{device}/{component}/main/metric/{name}` with the
+   * metric name passed through the template sanitizer (the §2.2 channel-token rule).
+   */
+  private metricTopic(metric: Metric): string {
+    return this.uns.topic(UnsClass.Metric, sanitize(metric.getName()));
+  }
+
+  /** Wrap each EMF variant in a `Metric` envelope and publish it through the reserved seam. */
   private async publish(metric: Metric, values: MeasureValues): Promise<void> {
+    const topic = this.metricTopic(metric);
     const variants = buildEmfVariants(this.namespace, metric, values, this.largeFleetWorkaround);
     for (const emf of variants) {
-      let builder = MessageBuilder.create("Metric", "1.0").withThingName(this.thingName).withPayload(emf);
-      for (const [key, value] of Object.entries(this.tags)) {
-        builder = builder.withTag(key, value);
-      }
-      const message = builder.build();
-      if (this.iotCore) {
-        await this.messaging.publishToIotCore(this.topic, message, Qos.AtLeastOnce);
-      } else {
-        await this.messaging.publish(this.topic, message);
-      }
+      const message = MessageBuilder.create("Metric", "1.0")
+        .withPayload(emf)
+        .withConfig(this.config)
+        .build();
+      // The metric class is reserved (§4.1) - publish through the privileged seam (§4.2).
+      await publishReservedVia(this.messaging, topic, message, this.iotCore ? "iotcore" : "local");
     }
   }
 

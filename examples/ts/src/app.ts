@@ -296,11 +296,11 @@ export class SkeletonApp {
     logger.info(`subscribed for requests on ${this.requestTopic}`);
 
     // 2. Subscribe to commands from AWS IoT Core (the IoT Core bridge); ack each one
-    //    back to IoT Core (exercises subscribeToIotCore + publishToIotCore). Non-fatal:
+    //    back to IoT Core (exercises subscribeToIoTCore + publishToIoTCore). Non-fatal:
     //    builds/modes without an IoT Core transport (e.g. local-only STANDALONE) skip the
     //    bridge instead of failing the whole component.
     try {
-      await messaging.subscribeToIotCore(
+      await messaging.subscribeToIoTCore(
         this.cmdTopic,
         async (topic, msg) => {
           logger.info(`received IoT Core command on ${topic}`);
@@ -309,7 +309,7 @@ export class SkeletonApp {
             .withPayload({ ack: msg.getBody() })
             .build();
           try {
-            await messaging.publishToIotCore(telemetryTopic, ack, Qos.AtLeastOnce);
+            await messaging.publishToIoTCore(telemetryTopic, ack, Qos.AtLeastOnce);
           } catch (e) {
             logger.warn(`failed to ack IoT Core command: ${String(e)}`);
           }
@@ -352,9 +352,9 @@ export class SkeletonApp {
       .build();
     try {
       await messaging.publish(dataTopic, msg);
-      // Also mirror to AWS IoT Core (exercises the IoT Core bridge / publishToIotCore).
+      // Also mirror to AWS IoT Core (exercises the IoT Core bridge / publishToIoTCore).
       try {
-        await messaging.publishToIotCore(telemetryTopic, msg, Qos.AtLeastOnce);
+        await messaging.publishToIoTCore(telemetryTopic, msg, Qos.AtLeastOnce);
       } catch (e) {
         logger.warn(`failed to publish telemetry to IoT Core: ${String(e)}`);
       }
@@ -387,7 +387,7 @@ export class SkeletonApp {
     if (!messaging) return;
     try {
       if (this.requestTopic) await messaging.unsubscribe(this.requestTopic);
-      if (this.cmdTopic && this.cmdSubscribed) await messaging.unsubscribeFromIotCore(this.cmdTopic);
+      if (this.cmdTopic && this.cmdSubscribed) await messaging.unsubscribeFromIoTCore(this.cmdTopic);
     } catch (e) {
       logger.warn(`error while unsubscribing: ${String(e)}`);
     }

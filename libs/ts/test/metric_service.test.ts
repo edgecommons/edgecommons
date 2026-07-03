@@ -155,19 +155,20 @@ describe("MetricEmitter lifecycle", () => {
     e.defineMetric(MetricBuilder.create("requests").withConfig(cfg({})).addMeasure("count", "Count", 60).build());
 
     // ...rebuild to a messaging target on config change.
-    const changed = cfg({ target: "messaging", targetConfig: { topic: "m/t" } });
+    const changed = cfg({ target: "messaging" });
     expect(await e.onConfigurationChange(changed)).toBe(true);
     expect(targetOf(e)).toBeInstanceOf(MessagingMetricTarget);
 
     await e.emitMetricNow("requests", { count: 9 });
     expect(svc.published).toHaveLength(1);
-    expect(svc.published[0].topic).toBe("m/t");
+    // The messaging target now mints the UNS metric topic per metric (§4.3).
+    expect(svc.published[0].topic).toBe("ecv1/thing-1/C/main/metric/requests");
   });
 
   it("onConfigurationChange keeps the previous target on rebuild error", async () => {
     // Start with a valid messaging target.
     const svc = new RecordingMessagingService();
-    const e = await MetricEmitter.create(cfg({ target: "messaging", targetConfig: { topic: "m/t" } }), svc);
+    const e = await MetricEmitter.create(cfg({ target: "messaging" }), svc);
     const prev = targetOf(e);
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     // No messaging service is retained? It is. Force an error: messaging target on an

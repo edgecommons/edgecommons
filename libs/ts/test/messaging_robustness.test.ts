@@ -112,7 +112,7 @@ describe("Fix 2: a throwing/rejecting subscription callback is contained", () =>
     const p = ipcProvider(client);
     const got: string[] = [];
 
-    await p.subscribeRaw("iot/#", Destination.IotCore, Qos.AtLeastOnce, (_t, payload) => {
+    await p.subscribeRaw("iot/#", Destination.IoTCore, Qos.AtLeastOnce, (_t, payload) => {
       if (payload.toString("utf8") === "boom") throw new Error("iot callback blew up");
       got.push(payload.toString("utf8"));
     });

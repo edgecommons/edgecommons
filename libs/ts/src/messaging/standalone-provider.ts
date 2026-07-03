@@ -12,7 +12,7 @@ import mqtt, { MqttClient } from "mqtt";
 
 import { GgError } from "../errors";
 import { logger } from "../logging";
-import { BrokerConfig, MessagingConfig, resolvedHost } from "./config";
+import { BrokerConfig, LwtConfig, MessagingConfig, lwtPayloadBytes, resolvedHost } from "./config";
 import { Destination, MessagingProvider, Qos, RawSubscription } from "./types";
 
 interface Sub {
@@ -82,13 +82,16 @@ export class StandaloneMqttProvider implements MessagingProvider {
     // a CA stays plaintext (the other three ignore it), so the four languages agree.
     const lc = config.local.credentials;
     const localTls = !!lc?.caPath;
-    const local = new BrokerChannel(await connectBroker(config.local, localTls));
+    // The MQTT LWT (UNS-CANONICAL-DESIGN §6) applies to the LOCAL-broker connection only; the
+    // will is registered at CONNECT (and re-registered on reconnect — mqtt.js reuses the same
+    // connect options), never routed through publish(), always retain=false.
+    const local = new BrokerChannel(await connectBroker(config.local, localTls, config.lwt));
     const iot = config.iotCore ? new BrokerChannel(await connectBroker(config.iotCore, true)) : undefined;
     return new StandaloneMqttProvider(local, iot);
   }
 
   private channel(dest: Destination): BrokerChannel {
-    if (dest === Destination.IotCore) {
+    if (dest === Destination.IoTCore) {
       if (!this.iot) throw GgError.messaging("no IoT Core broker configured (messaging.iotCore)");
       return this.iot;
     }
@@ -151,7 +154,7 @@ export class StandaloneMqttProvider implements MessagingProvider {
 }
 
 /** Connect one broker, resolving on CONNACK and rejecting on the first error. */
-function connectBroker(broker: BrokerConfig, tls: boolean): Promise<MqttClient> {
+function connectBroker(broker: BrokerConfig, tls: boolean, lwt?: LwtConfig): Promise<MqttClient> {
   const host = resolvedHost(broker);
   const url = `${tls ? "mqtts" : "mqtt"}://${host}:${broker.port}`;
   const options: mqtt.IClientOptions = {
@@ -161,6 +164,18 @@ function connectBroker(broker: BrokerConfig, tls: boolean): Promise<MqttClient> 
     reconnectPeriod: 5_000,
     connectTimeout: 15_000,
   };
+  if (lwt !== undefined) {
+    // §6: retain=false is a hard invariant (no config knob exists — D9).
+    options.will = {
+      topic: lwt.topic,
+      payload: lwtPayloadBytes(lwt.payload),
+      qos: lwt.qos,
+      retain: false,
+    };
+    logger.info(
+      `ggcommons: registered MQTT LWT on the local connection: topic='${lwt.topic}', qos=${lwt.qos}, retain=false`,
+    );
+  }
   const creds = broker.credentials;
   if (creds?.username) options.username = creds.username;
   if (creds?.password) options.password = creds.password;

@@ -4,7 +4,9 @@
  *
  * Mirrors the Rust `MessagingProvider` (raw bytes transport) / `MessagingService`
  * (message-level publish/subscribe + request/reply) split, and the Java/Python
- * `IMessagingService` contract — explicit local / IoT Core method pairs.
+ * `IMessagingService` contract — explicit local / IoT Core method pairs (Java/TS
+ * casing is `IoTCore` — D-U7; the enum's string value `"iotcore"` and all config
+ * tokens are unchanged).
  */
 import type { Message } from "../message";
 
@@ -13,7 +15,7 @@ export enum Destination {
   /** Local broker (STANDALONE MQTT) or Greengrass IPC local pub/sub. */
   Local = "local",
   /** AWS IoT Core. */
-  IotCore = "iotcore",
+  IoTCore = "iotcore",
 }
 
 /** MQTT quality of service. */
@@ -79,15 +81,57 @@ export class ReplyFuture implements PromiseLike<Message> {
 }
 
 /**
+ * The `request()` deadline failure (UNS-CANONICAL-DESIGN §5 / D-U23): the framework-owned
+ * timer fired before a reply arrived — the ephemeral reply subscription has been cleaned up
+ * and the {@link ReplyFuture} rejects with this error. Java signals
+ * `java.util.concurrent.TimeoutException`; Python raises `RequestTimeoutError`.
+ */
+export class RequestTimeoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RequestTimeoutError";
+  }
+}
+
+/**
+ * Thrown by the reserved-class publish guard (UNS-CANONICAL-DESIGN §4.1, D-U4/D-U8/D-U24)
+ * when a client-chosen topic targets a library-owned UNS class (`state | metric | cfg | log`).
+ * Components must not publish to reserved classes directly — the library publishers
+ * (heartbeat/state keepalive, the metric subsystem via `gg.metrics()`, the effective-config
+ * publisher) own those topics and reach them through the privileged internal seam.
+ *
+ * The guard is misuse prevention, not a security boundary — per-device broker ACLs are the
+ * durable enforcement (DESIGN-uns §7.5).
+ */
+export class ReservedTopicError extends Error {
+  /** The rejected topic. */
+  readonly topic: string;
+  /** The reserved UNS class token (`state | metric | cfg | log`) that triggered the rejection. */
+  readonly classToken: string;
+
+  constructor(topic: string, classToken: string) {
+    super(
+      `topic '${topic}' targets the reserved UNS class '${classToken}'` +
+        " (state|metric|cfg|log are library-owned): use the library publishers instead" +
+        " (heartbeat/state keepalive, the metric subsystem via gg.metrics(), the" +
+        " effective-config publisher)",
+    );
+    this.name = "ReservedTopicError";
+    this.topic = topic;
+    this.classToken = classToken;
+  }
+}
+
+/**
  * Transport-agnostic messaging operations over {@link Message}s, with explicit
  * local / IoT Core method pairs (mirrors the Java/Python `IMessagingService` and
  * Rust `MessagingService`).
  */
 export interface IMessagingService {
   publish(topic: string, msg: Message): Promise<void>;
-  publishToIotCore(topic: string, msg: Message, qos?: Qos): Promise<void>;
+  publishToIoTCore(topic: string, msg: Message, qos?: Qos): Promise<void>;
   publishRaw(topic: string, payload: unknown): Promise<void>;
-  publishToIotCoreRaw(topic: string, payload: unknown, qos?: Qos): Promise<void>;
+  publishToIoTCoreRaw(topic: string, payload: unknown, qos?: Qos): Promise<void>;
 
   /**
    * Register a callback for `filter` on the local broker. `maxMessages` bounds the
@@ -95,7 +139,7 @@ export interface IMessagingService {
    * (`1` = serial, ordered).
    */
   subscribe(filter: string, handler: MessageHandler, maxMessages?: number, maxConcurrency?: number): Promise<void>;
-  subscribeToIotCore(
+  subscribeToIoTCore(
     filter: string,
     handler: MessageHandler,
     qos?: Qos,
@@ -104,17 +148,23 @@ export interface IMessagingService {
   ): Promise<void>;
 
   unsubscribe(filter: string): Promise<void>;
-  unsubscribeFromIotCore(filter: string): Promise<void>;
+  unsubscribeFromIoTCore(filter: string): Promise<void>;
 
-  /** Send a request on the local broker; await/timeout the returned {@link ReplyFuture}. */
+  /**
+   * Send a request on the local broker; await/timeout the returned {@link ReplyFuture}.
+   * `timeoutMs` semantics (§5 / D-U5): `undefined` uses the framework-owned default deadline
+   * (`messaging.requestTimeoutSeconds`, default 30 s); an explicit value wins; explicit `0`
+   * disables the deadline for this call. On expiry the reply subscription is cleaned up and
+   * the future rejects with {@link RequestTimeoutError} — even if the caller never awaits it.
+   */
   request(topic: string, msg: Message, timeoutMs?: number): ReplyFuture;
-  requestFromIotCore(topic: string, msg: Message, timeoutMs?: number): ReplyFuture;
+  requestFromIoTCore(topic: string, msg: Message, timeoutMs?: number): ReplyFuture;
 
   reply(request: Message, reply: Message): Promise<void>;
-  replyToIotCore(request: Message, reply: Message): Promise<void>;
+  replyToIoTCore(request: Message, reply: Message): Promise<void>;
 
   cancelRequest(reply: ReplyFuture): void;
-  cancelRequestFromIotCore(reply: ReplyFuture): void;
+  cancelRequestFromIoTCore(reply: ReplyFuture): void;
 
   /**
    * Whether the underlying messaging transport is currently connected. The readiness signal behind the

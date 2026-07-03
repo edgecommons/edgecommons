@@ -7,15 +7,14 @@
  */
 import type { Config } from "./model";
 
-export { Config } from "./model";
+export { Config, DEFAULT_REQUEST_TIMEOUT_SECONDS } from "./model";
 export type {
   RawConfig,
   Measures,
-  HeartbeatTarget,
   ComponentConfig,
 } from "./model";
 export { LoggingConfig, FileLoggingConfig, HeartbeatConfig, MetricConfig, HealthConfig } from "./model";
-export { resolve } from "./template";
+export { resolve, sanitize } from "./template";
 export { validate } from "./validation";
 export type { ConfigSource } from "./source";
 export { buildConfigSource } from "./source";

@@ -15,7 +15,8 @@ import { DefaultMessagingService } from "./messaging/service";
 import { IpcMessagingProvider } from "./messaging/ipc-provider";
 
 const RESULT_PATH = process.env.GGC_TS_VERIFY_OUT ?? "/tmp/ts_ipc_verify_result.json";
-const HEARTBEAT_FILTER = "ggcommons/+/+/heartbeat";
+/** The UNS state keepalive filter (the heartbeat's topic, UNS-CANONICAL-DESIGN §4.3). */
+const HEARTBEAT_FILTER = "ecv1/+/+/+/state";
 const HEARTBEAT_WAIT_MS = 14000;
 
 function rid(): string {
@@ -37,15 +38,14 @@ async function verifyHeartbeat(svc: DefaultMessagingService): Promise<Record<str
     svc
       .subscribe(HEARTBEAT_FILTER, (topic, m) => {
         if (m.isRaw()) return;
-        const tags = m.tags as Record<string, unknown>;
         clearTimeout(timer);
         const body = m.getBody();
         finish({
-          ok: m.header.name === "heartbeat",
+          ok: m.header.name === "state",
           topic,
           header_name: m.header.name,
-          thing: tags.thing ?? null,
-          tag_keys: Object.keys(tags),
+          device: m.getIdentity()?.device ?? null,
+          identity_path: m.getIdentity()?.path ?? null,
           body_keys: body && typeof body === "object" ? Object.keys(body as object) : [],
         });
       })

@@ -15,7 +15,24 @@
  */
 
 // Lifecycle
-export { GGCommons, GGCommonsBuilder } from "./ggcommons";
+export { GGCommons, GGCommonsBuilder, GgInstance } from "./ggcommons";
+
+// Unified namespace (UNS): topic builder/validator + reserved-class predicate
+export {
+  Uns,
+  UnsClass,
+  UnsScope,
+  UnsValidationError,
+  UNS_ROOT,
+  MAX_TOPIC_SLASHES,
+  MAX_TOPIC_UTF8_BYTES,
+  RESERVED_CLASSES,
+  isLeafClass,
+  unsClassFromToken,
+  checkToken,
+  reservedClassOf,
+} from "./uns";
+export type { UnsValidationCode } from "./uns";
 
 // Errors
 export { GgError } from "./errors";
@@ -48,26 +65,31 @@ export {
   HeartbeatConfig,
   MetricConfig,
   HealthConfig,
+  DEFAULT_REQUEST_TIMEOUT_SECONDS,
   resolve,
+  sanitize,
   validate,
   buildConfigSource,
 } from "./config";
 export type {
   RawConfig,
   Measures,
-  HeartbeatTarget,
   ComponentConfig,
   ConfigurationChangeListener,
   ConfigSource,
 } from "./config";
+export { EffectiveConfigPublisher, redact } from "./config/effective_config";
 
 // Messaging
 export {
   Message,
   MessageBuilder,
+  MessageIdentity,
   Destination,
   Qos,
   ReplyFuture,
+  RequestTimeoutError,
+  ReservedTopicError,
   REPLY_TOPIC_PREFIX,
   DefaultMessagingService,
   StandaloneMqttProvider,
@@ -79,6 +101,7 @@ export {
 export type {
   MessageHeader,
   MessageTags,
+  HierLevel,
   MessageHandler,
   MessagingProvider,
   IMessagingService,
@@ -87,6 +110,7 @@ export type {
   MessagingConfig,
   BrokerConfig,
   Credentials,
+  LwtConfig,
 } from "./messaging";
 
 // Metrics

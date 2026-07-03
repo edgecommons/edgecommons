@@ -99,7 +99,7 @@ export class IpcMessagingProvider implements MessagingProvider {
   }
 
   async publishBytes(topic: string, payload: Buffer, dest: Destination, qos: Qos): Promise<void> {
-    if (dest === Destination.IotCore) {
+    if (dest === Destination.IoTCore) {
       await this.client.publishToIoTCore({ topicName: topic, qos: ipcQos(qos), payload });
     } else {
       await this.client.publishToTopic({ topic, publishMessage: { binaryMessage: { message: payload } } });
@@ -112,8 +112,8 @@ export class IpcMessagingProvider implements MessagingProvider {
     qos: Qos,
     onMessage: (topic: string, payload: Buffer) => void,
   ): Promise<RawSubscription> {
-    if (dest === Destination.IotCore) {
-      return this.subscribeIotCore(filter, qos, onMessage);
+    if (dest === Destination.IoTCore) {
+      return this.subscribeIoTCoreRaw(filter, qos, onMessage);
     }
     return this.subscribeLocal(filter, onMessage);
   }
@@ -138,7 +138,7 @@ export class IpcMessagingProvider implements MessagingProvider {
     return this.track(op);
   }
 
-  private async subscribeIotCore(
+  private async subscribeIoTCoreRaw(
     filter: string,
     qos: Qos,
     onMessage: (topic: string, payload: Buffer) => void,

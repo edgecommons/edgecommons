@@ -135,13 +135,44 @@ describe("EnvConfigSource", () => {
 });
 
 describe("ConfigComponentSource", () => {
-  it("load() does request/reply on the resolved topic and returns the body", async () => {
+  it("load() requests the UNS Flow-A rendezvous, self-identifies in the body, and returns the reply body", async () => {
     const svc = new RecordingMessagingService();
     svc.replyBody = { from: "config-component" };
+    let requestTopic: string | undefined;
+    let requestBody: unknown;
+    const origReq = svc.request.bind(svc);
+    svc.request = ((topic, msg, timeoutMs) => {
+      requestTopic = topic;
+      requestBody = msg.getBody();
+      // The bootstrap request carries NO identity (pre-config, §1.5).
+      expect(msg.getIdentity()).toBeUndefined();
+      return origReq(topic, msg, timeoutMs);
+    }) as typeof svc.request;
     const src = new ConfigComponentSource(svc, "thing-A", "com.example.C");
     expect(src.sourceName()).toBe("CONFIG_COMPONENT");
     const loaded = await src.load();
     expect(loaded).toEqual({ from: "config-component" });
+    // D-U19 Flow A: server rendezvous under the logical component name `config`; the requester
+    // self-identifies with the sanitized SHORT component name in the body.
+    expect(requestTopic).toBe("ecv1/thing-A/config/main/cmd/get-configuration");
+    expect(requestBody).toEqual({ component: "C" });
+  });
+
+  it("sanitizes the thing/component tokens into the minted topics", async () => {
+    const svc = new RecordingMessagingService();
+    svc.replyBody = {};
+    let requestTopic: string | undefined;
+    const origReq = svc.request.bind(svc);
+    svc.request = ((topic, msg, timeoutMs) => {
+      requestTopic = topic;
+      return origReq(topic, msg, timeoutMs);
+    }) as typeof svc.request;
+    const src = new ConfigComponentSource(svc, "thing/A+B", "com.example.My#Comp");
+    await src.load();
+    expect(requestTopic).toBe("ecv1/thing_A_B/config/main/cmd/get-configuration");
+    const watch = await src.watch(() => undefined);
+    expect(svc.subscriptions.has("ecv1/thing_A_B/My_Comp/main/cmd/set-config")).toBe(true);
+    await watch!.close();
   });
 
   it("load() retries 3 times then throws GgError(Config) on no reply", async () => {
@@ -160,20 +191,20 @@ describe("ConfigComponentSource", () => {
     expect(warn).toHaveBeenCalled();
   });
 
-  it("watch() subscribes to the updated topic and forwards bodies", async () => {
+  it("watch() subscribes to the component's set-config inbox and forwards bodies", async () => {
     const svc = new RecordingMessagingService();
     const src = new ConfigComponentSource(svc, "thing-A", "com.example.C");
     const updates: unknown[] = [];
     const watch = await src.watch((doc) => updates.push(doc));
-    const updatedTopic = "ggcommons/thing-A/config/com.example.C/updated";
-    expect(svc.subscriptions.has(updatedTopic)).toBe(true);
+    const setConfigTopic = "ecv1/thing-A/C/main/cmd/set-config";
+    expect(svc.subscriptions.has(setConfigTopic)).toBe(true);
 
-    svc.emit(updatedTopic, { reloaded: true });
+    svc.emit(setConfigTopic, { reloaded: true });
     await tick(0);
     expect(updates).toEqual([{ reloaded: true }]);
 
     await watch!.close();
-    expect(svc.unsubscribed).toContain(updatedTopic);
+    expect(svc.unsubscribed).toContain(setConfigTopic);
   });
 });
 

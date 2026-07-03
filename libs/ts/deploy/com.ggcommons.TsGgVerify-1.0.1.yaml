@@ -14,14 +14,12 @@ ComponentConfiguration:
       logging:
         level: "INFO"
       heartbeat:
+        enabled: true
         intervalSecs: 3
         measures:
           cpu: true
           memory: true
-        targets:
-          - type: "messaging"
-            config:
-              destination: "ipc"
+        destination: "local"
       metricEmission:
         target: "log"
         namespace: "ggcommons"
