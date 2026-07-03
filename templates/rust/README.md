@@ -37,6 +37,19 @@ cargo run -- \
 - `--transport <TRANSPORT> [path]` — `IPC | MQTT [messaging_config.json]` (default: from the platform; IPC only valid on GREENGRASS)
 - `-t/--thing <name>` — IoT Thing name
 
+## UNS identity & topics
+
+Topics live in the unified namespace
+(`ecv1/{device}/{component}/{instance}/{class}/{channel…}`) and are minted via
+`gg.uns()` (or `gg.instance(id)?.uns()`) — never hand-written. The component's
+identity is config-driven: the optional top-level `hierarchy`
+(`{"levels": ["site", "device"]}`) + `identity` (`{"site": "factory-1"}`) blocks in
+`test-configs/config.json`; the last hierarchy level's value is always the resolved
+thing name (`-t`). Messages built `.from_config(..)` carry that identity in their
+envelope. The heartbeat is an automatic UNS `state` keepalive (on, every 5 s, local)
+tuned by the optional `heartbeat` config block; the reserved classes
+(`state`/`metric`/`cfg`/`log`) are library-owned and rejected on direct publish.
+
 ## Deploy to Greengrass
 
 The on-device build uses the GDK **custom** build system (`gdk-config.json` →

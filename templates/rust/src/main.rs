@@ -30,7 +30,7 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!(
         component = gg.component_name(),
-        thing = %gg.config().thing_name,
+        identity = %gg.config().identity().path(),
         "<<COMPONENTNAME>> starting"
     );
 

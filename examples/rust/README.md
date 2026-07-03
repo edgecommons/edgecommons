@@ -9,10 +9,23 @@ only business logic.
 
 ## What it does
 
-- **Request/reply** — subscribes to `<thing>/skeleton/request` and replies to each request.
-- **Periodic publish** — publishes `<thing>/skeleton/data` every
-  `component.global.publish_interval` seconds, emitting a `messages_published` metric per send.
-- **Heartbeat** — periodic CPU/memory system metrics (configured in `recipe.yaml` / `config.json`).
+All topics are minted through the **unified namespace** (UNS) builder — `gg.uns()`,
+`ecv1/{device}/{component}/{instance}/{class}/{channel…}` — bound to the component's
+config-driven identity (optional top-level `hierarchy` + `identity` blocks; the last
+hierarchy level's value is always the resolved thing name). Topics are never
+hand-written.
+
+- **Request/reply** — subscribes to its command inbox
+  `ecv1/<thing>/RustComponentSkeleton/main/cmd/request` and replies to each request;
+  a periodic self-request demonstrates the framework request deadline
+  (`GgError::RequestTimeout`, `messaging.requestTimeoutSeconds`).
+- **Periodic publish** — publishes `ecv1/<thing>/RustComponentSkeleton/main/data/sample`
+  every `component.global.publish_interval` seconds, emitting a `messages_published`
+  metric per send (and mirrors it to IoT Core on `…/data/telemetry`).
+- **Heartbeat** — automatic UNS `state` keepalive on
+  `ecv1/<thing>/RustComponentSkeleton/main/state` (on by default, every 5 s, local);
+  the enabled CPU/memory measures emit as the metric `sys` (configured by the
+  optional `heartbeat` block in `recipe.yaml` / `config.json`).
 - **Graceful shutdown** — runs until Ctrl-C / SIGTERM, unsubscribes, and drops the
   runtime cleanly (RAII).
 
@@ -31,9 +44,11 @@ cargo run -- \
   -t my-thing
 ```
 
-Subscribe to `my-thing/skeleton/data` in an MQTT client to see published messages,
-and publish to `my-thing/skeleton/request` (with a `replyTo` header) to exercise
-request/reply.
+Subscribe to `ecv1/my-thing/RustComponentSkeleton/main/data/sample` (or `ecv1/#`) in
+an MQTT client to see published messages, and publish to
+`ecv1/my-thing/RustComponentSkeleton/main/cmd/request` (with a `reply_to` header) to
+exercise request/reply. The `state` keepalive appears on
+`ecv1/my-thing/RustComponentSkeleton/main/state`.
 
 ## CLI contract
 

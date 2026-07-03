@@ -19,6 +19,13 @@ ComponentConfiguration:
         level: "INFO"
         # Per-language log format (token template): {timestamp} {level} {target} {message}.
         rust_format: "{timestamp} [{level}] {target} - {message}"
+      # UNS identity (optional): the topic hierarchy defaults to a single "device"
+      # level whose value is the resolved thing name, so topics mint as
+      # ecv1/{thing}/{component}/{instance}/{class}/... out of the box. To place the
+      # device in a deeper enterprise hierarchy, declare the levels and supply every
+      # value except the last (the device = the thing name), e.g.:
+      #   hierarchy: { levels: ["site", "device"] }
+      #   identity: { site: "dallas" }
       heartbeat:
         enabled: true
         intervalSecs: 5

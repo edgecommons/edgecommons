@@ -25,7 +25,7 @@ struct ConfigListener;
 #[async_trait::async_trait]
 impl ConfigurationChangeListener for ConfigListener {
     async fn on_configuration_change(&self, config: Arc<Config>) -> bool {
-        tracing::info!(thing = %config.thing_name, "configuration changed");
+        tracing::info!(identity = %config.identity().path(), "configuration changed");
         true
     }
 }
@@ -50,12 +50,29 @@ impl App {
     /// re-implementing `tokio::signal` here, so there is a single signal source. Dropping the
     /// `GgCommons` runtime after this returns releases all resources (RAII).
     pub async fn run(&self, gg: &GgCommons) -> anyhow::Result<()> {
-        tracing::info!(thing = %self.config.thing_name, "<<COMPONENTNAME>> running");
+        tracing::info!(identity = %self.config.identity().path(), "<<COMPONENTNAME>> running");
 
         // TODO: your business logic goes here. The wired services are available as:
         //   - self.messaging  — publish/subscribe + request/reply (Option; see above)
         //   - self.metrics    — self.metrics.define_metric(..) / emit_metric(..)
-        //   - self.config     — self.config.global() / self.config.thing_name
+        //   - self.config     — self.config.global() / self.config.identity()
+        //
+        // Publish on unified-namespace (UNS) topics minted via `gg.uns()` — never
+        // hand-write topics — and build messages `.from_config(..)` so each envelope
+        // carries the component identity (config `hierarchy` + `identity` blocks;
+        // the last hierarchy level's value is the resolved thing name). E.g.:
+        //   let topic = gg.uns().topic_with_channel(UnsClass::Data, "example")?;
+        //   let msg = MessageBuilder::new("Example", "1.0")
+        //       .from_config(&self.config)
+        //       .payload(serde_json::json!({ "value": 42 }))
+        //       .build();
+        //   if let Some(messaging) = &self.messaging { messaging.publish(&topic, &msg).await?; }
+        // For instance-scoped topics/messages use `gg.instance(id)?` instead. The
+        // heartbeat (a UNS `state` keepalive) is automatic — on, every 5 s, local —
+        // tuned by the optional `heartbeat` config block. The reserved UNS classes
+        // (`state`/`metric`/`cfg`/`log`) are library-owned: publishing to them
+        // directly is rejected with `GgError::ReservedTopic`.
+        //
         // Touch the handles so the starting template compiles without warnings.
         let _ = (&self.metrics, &self.messaging);
 

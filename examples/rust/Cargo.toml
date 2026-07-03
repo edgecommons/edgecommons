@@ -2,7 +2,8 @@
 name = "rust-component-skeleton"
 version = "1.0.0"
 edition = "2021"
-rust-version = "1.75"
+# Matches the ggcommons library's MSRV (edition-2024 crate).
+rust-version = "1.85"
 license = "Apache-2.0"
 description = "Greengrass component skeleton (Rust) — best-practices demo built on the ggcommons Rust library"
 publish = false

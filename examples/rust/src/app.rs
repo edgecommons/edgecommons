@@ -5,13 +5,25 @@
 //!
 //! ## Overview
 //! [`SkeletonApp`] wires the concerns that every real component needs:
-//! 1. **Request/reply** — subscribes to a request topic and replies to each request.
-//! 2. **Periodic publish** — publishes a data message on an interval read from
-//!    configuration (`component.global.publish_interval`), emitting a metric each time.
+//! 1. **Request/reply** — subscribes to its UNS command inbox (`…/cmd/request`) and
+//!    replies to each request; a periodic self-request demonstrates the framework's
+//!    request deadline ([`GgError::RequestTimeout`]).
+//! 2. **Periodic publish** — publishes a data message to its UNS `…/data/sample`
+//!    topic on an interval read from configuration
+//!    (`component.global.publish_interval`), emitting a metric each time.
 //! 3. **Dynamic config** — registers a [`ConfigurationChangeListener`] so the publish
 //!    interval updates live on a config hot-reload, without a restart.
 //! 4. **Graceful shutdown** — runs until Ctrl-C / SIGTERM, then unsubscribes and
 //!    returns so the [`ggcommons::GgCommons`] runtime can drop cleanly (RAII).
+//!
+//! Every topic is **minted through the unified-namespace builder** ([`GgCommons::uns`]
+//! — `ecv1/{device}/{component}/{instance}/{class}/{channel…}`), never hand-written.
+//! The component's identity comes from config: the optional top-level `hierarchy`
+//! (`{"levels": ["site", "device"]}`) + `identity` (`{"site": "factory-1"}`) blocks;
+//! the last hierarchy level's value is always the resolved thing name. Messages are
+//! built `.from_config(..)` so each envelope carries that identity. The heartbeat is
+//! automatic (a `state` keepalive — on, every 5 s, local) via the optional
+//! `heartbeat` config block.
 //!
 //! Messaging is available on both the HOST platform (MQTT) and the GREENGRASS platform
 //! (IPC, with the `greengrass` feature). If a build omits a messaging transport, the app
@@ -317,8 +329,6 @@ impl SkeletonApp {
     /// # Errors
     /// Propagates failures from subscribing, publishing, or signal handling.
     pub async fn run(&self, gg: &GgCommons) -> anyhow::Result<()> {
-        let thing = &self.config.thing_name;
-
         // Demonstrate encrypted-vault secret access once at startup (feature-gated, non-fatal).
         #[cfg(feature = "credentials")]
         self.demonstrate_credentials();
@@ -335,10 +345,19 @@ impl SkeletonApp {
             return Ok(());
         };
 
-        let request_topic = format!("{thing}/skeleton/request");
-        let data_topic = format!("{thing}/skeleton/data");
-        let cmd_topic = format!("{thing}/skeleton/cmd");
-        let telemetry_topic = format!("{thing}/skeleton/telemetry");
+        // Mint every topic through the UNS builder bound to this component's resolved
+        // identity — never hand-write topics. `gg.uns()` is bound to instance "main";
+        // for instance-scoped topics/messages use `gg.instance(id)?` (its `.uns()` and
+        // `.message(..)` pre-bind that instance token).
+        let uns = gg.uns();
+        // Our command inbox for local request/reply.
+        let request_topic = uns.topic_with_channel(UnsClass::Cmd, "request")?;
+        // Periodic data samples (local pub/sub).
+        let data_topic = uns.topic_with_channel(UnsClass::Data, "sample")?;
+        // Command inbox served from AWS IoT Core (the IoT Core bridge).
+        let cmd_topic = uns.topic_with_channel(UnsClass::Cmd, "control")?;
+        // Telemetry mirrored up to AWS IoT Core.
+        let telemetry_topic = uns.topic_with_channel(UnsClass::Data, "telemetry")?;
 
         // 1. Respond to requests on the request topic (local pub/sub).
         let responder = messaging.clone();
@@ -421,8 +440,14 @@ impl SkeletonApp {
         Ok(())
     }
 
-    /// Periodically issue a request to our own request topic and log the reply,
+    /// Periodically issue a request to our own command inbox and log the reply,
     /// demonstrating request/reply correlation end-to-end over the transport.
+    ///
+    /// The request deadline is **framework-owned**: awaiting the [`ReplyFuture`]
+    /// yields [`GgError::RequestTimeout`] when no reply arrives within
+    /// `messaging.requestTimeoutSeconds` (default 30 s; per-call override via
+    /// `request_with_timeout`). No hand-rolled `tokio::time::timeout` needed — the
+    /// ephemeral reply subscription is already cleaned up when the error surfaces.
     ///
     /// # Errors
     /// Returns on a fatal send failure; per-attempt timeouts/errors are logged.
@@ -438,15 +463,15 @@ impl SkeletonApp {
                 .payload(json!({ "ping": true }))
                 .build();
             match messaging.request(&request_topic, request).await {
-                Ok(reply_future) => {
-                    match tokio::time::timeout(Duration::from_secs(10), reply_future).await {
-                        Ok(Ok(reply)) => {
-                            tracing::info!(reply = %reply.header.name, body = %reply.body, "request/reply round-trip OK")
-                        }
-                        Ok(Err(e)) => tracing::warn!(error = %e, "reply was an error"),
-                        Err(_) => tracing::warn!("request timed out"),
+                Ok(reply_future) => match reply_future.await {
+                    Ok(reply) => {
+                        tracing::info!(reply = %reply.header.name, body = %reply.body, "request/reply round-trip OK")
                     }
-                }
+                    Err(GgError::RequestTimeout { secs, .. }) => {
+                        tracing::warn!(deadline_secs = secs, "request timed out (framework deadline)")
+                    }
+                    Err(e) => tracing::warn!(error = %e, "reply was an error"),
+                },
                 Err(e) => tracing::warn!(error = %e, "request failed to send"),
             }
         }
@@ -490,13 +515,14 @@ impl SkeletonApp {
             // Also append the data point to the durable telemetry stream (feature-gated). The
             // library's export engine drains it to the configured sink (Kinesis via TES on-device)
             // independently — append returns once the record is committed to the local buffer, so a
-            // sink/network outage never blocks the publish loop. Partition by Thing for ordered
-            // per-device delivery downstream.
+            // sink/network outage never blocks the publish loop. Partition by the UNS device token
+            // for ordered per-device delivery downstream.
             #[cfg(feature = "streaming")]
             if let Some(stream) = &self.stream {
-                let payload = serde_json::to_vec(&json!({ "seq": seq, "thing": self.config.thing_name }))
+                let device = self.config.identity().device();
+                let payload = serde_json::to_vec(&json!({ "seq": seq, "device": device }))
                     .unwrap_or_default();
-                let record = StreamRecord::new(self.config.thing_name.clone(), now_ms(), payload);
+                let record = StreamRecord::new(device.to_string(), now_ms(), payload);
                 match stream.append(record) {
                     Ok(()) => tracing::debug!(seq, "appended record to telemetry stream"),
                     Err(e) => tracing::warn!(error = %e, "failed to append to telemetry stream"),
@@ -509,7 +535,8 @@ impl SkeletonApp {
             if let Some(stream) = &self.mem_stream {
                 let payload = serde_json::to_vec(&json!({ "seq": seq, "trace": "publish-loop" }))
                     .unwrap_or_default();
-                let record = StreamRecord::new(self.config.thing_name.clone(), now_ms(), payload);
+                let record =
+                    StreamRecord::new(self.config.identity().device().to_string(), now_ms(), payload);
                 if let Err(e) = stream.append(record) {
                     tracing::warn!(error = %e, "failed to append to in-memory debug-trace stream");
                 }
