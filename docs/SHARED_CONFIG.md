@@ -11,7 +11,8 @@
 ## 1. Problem & scope
 
 In industrial deployments many components run together on one device/line and **must share
-identical configuration** (e.g. `tags.appId/site/shop/line`, the `logging` format, `heartbeat` and
+identical configuration** (e.g. the `hierarchy`/`identity` location levels [§5.3], business
+`tags.appId`, the `logging` format, `heartbeat` and
 `metricEmission` targets, and the *source/provider* of `parameters`/`credentials`). Today that
 config is **replicated per component**, and — critically — the credentials **vault** and the
 parameters **cache** are also **per component** (every recipe points them at
@@ -41,7 +42,8 @@ the two on-disk files (§9).
 
 ### Non-goals (v1)
 - Not a secrets-distribution channel (secret *values* still flow through the vault/central sync).
-- Not multi-level site/line hierarchy yet (designed-for, not built — §5.3).
+- Not multi-level site/line hierarchy yet (designed-for, not built — §5.3; now concretely specified,
+  and driven, by [`platform/DESIGN-uns.md`](platform/DESIGN-uns.md) §5).
 - No server-side merging in `CONFIG_COMPONENT` beyond what §6 specifies.
 
 ---
@@ -172,6 +174,16 @@ doc is meaningfully validated.)
 v1 has two layers. The engine takes an **ordered list** `[base, component]`; a later release can
 populate `[device, site, line, component]` (e.g. base itself carries an `extends` chain) with **zero
 algorithm change**.
+
+**Location identity lives here (consistency with DESIGN-uns).** The enterprise location — the ordered
+`hierarchy.levels` schema and the resolved level values (`site`/`shop`/`line`/… above the device) — is
+**shared-config base-layer** data, distributed by exactly this `base ⊕ component` merge. Per
+[`platform/DESIGN-uns.md`](platform/DESIGN-uns.md) §5, those levels move **out of `tags`** and into a
+top-level **`identity`** / **`hierarchy`** block on the wire (`tags` keeps only business context such as
+`appId`/`org`); `tags.thing` is dropped (redundant with the device level). The UNS is the concrete
+driver for the N-layer `[device, site, line, component]` chain anticipated above: it works today on the
+2-layer base (the device base carries the full location path), and the N-layer `extends` chain is the
+later refinement for defining site values once across devices.
 
 ### 5.4 Opt-out (D4/D5)
 Default ON. Resolution order:

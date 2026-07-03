@@ -177,6 +177,7 @@ fail fast. The programmatic builder API is free to evolve (it gains platform/tra
 | [DESIGN-subsystems.md](DESIGN-subsystems.md) | Per-subsystem design for all eight, the platform-defaults matrix, new sources/targets/sinks, and config schema deltas. |
 | [DESIGN-packaging.md](DESIGN-packaging.md) | Helm chart shape, liveness/readiness/startup probes, graceful shutdown, ServiceMonitor/Prometheus, RBAC/ServiceAccount, PVC, sidecar/init patterns, and edge/on-prem AWS identity wiring. |
 | [DESIGN-operator.md](DESIGN-operator.md) | The optional `GgcommonsComponent` CRD sketch and the explicit "don't build it yet / build it when…" recommendation. |
+| [DESIGN-uns.md](DESIGN-uns.md) | The **Unified Namespace**: topic grammar, message classes, configurable hierarchy + top-level identity (distributed via `../SHARED_CONFIG.md`), the `messaging()`/`uns()`/facade API, streaming enrichment, and the `uns-bridge` site-bus realization. Concretizes [DESIGN-channels.md](DESIGN-channels.md); consumed by the `edgecommons/edge-console` component. |
 | [PARITY.md](PARITY.md) | Per-language implementation plan and four-way parity deltas (Java canonical; Python/Rust/TS specifics, Rust cargo features, service-interface seams). |
 
 > Design claims are backed by inline `file:line` citations to the source tree (e.g.
