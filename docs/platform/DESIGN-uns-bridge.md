@@ -70,7 +70,10 @@ and its per-instance body is permissive). Sketch (finalized in §2.7):
 
 ```jsonc
 "component": {
-  "name": "com.edgecommons.UnsBridge",
+  // No `name` key here — the canonical schema's `component` object allows only
+  // `global`/`instances` (`additionalProperties:false`); the component's full name comes from
+  // the runtime builder (the GG recipe's `ComponentName`, or the HOST CLI invocation), not from
+  // config (finalized in §2.7).
   "instances": [
     { "id": "site",
       "siteBroker": { "host": "site-broker.dallas.example", "port": 8883,
@@ -349,7 +352,10 @@ verbatim (`config.rs:64–82`, `mqtt.rs:279–297,398–419`):
   "metricEmission": { "target": "messaging" },
 
   "component": {
-    "name": "com.edgecommons.uns-bridge",
+    // No `name` key here — the canonical schema's `component` object is `{global, instances}`
+    // only, `additionalProperties:false` (`schema/ggcommons-config-schema.json`); the component's
+    // full name is supplied by the runtime builder, not by config (see the prose below).
+    //
     // The SITE broker is the bridge's EXTERNAL SYSTEM, declared as an instance (like an
     // adapter's OPC UA endpoints). The bridge builds it via the reused core MqttProvider
     // (§1.1) — NOT a core `messaging.connections` feature; no shared-schema change.
@@ -370,9 +376,11 @@ verbatim (`config.rs:64–82`, `mqtt.rs:279–297,398–419`):
 ```
 
 Device identity comes from the standard chain (`-t` ▸ platform env ▸ …, D‑U1) — the bridge adds no
-identity config of its own. The component's full name is chosen so the sanitized short name (the
-UNS token, D‑U18) is exactly **`uns-bridge`** (e.g. `com.mbreissi.uns-bridge`) — the token the
-LWT topic, the console, and this document all assume.
+identity config of its own. The component's full name (e.g. `com.mbreissi.uns-bridge`) is supplied
+by the runtime builder — the GG recipe's `ComponentName`, or the HOST/KUBERNETES invocation — never
+by this config file (`component.name` is not a legal key, above). It is chosen so the sanitized
+short name (the UNS token, D‑U18) is exactly **`uns-bridge`** — the token the LWT topic, the
+console, and this document all assume.
 
 ### 2.8 (§3.9) The bridge's own observability + command inbox
 
