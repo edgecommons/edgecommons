@@ -157,6 +157,42 @@ class TestPublishState:
         assert message.get_body() == {"status": "STOPPED"}
 
 
+class TestPublishStateNow:
+    """The public out-of-band re-emit used by the _bcast republish listener's
+    republish-state action (DESIGN-uns §9.3/§9.4): same payload/seam/routing as a
+    tick's keepalive, but respects heartbeat.enabled (a disabled state keepalive
+    must not be re-enabled by a broadcast)."""
+
+    def test_enabled_publishes_running_with_uptime(self, hb):
+        msg = MagicMock()
+        hb.set_messaging_service(msg)
+        hb.publish_state_now()
+        msg._publish_reserved.assert_called_once()
+        topic, message = msg._publish_reserved.call_args[0]
+        assert topic == "ecv1/thing-1/comp/main/state"
+        assert message.get_header().name == "state"
+        body = message.get_body()
+        assert body["status"] == "RUNNING"
+        assert isinstance(body["uptimeSecs"], int)
+
+    def test_disabled_by_configuration_does_not_publish(self):
+        cfg = FakeConfig({"enabled": False, "intervalSecs": 3600})
+        h = EnhancedHeartbeat(cfg)
+        try:
+            msg = MagicMock()
+            h.set_messaging_service(msg)
+            h.publish_state_now()
+            msg._publish_reserved.assert_not_called()
+        finally:
+            h.stop()
+
+    def test_failure_is_swallowed(self, hb):
+        msg = MagicMock()
+        msg._publish_reserved.side_effect = RuntimeError("broker down")
+        hb.set_messaging_service(msg)
+        hb.publish_state_now()  # no exception
+
+
 class TestEmitSysMetric:
     def test_no_metric_service_returns(self, hb):
         hb._emit_sys_metric()  # no exception

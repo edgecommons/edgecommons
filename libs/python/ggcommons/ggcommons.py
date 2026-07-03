@@ -70,6 +70,12 @@ class GGCommons:
         # effective (redacted) configuration on ecv1/{device}/{component}/main/cfg at
         # startup and on every configuration change.
         self._effective_config_publisher = None
+        # The library-owned _bcast republish listener (DESIGN-uns §9.3/§9.4, the
+        # late-join lever): subscribes ecv1/{device}/_bcast/main/cmd/republish-state|
+        # republish-cfg on the primary connection and re-announces state/cfg out of
+        # band (jittered, coalesced) when the uns-bridge - or a console - broadcasts a
+        # republish command.
+        self._republish_listener = None
         # The component-identity-bound UNS topic builder (instance "main"), lazily
         # bound on first uns() from the resolved component identity +
         # topic.includeRoot (UNS-CANONICAL-DESIGN §2).
@@ -186,6 +192,19 @@ class GGCommons:
                 self._config_manager, _MC2
             )
             self._effective_config_publisher.publish_now()
+
+            # §9.3/§9.4: subscribe the own-device _bcast republish topics on the
+            # primary connection so the uns-bridge's reconnect-rehydration broadcast
+            # (and a console's explicit republish) gets a jittered, coalesced
+            # state/cfg re-announce. Always on (no config surface); best-effort start
+            # (a failure disables the listener only).
+            from ggcommons.republish_listener import RepublishListener
+            self._republish_listener = RepublishListener(
+                self._config_manager, _MC2,
+                self._heartbeat.publish_state_now,
+                self._effective_config_publisher.publish_now,
+            )
+            self._republish_listener.start()
 
             logger.info("GGCommons initialized successfully")
             
@@ -739,6 +758,15 @@ class GGCommons:
         # this was reached via SIGTERM or a direct shutdown() call (FR-HB-2). Idempotent.
         if self._readiness is not None:
             self._readiness.set_shutting_down()
+
+        try:
+            # Unsubscribe the _bcast republish topics while messaging is still up (the
+            # unsubscribe-before-exit rule) and stop reacting to republish broadcasts
+            # mid-teardown.
+            if self._republish_listener is not None:
+                self._republish_listener.close()
+        except Exception as e:
+            logger.error(f"Error closing republish listener during shutdown: {e}")
 
         try:
             # Stop the streaming stats bridge + close the native service (flush + stop engines).

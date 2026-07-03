@@ -36,6 +36,7 @@ import { IpcMessagingProvider } from "./messaging/ipc-provider";
 import { loadMessagingConfig } from "./messaging/config";
 import { MetricEmitter } from "./metrics/service";
 import { MetricService } from "./metrics/types";
+import { RepublishListener } from "./republish_listener";
 import { Uns, checkToken } from "./uns";
 import type { StreamMetricsBridge, StreamService } from "./streaming";
 import type { CredentialMetricsBridge, CredentialService } from "./credentials";
@@ -108,6 +109,12 @@ export class GGCommons {
   private credentialsService?: CredentialService;
   private credentialMetrics?: CredentialMetricsBridge;
   private parametersService?: ParameterService;
+  /**
+   * The `_bcast` republish listener (DESIGN-uns §9.3/§9.4): the late-join lever that
+   * re-announces the state keepalive / effective config on a reconnect-rehydration broadcast.
+   * Always wired when messaging is available (no config surface); undefined otherwise.
+   */
+  private republishListener?: RepublishListener;
   /**
    * The component-identity-bound UNS topic builder (instance
    * {@link MessageIdentity.DEFAULT_INSTANCE}), lazily bound on first {@link uns} from the
@@ -199,6 +206,11 @@ export class GGCommons {
   /** @internal Attach the parameter service after construction. */
   _setParameters(service: ParameterService | undefined): void {
     this.parametersService = service;
+  }
+
+  /** @internal Attach the `_bcast` republish listener after construction. */
+  _setRepublishListener(listener: RepublishListener | undefined): void {
+    this.republishListener = listener;
   }
 
   /**
@@ -308,6 +320,9 @@ export class GGCommons {
       process.removeListener(signal, handler);
     }
     this.signalHandlers = [];
+    // Unsubscribe the _bcast republish topics while messaging is still up (the
+    // unsubscribe-before-exit rule) and stop reacting to republish broadcasts mid-teardown.
+    await this.republishListener?.close().catch(() => undefined);
     (this.parametersService as { close?: () => void } | undefined)?.close?.();
     this.credentialMetrics?.close();
     this.streamMetrics?.close();
@@ -554,6 +569,19 @@ export class GGCommonsBuilder {
       const effectiveConfigPublisher = new EffectiveConfigPublisher(() => current, messaging);
       listeners.push(effectiveConfigPublisher);
       await effectiveConfigPublisher.publishNow();
+
+      // §9.3/§9.4: subscribe the own-device _bcast republish topics on the primary connection
+      // so the uns-bridge's reconnect-rehydration broadcast (and a console's explicit
+      // republish) gets a jittered, coalesced state/cfg re-announce. Always on (no config
+      // surface); best-effort start (a failure disables the listener only).
+      const republishListener = new RepublishListener(
+        () => current,
+        messaging,
+        () => heartbeat.publishStateNow(),
+        () => effectiveConfigPublisher.publishNow(),
+      );
+      await republishListener.start();
+      runtime._setRepublishListener(republishListener);
     }
 
     // HTTP health endpoint (FR-HB-1). Precedence (FR-RT-3): explicit `health.enabled` ▸ platform

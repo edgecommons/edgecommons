@@ -320,6 +320,31 @@ export class Heartbeat {
   }
 
   /**
+   * Re-emits the RUNNING `state` keepalive immediately, out of band from the periodic
+   * schedule — the `republish-state` broadcast re-announce (DESIGN-uns §9.3/§9.4, the
+   * late-join lever, `RepublishListener`): same payload as a tick's keepalive
+   * (`{"status":"RUNNING","uptimeSecs":n}`), same privileged reserved-publish seam, same
+   * `heartbeat.destination` routing. Respects `heartbeat.enabled`: a component whose operator
+   * disabled the state keepalive does not re-announce state (the broadcast cannot re-enable an
+   * opted-out state surface). Best-effort — failures are logged and swallowed; the periodic
+   * schedule is unaffected.
+   */
+  async publishStateNow(): Promise<void> {
+    const cfg = this.configProvider();
+    if (!cfg.parsed.heartbeat.enabled) {
+      logger.debug(
+        "republish-state re-announce skipped: the heartbeat state keepalive is disabled (heartbeat.enabled=false)",
+      );
+      return;
+    }
+    try {
+      await this.publishState(cfg, "RUNNING", true);
+    } catch (e) {
+      logger.warn(`out-of-band state re-announce failed: ${errMsg(e)}`);
+    }
+  }
+
+  /**
    * One heartbeat cycle (§4.3): the `state` keepalive plus the measures as the `sys` metric.
    * Each half is best-effort — a failure in one must not suppress the other. Never throws.
    */

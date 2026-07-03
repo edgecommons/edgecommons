@@ -63,6 +63,10 @@ pub struct Heartbeat {
     reserved: Option<Arc<dyn ReservedMessaging>>,
     /// Ensures the best-effort STOPPED state is published at most once.
     stopped_published: Arc<AtomicBool>,
+    /// Monotonic start reference for the keepalive's `uptimeSecs`, shared by the periodic tick
+    /// and [`Self::publish_state_now`] (the `_bcast` `republish-state` out-of-band re-emit,
+    /// [`crate::uns::RepublishListener`]) so both report the same uptime series.
+    start_instant: Instant,
 }
 
 impl Heartbeat {
@@ -150,7 +154,31 @@ impl Heartbeat {
             config,
             reserved,
             stopped_published: Arc::new(AtomicBool::new(false)),
+            start_instant,
         }
+    }
+
+    /// Re-emits the RUNNING `state` keepalive immediately, out of band from the periodic
+    /// schedule — the `republish-state` broadcast re-announce
+    /// ([`crate::uns::RepublishListener`], DESIGN-uns §9.3/§9.4, the late-join lever): the exact
+    /// tick payload (`{"status":"RUNNING","uptimeSecs":n}`), the same [`ReservedMessaging`]
+    /// seam, the same `heartbeat.destination` routing.
+    ///
+    /// **Respects `heartbeat.enabled`**: a component whose operator disabled the state
+    /// keepalive does not re-announce state — the broadcast cannot re-enable an opted-out state
+    /// surface. Best-effort: failures are logged and swallowed (via [`publish_state`]); with no
+    /// messaging seam (no transport) this is a silent no-op.
+    pub(crate) async fn publish_state_now(&self) {
+        let Some(reserved) = self.reserved.as_deref() else { return };
+        let cfg = self.config.load_full();
+        if !cfg.parsed.heartbeat.enabled {
+            tracing::debug!(
+                "republish-state re-announce skipped: the heartbeat state keepalive is disabled \
+                 (heartbeat.enabled=false)"
+            );
+            return;
+        }
+        publish_state(&cfg, reserved, "RUNNING", Some(self.start_instant.elapsed().as_secs())).await;
     }
 }
 
@@ -570,6 +598,55 @@ mod tests {
         assert_eq!(identity.instance(), "main");
         assert!(recorder.reserved_iot().is_empty(), "local destination must not hit IoT Core");
         assert!(recorder.local().is_empty(), "the keepalive must use the SEAM, not publish()");
+    }
+
+    /// `publish_state_now` (the `_bcast` `republish-state` out-of-band re-emit action wired
+    /// into [`crate::uns::RepublishListener`]) re-emits a RUNNING keepalive on demand, through
+    /// the same seam/topic/shape as a periodic tick.
+    #[tokio::test]
+    async fn publish_state_now_re_emits_the_running_keepalive() {
+        // A long interval keeps the periodic task's own tick out of the assertion window.
+        let config = heartbeat_config(json!({ "intervalSecs": 60 }));
+        let recorder = RecordingMessaging::new();
+        let metrics: Arc<dyn MetricService> = RecordingMetrics::new();
+        let config_handle = Arc::new(ArcSwap::from_pointee(config));
+        let hb = Heartbeat::start(config_handle, metrics, Some(recorder.clone()));
+
+        hb.publish_state_now().await;
+
+        let states = recorder.reserved_local();
+        assert!(!states.is_empty(), "at least the out-of-band RUNNING keepalive");
+        let (topic, msg) = states.last().unwrap();
+        assert_eq!(topic, "ecv1/thing-1/MyComp/main/state");
+        assert_eq!(msg.header.name, "state");
+        assert_eq!(msg.body["status"], "RUNNING");
+        assert!(msg.body.get("uptimeSecs").is_some());
+    }
+
+    /// `heartbeat.enabled: false` -> `publish_state_now` is a no-op: the broadcast cannot
+    /// re-enable an opted-out state surface.
+    #[tokio::test]
+    async fn publish_state_now_respects_heartbeat_disabled() {
+        let config = heartbeat_config(json!({ "enabled": false, "intervalSecs": 60 }));
+        let recorder = RecordingMessaging::new();
+        let metrics: Arc<dyn MetricService> = RecordingMetrics::new();
+        let config_handle = Arc::new(ArcSwap::from_pointee(config));
+        let hb = Heartbeat::start(config_handle, metrics, Some(recorder.clone()));
+
+        hb.publish_state_now().await;
+
+        assert!(recorder.reserved_local().is_empty());
+    }
+
+    /// No messaging seam (no transport): `publish_state_now` is a silent no-op, not a panic.
+    #[tokio::test]
+    async fn publish_state_now_without_messaging_is_a_noop() {
+        let config = heartbeat_config(json!({ "intervalSecs": 60 }));
+        let metrics: Arc<dyn MetricService> = RecordingMetrics::new();
+        let config_handle = Arc::new(ArcSwap::from_pointee(config));
+        let hb = Heartbeat::start(config_handle, metrics, None);
+
+        hb.publish_state_now().await; // must not panic
     }
 
     /// The STOPPED shape omits uptimeSecs (pinned by the golden envelopes).

@@ -40,6 +40,12 @@ pub(crate) struct RecordingMessaging {
     pub reserved_iot_published: Mutex<Vec<(String, Message)>>,
     /// Topics subscribed to locally.
     pub subscribed: Mutex<Vec<String>>,
+    /// Live subscription handlers (local + IoT Core share one map — no test so far needs both
+    /// destinations subscribed to the same filter), keyed by filter: inserted by
+    /// `subscribe`/`subscribe_to_iot_core`, removed by `unsubscribe`/`unsubscribe_from_iot_core`.
+    /// Backs [`Self::subscribed_topics`] / [`Self::simulate_message`] for tests exercising a
+    /// `MessageHandler` (e.g. [`crate::uns::RepublishListener`]).
+    pub handlers: Mutex<HashMap<String, Arc<dyn MessageHandler>>>,
     /// Monotonic timestamps of each publish (any path), for timing tests.
     pub publish_times: Mutex<Vec<Instant>>,
     /// The value [`MessagingService::connected`] returns (default `false`); set via
@@ -82,6 +88,24 @@ impl RecordingMessaging {
     /// Set the value reported by [`MessagingService::connected`] (drives `/readyz` tests).
     pub fn set_connected(&self, connected: bool) {
         self.connected.store(connected, Ordering::SeqCst);
+    }
+
+    /// The currently-subscribed filter set — grows on `subscribe`/`subscribe_to_iot_core`,
+    /// shrinks on `unsubscribe`/`unsubscribe_from_iot_core`. Mirrors the Java
+    /// `MockMessagingService.getSubscribedTopics()`.
+    pub fn subscribed_topics(&self) -> std::collections::HashSet<String> {
+        self.handlers.lock().unwrap().keys().cloned().collect()
+    }
+
+    /// Invoke the handler currently registered for `topic` with `message`, as if it had
+    /// arrived off the wire. A no-op when nothing is subscribed to `topic` (e.g. after
+    /// `unsubscribe`, or a topic never subscribed) — mirrors the Java
+    /// `MockMessagingService.simulateMessage`.
+    pub async fn simulate_message(&self, topic: &str, message: Message) {
+        let handler = self.handlers.lock().unwrap().get(topic).cloned();
+        if let Some(handler) = handler {
+            handler.handle(topic.to_string(), message).await;
+        }
     }
 }
 
@@ -137,31 +161,35 @@ impl MessagingService for RecordingMessaging {
     async fn subscribe(
         &self,
         filter: &str,
-        _handler: Arc<dyn MessageHandler>,
+        handler: Arc<dyn MessageHandler>,
         _max_messages: usize,
         _max_concurrency: usize,
     ) -> Result<()> {
         self.subscribed.lock().unwrap().push(filter.to_string());
+        self.handlers.lock().unwrap().insert(filter.to_string(), handler);
         Ok(())
     }
 
     async fn subscribe_to_iot_core(
         &self,
         filter: &str,
-        _handler: Arc<dyn MessageHandler>,
+        handler: Arc<dyn MessageHandler>,
         _qos: Qos,
         _max_messages: usize,
         _max_concurrency: usize,
     ) -> Result<()> {
         self.subscribed.lock().unwrap().push(filter.to_string());
+        self.handlers.lock().unwrap().insert(filter.to_string(), handler);
         Ok(())
     }
 
-    async fn unsubscribe(&self, _filter: &str) -> Result<()> {
+    async fn unsubscribe(&self, filter: &str) -> Result<()> {
+        self.handlers.lock().unwrap().remove(filter);
         Ok(())
     }
 
-    async fn unsubscribe_from_iot_core(&self, _filter: &str) -> Result<()> {
+    async fn unsubscribe_from_iot_core(&self, filter: &str) -> Result<()> {
+        self.handlers.lock().unwrap().remove(filter);
         Ok(())
     }
 

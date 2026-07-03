@@ -106,8 +106,15 @@ pub struct GgCommons {
     _health_server: Option<health::HealthServer>,
     /// Owns the SIGTERM/Ctrl-C watcher task (FR-HB-2); aborted on drop.
     _signal_task: AbortOnDrop,
-    /// Owns the heartbeat task; dropping `GgCommons` stops it (RAII).
-    _heartbeat: heartbeat::Heartbeat,
+    /// Owns the `_bcast` republish listener (§9.3/§9.4, the late-join lever); dropping
+    /// `GgCommons` unsubscribes it (RAII). Declared BEFORE `_heartbeat` so it tears down first
+    /// (mirrors the Java canonical's shutdown order: `republishListener.close()` before
+    /// `heartbeat.close()` — struct fields drop in declaration order). `None` when no messaging
+    /// transport was wired.
+    _republish_listener: Option<Arc<uns::RepublishListener>>,
+    /// Owns the heartbeat task; dropping `GgCommons` stops it (RAII). `Arc`-shared with the
+    /// republish listener's `republish-state` action ([`heartbeat::Heartbeat::publish_state_now`]).
+    _heartbeat: Arc<heartbeat::Heartbeat>,
     /// Owns the hot-reload task; aborted on drop. `None` if the source can't watch.
     _reload_task: Option<AbortOnDrop>,
     /// Keeps the config source (and its OS file watcher) alive for hot reload.
@@ -452,8 +459,11 @@ impl GgCommonsBuilder {
         );
         let metrics: Arc<dyn metrics::MetricService> = emitter.clone();
         // §4.3: the heartbeat is the UNS state keepalive + sys metric; the state
-        // class is reserved, so it publishes through the crate-private seam.
-        let heartbeat = heartbeat::Heartbeat::start(config.clone(), metrics.clone(), reserved.clone());
+        // class is reserved, so it publishes through the crate-private seam. `Arc`-wrapped so
+        // the _bcast republish listener's `republish-state` action can share it (§9.3/§9.4,
+        // below).
+        let heartbeat =
+            Arc::new(heartbeat::Heartbeat::start(config.clone(), metrics.clone(), reserved.clone()));
 
         // Credentials / local vault (feature-gated): open the shared vault when the config has a
         // `credentials` section, resolving path templates ({ThingName}/{ComponentFullName}) first.
@@ -585,10 +595,42 @@ impl GgCommonsBuilder {
         // §4.3: announce the effective (redacted) configuration on the UNS cfg topic
         // — the startup push; registered as a listener so every hot reload
         // re-announces. Best-effort (publish_now never fails the build).
+        let mut republish_listener: Option<Arc<uns::RepublishListener>> = None;
         if let Some(reserved) = &reserved {
             let cfg_publisher =
                 Arc::new(config::effective::EffectiveConfigPublisher::new(reserved.clone()));
             cfg_publisher.publish_now(&snapshot).await;
+
+            // §9.3/§9.4: the _bcast republish listener (the late-join lever) — subscribe the
+            // own-device broadcast topics on the PRIMARY connection so the uns-bridge's
+            // reconnect-rehydration broadcast (and a console's explicit republish) gets a
+            // jittered, coalesced state/cfg re-announce. Always on (no config surface);
+            // best-effort start (a failure disables the listener only). Requires a messaging
+            // service to subscribe on, which is always Some here (reserved and messaging are
+            // both derived from the same messaging_impl).
+            if let Some(messaging_svc) = &messaging {
+                let hb_for_republish = heartbeat.clone();
+                let state_action: uns::RepublishAction = Arc::new(move || {
+                    let hb = hb_for_republish.clone();
+                    Box::pin(async move { hb.publish_state_now().await })
+                });
+                let cfg_publisher_for_republish = cfg_publisher.clone();
+                let config_for_republish = config.clone();
+                let cfg_action: uns::RepublishAction = Arc::new(move || {
+                    let publisher = cfg_publisher_for_republish.clone();
+                    let cfg = config_for_republish.clone();
+                    Box::pin(async move { publisher.publish_now(&cfg.load_full()).await })
+                });
+                let listener = uns::RepublishListener::new(
+                    messaging_svc.clone(),
+                    state_action,
+                    cfg_action,
+                );
+                let device = snapshot.identity().device().to_string();
+                listener.clone().start(&device).await;
+                republish_listener = Some(listener);
+            }
+
             if let Ok(mut l) = listeners.lock() {
                 l.push(cfg_publisher as Arc<dyn config::ConfigurationChangeListener>);
             }
@@ -625,6 +667,7 @@ impl GgCommonsBuilder {
             shutdown_rx,
             _health_server: health_server,
             _signal_task: signal_task,
+            _republish_listener: republish_listener,
             _heartbeat: heartbeat,
             _reload_task: reload_task,
             _config_source: source,

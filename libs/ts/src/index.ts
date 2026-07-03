@@ -128,6 +128,10 @@ export type { MetricService, MetricTarget, MeasureValues } from "./metrics";
 export { Heartbeat, HeartbeatMonitor } from "./heartbeat";
 export type { ConfigProvider } from "./heartbeat";
 
+// UNS `_bcast` republish listener (the late-join lever, DESIGN-uns §9.3/§9.4)
+export { RepublishListener } from "./republish_listener";
+export type { Delayer as RepublishDelayer, ClockMillis as RepublishClockMillis, JitterFn as RepublishJitterFn } from "./republish_listener";
+
 // Health (HTTP /livez · /readyz · /startupz + readiness state)
 export { HealthServer, ReadinessState, evaluateHealth } from "./health";
 export type { HealthServerOptions, HealthPaths, HealthResponse } from "./health";

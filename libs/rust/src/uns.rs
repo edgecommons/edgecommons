@@ -59,8 +59,16 @@
 //! - [`crate::messaging::message`] — the [`MessageIdentity`] envelope element.
 //! - [`crate::config`] — resolves the component identity + `topic.includeRoot`.
 
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use rand::Rng;
+
 use crate::error::{GgError, Result};
-use crate::messaging::message::MessageIdentity;
+use crate::messaging::message::{HierEntry, Message, MessageIdentity};
+use crate::messaging::{message_handler, MessagingService};
 
 /// The machine-readable UNS validation failure codes (the exact §2.2 set, pinned in
 /// `uns-test-vectors/topics.json` so all four languages fail identically).
@@ -826,6 +834,69 @@ mod vector_tests {
         }
         eprintln!("uns-test-vectors envelopes.json: {} golden envelopes OK", vectors.len());
     }
+
+    /// Cross-language conformance for the `_bcast` republish listener (DESIGN-uns §9.4; the
+    /// contract [`RepublishListener`] implements): the two topics byte-for-byte (built the same
+    /// way [`RepublishListener::start`] does — a single-level `[device]` hierarchy under the
+    /// reserved `_bcast` pseudo-component), the envelope structure (no `identity`/`tags`/
+    /// `reply_to` — fire-and-forget), and the behavior constants ([`JITTER_WINDOW_MS`],
+    /// [`COOLDOWN_MS`], and `replyTo: false`).
+    #[test]
+    fn cross_language_bcast_vectors() {
+        let Some(dir) = vectors_dir() else { return };
+        let doc = load(&dir, "bcast.json");
+        let device = str_field(&doc, "device");
+        let commands = doc["commands"].as_array().expect("commands group");
+        assert_eq!(commands.len(), 2, "republish-state and republish-cfg");
+
+        for case in commands {
+            let name = str_field(case, "name");
+            let input = &case["input"];
+            assert_eq!(str_field(input, "device"), device, "case '{name}': device mismatch");
+            assert_eq!(str_field(input, "component"), BCAST_COMPONENT, "case '{name}': component");
+            assert_eq!(
+                str_field(input, "instance"),
+                MessageIdentity::DEFAULT_INSTANCE,
+                "case '{name}': instance"
+            );
+            assert!(
+                !input["includeRoot"].as_bool().expect("includeRoot"),
+                "case '{name}': the _bcast topic is always rootless (D-U25)"
+            );
+
+            let identity = MessageIdentity::new(
+                vec![HierEntry { level: "device".to_string(), value: device.to_string() }],
+                BCAST_COMPONENT,
+                Some(MessageIdentity::DEFAULT_INSTANCE.to_string()),
+            )
+            .expect("bcast identity constructs");
+            let uns = Uns::new(identity, false);
+            let cls = UnsClass::from_token(str_field(input, "class")).expect("class token");
+            let topic = uns
+                .topic_with_channel(cls, str_field(input, "channel"))
+                .expect("bcast topic builds");
+            assert_eq!(topic, str_field(case, "topic"), "case '{name}': topic mismatch");
+
+            // Envelope structure (D-U22): no identity/tags/reply_to; empty body; header.name is
+            // the verb — fire-and-forget, never replied to.
+            let envelope = &case["envelope"];
+            assert!(envelope.get("identity").is_none(), "case '{name}': no identity element");
+            assert!(envelope.get("tags").is_none(), "case '{name}': no tags element");
+            assert!(
+                envelope["header"].get("reply_to").is_none(),
+                "case '{name}': no reply_to (fire-and-forget)"
+            );
+            assert_eq!(str_field(&envelope["header"], "name"), name);
+            assert_eq!(envelope["body"], serde_json::json!({}));
+        }
+
+        let behavior = &doc["behavior"];
+        assert_eq!(behavior["jitterWindowMs"].as_u64().unwrap(), JITTER_WINDOW_MS, "jitterWindowMs");
+        assert_eq!(behavior["cooldownMs"].as_u64().unwrap(), COOLDOWN_MS, "cooldownMs");
+        assert!(!behavior["replyTo"].as_bool().unwrap(), "replyTo");
+
+        eprintln!("uns-test-vectors bcast.json: {} commands OK", commands.len());
+    }
 }
 
 #[cfg(test)]
@@ -1089,5 +1160,830 @@ mod tests {
         assert_eq!(reserved_class_of("ecv1x/d/c/i/state", false), None);
         // Too-short topics pass.
         assert_eq!(reserved_class_of("ecv1/d/state", false), None);
+    }
+}
+
+// ============================================================================================
+// The `_bcast` republish listener (DESIGN-uns §9.3 layer 2 / §9.4; slice G-S1)
+// ============================================================================================
+
+/// The reserved broadcast pseudo-component token (UNS-CANONICAL-DESIGN §4.3).
+pub(crate) const BCAST_COMPONENT: &str = "_bcast";
+
+/// The re-announce-state broadcast verb (the topic channel token AND the required envelope
+/// `header.name` of an accepted trigger).
+pub(crate) const REPUBLISH_STATE: &str = "republish-state";
+
+/// The re-announce-effective-config broadcast verb (the topic channel token AND the required
+/// envelope `header.name` of an accepted trigger).
+pub(crate) const REPUBLISH_CFG: &str = "republish-cfg";
+
+/// The anti-stampede jitter window in ms: an accepted broadcast re-announces after a uniformly
+/// random delay in `[0, JITTER_WINDOW_MS]` (DESIGN-uns §9.3: "a random 0 to 2s"). Normative for
+/// all four languages; pinned by `uns-test-vectors/bcast.json`.
+pub(crate) const JITTER_WINDOW_MS: u64 = 2_000;
+
+/// The per-verb coalescing cooldown in ms, measured from the last ACCEPTED trigger: at most one
+/// re-announce per verb per this window, so a looping/duplicated broadcast never amplifies.
+/// Normative for all four languages; pinned by `uns-test-vectors/bcast.json`.
+pub(crate) const COOLDOWN_MS: u64 = 5_000;
+
+const SUBSCRIBE_MAX_MESSAGES: usize = 8;
+const SUBSCRIBE_MAX_CONCURRENCY: usize = 1;
+const STATE_IDX: usize = 0;
+const CFG_IDX: usize = 1;
+
+/// One out-of-band re-announce action (the `republish-state`/`republish-cfg` verb handlers): an
+/// infallible, best-effort async callback. Both wired actions
+/// ([`crate::heartbeat::Heartbeat::publish_state_now`],
+/// [`crate::config::effective::EffectiveConfigPublisher::publish_now`]) already log-and-swallow
+/// their own failures, so [`RepublishListener::fire`] has nothing to catch — unlike the Java
+/// canonical's `try/catch` around a throwing `Runnable`.
+pub(crate) type RepublishAction = Arc<dyn Fn() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
+
+/// A boxed, already-built future — what a [`Delayer`] schedules.
+type BoxFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
+
+/// The delayed-execution seam (the injected-clock discipline — mirrors the `uns-bridge`'s pure
+/// `reply.rs`/`policy.rs` modules, which take `now: Instant` as a parameter instead of reading
+/// the clock inline): production sleeps-then-runs on a spawned `tokio` task ([`TokioDelayer`]);
+/// tests record `(delay, task)` pairs and run them synchronously on demand — no real sleeping,
+/// so the jitter/coalescing tests are deterministic and fast.
+pub(crate) trait Delayer: Send + Sync {
+    /// Schedule `task` to run after `delay_millis`. Returns immediately (does not block).
+    fn schedule(&self, delay_millis: u64, task: BoxFuture);
+}
+
+/// Production [`Delayer`]: spawns a `tokio` task that sleeps for the jittered delay, then runs
+/// the task. Panics inside `task` are isolated to that spawned task (standard `tokio::spawn`
+/// behavior) — they cannot crash the component.
+struct TokioDelayer;
+
+impl Delayer for TokioDelayer {
+    fn schedule(&self, delay_millis: u64, task: BoxFuture) {
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(delay_millis)).await;
+            task.await;
+        });
+    }
+}
+
+/// One `_bcast` broadcast verb: the wire verb string (both the topic channel token and the
+/// required envelope `header.name` of an accepted trigger) plus the out-of-band re-announce
+/// action it fires.
+struct RepublishVerb {
+    name: &'static str,
+    action: RepublishAction,
+}
+
+/// Per-verb mutable state, guarded together with the lifecycle flags (mirrors the Java
+/// canonical's single monitor over both commands): the resolved topic (set once by
+/// [`RepublishListener::start`]) and the pure accept/coalesce gate.
+#[derive(Default)]
+struct VerbState {
+    topic: Option<String>,
+    gate: RepublishGate,
+}
+
+/// The `_bcast` republish listener's lifecycle flags plus both verbs' mutable state, behind one
+/// lock (no `.await` ever happens while holding it).
+#[derive(Default)]
+struct Inner {
+    started: bool,
+    closed: bool,
+    verbs: [VerbState; 2],
+}
+
+/// The pure per-verb accept/coalesce decision (§9.4) — no IO, no clock read: `now` is a
+/// parameter, mirroring the `uns-bridge`'s `reply.rs`/`policy.rs` pure-decision modules (e.g.
+/// `TokenBucket::try_take(&mut self, now: Instant)`). A trigger is accepted only when no
+/// re-announce is already pending AND at least [`COOLDOWN_MS`] have elapsed since the last
+/// ACCEPTED trigger (measured from acceptance, not the jittered fire).
+#[derive(Debug, Default)]
+struct RepublishGate {
+    /// A re-announce is scheduled but has not fired yet.
+    pending: bool,
+    /// The clock time of the last ACCEPTED trigger (the cooldown reference point); `None` until
+    /// the first acceptance.
+    last_accepted: Option<Instant>,
+}
+
+impl RepublishGate {
+    /// Accept-or-coalesce: on accept, marks `pending`, records `now` as the new cooldown
+    /// reference, and returns `true`; otherwise leaves the state untouched and returns `false`.
+    fn accept(&mut self, now: Instant) -> bool {
+        if self.pending {
+            return false;
+        }
+        if let Some(last) = self.last_accepted {
+            if now.saturating_duration_since(last) < Duration::from_millis(COOLDOWN_MS) {
+                return false;
+            }
+        }
+        self.pending = true;
+        self.last_accepted = Some(now);
+        true
+    }
+
+    /// Clears `pending` (called when the jittered re-announce fires, win or lose).
+    fn clear_pending(&mut self) {
+        self.pending = false;
+    }
+}
+
+/// The library-owned `_bcast` republish listener — the UNS "late-join lever" (DESIGN-uns §9.3
+/// layer 2 / §9.4, DESIGN-uns-bridge §2.5): every component subscribes, on its PRIMARY
+/// (local/IPC) connection, the two per-device broadcast command topics for its own device:
+///
+/// ```text
+/// ecv1/{device}/_bcast/main/cmd/republish-state
+/// ecv1/{device}/_bcast/main/cmd/republish-cfg
+/// ```
+///
+/// and, on receipt, re-announces out of band: `republish-state` re-emits the heartbeat's
+/// `state` keepalive (`{"status":"RUNNING","uptimeSecs":n}`,
+/// [`crate::heartbeat::Heartbeat::publish_state_now`]) and `republish-cfg` re-runs the
+/// effective-config (`cfg`) publisher
+/// ([`crate::config::effective::EffectiveConfigPublisher::publish_now`]). Both actions already
+/// publish through the privileged [`crate::messaging::ReservedMessaging`] seam internally — this
+/// listener never touches it directly, which is why it is library plumbing: component code
+/// cannot reach the reserved `state`/`cfg` classes itself. The `uns-bridge` publishes these
+/// broadcasts on every site-connection re-establishment so the site view rehydrates without
+/// broker retain; the edge-console uses `republish-cfg` for config review.
+///
+/// **Normative behavior** (mirrored by the Python/Rust/TS listeners; constants pinned by
+/// `uns-test-vectors/bcast.json`):
+/// - **Topics** — built through the library topic builder with the reserved `_bcast`
+///   pseudo-component identity: single-level hierarchy `[{device: <own device>}]`, component
+///   [`BCAST_COMPONENT`], instance `main`, class `cmd`, channel = the verb. Always **rootless**
+///   (the identity is single-level, so `includeRoot` is a D-U25 no-op).
+/// - **Trigger validation** — the envelope's `header.name` must equal the topic's verb; a
+///   missing/mismatched name, a raw (headerless) payload, or any parse anomaly is ignored (DEBUG
+///   log) — never crashes the component (see [`Self::handle`]).
+/// - **Jitter** — an accepted trigger fires after a uniformly random delay in
+///   `[0, JITTER_WINDOW_MS]` ms via the injected [`Delayer`]/clock/jitter seams (no inline
+///   `Instant::now()`/`rand::*` call anywhere in this type).
+/// - **Coalescing / cooldown (per verb, independent)** — see [`RepublishGate`].
+/// - **No config surface** — always on; core plumbing, not a feature toggle.
+///
+/// Lifecycle: constructed and [`start`](Self::start) by the `GgCommons` runtime after
+/// initialization completes. Teardown is RAII (`Drop`) — mirrors [`crate::heartbeat::Heartbeat`]
+/// — unsubscribing both topics before the messaging transport is torn down.
+pub(crate) struct RepublishListener {
+    messaging: Arc<dyn MessagingService>,
+    verb_defs: [RepublishVerb; 2],
+    inner: Mutex<Inner>,
+    delayer: Arc<dyn Delayer>,
+    clock: Box<dyn Fn() -> Instant + Send + Sync>,
+    jitter: Box<dyn Fn(u64) -> u64 + Send + Sync>,
+}
+
+impl RepublishListener {
+    /// Production wiring: a real `tokio::time::sleep`-based delayer, the monotonic system
+    /// clock, and `rand`-backed uniform jitter over `[0, window]`.
+    pub(crate) fn new(
+        messaging: Arc<dyn MessagingService>,
+        state_action: RepublishAction,
+        cfg_action: RepublishAction,
+    ) -> Arc<RepublishListener> {
+        Self::with_seams(
+            messaging,
+            state_action,
+            cfg_action,
+            Arc::new(TokioDelayer),
+            Box::new(Instant::now),
+            Box::new(|window_ms| rand::thread_rng().gen_range(0..=window_ms)),
+        )
+    }
+
+    /// Full-injection constructor for deterministic tests (fake delayer/clock/jitter) — mirrors
+    /// the Java canonical's package-private constructor.
+    fn with_seams(
+        messaging: Arc<dyn MessagingService>,
+        state_action: RepublishAction,
+        cfg_action: RepublishAction,
+        delayer: Arc<dyn Delayer>,
+        clock: Box<dyn Fn() -> Instant + Send + Sync>,
+        jitter: Box<dyn Fn(u64) -> u64 + Send + Sync>,
+    ) -> Arc<RepublishListener> {
+        Arc::new(RepublishListener {
+            messaging,
+            verb_defs: [
+                RepublishVerb { name: REPUBLISH_STATE, action: state_action },
+                RepublishVerb { name: REPUBLISH_CFG, action: cfg_action },
+            ],
+            inner: Mutex::new(Inner::default()),
+            delayer,
+            clock,
+            jitter,
+        })
+    }
+
+    /// Builds the two own-device `_bcast` topics and subscribes them on the PRIMARY connection.
+    /// Best-effort and idempotent: on any topic-build or subscribe failure the listener logs a
+    /// WARN and disables itself (returns without setting `started`) — the component must come up
+    /// regardless. A second call, or a call after the listener is closed, is a no-op.
+    ///
+    /// The subscribe handlers hold only a [`std::sync::Weak`] reference back to this listener
+    /// (never a strong one) — otherwise the listener could never be dropped while its own
+    /// subscriptions are live, and [`Drop::drop`] (which unsubscribes them) would never run.
+    pub(crate) async fn start(self: Arc<Self>, device: &str) {
+        {
+            let inner = self.inner.lock().unwrap();
+            if inner.started || inner.closed {
+                return;
+            }
+        }
+
+        // The reserved _bcast pseudo-component pinned to this component's own device. The
+        // identity is single-level, so the topic is rootless by construction (D-U25) - the
+        // broadcast shape is shared by every component on the device bus, whatever their own
+        // hierarchy/root mode (Java canonical: `new Uns(bcast, false)`).
+        let identity = match MessageIdentity::new(
+            vec![HierEntry { level: "device".to_string(), value: device.to_string() }],
+            BCAST_COMPONENT,
+            Some(MessageIdentity::DEFAULT_INSTANCE.to_string()),
+        ) {
+            Ok(id) => id,
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "failed to build the _bcast identity - the republish listener is disabled"
+                );
+                return;
+            }
+        };
+        let uns = Uns::new(identity, false);
+
+        let mut topics: Vec<String> = Vec::with_capacity(self.verb_defs.len());
+        for verb in &self.verb_defs {
+            match uns.topic_with_channel(UnsClass::Cmd, verb.name) {
+                Ok(topic) => topics.push(topic),
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        verb = verb.name,
+                        "failed to build a _bcast topic - the republish listener is disabled"
+                    );
+                    return;
+                }
+            }
+        }
+
+        for (i, topic) in topics.iter().enumerate() {
+            let weak = Arc::downgrade(&self);
+            let handler = message_handler(move |_topic, message| {
+                let weak = weak.clone();
+                async move {
+                    if let Some(listener) = weak.upgrade() {
+                        RepublishListener::handle(listener, i, message).await;
+                    }
+                }
+            });
+            if let Err(e) = self
+                .messaging
+                .subscribe(topic, handler, SUBSCRIBE_MAX_MESSAGES, SUBSCRIBE_MAX_CONCURRENCY)
+                .await
+            {
+                tracing::warn!(
+                    error = %e,
+                    topic,
+                    "failed to subscribe a _bcast topic - the republish listener is disabled"
+                );
+                for prior in &topics[..i] {
+                    let _ = self.messaging.unsubscribe(prior).await;
+                }
+                return;
+            }
+        }
+
+        let mut inner = self.inner.lock().unwrap();
+        for (i, topic) in topics.into_iter().enumerate() {
+            inner.verbs[i].topic = Some(topic);
+        }
+        inner.started = true;
+        tracing::info!(
+            state_topic = inner.verbs[STATE_IDX].topic.as_deref().unwrap_or(""),
+            cfg_topic = inner.verbs[CFG_IDX].topic.as_deref().unwrap_or(""),
+            "republish listener subscribed"
+        );
+    }
+
+    /// One received broadcast: validate the envelope (`header.name` must equal the verb), then
+    /// run the accept/coalesce decision. Never panics — a malformed or foreign `_bcast` payload
+    /// is ignored at DEBUG. (Rust has no "null message" case — the dispatcher always hands the
+    /// handler a parsed [`Message`] — so unlike the Java canonical this needs no null check; a
+    /// non-envelope/raw payload is covered by [`Message::is_raw`].)
+    async fn handle(listener: Arc<Self>, verb_index: usize, message: Message) {
+        let verb_name = listener.verb_defs[verb_index].name;
+        if message.is_raw() || message.header.name != verb_name {
+            tracing::debug!(verb = verb_name, "ignoring foreign/malformed _bcast payload");
+            return;
+        }
+        Self::on_broadcast(listener, verb_index).await;
+    }
+
+    /// The accept/coalesce decision (per verb): coalesce while a re-announce is pending or
+    /// within [`COOLDOWN_MS`] of the last accepted trigger ([`RepublishGate::accept`]);
+    /// otherwise accept and schedule the re-announce after a jittered delay in
+    /// `[0, JITTER_WINDOW_MS]` ms.
+    async fn on_broadcast(listener: Arc<Self>, verb_index: usize) {
+        let now = (listener.clock)();
+        let verb_name = listener.verb_defs[verb_index].name;
+        let accepted = {
+            let mut inner = listener.inner.lock().unwrap();
+            if inner.closed {
+                return;
+            }
+            inner.verbs[verb_index].gate.accept(now)
+        };
+        if !accepted {
+            tracing::debug!(verb = verb_name, "broadcast coalesced");
+            return;
+        }
+        let delay_millis = (listener.jitter)(JITTER_WINDOW_MS);
+        tracing::info!(verb = verb_name, delay_millis, "broadcast accepted; re-announcing");
+
+        // Weak, like the subscribe handler: a pending re-announce must not keep the listener
+        // (and therefore its subscriptions) alive past its owner's lifetime.
+        let weak = Arc::downgrade(&listener);
+        let task: BoxFuture = Box::pin(async move {
+            if let Some(listener) = weak.upgrade() {
+                RepublishListener::fire(listener, verb_index).await;
+            }
+        });
+        listener.delayer.schedule(delay_millis, task);
+    }
+
+    /// The jittered re-announce: best-effort. `pending` is cleared BEFORE the action runs, so a
+    /// panicking/misbehaving action cannot wedge the verb — the next broadcast after the
+    /// cooldown is still accepted (see the `a_panicking_action_does_not_wedge_the_verb` test).
+    async fn fire(listener: Arc<Self>, verb_index: usize) {
+        let closed = {
+            let mut inner = listener.inner.lock().unwrap();
+            inner.verbs[verb_index].gate.clear_pending();
+            inner.closed
+        };
+        if closed {
+            return;
+        }
+        (listener.verb_defs[verb_index].action)().await;
+    }
+
+    /// Test-only deterministic teardown: the same unsubscribe-before-exit logic as
+    /// [`Drop::drop`], but awaited synchronously (no fire-and-forget spawn), so tests can assert
+    /// the post-close state without polling/sleeping. Idempotent. Production teardown is
+    /// RAII-only (`Drop`, mirroring [`crate::heartbeat::Heartbeat`]) — this is not part of the
+    /// production wiring, hence `#[cfg(test)]`.
+    #[cfg(test)]
+    pub(crate) async fn close(&self) {
+        let topics = self.mark_closed();
+        for topic in topics {
+            if let Err(e) = self.messaging.unsubscribe(&topic).await {
+                tracing::debug!(error = %e, topic, "republish-listener unsubscribe failed");
+            }
+        }
+    }
+
+    /// Marks the listener closed (idempotent) and returns the topics to unsubscribe (empty if
+    /// already closed or never started). Shared by [`Self::close`] and [`Drop::drop`].
+    fn mark_closed(&self) -> Vec<String> {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.closed {
+            return Vec::new();
+        }
+        inner.closed = true;
+        if inner.started {
+            inner.verbs.iter().filter_map(|v| v.topic.clone()).collect()
+        } else {
+            Vec::new()
+        }
+    }
+}
+
+impl Drop for RepublishListener {
+    /// RAII teardown (mirrors [`crate::heartbeat::Heartbeat`]): unsubscribes both `_bcast`
+    /// topics — while messaging is still up (the unsubscribe-before-exit rule) — on a spawned
+    /// fire-and-forget task, since `Drop` cannot `.await`. A no-op when never started or already
+    /// closed, and when no `tokio` runtime is available to spawn on.
+    fn drop(&mut self) {
+        let topics = self.mark_closed();
+        if topics.is_empty() {
+            return;
+        }
+        let messaging = self.messaging.clone();
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                for topic in topics {
+                    if let Err(e) = messaging.unsubscribe(&topic).await {
+                        tracing::debug!(error = %e, topic, "republish-listener unsubscribe failed");
+                    }
+                }
+            });
+        }
+    }
+}
+
+#[cfg(test)]
+mod republish_tests {
+    use super::*;
+    use crate::messaging::message::MessageBuilder;
+    use crate::testutil::RecordingMessaging;
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+
+    const DEVICE: &str = "test-thing";
+    const STATE_TOPIC: &str = "ecv1/test-thing/_bcast/main/cmd/republish-state";
+    const CFG_TOPIC: &str = "ecv1/test-thing/_bcast/main/cmd/republish-cfg";
+
+    fn topics() -> std::collections::HashSet<String> {
+        std::collections::HashSet::from([STATE_TOPIC.to_string(), CFG_TOPIC.to_string()])
+    }
+
+    fn broadcast(verb: &str) -> Message {
+        MessageBuilder::new(verb, "1.0").payload(serde_json::json!({})).build()
+    }
+
+    // ---------- the pure RepublishGate (no tokio needed) ----------
+
+    #[test]
+    fn gate_accepts_first_trigger_and_coalesces_while_pending() {
+        let mut gate = RepublishGate::default();
+        let t0 = Instant::now();
+        assert!(gate.accept(t0), "the first trigger must be accepted");
+        assert!(!gate.accept(t0), "a re-announce is already pending -> coalesce");
+    }
+
+    #[test]
+    fn gate_coalesces_within_cooldown_and_accepts_at_the_boundary() {
+        let mut gate = RepublishGate::default();
+        let t0 = Instant::now();
+        assert!(gate.accept(t0));
+        gate.clear_pending();
+        assert!(
+            !gate.accept(t0 + Duration::from_millis(COOLDOWN_MS - 1)),
+            "just inside the cooldown -> coalesce"
+        );
+        assert!(
+            gate.accept(t0 + Duration::from_millis(COOLDOWN_MS)),
+            "at the cooldown boundary -> accept"
+        );
+    }
+
+    // ---------- the async listener (RecordingDelayer + injected clock/jitter) ----------
+
+    /// Records `(delay_millis, task)` pairs; the test runs tasks synchronously on demand — no
+    /// real sleeping (the injected-clock discipline).
+    #[derive(Default)]
+    struct RecordingDelayer {
+        tasks: Mutex<Vec<(u64, BoxFuture)>>,
+    }
+
+    impl Delayer for RecordingDelayer {
+        fn schedule(&self, delay_millis: u64, task: BoxFuture) {
+            self.tasks.lock().unwrap().push((delay_millis, task));
+        }
+    }
+
+    impl RecordingDelayer {
+        fn new() -> Arc<Self> {
+            Arc::new(Self::default())
+        }
+
+        fn delays(&self) -> Vec<u64> {
+            self.tasks.lock().unwrap().iter().map(|(d, _)| *d).collect()
+        }
+
+        fn pending(&self) -> usize {
+            self.tasks.lock().unwrap().len()
+        }
+
+        /// Runs and clears every scheduled task (the "jitter delay elapsed" step).
+        async fn run_all(&self) {
+            let tasks: Vec<BoxFuture> = {
+                let mut guard = self.tasks.lock().unwrap();
+                guard.drain(..).map(|(_, t)| t).collect()
+            };
+            for t in tasks {
+                t.await;
+            }
+        }
+
+        /// Take the single scheduled task (for the panic-isolation test).
+        fn take_one(&self) -> BoxFuture {
+            self.tasks.lock().unwrap().pop().expect("a task was scheduled").1
+        }
+    }
+
+    /// A fixed-base monotonic clock: `base + offset`, `offset` settable from the test —
+    /// mirrors the Java canonical test's `AtomicLong clock`.
+    #[derive(Clone)]
+    struct FakeClock {
+        base: Instant,
+        offset_ms: Arc<AtomicU64>,
+    }
+
+    impl FakeClock {
+        fn new() -> Self {
+            Self { base: Instant::now(), offset_ms: Arc::new(AtomicU64::new(0)) }
+        }
+        fn set(&self, ms: u64) {
+            self.offset_ms.store(ms, Ordering::SeqCst);
+        }
+        fn now(&self) -> Instant {
+            self.base + Duration::from_millis(self.offset_ms.load(Ordering::SeqCst))
+        }
+    }
+
+    /// A [`RepublishAction`] that increments an [`AtomicUsize`] counter.
+    fn action_counter() -> (RepublishAction, Arc<AtomicUsize>) {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let counter_for_action = counter.clone();
+        let action: RepublishAction =
+            Arc::new(move || {
+                let c = counter_for_action.clone();
+                Box::pin(async move {
+                    c.fetch_add(1, Ordering::SeqCst);
+                })
+            });
+        (action, counter)
+    }
+
+    /// Test rig: a listener wired with the recording seams, plus the fakes/counters to assert
+    /// against — mirrors the Java canonical test's `@BeforeEach setUp`.
+    struct Rig {
+        messaging: Arc<RecordingMessaging>,
+        listener: Arc<RepublishListener>,
+        delayer: Arc<RecordingDelayer>,
+        clock: FakeClock,
+        jitter_window_seen: Arc<AtomicU64>,
+        next_jitter: Arc<AtomicU64>,
+        state_calls: Arc<AtomicUsize>,
+        cfg_calls: Arc<AtomicUsize>,
+    }
+
+    fn rig() -> Rig {
+        let messaging = RecordingMessaging::new();
+        let delayer = RecordingDelayer::new();
+        let clock = FakeClock::new();
+        let jitter_window_seen = Arc::new(AtomicU64::new(u64::MAX));
+        let next_jitter = Arc::new(AtomicU64::new(0));
+        let (state_action, state_calls) = action_counter();
+        let (cfg_action, cfg_calls) = action_counter();
+
+        let clock_for_seam = clock.clone();
+        let seen = jitter_window_seen.clone();
+        let next = next_jitter.clone();
+        let listener = RepublishListener::with_seams(
+            messaging.clone() as Arc<dyn MessagingService>,
+            state_action,
+            cfg_action,
+            delayer.clone() as Arc<dyn Delayer>,
+            Box::new(move || clock_for_seam.now()),
+            Box::new(move |window| {
+                seen.store(window, Ordering::SeqCst);
+                next.load(Ordering::SeqCst)
+            }),
+        );
+        Rig {
+            messaging,
+            listener,
+            delayer,
+            clock,
+            jitter_window_seen,
+            next_jitter,
+            state_calls,
+            cfg_calls,
+        }
+    }
+
+    #[tokio::test]
+    async fn start_subscribes_both_own_device_bcast_topics() {
+        let r = rig();
+        r.listener.clone().start(DEVICE).await;
+        assert_eq!(
+            r.messaging.subscribed_topics(),
+            topics(),
+            "start() must subscribe exactly the two own-device _bcast republish topics"
+        );
+    }
+
+    #[tokio::test]
+    async fn republish_state_re_emits_the_state_keepalive() {
+        let r = rig();
+        r.listener.clone().start(DEVICE).await;
+        r.messaging.simulate_message(STATE_TOPIC, broadcast(REPUBLISH_STATE)).await;
+        assert_eq!(r.state_calls.load(Ordering::SeqCst), 0, "the re-announce must wait for the jitter delay");
+        r.delayer.run_all().await;
+        assert_eq!(r.state_calls.load(Ordering::SeqCst), 1, "republish-state must re-run the state action");
+        assert_eq!(r.cfg_calls.load(Ordering::SeqCst), 0, "republish-state must not touch the cfg action");
+    }
+
+    #[tokio::test]
+    async fn republish_cfg_re_runs_the_effective_config_publisher() {
+        let r = rig();
+        r.listener.clone().start(DEVICE).await;
+        r.messaging.simulate_message(CFG_TOPIC, broadcast(REPUBLISH_CFG)).await;
+        r.delayer.run_all().await;
+        assert_eq!(r.cfg_calls.load(Ordering::SeqCst), 1, "republish-cfg must re-run the cfg action");
+        assert_eq!(r.state_calls.load(Ordering::SeqCst), 0, "republish-cfg must not touch the state action");
+    }
+
+    #[tokio::test]
+    async fn jitter_window_is_applied_to_the_scheduled_delay() {
+        let r = rig();
+        r.next_jitter.store(1234, Ordering::SeqCst);
+        r.listener.clone().start(DEVICE).await;
+        r.messaging.simulate_message(STATE_TOPIC, broadcast(REPUBLISH_STATE)).await;
+        assert_eq!(
+            r.jitter_window_seen.load(Ordering::SeqCst),
+            JITTER_WINDOW_MS,
+            "the jitter source must be asked for a delay within the normative window"
+        );
+        assert_eq!(r.delayer.delays(), vec![1234], "the scheduled delay must be exactly the jittered value");
+    }
+
+    #[tokio::test]
+    async fn broadcasts_coalesce_while_a_re_announce_is_pending() {
+        let r = rig();
+        r.listener.clone().start(DEVICE).await;
+        r.messaging.simulate_message(STATE_TOPIC, broadcast(REPUBLISH_STATE)).await;
+        r.messaging.simulate_message(STATE_TOPIC, broadcast(REPUBLISH_STATE)).await;
+        r.messaging.simulate_message(STATE_TOPIC, broadcast(REPUBLISH_STATE)).await;
+        assert_eq!(r.delayer.pending(), 1, "a looping broadcast must coalesce to a single pending re-announce");
+        r.delayer.run_all().await;
+        assert_eq!(r.state_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn broadcasts_coalesce_within_the_cooldown_and_accept_after_it() {
+        let r = rig();
+        r.listener.clone().start(DEVICE).await;
+        r.messaging.simulate_message(STATE_TOPIC, broadcast(REPUBLISH_STATE)).await;
+        r.delayer.run_all().await; // fired; cooldown runs from the ACCEPTED trigger at t=0
+
+        r.clock.set(COOLDOWN_MS - 1);
+        r.messaging.simulate_message(STATE_TOPIC, broadcast(REPUBLISH_STATE)).await;
+        assert_eq!(r.delayer.pending(), 0, "a broadcast inside the cooldown must coalesce");
+        assert_eq!(r.state_calls.load(Ordering::SeqCst), 1);
+
+        r.clock.set(COOLDOWN_MS);
+        r.messaging.simulate_message(STATE_TOPIC, broadcast(REPUBLISH_STATE)).await;
+        assert_eq!(r.delayer.pending(), 1, "the cooldown boundary must accept again");
+        r.delayer.run_all().await;
+        assert_eq!(r.state_calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn the_verbs_rate_limit_independently() {
+        let r = rig();
+        r.listener.clone().start(DEVICE).await;
+        r.messaging.simulate_message(STATE_TOPIC, broadcast(REPUBLISH_STATE)).await;
+        // With a state re-announce pending, a cfg broadcast must still be accepted.
+        r.messaging.simulate_message(CFG_TOPIC, broadcast(REPUBLISH_CFG)).await;
+        assert_eq!(r.delayer.pending(), 2, "state and cfg coalesce/cooldown independently");
+        r.delayer.run_all().await;
+        assert_eq!(r.state_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(r.cfg_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn foreign_and_malformed_payloads_are_ignored() {
+        let r = rig();
+        r.listener.clone().start(DEVICE).await;
+        // Wrong verb name in the header (foreign command on the topic).
+        r.messaging.simulate_message(STATE_TOPIC, broadcast("something-else")).await;
+        // A raw (headerless) envelope - e.g. junk JSON published on the broadcast topic.
+        r.messaging.simulate_message(STATE_TOPIC, Message::raw(serde_json::json!({ "x": 1 }))).await;
+        assert_eq!(r.delayer.pending(), 0, "foreign/malformed payloads must never schedule");
+        assert_eq!(r.state_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(r.cfg_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn invalid_device_disables_the_listener() {
+        let r = rig();
+        // '/' fails the §2.2 token rule at topic-build time.
+        r.listener.clone().start("bad/device").await;
+        assert!(
+            r.messaging.subscribed_topics().is_empty(),
+            "an invalid device disables the listener (WARN + no subscriptions)"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_panicking_action_does_not_wedge_the_verb() {
+        let messaging = RecordingMessaging::new();
+        let delayer = RecordingDelayer::new();
+        let clock = FakeClock::new();
+        let (cfg_action, _cfg_calls) = action_counter();
+        let panicking_state_action: RepublishAction =
+            Arc::new(|| Box::pin(async { panic!("boom") }));
+        let clock_for_seam = clock.clone();
+        let listener = RepublishListener::with_seams(
+            messaging.clone() as Arc<dyn MessagingService>,
+            panicking_state_action,
+            cfg_action,
+            delayer.clone() as Arc<dyn Delayer>,
+            Box::new(move || clock_for_seam.now()),
+            Box::new(|_| 0),
+        );
+        listener.clone().start(DEVICE).await;
+        messaging.simulate_message(STATE_TOPIC, broadcast(REPUBLISH_STATE)).await;
+
+        // pending was cleared BEFORE the action ran, so the panic (isolated to its own spawned
+        // task, standard tokio behavior) must not wedge the verb.
+        let task = delayer.take_one();
+        let result = tokio::spawn(task).await;
+        assert!(result.is_err(), "the panic must not escape the spawned task");
+
+        clock.set(COOLDOWN_MS);
+        messaging.simulate_message(STATE_TOPIC, broadcast(REPUBLISH_STATE)).await;
+        assert_eq!(delayer.pending(), 1, "the verb accepts again after the cooldown");
+    }
+
+    #[tokio::test]
+    async fn close_unsubscribes_both_topics_and_drops_pending_re_announces() {
+        let r = rig();
+        r.listener.clone().start(DEVICE).await;
+        r.messaging.simulate_message(STATE_TOPIC, broadcast(REPUBLISH_STATE)).await;
+        r.listener.close().await;
+        assert!(
+            r.messaging.subscribed_topics().is_empty(),
+            "close() must unsubscribe both _bcast topics (unsubscribe-before-exit)"
+        );
+        r.delayer.run_all().await;
+        assert_eq!(r.state_calls.load(Ordering::SeqCst), 0, "a pending re-announce must not fire after close()");
+        // A late broadcast (e.g. a stale queued delivery) is ignored - nothing is subscribed.
+        r.messaging.simulate_message(STATE_TOPIC, broadcast(REPUBLISH_STATE)).await;
+        assert_eq!(r.delayer.pending(), 0);
+    }
+
+    #[tokio::test]
+    async fn close_is_idempotent_and_start_after_close_is_a_no_op() {
+        let r = rig();
+        r.listener.clone().start(DEVICE).await;
+        r.listener.close().await;
+        r.listener.close().await; // idempotent, must not panic
+        r.listener.clone().start(DEVICE).await; // closed -> must not resubscribe
+        assert!(r.messaging.subscribed_topics().is_empty());
+    }
+
+    #[tokio::test]
+    async fn start_is_idempotent() {
+        let r = rig();
+        r.listener.clone().start(DEVICE).await;
+        r.listener.clone().start(DEVICE).await;
+        assert_eq!(r.messaging.subscribed_topics(), topics());
+        r.messaging.simulate_message(STATE_TOPIC, broadcast(REPUBLISH_STATE)).await;
+        assert_eq!(r.delayer.pending(), 1, "a double start must not double-schedule");
+    }
+
+    #[tokio::test]
+    async fn drop_unsubscribes_both_topics_as_a_raii_fallback() {
+        // Mirrors the Java canonical's close()-on-shutdown, adapted for Rust: production
+        // teardown is Drop-only (no explicit close() outside tests).
+        let r = rig();
+        r.listener.clone().start(DEVICE).await;
+        drop(r.listener);
+        for _ in 0..50 {
+            if r.messaging.subscribed_topics().is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(
+            r.messaging.subscribed_topics().is_empty(),
+            "Drop must unsubscribe both _bcast topics as the RAII fallback"
+        );
+    }
+
+    /// The production wiring end to end: the jittered delay is bounded by the window, so the
+    /// re-announce lands within it. (Uses real timing, like the Java canonical's
+    /// `productionConstructorSchedulesForReal` — the one intentional exception to this module's
+    /// otherwise fully deterministic, sleep-free tests.)
+    #[tokio::test]
+    async fn production_constructor_schedules_for_real() {
+        let messaging = RecordingMessaging::new();
+        let (state_action, _state_calls) = action_counter();
+        let (cfg_action, cfg_calls) = action_counter();
+        let listener =
+            RepublishListener::new(messaging.clone() as Arc<dyn MessagingService>, state_action, cfg_action);
+
+        listener.clone().start(DEVICE).await;
+        assert_eq!(messaging.subscribed_topics(), topics());
+        messaging.simulate_message(CFG_TOPIC, broadcast(REPUBLISH_CFG)).await;
+
+        let deadline = Instant::now() + Duration::from_millis(JITTER_WINDOW_MS) + Duration::from_secs(3);
+        while cfg_calls.load(Ordering::SeqCst) == 0 && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert_eq!(
+            cfg_calls.load(Ordering::SeqCst),
+            1,
+            "the production scheduler must fire the re-announce within the jitter window"
+        );
+
+        listener.close().await;
+        assert!(messaging.subscribed_topics().is_empty());
     }
 }

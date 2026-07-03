@@ -314,6 +314,29 @@ class EnhancedHeartbeat(ConfigurationChangeListener):
             self._messaging_service._publish_reserved(topic, message)
         logger.debug(f"Published heartbeat state '{status}' on topic: {topic}")
 
+    def publish_state_now(self) -> None:
+        """Re-emits the RUNNING ``state`` keepalive immediately, out of band from the
+        periodic schedule — the ``republish-state`` broadcast re-announce (DESIGN-uns
+        §9.3/§9.4, the late-join lever): same payload as a tick's keepalive
+        (``{"status":"RUNNING","uptimeSecs":n}``), same privileged
+        ``_publish_reserved*`` seam, same ``heartbeat.destination`` routing (mirrors
+        Java's ``Heartbeat.publishStateNow()``). **Respects ``heartbeat.enabled``**: a
+        component whose operator disabled the state keepalive does not re-announce
+        state (the broadcast cannot re-enable an opted-out state surface). Best-effort
+        — failures are logged and swallowed; the periodic schedule is unaffected.
+        """
+        heartbeat_config = self._get_heartbeat_config()
+        if heartbeat_config is None or not heartbeat_config.is_enabled():
+            logger.debug(
+                "republish-state re-announce skipped: the heartbeat state keepalive is"
+                " disabled (heartbeat.enabled=false)"
+            )
+            return
+        try:
+            self._publish_state("RUNNING", include_uptime=True)
+        except Exception as e:  # noqa: BLE001 - best-effort by design
+            logger.warning(f"Out-of-band state re-announce failed: {e}")
+
     def _emit_sys_metric(self) -> None:
         """Emits the enabled measures as the ``sys`` metric through the normal metric
         subsystem (its configured target: messaging/cloudwatch/EMF/log/prometheus)."""
