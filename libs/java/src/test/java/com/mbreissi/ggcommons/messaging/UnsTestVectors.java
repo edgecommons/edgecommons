@@ -4,7 +4,10 @@
  */
 package com.mbreissi.ggcommons.messaging;
 
+import com.mbreissi.ggcommons.commands.CommandInbox;
 import com.mbreissi.ggcommons.config.ConfigManager;
+import com.mbreissi.ggcommons.test.MockConfigurationService;
+import com.mbreissi.ggcommons.test.MockMessagingService;
 import com.mbreissi.ggcommons.uns.RepublishListener;
 import com.mbreissi.ggcommons.uns.Uns;
 import com.mbreissi.ggcommons.uns.UnsClass;
@@ -12,12 +15,15 @@ import com.mbreissi.ggcommons.uns.UnsScope;
 import com.mbreissi.ggcommons.uns.UnsValidationException;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -195,6 +201,164 @@ final class UnsTestVectors {
                 "cooldownMs must equal the implementation's cooldown");
         assertEquals(false, behavior.get("replyTo").getAsBoolean(),
                 "the republish broadcast never carries a reply_to");
+    }
+
+    /**
+     * Replays a {@code commands.json} document — the command-inbox contract (DESIGN-uns §9.5,
+     * the minimal {@code commands()} facade, edge-console slice S2): the own-inbox wildcard is
+     * rebuilt byte-for-byte through the topic builder; each verb's request topic and golden
+     * request/reply envelopes are rebuilt through {@link Uns}/{@link MessageBuilder} and compared
+     * structurally (the reply must carry the request's {@code correlation_id} and no
+     * {@code reply_to}); every request is then <b>dispatched through a LIVE {@link CommandInbox}</b>
+     * (pinned action seams: uptime 42 s, reload success, the vector's own config snapshot) whose
+     * published reply body must equal the golden body byte-for-byte; and the behavior flags/sets
+     * must equal the implementation's pinned constants.
+     */
+    static void assertCommandsDocument(JsonObject doc) {
+        // ---- the inbox subscription, byte-for-byte through the real builder ----
+        JsonObject inbox = doc.getAsJsonObject("inbox");
+        JsonObject input = inbox.getAsJsonObject("input");
+        MessageIdentity identity = new MessageIdentity(
+                List.of(new MessageIdentity.HierEntry("device", input.get("device").getAsString())),
+                input.get("component").getAsString(), input.get("instance").getAsString());
+        String filter = new Uns(identity, input.get("includeRoot").getAsBoolean())
+                .filter(UnsClass.fromToken(input.get("class").getAsString()),
+                        new UnsScope(null, identity.getDevice(), identity.getComponent(),
+                                identity.getInstance()));
+        assertEquals(inbox.get("filter").getAsString(), filter, "inbox filter");
+
+        // ---- a LIVE inbox with the pinned action seams the vectors document ----
+        JsonArray verbs = doc.getAsJsonArray("verbs");
+        assertEquals(3, verbs.size(), "commands.json must pin exactly the three built-in verbs");
+        String[] expectedVerbs = {CommandInbox.PING, CommandInbox.RELOAD_CONFIG,
+                CommandInbox.GET_CONFIGURATION};
+        JsonObject pinnedConfig = verbs.get(2).getAsJsonObject()
+                .getAsJsonObject("reply").getAsJsonObject("body")
+                .getAsJsonObject("result").getAsJsonObject("config");
+        MockConfigurationService config = new MockConfigurationService();
+        config.setComponentIdentity(identity);
+        MockMessagingService messaging = new MockMessagingService();
+        CommandInbox live = new CommandInbox(config, messaging,
+                () -> 42L, () -> true, pinnedConfig::deepCopy);
+        live.start();
+        assertEquals(Set.of(filter), messaging.getSubscribedTopics(),
+                "the live inbox must subscribe exactly the pinned filter");
+
+        for (int i = 0; i < verbs.size(); i++) {
+            JsonObject c = verbs.get(i).getAsJsonObject();
+            assertEquals(expectedVerbs[i], c.get("name").getAsString(), "verb #" + i);
+            assertCommandCase(c, identity, messaging, true);
+        }
+        for (JsonElement caseEl : doc.getAsJsonArray("errors")) {
+            assertCommandCase(caseEl.getAsJsonObject(), identity, messaging, false);
+        }
+        live.close();
+
+        // ---- the normative behavior flags/sets (all four languages) ----
+        JsonObject behavior = doc.getAsJsonObject("behavior");
+        assertEquals(true, behavior.get("verbIsTopicChannel").getAsBoolean(),
+                "the verb is the cmd topic's channel");
+        assertEquals(true, behavior.get("headerNameMustEqualVerb").getAsBoolean(),
+                "header.name must equal the topic verb");
+        assertEquals(true, behavior.get("fireAndForgetWithoutReplyTo").getAsBoolean(),
+                "a cmd without reply_to is fire-and-forget");
+        assertEquals(true, behavior.get("malformedIgnoredWithoutReply").getAsBoolean(),
+                "malformed/foreign payloads are ignored, never replied to");
+        assertEquals(CommandInbox.BUILT_IN_VERBS, stringSet(behavior, "builtInVerbs"),
+                "builtInVerbs must equal the implementation's set");
+        assertEquals(CommandInbox.DELEGATED_VERBS, stringSet(behavior, "delegatedVerbs"),
+                "delegatedVerbs must equal the implementation's set");
+        assertEquals(Set.of(CommandInbox.ERR_UNKNOWN_VERB, CommandInbox.ERR_HANDLER_ERROR,
+                        CommandInbox.ERR_RELOAD_FAILED, CommandInbox.ERR_NO_CONFIG),
+                stringSet(behavior, "errorCodes"),
+                "errorCodes must equal the implementation's pinned base codes");
+    }
+
+    /**
+     * One command vector: the topic byte-for-byte, the request/reply envelopes structurally
+     * (rebuilt via {@link MessageBuilder}; the request's {@code reply_to} via the real
+     * {@code makeRequest} path), the correlation rule, and the LIVE round trip — the request is
+     * replayed through the subscribed inbox and the published reply (topic = the request's
+     * {@code reply_to}) must carry the golden body.
+     */
+    private static void assertCommandCase(JsonObject c, MessageIdentity identity,
+            MockMessagingService messaging, boolean expectOk) {
+        String name = c.get("name").getAsString();
+        String verb = c.get("verb").getAsString();
+
+        // Topic reproduction, byte-for-byte (the verb is the cmd channel).
+        assertEquals(c.get("topic").getAsString(),
+                new Uns(identity, false).topic(UnsClass.CMD, verb), "'" + name + "' topic");
+
+        // Request envelope reproduction: pinned header fields + the real makeRequest path for
+        // reply_to; no identity (the requester's identity is not part of the dispatch contract).
+        JsonObject request = c.getAsJsonObject("request");
+        JsonObject requestHeader = request.getAsJsonObject("header");
+        assertEquals(verb, requestHeader.get("name").getAsString(),
+                "'" + name + "' request header.name must equal the verb");
+        Message rebuiltRequest = MessageBuilder
+                .create(requestHeader.get("name").getAsString(),
+                        requestHeader.get("version").getAsString())
+                .withUuid(requestHeader.get("uuid").getAsString())
+                .withTimestamp(requestHeader.get("timestamp").getAsString())
+                .withCorrelationId(requestHeader.get("correlation_id").getAsString())
+                .withPayload(request.get("body"))
+                .build();
+        rebuiltRequest.makeRequest(requestHeader.get("reply_to").getAsString());
+        assertEquals(request, rebuiltRequest.toDict(), "'" + name + "' request envelope");
+
+        // Reply envelope reproduction: the responder's identity, the REQUEST's correlation_id,
+        // never a reply_to.
+        JsonObject reply = c.getAsJsonObject("reply");
+        JsonObject replyHeader = reply.getAsJsonObject("header");
+        assertEquals(verb, replyHeader.get("name").getAsString(),
+                "'" + name + "' reply header.name must equal the verb");
+        assertEquals(CommandInbox.CMD_MESSAGE_VERSION, replyHeader.get("version").getAsString(),
+                "'" + name + "' reply header.version");
+        assertEquals(requestHeader.get("correlation_id").getAsString(),
+                replyHeader.get("correlation_id").getAsString(),
+                "'" + name + "' reply must carry the request's correlation_id");
+        assertEquals(false, replyHeader.has("reply_to"), "'" + name + "' reply has no reply_to");
+        MessageIdentity replyIdentity = MessageIdentity.fromDict(reply.getAsJsonObject("identity"));
+        assertNotNull(replyIdentity, "'" + name + "' reply identity must parse");
+        Message rebuiltReply = MessageBuilder
+                .create(replyHeader.get("name").getAsString(),
+                        replyHeader.get("version").getAsString())
+                .withUuid(replyHeader.get("uuid").getAsString())
+                .withTimestamp(replyHeader.get("timestamp").getAsString())
+                .withCorrelationId(replyHeader.get("correlation_id").getAsString())
+                .withIdentity(replyIdentity)
+                .withPayload(reply.get("body"))
+                .build();
+        assertEquals(reply, rebuiltReply.toDict(), "'" + name + "' reply envelope");
+
+        // Reply body shape: {ok:true, result:{…}} or {ok:false, error:{code, message}}.
+        JsonObject body = reply.getAsJsonObject("body");
+        assertEquals(expectOk, body.get("ok").getAsBoolean(), "'" + name + "' reply ok flag");
+        assertEquals(true, body.has(expectOk ? "result" : "error"),
+                "'" + name + "' reply body carries " + (expectOk ? "result" : "error"));
+
+        // LIVE round trip: the real inbox must publish exactly the golden reply body to the
+        // request's reply_to.
+        messaging.clearPublishedMessages();
+        messaging.simulateMessage(c.get("topic").getAsString(),
+                MessageBuilder.fromObject(request.deepCopy()));
+        assertEquals(1, messaging.getPublishedMessages().size(),
+                "'" + name + "' live dispatch must publish exactly one reply");
+        MockMessagingService.PublishedMessage published = messaging.getPublishedMessages().get(0);
+        assertEquals(requestHeader.get("reply_to").getAsString(), published.topic,
+                "'" + name + "' live reply must go to the request's reply_to");
+        assertEquals(body, published.message.toDict().get("body"),
+                "'" + name + "' live reply body must equal the golden body");
+    }
+
+    /** Reads a behavior string array as a set. */
+    private static Set<String> stringSet(JsonObject behavior, String key) {
+        Set<String> values = new HashSet<>();
+        for (JsonElement el : behavior.getAsJsonArray(key)) {
+            values.add(el.getAsString());
+        }
+        return values;
     }
 
     // ===================== per-case runners (the language binding under test) ===================

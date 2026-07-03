@@ -4,6 +4,7 @@
  */
 package com.mbreissi.ggcommons;
 
+import com.mbreissi.ggcommons.commands.CommandInbox;
 import com.mbreissi.ggcommons.config.ConfigManager;
 import com.mbreissi.ggcommons.config.ConfigManagerFactory;
 import com.mbreissi.ggcommons.config.EffectiveConfigPublisher;
@@ -71,6 +72,14 @@ public class GGCommons
      * coalesced) when the {@code uns-bridge} — or a console — broadcasts a republish command.
      */
     protected RepublishListener republishListener;
+    /**
+     * The library-owned command inbox — the minimal {@code commands()} facade (DESIGN-uns §9.5,
+     * slice S2): subscribes {@code ecv1/{device}/{component}/main/cmd/#} on the primary
+     * connection, dispatches {@code cmd} envelopes by verb (built-ins {@code ping} /
+     * {@code reload-config} / {@code get-configuration} + custom registrations via
+     * {@link #getCommands()}), and replies to {@code header.reply_to}.
+     */
+    protected CommandInbox commandInbox;
 
     /**
      * The component-identity-bound UNS topic builder (instance
@@ -245,6 +254,16 @@ public class GGCommons
                     heartbeat::publishStateNow, effectiveConfigPublisher::publishNow);
             republishListener.start();
 
+            // §9.5 (slice S2): subscribe the component's own command inbox
+            // (ecv1/{device}/{component}/main/cmd/#) on the primary connection and dispatch cmd
+            // envelopes by verb - built-ins ping / reload-config / get-configuration answer the
+            // console out of the box; apps add custom verbs via getCommands().register(). Always
+            // on (no config surface); best-effort start (a failure disables the inbox only).
+            commandInbox = new CommandInbox(configManager, messagingClient,
+                    heartbeat::getUptimeSecs, configManager::reloadFromProvider,
+                    effectiveConfigPublisher::redactedEffectiveConfig);
+            commandInbox.start();
+
             // FR-HB-1: start the HTTP health endpoint (default-on for KUBERNETES; opt-in elsewhere),
             // and FR-HB-2: wire SIGTERM/SIGINT to the graceful, idempotent shutdown so a kubelet (or
             // the Greengrass Nucleus) terminating the process flips /readyz -> 503, unsubscribes
@@ -285,6 +304,20 @@ public class GGCommons
     public MetricEmitter getMetrics()
     {
         return metricEmitter;
+    }
+
+    /**
+     * Returns the command-inbox facade — the minimal {@code gg.commands()} surface (DESIGN-uns
+     * §9.5): register custom command verbs with
+     * {@code getCommands().register(verb, handler)}; the built-in verbs ({@code ping},
+     * {@code reload-config}, {@code get-configuration}) are registered by the library and cannot
+     * be shadowed. May be {@code null} on a mock/subclass bring-up that never ran {@code init}.
+     *
+     * @return the {@link CommandInbox} facade
+     */
+    public CommandInbox getCommands()
+    {
+        return commandInbox;
     }
 
     /**
@@ -652,6 +685,12 @@ public class GGCommons
         if (republishListener != null)
         {
             republishListener.close();
+        }
+        // Unsubscribe the command inbox while messaging is still up (same rule) and stop
+        // dispatching command verbs mid-teardown.
+        if (commandInbox != null)
+        {
+            commandInbox.close();
         }
         if (credentialMetricsBridge != null)
         {

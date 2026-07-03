@@ -64,24 +64,29 @@ class UnsTestVectorsGeneratorTest {
         JsonObject topics = topicsDocument();
         JsonObject envelopes = envelopesDocument();
         JsonObject bcast = bcastDocument();
+        JsonObject commands = commandsDocument();
 
         // Self-check BEFORE writing: the documents must be exactly what the implementation does.
         UnsTestVectors.assertTopicsDocument(topics);
         UnsTestVectors.assertEnvelopesDocument(envelopes);
         UnsTestVectors.assertBcastDocument(bcast);
+        UnsTestVectors.assertCommandsDocument(commands);
 
         String topicsJson = UnsTestVectors.GSON.toJson(topics) + "\n";
         String envelopesJson = UnsTestVectors.GSON.toJson(envelopes) + "\n";
         String bcastJson = UnsTestVectors.GSON.toJson(bcast) + "\n";
+        String commandsJson = UnsTestVectors.GSON.toJson(commands) + "\n";
 
         Files.createDirectories(UnsTestVectors.DIR);
         Path topicsPath = UnsTestVectors.DIR.resolve("topics.json");
         Path envelopesPath = UnsTestVectors.DIR.resolve("envelopes.json");
         Path bcastPath = UnsTestVectors.DIR.resolve("bcast.json");
+        Path commandsPath = UnsTestVectors.DIR.resolve("commands.json");
         Path readmePath = UnsTestVectors.DIR.resolve("README.md");
         writeIfAbsent(topicsPath, topicsJson);
         writeIfAbsent(envelopesPath, envelopesJson);
         writeIfAbsent(bcastPath, bcastJson);
+        writeIfAbsent(commandsPath, commandsJson);
         writeIfAbsent(readmePath, README);
 
         // Determinism lock (verify-in-place): the on-disk vectors must equal the reference
@@ -89,6 +94,7 @@ class UnsTestVectorsGeneratorTest {
         verifyInPlace(topicsPath, topicsJson);
         verifyInPlace(envelopesPath, envelopesJson);
         verifyInPlace(bcastPath, bcastJson);
+        verifyInPlace(commandsPath, commandsJson);
         verifyInPlace(readmePath, README);
     }
 
@@ -531,6 +537,127 @@ class UnsTestVectorsGeneratorTest {
         return c;
     }
 
+    // ===================== commands.json =====================
+
+    /**
+     * The command-inbox contract (DESIGN-uns §7.3/§9.5, the minimal {@code commands()} facade —
+     * edge-console slice S2): the own-inbox wildcard, the three built-in verbs' golden
+     * request/reply envelope pairs, the unknown-verb error reply, and the normative behavior
+     * flags/sets every language's inbox implements. Topics and the inbox filter are produced by
+     * the REAL topic builder; envelopes by the REAL {@link MessageBuilder} (the request's
+     * {@code reply_to} via the real {@code makeRequest} path); and the reply bodies are verified
+     * against a LIVE {@code CommandInbox} dispatch before writing (see
+     * {@code UnsTestVectors.assertCommandsDocument}), so the file is implementation output by
+     * construction (D-U12).
+     */
+    private static JsonObject commandsDocument() {
+        JsonObject doc = new JsonObject();
+        doc.addProperty("description", "ggcommons UNS command-inbox vectors - the minimal"
+                + " commands() facade (DESIGN-uns 7.3/9.5, edge-console slice S2). Inbox filter +"
+                + " request topics byte-for-byte; request/reply envelopes structural (D-U22);"
+                + " reply bodies must equal a live inbox dispatch's output; the behavior"
+                + " flags/sets are normative for every language's command inbox");
+        JsonObject inboxInput = new JsonObject();
+        inboxInput.addProperty("device", "gw-01");
+        inboxInput.addProperty("component", "opcua-adapter");
+        inboxInput.addProperty("instance", "main");
+        inboxInput.addProperty("includeRoot", false);
+        inboxInput.addProperty("class", "cmd");
+        JsonObject inbox = new JsonObject();
+        inbox.addProperty("filter", new com.mbreissi.ggcommons.uns.Uns(SINGLE_IDENTITY, false)
+                .filter(com.mbreissi.ggcommons.uns.UnsClass.CMD,
+                        new com.mbreissi.ggcommons.uns.UnsScope(null,
+                                SINGLE_IDENTITY.getDevice(), SINGLE_IDENTITY.getComponent(),
+                                SINGLE_IDENTITY.getInstance())));
+        inbox.add("input", inboxInput);
+        doc.add("inbox", inbox);
+
+        JsonArray verbs = new JsonArray();
+        verbs.add(commandCase(com.mbreissi.ggcommons.commands.CommandInbox.PING,
+                com.mbreissi.ggcommons.commands.CommandInbox.PING, 1,
+                body("{}"),
+                body("{\"ok\":true,\"result\":{\"status\":\"RUNNING\",\"uptimeSecs\":42}}")));
+        verbs.add(commandCase(com.mbreissi.ggcommons.commands.CommandInbox.RELOAD_CONFIG,
+                com.mbreissi.ggcommons.commands.CommandInbox.RELOAD_CONFIG, 2,
+                body("{}"),
+                body("{\"ok\":true,\"result\":{\"reloaded\":true}}")));
+        verbs.add(commandCase(com.mbreissi.ggcommons.commands.CommandInbox.GET_CONFIGURATION,
+                com.mbreissi.ggcommons.commands.CommandInbox.GET_CONFIGURATION, 3,
+                body("{}"),
+                body("{\"ok\":true,\"result\":{\"config\":{\"component\":"
+                        + "{\"name\":\"opcua-adapter\"},\"messaging\":{\"local\":"
+                        + "{\"credentials\":\"***\"}}}}}")));
+        doc.add("verbs", verbs);
+
+        JsonArray errors = new JsonArray();
+        errors.add(commandCase("unknown-verb", "no-such-verb", 9,
+                body("{}"),
+                body("{\"ok\":false,\"error\":{\"code\":\"UNKNOWN_VERB\",\"message\":"
+                        + "\"verb 'no-such-verb' is not registered on this component\"}}")));
+        doc.add("errors", errors);
+
+        JsonObject behavior = new JsonObject();
+        behavior.addProperty("verbIsTopicChannel", true);
+        behavior.addProperty("headerNameMustEqualVerb", true);
+        behavior.addProperty("fireAndForgetWithoutReplyTo", true);
+        behavior.addProperty("malformedIgnoredWithoutReply", true);
+        JsonArray builtInVerbs = new JsonArray();
+        builtInVerbs.add(com.mbreissi.ggcommons.commands.CommandInbox.PING);
+        builtInVerbs.add(com.mbreissi.ggcommons.commands.CommandInbox.RELOAD_CONFIG);
+        builtInVerbs.add(com.mbreissi.ggcommons.commands.CommandInbox.GET_CONFIGURATION);
+        behavior.add("builtInVerbs", builtInVerbs);
+        JsonArray delegatedVerbs = new JsonArray();
+        delegatedVerbs.add(com.mbreissi.ggcommons.commands.CommandInbox.SET_CONFIG_VERB);
+        behavior.add("delegatedVerbs", delegatedVerbs);
+        JsonArray errorCodes = new JsonArray();
+        errorCodes.add(com.mbreissi.ggcommons.commands.CommandInbox.ERR_UNKNOWN_VERB);
+        errorCodes.add(com.mbreissi.ggcommons.commands.CommandInbox.ERR_HANDLER_ERROR);
+        errorCodes.add(com.mbreissi.ggcommons.commands.CommandInbox.ERR_RELOAD_FAILED);
+        errorCodes.add(com.mbreissi.ggcommons.commands.CommandInbox.ERR_NO_CONFIG);
+        behavior.add("errorCodes", errorCodes);
+        doc.add("behavior", behavior);
+        return doc;
+    }
+
+    /**
+     * One command vector: {@code {name, verb, topic, request, reply}} — the topic through the
+     * REAL builder, the request through the REAL {@link MessageBuilder} + {@code makeRequest}
+     * (pinned {@code reply_to}), the reply carrying the request's {@code correlation_id} and the
+     * responder's identity.
+     */
+    private static JsonObject commandCase(String name, String verb, int n,
+            JsonObject requestBody, JsonObject replyBody) {
+        String topic = new com.mbreissi.ggcommons.uns.Uns(SINGLE_IDENTITY, false)
+                .topic(com.mbreissi.ggcommons.uns.UnsClass.CMD, verb);
+        Message request = MessageBuilder.create(verb, "1.0")
+                .withUuid(cmdUuid(n, 1))
+                .withTimestamp(TIMESTAMP)
+                .withCorrelationId(cmdUuid(n, 2))
+                .withPayload(requestBody)
+                .build();
+        request.makeRequest("ggcommons/reply-" + cmdUuid(n, 3));
+        Message reply = MessageBuilder.create(verb,
+                        com.mbreissi.ggcommons.commands.CommandInbox.CMD_MESSAGE_VERSION)
+                .withUuid(cmdUuid(n, 4))
+                .withTimestamp(TIMESTAMP)
+                .withCorrelationId(cmdUuid(n, 2))
+                .withIdentity(SINGLE_IDENTITY)
+                .withPayload(replyBody)
+                .build();
+        JsonObject c = new JsonObject();
+        c.addProperty("name", name);
+        c.addProperty("verb", verb);
+        c.addProperty("topic", topic);
+        c.add("request", request.toDict());
+        c.add("reply", reply.toDict());
+        return c;
+    }
+
+    /** Deterministic pinned UUIDs for the command vectors: verb {@code n}, field {@code f}. */
+    private static String cmdUuid(int n, int f) {
+        return String.format("00000000-0000-4000-8000-00000000c%d0%d", n, f);
+    }
+
     // ===================== case builders =====================
 
     private static JsonObject buildCase(String name, String[] levels, String[] values,
@@ -684,8 +811,9 @@ class UnsTestVectorsGeneratorTest {
             | `topics.json` | `build` / `validate` / `filter` / `guard` case groups (inputs + expected outputs or error codes). |
             | `envelopes.json` | One golden **full canonical JSON** envelope per UNS class, with pinned `uuid`/`correlation_id`/`timestamp`. |
             | `bcast.json` | The `_bcast` **republish** (reconnect-rehydration) contract: the two broadcast command topics, the golden notification envelopes, and the normative listener behavior constants. |
+            | `commands.json` | The **command-inbox** contract (the minimal `commands()` facade): the own-inbox wildcard, the three built-in verbs' golden request/reply pairs, the unknown-verb error reply, and the normative dispatch behavior. |
 
-            Both files are UTF-8; some inputs deliberately contain raw C1 control bytes
+            The files are UTF-8; some inputs deliberately contain raw C1 control bytes
             (U+0085 etc.) — parse them as JSON, do not preprocess.
 
             ## topics.json case groups
@@ -769,6 +897,56 @@ class UnsTestVectorsGeneratorTest {
               ignored, never crash. `republish-state` re-emits the heartbeat `state` keepalive
               (respecting `heartbeat.enabled`); `republish-cfg` re-runs the effective-config
               (`cfg`) publisher. See `docs/platform/DESIGN-uns.md` §9.4.
+
+            ## commands.json command-inbox contract
+
+            Pins the component **command inbox** — the minimal `commands()` facade
+            (DESIGN-uns §7.3/§9.5, the edge-console slice S2). The document is
+            `{inbox, verbs[], errors[], behavior}`:
+
+            - **inbox** — `{filter, input}`: the own-inbox wildcard every component subscribes
+              on its PRIMARY connection at startup, rebuilt **byte-for-byte** from `input`
+              (`{device, component, instance: "main", includeRoot: false, class: "cmd"}`)
+              through the language's filter builder with every scope token pinned:
+              `ecv1/{device}/{component}/main/cmd/#`. Unsubscribed on shutdown, before
+              messaging closes. Only the `main`-instance inbox exists in this slice.
+            - **verbs** — the three built-in verbs, in order `ping`, `reload-config`,
+              `get-configuration`. Each is `{name, verb, topic, request, reply}`:
+              - `topic` is rebuilt byte-for-byte (the **verb is the `cmd` channel**;
+                `/`-namespaced verbs are legal for custom registrations).
+              - `request` is the golden request envelope: header
+                `{name: <verb>, version: "1.0", timestamp, uuid, correlation_id, reply_to}`
+                (`header.name` **must equal the topic's verb**; `reply_to` set via the
+                language's request path), body = the verb's arguments object (`{}` for all
+                three built-ins). The requester's `identity`/`tags` are not part of the
+                dispatch contract (a request may carry them; they are ignored).
+              - `reply` is the golden reply envelope, published to the request's `reply_to`:
+                header `{name: <verb>, version: "1.0", …, correlation_id: <the REQUEST's
+                correlation_id>}` (never a `reply_to`), the **responder's** `identity`, and the
+                body `{"ok": true, "result": <verb-specific>}` — `ping` →
+                `{"status": "RUNNING", "uptimeSecs": n}` (the state keepalive's RUNNING body
+                shape; the vector pins 42), `reload-config` → `{"reloaded": true}`,
+                `get-configuration` → `{"config": <redacted effective config>}` (**Flow B** —
+                the same redacted snapshot the `cfg` push publishes, as a reply). Envelopes
+                compare **structurally** (D-U22); a live reply may additionally carry the
+                responder's `tags` (metadata, not normative).
+            - **errors** — the golden error reply: an unknown (but well-formed) verb with a
+              `reply_to` is answered `{"ok": false, "error": {"code": "UNKNOWN_VERB",
+              "message": …}}` (the `UNKNOWN_VERB` message text is library-composed and pinned;
+              other codes' messages are informative, not normative).
+            - **behavior** — the normative dispatch rules every language implements:
+              `verbIsTopicChannel` (the verb is everything after `cmd/`),
+              `headerNameMustEqualVerb`, `fireAndForgetWithoutReplyTo` (no `reply_to` → the
+              handler runs, no reply — unknown fire-and-forget verbs are ignored at DEBUG),
+              `malformedIgnoredWithoutReply` (missing header / name≠verb / parse anomaly →
+              DEBUG ignore, **never** a reply, never a crash), `builtInVerbs` (registered by
+              the library; cannot be shadowed or unregistered), `delegatedVerbs`
+              (`set-config` is owned by the CONFIG_COMPONENT source's own subscription — the
+              inbox always ignores it), and `errorCodes` (the pinned base set: `UNKNOWN_VERB`,
+              `HANDLER_ERROR` — a handler threw an uncoded error, `RELOAD_FAILED`,
+              `NO_CONFIG`; custom handlers may add codes via the language's coded command
+              exception). Handler failures on a fire-and-forget request are logged only.
+              See `docs/platform/DESIGN-uns.md` §9.5.
 
             Generated by the Java canonical generator test (D-U12):
             `mvn -f libs/java/pom.xml test -Dtest=UnsTestVectorsGeneratorTest`.

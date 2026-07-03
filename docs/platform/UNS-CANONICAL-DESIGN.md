@@ -1,9 +1,18 @@
 # ggcommons UNS — Canonical API Design & Decisions Register (implementation companion)
 
-> **Status: implementation-ready (2026-07-02).** Companion to [`DESIGN-uns.md`](DESIGN-uns.md) (the
-> approved design). Java canonical; Python/Rust/TS mirror notes inline. Pre-1.0 hard cut; no
-> dual-publish. Shared/layered config is **explicitly out of scope** — each component reads its own
-> `hierarchy` + `identity` blocks (shared config is a later co-location optimization).
+> **Status (2026-07-03): Phases 1–2 SHIPPED, all four languages** (branch `feat/unified-namespace`,
+> not yet merged to `main`) — every API shape below (`MessageIdentity`, `gg.uns()`/`UnsClass`/`UnsScope`,
+> the `gg.instance()` handle, the reserved-class guard + per-language internal seam, the `request()`
+> deadline, MQTT LWT, IoTCore casing, the library-owned `state`/`metric`/`cfg` publishers, the
+> `uns-test-vectors/` conformance suite, and the interop UNS suite) is real, tested code — see the
+> "Build plan — phase checklist" at the bottom for the per-item status and DESIGN-uns.md §13 for the
+> phase-level summary. Phase 3 (`uns-bridge` + the `_bcast` listener) has also shipped — see
+> [`DESIGN-uns-bridge.md`](DESIGN-uns-bridge.md). Phases 4 (streaming enrichment) and 5 (the
+> southbound command family + D‑U15/16) remain design-only. Companion to
+> [`DESIGN-uns.md`](DESIGN-uns.md) (the approved design). Java canonical; Python/Rust/TS mirror notes
+> inline. Pre-1.0 hard cut; no dual-publish. Shared/layered config is **explicitly out of scope** —
+> each component reads its own `hierarchy` + `identity` blocks (shared config is a later co-location
+> optimization).
 >
 > **Provenance:** produced by a Fable design pass over seven code-grounded reader maps (all four cores +
 > schema + components + interop). The **Decisions register** below is the running tracker for later
@@ -410,9 +419,14 @@ broadcast):**
   `ecv1/bcast/cmd/republish-state` in DESIGN-uns §9.3 → `ecv1/{device}/_bcast/main/cmd/republish-state`.
   (Site-wide broadcast across devices = the console publishing per-device from its FleetModel, or a
   `+`-device refinement — deferred to Phase 3.) **Reserved tokens:** logical component `config`;
-  pseudo-component `_bcast`; the `_`-prefix is reserved for system pseudo-components. Flow-B verb handlers
-  + broadcast land in Phase 3 (facade `commands()`); **Phase 1 implements only Flow A + the `set-config`
-  push.**
+  pseudo-component `_bcast`; the `_`-prefix is reserved for system pseudo-components. **Phase 1
+  implemented Flow A + the `set-config` push; the one `_bcast` broadcast pair
+  (`republish-state`/`republish-cfg`) has since shipped in all four languages as its own listener
+  (DESIGN-uns.md §9.4, slice G-S1); and the minimal `commands()` facade — the component command
+  inbox + `ping`/`reload-config`/Flow-B `get-configuration` + `register(verb, handler)` — has
+  shipped in the Java canonical (DESIGN-uns.md §9.5, slice S2; `uns-test-vectors/commands.json`;
+  Py/Rust/TS mirrors pending).** The full facade (schema/danger/RBAC-annotated registration,
+  `describe`, `set-log-level`, `sb/*`) remains deferred.
 
 Heartbeat config reshape (resolves #33 / M11 in this phase — Risks #1): `heartbeat.targets[]` is
 **removed** (where the topic drift knobs live); replaced by `heartbeat: { enabled (bool, default true),
@@ -487,10 +501,24 @@ library-owned **state / metric / cfg** publishers on UNS topics; the CONFIG_COMP
 the M8 named client (Rust only); schema changes + `uns-test-vectors` + the interop UNS suite.
 
 **Deferred to the components phase:** `telemetry()`, `status()`, `events()`, `commands()`, `discovery()`
-facades; all built-in `cmd` verbs incl. the `republish-state` broadcast listener (late-join lands with
-the bridge, Phase 3); the `log`-tail publisher (class reserved+guarded now, publisher later); `uns-bridge`
-+ site-broker recipes (M1/M2); streaming enrichment (M15); the southbound command family (M9); D‑U15/16
-(Phase 5).
+facades (incl. registering arbitrary component-defined `cmd` verbs through a generalized facade); the
+`log`-tail publisher (class reserved+guarded now, publisher later); streaming enrichment (M15); the
+southbound command family (M9); D‑U15/16 (Phase 5).
+
+> **Update (2026-07-03) — three of these have since shipped, ahead of this note:** the `_bcast`
+> `republish-state`/`republish-cfg` broadcast listener has shipped in all four languages
+> (DESIGN-uns.md §9.4, slice G-S1); **`uns-bridge` + site-broker recipes (M1/M2)** have shipped as a
+> standalone, e2e-tested Rust component (`edgecommons/uns-bridge`, not yet published to GitHub or
+> pinned by a ggcommons rev bump) — see [`DESIGN-uns-bridge.md`](DESIGN-uns-bridge.md); and the
+> **minimal `commands()` facade** — the component command inbox (`ecv1/{device}/{component}/main/cmd/#`),
+> the built-ins `ping`/`reload-config`/Flow-B `get-configuration`, and the `register(verb, handler)`
+> seam — has shipped in the **Java canonical** (DESIGN-uns.md §9.5, slice S2; pinned by
+> `uns-test-vectors/commands.json`; Py/Rust/TS mirrors pending). The rest of this deferred list is
+> still accurate: no `telemetry()/status()/events()/discovery()` facade exists in any library (and
+> no schema/danger/RBAC-annotated `commands()` registration), no `log`-tail publisher, no streaming
+> hierarchy columns (M15), and no `cmd/sb/*` UNS command family or `writes.allow[]` (M9/D‑U15/16) —
+> though `opcua-adapter` has separately landed the M9 *capabilities* (browse/write-ack/regex-read) on
+> its own legacy topics; see `SOUTHBOUND.md` §2.2.
 
 **Schema deltas** (edit `schema/ggcommons-config-schema.json`, then `schema/sync-schema.sh`): ADD
 top-level `hierarchy {levels: string[]}`, `identity` (patternProperties `^[A-Za-z0-9_-]+$` → string),
@@ -604,25 +632,42 @@ internal `IotCoreSubscriptionHandler → IoTCoreSubscriptionHandler` (cosmetic).
 
 **Phase 1 — grammar / identity / `uns()` / vectors + library publishers + config remap + schema + M11**
 (this is the bulk of the "core" work; guard/deadline/LWT/casing from the doc's Phase 2 are folded in
-where coupled):
-- [ ] **Schema** (`schema/ggcommons-config-schema.json` + `sync-schema.sh` → 5 copies): +`hierarchy`,
+where coupled) — **DONE, all four languages:**
+- [x] **Schema** (`schema/ggcommons-config-schema.json` + `sync-schema.sh` → 5 copies): +`hierarchy`,
   +`identity`, +`topic.includeRoot`, `messaging` += `requestTimeoutSeconds`/`lwt`, `heartbeat` reshape,
   drop drift knobs. Drift gate green.
-- [ ] **Java canonical**: `MessageIdentity` + envelope; `MessageBuilder` stamping; `ConfigManager.getComponentIdentity`;
+- [x] **Java canonical**: `MessageIdentity` + envelope; `MessageBuilder` stamping; `ConfigManager.getComponentIdentity`;
   `Uns` builder/validator; reserved guard + `ReservedPublisher`; `request()` deadline; MQTT LWT; IoTCore
   casing; heartbeat→state (M11) + metric `sys`; metric→UNS; cfg publisher; config-component remap. Unit
   tests → JaCoCo 90%.
-- [ ] **`uns-test-vectors/`** (Java generator) + Java loader test.
-- [ ] **Mirrors** (parallel): Python, Rust, TS — each vs the vectors; per-lang unit tests → 90% (Linux/WSL
+- [x] **`uns-test-vectors/`** (Java generator) + Java loader test.
+- [x] **Mirrors** (parallel): Python, Rust, TS — each vs the vectors; per-lang unit tests → 90% (Linux/WSL
   for Py/Rust).
-- [ ] **Interop UNS suite** (`test_interop.py` `test_uns_*`, 4×4) + the `uns-guard` role.
-- [ ] **M8 named client** (Rust only).
+- [x] **Interop UNS suite** (`test_interop.py` `test_uns_*`, 4×4) + the `uns-guard` role.
+- [x] **M8 named client (Rust only)** — resolved differently than originally scoped: D‑U17's final
+  revision dropped the "named client" API entirely (§2.3 above); the `uns-bridge` reuses the core's
+  already-public MQTT objects directly instead. Nothing named-client-shaped was built or is needed.
 
 **Phase 3 — `uns-bridge` (Rust) + site-broker recipes (M1/M2) + late-join** (`republish-state` listener +
-minimal `commands()` scaffolding).
-**Phase 4 — streaming enrichment (M15).**
+minimal `commands()` scaffolding) — **DONE**: the `_bcast` `republish-state`/`republish-cfg` listener
+shipped in all four languages (DESIGN-uns.md §9.4, slice G-S1); the `uns-bridge` component + site-broker
+deploy recipes shipped as a standalone, e2e-tested Rust component in its own sibling repo (P3-2 through
+P3-6, dual-EMQX end-to-end proof 9/9 green) — see [`DESIGN-uns-bridge.md`](DESIGN-uns-bridge.md) for what
+still remains before general release (GitHub publish, registry entry, rev-pin bump, edge-console
+integration). The "minimal `commands()` scaffolding" has since landed in the **Java canonical**
+(slice S2, DESIGN-uns.md §9.5): the component command inbox + the built-ins
+`ping`/`reload-config`/Flow-B `get-configuration` + a `register(verb, handler)` registration API,
+pinned by `uns-test-vectors/commands.json` — Py/Rust/TS mirrors pending.
+
+**Phase 4 — streaming enrichment (M15).** **NOT STARTED** — no identity/hierarchy columns or
+partitioning in the streaming sinks (verified by source search).
+
 **Phase 5 — southbound command family (M9) + D‑U15/D‑U16 + component adoption (opcua/modbus/processor) +
 docs/scaffold retirement** (incl. the stale `SouthboundTagUpdate` python-protocol-adapter template).
+**NOT STARTED** as designed here (no `cmd/sb/*` UNS topics, no `writes.allow[]`). Note the independent
+precedent: `opcua-adapter` has landed the M9 *capabilities* (browse/write-ack/regex-read) on its own
+legacy topics (2026-07-02, "command-surface-parity") — see `SOUTHBOUND.md` §2.2 — which is not the same
+as this phase landing.
 
 > **Cross-cutting:** `edge-console` (design only, no code) already consumes the new identity model; its
 > DESIGN.md needs no change beyond what already references DESIGN-uns.

@@ -195,7 +195,7 @@ public class Heartbeat implements ConfigurationChangeListener
         body.addProperty("status", status);
         if (includeUptime)
         {
-            body.addProperty("uptimeSecs", (System.nanoTime() - startNanos) / 1_000_000_000L);
+            body.addProperty("uptimeSecs", getUptimeSecs());
         }
         Message stateMessage = MessageBuilder.create(STATE_MESSAGE_NAME, STATE_MESSAGE_VERSION)
                 .withPayload(body)
@@ -241,6 +241,18 @@ public class Heartbeat implements ConfigurationChangeListener
         {
             LOGGER.warn("Out-of-band state re-announce failed: {}", e.toString());
         }
+    }
+
+    /**
+     * The component's monotonic uptime in whole seconds — the same value the RUNNING {@code state}
+     * keepalive carries as {@code uptimeSecs}. Consumed by the command inbox's {@code ping}
+     * built-in verb (DESIGN-uns §9.5) so ping replies and keepalives agree on one uptime source.
+     *
+     * @return seconds since this heartbeat (i.e. the runtime) was constructed
+     */
+    public long getUptimeSecs()
+    {
+        return (System.nanoTime() - startNanos) / 1_000_000_000L;
     }
 
     /**

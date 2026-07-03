@@ -1,0 +1,216 @@
+{
+  "description": "ggcommons UNS command-inbox vectors - the minimal commands() facade (DESIGN-uns 7.3/9.5, edge-console slice S2). Inbox filter + request topics byte-for-byte; request/reply envelopes structural (D-U22); reply bodies must equal a live inbox dispatch's output; the behavior flags/sets are normative for every language's command inbox",
+  "inbox": {
+    "filter": "ecv1/gw-01/opcua-adapter/main/cmd/#",
+    "input": {
+      "device": "gw-01",
+      "component": "opcua-adapter",
+      "instance": "main",
+      "includeRoot": false,
+      "class": "cmd"
+    }
+  },
+  "verbs": [
+    {
+      "name": "ping",
+      "verb": "ping",
+      "topic": "ecv1/gw-01/opcua-adapter/main/cmd/ping",
+      "request": {
+        "header": {
+          "name": "ping",
+          "version": "1.0",
+          "timestamp": "2026-07-01T12:00:00Z",
+          "uuid": "00000000-0000-4000-8000-00000000c101",
+          "correlation_id": "00000000-0000-4000-8000-00000000c102",
+          "reply_to": "ggcommons/reply-00000000-0000-4000-8000-00000000c103"
+        },
+        "body": {}
+      },
+      "reply": {
+        "header": {
+          "name": "ping",
+          "version": "1.0",
+          "timestamp": "2026-07-01T12:00:00Z",
+          "uuid": "00000000-0000-4000-8000-00000000c104",
+          "correlation_id": "00000000-0000-4000-8000-00000000c102"
+        },
+        "identity": {
+          "hier": [
+            {
+              "level": "device",
+              "value": "gw-01"
+            }
+          ],
+          "path": "gw-01",
+          "component": "opcua-adapter",
+          "instance": "main"
+        },
+        "body": {
+          "ok": true,
+          "result": {
+            "status": "RUNNING",
+            "uptimeSecs": 42
+          }
+        }
+      }
+    },
+    {
+      "name": "reload-config",
+      "verb": "reload-config",
+      "topic": "ecv1/gw-01/opcua-adapter/main/cmd/reload-config",
+      "request": {
+        "header": {
+          "name": "reload-config",
+          "version": "1.0",
+          "timestamp": "2026-07-01T12:00:00Z",
+          "uuid": "00000000-0000-4000-8000-00000000c201",
+          "correlation_id": "00000000-0000-4000-8000-00000000c202",
+          "reply_to": "ggcommons/reply-00000000-0000-4000-8000-00000000c203"
+        },
+        "body": {}
+      },
+      "reply": {
+        "header": {
+          "name": "reload-config",
+          "version": "1.0",
+          "timestamp": "2026-07-01T12:00:00Z",
+          "uuid": "00000000-0000-4000-8000-00000000c204",
+          "correlation_id": "00000000-0000-4000-8000-00000000c202"
+        },
+        "identity": {
+          "hier": [
+            {
+              "level": "device",
+              "value": "gw-01"
+            }
+          ],
+          "path": "gw-01",
+          "component": "opcua-adapter",
+          "instance": "main"
+        },
+        "body": {
+          "ok": true,
+          "result": {
+            "reloaded": true
+          }
+        }
+      }
+    },
+    {
+      "name": "get-configuration",
+      "verb": "get-configuration",
+      "topic": "ecv1/gw-01/opcua-adapter/main/cmd/get-configuration",
+      "request": {
+        "header": {
+          "name": "get-configuration",
+          "version": "1.0",
+          "timestamp": "2026-07-01T12:00:00Z",
+          "uuid": "00000000-0000-4000-8000-00000000c301",
+          "correlation_id": "00000000-0000-4000-8000-00000000c302",
+          "reply_to": "ggcommons/reply-00000000-0000-4000-8000-00000000c303"
+        },
+        "body": {}
+      },
+      "reply": {
+        "header": {
+          "name": "get-configuration",
+          "version": "1.0",
+          "timestamp": "2026-07-01T12:00:00Z",
+          "uuid": "00000000-0000-4000-8000-00000000c304",
+          "correlation_id": "00000000-0000-4000-8000-00000000c302"
+        },
+        "identity": {
+          "hier": [
+            {
+              "level": "device",
+              "value": "gw-01"
+            }
+          ],
+          "path": "gw-01",
+          "component": "opcua-adapter",
+          "instance": "main"
+        },
+        "body": {
+          "ok": true,
+          "result": {
+            "config": {
+              "component": {
+                "name": "opcua-adapter"
+              },
+              "messaging": {
+                "local": {
+                  "credentials": "***"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "errors": [
+    {
+      "name": "unknown-verb",
+      "verb": "no-such-verb",
+      "topic": "ecv1/gw-01/opcua-adapter/main/cmd/no-such-verb",
+      "request": {
+        "header": {
+          "name": "no-such-verb",
+          "version": "1.0",
+          "timestamp": "2026-07-01T12:00:00Z",
+          "uuid": "00000000-0000-4000-8000-00000000c901",
+          "correlation_id": "00000000-0000-4000-8000-00000000c902",
+          "reply_to": "ggcommons/reply-00000000-0000-4000-8000-00000000c903"
+        },
+        "body": {}
+      },
+      "reply": {
+        "header": {
+          "name": "no-such-verb",
+          "version": "1.0",
+          "timestamp": "2026-07-01T12:00:00Z",
+          "uuid": "00000000-0000-4000-8000-00000000c904",
+          "correlation_id": "00000000-0000-4000-8000-00000000c902"
+        },
+        "identity": {
+          "hier": [
+            {
+              "level": "device",
+              "value": "gw-01"
+            }
+          ],
+          "path": "gw-01",
+          "component": "opcua-adapter",
+          "instance": "main"
+        },
+        "body": {
+          "ok": false,
+          "error": {
+            "code": "UNKNOWN_VERB",
+            "message": "verb 'no-such-verb' is not registered on this component"
+          }
+        }
+      }
+    }
+  ],
+  "behavior": {
+    "verbIsTopicChannel": true,
+    "headerNameMustEqualVerb": true,
+    "fireAndForgetWithoutReplyTo": true,
+    "malformedIgnoredWithoutReply": true,
+    "builtInVerbs": [
+      "ping",
+      "reload-config",
+      "get-configuration"
+    ],
+    "delegatedVerbs": [
+      "set-config"
+    ],
+    "errorCodes": [
+      "UNKNOWN_VERB",
+      "HANDLER_ERROR",
+      "RELOAD_FAILED",
+      "NO_CONFIG"
+    ]
+  }
+}

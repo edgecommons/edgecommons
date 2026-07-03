@@ -1,12 +1,23 @@
-# ggcommons Unified Namespace (UNS) — messaging namespace, identity & site-bus realization (PROPOSED)
+# ggcommons Unified Namespace (UNS) — messaging namespace, identity & site-bus realization
 
-> **Status: PROPOSED — design for review. No code.** This document specifies a single **Unified
-> Namespace** for how ggcommons components address one another on the bus: the topic grammar, the
-> message classes, the identity model, the messaging API surface (`messaging()` / `uns()` / the platform
-> facades), streaming enrichment, and the physical realization of a **site-wide UNS bus** across
-> per-device brokers. Java is canonical; any build lands in all four libraries (Java / Python / Rust /
-> TS) with identical semantics. It is a deliberate, **pre-1.0 breaking change** — there is no production
-> installed base to preserve.
+> **Status (2026-07-03): Phases 1–2 SHIPPED in all four languages** on branch `feat/unified-namespace`
+> (not yet merged to `main`) — the topic grammar, the eight classes, the top-level `identity` element,
+> `messaging()`/`gg.uns()`/`gg.instance()`, the reserved-class publish guard, `request()`'s internal
+> deadline, MQTT LWT, and the library-owned `state`/`metric`/`cfg` publishers are real, tested code (see
+> [`UNS-CANONICAL-DESIGN.md`](UNS-CANONICAL-DESIGN.md) for file:line citations and the mirror-parity
+> record). **Phase 3 is also shipped**: the `_bcast` `republish-state`/`republish-cfg` listener (§9.4)
+> is in all four languages, and the `uns-bridge` component (§9.1) is built and passing a live
+> dual-broker end-to-end test in its own sibling repo — see
+> [`DESIGN-uns-bridge.md`](DESIGN-uns-bridge.md) for exactly what's done there and what's still
+> pending before general release (GitHub publish, a ggcommons git-rev bump, the edge-console
+> integration). **Phases 4 (streaming enrichment, M15) and 5 (the southbound command family, M9, and
+> D‑U15/16) are still design-only** — see §13 for the per-phase breakdown. This document specifies a
+> single **Unified Namespace** for how ggcommons components address one another on the bus: the topic
+> grammar, the message classes, the identity model, the messaging API surface (`messaging()` / `uns()` /
+> the platform facades), streaming enrichment, and the physical realization of a **site-wide UNS bus**
+> across per-device brokers. Java is canonical; the build lands in all four libraries (Java / Python /
+> Rust / TS) with identical semantics. It was a deliberate, **pre-1.0 breaking change** — there was no
+> production installed base to preserve.
 >
 > **Companion docs:** [`UNS-CANONICAL-DESIGN.md`](UNS-CANONICAL-DESIGN.md) (**the implementation
 > companion** — concrete API shapes, per-language mirror notes, and the D‑U1…D‑U24 decisions register),
@@ -275,6 +286,12 @@ auto-registers (lowercase-hyphenated; a `/`-namespace level for families):
 a namespace level: the southbound-adapter kit registers `sb/status`, `sb/browse`, `sb/read`, `sb/write`,
 `sb/subscribe-preview`; file-replicator registers `fr/…`.
 
+> **Shipped so far (slice S2, §9.5):** the **command inbox** + the minimal registration seam
+> (`register(verb, handler)` / `unregister`) + the built-ins `ping`, `reload-config` and Flow-B
+> `get-configuration` (`republish-state`/`republish-cfg` ride the §9.4 `_bcast` listener;
+> `set-config` rides the CONFIG_COMPONENT source). The schema/danger/RBAC-annotated registration,
+> `describe`/`get-panel-asset`, `set-log-level` and the `sb/*` family remain deferred (Phase 5).
+
 ### 7.4 Request/reply hardening (D10)
 
 `request()` keeps returning today's future/IoU. It arms an **internal default deadline** (framework-owned
@@ -425,14 +442,14 @@ sequenceDiagram
   Note over Con: cache hydrated; consumers snapshot from it
 ```
 
-### 9.4 The `_bcast` republish listener — normative behavior (slice G-S1; Java canonical shipped)
+### 9.4 The `_bcast` republish listener — normative behavior (slice G-S1; shipped in all four languages)
 
 Layer 2 of §9.3, made concrete. **Every** ggcommons component runs a library-owned republish
 listener (Java: `uns/RepublishListener`, wired by the `GGCommons` runtime after init completes) —
 the answering half of the `uns-bridge`'s reconnect-rehydration broadcast (DESIGN-uns-bridge §2.5)
 and the lever the edge-console's config-review pulls. The wire contract is pinned by
 **`uns-test-vectors/bcast.json`** (topics byte-for-byte, envelope structural, behavior constants);
-the Python/Rust/TS mirrors must replicate ALL of the following:
+the Python/Rust/TS mirrors replicate ALL of the following (shipped, four-way parity):
 
 - **Subscriptions** — at startup, on the component's **primary** (local/IPC) connection, the two
   exact own-device topics `ecv1/{device}/_bcast/main/cmd/republish-state` and
@@ -465,6 +482,81 @@ the Python/Rust/TS mirrors must replicate ALL of the following:
   - `republish-cfg` → re-run the effective-config publisher (the standard redacted `cfg` push;
     Java: `EffectiveConfigPublisher.publishNow()`). Always on.
   - Both best-effort: a failing publish is logged and swallowed.
+- **No config surface** — always on; core plumbing, not a feature toggle. No schema change.
+
+### 9.5 The command inbox + built-in verbs — normative behavior (slice S2; Java canonical shipped, mirrors pending)
+
+The minimal `commands()` facade (§7.3), sized to what the edge-console needs first: **every**
+ggcommons component runs a library-owned command inbox (Java: `commands/CommandInbox`, wired by the
+`GGCommons` runtime after init completes, right after the §9.4 republish listener) so the console —
+or any peer — can address it with request/reply verbs. The wire contract is pinned by
+**`uns-test-vectors/commands.json`** (inbox filter + topics byte-for-byte, request/reply envelopes
+structural, reply bodies equal to a live inbox dispatch, behavior flags/sets normative); the
+Python/Rust/TS mirrors replicate ALL of the following:
+
+- **Inbox subscription** — at startup, on the component's **primary** (local/IPC) connection, the
+  single own-inbox wildcard `ecv1/{device}/{component}/main/cmd/#`, built through the topic
+  builder's filter API under the component's own identity + root mode with every scope token
+  pinned (rooted deployments get `ecv1/{site}/{device}/…/cmd/#` automatically). Unsubscribed on
+  shutdown, before messaging closes. One subscription total — registering a custom verb never
+  subscribes anything new. Only the **`main`-instance** inbox exists in this slice; per-instance
+  inboxes ride the full facade (Phase 5). (This inbox does NOT absorb the §9.4 `_bcast` topics —
+  those live under the `_bcast` pseudo-component, a different path.)
+- **Verb identification** — the verb is the **topic channel**: everything after `cmd/`
+  (`/`-namespaced verbs like `sb/status` included). The envelope's **`header.name` must equal the
+  topic's verb** (the §9.4 rule); the pair is the well-formedness gate.
+- **Reply contract** — a request carries `header.reply_to` + `correlation_id`. The handler's
+  result is published to `reply_to` through the existing `reply()` mechanism, which stamps the
+  **request's `correlation_id`** onto the reply (the `uns-bridge` rewrites `reply_to` for
+  cross-broker request/reply, so this works from the console over the site broker transparently —
+  console timeouts stay ≤ 30 s, under the bridge's 60 s mapping TTL). The reply envelope: header
+  `{name: <verb>, version: "1.0"}`, no `reply_to`, the **responder's** `identity` (+ `tags` when
+  configured — metadata, not normative). Body shapes (pinned):
+  - success — `{"ok": true, "result": <verb-specific object>}` (a `null`/void handler result is
+    the empty object `{}` — a plain ack);
+  - error — `{"ok": false, "error": {"code": "<CODE>", "message": "<text>"}}`. Base codes:
+    `UNKNOWN_VERB` (well-formed request, no such verb), `HANDLER_ERROR` (a handler threw an
+    uncoded error), `RELOAD_FAILED`, `NO_CONFIG` (verb-specific, below). Custom handlers add
+    codes by throwing the language's coded command exception (`CommandException(code, message)`);
+    `error.message` is informative, not normative (except `UNKNOWN_VERB`'s library-composed text,
+    which the vectors pin).
+  - A `cmd` with **no `reply_to` is fire-and-forget**: the handler runs, nothing is published
+    (handler failures are logged only). An unknown fire-and-forget verb is ignored at DEBUG.
+- **Malformed / foreign** — a missing header, a `header.name` ≠ the topic verb, or any parse
+  anomaly is **ignored at DEBUG — never replied to, never a crash**. (Deliberate, and stricter
+  than "error reply": replying to mismatched-name payloads would double-answer foreign
+  conventions that share `cmd` topics — e.g. the Flow-A config rendezvous uses header name
+  `GetConfiguration` on a `get-configuration` channel — and §9.4 set the ignore precedent.)
+- **Delegated verbs** — `set-config` is owned by the `CONFIG_COMPONENT` source's own subscription
+  on the same inbox path (§4.3); the inbox always ignores it (DEBUG), so the two subscribers never
+  double-handle and a `set-config` on a non-CONFIG_COMPONENT component is a silent no-op.
+- **The three built-in verbs** (auto-registered; request body `{}`, args ignored):
+  - **`ping`** → `{"status": "RUNNING", "uptimeSecs": n}` — the state keepalive's RUNNING body
+    shape, same uptime source as the heartbeat (Java: `Heartbeat.getUptimeSecs()`). Proves the
+    component is not just alive (the keepalive shows that) but **responsive to addressed
+    commands**. Always answered, even when `heartbeat.enabled` is false.
+  - **`reload-config`** → re-fetch from the **active config source** and re-apply (Java:
+    `ConfigManager.reloadFromProvider()` — provider re-read/re-request, schema validation,
+    `applyConfig`; listeners fire, so a successful reload also re-announces the `cfg` push).
+    Reply `{"reloaded": true}`, or `RELOAD_FAILED` when the fetch fails / returns nothing / the
+    document is schema-invalid (the previous config is kept; a reload never crashes a component).
+  - **`get-configuration`** → the current **redacted effective config** as
+    `{"config": <redacted config>}` — byte-identical to the `cfg` push body (one shared snapshot
+    source; Java: `EffectiveConfigPublisher.redactedEffectiveConfig()`), or `NO_CONFIG`. This is
+    **Flow B** (the console pulls a component's own config as a reply) — distinct from **Flow A**
+    (§4.3, shipped earlier), where a *component* fetches its own config *from a config server* at
+    `ecv1/{device}/config/main/cmd/get-configuration`. Same verb token, different recipient and
+    payload. *(Known future consideration: a config-server component named `config` would need a
+    library-privileged override of this built-in to serve Flow A — deferred to the full facade's
+    `register(verb, schema, handler, {danger})`.)*
+- **Registration seam** — `gg.getCommands().register(verb, handler)` (Java; mirrors:
+  `gg.commands().register(...)` / the language's idiom), callable before or after startup. Verb
+  tokens pass the §2.2 token rule (`/`-namespaces allowed). **No shadowing, ever**: registering a
+  built-in, the delegated `set-config`, or an already-registered verb throws — replace a custom
+  handler via `unregister(verb)` first (built-ins cannot be unregistered). The handler receives
+  the full request envelope and returns the result object; it runs synchronously on the messaging
+  delivery thread (keep it fast, or hand off internally). `set-log-level`, `describe`,
+  `get-panel-asset` and the `sb/*` family remain deferred (§7.3 / Phase 5).
 - **No config surface** — always on; core plumbing, not a feature toggle. No schema change.
 
 ---
@@ -515,18 +607,33 @@ a precise error — silent coexistence of old and new topics is the worst outcom
 
 ## 13. Phasing
 
-1. **Grammar + classes + top-level `identity` + `messaging()`/`uns()`** (Java-canonical first, mirrors
-   before merge) + `uns-test-vectors` + **heartbeat-default parity (M11)** + the library-owned
-   state/metric/cfg publishers + the config-component rendezvous remap. *(M11 moved up from step 5: the
-   hard cut retires the legacy heartbeat topic here, and `heartbeat.targets[]` — where the topic drift
-   knobs live — is dropped in the same schema break; deferring it would break the heartbeat config
-   twice. See [`UNS-CANONICAL-DESIGN.md`](UNS-CANONICAL-DESIGN.md) Risks #1.)*
-2. **Reserved-class guard, `request()` hardening, MQTT LWT (retain deferred), named MessagingClient
-   (Rust only — D‑U17), IoTCore casing normalization.**
-3. **`uns-bridge` + site-broker recipes** (the site-bus realization) + reachability/late-join.
-4. **Streaming enrichment** (M15) + **southbound command family** (M9).
-5. **Docs/recipes/scaffold updates; retire the legacy schemes** (incl. the stale `SouthboundTagUpdate`
-   python-protocol-adapter template) + component adoption.
+1. **[DONE — all four languages]** **Grammar + classes + top-level `identity` + `messaging()`/`uns()`**
+   (Java-canonical first, mirrors before merge) + `uns-test-vectors` + **heartbeat-default parity
+   (M11)** + the library-owned state/metric/cfg publishers + the config-component rendezvous remap.
+   *(M11 moved up from step 5: the hard cut retires the legacy heartbeat topic here, and
+   `heartbeat.targets[]` — where the topic drift knobs live — is dropped in the same schema break;
+   deferring it would break the heartbeat config twice. See
+   [`UNS-CANONICAL-DESIGN.md`](UNS-CANONICAL-DESIGN.md) Risks #1.)*
+2. **[DONE]** **Reserved-class guard, `request()` hardening, MQTT LWT (retain deferred), IoTCore
+   casing normalization.** The "named MessagingClient (Rust only — D‑U17)" item originally scoped
+   here was superseded by D‑U17's final resolution (see [`UNS-CANONICAL-DESIGN.md`](UNS-CANONICAL-DESIGN.md)
+   §2.3): no core "named client" API was built or is needed — the `uns-bridge` builds its second
+   connection by reusing the core's already-public `MqttProvider`/`DefaultMessagingService`
+   constructors directly.
+3. **[DONE]** **`uns-bridge` + site-broker recipes** (the site-bus realization) + reachability/late-join.
+   The `_bcast` listener (§9.4) is shipped in all four languages; the `uns-bridge` component itself is
+   built and passing a live dual-broker end-to-end suite in its own sibling repo (not yet published to
+   GitHub or pinned by a ggcommons git-rev bump — see [`DESIGN-uns-bridge.md`](DESIGN-uns-bridge.md)
+   for exactly what remains before general release).
+   **Slice S2 (§9.5) — the minimal `commands()` facade — [JAVA CANONICAL DONE, mirrors pending]:**
+   the component command inbox + `ping`/`reload-config`/Flow-B `get-configuration` + the
+   `register(verb, handler)` seam, pinned by `uns-test-vectors/commands.json`; Python/Rust/TS
+   replicate §9.5 before merge (four-way parity).
+4. **[NOT STARTED]** **Streaming enrichment** (M15) + **southbound command family** (M9). (`opcua-adapter`
+   has separately landed the M9 *capabilities* — browse/write-ack/regex-read — on its own legacy
+   topics, ahead of and independent of this UNS migration; see `SOUTHBOUND.md` §2.2/§8.)
+5. **[NOT STARTED]** **Docs/recipes/scaffold updates; retire the legacy schemes** (incl. the stale
+   `SouthboundTagUpdate` python-protocol-adapter template) + component adoption.
 
 > **Implementation companion:** [`UNS-CANONICAL-DESIGN.md`](UNS-CANONICAL-DESIGN.md) turns this design
 > into concrete Java-canonical API shapes + per-language mirror notes and carries the running decisions

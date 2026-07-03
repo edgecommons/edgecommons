@@ -76,14 +76,14 @@ public final class EffectiveConfigPublisher implements ConfigurationChangeListen
                 }
                 return;
             }
-            JsonObject fullConfig = configManager.getFullConfig();
-            if (fullConfig == null) {
+            JsonObject redacted = redactedEffectiveConfig();
+            if (redacted == null) {
                 LOGGER.warn("No effective configuration available - skipping cfg publish");
                 return;
             }
             String topic = new Uns(identity, configManager.isTopicIncludeRoot()).topic(UnsClass.CFG);
             JsonObject body = new JsonObject();
-            body.add("config", redact(fullConfig));
+            body.add("config", redacted);
             Message cfgMessage = MessageBuilder.create(CFG_MESSAGE_NAME, CFG_MESSAGE_VERSION)
                     .withPayload(body)
                     .withConfig(configManager)
@@ -99,6 +99,19 @@ public final class EffectiveConfigPublisher implements ConfigurationChangeListen
     public boolean onConfigurationChanged() {
         publishNow();
         return true;
+    }
+
+    /**
+     * The current effective configuration, redacted (redaction v1) — the single snapshot source
+     * shared by the {@code cfg} push (this publisher) and the {@code get-configuration} command
+     * verb's reply (DESIGN-uns §9.5 Flow B), so both surfaces always agree byte-for-byte.
+     *
+     * @return the redacted deep copy of the effective config, or {@code null} when no effective
+     *         configuration is available (mock/test bring-up)
+     */
+    public JsonObject redactedEffectiveConfig() {
+        JsonObject fullConfig = configManager.getFullConfig();
+        return fullConfig == null ? null : redact(fullConfig);
     }
 
     /**

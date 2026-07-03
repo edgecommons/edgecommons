@@ -140,7 +140,16 @@ public class MockMessagingService extends MessagingClient {
 
     @Override
     public void reply(Message originalMessage, Message replyMessage) {
-        publishedMessages.add(new PublishedMessage("reply", replyMessage, null));
+        // Mimic the real providers: stamp the request's correlation id onto the reply and
+        // publish on the request's reply_to. Falls back to the legacy "reply" marker topic when
+        // the request carries no reply_to (kept for existing assertions).
+        String replyTo = originalMessage != null && originalMessage.getHeader() != null
+                ? originalMessage.getHeader().getReplyTo() : null;
+        if (originalMessage != null && originalMessage.getHeader() != null) {
+            replyMessage.setCorrelationId(originalMessage.getHeader().getCorrelationId());
+        }
+        publishedMessages.add(new PublishedMessage(replyTo != null ? replyTo : "reply",
+                replyMessage, null));
     }
 
     @Override
@@ -214,9 +223,15 @@ public class MockMessagingService extends MessagingClient {
     }
 
     public void simulateMessage(String topic, Message message) {
-        BiConsumer<String, Message> handler = subscriptions.get(topic);
-        if (handler != null) {
-            handler.accept(topic, message);
+        // Deliver to every subscription whose filter matches the topic (an exact-topic
+        // subscription matches itself, so plain-topic tests behave as before; wildcard
+        // subscriptions - e.g. the command inbox's ".../cmd/#" - receive concrete topics).
+        for (Map.Entry<String, BiConsumer<String, Message>> sub
+                : new HashMap<>(subscriptions).entrySet()) {
+            if (sub.getKey().equals(topic)
+                    || MessagingClient.topicMatchesFilter(sub.getKey(), topic)) {
+                sub.getValue().accept(topic, message);
+            }
         }
     }
 

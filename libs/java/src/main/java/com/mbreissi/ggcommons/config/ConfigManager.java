@@ -69,7 +69,13 @@ public class ConfigManager
     private final MessageIdentity componentIdentity;
     protected final CopyOnWriteArrayList<ConfigurationChangeListener> configChangeListeners = new CopyOnWriteArrayList<>();
     private boolean initializing = true;
-    protected final JsonObject fullConfig;
+    /**
+     * The full effective configuration as last APPLIED: seeded by the constructor and refreshed
+     * by every accepted {@link #applyConfig} (hot reload / {@code set-config} push /
+     * {@link #reloadFromProvider}), so {@link #getFullConfig()} always reflects the live config
+     * — the effective-config publisher and the {@code get-configuration} verb read it.
+     */
+    protected JsonObject fullConfig;
     protected TagConfiguration tagConfig;
     protected HeartbeatConfiguration heartbeatConfig;
     protected MetricConfiguration metricConfig;
@@ -175,6 +181,11 @@ public class ConfigManager
             }
         }
 
+        // Keep the full-config snapshot current: getFullConfig() (the effective-config publisher,
+        // the get-configuration verb, the opt-in subsystem inits) must reflect the APPLIED
+        // configuration, not the startup snapshot, after a hot reload / push / reload-config.
+        this.fullConfig = config;
+
         tagConfig = ConfigurationFactory.createTagConfiguration(config);
         loggingConfig = ConfigurationFactory.createLoggingConfiguration(config);
         heartbeatConfig = ConfigurationFactory.createHeartbeatConfiguration(config);
@@ -203,6 +214,61 @@ public class ConfigManager
         if (!initializing) {
             notifyConfigurationChanged();
         }
+    }
+
+    /**
+     * Re-fetches the configuration from the active config source and re-applies it — the
+     * {@code reload-config} command verb's action (DESIGN-uns §9.5). Re-invokes the provider's
+     * {@code loadConfiguration()} (re-reads the file / ConfigMap / env / shadow / GG config, or
+     * re-requests from the config component), validates the document against the schema, and
+     * applies it via {@link #applyConfig} (which notifies the change listeners, so a successful
+     * reload also re-announces the {@code cfg} push). Best-effort: any failure is logged and
+     * reported as {@code false} — a reload must never crash a running component.
+     *
+     * @return {@code true} when a document was fetched, validated and applied; {@code false}
+     *         when no provider is wired (test/subclass bring-up), the fetch failed/returned
+     *         nothing, or the document was schema-invalid (the previous config is kept)
+     */
+    public boolean reloadFromProvider()
+    {
+        if (configProvider == null)
+        {
+            LOGGER.warn("reload-config requested but no config provider is wired - ignoring");
+            return false;
+        }
+        JsonObject newConfig;
+        try
+        {
+            newConfig = configProvider.loadConfiguration();
+        }
+        catch (Exception e)
+        {
+            LOGGER.warn("reload-config: re-fetch from the '{}' source failed: {}",
+                    configProvider.getConfigSource(), e.toString());
+            return false;
+        }
+        if (newConfig == null)
+        {
+            LOGGER.warn("reload-config: the '{}' source returned no configuration - keeping the"
+                    + " previous configuration", configProvider.getConfigSource());
+            return false;
+        }
+        try
+        {
+            // Validate BEFORE applying so the caller gets a truthful verdict (applyConfig's own
+            // reject-and-keep path logs but does not report).
+            ConfigurationValidator.validate(newConfig);
+        }
+        catch (ConfigurationValidator.ConfigurationValidationException e)
+        {
+            LOGGER.error("reload-config: rejected re-fetched configuration (keeping previous): {}",
+                    e.getMessage());
+            return false;
+        }
+        applyConfig(newConfig);
+        LOGGER.info("reload-config: configuration re-fetched and re-applied from the '{}' source",
+                configProvider.getConfigSource());
+        return true;
     }
 
 

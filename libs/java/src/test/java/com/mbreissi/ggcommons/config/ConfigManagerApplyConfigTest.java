@@ -105,6 +105,94 @@ class ConfigManagerApplyConfigTest {
     }
 
     @Test
+    void applyConfigRefreshesTheFullConfigSnapshot(@TempDir Path tempDir) throws IOException {
+        ConfigManager cm = createConfigManager(writeConfig(tempDir, INITIAL_CONFIG).getAbsolutePath());
+        cm.completeInitialization();
+
+        // getFullConfig() must reflect the APPLIED configuration after a hot reload / push -
+        // the effective-config publisher and the get-configuration verb read it.
+        JsonObject reload = JsonParser.parseString("""
+                {"component":{"global":{"v":2}}}""").getAsJsonObject();
+        cm.applyConfig(reload);
+        assertEquals(2, cm.getFullConfig().getAsJsonObject("component")
+                        .getAsJsonObject("global").get("v").getAsInt(),
+                "getFullConfig() must return the applied config, not the startup snapshot");
+
+        // A rejected (schema-invalid) reload must NOT touch the snapshot.
+        JsonObject bad = JsonParser.parseString("""
+                {"component":{"global":{"v":3}},"bogusSection":true}""").getAsJsonObject();
+        cm.applyConfig(bad);
+        assertEquals(2, cm.getFullConfig().getAsJsonObject("component")
+                        .getAsJsonObject("global").get("v").getAsInt(),
+                "a rejected reload must keep the previous full-config snapshot");
+    }
+
+    // ----- reloadFromProvider (the reload-config verb's action, DESIGN-uns §9.5) -----
+
+    @Test
+    void reloadFromProviderReFetchesAppliesAndNotifies(@TempDir Path tempDir) throws IOException {
+        File configFile = writeConfig(tempDir, INITIAL_CONFIG);
+        ConfigManager cm = createConfigManager(configFile.getAbsolutePath());
+        cm.completeInitialization();
+
+        boolean[] notified = {false};
+        cm.addConfigChangeListener(() -> { notified[0] = true; return true; });
+
+        // Change the file on disk, then reload-config: the provider re-reads and re-applies.
+        try (FileWriter w = new FileWriter(configFile)) {
+            w.write("""
+                    {"logging":{"level":"DEBUG"},"component":{"global":{"v":7}}}""");
+            w.flush();
+        }
+        assertTrue(cm.reloadFromProvider(), "a valid re-fetch must be applied and ack'd");
+        assertTrue(notified[0], "a successful reload must notify configuration-change listeners");
+        assertEquals(7, cm.getGlobalConfig().get("v").getAsInt());
+        assertEquals(7, cm.getFullConfig().getAsJsonObject("component")
+                        .getAsJsonObject("global").get("v").getAsInt(),
+                "the full-config snapshot must be the reloaded document");
+    }
+
+    @Test
+    void reloadFromProviderRejectsAnInvalidDocumentAndKeepsPrevious(@TempDir Path tempDir)
+            throws IOException {
+        File configFile = writeConfig(tempDir, INITIAL_CONFIG);
+        ConfigManager cm = createConfigManager(configFile.getAbsolutePath());
+        cm.completeInitialization();
+
+        boolean[] notified = {false};
+        cm.addConfigChangeListener(() -> { notified[0] = true; return true; });
+
+        try (FileWriter w = new FileWriter(configFile)) {
+            w.write("""
+                    {"component":{"global":{"v":9}},"bogusSection":true}""");
+            w.flush();
+        }
+        assertFalse(cm.reloadFromProvider(), "a schema-invalid re-fetch must be rejected");
+        assertFalse(notified[0], "a rejected reload must not notify listeners");
+        assertEquals(1, cm.getGlobalConfig().get("v").getAsInt(),
+                "the previous configuration must be retained");
+    }
+
+    @Test
+    void reloadFromProviderReportsFalseWhenTheFetchFails(@TempDir Path tempDir) throws IOException {
+        File configFile = writeConfig(tempDir, INITIAL_CONFIG);
+        ConfigManager cm = createConfigManager(configFile.getAbsolutePath());
+        cm.completeInitialization();
+
+        assertTrue(configFile.delete(), "test setup: remove the config file");
+        assertFalse(cm.reloadFromProvider(),
+                "a failing re-fetch must be reported, never thrown");
+        assertEquals(1, cm.getGlobalConfig().get("v").getAsInt(),
+                "the previous configuration must be retained");
+    }
+
+    @Test
+    void reloadFromProviderWithoutAProviderIsFalse() {
+        // The mock/subclass bring-up case: no provider wired.
+        assertFalse(new com.mbreissi.ggcommons.test.MockConfigurationService().reloadFromProvider());
+    }
+
+    @Test
     void notifyToleratesNullListener(@TempDir Path tempDir) throws IOException {
         ConfigManager cm = createConfigManager(writeConfig(tempDir, INITIAL_CONFIG).getAbsolutePath());
 

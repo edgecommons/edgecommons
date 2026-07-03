@@ -85,6 +85,42 @@ class EffectiveConfigPublisherTest {
         assertTrue(messaging.getPublishedMessages().isEmpty());
     }
 
+    @Test
+    void redactedEffectiveConfigIsTheSharedSnapshotSource() {
+        // The get-configuration verb (DESIGN-uns §9.5 Flow B) and the cfg push must agree: the
+        // accessor returns the SAME redacted snapshot the publisher publishes.
+        MockConfigurationService config = configWith("""
+                {"component":{"global":{}},"messaging":{"local":{"credentials":"secret"}}}""");
+        MockMessagingService messaging = new MockMessagingService();
+        EffectiveConfigPublisher publisher = new EffectiveConfigPublisher(config, messaging);
+
+        JsonObject snapshot = publisher.redactedEffectiveConfig();
+        assertNotNull(snapshot);
+        assertEquals("***", snapshot.getAsJsonObject("messaging")
+                .getAsJsonObject("local").get("credentials").getAsString(),
+                "the snapshot is redacted (redaction v1)");
+        assertEquals("secret", config.getFullConfig().getAsJsonObject("messaging")
+                .getAsJsonObject("local").get("credentials").getAsString(),
+                "redaction works on a deep copy - the live config is not mutated");
+
+        publisher.publishNow();
+        assertEquals(snapshot, messaging.getPublishedMessages().get(0).message.toDict()
+                .getAsJsonObject("body").getAsJsonObject("config"),
+                "the cfg push body and the accessor snapshot are identical");
+    }
+
+    @Test
+    void redactedEffectiveConfigIsNullWithoutAConfig() {
+        MockConfigurationService config = new MockConfigurationService() {
+            @Override
+            public JsonObject getFullConfig() {
+                return null;
+            }
+        };
+        assertNull(new EffectiveConfigPublisher(config, new MockMessagingService())
+                .redactedEffectiveConfig());
+    }
+
     // ----- redaction v1 -----
 
     @Test
