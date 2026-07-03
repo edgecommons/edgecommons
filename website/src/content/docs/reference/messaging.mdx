@@ -18,10 +18,16 @@ languages, so components written in any language interoperate on the same topics
 
 <Aside type="caution">
 Several signatures **diverge by language** in ways that silently change behavior — most notably the
-`subscribe` integer arguments (order *and* meaning), the request/reply future type, the
-`MessageBuilder` method names, and the `build()` config requirement. Each is called out inline below;
-the [Messaging guide](/guides/messaging/) collects them in one place.
+`subscribe` integer arguments (order *and* meaning), the request/reply future type, and the
+`MessageBuilder` method names. Each is called out inline below; the
+[Messaging guide](/guides/messaging/) collects them in one place.
 </Aside>
+
+Topics are minted through the [UNS builder](/reference/uns/) (`gg.uns()` / `gg.instance(id).uns()`);
+the messaging client itself takes literal topics and enforces one rule — the
+[reserved-class publish guard](/reference/uns/#the-reserved-class-publish-guard): a client-chosen
+publish/request/reply to `ecv1/.../{state|metric|cfg|log}` is rejected
+(`ReservedTopicException` / `ReservedTopicError` / `GgError::ReservedTopic`).
 
 ## Accessor
 
@@ -69,8 +75,9 @@ messaging(): IMessagingService;   // GgCommons.messaging()
 ## The messaging client / service
 
 The primary type carrying all publish/subscribe/request/reply methods. Plain methods target the
-**local** broker (or Greengrass IPC); the `*ToIotCore` / `*FromIoTCore` mirror methods target AWS
-IoT Core directly and take a QoS.
+**local** broker (or Greengrass IPC); the IoT-Core mirror methods target AWS IoT Core directly and
+take a QoS. The IoT-Core casing follows each language's idiom, uniformly: Java/TypeScript
+`IoTCore`, Rust `_iot_core`, Python `_iot_core` (snake_case).
 
 <Tabs syncKey="lang">
 <TabItem label="Java">
@@ -80,17 +87,15 @@ IoT Core directly and take a QoS.
 (`receiveOwnMessages` defaults to `true`); you normally obtain it from `gg.getMessaging()`.
 `receiveOwnMessages` is consumed **only by the Greengrass IPC provider** (it selects the IPC
 `ReceiveMode` — `RECEIVE_ALL_MESSAGES` vs `RECEIVE_MESSAGES_FROM_OTHERS`); the standalone/MQTT
-provider takes no such flag and **ignores it** (an MQTT broker has no own-message filter). The
-IoT-Core method casing is intentionally inconsistent: `publishToIotCore` / `publishToIotCoreRaw`
-use "Iot", the rest use "IoT".
+provider takes no such flag and **ignores it** (an MQTT broker has no own-message filter).
 
 ```java
 public static final int DEFAULT_MAX_MESSAGES = 10_000;
 
 void publish(String topic, Message msg);
-void publishToIotCore(String topic, Message msg, QOS qos);          // note "Iot"
+void publishToIoTCore(String topic, Message msg, QOS qos);
 void publishRaw(String topic, JsonObject metricObject);
-void publishToIotCoreRaw(String topic, JsonObject metricObject, QOS qos);   // note "Iot"
+void publishToIoTCoreRaw(String topic, JsonObject metricObject, QOS qos);
 
 void subscribe(String topicFilter, BiConsumer<String,Message> callback);
 void subscribe(String topicFilter, BiConsumer<String,Message> callback, int maxConcurrency);
@@ -99,8 +104,10 @@ void subscribeToIoTCore(String topicFilter, BiConsumer<String,Message> callback,
 void subscribeToIoTCore(String topicFilter, BiConsumer<String,Message> callback, QOS qos, int maxConcurrency);
 void subscribeToIoTCore(String topicFilter, BiConsumer<String,Message> callback, QOS qos, int maxConcurrency, int maxMessages);
 
-ReplyFuture request(String topic, Message request);
+ReplyFuture request(String topic, Message request);                     // default deadline (30 s)
+ReplyFuture request(String topic, Message request, Duration timeout);   // null = default, ZERO = off
 ReplyFuture requestFromIoTCore(String topic, Message request);
+ReplyFuture requestFromIoTCore(String topic, Message request, Duration timeout);
 void cancelRequest(ReplyFuture replyFuture);
 void cancelRequestFromIoTCore(ReplyFuture replyFuture);
 void reply(Message request, Message reply);
@@ -114,10 +121,14 @@ boolean connected();
 void close();
 Object getNativeLocalClient();
 Object getNativeIotCoreClient();
+
+ReservedPublisher reservedPublisher();   // library-internal: the privileged publish seam
+                                         // the guard does not apply to (heartbeat/metric/cfg)
 ```
 
 The 3-arg `subscribe` overload's int is **`maxConcurrency`**, NOT `maxMessages` (the 4-arg overload
-adds `maxMessages` last).
+adds `maxMessages` last). `ReservedPublisher` is public-reachable but documented library-internal —
+component code uses the normal `publish` methods.
 
 </TabItem>
 <TabItem label="Python">
@@ -142,8 +153,9 @@ def subscribe_to_iot_core(topic, callback, qos, max_concurrency=None, max_messag
 def unsubscribe(topic) -> None: ...
 def unsubscribe_from_iot_core(topic) -> None: ...
 
-def request(topic, msg) -> Iou: ...
-def request_from_iot_core(topic, msg) -> Iou: ...
+# timeout_secs: None = the configured default (30 s), 0 = disabled for this call
+def request(topic, msg, timeout_secs: float | None = None) -> Iou: ...
+def request_from_iot_core(topic, msg, timeout_secs: float | None = None) -> Iou: ...
 def cancel_request(iou) -> Iou: ...
 def cancel_request_from_iot_core(iou) -> Iou: ...
 def reply(request, reply) -> None: ...
@@ -155,7 +167,8 @@ def get_native_client(): ...         # -> {'local': ..., 'iot_core': ...}
 
 The 3rd positional arg of `subscribe` is **`max_concurrency`** (matching Java); `max_messages` is
 4th. There is a single `get_native_client()` (returning a `{'local', 'iot_core'}` dict), not
-separate local/IoT-Core getters.
+separate local/IoT-Core getters. The library-internal privileged publish seam is the
+`_publish_reserved*` staticmethods (underscore convention — not for component code).
 
 </TabItem>
 <TabItem label="Rust">
@@ -180,8 +193,14 @@ pub trait MessagingService: Send + Sync {
     async fn unsubscribe(&self, filter: &str) -> Result<()>;
     async fn unsubscribe_from_iot_core(&self, filter: &str) -> Result<()>;
 
+    // request() applies the configured default deadline (30 s);
+    // request_with_timeout: None = default, Some(Duration::ZERO) = disabled
     async fn request(&self, topic: &str, msg: Message) -> Result<ReplyFuture>;
+    async fn request_with_timeout(&self, topic: &str, msg: Message,
+                                  timeout: Option<Duration>) -> Result<ReplyFuture>;
     async fn request_from_iot_core(&self, topic: &str, msg: Message) -> Result<ReplyFuture>;
+    async fn request_from_iot_core_with_timeout(&self, topic: &str, msg: Message,
+                                  timeout: Option<Duration>) -> Result<ReplyFuture>;
     async fn reply(&self, request: &Message, reply: Message) -> Result<()>;
     async fn reply_to_iot_core(&self, request: &Message, reply: Message) -> Result<()>;
 
@@ -191,6 +210,9 @@ pub trait MessagingService: Send + Sync {
     fn connected(&self) -> bool;
 }
 ```
+
+The library-internal privileged publish seam is the **crate-private** `ReservedMessaging` trait —
+the only language where the reserved-class guard is compiler-enforced.
 
 `subscribe` takes **`max_messages` first, then `max_concurrency`** — the opposite order from
 Java/Python. The default implementation is `DefaultMessagingService::new(provider: Arc<dyn MessagingProvider>) -> Self`.
@@ -221,26 +243,27 @@ Construct it with `new DefaultMessagingService(provider: MessagingProvider)`.
 ```typescript
 interface IMessagingService {
   publish(topic: string, msg: Message): Promise<void>;
-  publishToIotCore(topic: string, msg: Message, qos?: Qos): Promise<void>;
+  publishToIoTCore(topic: string, msg: Message, qos?: Qos): Promise<void>;
   publishRaw(topic: string, payload: unknown): Promise<void>;
-  publishToIotCoreRaw(topic: string, payload: unknown, qos?: Qos): Promise<void>;
+  publishToIoTCoreRaw(topic: string, payload: unknown, qos?: Qos): Promise<void>;
 
   // NOTE: maxMessages THEN maxConcurrency; defaults 32 and 1
   subscribe(filter: string, handler: MessageHandler,
             maxMessages?: number, maxConcurrency?: number): Promise<void>;
-  subscribeToIotCore(filter: string, handler: MessageHandler,
+  subscribeToIoTCore(filter: string, handler: MessageHandler,
             qos?: Qos, maxMessages?: number, maxConcurrency?: number): Promise<void>;
 
   unsubscribe(filter: string): Promise<void>;
-  unsubscribeFromIotCore(filter: string): Promise<void>;
+  unsubscribeFromIoTCore(filter: string): Promise<void>;
 
+  // timeoutMs: omitted = the configured default (30 s), explicit 0 = disabled
   request(topic: string, msg: Message, timeoutMs?: number): ReplyFuture;   // synchronous return
-  requestFromIotCore(topic: string, msg: Message, timeoutMs?: number): ReplyFuture;
+  requestFromIoTCore(topic: string, msg: Message, timeoutMs?: number): ReplyFuture;
   reply(request: Message, reply: Message): Promise<void>;
-  replyToIotCore(request: Message, reply: Message): Promise<void>;
+  replyToIoTCore(request: Message, reply: Message): Promise<void>;
 
   cancelRequest(reply: ReplyFuture): void;
-  cancelRequestFromIotCore(reply: ReplyFuture): void;
+  cancelRequestFromIoTCore(reply: ReplyFuture): void;
 
   connected(): boolean;
 }
@@ -249,9 +272,11 @@ type MessageHandler = (topic: string, message: Message) => void | Promise<void>;
 ```
 
 `subscribe` takes **`maxMessages` first, then `maxConcurrency`** (defaults `32` and `1`).
-`request` returns the `ReplyFuture` **synchronously** and takes the timeout as an argument
-(`timeoutMs` default `0` = no timeout). `subscribeToIotCore`'s `qos` defaults to `Qos.AtLeastOnce`;
-the Java/Python IoT-Core methods require an explicit QoS.
+`request` returns the `ReplyFuture` **synchronously**; an omitted `timeoutMs` resolves to the
+configured `messaging.requestTimeoutSeconds` default (30 s), and an explicit `0` disables the
+deadline. `subscribeToIoTCore`'s `qos` defaults to `Qos.AtLeastOnce`; the Java/Python IoT-Core
+methods require an explicit QoS. The library-internal privileged publish seam is the `@internal`
+reserved publish on `DefaultMessagingService` (stripped from the published typings).
 
 </TabItem>
 </Tabs>
@@ -276,20 +301,27 @@ in TypeScript.
 
 ## The `Message` envelope
 
-The on-wire shape is identical across all four languages: `{ "header": {...}, "tags": {...}, "body": <any> }`,
-or `{ "raw": <value> }` for a raw message. Header keys are **snake_case**; `reply_to` and an empty
-`thing` are omitted. A received payload with no `header`/`tags`/`body` (or non-JSON bytes) is
-delivered as a **raw** message; non-JSON bytes become a raw string.
+The on-wire shape is identical across all four languages:
+`{ "header": {...}, "identity": {...}, "tags": {...}, "body": <any> }`, or `{ "raw": <value> }` for
+a raw message. Header keys are **snake_case**; `reply_to` is omitted when absent. `identity` is the
+publisher's [UNS identity](/reference/uns/#messageidentity) (stamped by a config-bound builder;
+legally absent on bootstrap/raw-bridged messages); `tags` carries business context only and is
+emitted only when tags were stamped. A received payload with none of
+`header`/`identity`/`tags`/`body` (or non-JSON bytes) is delivered as a **raw** message; non-JSON
+bytes become a raw string. A malformed inbound `identity` parses leniently to null/absent with a
+warning — the message still delivers.
 
 <Tabs syncKey="lang">
 <TabItem label="Java">
 
-`Message` (package-private fields `MessageHeader header; MessageTags tags; Object body; Object raw;`).
+`Message` (package-private fields
+`MessageHeader header; MessageIdentity identity; MessageTags tags; Object body; Object raw;`).
 
 ```java
-JsonObject toDict();
+JsonObject toDict();               // header, identity, tags, body (identity between header and tags)
 String getCorrelationId();         // lazily generates a UUID if null
 MessageHeader getHeader();
+MessageIdentity getIdentity();     // null when the message carries no identity
 MessageTags getTags();
 void injectTag(String key, String value);
 Object getBody();
@@ -308,7 +340,7 @@ reflective tree, so `withPayload(Map)` works.
 </TabItem>
 <TabItem label="Python">
 
-`Message` is a `@dataclass(header=None, tags=None, body=None, raw=None)`.
+`Message` is a `@dataclass(header=None, identity=None, tags=None, body=None, raw=None)`.
 
 ```python
 def to_dict(self) -> dict: ...
@@ -316,6 +348,7 @@ def __str__(self) -> str: ...
 def dumps(self) -> str: ...
 def get_correlation_id(self): ...
 def get_header(self) -> MessageHeader: ...
+def get_identity(self) -> Optional[MessageIdentity]: ...
 def get_tags(self) -> MessageTags: ...
 def get_body(self): ...
 def get_raw(self): ...
@@ -335,6 +368,7 @@ def from_object(msg_contents) -> "Message": ...
 ```rust
 pub struct Message {
     pub header: MessageHeader,
+    pub identity: Option<MessageIdentity>,   // skipped when None
     pub tags: MessageTags,
     pub body: Value,
     pub raw: Option<Value>,
@@ -351,7 +385,7 @@ impl Message {
 ```
 
 Custom `Serialize`/`Deserialize`: a raw message serializes as `{"raw": ..}`, otherwise as
-`{"header", "tags", "body"}`.
+`{"header", "identity", "tags", "body"}` (absent identity/tags skipped).
 
 </TabItem>
 <TabItem label="TypeScript">
@@ -359,6 +393,7 @@ Custom `Serialize`/`Deserialize`: a raw message serializes as `{"raw": ..}`, oth
 ```typescript
 class Message {
   header: MessageHeader;
+  identity?: MessageIdentity;   // undefined when the message carries no identity
   tags: MessageTags;
   body: unknown;
 
@@ -382,9 +417,11 @@ class Message {
 
 ### `MessageHeader` and `MessageTags`
 
-The header carries metadata; `tags` carries routing/source metadata (the Thing name is flattened to
-a `"thing"` key, emitted only when set). The reply-topic prefix is the literal string
-`ggcommons/reply-` (trailing `-`, not `/`) in all four languages.
+The header carries message metadata; `tags` carries **business context only** (your custom `tags`
+config keys). The legacy `tags.thing` special-casing is **removed** in all four languages — the
+publisher's device travels in the top-level `identity` element, and a stray inbound `thing` key just
+lands in the generic tag map. The reply-topic prefix is the literal string `ggcommons/reply-`
+(trailing `-`, not `/`) in all four languages; reply topics are deliberately non-UNS.
 
 <Tabs syncKey="lang">
 <TabItem label="Java">
@@ -398,8 +435,8 @@ class MessageHeader {
 }
 
 class MessageTags {
-    String thingName; JsonObject tags;
-    JsonObject toDict();                       // flattens tags; adds "thing" only when non-null
+    JsonObject tags;                           // the free-form tag map (no thing field)
+    JsonObject toDict();                       // flattens the tag map
     static MessageTags fromConfig(ConfigManager config);
     void injectTag(String key, String value);
 }
@@ -423,9 +460,8 @@ class MessageHeader:
 
 @dataclass
 class MessageTags:
-    thing_name: Optional[str] = None
-    tags: Optional[dict] = None
-    def to_dict(self) -> dict: ...   # adds "thing" only when thing_name set
+    tags: dict = field(default_factory=dict)   # free-form tag map (no thing field)
+    def to_dict(self) -> dict: ...
 ```
 
 </TabItem>
@@ -442,8 +478,7 @@ pub struct MessageHeader {
 }
 
 pub struct MessageTags {
-    pub thing_name: String,         // serde rename "thing", skipped if empty
-    pub extra: BTreeMap<String, Value>,   // serde flatten
+    pub extra: BTreeMap<String, Value>,   // serde flatten — the free-form tag map
 }
 ```
 
@@ -460,23 +495,28 @@ interface MessageHeader {
   reply_to?: string;
 }
 
-type MessageTags = Record<string, unknown>;
+type MessageTags = Record<string, unknown>;   // free-form tag map (no thing key)
 ```
 
 </TabItem>
 </Tabs>
 
+For the `MessageIdentity` type (`hier`/`path`/`component`/`instance`, the computed `device`
+accessor, and `withInstance`), see the [UNS API reference](/reference/uns/#messageidentity).
+
 ## `MessageBuilder`
 
 Construct messages with the builder, not raw constructors — it stamps `uuid`, `correlation_id`, and
-`timestamp` for you.
+`timestamp` for you. Supplying the config is what stamps the custom tags **and the UNS `identity`**
+(with the per-message instance token, default `main`); `build()` **never requires config** in any
+language (a config-less build produces a legal envelope without `identity`). An explicit identity
+override always wins over the config-resolved one. All four builders expose explicit
+`uuid`/`timestamp` setters (deterministic envelopes for tests and vectors).
 
 <Aside type="caution">
-**Method names and the `build()` config requirement diverge.** Java/Python/TypeScript use
-`create` / `withPayload` / `withConfig` (Python: `with_payload` / `with_config`); **Rust uses
-`new` / `payload` / `from_config`**. Java `build()` throws `IllegalStateException` unless
-`withConfig(...)` was called; Python `build()` raises `ValueError` unless `with_config(...)` **or**
-`with_tags(...)` was called; Rust and TypeScript `build()` never require config.
+**Method names diverge.** Java/Python/TypeScript use `create` / `withPayload` / `withConfig`
+(Python: `with_payload` / `with_config`); **Rust uses `new` / `payload` / `from_config`** and drops
+the `with_` prefix throughout.
 </Aside>
 
 <Tabs syncKey="lang">
@@ -487,9 +527,13 @@ static MessageBuilder create(String name, String version);
 static Message fromObject(Object msgContents);     // classifies dict→envelope vs raw
 
 MessageBuilder withCorrelationId(String id);
+MessageBuilder withUuid(String uuid);
+MessageBuilder withTimestamp(String timestamp);
 MessageBuilder withPayload(Object payload);         // JsonObject / Map / POJO / List
-MessageBuilder withConfig(ConfigManager config);    // REQUIRED before build()
-Message build();                                     // throws IllegalStateException if withConfig() not called
+MessageBuilder withConfig(ConfigManager config);    // stamps tags + the UNS identity
+MessageBuilder withInstance(String instance);       // per-message instance token (default "main")
+MessageBuilder withIdentity(MessageIdentity id);    // explicit override (tests, vectors, relays)
+Message build();
 ```
 
 A string payload that parses as JSON is stored as the parsed object; otherwise it is stored as a raw
@@ -507,12 +551,14 @@ def from_object(msg_contents) -> Message: ...
 
 def with_correlation_id(self, id): ...
 def with_payload(self, body): ...
-def with_config(self, config): ...
-def with_tags(self, tags): ...          # alternative to with_config
+def with_config(self, config): ...      # stamps tags + the UNS identity
+def with_tags(self, tags): ...          # explicit tags (alternative to config)
 def with_uuid(self, uuid): ...
 def with_timestamp(self, ts): ...
 def with_reply_to(self, topic): ...
-def build(self) -> Message: ...         # raises ValueError if BOTH config and tags are None
+def with_instance(self, instance): ...  # per-message instance token (default "main")
+def with_identity(self, identity): ...  # explicit override (tests, vectors, relays)
+def build(self) -> Message: ...
 ```
 
 </TabItem>
@@ -523,16 +569,21 @@ Different method names — `new` (not `create`), `payload` (not `with_payload`),
 
 ```rust
 impl MessageBuilder {
-    pub fn new(name: &str, version: &str) -> Self;   // stamps uuid/correlation_id/timestamp
+    pub fn new(name: impl Into<String>, version: impl Into<String>) -> Self;
     pub fn payload(self, body: Value) -> Self;
-    pub fn correlation_id(self, id: &str) -> Self;
-    pub fn reply_to(self, topic: &str) -> Self;
-    pub fn thing_name(self, thing: &str) -> Self;
-    pub fn tag(self, key: &str, value: Value) -> Self;
-    pub fn from_config(self, config: &Config) -> Self;
-    pub fn build(self) -> Message;       // never requires config
+    pub fn correlation_id(self, id: impl Into<String>) -> Self;
+    pub fn uuid(self, uuid: impl Into<String>) -> Self;
+    pub fn timestamp(self, timestamp: impl Into<String>) -> Self;
+    pub fn reply_to(self, topic: impl Into<String>) -> Self;
+    pub fn tag(self, key: impl Into<String>, value: Value) -> Self;
+    pub fn from_config(self, config: &Config) -> Self;      // stamps tags + the UNS identity
+    pub fn instance(self, instance: impl Into<String>) -> Self;   // per-message token (default "main")
+    pub fn identity(self, identity: MessageIdentity) -> Self;     // explicit override
+    pub fn build(self) -> Message;
 }
 ```
+
+The former `thing_name(...)` setter is **removed** with the `tags.thing` hard cut.
 
 </TabItem>
 <TabItem label="TypeScript">
@@ -543,22 +594,47 @@ class MessageBuilder {
   withPayload(body: unknown): this;
   withTags(tags: MessageTags): this;
   withTag(key: string, value: unknown): this;
-  withThingName(thing: string): this;
-  withConfig(config: { thingName: string; parsed: { tags: MessageTags } }): this;   // optional
+  withConfig(config: {
+    parsed: { tags: Record<string, unknown> };
+    componentIdentity?: MessageIdentity;
+  }): this;                                        // stamps tags + the UNS identity
   withCorrelationId(id: string): this;
+  withUuid(uuid: string): this;
+  withTimestamp(timestamp: string): this;
   withReplyTo(topic: string): this;
-  build(): Message;                      // never requires config
+  withInstance(instance: string): this;            // per-message instance token (default "main")
+  withIdentity(identity: MessageIdentity): this;   // explicit override
+  build(): Message;
 }
 ```
+
+The former `withThingName(...)` setter is **removed** with the `tags.thing` hard cut. `withConfig`
+is typed structurally so it accepts the `Config` snapshot without a config import.
 
 </TabItem>
 </Tabs>
 
-## Request/reply future
+## Request/reply future and the internal deadline
 
 `request` returns a future that resolves when the matching reply arrives. The responder's
 `reply(request, reply)` copies the request's `correlation_id` onto the reply before publishing it to
-the request's `reply_to` topic. The future type differs per language.
+the request's `reply_to` topic.
+
+**Every request arms a framework-owned deadline at send time** — the configured
+`messaging.requestTimeoutSeconds` default (30 s; `0` disables) unless a per-call value is given.
+When it fires, the library (1) unsubscribes the ephemeral reply topic, (2) removes the pending
+entry, and (3) completes the future **exceptionally** — even if the caller never awaits it, so an
+abandoned request cannot leak its reply subscription. Reply-arrival, the deadline, and
+`cancelRequest` race through one idempotent settle path; a straggler reply after settle is logged
+at DEBUG and dropped. Consequences: a no-arg `get()`/`await` no longer blocks forever, and a
+`get(t)` waits at most `min(t, deadline)`.
+
+| Language | Per-call override | Deadline failure signal |
+|----------|-------------------|-------------------------|
+| Java | `request(topic, msg, Duration)` (`null` = default, `ZERO` = off) | `java.util.concurrent.TimeoutException` (exceptional completion) |
+| Python | `request(topic, msg, timeout_secs=...)` (`None` = default, `0` = off) | `Iou.get()` raises `RequestTimeoutError` |
+| Rust | `request_with_timeout(topic, msg, Option<Duration>)` | future resolves `Err(GgError::RequestTimeout { .. })` |
+| TypeScript | `request(topic, msg, timeoutMs)` (omitted = default, `0` = off) | promise rejects with `RequestTimeoutError` |
 
 <Tabs syncKey="lang">
 <TabItem label="Java">
@@ -572,46 +648,51 @@ public class ReplyFuture extends CompletableFuture<Message> {
 }
 
 // usage:
-ReplyFuture future = messaging.request("svc/op", request);
-Message reply = future.get(5, TimeUnit.SECONDS);
+ReplyFuture future = messaging.request("svc/op", request);   // 30 s default deadline
+Message reply = future.get();                                 // bounded by the deadline
+// on deadline: ExecutionException wrapping java.util.concurrent.TimeoutException
 ```
 
 </TabItem>
 <TabItem label="Python">
 
 `request` returns an `Iou`. Its `get(timeout)` returns a **`(done, result)` tuple** — not the reply
-directly. `timeout < 0` blocks forever; on timeout it returns `(False, self)`.
+directly. `timeout < 0` blocks (up to the framework deadline); on a *local* wait timeout it returns
+`(False, self)`. When the **framework deadline** settled the request, `get()` **raises**
+`RequestTimeoutError`.
 
 ```python
 class Iou:
-    def get(self, timeout=-1) -> Tuple[bool, Any]: ...   # (done, result)
+    def get(self, timeout=-1) -> Tuple[bool, Any]: ...   # (done, result); raises on deadline
     def set_result(self, result) -> None: ...
+    def set_error(self, error) -> None: ...              # exceptional completion
     def done(self) -> bool: ...
     def get_user_data(self): ...
 
 # usage:
-iou = messaging.request("svc/op", request)
-done, reply = iou.get(timeout=5)
+iou = messaging.request("svc/op", request)               # 30 s default deadline
+done, reply = iou.get(timeout=5)                         # may raise RequestTimeoutError
 ```
 
 </TabItem>
 <TabItem label="Rust">
 
 `request()` returns `Result<ReplyFuture>`; `await` the call to get the future, then `await` the
-future (wrap in `tokio::time::timeout` for a deadline). Dropping the `ReplyFuture` unsubscribes the
-ephemeral reply topic.
+future. A supervisor task owns the reply subscription and races the reply against the deadline;
+dropping the `ReplyFuture` still cancels the request and unsubscribes the reply topic.
 
 ```rust
 // ReplyFuture: impl Future<Output = Result<Message>>
-let fut = messaging.request("svc/op", request).await?;
-let reply = tokio::time::timeout(Duration::from_secs(5), fut).await??;
+let fut = messaging.request("svc/op", request).await?;    // 30 s default deadline
+let reply = fut.await?;                                    // Err(GgError::RequestTimeout) on deadline
 ```
 
 </TabItem>
 <TabItem label="TypeScript">
 
 `ReplyFuture implements PromiseLike<Message>` — `await` it directly. The timeout is the third
-argument to `request` (`timeoutMs`, default `0` = no timeout). It also exposes `.cancel()`.
+argument to `request` (omitted = the configured default; explicit `0` disables). It also exposes
+`.cancel()`.
 
 ```typescript
 interface ReplyFuture extends PromiseLike<Message> {
@@ -619,7 +700,8 @@ interface ReplyFuture extends PromiseLike<Message> {
 }
 
 // usage:
-const reply = await messaging.request("svc/op", req, 5000);
+const reply = await messaging.request("svc/op", req);     // 30 s default deadline
+// on deadline: rejects with RequestTimeoutError
 ```
 
 </TabItem>
@@ -629,10 +711,11 @@ const reply = await messaging.request("svc/op", req, 5000);
 
 Two QoS levels — at-most-once and at-least-once — which the MQTT provider maps to QoS `0` and `1`.
 **Java and Python reuse the AWS SDK enum**; **Rust and TypeScript define their own.** `Destination`
-exists in Rust/TS as a `Local` / `IotCore` selector used by the lower-level provider; Java/Python do
-not expose an equivalent enum (they have the per-destination method pairs instead).
+exists in Rust/TS as a `Local` / IoT-Core selector used by the lower-level provider (Rust
+`Destination::IotCore`, TypeScript `Destination.IoTCore` — string value `"iotcore"` in both);
+Java/Python do not expose an equivalent enum (they have the per-destination method pairs instead).
 
-QoS is a parameter only on the explicit `*ToIotCore` mirror methods. The **local** methods use a
+QoS is a parameter only on the explicit IoT-Core mirror methods. The **local** methods use a
 fixed, implicit QoS: on the standalone (dual-MQTT) provider, local `publish` / `subscribe` / `request`
 (and the ephemeral reply subscription) use **QoS 1 (`AT_LEAST_ONCE`)**, while the IoT-Core
 request/reply path (`requestFromIoTCore` / `replyToIoTCore` and their reply subscription) is forced to
@@ -672,7 +755,7 @@ QOS.AT_LEAST_ONCE    # mapped to MQTT QoS 1
 
 ```rust
 pub enum Qos { AtMostOnce, AtLeastOnce }
-pub enum Destination { Local, IotCore }
+pub enum Destination { Local, IotCore }   // RFC-430 acronym casing (Rust idiom)
 ```
 
 </TabItem>
@@ -682,7 +765,7 @@ pub enum Destination { Local, IotCore }
 
 ```typescript
 enum Qos { AtMostOnce = "atMostOnce", AtLeastOnce = "atLeastOnce" }
-enum Destination { Local = "local", IotCore = "iotcore" }
+enum Destination { Local = "local", IoTCore = "iotcore" }
 ```
 
 </TabItem>
@@ -761,9 +844,10 @@ const svc: IMessagingService = new DefaultMessagingService(fakeProvider);
 ## Messaging (broker) config types
 
 With the MQTT transport, the broker config is a JSON `messaging` section with a `local` block and an
-optional `iotCore` block. The wire shape is identical across the four languages (each maps it to its
-own config type — Java `MessagingConfiguration`, Python `messaging_config.py` dataclasses, Rust
-`config.rs`, TS `config.ts`).
+optional `iotCore` block, plus the request-deadline default and an optional LWT. The wire shape is
+identical across the four languages (each maps it to its own config type — Java
+`MessagingConfiguration`, Python `messaging_config.py` dataclasses, Rust `config.rs`, TS
+`config.ts`).
 
 ```json
 {
@@ -789,6 +873,12 @@ own config type — Java `MessagingConfiguration`, Python `messaging_config.py` 
         "certPath": "/certs/device.pem.crt",
         "keyPath": "/certs/private.pem.key"
       }
+    },
+    "requestTimeoutSeconds": 30,
+    "lwt": {
+      "topic": "ecv1/gw-01/my-component/main/state",
+      "payload": { "status": "UNREACHABLE" },
+      "qos": 1
     }
   }
 }
@@ -800,6 +890,14 @@ Field reference (verified, identical across all four languages):
 - **`iotCore`** — `endpoint` (string), `port` (int), `clientId` (string), required `credentials`.
   The whole `iotCore` block is **optional**: omit it for a local-only ("single-broker") deployment.
 - **`credentials`** — `caPath`, `certPath`, `keyPath`, and optional `username` / `password`.
+- **`requestTimeoutSeconds`** — number, min 0, default `30`; the default
+  [request deadline](#requestreply-future-and-the-internal-deadline). `0` disables it; an explicit
+  per-call timeout always wins.
+- **`lwt`** — optional MQTT Last-Will registered on the **local-broker connection** at CONNECT
+  (re-registered on reconnect): `topic` (required), `payload` (string or object, published
+  verbatim), `qos` (`0`|`1`, default `1`). **No retain option by design.** The IPC transport
+  no-ops it; the will never passes through `publish()`, so the reserved-class guard does not apply
+  to it. See the [guide](/guides/messaging/#mqtt-last-will-lwt).
 
 Rules:
 
@@ -834,13 +932,14 @@ messaging.subscribe("itest/pubsub", (topic, m) -> {
 // publish
 Message msg = MessageBuilder.create("Hello", "1.0")
     .withPayload(payload)        // JsonObject / Map / POJO
-    .withConfig(configManager)   // REQUIRED in Java
+    .withConfig(configManager)   // stamps tags + the UNS identity
     .build();
 messaging.publish("itest/pubsub", msg);
 
-// request/reply — ReplyFuture extends CompletableFuture<Message>
+// request/reply — ReplyFuture extends CompletableFuture<Message>;
+// a framework deadline (default 30 s) bounds the wait
 ReplyFuture future = messaging.request("itest/request", request);
-Message reply = future.get(5, TimeUnit.SECONDS);
+Message reply = future.get();
 // responder side:
 messaging.reply(request, replyMsg);   // copies correlation id
 ```
@@ -859,9 +958,9 @@ messaging.subscribe("evt/topic", handler, 1)   # 3rd arg = max_concurrency
 msg = MessageBuilder.create("Hello", "1.0").with_payload({"n": 1}).with_config(config).build()
 messaging.publish("evt/topic", msg)
 
-iou = messaging.request("svc/op", request)     # returns an Iou
-done, reply = iou.get(timeout=5)               # get() returns a (done, result) TUPLE
-# responder side:
+iou = messaging.request("svc/op", request)     # returns an Iou; 30 s framework deadline
+done, reply = iou.get(timeout=5)               # (done, result) TUPLE; raises RequestTimeoutError
+# responder side:                               # when the framework deadline fired
 messaging.reply(request, reply_msg)            # copies correlation id
 ```
 
@@ -869,7 +968,6 @@ messaging.reply(request, reply_msg)            # copies correlation id
 <TabItem label="Rust">
 
 ```rust
-use std::time::Duration;
 use serde_json::json;
 use ggcommons::messaging::message_handler;
 
@@ -886,13 +984,14 @@ messaging.subscribe(
 
 let msg = MessageBuilder::new("Hello", "1.0")   // new(), not create()
     .payload(json!({ "n": 1 }))
-    .thing_name("test-thing")
+    .from_config(&gg.config())                   // stamps tags + the UNS identity
     .build();
 messaging.publish("itest/pubsub", &msg).await?;
 
 // request/reply: request() -> Result<ReplyFuture>, then await the future
+// (a framework deadline — default 30 s — bounds the wait)
 let fut = messaging.request("svc/op", request).await?;
-let reply = tokio::time::timeout(Duration::from_secs(5), fut).await??;
+let reply = fut.await?;                          // Err(GgError::RequestTimeout) on deadline
 // responder side:
 responder.reply(&request, reply_msg).await?;    // copies correlation id
 ```
@@ -910,7 +1009,8 @@ await messaging.subscribe("evt/topic", (_t, m) => {
 const msg = MessageBuilder.create("evt", "1.0.0").withPayload({ n: 1 }).build();
 await messaging.publish("evt/topic", msg);
 
-// request/reply: request() returns a ReplyFuture you await; 3rd arg = timeoutMs
+// request/reply: request() returns a ReplyFuture you await;
+// 3rd arg = timeoutMs (omitted = the 30 s configured default)
 const reply = await messaging.request("rpc/echo", req, 1000);
 console.log(reply.getBody());
 // responder side:
@@ -926,6 +1026,12 @@ await messaging.reply(req, replyMsg);          // copies correlation id
   title="Messaging guide"
   href="/guides/messaging/"
   description="The conceptual walkthrough — transports, the envelope, concurrency caps, and the broker config rules."
+/>
+
+<LinkCard
+  title="UNS API"
+  href="/reference/uns/"
+  description="gg.uns(), gg.instance(), MessageIdentity, the validation rules, and the reserved-class guard."
 />
 
 <LinkCard

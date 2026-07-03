@@ -253,7 +253,13 @@ the resolved platform on the manager.
 | Thing name | `getThingName()` | `get_thing_name()` | `cfg.thing_name` (field) | `cfg.thingName` (field) |
 | Component name (short) | `getComponentName()` | `get_component_name()` | — see note | — see note |
 | Component full name | `getComponentFullName()` | `get_component_full_name()` | `cfg.component_name` (field) | `cfg.componentName` (field) |
+| **UNS component identity** | `getComponentIdentity()` → `MessageIdentity` | `get_component_identity()` | `cfg.identity()` | `cfg.componentIdentity` (field) |
 | Platform | `getPlatform()` → `Platform` | `get_platform()` | not on `Config` — see note | not on `Config` — see note |
+
+The UNS component identity — the resolved `hierarchy`/`identity` values plus the component token,
+instance `main` — is resolved **once at construction**, fail-fast on inconsistency, and is what the
+message builder stamps on every config-bound envelope. See the
+[UNS API reference](/reference/uns/#messageidentity).
 
 <Aside type="note" title="Rust / TypeScript identity">
 On the Rust/TS `Config` snapshot, identity is read from the public fields `component_name` /

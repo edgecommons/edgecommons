@@ -25,8 +25,9 @@ reference pages give the exact *what* — signatures, return types, and per-lang
   <LinkCard title="Entry point, builder & lifecycle" href="/reference/entry-point/" description="GGCommonsBuilder, the GGCommons runtime, every accessor, and shutdown." />
   <LinkCard title="Configuration" href="/reference/config/" description="The config manager / snapshot accessor surface — reading, reloading, and change listeners." />
   <LinkCard title="Messaging" href="/reference/messaging/" description="The messaging service, MessageBuilder, publish/subscribe, and request/reply." />
+  <LinkCard title="UNS" href="/reference/uns/" description="gg.uns() and gg.instance() — UNS topic building, validation, MessageIdentity, and the reserved-class guard." />
   <LinkCard title="Metrics" href="/reference/metrics/" description="MetricBuilder, the metric emitter / service, and Measure." />
-  <LinkCard title="Heartbeat" href="/reference/heartbeat/" description="The heartbeat service and its config model." />
+  <LinkCard title="Heartbeat" href="/reference/heartbeat/" description="The library-owned state keepalive + sys measures metric, and its config model." />
   <LinkCard title="Logging" href="/reference/logging/" description="Logger setup and the per-language logging format token." />
   <LinkCard title="Health" href="/reference/health/" description="The readiness flag and the HTTP health endpoint." />
   <LinkCard title="Credentials" href="/reference/credentials/" description="The credential service (opt-in): the encrypted vault and central sync." />
@@ -49,6 +50,8 @@ This table is the map. Find the row for what you need, read across to your langu
 | **Build** | `GGCommonsBuilder.create(name).withArgs(args).build()` | `GGCommonsBuilder.create(name).with_args(args).build()` | `GgCommonsBuilder::new(name).args(argv).build().await` | `new GGCommonsBuilder(name).args(argv).build()` (await) |
 | **Runtime type** | `GGCommons` | `GGCommons` | `GgCommons` | `GGCommons` |
 | **Messaging** | `getMessaging()` | `get_messaging()` | `messaging()` | `messaging()` |
+| **UNS topic builder** | `getUns()` | `uns()` | `uns()` | `uns()` |
+| **Instance handle** | `instance(id)` | `instance(id)` | `instance(id)` (`Result`) | `instance(id)` |
 | **Metrics** | `getMetrics()` | `get_metrics()` | `metrics()` | `metrics()` |
 | **Config** | `getConfigManager()` | `get_config_manager()` | `config()` | `config()` |
 | **Credentials** (opt-in) | `getCredentials()` | `get_credentials()` | `credentials()` | `credentials()` |
@@ -59,6 +62,8 @@ This table is the map. Find the row for what you need, read across to your langu
 <Aside type="note" title="Naming you cannot guess">
 - There is **no `getConfig()` in Java** — config is reached via `getConfigManager()`. Rust and
   TypeScript expose `config()`, which returns an atomic config **snapshot**, not a manager.
+- The **UNS accessors are bare in Python too**: `gg.uns()` and `gg.instance(id)` (no `get_`
+  prefix), matching Rust/TypeScript; Java is `getUns()` / `instance(id)`.
 - **Python `get_messaging()` and `get_metrics()` return the *class*, not an instance** — their
   operations are static, process-global. You call methods on the returned handle as usual; just know
   there is no per-instance object behind it.

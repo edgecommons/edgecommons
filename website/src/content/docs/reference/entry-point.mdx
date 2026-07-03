@@ -210,6 +210,8 @@ follow the [opt-in return contract](#opt-in-return-contract) below.
 // com.mbreissi.ggcommons.GGCommons — accessors
 ConfigManager     getConfigManager();   // concrete instance (returns the wired field; no init guard)
 MessagingClient   getMessaging();       // concrete instance
+Uns               getUns();             // the UNS topic builder (component identity, instance "main")
+GgInstance        instance(String id);  // instance-scoped handle (validated token; cached per id)
 MetricEmitter     getMetrics();         // concrete instance
 StreamService     getStreams();         // null when no `streaming` config section
 CredentialService getCredentials();     // null when no `credentials` section
@@ -225,6 +227,8 @@ There is no `getConfig()` accessor in Java — config is reached via `getConfigM
 # ggcommons.ggcommons.GGCommons — accessors
 def get_config_manager(self) -> ConfigManager     # raises RuntimeError if not initialized
 def get_messaging(self)                            # returns the MessagingClient CLASS (static-method ops)
+def uns(self) -> Uns                               # the UNS topic builder (bare name — no get_ prefix)
+def instance(self, instance_id: str) -> GgInstance # instance-scoped handle (validated; cached per id)
 def get_metrics(self)                              # returns the MetricEmitter CLASS
 def get_streams(self)                              # None when no `streaming` section
 def get_credentials(self)                          # None when no `credentials` section
@@ -243,6 +247,8 @@ fn component_name(&self) -> &str;
 fn args(&self) -> &ParsedArgs;
 fn config(&self) -> Arc<Config>;                                      // atomic snapshot (ArcSwap)
 fn messaging(&self) -> Result<Arc<dyn messaging::MessagingService>>;  // Err if no transport wired
+fn uns(&self) -> uns::Uns;                                            // the UNS topic builder
+fn instance(&self, instance_id: &str) -> Result<GgInstance>;          // Err on an invalid token
 fn metrics(&self) -> Arc<dyn metrics::MetricService>;
 
 #[cfg(feature = "streaming")]
@@ -267,6 +273,8 @@ componentName(): string;
 args(): ParsedArgs;
 config(): Config;                                  // snapshot
 messaging(): IMessagingService;                    // throws GgError.messaging(...) if no transport wired
+uns(): Uns;                                        // the UNS topic builder
+instance(instanceId: string): GgInstance;          // instance-scoped handle (validated; cached per id)
 metrics(): MetricService;
 streams(): StreamService | undefined;              // undefined when no `streaming` section
 credentials(): CredentialService | undefined;      // undefined when no `credentials` section
@@ -278,7 +286,8 @@ parameters(): ParameterService | undefined;        // undefined when no `paramet
 
 <Aside type="tip">
 For full method references on each service, see
-[Messaging](/reference/messaging/), [Metrics](/reference/metrics/), and the subsystem guides for
+[Messaging](/reference/messaging/), [UNS](/reference/uns/) (the `uns()`/`instance()` surface),
+[Metrics](/reference/metrics/), and the subsystem guides for
 [Config](/guides/components/), [Heartbeat](/guides/heartbeat/), and [Health](/guides/health/).
 </Aside>
 
@@ -569,6 +578,8 @@ TypeScript is **builder-only** — there is no public direct constructor and no 
 | Build | `build()` | `build()` | `build().await` | `await build()` |
 | Config accessor | `getConfigManager()` | `get_config_manager()` | `config()` | `config()` |
 | Messaging accessor | `getMessaging()` | `get_messaging()` | `messaging()` (`Result`) | `messaging()` (throws) |
+| UNS builder | `getUns()` | `uns()` | `uns()` | `uns()` |
+| Instance handle | `instance(id)` | `instance(id)` | `instance(id)` (`Result`) | `instance(id)` |
 | Metrics accessor | `getMetrics()` | `get_metrics()` | `metrics()` | `metrics()` |
 | Opt-in absent value | `null` | `None` | `Option` `None` (`streams()` empty service) | `undefined` |
 | Readiness setter | `setReady(b)` | `set_ready(b)` | `set_ready(b)` | `setReady(b)` |

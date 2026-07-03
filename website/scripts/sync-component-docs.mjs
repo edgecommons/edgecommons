@@ -64,13 +64,13 @@ function resolveDocLink(target, { name, repo, fileDir }) {
     return repo ? `https://github.com/${repo}/blob/main/${segs.slice(1).join("/")}${anchor}` : null;
   }
   const last = segs.length ? segs[segs.length - 1] : "";
-  if (!last.endsWith(".md")) {
+  if (!/\.mdx?$/i.test(last)) {
     // a directory link (reference/, the docs root, …)
     if (segs.includes("reference")) return `/components/${name}/reference-configuration/${anchor}`;
     if (segs.length === 0) return `/components/${name}/${anchor}`;
     return null; // unknown non-.md relative link — leave as-is
   }
-  const baseName = last.replace(/\.md$/i, "");
+  const baseName = last.replace(/\.mdx?$/i, "");
   if (/^(readme|index)$/i.test(baseName)) return `/components/${name}/${anchor}`;
   if (segs.includes("reference")) return `/components/${name}/reference-${baseName}/${anchor}`;
   return `/components/${name}/${baseName}/${anchor}`;
@@ -84,7 +84,7 @@ function rewriteLinks(body, opts) {
   });
 }
 
-function toStarlight(raw, { title, description, order, name, repo, fileDir }) {
+function toStarlight(raw, { title, description, order, name, repo, fileDir, isMdx }) {
   let body = raw;
   const h1 = raw.match(/^\s*#\s+(.+?)\s*$/m);
   if (!title) title = h1 ? h1[1].replace(/`/g, "") : "Untitled";
@@ -93,6 +93,13 @@ function toStarlight(raw, { title, description, order, name, repo, fileDir }) {
   let fm = `---\ntitle: ${jsonStr(title)}\n`;
   if (description) fm += `description: ${jsonStr(description)}\n`;
   fm += `sidebar:\n  order: ${order}\n---\n\n`;
+  // An .mdx component doc may use Starlight components (<Tabs>, <Aside>, …) without importing
+  // them (component docs stay renderer-agnostic in their repos) — inject the standard import.
+  if (isMdx && !/from\s+["']@astrojs\/starlight\/components["']/.test(body)) {
+    const used = [...new Set(body.match(/<(Tabs|TabItem|Aside|Steps|Card|CardGrid|LinkCard|Badge|Code|FileTree|Icon)[\s>]/g) || [])]
+      .map((m) => m.replace(/[<\s>]/g, ""));
+    if (used.length) fm += `import { ${used.join(", ")} } from "@astrojs/starlight/components";\n\n`;
+  }
   return fm + body;
 }
 
@@ -131,22 +138,25 @@ function syncComponent(c) {
     if (statSync(src).isDirectory()) {
       if (entry !== "reference") continue; // only the known Diátaxis subdir
       let i = 0;
-      for (const ref of readdirSync(src).filter((f) => f.endsWith(".md")).sort()) {
-        const name = ref.replace(/\.md$/, "");
+      for (const ref of readdirSync(src).filter((f) => /\.mdx?$/i.test(f)).sort()) {
+        const ext = /\.mdx$/i.test(ref) ? ".mdx" : ".md";
+        const name = ref.replace(/\.mdx?$/i, "");
         const md = toStarlight(readFileSync(join(src, ref), "utf8"), {
           title: `Reference — ${titleCase(name)}`,
           order: 30 + i++,
           name: c.name,
           repo: c.repo,
           fileDir: "reference",
+          isMdx: ext === ".mdx",
         });
-        writeFileSync(join(dest, `reference-${name}.md`), md);
+        writeFileSync(join(dest, `reference-${name}${ext}`), md);
       }
       continue;
     }
-    if (!entry.endsWith(".md")) continue;
+    if (!/\.mdx?$/i.test(entry)) continue;
+    const ext = /\.mdx$/i.test(entry) ? ".mdx" : ".md";
     const isIndex = entry.toLowerCase() === "readme.md";
-    const slug = isIndex ? "index" : entry.replace(/\.md$/, "");
+    const slug = isIndex ? "index" : entry.replace(/\.mdx?$/i, "");
     const md = toStarlight(readFileSync(src, "utf8"), {
       title: isIndex ? c.name : undefined,
       description: isIndex ? c.description : undefined,
@@ -154,8 +164,9 @@ function syncComponent(c) {
       name: c.name,
       repo: c.repo,
       fileDir: "",
+      isMdx: ext === ".mdx",
     });
-    writeFileSync(join(dest, `${slug}.md`), md);
+    writeFileSync(join(dest, `${slug}${ext}`), md);
   }
   return true;
 }

@@ -68,16 +68,19 @@ keys.
 
 `component` is the single required top-level key. Every other section is optional, and the newer
 subsystems are **opt-in**: the matching accessor returns null / `None` / `undefined` (and the
-subsystem stays dormant) unless its config section is present. The ten top-level sections are:
+subsystem stays dormant) unless its config section is present. The thirteen top-level sections are:
 
 | Section | Purpose |
 |---------|---------|
 | `logging` | Console + optional rotated file logging, per-logger levels, per-language format. |
 | `metricEmission` | Where metrics go (log / messaging / CloudWatch / Prometheus) and target tuning. |
-| `heartbeat` | Periodic system-metric publishing and its targets. |
-| `tags` | Custom template variables for paths and topics. |
+| `heartbeat` | The UNS `state` keepalive + the `sys` system-measures metric. |
+| `tags` | Custom template variables for paths and topics (also stamped as envelope `tags`). |
+| `hierarchy` | The UNS enterprise-hierarchy declaration (ordered level names, device last). |
+| `identity` | The UNS identity values for the levels above the device. |
+| `topic` | UNS topic-building options (`includeRoot`). |
 | `component` (**required**) | Your component's own config — global and per-instance. |
-| `messaging` | Dual-MQTT broker config (local + optional IoT Core). |
+| `messaging` | Dual-MQTT broker config (local + optional IoT Core), the request deadline, LWT. |
 | `streaming` | High-rate telemetry streams to Kinesis/Kafka via the embedded buffer. |
 | `credentials` | Encrypted local vault + optional central sync from AWS Secrets Manager. |
 | `parameters` | Offline-first externalized config (env / mountedDir / AWS SSM). |
@@ -169,14 +172,19 @@ applied in code, not by the schema).
 |-------|------|---------|----------------|---------|
 | `logFileName` | string | (code: `/greengrass/v2/logs/{ComponentFullName}.metric.log`) | — | File for the `log` target (template variables). Overridden to a local path on HOST/Kubernetes — see [Precedence](#precedence-and-platform-defaults). |
 | `maxFileSize` | string | (code: `10MB`) | — | Rotation size for the `log` target. |
-| `topic` | string | (code: `{ThingName}/{ComponentName}/metric`, or `cloudwatch/metric/put` for `cloudwatchcomponent`) | — | Topic for the `messaging` / cloudwatch-component targets. |
 | `destination` | string | (code: `ipc`) | `ipc`, `local`, `iotcore`, `iot_core` | Destination for the `messaging` target. `ipc`/`local` = local transport; `iotcore`/`iot_core` = IoT Core. |
 | `intervalSecs` | integer (min 1) | (code: `5`) | — | Batch flush interval for the `cloudwatch` target. |
 | `port` | integer (1–65535) | `9090` | — | HTTP port for the `prometheus` target. |
 | `path` | string | `/metrics` | — | OpenMetrics exposition path for the `prometheus` target. |
 | `buffer` | object (strict) | — | — | Durable store-and-forward buffer for the `cloudwatch` target (below). |
 
-{/* NEEDS REVIEW: the targetConfig defaults marked "(code: ...)" have no schema `default`; the values shown are the library defaults read from config/model.rs and config/model.ts — confirm they match the Java and Python code paths. */}
+<Aside type="danger" title="targetConfig.topic is removed">
+The former `targetConfig.topic` override no longer exists — a config that still carries it **fails
+validation**. The `messaging` target now always publishes to the fixed UNS metric topic
+`ecv1/{device}/{component}/main/metric/{metricName}`, and the `cloudwatchcomponent` target always
+uses the external AWS contract topic `cloudwatch/metric/put`. See the
+[Unified Namespace](/guides/unified-namespace/).
+</Aside>
 
 #### `metricEmission.targetConfig.buffer`
 
@@ -193,13 +201,24 @@ host-callback `PutMetricData` sink).
 
 ## `heartbeat`
 
-Periodic system-metric publishing. Object, strict.
+The library-owned heartbeat: a UNS **`state` keepalive** published to
+`ecv1/{device}/{component}/main/state` each tick (body `{"status":"RUNNING","uptimeSecs":n}`, a
+best-effort `{"status":"STOPPED"}` on graceful shutdown), with the enabled system measures emitted
+as the metric **`sys`** through the metric subsystem. Object, strict.
 
 | Field | Type | Default | Allowed values | Meaning |
 |-------|------|---------|----------------|---------|
+| `enabled` | boolean | `true` | — | Whether the heartbeat (state keepalive + `sys` measures metric) runs. |
 | `intervalSecs` | integer (min 1) | `5` | — | Heartbeat interval in seconds. |
-| `measures` | object (strict) | — | — | Which system metrics to include (below). |
-| `targets` | array of objects (strict) | `[{"type":"metric"}]` | — | Publish targets (below); each requires `type`. |
+| `measures` | object (strict) | — | — | Which system measures the `sys` metric includes (below). |
+| `destination` | string | `local` | `local`, `iotcore` | Publish destination of the **state keepalive only**. The measures route through `metricEmission`. |
+
+<Aside type="danger" title="heartbeat.targets[] is removed">
+The former `targets[]` array (with its `config.destination`/`config.topic` overrides) no longer
+exists — the keepalive topic is always the component's UNS state topic. A config still carrying
+`heartbeat.targets` **fails validation** with a precise error. See the
+[Heartbeat guide](/guides/heartbeat/#configuration) for migration.
+</Aside>
 
 ### `heartbeat.measures`
 
@@ -214,22 +233,45 @@ Availability of individual measures varies by language and platform.
 | `files` | boolean | `false` | Include open-file count. |
 | `fds` | boolean | `false` | Include file-descriptor count (not on all platforms/languages). |
 
-### `heartbeat.targets[]`
-
-| Field | Type | Default | Allowed values | Meaning |
-|-------|------|---------|----------------|---------|
-| `type` | string | (**required**) | `metric`, `messaging` | Target type. |
-| `config` | object (strict) | — | — | Target-specific config (below). |
-| `config.destination` | string | `ipc` | `ipc`, `local`, `iotcore`, `iot_core` | Messaging destination (for `messaging` targets). |
-| `config.topic` | string | `ggcommons/{ThingName}/{ComponentName}/heartbeat` | — | Topic template (for `messaging` targets). The **only** topic key the library reads. |
-| `topic` | string | (none) | — | Accepted by the schema (sibling of `config`) but **ignored by the library** — the code reads only `config.topic`. Put the topic under `config.topic`, not here. |
-
 ## `tags`
 
 Object whose keys match `^[a-zA-Z0-9_-]+$` and whose values are strings. Each tag becomes a custom
 **template variable**: a tag `site` is usable as `{site}` in any templated path or topic (alongside
-the built-ins `{ComponentName}`, `{ComponentFullName}`, and `{ThingName}`). Unknown-shaped keys are
-rejected.
+the built-ins `{ComponentName}`, `{ComponentFullName}`, and `{ThingName}`). Tags are also stamped as
+the message envelope's `tags` element (business context — the enterprise location lives in
+[`hierarchy`/`identity`](#hierarchy), not here). Unknown-shaped keys are rejected.
+
+## `hierarchy`
+
+The [UNS](/guides/unified-namespace/) enterprise-hierarchy declaration: an ordered, freely-named
+list of levels whose **last level is the physical node** (its value is always the resolved thing
+name). Absent ⇒ the zero-config default `["device"]`. Object, strict.
+
+| Field | Type | Default | Meaning |
+|-------|------|---------|---------|
+| `levels` | array of string (min 1) | `["device"]` | Ordered level names, deepest (the device) last — e.g. `["site", "factory", "zone", "device"]`. Names are strict (`^[A-Za-z0-9_-]+$`, unique) because they become identity keys (and, later, Parquet columns). |
+
+## `identity`
+
+The UNS identity **values** for every hierarchy level **except the last** (the last level's value is
+always the resolved thing name). Keys must match `hierarchy.levels[0..n-2]`; a key equal to the last
+level name — or not a declared level — is a **startup error**. Values pass through the template
+sanitizer before use. Object; keys match `^[A-Za-z0-9_-]+$`, values are strings.
+
+```json
+{
+  "hierarchy": { "levels": ["site", "factory", "zone", "device"] },
+  "identity":  { "site": "dallas", "factory": "finishing", "zone": "zone-3" }
+}
+```
+
+## `topic`
+
+UNS topic-building options. Object, strict.
+
+| Field | Type | Default | Meaning |
+|-------|------|---------|---------|
+| `includeRoot` | boolean | `false` | Insert the first hierarchy value (the site) after the `ecv1` root in built topics — `ecv1/{site}/{device}/...` — for multi-site broker deployments. Effective only with a **multi-level** hierarchy (a no-op + WARN with the single-level default). |
 
 ## `component` (required)
 
@@ -253,6 +295,19 @@ is typically absent. Object, strict.
 |-------|------|---------|
 | `local` | object (`mqttBroker`) | The local MQTT broker connection (required when using the MQTT transport). |
 | `iotCore` | object (`mqttBroker`) | The optional AWS IoT Core connection (mutual TLS). |
+| `requestTimeoutSeconds` | number (min 0), default `30` | The default `request()` deadline: on expiry the reply future completes exceptionally and the ephemeral reply subscription is cleaned up. `0` disables the default; an explicit per-call timeout always wins. |
+| `lwt` | object (strict) | Optional MQTT Last-Will-and-Testament registered on the **local-broker** connection at CONNECT (re-registered on reconnect); the IPC transport ignores it. Fields below. |
+
+### `messaging.lwt`
+
+The will is broker-published on ungraceful disconnect; it never passes through `publish()`. There is
+**no retain option by design**.
+
+| Field | Type | Default | Meaning |
+|-------|------|---------|---------|
+| `topic` | string | (**required**) | The will topic (e.g. the component's UNS state topic). |
+| `payload` | string \| object | (none) | The will payload, published **verbatim**. |
+| `qos` | number | `1` | Will QoS (`0` or `1`). |
 
 ### `mqttBroker`
 
@@ -515,11 +570,14 @@ A multi-section component config document (this validates clean against the sche
 {
   "logging": { "level": "DEBUG", "rust_format": "{timestamp} [{level}] {target} - {message}" },
   "heartbeat": {
+    "enabled": true,
     "intervalSecs": 5,
     "measures": { "cpu": true, "memory": true },
-    "targets": [ { "type": "metric" } ]
+    "destination": "local"
   },
   "metricEmission": { "target": "log", "namespace": "ggcommons" },
+  "hierarchy": { "levels": ["site", "device"] },
+  "identity": { "site": "factory-1" },
   "credentials": {
     "vault": {
       "path": "./.vault/vault",

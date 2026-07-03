@@ -172,6 +172,12 @@ Pick your language with the tabs in each code block — the tabs stay in sync ac
 </TabItem>
 </Tabs>
 
+   The sample config under `test-configs/` already declares the component's
+   [UNS identity](/guides/unified-namespace/#identity-and-the-hierarchy) — a `hierarchy`
+   (`["site", "device"]`) plus an `identity` value for the site — and the default heartbeat, so the
+   generated component announces itself on the unified namespace out of the box. The app skeleton
+   mints any topic it publishes through `gg.uns()` rather than hand-building topic strings.
+
 4. ### Understand the bootstrap code
 
    The entry point builds one `GGCommons` runtime from the standard CLI args, then reads each
@@ -438,8 +444,11 @@ Pick your language with the tabs in each code block — the tabs stay in sync ac
 </TabItem>
 </Tabs>
 
-   To confirm the component is alive, subscribe to `heartbeat/+/+` on the broker (for example with
-   MQTTX) and watch the periodic heartbeat messages arrive.
+   To confirm the component is alive, subscribe to `ecv1/+/+/+/state` on the broker (for example
+   with MQTTX) and watch the periodic [`state` keepalives](/guides/heartbeat/) arrive on
+   `ecv1/<thing>/<component>/main/state` — every scaffolded component publishes them by default,
+   and mints its own topics through the [Unified Namespace](/guides/unified-namespace/) builder
+   (`gg.uns()`).
 
    <Aside type="note" title="Java streaming">
    If you enable the telemetry-streaming subsystem, add `--enable-native-access=ALL-UNNAMED` to the

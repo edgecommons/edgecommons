@@ -95,6 +95,9 @@ pub enum GgError {
     Streaming(String),   // `streaming` feature
     Credentials(String), // `credentials` feature
     Parameters(String),  // `parameters` feature
+    UnsValidation { code: UnsValidationCode, detail: String },  // UNS topic build/validate
+    ReservedTopic(String),                                       // reserved-class publish guard
+    RequestTimeout { topic: String, secs: f64 },                 // request() deadline fired
     Io(std::io::Error),    // #[from] — auto-converts via `?`
     Json(serde_json::Error), // #[from] — auto-converts via `?`
 }
@@ -129,6 +132,11 @@ class ParameterError extends Error {}                  // this.name = "Parameter
 class GgStreamError extends Error {                     // this.name = "GgStreamError"
   readonly code: number;                               // the underlying ggsl_status value
 }
+class UnsValidationError extends Error {               // UNS topic build/validate failure
+  readonly code: UnsValidationCode;                    // machine-readable §2.2 code
+}
+class ReservedTopicError extends Error {}              // reserved-class publish guard
+class RequestTimeoutError extends Error {}             // request() deadline fired
 ```
 
 Because `GgErrorKind` omits `Streaming`/`Credentials`/`Parameters`, a check like
@@ -152,10 +160,17 @@ The same logical failure maps to a different type in each SDK. Read across a row
 | Messaging | standard exception (no dedicated class) | standard exception (no dedicated class) | `GgError::Messaging` | `GgError` kind `"Messaging"` |
 | Metrics | standard exception (no dedicated class) | standard exception (no dedicated class) | `GgError::Metrics` | `GgError` kind `"Metrics"` |
 | Greengrass IPC | standard exception (no dedicated class) | standard exception (no dedicated class) | `GgError::Ipc` | `GgError` kind `"Ipc"` |
+| UNS topic build/validate | `UnsValidationException` (+`getCode()`) | `UnsValidationError` (+`.code`) | `GgError::UnsValidation { code, .. }` | `UnsValidationError` (+`.code`) |
+| Reserved-class publish | `ReservedTopicException` | `ReservedTopicError` | `GgError::ReservedTopic` | `ReservedTopicError` |
+| Request deadline | `java.util.concurrent.TimeoutException` (exceptional future) | `RequestTimeoutError` (raised by `Iou.get()`) | `GgError::RequestTimeout` | `RequestTimeoutError` (rejected promise) |
 | Credentials | `CredentialException` | `CredentialError` | `GgError::Credentials` | `CredentialError` |
 | Parameters | `ParameterException` | `ParameterError` | `GgError::Parameters` | `ParameterError` |
 | Streaming | `GgStreamException` (+`code()`) | `GgStreamError` (+`.code`) | `GgError::Streaming` (code discarded) | `GgStreamError` (+`.code`) |
 | I/O · JSON | JDK `IOException` etc. | stdlib exceptions | `GgError::Io` / `GgError::Json` | `GgError` kind `"Io"` / `"Json"` |
+
+The UNS validation errors carry the machine-readable code set pinned in `uns-test-vectors/`
+(`EMPTY_TOKEN`, `BAD_CHAR`, `DEPTH_EXCEEDED`, ... — see the
+[UNS API reference](/reference/uns/#normative-validation-rules)), identical across languages.
 
 {/* NEEDS REVIEW: Java and Python have no dedicated Messaging/Metrics/IPC exception class in the taxonomy; the "standard exception" cells describe the absence of a dedicated type, not a confirmed concrete type a runtime messaging/metrics failure throws. A human should confirm what those paths actually throw at runtime. */}
 

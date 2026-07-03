@@ -1,0 +1,527 @@
+---
+title: UNS API
+description: API reference for the unified-namespace surface — gg.uns() (UnsClass, UnsScope, topic/topicFor/filter/validate), the gg.instance() handle, MessageIdentity, validation rules, and the reserved-class guard.
+sidebar:
+  order: 6.5
+---
+
+import { Tabs, TabItem, Aside, LinkCard } from "@astrojs/starlight/components";
+
+This is the API reference for the **unified namespace**: the `gg.uns()` topic builder/validator,
+the `gg.instance(id)` handle, the `MessageIdentity` type, the normative validation rules, and the
+reserved-class publish guard. For the concept — the grammar, the classes, the six-wildcard consumer
+pattern — read the [Unified Namespace guide](/guides/unified-namespace/) first.
+
+All four languages build **byte-identical topics** and **structurally identical** `identity`
+elements; the shared `uns-test-vectors/` conformance suite (topic vectors + golden envelopes) pins
+this, and the cross-language interop harness asserts it over a real broker.
+
+## Accessors
+
+| Handle | Java | Python | Rust | TypeScript |
+|--------|------|--------|------|------------|
+| Topic builder (component-level, instance `main`) | `gg.getUns()` | `gg.uns()` | `gg.uns()` | `gg.uns()` |
+| Instance-scoped handle | `gg.instance(id)` | `gg.instance(id)` | `gg.instance(id)` → `Result` | `gg.instance(id)` |
+
+`gg.instance(id)` validates the instance token (charset rule below) and caches the handle per id. It
+does **not** require the id to appear in `component.instances[]` — instances may be created
+dynamically (an unknown id logs a DEBUG diagnostic).
+
+## `UnsClass` — the closed class set
+
+Eight classes; `state`/`metric`/`cfg`/`log` are **reserved** (library-owned publish),
+`state`/`cfg` are **leaf** (channel forbidden), every other class **requires** ≥ 1 channel token.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+// com.mbreissi.ggcommons.uns.UnsClass
+public enum UnsClass {
+    STATE, METRIC, CFG, LOG, DATA, EVT, CMD, APP;
+    public final String token;    // the wire token ("state", "metric", ...)
+    public final boolean leaf;    // true => channel forbidden; false => channel REQUIRED
+    public static final Set<UnsClass> RESERVED;   // STATE, METRIC, CFG, LOG
+}
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+# ggcommons.uns
+class UnsClass(str, Enum):
+    STATE, METRIC, CFG, LOG, DATA, EVT, CMD, APP = ...
+
+    @property
+    def token(self) -> str: ...          # the wire token
+    @property
+    def leaf(self) -> bool: ...          # True => channel forbidden
+    @staticmethod
+    def from_token(token: str) -> Optional["UnsClass"]: ...
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+// ggcommons::uns
+pub enum UnsClass { State, Metric, Cfg, Log, Data, Evt, Cmd, App }
+
+impl UnsClass {
+    pub const fn token(self) -> &'static str;
+    pub const fn is_leaf(self) -> bool;
+    pub const fn is_reserved(self) -> bool;
+    pub fn from_token(token: &str) -> Option<UnsClass>;
+}
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+// ggcommons (src/uns.ts)
+export enum UnsClass { State = "state", Metric = "metric", Cfg = "cfg", Log = "log",
+                       Data = "data", Evt = "evt", Cmd = "cmd", App = "app" }
+
+export const RESERVED_CLASSES: ReadonlySet<UnsClass>;   // State, Metric, Cfg, Log
+export function isLeafClass(cls: UnsClass): boolean;    // State, Cfg
+export function unsClassFromToken(token: string): UnsClass | undefined;
+```
+
+</TabItem>
+</Tabs>
+
+## `Uns` — the topic builder + validator
+
+Bound to a `MessageIdentity` (yours via `gg.uns()`, an instance's via `gg.instance(id).uns()`) and
+to the component's effective `topic.includeRoot` setting.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+// com.mbreissi.ggcommons.uns.Uns
+public final class Uns {
+    public static final String ROOT = "ecv1";
+    public static final int MAX_TOPIC_SLASHES = 7;       // AWS IoT Core depth budget
+    public static final int MAX_TOPIC_UTF8_BYTES = 256;  // IoT Core publish limit
+
+    public Uns(MessageIdentity identity, boolean includeRoot);
+
+    public MessageIdentity identity();                    // the bound identity
+    public String topic(UnsClass cls);                    // leaf classes (STATE, CFG)
+    public String topic(UnsClass cls, String channel);    // channeled classes
+    public String topicFor(MessageIdentity target, UnsClass cls, String channel);
+    public String filter(UnsClass cls, UnsScope scope);   // '/#' appended for channeled classes
+    public void   validate(String topic);                 // throws UnsValidationException
+    public static void checkToken(String token, String what);
+}
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+# ggcommons.uns
+class Uns:
+    def __init__(self, identity: MessageIdentity, include_root: bool): ...
+
+    def identity(self) -> MessageIdentity: ...
+    def topic(self, cls: UnsClass, channel: Optional[str] = None) -> str: ...
+    def topic_for(self, target: MessageIdentity, cls: UnsClass,
+                  channel: Optional[str] = None) -> str: ...
+    def filter(self, cls: UnsClass, scope: UnsScope) -> str: ...
+    def validate(self, topic: str) -> None: ...      # raises UnsValidationError
+
+    @staticmethod
+    def check_token(token: str, what: str) -> None: ...
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+// ggcommons::uns
+pub struct Uns { /* identity + include_root */ }
+
+impl Uns {
+    pub fn new(identity: MessageIdentity, include_root: bool) -> Uns;
+
+    pub fn identity(&self) -> &MessageIdentity;
+    pub fn topic(&self, cls: UnsClass) -> Result<String>;                    // leaf classes
+    pub fn topic_with_channel(&self, cls: UnsClass, channel: &str) -> Result<String>;
+    pub fn topic_for(&self, target: &MessageIdentity, cls: UnsClass,
+                     channel: Option<&str>) -> Result<String>;
+    pub fn filter(&self, cls: UnsClass, scope: &UnsScope) -> Result<String>;
+    pub fn validate(&self, topic: &str) -> Result<()>;
+}
+
+pub fn check_token(token: &str, what: &str) -> Result<()>;
+pub fn reserved_class_of(topic: &str, include_root: bool) -> Option<UnsClass>;
+```
+
+Rust splits the leaf/channeled builders (`topic` vs `topic_with_channel`) instead of overloading,
+and every builder returns `Result` (errors are `GgError::UnsValidation { code, detail }`).
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+// ggcommons (src/uns.ts)
+export const UNS_ROOT = "ecv1";
+export const MAX_TOPIC_SLASHES = 7;
+export const MAX_TOPIC_UTF8_BYTES = 256;
+
+export class Uns {
+  constructor(identity: MessageIdentity, includeRoot: boolean);
+
+  identity(): MessageIdentity;
+  topic(cls: UnsClass, channel?: string): string;
+  topicFor(target: MessageIdentity, cls: UnsClass, channel?: string): string;
+  filter(cls: UnsClass, scope: UnsScope): string;
+  validate(topic: string): void;                 // throws UnsValidationError
+}
+
+export function checkToken(token: string | undefined | null, what: string): void;
+export function reservedClassOf(topic: string | undefined, includeRoot: boolean): UnsClass | undefined;
+```
+
+</TabItem>
+</Tabs>
+
+`topicFor` takes a `MessageIdentity` — typically a received message's identity — which is how you
+address a peer's `cmd` inbox without ever parsing a topic.
+
+### Normative validation rules
+
+Identical in all four languages (pinned by `uns-test-vectors/topics.json`):
+
+1. **Token rule** — a token is non-empty and contains no `/`, `+`, `#`, `\`, no control characters
+   (including the C1 range U+0080–U+009F), and no `..` substring. Dots are legal (a full reverse-DNS
+   name fits in one level). This is **exactly** the config template sanitizer's blacklist, so any
+   sanitized identity value is guaranteed to build a publishable topic.
+2. **Depth guard** — total `/` count ≤ **7** (AWS IoT Core's 8-level limit): channel ≤ 3 tokens
+   without the root, ≤ 2 with `topic.includeRoot: true`. Enforced at **build time**.
+3. **Length** — total topic ≤ **256 UTF-8 bytes**.
+4. **Class rules** — `state`/`cfg` are leaf (channel forbidden); all other classes require ≥ 1
+   channel token.
+5. **`validate(topic)`** accepts only concrete topics (rejects `+`/`#` — use `filter()` for
+   subscriptions, whose output is correct by construction).
+6. **Root** — `topic.includeRoot` inserts the first hierarchy value after `ecv1` **only when the
+   hierarchy has ≥ 2 levels**; with a single-level hierarchy it is a no-op with a config WARN.
+
+Failures carry a **machine-readable code**, identical across languages:
+
+```text
+EMPTY_TOKEN | BAD_CHAR | TRAVERSAL | DEPTH_EXCEEDED | LENGTH_EXCEEDED |
+CHANNEL_ON_LEAF | CHANNEL_REQUIRED | BAD_ROOT | BAD_CLASS | WILDCARD_IN_TOPIC
+```
+
+| Language | Error type |
+|----------|------------|
+| Java | `UnsValidationException extends IllegalArgumentException` (`getCode()`) |
+| Python | `UnsValidationError(ValueError)` (`.code`) |
+| Rust | `GgError::UnsValidation { code: UnsValidationCode, detail }` |
+| TypeScript | `UnsValidationError extends Error` (`.code`) |
+
+## `UnsScope` — wildcard scopes for `filter()`
+
+An absent field renders as `+`. The `site` position participates only when the builder's effective
+root mode is on. Channeled classes get a trailing `/#`; leaf classes end at the class token.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+public record UnsScope(String site, String device, String component, String instance) {
+    public static UnsScope all();
+    public static UnsScope device(String device);
+    public static UnsScope component(String device, String component);
+    public static UnsScope instance(String device, String component, String instance);
+}
+
+gg.getUns().filter(UnsClass.STATE, UnsScope.all());              // ecv1/+/+/+/state
+gg.getUns().filter(UnsClass.DATA, UnsScope.device("gw-01"));     // ecv1/gw-01/+/+/data/#
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+@dataclass(frozen=True)
+class UnsScope:
+    site: Optional[str] = None
+    device: Optional[str] = None
+    component: Optional[str] = None
+    instance: Optional[str] = None
+
+    @staticmethod
+    def all() -> "UnsScope": ...
+    @staticmethod
+    def for_device(device: str) -> "UnsScope": ...
+    @staticmethod
+    def for_component(device: str, component: str) -> "UnsScope": ...
+    @staticmethod
+    def for_instance(device: str, component: str, instance: str) -> "UnsScope": ...
+
+gg.uns().filter(UnsClass.STATE, UnsScope.all())                  # ecv1/+/+/+/state
+gg.uns().filter(UnsClass.DATA, UnsScope.for_device("gw-01"))     # ecv1/gw-01/+/+/data/#
+```
+
+Python uses `for_device`/`for_component`/`for_instance` (bare `device` would shadow the field).
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+pub struct UnsScope { /* site, device, component, instance: Option<String> */ }
+
+impl UnsScope {
+    pub fn all() -> UnsScope;
+    pub fn device(device: impl Into<String>) -> UnsScope;
+    pub fn component(device: impl Into<String>, component: impl Into<String>) -> UnsScope;
+    pub fn instance(device: impl Into<String>, component: impl Into<String>,
+                    instance: impl Into<String>) -> UnsScope;
+    pub fn with_site(self, site: impl Into<String>) -> UnsScope;
+}
+
+gg.uns().filter(UnsClass::State, &UnsScope::all())?;              // ecv1/+/+/+/state
+gg.uns().filter(UnsClass::Data, &UnsScope::device("gw-01"))?;     // ecv1/gw-01/+/+/data/#
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+export interface UnsScope { site?: string; device?: string; component?: string; instance?: string }
+export const UnsScope: {
+  all(): UnsScope;
+  device(device: string): UnsScope;
+  component(device: string, component: string): UnsScope;
+  instance(device: string, component: string, instance: string): UnsScope;
+};
+
+gg.uns().filter(UnsClass.State, UnsScope.all());                 // ecv1/+/+/+/state
+gg.uns().filter(UnsClass.Data, UnsScope.device("gw-01"));        // ecv1/gw-01/+/+/data/#
+```
+
+</TabItem>
+</Tabs>
+
+## `gg.instance()` — the instance-scoped handle
+
+The handle pre-binds an instance token into (a) the topic builder and (b) the message builder — the
+messaging client itself stays instance-agnostic.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+// com.mbreissi.ggcommons.GgInstance
+public final class GgInstance {
+    public String id();
+    public Uns uns();                                     // topics minted with this instance token
+    public MessageBuilder newMessage(String name, String version);
+        // == MessageBuilder.create(name, version).withConfig(config).withInstance(id())
+}
+
+GgInstance kep1 = gg.instance("kep1");
+String t = kep1.uns().topic(UnsClass.DATA, "press12/temperature");
+gg.getMessaging().publish(t, kep1.newMessage("SignalUpdate", "1.0").withPayload(p).build());
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+inst = gg.instance("kep1")            # GgInstance
+t = inst.uns().topic(UnsClass.DATA, "press12/temperature")
+msg = inst.new_message("SignalUpdate", "1.0").with_payload(p).build()
+gg.get_messaging().publish(t, msg)
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+let inst = gg.instance("kep1")?;      // Result<GgInstance> — validates the token
+let t = inst.uns().topic_with_channel(UnsClass::Data, "press12/temperature")?;
+let msg = inst.message("SignalUpdate", "1.0").payload(p).build();
+gg.messaging()?.publish(&t, &msg).await?;
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+const inst = gg.instance("kep1");     // GgInstance
+const t = inst.uns().topic(UnsClass.Data, "press12/temperature");
+const msg = inst.newMessage("SignalUpdate", "1.0").withPayload(p).build();
+await gg.messaging().publish(t, msg);
+```
+
+</TabItem>
+</Tabs>
+
+## `MessageIdentity`
+
+The wire object **and** the component's resolved identity — one type. On the wire it is the
+envelope's top-level `identity` element (`hier`, `path`, `component`, `instance`); see the
+[Unified Namespace guide](/guides/unified-namespace/#identity-and-the-hierarchy) for the JSON shape
+and resolution rules.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+// com.mbreissi.ggcommons.messaging.MessageIdentity
+public final class MessageIdentity {
+    public static final String DEFAULT_INSTANCE = "main";
+    public record HierEntry(String level, String value) { }
+
+    public MessageIdentity(List<HierEntry> hier, String component, String instance);
+
+    public List<HierEntry> getHier();       // ordered; last entry = the device
+    public String getPath();                // precomputed '/'-join of the hier values
+    public String getComponent();
+    public String getInstance();
+    public String getDevice();              // computed accessor — NOT a wire field
+    public MessageIdentity withInstance(String instance);   // copy with another instance token
+
+    public JsonObject toDict();
+    public static MessageIdentity fromDict(JsonObject src); // lenient: malformed -> null + WARN
+}
+```
+
+The component's resolved identity is `configManager.getComponentIdentity()` (instance `main`).
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+# ggcommons.messaging.identity
+class HierEntry:
+    def __init__(self, level: str, value: str): ...
+
+class MessageIdentity:
+    DEFAULT_INSTANCE = "main"
+
+    def __init__(self, hier: List[HierEntry], component: str,
+                 instance: Optional[str] = None, path: Optional[str] = None): ...
+
+    # read-only properties:
+    hier: List[HierEntry]          # ordered; last entry = the device
+    path: str                      # precomputed '/'-join
+    component: str
+    instance: str
+    device: str                    # computed — NOT a wire field
+
+    def with_instance(self, instance: str) -> "MessageIdentity": ...
+    def to_dict(self) -> dict: ...
+    @staticmethod
+    def from_dict(src) -> Optional["MessageIdentity"]: ...   # lenient
+```
+
+The component's resolved identity is `config.get_component_identity()`.
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+// ggcommons::messaging::message
+pub struct HierEntry { pub level: String, pub value: String }
+
+pub struct MessageIdentity { /* hier, path, component, instance */ }
+
+impl MessageIdentity {
+    pub fn new(hier: Vec<HierEntry>, component: impl Into<String>,
+               instance: Option<String>) -> Result<MessageIdentity>;
+
+    pub fn hier(&self) -> &[HierEntry];
+    pub fn path(&self) -> &str;
+    pub fn component(&self) -> &str;
+    pub fn instance(&self) -> &str;
+    pub fn device(&self) -> &str;                            // computed — NOT a wire field
+    pub fn with_instance(&self, instance: impl Into<String>) -> Result<MessageIdentity>;
+    pub fn from_wire(src: &Value) -> Option<MessageIdentity>; // lenient
+}
+```
+
+The component's resolved identity is `gg.config().identity()`.
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+// ggcommons (src/message.ts)
+export interface HierLevel { level: string; value: string }
+
+export class MessageIdentity {
+  static readonly DEFAULT_INSTANCE = "main";
+
+  readonly hier: readonly HierLevel[];   // ordered; last entry = the device
+  readonly path: string;                 // precomputed '/'-join
+  readonly component: string;
+  readonly instance: string;
+
+  get device(): string;                  // computed — NOT a wire field
+  withInstance(instance: string): MessageIdentity;
+  toObject(): unknown;
+  static fromObject(src: unknown): MessageIdentity | undefined;   // lenient
+}
+```
+
+The component's resolved identity is `gg.config().componentIdentity`.
+
+</TabItem>
+</Tabs>
+
+Deserialize leniency is deliberate: a malformed inbound `identity` yields a null/absent identity
+with a warning — the message still delivers. `identity` is **optional on the wire**: a message built
+without a config-bound builder (the `CONFIG_COMPONENT` bootstrap request, raw bridging of external
+systems) legally omits it.
+
+## The reserved-class publish guard
+
+Every publish path that takes a client-chosen topic — `publish`, `publishRaw`, `publishToIoTCore`,
+`publishToIoTCoreRaw`, `request`, `requestFromIoTCore`, and `reply`/`replyToIoTCore` (a hostile
+`reply_to` must not turn a responder into a forger) — rejects a topic whose class position is a
+reserved class (`state` | `metric` | `cfg` | `log`) under the `ecv1` root. `subscribe*` is never
+guarded (consumers must read reserved classes), and non-`ecv1` topics (reply topics,
+`cloudwatch/metric/put`, legacy/foreign MQTT) pass untouched.
+
+| Language | Error type |
+|----------|------------|
+| Java | `ReservedTopicException extends IllegalArgumentException` |
+| Python | `ReservedTopicError(ValueError)` |
+| Rust | `GgError::ReservedTopic(String)` |
+| TypeScript | `ReservedTopicError extends Error` |
+
+<Aside type="note" title="The guard is misuse prevention, not a security boundary">
+Only Rust's crate-private internal-publish seam is compiler-enforced; in the other three languages
+the library's own publishers use a named internal path (`ReservedPublisher` in Java,
+`_publish_reserved*` in Python, an `@internal` method in TypeScript) that in-process code could
+technically reach. The durable enforcement is per-device **broker ACLs** scoping each component to
+its own `ecv1/{device}/#` subtree.
+</Aside>
+
+## See also
+
+<LinkCard
+  title="Unified Namespace guide"
+  href="/guides/unified-namespace/"
+  description="The concept: the grammar, the eight classes, identity + hierarchy, and the six-wildcard consumer pattern."
+/>
+
+<LinkCard
+  title="Messaging API"
+  href="/reference/messaging/"
+  description="The messaging client the built topics feed into — publish/subscribe, request/reply deadlines, and the envelope."
+/>
+
+<LinkCard
+  title="Configuration schema"
+  href="/reference/configuration-schema/"
+  description="The hierarchy, identity, and topic config blocks that drive identity resolution."
+/>

@@ -26,12 +26,17 @@ Every component gets these subsystems out of the box — they are always present
   schema, substitutes template variables like `{ComponentName}` and `{ThingName}`, and supports
   hot reload.
 - **messaging** — one interface over two transports (Greengrass IPC and dual-MQTT). Connections
-  and subscriptions block until confirmed; request/reply uses correlation IDs; the message
-  envelope is identical across all four languages.
-- **metrics** — pluggable targets: CloudWatch EMF, a cloudwatch component, the messaging bus, a
-  local rotated log file, or a pull-based Prometheus endpoint.
-- **heartbeat** — periodic system metrics (CPU, memory, disk, threads, file descriptors) emitted
-  through the metric or messaging subsystem.
+  and subscriptions block until confirmed; request/reply uses correlation IDs and a framework-owned
+  deadline; the message envelope is identical across all four languages.
+- **unified namespace (UNS)** — one topic grammar
+  (`ecv1/{device}/{component}/{instance}/{class}`) for everything on the bus, with a config-driven
+  **identity** element stamped on every envelope and a `gg.uns()` builder that validates every
+  topic. A consumer watches a whole fleet with [six wildcards](/guides/unified-namespace/).
+- **metrics** — pluggable targets: CloudWatch EMF, a cloudwatch component, the messaging bus (UNS
+  `metric` topics), a local rotated log file, or a pull-based Prometheus endpoint.
+- **heartbeat** — the library-owned `state` keepalive (on by default, every 5 s) that makes every
+  component observable on the UNS, plus system measures (CPU, memory, disk, threads, file
+  descriptors) emitted as the `sys` metric.
 - **logging** — console logging plus optional size-rotated file logging, with a per-language
   format token (`java_format`, `python_format`, `rust_format`, `ts_format`).
 

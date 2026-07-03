@@ -1,0 +1,293 @@
+---
+title: Unified Namespace (UNS)
+description: The one topic namespace every GGCommons component publishes and subscribes on — the ecv1 topic grammar, the eight message classes, the identity element, and the six-wildcard consumer pattern.
+sidebar:
+  order: 2.5
+---
+
+import { Tabs, TabItem, Aside, CardGrid, LinkCard } from "@astrojs/starlight/components";
+
+Every GGCommons component addresses the bus through one **Unified Namespace (UNS)**: a single topic
+grammar, a closed set of message **classes**, and a config-driven **identity** stamped on every
+envelope. A consumer — a monitoring console, a site historian, an MES bridge — subscribes a small,
+uniform set of wildcards and needs **zero per-component knowledge**; every message it receives is
+**self-identifying** through its top-level `identity` element, never through topic parsing.
+
+The UNS replaced the per-subsystem topic schemes wholesale (the old
+`ggcommons/{ThingName}/{ComponentName}/heartbeat`, `{ThingName}/{ComponentName}/metric`, and
+`ggcommons/{ThingName}/config/...` topics no longer exist). This page is the concept reference the
+other guides build on; the exact API is in the [UNS API reference](/reference/uns/).
+
+## The topic grammar
+
+```text
+ecv1 / {device} / {component} / {instance} / {class} [ / {channel...} ]
+```
+
+| Segment | What it is |
+|---------|------------|
+| `ecv1` | The fused root literal: EdgeCommons namespace + grammar major version. Grammar bumps are `ecv1 → ecv2`; *payload* versions stay in `header.version`. |
+| `{device}` | The physical node — the resolved thing name (the last level of the [hierarchy](#identity-and-the-hierarchy)). |
+| `{component}` | The component's sanitized **short name** (the segment after the last `.`). |
+| `{instance}` | The logical instance the message pertains to; `main` for component-level messages. |
+| `{class}` | One of the eight closed [message classes](#the-eight-message-classes). |
+| `{channel...}` | Class-specific sub-path (a metric name, a signal path, a command verb). |
+
+Two deliberate properties:
+
+- **The topic addresses the endpoint, not the hierarchy.** The enterprise's logical hierarchy
+  (site/area/line/...) lives in the message's `identity` element, **not** the topic — so topic depth
+  is constant regardless of hierarchy depth, and broker-side scoping is by device
+  (`ecv1/{device}/#`).
+- **Depth-guarded by construction.** The whole grammar stays within AWS IoT Core's 7-slash topic
+  limit; the `uns()` builder rejects an over-deep channel at build time instead of letting IoT Core
+  silently drop the message.
+
+A multi-site broker deployment can opt in to a site segment after the root with the top-level
+`topic.includeRoot: true` config: `ecv1/{site}/{device}/...` (the site is the first hierarchy
+value; the setting is a no-op with a single-level hierarchy).
+
+## The eight message classes
+
+| Class | Carries | Publisher | Example tail |
+|-------|---------|-----------|--------------|
+| `state` | Lifecycle + health + keepalive — **the liveness beacon** | library — **reserved** | `state` |
+| `metric` | Operational metrics, incl. the built-in `sys` system measures | library — **reserved** | `metric/signals-ingested` |
+| `cfg` | Effective-config snapshot (redacted), at startup + on change | library — **reserved** | `cfg` |
+| `log` | Structured log records for remote tail *(class reserved now; publisher is roadmap)* | library — **reserved** | `log/error` |
+| `data` | The telemetry data plane — signal updates, processed outputs | your code | `data/press12/temperature` |
+| `evt` | Events and alarms | your code | `evt/critical/overtemp` |
+| `cmd` | Commands — request/reply, addressed to the **recipient's** inbox | any | `cmd/reload-config` |
+| `app` | Arbitrary application pub/sub between components | your code | `app/order/received` |
+
+The first four are **reserved platform classes**: they are library-owned, and a raw
+`messaging().publish(...)` to a reserved-class topic is **rejected** (`ReservedTopicException` /
+`ReservedTopicError` / `GgError::ReservedTopic`), so no component can forge another's health or
+config. `state` and `cfg` are **leaf** classes (no channel); every other class requires at least one
+channel token. `cmd` is the only class whose identity path names the **recipient**; everything else
+names the **publisher**.
+
+<Aside type="note" title="What the library publishes for you">
+With zero component code, every component is already observable on the UNS:
+
+- **`state`** — the [heartbeat keepalive](/guides/heartbeat/), on by default every 5 s:
+  `ecv1/{device}/{component}/main/state` with body `{"status":"RUNNING","uptimeSecs":n}` (and a
+  best-effort `{"status":"STOPPED"}` on graceful shutdown).
+- **`metric`** — each metric on `ecv1/{device}/{component}/main/metric/{name}` when the
+  [metrics](/guides/metrics/) `messaging` target is selected; the heartbeat's system measures arrive
+  as a metric named **`sys`**.
+- **`cfg`** — the effective (redacted) configuration on `ecv1/{device}/{component}/main/cfg` at
+  startup and on every config change.
+</Aside>
+
+## The six-wildcard consumer pattern
+
+A consumer's **complete subscription set** is six uniform wildcards — no per-component branches:
+
+```text
+ecv1/+/+/+/state        ecv1/+/+/+/cfg        ecv1/+/+/+/evt/#
+ecv1/+/+/+/metric/#     ecv1/+/+/+/data/#     ecv1/+/+/+/log/#
+```
+
+That covers every component's liveness, config, events, metrics, telemetry, and (future) log tail on
+the bus. Group and display by reading each message's `identity` — never by parsing the topic. The
+`uns()` API builds these filters for you (`gg.uns().filter(class, scope)`), scoped site-wide or
+narrowed to a device/component/instance.
+
+To watch a device's components come alive from any MQTT client:
+
+<Tabs syncKey="os">
+<TabItem label="Linux">
+
+```bash
+mosquitto_sub -h localhost -p 1883 -t 'ecv1/+/+/+/state' -v
+```
+
+</TabItem>
+<TabItem label="Windows">
+
+```powershell
+mosquitto_sub -h localhost -p 1883 -t 'ecv1/+/+/+/state' -v
+```
+
+</TabItem>
+</Tabs>
+
+## Identity and the hierarchy
+
+Every envelope built through a config-bound builder carries a top-level **`identity`** element —
+a sibling of `header`/`tags`/`body`:
+
+```json
+{
+  "header":   { "name": "state", "version": "1.0", "timestamp": "…", "uuid": "…", "correlation_id": "…" },
+  "identity": {
+    "hier": [
+      { "level": "site",    "value": "dallas" },
+      { "level": "factory", "value": "finishing" },
+      { "level": "zone",    "value": "zone-3" },
+      { "level": "device",  "value": "gw-01" }
+    ],
+    "path":      "dallas/finishing/zone-3/gw-01",
+    "component": "opcua-adapter",
+    "instance":  "kep1"
+  },
+  "tags": { "app": "line-ctl" },
+  "body": { }
+}
+```
+
+- **`hier`** is the ordered enterprise hierarchy; its **last entry is always the device** (the
+  resolved thing name). There is no standalone `device` wire field — the in-memory
+  `MessageIdentity` exposes a computed `device` accessor.
+- **`path`** is the precomputed `/`-join of the hierarchy values, so consumers group and display
+  without re-joining.
+- **`component`** / **`instance`** are the addressing suffix — the same tokens as in the topic.
+- **`tags` carries business context only** (app, org, cost center). The old `tags.thing` key is
+  **removed** — identity is where the device lives now.
+
+The hierarchy is declared once in config — an ordered, freely-named list of levels whose deepest
+level is the physical node — and the location values above the device come from the top-level
+`identity` config block:
+
+```json
+{
+  "hierarchy": { "levels": ["site", "factory", "zone", "device"] },
+  "identity":  { "site": "dallas", "factory": "finishing", "zone": "zone-3" }
+}
+```
+
+The last level's value is **always the resolved thing name** (from `-t`, the Kubernetes Downward
+API, or `AWS_IOT_THING_NAME`) — putting a `device` key in `identity` is a startup error. With **no**
+`hierarchy`/`identity` config at all, the zero-config default is `levels: ["device"]` and the UNS
+works out of the box as `ecv1/{thing}/{component}/main/{class}`. Identity resolves **once at
+startup** (fail-fast if values don't cover the declared levels), and the library stamps it on every
+message. See the [Configuration guide](/guides/configuration/#uns-identity-hierarchy-and-identity).
+
+### Instances are per-message
+
+A component commonly serves many instances (an OPC UA adapter with `kep1`, `plc-2`, ...). The
+`{instance}` topic segment and the `identity.instance` field are resolved **per message** through an
+instance-scoped handle — `gg.instance("kep1")` — whose `uns()` mints topics and whose message
+builder stamps envelopes with that token. Component-level messages default to `main`. See
+[`gg.instance()`](/reference/uns/#gginstance--the-instance-scoped-handle).
+
+## Building and validating topics — `gg.uns()`
+
+Never concatenate UNS topics by hand. `gg.uns()` is the topic builder + validator bound to your
+component's resolved identity — it enforces the token charset, the class rules, and the ≤ 7-slash
+IoT Core depth budget at build time:
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+String t = gg.getUns().topic(UnsClass.APP, "order/received");
+// -> ecv1/gw-01/my-component/main/app/order/received
+gg.getMessaging().publish(t, msg);
+
+// address a peer's command inbox from a received message's identity:
+String cmd = gg.getUns().topicFor(peer.getIdentity(), UnsClass.CMD, "reload-config");
+
+// build a consumer filter:
+String f = gg.getUns().filter(UnsClass.STATE, UnsScope.all());   // ecv1/+/+/+/state
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+from ggcommons.uns import UnsClass, UnsScope
+
+t = gg.uns().topic(UnsClass.APP, "order/received")
+gg.get_messaging().publish(t, msg)
+
+cmd = gg.uns().topic_for(peer.identity, UnsClass.CMD, "reload-config")
+f = gg.uns().filter(UnsClass.STATE, UnsScope.all())   # ecv1/+/+/+/state
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+use ggcommons::uns::{UnsClass, UnsScope};
+
+let t = gg.uns().topic_with_channel(UnsClass::App, "order/received")?;
+gg.messaging()?.publish(&t, &msg).await?;
+
+let cmd = gg.uns().topic_for(peer_identity, UnsClass::Cmd, Some("reload-config"))?;
+let f = gg.uns().filter(UnsClass::State, &UnsScope::all())?;   // ecv1/+/+/+/state
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+import { UnsClass, UnsScope } from "ggcommons";
+
+const t = gg.uns().topic(UnsClass.App, "order/received");
+await gg.messaging().publish(t, msg);
+
+const cmd = gg.uns().topicFor(peer.identity!, UnsClass.Cmd, "reload-config");
+const f = gg.uns().filter(UnsClass.State, UnsScope.all());   // ecv1/+/+/+/state
+```
+
+</TabItem>
+</Tabs>
+
+`gg.messaging()` still takes **literal topics** — it remains fully usable for external, non-UNS
+topics (bridging a legacy MQTT system, the `cloudwatch/metric/put` contract). The only restriction
+is the reserved-class guard above. See the [Messaging guide](/guides/messaging/).
+
+## Command addressing and reserved names
+
+- **A component's command inbox** is `ecv1/{device}/{component}/{instance}/cmd/{verb}` — one
+  `ecv1/{device}/{me}/+/cmd/#` subscription receives only your own commands, no body-filtering.
+  Verbs are lowercase-hyphenated, optionally family-namespaced (`sb/status`).
+- **Config fetch** (the `CONFIG_COMPONENT` source): a request to
+  `ecv1/{device}/config/main/cmd/get-configuration`, where `config` is a **reserved-by-convention
+  logical component name** (the config server is its sole subscriber). Config **push** arrives on
+  the target component's own inbox: `ecv1/{device}/{component}/main/cmd/set-config`.
+- **Reserved tokens**: the root `ecv1`; the logical component `config`; the pseudo-component
+  `_bcast` (device-wide command broadcast, `ecv1/{device}/_bcast/main/cmd/{verb}`); and the whole
+  `_`-prefix for system pseudo-components. Don't name components or instances with these.
+- **Reply topics are non-UNS** by design: the ephemeral `ggcommons/reply-...` request/reply topics
+  are not `ecv1/`-rooted and pass the guard untouched.
+
+## What is shipped vs. roadmap
+
+**Shipped now, in all four languages** (byte-identical topics, structurally identical envelopes,
+pinned by the cross-language `uns-test-vectors/` conformance suite):
+
+- The grammar, the eight classes, the reserved-class publish guard, and `gg.uns()` /
+  `gg.instance(id)`.
+- The top-level `identity` envelope element + the `hierarchy`/`identity`/`topic` config blocks.
+- The library-owned publishers: the `state` keepalive ([heartbeat](/guides/heartbeat/)), UNS
+  `metric` topics, and the `cfg` effective-config announcements.
+- The `request()` internal deadline, MQTT [Last Will](/guides/messaging/#mqtt-last-will-lwt), and
+  the `CONFIG_COMPONENT` command remap.
+
+<Aside type="caution" title="Roadmap — designed, not yet shipped">
+The following are **design-complete but not built** (see `docs/platform/DESIGN-uns.md`); don't code
+against them yet:
+
+- **`uns-bridge` + the site broker** — one envelope-aware bridge per device bus relaying onto a
+  site-wide UNS broker (EMQX), with whole-device UNREACHABLE detection and the
+  `republish-state` late-join broadcast.
+- **The southbound `sb/*` command family** — `sb/browse`, `sb/read`, confirmed `sb/write`,
+  `sb/subscribe-preview` on the adapter contract.
+- **The richer facades** — `telemetry()`, `events()`, `commands()`, `discovery()`, `status()`, and
+  the `log`-tail publisher. Today components publish `data`/`evt`/`cmd`/`app` themselves via
+  `messaging()` + `uns()` as shown above.
+- **Streaming enrichment** — auto-stamping stream records with identity + hierarchy columns and
+  Hive-style partitioning in the Parquet/AVRO sink.
+</Aside>
+
+## Related
+
+<CardGrid>
+  <LinkCard title="UNS API reference" href="/reference/uns/" description="UnsClass, UnsScope, topic/topicFor/filter/validate, the instance handle, and every validation rule + error code." />
+  <LinkCard title="Messaging guide" href="/guides/messaging/" description="The envelope with identity, publish/subscribe, the reserved-class guard, and request/reply deadlines." />
+  <LinkCard title="Heartbeat guide" href="/guides/heartbeat/" description="The state keepalive and the sys measures metric." />
+  <LinkCard title="Configuration guide" href="/guides/configuration/" description="The hierarchy, identity, and topic config blocks that drive identity resolution." />
+</CardGrid>

@@ -436,12 +436,12 @@ Your component then opens the vault from that KEK with no code changes — see t
 On KUBERNETES two observability defaults flip on automatically:
 
 - **Prometheus pull metrics.** The metric target defaults to `prometheus`: the SDK keeps an in-process
-  registry and serves it as OpenMetrics text at `:9090/metrics`. Metrics (and the heartbeat, when
-  routed to a `metric` target) are **scraped**, not pushed. Gauge names are
-  `sanitize(lower("{namespace}_{measure}"))`, so a heartbeat memory gauge under namespace `ggcommons`
-  appears as `ggcommons_memory_usage`. Central, multi-site aggregation is the scraping collector's
-  outbound `remote_write` to AMP/Mimir/Thanos/Grafana Cloud — edge-initiated egress, never
-  cloud→edge inbound. See the [Metrics guide](/guides/metrics/).
+  registry and serves it as OpenMetrics text at `:9090/metrics`. Metrics (including the heartbeat's
+  [`sys` system-measures metric](/guides/heartbeat/)) are **scraped**, not pushed. Gauge names are
+  `sanitize(lower("{namespace}_{measure}"))`, so the `sys` metric's memory measure under namespace
+  `ggcommons` appears as `ggcommons_memory_usage`. Central, multi-site aggregation is the scraping
+  collector's outbound `remote_write` to AMP/Mimir/Thanos/Grafana Cloud — edge-initiated egress,
+  never cloud→edge inbound. See the [Metrics guide](/guides/metrics/).
 - **Structured stdout-JSON logging.** The logging format defaults to `json`: one JSON object per line
   to stdout, carrying Downward-API correlation fields (the pod's identity), ready for any log shipper.
   See the [Logging guide](/guides/logging/).

@@ -13,6 +13,11 @@ that connects to a local broker and, optionally, AWS IoT Core. The same publish/
 request/reply, and message envelope work identically across Java, Python, Rust, and TypeScript, so
 components written in any language interoperate on the same topics.
 
+Topics live in the **[Unified Namespace](/guides/unified-namespace/)**: mint them with the
+[`gg.uns()` builder](#uns-topics-and-the-reserved-class-guard) rather than concatenating strings,
+and every envelope built through a config-bound builder carries a self-identifying
+[`identity` element](#the-message-envelope).
+
 Connections and subscriptions are **synchronous** — `connect`, `publish`, and `subscribe` run inline
 rather than returning a pending promise. Be aware, though, that the standalone (dual-MQTT) provider
 **swallows the underlying Paho `MqttException`** (it logs the error and returns), so a normal return
@@ -66,7 +71,7 @@ const messaging = gg.messaging();   // IMessagingService
 
 ## The message envelope
 
-Every message GGCommons sends on the wire is a JSON object with three parts. The shape and key names
+Every message GGCommons sends on the wire is a JSON object with four parts. The shape and key names
 are **identical across all four languages** so they interoperate.
 
 ```json
@@ -79,7 +84,16 @@ are **identical across all four languages** so they interoperate.
     "correlation_id": "a1b2...",
     "reply_to": "ggcommons/reply-..."
   },
-  "tags": { "thing": "lab-5950x", "site": "lab" },
+  "identity": {
+    "hier": [
+      { "level": "site",   "value": "dallas" },
+      { "level": "device", "value": "gw-01" }
+    ],
+    "path": "dallas/gw-01",
+    "component": "my-component",
+    "instance": "main"
+  },
+  "tags": { "site": "lab" },
   "body": { "celsius": 22.4 }
 }
 ```
@@ -87,14 +101,20 @@ are **identical across all four languages** so they interoperate.
 - **`header`** — message metadata. Keys are **snake_case** on the wire (`correlation_id`, `reply_to`,
   `uuid`). `reply_to` is omitted when there is no reply topic; `correlation_id`/`uuid`/`timestamp`
   are filled in automatically if you do not set them.
-- **`tags`** — routing/source metadata. The Thing name is flattened to a `"thing"` key, and is only
-  emitted when set; any custom tags you add appear alongside it.
+- **`identity`** — the publisher's [UNS identity](/guides/unified-namespace/#identity-and-the-hierarchy):
+  the ordered enterprise hierarchy (`hier`, last entry = the device), the precomputed `path`, and the
+  `component`/`instance` addressing tokens. Stamped automatically by any **config-bound** builder;
+  a message built without config (a bootstrap request, raw bridging) legally omits it. Consumers
+  identify the sender from this element — **never by parsing the topic**.
+- **`tags`** — **business context only** (app, org, cost center) — your custom `tags` config keys.
+  The legacy `tags.thing` key is **removed**: the device now lives in `identity`. `tags` is emitted
+  only when tags were stamped.
 - **`body`** — your payload. Any JSON value.
 
 A **raw** message has no envelope — it serializes as `{ "raw": <value> }` instead. When a component
-receives a payload that is not an envelope (no `header`/`tags`/`body`), or non-JSON bytes, it is
-delivered to your handler as a **raw message** (non-JSON bytes become a raw string). See
-[Raw messages](#raw-publish-and-subscribe) below.
+receives a payload that is not an envelope (none of `header`/`identity`/`tags`/`body`), or non-JSON
+bytes, it is delivered to your handler as a **raw message** (non-JSON bytes become a raw string).
+See [Raw messages](#raw-publish-and-subscribe) below.
 
 <Aside type="note">
 The reply-topic prefix is the literal string `ggcommons/reply-` (a trailing `-`, not a `/`) in all
@@ -104,14 +124,16 @@ four languages.
 ## Building a message
 
 Construct messages with `MessageBuilder` — not the raw constructors. The builder stamps the
-`uuid`, `correlation_id`, and `timestamp` for you.
+`uuid`, `correlation_id`, and `timestamp` for you, and — when you supply the config — the
+custom tags **and the UNS `identity` element** (with the per-message `instance` token, default
+`main`).
 
-<Aside type="caution">
-**`build()` config requirement differs.** In **Java**, `build()` throws `IllegalStateException`
-unless you called `withConfig(...)`. In **Python**, `build()` raises `ValueError` unless you called
-`with_config(...)` **or** `with_tags(...)`. In **Rust** and **TypeScript**, `build()` never requires
-config. Supplying the config (or tags) is what populates the Thing name and custom tags on the
-envelope.
+<Aside type="note">
+**`build()` never requires config in any language.** Supplying the config is what stamps the
+custom tags and the config-resolved `identity` on the envelope; a builder without config produces a
+legal envelope with no `identity` (the bootstrap/raw-bridging case). Use `withInstance(...)` /
+`with_instance(...)` / `.instance(...)` to stamp a non-`main` instance token — or better, build
+through an [instance handle](/reference/uns/#gginstance--the-instance-scoped-handle).
 </Aside>
 
 <Tabs syncKey="lang">
@@ -120,7 +142,8 @@ envelope.
 ```java
 Message msg = MessageBuilder.create("TemperatureReading", "1.0")
     .withPayload(payload)        // JsonObject, Map, POJO, or List
-    .withConfig(configManager)   // REQUIRED in Java
+    .withConfig(configManager)   // stamps tags + the UNS identity
+    .withInstance("kep1")        // optional per-message instance token (default "main")
     .build();
 ```
 
@@ -131,7 +154,8 @@ Message msg = MessageBuilder.create("TemperatureReading", "1.0")
 msg = (
     MessageBuilder.create("TemperatureReading", "1.0")
     .with_payload({"celsius": 22.4})
-    .with_config(config)         # or .with_tags({...})
+    .with_config(config)         # stamps tags + the UNS identity
+    .with_instance("kep1")       # optional per-message instance token (default "main")
     .build()
 )
 ```
@@ -147,7 +171,8 @@ use serde_json::json;
 
 let msg = MessageBuilder::new("TemperatureReading", "1.0")
     .payload(json!({ "celsius": 22.4 }))
-    .from_config(&config)        // or .thing_name("lab-5950x")
+    .from_config(&config)        // stamps tags + the UNS identity
+    .instance("kep1")            // optional per-message instance token (default "main")
     .build();
 ```
 
@@ -157,18 +182,80 @@ let msg = MessageBuilder::new("TemperatureReading", "1.0")
 ```typescript
 const msg = MessageBuilder.create("TemperatureReading", "1.0")
   .withPayload({ celsius: 22.4 })
-  .withConfig({ thingName, parsed: { tags } })   // optional in TS
+  .withConfig(gg.config())       // stamps tags + the UNS identity
+  .withInstance("kep1")          // optional per-message instance token (default "main")
   .build();
 ```
 
 </TabItem>
 </Tabs>
 
+For tests, vectors, and relays, an explicit `withIdentity(...)` / `with_identity(...)` /
+`.identity(...)` override always wins over the config-resolved identity. All four builders also
+accept explicit `uuid` and `timestamp` setters for deterministic envelopes.
+
+## UNS topics and the reserved-class guard
+
+`messaging()` takes **literal topics** — there is no hidden topic construction. For a topic in the
+[Unified Namespace](/guides/unified-namespace/), mint it with `gg.uns()` (or an instance handle's
+`uns()`), which validates the token charset and the ≤ 7-slash IoT Core depth budget at build time:
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+String topic = gg.getUns().topic(UnsClass.APP, "order/received");
+gg.getMessaging().publish(topic, msg);   // ecv1/{device}/{component}/main/app/order/received
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+from ggcommons.uns import UnsClass
+
+topic = gg.uns().topic(UnsClass.APP, "order/received")
+gg.get_messaging().publish(topic, msg)   # ecv1/{device}/{component}/main/app/order/received
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+use ggcommons::uns::UnsClass;
+
+let topic = gg.uns().topic_with_channel(UnsClass::App, "order/received")?;
+gg.messaging()?.publish(&topic, &msg).await?;
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+import { UnsClass } from "ggcommons";
+
+const topic = gg.uns().topic(UnsClass.App, "order/received");
+await gg.messaging().publish(topic, msg);
+```
+
+</TabItem>
+</Tabs>
+
+Arbitrary **non-UNS** topics remain fully supported (bridging an external MQTT system, the
+`cloudwatch/metric/put` contract). The single restriction is the **reserved-class guard**: a raw
+publish (or `request`/`reply`) to a reserved-class UNS topic — `ecv1/.../{state|metric|cfg|log}` —
+is rejected (`ReservedTopicException` / `ReservedTopicError` / `GgError::ReservedTopic`), because
+those classes are library-owned: the [heartbeat](/guides/heartbeat/) publishes `state`, the
+[metrics subsystem](/guides/metrics/) publishes `metric`, and the config subsystem publishes `cfg`.
+Subscribing to reserved classes is always allowed. See the
+[UNS API reference](/reference/uns/#the-reserved-class-publish-guard).
+
 ## Publish and subscribe
 
 `publish` sends an envelope to a topic. `subscribe` registers a handler that receives the
 **topic** and the decoded `Message` for each match. Topic filters use the usual MQTT wildcards
-(`+` single level, `#` multi level).
+(`+` single level, `#` multi level). The examples below use a literal topic; UNS-native code mints
+the topic via `uns()` as shown above.
 
 <Aside type="danger">
 **The subscribe integer arguments differ in order AND meaning across languages — read this before
@@ -340,19 +427,29 @@ a future that completes when the reply arrives. On the responder side, `reply(re
 **copies the request's `correlation_id`** onto the reply and publishes it to the request's `reply_to`
 topic — so the requester's future resolves to the right answer.
 
+**Every request carries a framework-owned deadline.** The default is
+`messaging.requestTimeoutSeconds` (**30 s**; `0` disables); an explicit per-call timeout always
+wins. When the deadline fires, the library unsubscribes the ephemeral reply topic and completes the
+future **exceptionally** — even if you never await it — so an abandoned request can no longer leak
+its reply subscription (and trip the Greengrass shared-connection quota). Consequences: a no-arg
+`get()`/`await` no longer blocks forever, and a `get(t)` waits at most `min(t, deadline)`.
+
 The future type differs per language: Java extends `CompletableFuture<Message>`, Python returns an
-`Iou` whose `get()` yields a `(done, result)` tuple, Rust returns a `Result<ReplyFuture>` you
-`await`, and TypeScript returns a `ReplyFuture` (PromiseLike) you `await` with the timeout passed as
-an argument.
+`Iou`, Rust returns a `Result<ReplyFuture>` you `await`, and TypeScript returns a `ReplyFuture`
+(PromiseLike) you `await`.
 
 <Tabs syncKey="lang">
 <TabItem label="Java">
 
-`ReplyFuture extends CompletableFuture<Message>`, so use the standard future API.
+`ReplyFuture extends CompletableFuture<Message>`, so use the standard future API. On deadline it
+completes exceptionally with a `java.util.concurrent.TimeoutException`. The per-call override is
+`request(topic, msg, Duration)` (`null` = the default, `Duration.ZERO` = disabled).
 
 ```java
-ReplyFuture future = messaging.request("svc/op", request);
-Message reply = future.get(5, TimeUnit.SECONDS);
+ReplyFuture future = messaging.request("svc/op", request);          // 30 s default deadline
+Message reply = future.get();                                        // safe: bounded by the deadline
+
+ReplyFuture slow = messaging.request("svc/op", request, Duration.ofSeconds(120));
 
 // responder side:
 messaging.reply(request, replyMsg);   // copies correlation id automatically
@@ -361,13 +458,20 @@ messaging.reply(request, replyMsg);   // copies correlation id automatically
 </TabItem>
 <TabItem label="Python">
 
-`request` returns an `Iou`. Its `get(timeout)` returns a **`(done, result)` tuple** — unpack it.
+`request(topic, msg, timeout_secs=None)` returns an `Iou` (`None` = the configured default, `0` =
+disabled). Its `get(timeout)` returns a **`(done, result)` tuple** — but when the framework deadline
+fired first, `get()` **raises `RequestTimeoutError`**.
 
 ```python
-iou = messaging.request("svc/op", request)
-done, reply = iou.get(timeout=5)        # NOTE: get() returns a (done, result) tuple
-if done:
-    print(reply.get_body())
+from ggcommons.messaging.errors import RequestTimeoutError
+
+iou = messaging.request("svc/op", request)          # 30 s default deadline
+try:
+    done, reply = iou.get(timeout=5)                # (done, result) tuple
+    if done:
+        print(reply.get_body())
+except RequestTimeoutError:
+    ...                                              # the framework deadline fired
 
 # responder side:
 messaging.reply(request, reply_msg)     # copies correlation id automatically
@@ -377,14 +481,19 @@ messaging.reply(request, reply_msg)     # copies correlation id automatically
 <TabItem label="Rust">
 
 `request()` returns `Result<ReplyFuture>` — `await` the call to get the future, then `await` the
-future (wrap it in `tokio::time::timeout` for a deadline). Dropping the `ReplyFuture` unsubscribes
-the ephemeral reply topic.
+future. On deadline it resolves `Err(GgError::RequestTimeout { .. })`. The per-call override is
+`request_with_timeout(topic, msg, Option<Duration>)` (`None` = the default,
+`Some(Duration::ZERO)` = disabled). Dropping the `ReplyFuture` still cancels the request.
 
 ```rust
 use std::time::Duration;
 
-let fut = messaging.request("svc/op", request).await?;
-let reply = tokio::time::timeout(Duration::from_secs(5), fut).await??;
+let fut = messaging.request("svc/op", request).await?;   // 30 s default deadline
+let reply = fut.await?;                                    // Err(GgError::RequestTimeout) on deadline
+
+let fut = messaging
+    .request_with_timeout("svc/op", request, Some(Duration::from_secs(120)))
+    .await?;
 
 // responder side:
 responder.reply(&request, reply_msg).await?;   // copies correlation id automatically
@@ -393,12 +502,15 @@ responder.reply(&request, reply_msg).await?;   // copies correlation id automati
 </TabItem>
 <TabItem label="TypeScript">
 
-`request(topic, msg, timeoutMs?)` returns a `ReplyFuture` you `await`; the timeout is the third
-argument (default `0` = no timeout).
+`request(topic, msg, timeoutMs?)` returns a `ReplyFuture` you `await`. An omitted `timeoutMs` uses
+the configured default (30 s); an explicit `0` disables the deadline. On deadline the promise
+rejects with `RequestTimeoutError`.
 
 ```typescript
-const reply = await messaging.request("svc/op", req, 5000);   // 3rd arg = timeoutMs
+const reply = await messaging.request("svc/op", req);        // 30 s default deadline
 console.log(reply.getBody());
+
+const slow = await messaging.request("svc/op", req, 120_000); // explicit per-call deadline
 
 // responder side:
 await messaging.reply(req, replyMsg);   // copies correlation id automatically
@@ -408,7 +520,9 @@ await messaging.reply(req, replyMsg);   // copies correlation id automatically
 </Tabs>
 
 To abandon an in-flight request before it completes, call `cancelRequest` / `cancel_request` (Rust/TS
-also expose `.cancel()` on the future), which tears down the reply subscription.
+also expose `.cancel()` on the future), which tears down the reply subscription. Reply-arrival, the
+deadline, and cancellation race through one idempotent settle path — exactly one wins; a straggler
+reply after settle is logged at DEBUG and dropped.
 
 ## Per-subscription concurrency caps
 
@@ -433,16 +547,17 @@ the **local** broker. Mirror methods target **AWS IoT Core** directly and take a
 
 | Local | IoT Core |
 |-------|----------|
-| `publish` / `publishRaw` | `publishToIotCore` / `publishToIotCoreRaw` |
+| `publish` / `publishRaw` | `publishToIoTCore` / `publishToIoTCoreRaw` |
 | `subscribe` | `subscribeToIoTCore` |
 | `request` | `requestFromIoTCore` |
 | `reply` | `replyToIoTCore` |
 | `unsubscribe` | `unsubscribeFromIoTCore` |
 
 <Aside type="note">
-The Java IoT-Core method casing is intentionally inconsistent in the SDK: `publishToIotCore` /
-`publishToIotCoreRaw` use "Iot", while `subscribeToIoTCore` / `requestFromIoTCore` /
-`replyToIoTCore` / `unsubscribeFromIoTCore` use "IoT". The other three languages are consistent.
+The casing follows each language's idiom, uniformly within each SDK: **Java and TypeScript** spell
+the whole family `IoTCore` (`publishToIoTCore`, `subscribeToIoTCore`, ...); **Rust** uses the
+RFC-430 acronym convention `_iot_core` / `Destination::IotCore`; **Python** is snake_case
+(`publish_to_iot_core`). All config/string tokens (`"iotcore"`) are unchanged.
 </Aside>
 
 **QoS** has two levels — at-most-once and at-least-once — which the MQTT provider maps to QoS `0` and
@@ -450,7 +565,7 @@ The Java IoT-Core method casing is intentionally inconsistent in the SDK: `publi
 (`AT_MOST_ONCE` / `AT_LEAST_ONCE`), while **Rust and TypeScript define their own** `Qos` enum
 (`AtMostOnce` / `AtLeastOnce`).
 
-QoS is only a parameter on the explicit `*ToIotCore` mirror methods; the **local** methods use a
+QoS is only a parameter on the explicit IoT-Core mirror methods; the **local** methods use a
 fixed, implicit QoS. On the dual-MQTT provider, local `publish` / `subscribe` / `request` (and the
 ephemeral reply subscription `request` creates) use **QoS 1 (at-least-once)**, whereas the IoT-Core
 request/reply path (`requestFromIoTCore` / `replyToIoTCore`, and their reply subscription) is forced
@@ -462,7 +577,7 @@ to **QoS 0 (at-most-once)** regardless of any QoS you pass elsewhere.
 ```java
 import software.amazon.awssdk.aws.greengrass.model.QOS;
 
-messaging.publishToIotCore("cloud/telemetry", msg, QOS.AT_LEAST_ONCE);
+messaging.publishToIoTCore("cloud/telemetry", msg, QOS.AT_LEAST_ONCE);
 messaging.subscribeToIoTCore("cloud/cmd", (topic, m) -> handle(m), QOS.AT_LEAST_ONCE, 1);
 ```
 
@@ -498,9 +613,9 @@ messaging.subscribe_to_iot_core(
 ```typescript
 import { Qos } from "ggcommons";
 
-await messaging.publishToIotCore("cloud/telemetry", msg, Qos.AtLeastOnce);
-// subscribeToIotCore's qos arg defaults to Qos.AtLeastOnce
-await messaging.subscribeToIotCore("cloud/cmd", (_t, m) => handle(m), Qos.AtLeastOnce, 32, 1);
+await messaging.publishToIoTCore("cloud/telemetry", msg, Qos.AtLeastOnce);
+// subscribeToIoTCore's qos arg defaults to Qos.AtLeastOnce
+await messaging.subscribeToIoTCore("cloud/cmd", (_t, m) => handle(m), Qos.AtLeastOnce, 32, 1);
 ```
 
 </TabItem>
@@ -546,7 +661,8 @@ keys are silently ignored rather than rejected, so double-check the field names 
         "certPath": "/certs/device.pem.crt",
         "keyPath": "/certs/private.pem.key"
       }
-    }
+    },
+    "requestTimeoutSeconds": 30
   }
 }
 ```
@@ -569,6 +685,37 @@ Key rules (all verified, identical across the four languages):
 - **`host` is an opaque string** — a Kubernetes `Service` DNS name works unchanged.
 - **`local.type` is optional and ignored** — it is parsed into the config record but never read; there
   is **no** defaulting to `"mqtt"`.
+- **`requestTimeoutSeconds`** (number, default `30`, `0` = off) sets the default
+  [request deadline](#requestreply-with-correlation).
+
+### MQTT Last Will (LWT)
+
+An optional `messaging.lwt` block registers an MQTT **Last-Will-and-Testament** on the
+**local-broker connection** at CONNECT (and re-registers it on every reconnect). The broker
+publishes the will when the component disconnects ungracefully — the fastest way for consumers to
+learn a publisher vanished:
+
+```json
+{
+  "messaging": {
+    "local": { "host": "localhost", "port": 1883, "clientId": "my-component" },
+    "lwt": {
+      "topic": "ecv1/gw-01/my-component/main/state",
+      "payload": { "status": "UNREACHABLE" },
+      "qos": 1
+    }
+  }
+}
+```
+
+- `topic` is required; `payload` (string or JSON object) is published **verbatim**; `qos` is `0` or
+  `1` (default `1`). There is **no retain option** by design.
+- The will applies to the **local MQTT connection only**. The **IPC transport no-ops** it (logged at
+  DEBUG), so behavior on Greengrass is identical minus the acceleration. IoT Core LWT is not
+  supported.
+- The will is registered at CONNECT, **not** routed through `publish()` — so the reserved-class
+  guard cannot apply to it; broker ACLs govern wills. Consumers must treat a will's event time as
+  its delivery time.
 
 <Aside type="tip">
 For local development, bring up the bundled EMQX broker (plaintext `1883`, mutual-TLS `8883`):
@@ -661,13 +808,25 @@ subscriptions or threads can trip the shared-connection quota on Greengrass.
 ## See also
 
 <LinkCard
+  title="Unified Namespace guide"
+  href="/guides/unified-namespace/"
+  description="The topic grammar, the eight message classes, identity, and the six-wildcard consumer pattern."
+/>
+
+<LinkCard
   title="API reference: Messaging"
   href="/reference/messaging/"
   description="The full public messaging surface — every method, signature, and type, per language."
 />
 
 <LinkCard
+  title="API reference: UNS"
+  href="/reference/uns/"
+  description="gg.uns(), gg.instance(), MessageIdentity, and the validation rules + error codes."
+/>
+
+<LinkCard
   title="Configuration schema: messaging section"
   href="/reference/configuration-schema/"
-  description="The schema for the messaging config section, including the local and iotCore broker blocks."
+  description="The schema for the messaging config section — brokers, requestTimeoutSeconds, and lwt."
 />

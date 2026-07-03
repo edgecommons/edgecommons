@@ -69,15 +69,18 @@ by language (see the [Quickstart](/start/quickstart/)); here is a representative
 
 The top level of the document is **strict**: only the known sections are allowed and `component` is
 the only required one. The framework sections (`logging`, `metricEmission`, `heartbeat`, `tags`,
-`messaging`, `streaming`, `credentials`, `parameters`, `health`) configure the SDK subsystems; the
-`component` section carries **your** application config, split into a shared `component.global`
-object and an optional `component.instances` array for multi-instance components.
+`hierarchy`, `identity`, `topic`, `messaging`, `streaming`, `credentials`, `parameters`, `health`)
+configure the SDK subsystems; the `component` section carries **your** application config, split
+into a shared `component.global` object and an optional `component.instances` array for
+multi-instance components.
 
 ```json
 {
   "logging": { "level": "DEBUG", "rust_format": "{timestamp} [{level}] {target} - {message}" },
-  "heartbeat": { "intervalSecs": 5, "measures": { "cpu": true, "memory": true }, "targets": [ { "type": "metric" } ] },
+  "heartbeat": { "enabled": true, "intervalSecs": 5, "measures": { "cpu": true, "memory": true }, "destination": "local" },
   "metricEmission": { "target": "log", "namespace": "ggcommons" },
+  "hierarchy": { "levels": ["site", "device"] },
+  "identity": { "site": "factory-1" },
   "credentials": { "vault": { "path": "./.vault/vault", "keyProvider": { "type": "file", "keyPath": "./.vault/vault.key" } } },
   "parameters": { "source": { "type": "env", "prefix": "GG_PARAM_" }, "refreshIntervalSecs": 0, "sync": { "names": ["/skeleton/region", "/skeleton/poolSize"] } },
   "tags": { "site": "factory-1" },
@@ -95,8 +98,11 @@ A few things worth knowing about the structure:
 - **`component.instances`** is an array of objects, each requiring a unique `id`. Use it when one
   component process drives several logical instances (for example, one per production line). Each
   instance object is also open.
-- **`tags`** holds custom key/value strings that double as template variables (see below). Keys
-  match `^[a-zA-Z0-9_-]+$`.
+- **`tags`** holds custom key/value strings that double as template variables (see below) and are
+  stamped as the message envelope's business-context `tags`. Keys match `^[a-zA-Z0-9_-]+$`.
+- **`hierarchy`** and **`identity`** declare the component's
+  [UNS identity](#uns-identity-hierarchy-and-identity) — the enterprise hierarchy and the location
+  values above the device.
 - The per-language **logging format** key is language-scoped: `java_format`, `python_format`,
   `rust_format`, or `ts_format`. Each SDK reads only its own key and ignores the other three — there
   is no shared `format` key.
@@ -107,6 +113,40 @@ matching accessor returns null/None/undefined unless the section is present in t
 [configuration schema reference](/reference/configuration-schema/) for every field, type, default,
 and enum.
 </Aside>
+
+## UNS identity: `hierarchy` and `identity`
+
+Two top-level sections drive the component's
+[Unified Namespace identity](/guides/unified-namespace/#identity-and-the-hierarchy):
+
+```json
+{
+  "hierarchy": { "levels": ["site", "factory", "zone", "device"] },
+  "identity":  { "site": "dallas", "factory": "finishing", "zone": "zone-3" },
+  "topic":     { "includeRoot": false }
+}
+```
+
+- **`hierarchy.levels`** is the ordered, freely-named enterprise hierarchy; the **last level is the
+  physical node**, and its value is always the **resolved thing name** (from `-t`, the Kubernetes
+  Downward API, or `AWS_IOT_THING_NAME`). Level names are strict (`^[A-Za-z0-9_-]+$`, unique).
+- **`identity`** supplies the values for every level **except the last**. A missing value — or a key
+  equal to the last level name, or not a declared level — is a **startup error** (fail-fast, once,
+  at config construction). Values pass through the template sanitizer.
+- **`topic.includeRoot`** (default `false`) opts a multi-site broker deployment into
+  `ecv1/{site}/{device}/...` topics; it is a no-op with a single-level hierarchy.
+- **Zero-config default**: with no `hierarchy`/`identity` at all, `levels` defaults to `["device"]`
+  and the UNS works out of the box as `ecv1/{thing}/{component}/main/{class}`.
+
+The resolved identity is stamped on every config-bound message and is exposed as Java
+`configManager.getComponentIdentity()`, Python `config.get_component_identity()`, Rust
+`cfg.identity()`, and TypeScript `cfg.componentIdentity` — see the
+[UNS API reference](/reference/uns/#messageidentity).
+
+The library also **announces the effective configuration** on the UNS: at startup and on every
+config change it publishes a redacted snapshot (secrets and credentials masked, `$secret` refs never
+resolved) to `ecv1/{device}/{component}/main/cfg` — so a console or auditor can review any
+component's live config with a single `ecv1/+/+/+/cfg` subscription.
 
 ## Template variables
 
@@ -376,8 +416,11 @@ Four of the six sources hot-reload; two are read once at startup:
 - **`CONFIGMAP`** reloads in place via the kubelet `..data` directory swap.
 - **`SHADOW`** subscribes to the device shadow's update topics over IPC and reapplies the config when
   the shadow's `desired` state changes (`update/accepted`).
-- **`CONFIG_COMPONENT`** subscribes to `ggcommons/{ThingName}/config/{ComponentName}/updated` over
-  IPC and reapplies the config the shared config component pushes.
+- **`CONFIG_COMPONENT`** fetches its config by sending a request to the config server's UNS command
+  inbox `ecv1/{device}/config/main/cmd/get-configuration` (`config` is a reserved logical component
+  name), then subscribes to its **own** command inbox
+  `ecv1/{device}/{component}/main/cmd/set-config` and reapplies each config the shared config
+  component pushes.
 - **`GG_CONFIG`** and **`ENV`** do **not** hot-reload — the document is read once at startup. (A
   Greengrass deployment that revises the `GG_CONFIG` configuration restarts the component, so the new
   values are picked up on the next start rather than in place.)

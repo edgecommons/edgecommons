@@ -249,29 +249,32 @@ node dist/main.js \
 
 ## 4. Verify it is running
 
-A running component publishes heartbeats. Subscribe to the wildcard heartbeat topic with any MQTT
-client (for example MQTTX or `mosquitto_sub`) pointed at your local broker:
+A running component publishes its [`state` keepalive](/guides/heartbeat/) on the
+[Unified Namespace](/guides/unified-namespace/) every 5 seconds by default. Subscribe to the state
+wildcard with any MQTT client (for example MQTTX or `mosquitto_sub`) pointed at your local broker:
 
 <Tabs syncKey="os">
 <TabItem label="Linux">
 
 ```bash
-mosquitto_sub -h localhost -p 1883 -t 'heartbeat/+/+' -v
+mosquitto_sub -h localhost -p 1883 -t 'ecv1/+/+/+/state' -v
 ```
 
 </TabItem>
 <TabItem label="Windows">
 
 ```powershell
-mosquitto_sub -h localhost -p 1883 -t 'heartbeat/+/+' -v
+mosquitto_sub -h localhost -p 1883 -t 'ecv1/+/+/+/state' -v
 ```
 
 </TabItem>
 </Tabs>
 
-You should see periodic heartbeat messages keyed by your component and Thing name. From there, use the
-[Messaging guide](/guides/messaging/) to publish/subscribe on your own topics, and the
-[Configuration guide](/guides/configuration/) to drive behavior from the `-c FILE` config.
+You should see periodic `state` envelopes on `ecv1/<device>/<component>/main/state` with body
+`{"status":"RUNNING","uptimeSecs":n}` — the device and component are also carried in each message's
+`identity` element. From there, use the [Messaging guide](/guides/messaging/) to publish/subscribe
+on your own topics, and the [Configuration guide](/guides/configuration/) to drive behavior from
+the `-c FILE` config.
 
 ## Connecting to AWS IoT Core
 
