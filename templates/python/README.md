@@ -21,6 +21,38 @@ top-level `hierarchy` + `identity` config blocks (see `test-configs/config_1.jso
 hierarchy level is always the resolved thing name), and application topics are minted in code via
 `gg.uns()` — never hand-written.
 
+### The demonstrated monitoring + command surface
+
+Beyond the fully-automatic `state` keepalive and command inbox (`ping` / `reload-config` /
+`get-configuration`, live with zero code), `app/<<COMPONENTNAME>>.py` demonstrates the rest of
+the surface an edge-console reads/drives (DESIGN-uns §7/§9):
+
+| Surface | Where | Topic |
+|---|---|---|
+| Metric (`loopTicks`: `tickCount` counter + `uptimeSecs` gauge) | `gg.get_metrics()` | `ecv1/{device}/{component}/main/metric/loopTicks` (target-dependent; `messaging` target shown) |
+| Event (`sample-event`, severity + context) | `gg.uns().topic(UnsClass.EVT, "sample-event")` + `MessagingClient.publish` | `ecv1/{device}/{component}/main/evt/sample-event` |
+| Custom command verb (`set-greeting`) | `gg.get_commands().register("set-greeting", ...)` | `ecv1/{device}/{component}/main/cmd/set-greeting` |
+
+Subscribe `ecv1/+/+/+/metric/#` and `ecv1/+/+/+/evt/#` to see them (metrics only publish over MQTT
+when `metricEmission.target` is `messaging`; the default `log` target writes a local file
+instead). Invoke the custom verb with a request/reply tool (e.g. MQTTX) by publishing
+`{"header":{"name":"set-greeting","version":"1.0"},"body":{"greeting":"Hi there"}}` to
+`ecv1/{device}/{component}/main/cmd/set-greeting`; the next `app` status publish reflects the new
+greeting. Replace all three with your own metrics/events/verbs.
+
+### Building against the unreleased library (local-dev only)
+
+`requirements.txt` names the published `greengrass-commons` package (a release-time placeholder —
+see the comment above it). Until a version is actually released, build against the sibling
+monorepo checkout instead:
+
+```bash
+pip install -r requirements.txt
+bash scripts/link-sibling-lib.sh   # editable-installs ../ggcommons/libs/python over the line above
+```
+
+See `requirements.txt` and `scripts/link-sibling-lib.sh` for details.
+
 ## Run under Greengrass
 
 On the GREENGRASS platform the component reads its config from the deployment:

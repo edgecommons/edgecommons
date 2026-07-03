@@ -20,6 +20,43 @@ automatically to `ecv1/{device}/{component}/main/state`) and `ecv1/+/+/+/app/#` 
 status messages. If you enable the telemetry-streaming subsystem, add
 `--enable-native-access=ALL-UNNAMED` (the FFM/Panama binding to `ggstreamlog`).
 
+### The demonstrated monitoring + command surface
+
+Beyond the fully-automatic `state` keepalive and command inbox (`ping` / `reload-config` /
+`get-configuration`, live with zero code), `<<COMPONENTNAME>>.java` demonstrates the rest of the
+surface an edge-console reads/drives (DESIGN-uns §7/§9):
+
+| Surface | Where | Topic |
+|---|---|---|
+| Metric (`loopTicks`: `tickCount` counter + `uptimeSecs` gauge) | `gg.getMetrics()` | `ecv1/{device}/{component}/main/metric/loopTicks` (target-dependent; `messaging` target shown) |
+| Event (`sample-event`, severity + context) | `gg.getUns().topic(UnsClass.EVT, "sample-event")` + `MessagingClient.publish` | `ecv1/{device}/{component}/main/evt/sample-event` |
+| Custom command verb (`set-greeting`) | `gg.getCommands().register("set-greeting", ...)` | `ecv1/{device}/{component}/main/cmd/set-greeting` |
+
+Subscribe `ecv1/+/+/+/metric/#` and `ecv1/+/+/+/evt/#` to see them (metrics only publish over MQTT
+when `metricEmission.target` is `messaging`; the default `log` target writes a local file
+instead — see `test-configs/<<COMPONENTNAME>>.json`). Invoke the custom verb with a request/reply
+tool (e.g. MQTTX) by publishing `{"header":{"name":"set-greeting","version":"1.0"},"body":
+{"greeting":"Hi there"}}` to `ecv1/{device}/{component}/main/cmd/set-greeting`; the next `app`
+status publish reflects the new greeting. Replace all three with your own metrics/events/verbs.
+
+### Building against the unreleased library (local-dev only)
+
+This template pins `com.mbreissi:ggcommons` by the `ggcommons.version` Maven property (default:
+the CLI's published-pin constant). Until a version is actually released, resolve it from your own
+`~/.m2` instead of GitHub Packages:
+
+```bash
+# Once, from the ggcommons monorepo checkout (installs whatever version its pom.xml declares):
+cd ../ggcommons/libs/java && mvn install -DskipTests
+
+# Then build THIS component against that local version:
+mvn compile -Dggcommons.version=<the version mvn install just printed>
+```
+
+See the `ggcommons.version` property comment in `pom.xml` for details; the CLI's release-time pin
+bump (`_GGCOMMONS_VERSION` in `cli/ggcommons_cli/commands/create_component.py`) is a separate,
+later step.
+
 The component's **UNS identity** is config-driven: the top-level `hierarchy` block declares the
 ordered levels (the last is always the resolved thing name, from `-t/--thing` or the platform) and
 `identity` supplies a value for every level above it — see `test-configs/<<COMPONENTNAME>>.json`.

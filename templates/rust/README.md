@@ -30,6 +30,25 @@ cargo run -- \
   -t my-thing
 ```
 
+## The demonstrated monitoring + command surface
+
+Beyond the fully-automatic `state` keepalive and command inbox (`ping` / `reload-config` /
+`get-configuration`, live with zero code), `src/app.rs` demonstrates the rest of the surface an
+edge-console reads/drives (DESIGN-uns §7/§9):
+
+| Surface | Where | Topic |
+|---|---|---|
+| Metric (`loopTicks`: `tickCount` counter + `uptimeSecs` gauge) | `gg.metrics()` | `ecv1/{device}/{component}/main/metric/loopTicks` (target-dependent; `messaging` target shown) |
+| Event (`sample-event`, severity + context) | `gg.uns().topic_with_channel(UnsClass::Evt, "sample-event")` + `MessagingService::publish` | `ecv1/{device}/{component}/main/evt/sample-event` |
+| Custom command verb (`set-greeting`) | `gg.commands().register("set-greeting", ...)` | `ecv1/{device}/{component}/main/cmd/set-greeting` |
+
+Subscribe `ecv1/+/+/+/metric/#` and `ecv1/+/+/+/evt/#` to see them (metrics only publish over MQTT
+when `metricEmission.target` is `messaging`; the default `log` target writes a local file
+instead). Invoke the custom verb with a request/reply tool (e.g. MQTTX) by publishing
+`{"header":{"name":"set-greeting","version":"1.0"},"body":{"greeting":"Hi there"}}` to
+`ecv1/{device}/{component}/main/cmd/set-greeting`; the next `app` status publish reflects the new
+greeting. Replace all three with your own metrics/events/verbs.
+
 ## CLI contract
 
 - `-c/--config <SOURCE> [args...]` — `FILE | ENV | GG_CONFIG | SHADOW | CONFIG_COMPONENT` (default: from the resolved platform profile — GREENGRASS → GG_CONFIG, HOST → FILE, KUBERNETES → CONFIGMAP)
@@ -93,5 +112,13 @@ and `kubectl apply -f k8s/` again to hot-reload the component config in-process 
 ## The ggcommons dependency
 
 `Cargo.toml` depends on the `ggcommons` crate via an **absolute path** (filled in at
-generation time). When the library is published to a git remote or a cargo registry,
-replace that path dependency with the corresponding git/registry dependency.
+generation time, `--dep-source local`, the default). This IS the local-dev override already:
+Cargo resolves straight from the sibling checkout's current source, so it works against an
+unpublished branch (e.g. `feat/unified-namespace`) with no extra step — unlike an
+already-published component whose committed manifest carries a git-rev pin (see the `uns-bridge`
+component's gitignored `.cargo/config.toml` `[patch]` for how THAT case is locally overridden
+without touching the committed pin).
+
+Regenerate with `--dep-source registry` once the library tags a real `rust-lib/vX.Y.Z` release to
+switch to a git dependency (see `Cargo.toml`'s dependency comment); that pin is a release-time
+item, not something this template can do today.

@@ -29,6 +29,15 @@ cloudwatch = ["ggcommons/cloudwatch"]
 #   local    -> path = "<abs path to libs/rust>"   (a monorepo checkout; the dev default)
 #   registry -> git = "https://github.com/edgecommons/ggcommons", tag = "rust-lib/vX.Y.Z"
 # (swap the git dep for a crates.io version once the crate is published).
+#
+# `local` (the default `--dep-source`) IS this template's local-dev override: a Cargo path
+# dependency resolves straight from the sibling checkout's current source (even an unpublished
+# branch like feat/unified-namespace), so unlike an ALREADY-SCAFFOLDED component with a published
+# git-rev pin (see the bridge's gitignored .cargo/config.toml `[patch]`, which redirects that pin
+# to the sibling), a freshly generated component needs no extra override step at all. Selecting
+# `--dep-source registry` before a real `rust-lib/vX.Y.Z` tag exists will fail to resolve — that
+# path is the release-time item (see `cli/ggcommons_cli/commands/create_component.py`'s
+# `_GGCOMMONS_VERSION`, currently behind the sibling library's own Cargo.toml version).
 ggcommons = { <<GGCOMMONS_DEP>>, default-features = false }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
 serde_json = "1"
