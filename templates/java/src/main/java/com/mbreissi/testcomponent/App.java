@@ -179,14 +179,11 @@ public class <<COMPONENTNAME>>
      * {"greeting":"Hi from mqttx"}}} to {@code ecv1/{device}/{component}/main/cmd/set-greeting}.
      */
     private JsonObject handleSetGreeting(Message request) throws CommandException {
-        // Classic instanceof + cast (not pattern-matching instanceof): this template targets
-        // Java 11 (maven.compiler.source/target above), which predates JEP 394.
-        Object rawBody = request.getBody();
-        if (!(rawBody instanceof JsonObject) || !((JsonObject) rawBody).has("greeting")
-                || !((JsonObject) rawBody).get("greeting").isJsonPrimitive()) {
+        // Pattern-matching instanceof (JEP 394, Java 16+) — fine on this template's Java 25 target.
+        if (!(request.getBody() instanceof JsonObject body) || !body.has("greeting")
+                || !body.get("greeting").isJsonPrimitive()) {
             throw new CommandException("BAD_ARGS", "expected a JSON body {\"greeting\": \"<text>\"}");
         }
-        JsonObject body = (JsonObject) rawBody;
         String next = body.get("greeting").getAsString();
         String previous = greeting.getAndSet(next);
         JsonObject result = new JsonObject();

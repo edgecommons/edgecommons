@@ -11,8 +11,12 @@
 
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <maven.compiler.source>11</maven.compiler.source>
-    <maven.compiler.target>11</maven.compiler.target>
+    <!-- Language level: Java 25 (LTS) — MATCHES the ggcommons library (libs/java/pom.xml sets
+         maven.compiler.release=25). This is not optional styling: the com.mbreissi:ggcommons
+         artifact is compiled to Java 25 bytecode, so a component depending on it both compiles
+         against and runs on a Java 25 JDK/JRE anyway (the lab + Greengrass core run JDK 25).
+         Bump this in lockstep whenever the library's language level moves. -->
+    <maven.compiler.release>25</maven.compiler.release>
     <junitVersion>5.9.2</junitVersion>
     <mavenPluginVersion>2.1</mavenPluginVersion>
     <!-- LOCAL DEV OVERRIDE SEAM (the Maven analog of the bridge's gitignored .cargo/config.toml
@@ -104,8 +108,10 @@
         <artifactId>maven-compiler-plugin</artifactId>
         <version>3.11.0</version>
         <configuration>
-          <source>${maven.compiler.source}</source>
-          <target>${maven.compiler.target}</target>
+          <!-- Single-source the language level via maven.compiler.release (Java 25, matching the
+               library) — <release> pins source AND target AND the platform API in one, so the
+               component can't accidentally use APIs newer than its declared level. -->
+          <release>${maven.compiler.release}</release>
         </configuration>
       </plugin>
     </plugins>
