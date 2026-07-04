@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 import { Config } from "../src/config/model";
 import { Heartbeat, HeartbeatMonitor } from "../src/heartbeat";
+import { InstanceConnectivity } from "../src/instance_connectivity";
 import type { MetricService, MeasureValues } from "../src/metrics/types";
 import { RecordingMessagingService } from "./_fakes";
 
@@ -195,5 +196,69 @@ describe("Heartbeat.start (UNS state keepalive + sys metric, §4.3)", () => {
       throw new Error("transport already closed");
     };
     await expect(hb.stop()).resolves.toBeUndefined();
+  });
+});
+
+describe("Heartbeat per-instance connectivity (#1c)", () => {
+  const lastBody = (svc: RecordingMessagingService): Record<string, unknown> =>
+    svc.published.at(-1)!.message!.getBody() as Record<string, unknown>;
+
+  it("the RUNNING keepalive carries the provider's instances[]; absent/empty/cleared omit it", async () => {
+    const metrics = new RecordingMetricService();
+    const svc = new RecordingMessagingService();
+    const config = cfg({ intervalSecs: 60, measures: { memory: true } });
+    const hb = Heartbeat.start(() => config, metrics, svc);
+    await vi.advanceTimersByTimeAsync(0); // startup tick — no provider
+    expect(lastBody(svc).instances).toBeUndefined();
+
+    hb.setInstanceConnectivityProvider(() => [
+      InstanceConnectivity.of("filler1", true, "opc.tcp://kep:49320"),
+      InstanceConnectivity.of("kep2", false),
+    ]);
+    await hb.publishStateNow();
+    const body = lastBody(svc);
+    expect(body.status).toBe("RUNNING");
+    expect(body.instances).toEqual([
+      { instance: "filler1", connected: true, detail: "opc.tcp://kep:49320" },
+      { instance: "kep2", connected: false },
+    ]);
+
+    hb.setInstanceConnectivityProvider(() => []); // empty -> omitted
+    await hb.publishStateNow();
+    expect(lastBody(svc).instances).toBeUndefined();
+
+    hb.setInstanceConnectivityProvider(undefined); // cleared -> omitted
+    await hb.publishStateNow();
+    expect(lastBody(svc).instances).toBeUndefined();
+
+    await hb.stop();
+  });
+
+  it("a throwing provider never suppresses the keepalive", async () => {
+    const metrics = new RecordingMetricService();
+    const svc = new RecordingMessagingService();
+    const config = cfg({ intervalSecs: 60, measures: { memory: true } });
+    const hb = Heartbeat.start(() => config, metrics, svc);
+    await vi.advanceTimersByTimeAsync(0);
+    hb.setInstanceConnectivityProvider(() => {
+      throw new Error("boom");
+    });
+    await hb.publishStateNow();
+    const body = lastBody(svc);
+    expect(body.status).toBe("RUNNING");
+    expect(body.instances).toBeUndefined();
+    await hb.stop();
+  });
+
+  it("InstanceConnectivity serializes and validates", () => {
+    expect(InstanceConnectivity.of("plc1", true, "tcp://10.0.0.50:502").toJson()).toEqual({
+      instance: "plc1",
+      connected: true,
+      detail: "tcp://10.0.0.50:502",
+    });
+    expect(InstanceConnectivity.of("plc1", false).toJson()).toEqual({ instance: "plc1", connected: false });
+    expect(new InstanceConnectivity("plc1", false, "  ").toJson().detail).toBeUndefined();
+    expect(() => new InstanceConnectivity("", true)).toThrow();
+    expect(() => new InstanceConnectivity("  ", true)).toThrow();
   });
 });

@@ -127,6 +127,8 @@ export type { MetricService, MetricTarget, MeasureValues } from "./metrics";
 // Heartbeat
 export { Heartbeat, HeartbeatMonitor } from "./heartbeat";
 export type { ConfigProvider } from "./heartbeat";
+export { InstanceConnectivity } from "./instance_connectivity";
+export type { InstanceConnectivityProvider } from "./instance_connectivity";
 
 // UNS `_bcast` republish listener (the late-join lever, DESIGN-uns §9.3/§9.4)
 export { RepublishListener } from "./republish_listener";

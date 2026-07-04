@@ -30,6 +30,7 @@ import { GgError } from "./errors";
 import { AppFacade, DataFacade, EventsFacade } from "./facades";
 import type { StreamSink } from "./facades";
 import { Heartbeat } from "./heartbeat";
+import type { InstanceConnectivityProvider } from "./instance_connectivity";
 import { initLogging, reconfigureLogging, LoggingReconfigurer, logger } from "./logging";
 import { MessageBuilder, MessageIdentity } from "./message";
 import { DefaultMessagingService } from "./messaging/service";
@@ -260,6 +261,18 @@ export class GGCommons {
    */
   setReady(ready: boolean): void {
     this.readiness.setReady(ready);
+  }
+
+  /**
+   * Registers the component's per-instance connectivity provider — the overridable surface for
+   * reporting connectivity AT THE INSTANCE LEVEL (each configured connection's health) in the
+   * `main` `state` keepalive's `instances` array, without minting a separate UNS instance per
+   * connection (data + lifecycle stay under `main`; the #1c model). A reference adapter maps each
+   * connection to its reachability: OPC UA server session / Modbus slave / file-replicator source
+   * directory. Pass `undefined` to stop reporting.
+   */
+  setInstanceConnectivityProvider(provider: InstanceConnectivityProvider | undefined): void {
+    this.heartbeat.setInstanceConnectivityProvider(provider);
   }
 
   /** Whether the runtime is currently ready (`messaging connected && readyFlag && !shuttingDown`). */

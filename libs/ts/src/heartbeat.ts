@@ -45,6 +45,7 @@ import { publishReservedVia } from "./messaging/service";
 import { MessageBuilder } from "./message";
 import { Uns, UnsClass } from "./uns";
 import { logger } from "./logging";
+import type { InstanceConnectivityProvider } from "./instance_connectivity";
 
 /** The state keepalive's envelope header name (§4.3). */
 const STATE_MESSAGE_NAME = "state";
@@ -223,6 +224,11 @@ export class Heartbeat {
   private readonly startHr = process.hrtime.bigint();
   /** Ensures the best-effort STOPPED state is published at most once. */
   private stoppedPublished = false;
+  /**
+   * An optional component-supplied source of per-instance connectivity, sampled each keepalive
+   * tick into the state body's `instances` array (see {@link InstanceConnectivityProvider}).
+   */
+  private connectivityProvider?: InstanceConnectivityProvider;
 
   private constructor(
     private readonly configProvider: ConfigProvider,
@@ -232,6 +238,16 @@ export class Heartbeat {
     interval: number,
   ) {
     this.currentInterval = interval;
+  }
+
+  /**
+   * Registers (or clears with `undefined`) the per-instance connectivity provider whose result is
+   * emitted in each RUNNING `state` keepalive's `instances` array — the overridable surface a
+   * multi-connection component uses to report connectivity at the instance level without a separate
+   * UNS instance per connection. Wired from `GGCommons.setInstanceConnectivityProvider`.
+   */
+  setInstanceConnectivityProvider(provider: InstanceConnectivityProvider | undefined): void {
+    this.connectivityProvider = provider;
   }
 
   /**
@@ -318,6 +334,22 @@ export class Heartbeat {
     const body: Record<string, unknown> = { status };
     if (includeUptime) {
       body.uptimeSecs = this.getUptimeSecs();
+    }
+    // Per-instance connectivity — the state body's `instances` (RUNNING keepalive only). Best-effort:
+    // a nullish/empty/throwing provider omits the section but never suppresses the keepalive.
+    const provider = this.connectivityProvider;
+    if (includeUptime && provider) {
+      try {
+        const conns = provider();
+        if (conns && conns.length > 0) {
+          const instances = conns.filter((c) => c != null).map((c) => c.toJson());
+          if (instances.length > 0) {
+            body.instances = instances;
+          }
+        }
+      } catch (e) {
+        logger.warn(`instance connectivity provider failed; omitting instances[] this tick: ${errMsg(e)}`);
+      }
     }
     const stateMessage = MessageBuilder.create(STATE_MESSAGE_NAME, STATE_MESSAGE_VERSION)
       .withPayload(body)
