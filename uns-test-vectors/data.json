@@ -1,0 +1,381 @@
+{
+  "description": "ggcommons UNS data() publish-facade vectors (DESIGN-class-facades 2.1). input -> expected {topic, route, body[, partitionKey]} or {throws:true}; body compared STRUCTURALLY (D-U22). Pins the GOOD quality default (+qualityRaw:'unspecified'), serverTs=now, the samples wrapper, channel sanitization, the missing-signal.id reject, and channel routing. instance 'kep1'; clock fixed at 2026-07-01T12:00:00Z",
+  "cases": [
+    {
+      "name": "data-value-shorthand-quality-default",
+      "input": {
+        "signalId": "temp",
+        "signalPath": "temp",
+        "samples": [
+          {
+            "value": 21.5
+          }
+        ]
+      },
+      "expected": {
+        "topic": "ecv1/gw-01/opcua-adapter/kep1/data/temp",
+        "route": "local",
+        "body": {
+          "signal": {
+            "id": "temp"
+          },
+          "samples": [
+            {
+              "value": 21.5,
+              "quality": "GOOD",
+              "qualityRaw": "unspecified",
+              "serverTs": "2026-07-01T12:00:00Z"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "data-explicit-bad-quality",
+      "input": {
+        "signalId": "temp",
+        "signalPath": "temp",
+        "samples": [
+          {
+            "value": 0,
+            "quality": "BAD"
+          }
+        ]
+      },
+      "expected": {
+        "topic": "ecv1/gw-01/opcua-adapter/kep1/data/temp",
+        "route": "local",
+        "body": {
+          "signal": {
+            "id": "temp"
+          },
+          "samples": [
+            {
+              "value": 0,
+              "quality": "BAD",
+              "serverTs": "2026-07-01T12:00:00Z"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "data-full-sample-passthrough",
+      "input": {
+        "signalId": "ns=2;s=Line1.Temp",
+        "signalPath": "temp",
+        "signalName": "Line 1 Temperature",
+        "signalAddress": {
+          "ns": 2,
+          "nodeId": "Line1.Temp"
+        },
+        "device": {
+          "adapter": "opcua",
+          "instance": "kep1",
+          "endpoint": "opc.tcp://host:4840"
+        },
+        "samples": [
+          {
+            "value": 21.5,
+            "quality": "GOOD",
+            "qualityRaw": "Good",
+            "sourceTs": "2026-07-01T11:59:59Z",
+            "serverTs": "2026-07-01T11:59:59.5Z"
+          }
+        ]
+      },
+      "expected": {
+        "topic": "ecv1/gw-01/opcua-adapter/kep1/data/temp",
+        "route": "local",
+        "body": {
+          "device": {
+            "adapter": "opcua",
+            "instance": "kep1",
+            "endpoint": "opc.tcp://host:4840"
+          },
+          "signal": {
+            "id": "ns=2;s=Line1.Temp",
+            "name": "Line 1 Temperature",
+            "address": {
+              "ns": 2,
+              "nodeId": "Line1.Temp"
+            }
+          },
+          "samples": [
+            {
+              "value": 21.5,
+              "quality": "GOOD",
+              "qualityRaw": "Good",
+              "sourceTs": "2026-07-01T11:59:59Z",
+              "serverTs": "2026-07-01T11:59:59.5Z"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "data-batch-samples",
+      "input": {
+        "signalId": "flow",
+        "signalPath": "flow",
+        "samples": [
+          {
+            "value": 1.0
+          },
+          {
+            "value": 2.0,
+            "quality": "UNCERTAIN",
+            "qualityRaw": "partial"
+          }
+        ]
+      },
+      "expected": {
+        "topic": "ecv1/gw-01/opcua-adapter/kep1/data/flow",
+        "route": "local",
+        "body": {
+          "signal": {
+            "id": "flow"
+          },
+          "samples": [
+            {
+              "value": 1.0,
+              "quality": "GOOD",
+              "qualityRaw": "unspecified",
+              "serverTs": "2026-07-01T12:00:00Z"
+            },
+            {
+              "value": 2.0,
+              "quality": "UNCERTAIN",
+              "qualityRaw": "partial",
+              "serverTs": "2026-07-01T12:00:00Z"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "data-array-value",
+      "input": {
+        "signalId": "waveform",
+        "signalPath": "waveform",
+        "samples": [
+          {
+            "value": [
+              1,
+              2,
+              3
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "topic": "ecv1/gw-01/opcua-adapter/kep1/data/waveform",
+        "route": "local",
+        "body": {
+          "signal": {
+            "id": "waveform"
+          },
+          "samples": [
+            {
+              "value": [
+                1,
+                2,
+                3
+              ],
+              "quality": "GOOD",
+              "qualityRaw": "unspecified",
+              "serverTs": "2026-07-01T12:00:00Z"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "data-signalpath-defaults-to-id",
+      "input": {
+        "signalId": "press12/temperature",
+        "samples": [
+          {
+            "value": 42.0
+          }
+        ]
+      },
+      "expected": {
+        "topic": "ecv1/gw-01/opcua-adapter/kep1/data/press12/temperature",
+        "route": "local",
+        "body": {
+          "signal": {
+            "id": "press12/temperature"
+          },
+          "samples": [
+            {
+              "value": 42.0,
+              "quality": "GOOD",
+              "qualityRaw": "unspecified",
+              "serverTs": "2026-07-01T12:00:00Z"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "data-channel-multi-token-path",
+      "input": {
+        "signalId": "s1",
+        "signalPath": "a/b",
+        "samples": [
+          {
+            "value": 1.0
+          }
+        ]
+      },
+      "expected": {
+        "topic": "ecv1/gw-01/opcua-adapter/kep1/data/a/b",
+        "route": "local",
+        "body": {
+          "signal": {
+            "id": "s1"
+          },
+          "samples": [
+            {
+              "value": 1.0,
+              "quality": "GOOD",
+              "qualityRaw": "unspecified",
+              "serverTs": "2026-07-01T12:00:00Z"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "data-channel-sanitized",
+      "input": {
+        "signalId": "s2",
+        "signalPath": "a+b",
+        "samples": [
+          {
+            "value": 1.0
+          }
+        ]
+      },
+      "expected": {
+        "topic": "ecv1/gw-01/opcua-adapter/kep1/data/a_b",
+        "route": "local",
+        "body": {
+          "signal": {
+            "id": "s2"
+          },
+          "samples": [
+            {
+              "value": 1.0,
+              "quality": "GOOD",
+              "qualityRaw": "unspecified",
+              "serverTs": "2026-07-01T12:00:00Z"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "data-route-northbound",
+      "input": {
+        "signalId": "temp",
+        "signalPath": "temp",
+        "samples": [
+          {
+            "value": 21.5
+          }
+        ],
+        "override": "northbound"
+      },
+      "expected": {
+        "topic": "ecv1/gw-01/opcua-adapter/kep1/data/temp",
+        "route": "northbound",
+        "body": {
+          "signal": {
+            "id": "temp"
+          },
+          "samples": [
+            {
+              "value": 21.5,
+              "quality": "GOOD",
+              "qualityRaw": "unspecified",
+              "serverTs": "2026-07-01T12:00:00Z"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "data-route-stream",
+      "input": {
+        "signalId": "ns=2;s=Line1.Temp",
+        "signalPath": "temp",
+        "samples": [
+          {
+            "value": 21.5
+          }
+        ],
+        "override": "stream:hot"
+      },
+      "expected": {
+        "topic": "ecv1/gw-01/opcua-adapter/kep1/data/temp",
+        "route": "stream:hot",
+        "partitionKey": "ns=2;s=Line1.Temp",
+        "body": {
+          "signal": {
+            "id": "ns=2;s=Line1.Temp"
+          },
+          "samples": [
+            {
+              "value": 21.5,
+              "quality": "GOOD",
+              "qualityRaw": "unspecified",
+              "serverTs": "2026-07-01T12:00:00Z"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "data-missing-signal-id-throws",
+      "input": {
+        "signalPath": "temp",
+        "samples": [
+          {
+            "value": 1.0
+          }
+        ]
+      },
+      "expected": {
+        "throws": true
+      }
+    },
+    {
+      "name": "data-no-samples-throws",
+      "input": {
+        "signalId": "temp",
+        "signalPath": "temp",
+        "samples": []
+      },
+      "expected": {
+        "throws": true
+      }
+    },
+    {
+      "name": "data-quality-only-sample-throws",
+      "input": {
+        "signalId": "temp",
+        "signalPath": "temp",
+        "samples": [
+          {
+            "quality": "BAD"
+          }
+        ]
+      },
+      "expected": {
+        "throws": true
+      }
+    }
+  ]
+}

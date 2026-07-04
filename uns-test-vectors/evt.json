@@ -1,0 +1,188 @@
+{
+  "description": "ggcommons UNS events() publish-facade vectors (DESIGN-class-facades 2.2). input -> expected {topic, route, body} from the live facade; body STRUCTURAL (D-U22). Pins the evt/{severity}/{type} channel derived FROM the body, the four severity tokens, timestamp=now, and alarm raise/clear. instance 'main'; clock fixed at 2026-07-01T12:00:00Z",
+  "cases": [
+    {
+      "name": "evt-emit-info-message-only",
+      "input": {
+        "kind": "emit",
+        "type": "door-open",
+        "message": "front door opened"
+      },
+      "expected": {
+        "topic": "ecv1/gw-01/opcua-adapter/main/evt/info/door-open",
+        "route": "local",
+        "body": {
+          "severity": "info",
+          "type": "door-open",
+          "message": "front door opened",
+          "timestamp": "2026-07-01T12:00:00Z"
+        }
+      }
+    },
+    {
+      "name": "evt-emit-critical",
+      "input": {
+        "kind": "emit",
+        "severity": "critical",
+        "type": "overtemp",
+        "message": "sensor over threshold",
+        "context": {
+          "celsius": 95.0
+        }
+      },
+      "expected": {
+        "topic": "ecv1/gw-01/opcua-adapter/main/evt/critical/overtemp",
+        "route": "local",
+        "body": {
+          "severity": "critical",
+          "type": "overtemp",
+          "message": "sensor over threshold",
+          "timestamp": "2026-07-01T12:00:00Z",
+          "context": {
+            "celsius": 95.0
+          }
+        }
+      }
+    },
+    {
+      "name": "evt-emit-warning",
+      "input": {
+        "kind": "emit",
+        "severity": "warning",
+        "type": "write-rejected",
+        "message": "write not in allow-list"
+      },
+      "expected": {
+        "topic": "ecv1/gw-01/opcua-adapter/main/evt/warning/write-rejected",
+        "route": "local",
+        "body": {
+          "severity": "warning",
+          "type": "write-rejected",
+          "message": "write not in allow-list",
+          "timestamp": "2026-07-01T12:00:00Z"
+        }
+      }
+    },
+    {
+      "name": "evt-emit-debug",
+      "input": {
+        "kind": "emit",
+        "severity": "debug",
+        "type": "poll-cycle"
+      },
+      "expected": {
+        "topic": "ecv1/gw-01/opcua-adapter/main/evt/debug/poll-cycle",
+        "route": "local",
+        "body": {
+          "severity": "debug",
+          "type": "poll-cycle",
+          "timestamp": "2026-07-01T12:00:00Z"
+        }
+      }
+    },
+    {
+      "name": "evt-emit-type-sanitized",
+      "input": {
+        "kind": "emit",
+        "severity": "info",
+        "type": "a+b",
+        "message": "type sanitized for the channel"
+      },
+      "expected": {
+        "topic": "ecv1/gw-01/opcua-adapter/main/evt/info/a_b",
+        "route": "local",
+        "body": {
+          "severity": "info",
+          "type": "a+b",
+          "message": "type sanitized for the channel",
+          "timestamp": "2026-07-01T12:00:00Z"
+        }
+      }
+    },
+    {
+      "name": "evt-raise-alarm-default-critical",
+      "input": {
+        "kind": "raise",
+        "type": "connection-lost",
+        "message": "modbus link down",
+        "context": {
+          "connected": false
+        }
+      },
+      "expected": {
+        "topic": "ecv1/gw-01/opcua-adapter/main/evt/critical/connection-lost",
+        "route": "local",
+        "body": {
+          "severity": "critical",
+          "type": "connection-lost",
+          "message": "modbus link down",
+          "timestamp": "2026-07-01T12:00:00Z",
+          "context": {
+            "connected": false
+          },
+          "alarm": true,
+          "active": true
+        }
+      }
+    },
+    {
+      "name": "evt-clear-alarm-default-critical",
+      "input": {
+        "kind": "clear",
+        "type": "connection-lost"
+      },
+      "expected": {
+        "topic": "ecv1/gw-01/opcua-adapter/main/evt/critical/connection-lost",
+        "route": "local",
+        "body": {
+          "severity": "critical",
+          "type": "connection-lost",
+          "timestamp": "2026-07-01T12:00:00Z",
+          "alarm": true,
+          "active": false
+        }
+      }
+    },
+    {
+      "name": "evt-raise-alarm-warning-override",
+      "input": {
+        "kind": "raise",
+        "severity": "warning",
+        "type": "degraded",
+        "message": "running degraded"
+      },
+      "expected": {
+        "topic": "ecv1/gw-01/opcua-adapter/main/evt/warning/degraded",
+        "route": "local",
+        "body": {
+          "severity": "warning",
+          "type": "degraded",
+          "message": "running degraded",
+          "timestamp": "2026-07-01T12:00:00Z",
+          "alarm": true,
+          "active": true
+        }
+      }
+    },
+    {
+      "name": "evt-emit-northbound",
+      "input": {
+        "kind": "emit",
+        "severity": "critical",
+        "type": "overtemp",
+        "message": "escalate to cloud",
+        "override": "northbound"
+      },
+      "expected": {
+        "topic": "ecv1/gw-01/opcua-adapter/main/evt/critical/overtemp",
+        "route": "northbound",
+        "body": {
+          "severity": "critical",
+          "type": "overtemp",
+          "message": "escalate to cloud",
+          "timestamp": "2026-07-01T12:00:00Z"
+        }
+      }
+    }
+  ]
+}

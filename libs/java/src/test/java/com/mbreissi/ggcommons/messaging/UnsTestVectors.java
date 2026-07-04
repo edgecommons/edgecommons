@@ -6,6 +6,14 @@ package com.mbreissi.ggcommons.messaging;
 
 import com.mbreissi.ggcommons.commands.CommandInbox;
 import com.mbreissi.ggcommons.config.ConfigManager;
+import com.mbreissi.ggcommons.facades.AppFacade;
+import com.mbreissi.ggcommons.facades.Channel;
+import com.mbreissi.ggcommons.facades.DataFacade;
+import com.mbreissi.ggcommons.facades.EventsFacade;
+import com.mbreissi.ggcommons.facades.Quality;
+import com.mbreissi.ggcommons.facades.Severity;
+import com.mbreissi.ggcommons.facades.SignalUpdate;
+import com.mbreissi.ggcommons.facades.StreamSink;
 import com.mbreissi.ggcommons.test.MockConfigurationService;
 import com.mbreissi.ggcommons.test.MockMessagingService;
 import com.mbreissi.ggcommons.uns.RepublishListener;
@@ -18,8 +26,13 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -70,6 +83,19 @@ final class UnsTestVectors {
             List.of(new MessageIdentity.HierEntry("site", "dallas"),
                     new MessageIdentity.HierEntry("device", "gw-01")),
             "opcua-adapter", "main");
+
+    /**
+     * The pinned clock for the publish-facade vectors (data/evt): the {@code serverTs}/
+     * {@code timestamp} time defaults resolve to {@value #FACADE_NOW} deterministically — the same
+     * injected-clock discipline the {@code _bcast} listener uses.
+     */
+    static final String FACADE_NOW = "2026-07-01T12:00:00Z";
+    private static final Clock FIXED_CLOCK =
+            Clock.fixed(Instant.parse(FACADE_NOW), ZoneOffset.UTC);
+
+    /** The single-level identity the publish-facade vectors bind to (device {@code gw-01}). */
+    private static final MessageIdentity FACADE_IDENTITY = new MessageIdentity(
+            List.of(new MessageIdentity.HierEntry("device", "gw-01")), "opcua-adapter", "main");
 
     private UnsTestVectors() {
     }
@@ -438,5 +464,218 @@ final class UnsTestVectors {
 
     private static String optional(JsonObject obj, String key) {
         return obj != null && obj.has(key) ? obj.get(key).getAsString() : null;
+    }
+
+    // ===================== data/evt/app publish-facade documents ================================
+
+    /**
+     * Replays every {@code data.json} case through a LIVE {@link DataFacade} (fixed clock, mock
+     * messaging + recording stream sink) and asserts the pinned {@code {topic, route, body[,
+     * partitionKey]}} — or {@code {throws:true}} — output. This binds the mirrors to the body
+     * defaulting rules (quality → {@code GOOD} + {@code qualityRaw:"unspecified"}, {@code serverTs}
+     * → now, samples wrapper), the channel sanitization, and the per-call channel routing.
+     */
+    static void assertDataDocument(JsonObject doc) {
+        for (JsonElement caseEl : doc.getAsJsonArray("cases")) {
+            JsonObject c = caseEl.getAsJsonObject();
+            assertEquals(c.getAsJsonObject("expected"), runDataCase(c.getAsJsonObject("input")),
+                    "data case '" + c.get("name").getAsString() + "'");
+        }
+    }
+
+    /**
+     * Replays every {@code evt.json} case through a LIVE {@link EventsFacade}: pins the
+     * {@code evt/{severity}/{type}} channel DERIVED from the body, the four severity tokens, the
+     * {@code timestamp} → now default, and the {@code raiseAlarm}/{@code clearAlarm}
+     * {@code alarm}/{@code active} fields.
+     */
+    static void assertEvtDocument(JsonObject doc) {
+        for (JsonElement caseEl : doc.getAsJsonArray("cases")) {
+            JsonObject c = caseEl.getAsJsonObject();
+            assertEquals(c.getAsJsonObject("expected"), runEvtCase(c.getAsJsonObject("input")),
+                    "evt case '" + c.get("name").getAsString() + "'");
+        }
+    }
+
+    /**
+     * Replays every {@code app.json} case through a LIVE {@link AppFacade}: pins the thin-facade
+     * guarantee (body passed through verbatim, header {@code name} = the caller's name, topic =
+     * {@code app/{channel}}).
+     */
+    static void assertAppDocument(JsonObject doc) {
+        for (JsonElement caseEl : doc.getAsJsonArray("cases")) {
+            JsonObject c = caseEl.getAsJsonObject();
+            assertEquals(c.getAsJsonObject("expected"), runAppCase(c.getAsJsonObject("input")),
+                    "app case '" + c.get("name").getAsString() + "'");
+        }
+    }
+
+    /** A recording {@link StreamSink}: captures the last (and counts all) stream appends. */
+    private static final class RecordingStreamSink implements StreamSink {
+        private String streamName;
+        private String partitionKey;
+        private byte[] payload;
+        private int count;
+
+        @Override
+        public void append(String streamName, String partitionKey, long timestampMs, byte[] payload) {
+            this.streamName = streamName;
+            this.partitionKey = partitionKey;
+            this.payload = payload;
+            this.count++;
+        }
+    }
+
+    /**
+     * Runs one {@code data.json} case: builds a {@link SignalUpdate} from the input, publishes it
+     * through a live {@link DataFacade}, and reports what reached the wire ({@code topic}/
+     * {@code route}/{@code body}, plus {@code partitionKey} for a stream route) or
+     * {@code {throws:true}} when the facade rejected it (missing {@code signal.id}, no samples, a
+     * quality-only sample).
+     */
+    static JsonObject runDataCase(JsonObject input) {
+        String instanceId = input.has("instance") ? input.get("instance").getAsString() : "kep1";
+        MockMessagingService messaging = new MockMessagingService();
+        RecordingStreamSink sink = new RecordingStreamSink();
+        MockConfigurationService config = new MockConfigurationService();
+        config.setComponentIdentity(FACADE_IDENTITY);
+        Uns uns = new Uns(FACADE_IDENTITY.withInstance(instanceId), false);
+        DataFacade facade = new DataFacade(config, instanceId, uns, messaging, sink, FIXED_CLOCK);
+
+        SignalUpdate.Builder builder = new SignalUpdate.Builder(
+                input.has("signalId") && !input.get("signalId").isJsonNull()
+                        ? input.get("signalId").getAsString() : null);
+        if (has(input, "signalName")) {
+            builder.name(input.get("signalName").getAsString());
+        }
+        if (input.has("signalAddress") && input.get("signalAddress").isJsonObject()) {
+            builder.address(input.getAsJsonObject("signalAddress"));
+        }
+        if (input.has("device") && input.get("device").isJsonObject()) {
+            builder.device(input.getAsJsonObject("device"));
+        }
+        if (has(input, "signalPath")) {
+            builder.signalPath(input.get("signalPath").getAsString());
+        }
+        if (input.has("samples")) {
+            for (JsonElement sampleEl : input.getAsJsonArray("samples")) {
+                JsonObject s = sampleEl.getAsJsonObject();
+                Object value = s.has("value") ? s.get("value") : null;
+                Quality quality = has(s, "quality") ? Quality.fromWire(s.get("quality").getAsString()) : null;
+                String qualityRaw = has(s, "qualityRaw") ? s.get("qualityRaw").getAsString() : null;
+                String sourceTs = has(s, "sourceTs") ? s.get("sourceTs").getAsString() : null;
+                String serverTs = has(s, "serverTs") ? s.get("serverTs").getAsString() : null;
+                builder.addSample(new SignalUpdate.Sample(value, quality, qualityRaw, sourceTs, serverTs));
+            }
+        }
+        if (has(input, "override")) {
+            builder.via(Channel.fromConfig(input.get("override").getAsString()));
+        }
+
+        try {
+            facade.publish(builder.build());
+        } catch (IllegalArgumentException e) {
+            // UnsValidationException (a bad channel token) is itself an IllegalArgumentException.
+            JsonObject out = new JsonObject();
+            out.addProperty("throws", true);
+            return out;
+        }
+
+        JsonObject out = new JsonObject();
+        List<MockMessagingService.PublishedMessage> published = messaging.getPublishedMessages();
+        if (!published.isEmpty()) {
+            MockMessagingService.PublishedMessage pm = published.get(0);
+            out.addProperty("topic", pm.topic);
+            out.addProperty("route", pm.qos == null ? "local" : "northbound");
+            out.add("body", pm.message.toDict().getAsJsonObject("body"));
+        } else {
+            String path = has(input, "signalPath") ? input.get("signalPath").getAsString()
+                    : input.get("signalId").getAsString();
+            out.addProperty("topic", uns.topic(UnsClass.DATA, facade.channelToken(path)));
+            out.addProperty("route", "stream:" + sink.streamName);
+            out.addProperty("partitionKey", sink.partitionKey);
+            out.add("body", JsonParser.parseString(new String(sink.payload, StandardCharsets.UTF_8))
+                    .getAsJsonObject().getAsJsonObject("body"));
+        }
+        return out;
+    }
+
+    /** Runs one {@code evt.json} case through a live {@link EventsFacade}; reports {topic, route, body}. */
+    static JsonObject runEvtCase(JsonObject input) {
+        MockMessagingService messaging = new MockMessagingService();
+        MockConfigurationService config = new MockConfigurationService();
+        config.setComponentIdentity(FACADE_IDENTITY);
+        Uns uns = new Uns(FACADE_IDENTITY, false);
+        EventsFacade facade = new EventsFacade(config, "main", uns, messaging, FIXED_CLOCK);
+        if (has(input, "override")) {
+            facade = facade.via(Channel.fromConfig(input.get("override").getAsString()));
+        }
+
+        String kind = input.get("kind").getAsString();
+        String type = input.get("type").getAsString();
+        String message = has(input, "message") ? input.get("message").getAsString() : null;
+        JsonObject context = input.has("context") && input.get("context").isJsonObject()
+                ? input.getAsJsonObject("context") : null;
+        Severity severity = has(input, "severity") ? Severity.fromWire(input.get("severity").getAsString()) : null;
+
+        switch (kind) {
+            case "emit" -> {
+                if (severity == null) {
+                    facade.emit(type, message);
+                } else {
+                    facade.emit(severity, type, message, context);
+                }
+            }
+            case "raise" -> {
+                if (severity == null) {
+                    facade.raiseAlarm(type, message, context);
+                } else {
+                    facade.raiseAlarm(severity, type, message, context);
+                }
+            }
+            case "clear" -> {
+                if (severity == null) {
+                    facade.clearAlarm(type, context);
+                } else {
+                    facade.clearAlarm(severity, type, context);
+                }
+            }
+            default -> throw new IllegalArgumentException("unknown evt kind: " + kind);
+        }
+
+        MockMessagingService.PublishedMessage pm = messaging.getPublishedMessages().get(0);
+        JsonObject out = new JsonObject();
+        out.addProperty("topic", pm.topic);
+        out.addProperty("route", pm.qos == null ? "local" : "northbound");
+        out.add("body", pm.message.toDict().getAsJsonObject("body"));
+        return out;
+    }
+
+    /** Runs one {@code app.json} case through a live {@link AppFacade}; reports {topic, route, body}. */
+    static JsonObject runAppCase(JsonObject input) {
+        MockMessagingService messaging = new MockMessagingService();
+        MockConfigurationService config = new MockConfigurationService();
+        config.setComponentIdentity(FACADE_IDENTITY);
+        Uns uns = new Uns(FACADE_IDENTITY, false);
+        AppFacade facade = new AppFacade(config, "main", uns, messaging);
+
+        String name = input.get("name").getAsString();
+        String channel = input.get("channel").getAsString();
+        JsonObject body = input.has("body") && input.get("body").isJsonObject()
+                ? input.getAsJsonObject("body") : new JsonObject();
+        Channel routing = has(input, "override") ? Channel.fromConfig(input.get("override").getAsString()) : null;
+        facade.publish(name, channel, body, routing);
+
+        MockMessagingService.PublishedMessage pm = messaging.getPublishedMessages().get(0);
+        JsonObject out = new JsonObject();
+        out.addProperty("topic", pm.topic);
+        out.addProperty("route", pm.qos == null ? "local" : "northbound");
+        out.add("body", pm.message.toDict().getAsJsonObject("body"));
+        return out;
+    }
+
+    /** True when {@code key} is present and not JSON null. */
+    private static boolean has(JsonObject obj, String key) {
+        return obj.has(key) && !obj.get(key).isJsonNull();
     }
 }

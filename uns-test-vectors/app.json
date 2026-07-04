@@ -1,0 +1,89 @@
+{
+  "description": "ggcommons UNS app() publish-facade vectors (DESIGN-class-facades 2.3). input -> expected {topic, route, body} from the live facade; body STRUCTURAL (D-U22). Pins the verbatim body, header name = caller's name, and topic = app/{channel} (sanitized). instance 'main'",
+  "cases": [
+    {
+      "name": "app-verbatim-body",
+      "input": {
+        "name": "OrderReceived",
+        "channel": "order/received",
+        "body": {
+          "orderId": "A-42",
+          "qty": 3
+        }
+      },
+      "expected": {
+        "topic": "ecv1/gw-01/opcua-adapter/main/app/order/received",
+        "route": "local",
+        "body": {
+          "orderId": "A-42",
+          "qty": 3
+        }
+      }
+    },
+    {
+      "name": "app-single-token-channel",
+      "input": {
+        "name": "Hello",
+        "channel": "hello",
+        "body": {
+          "greeting": "hi"
+        }
+      },
+      "expected": {
+        "topic": "ecv1/gw-01/opcua-adapter/main/app/hello",
+        "route": "local",
+        "body": {
+          "greeting": "hi"
+        }
+      }
+    },
+    {
+      "name": "app-channel-sanitized",
+      "input": {
+        "name": "Ping",
+        "channel": "a+b",
+        "body": {
+          "n": 1
+        }
+      },
+      "expected": {
+        "topic": "ecv1/gw-01/opcua-adapter/main/app/a_b",
+        "route": "local",
+        "body": {
+          "n": 1
+        }
+      }
+    },
+    {
+      "name": "app-empty-body",
+      "input": {
+        "name": "Beat",
+        "channel": "beat",
+        "body": {}
+      },
+      "expected": {
+        "topic": "ecv1/gw-01/opcua-adapter/main/app/beat",
+        "route": "local",
+        "body": {}
+      }
+    },
+    {
+      "name": "app-route-northbound",
+      "input": {
+        "name": "CloudEvent",
+        "channel": "cloud",
+        "body": {
+          "k": "v"
+        },
+        "override": "northbound"
+      },
+      "expected": {
+        "topic": "ecv1/gw-01/opcua-adapter/main/app/cloud",
+        "route": "northbound",
+        "body": {
+          "k": "v"
+        }
+      }
+    }
+  ]
+}

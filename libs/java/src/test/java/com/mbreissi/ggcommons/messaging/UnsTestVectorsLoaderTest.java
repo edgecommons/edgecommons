@@ -52,6 +52,24 @@ class UnsTestVectorsLoaderTest {
         UnsTestVectors.assertCommandsDocument(doc);
     }
 
+    @Test
+    void crossLanguageDataConformance() throws Exception {
+        JsonObject doc = load(UnsTestVectors.DIR.resolve("data.json"));
+        UnsTestVectors.assertDataDocument(doc);
+    }
+
+    @Test
+    void crossLanguageEvtConformance() throws Exception {
+        JsonObject doc = load(UnsTestVectors.DIR.resolve("evt.json"));
+        UnsTestVectors.assertEvtDocument(doc);
+    }
+
+    @Test
+    void crossLanguageAppConformance() throws Exception {
+        JsonObject doc = load(UnsTestVectors.DIR.resolve("app.json"));
+        UnsTestVectors.assertAppDocument(doc);
+    }
+
     /** Skips (never fails) when the shared vector files have not been generated yet. */
     private static JsonObject load(Path path) throws Exception {
         assumeTrue(Files.exists(path), "uns-test-vectors not present (" + path + ")");

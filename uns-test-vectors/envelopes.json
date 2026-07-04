@@ -190,7 +190,7 @@
       "topic": "ecv1/gw-01/opcua-adapter/kep1/data/temp",
       "envelope": {
         "header": {
-          "name": "data",
+          "name": "SouthboundSignalUpdate",
           "version": "1.0",
           "timestamp": "2026-07-01T12:00:00Z",
           "uuid": "00000000-0000-4000-8000-000000000601",
@@ -208,17 +208,35 @@
           "instance": "kep1"
         },
         "body": {
-          "signalId": "ns=2;s=Line1.Temp",
-          "value": 21.5,
-          "quality": "GOOD"
+          "device": {
+            "adapter": "opcua",
+            "instance": "kep1",
+            "endpoint": "opc.tcp://host:4840"
+          },
+          "signal": {
+            "id": "ns=2;s=Line1.Temp",
+            "name": "Line 1 Temperature",
+            "address": {
+              "ns": 2,
+              "nodeId": "Line1.Temp"
+            }
+          },
+          "samples": [
+            {
+              "value": 21.5,
+              "quality": "GOOD",
+              "qualityRaw": "unspecified",
+              "serverTs": "2026-07-01T12:00:00Z"
+            }
+          ]
         }
       }
     },
     {
-      "name": "evt-door-open",
+      "name": "evt-info-door-open",
       "class": "evt",
-      "channel": "door-open",
-      "topic": "ecv1/gw-01/opcua-adapter/main/evt/door-open",
+      "channel": "info/door-open",
+      "topic": "ecv1/gw-01/opcua-adapter/main/evt/info/door-open",
       "envelope": {
         "header": {
           "name": "evt",
@@ -239,8 +257,10 @@
           "instance": "main"
         },
         "body": {
-          "event": "door-open",
-          "severity": "info"
+          "severity": "info",
+          "type": "door-open",
+          "message": "front door opened",
+          "timestamp": "2026-07-01T12:00:00Z"
         }
       }
     },
@@ -283,7 +303,7 @@
       "topic": "ecv1/gw-01/opcua-adapter/main/app/hello",
       "envelope": {
         "header": {
-          "name": "app",
+          "name": "OrderReceived",
           "version": "1.0",
           "timestamp": "2026-07-01T12:00:00Z",
           "uuid": "00000000-0000-4000-8000-000000000901",

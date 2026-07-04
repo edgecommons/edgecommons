@@ -9,9 +9,14 @@ import com.mbreissi.ggcommons.config.ConfigManager;
 import com.mbreissi.ggcommons.config.ConfigManagerFactory;
 import com.mbreissi.ggcommons.config.EffectiveConfigPublisher;
 import com.mbreissi.ggcommons.config.HealthConfiguration;
+import com.mbreissi.ggcommons.facades.AppFacade;
+import com.mbreissi.ggcommons.facades.DataFacade;
+import com.mbreissi.ggcommons.facades.EventsFacade;
+import com.mbreissi.ggcommons.facades.StreamSink;
 import com.mbreissi.ggcommons.health.HealthServer;
 import com.mbreissi.ggcommons.heartbeat.Heartbeat;
 import com.mbreissi.ggcommons.heartbeat.HeartbeatBuilder;
+import com.mbreissi.ggcommons.messaging.MessageIdentity;
 import com.mbreissi.ggcommons.messaging.MessagingClient;
 import com.mbreissi.ggcommons.messaging.MessagingClientBuilder;
 import com.mbreissi.ggcommons.metrics.MetricEmitter;
@@ -38,6 +43,7 @@ import org.apache.commons.cli.*;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.time.Clock;
 import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
@@ -92,6 +98,13 @@ public class GGCommons
      * returns the same {@link GgInstance} for the same id.
      */
     private final ConcurrentHashMap<String, GgInstance> instanceHandles = new ConcurrentHashMap<>();
+
+    /**
+     * The clock the per-instance publish facades ({@code data()}/{@code events()}) use for their
+     * time defaults ({@code serverTs}/{@code timestamp} → now). System UTC in production; the
+     * facades take an injected {@link Clock} directly in their own unit tests for determinism.
+     */
+    private final Clock clock = Clock.systemUTC();
 
     /**
      * The HTTP health/readiness server (FR-HB-1). Non-null only when the health server is enabled
@@ -368,8 +381,66 @@ public class GGCommons
                 LOGGER.debug("instance('{}'): id is not among the configured component.instances[]"
                         + " ids {} - creating a dynamic instance handle", id, configured);
             }
-            return new GgInstance(id, cm, cm.isTopicIncludeRoot());
+            return new GgInstance(id, cm, cm.isTopicIncludeRoot(), messagingClient, streamSink(),
+                    clock);
         });
+    }
+
+    /**
+     * The stream seam the {@code data()} facade composes for a {@code stream:<name>} channel
+     * (DESIGN-class-facades §4): binds {@code getStreams().stream(name).append(...)} when streaming
+     * is configured, else {@code null} so the facade falls a stream route back to a LOCAL publish.
+     *
+     * @return the stream sink, or {@code null} when no {@code streaming} section is configured
+     */
+    private StreamSink streamSink()
+    {
+        StreamService s = streams;
+        if (s == null)
+        {
+            return null;
+        }
+        return (name, partitionKey, timestampMs, payload) ->
+                s.stream(name).append(partitionKey, timestampMs, payload);
+    }
+
+    /**
+     * The {@code data()} publish facade for the component's {@code main} instance — the
+     * single-instance-component convenience, equivalent to {@code instance("main").data()}
+     * (DESIGN-class-facades §3, D6). Builds/validates the {@code SouthboundSignalUpdate} body.
+     *
+     * @return the {@code main}-instance {@link DataFacade}
+     * @throws IllegalStateException when called before initialization completes
+     */
+    public DataFacade getData()
+    {
+        return instance(MessageIdentity.DEFAULT_INSTANCE).data();
+    }
+
+    /**
+     * The {@code events()} publish facade for the component's {@code main} instance — equivalent to
+     * {@code instance("main").events()} (DESIGN-class-facades §3, D6). Operator events &amp; alarms
+     * on the {@code evt} class.
+     *
+     * @return the {@code main}-instance {@link EventsFacade}
+     * @throws IllegalStateException when called before initialization completes
+     */
+    public EventsFacade getEvents()
+    {
+        return instance(MessageIdentity.DEFAULT_INSTANCE).events();
+    }
+
+    /**
+     * The {@code app()} publish facade for the component's {@code main} instance — equivalent to
+     * {@code instance("main").app()} (DESIGN-class-facades §3, D6). Free-form inter-component
+     * pub/sub on the {@code app} class.
+     *
+     * @return the {@code main}-instance {@link AppFacade}
+     * @throws IllegalStateException when called before initialization completes
+     */
+    public AppFacade getApp()
+    {
+        return instance(MessageIdentity.DEFAULT_INSTANCE).app();
     }
 
     /**
