@@ -64,6 +64,10 @@ class EnhancedHeartbeat(ConfigurationChangeListener):
         # whose operations are static); injected via the setters below.
         self._messaging_service = None
         self._metric_service = None
+        # Optional component-supplied per-instance connectivity provider (see
+        # instance_connectivity.py); sampled each keepalive tick into the state body's
+        # ``instances`` array. Registered via set_instance_connectivity_provider.
+        self._connectivity_provider = None
 
         # Single long-lived loop thread driven by an Event (replaces the previous
         # self-rescheduling Timer chain, which spun up a new OS thread every tick
@@ -269,6 +273,19 @@ class EnhancedHeartbeat(ConfigurationChangeListener):
         except Exception as e:  # noqa: BLE001 - each half is best-effort
             logger.warning(f"Heartbeat '{self.SYS_METRIC_NAME}' metric emit failed: {e}")
 
+    def set_instance_connectivity_provider(self, provider) -> None:
+        """Register (or clear with ``None``) the per-instance connectivity provider whose
+        result is emitted in each RUNNING ``state`` keepalive's ``instances`` array — the
+        overridable surface a multi-connection component uses to report connectivity at the
+        instance level without a separate UNS instance per connection. Wired from
+        ``GGCommons.set_instance_connectivity_provider``.
+
+        :param provider: a zero-arg callable returning a list of
+            :class:`~ggcommons.heartbeat.instance_connectivity.InstanceConnectivity`, or
+            ``None`` to stop reporting per-instance connectivity.
+        """
+        self._connectivity_provider = provider
+
     def _publish_state(self, status: str, include_uptime: bool) -> None:
         """Publishes one ``state`` envelope to the component's UNS state topic through
         the privileged seam. No-op (WARN once) when the component identity is not
@@ -298,6 +315,21 @@ class EnhancedHeartbeat(ConfigurationChangeListener):
         body: Dict[str, Any] = {"status": status}
         if include_uptime:
             body["uptimeSecs"] = self.get_uptime_secs()
+        # Per-instance connectivity — the state body's ``instances`` (RUNNING keepalive only).
+        # Best-effort: a None/empty/raising provider omits the section but NEVER suppresses the
+        # keepalive itself.
+        provider = self._connectivity_provider
+        if include_uptime and provider is not None:
+            try:
+                conns = provider()
+                if conns:
+                    instances = [c.to_dict() for c in conns if c is not None]
+                    if instances:
+                        body["instances"] = instances
+            except Exception as e:  # noqa: BLE001 - best-effort; a provider bug never breaks the keepalive
+                logger.warning(
+                    f"Instance connectivity provider failed; omitting instances[] this tick: {e}"
+                )
         message = MessageBuilder.create(self.STATE_MESSAGE_NAME, self.STATE_MESSAGE_VERSION) \
             .with_payload(body) \
             .with_config(self._config_service) \

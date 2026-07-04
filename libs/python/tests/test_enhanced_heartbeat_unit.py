@@ -157,6 +157,81 @@ class TestPublishState:
         assert message.get_body() == {"status": "STOPPED"}
 
 
+class TestInstanceConnectivity:
+    """The #1c per-instance connectivity surface: a registered provider's result is emitted
+    in the RUNNING state body's ``instances`` array, best-effort (a None/empty/raising
+    provider omits the section but never suppresses the keepalive)."""
+
+    def _body(self, msg):
+        return msg._publish_reserved.call_args[0][1].get_body()
+
+    def test_provider_result_in_state_instances(self, hb):
+        from ggcommons.heartbeat.instance_connectivity import InstanceConnectivity
+        msg = MagicMock()
+        hb.set_messaging_service(msg)
+        hb.set_instance_connectivity_provider(lambda: [
+            InstanceConnectivity.of("filler1", True, "opc.tcp://kep:49320"),
+            InstanceConnectivity.of("kep2", False),
+        ])
+        hb._publish_state("RUNNING", include_uptime=True)
+        body = self._body(msg)
+        assert body["status"] == "RUNNING"
+        assert body["instances"] == [
+            {"instance": "filler1", "connected": True, "detail": "opc.tcp://kep:49320"},
+            {"instance": "kep2", "connected": False},
+        ]
+
+    def test_no_provider_omits_instances(self, hb):
+        msg = MagicMock()
+        hb.set_messaging_service(msg)
+        hb._publish_state("RUNNING", include_uptime=True)
+        assert "instances" not in self._body(msg)
+
+    def test_empty_none_and_cleared_omit_instances(self, hb):
+        msg = MagicMock()
+        hb.set_messaging_service(msg)
+        for provider in (lambda: [], lambda: None):
+            hb.set_instance_connectivity_provider(provider)
+            hb._publish_state("RUNNING", include_uptime=True)
+            assert "instances" not in self._body(msg)
+        hb.set_instance_connectivity_provider(None)  # cleared
+        hb._publish_state("RUNNING", include_uptime=True)
+        assert "instances" not in self._body(msg)
+
+    def test_raising_provider_never_suppresses_keepalive(self, hb):
+        def boom():
+            raise RuntimeError("boom")
+        msg = MagicMock()
+        hb.set_messaging_service(msg)
+        hb.set_instance_connectivity_provider(boom)
+        hb._publish_state("RUNNING", include_uptime=True)
+        msg._publish_reserved.assert_called_once()
+        body = self._body(msg)
+        assert body["status"] == "RUNNING"
+        assert "instances" not in body
+
+    def test_stopped_state_omits_instances(self, hb):
+        from ggcommons.heartbeat.instance_connectivity import InstanceConnectivity
+        msg = MagicMock()
+        hb.set_messaging_service(msg)
+        hb.set_instance_connectivity_provider(lambda: [InstanceConnectivity.of("x", True)])
+        hb._publish_state("STOPPED", include_uptime=False)
+        assert "instances" not in self._body(msg)
+
+    def test_instance_connectivity_serializes_and_validates(self):
+        import pytest
+        from ggcommons.heartbeat.instance_connectivity import InstanceConnectivity
+        assert InstanceConnectivity.of("plc1", True, "tcp://10.0.0.50:502").to_dict() == {
+            "instance": "plc1", "connected": True, "detail": "tcp://10.0.0.50:502"}
+        assert InstanceConnectivity.of("plc1", False).to_dict() == {
+            "instance": "plc1", "connected": False}
+        assert "detail" not in InstanceConnectivity("plc1", False, "  ").to_dict()
+        with pytest.raises(ValueError):
+            InstanceConnectivity("", True)
+        with pytest.raises(ValueError):
+            InstanceConnectivity("  ", True)
+
+
 class TestPublishStateNow:
     """The public out-of-band re-emit used by the _bcast republish listener's
     republish-state action (DESIGN-uns §9.3/§9.4): same payload/seam/routing as a

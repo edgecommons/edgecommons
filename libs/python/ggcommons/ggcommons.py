@@ -454,6 +454,22 @@ class GGCommons:
 
         MetricEmitter.init(self._config_manager)
 
+    def set_instance_connectivity_provider(self, provider) -> None:
+        """Register the component's per-instance connectivity provider — the overridable
+        surface for reporting connectivity AT THE INSTANCE LEVEL (each configured
+        connection's health) in the ``main`` ``state`` keepalive's ``instances`` array,
+        without minting a separate UNS instance per connection (data + lifecycle stay under
+        ``main``). A reference adapter maps each connection to its reachability: OPC UA
+        server session / Modbus slave / file-replicator source directory. No-op when the
+        heartbeat is not wired (test bring-up). Pass ``None`` to stop reporting.
+
+        :param provider: a zero-arg callable returning a list of
+            :class:`~ggcommons.heartbeat.instance_connectivity.InstanceConnectivity`, or
+            ``None`` to clear.
+        """
+        if self._heartbeat is not None:
+            self._heartbeat.set_instance_connectivity_provider(provider)
+
     def _init_heartbeat(self) -> None:
         """Initialize the heartbeat system, wiring it to the concrete subsystems."""
         # Import here to avoid circular imports
