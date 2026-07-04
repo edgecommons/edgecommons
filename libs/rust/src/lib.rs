@@ -339,6 +339,19 @@ impl GgCommons {
         self.health_state.set_ready(ready);
     }
 
+    /// Registers the component's per-instance connectivity provider — the overridable surface for
+    /// reporting connectivity AT THE INSTANCE LEVEL (each configured connection's health) in the
+    /// `main` `state` keepalive's `instances[]`, without minting a separate UNS instance per
+    /// connection (data + lifecycle stay under `main`; the #1c model). A reference adapter maps each
+    /// connection to its reachability: OPC UA server session / Modbus slave / file-replicator source
+    /// directory. Pass `None` to stop reporting.
+    pub fn set_instance_connectivity_provider(
+        &self,
+        provider: Option<Arc<heartbeat::InstanceConnectivityProvider>>,
+    ) {
+        self._heartbeat.set_instance_connectivity_provider(provider);
+    }
+
     /// Whether the runtime has begun shutting down (the SIGTERM watcher fired). Exposed so an app
     /// run loop can cooperatively exit; `/readyz` already reports 503 once this is true.
     pub fn is_shutting_down(&self) -> bool {
@@ -1059,6 +1072,7 @@ pub mod prelude {
     pub use crate::messaging::{
         message_handler, MessageHandler, MessageIdentity, MessagingService, Qos, ReplyFuture,
     };
+    pub use crate::heartbeat::{InstanceConnectivity, InstanceConnectivityProvider};
     pub use crate::metrics::{Measure, Metric, MetricBuilder, MetricService};
     pub use crate::uns::{Uns, UnsClass, UnsScope};
     #[cfg(feature = "streaming")]

@@ -35,7 +35,7 @@
 //! - [`crate::metrics`], [`crate::messaging`], [`crate::uns`].
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwap;
@@ -55,6 +55,53 @@ const STATE_MESSAGE_VERSION: &str = "1.0";
 pub const SYS_METRIC_NAME: &str = "sys";
 const DEFAULT_INTERVAL_SECS: u64 = 5;
 
+/// One component instance's southbound/source connectivity — reported at the INSTANCE LEVEL in the
+/// `main` state keepalive's `instances[]`, without minting a separate UNS instance per connection
+/// (data + lifecycle stay under `main`; the #1c model). A reference adapter maps each connection to
+/// its reachability: OPC UA server session / Modbus slave / file-replicator source directory.
+#[derive(Debug, Clone)]
+pub struct InstanceConnectivity {
+    /// The component instance / connection id.
+    pub instance: String,
+    /// Whether that instance's southbound/source is currently reachable.
+    pub connected: bool,
+    /// Optional human detail (endpoint, or the down reason).
+    pub detail: Option<String>,
+}
+
+impl InstanceConnectivity {
+    /// Full constructor.
+    pub fn new(instance: impl Into<String>, connected: bool, detail: Option<String>) -> Self {
+        Self { instance: instance.into(), connected, detail }
+    }
+
+    /// Convenience factory without a detail.
+    pub fn of(instance: impl Into<String>, connected: bool) -> Self {
+        Self::new(instance, connected, None)
+    }
+
+    /// The state-body element `{"instance":…,"connected":…[,"detail":…]}`.
+    fn to_json(&self) -> Value {
+        let mut o = Map::new();
+        o.insert("instance".to_string(), json!(self.instance));
+        o.insert("connected".to_string(), json!(self.connected));
+        if let Some(d) = &self.detail {
+            if !d.trim().is_empty() {
+                o.insert("detail".to_string(), json!(d));
+            }
+        }
+        Value::Object(o)
+    }
+}
+
+/// A component-supplied source of per-instance connectivity, sampled each keepalive tick into the
+/// state body's `instances[]`. Register via `gg.set_instance_connectivity_provider(...)`. Keep it
+/// cheap and non-blocking (sample a cached status); an empty vec omits the section.
+pub type InstanceConnectivityProvider = dyn Fn() -> Vec<InstanceConnectivity> + Send + Sync;
+
+/// The shared, hot-swappable slot holding the optional connectivity provider.
+type ConnectivitySlot = RwLock<Option<Arc<InstanceConnectivityProvider>>>;
+
 /// Owns the heartbeat background task. Dropping it stops the heartbeat (RAII) and
 /// publishes the best-effort `STOPPED` state (at most once).
 pub struct Heartbeat {
@@ -67,6 +114,9 @@ pub struct Heartbeat {
     /// and [`Self::publish_state_now`] (the `_bcast` `republish-state` out-of-band re-emit,
     /// [`crate::uns::RepublishListener`]) so both report the same uptime series.
     start_instant: Instant,
+    /// The optional per-instance connectivity provider (#1c), shared with the periodic tick and
+    /// [`Self::publish_state_now`]; sampled into each RUNNING state body's `instances[]`.
+    connectivity: Arc<ConnectivitySlot>,
 }
 
 impl Heartbeat {
@@ -100,6 +150,8 @@ impl Heartbeat {
         metrics.define_metric(metric);
 
         let start_instant = Instant::now();
+        let connectivity: Arc<ConnectivitySlot> = Arc::new(RwLock::new(None));
+        let task_connectivity = connectivity.clone();
         let task_config = config.clone();
         let task_reserved = reserved.clone();
         let initial_measures = initial.parsed.heartbeat.measures.clone();
@@ -126,11 +178,13 @@ impl Heartbeat {
                 // §4.3: each half is best-effort — a failure in one must not
                 // suppress the other.
                 if let Some(reserved) = &task_reserved {
+                    let conns = task_connectivity.read().unwrap().clone();
                     publish_state(
                         &cfg,
                         reserved.as_ref(),
                         "RUNNING",
                         Some(start_instant.elapsed().as_secs()),
+                        conns,
                     )
                     .await;
                 }
@@ -155,6 +209,7 @@ impl Heartbeat {
             reserved,
             stopped_published: Arc::new(AtomicBool::new(false)),
             start_instant,
+            connectivity,
         }
     }
 
@@ -178,7 +233,20 @@ impl Heartbeat {
             );
             return;
         }
-        publish_state(&cfg, reserved, "RUNNING", Some(self.start_instant.elapsed().as_secs())).await;
+        let conns = self.connectivity.read().unwrap().clone();
+        publish_state(&cfg, reserved, "RUNNING", Some(self.start_instant.elapsed().as_secs()), conns)
+            .await;
+    }
+
+    /// Registers (or clears with `None`) the per-instance connectivity provider whose result is
+    /// emitted in each RUNNING `state` keepalive's `instances[]` — the overridable surface a
+    /// multi-connection component uses to report connectivity at the instance level without a
+    /// separate UNS instance per connection. Wired from `GgCommons::set_instance_connectivity_provider`.
+    pub(crate) fn set_instance_connectivity_provider(
+        &self,
+        provider: Option<Arc<InstanceConnectivityProvider>>,
+    ) {
+        *self.connectivity.write().unwrap() = provider;
     }
 
     /// The heartbeat's monotonic uptime in seconds (Java: `Heartbeat.getUptimeSecs()`) — the
@@ -213,6 +281,7 @@ async fn publish_state(
     reserved: &dyn ReservedMessaging,
     status: &str,
     uptime_secs: Option<u64>,
+    connectivity: Option<Arc<InstanceConnectivityProvider>>,
 ) {
     // The RAW includeRoot flag (Java parity): Uns applies D-U25 internally.
     let uns = Uns::new(config.identity().clone(), config.topic_include_root());
@@ -227,6 +296,23 @@ async fn publish_state(
     body.insert("status".to_string(), json!(status));
     if let Some(uptime) = uptime_secs {
         body.insert("uptimeSecs".to_string(), json!(uptime));
+    }
+    // Per-instance connectivity — the state body's instances[] (RUNNING keepalive only). Best-effort:
+    // catch a panicking provider so a provider bug can never suppress the keepalive itself.
+    if uptime_secs.is_some() {
+        if let Some(provider) = connectivity {
+            let items = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| provider()))
+                .unwrap_or_else(|_| {
+                    tracing::warn!(
+                        "instance connectivity provider panicked; omitting instances[] this tick"
+                    );
+                    Vec::new()
+                });
+            if !items.is_empty() {
+                let arr: Vec<Value> = items.iter().map(InstanceConnectivity::to_json).collect();
+                body.insert("instances".to_string(), Value::Array(arr));
+            }
+        }
     }
     let message = MessageBuilder::new(STATE_MESSAGE_NAME, STATE_MESSAGE_VERSION)
         .payload(Value::Object(body))
@@ -267,7 +353,7 @@ impl Drop for Heartbeat {
         }
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             handle.spawn(async move {
-                publish_state(&config, reserved.as_ref(), "STOPPED", None).await;
+                publish_state(&config, reserved.as_ref(), "STOPPED", None, None).await;
             });
         }
     }
@@ -593,7 +679,7 @@ mod tests {
         let config = heartbeat_config(json!({ "intervalSecs": 1 }));
         let recorder = RecordingMessaging::new();
 
-        publish_state(&config, recorder.as_ref(), "RUNNING", Some(42)).await;
+        publish_state(&config, recorder.as_ref(), "RUNNING", Some(42), None).await;
 
         let published = recorder.reserved_local();
         assert_eq!(published.len(), 1, "one state keepalive through the seam");
@@ -608,6 +694,85 @@ mod tests {
         assert_eq!(identity.instance(), "main");
         assert!(recorder.reserved_iot().is_empty(), "local destination must not hit IoT Core");
         assert!(recorder.local().is_empty(), "the keepalive must use the SEAM, not publish()");
+    }
+
+    /// The #1c per-instance connectivity surface: a provider's result rides the RUNNING state
+    /// body's `instances[]`, with the detail omitted when absent.
+    #[tokio::test]
+    async fn publish_state_carries_per_instance_connectivity() {
+        let config = heartbeat_config(json!({ "intervalSecs": 1 }));
+        let recorder = RecordingMessaging::new();
+        let provider: Arc<InstanceConnectivityProvider> = Arc::new(|| {
+            vec![
+                InstanceConnectivity::new("filler1", true, Some("opc.tcp://kep:49320".to_string())),
+                InstanceConnectivity::of("kep2", false),
+            ]
+        });
+
+        publish_state(&config, recorder.as_ref(), "RUNNING", Some(1), Some(provider)).await;
+
+        let published = recorder.reserved_local();
+        let instances = published[0].1.body["instances"].as_array().unwrap();
+        assert_eq!(instances.len(), 2);
+        assert_eq!(instances[0]["instance"], "filler1");
+        assert_eq!(instances[0]["connected"], true);
+        assert_eq!(instances[0]["detail"], "opc.tcp://kep:49320");
+        assert_eq!(instances[1]["instance"], "kep2");
+        assert_eq!(instances[1]["connected"], false);
+        assert!(instances[1].get("detail").is_none(), "no detail -> omitted");
+    }
+
+    /// No provider / an empty result / the STOPPED state all omit the `instances[]` section.
+    #[tokio::test]
+    async fn no_provider_empty_or_stopped_omits_instances() {
+        let config = heartbeat_config(json!({ "intervalSecs": 1 }));
+
+        let r1 = RecordingMessaging::new();
+        publish_state(&config, r1.as_ref(), "RUNNING", Some(1), None).await;
+        assert!(r1.reserved_local()[0].1.body.get("instances").is_none());
+
+        let r2 = RecordingMessaging::new();
+        let empty: Arc<InstanceConnectivityProvider> = Arc::new(Vec::new);
+        publish_state(&config, r2.as_ref(), "RUNNING", Some(1), Some(empty)).await;
+        assert!(r2.reserved_local()[0].1.body.get("instances").is_none());
+
+        let r3 = RecordingMessaging::new();
+        let p: Arc<InstanceConnectivityProvider> = Arc::new(|| vec![InstanceConnectivity::of("x", true)]);
+        publish_state(&config, r3.as_ref(), "STOPPED", None, Some(p)).await;
+        assert!(r3.reserved_local()[0].1.body.get("instances").is_none(), "STOPPED carries no instances");
+    }
+
+    /// Best-effort: a panicking provider omits `instances[]` but never suppresses the keepalive.
+    #[tokio::test]
+    async fn a_panicking_provider_never_suppresses_the_keepalive() {
+        let config = heartbeat_config(json!({ "intervalSecs": 1 }));
+        let recorder = RecordingMessaging::new();
+        let prev = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {})); // silence the expected panic print
+        let provider: Arc<InstanceConnectivityProvider> = Arc::new(|| panic!("boom"));
+        publish_state(&config, recorder.as_ref(), "RUNNING", Some(1), Some(provider)).await;
+        std::panic::set_hook(prev);
+
+        let published = recorder.reserved_local();
+        assert_eq!(published.len(), 1, "a panicking provider must not suppress the keepalive");
+        assert_eq!(published[0].1.body["status"], "RUNNING");
+        assert!(published[0].1.body.get("instances").is_none());
+    }
+
+    #[test]
+    fn instance_connectivity_serializes() {
+        assert_eq!(
+            InstanceConnectivity::new("plc1", true, Some("tcp://10.0.0.50:502".to_string())).to_json(),
+            json!({ "instance": "plc1", "connected": true, "detail": "tcp://10.0.0.50:502" })
+        );
+        assert_eq!(
+            InstanceConnectivity::of("plc1", false).to_json(),
+            json!({ "instance": "plc1", "connected": false })
+        );
+        assert!(
+            InstanceConnectivity::new("plc1", false, Some("  ".to_string())).to_json().get("detail").is_none(),
+            "blank detail -> omitted"
+        );
     }
 
     /// `publish_state_now` (the `_bcast` `republish-state` out-of-band re-emit action wired
@@ -664,7 +829,7 @@ mod tests {
     async fn publish_state_stopped_omits_uptime() {
         let config = heartbeat_config(json!({}));
         let recorder = RecordingMessaging::new();
-        publish_state(&config, recorder.as_ref(), "STOPPED", None).await;
+        publish_state(&config, recorder.as_ref(), "STOPPED", None, None).await;
         let (_, msg) = &recorder.reserved_local()[0];
         assert_eq!(msg.body["status"], "STOPPED");
         assert!(msg.body.get("uptimeSecs").is_none());
@@ -675,7 +840,7 @@ mod tests {
     async fn state_destination_iotcore_routes_to_iot_core() {
         let config = heartbeat_config(json!({ "destination": "iotcore" }));
         let recorder = RecordingMessaging::new();
-        publish_state(&config, recorder.as_ref(), "RUNNING", Some(1)).await;
+        publish_state(&config, recorder.as_ref(), "RUNNING", Some(1), None).await;
         assert!(recorder.reserved_local().is_empty());
         assert_eq!(recorder.reserved_iot().len(), 1);
         assert_eq!(recorder.reserved_iot()[0].0, "ecv1/thing-1/MyComp/main/state");
@@ -695,7 +860,7 @@ mod tests {
         )
         .unwrap();
         let recorder = RecordingMessaging::new();
-        publish_state(&config, recorder.as_ref(), "RUNNING", Some(1)).await;
+        publish_state(&config, recorder.as_ref(), "RUNNING", Some(1), None).await;
         assert_eq!(recorder.reserved_local()[0].0, "ecv1/dallas/gw-01/MyComp/main/state");
     }
 
