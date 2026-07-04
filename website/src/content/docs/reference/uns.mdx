@@ -1,6 +1,6 @@
 ---
 title: UNS API
-description: API reference for the unified-namespace surface — gg.uns() (UnsClass, UnsScope, topic/topicFor/filter/validate), the gg.instance() handle, MessageIdentity, validation rules, and the reserved-class guard.
+description: API reference for the unified-namespace surface — gg.uns() (UnsClass, UnsScope, topic/topicFor/filter/validate), the gg.instance() handle, MessageIdentity, validation rules, the reserved-class guard, and the data()/events()/app() class-publish facades.
 sidebar:
   order: 6.5
 ---
@@ -8,9 +8,13 @@ sidebar:
 import { Tabs, TabItem, Aside, LinkCard } from "@astrojs/starlight/components";
 
 This is the API reference for the **unified namespace**: the `gg.uns()` topic builder/validator,
-the `gg.instance(id)` handle, the `MessageIdentity` type, the normative validation rules, and the
-reserved-class publish guard. For the concept — the grammar, the classes, the six-wildcard consumer
-pattern — read the [Unified Namespace guide](/guides/unified-namespace/) first.
+the `gg.instance(id)` handle, the `MessageIdentity` type, the normative validation rules, the
+reserved-class publish guard, and the `data()`/`events()`/`app()` **class-publish facades** — the
+sanctioned way to publish the three app-usable UNS classes. For the concept — the grammar, the
+classes, the six-wildcard consumer pattern — read the [Unified Namespace guide](/guides/unified-namespace/)
+first; for a task-oriented walkthrough of publishing telemetry/events, see
+[Publishing telemetry and events](/guides/unified-namespace/#publishing-telemetry-and-events)
+in that guide.
 
 All four languages build **byte-identical topics** and **structurally identical** `identity`
 elements; the shared `uns-test-vectors/` conformance suite (topic vectors + golden envelopes) pins
@@ -482,6 +486,421 @@ with a warning — the message still delivers. `identity` is **optional on the w
 without a config-bound builder (the `CONFIG_COMPONENT` bootstrap request, raw bridging of external
 systems) legally omits it.
 
+## Class-publish facades: data(), events(), app()
+
+The three **app-usable** UNS classes — `data`, `evt`, `app` — are non-reserved: any component may
+publish them. Before this facade slice, that meant hand-minting the topic with `uns()` and
+hand-assembling the body, and it had already drifted between components (one adapter's `evt` channel
+carried a severity segment, another's didn't; each re-invented its own `SouthboundSignalUpdate`
+quality default). `data()`/`events()`/`app()` are the **sanctioned publish path**: they still go
+through the ordinary, guarded `messaging().publish(...)` — publishing `data`/`evt`/`app` is not a
+privileged operation, so raw `uns()` + `messaging()` publishing (as shown above) remains fully
+supported — but they **construct and validate the body**, fill in the documented defaults, and mint
+the topic consistently. Use them; reach for the raw path only when a body is genuinely exotic.
+
+### Accessors
+
+Same convention as `uns()`/`instance()` above: a component-level convenience (instance `main`) and an
+instance-scoped form.
+
+| Handle | Java | Python | Rust | TypeScript |
+|--------|------|--------|------|------------|
+| `data()` (component-level) | `gg.getData()` | `gg.data()` | `gg.data()` | `gg.data()` |
+| `events()` (component-level) | `gg.getEvents()` | `gg.events()` | `gg.events()` | `gg.events()` |
+| `app()` (component-level) | `gg.getApp()` | `gg.app()` | `gg.app()` | `gg.app()` |
+| any of the three, instance-scoped | `gg.instance(id).data()` / `.events()` / `.app()` | same | same (each returns the facade directly; `gg.instance(id)` itself returns `Result`) | same |
+
+### `data()` — the telemetry / signal data plane
+
+Publishes `class = data`, `header.name = "SouthboundSignalUpdate"`. It constructs the body
+(`device?`, `signal{id, name?, address?}`, `samples[]`) instead of you hand-assembling it, and
+sanitizes each `/`-separated token of the signal path into the `data/{channel}` tail — the stable
+`signal.id` still rides untouched in the body.
+
+<Aside type="tip" title="The quality guarantee">
+A sample can **never** reach the bus without a `quality`. If the source doesn't supply one, `data()`
+fills `quality: "GOOD"` and marks `qualityRaw: "unspecified"` — so a consumer can always tell a
+synthesized `GOOD` from a device-reported one. `serverTs` defaults to now; `sourceTs` is **never**
+synthesized (left absent when the source has none). The only hard reject is a missing/empty
+`signal.id` — the one field every consumer keys on.
+</Aside>
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+// com.mbreissi.ggcommons.facades.DataFacade — via gg.getData() / gg.instance(id).data()
+public final class DataFacade {
+    public SignalUpdate.Builder signal(String id);                    // fluent body builder
+    public void publish(SignalUpdate update);                         // full form
+    public void publish(String signalPath, Object value);             // shorthand: quality=GOOD, serverTs=now
+    public void publish(String signalPath, Object value, Quality quality);
+    public void publishBody(String signalPath, JsonObject body);      // raw escape hatch — no defaulting
+    public void publishBody(String signalPath, JsonObject body, Channel via);
+    public JsonObject buildBody(SignalUpdate update);                 // inspect the constructed body
+    public Channel resolveChannel(Channel via);                       // per-call ▸ config ▸ LOCAL
+}
+
+gg.instance("kep1").data().signal("press12/temperature")
+    .name("Line1 Temp")
+    .device("opcua", "kep1", "opc.tcp://kep-server:49320")
+    .addSample(21.5)                          // quality -> GOOD, serverTs -> now
+    .publish();
+// -> ecv1/gw-01/opcua-adapter/kep1/data/press12/temperature
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+# ggcommons.facades.data_facade.DataFacade — via gg.data() / gg.instance(id).data()
+class DataFacade:
+    def signal(self, signal_id: str) -> SignalUpdateBuilder: ...
+    def publish_update(self, update: SignalUpdate) -> None: ...
+    def publish(self, signal_path: str, value: Any, quality: Optional[Quality] = None) -> None: ...
+    def publish_body(self, signal_path: str, body: dict,
+                     via: Optional[Channel] = None) -> None: ...      # raw escape hatch
+    def build_body(self, update: SignalUpdate) -> dict: ...
+    def resolve_channel(self, via: Optional[Channel]) -> Channel: ...
+
+gg.instance("kep1").data().signal("press12/temperature") \
+    .name("Line1 Temp") \
+    .device("opcua", "kep1", "opc.tcp://kep-server:49320") \
+    .add_sample(21.5) \
+    .publish()
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+impl DataFacade {
+    pub fn signal(&self, id: impl Into<String>) -> SignalUpdateBuilder;
+    pub async fn publish(&self, update: SignalUpdate) -> Result<()>;
+    pub async fn publish_value(&self, signal_path: impl Into<String>, value: impl Into<Value>) -> Result<()>;
+    pub async fn publish_value_with_quality(&self, signal_path: impl Into<String>,
+                                            value: impl Into<Value>, quality: Quality) -> Result<()>;
+    pub async fn publish_body(&self, signal_path: &str, body: Value) -> Result<()>;        // raw escape hatch
+    pub async fn publish_body_via(&self, signal_path: &str, body: Value, via: Option<Channel>) -> Result<()>;
+    pub fn build_body(&self, update: &SignalUpdate) -> Result<Value>;
+    pub fn resolve_channel(&self, via: Option<Channel>) -> Channel;
+}
+
+gg.instance("kep1")?.data().publish(
+    SignalUpdate::builder()
+        .signal_id("press12/temperature")
+        .name("Line1 Temp")
+        .sample(Sample::new(21.5))            // quality -> Good, server_ts -> now
+        .build()
+).await?;
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+class DataFacade {
+  signal(id: string | undefined): SignalUpdateBuilder;
+  publish(update: SignalUpdate): Promise<void>;
+  publish(signalPath: string, value: unknown, quality?: Quality): Promise<void>;
+  publishBody(signalPath: string, body: Record<string, unknown>, via?: Channel): Promise<void>;  // raw escape hatch
+  buildBody(update: SignalUpdate): Record<string, unknown>;
+  resolveChannel(via: Channel | undefined): Channel;
+}
+
+await gg.instance("kep1").data().signal("press12/temperature")
+  .name("Line1 Temp")
+  .device("opcua", "kep1", "opc.tcp://kep-server:49320")
+  .addSample(21.5)                            // quality -> Good, serverTs -> now
+  .publish();
+```
+
+</TabItem>
+</Tabs>
+
+### `events()` — operator events & alarms (evt)
+
+Publishes `class = evt`, `header.name = "evt"`. The channel is **derived from the body**:
+`evt/{severity}/{sanitize(type)}` — so the topic and the body can never disagree, the exact drift
+that motivated this facade (one adapter's channel carried severity, another's didn't; this makes it
+structural). `timestamp` defaults to now; `type` is the only required field (it is a channel token).
+`raiseAlarm`/`clearAlarm` set `alarm: true` plus `active: true|false` and default `severity` to
+`critical`, so a raise and its clear ride the **same** channel — a console watching
+`evt/critical/#` sees both halves of the alarm lifecycle.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+// com.mbreissi.ggcommons.facades.EventsFacade — via gg.getEvents() / gg.instance(id).events()
+public final class EventsFacade {
+    public EventsFacade via(Channel channel);                          // LOCAL (default) or NORTHBOUND only
+    public void emit(Severity severity, String type, String message, JsonObject context);
+    public void emit(Severity severity, String type, String message);
+    public void emit(String type, String message);                    // severity defaults to INFO
+    public void raiseAlarm(String type, String message, JsonObject context);              // severity -> CRITICAL
+    public void raiseAlarm(Severity severity, String type, String message, JsonObject context);
+    public void clearAlarm(String type, JsonObject context);                               // severity -> CRITICAL
+    public void clearAlarm(Severity severity, String type, JsonObject context);
+    public JsonObject buildBody(Severity severity, String type, String message,
+                               JsonObject context, Boolean alarm, Boolean active);
+    public String channelFor(Severity severity, String type);
+}
+
+gg.getEvents().raiseAlarm("connection-lost", "Modbus link down", ctx);  // -> evt/critical/connection-lost
+gg.getEvents().clearAlarm("connection-lost", ctx);                      // -> the same channel, active=false
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+# ggcommons.facades.events_facade.EventsFacade — via gg.events() / gg.instance(id).events()
+class EventsFacade:
+    def via(self, channel: Channel) -> "EventsFacade": ...
+    def emit(self, event_type: str, message: Optional[str] = None,
+             context: Optional[dict] = None, severity: Optional[Severity] = None) -> None: ...
+    def raise_alarm(self, event_type: str, message: Optional[str] = None,
+                    context: Optional[dict] = None, severity: Optional[Severity] = None) -> None: ...
+    def clear_alarm(self, event_type: str, context: Optional[dict] = None,
+                    severity: Optional[Severity] = None) -> None: ...
+    def build_body(self, severity, event_type, message=None, context=None,
+                   alarm=None, active=None) -> dict: ...
+    def channel_for(self, severity: Severity, event_type: str) -> str: ...
+
+gg.events().raise_alarm("connection-lost", "Modbus link down", {"unit": 3})  # severity defaults to CRITICAL
+gg.events().clear_alarm("connection-lost", {"unit": 3})
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+impl EventsFacade {
+    pub fn via(&self, channel: Channel) -> Result<EventsFacade>;      // Err on a stream channel
+    pub async fn emit(&self, severity: Severity, event_type: impl Into<String>,
+                      message: Option<String>, context: Option<Value>) -> Result<()>;
+    pub async fn emit_message(&self, event_type: impl Into<String>, message: impl Into<String>) -> Result<()>; // severity=Info
+    pub async fn raise_alarm(&self, severity: Severity, event_type: impl Into<String>,
+                             message: Option<String>, context: Option<Value>) -> Result<()>;
+    pub async fn raise_alarm_default(&self, event_type: impl Into<String>,
+                                     message: Option<String>, context: Option<Value>) -> Result<()>; // severity=Critical
+    pub async fn clear_alarm(&self, severity: Severity, event_type: impl Into<String>,
+                             context: Option<Value>) -> Result<()>;
+    pub async fn clear_alarm_default(&self, event_type: impl Into<String>,
+                                     context: Option<Value>) -> Result<()>;                           // severity=Critical
+    pub fn build_body(&self, severity: Severity, event_type: &str, message: Option<&str>,
+                      context: Option<&Value>, active: Option<bool>) -> Result<Value>;
+    pub fn channel_for(severity: Severity, event_type: &str) -> Result<String>;
+}
+
+gg.events().raise_alarm_default("connection-lost", Some("Modbus link down".into()), None).await?;
+gg.events().clear_alarm_default("connection-lost", None).await?;
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+class EventsFacade {
+  via(channel: Channel): EventsFacade;                                // throws on a stream channel
+  emit(severity: Severity, type: string, message?: string, context?: Record<string, unknown>): Promise<void>;
+  emitInfo(type: string, message?: string): Promise<void>;            // severity = Severity.Info
+  raiseAlarm(type: string, message?: string, context?: Record<string, unknown>,
+             severity?: Severity): Promise<void>;                     // severity defaults to Critical
+  clearAlarm(type: string, context?: Record<string, unknown>, severity?: Severity): Promise<void>;
+  buildBody(severity: Severity, type: string, message: string | undefined,
+            context: Record<string, unknown> | undefined,
+            alarm: boolean | undefined, active: boolean | undefined): Record<string, unknown>;
+  channelFor(severity: Severity, type: string): string;
+}
+
+await gg.events().raiseAlarm("connection-lost", "Modbus link down");
+await gg.events().clearAlarm("connection-lost");
+```
+
+</TabItem>
+</Tabs>
+
+### `app()` — free-form inter-component pub/sub
+
+Publishes `class = app` with a **developer-chosen** header `name` and body — there is no body
+contract to enforce (that is the point of `app`), so the facade's only job is minting the
+`app/{channel}` topic correctly and stamping identity, replacing the three-line raw ritual.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+// com.mbreissi.ggcommons.facades.AppFacade — via gg.getApp() / gg.instance(id).app()
+public final class AppFacade {
+    public void publish(String name, String channel, JsonObject body);
+    public void publish(String name, String channel, JsonObject body, Channel routing);
+}
+
+gg.getApp().publish("OrderReceived", "order/received", body);   // -> app/order/received
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+# ggcommons.facades.app_facade.AppFacade — via gg.app() / gg.instance(id).app()
+class AppFacade:
+    def publish(self, name: str, channel: str, body: dict,
+               routing: Optional[Channel] = None) -> None: ...
+
+gg.app().publish("OrderReceived", "order/received", {"orderId": "A-42", "qty": 3})
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+impl AppFacade {
+    pub async fn publish(&self, name: impl Into<String>, channel: impl Into<String>, body: Value) -> Result<()>;
+    pub async fn publish_via(&self, name: impl Into<String>, channel: impl Into<String>,
+                             body: Value, routing: Option<Channel>) -> Result<()>;
+}
+
+gg.app().publish("OrderReceived", "order/received", json!({ "orderId": "A-42", "qty": 3 })).await?;
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+class AppFacade {
+  publish(name: string, channel: string, body: Record<string, unknown>, routing?: Channel): Promise<void>;
+}
+
+await gg.app().publish("OrderReceived", "order/received", { orderId: "A-42", qty: 3 });
+```
+
+</TabItem>
+</Tabs>
+
+### Value types — `Quality`, `Severity`, `Channel`
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+public enum Quality { GOOD, BAD, UNCERTAIN;
+    public String wire();                          // the UPPERCASE wire token
+    public static Quality fromWire(String token);   // null when outside the closed set
+}
+
+public enum Severity { CRITICAL, WARNING, INFO, DEBUG;
+    public String wire();                           // the lowercase wire token, the evt channel's 1st segment
+    public static Severity fromWire(String token);
+}
+
+public final class Channel {
+    public static final Channel LOCAL, NORTHBOUND;
+    public static Channel stream(String name);                    // data() only
+    public enum Kind { LOCAL, NORTHBOUND, STREAM }
+    public Kind kind();
+    public String streamName();                                    // non-null only for STREAM
+    public static Channel fromConfig(String value);                // parses "local"/"northbound"/"stream:<name>"
+}
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+class Quality(str, Enum):
+    GOOD = "GOOD"; BAD = "BAD"; UNCERTAIN = "UNCERTAIN"
+    def wire(self) -> str: ...
+    @staticmethod
+    def from_wire(token: Optional[str]) -> Optional["Quality"]: ...
+
+class Severity(str, Enum):
+    CRITICAL = "critical"; WARNING = "warning"; INFO = "info"; DEBUG = "debug"
+    def wire(self) -> str: ...
+    @staticmethod
+    def from_wire(token: Optional[str]) -> Optional["Severity"]: ...
+
+class Channel:
+    class Kind(Enum): LOCAL = "local"; NORTHBOUND = "northbound"; STREAM = "stream"
+    LOCAL: "Channel"       # class attribute
+    NORTHBOUND: "Channel"  # class attribute
+    @staticmethod
+    def stream(name: str) -> "Channel": ...             # data() only
+    @staticmethod
+    def from_config(value: Optional[str]) -> Optional["Channel"]: ...
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum Quality { Good, Bad, Uncertain }
+impl Quality {
+    pub const fn wire(self) -> &'static str;
+    pub fn from_wire(token: &str) -> Option<Quality>;
+}
+
+#[serde(rename_all = "lowercase")]
+pub enum Severity { Critical, Warning, Info, Debug }
+impl Severity {
+    pub const fn wire(self) -> &'static str;
+    pub fn from_wire(token: &str) -> Option<Severity>;
+}
+
+pub enum Channel { Local, Northbound, Stream(String) }
+impl Channel {
+    pub fn stream(name: impl Into<String>) -> Result<Channel>;    // data() only
+    pub const fn is_stream(&self) -> bool;
+    pub fn from_config(value: &str) -> Option<Channel>;
+}
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+export enum Quality { Good = "GOOD", Bad = "BAD", Uncertain = "UNCERTAIN" }
+export function qualityFromWire(token: string): Quality | undefined;
+
+export enum Severity { Critical = "critical", Warning = "warning", Info = "info", Debug = "debug" }
+export function severityFromWire(token: string): Severity | undefined;
+
+export type ChannelKind = "local" | "northbound" | "stream";
+export type Channel = LocalChannel | NorthboundChannel | StreamChannel;
+export const Channel: {
+  LOCAL: LocalChannel;
+  NORTHBOUND: NorthboundChannel;
+  stream(name: string): StreamChannel;               // data() only
+  fromConfig(value: string | undefined | null): Channel | undefined;
+};
+```
+
+</TabItem>
+</Tabs>
+
+### Channel routing
+
+All three facades resolve their effective channel the same way: **per-call override** (`via(...)` /
+`.via(channel)` / the builder's `via`) **▸ the config `publish.channel`** (instance-level, then
+global) **▸ `LOCAL`**. Only `data()` accepts a `stream:<name>` route — `events()`/`app()` reject one
+at build time, since alarms and app messages are low-rate control-plane, not bulk telemetry.
+
+- **`local`** — the default; publishes on the local bus (`messaging().publish`).
+- **`northbound`** — publishes straight to AWS IoT Core (`messaging().publishToIoTCore`); a
+  northbound outage is caught, logged, and never flips local readiness.
+- **`stream:<name>`** (`data()` only) — serializes the same envelope and appends it to
+  `streams().stream(name)` (partition key = `signal.id`, timestamp = the sample's `serverTs`) instead
+  of the bus. If no stream is configured, the facade **falls back to a local publish** (with a
+  once-only warning) rather than dropping the message or failing the call.
+
+A config-driven default (no code change needed to move a signal from the bus to a stream) is set
+under the instance's or the global `component.*` config as `publish: { channel: "..." }` — see
+`"local"` / `"northbound"` / `"stream:<name>"` above.
+
 ## The reserved-class publish guard
 
 Every publish path that takes a client-chosen topic — `publish`, `publishRaw`, `publishToIoTCore`,
@@ -512,6 +931,12 @@ its own `ecv1/{device}/#` subtree.
   title="Unified Namespace guide"
   href="/guides/unified-namespace/"
   description="The concept: the grammar, the eight classes, identity + hierarchy, and the six-wildcard consumer pattern."
+/>
+
+<LinkCard
+  title="Publishing telemetry and events"
+  href="/guides/unified-namespace/#publishing-telemetry-and-events"
+  description="Task-oriented walkthrough of data()/events()/app(): the quality guarantee, the derived evt channel, and channel routing."
 />
 
 <LinkCard

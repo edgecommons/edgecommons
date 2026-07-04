@@ -10,8 +10,14 @@
 > dual-broker end-to-end test in its own sibling repo — see
 > [`DESIGN-uns-bridge.md`](DESIGN-uns-bridge.md) for exactly what's done there and what's still
 > pending before general release (GitHub publish, a ggcommons git-rev bump, the edge-console
-> integration). **Phases 4 (streaming enrichment, M15) and 5 (the southbound command family, M9, and
-> D‑U15/16) are still design-only** — see §13 for the per-phase breakdown. This document specifies a
+> integration). **The class-publish facades — `data()`/`events()`/`app()` — have also shipped in all
+> four languages**, ahead of Phase 5: see [`DESIGN-class-facades.md`](DESIGN-class-facades.md) for the
+> full design + decision register. They replace the raw `uns()`+`messaging()` hand-building §7.3 used
+> to describe for the app-usable classes, and complete the class-facade family alongside the reserved
+> `state`/`metric`/`cfg` publishers and the minimal `commands()` inbox — every one of the eight UNS
+> classes now has exactly one library-owned owner (§7.3, §4). **Phases 4 (streaming enrichment, M15)
+> and 5 (the southbound command family, M9, and D‑U15/16) remain design-only** — see §13 for the
+> per-phase breakdown. This document specifies a
 > single **Unified Namespace** for how ggcommons components address one another on the bus: the topic
 > grammar, the message classes, the identity model, the messaging API surface (`messaging()` / `uns()` /
 > the platform facades), streaming enrichment, and the physical realization of a **site-wide UNS bus**
@@ -21,6 +27,9 @@
 >
 > **Companion docs:** [`UNS-CANONICAL-DESIGN.md`](UNS-CANONICAL-DESIGN.md) (**the implementation
 > companion** — concrete API shapes, per-language mirror notes, and the D‑U1…D‑U24 decisions register),
+> [`DESIGN-class-facades.md`](DESIGN-class-facades.md) (the **shipped** `data()`/`events()`/`app()`
+> class-publish facades — body-contract enforcement + defaults + channel routing for the three
+> app-usable classes; §7.3 below is their summary, that doc is the source of truth),
 > [`DESIGN-channels.md`](DESIGN-channels.md) (the local/northbound/stream channel
 > model this concretizes), [`DESIGN-core.md`](DESIGN-core.md) (platform/transport resolution & identity
 > chain), [`../SHARED_CONFIG.md`](../SHARED_CONFIG.md) (how the hierarchy + shared identity are
@@ -120,10 +129,10 @@ keepalive *is* the liveness beacon; system stats move to `metric`), and **announ
 | `metric` | Operational metrics incl. built-in `sys` (cpu/mem/…) | pub | library (`metrics()`) — **reserved** | `metric/signals-ingested` |
 | `cfg` | Effective-config snapshot (redacted), on change / on request | pub | library — **reserved** | `cfg` |
 | `log` | Structured log records for remote tail (off by default) | pub | library — **reserved** | `log/error` |
-| `data` | Telemetry data plane — `SouthboundSignalUpdate`, processed outputs | pub | `telemetry()` / app | `data/press12/temperature` |
-| `evt` | Events and alarms (raise/clear) | pub | `events()` / app | `evt/critical/overtemp` |
+| `data` | Telemetry data plane — `SouthboundSignalUpdate`, processed outputs | pub | `data()` — **shipped facade** (raw `messaging()`+`uns()` still allowed) | `data/press12/temperature` |
+| `evt` | Events and alarms (raise/clear) | pub | `events()` — **shipped facade** (raw `messaging()`+`uns()` still allowed) | `evt/critical/overtemp` |
 | `cmd` | Commands — request/reply, built-in + component verbs | **req/reply (inbound)** | any (§7) | `cmd/reload-config` |
-| `app` | Arbitrary application pub/sub between components | pub/sub | app (`messaging()`) | `app/order/received` |
+| `app` | Arbitrary application pub/sub between components | pub/sub | `app()` — **shipped facade** (raw `messaging()` still allowed) | `app/order/received` |
 
 The first four are **reserved platform classes** (D12) — library-owned, so a component cannot hand-forge
 another's health or config. `cmd` is the only class whose identity path names the **recipient**;
@@ -187,7 +196,7 @@ in `tags`), self-describing and order-safe:
 
 A component commonly serves **many** instances — its existing `component.instances[]` (e.g. an OPC UA
 adapter with `kep1`, `plc-2`). The `{instance}` segment is resolved **per message**, from the instance the
-message pertains to — via an instance-scoped facade handle (`gg.instance("kep1").telemetry().publish(…)`)
+message pertains to — via an instance-scoped facade handle (`gg.instance("kep1").data().publish(…)`)
 or the originating-instance context — never a single `identity.instance` value. Component-level messages
 (the overall `state`) use the default token `main`.
 
@@ -270,8 +279,9 @@ observable:
 | *(automatic)* | heartbeat/`state`, identity, `describe`, `cfg`, `log`-tail | **nothing** — visible for free |
 | `gg.status()` | health nuance | `update(DEGRADED, reason)`, `registerCheck(name, supplier)` |
 | `gg.metrics()` | metrics (kept `MetricEmitter`; topic now UNS-minted) | `emit(measure)` |
-| `gg.telemetry()` | signal/`data` plane | `publish(SouthboundSignalUpdate)` / `publish(path, value, meta?)` |
-| `gg.events()` | operator alarms/events (`evt`) | `emit(sev, type, msg, data)`, `raiseAlarm/clearAlarm` |
+| `gg.data()` (Java: `gg.getData()`) | signal/`data` plane — **shipped, non-reserved** | `signal(id).addSample(value).publish()` / `publish(path, value)` |
+| `gg.events()` (Java: `gg.getEvents()`) | operator alarms/events (`evt`) — **shipped, non-reserved** | `emit(sev, type, msg, ctx)`, `raiseAlarm/clearAlarm` |
+| `gg.app()` (Java: `gg.getApp()`) | free-form inter-component pub/sub (`app`) — **shipped, non-reserved** | `publish(name, channel, body)` |
 | `gg.commands()` | **console-exposed** request/reply | `register(verb, schema, handler, {danger})` |
 | `gg.discovery()` | capability manifest + panels | `describe(manifest)`, `registerPanel(id, asset)` |
 | `gg.streams()` | durable telemetry egress (§8) | `publish(stream, record)` — auto-enriched |
@@ -291,6 +301,24 @@ a namespace level: the southbound-adapter kit registers `sb/status`, `sb/browse`
 > `get-configuration` (`republish-state`/`republish-cfg` ride the §9.4 `_bcast` listener;
 > `set-config` rides the CONFIG_COMPONENT source). The schema/danger/RBAC-annotated registration,
 > `describe`/`get-panel-asset`, `set-log-level` and the `sb/*` family remain deferred (Phase 5).
+
+> **Shipped (the class-facades slice, [`DESIGN-class-facades.md`](DESIGN-class-facades.md)):** the
+> three **app-usable** class-publish facades — `data()`/`events()`/`app()` — are real, tested code in
+> all four languages (Java canonical `2283189`, Py/Rust/TS mirrors `8d3e3c9`), pinned by
+> `uns-test-vectors/{data,evt,app}.json`. They replace the raw hand-building this section used to
+> illustrate: `data()` **constructs and validates** the `SouthboundSignalUpdate` body (`quality`
+> defaults to `GOOD` with a `qualityRaw:"unspecified"` marker when the source omits it, `serverTs`
+> defaults to now, the `signal.id` is the only hard reject); `events()` **derives** the
+> `evt/{severity}/{type}` channel from the body's own severity + type (so the topic and body can never
+> disagree — the exact `evt` drift §1.2 of that doc documents) and adds `raiseAlarm`/`clearAlarm`;
+> `app()` is thin publish-sugar (named header + verbatim body). All three resolve channel routing
+> per-call override ▸ config `publish.channel` (instance ▸ global) ▸ `LOCAL` (D1), with `data()`
+> alone honoring a `stream:<name>` route (composing `getStreams()`, falling back to LOCAL when no sink
+> is wired). They publish through the **ordinary, guarded** `messaging().publish(...)` — non-reserved,
+> so raw `uns()`+`messaging()` publishing to `data`/`evt`/`app` remains allowed (D9: facades are
+> enforcement-by-default, not prohibition). With these three, **every one of the eight UNS classes now
+> has exactly one library-owned owner** (§4's reserved publishers, the `cmd` inbox above, and these) —
+> see that doc's §6 for the complete family table.
 
 ### 7.4 Request/reply hardening (D10)
 
@@ -632,8 +660,15 @@ a precise error — silent coexistence of old and new topics is the worst outcom
 4. **[NOT STARTED]** **Streaming enrichment** (M15) + **southbound command family** (M9). (`opcua-adapter`
    has separately landed the M9 *capabilities* — browse/write-ack/regex-read — on its own legacy
    topics, ahead of and independent of this UNS migration; see `SOUTHBOUND.md` §2.2/§8.)
-5. **[NOT STARTED]** **Docs/recipes/scaffold updates; retire the legacy schemes** (incl. the stale
-   `SouthboundTagUpdate` python-protocol-adapter template) + component adoption.
+5. **[NOT STARTED as designed here, but the library facades have shipped ahead of it]** **Docs/recipes/
+   scaffold updates; retire the legacy schemes** (incl. the stale `SouthboundTagUpdate`
+   python-protocol-adapter template) + component adoption. Per
+   [`DESIGN-class-facades.md`](DESIGN-class-facades.md) §7.1's "library-facades-first" sequencing, the
+   **`data()`/`events()`/`app()` class-publish facades themselves are DONE, all four languages** (§7.3
+   above) — what remains here is the per-repo component-adoption PRs (`opcua-adapter`'s
+   `SignalUpdatePublisher`/`EventEmitter`, `modbus-adapter`'s `publisher.py`/`events.py`,
+   `telemetry-processor`'s `route.rs`) that migrate off their own hand-built bodies onto the shipped
+   facades, plus the docs/scaffold retirement this step was always scoped to.
 
 > **Implementation companion:** [`UNS-CANONICAL-DESIGN.md`](UNS-CANONICAL-DESIGN.md) turns this design
 > into concrete Java-canonical API shapes + per-language mirror notes and carries the running decisions

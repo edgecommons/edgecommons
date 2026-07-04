@@ -55,10 +55,10 @@ value; the setting is a no-op with a single-level hierarchy).
 | `metric` | Operational metrics, incl. the built-in `sys` system measures | library — **reserved** | `metric/signals-ingested` |
 | `cfg` | Effective-config snapshot (redacted), at startup + on change | library — **reserved** | `cfg` |
 | `log` | Structured log records for remote tail *(class reserved now; publisher is roadmap)* | library — **reserved** | `log/error` |
-| `data` | The telemetry data plane — signal updates, processed outputs | your code | `data/press12/temperature` |
-| `evt` | Events and alarms | your code | `evt/critical/overtemp` |
+| `data` | The telemetry data plane — signal updates, processed outputs | `data()` facade | `data/press12/temperature` |
+| `evt` | Events and alarms | `events()` facade | `evt/critical/overtemp` |
 | `cmd` | Commands — request/reply, addressed to the **recipient's** inbox | any | `cmd/reload-config` |
-| `app` | Arbitrary application pub/sub between components | your code | `app/order/received` |
+| `app` | Arbitrary application pub/sub between components | `app()` facade | `app/order/received` |
 
 The first four are **reserved platform classes**: they are library-owned, and a raw
 `messaging().publish(...)` to a reserved-class topic is **rejected** (`ReservedTopicException` /
@@ -239,6 +239,124 @@ const f = gg.uns().filter(UnsClass.State, UnsScope.all());   // ecv1/+/+/+/state
 topics (bridging a legacy MQTT system, the `cloudwatch/metric/put` contract). The only restriction
 is the reserved-class guard above. See the [Messaging guide](/guides/messaging/).
 
+<Aside type="tip" title="Prefer the class-publish facades for data / evt / app">
+The example above builds an `app` topic by hand to show `gg.uns()` in the general case — that raw
+form stays fully supported for any class (D9: facades add enforcement, not a restriction). But for
+the three app-usable classes, reach for [`data()`/`events()`/`app()`](#publishing-telemetry-and-events)
+instead of hand-building the topic and body yourself: they mint the same topic, plus construct and
+validate the body (the `data` quality guarantee, the `evt` severity-derived channel) that raw
+`uns()` + `messaging()` leaves entirely up to you.
+</Aside>
+
+## Publishing telemetry and events
+
+For the three app-usable classes, don't hand-build the topic and body with `uns()` + `messaging()` —
+use the matching **class-publish facade**: `data()`, `events()`, or `app()`. They mint the same UNS
+topic, but also construct and validate the body, so every consumer sees a consistent shape instead of
+each publisher re-inventing one (see the
+[full API reference](/reference/uns/#class-publish-facades-data-events-app) for every method
+signature in all four languages).
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+// data(): publish a signal reading — quality defaults to GOOD, serverTs to now
+gg.instance("kep1").data().signal("press12/temperature")
+    .name("Line1 Temp")
+    .addSample(21.5)
+    .publish();
+
+// events(): a one-shot informational event, and a stateful alarm pair on the same channel
+gg.getEvents().emit("door-open", "front door opened");
+gg.getEvents().raiseAlarm("connection-lost", "Modbus link down", null);
+gg.getEvents().clearAlarm("connection-lost", null);
+
+// app(): free-form inter-component pub/sub
+gg.getApp().publish("OrderReceived", "order/received", body);
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+# data(): publish a signal reading — quality defaults to GOOD, serverTs to now
+gg.instance("kep1").data().signal("press12/temperature") \
+    .name("Line1 Temp") \
+    .add_sample(21.5) \
+    .publish()
+
+# events(): a one-shot informational event, and a stateful alarm pair on the same channel
+gg.events().emit("door-open", "front door opened")
+gg.events().raise_alarm("connection-lost", "Modbus link down")
+gg.events().clear_alarm("connection-lost")
+
+# app(): free-form inter-component pub/sub
+gg.app().publish("OrderReceived", "order/received", {"orderId": "A-42", "qty": 3})
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+// data(): publish a signal reading — quality defaults to Good, server_ts to now
+gg.instance("kep1")?.data().publish(
+    SignalUpdate::builder().signal_id("press12/temperature").name("Line1 Temp")
+        .sample(Sample::new(21.5)).build()
+).await?;
+
+// events(): a one-shot informational event, and a stateful alarm pair on the same channel
+gg.events().emit_message("door-open", "front door opened").await?;
+gg.events().raise_alarm_default("connection-lost", Some("Modbus link down".into()), None).await?;
+gg.events().clear_alarm_default("connection-lost", None).await?;
+
+// app(): free-form inter-component pub/sub
+gg.app().publish("OrderReceived", "order/received", json!({ "orderId": "A-42", "qty": 3 })).await?;
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+// data(): publish a signal reading — quality defaults to Good, serverTs to now
+await gg.instance("kep1").data().signal("press12/temperature")
+  .name("Line1 Temp")
+  .addSample(21.5)
+  .publish();
+
+// events(): a one-shot informational event, and a stateful alarm pair on the same channel
+await gg.events().emitInfo("door-open", "front door opened");
+await gg.events().raiseAlarm("connection-lost", "Modbus link down");
+await gg.events().clearAlarm("connection-lost");
+
+// app(): free-form inter-component pub/sub
+await gg.app().publish("OrderReceived", "order/received", { orderId: "A-42", qty: 3 });
+```
+
+</TabItem>
+</Tabs>
+
+Three things worth knowing before you reach for them:
+
+- **The quality default is a guarantee, not a convenience.** `data()` never lets a sample reach the
+  bus without a `quality` — if your source has no notion of one, the facade fills `"GOOD"` and marks
+  `qualityRaw: "unspecified"`, so a consumer can always distinguish a synthesized verdict from a
+  device-reported one. The only thing `data()` ever rejects outright is a missing `signal.id`.
+- **The `evt` channel is derived, not chosen.** `events()` builds `evt/{severity}/{type}` from the
+  body's own `severity` + `type` fields — you can't publish a body whose topic disagrees with it, the
+  drift that motivated this facade in the first place. `raiseAlarm`/`clearAlarm` default `severity` to
+  `critical` so the raise and its later clear land on the *same* channel.
+- **Channel routing is uniform across all three**: a per-call override, then a config-driven
+  `publish.channel` default (instance, then global), then `local`. Only `data()` accepts a
+  `stream:<name>` route (for bulk telemetry via [streaming](/guides/streaming/)) — falling back to a
+  local publish if no stream is configured rather than dropping the message; `events()`/`app()` are
+  local/northbound only, since alarms and app messages are low-rate control-plane traffic.
+
+Raw `uns()` + `messaging()` publishing to `data`/`evt`/`app` is **not deprecated** — these classes stay
+non-reserved, and the facade is the *recommended*, not the *only*, path. Use the raw form for a body
+shape the facade genuinely shouldn't own (`data()` even offers a `publishBody()`/`publish_body()`
+escape hatch for exactly that — topic + identity handled, body untouched).
+
 ## Command addressing and reserved names
 
 - **A component's command inbox** is `ecv1/{device}/{component}/{instance}/cmd/{verb}` — one
@@ -268,6 +386,11 @@ pinned by the cross-language `uns-test-vectors/` conformance suite):
   the `CONFIG_COMPONENT` command remap.
 - The `_bcast` `republish-state`/`republish-cfg` broadcast listener every component runs (the
   late-join lever the `uns-bridge`, below, triggers on reconnect).
+- The **`data()`/`events()`/`app()` class-publish facades** — see
+  [Publishing telemetry and events](#publishing-telemetry-and-events) above and the
+  [full API reference](/reference/uns/#class-publish-facades-data-events-app).
+- The minimal **`commands()`** facade (the component command inbox + `ping`/`reload-config`/
+  `get-configuration`) — **Java only so far**, Python/Rust/TS mirrors pending.
 
 <Aside type="caution" title="Roadmap — some built, most not yet shipped">
 These are at different stages (see `docs/platform/DESIGN-uns.md` /
@@ -287,9 +410,10 @@ These are at different stages (see `docs/platform/DESIGN-uns.md` /
   `opcua-adapter` reference component (paged address-space browse, a confirmed write with per-entry
   acknowledgment, regex-matched on-demand reads), shipped on that adapter's own legacy topics ahead
   of the UNS migration.
-- **The richer facades** — `telemetry()`, `events()`, `commands()`, `discovery()`, `status()`, and
-  the `log`-tail publisher. Today components publish `data`/`evt`/`cmd`/`app` themselves via
-  `messaging()` + `uns()` as shown above.
+- **The remaining facades** — `discovery()` and `status()` (health nuance beyond the automatic
+  `state` keepalive), and the `log`-tail publisher. (`data()`/`events()`/`app()` have shipped — see
+  above; `commands()` has shipped its minimal form in Java only, with a schema/danger/RBAC-annotated
+  registration + `describe`/`get-panel-asset`/`set-log-level` still to come.)
 - **Streaming enrichment** — auto-stamping stream records with identity + hierarchy columns and
   Hive-style partitioning in the Parquet/AVRO sink.
 </Aside>

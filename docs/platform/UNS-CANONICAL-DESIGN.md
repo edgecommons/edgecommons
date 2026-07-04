@@ -7,8 +7,11 @@
 > `uns-test-vectors/` conformance suite, and the interop UNS suite) is real, tested code — see the
 > "Build plan — phase checklist" at the bottom for the per-item status and DESIGN-uns.md §13 for the
 > phase-level summary. Phase 3 (`uns-bridge` + the `_bcast` listener) has also shipped — see
-> [`DESIGN-uns-bridge.md`](DESIGN-uns-bridge.md). Phases 4 (streaming enrichment) and 5 (the
-> southbound command family + D‑U15/16) remain design-only. Companion to
+> [`DESIGN-uns-bridge.md`](DESIGN-uns-bridge.md). **The `data()`/`events()`/`app()` class-publish
+> facades — §7's "deferred" list below — have since shipped in all four languages**, ahead of Phase 5;
+> see [`DESIGN-class-facades.md`](DESIGN-class-facades.md) (the companion doc for those three) and §7's
+> update note. Phases 4 (streaming enrichment) and 5 (the
+> southbound command family + D‑U15/16, minus the now-shipped facades) remain design-only. Companion to
 > [`DESIGN-uns.md`](DESIGN-uns.md) (the approved design). Java canonical; Python/Rust/TS mirror notes
 > inline. Pre-1.0 hard cut; no dual-publish. Shared/layered config is **explicitly out of scope** —
 > each component reads its own `hierarchy` + `identity` blocks (shared config is a later co-location
@@ -301,7 +304,12 @@ public final class GgInstance {
     public Uns uns();                                          // topics minted with this instance token
     public MessageBuilder newMessage(String name, String version);
         // == MessageBuilder.create(name, version).withConfig(configManager).withInstance(id)
-    // Components phase adds: telemetry(), events(), commands() here — same handle, no rework.
+    // Components phase adds: commands() [shipped, Java canonical] and the class-publish facades
+    // data()/events()/app() [SHIPPED, all four languages — see DESIGN-class-facades.md] here —
+    // same handle, no rework, exactly as anticipated below.
+    public DataFacade data();
+    public EventsFacade events();
+    public AppFacade app();
 }
 
 // GGCommons
@@ -505,19 +513,23 @@ facades (incl. registering arbitrary component-defined `cmd` verbs through a gen
 `log`-tail publisher (class reserved+guarded now, publisher later); streaming enrichment (M15); the
 southbound command family (M9); D‑U15/16 (Phase 5).
 
-> **Update (2026-07-03) — three of these have since shipped, ahead of this note:** the `_bcast`
+> **Update (2026-07-03) — four of these have since shipped, ahead of this note:** the `_bcast`
 > `republish-state`/`republish-cfg` broadcast listener has shipped in all four languages
 > (DESIGN-uns.md §9.4, slice G-S1); **`uns-bridge` + site-broker recipes (M1/M2)** have shipped as a
 > standalone, e2e-tested Rust component (`edgecommons/uns-bridge`, not yet published to GitHub or
-> pinned by a ggcommons rev bump) — see [`DESIGN-uns-bridge.md`](DESIGN-uns-bridge.md); and the
+> pinned by a ggcommons rev bump) — see [`DESIGN-uns-bridge.md`](DESIGN-uns-bridge.md); the
 > **minimal `commands()` facade** — the component command inbox (`ecv1/{device}/{component}/main/cmd/#`),
 > the built-ins `ping`/`reload-config`/Flow-B `get-configuration`, and the `register(verb, handler)`
 > seam — has shipped in the **Java canonical** (DESIGN-uns.md §9.5, slice S2; pinned by
-> `uns-test-vectors/commands.json`; Py/Rust/TS mirrors pending). The rest of this deferred list is
-> still accurate: no `telemetry()/status()/events()/discovery()` facade exists in any library (and
-> no schema/danger/RBAC-annotated `commands()` registration), no `log`-tail publisher, no streaming
-> hierarchy columns (M15), and no `cmd/sb/*` UNS command family or `writes.allow[]` (M9/D‑U15/16) —
-> though `opcua-adapter` has separately landed the M9 *capabilities* (browse/write-ack/regex-read) on
+> `uns-test-vectors/commands.json`; Py/Rust/TS mirrors pending); and **the `data()`/`events()`/`app()`
+> class-publish facades have shipped in ALL FOUR languages** (Java canonical commit `2283189`,
+> Py/Rust/TS mirrors `8d3e3c9`) — see [`DESIGN-class-facades.md`](DESIGN-class-facades.md), pinned by
+> `uns-test-vectors/{data,evt,app}.json`. The rest of this deferred list is still accurate: no
+> `status()/discovery()` facade exists in any library (and no schema/danger/RBAC-annotated
+> `commands()` registration), no `log`-tail publisher, no streaming hierarchy columns (M15), and no
+> `cmd/sb/*` UNS command family or `writes.allow[]` (M9/D‑U15 — though D‑U15's sanitized-path-vs-
+> stable-id split is now exactly what the shipped `data()` facade implements, see below) — though
+> `opcua-adapter` has separately landed the M9 *capabilities* (browse/write-ack/regex-read) on
 > its own legacy topics; see `SOUTHBOUND.md` §2.2.
 
 **Schema deltas** (edit `schema/ggcommons-config-schema.json`, then `schema/sync-schema.sh`): ADD
@@ -568,7 +580,7 @@ internal `IotCoreSubscriptionHandler → IoTCoreSubscriptionHandler` (cosmetic).
 | D‑U12 | Vectors generated from Java canonical | confirmed (vault precedent is Rust; UNS is Java-authored — trivial JSON, not crypto) | High | Easy | no |
 | D‑U13 | Split `topics.json`+`envelopes.json`; golden = full canonical JSON | confirmed; structural comparison (D‑U22); pinned uuids/timestamps need Rust/TS builder setters | High | Easy | no |
 | D‑U14 | Heartbeat #33 → on/5s/local `state` | flips Rust/TS off→on, Java metric→state, Python legacy→state; measures → metric `sys`; graceful `STOPPED` state; validate on HOST smoke. Pulled into Phase 1 (Risks #1) | High | Moderate (fleet-wide behavior) | no (pre-approved; **review the STOPPED addition**) |
-| D‑U15 | signalId → sanitized `data/{channel}`, raw id in body | provisional, **Phase 5** — no work now; token rule (§2.2) = the same sanitizer | Med | Easy (deferred) | no |
+| D‑U15 | signalId → sanitized `data/{channel}`, raw id in body | ✅ **implemented 2026-07-03** via the shipped `data()` facade (`DESIGN-class-facades.md` §2.1 rule 6): the facade sanitizes each `/`-token of the signal path into the `data/{channel}` tail while the raw `signal.id` rides untouched in the body — exactly the split this row anticipated; token rule (§2.2) = the same sanitizer. What's still Phase 5: `writes.allow[]` matching the stable id (D‑U16) and the southbound command family (M9) | High | Easy | no |
 | D‑U16 | `writes.allow[]` matches stable `signal.id` | provisional, **Phase 5** (adapter-contract change, M9) | Med | Easy (deferred) | no |
 | **D‑U17** | M8 the bridge's site connection | ✅ **FINAL 2026-07-03 → NO CORE CHANGE (any language).** The site broker is the uns-bridge's **external system** (like the opcua-adapter's OPC UA endpoints), configured in the bridge's own `component.instances[]` and built by **reusing the core's already-`pub` MQTT objects** (`MqttProvider::connect` + `DefaultMessagingService`/raw `MessagingProvider`), inside the bridge. **No `messaging.connections` schema, no `gg.messaging()` API change, no keyed registry, no Java/Python/TS change** (at most a 1-line Rust `pub use`). Supersedes the earlier "named connection in the core" reading. §2.3, DESIGN-uns-bridge §1 | High | Easy | resolved |
 | **D‑U18** | `identity.component` = **sanitized short name** (existing `{ComponentName}` semantics), not reverse-DNS full name | ✅ **confirmed 2026-07-02** (user agreed). Matches every existing topic site + the design examples; dots legal in-level so full name stays possible later; cross-vendor collision on one device accepted pre-1.0 | High | Hard once fleets deploy | resolved |
@@ -664,10 +676,21 @@ partitioning in the streaming sinks (verified by source search).
 
 **Phase 5 — southbound command family (M9) + D‑U15/D‑U16 + component adoption (opcua/modbus/processor) +
 docs/scaffold retirement** (incl. the stale `SouthboundTagUpdate` python-protocol-adapter template).
-**NOT STARTED** as designed here (no `cmd/sb/*` UNS topics, no `writes.allow[]`). Note the independent
+**NOT STARTED as designed here** (no `cmd/sb/*` UNS topics, no `writes.allow[]`). Note the independent
 precedent: `opcua-adapter` has landed the M9 *capabilities* (browse/write-ack/regex-read) on its own
 legacy topics (2026-07-02, "command-surface-parity") — see `SOUTHBOUND.md` §2.2 — which is not the same
 as this phase landing.
+
+> **Update (2026-07-03) — the library half of this phase's facade work has shipped ahead of the rest:**
+> per [`DESIGN-class-facades.md`](DESIGN-class-facades.md) §7.1's recommended "library-facades-first"
+> sequencing, the `data()`/`events()`/`app()` class-publish facades are **DONE, all four languages**
+> (Java canonical `2283189`; Python/Rust/TS mirrors `8d3e3c9`; pinned by
+> `uns-test-vectors/{data,evt,app}.json`, D‑U15's sanitized-path/raw-id split included — see that row
+> above). What remains **NOT STARTED** in this phase: the per-repo component-adoption PRs that migrate
+> `opcua-adapter`'s `SignalUpdatePublisher`/`EventEmitter`, `modbus-adapter`'s
+> `publisher.py`/`events.py`/`command_service.py` write-audit, and `telemetry-processor`'s `route.rs`
+> off their own hand-built bodies onto the shipped facades; the `cmd/sb/*` UNS command family +
+> `writes.allow[]` (M9/D‑U16); and the docs/scaffold retirement.
 
 > **Cross-cutting:** `edge-console` (design only, no code) already consumes the new identity model; its
 > DESIGN.md needs no change beyond what already references DESIGN-uns.
