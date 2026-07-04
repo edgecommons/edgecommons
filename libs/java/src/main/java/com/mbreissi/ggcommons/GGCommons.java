@@ -16,6 +16,7 @@ import com.mbreissi.ggcommons.facades.StreamSink;
 import com.mbreissi.ggcommons.health.HealthServer;
 import com.mbreissi.ggcommons.heartbeat.Heartbeat;
 import com.mbreissi.ggcommons.heartbeat.HeartbeatBuilder;
+import com.mbreissi.ggcommons.heartbeat.InstanceConnectivityProvider;
 import com.mbreissi.ggcommons.messaging.MessageIdentity;
 import com.mbreissi.ggcommons.messaging.MessagingClient;
 import com.mbreissi.ggcommons.messaging.MessagingClientBuilder;
@@ -441,6 +442,25 @@ public class GGCommons
     public AppFacade getApp()
     {
         return instance(MessageIdentity.DEFAULT_INSTANCE).app();
+    }
+
+    /**
+     * Registers the component's per-instance connectivity provider — the overridable surface for
+     * reporting connectivity <b>at the instance level</b> (each configured connection's health) in
+     * the {@code main} {@code state} keepalive's {@code instances[]} array, without minting a
+     * separate UNS instance per connection (data + lifecycle stay under {@code main}). A reference
+     * adapter maps each connection to its live reachability: OPC UA server session / Modbus slave /
+     * file-replicator source directory. No-op when the heartbeat is not wired (test/subclass
+     * bring-up). Pass {@code null} to stop reporting.
+     *
+     * @param provider the per-instance connectivity provider, or {@code null} to clear
+     */
+    public void setInstanceConnectivityProvider(InstanceConnectivityProvider provider)
+    {
+        if (heartbeat != null)
+        {
+            heartbeat.setInstanceConnectivityProvider(provider);
+        }
     }
 
     /**

@@ -9,6 +9,7 @@ import com.mbreissi.ggcommons.config.HeartbeatConfiguration;
 import com.mbreissi.ggcommons.test.MockConfigurationService;
 import com.mbreissi.ggcommons.test.MockMessagingService;
 import com.mbreissi.ggcommons.test.MockMetricService;
+import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import org.junit.jupiter.api.Test;
@@ -280,5 +281,122 @@ class HeartbeatPublishTest {
         } finally {
             heartbeat.close();
         }
+    }
+
+    @Test
+    void stateKeepaliveCarriesPerInstanceConnectivityFromTheProvider() {
+        MockConfigurationService config = configWithHeartbeat("{\"intervalSecs\":3600}");
+        MockMessagingService messaging = new MockMessagingService();
+
+        Heartbeat heartbeat = HeartbeatBuilder.create(config)
+                .withMessagingService(messaging)
+                .withMetricService(new MockMetricService())
+                .build();
+        try {
+            awaitAtLeastOnePublish(messaging); // startup tick — no provider yet
+            JsonObject startup = messaging.getPublishedMessages().get(0).message.toDict().getAsJsonObject("body");
+            assertFalse(startup.has("instances"), "no provider -> no instances[] section");
+
+            messaging.clearPublishedMessages();
+            heartbeat.setInstanceConnectivityProvider(() -> List.of(
+                    InstanceConnectivity.of("filler1", true, "opc.tcp://kep:49320"),
+                    InstanceConnectivity.of("kep2", false)));
+            heartbeat.publishStateNow();
+
+            JsonObject body = messaging.getPublishedMessages().get(0).message.toDict().getAsJsonObject("body");
+            assertEquals("RUNNING", body.get("status").getAsString());
+            JsonArray instances = body.getAsJsonArray("instances");
+            assertEquals(2, instances.size());
+            JsonObject first = instances.get(0).getAsJsonObject();
+            assertEquals("filler1", first.get("instance").getAsString());
+            assertTrue(first.get("connected").getAsBoolean());
+            assertEquals("opc.tcp://kep:49320", first.get("detail").getAsString());
+            JsonObject second = instances.get(1).getAsJsonObject();
+            assertEquals("kep2", second.get("instance").getAsString());
+            assertFalse(second.get("connected").getAsBoolean());
+            assertFalse(second.has("detail"), "no detail -> omitted");
+        } finally {
+            heartbeat.close();
+        }
+    }
+
+    @Test
+    void aThrowingConnectivityProviderNeverSuppressesTheKeepalive() {
+        MockConfigurationService config = configWithHeartbeat("{\"intervalSecs\":3600}");
+        MockMessagingService messaging = new MockMessagingService();
+
+        Heartbeat heartbeat = HeartbeatBuilder.create(config)
+                .withMessagingService(messaging)
+                .withMetricService(new MockMetricService())
+                .build();
+        try {
+            awaitAtLeastOnePublish(messaging);
+            messaging.clearPublishedMessages();
+            heartbeat.setInstanceConnectivityProvider(() -> { throw new RuntimeException("boom"); });
+            heartbeat.publishStateNow();
+
+            List<MockMessagingService.PublishedMessage> published = messaging.getPublishedMessages();
+            assertEquals(1, published.size(), "a throwing provider must not suppress the keepalive");
+            JsonObject body = published.get(0).message.toDict().getAsJsonObject("body");
+            assertEquals("RUNNING", body.get("status").getAsString());
+            assertFalse(body.has("instances"), "a throwing provider omits instances[]");
+        } finally {
+            heartbeat.close();
+        }
+    }
+
+    @Test
+    void anEmptyOrNullProviderResultOmitsTheInstancesSection() {
+        MockConfigurationService config = configWithHeartbeat("{\"intervalSecs\":3600}");
+        MockMessagingService messaging = new MockMessagingService();
+
+        Heartbeat heartbeat = HeartbeatBuilder.create(config)
+                .withMessagingService(messaging)
+                .withMetricService(new MockMetricService())
+                .build();
+        try {
+            awaitAtLeastOnePublish(messaging);
+
+            heartbeat.setInstanceConnectivityProvider(List::of); // empty list
+            messaging.clearPublishedMessages();
+            heartbeat.publishStateNow();
+            assertFalse(messaging.getPublishedMessages().get(0).message.toDict()
+                    .getAsJsonObject("body").has("instances"), "empty list -> no instances[]");
+
+            heartbeat.setInstanceConnectivityProvider(() -> null); // null result
+            messaging.clearPublishedMessages();
+            heartbeat.publishStateNow();
+            assertFalse(messaging.getPublishedMessages().get(0).message.toDict()
+                    .getAsJsonObject("body").has("instances"), "null result -> no instances[]");
+
+            heartbeat.setInstanceConnectivityProvider(null); // cleared
+            messaging.clearPublishedMessages();
+            heartbeat.publishStateNow();
+            assertFalse(messaging.getPublishedMessages().get(0).message.toDict()
+                    .getAsJsonObject("body").has("instances"), "cleared provider -> no instances[]");
+        } finally {
+            heartbeat.close();
+        }
+    }
+
+    @Test
+    void instanceConnectivitySerializesAndValidates() {
+        JsonObject json = InstanceConnectivity.of("plc1", true, "tcp://10.0.0.50:502").toJson();
+        assertEquals("plc1", json.get("instance").getAsString());
+        assertTrue(json.get("connected").getAsBoolean());
+        assertEquals("tcp://10.0.0.50:502", json.get("detail").getAsString());
+
+        assertFalse(InstanceConnectivity.of("plc1", false).toJson().has("detail"),
+                "no detail -> omitted");
+        assertFalse(new InstanceConnectivity("plc1", false, "  ").toJson().has("detail"),
+                "blank detail -> omitted");
+
+        InstanceConnectivity c = new InstanceConnectivity("srv", true, "d");
+        assertEquals("srv", c.getInstance());
+        assertTrue(c.isConnected());
+        assertEquals("d", c.getDetail());
+
+        assertThrows(IllegalArgumentException.class, () -> new InstanceConnectivity(null, true, null));
+        assertThrows(IllegalArgumentException.class, () -> new InstanceConnectivity("  ", true, null));
     }
 }

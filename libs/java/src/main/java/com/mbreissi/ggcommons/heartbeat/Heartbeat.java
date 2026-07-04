@@ -17,6 +17,7 @@ import com.mbreissi.ggcommons.metrics.MetricBuilder;
 import com.mbreissi.ggcommons.metrics.MetricEmitter;
 import com.mbreissi.ggcommons.uns.Uns;
 import com.mbreissi.ggcommons.uns.UnsClass;
+import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import org.apache.logging.log4j.LogManager;
@@ -24,6 +25,7 @@ import org.apache.logging.log4j.Logger;
 import software.amazon.awssdk.aws.greengrass.model.QOS;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -61,6 +63,11 @@ public class Heartbeat implements ConfigurationChangeListener
     private volatile boolean stoppedPublished = false;
     /** WARN-once flag for the no-resolved-identity (test/subclass bring-up) case. */
     private volatile boolean warnedNoIdentity = false;
+    /**
+     * An optional component-supplied source of per-instance connectivity, sampled each keepalive
+     * tick into the state body's {@code instances[]} array (see {@link InstanceConnectivityProvider}).
+     */
+    private volatile InstanceConnectivityProvider connectivityProvider;
     private final ScheduledExecutorService scheduler =
             Executors.newSingleThreadScheduledExecutor(runnable -> {
                 Thread thread = new Thread(runnable, "Heartbeat-scheduler");
@@ -82,6 +89,20 @@ public class Heartbeat implements ConfigurationChangeListener
 
         configurationService.addConfigChangeListener(this);
         initialize();
+    }
+
+    /**
+     * Registers (or replaces, or clears with {@code null}) the per-instance connectivity provider
+     * whose result is emitted in each RUNNING {@code state} keepalive's {@code instances[]} array —
+     * the overridable surface a multi-connection component uses to report connectivity at the
+     * instance level without a separate UNS instance per connection. Wired from
+     * {@code GGCommons.setInstanceConnectivityProvider}. Thread-safe (volatile).
+     *
+     * @param provider the provider, or {@code null} to stop reporting per-instance connectivity
+     */
+    public void setInstanceConnectivityProvider(InstanceConnectivityProvider provider)
+    {
+        this.connectivityProvider = provider;
     }
 
     /**
@@ -196,6 +217,37 @@ public class Heartbeat implements ConfigurationChangeListener
         if (includeUptime)
         {
             body.addProperty("uptimeSecs", getUptimeSecs());
+        }
+        // Per-instance connectivity — the state body's instances[] (only on the RUNNING keepalive; a
+        // STOPPED state carries no live instances). Best-effort: a null/throwing provider simply omits
+        // the section — a provider bug must never suppress the keepalive itself.
+        InstanceConnectivityProvider provider = connectivityProvider;
+        if (includeUptime && provider != null)
+        {
+            try
+            {
+                List<InstanceConnectivity> conns = provider.instanceConnectivity();
+                if (conns != null && !conns.isEmpty())
+                {
+                    JsonArray instances = new JsonArray();
+                    for (InstanceConnectivity c : conns)
+                    {
+                        if (c != null)
+                        {
+                            instances.add(c.toJson());
+                        }
+                    }
+                    if (!instances.isEmpty())
+                    {
+                        body.add("instances", instances);
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                LOGGER.warn("Instance connectivity provider failed; omitting instances[] this tick: {}",
+                        e.toString());
+            }
         }
         Message stateMessage = MessageBuilder.create(STATE_MESSAGE_NAME, STATE_MESSAGE_VERSION)
                 .withPayload(body)
