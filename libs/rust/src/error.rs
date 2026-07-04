@@ -115,6 +115,16 @@ pub enum GgError {
     #[error("parameters error: {0}")]
     Parameters(String),
 
+    /// App-usable class publish-facade validation error (`data()`/`events()`/`app()`,
+    /// DESIGN-class-facades §5.2): a structural violation the facade cannot default away —
+    /// a missing/empty `signal.id`, an empty `samples` list, a sample with no `value`, an
+    /// empty `evt` type, an empty `app` name/channel, or an empty stream channel name.
+    /// Distinct from [`GgError::UnsValidation`] (topic/token shape) and
+    /// [`GgError::Messaging`] (transport) — this is the body-contract rejection the three
+    /// facades make structural (DESIGN-class-facades §1.3/§5).
+    #[error("facade error: {0}")]
+    Facade(String),
+
     /// Underlying I/O error.
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),

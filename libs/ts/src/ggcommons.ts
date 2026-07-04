@@ -27,6 +27,8 @@ import { ConfigurationChangeListener } from "./config";
 import { EffectiveConfigPublisher } from "./config/effective_config";
 import { CommandInbox } from "./commands";
 import { GgError } from "./errors";
+import { AppFacade, DataFacade, EventsFacade } from "./facades";
+import type { StreamSink } from "./facades";
 import { Heartbeat } from "./heartbeat";
 import { initLogging, reconfigureLogging, LoggingReconfigurer, logger } from "./logging";
 import { MessageBuilder, MessageIdentity } from "./message";
@@ -45,8 +47,9 @@ import type { ParameterService } from "./parameters";
 
 /**
  * The per-instance seam (UNS-CANONICAL-DESIGN §3, D-U3): an instance-scoped handle whose only
- * job is to pre-bind the instance token into (a) the {@link Uns} topic builder and (b) the
- * {@link MessageBuilder}. The messaging service stays instance-agnostic — `publish(topic,
+ * job is to pre-bind the instance token into (a) the {@link Uns} topic builder, (b) the
+ * {@link MessageBuilder}, and (c) the app-usable publish facades (`data()`/`events()`/`app()` —
+ * DESIGN-class-facades §3). The messaging service stays instance-agnostic — `publish(topic,
  * msg)` already receives both the topic (minted by this handle's instance-bound `uns()`) and
  * the envelope (stamped by its instance-bound builder).
  *
@@ -57,12 +60,33 @@ import type { ParameterService } from "./parameters";
 export class GgInstance {
   private readonly unsValue: Uns;
 
-  /** @internal Created by {@link GGCommons.instance}, which validates + caches per id. */
+  /** Lazily-created facades (per-instance; the facades hold no per-instance client state). */
+  private dataFacade?: DataFacade;
+  private eventsFacade?: EventsFacade;
+  private appFacade?: AppFacade;
+
+  /**
+   * @internal Created by {@link GGCommons.instance}, which validates + caches per id.
+   *
+   * @param idValue         the instance token
+   * @param configProvider  a snapshot accessor (envelope identity + `publish.channel` lookup)
+   * @param componentIdentity the resolved component identity (pre-instance-binding)
+   * @param includeRoot     the resolved `topic.includeRoot` mode
+   * @param messagingProvider the (guarded) messaging service accessor, or `undefined` when
+   *                          messaging is not available in this runtime mode (the facades then
+   *                          throw `GgError.messaging` on first use, matching {@link GGCommons.messaging})
+   * @param streamSinkProvider the stream seam for `data().via(stream)` (`undefined` when
+   *                            streaming is not configured — a stream route then falls back to local)
+   * @param clockMillis     the clock for the facades' time defaults (injected for deterministic tests)
+   */
   constructor(
     private readonly idValue: string,
     private readonly configProvider: () => Config,
     componentIdentity: MessageIdentity,
     includeRoot: boolean,
+    private readonly messagingProvider: () => IMessagingService | undefined = () => undefined,
+    private readonly streamSinkProvider: () => StreamSink | undefined = () => undefined,
+    private readonly clockMillis: () => number = () => Date.now(),
   ) {
     this.unsValue = new Uns(componentIdentity.withInstance(idValue), includeRoot);
   }
@@ -84,6 +108,63 @@ export class GgInstance {
    */
   newMessage(name: string, version: string): MessageBuilder {
     return MessageBuilder.create(name, version).withConfig(this.configProvider()).withInstance(this.idValue);
+  }
+
+  /** The (guarded) messaging service, or throw if none was wired in this runtime mode. */
+  private requireMessaging(): IMessagingService {
+    const messaging = this.messagingProvider();
+    if (!messaging) {
+      throw GgError.messaging("messaging is not available in this runtime mode");
+    }
+    return messaging;
+  }
+
+  /**
+   * The `data()` publish facade bound to this instance (DESIGN-class-facades §2.1): builds +
+   * validates the `SouthboundSignalUpdate` body (quality → GOOD, `serverTs` → now, samples
+   * wrapper), sanitizes the signal path into the `data` channel, and routes on the resolved
+   * channel (per-call ▸ config `publish.channel` ▸ LOCAL).
+   */
+  data(): DataFacade {
+    if (this.dataFacade === undefined) {
+      this.dataFacade = new DataFacade(
+        this.configProvider,
+        this.idValue,
+        this.unsValue,
+        this.requireMessaging(),
+        this.streamSinkProvider(),
+        this.clockMillis,
+      );
+    }
+    return this.dataFacade;
+  }
+
+  /**
+   * The `events()` publish facade bound to this instance (DESIGN-class-facades §2.2): operator
+   * events & alarms on the `evt` class, deriving the `evt/{severity}/{type}` channel from the body.
+   */
+  events(): EventsFacade {
+    if (this.eventsFacade === undefined) {
+      this.eventsFacade = new EventsFacade(
+        this.configProvider,
+        this.idValue,
+        this.unsValue,
+        this.requireMessaging(),
+        this.clockMillis,
+      );
+    }
+    return this.eventsFacade;
+  }
+
+  /**
+   * The `app()` publish facade bound to this instance (DESIGN-class-facades §2.3): free-form
+   * inter-component pub/sub on the `app` class (named header + verbatim body).
+   */
+  app(): AppFacade {
+    if (this.appFacade === undefined) {
+      this.appFacade = new AppFacade(this.configProvider, this.idValue, this.unsValue, this.requireMessaging());
+    }
+    return this.appFacade;
   }
 }
 
@@ -134,6 +215,12 @@ export class GGCommons {
   private unsValue?: Uns;
   /** Cached per-id instance handles (UNS-CANONICAL-DESIGN §3, D-U3). */
   private readonly instanceHandles = new Map<string, GgInstance>();
+  /**
+   * The clock the per-instance publish facades (`data()`/`events()`) use for their time defaults
+   * (`serverTs`/`timestamp` → now). System clock in production; the facades take an injected
+   * `ClockMillis` directly in their own unit tests for determinism.
+   */
+  private readonly clockMillis: () => number = () => Date.now();
 
   /** @internal Attach the config-watch handle after construction. */
   _setWatch(watch: ConfigWatch | undefined): void {
@@ -314,10 +401,51 @@ export class GGCommons {
         () => this.current,
         this.current.componentIdentity,
         this.current.topicIncludeRoot,
+        () => this.messagingService,
+        () => this.streamSink(),
+        this.clockMillis,
       );
       this.instanceHandles.set(instanceId, handle);
     }
     return handle;
+  }
+
+  /**
+   * The stream seam the `data()` facade composes for a `stream:<name>` channel
+   * (DESIGN-class-facades §4): binds `streams().stream(name).append(...)` when streaming is
+   * configured, else `undefined` so the facade falls a stream route back to a LOCAL publish.
+   */
+  private streamSink(): StreamSink | undefined {
+    const streams = this.streamsService;
+    if (!streams) return undefined;
+    return (name, partitionKey, timestampMs, payload) => streams.stream(name).append(partitionKey, timestampMs, payload);
+  }
+
+  /**
+   * The `data()` publish facade for the component's `main` instance — the single-instance-
+   * component convenience, equivalent to `instance("main").data()` (DESIGN-class-facades §3, D6).
+   * Builds/validates the `SouthboundSignalUpdate` body.
+   */
+  data(): DataFacade {
+    return this.instance(MessageIdentity.DEFAULT_INSTANCE).data();
+  }
+
+  /**
+   * The `events()` publish facade for the component's `main` instance — equivalent to
+   * `instance("main").events()` (DESIGN-class-facades §3, D6). Operator events & alarms on the
+   * `evt` class.
+   */
+  events(): EventsFacade {
+    return this.instance(MessageIdentity.DEFAULT_INSTANCE).events();
+  }
+
+  /**
+   * The `app()` publish facade for the component's `main` instance — equivalent to
+   * `instance("main").app()` (DESIGN-class-facades §3, D6). Free-form inter-component pub/sub on
+   * the `app` class.
+   */
+  app(): AppFacade {
+    return this.instance(MessageIdentity.DEFAULT_INSTANCE).app();
   }
 
   /** Register a listener invoked after the configuration is hot-reloaded. */

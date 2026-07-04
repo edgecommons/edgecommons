@@ -138,6 +138,13 @@ class TestFacadeAccessors:
         gg = object.__new__(GGCommons)
         gg._uns = None
         gg._instance_handles = {}
+        # instance() also threads the streaming sink + clock into GgInstance for the
+        # data()/events()/app() publish facades (DESIGN-class-facades §3/§4); a bare
+        # object.__new__ bring-up (no __init__) needs these set so _stream_sink() and
+        # the GgInstance constructor don't AttributeError. None is a valid value for
+        # both (no streaming configured; the facades default their own clock).
+        gg._streams = None
+        gg._clock = None
 
         class Cm:
             def get_component_identity(self):

@@ -32,6 +32,7 @@ pub mod cli;
 pub mod commands;
 pub mod config;
 pub mod error;
+pub mod facades;
 pub mod health;
 pub mod heartbeat;
 mod instance;
@@ -125,6 +126,18 @@ pub struct GgCommons {
     /// republish listener's `republish-state` action ([`heartbeat::Heartbeat::publish_state_now`])
     /// and the command inbox's `ping` uptime source ([`heartbeat::Heartbeat::uptime_secs`]).
     _heartbeat: Arc<heartbeat::Heartbeat>,
+    /// The `data()` facade's stream-route seam (DESIGN-class-facades §4): `Some` when the
+    /// `streaming` cargo feature is on (regardless of whether a `streaming` config section is
+    /// present — the underlying `StreamService` is always available under the feature, and an
+    /// unconfigured stream NAME fails at append time, logged and swallowed like any other
+    /// stream-route failure); `None` when the feature is off, so a `stream:` channel on
+    /// `data()` falls back to a LOCAL publish (D1a).
+    facade_stream_sink: Option<Arc<dyn facades::StreamSink>>,
+    /// The injected "now" seam the `data()`/`events()` facades use for their `serverTs`/
+    /// `timestamp` defaults (DESIGN-class-facades). Production is always
+    /// [`facades::system_clock`] — the facades' own unit/conformance tests inject a fixed clock
+    /// directly (they build `GgInstance`/the facades without going through this runtime).
+    facade_clock: facades::Clock,
     /// Owns the hot-reload task; aborted on drop. `None` if the source can't watch.
     _reload_task: Option<AbortOnDrop>,
     /// Keeps the config source (and its OS file watcher) alive for hot reload; also cloned into
@@ -248,7 +261,40 @@ impl GgCommons {
                  creating a dynamic instance handle"
             );
         }
-        GgInstance::new(instance_id.to_string(), cfg)
+        GgInstance::new(
+            instance_id.to_string(),
+            cfg,
+            self.messaging.clone(),
+            self.facade_stream_sink.clone(),
+            self.facade_clock.clone(),
+        )
+    }
+
+    /// The `data()` publish facade for the component's `main` instance — the
+    /// single-instance-component convenience, equivalent to `instance("main").data()`
+    /// (DESIGN-class-facades §3, D6). Builds/validates the `SouthboundSignalUpdate` body.
+    pub fn data(&self) -> facades::DataFacade {
+        self.instance(messaging::MessageIdentity::DEFAULT_INSTANCE)
+            .expect("the 'main' instance token always passes the §2.2 token rule")
+            .data()
+    }
+
+    /// The `events()` publish facade for the component's `main` instance — equivalent to
+    /// `instance("main").events()` (DESIGN-class-facades §3, D6). Operator events & alarms on
+    /// the `evt` class.
+    pub fn events(&self) -> facades::EventsFacade {
+        self.instance(messaging::MessageIdentity::DEFAULT_INSTANCE)
+            .expect("the 'main' instance token always passes the §2.2 token rule")
+            .events()
+    }
+
+    /// The `app()` publish facade for the component's `main` instance — equivalent to
+    /// `instance("main").app()` (DESIGN-class-facades §3, D6). Free-form inter-component
+    /// pub/sub on the `app` class.
+    pub fn app(&self) -> facades::AppFacade {
+        self.instance(messaging::MessageIdentity::DEFAULT_INSTANCE)
+            .expect("the 'main' instance token always passes the §2.2 token rule")
+            .app()
     }
 
     /// The telemetry-streaming service for this component (the `streaming` feature).
@@ -569,6 +615,21 @@ impl GgCommonsBuilder {
             (svc, bridge)
         };
 
+        // The `data()` facade's stream-route seam (DESIGN-class-facades §4): composes the
+        // `streaming` feature's `StreamService` when it is compiled in (the underlying service is
+        // always available under the feature, even with zero configured streams — an unconfigured
+        // stream NAME then fails at append time, caught and logged like any other stream-route
+        // failure); `None` when the feature is off, so a `data().via(Channel::stream(name))` call
+        // falls back to a LOCAL publish instead (readiness / no-streaming → local, D1a).
+        #[cfg(feature = "streaming")]
+        let facade_stream_sink: Option<Arc<dyn facades::StreamSink>> =
+            Some(Arc::new(streaming::StreamServiceSink::new(streams.clone())));
+        #[cfg(not(feature = "streaming"))]
+        let facade_stream_sink: Option<Arc<dyn facades::StreamSink>> = None;
+        // The injected "now" seam for the `data()`/`events()` facades' `serverTs`/`timestamp`
+        // defaults (no inline `Instant`/`SystemTime` read in a facade body).
+        let facade_clock: facades::Clock = facades::system_clock();
+
         // Health / readiness (FR-HB-1/2). The shared readiness state seeds both the HTTP health
         // endpoint and the SIGTERM watcher. `ready` defaults to true and messaging-connected is
         // queried live, so a component is ready as soon as the broker connects unless the app gates
@@ -745,6 +806,8 @@ impl GgCommonsBuilder {
             _signal_task: signal_task,
             _republish_listener: republish_listener,
             commands,
+            facade_stream_sink,
+            facade_clock,
             _heartbeat: heartbeat,
             _reload_task: reload_task,
             _config_source: source,
@@ -989,6 +1052,9 @@ pub mod prelude {
     pub use crate::commands::{command_handler, CommandError, CommandHandler, CommandInbox};
     pub use crate::config::model::Config;
     pub use crate::config::ConfigurationChangeListener;
+    pub use crate::facades::{
+        AppFacade, Channel, DataFacade, EventsFacade, Quality, Sample, Severity, SignalUpdate,
+    };
     pub use crate::platform::{Platform, Transport};
     pub use crate::messaging::{
         message_handler, MessageHandler, MessageIdentity, MessagingService, Qos, ReplyFuture,

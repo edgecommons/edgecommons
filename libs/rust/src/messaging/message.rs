@@ -604,7 +604,11 @@ impl MessageBuilder {
 
 /// Current UTC time formatted as RFC3339, or a fixed epoch string on the
 /// (practically impossible) formatting failure.
-fn now_rfc3339() -> String {
+///
+/// `pub(crate)`: also reused as the production [`crate::facades::Clock`] seam (the
+/// `data()`/`events()` facades' `serverTs`/`timestamp` "now" default) so there is exactly one
+/// "current time as our wire timestamp format" function in the crate.
+pub(crate) fn now_rfc3339() -> String {
     OffsetDateTime::now_utc()
         .format(&Rfc3339)
         .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())

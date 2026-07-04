@@ -14,6 +14,7 @@ import os
 import signal
 import sys
 import threading
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional, List
 from ggcommons.config.manager.config_manager import ConfigManager
@@ -90,6 +91,10 @@ class GGCommons:
         # Cached per-id instance handles (UNS-CANONICAL-DESIGN §3, D-U3): instance(id)
         # returns the same GgInstance for the same id.
         self._instance_handles = {}
+        # The clock the data()/events() publish facades use for their time defaults
+        # (serverTs/timestamp -> now), injected so tests can pin a fixed clock
+        # (DESIGN-class-facades §2, mirrors Java's Clock.systemUTC()).
+        self._clock = lambda: datetime.now(timezone.utc)
         self._streams = None
         self._stream_metrics = None
         self._credentials = None
@@ -750,6 +755,7 @@ class GGCommons:
         :raises RuntimeError: when called before initialization completes
         """
         from ggcommons.gg_instance import GgInstance
+        from ggcommons.messaging.messaging_client import MessagingClient
         from ggcommons.uns import Uns
 
         Uns.check_token(instance_id, "instance id")
@@ -764,9 +770,62 @@ class GGCommons:
                     instance_id,
                     configured,
                 )
-            handle = GgInstance(instance_id, cm, cm.is_topic_include_root())
+            handle = GgInstance(instance_id, cm, cm.is_topic_include_root(),
+                               MessagingClient, self._stream_sink(), self._clock)
             self._instance_handles[instance_id] = handle
         return handle
+
+    def _stream_sink(self):
+        """The stream seam the ``data()`` facade composes for a ``stream:<name>``
+        channel (DESIGN-class-facades §4): binds ``get_streams().stream(name).append(...)``
+        when streaming is configured, else ``None`` so the facade falls a stream route
+        back to a LOCAL publish.
+
+        :return: the stream sink callable, or ``None`` when no ``streaming`` section is
+            configured
+        """
+        streams = self._streams
+        if streams is None:
+            return None
+
+        def _sink(stream_name, partition_key, timestamp_ms, payload):
+            streams.stream(stream_name).append(partition_key, timestamp_ms, payload)
+
+        return _sink
+
+    def data(self):
+        """The ``data()`` publish facade for the component's ``main`` instance — the
+        single-instance-component convenience, equivalent to ``instance("main").data()``
+        (DESIGN-class-facades §3, D6). Builds/validates the ``SouthboundSignalUpdate``
+        body. Mirrors Java's ``getData()``.
+
+        :raises RuntimeError: when called before initialization completes
+        """
+        from ggcommons.messaging.identity import MessageIdentity
+
+        return self.instance(MessageIdentity.DEFAULT_INSTANCE).data()
+
+    def events(self):
+        """The ``events()`` publish facade for the component's ``main`` instance —
+        equivalent to ``instance("main").events()`` (DESIGN-class-facades §3, D6).
+        Operator events & alarms on the ``evt`` class. Mirrors Java's ``getEvents()``.
+
+        :raises RuntimeError: when called before initialization completes
+        """
+        from ggcommons.messaging.identity import MessageIdentity
+
+        return self.instance(MessageIdentity.DEFAULT_INSTANCE).events()
+
+    def app(self):
+        """The ``app()`` publish facade for the component's ``main`` instance —
+        equivalent to ``instance("main").app()`` (DESIGN-class-facades §3, D6). Free-form
+        inter-component pub/sub on the ``app`` class. Mirrors Java's ``getApp()``.
+
+        :raises RuntimeError: when called before initialization completes
+        """
+        from ggcommons.messaging.identity import MessageIdentity
+
+        return self.instance(MessageIdentity.DEFAULT_INSTANCE).app()
 
     def _require_resolved_identity(self) -> ConfigManager:
         """Guards the UNS accessors: they need the config manager and its resolved

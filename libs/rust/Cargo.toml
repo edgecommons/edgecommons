@@ -79,7 +79,7 @@ sysinfo = "0.39"
 notify = "8"
 # Message wire-format parity with Java/Python: UUID correlation ids + RFC3339 timestamps.
 uuid = { version = "1", features = ["v4"] }
-time = { version = "0.3", features = ["formatting"] }
+time = { version = "0.3", features = ["formatting", "parsing"] }
 # Uniform jitter for the _bcast republish listener's anti-stampede delay (UNS-CANONICAL-DESIGN
 # §9.3/§9.4). Already a transitive dependency (rumqttc et al.); pinned direct here since the
 # listener is core plumbing, not feature-gated.

@@ -136,6 +136,38 @@ export type { Delayer as RepublishDelayer, ClockMillis as RepublishClockMillis, 
 export { CommandInbox, CommandException } from "./commands";
 export type { CommandHandler, CommandResult } from "./commands";
 
+// App-usable class publish facades: data()/events()/app() (DESIGN-class-facades)
+export {
+  DataFacade,
+  DATA_MESSAGE_NAME,
+  DATA_MESSAGE_VERSION,
+  QUALITY_UNSPECIFIED,
+  EventsFacade,
+  EVT_MESSAGE_NAME,
+  EVT_MESSAGE_VERSION,
+  AppFacade,
+  APP_MESSAGE_VERSION,
+  Quality,
+  qualityFromWire,
+  Severity,
+  severityFromWire,
+  Channel,
+  SignalUpdateBuilder,
+  effectiveSignalPath,
+  toIso,
+} from "./facades";
+export type {
+  ChannelKind,
+  LocalChannel,
+  NorthboundChannel,
+  StreamChannel,
+  Sample,
+  SampleOptions,
+  SignalUpdate,
+  StreamSink,
+  ClockMillis,
+} from "./facades";
+
 // Health (HTTP /livez · /readyz · /startupz + readiness state)
 export { HealthServer, ReadinessState, evaluateHealth } from "./health";
 export type { HealthServerOptions, HealthPaths, HealthResponse } from "./health";

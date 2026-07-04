@@ -117,6 +117,32 @@ pub trait StreamService: Send + Sync {
     fn stats(&self, name: &str) -> Option<Stats>;
 }
 
+/// The production [`crate::facades::StreamSink`] adapter: composes a [`StreamService`] so
+/// `data().via(Channel::stream(name))` (DESIGN-class-facades §4) can append the facade's
+/// serialized envelope without depending on the native `ggstreamlog` binding directly. Wired by
+/// [`crate::GgCommonsBuilder::build`] whenever the `streaming` feature is compiled in — the facade
+/// seam itself lives in [`crate::facades`] so it (and `DataFacade`) build standalone too.
+pub struct StreamServiceSink(Arc<dyn StreamService>);
+
+impl StreamServiceSink {
+    /// Wraps a [`StreamService`] as a [`crate::facades::StreamSink`].
+    pub fn new(service: Arc<dyn StreamService>) -> Self {
+        Self(service)
+    }
+}
+
+impl crate::facades::StreamSink for StreamServiceSink {
+    fn append(
+        &self,
+        stream_name: &str,
+        partition_key: &str,
+        timestamp_ms: u64,
+        payload: Vec<u8>,
+    ) -> Result<()> {
+        self.0.stream(stream_name)?.append(Record::new(partition_key, timestamp_ms, payload))
+    }
+}
+
 /// The default [`StreamService`]: a thin wrapper over [`ggstreamlog::StreamService`], adding the
 /// component-facing handle/stats types and config-template resolution. The orchestration (opening
 /// buffers, building sinks, running export engines) lives in the core and is shared with the
