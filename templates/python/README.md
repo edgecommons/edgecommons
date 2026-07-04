@@ -25,20 +25,26 @@ hierarchy level is always the resolved thing name), and application topics are m
 
 Beyond the fully-automatic `state` keepalive and command inbox (`ping` / `reload-config` /
 `get-configuration`, live with zero code), `app/<<COMPONENTNAME>>.py` demonstrates the rest of
-the surface an edge-console reads/drives (DESIGN-uns §7/§9):
+the surface an edge-console reads/drives (DESIGN-uns §7/§9), through the **app-usable class
+facades** (`docs/platform/DESIGN-class-facades.md`) rather than hand-built topics/bodies:
 
 | Surface | Where | Topic |
 |---|---|---|
 | Metric (`loopTicks`: `tickCount` counter + `uptimeSecs` gauge) | `gg.get_metrics()` | `ecv1/{device}/{component}/main/metric/loopTicks` (target-dependent; `messaging` target shown) |
-| Event (`sample-event`, severity + context) | `gg.uns().topic(UnsClass.EVT, "sample-event")` + `MessagingClient.publish` | `ecv1/{device}/{component}/main/evt/sample-event` |
+| Data signal (`demo-signal`: a sine-wave reading) | `gg.data().publish("demo-signal", value)` | `ecv1/{device}/{component}/main/data/demo-signal` |
+| Event (`sample-event`, severity + context) | `gg.events().emit("sample-event", message, context, severity=Severity.INFO)` | `ecv1/{device}/{component}/main/evt/info/sample-event` |
 | Custom command verb (`set-greeting`) | `gg.get_commands().register("set-greeting", ...)` | `ecv1/{device}/{component}/main/cmd/set-greeting` |
 
-Subscribe `ecv1/+/+/+/metric/#` and `ecv1/+/+/+/evt/#` to see them (metrics only publish over MQTT
-when `metricEmission.target` is `messaging`; the default `log` target writes a local file
-instead). Invoke the custom verb with a request/reply tool (e.g. MQTTX) by publishing
-`{"header":{"name":"set-greeting","version":"1.0"},"body":{"greeting":"Hi there"}}` to
-`ecv1/{device}/{component}/main/cmd/set-greeting`; the next `app` status publish reflects the new
-greeting. Replace all three with your own metrics/events/verbs.
+Subscribe `ecv1/+/+/+/metric/#`, `ecv1/+/+/+/data/#` and `ecv1/+/+/+/evt/#` to see them (metrics
+only publish over MQTT when `metricEmission.target` is `messaging`; the default `log` target
+writes a local file instead). `DataFacade` defaults an omitted sample `quality` to `GOOD` (marked
+`qualityRaw:"unspecified"` on the wire) — pass an explicit `Quality` when your source knows a read
+failed or is stale. `EventsFacade` derives the `evt/{severity}/{type}` channel from the body's own
+severity + type, so the topic and body can never disagree; use `raise_alarm`/`clear_alarm` for
+stateful alarms instead of one-shot `emit`. Invoke the custom verb with a request/reply tool
+(e.g. MQTTX) by publishing `{"header":{"name":"set-greeting","version":"1.0"},"body":
+{"greeting":"Hi there"}}` to `ecv1/{device}/{component}/main/cmd/set-greeting`; the next `app`
+status publish reflects the new greeting. Replace all four with your own metrics/signals/events/verbs.
 
 ### Building against the unreleased library (local-dev only)
 

@@ -12,32 +12,39 @@
  *
  * What this scaffold adds is the rest of the monitoring + command surface the edge-console
  * reads (DESIGN-uns §7/§9 — G-S1/S2), so a freshly generated component has something to show up
- * on the console's Events/Metrics tabs and something custom to command, instead of an empty
- * dashboard:
+ * on the console's Signals/Events/Metrics tabs and something custom to command, instead of an
+ * empty dashboard:
  * - a periodic **metric** ({@link METRIC_NAME}: a monotonic `tickCount` counter plus an
  *   `uptimeSecs` gauge-like measure) via `gg.metrics()`;
- * - a periodic **evt** (`ecv1/.../evt/sample-event`) via the UNS topic builder + `MessageBuilder`
- *   — there is no dedicated `events()` facade yet, so an evt is just a normal published message
- *   on the open `evt` class;
+ * - a periodic **data** signal ({@link DATA_SIGNAL_ID}: a sine-wave demo reading) via
+ *   `gg.data()` — the {@link DataFacade} constructs the `SouthboundSignalUpdate` body
+ *   (device/signal/samples) and defaults an omitted sample quality to `GOOD`, so the console's
+ *   Signals tab has something to chart;
+ * - a periodic **evt** (`ecv1/.../evt/info/sample-event`) via `gg.events()` — the
+ *   {@link EventsFacade} derives the `evt/{severity}/{type}` channel from the body's own
+ *   severity + type, so the topic and body can never disagree;
  * - a custom **command verb** ({@link SET_GREETING}), registered with
  *   `gg.commands().register(...)` alongside the automatic built-ins, that mutates a small piece
  *   of in-memory state which the periodic status publish then reflects on its very next tick —
  *   so invoking it from the console is visibly observable.
  *
- * Replace all three with your own business metrics/events/verbs; none of this is required by the
- * library (a bare scaffold works fine without them), it exists so the demonstrated surface is
- * live end-to-end out of the box.
+ * Replace all four with your own business metrics/signals/events/verbs; none of this is required
+ * by the library (a bare scaffold works fine without them), it exists so the demonstrated surface
+ * is live end-to-end out of the box.
  */
 import {
   CommandException,
   Config,
   ConfigurationChangeListener,
+  DataFacade,
+  EventsFacade,
   GGCommons,
   IMessagingService,
   Message,
   MessageBuilder,
   MetricBuilder,
   MetricService,
+  Severity,
   Uns,
   UnsClass,
   logger,
@@ -45,9 +52,11 @@ import {
 
 /** The demo loop-tick metric name (see the module docs). */
 const METRIC_NAME = "loopTicks";
+/** The demo data() signal id (see the module docs). */
+const DATA_SIGNAL_ID = "demo-signal";
 /** The custom command verb this scaffold registers (see the module docs). */
 const SET_GREETING = "set-greeting";
-/** How often the demo loop ticks (publishes the status/evt/metric trio below), in ms. */
+/** How often the demo loop ticks (publishes the status/metric/data/evt quartet below), in ms. */
 const TICK_INTERVAL_MS = 10_000;
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -67,6 +76,13 @@ export class App {
   private readonly uns: Uns;
   /** `undefined` when no messaging transport is available for the runtime mode. */
   private readonly messaging?: IMessagingService;
+  /**
+   * The `data()`/`events()` publish facades (DESIGN-class-facades.md), bound to this
+   * component's `main` instance. `undefined` for the same reason {@link messaging} can be —
+   * both throw if no transport is wired, so both are guarded with the same try/catch below.
+   */
+  private readonly data?: DataFacade;
+  private readonly events?: EventsFacade;
   /**
    * In-memory demo state: mutated by the {@link SET_GREETING} command (registered below), read
    * back by the periodic status publish in {@link run} — so a console "Send command" has a
@@ -96,6 +112,19 @@ export class App {
       this.messaging = gg.messaging();
     } catch {
       this.messaging = undefined;
+    }
+
+    // gg.data()/gg.events() throw for the exact same reason (no transport wired) — same guard,
+    // same degrade-to-undefined; tick() below only publishes through them when defined.
+    try {
+      this.data = gg.data();
+    } catch {
+      this.data = undefined;
+    }
+    try {
+      this.events = gg.events();
+    } catch {
+      this.events = undefined;
     }
 
     // --- metrics: define once, emit every tick in run(). MetricBuilder is the sanctioned
@@ -145,27 +174,23 @@ export class App {
     logger.info(`<<COMPONENTNAME>> running (thing=${this.config.thingName})`);
 
     // Publish on unified-namespace (UNS) topics minted via `this.uns` — never hand-write topics.
-    // APP is the free application class; EVT is for discrete, notable occurrences (this
-    // scaffold's sample event) — metric publishes go through `this.metrics` above, never a
-    // hand-built topic.
+    // APP is the free application class for this scaffold's status publish; the data()/events()
+    // facades below mint their OWN topics from the signal id / severity+type.
     const statusTopic = this.uns.topic(UnsClass.App, "status");
-    const eventTopic = this.uns.topic(UnsClass.Evt, "sample-event");
-    logger.info(
-      `UNS identity path: ${this.uns.identity().path} - status=${statusTopic} event=${eventTopic}`,
-    );
+    logger.info(`UNS identity path: ${this.uns.identity().path} - status=${statusTopic}`);
 
     const start = Date.now();
     let seq = 0;
     while (!this.stopped) {
       seq += 1;
       const uptimeSecs = Math.floor((Date.now() - start) / 1000);
-      await this.tick(seq, uptimeSecs, statusTopic, eventTopic);
+      await this.tick(seq, uptimeSecs, statusTopic);
       await sleep(TICK_INTERVAL_MS);
     }
   }
 
-  /** One demo tick: the status/metric/evt trio (see the class docs). */
-  private async tick(seq: number, uptimeSecs: number, statusTopic: string, eventTopic: string): Promise<void> {
+  /** One demo tick: the status/metric/data/evt quartet (see the class docs). */
+  private async tick(seq: number, uptimeSecs: number, statusTopic: string): Promise<void> {
     if (this.messaging) {
       // 1) app status - reflects the current greeting (mutable via the set-greeting command
       // above), so a console operator can watch a command's effect land on the next tick.
@@ -176,27 +201,44 @@ export class App {
       await this.messaging
         .publish(statusTopic, statusMsg)
         .catch((e: unknown) => logger.warn(`status publish failed: ${String(e)}`));
-
-      // 3) evt - a discrete, human-meaningful occurrence (not a metric, not liveness state);
-      // the console's Events tab. A real component would emit these on actual occurrences (a
-      // threshold crossed, a connection lost/restored, ...), not on a fixed timer.
-      const eventMsg = MessageBuilder.create("SampleEvent", "1.0")
-        .withPayload({
-          severity: "info",
-          message: "sample event from <<COMPONENTNAME>>",
-          context: { seq, greeting: this.greeting },
-        })
-        .withConfig(this.config)
-        .build();
-      await this.messaging
-        .publish(eventTopic, eventMsg)
-        .catch((e: unknown) => logger.warn(`event publish failed: ${String(e)}`));
     }
 
     // 2) metric - a loop-tick counter plus an uptime-ish gauge (the console's Metrics tab).
     await this.metrics
       .emitMetric(METRIC_NAME, { tickCount: seq, uptimeSecs })
       .catch((e: unknown) => logger.warn(`metric emit failed: ${String(e)}`));
+
+    // 3) data - a periodic sample telemetry signal (the console's Signals tab), through the
+    // data() facade: it constructs the SouthboundSignalUpdate body (device/signal/samples),
+    // sanitizes the channel, and stamps identity - a real adapter maps one protocol read onto
+    // addSample(...) and never touches the envelope or topic (DESIGN-class-facades §2.1). A
+    // sine wave stands in for a live sensor reading here; publish(path, value) with no explicit
+    // Quality demonstrates the facade's honest default - an unspecified reading defaults to
+    // Quality.Good (marked qualityRaw="unspecified" on the wire so a consumer can tell a
+    // synthesized GOOD from a device-reported one). Pass an explicit Quality when your source
+    // knows a read failed or is stale.
+    if (this.data) {
+      const demoValue = 20.0 + 5.0 * Math.sin(seq / 10.0);
+      await this.data
+        .publish(DATA_SIGNAL_ID, demoValue)
+        .catch((e: unknown) => logger.warn(`data publish failed: ${String(e)}`));
+    }
+
+    // 4) evt - a discrete, human-meaningful occurrence (not a metric, not liveness state); the
+    // console's Events tab. Through the events() facade: emit(severity, type, message, context)
+    // derives the evt/{severity}/{type} channel from the body's own severity + type, so the
+    // topic and body can never disagree (DESIGN-class-facades §2.2) - no more hand-built
+    // body/topic. A real component would emit these on actual occurrences (a threshold crossed,
+    // a connection lost/restored, ...), not on a fixed timer; raiseAlarm/clearAlarm are there
+    // for stateful alarms.
+    if (this.events) {
+      await this.events
+        .emit(Severity.Info, "sample-event", "sample event from <<COMPONENTNAME>>", {
+          seq,
+          greeting: this.greeting,
+        })
+        .catch((e: unknown) => logger.warn(`event publish failed: ${String(e)}`));
+    }
 
     logger.info(`tick seq=${seq} uptimeSecs=${uptimeSecs} greeting=${this.greeting}`);
   }

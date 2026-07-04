@@ -5,6 +5,9 @@ import com.mbreissi.ggcommons.GGCommonsBuilder;
 import com.mbreissi.ggcommons.commands.CommandException;
 import com.mbreissi.ggcommons.commands.CommandInbox;
 import com.mbreissi.ggcommons.config.ConfigManager;
+import com.mbreissi.ggcommons.facades.DataFacade;
+import com.mbreissi.ggcommons.facades.EventsFacade;
+import com.mbreissi.ggcommons.facades.Severity;
 import com.mbreissi.ggcommons.messaging.Message;
 import com.mbreissi.ggcommons.messaging.MessageBuilder;
 import com.mbreissi.ggcommons.messaging.MessagingClient;
@@ -28,7 +31,8 @@ import static com.mbreissi.ggcommons.utils.Utils.sleep;
  * <b>config-driven</b>: the top-level {@code hierarchy} + {@code identity} config blocks resolve
  * to this component's UNS identity (the last hierarchy level is always the resolved thing name).
  * Every envelope built with {@code .withConfig(...)} carries that identity automatically, and
- * every topic is minted through {@code gg.getUns()} — never hand-written.
+ * every topic is minted through {@code gg.getUns()} (or, for the app-usable classes below, by the
+ * publish facade itself) — never hand-written.
  *
  * <p>The {@code state} heartbeat keepalive AND the component command inbox are both
  * <b>automatic</b> (library-owned, no code here): the {@code state} keepalive publishes on
@@ -39,22 +43,26 @@ import static com.mbreissi.ggcommons.utils.Utils.sleep;
  *
  * <p>What this scaffold adds is the rest of the monitoring + command surface the edge-console
  * reads (DESIGN-uns §7/§9 — G-S1/S2), so a freshly generated component has something to show up
- * on the console's Events/Metrics tabs and something custom to command, instead of an empty
- * dashboard:
+ * on the console's Signals/Events/Metrics tabs and something custom to command, instead of an
+ * empty dashboard:
  * <ul>
  *   <li>a periodic <b>metric</b> ({@value #METRIC_NAME}: a monotonic {@code tickCount} counter
  *       plus an {@code uptimeSecs} gauge-like measure) via {@code gg.getMetrics()};</li>
- *   <li>a periodic <b>evt</b> ({@code ecv1/.../evt/sample-event}) via the UNS topic builder +
- *       {@code MessageBuilder} — there is no dedicated {@code events()} facade yet, so an evt is
- *       just a normal published message on the open {@code evt} class;</li>
+ *   <li>a periodic <b>data</b> signal ({@value #DATA_SIGNAL_ID}: a sine-wave demo reading) via
+ *       {@code gg.getData()} — the {@link DataFacade} constructs the
+ *       {@code SouthboundSignalUpdate} body (device/signal/samples) and defaults an omitted
+ *       sample quality to {@code GOOD}, so the console's Signals tab has something to chart;</li>
+ *   <li>a periodic <b>evt</b> ({@code ecv1/.../evt/info/sample-event}) via {@code gg.getEvents()}
+ *       — the {@link EventsFacade} derives the {@code evt/{severity}/{type}} channel from the
+ *       body's own severity + type, so the topic and body can never disagree;</li>
  *   <li>a custom <b>command verb</b> ({@value #SET_GREETING}), registered with
  *       {@code gg.getCommands().register(...)} alongside the automatic built-ins, that mutates a
  *       small piece of in-memory state which the periodic {@code app} status publish below then
  *       reflects on its very next tick — so invoking it from the console is visibly observable.</li>
  * </ul>
- * Replace all three with your own business metrics/events/verbs; none of this is required by the
- * library (a bare scaffold works fine without them), it exists so the demonstrated surface is
- * live end-to-end out of the box.
+ * Replace all four with your own business metrics/signals/events/verbs; none of this is required
+ * by the library (a bare scaffold works fine without them), it exists so the demonstrated surface
+ * is live end-to-end out of the box.
  */
 public class <<COMPONENTNAME>>
 {
@@ -62,6 +70,8 @@ public class <<COMPONENTNAME>>
 
     /** The demo loop-tick metric name (see the class docs). */
     private static final String METRIC_NAME = "loopTicks";
+    /** The demo data() signal id (see the class docs). */
+    private static final String DATA_SIGNAL_ID = "demo-signal";
     /** The custom command verb this scaffold registers (see the class docs). */
     private static final String SET_GREETING = "set-greeting";
 
@@ -70,6 +80,10 @@ public class <<COMPONENTNAME>>
     final MessagingClient messaging;
     final MetricEmitter metrics;
     final CommandInbox commands;
+    /** The {@code data()} publish facade — see the class docs. */
+    final DataFacade data;
+    /** The {@code events()} publish facade — see the class docs. */
+    final EventsFacade events;
 
     /**
      * In-memory demo state: mutated by the {@value #SET_GREETING} command, read back by the
@@ -90,6 +104,8 @@ public class <<COMPONENTNAME>>
         messaging = ggCommons.getMessaging();
         metrics = ggCommons.getMetrics();
         commands = ggCommons.getCommands();
+        data = ggCommons.getData();
+        events = ggCommons.getEvents();
 
         // --- metrics: define once, emit every tick. MetricBuilder is the sanctioned
         // construction path (never `new Metric(...)`, deprecated). Two measures show a metric
@@ -111,14 +127,13 @@ public class <<COMPONENTNAME>>
             commands.register(SET_GREETING, this::handleSetGreeting);
         }
 
-        // The resolved UNS identity path (e.g. "site1/my-gw") and the topics minted from it.
-        // APP is the free application class; EVT is for discrete, notable occurrences (this
-        // scaffold's sample event) — metric publishes go through gg.getMetrics() above, never a
-        // hand-built topic.
+        // The resolved UNS identity path (e.g. "site1/my-gw") and the topic minted from it. APP
+        // is the free application class for this scaffold's status publish below; the data()
+        // and events() facades mint their OWN topics from the signal id / severity+type - never
+        // hand-write those.
         String statusTopic = ggCommons.getUns().topic(UnsClass.APP, "status");
-        String eventTopic = ggCommons.getUns().topic(UnsClass.EVT, "sample-event");
-        LOGGER.info("UNS identity path: {} - status={} event={}",
-                ggCommons.getUns().identity().getPath(), statusTopic, eventTopic);
+        LOGGER.info("UNS identity path: {} - status={}",
+                ggCommons.getUns().identity().getPath(), statusTopic);
 
         long seq = 0;
         long startMillis = System.currentTimeMillis();
@@ -147,21 +162,34 @@ public class <<COMPONENTNAME>>
             measures.put("uptimeSecs", (float) uptimeSecs);
             metrics.emitMetric(METRIC_NAME, measures);
 
-            // 3) evt - a discrete, human-meaningful occurrence (not a metric, not liveness state);
-            // the console's Events tab. A real component would emit these on actual occurrences
-            // (a threshold crossed, a connection lost/restored, ...), not on a fixed timer.
-            JsonObject eventBody = new JsonObject();
-            eventBody.addProperty("severity", "info");
-            eventBody.addProperty("message", "sample event from <<COMPONENTNAME>>");
+            // 3) data - a periodic sample telemetry signal (the console's Signals tab), through
+            // the data() facade: it constructs the SouthboundSignalUpdate body
+            // (device/signal/samples), sanitizes the channel, and stamps identity - a real
+            // adapter maps one protocol read onto addSample(...) and never touches the envelope
+            // or topic (DESIGN-class-facades §2.1). A sine wave stands in for a live sensor
+            // reading here; addSample(value) with no explicit Quality demonstrates the facade's
+            // honest default - an unspecified reading defaults to Quality.GOOD (marked
+            // qualityRaw="unspecified" on the wire so a consumer can tell a synthesized GOOD
+            // from a device-reported one). Pass an explicit Quality.BAD/UNCERTAIN when your
+            // source knows a read failed or is stale.
+            double demoValue = 20.0 + 5.0 * Math.sin(seq / 10.0);
+            data.signal(DATA_SIGNAL_ID)
+                    .name("Demo Signal")
+                    .addSample(demoValue)
+                    .publish();
+
+            // 4) evt - a discrete, human-meaningful occurrence (not a metric, not liveness
+            // state); the console's Events tab. Through the events() facade: emit(severity,
+            // type, message, context) derives the evt/{severity}/{type} channel from the body's
+            // own severity + type, so the topic and body can never disagree
+            // (DESIGN-class-facades §2.2) - no more hand-built body/topic. A real component
+            // would emit these on actual occurrences (a threshold crossed, a connection
+            // lost/restored, ...), not on a fixed timer; raiseAlarm/clearAlarm are there for
+            // stateful alarms (e.g. a connection-lost/connection-restored pair).
             JsonObject context = new JsonObject();
             context.addProperty("seq", seq);
             context.addProperty("greeting", greeting.get());
-            eventBody.add("context", context);
-            Message eventMsg = MessageBuilder.create("SampleEvent", "1.0")
-                    .withPayload(eventBody)
-                    .withConfig(configManager)
-                    .build();
-            messaging.publish(eventTopic, eventMsg);
+            events.emit(Severity.INFO, "sample-event", "sample event from <<COMPONENTNAME>>", context);
 
             LOGGER.info("Running... (seq={} uptimeSecs={} greeting='{}')", seq, uptimeSecs, greeting.get());
             sleep(10000);

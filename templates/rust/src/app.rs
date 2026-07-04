@@ -11,21 +11,25 @@
 //!
 //! What this scaffold adds is the rest of the monitoring + command surface the edge-console
 //! reads (DESIGN-uns §7/§9 — G-S1/S2), so a freshly generated component has something to show
-//! up on the console's Events/Metrics tabs and something custom to command, instead of an empty
-//! dashboard:
+//! up on the console's Signals/Events/Metrics tabs and something custom to command, instead of
+//! an empty dashboard:
 //! - a periodic **metric** ([`METRIC_NAME`]: a monotonic `tickCount` counter plus an
 //!   `uptimeSecs` gauge-like measure) via `gg.metrics()`;
-//! - a periodic **evt** (`ecv1/.../evt/sample-event`) via the UNS topic builder + `MessageBuilder`
-//!   — there is no dedicated `events()` facade yet, so an evt is just a normal published message
-//!   on the open `evt` class;
+//! - a periodic **data** signal ([`DATA_SIGNAL_ID`]: a sine-wave demo reading) via `gg.data()` —
+//!   the [`DataFacade`] constructs the `SouthboundSignalUpdate` body (device/signal/samples) and
+//!   defaults an omitted sample quality to `GOOD`, so the console's Signals tab has something to
+//!   chart;
+//! - a periodic **evt** (`ecv1/.../evt/info/sample-event`) via `gg.events()` — the
+//!   [`EventsFacade`] derives the `evt/{severity}/{type}` channel from the body's own severity +
+//!   type, so the topic and body can never disagree;
 //! - a custom **command verb** ([`SET_GREETING`]), registered with `gg.commands().register(...)`
 //!   alongside the automatic built-ins, that mutates a small piece of in-memory state which the
 //!   periodic status publish then reflects on its very next tick — so invoking it from the
 //!   console is visibly observable.
 //!
-//! Replace all three with your own business metrics/events/verbs; none of this is required by
-//! the library (a bare scaffold works fine without them), it exists so the demonstrated surface
-//! is live end-to-end out of the box.
+//! Replace all four with your own business metrics/signals/events/verbs; none of this is
+//! required by the library (a bare scaffold works fine without them), it exists so the
+//! demonstrated surface is live end-to-end out of the box.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -37,15 +41,21 @@ use serde_json::json;
 
 /// The demo loop-tick metric name (see the module docs).
 const METRIC_NAME: &str = "loopTicks";
+/// The demo data() signal id (see the module docs).
+const DATA_SIGNAL_ID: &str = "demo-signal";
 /// The custom command verb this scaffold registers (see the module docs).
 const SET_GREETING: &str = "set-greeting";
-/// How often the demo loop ticks (publishes the status/evt/metric trio below).
+/// How often the demo loop ticks (publishes the status/metric/data/evt quartet below).
 const TICK_INTERVAL: Duration = Duration::from_secs(10);
 
 /// The component's business logic and the `ggcommons` service handles it operates over.
 pub struct App {
     config: Arc<Config>,
     metrics: Arc<dyn MetricService>,
+    /// The `data()` publish facade — bound to the `main` instance (see the module docs).
+    data: DataFacade,
+    /// The `events()` publish facade — bound to the `main` instance (see the module docs).
+    events: EventsFacade,
     /// `Some` when a messaging transport is available for the resolved platform
     /// (HOST/MQTT always; GREENGRASS/IPC with the `greengrass` feature).
     messaging: Option<Arc<dyn MessagingService>>,
@@ -129,6 +139,11 @@ impl App {
         Ok(Self {
             config: gg.config(),
             metrics,
+            // data()/events() are bound to the `main` instance (== gg.instance("main").data()/
+            // .events()); each call mints its own topic from the signal id / severity+type -
+            // never hand-write one.
+            data: gg.data(),
+            events: gg.events(),
             messaging: gg.messaging().ok(),
             uns: gg.uns(),
             greeting,
@@ -136,7 +151,7 @@ impl App {
     }
 
     /// Run until a shutdown signal (Ctrl-C / SIGTERM) is received, ticking the demo
-    /// status/metric/evt trio every [`TICK_INTERVAL`].
+    /// status/metric/data/evt quartet every [`TICK_INTERVAL`].
     ///
     /// The library owns signal handling (FR-HB-2): `tokio::select!` races the tick timer against
     /// [`GgCommons::shutdown_signal`] rather than re-implementing `tokio::signal` here, so there
@@ -146,12 +161,11 @@ impl App {
         tracing::info!(identity = %self.config.identity().path(), "<<COMPONENTNAME>> running");
 
         // Publish on unified-namespace (UNS) topics minted via `self.uns` — never hand-write
-        // topics. APP is the free application class; EVT is for discrete, notable occurrences
-        // (this scaffold's sample event) — metric publishes go through `self.metrics` above,
-        // never a hand-built topic. For instance-scoped topics/messages use `gg.instance(id)?`.
+        // topics. APP is the free application class for this scaffold's status publish; the
+        // data()/events() facades below mint their OWN topics from the signal id / severity+type.
+        // For instance-scoped topics/messages use `gg.instance(id)?`.
         let status_topic = self.uns.topic_with_channel(UnsClass::App, "status")?;
-        let event_topic = self.uns.topic_with_channel(UnsClass::Evt, "sample-event")?;
-        tracing::info!(status = %status_topic, event = %event_topic, "demo topics minted");
+        tracing::info!(status = %status_topic, "demo topics minted");
 
         let mut ticker = tokio::time::interval(TICK_INTERVAL);
         let start = Instant::now();
@@ -174,22 +188,6 @@ impl App {
                         if let Err(e) = messaging.publish(&status_topic, &status_msg).await {
                             tracing::warn!(error = %e, "status publish failed");
                         }
-
-                        // 3) evt - a discrete, human-meaningful occurrence (not a metric, not
-                        // liveness state); the console's Events tab. A real component would emit
-                        // these on actual occurrences (a threshold crossed, a connection
-                        // lost/restored, ...), not on a fixed timer.
-                        let event_msg = MessageBuilder::new("SampleEvent", "1.0")
-                            .from_config(&self.config)
-                            .payload(json!({
-                                "severity": "info",
-                                "message": "sample event from <<COMPONENTNAME>>",
-                                "context": { "seq": seq, "greeting": greeting },
-                            }))
-                            .build();
-                        if let Err(e) = messaging.publish(&event_topic, &event_msg).await {
-                            tracing::warn!(error = %e, "event publish failed");
-                        }
                     }
 
                     // 2) metric - a loop-tick counter plus an uptime-ish gauge (the console's
@@ -199,6 +197,39 @@ impl App {
                     values.insert("uptimeSecs".to_string(), uptime_secs as f64);
                     if let Err(e) = self.metrics.emit_metric(METRIC_NAME, values).await {
                         tracing::warn!(error = %e, "metric emit failed");
+                    }
+
+                    // 3) data - a periodic sample telemetry signal (the console's Signals tab),
+                    // through the data() facade: it constructs the SouthboundSignalUpdate body
+                    // (device/signal/samples), sanitizes the channel, and stamps identity - a
+                    // real adapter maps one protocol read onto a `Sample` and never touches the
+                    // envelope or topic (DESIGN-class-facades §2.1). A sine wave stands in for a
+                    // live sensor reading here; `publish_value` with no explicit `Quality`
+                    // demonstrates the facade's honest default - an unspecified reading defaults
+                    // to `Quality::Good` (marked `qualityRaw:"unspecified"` on the wire so a
+                    // consumer can tell a synthesized GOOD from a device-reported one). Use
+                    // `publish_value_with_quality`/the `signal(...)` builder when your source
+                    // knows a read failed or is stale.
+                    let demo_value = 20.0 + 5.0 * ((seq as f64) / 10.0).sin();
+                    if let Err(e) = self.data.publish_value(DATA_SIGNAL_ID, demo_value).await {
+                        tracing::warn!(error = %e, "data publish failed");
+                    }
+
+                    // 4) evt - a discrete, human-meaningful occurrence (not a metric, not
+                    // liveness state); the console's Events tab. Through the events() facade:
+                    // emit(severity, type, message, context) derives the evt/{severity}/{type}
+                    // channel from the body's own severity + type, so the topic and body can
+                    // never disagree (DESIGN-class-facades §2.2) - no more hand-built
+                    // body/topic. A real component would emit these on actual occurrences (a
+                    // threshold crossed, a connection lost/restored, ...), not on a fixed timer;
+                    // raise_alarm/clear_alarm are there for stateful alarms.
+                    if let Err(e) = self.events.emit(
+                        Severity::Info,
+                        "sample-event",
+                        Some("sample event from <<COMPONENTNAME>>".to_string()),
+                        Some(json!({ "seq": seq, "greeting": greeting })),
+                    ).await {
+                        tracing::warn!(error = %e, "event publish failed");
                     }
 
                     tracing::info!(seq, uptime_secs, %greeting, "tick");
