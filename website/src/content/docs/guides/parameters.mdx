@@ -200,7 +200,6 @@ A few behaviors worth knowing:
   `getBytes` always returns the raw bytes.
 - **Ordering:** Java, Python, and Rust return `names`/`getByPath` results **sorted**. The TypeScript
   in-memory cache returns **insertion order** — do not rely on TypeScript ordering.
-  {/* TODO: unverified - whether TS MemoryCache insertion-order (vs sorted) is intentional is not stated in source/tests */}
 
 ### Inspecting refresh state
 
@@ -433,8 +432,6 @@ If you do handle a `ParamValue`, mind how each language treats secure values whe
 - **Rust** derives `Debug` (so `format!("{:?}", pv)` would print the raw bytes) and **TypeScript** is
   a plain interface with no custom stringifier (logging it prints the `value` buffer). On Rust and
   TypeScript, **do not log a `ParamValue`** for a secure parameter.
-
-{/* NEEDS REVIEW: confirm whether the Rust derived-Debug / TS plain-interface non-redaction is an accepted trade-off before stating any redaction guarantee for those two languages. */}
 
 ## Custom sources
 

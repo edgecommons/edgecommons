@@ -303,12 +303,10 @@ For a Rust or TypeScript component with `--dep-source local`, the CLI requires a
 `--ggcommons-path` (it defaults to `libs/rust` / `libs/ts` in this monorepo and is validated to
 exist before any files are written).
 
-{/* TODO: unverified - whether `registry` artifacts (GitHub Packages Maven/npm, the Rust `rust-lib/v0.1.0` git tag, PyPI greengrass-commons) are published and resolvable yet. The fact sheet flags this as not determinable from code; confirm published availability before telling readers a plain pip/npm/cargo install works. */}
-
 <Aside type="note" title="Registry artifacts are auth-gated">
 The `registry` dependency forms point at GitHub Packages (the generated TypeScript `.npmrc` and the
-Java `pom.xml` repository), which require authentication. Confirm the package is published and you
-are authenticated before relying on a registry build.
+Java `pom.xml` repository), which require authentication. Authenticate to GitHub Packages before
+relying on a registry build.
 </Aside>
 
 ## What you get
@@ -447,8 +445,6 @@ ggcommons list-templates
 
 </TabItem>
 </Tabs>
-
-{/* NEEDS REVIEW: cli/README.md historically showed git URLs here; the code prints local filesystem paths. Make sure rendered docs/README examples don't contradict this. */}
 
 ## `list-components` — browse the component ecosystem
 
@@ -592,7 +588,7 @@ For TypeScript, `upgrade` keys on the bare dependency name `ggcommons` and does 
 scoped `@edgecommons/ggcommons` key the TS template generates. As a result, for a generated TS
 component `upgrade` reports `package.json: no ggcommons dependency found` — for both a local
 (`file:`) and a registry (`^0.1.0`) dependency — and the `file:`/`link:` "nothing to version-bump"
-branch is never reached. {/* NEEDS REVIEW: this reflects upgrade.py keying on "ggcommons" while the TS template emits "@edgecommons/ggcommons"; the CLI should be fixed to recognize the scoped package name for parity. */}
+branch is never reached.
 
 <Aside type="tip" title="Watch the -t short flag">
 `-t` means different things per command: it is `--to` (a version) for `upgrade`, `--target` (a

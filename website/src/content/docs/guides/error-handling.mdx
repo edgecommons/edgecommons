@@ -60,8 +60,6 @@ Configuration is loaded and then validated against the canonical JSON schema. In
 `ConfigurationValidationException` on a schema violation. Validation is **fail-closed** in every
 language: if the bundled schema resource is missing, validation throws rather than silently passing.
 
-{/* TODO: unverified - Python has no dedicated config-load exception class; confirm with the doc owner the stable public type a component should catch for "config failed to load" (currently ValueError / ConfigurationValidationException / propagated stdlib exceptions). */}
-
 <Tabs syncKey="lang">
 <TabItem label="Java">
 
@@ -157,8 +155,6 @@ Messaging failures (failure to connect to the local broker or AWS IoT Core, a pu
 error, or a request timeout) reach you through the messaging accessor and its operations. Rust and
 TypeScript have first-class messaging error signals; Java and Python surface them as standard runtime
 exceptions.
-
-{/* NEEDS REVIEW: Java and Python have NO dedicated messaging exception class (verified by reading libs/java/.../messaging and libs/python/ggcommons/messaging — failures are RuntimeException/IllegalStateException in Java and RuntimeError/TimeoutError/ValueError in Python; no doc comment defines a taxonomy). Confirm whether a dedicated MessagingException/MessagingError is intended for parity with Rust GgError::Messaging and TS kind "Messaging". */}
 
 <Tabs syncKey="lang">
 <TabItem label="Java">
@@ -410,8 +406,6 @@ Java exposes `code()` plus named constants, Python and TypeScript expose a `.cod
 named constants, and **Rust discards the code entirely** — it stringifies into `GgError::Streaming`,
 so a Rust caller cannot branch on the status value.
 
-{/* TODO: unverified - Python's GgStreamError carries .code but exposes no named ERR_* constants (tests hard-code the integers). Confirm with the doc owner whether this is intended parity or a gap to close vs Java's GgStreamException.ERR_* constants. */}
-
 <Tabs syncKey="lang">
 <TabItem label="Java">
 
@@ -562,8 +556,6 @@ another:
   fallibility in the `Result` return type.
 - **Streaming status code.** Java keeps it (`code()` + named constants), Python and TypeScript keep
   the integer (no named constants), Rust drops it.
-
-{/* TODO: unverified - TS GgErrorKind deliberately omits Streaming/Credentials/Parameters (they are separate classes), which diverges from Rust's all-in-one GgError and could surprise a developer expecting e.kind === "Streaming". Confirm this is the intended final shape with the doc owner. */}
 
 ## Related
 

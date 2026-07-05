@@ -41,8 +41,6 @@ GGCommonsBuilder receiveOwnMessages(boolean receiveOwnMessages); // default true
 GGCommons build();                                           // throws IllegalStateException if componentName is null
 ```
 
-{/* NEEDS REVIEW: GGCommonsBuilder method-level Javadoc is absent in source (GGCommonsBuilder.java); signatures/defaults verified from code, prose descriptions inferred. */}
-
 </TabItem>
 <TabItem label="Python">
 
@@ -315,7 +313,7 @@ When no messaging transport is wired, the messaging accessor behaves differently
 
 ## Opt-in return contract
 
-The newer subsystems — **streaming**, **credentials**, **parameters** — are opt-in. The accessor
+The **streaming**, **credentials**, and **parameters** subsystems are opt-in. The accessor
 yields a usable service **only when the matching config section is present** (and, in Rust, the
 matching cargo feature is enabled). Otherwise it returns an "absent" value whose exact form is
 language-specific.
@@ -525,8 +523,6 @@ static ParsedCommandLine processArgs(String componentName, String[] args, Option
 
 Python has no standalone `processArgs` equivalent on the runtime. Arg parsing happens inside
 `build()`; reach the resolved values through the config manager after building.
-
-{/* NEEDS REVIEW: confirm no public standalone arg-parse helper exists in Python (fact sheet lists none for the entry-point surface). */}
 
 </TabItem>
 <TabItem label="Rust">

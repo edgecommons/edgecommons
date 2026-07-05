@@ -13,10 +13,8 @@ envelope. A consumer — a monitoring console, a site historian, an MES bridge �
 uniform set of wildcards and needs **zero per-component knowledge**; every message it receives is
 **self-identifying** through its top-level `identity` element, never through topic parsing.
 
-The UNS replaced the per-subsystem topic schemes wholesale (the old
-`ggcommons/{ThingName}/{ComponentName}/heartbeat`, `{ThingName}/{ComponentName}/metric`, and
-`ggcommons/{ThingName}/config/...` topics no longer exist). This page is the concept reference the
-other guides build on; the exact API is in the [UNS API reference](/reference/uns/).
+This page is the concept reference the other guides build on; the exact API is in the
+[UNS API reference](/reference/uns/).
 
 ## The topic grammar
 
@@ -54,7 +52,7 @@ value; the setting is a no-op with a single-level hierarchy).
 | `state` | Lifecycle + health + keepalive — **the liveness beacon** | library — **reserved** | `state` |
 | `metric` | Operational metrics, incl. the built-in `sys` system measures | library — **reserved** | `metric/signals-ingested` |
 | `cfg` | Effective-config snapshot (redacted), at startup + on change | library — **reserved** | `cfg` |
-| `log` | Structured log records for remote tail *(class reserved now; publisher is roadmap)* | library — **reserved** | `log/error` |
+| `log` | Structured log records for remote tail *(class reserved; no built-in publisher)* | library — **reserved** | `log/error` |
 | `data` | The telemetry data plane — signal updates, processed outputs | `data()` facade | `data/press12/temperature` |
 | `evt` | Events and alarms | `events()` facade | `evt/critical/overtemp` |
 | `cmd` | Commands — request/reply, addressed to the **recipient's** inbox | any | `cmd/reload-config` |
@@ -89,7 +87,7 @@ ecv1/+/+/+/state        ecv1/+/+/+/cfg        ecv1/+/+/+/evt/#
 ecv1/+/+/+/metric/#     ecv1/+/+/+/data/#     ecv1/+/+/+/log/#
 ```
 
-That covers every component's liveness, config, events, metrics, telemetry, and (future) log tail on
+That covers every component's liveness, config, events, metrics, telemetry, and log tail on
 the bus. Group and display by reading each message's `identity` — never by parsing the topic. The
 `uns()` API builds these filters for you (`gg.uns().filter(class, scope)`), scoped site-wide or
 narrowed to a device/component/instance.
@@ -235,13 +233,13 @@ const f = gg.uns().filter(UnsClass.State, UnsScope.all());   // ecv1/+/+/+/state
 </TabItem>
 </Tabs>
 
-`gg.messaging()` still takes **literal topics** — it remains fully usable for external, non-UNS
+`gg.messaging()` takes **literal topics** — it is fully usable for external, non-UNS
 topics (bridging a legacy MQTT system, the `cloudwatch/metric/put` contract). The only restriction
 is the reserved-class guard above. See the [Messaging guide](/guides/messaging/).
 
 <Aside type="tip" title="Prefer the class-publish facades for data / evt / app">
 The example above builds an `app` topic by hand to show `gg.uns()` in the general case — that raw
-form stays fully supported for any class (D9: facades add enforcement, not a restriction). But for
+form is fully supported for any class (the facades add enforcement, not a restriction). But for
 the three app-usable classes, reach for [`data()`/`events()`/`app()`](#publishing-telemetry-and-events)
 instead of hand-building the topic and body yourself: they mint the same topic, plus construct and
 validate the body (the `data` quality guarantee, the `evt` severity-derived channel) that raw
@@ -343,8 +341,8 @@ Three things worth knowing before you reach for them:
   `qualityRaw: "unspecified"`, so a consumer can always distinguish a synthesized verdict from a
   device-reported one. The only thing `data()` ever rejects outright is a missing `signal.id`.
 - **The `evt` channel is derived, not chosen.** `events()` builds `evt/{severity}/{type}` from the
-  body's own `severity` + `type` fields — you can't publish a body whose topic disagrees with it, the
-  drift that motivated this facade in the first place. `raiseAlarm`/`clearAlarm` default `severity` to
+  body's own `severity` + `type` fields — you can't publish a body whose topic disagrees with it.
+  `raiseAlarm`/`clearAlarm` default `severity` to
   `critical` so the raise and its later clear land on the *same* channel.
 - **Channel routing is uniform across all three**: a per-call override, then a config-driven
   `publish.channel` default (instance, then global), then `local`. Only `data()` accepts a
@@ -352,7 +350,7 @@ Three things worth knowing before you reach for them:
   local publish if no stream is configured rather than dropping the message; `events()`/`app()` are
   local/northbound only, since alarms and app messages are low-rate control-plane traffic.
 
-Raw `uns()` + `messaging()` publishing to `data`/`evt`/`app` is **not deprecated** — these classes stay
+Raw `uns()` + `messaging()` publishing to `data`/`evt`/`app` is **fully supported** — these classes are
 non-reserved, and the facade is the *recommended*, not the *only*, path. Use the raw form for a body
 shape the facade genuinely shouldn't own (`data()` even offers a `publishBody()`/`publish_body()`
 escape hatch for exactly that — topic + identity handled, body untouched).
@@ -372,10 +370,10 @@ escape hatch for exactly that — topic + identity handled, body untouched).
 - **Reply topics are non-UNS** by design: the ephemeral `ggcommons/reply-...` request/reply topics
   are not `ecv1/`-rooted and pass the guard untouched.
 
-## What is shipped vs. roadmap
+## What the library provides
 
-**Shipped now, in all four languages** (byte-identical topics, structurally identical envelopes,
-pinned by the cross-language `uns-test-vectors/` conformance suite):
+In all four languages (byte-identical topics, structurally identical envelopes, pinned by the
+cross-language `uns-test-vectors/` conformance suite):
 
 - The grammar, the eight classes, the reserved-class publish guard, and `gg.uns()` /
   `gg.instance(id)`.
@@ -384,38 +382,26 @@ pinned by the cross-language `uns-test-vectors/` conformance suite):
   `metric` topics, and the `cfg` effective-config announcements.
 - The `request()` internal deadline, MQTT [Last Will](/guides/messaging/#mqtt-last-will-lwt), and
   the `CONFIG_COMPONENT` command remap.
-- The `_bcast` `republish-state`/`republish-cfg` broadcast listener every component runs (the
-  late-join lever the `uns-bridge`, below, triggers on reconnect).
+- The `_bcast` `republish-state`/`republish-cfg` broadcast listener every component runs.
 - The **`data()`/`events()`/`app()` class-publish facades** — see
   [Publishing telemetry and events](#publishing-telemetry-and-events) above and the
   [full API reference](/reference/uns/#class-publish-facades-data-events-app).
-- The minimal **`commands()`** facade (the component command inbox + `ping`/`reload-config`/
-  `get-configuration`) — shipped in **all four languages** (pinned by `uns-test-vectors/commands.json`).
+- The **`commands()`** facade (the component command inbox + `ping`/`reload-config`/
+  `get-configuration`) in **all four languages** (pinned by `uns-test-vectors/commands.json`).
 
-<Aside type="caution" title="Roadmap — some built, most not yet shipped">
-These are at different stages (see `docs/platform/DESIGN-uns.md` /
-`docs/platform/DESIGN-uns-bridge.md`); don't build against any of them yet:
-
-- **`uns-bridge` + the site broker** — one envelope-aware bridge per device bus relaying onto a
-  site-wide UNS broker (EMQX), with whole-device UNREACHABLE detection and the `republish-state`
-  late-join broadcast. **Built and passing a live two-broker end-to-end test suite** (the relay,
-  the reply-rewrite proxy, per-class uplink policy, and the site-broker deploy recipes are all
-  implemented); it now ships as the `uns-bridge` component (repo `edgecommons/uns-bridge`, listed in
-  the component registry, `experimental`). The device-side half it depends on (the
-  `republish-state`/`republish-cfg` listener every component runs) has shipped in all four
-  languages.
-- **The southbound `sb/*` command family** — `sb/browse`, `sb/read`, confirmed `sb/write`,
-  `sb/subscribe-preview` on the adapter contract. Still not built as a UNS-addressed topic family or
-  a shared cross-adapter facade — but the **capabilities** it targets already exist in the
-  `opcua-adapter` reference component (paged address-space browse, a confirmed write with per-entry
-  acknowledgment, regex-matched on-demand reads), shipped on that adapter's own legacy topics ahead
-  of the UNS migration.
-- **The remaining facades** — `discovery()` and `status()` (health nuance beyond the automatic
-  `state` keepalive), and the `log`-tail publisher. (`data()`/`events()`/`app()` have shipped — see
-  above; `commands()` has shipped its minimal form in all four languages, with a schema/danger/RBAC-annotated
-  registration + `describe`/`get-panel-asset`/`set-log-level` still to come.)
-- **Streaming enrichment** — auto-stamping stream records with identity + hierarchy columns and
-  Hive-style partitioning in the Parquet/AVRO sink.
+<Aside type="caution" title="Related components and current limits">
+- The **`uns-bridge`** component (repo `edgecommons/uns-bridge`, in the component registry,
+  `experimental`) is an envelope-aware bridge per device bus that relays onto a site-wide UNS broker
+  (EMQX), with whole-device UNREACHABLE detection and the `republish-state` late-join broadcast; the
+  device-side half it uses is the `republish-state`/`republish-cfg` listener every component runs.
+- The southbound `sb/*` verbs (`sb/browse`, `sb/read`, confirmed `sb/write`, `sb/subscribe-preview`)
+  are **not** a shared, UNS-addressed cross-adapter command family; the underlying capabilities
+  (paged address-space browse, a confirmed write with per-entry acknowledgment, regex-matched
+  on-demand reads) live in the `opcua-adapter` reference component on that adapter's own topics.
+- There is **no `discovery()` or `status()` facade** (for health nuance beyond the automatic
+  `state` keepalive) and **no `log`-tail publisher** — use `messaging()` + `uns()` for those.
+- Stream records are **not** auto-stamped with identity/hierarchy columns or Hive-partitioned in the
+  Parquet/AVRO sink.
 </Aside>
 
 ## Related

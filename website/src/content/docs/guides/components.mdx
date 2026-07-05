@@ -92,8 +92,6 @@ const gg = await new GGCommonsBuilder("com.example.Lc")
 </TabItem>
 </Tabs>
 
-{/* NEEDS REVIEW: the Java builder methods (create/withArgs/receiveOwnMessages/build) carry no Javadoc in source; descriptions here are taken from their signatures and the verified skeleton example. */}
-
 <Aside type="caution" title="argv conventions differ">
 The three languages disagree on what `args` should contain:
 
@@ -364,9 +362,8 @@ messaging/streams/heartbeat/vault before the process exits.
 <Aside type="danger" title="Do NOT wire your own shutdown hook or signal handler">
 This is the single most common mistake. The library already installs the signal handling for you —
 registering your own `Runtime.getRuntime().addShutdownHook(...)`, `signal.signal(...)`, or
-`process.on("SIGTERM", ...)` just **double-runs teardown**. (Some older docs and bootstrap snippets
-still show a manual hook — that guidance is obsolete.) You may still call `shutdown()` / `close()`
-explicitly; both are idempotent.
+`process.on("SIGTERM", ...)` just **double-runs teardown**. You may still call `shutdown()` /
+`close()` explicitly; both are idempotent.
 </Aside>
 
 How teardown is wired differs by language:

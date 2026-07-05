@@ -395,10 +395,6 @@ Pick your language with the tabs in each code block — the tabs stay in sync ac
    }
    ```
 
-   {/* NEEDS REVIEW: the developer guide states messaging.local.type is required, but the shipped
-   templates omit it and a recent fix made local.type optional. Confirm whether type must be set
-   for a plaintext localhost broker. */}
-
 7. ### Run it
 
    Start the component on the HOST platform, pointing `--transport MQTT` at the messaging config and
@@ -455,18 +451,10 @@ Pick your language with the tabs in each code block — the tabs stay in sync ac
    `java` command — it is required for the FFM/Panama binding to the native streaming core.
    </Aside>
 
-   {/* TODO: unverified - whether a generated Java component compiles cleanly with
-   maven.compiler.target=11 against the Java-25 com.mbreissi:ggcommons artifact. It must run on
-   JDK 25 regardless; confirm against a real build before pinning the exact JDK requirement. */}
-
-
 <Aside type="caution" title="Resolving the published library">
-Whether a bare `pip install greengrass-commons`, `npm i @edgecommons/ggcommons`, or the Rust registry
-git tag resolve from public registries (versus requiring GitHub Packages authentication) is not yet
-confirmed. {/* NEEDS REVIEW: verify published availability of greengrass-commons, @edgecommons/ggcommons,
-and the Rust git tag before telling readers a plain registry install works. */} Until then, the
-default `--dep-source local` (Rust/TS) and a local `mvn install` / editable Python install are the
-reliable paths — see the [Installation guide](/start/installation/).
+For a self-contained local build, use the default `--dep-source local` (Rust/TS) and a local
+`mvn install` / editable Python install. See the [Installation guide](/start/installation/) for
+resolving the published `registry` artifacts.
 </Aside>
 
 ## Next steps

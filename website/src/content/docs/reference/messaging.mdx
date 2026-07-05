@@ -418,9 +418,9 @@ class Message {
 ### `MessageHeader` and `MessageTags`
 
 The header carries message metadata; `tags` carries **business context only** (your custom `tags`
-config keys). The legacy `tags.thing` special-casing is **removed** in all four languages — the
-publisher's device travels in the top-level `identity` element, and a stray inbound `thing` key just
-lands in the generic tag map. The reply-topic prefix is the literal string `ggcommons/reply-`
+config keys). `tags` has no special `thing` handling in any language — the publisher's device travels
+in the top-level `identity` element, and a stray inbound `thing` key just lands in the generic tag
+map. The reply-topic prefix is the literal string `ggcommons/reply-`
 (trailing `-`, not `/`) in all four languages; reply topics are deliberately non-UNS.
 
 <Tabs syncKey="lang">
@@ -583,7 +583,7 @@ impl MessageBuilder {
 }
 ```
 
-The former `thing_name(...)` setter is **removed** with the `tags.thing` hard cut.
+There is no `thing_name(...)` setter; the publisher's device travels in the UNS `identity`.
 
 </TabItem>
 <TabItem label="TypeScript">
@@ -608,8 +608,8 @@ class MessageBuilder {
 }
 ```
 
-The former `withThingName(...)` setter is **removed** with the `tags.thing` hard cut. `withConfig`
-is typed structurally so it accepts the `Config` snapshot without a config import.
+There is no `withThingName(...)` setter; the publisher's device travels in the UNS `identity`.
+`withConfig` is typed structurally so it accepts the `Config` snapshot without a config import.
 
 </TabItem>
 </Tabs>
@@ -626,7 +626,7 @@ When it fires, the library (1) unsubscribes the ephemeral reply topic, (2) remov
 entry, and (3) completes the future **exceptionally** — even if the caller never awaits it, so an
 abandoned request cannot leak its reply subscription. Reply-arrival, the deadline, and
 `cancelRequest` race through one idempotent settle path; a straggler reply after settle is logged
-at DEBUG and dropped. Consequences: a no-arg `get()`/`await` no longer blocks forever, and a
+at DEBUG and dropped. As a result, a no-arg `get()`/`await` is bounded by the deadline, and a
 `get(t)` waits at most `min(t, deadline)`.
 
 | Language | Per-call override | Deadline failure signal |

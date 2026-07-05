@@ -291,12 +291,6 @@ block to run purely against the local broker.
 
 ## Containerizing for a bare host
 
-{/* NEEDS REVIEW: the scaffolding CLI emits a Dockerfile ONLY for the KUBERNETES target (gated by
-    --platforms KUBERNETES); there is no dedicated HOST/bare-host Dockerfile in templates/*. Confirm
-    the intended supported story for running a container on a plain Docker host (reuse the k8s
-    Dockerfile with overridden args vs. a documented HOST Dockerfile) before presenting a copy-paste
-    recipe. */}
-
 There is **no dedicated bare-host Dockerfile** in the templates. The scaffolding CLI generates a
 `Dockerfile` only when **Kubernetes** is a selected target (it is gated behind `--platforms
 KUBERNETES`), and that image's entrypoint runs with **no platform arguments** so it can auto-detect
@@ -311,11 +305,6 @@ are:
 - Reuse the Kubernetes `Dockerfile` as a base image but **override the entrypoint** to pass
   `--platform HOST --transport MQTT <messaging_config.json> -c FILE <config.json> -t <thing>`, and
   mount your messaging config and component config into the container.
-
-{/* NEEDS REVIEW: behavior of `--platform auto` inside a plain (non-k8s) container — with no
-    service-account token it should fall back to HOST, but the exact in-container invocation and
-    config mounting for a bare-host container are not exercised in the templates. Verify before
-    documenting a concrete command. */}
 
 When the platform is left as `auto` (the default) outside Kubernetes and without Greengrass signals,
 the resolver falls back to `HOST`. A bare-host container therefore still needs its broker and config

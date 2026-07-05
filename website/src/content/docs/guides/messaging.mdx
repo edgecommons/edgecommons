@@ -107,7 +107,7 @@ are **identical across all four languages** so they interoperate.
   a message built without config (a bootstrap request, raw bridging) legally omits it. Consumers
   identify the sender from this element — **never by parsing the topic**.
 - **`tags`** — **business context only** (app, org, cost center) — your custom `tags` config keys.
-  The legacy `tags.thing` key is **removed**: the device now lives in `identity`. `tags` is emitted
+  The device identity lives in the `identity` element, not in `tags`. `tags` is emitted
   only when tags were stamped.
 - **`body`** — your payload. Any JSON value.
 
@@ -430,9 +430,9 @@ topic — so the requester's future resolves to the right answer.
 **Every request carries a framework-owned deadline.** The default is
 `messaging.requestTimeoutSeconds` (**30 s**; `0` disables); an explicit per-call timeout always
 wins. When the deadline fires, the library unsubscribes the ephemeral reply topic and completes the
-future **exceptionally** — even if you never await it — so an abandoned request can no longer leak
+future **exceptionally** — even if you never await it — so an abandoned request does not leak
 its reply subscription (and trip the Greengrass shared-connection quota). Consequences: a no-arg
-`get()`/`await` no longer blocks forever, and a `get(t)` waits at most `min(t, deadline)`.
+`get()`/`await` is bounded by the deadline, and a `get(t)` waits at most `min(t, deadline)`.
 
 The future type differs per language: Java extends `CompletableFuture<Message>`, Python returns an
 `Iou`, Rust returns a `Result<ReplyFuture>` you `await`, and TypeScript returns a `ReplyFuture`

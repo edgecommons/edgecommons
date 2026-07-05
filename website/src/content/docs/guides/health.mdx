@@ -40,7 +40,6 @@ Key semantics, identical across all four SDKs:
   The probe handlers are GET-only, but each SDK responds differently to a non-GET method (Java
   `405` on a known path, TypeScript `405` for any path, Rust ignores the method, Python `501`).
   Kubernetes only ever issues `GET` against probe paths, so this rarely matters in practice.
-  {/* TODO: unverified - Python 501 for non-GET is inferred from stdlib BaseHTTPRequestHandler (only do_GET defined); no ggcommons test exercises a non-GET verb against the Python server. */}
 </Aside>
 
 ## When the server runs

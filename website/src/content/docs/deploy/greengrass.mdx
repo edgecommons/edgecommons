@@ -29,7 +29,6 @@ a local MQTT broker. See the [Quickstart](/start/quickstart/) and
 - The **GDK CLI** (`gdk`) installed and on your `PATH`, plus AWS credentials with permission to
   upload artifacts to S3 and register component versions. Confirm with `ggcommons doctor`, which
   reports whether `gdk` and `aws` are present.
-  {/* TODO: unverified - the exact GDK install command is not pinned in the repo; install per the AWS IoT Greengrass Development Kit CLI docs and verify with `gdk --version`. */}
 - An **S3 bucket** for published artifacts. The CLI writes the bucket/region you pass at scaffold
   time into `gdk-config.json` (`--bucket` / `--region`, defaulting to
   `greengrass-component-artifacts-us-east-1` in `us-east-1`).
@@ -161,7 +160,6 @@ What `gdk component build` actually does — and the artifact it produces — is
   `--enable-native-access=ALL-UNNAMED` for the FFM/Panama binding to the native streaming core. The
   shipped recipe's `Run` script does **not** include this flag, so add it to the recipe's `java`
   command before publishing a streaming component.
-  {/* NEEDS REVIEW: confirm whether/where --enable-native-access=ALL-UNNAMED should be injected into the generated Java recipe Run script for streaming components. */}
   </Aside>
 
 </TabItem>
@@ -182,7 +180,6 @@ What `gdk component build` actually does — and the artifact it produces — is
   `greengrass_commons-0.0.10038883-py3-none-any.whl`, whose pinned version may not match the
   `greengrass-commons` line in `requirements.txt`. On-device install fails unless that exact wheel is
   bundled into the ZIP. Prefer resolving the library through `requirements.txt`.
-  {/* NEEDS REVIEW: confirm whether the hard-coded greengrass_commons wheel in templates/python/recipe.yaml is meant to be bundled at publish time or is a stale placeholder line. */}
   </Aside>
 
 </TabItem>
@@ -217,9 +214,8 @@ What `gdk component build` actually does — and the artifact it produces — is
 
 <Aside type="note">
 The Java and Python recipes declare a HARD `aws.greengrass.TokenExchangeService` dependency; the
-Rust and TypeScript recipes currently do not. If your Rust/TS component calls AWS APIs on-device
+Rust and TypeScript recipes do not. If your Rust/TS component calls AWS APIs on-device
 (for example CloudWatch metrics or Secrets Manager sync), add that dependency to its `recipe.yaml`.
-{/* NEEDS REVIEW: confirm whether the omission of the TES ComponentDependency from the Rust/TS recipes is intentional. */}
 </Aside>
 
 ## What the generated recipe declares
@@ -239,8 +235,6 @@ likely to touch:
 
 `gdk-config.json` holds the build system, the publish `bucket`/`region`, and the `NEXT_PATCH`
 version. Edit the recipe and re-run `gdk component build` to pick up changes.
-
-{/* TODO: unverified - gdk_version differs between templates (Java/Rust/TS pin "1.0.0", Python pins "1.6.2"); confirm whether this is intentional or drift before documenting a required GDK version. */}
 
 ## Deploy locally with greengrass-cli
 

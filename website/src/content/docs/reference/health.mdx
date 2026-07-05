@@ -456,10 +456,6 @@ rarely matters in practice. The response to a non-`GET` method nonetheless **div
 | Rust | The method is parsed then **discarded** — routing is by path regardless of method, so `POST /livez` -> **200**. A malformed request line -> **400 "bad request"**. There is no 405 path. |
 | Python | Only `do_GET` is defined; other verbs fall through to the stdlib `BaseHTTPRequestHandler` -> **501 Not Implemented**. |
 
-{/* TODO: unverified - Python 501 for non-GET is inferred from stdlib BaseHTTPRequestHandler (only do_GET is defined); no ggcommons test exercises a non-GET verb against the Python server. */}
-
-{/* NEEDS REVIEW: the Python non-GET 501 and Rust 400 (malformed line) bodies/status lines are behavioral edges with no Python test and no doc comment in source; confirm the exact status line if documenting it precisely. */}
-
 ### Runtime-accessor asymmetry
 
 All four SDKs expose `setReady` / `set_ready`. Beyond that:

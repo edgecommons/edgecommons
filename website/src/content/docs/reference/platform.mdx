@@ -225,7 +225,7 @@ The resolver's output — the fully resolved runtime settings every subsystem in
 <Aside type="caution" title="Java carries one extra field">
 **Java**'s `ResolvedProfile` has **five** fields: it threads the resolved MQTT
 `messagingConfigPath` through the resolver. **Python**, **Rust**, and **TypeScript** keep
-`ResolvedProfile` at **four** fields and compute the FR-MSG-1 ConfigMap-default messaging path in the
+`ResolvedProfile` at **four** fields and compute the ConfigMap-default messaging path in the
 CLI layer instead. Either way the resolved path ends up on the parsed-args result.
 </Aside>
 
@@ -629,7 +629,7 @@ apply:
 - `CONFIGMAP` → mount dir `/etc/ggcommons`, key `config.json`
 
 Under `MQTT` + `CONFIGMAP` with no explicit `--transport MQTT <path>`, the messaging-config path
-defaults to that same mounted ConfigMap file (FR-MSG-1) — one file serves as both component config and
+defaults to that same mounted ConfigMap file — one file serves as both component config and
 MQTT broker config. An explicit path always wins; `HOST` (which uses `FILE`) still requires an
 explicit path. Java computes this in `PlatformResolver.resolveMessagingConfigPath`; Python, Rust, and
 TypeScript compute it in their CLI layer.

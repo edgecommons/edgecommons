@@ -307,8 +307,8 @@ java --enable-native-access=ALL-UNNAMED -jar target\my-component.jar `
 
 ## Migrating from `-m` / `--mode`
 
-The legacy single `-m` / `--mode` axis has been **removed**. The two orthogonal flags
-`--platform` and `--transport` replace it. All four SDKs reject the old flag with the same guidance:
+The `-m` / `--mode` flag is not supported; use the two orthogonal flags `--platform` and
+`--transport` instead. All four SDKs reject `-m`/`--mode` with the same guidance:
 
 ```text
 The -m/--mode flag has been removed. Use --platform GREENGRASS|HOST|KUBERNETES and

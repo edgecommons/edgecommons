@@ -156,7 +156,6 @@ These hold in all four SDKs unless noted:
   an empty list. All reject malformed values.
 - **Ordering** — `names` / `getByPath` results are **sorted** in Java (`TreeMap`), Python (`sorted`),
   and Rust (`BTreeMap`). The TypeScript in-memory cache returns **insertion order**.
-  {/* TODO: unverified - whether TS MemoryCache insertion-order (vs sorted) is intentional is not stated in source/tests */}
 
 <Aside type="caution" title="Rust reads return Result">
 Every Rust `ParameterService` method returns `Result<…>` (for example `get` can `Err` on a non-UTF-8
@@ -354,8 +353,6 @@ synchronous (the Rust SSM implementation `block_on`s an internal runtime).
 | `MountedDirSource` | `MountedDirSource(root, securePaths)` | Each file under `root` is a parameter (bytes = value; name = `/` + path relative to `root`). A name under any `securePaths` prefix is `secure=true`. `version` is always null. Dotfiles are skipped (the kubelet `..data` symlink farm); a directory at a name is "not a parameter". |
 | `AwsSsmSource` | `AwsSsmSource(region, endpointUrl, withDecryption=true)` | `GetParameter` / `GetParametersByPath` (paginated) with `WithDecryption`. `SecureString` → `secure=true`; `version` = SSM version. Uses the default credential chain (TES on Greengrass). `endpointUrl` overrides for floci / LocalStack / a VPC endpoint. |
 
-{/* NEEDS REVIEW: Java EnvSource has a public test-seam ctor EnvSource(prefix, lookup, allVars) (EnvSource.java:39) for injecting env in tests; omitted here as a component-developer reference detail — confirm whether it should be documented. */}
-
 ### Optional SSM dependency
 
 The AWS SDK for SSM is an optional dependency in every SDK, but enforced differently:
@@ -391,8 +388,6 @@ Only Java and Python redact a `ParamValue` when logged. **Rust** derives `Debug`
 `format!("{:?}", pv)` prints the raw value bytes) and **TypeScript** is a plain interface with no
 custom stringifier — on those two SDKs, **do not log a `ParamValue`** for a secure parameter.
 </Aside>
-
-{/* NEEDS REVIEW: confirm whether the Rust derived-Debug / TS plain-interface non-redaction is an accepted trade-off before stating any redaction guarantee for those two languages. */}
 
 ## ParameterStats
 

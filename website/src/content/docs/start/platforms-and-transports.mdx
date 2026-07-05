@@ -18,9 +18,9 @@ messaging mechanism to use. The SDK feeds both (plus the config source and ident
 Greengrass, a bare host or Docker, or Kubernetes. The flags are **identical in all four SDKs** (Java,
 Python, Rust, TypeScript) — only the launcher differs.
 
-<Aside type="note" title="Migrating from -m/--mode">
-  The old single `-m/--mode` axis has been removed in all four SDKs. Passing `-m` or `--mode` now
-  fails fast with guidance to use `--platform`/`--transport` instead.
+<Aside type="note" title="The -m/--mode flag is not supported">
+  There is no `-m/--mode` axis in any of the four SDKs. Passing `-m` or `--mode` fails fast with
+  guidance to use `--platform`/`--transport` instead.
 </Aside>
 
 ## The platforms
@@ -83,7 +83,7 @@ In practice this splits across two layers, because not every setting is a CLI fl
   `explicit config value ▸ platform-profile default ▸ library default`.
 
 The union of the two is the four-tier rule above: the flag tier governs the runtime axes, and the
-config tier governs the subsystem settings. {/* NEEDS REVIEW: no single source file documents all four tiers together; this synthesis follows resolver docstrings + per-subsystem init sites (e.g. Python _init_health, Java profileMetricTarget javadoc). */}
+config tier governs the subsystem settings.
 
 ## Per-platform profile defaults
 
@@ -167,8 +167,7 @@ run-component --platform HOST --transport MQTT .\messaging.json -c FILE .\config
 
 A few flag details that are easy to miss:
 
-- `-t/--thing` takes the **full** string value (a historical bug once truncated it to a single
-  character — that is fixed).
+- `-t/--thing` takes the **full** string value.
 - Asking for `IPC` off Greengrass (e.g. `--platform HOST --transport IPC`) fails validation rather
   than silently falling back.
 - The resolved identity is `-t/--thing` ▸ (on `KUBERNETES` only: `GGCOMMONS_THING_NAME` ▸ `POD_NAME`)

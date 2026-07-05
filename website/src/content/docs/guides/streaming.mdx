@@ -87,8 +87,6 @@ server-to-device path. For command-and-control or low-rate messaging, use the
 | TypeScript | napi addon `@mbreissi/ggstreamlog-node`, `require`-d lazily on first `open` | Install the addon; a component that never streams never loads it |
 | Rust | Linked directly — **compile-time** via cargo features | Build with `streaming` plus a sink feature (below) |
 
-{/* TODO: unverified - whether release jars/wheels bundle the native lib by default for end users, or whether components must always supply -Dggstreamlog.library.path (the Java loader supports both; the shipped default is a packaging question) */}
-
 For Rust, the `streaming` feature enables the module and accessor; **real export also needs a sink
 feature** — `streaming-kinesis` and/or `streaming-kafka`. Without a sink feature, a stream still
 buffers durably but never exports (see [Buffer-only fallback](#buffer-only-fallback)).
@@ -408,18 +406,18 @@ under `buffer`.
 | `path` | — | Required for `disk`; must be omitted for `memory`. |
 | `segmentBytes` | `67108864` (64 MiB) | On-disk segment size. |
 | `maxDiskBytes` | `1073741824` (1 GiB) | Total buffer budget (on disk, or in RAM for `memory`). Must be `>= segmentBytes`. |
-| `maxAgeSecs` | _null_ | **No effect today** (see below). Intended as an age cap for `dropOldest`. |
+| `maxAgeSecs` | _null_ | **No effect** (see below). |
 | `onFull` | `dropOldest` | Behavior when the budget is reached (below). |
 | `fsync` | `perBatch` | Durability flush policy: `always`, `perBatch`, or `interval`. |
 | `fsyncIntervalMs` | `1000` | Flush cadence when `fsync: interval`. |
 | `maxBufferedRecords` | `10000` | In-memory ingest-queue bound — the actual backpressure point. |
 
-<Aside type="caution" title="maxAgeSecs has no effect today">
+<Aside type="caution" title="maxAgeSecs has no effect">
 There is **no age-based retention**. The buffer enforces its budget purely by **bytes**: `dropOldest`
 reclaims the oldest segment (disk) or record (memory) only when an append would push the buffer past
 `maxDiskBytes`. `maxAgeSecs` is parsed but never read, so records are **never dropped because of
 age** — a buffer that stays under `maxDiskBytes` retains its data indefinitely no matter how old it
-gets. Treat `maxAgeSecs` as not-yet-implemented and size retention with `maxDiskBytes`.
+gets. `maxAgeSecs` is inert, so size your retention with `maxDiskBytes`.
 </Aside>
 
 ### onFull semantics
@@ -453,25 +451,24 @@ production-ready; tune only when you have a reason.
 |---------------|---------|---------|
 | `batch.maxRecords` | `500` | Max records per export batch. |
 | `batch.maxBytes` | `4194304` (4 MiB) | Max bytes per export batch. |
-| `batch.maxLatencyMs` | `1000` | **No effect today** (see below). Intended max wait before flushing a partial batch. |
-| `batch.compression` | `none` | `none` or `zstd` (`zstd` is a no-op today — see below). |
+| `batch.maxLatencyMs` | `1000` | **No effect** (see below). |
+| `batch.compression` | `none` | `none` or `zstd` (`zstd` is a no-op — see below). |
 | `delivery.maxRetries` | `-1` | Max attempts for a whole-batch `Failed` send before abandoning it (`-1` = retry forever). Bounds **only** whole-batch failures — per-record partial failures retry indefinitely (see [Delivery semantics](#delivery-semantics)). |
 | `delivery.backoffBaseMs` | `50` | Initial retry backoff. |
 | `delivery.backoffMaxMs` | `30000` | Backoff ceiling. |
 | `delivery.pollIntervalMs` | `100` | Export poll cadence — also the effective partial-batch drain interval (see below). |
 
-<Aside type="caution" title="batch.maxLatencyMs has no effect today">
+<Aside type="caution" title="batch.maxLatencyMs has no effect">
 The export loop reads each batch with `read_batch(maxRecords, maxBytes)` only — `maxLatencyMs` is
 parsed and defaulted but never consulted. `read_batch` returns immediately with whatever is buffered
 (it never waits to fill a batch), so a partial batch drains on the engine's next poll. The effective
 partial-batch latency is therefore governed by **`delivery.pollIntervalMs`**: a low-rate stream
-drains roughly every `pollIntervalMs` regardless of `maxLatencyMs`. Treat `maxLatencyMs` as
-not-yet-implemented.
+drains roughly every `pollIntervalMs` regardless of `maxLatencyMs`.
 </Aside>
 
-<Aside type="caution" title="compression: zstd is a no-op today">
-`zstd` is accepted by the schema and the core, but in this phase it is treated as `none` until the
-sink implements it. Do not rely on compression being applied yet.
+<Aside type="caution" title="compression: zstd is a no-op">
+`zstd` is accepted by the schema and the core, but it is treated as `none` — the sink does not apply
+compression. Do not rely on compression being applied.
 </Aside>
 
 <Aside type="note" title="Numeric fields accept integer-valued floats">
@@ -530,9 +527,7 @@ snake_case in Python and Rust.
 | `nextOffset` | Next offset to be assigned. |
 | `oldestUnackedAgeMs` | Age of the oldest un-acked record. |
 
-{/* NEEDS REVIEW: the per-field meanings above are inferred from the field names and the at-least-once model — the source StreamStats/Stats types carry only type-level docs, no per-field doc comments, in all four languages. */}
-
-Rust's `Stats` carries one extra field, `last_export_error: Option<String>`, which is currently always
+Rust's `Stats` carries one extra field, `last_export_error: Option<String>`, which is always
 `None` in the wrapper. Java, Python, and TypeScript expose exactly the ten counters above.
 
 ## Error handling

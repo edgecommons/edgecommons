@@ -290,8 +290,6 @@ additional field.
 | `nextOffset` / `next_offset` | " | Next log offset to be assigned. |
 | `oldestUnackedAgeMs` / `oldest_unacked_age_ms` | " | Age of the oldest un-acked record, in ms. |
 
-{/* NEEDS REVIEW: the per-field meanings above are inferred from field names and the at-least-once model — the source StreamStats/Stats types carry only type-level docs (no per-field doc comments) in all four languages; in Rust only `backlog` and `last_export_error` are doc'd. */}
-
 - **Java**: `StreamStats` is a `record` with accessor methods (`appendedTotal()`, `backlog()`, ...).
 - **Python**: `StreamStats` is a frozen `@dataclass` with snake_case attributes.
 - **Rust**: `Stats` exposes the ten `u64` counters **plus** an 11th field
@@ -535,8 +533,6 @@ buffers durably but never exports.
 [dependencies]
 ggcommons = { version = "*", features = ["streaming", "streaming-kinesis"] }
 ```
-
-{/* TODO: unverified - whether release jars/wheels bundle the native lib by default for end users, or whether components must always supply -Dggstreamlog.library.path (the Java loader supports both; the shipped default is a packaging question, not answerable from this subsystem's code). */}
 
 The probe call in each language:
 

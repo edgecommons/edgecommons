@@ -149,8 +149,6 @@ delivers immediately and `flush` has nothing to drain — see the
 [Metrics guide](/guides/metrics/#emit-measure-values).
 </Aside>
 
-{/* NEEDS REVIEW: Java construction path — gg.getMetrics() returns an emitter built internally via MetricEmitterBuilder.create(cfg).withMessagingService(mc).withPlatform(p).build(); component developers should not construct it directly. Confirm whether the builder is part of the documented public surface before adding it here. */}
-
 ## MetricBuilder
 
 Defines a metric: a name, one or more **measures** (each with a unit and a storage resolution), and

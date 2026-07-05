@@ -283,7 +283,7 @@ on the selected target:
 | Target | `targetConfig` keys | Defaults and notes |
 |--------|---------------------|--------------------|
 | `log` | `logFileName`, `maxFileSize` | `maxFileSize` default `10MB`; the rotated-backup count is **fixed at 5** (not configurable). When `logFileName` is unset the path falls back to the platform default (a local path on HOST/Kubernetes, which lack the on-device `/greengrass/v2/logs`). |
-| `messaging` | `destination` | Publishes each metric to the fixed [UNS](/guides/unified-namespace/) topic `ecv1/{device}/{component}/main/metric/{metricName}` (the name sanitized as a channel token) — **the topic is not configurable** (the old `targetConfig.topic` override is removed and fails validation). `destination` default `ipc` (set `iot_core` / `iotcore` to publish to AWS IoT Core at QoS at-least-once). A consumer subscribes `ecv1/+/+/+/metric/#`. |
+| `messaging` | `destination` | Publishes each metric to the fixed [UNS](/guides/unified-namespace/) topic `ecv1/{device}/{component}/main/metric/{metricName}` (the name sanitized as a channel token) — **the topic is not configurable** (a `targetConfig.topic` override fails validation). `destination` default `ipc` (set `iot_core` / `iotcore` to publish to AWS IoT Core at QoS at-least-once). A consumer subscribes `ecv1/+/+/+/metric/#`. |
 | `cloudwatchcomponent` | — | Always publishes to `cloudwatch/metric/put` — the external contract topic the AWS-managed CloudWatch metrics Greengrass component listens on (deliberately non-UNS; not configurable). |
 | `cloudwatch` | `intervalSecs`, `buffer` | `intervalSecs` default `5` (a value `< 1` is reset to `5`) is the in-memory batch-flush period; it is **ignored by the durable buffer**, which the background engine drains. `buffer` selects durable vs in-memory — see [Durable CloudWatch buffer](#durable-cloudwatch-buffer). |
 | `prometheus` | `port`, `path` | `port` default `9090`, `path` default `/metrics`. |
@@ -368,8 +368,6 @@ Behavior to be aware of:
   CloudWatch's accept window (≈14 days past / ≈2 hours future), and groups by namespace.
 - `close()` on a durable buffer flushes to **disk** and stops the engine — it does **not** drain to
   the cloud, so any backlog persists for the next restart.
-
-{/* NEEDS REVIEW: the fine-grained durable tuning keys (segmentBytes, delivery.maxRetries, batch sizing, pollIntervalMs) were flagged TODO in the fact sheet as not fully confirmed as a stable public surface — verify against schema source before documenting them here. */}
 
 ## EMF timestamp units
 

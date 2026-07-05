@@ -489,12 +489,9 @@ systems) legally omits it.
 ## Class-publish facades: data(), events(), app()
 
 The three **app-usable** UNS classes — `data`, `evt`, `app` — are non-reserved: any component may
-publish them. Before this facade slice, that meant hand-minting the topic with `uns()` and
-hand-assembling the body, and it had already drifted between components (one adapter's `evt` channel
-carried a severity segment, another's didn't; each re-invented its own `SouthboundSignalUpdate`
-quality default). `data()`/`events()`/`app()` are the **sanctioned publish path**: they still go
+publish them. `data()`/`events()`/`app()` are the **sanctioned publish path**: they go
 through the ordinary, guarded `messaging().publish(...)` — publishing `data`/`evt`/`app` is not a
-privileged operation, so raw `uns()` + `messaging()` publishing (as shown above) remains fully
+privileged operation, so raw `uns()` + `messaging()` publishing (as shown above) is fully
 supported — but they **construct and validate the body**, fill in the documented defaults, and mint
 the topic consistently. Use them; reach for the raw path only when a body is genuinely exotic.
 
@@ -621,9 +618,8 @@ await gg.instance("kep1").data().signal("press12/temperature")
 ### `events()` — operator events & alarms (evt)
 
 Publishes `class = evt`, `header.name = "evt"`. The channel is **derived from the body**:
-`evt/{severity}/{sanitize(type)}` — so the topic and the body can never disagree, the exact drift
-that motivated this facade (one adapter's channel carried severity, another's didn't; this makes it
-structural). `timestamp` defaults to now; `type` is the only required field (it is a channel token).
+`evt/{severity}/{sanitize(type)}` — so the topic and the body can never disagree. `timestamp`
+defaults to now; `type` is the only required field (it is a channel token).
 `raiseAlarm`/`clearAlarm` set `alarm: true` plus `active: true|false` and default `severity` to
 `critical`, so a raise and its clear ride the **same** channel — a console watching
 `evt/critical/#` sees both halves of the alarm lifecycle.
@@ -908,7 +904,7 @@ side of the `cmd` class: a library-owned **command inbox** every component runs 
 instance. It subscribes the component's own command wildcard `ecv1/{device}/{component}/main/cmd/#`
 on the PRIMARY (local/IPC) connection and dispatches each incoming `cmd` envelope to a handler by
 **verb** — the topic channel after `cmd/` (`/`-namespaced verbs included), which the envelope's
-`header.name` must equal. It ships in **all four languages** (not Java only), pinned by
+`header.name` must equal. It is available in **all four languages**, pinned by
 `uns-test-vectors/commands.json`.
 
 ### Accessor and registration

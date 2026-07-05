@@ -55,13 +55,11 @@ or mistyped top-level key is rejected. Each named section (`logging`, `metricEmi
 `additionalProperties: false` with fully-described fields.
 
 <Aside type="caution" title="The subsystem sections are strict, not permissive">
-Older notes (including `schema/README.md`) describe the subsystem sections as "permissive
-(`additionalProperties: true`)". That is **wrong** against the canonical schema, which fully
-describes every section with `additionalProperties: false`. Only a few **nested subtrees** are
-genuinely open for arbitrary keys: `component.global` and each `component.instances[]` entry
-(arbitrary component-specific keys), plus the kafka sink `properties` map. `tags` and `logging.loggers`
-accept any matching key but constrain the value (string / level enum). Everything else rejects unknown
-keys.
+The canonical schema fully describes every section with `additionalProperties: false`. Only a few
+**nested subtrees** are genuinely open for arbitrary keys: `component.global` and each
+`component.instances[]` entry (arbitrary component-specific keys), plus the kafka sink `properties`
+map. `tags` and `logging.loggers` accept any matching key but constrain the value (string / level
+enum). Everything else rejects unknown keys.
 </Aside>
 
 ### `component` is the only required section
@@ -92,8 +90,6 @@ numbers as doubles (for example `300.0`), and the libraries parse them leniently
 are still declared `integer` in the schema (`heartbeat.intervalSecs`, `health.port`,
 `logging.fileLogging.backupCount`, the MQTT/Prometheus ports).
 </Aside>
-
-{/* TODO: unverified - several fields declared `integer` in the schema (heartbeat.intervalSecs, health.port, fileLogging.backupCount) are parsed leniently from Greengrass doubles in code; whether the draft-07 validator runs before that lenient parse (and could reject a Greengrass-supplied 5.0) was not traced end-to-end. */}
 
 ## Precedence and platform defaults
 
@@ -178,9 +174,9 @@ applied in code, not by the schema).
 | `path` | string | `/metrics` | — | OpenMetrics exposition path for the `prometheus` target. |
 | `buffer` | object (strict) | — | — | Durable store-and-forward buffer for the `cloudwatch` target (below). |
 
-<Aside type="danger" title="targetConfig.topic is removed">
-The former `targetConfig.topic` override no longer exists — a config that still carries it **fails
-validation**. The `messaging` target now always publishes to the fixed UNS metric topic
+<Aside type="danger" title="There is no targetConfig.topic override">
+There is no `targetConfig.topic` override — a config that carries it **fails validation**. The
+`messaging` target always publishes to the fixed UNS metric topic
 `ecv1/{device}/{component}/main/metric/{metricName}`, and the `cloudwatchcomponent` target always
 uses the external AWS contract topic `cloudwatch/metric/put`. See the
 [Unified Namespace](/guides/unified-namespace/).
@@ -213,11 +209,11 @@ as the metric **`sys`** through the metric subsystem. Object, strict.
 | `measures` | object (strict) | — | — | Which system measures the `sys` metric includes (below). |
 | `destination` | string | `local` | `local`, `iotcore` | Publish destination of the **state keepalive only**. The measures route through `metricEmission`. |
 
-<Aside type="danger" title="heartbeat.targets[] is removed">
-The former `targets[]` array (with its `config.destination`/`config.topic` overrides) no longer
-exists — the keepalive topic is always the component's UNS state topic. A config still carrying
-`heartbeat.targets` **fails validation** with a precise error. See the
-[Heartbeat guide](/guides/heartbeat/#configuration) for migration.
+<Aside type="danger" title="There is no heartbeat.targets[] array">
+There is no `heartbeat.targets[]` array (or its `config.destination`/`config.topic` overrides) — the
+keepalive topic is always the component's UNS state topic. A config carrying `heartbeat.targets`
+**fails validation** with a precise error. See the
+[Heartbeat guide](/guides/heartbeat/#configuration).
 </Aside>
 
 ### `heartbeat.measures`

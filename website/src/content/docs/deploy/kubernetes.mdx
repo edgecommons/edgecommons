@@ -225,7 +225,7 @@ kind load docker-image ghcr.io/<owner>/my-component:latest --name ggcommons
 
 The Rust and TypeScript images need build-time auth to fetch the private library — pass a
 `GITHUB_TOKEN` (e.g. via a Docker build secret/arg) per the header comment in each generated
-`Dockerfile`. {/* NEEDS REVIEW: exact `docker build` token-passing flags (--secret vs --build-arg) are not pinned in the template Dockerfile header; verify the intended mechanism before documenting a concrete command. */}
+`Dockerfile`.
 
 ## Step 2 — The ConfigMap (config + broker)
 
@@ -494,8 +494,6 @@ helm template ggc test-infra/k8s/chart `
 </TabItem>
 </Tabs>
 
-{/* NEEDS REVIEW: the ServiceMonitor / RBAC / ServiceAccount rendered resources are described from chart values.yaml knobs and the chart's secret.yaml + deployment.yaml (read directly); the servicemonitor.yaml/rbac.yaml/serviceaccount.yaml templates themselves were not opened — confirm the exact rendered output before relying on it verbatim. */}
-
 ### Smoke it on a local cluster (kind)
 
 The repo ships an end-to-end smoke test that brings up an in-cluster broker, installs the chart, and
@@ -532,10 +530,8 @@ The smoke test cleans up its namespace on exit; pass `KEEP=1` to leave it for in
 A component that uses telemetry streaming with a **durable disk buffer** needs a single writer per
 buffer, so it must run as a **StatefulSet with a per-pod PVC** rather than a Deployment. The repo
 includes a deployment-shape example at `test-infra/k8s/streaming-statefulset-example.yaml`. The
-`ggstreamlog` engine itself is unchanged — only the workload shape differs (see the
+`ggstreamlog` engine works the same way; only the workload shape differs (see the
 [Streaming guide](/guides/streaming/)).
-
-{/* TODO: unverified - streaming-statefulset-example.yaml contents were not opened; it is described per test-infra/k8s/README.md as a deployment shape that is NOT smoke-tested (it needs a reachable Kinesis/Kafka sink). Verify the manifest before treating it as turnkey. */}
 
 ## Next steps
 

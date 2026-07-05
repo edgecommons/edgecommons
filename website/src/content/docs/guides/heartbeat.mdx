@@ -59,8 +59,7 @@ Each tick publishes one envelope to `ecv1/{device}/{component}/main/state`:
 }
 ```
 
-- The message name and version are `state` / `1.0` in **all four languages** (the old per-language
-  heartbeat message-name divergence is gone).
+- The message name and version are `state` / `1.0` in **all four languages**.
 - `uptimeSecs` is the seconds since component start (monotonic clock). The shutdown `STOPPED` state
   omits it.
 - **`heartbeat.destination`** (`local` | `iotcore`, default `local`) selects where the keepalive
@@ -235,13 +234,11 @@ so an absent section gives you a working keepalive out of the box:
 | `measures.*` | boolean | `cpu`/`memory` on, rest off | Per-measure toggles for the `sys` metric. |
 | `destination` | string | `local` | `local` or `iotcore` — where the **state keepalive** publishes. The measures route through `metricEmission`. |
 
-<Aside type="danger" title="heartbeat.targets[] is removed">
-The old `heartbeat.targets[]` array (with per-target `type`/`config.destination`/`config.topic`) no
-longer exists, and the heartbeat topic is **no longer configurable** — it is always the component's
-UNS state topic. A config that still carries `targets` **fails schema validation at startup** with
-a precise error. Migrate: delete `targets`, keep `intervalSecs`/`measures`, add `destination` if you
-routed the old messaging target to IoT Core, and route the measures via
-[`metricEmission`](/guides/metrics/).
+<Aside type="danger" title="There is no heartbeat.targets[]">
+The `heartbeat` section has no `targets[]` array, and the heartbeat topic is **not configurable** —
+it is always the component's UNS state topic. A config that carries a `targets` key **fails schema
+validation at startup** with a precise error. Use `intervalSecs`/`measures`/`destination` instead,
+and route the measures via [`metricEmission`](/guides/metrics/).
 </Aside>
 
 <Aside type="tip" title="Customizing is config, not code">

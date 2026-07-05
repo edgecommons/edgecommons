@@ -36,7 +36,7 @@ application-specific options are merged in alongside them (Java `Options`, Pytho
 | `-h` / `--help` | *(takes no value)* | prints the usage banner and exits 0 |
 
 Platform, transport, and `-c` config-source tokens all parse case-insensitively (each is upper-cased
-before it is matched, so `file`, `File`, and `FILE` are equivalent). The removed `-m` / `--mode` flag
+before it is matched, so `file`, `File`, and `FILE` are equivalent). The `-m` / `--mode` flag
 is rejected with guidance to `--platform` / `--transport`. See the [CLI contract](/start/cli-contract/)
 for the per-source extra-argument defaults, the auto-detection order, and the
 `IPC`-on-GREENGRASS-only rule.
@@ -109,7 +109,7 @@ let parsed = cli::parse_from(std::env::args())?;
 println!("{:?} / {:?}", parsed.platform, parsed.transport);
 ```
 
-A bad flag, an unknown source/platform/transport token, the removed `-m`/`--mode`, or an illegal
+A bad flag, an unknown source/platform/transport token, the `-m`/`--mode` flag, or an illegal
 platform/transport combination (`IPC` off GREENGRASS) returns `GgError::Cli`.
 
 </TabItem>
@@ -397,6 +397,6 @@ const messaging = gg.messaging();
 ## See also
 
 - [CLI contract](/start/cli-contract/) — the flags, per-platform defaults, auto-detection, and the
-  `-m`/`--mode` migration in depth.
+  `-m`/`--mode` rejection in depth.
 - [Configuration guide](/guides/configuration/) — what each `-c` source reads and how hot-reload works.
 - [Messaging guide](/guides/messaging/) — IPC vs dual-MQTT and the messaging-config file.

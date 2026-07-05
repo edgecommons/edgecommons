@@ -396,8 +396,7 @@ language.
 <Aside type="note" title="Invalid hot reload — reject-and-keep (all four)">
 On a schema-invalid hot reload, all four SDKs **reject the new document and keep the previous valid
 config** — listeners are not notified and the reload reports failure. First-load validation fails
-closed in all four. (Python was brought to parity here; it previously swallowed the reload-path
-validation failure and applied the invalid config.)
+closed in all four.
 </Aside>
 
 ## Construction

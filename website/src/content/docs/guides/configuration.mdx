@@ -465,9 +465,9 @@ Python is also the only SDK that can opt out of validation, by constructing the 
 - **Missing instance**: `null` (Java) / `None` (Rust) / `undefined` (TypeScript) / `KeyError`
   (Python).
 - **Invalid reload**: reject-and-keep in **all four** SDKs — a schema-invalid hot reload is logged,
-  the previous config is kept, and listeners are not notified (Python was brought to parity; its
-  `applyConfig`/`apply_config` re-validates and keeps the prior config on failure, just like the
-  others). It is only fatal during the initial load.
+  the previous config is kept, and listeners are not notified (Python's `apply_config` re-validates
+  and keeps the prior config on failure, just like the others). It is only fatal during the initial
+  load.
 
 ## Next steps
 

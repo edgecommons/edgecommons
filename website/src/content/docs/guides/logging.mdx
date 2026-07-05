@@ -242,8 +242,7 @@ When `enabled` is `false` (or `fileLogging` is omitted), only the console sink r
 <Aside type="caution" title="fileLogging is an object, not a flag or a path">
 `fileLogging` must be an **object** with at least `enabled`. The path lives at
 `fileLogging.filePath` — there is no top-level `logFilePath` key, and `"fileLogging": true` will
-fail schema validation. (Older docs that show `"fileLogging": true` + `"logFilePath": "..."` are
-out of date.)
+fail schema validation.
 </Aside>
 
 ## The stdout-JSON sink
@@ -312,8 +311,6 @@ A few per-language details to know about the JSON field set:
   fields.
 - **Rust** preserves arbitrary structured event fields verbatim (e.g. a logged `error` field) rather
   than a fixed `thrown` key.
-
-{/* NEEDS REVIEW: Python installs a bare logging.StreamHandler() (default stream = sys.stderr) for both text and JSON modes. Confirm on a real run whether Python's JSON lines actually land on stdout vs stderr before relying on "stdout-JSON" specifically for Python. The field shape is correct; the stream target is the open question. */}
 
 ## Getting a logger and emitting logs
 

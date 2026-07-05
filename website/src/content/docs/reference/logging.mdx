@@ -125,8 +125,6 @@ public interface Logger {
 The `(String, Object...)` overload uses SLF4J-style `{}` placeholders; the `(String, Throwable)`
 overload attaches an exception. There is **no `fatal()` method** on this interface.
 
-{/* NEEDS REVIEW: the Logger interface has class-level Javadoc but NO per-method Javadoc in source (libs/java/.../logging/Logger.java); the overload/predicate descriptions above are derived from the signatures. Confirm the SLF4J-style {} semantics hold for the Log4j2 and JUL adapters too. */}
-
 </TabItem>
 <TabItem label="Python">
 
@@ -190,8 +188,6 @@ export class Logger {
 There are only four log methods (`debug`/`info`/`warn`/`error`) — no `trace`/`fatal`, and **no
 level-predicate methods**. Each method takes an optional second `error?: unknown`. In text mode
 `warn`/`error` write to stderr and the rest to stdout; in JSON mode all levels go to stdout.
-
-{/* NEEDS REVIEW: Logger.debug/info/warn/error have NO JSDoc in source (libs/ts/src/logging.ts:440-451); the signatures and stream-routing note are read directly from source. The Level enum and RotatingFileWriter are internal/un-exported — components set levels via config (logging.level / logging.loggers), not via setLevel. */}
 
 </TabItem>
 </Tabs>
@@ -328,8 +324,6 @@ or text formatter), and — only when `fileLogging.enabled` and not under the JS
 `logging.handlers.RotatingFileHandler(maxBytes, backupCount)`. The `ConfigManager` rebuilds and calls
 this on hot reload. Note: Python parses `globalControl` (`is_global_control_enabled()`) but
 `configure_logging()` never acts on it.
-
-{/* NEEDS REVIEW: configure_logging() installs a bare logging.StreamHandler() whose default stream is sys.stderr (for both text and JSON modes). Confirm on a real run whether Python's JSON lines land on stdout vs stderr before documenting "stdout-JSON" for Python specifically. */}
 
 </TabItem>
 <TabItem label="Rust">

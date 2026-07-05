@@ -182,8 +182,6 @@ project by hand. The current published version is `0.1.0` (the value the CLI sub
   cd libs/java && mvn clean install
   ```
 
-  {/* NEEDS REVIEW: confirm whether com.mbreissi:ggcommons is published to a PUBLIC Maven registry, or only to auth-gated GitHub Packages, before telling readers a plain dependency resolves without a token. */}
-
 </TabItem>
 <TabItem label="Python">
 
@@ -198,8 +196,6 @@ project by hand. The current published version is `0.1.0` (the value the CLI sub
   ```bash
   pip install -r requirements.txt
   ```
-
-  {/* NEEDS REVIEW: confirm whether `pip install greengrass-commons` resolves from public PyPI, or requires a private index / GitHub-Packages auth, before documenting a bare pip install. */}
 
 </TabItem>
 <TabItem label="Rust">
@@ -218,8 +214,6 @@ project by hand. The current published version is `0.1.0` (the value the CLI sub
   For the `local` form, the CLI fills the path from `--ggcommons-path` (defaulting to the in-repo
   `libs/rust`). Off-by-default cargo features (`greengrass`, `cloudwatch`, `streaming`,
   `credentials`, `parameters`, …) are composed on top as your component needs them.
-
-  {/* NEEDS REVIEW: confirm the `rust-lib/v0.1.0` git tag actually exists on the published repo, and whether a crates.io release is available, before pointing readers at the registry form. */}
 
 </TabItem>
 <TabItem label="TypeScript">
@@ -256,8 +250,6 @@ project by hand. The current published version is `0.1.0` (the value the CLI sub
   @edgecommons:registry=https://npm.pkg.github.com
   //npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}
   ```
-
-  {/* NEEDS REVIEW: confirm whether `npm i @edgecommons/ggcommons` resolves from public npm, or only from auth-gated GitHub Packages, before documenting a token-free install. */}
 
 </TabItem>
 </Tabs>

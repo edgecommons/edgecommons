@@ -165,7 +165,7 @@ sudo ./svc.sh stop && sudo ./svc.sh uninstall
 | npm scope **`@mbreissi/ggcommons`** (+ `@mbreissi:registry`, `scope: "@mbreissi"`) | → `@edgecommons` | **GitHub Packages npm forces scope = owner.** This is the biggest surface (all TS imports/templates/docs). |
 | Public-npm addon **`@mbreissi/ggstreamlog-node`** | optional | Published to *public* npm (registry.npmjs.org), so its scope is independent of the GitHub owner. Rename for consistency (needs you to own the `@edgecommons` npm org) or keep on `@mbreissi`. |
 | **`com.mbreissi`** (Java groupId / package, ~hundreds of refs) | **keep** | Maven coordinates are independent of the GH Packages owner — only the `<distributionManagement>`/repository **URL** changes (covered by the `github.com/mbreissi/` rule). |
-| **`docs.ggcommons.mbreissi.com`** (docs domain) | **keep** | A DNS subdomain, unrelated to the GitHub owner. |
+| **`docs.edgecommons.mbreissi.com`** (canonical docs domain) | **use internally** | The canonical docs URL — refer to this one in all docs/notes/configs. `docs.ggcommons.mbreissi.com` still resolves as a live legacy alias, but do not reference it in new material. |
 
 > **Do NOT do a blanket `mbreissi` → `edgecommons` replace** — it would break the Java groupId and the
 > docs domain. Use the targeted rules below (none of them match `com.mbreissi` or `…mbreissi.com`).

@@ -41,7 +41,7 @@ class GgStreamException extends RuntimeException {             // unchecked — 
 ```
 
 CLI and builder preconditions throw the standard `IllegalArgumentException` (e.g. unknown
-`--platform` / `--transport`, the removed `-m/--mode` flag) and `IllegalStateException` (builder
+`--platform` / `--transport`, the unsupported `-m/--mode` flag) and `IllegalStateException` (builder
 precondition violations).
 
 </TabItem>
@@ -71,8 +71,6 @@ Python has **no dedicated config-load exception class**. Config-load failures su
 built-in `ValueError`, as `ConfigurationValidationException`, or as a propagated stdlib exception.
 Using an accessor before the runtime is initialized raises `RuntimeError("GGCommons not properly
 initialized")`.
-
-{/* TODO: unverified - confirm with the doc owner whether Python should grow a dedicated config-load exception class (parity with Java ConfigurationException) or whether ValueError / ConfigurationValidationException is the intended stable public contract for component authors to catch. */}
 
 </TabItem>
 <TabItem label="Rust">
@@ -150,8 +148,6 @@ Because `GgErrorKind` omits `Streaming`/`Credentials`/`Parameters`, a check like
 `e.kind === "Streaming"` will never match — those failures are the separate classes above. Use
 `instanceof GgStreamError` / `instanceof CredentialError` / `instanceof ParameterError` instead.
 
-{/* TODO: unverified - confirm GgErrorKind intentionally omits Streaming/Credentials/Parameters as the final shape; it diverges from Rust's all-in-one GgError and can surprise a developer expecting e.kind === "Streaming". */}
-
 </TabItem>
 </Tabs>
 
@@ -178,8 +174,6 @@ The same logical failure maps to a different type in each SDK. Read across a row
 The UNS validation errors carry the machine-readable code set pinned in `uns-test-vectors/`
 (`EMPTY_TOKEN`, `BAD_CHAR`, `DEPTH_EXCEEDED`, ... — see the
 [UNS API reference](/reference/uns/#normative-validation-rules)), identical across languages.
-
-{/* NEEDS REVIEW: Java and Python have no dedicated Messaging/Metrics/IPC exception class in the taxonomy; the "standard exception" cells describe the absence of a dedicated type, not a confirmed concrete type a runtime messaging/metrics failure throws. A human should confirm what those paths actually throw at runtime. */}
 
 ## When each is thrown
 
@@ -275,8 +269,6 @@ with pytest.raises(GgStreamError) as ei:
     svc.stats("nope")
 assert ei.value.code == 5     # ERR_UNKNOWN_STREAM — no named constant in ggcommons.streaming
 ```
-
-{/* TODO: unverified - confirm whether Python intentionally omits named ERR_* constants (vs Java's GgStreamException.ERR_*) or whether that is a parity gap to close. */}
 
 </TabItem>
 <TabItem label="Rust">

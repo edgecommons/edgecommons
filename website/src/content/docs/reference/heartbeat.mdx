@@ -499,11 +499,11 @@ The section is validated against the `heartbeat` schema section of
 The `sys` metric's `storageResolution` is `1` when `intervalSecs` is under `60`, otherwise `60`
 (all four languages).
 
-<Aside type="danger" title="heartbeat.targets[] is removed">
-The former `targets[]` array and its per-target topic/destination overrides no longer exist — the
+<Aside type="danger" title="heartbeat.targets is not accepted">
+The heartbeat has no `targets[]` array and no per-target topic/destination overrides — the
 keepalive topic is always the component's UNS state topic, and the measures route through the
-metric subsystem. A config still carrying `heartbeat.targets` **fails validation at startup**. See
-the [guide's migration note](/guides/heartbeat/#configuration).
+metric subsystem. A config carrying `heartbeat.targets` **fails validation at startup**. See
+the [guide's configuration section](/guides/heartbeat/#configuration).
 </Aside>
 
 ## Related
