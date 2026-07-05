@@ -461,7 +461,7 @@ impl Config {
             tracing::warn!(
                 "topic.includeRoot=true has no effect with a single-level hierarchy \
                  (hierarchy.levels resolves to one level - the device): the site position \
-                 requires a level above the device, so UNS topics stay rootless (D-U25). \
+                 requires a level above the device, so UNS topics stay rootless. \
                  Declare a multi-level hierarchy.levels or remove topic.includeRoot."
             );
         }

@@ -156,7 +156,7 @@ class ConfigManager:
                 "topic.includeRoot=true has no effect with a single-level hierarchy"
                 " (hierarchy.levels resolves to one level - the device): the site"
                 " position requires a level above the device, so UNS topics stay"
-                " rootless (D-U25). Declare a multi-level hierarchy.levels or remove"
+                " rootless. Declare a multi-level hierarchy.levels or remove"
                 " topic.includeRoot."
             )
         self._messaging_request_timeout_seconds = (
