@@ -231,7 +231,10 @@ The HTTP probes above serve the **orchestrator** (kubelet). For every *other* co
 monitoring console, a peer component, a site watchdog — the liveness signal is the library-owned
 [heartbeat `state` keepalive](/guides/heartbeat/) on the
 [Unified Namespace](/guides/unified-namespace/): `ecv1/{device}/{component}/main/state`, published
-every 5 s by default, with a best-effort `{"status":"STOPPED"}` on graceful shutdown.
+every 5 s by default, with a best-effort `{"status":"STOPPED"}` on graceful shutdown. For a component
+that fronts several southbound connections, the RUNNING `state` body can also carry a per-connection
+reachability array, [`instances[]`](/guides/heartbeat/#per-instance-connectivity), so a console sees
+each connection's health under the one component.
 
 A fleet-health consumer therefore needs **one subscription** — `ecv1/+/+/+/state` — to see every
 component on the bus (and the full six-wildcard set to also get config, events, metrics, and

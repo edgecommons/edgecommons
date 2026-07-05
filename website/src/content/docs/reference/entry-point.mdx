@@ -178,7 +178,7 @@ async fn main() -> anyhow::Result<()> {
 <TabItem label="TypeScript">
 
 ```typescript
-import { GGCommonsBuilder, GGCommons } from "ggcommons";
+import { GGCommonsBuilder, GGCommons } from "@edgecommons/ggcommons";
 
 const gg = await new GGCommonsBuilder("com.example.Lc")
   .args([
@@ -283,6 +283,19 @@ parameters(): ParameterService | undefined;        // undefined when no `paramet
 
 </TabItem>
 </Tabs>
+
+<Aside type="note" title="Also on the runtime: publish facades + the connectivity provider">
+Beyond the subsystem accessors above, the runtime also carries two surfaces documented on their own
+pages rather than repeated here:
+
+- **Per-message-class publish facades** — `data()` / `events()` / `app()` and the `commands()` inbox
+  (Java `getData()` / `getEvents()` / `getApp()` / `getCommands()`), plus the instance-scoped
+  `instance(id).data()` / `.events()` / `.app()`. Full surface on the
+  [UNS reference](/reference/uns/).
+- **`setInstanceConnectivityProvider(...)`** / `set_instance_connectivity_provider(...)` — feeds the
+  heartbeat's RUNNING `state` body `instances[]` array. See
+  [Per-instance connectivity](/reference/heartbeat/#per-instance-connectivity).
+</Aside>
 
 <Aside type="tip">
 For full method references on each service, see

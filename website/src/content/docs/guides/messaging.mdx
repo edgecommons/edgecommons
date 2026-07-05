@@ -232,7 +232,7 @@ gg.messaging()?.publish(&topic, &msg).await?;
 <TabItem label="TypeScript">
 
 ```typescript
-import { UnsClass } from "ggcommons";
+import { UnsClass } from "@edgecommons/ggcommons";
 
 const topic = gg.uns().topic(UnsClass.App, "order/received");
 await gg.messaging().publish(topic, msg);
@@ -611,7 +611,7 @@ messaging.subscribe_to_iot_core(
 <TabItem label="TypeScript">
 
 ```typescript
-import { Qos } from "ggcommons";
+import { Qos } from "@edgecommons/ggcommons";
 
 await messaging.publishToIoTCore("cloud/telemetry", msg, Qos.AtLeastOnce);
 // subscribeToIoTCore's qos arg defaults to Qos.AtLeastOnce
@@ -791,7 +791,7 @@ The user-facing type is the `IMessagingService` interface. In a test, construct
 implementing `IMessagingService`.
 
 ```typescript
-import { DefaultMessagingService } from "ggcommons";
+import { DefaultMessagingService } from "@edgecommons/ggcommons";
 
 const svc: IMessagingService = new DefaultMessagingService(fakeProvider);
 await svc.publish("test/topic", msg);

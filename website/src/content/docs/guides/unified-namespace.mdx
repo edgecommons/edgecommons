@@ -223,7 +223,7 @@ let f = gg.uns().filter(UnsClass::State, &UnsScope::all())?;   // ecv1/+/+/+/sta
 <TabItem label="TypeScript">
 
 ```typescript
-import { UnsClass, UnsScope } from "ggcommons";
+import { UnsClass, UnsScope } from "@edgecommons/ggcommons";
 
 const t = gg.uns().topic(UnsClass.App, "order/received");
 await gg.messaging().publish(t, msg);
@@ -390,7 +390,7 @@ pinned by the cross-language `uns-test-vectors/` conformance suite):
   [Publishing telemetry and events](#publishing-telemetry-and-events) above and the
   [full API reference](/reference/uns/#class-publish-facades-data-events-app).
 - The minimal **`commands()`** facade (the component command inbox + `ping`/`reload-config`/
-  `get-configuration`) — **Java only so far**, Python/Rust/TS mirrors pending.
+  `get-configuration`) — shipped in **all four languages** (pinned by `uns-test-vectors/commands.json`).
 
 <Aside type="caution" title="Roadmap — some built, most not yet shipped">
 These are at different stages (see `docs/platform/DESIGN-uns.md` /
@@ -400,8 +400,8 @@ These are at different stages (see `docs/platform/DESIGN-uns.md` /
   site-wide UNS broker (EMQX), with whole-device UNREACHABLE detection and the `republish-state`
   late-join broadcast. **Built and passing a live two-broker end-to-end test suite** (the relay,
   the reply-rewrite proxy, per-class uplink policy, and the site-broker deploy recipes are all
-  implemented), but not yet available as an installable component — it isn't published to a public
-  repo or listed in the component registry yet. The device-side half it depends on (the
+  implemented); it now ships as the `uns-bridge` component (repo `edgecommons/uns-bridge`, listed in
+  the component registry, `experimental`). The device-side half it depends on (the
   `republish-state`/`republish-cfg` listener every component runs) has shipped in all four
   languages.
 - **The southbound `sb/*` command family** — `sb/browse`, `sb/read`, confirmed `sb/write`,
@@ -412,7 +412,7 @@ These are at different stages (see `docs/platform/DESIGN-uns.md` /
   of the UNS migration.
 - **The remaining facades** — `discovery()` and `status()` (health nuance beyond the automatic
   `state` keepalive), and the `log`-tail publisher. (`data()`/`events()`/`app()` have shipped — see
-  above; `commands()` has shipped its minimal form in Java only, with a schema/danger/RBAC-annotated
+  above; `commands()` has shipped its minimal form in all four languages, with a schema/danger/RBAC-annotated
   registration + `describe`/`get-panel-asset`/`set-log-level` still to come.)
 - **Streaming enrichment** — auto-stamping stream records with identity + hierarchy columns and
   Hive-style partitioning in the Parquet/AVRO sink.

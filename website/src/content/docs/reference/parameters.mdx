@@ -332,6 +332,13 @@ A `ParameterSource` is the pluggable seam between the network/filesystem and the
 three config-selectable built-ins — **`env`, `mountedDir`, and `awsSsm` only** (there is no `custom`
 config type). See the [Parameters guide](/guides/parameters/#sources) for config examples.
 
+<Aside type="caution" title="source.type has no usable default — you must set it">
+The schema declares `source.type`'s default as `none`, but the source factory has **no `none` case**:
+a `parameters` section that omits `source.type` passes schema validation yet **throws at startup**
+(`ParameterException`, "supported: env, mountedDir, awsSsm"). If you add a `parameters` section you
+**must** set `source.type` to `env`, `mountedDir`, or `awsSsm`.
+</Aside>
+
 The `ParameterSource` interface:
 
 - `fetch(name) -> Option<ParamValue>`

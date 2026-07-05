@@ -901,6 +901,52 @@ A config-driven default (no code change needed to move a signal from the bus to 
 under the instance's or the global `component.*` config as `publish: { channel: "..." }` — see
 `"local"` / `"northbound"` / `"stream:<name>"` above.
 
+## The command inbox: commands()
+
+Where `data()`/`events()`/`app()` publish the outbound app classes, **`commands()`** is the inbound
+side of the `cmd` class: a library-owned **command inbox** every component runs on its `main`
+instance. It subscribes the component's own command wildcard `ecv1/{device}/{component}/main/cmd/#`
+on the PRIMARY (local/IPC) connection and dispatches each incoming `cmd` envelope to a handler by
+**verb** — the topic channel after `cmd/` (`/`-namespaced verbs included), which the envelope's
+`header.name` must equal. It ships in **all four languages** (not Java only), pinned by
+`uns-test-vectors/commands.json`.
+
+### Accessor and registration
+
+| Handle | Java | Python | Rust | TypeScript |
+|--------|------|--------|------|------------|
+| Command inbox | `gg.getCommands()` | `gg.get_commands()` | `gg.commands()` | `gg.commands()` |
+
+Register a custom verb handler with `register(verb, handler)` in every language; the verb is one or
+more `/`-separated `cmd` channel tokens, each validated against the
+[token rule](#normative-validation-rules). A verb cannot shadow a built-in or an already-registered
+verb.
+
+### Built-in verbs
+
+Three verbs are registered by the library and cannot be shadowed or unregistered:
+
+| Verb | Reply `result` |
+|------|----------------|
+| `ping` | `{ "status": "RUNNING", "uptimeSecs": n }` — liveness/echo (the state keepalive's RUNNING body shape) |
+| `reload-config` | `{ "reloaded": true }` — re-fetch + re-apply config from the active source |
+| `get-configuration` | `{ "config": <redacted effective config> }` — the component's own redacted effective config (Flow B) |
+
+### Reply shape
+
+A request carrying `header.reply_to` gets a structured reply on that topic (stamped with the
+request's correlation id and the responder's `identity`); a `cmd` without `reply_to` is
+fire-and-forget. The reply body is one of:
+
+```json
+{ "ok": true,  "result": { /* verb-specific object */ } }
+{ "ok": false, "error": { "code": "<CODE>", "message": "<text>" } }
+```
+
+An unknown verb replies with `error.code = "UNKNOWN_VERB"`; a malformed or foreign payload (a missing
+header, or a `header.name` that does not equal the topic's verb) is ignored at DEBUG — never replied
+to, never a crash.
+
 ## The reserved-class publish guard
 
 Every publish path that takes a client-chosen topic — `publish`, `publishRaw`, `publishToIoTCore`,

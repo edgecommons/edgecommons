@@ -57,7 +57,7 @@ GGCommons is one SDK in four languages. You only need the toolchain for the lang
 
   <Aside type="note">
   The library crate is edition 2024 / MSRV 1.85; a scaffolded **component** crate is edition 2021 /
-  MSRV 1.75. A current stable toolchain satisfies both. Building the on-device `greengrass` feature
+  MSRV 1.85. A current stable toolchain satisfies both. Building the on-device `greengrass` feature
   additionally needs a C toolchain and `libclang` and is **Linux/WSL only**.
   </Aside>
 
@@ -239,7 +239,7 @@ project by hand. The current published version is `0.1.0` (the value the CLI sub
   defaulting to the in-repo `libs/ts`). Install local path deps with `npm install --install-links` so
   the package is copied rather than symlinked.
 
-  **Registry** — use a semver range and resolve the `@mbreissi` scope from GitHub Packages. The CLI
+  **Registry** — use a semver range and resolve the `@edgecommons` scope from GitHub Packages. The CLI
   emits an `.npmrc` (only for `--dep-source registry`) and authenticates from the `NODE_AUTH_TOKEN`
   environment variable (a GitHub token with `read:packages`):
 

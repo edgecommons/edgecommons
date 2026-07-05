@@ -25,8 +25,8 @@ On graceful shutdown the library additionally publishes a best-effort `{"status"
 disappearance.
 
 The heartbeat is **on by default** — every component announces itself every **5 seconds** in all
-four languages the moment it starts. You never call a heartbeat API; you shape it with the
-`heartbeat` config section.
+four languages the moment it starts. You shape it with the `heartbeat` config section; the one
+runtime lever is the optional [per-instance connectivity provider](#per-instance-connectivity).
 
 <Aside type="note" title="Heartbeat is autonomous and library-owned">
 No SDK exposes a public accessor to the heartbeat object — there is **no** `getHeartbeat()`,
@@ -35,6 +35,11 @@ during initialization and tears it down on close. The `state` class is a **reser
 the heartbeat publishes through the library's privileged internal path, and your own code cannot
 publish raw messages to a `state` topic (the
 [reserved-class guard](/reference/uns/#the-reserved-class-publish-guard) rejects it).
+
+The one runtime lever is the **per-instance connectivity provider** —
+`gg.setInstanceConnectivityProvider(…)` ([see below](#per-instance-connectivity)). It never exposes
+the heartbeat object; it registers a callback the heartbeat samples on each RUNNING tick to enrich
+the `state` body with per-connection reachability.
 </Aside>
 
 ## The state keepalive
@@ -84,6 +89,92 @@ mosquitto_sub -h localhost -p 1883 -t 'ecv1/+/+/+/state' -v
 
 </TabItem>
 </Tabs>
+
+## Per-instance connectivity
+
+A single component often fronts **many** southbound connections: an OPC UA adapter talking to several
+servers, a Modbus adapter polling several slaves, a file-replicator watching several source
+directories. Each can be reachable or down **independently** — and an operator wants to see which. The
+`state` keepalive carries this per-connection reachability in an optional **`instances[]`** array,
+*without* minting a phantom UNS instance per connection (the component stays one component, addressed
+under `main`).
+
+You surface it by registering a **connectivity provider** — the heartbeat samples it on every RUNNING
+tick and, when it returns entries, folds them into the state body:
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+gg.setInstanceConnectivityProvider(() -> List.of(
+    InstanceConnectivity.of("kep1", device1.isConnected(), "opc.tcp://kep1:49320"),
+    InstanceConnectivity.of("kep2", device2.isConnected()))); // detail optional
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+gg.set_instance_connectivity_provider(lambda: [
+    InstanceConnectivity.of("plc1", dev1.is_connected(), "tcp://10.0.0.50:502 unit=1"),
+    InstanceConnectivity.of("plc2", dev2.is_connected()),  # detail optional
+])
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+gg.set_instance_connectivity_provider(Some(Arc::new(|| vec![
+    InstanceConnectivity::new("src1", src1.is_reachable(), Some("/mnt/in".into())),
+    InstanceConnectivity::of("src2", src2.is_reachable()), // no detail
+])));
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+gg.setInstanceConnectivityProvider(() => [
+    InstanceConnectivity.of("kep1", dev1.connected, "opc.tcp://kep1:49320"),
+    InstanceConnectivity.of("kep2", dev2.connected),
+]);
+```
+
+</TabItem>
+</Tabs>
+
+Each element is `{ instance, connected, detail? }` — the connection id, its live reachability, and an
+optional human detail (typically the endpoint, or a down reason). The RUNNING `state` body then reads:
+
+```json
+{
+  "status": "RUNNING",
+  "uptimeSecs": 125,
+  "instances": [
+    { "instance": "kep1", "connected": true,  "detail": "opc.tcp://kep1:49320" },
+    { "instance": "kep2", "connected": false }
+  ]
+}
+```
+
+**Rules**
+
+- **RUNNING only.** The provider is sampled on RUNNING keepalives; the shutdown `STOPPED` state never
+  carries `instances[]`.
+- **Best-effort, never fatal.** A provider that returns `null` / `None` / an empty list — or one that
+  throws or panics — simply omits the `instances[]` section for that tick; it **never** suppresses the
+  keepalive itself. Keep the callback cheap and non-blocking (sample a cached flag, don't do I/O).
+- **Set once, replace or clear anytime.** Registering again replaces the provider; passing
+  `null` / `None` / `undefined` clears it (the section disappears on the next tick).
+
+**Why an array and not per-connection instances.** A multi-server adapter is still *one* component —
+its identity, data, config, and lifecycle all live under `main`. Reporting each connection as a
+first-class UNS instance would mint phantom components a console then has to reconcile. Instead the one
+`state` topic carries a connectivity sub-table, so a console shows a single component with a
+per-connection health view. The reference adapters use exactly this: **opcua-adapter** reports one
+entry per configured server (`detail` = the endpoint), **modbus-adapter** one per slave
+(`detail` = `tcp://host:port unit=N`), and **file-replicator** one per watched source directory.
 
 ## The `sys` measures metric
 

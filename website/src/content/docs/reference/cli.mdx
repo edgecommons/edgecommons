@@ -119,7 +119,7 @@ platform/transport combination (`IPC` off GREENGRASS) returns `GgError::Cli`.
 parses the flags, runs the resolver, and applies the `MQTT` + `CONFIGMAP` messaging-path default.
 
 ```typescript
-import { parseArgs, type ParsedArgs } from "ggcommons";
+import { parseArgs, type ParsedArgs } from "@edgecommons/ggcommons";
 
 // argv — WITHOUT the program name (pass process.argv.slice(2)).
 // env  — defaults to process.env (mirrors Java reading System.getenv()).
@@ -381,7 +381,7 @@ let messaging = gg.messaging()?;  // returns Result
 <TabItem label="TypeScript">
 
 ```typescript
-import { GGCommonsBuilder } from "ggcommons";
+import { GGCommonsBuilder } from "@edgecommons/ggcommons";
 
 const gg = await new GGCommonsBuilder("com.example.MyComponent")
   .args(process.argv.slice(2))   // runs parseArgs internally

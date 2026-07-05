@@ -25,7 +25,7 @@ the constants are the source of truth for the env vars and tokens the model keys
 | Java | `com.mbreissi.ggcommons.platform` (the resolver, enums, and profile types); `com.mbreissi.ggcommons.GGCommons` (the parser entry point `processArgs`). |
 | Python | `ggcommons.platform` — submodules `platform` (the `Platform` enum), `transport` (the `Transport` enum), and `resolver` (everything else). |
 | Rust | `ggcommons::platform` (enums, profile types, resolver fns); `ggcommons::cli` (the `parse_from` entry point). |
-| TypeScript | the `ggcommons` package root re-exports from `platform.ts` and `cli.ts`. |
+| TypeScript | the `@edgecommons/ggcommons` package root re-exports from `platform.ts` and `cli.ts`. |
 
 ## `Platform`
 
@@ -521,7 +521,7 @@ resolved.identity;   // "my-thing"
 <TabItem label="TypeScript">
 
 ```typescript
-import { resolveProfile, Platform, type ResolverInputs } from "ggcommons";
+import { resolveProfile, Platform, type ResolverInputs } from "@edgecommons/ggcommons";
 
 const resolved = resolveProfile(
   {

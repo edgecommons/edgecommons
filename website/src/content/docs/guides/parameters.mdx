@@ -251,6 +251,13 @@ The `source.type` selects one of three built-in sources. **`env`, `mountedDir`, 
 only config-driven sources** — there is no `custom` type (see [Custom sources](#custom-sources) for
 the programmatic seam). Each config example below is the same in all four languages.
 
+<Aside type="caution" title="source.type has no usable default — you must set it">
+The schema declares `source.type`'s default as `none`, but the source factory has **no `none` case**:
+a `parameters` section that omits `source.type` passes schema validation yet **throws at startup**
+(`ParameterException`, "supported: env, mountedDir, awsSsm"). If you add a `parameters` section you
+**must** set `source.type` to `env`, `mountedDir`, or `awsSsm`.
+</Aside>
+
 ### env — environment variables
 
 Maps a parameter name to an environment variable: `/myapp/db/host` becomes

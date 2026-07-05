@@ -1,25 +1,14 @@
 {
   "schemaVersion": 1,
-  "updated": "2026-06-30",
+  "updated": "2026-07-03",
   "components": [
-    {
-      "name": "telemetry-processor",
-      "repo": "edgecommons/telemetry-processor",
-      "language": "RUST",
-      "category": "processor",
-      "description": "Rust reference processing component. Subscribes to configured (wildcard, templated) local telemetry topics, runs a declarative per-route pipeline (filter / sample / aggregate / project / Rhai), and forwards results to a target: local republish, northbound MQTT/IoT Core, or a durable stream (Kinesis / Kafka / rolling Parquet-AVRO files). The high-throughput northbound seam between southbound adapters and the cloud.",
-      "status": "experimental",
-      "platforms": ["GREENGRASS", "HOST", "KUBERNETES"],
-      "library": "ggcommons",
-      "topics": ["edgecommons", "aws-iot-greengrass", "iiot", "telemetry", "stream-processing", "edgecommons-processor"]
-    },
     {
       "name": "opcua-adapter",
       "repo": "edgecommons/opcua-adapter",
       "language": "JAVA",
       "category": "adapter",
       "protocol": "OPC UA",
-      "description": "Java reference southbound adapter (Eclipse Milo). Subscribes to OPC UA nodes and republishes value changes as SouthboundTagUpdate messages; serves on-demand reads/writes and emits the southbound_health metric.",
+      "description": "Java reference southbound adapter (Eclipse Milo). Subscribes to OPC UA nodes and republishes value changes as SouthboundSignalUpdate messages; serves on-demand reads/writes and emits the southbound_health metric.",
       "status": "beta",
       "platforms": ["GREENGRASS", "HOST", "KUBERNETES"],
       "library": "com.mbreissi:ggcommons",
@@ -30,12 +19,56 @@
       "repo": "edgecommons/modbus-adapter",
       "language": "PYTHON",
       "category": "adapter",
-      "protocol": "Modbus",
-      "description": "Python reference southbound adapter (pymodbus). Polls Modbus TCP / serial RTU / RTU-over-TCP register maps and republishes value changes as SouthboundTagUpdate messages; serves reads/writes and emits the southbound_health metric.",
+      "protocol": "Modbus (TCP / RTU / RTU-over-TCP)",
+      "description": "Python reference southbound adapter (pymodbus). Polls Modbus TCP / serial RTU / RTU-over-TCP register maps and republishes value changes as SouthboundSignalUpdate messages; serves reads/writes and emits the southbound_health metric.",
       "status": "beta",
       "platforms": ["GREENGRASS", "HOST", "KUBERNETES"],
       "library": "greengrass-commons",
       "topics": ["edgecommons", "aws-iot-greengrass", "iiot", "modbus", "edgecommons-adapter"]
+    },
+    {
+      "name": "telemetry-processor",
+      "repo": "edgecommons/telemetry-processor",
+      "language": "RUST",
+      "category": "processor",
+      "description": "Rust reference processing component: the high-throughput northbound seam between southbound adapters and the cloud. Subscribes to configured (wildcard, templated) local telemetry topics, runs a declarative per-route pipeline (filter / sample / aggregate / project / script — Rhai or Lua), and forwards results to a target: local republish, northbound MQTT/IoT Core, or a durable stream (Kinesis / Kafka / rolling Parquet-AVRO files).",
+      "status": "experimental",
+      "platforms": ["GREENGRASS", "HOST", "KUBERNETES"],
+      "library": "ggcommons",
+      "topics": ["edgecommons", "aws-iot-greengrass", "iiot", "telemetry", "stream-processing", "edgecommons-processor"]
+    },
+    {
+      "name": "uns-bridge",
+      "repo": "edgecommons/uns-bridge",
+      "language": "RUST",
+      "category": "bridge",
+      "description": "Envelope-aware UNS relay between a device bus and a site broker. Uplinks the six UNS consumer classes topic-verbatim with hop-tag loop protection and per-class policy (rate caps, evt replay buffer), relays own-device commands back down, and proxies request/reply across the bridge (reply_to rewrite). One uns-bridge per device bus.",
+      "status": "experimental",
+      "platforms": ["HOST", "KUBERNETES"],
+      "library": "ggcommons",
+      "topics": ["edgecommons", "aws-iot-greengrass", "iiot", "unified-namespace", "mqtt", "edgecommons-bridge"]
+    },
+    {
+      "name": "edge-console",
+      "repo": "edgecommons/edge-console",
+      "language": "TYPESCRIPT",
+      "category": "console",
+      "description": "Edge-deployed real-time web console and the site's sole browser-to-bus bridge (HTTPS+WS in front, MQTT/UNS behind). A Node backend on the ggcommons TS library consumes the six UNS consumer classes from the site broker into a timestamped last-known-value FleetModel with console-side miss-detection (cfg-derived cadence, stale/offline ladder, whole-device UNREACHABLE from the uns-bridge LWT); an IBM Carbon/React UI serves edge-health and config-review views.",
+      "status": "experimental",
+      "platforms": ["HOST", "KUBERNETES"],
+      "library": "@edgecommons/ggcommons",
+      "topics": ["edgecommons", "aws-iot-greengrass", "iiot", "unified-namespace", "console", "edgecommons-console"]
+    },
+    {
+      "name": "file-replicator",
+      "repo": "edgecommons/file-replicator",
+      "language": "RUST",
+      "category": "sink",
+      "description": "Rust reference sink component (northbound file delivery): watches local directories and replicates files to a destination (local, S3; SFTP/FTPS, HTTP, Azure Blob, GCS phased) on arrival or on cron schedules/windows. Resumable uploads with integrity verification, bandwidth caps, per-instance activation, on-complete delete/archive/quarantine, and a full control + event surface on a unified namespace.",
+      "status": "experimental",
+      "platforms": ["GREENGRASS", "HOST", "KUBERNETES"],
+      "library": "ggcommons",
+      "topics": ["edgecommons", "aws-iot-greengrass", "iiot", "file-replication", "s3", "edgecommons-sink"]
     }
   ]
 }

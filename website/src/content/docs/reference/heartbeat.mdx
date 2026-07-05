@@ -14,7 +14,8 @@ conceptual overview — the `state` keepalive, the `sys` metric, and the measure
 
 **What the heartbeat does** (identical in all four languages): every `intervalSecs` tick it
 publishes a **`state` keepalive** to `ecv1/{device}/{component}/main/state` (header name `state`,
-version `1.0`, body `{"status":"RUNNING","uptimeSecs":n}`) through the library's privileged
+version `1.0`, body `{"status":"RUNNING","uptimeSecs":n}` — optionally extended with a per-connection
+`instances[]` array, [see below](#per-instance-connectivity)) through the library's privileged
 reserved-publish path, and emits the enabled system measures as a metric named **`sys`** through the
 metric subsystem. On graceful shutdown it publishes a best-effort `{"status":"STOPPED"}` state, at
 most once.
@@ -23,7 +24,12 @@ most once.
 The GGCommons runtime constructs the heartbeat during initialization and tears it down on close.
 **No SDK exposes a public accessor** — there is no `getHeartbeat()` / `heartbeat()` /
 `get_heartbeat()` on the GGCommons object in any language. Component code drives the heartbeat
-through the [`heartbeat` config section](#the-heartbeat-config-shape), not through these APIs. And
+through the [`heartbeat` config section](#the-heartbeat-config-shape), not through these APIs — with
+**one** exception. The single runtime lever is `gg.setInstanceConnectivityProvider(...)` /
+`set_instance_connectivity_provider(...)`, a callback that *shapes* the RUNNING `state` body
+(its optional `instances[]` array). It still never hands you the heartbeat object — you cannot start,
+stop, or retime the heartbeat, only register a per-tick sampler; see
+[Per-instance connectivity](#per-instance-connectivity) below. And
 because `state` is a **reserved** UNS class, the heartbeat publishes through each language's
 internal seam (Java `ReservedPublisher`, Python `_publish_reserved`, Rust's crate-private
 `ReservedMessaging` trait, TypeScript's `@internal` reserved publish) — your code cannot publish
@@ -40,6 +46,41 @@ raw `state` messages.
 | Default interval | `5` seconds |
 | Default keepalive destination | `local` |
 
+## Per-instance connectivity
+
+A component that fronts several southbound connections reports each connection's reachability in the
+RUNNING `state` body's optional **`instances[]`** array — **without** minting a UNS instance per
+connection (identity, data, and lifecycle stay under `main`). You register a **connectivity
+provider**; the heartbeat samples it on every RUNNING tick. This is the terse API surface — for the
+concept, the on-wire array, and worked examples, see the
+[guide's Per-instance connectivity section](/guides/heartbeat/#per-instance-connectivity).
+
+**`InstanceConnectivity`** — one entry per connection: `{ instance, connected, detail? }` (the
+connection id, its live reachability, and an optional human `detail` such as the endpoint or a down
+reason).
+
+| Language | Factory / constructor | Provider you register (return type) |
+|----------|-----------------------|-------------------------------------|
+| Java | `InstanceConnectivity.of(instance, connected[, detail])` | `InstanceConnectivityProvider` → `List<InstanceConnectivity> instanceConnectivity()` |
+| Python | `InstanceConnectivity.of(instance, connected[, detail])` | a `Callable[[], list[InstanceConnectivity]]` (or `None` to clear) |
+| Rust | `InstanceConnectivity::of(instance, connected)` / `::new(instance, connected, Option<detail>)` | `Arc<dyn Fn() -> Vec<InstanceConnectivity> + Send + Sync>` |
+| TypeScript | `InstanceConnectivity.of(instance, connected[, detail])` | `() => InstanceConnectivity[]` |
+
+**Registering it** — note the naming divergence (Java/TypeScript camelCase, Python/Rust snake_case):
+
+| Language | Setter |
+|----------|--------|
+| Java | `gg.setInstanceConnectivityProvider(provider)` |
+| Python | `gg.set_instance_connectivity_provider(provider)` |
+| Rust | `gg.set_instance_connectivity_provider(Some(Arc::new(provider)))` |
+| TypeScript | `gg.setInstanceConnectivityProvider(provider)` |
+
+**Rules.** The provider is sampled on **RUNNING keepalives only** — the shutdown `STOPPED` state
+never carries `instances[]`. It is **best-effort**: a provider that returns `null` / `None` / an
+empty list, or one that throws or panics, simply omits the `instances[]` section for that tick and
+**never** suppresses the keepalive. Registering again replaces the provider; passing
+`null` / `None` / `undefined` clears it.
+
 ## The heartbeat type and lifecycle
 
 <Tabs syncKey="lang">
@@ -51,6 +92,19 @@ constructor is package-private; the runtime constructs it via [`HeartbeatBuilder
 ```java
 public class Heartbeat implements ConfigurationChangeListener {
 
+    // Register (or replace, or clear with null) the per-instance connectivity provider whose
+    // result shapes each RUNNING state body's instances[] array — the ONE runtime lever, wired
+    // from GGCommons.setInstanceConnectivityProvider (see "Per-instance connectivity" above).
+    public void setInstanceConnectivityProvider(InstanceConnectivityProvider provider);
+
+    // Re-emit the RUNNING state keepalive immediately, out of band from the periodic schedule
+    // (backs the republish-state broadcast re-announce). Respects heartbeat.enabled; best-effort.
+    public void publishStateNow();
+
+    // The component's monotonic uptime in whole seconds — the value the RUNNING keepalive carries
+    // as uptimeSecs; backs the command inbox's `ping` verb so ping and keepalives agree.
+    public long getUptimeSecs();
+
     // Stop: cancel the periodic task, publish the best-effort STOPPED state
     // (at most once; failures are swallowed), and shut down the scheduler.
     public void close();
@@ -61,6 +115,12 @@ public class Heartbeat implements ConfigurationChangeListener {
 // package constants: STATE_MESSAGE_NAME = "state", STATE_MESSAGE_VERSION = "1.0",
 //                    SYS_METRIC_NAME = "sys"
 ```
+
+Beyond `close()` and `onConfigurationChanged()`, the Java `Heartbeat` therefore exposes three more
+public methods: `setInstanceConnectivityProvider(...)` (the runtime lever —
+[see above](#per-instance-connectivity)), `publishStateNow()` (an out-of-band RUNNING re-announce
+that backs the `republish-state` broadcast), and `getUptimeSecs()` (the monotonic uptime the `ping`
+command verb reports).
 
 </TabItem>
 <TabItem label="Python">
@@ -115,7 +175,7 @@ pub const SYS_METRIC_NAME: &str = "sys";
 `start` factory.
 
 ```typescript
-import { Heartbeat } from "ggcommons";
+import { Heartbeat } from "@edgecommons/ggcommons";
 
 export type ConfigProvider = () => Config;   // live-config getter (mirrors Rust Arc<ArcSwap<Config>>)
 
@@ -213,7 +273,7 @@ drop(hb);   // RAII stop + best-effort STOPPED
 messaging service (absent ⇒ the keepalive is skipped; the `sys` metric still emits).
 
 ```typescript
-import { Heartbeat } from "ggcommons";
+import { Heartbeat } from "@edgecommons/ggcommons";
 
 const hb = Heartbeat.start(() => currentConfig, metrics, messaging);
 
@@ -279,7 +339,7 @@ The TypeScript monitor takes a `Measures` object. CPU is a delta between consecu
 calls, so the first sample reports `0.0`.
 
 ```typescript
-import { HeartbeatMonitor } from "ggcommons";
+import { HeartbeatMonitor } from "@edgecommons/ggcommons";
 
 const monitor = new HeartbeatMonitor({
   cpu: false, memory: true, disk: false,

@@ -79,7 +79,7 @@ async fn main() -> anyhow::Result<()> {
 <TabItem label="TypeScript">
 
 ```typescript
-import { GGCommonsBuilder } from "ggcommons";
+import { GGCommonsBuilder } from "@edgecommons/ggcommons";
 
 const gg = await new GGCommonsBuilder("com.example.Lc")
   .args([
@@ -139,6 +139,12 @@ The **UNS topic builder** (`gg.uns()`, bound to the component's config-resolved 
 validates every [Unified Namespace](/guides/unified-namespace/) topic you publish or subscribe; the
 **instance handle** (`gg.instance("kep1")`) is the same builder plus a message builder pre-bound to
 a per-message instance token. See the [UNS API reference](/reference/uns/).
+
+The runtime also carries the **per-message-class publish facades** — `data()` / `events()` / `app()`
+and the `commands()` inbox (Java `getData()` / `getEvents()` / `getApp()` / `getCommands()`), plus
+`instance(id).data()` / `.events()` / `.app()` — and `setInstanceConnectivityProvider(...)`, which
+feeds the heartbeat's RUNNING `state` body `instances[]`. These are documented on the
+[UNS](/reference/uns/) and [Heartbeat](/reference/heartbeat/) reference pages.
 
 The **always-on** subsystems (config, messaging, metrics) return their service directly:
 

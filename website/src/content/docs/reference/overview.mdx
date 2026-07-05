@@ -115,8 +115,8 @@ knowing before you read them:
   **without** the node/script prefix (`process.argv.slice(2)`). Java `withArgs(...)` and Python
   `with_args(...)` take the already-stripped application args.
 - **You do not wire your own signal handler.** The library installs the SIGTERM/SIGINT handling for
-  you (Java: a JVM shutdown hook on both signals; TypeScript: SIGTERM + SIGINT; Python: **SIGTERM
-  only**; Rust: a watcher that flips readiness to "shutting down" and relies on `Drop` for teardown).
+  you (Java: a JVM shutdown hook on both signals; TypeScript: SIGTERM + SIGINT; Python: SIGTERM +
+  SIGINT; Rust: a watcher that flips readiness to "shutting down" and relies on `Drop` for teardown).
   Registering another handler just double-runs teardown. `shutdown()`/`close()` are idempotent, so
   calling them explicitly is still safe.
 

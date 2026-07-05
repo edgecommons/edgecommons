@@ -450,6 +450,56 @@ ggcommons list-templates
 
 {/* NEEDS REVIEW: cli/README.md historically showed git URLs here; the code prints local filesystem paths. Make sure rendered docs/README examples don't contradict this. */}
 
+## `list-components` — browse the component ecosystem
+
+Where `list-templates` shows the languages you can *scaffold*, `list-components` shows the components
+that already *exist* in the edgecommons ecosystem — the discovery half of the catalog. It reads the
+machine-readable component catalog (`components.json`) from the **`edgecommons/registry`** repository
+and prints the registered components (or emits them as JSON), optionally filtered by language or
+category.
+
+The registry repo is private, so by default the catalog is fetched **authenticated via the GitHub
+CLI (`gh`)** — install `gh` and run `gh auth login` first. Override the source with `--source` (or
+the `$GGCOMMONS_REGISTRY_URL` environment variable): pass a registry URL or a local `components.json`
+path, either of which bypasses `gh` entirely.
+
+| Flag | Default | Notes |
+|------|---------|-------|
+| `--source` | the private `edgecommons/registry` catalog via `gh` (or `$GGCOMMONS_REGISTRY_URL`) | A registry URL, or a local `components.json` path — either bypasses `gh`. |
+| `--language` | _(all)_ | Filter by language: `JAVA` \| `PYTHON` \| `RUST` \| `TYPESCRIPT` (case-insensitive). |
+| `--category` | _(all)_ | Filter by category: `adapter` \| `processor` \| `sink` \| `bridge` \| `console` (case-insensitive). |
+| `--json` | off | Emit the matching catalog entries as raw JSON instead of the formatted table. |
+
+<Tabs syncKey="os">
+<TabItem label="Linux">
+
+```bash
+ggcommons list-components                              # every registered component
+ggcommons list-components --language RUST              # only Rust components
+ggcommons list-components --category adapter --json    # adapters, as raw JSON
+ggcommons list-components --source ./components.json   # a local catalog (no gh needed)
+```
+
+</TabItem>
+<TabItem label="Windows">
+
+```powershell
+ggcommons list-components                              # every registered component
+ggcommons list-components --language RUST              # only Rust components
+ggcommons list-components --category adapter --json    # adapters, as raw JSON
+ggcommons list-components --source ./components.json   # a local catalog (no gh needed)
+```
+
+</TabItem>
+</Tabs>
+
+<Aside type="note" title="Category values">
+The registry categories are `adapter`, `processor`, `sink`, `bridge`, and `console`. The command's
+own `--category` help text still lists only the first three (`adapter|processor|sink`), but the
+filter is a free-form case-insensitive match against each entry's `category`, so `bridge` and
+`console` work too.
+</Aside>
+
 ## `validate` — lint the recipe
 
 Checks a generated component's `recipe.yaml` for problems that would break

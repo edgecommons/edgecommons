@@ -86,7 +86,7 @@ module path, which is what per-logger `loggers` directives match against.
 <TabItem label="TypeScript">
 
 ```typescript
-import { logger, getLogger } from "ggcommons";
+import { logger, getLogger } from "@edgecommons/ggcommons";
 
 logger.info("using the process-wide root logger");   // name "ggcommons"
 
@@ -351,7 +351,7 @@ to call `reconfigure` on reload.
 <TabItem label="TypeScript">
 
 ```typescript
-import { initLogging, reconfigureLogging, LoggingReconfigurer } from "ggcommons";
+import { initLogging, reconfigureLogging, LoggingReconfigurer } from "@edgecommons/ggcommons";
 
 initLogging(config, options?);        // (config: Config, options?: LoggingOptions)
 reconfigureLogging(config);           // re-run the full configurator
@@ -375,7 +375,7 @@ is meaningless to the others. Setting the value to the literal `json` (case-inse
 | --- | --- | --- | --- |
 | Java | `java_format` | Log4j2 `PatternLayout` | `%d{yyyy-MM-dd HH:mm:ss} [%-5p] %-25.25c{1}(%4L): %m%n` |
 | Python | `python_format` | `logging.Formatter` string | `%(asctime)s [%(levelname)s] %(name)s: %(message)s` |
-| Rust | `rust_format` | token template | `{timestamp} {level} {target} {message}` |
+| Rust | `rust_format` | token template | none — the `tracing-subscriber` `fmt` layer (the `{timestamp} {level} {target} {message}` tokens apply only when `rust_format` is set explicitly) |
 | TypeScript | `ts_format` | token template | `{timestamp} [{level}] {message}` |
 
 Token-template placeholders differ between Rust and TypeScript: Rust supports `{timestamp}`,
@@ -430,7 +430,7 @@ debug!(payload_bytes = payload.len(), "received payload");
 <TabItem label="TypeScript">
 
 ```typescript
-import { logger, getLogger } from "ggcommons";
+import { logger, getLogger } from "@edgecommons/ggcommons";
 
 logger.info("publish interval set to " + interval + "ms");
 

@@ -96,8 +96,10 @@ pub enum GgError {
     Credentials(String), // `credentials` feature
     Parameters(String),  // `parameters` feature
     UnsValidation { code: UnsValidationCode, detail: String },  // UNS topic build/validate
+    Command(String),                                             // commands() inbox verb registration
     ReservedTopic(String),                                       // reserved-class publish guard
     RequestTimeout { topic: String, secs: f64 },                 // request() deadline fired
+    Facade(String),        // data()/events()/app() body-contract violation
     Io(std::io::Error),    // #[from] — auto-converts via `?`
     Json(serde_json::Error), // #[from] — auto-converts via `?`
 }
@@ -105,7 +107,12 @@ pub enum GgError {
 
 `GgError` is `Send + Sync`; constructing or matching on it cannot panic. The `#[from]` on `Io` and
 `Json` means stdlib I/O and `serde_json` errors convert into a `GgError` automatically through the
-`?` operator.
+`?` operator. Two subsystem variants complete the set (16 in all): **`Command`** — a
+[`commands()`](/reference/uns/#the-command-inbox-commands) verb-registration error (a verb collides
+with a built-in, a delegated verb, or an already-registered one) — and **`Facade`**, the
+[`data()`/`events()`/`app()`](/reference/uns/#class-publish-facades-data-events-app) body-contract
+rejection the facades cannot default away (a missing `signal.id`, an empty `samples`/`evt` type/`app`
+name, ...), distinct from `UnsValidation` (topic shape) and `Messaging` (transport).
 
 </TabItem>
 <TabItem label="TypeScript">
