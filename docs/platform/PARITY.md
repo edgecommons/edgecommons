@@ -1,6 +1,7 @@
 # Design — Four-language parity & implementation plan
 
-> Companion to the other design docs. **Status: PROPOSED.** How the Kubernetes work lands across Java
+> Companion to the other design docs. **Status: Phase 1 SHIPPED on `main` (v0.2.0), all four
+> languages; Phase 2+ still proposed.** How the Kubernetes work lands across Java
 > (canonical), Python, Rust, and TypeScript while preserving four-way parity, and the per-language
 > specifics that shape it. Rule (CLAUDE.md + [[no-api-divergence-without-asking]]): define semantics in
 > **Java first**, then mirror; any divergence is explicit and tracked.

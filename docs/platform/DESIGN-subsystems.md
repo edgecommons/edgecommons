@@ -1,6 +1,9 @@
 # Design — Subsystems on Kubernetes
 
-> Companion to [DESIGN-core.md](DESIGN-core.md). **Status: PROPOSED.** Per-subsystem design for all
+> Companion to [DESIGN-core.md](DESIGN-core.md). **Status: Phase 1 SHIPPED on `main` (v0.2.0) — the
+> KUBERNETES additions (Prometheus metrics, HTTP health, stdout-JSON logging, ConfigMap config,
+> env-KEK vault) are live in all four languages; the §3.2-style deferred enhancements remain.**
+> Per-subsystem design for all
 > eight, each as: **Seam today → Kubernetes addition → Config → Disconnect tolerance → Parity → Risks.**
 > The KUBERNETES profile defaults are summarized in DESIGN-core §3. Connectivity model throughout:
 > **edge-first with intermittent cloud cooperation** — cloud is used where appropriate, but every

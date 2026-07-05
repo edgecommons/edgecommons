@@ -1,6 +1,7 @@
 # Platform model (platform × transport) — Requirements
 
-> Companion to [README.md](README.md) and the design docs. **Status: PROPOSED.** Requirements use
+> Companion to [README.md](README.md) and the design docs. **Status: Phase 1 SHIPPED on `main`
+> (v0.2.0), all four languages; Phase 2+ requirements remain proposed.** Requirements use
 > RFC-2119 keywords (**MUST** / **SHOULD** / **MAY**). IDs are stable handles for review and traceability.
 > Each requirement carries an **Acceptance** note stating how it is verified.
 

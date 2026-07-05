@@ -1,7 +1,7 @@
 # ggcommons UNS — Canonical API Design & Decisions Register (implementation companion)
 
-> **Status (2026-07-03): Phases 1–2 SHIPPED, all four languages** (branch `feat/unified-namespace`,
-> not yet merged to `main`) — every API shape below (`MessageIdentity`, `gg.uns()`/`UnsClass`/`UnsScope`,
+> **Status (updated 2026-07-05): Phases 1–3 SHIPPED, all four languages, merged to `main`** and
+> released as **v0.2.0** (release commit `b1d8d85`) — every API shape below (`MessageIdentity`, `gg.uns()`/`UnsClass`/`UnsScope`,
 > the `gg.instance()` handle, the reserved-class guard + per-language internal seam, the `request()`
 > deadline, MQTT LWT, IoTCore casing, the library-owned `state`/`metric`/`cfg` publishers, the
 > `uns-test-vectors/` conformance suite, and the interop UNS suite) is real, tested code — see the
@@ -304,7 +304,7 @@ public final class GgInstance {
     public Uns uns();                                          // topics minted with this instance token
     public MessageBuilder newMessage(String name, String version);
         // == MessageBuilder.create(name, version).withConfig(configManager).withInstance(id)
-    // Components phase adds: commands() [shipped, Java canonical] and the class-publish facades
+    // Components phase adds: commands() [shipped, all four languages] and the class-publish facades
     // data()/events()/app() [SHIPPED, all four languages — see DESIGN-class-facades.md] here —
     // same handle, no rework, exactly as anticipated below.
     public DataFacade data();
@@ -432,8 +432,8 @@ broadcast):**
   (`republish-state`/`republish-cfg`) has since shipped in all four languages as its own listener
   (DESIGN-uns.md §9.4, slice G-S1); and the minimal `commands()` facade — the component command
   inbox + `ping`/`reload-config`/Flow-B `get-configuration` + `register(verb, handler)` — has
-  shipped in the Java canonical (DESIGN-uns.md §9.5, slice S2; `uns-test-vectors/commands.json`;
-  Py/Rust/TS mirrors pending).** The full facade (schema/danger/RBAC-annotated registration,
+  shipped in all four languages (DESIGN-uns.md §9.5, slice S2; `uns-test-vectors/commands.json`).**
+  The full facade (schema/danger/RBAC-annotated registration,
   `describe`, `set-log-level`, `sb/*`) remains deferred.
 
 Heartbeat config reshape (resolves #33 / M11 in this phase — Risks #1): `heartbeat.targets[]` is
@@ -508,20 +508,23 @@ per-language internal seam; the `request()` deadline; MQTT LWT; IoTCore casing n
 library-owned **state / metric / cfg** publishers on UNS topics; the CONFIG_COMPONENT rendezvous remap;
 the M8 named client (Rust only); schema changes + `uns-test-vectors` + the interop UNS suite.
 
-**Deferred to the components phase:** `telemetry()`, `status()`, `events()`, `commands()`, `discovery()`
-facades (incl. registering arbitrary component-defined `cmd` verbs through a generalized facade); the
+**Deferred to the components phase:** `telemetry()`, `status()`, `discovery()`
+facades (incl. registering arbitrary component-defined `cmd` verbs through a generalized facade — the
+minimal `commands()` inbox and the `data()`/`events()`/`app()` publish facades have since shipped, see
+the update note below); the
 `log`-tail publisher (class reserved+guarded now, publisher later); streaming enrichment (M15); the
 southbound command family (M9); D‑U15/16 (Phase 5).
 
 > **Update (2026-07-03) — four of these have since shipped, ahead of this note:** the `_bcast`
 > `republish-state`/`republish-cfg` broadcast listener has shipped in all four languages
 > (DESIGN-uns.md §9.4, slice G-S1); **`uns-bridge` + site-broker recipes (M1/M2)** have shipped as a
-> standalone, e2e-tested Rust component (`edgecommons/uns-bridge`, not yet published to GitHub or
-> pinned by a ggcommons rev bump) — see [`DESIGN-uns-bridge.md`](DESIGN-uns-bridge.md); the
+> standalone, e2e-tested Rust component (`edgecommons/uns-bridge`, now published to GitHub, registered
+> in `registry/components.json` under `category: bridge`, and git-rev-pinned to the v0.2.0 UNS release
+> `b1d8d85`) — see [`DESIGN-uns-bridge.md`](DESIGN-uns-bridge.md); the
 > **minimal `commands()` facade** — the component command inbox (`ecv1/{device}/{component}/main/cmd/#`),
 > the built-ins `ping`/`reload-config`/Flow-B `get-configuration`, and the `register(verb, handler)`
-> seam — has shipped in the **Java canonical** (DESIGN-uns.md §9.5, slice S2; pinned by
-> `uns-test-vectors/commands.json`; Py/Rust/TS mirrors pending); and **the `data()`/`events()`/`app()`
+> seam — has shipped in **all four languages** (DESIGN-uns.md §9.5, slice S2; pinned by
+> `uns-test-vectors/commands.json`); and **the `data()`/`events()`/`app()`
 > class-publish facades have shipped in ALL FOUR languages** (Java canonical commit `2283189`,
 > Py/Rust/TS mirrors `8d3e3c9`) — see [`DESIGN-class-facades.md`](DESIGN-class-facades.md), pinned by
 > `uns-test-vectors/{data,evt,app}.json`. The rest of this deferred list is still accurate: no
@@ -665,11 +668,12 @@ minimal `commands()` scaffolding) — **DONE**: the `_bcast` `republish-state`/`
 shipped in all four languages (DESIGN-uns.md §9.4, slice G-S1); the `uns-bridge` component + site-broker
 deploy recipes shipped as a standalone, e2e-tested Rust component in its own sibling repo (P3-2 through
 P3-6, dual-EMQX end-to-end proof 9/9 green) — see [`DESIGN-uns-bridge.md`](DESIGN-uns-bridge.md) for what
-still remains before general release (GitHub publish, registry entry, rev-pin bump, edge-console
-integration). The "minimal `commands()` scaffolding" has since landed in the **Java canonical**
-(slice S2, DESIGN-uns.md §9.5): the component command inbox + the built-ins
+still remains before general release (the edge-console site-side client and the GREENGRASS/IPC bridge
+variant; GitHub publish, the `registry/components.json` entry, and the git-rev pin to the v0.2.0 UNS
+release `b1d8d85` are now done). The "minimal `commands()` scaffolding" has since landed in **all four
+languages** (slice S2, DESIGN-uns.md §9.5): the component command inbox + the built-ins
 `ping`/`reload-config`/Flow-B `get-configuration` + a `register(verb, handler)` registration API,
-pinned by `uns-test-vectors/commands.json` — Py/Rust/TS mirrors pending.
+pinned by `uns-test-vectors/commands.json`.
 
 **Phase 4 — streaming enrichment (M15).** **NOT STARTED** — no identity/hierarchy columns or
 partitioning in the streaming sinks (verified by source search).

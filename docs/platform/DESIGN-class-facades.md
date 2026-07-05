@@ -1,13 +1,14 @@
 # DESIGN — the app-usable class publish facades: `data()`, `events()`, `app()`
 
-> **Status: DECIDED + BUILT in Java canonical (2026-07-03).** The nine open decisions below are
-> **RESOLVED** — see the decision register in §8. The Java implementation has shipped on branch
-> `feat/unified-namespace`: the `Quality`/`Severity`/`Channel` enums + the `SignalUpdate` body
+> **Status: DECIDED + BUILT in all four languages (2026-07-03; merged to `main` in v0.2.0, release
+> commit `b1d8d85`).** The nine open decisions below are
+> **RESOLVED** — see the decision register in §8. The implementation has shipped (Java canonical, then
+> Python/Rust/TS mirrors): the `Quality`/`Severity`/`Channel` enums + the `SignalUpdate` body
 > builder + the `DataFacade`/`EventsFacade`/`AppFacade` facades under
-> `libs/java/.../facades/`, wired onto `GgInstance.data()/events()/app()` and the `GGCommons`
+> `libs/{java,python,rust,ts}/.../facades/`, wired onto `GgInstance.data()/events()/app()` and the `GGCommons`
 > convenience `getData()/getEvents()/getApp()` (== instance `main`); the body contracts are pinned
-> by new `uns-test-vectors/{data,evt,app}.json` and the refreshed `envelopes.json` goldens.
-> **Python / Rust / TS mirrors follow** (§3.2 mirror notes + §7). This closes the last gap in
+> by new `uns-test-vectors/{data,evt,app}.json` and the refreshed `envelopes.json` goldens
+> (Java canonical `2283189`; Python/Rust/TS mirrors `8d3e3c9`). This closes the last gap in
 > the UNS class-facade family: the reserved platform classes (`state`/`metric`/`cfg`, and `log`
 > deferred) each already have a **library-owned publisher** that mints the correct topic *and*
 > constructs/validates the class body; the inbound `cmd` class has the `CommandInbox`. But the three
@@ -451,10 +452,10 @@ design becomes closed:
 | `metric` | `MetricEmitter` | reserved | `getMetrics()` / `gg.metrics()` | `MetricEmitter` → `ReservedPublisher` | **shipped** |
 | `cfg` | `EffectiveConfigPublisher` | reserved, **automatic** | *(none — free)* | that publisher → `ReservedPublisher` | **shipped** |
 | `log` | *(log-tail publisher)* | reserved | *(none — free)* | deferred | **deferred** |
-| `cmd` (inbound) | `CommandInbox` | request/reply | `getCommands()` / `gg.commands()` | inbox + `register(verb,handler)` | **shipped (Java); mirrors pending** |
-| **`data`** | **`DataFacade`** | **app-usable** | **`getData()` / `data()`** | **the facade (this doc)** | **PROPOSED** |
-| **`evt`** | **`EventsFacade`** | **app-usable** | **`getEvents()` / `events()`** | **the facade (this doc)** | **PROPOSED** |
-| **`app`** | **`AppFacade`** | **app-usable** | **`getApp()` / `app()`** | **the facade (this doc)** | **PROPOSED** |
+| `cmd` (inbound) | `CommandInbox` | request/reply | `getCommands()` / `gg.commands()` | inbox + `register(verb,handler)` | **shipped (all four languages)** |
+| **`data`** | **`DataFacade`** | **app-usable** | **`getData()` / `data()`** | **the facade (this doc)** | **shipped (all four languages)** |
+| **`evt`** | **`EventsFacade`** | **app-usable** | **`getEvents()` / `events()`** | **the facade (this doc)** | **shipped (all four languages)** |
+| **`app`** | **`AppFacade`** | **app-usable** | **`getApp()` / `app()`** | **the facade (this doc)** | **shipped (all four languages)** |
 
 \* `getStatus()` (health nuance: `update(DEGRADED, reason)`, `registerCheck`) is a separate deferred
 refinement of the automatic `state` publisher; not part of this doc.
@@ -555,8 +556,8 @@ Python/Rust/TS ports have an unambiguous target.
    `GGCommons.getData()/getEvents()/getApp()`.
 7. **Sequencing — RESOLVED: library-facades-first slice.** Land the four-language library facades
    (Java-canonical first, this build) `main`-merged and rev-tagged before the component-adoption PRs
-   (Phase 5). Raw publishing is **not** deprecated. Java canonical is shipped here; the mirrors + adapter
-   adoption follow.
+   (Phase 5). Raw publishing is **not** deprecated. The four-language library facades have shipped and
+   merged to `main` (v0.2.0); the component-adoption PRs follow (Phase 5).
 8. **`events()` alarm state — RESOLVED: include `raiseAlarm`/`clearAlarm` now.** Body
    `{severity, type, message?, timestamp, context?, alarm?, active?}`; `raiseAlarm`/`clearAlarm` set
    `alarm=true` + `active=true|false`. Both default `severity` to **`critical`** (overridable) so an
@@ -571,7 +572,7 @@ Python/Rust/TS ports have an unambiguous target.
 
 ---
 
-*Java canonical is built on `feat/unified-namespace` (uncommitted, pending review): the facades +
-enums + `SignalUpdate` under `libs/java/.../facades/`, the accessor wiring, the
+*Built in all four languages and merged to `main` (v0.2.0): the facades +
+enums + `SignalUpdate` under `libs/{java,python,rust,ts}/.../facades/`, the accessor wiring, the
 `uns-test-vectors/{data,evt,app}.json` + refreshed `envelopes.json` goldens, and the unit tests under
-`mvn verify` (JaCoCo 90%). The Python / Rust / TS mirrors replicate the §3.2 seams + the same vectors.*
+each language's 90% coverage gate. The Python / Rust / TS mirrors replicate the §3.2 seams + the same vectors.*

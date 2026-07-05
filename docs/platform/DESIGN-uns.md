@@ -1,7 +1,7 @@
 # ggcommons Unified Namespace (UNS) — messaging namespace, identity & site-bus realization
 
-> **Status (2026-07-03): Phases 1–2 SHIPPED in all four languages** on branch `feat/unified-namespace`
-> (not yet merged to `main`) — the topic grammar, the eight classes, the top-level `identity` element,
+> **Status (updated 2026-07-05): Phases 1–3 SHIPPED in all four languages, merged to `main`** and
+> released as **v0.2.0** (release commit `b1d8d85`) — the topic grammar, the eight classes, the top-level `identity` element,
 > `messaging()`/`gg.uns()`/`gg.instance()`, the reserved-class publish guard, `request()`'s internal
 > deadline, MQTT LWT, and the library-owned `state`/`metric`/`cfg` publishers are real, tested code (see
 > [`UNS-CANONICAL-DESIGN.md`](UNS-CANONICAL-DESIGN.md) for file:line citations and the mirror-parity
@@ -9,8 +9,9 @@
 > is in all four languages, and the `uns-bridge` component (§9.1) is built and passing a live
 > dual-broker end-to-end test in its own sibling repo — see
 > [`DESIGN-uns-bridge.md`](DESIGN-uns-bridge.md) for exactly what's done there and what's still
-> pending before general release (GitHub publish, a ggcommons git-rev bump, the edge-console
-> integration). **The class-publish facades — `data()`/`events()`/`app()` — have also shipped in all
+> pending before general release (the edge-console site-side client and the GREENGRASS/IPC bridge
+> variant; GitHub publish, the `registry/components.json` entry, and the git-rev pin to the v0.2.0 UNS
+> release are now done). **The class-publish facades — `data()`/`events()`/`app()` — have also shipped in all
 > four languages**, ahead of Phase 5: see [`DESIGN-class-facades.md`](DESIGN-class-facades.md) for the
 > full design + decision register. They replace the raw `uns()`+`messaging()` hand-building §7.3 used
 > to describe for the app-usable classes, and complete the class-facade family alongside the reserved
@@ -512,7 +513,7 @@ the Python/Rust/TS mirrors replicate ALL of the following (shipped, four-way par
   - Both best-effort: a failing publish is logged and swallowed.
 - **No config surface** — always on; core plumbing, not a feature toggle. No schema change.
 
-### 9.5 The command inbox + built-in verbs — normative behavior (slice S2; Java canonical shipped, mirrors pending)
+### 9.5 The command inbox + built-in verbs — normative behavior (slice S2; shipped in all four languages)
 
 The minimal `commands()` facade (§7.3), sized to what the edge-console needs first: **every**
 ggcommons component runs a library-owned command inbox (Java: `commands/CommandInbox`, wired by the
@@ -650,13 +651,12 @@ a precise error — silent coexistence of old and new topics is the worst outcom
    constructors directly.
 3. **[DONE]** **`uns-bridge` + site-broker recipes** (the site-bus realization) + reachability/late-join.
    The `_bcast` listener (§9.4) is shipped in all four languages; the `uns-bridge` component itself is
-   built and passing a live dual-broker end-to-end suite in its own sibling repo (not yet published to
-   GitHub or pinned by a ggcommons git-rev bump — see [`DESIGN-uns-bridge.md`](DESIGN-uns-bridge.md)
-   for exactly what remains before general release).
-   **Slice S2 (§9.5) — the minimal `commands()` facade — [JAVA CANONICAL DONE, mirrors pending]:**
+   built and passing a live dual-broker end-to-end suite in its own sibling repo (now published to
+   GitHub, registered in `registry/components.json`, and pinned to the v0.2.0 UNS release — see
+   [`DESIGN-uns-bridge.md`](DESIGN-uns-bridge.md) for exactly what remains before general release).
+   **Slice S2 (§9.5) — the minimal `commands()` facade — [DONE, all four languages]:**
    the component command inbox + `ping`/`reload-config`/Flow-B `get-configuration` + the
-   `register(verb, handler)` seam, pinned by `uns-test-vectors/commands.json`; Python/Rust/TS
-   replicate §9.5 before merge (four-way parity).
+   `register(verb, handler)` seam, pinned by `uns-test-vectors/commands.json`.
 4. **[NOT STARTED]** **Streaming enrichment** (M15) + **southbound command family** (M9). (`opcua-adapter`
    has separately landed the M9 *capabilities* — browse/write-ack/regex-read — on its own legacy
    topics, ahead of and independent of this UNS migration; see `SOUTHBOUND.md` §2.2/§8.)

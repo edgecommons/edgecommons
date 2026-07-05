@@ -1,10 +1,11 @@
 # Design — Core runtime model (platform × transport)
 
-> Companion to [README.md](README.md) and [REQUIREMENTS.md](REQUIREMENTS.md). **Status: PROPOSED.**
+> Companion to [README.md](README.md) and [REQUIREMENTS.md](REQUIREMENTS.md). **Status: Phase 1
+> SHIPPED on `main` (v0.2.0), all four languages — Phase 2+ still proposed.**
 > This is the heart of the change: the two-axis runtime model, platform profiles, the precedence
 > resolver, auto-detection, the new CLI contract, identity resolution, the preserved init order, the
-> schema additions, and the **full Phase-0 behavior-preserving migration**. Java is canonical; per-
-> language deltas are in [PARITY.md](PARITY.md). `file:line` citations are to the current tree.
+> schema additions, and the **full Phase-0 behavior-preserving migration** — all shipped. Java is
+> canonical; per-language deltas are in [PARITY.md](PARITY.md). `file:line` citations are to the current tree.
 
 ---
 

@@ -1,6 +1,10 @@
 # Platform model (platform × transport) for ggcommons — Executive Summary & index
 
-> **Status: PROPOSED — design for review. No code.** This directory is a requirements + design
+> **Status: Phase 1 SHIPPED on `main` (v0.2.0); Phase 2+ still design-for-review.** Phase 1 (the
+> KUBERNETES platform profile, the `platform × transport` axes, the precedence resolver + auto-detect,
+> ConfigMap/Downward-API config, HTTP health, Prometheus metrics, stdout-JSON logging, and the env-KEK
+> vault) is live in all four languages; the additive Phase 2+ profiles (ECS/Nomad/systemd) and the
+> operator remain design-for-review. This directory is a requirements + design
 > package for **re-architecting ggcommons' runtime model into two orthogonal axes — `platform ×
 > transport`** — re-expressing today's GREENGRASS (edge/Nucleus) and STANDALONE (bare host/Docker) as
 > platform *profiles*, and adding **Kubernetes** as the first new platform (which the model enables and

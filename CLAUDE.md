@@ -53,8 +53,10 @@ exists to abstract these differences away so the same business logic runs everyw
   source (reads the component config from a mounted ConfigMap directory, with `..data`-swap hot-reload).
   The MQTT broker config is sourced from that same ConfigMap (no positional `--transport MQTT <path>`
   needed), and identity resolves from the Downward API (`GGCOMMONS_THING_NAME` ▸ `POD_NAME`) when
-  `-t/--thing` is absent. Phase 1a/1b shipped; the remaining k8s-native facilities (prometheus metrics,
-  stdout-JSON logging, HTTP health endpoint, PVC streaming, `env` KeyProvider) land in Phase 1c/1d.
+  `-t/--thing` is absent. Phase 1a–1d shipped (on `main`, v0.2.0): the KUBERNETES-native facilities —
+  Prometheus metrics, stdout-JSON logging, HTTP health endpoint, and the `env` KeyProvider — are live
+  in all four languages. (PVC-aware streaming on a StatefulSet is still a later addition; the k8s
+  templates ship a plain Deployment today.)
 - **`auto`** (the default): the platform is auto-detected from the environment (Nucleus signals →
   k8s service-account token → HOST fallback); always overridable by an explicit `--platform`.
 
@@ -85,8 +87,10 @@ exists to abstract these differences away so the same business logic runs everyw
   (char-set + IoT-Core 7-slash depth guard at build time); `gg.instance(id)` pre-binds the
   per-message instance token; a consumer covers the whole fleet with six wildcards
   (`ecv1/+/+/+/{state|cfg|evt|metric|data|log}`). Cross-language conformance is pinned by
-  `uns-test-vectors/`. (The `uns-bridge`/site-broker realization is Phase 3 roadmap; the richer
-  `telemetry()/events()/commands()/discovery()` facades are deferred — use `messaging()` + `uns()`.)
+  `uns-test-vectors/`. (The `uns-bridge`/site-broker realization (Phase 3) has shipped; the
+  `data()`/`events()`/`app()` publish facades and the minimal `commands()` inbox are shipped in all
+  four languages. The richer `status()`/`discovery()`/`telemetry()` facades and the `log`-tail
+  publisher remain deferred — use `messaging()` + `uns()` for those.)
 - **metrics** — pluggable targets: CloudWatch EMF, cloudwatch-component, messaging (publishes on the
   UNS `metric` class), local log, prometheus.
 - **heartbeat** — the automatic UNS **`state` keepalive** (`ecv1/{device}/{component}/main/state`,

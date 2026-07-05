@@ -7,12 +7,13 @@
 > HOST compose, GREENGRASS `DockerApplicationManager` recipe, KUBERNETES manifests, the per-device
 > ACL file). See §7 for the
 > per-slice status and the repo's own README for the up-to-date slice table. **What's still open
-> before general release** (the repo's own "Remaining release-time items"): it isn't pushed to
-> GitHub yet, its `Cargo.toml` `ggcommons` git-rev pin is a pre-UNS placeholder (a pure git-rev build
-> doesn't compile until it's bumped to a rev on/after `feat/unified-namespace` lands on `main` —
-> today it builds only via the local sibling `[patch]` override), it has no `registry/components.json`
-> entry yet, and the edge-console (its first site-side client) hasn't been built. The GREENGRASS/IPC
-> variant (today only the HOST/KUBERNETES dual-MQTT variant is built) is also a documented follow-up.
+> before general release:** the edge-console (its first site-side client) hasn't been built, and the
+> GREENGRASS/IPC variant (today only the HOST/KUBERNETES dual-MQTT variant is built) is a documented
+> follow-up. The org-integration items are now **done**: the repo is pushed to GitHub as
+> `edgecommons/uns-bridge`, has a `registry/components.json` entry (`category: bridge`), and its
+> `Cargo.toml` `ggcommons` git-rev pin is `b1d8d85` — the **v0.2.0 UNS release on `main`**, which
+> contains the UNS core — so a pure git-rev build resolves it (local dev still uses the sibling
+> `[patch]` override).
 >
 > Phase-3 companion to [`DESIGN-uns.md`](DESIGN-uns.md) (§9 the site-bus realization) and
 > [`UNS-CANONICAL-DESIGN.md`](UNS-CANONICAL-DESIGN.md) (§2.3 the named connection, §6 LWT, the
@@ -21,8 +22,8 @@
 > carries the **Phase-3 decisions register (D‑B1…D‑B15)**.
 >
 > The UNS core (grammar, identity, `uns()`, reserved-class guard, request deadline, LWT hook,
-> library publishers) is **DONE and committed** on `feat/unified-namespace`; every library-seam
-> claim below is verified against that HEAD with `file:line` citations into `libs/rust/`.
+> library publishers) is **DONE and merged to `main`** (v0.2.0, release commit `b1d8d85`); every
+> library-seam claim below is verified against that source with `file:line` citations into `libs/rust/`.
 
 ---
 
@@ -432,22 +433,22 @@ monorepo.
 **Status update (2026-07-03): the repo now exists** — `git init`'d locally at
 `C:\Users\breis\source\edgecommons\uns-bridge`, fully scaffolded and implemented through P3-6 (relay
 engine, reply proxy, uplink policy, observability, deploy recipes, a passing dual-EMQX e2e suite).
-The remaining items below are genuinely still **org actions, not yet done**:
-1. Push to **GitHub** as `edgecommons/uns-bridge` (the local repo has no remote configured yet).
-2. **Registry entry** in `registry/components.json`: `name: uns-bridge`, `repo: edgecommons/uns-bridge`,
-   `language: RUST`, **`category: "bridge"`** (new category; the profile generator renders
-   categories generically), `platforms: [GREENGRASS, HOST, KUBERNETES]`, `library: ggcommons`,
-   topics `[edgecommons, aws-iot-greengrass, iiot, uns, mqtt-bridge, edgecommons-bridge]` — not yet
-   added.
-3. `clone.sh` needs **no change** (registry-driven) once the entry above lands. Reusable CI:
-   `component-ci.yml` from `edgecommons/.github`, plus the two-broker compose for the integration
-   job (§6) — not yet wired up (the repo has no CI workflow of its own yet).
-4. `Cargo.toml` already has the dependency shape — `ggcommons = { git =
-   "https://github.com/edgecommons/ggcommons.git", rev = "<pin>", default-features = false }` — but
-   the pin is a **pre-UNS placeholder** on remote `main` (today's `feat/unified-namespace` HEAD isn't
-   pushed there yet); local dev builds against the sibling checkout via a gitignored
-   `.cargo/config.toml` `[patch]` override. Bumping the pin to a UNS-core rev and regenerating
-   `Cargo.lock` — once that branch lands on `main` — is still genuinely open.
+The org-integration items below are now **done**:
+1. **Pushed to GitHub** as `edgecommons/uns-bridge` (`origin` configured; `origin/main` published).
+2. **Registry entry** added to `registry/components.json`: `name: uns-bridge`, `repo: edgecommons/uns-bridge`,
+   `language: RUST`, **`category: "bridge"`** (the profile generator renders categories generically),
+   `platforms: [GREENGRASS, HOST, KUBERNETES]`, `library: ggcommons`.
+3. `clone.sh` needs **no change** (registry-driven) — the entry above drives it. Reusable CI
+   (`component-ci.yml` from `edgecommons/.github`, plus the two-broker compose for the integration
+   job §6) is wired in the repo's own `.github/`.
+4. `Cargo.toml` pins `ggcommons = { git =
+   "https://github.com/edgecommons/ggcommons.git", rev = "b1d8d85…", default-features = false }` — the
+   **v0.2.0 UNS release on `main`**, which contains the UNS core, so a pure git-rev build resolves it;
+   local dev still builds against the sibling checkout via a gitignored `.cargo/config.toml` `[patch]`
+   override.
+
+What genuinely **remains** before general release: the **edge-console** (its first site-side client)
+and the **GREENGRASS/IPC** bridge variant (today only the HOST/KUBERNETES dual-MQTT variant is built).
 
 ---
 
@@ -598,12 +599,12 @@ broker *and* a site broker:
 
 ## 7. Phasing — build slices (each independently green: build + tests + gate)
 
-> **Status (2026-07-03):** P3-2 through P3-6 are **done** in the `uns-bridge` repo (folded slightly
+> **Status (updated 2026-07-05):** P3-2 through P3-6 are **done** in the `uns-bridge` repo (folded slightly
 > differently than first planned — the repo split P3-4 into P3-4 "uplink policy" and a P3-4b "bridge's
-> own observability" slice; see its README for the exact breakdown). What genuinely remains from
-> P3-6's "org integration" is **not** done: no GitHub repo, no `registry/components.json` entry, no
-> CI wiring, no docs-site sync. P3-1 folded into P3-2 as anticipated (no core/other-language change
-> was owed).
+> own observability" slice; see its README for the exact breakdown). Most of P3-6's "org integration"
+> is now **done**: the repo is on GitHub as `edgecommons/uns-bridge`, has a `registry/components.json`
+> entry, and carries its own CI. What genuinely remains: docs-site sync and the lab/kind validation
+> matrix. P3-1 folded into P3-2 as anticipated (no core/other-language change was owed).
 
 | Slice | Contents | Where | Status |
 |---|---|---|---|
@@ -612,7 +613,7 @@ broker *and* a site broker:
 | **P3-3 reply_to rewrite** | Correlation map + TTL sweep + maxPending eviction + reply back-haul; round-trip + expiry e2e | uns-bridge | **done** |
 | **P3-4 uplink policy + LWT** | Per-class enable/rate caps/evt buffer; drop-counter metrics; reconnect `republish-*` broadcast (+ the library's Phase-3 `_bcast` listener if not yet landed); `connections.site.lwt` config + startup cross-check; rate-cap/disconnect/LWT e2e | uns-bridge (+ small monorepo bit for the `_bcast` listener) | **done** (the `_bcast` listener also shipped, all four languages) |
 | **P3-5 recipes (M2)** | `deploy/site-broker/`: HOST compose, GG DockerApplicationManager recipe, k8s notes + boundary-bridge Deployment, ACL file, TLS notes; docs pages | uns-bridge | **done** |
-| **P3-6 org integration + validation** | Registry entry (`category: bridge`) → profile regen; docs-site sync; validation matrix: HOST dual-broker on dev box, GREENGRASS on lab-5950x (site broker = dev box), kind boundary case | registry / .github / website | **the bridge-level dual-EMQX e2e proof is done** (9/9 assertions); the registry entry, docs-site sync, and lab/kind validation are **not yet done** |
+| **P3-6 org integration + validation** | Registry entry (`category: bridge`) → profile regen; docs-site sync; validation matrix: HOST dual-broker on dev box, GREENGRASS on lab-5950x (site broker = dev box), kind boundary case | registry / .github / website | **the bridge-level dual-EMQX e2e proof is done** (9/9 assertions) and the registry entry + repo CI have landed; **docs-site sync and the lab/kind validation matrix remain** |
 ---
 
 ## 8. Risks
