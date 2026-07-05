@@ -1,0 +1,19 @@
+# Cloudflare edge cache control for the docs site (Workers Static Assets).
+#
+# Problem this fixes: after a deploy, docs.edgecommons.mbreissi.com kept serving
+# STALE pages (CF-Cache-Status: HIT). The zone edge ignored the origin's
+# `Cache-Control: max-age=0, must-revalidate` and served stale, so doc updates
+# didn't go live until the edge TTL expired. `CDN-Cache-Control` is Cloudflare's
+# edge-only cache directive — it governs Cloudflare's cache independently of the
+# browser `Cache-Control` (which Astro still sets), so we can keep hashed assets
+# fast while making HTML always fresh.
+
+# Everything: don't let the edge serve a stale copy — always fetch the freshly
+# deployed asset from the Worker. (The site is low-traffic; the origin is fast.)
+/*
+  CDN-Cache-Control: no-store
+
+# Content-hashed, immutable build assets — safe to cache hard at the edge. This
+# rule is more specific, so it overrides the /* rule for these paths.
+/_astro/*
+  CDN-Cache-Control: public, max-age=31536000, immutable
