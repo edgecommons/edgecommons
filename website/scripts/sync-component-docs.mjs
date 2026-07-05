@@ -33,7 +33,7 @@ const TOKEN = process.env.EDGECOMMONS_READ_TOKEN || "";
 const LOCAL_MAP = JSON.parse(process.env.COMPONENT_DOCS_MAP || "{}");
 
 // Sidebar order by source filename (Diátaxis). reference/* are flattened to reference-<x> at 30+.
-const ORDER = { index: 0, tutorial: 10, "how-to-guides": 20, "sample-configurations": 25, explanation: 40 };
+const ORDER = { index: 0, tutorial: 10, "how-to-guides": 20, scripting: 22, "sample-configurations": 25, explanation: 40 };
 
 function jsonStr(s) {
   return JSON.stringify(String(s));
