@@ -12,8 +12,9 @@ Status: **Complete — all phases delivered and validated on-device** (HOST plat
 > reserved classes (`state`/`metric`/`cfg`/`log`) are guarded (`EdgeCommonsError::ReservedTopic`), `request()`
 > arms a framework deadline (`messaging.requestTimeoutSeconds`, default 30 s;
 > `EdgeCommonsError::RequestTimeout`), generic component messaging config deliberately has no MQTT LWT, and the heartbeat became the
-> UNS `state` keepalive + `sys` metric (`heartbeat.targets[]` removed). Per D‑U7, Rust deliberately
-> keeps the `IotCore`/`_iot_core` spelling (RFC-430 idiom) where Java/TS normalized to `IoTCore`.
+> UNS `state` keepalive + `sys` metric (`heartbeat.targets[]` removed). The public messaging surface now uses
+> `Destination::Northbound` and `*_northbound` names; IoT Core spellings remain only where required by
+> the underlying Greengrass SDK operation names.
 > Sections below describe the pre-UNS surface where they differ.
 
 This document is the full design and delivery plan for a Rust implementation of the Greengrass Commons library. It assumes familiarity with the existing Java (`edgecommons-java-lib`, canonical) and Python (`edgecommons-python-lib`) libraries; see the workspace `CLAUDE.md` for ecosystem context.
@@ -439,7 +440,7 @@ Sequencing puts all **device-free** work first; the only Greengrass-core-depende
 
 ### Phase 1 — HOST platform, end-to-end (3–5 wks)
 - ✅ `MessagingProvider` trait + `MqttProvider` (dual broker: local + IoT Core, reconnect/re-subscribe).
-- ✅ `MessagingService` + `Message`/builders + explicit `…ToIoTCore` pairs + raw publish/QoS + **request/reply (`ReplyFuture`) with timeout/cancel** — tested over the local EMQX broker.
+- ✅ `MessagingService` + `Message`/builders + explicit northbound pairs + raw publish/QoS + **request/reply (`ReplyFuture`) with timeout/cancel** — tested over the local EMQX broker.
 - ✅ **Increment 1:** all four metric targets + EMF (`cloudwatch` behind a feature).
 - ✅ **Increment 2:** heartbeat via `sysinfo` (+ Linux `/proc` / Windows `windows-sys` for threads/fds/files).
 - ✅ **Increment 3:** FILE config hot-reload (`notify`) → validate → atomic `ArcSwap` swap → `ConfigChangeListener` notification; heartbeat reacts to reloads.

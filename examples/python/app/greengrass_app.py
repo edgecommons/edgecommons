@@ -160,13 +160,13 @@ class GreengrassApp(ConfigurationChangeListener, ABC):
             f"#### Received an ipc hello world message on topic {topic}: {msg.get_body()['msg_id']}"
         )
 
-    def iot_core_hello_world_handler(self, topic: str, msg: Message):
+    def northbound_hello_world_handler(self, topic: str, msg: Message):
         logger.info(
-            f"Received an iot core hello world message on topic {topic}: {msg.get_body()['msg_id']}"
+            f"Received a northbound hello world message on topic {topic}: {msg.get_body()['msg_id']}"
         )
         time.sleep(5)
         logger.info(
-            f"Received an iot core hello world message on topic {topic}: {msg.get_body()['msg_id']}"
+            f"Received a northbound hello world message on topic {topic}: {msg.get_body()['msg_id']}"
         )
 
     def request_callback(self, topic: str, request: Message):
@@ -246,7 +246,7 @@ class GreengrassApp(ConfigurationChangeListener, ABC):
             try:
                 MessagingClient.subscribe_northbound(
                     self._hello_topic,
-                    self.iot_core_hello_world_handler,
+                    self.northbound_hello_world_handler,
                     QOS.AT_LEAST_ONCE,
                 )
             except Exception as e:

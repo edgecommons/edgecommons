@@ -393,7 +393,7 @@ impl SkeletonApp {
         let acker = messaging.clone();
         let ack_config = self.config.clone();
         let ack_topic = telemetry_topic.clone();
-        let iot_core_subscribed = messaging
+        let northbound_subscribed = messaging
             .subscribe_northbound(
                 &cmd_topic,
                 message_handler(move |topic, msg| {
@@ -401,13 +401,13 @@ impl SkeletonApp {
                     let ack_config = ack_config.clone();
                     let ack_topic = ack_topic.clone();
                     async move {
-                        tracing::info!(topic = %topic, "received IoT Core command");
+                        tracing::info!(topic = %topic, "received northbound command");
                         let ack = MessageBuilder::new("CmdAck", "1.0")
                             .from_config(&ack_config)
                             .payload(json!({ "ack": msg.body }))
                             .build();
                         if let Err(e) = acker.publish_northbound(&ack_topic, &ack, Qos::AtLeastOnce).await {
-                            tracing::warn!(error = %e, "failed to ack IoT Core command");
+                            tracing::warn!(error = %e, "failed to ack northbound command");
                         }
                     }
                 }),
@@ -418,11 +418,11 @@ impl SkeletonApp {
             .await
             .map(|()| true)
             .unwrap_or_else(|e| {
-                tracing::warn!(error = %e, topic = %cmd_topic, "IoT Core unavailable; skipping command bridge");
+                tracing::warn!(error = %e, topic = %cmd_topic, "northbound transport unavailable; skipping command bridge");
                 false
             });
-        if iot_core_subscribed {
-            tracing::info!(topic = %cmd_topic, "subscribed to IoT Core commands");
+        if northbound_subscribed {
+            tracing::info!(topic = %cmd_topic, "subscribed to northbound commands");
         }
 
         // 3. Run the periodic publisher and the periodic self-requester until shutdown.
@@ -434,7 +434,7 @@ impl SkeletonApp {
 
         // 4. Clean up subscriptions before the runtime drops (only the ones established).
         messaging.unsubscribe(&request_topic).await?;
-        if iot_core_subscribed {
+        if northbound_subscribed {
             messaging.unsubscribe_northbound(&cmd_topic).await?;
         }
         Ok(())

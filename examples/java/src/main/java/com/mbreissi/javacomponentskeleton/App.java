@@ -14,6 +14,7 @@ import com.mbreissi.edgecommons.parameters.ParameterService;
 import com.mbreissi.edgecommons.messaging.Message;
 import com.mbreissi.edgecommons.messaging.MessageBuilder;
 import com.mbreissi.edgecommons.messaging.MessageHandler;
+import com.mbreissi.edgecommons.messaging.Qos;
 import com.mbreissi.edgecommons.messaging.ReplyFuture;
 import com.mbreissi.edgecommons.metrics.Metric;
 import com.mbreissi.edgecommons.metrics.MetricBuilder;
@@ -23,7 +24,6 @@ import com.mbreissi.edgecommons.uns.UnsClass;
 import com.google.gson.JsonObject;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import software.amazon.awssdk.aws.greengrass.model.QOS;
 
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
@@ -89,7 +89,7 @@ public class App implements ConfigurationChangeListener
 
     // Message handlers using modern MessageHandler interface
     private final MessageHandler ipcHelloWorldHandler;
-    private final MessageHandler iotCoreHelloWorldHandler;
+    private final MessageHandler northboundHelloWorldHandler;
     private final MessageHandler requestHandler;
 
     private void publishRequest(String id, int waitTimeSecs) {
@@ -218,10 +218,10 @@ public class App implements ConfigurationChangeListener
             LOGGER.info("Received LOCAL message on topic {}: {}", topic, id);
         };
 
-        iotCoreHelloWorldHandler = (topic, message) -> {
+        northboundHelloWorldHandler = (topic, message) -> {
             JsonObject body = (JsonObject) message.getBody();
             String id = body.get("id").getAsString();
-            LOGGER.info("Received IOT CORE message on topic {}: {}", topic, id);
+            LOGGER.info("Received northbound message on topic {}: {}", topic, id);
         };
 
         requestHandler = (topic, msg) -> {
@@ -289,7 +289,7 @@ public class App implements ConfigurationChangeListener
         // the bridge instead of failing component startup.
         messagingService.subscribe(pubTopic, ipcHelloWorldHandler, 3);
         try {
-            messagingService.subscribeNorthbound(pubTopic, iotCoreHelloWorldHandler, QOS.AT_LEAST_ONCE, 2);
+            messagingService.subscribeNorthbound(pubTopic, northboundHelloWorldHandler, Qos.AT_LEAST_ONCE, 2);
             northboundSubscribed = true;
         } catch (Exception e) {
             LOGGER.warn("northbound transport unavailable; skipping northbound subscribe: {}", e.getMessage());
@@ -463,7 +463,7 @@ public class App implements ConfigurationChangeListener
         // Publish to both local and northbound to demonstrate dual connectivity (northbound non-fatal).
         messagingService.publish(pubTopic, msg);
         try {
-            messagingService.publishNorthbound(pubTopic, msg, QOS.AT_LEAST_ONCE);
+            messagingService.publishNorthbound(pubTopic, msg, Qos.AT_LEAST_ONCE);
         } catch (Exception e) {
             LOGGER.warn("failed to publish northbound: {}", e.getMessage());
         }

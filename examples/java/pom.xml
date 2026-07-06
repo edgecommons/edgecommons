@@ -41,7 +41,7 @@
       <artifactId>edgecommons</artifactId>
       <!-- The in-repo library version (libs/java/pom.xml). For a local monorepo build run
            `mvn -f ../../libs/java/pom.xml -DskipTests install` first so ~/.m2 satisfies it. -->
-      <version>0.1.1</version>
+      <version>0.2.0</version>
     </dependency>
   </dependencies>
 
