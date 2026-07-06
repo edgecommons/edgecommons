@@ -146,15 +146,25 @@ def commands():
     # instead of skipping.)
     node, npm = shutil.which("node"), shutil.which("npm")
     if node and npm:
-        ts_bin = WORKSPACE / "libs" / "ts" / "node_modules" / ".bin"
-        tsc = ts_bin / ("tsc.cmd" if os.name == "nt" else "tsc")
+        # A root workspace install hoists TypeScript to node_modules/.bin; older local
+        # installs may still have a package-local libs/ts/node_modules/.bin. Support both.
+        bin_name = "tsc.cmd" if os.name == "nt" else "tsc"
+        ts_bins = [
+            WORKSPACE / "node_modules" / ".bin",
+            WORKSPACE / "libs" / "ts" / "node_modules" / ".bin",
+        ]
+        tsc = next((bin_dir / bin_name for bin_dir in ts_bins if (bin_dir / bin_name).exists()),
+                   ts_bins[0] / bin_name)
         if not tsc.exists():
             # npm is a .cmd shim on Windows; run via shell there.
             r = subprocess.run(f'"{npm}" install', cwd=WORKSPACE, capture_output=True, text=True,
                                timeout=600, shell=True)
             assert r.returncode == 0, f"ts npm install failed:\n{r.stderr}"
+            tsc = next((bin_dir / bin_name for bin_dir in ts_bins if (bin_dir / bin_name).exists()),
+                       ts_bins[0] / bin_name)
+            assert tsc.exists(), f"tsc not found after npm install; checked: {ts_bins}"
         env = os.environ.copy()
-        env["PATH"] = str(ts_bin) + os.pathsep + env.get("PATH", "")
+        env["PATH"] = os.pathsep.join(str(p) for p in ts_bins) + os.pathsep + env.get("PATH", "")
         # #14 guard: force-clean the TS build outputs so the ts_node can never silently run against a
         # stale libs/ts build (the "old library" trap that made the ts raw-publisher time out even
         # though publishRaw was correct). The plain `tsc` build below then regenerates both dists from
