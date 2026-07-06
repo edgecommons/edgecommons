@@ -3,6 +3,9 @@
 # the single lockfile for the JS/TS workspace.
 node_modules/
 
+# Generated build output.
+build/
+
 # Runtime credentials-vault artifacts written by components at run time (e.g. the
 # example skeletons when run locally) — encrypted-at-rest, never committed.
 .vault/
