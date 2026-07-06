@@ -72,8 +72,8 @@ What the harness proves end-to-end:
 `chart/templates/configmap.yaml` renders a **minimal valid edgecommons config** into the
 `config.json` key (the `CONFIGMAP` source's default key), mounted at `/etc/edgecommons`:
 
-- `metricEmission.target: log` (a log metric target),
-- a `heartbeat` (5s interval, metric target),
+- `metricEmission` namespace only; the KUBERNETES profile defaults the target to `prometheus`,
+- a `heartbeat` (5s interval),
 - `messaging.local` MQTT pointing at the in-cluster broker Service DNS
   (`edgecommons-emqx`, configurable via `messaging.brokerHost`),
 - `component` (the only schema-required key).

@@ -57,7 +57,7 @@ pub struct Messaging {
 
 /// Effective QoS defaults aggregated from `messaging.local.qos` and
 /// `messaging.northbound.qos`.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QosConfig {
     /// Local MQTT broker defaults. Supports QoS 0/1/2.
@@ -66,15 +66,6 @@ pub struct QosConfig {
     /// Northbound MQTT broker defaults. Supports QoS 0/1/2.
     #[serde(default)]
     pub northbound: QosDefaults,
-}
-
-impl Default for QosConfig {
-    fn default() -> Self {
-        Self {
-            local: QosDefaults::default(),
-            northbound: QosDefaults::default(),
-        }
-    }
 }
 
 impl Messaging {

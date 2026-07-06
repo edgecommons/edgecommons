@@ -68,15 +68,14 @@ messaging:
   clientId: edgecommons-k8s-smoke
 
 # The rendered edgecommons component config (config.json) placed in the ConfigMap.
-# A minimal VALID config: a log metric target, a heartbeat, and an MQTT messaging
-# config pointing at the in-cluster broker. `component` is the only schema-required key.
+# A minimal VALID config: a heartbeat, pull-based Prometheus metrics, and an MQTT
+# messaging config pointing at the in-cluster broker. `component` is the only
+# schema-required key.
 config:
   logging:
     level: INFO
   heartbeat:
     intervalSecs: 5
-    targets:
-      - type: metric
     measures:
       cpu: true
       memory: true
@@ -86,7 +85,7 @@ config:
       fds: false
   # No explicit `target`: on the KUBERNETES platform the metric target DEFAULTS to `prometheus`
   # (Phase 1c) — an in-process registry served as OpenMetrics text at :9090/metrics. So the heartbeat
-  # (routed via `heartbeat.targets: [{type: metric}]`) and any app metrics are SCRAPED, not pushed.
+  # `sys` metric and any app metrics are SCRAPED, not pushed.
   # gauge name = sanitize(lower("{namespace}_{measure}")), so e.g. heartbeat memory -> edgecommons_memory_usage.
   metricEmission:
     namespace: edgecommons
