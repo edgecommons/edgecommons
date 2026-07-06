@@ -46,8 +46,19 @@ describe("config validation", () => {
         topic: { includeRoot: true },
         heartbeat: { enabled: true, intervalSecs: 5, measures: { cpu: true }, destination: "local" },
         messaging: {
+          local: {
+            host: "localhost",
+            port: 1883,
+            clientId: "local",
+            qos: { publish: 1, subscribe: 1 },
+          },
+          northbound: {
+            host: "broker.example.com",
+            port: 8883,
+            clientId: "northbound",
+            qos: { publish: 1, subscribe: 1 },
+          },
           requestTimeoutSeconds: 30,
-          lwt: { topic: "ecv1/gw/c/main/state", payload: { status: "UNREACHABLE" }, qos: 1 },
         },
       }),
     ).not.toThrow();
@@ -59,8 +70,24 @@ describe("config validation", () => {
     expect(() => validate({ component: {}, metricEmission: { targetConfig: { topic: "x/y" } } })).toThrow(EdgeCommonsError);
   });
 
-  it("rejects an lwt without a topic and an out-of-range lwt qos", () => {
-    expect(() => validate({ component: {}, messaging: { lwt: { payload: "x" } } })).toThrow(EdgeCommonsError);
-    expect(() => validate({ component: {}, messaging: { lwt: { topic: "t", qos: 2 } } })).toThrow(EdgeCommonsError);
+  it("rejects generic messaging.lwt", () => {
+    expect(() =>
+      validate({
+        component: {},
+        messaging: { lwt: { topic: "ecv1/gw/c/main/state", payload: { status: "UNREACHABLE" }, qos: 1 } },
+      }),
+    ).toThrow(EdgeCommonsError);
+  });
+
+  it("rejects top-level messaging.qos", () => {
+    expect(() =>
+      validate({
+        component: {},
+        messaging: {
+          local: { host: "localhost", port: 1883, clientId: "local" },
+          qos: { local: { publish: 1 } },
+        },
+      }),
+    ).toThrow(EdgeCommonsError);
   });
 });

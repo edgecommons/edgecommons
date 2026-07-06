@@ -8,6 +8,7 @@ import com.mbreissi.edgecommons.messaging.Message;
 import com.mbreissi.edgecommons.messaging.MessageBuilder;
 import com.mbreissi.edgecommons.messaging.MessagingConfiguration;
 import com.mbreissi.edgecommons.messaging.MessagingProvider;
+import com.mbreissi.edgecommons.messaging.Qos;
 import com.mbreissi.edgecommons.messaging.ReplyFuture;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
@@ -17,7 +18,6 @@ import org.eclipse.paho.client.mqttv3.IMqttDeliveryToken;
 import org.eclipse.paho.client.mqttv3.MqttCallback;
 import org.eclipse.paho.client.mqttv3.MqttCallbackExtended;
 import org.eclipse.paho.client.mqttv3.*;
-import software.amazon.awssdk.aws.greengrass.model.QOS;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLSocketFactory;
 import java.nio.charset.StandardCharsets;
@@ -39,6 +39,10 @@ public final class StandaloneMessagingProvider extends MessagingProvider
 {
     protected static final Logger LOGGER = LogManager.getLogger(StandaloneMessagingProvider.class);
 
+    private final int localPublishQos;
+    private final int localSubscribeQos;
+    private final int iotCorePublishQos;
+    private final int iotCoreSubscribeQos;
 
     private static class QueueEntry
     {
@@ -250,27 +254,48 @@ public final class StandaloneMessagingProvider extends MessagingProvider
     public StandaloneMessagingProvider(MessagingConfiguration config, String thingName) {
         try {
             // Initialize local MQTT client
-            MessagingConfiguration.LocalMqttConfig localConfig = config.getMessaging().getLocal();
-            MessagingConfiguration.IoTCoreConfig iotCoreConfig = config.getMessaging().getIotCore();
+            MessagingConfiguration.MessagingConfig messagingConfig = config.getMessaging();
+            MessagingConfiguration.LocalMqttConfig localConfig = messagingConfig.getLocal();
+            MessagingConfiguration.NorthboundMqttConfig northboundConfig = messagingConfig.getNorthbound();
+            localPublishQos = validateQos(
+                    localConfig.getQos() == null ? 1 : localConfig.getQos().publishOrDefault(),
+                    2,
+                    "messaging.local.qos.publish");
+            localSubscribeQos = validateQos(
+                    localConfig.getQos() == null ? 1 : localConfig.getQos().subscribeOrDefault(),
+                    2,
+                    "messaging.local.qos.subscribe");
+            iotCorePublishQos = validateQos(
+                    northboundConfig == null || northboundConfig.getQos() == null ? 1 : northboundConfig.getQos().publishOrDefault(),
+                    2,
+                    "messaging.northbound.qos.publish");
+            iotCoreSubscribeQos = validateQos(
+                    northboundConfig == null || northboundConfig.getQos() == null ? 1 : northboundConfig.getQos().subscribeOrDefault(),
+                    2,
+                    "messaging.northbound.qos.subscribe");
 
             boolean useSSL = localConfig.getCredentials() != null && localConfig.getCredentials().getCaPath() != null;
             String protocol = useSSL ? "ssl" : "tcp";
             String localBrokerUrl = protocol + "://" + localConfig.getHost() + ":" + localConfig.getPort();
             localMqttClient = new MqttClient(localBrokerUrl, localConfig.getClientId());
 
-            MqttConnectOptions localOptions = buildLocalConnectOptions(localConfig, config.getMessaging().getLwt());
+            MqttConnectOptions localOptions = buildLocalConnectOptions(localConfig);
             localMqttClient.setCallback(new EventCallback(localMqttClient, localSubscriptionProcessors));
             localMqttClient.connect(localOptions);
             LOGGER.info("Connected to local broker at {}", localBrokerUrl);
 
-            // Initialize IoT Core MQTT client (optional — only when an iotCore section is present)
-            if (iotCoreConfig != null) {
-                String iotCoreBrokerUrl = "ssl://" + iotCoreConfig.getEndpoint() + ":" + iotCoreConfig.getPort();
-                iotCoreMqttClient = new MqttClient(iotCoreBrokerUrl, iotCoreConfig.getClientId());
-                connectToIotCore(iotCoreConfig);
+            // Initialize northbound MQTT client (optional — only when a northbound section is present)
+            if (northboundConfig != null) {
+                boolean northboundUseSSL = northboundConfig.getCredentials() != null
+                        && northboundConfig.getCredentials().getCaPath() != null;
+                String northboundProtocol = northboundUseSSL ? "ssl" : "tcp";
+                String northboundBrokerUrl = northboundProtocol + "://"
+                        + northboundConfig.getResolvedHost() + ":" + northboundConfig.getPort();
+                iotCoreMqttClient = new MqttClient(northboundBrokerUrl, northboundConfig.getClientId());
+                connectToNorthbound(northboundConfig, northboundBrokerUrl);
             } else {
                 iotCoreMqttClient = null;
-                LOGGER.info("No 'iotCore' section in the standalone messaging config; IoT Core messaging is disabled.");
+                LOGGER.info("No 'northbound' section in the standalone messaging config; northbound messaging is disabled.");
             }
 
         } catch (Exception e) {
@@ -279,16 +304,19 @@ public final class StandaloneMessagingProvider extends MessagingProvider
         }
     }
 
+    private static int validateQos(int qos, int max, String field) {
+        if (qos < 0 || qos > max) {
+            throw new IllegalArgumentException(field + " must be 0.." + max + " (got " + qos + ")");
+        }
+        return qos;
+    }
+
     /**
-     * Builds the connect options for the <em>local-broker</em> connection: automatic reconnect,
-     * the TLS / username-password credential wiring, and — when a {@code messaging.lwt} section is
-     * present — the MQTT Last-Will-and-Testament (UNS-CANONICAL-DESIGN §6). Package-private as the
-     * connect-options test seam: tests assert the produced options directly, without a broker.
-     * Paho re-sends these options on every automatic reconnect, so the will is re-registered on
-     * reconnect for free.
+     * Builds the connect options for the <em>local-broker</em> connection: automatic reconnect
+     * plus TLS / username-password credential wiring. Package-private as the connect-options test
+     * seam: tests assert the produced options directly, without a broker.
      */
-    static MqttConnectOptions buildLocalConnectOptions(MessagingConfiguration.LocalMqttConfig localConfig,
-                                                       MessagingConfiguration.LwtConfig lwt) throws Exception {
+    static MqttConnectOptions buildLocalConnectOptions(MessagingConfiguration.LocalMqttConfig localConfig) throws Exception {
         boolean useSSL = localConfig.getCredentials() != null && localConfig.getCredentials().getCaPath() != null;
         MqttConnectOptions localOptions = new MqttConnectOptions();
         localOptions.setAutomaticReconnect(true);
@@ -303,47 +331,7 @@ public final class StandaloneMessagingProvider extends MessagingProvider
                 localOptions.setPassword(localConfig.getCredentials().getPassword().toCharArray());
             }
         }
-        applyLwt(localOptions, lwt);
         return localOptions;
-    }
-
-    /**
-     * Registers the configured MQTT Last-Will-and-Testament on the given connect options
-     * (UNS-CANONICAL-DESIGN §6, D-U9/M7). Local-broker connection only; retain is hard-wired to
-     * {@code false} (there is no retain knob by design). A String payload is published verbatim as
-     * UTF-8 bytes; an object payload is serialized to compact JSON bytes. No-op when {@code lwt}
-     * is null (section absent).
-     *
-     * @throws IllegalArgumentException on a missing/empty topic or a QoS outside {0, 1}
-     */
-    static void applyLwt(MqttConnectOptions options, MessagingConfiguration.LwtConfig lwt) {
-        if (lwt == null) {
-            return;
-        }
-        String topic = lwt.getTopic();
-        if (topic == null || topic.isEmpty()) {
-            throw new IllegalArgumentException("messaging.lwt.topic is required when an lwt section is present");
-        }
-        int qos = lwt.getQosOrDefault();
-        if (qos != 0 && qos != 1) {
-            throw new IllegalArgumentException("messaging.lwt.qos must be 0 or 1 (got " + qos + ")");
-        }
-        options.setWill(topic, lwtPayloadBytes(lwt.getPayload()), qos, false);  // retain=false, hard
-        LOGGER.info("Registered MQTT LWT on the local connection: topic='{}', qos={}, retain=false", topic, qos);
-    }
-
-    /**
-     * Serializes the {@code messaging.lwt.payload} value: a JSON string verbatim as UTF-8 bytes; a
-     * JSON object (or any other JSON value) as its compact JSON bytes; absent/null as empty bytes.
-     */
-    static byte[] lwtPayloadBytes(com.google.gson.JsonElement payload) {
-        if (payload == null || payload.isJsonNull()) {
-            return new byte[0];
-        }
-        if (payload.isJsonPrimitive() && payload.getAsJsonPrimitive().isString()) {
-            return payload.getAsString().getBytes(StandardCharsets.UTF_8);
-        }
-        return payload.toString().getBytes(StandardCharsets.UTF_8);
     }
 
     static SSLContext createSslContext(MessagingConfiguration.CredentialsConfig credentials) throws Exception {
@@ -382,43 +370,39 @@ public final class StandaloneMessagingProvider extends MessagingProvider
         return context;
     }
 
-    public void connectToIotCore(MessagingConfiguration.IoTCoreConfig config)
+    public void connectToNorthbound(MessagingConfiguration.NorthboundMqttConfig config, String uri)
     {
-        String uri = String.format("ssl://%s:%d", config.getEndpoint(), config.getPort());
         try
         {
             iotCoreMqttClient.setCallback(new EventCallback(iotCoreMqttClient, iotCoreSubscriptionProcessors));
             MqttConnectOptions connOpts = new MqttConnectOptions();
             connOpts.setAutomaticReconnect(true);
-            SSLSocketFactory socketFactory = getSocketFactory(config.getCredentials().getCaPath(),
-                    config.getCredentials().getCertPath(),
-                    config.getCredentials().getKeyPath());
-            if (socketFactory != null)
-            {
-                connOpts.setSocketFactory(socketFactory);
-                LOGGER.info("Attempting to connect to IoT Core at {}", uri);
-                LOGGER.info("       ...using private key file: {}", config.getCredentials().getKeyPath());
-                LOGGER.info("       ...using device cert file: {}", config.getCredentials().getCertPath());
-                LOGGER.info("       ...using CA Cert file: {}", config.getCredentials().getCaPath());
-                LOGGER.info("       ...using client ID: {}", config.getClientId());
-            }
-            else
-            {
-                LOGGER.fatal("Unable to load cert/key files for IoT Core at {}. Refusing to connect without credentials.", uri);
-                throw new RuntimeException("Unable to load IoT Core credentials (cert/key/CA) for " + uri
-                        + "; refusing to connect unauthenticated.");
+            MessagingConfiguration.CredentialsConfig credentials = config.getCredentials();
+            if (credentials != null) {
+                if (credentials.getCaPath() != null) {
+                    connOpts.setSocketFactory(createSslContext(credentials).getSocketFactory());
+                    LOGGER.info("Attempting to connect to northbound MQTT broker over TLS at {}", uri);
+                } else if (credentials.getUsername() != null && credentials.getPassword() != null) {
+                    connOpts.setUserName(credentials.getUsername());
+                    connOpts.setPassword(credentials.getPassword().toCharArray());
+                    LOGGER.info("Attempting to connect to northbound MQTT broker with username/password at {}", uri);
+                } else {
+                    LOGGER.info("Attempting to connect to northbound MQTT broker without credentials at {}", uri);
+                }
+            } else {
+                LOGGER.info("Attempting to connect to northbound MQTT broker without credentials at {}", uri);
             }
 
             connOpts.setCleanSession(true);
             connOpts.setMaxInflight(250);
             connOpts.setConnectionTimeout(10);
             iotCoreMqttClient.connect(connOpts);
-            LOGGER.info("Connected to AWS IoT Core broker {}", uri);
+            LOGGER.info("Connected to northbound MQTT broker {}", uri);
         }
-        catch (MqttException e)
+        catch (Exception e)
         {
-            LOGGER.fatal("Failed to connect to IoT Core at {} - {}", uri, e.toString());
-            throw new RuntimeException("Failed to connect to IoT Core at " + uri, e);
+            LOGGER.fatal("Failed to connect to northbound MQTT broker at {} - {}", uri, e.toString());
+            throw new RuntimeException("Failed to connect to northbound MQTT broker at " + uri, e);
         }
     }
 
@@ -509,11 +493,11 @@ public final class StandaloneMessagingProvider extends MessagingProvider
         return retVal;
     }
 
-    private void internalPublish(MqttClient client, String topic, Message message, QOS qos) {
+    private void internalPublish(MqttClient client, String topic, Message message, int qos) {
         try
         {
             MqttMessage msg = new MqttMessage(message.toString().getBytes());
-            msg.setQos(qos.ordinal());
+            msg.setQos(qos);
             client.publish(topic, msg);
         }
         catch (MqttException e)
@@ -526,7 +510,7 @@ public final class StandaloneMessagingProvider extends MessagingProvider
     @Override
     public void publish(String topic, Message message)
     {
-        internalPublish(localMqttClient, topic, message, QOS.AT_LEAST_ONCE);
+        internalPublish(localMqttClient, topic, message, localPublishQos);
     }
 
     private MqttClient requireIotCore()
@@ -534,15 +518,15 @@ public final class StandaloneMessagingProvider extends MessagingProvider
         if (iotCoreMqttClient == null)
         {
             throw new IllegalStateException(
-                    "IoT Core is not configured in the standalone messaging config (no 'iotCore' section)");
+                    "Northbound MQTT is not configured in the standalone messaging config (no 'northbound' section)");
         }
         return iotCoreMqttClient;
     }
 
     @Override
-    public void publishToIoTCore(String topic, Message message, QOS qos)
+    public void publishNorthbound(String topic, Message message, Qos qos)
     {
-        internalPublish(requireIotCore(), topic, message, qos);
+        internalPublish(requireIotCore(), topic, message, qos.mqttLevel());
     }
 
     @Override
@@ -551,6 +535,7 @@ public final class StandaloneMessagingProvider extends MessagingProvider
         try
         {
             MqttMessage msg = new MqttMessage(payload.toString().getBytes());
+            msg.setQos(localPublishQos);
             localMqttClient.publish(topic, msg);
         }
         catch (MqttException e)
@@ -561,12 +546,12 @@ public final class StandaloneMessagingProvider extends MessagingProvider
     }
 
     @Override
-    public void publishToIoTCoreRaw(String topic, JsonObject payload, QOS qos)
+    public void publishNorthboundRaw(String topic, JsonObject payload, Qos qos)
     {
         try
         {
             MqttMessage msg = new MqttMessage(payload.toString().getBytes());
-            msg.setQos(qos.ordinal());
+            msg.setQos(qos.mqttLevel());
             requireIotCore().publish(topic, msg);
         }
         catch (MqttException e)
@@ -576,14 +561,14 @@ public final class StandaloneMessagingProvider extends MessagingProvider
         }
     }
 
-    private void internalSubscribe(MqttClient client, String topicFilter, BiConsumer<String, Message> callback, QOS qos, int maxConcurrency, int maxMessages, ConcurrentHashMap<String,SubscriptionProcessor> subscriptionMap)
+    private void internalSubscribe(MqttClient client, String topicFilter, BiConsumer<String, Message> callback, int qos, int maxConcurrency, int maxMessages, ConcurrentHashMap<String,SubscriptionProcessor> subscriptionMap)
     {
         SubscriptionProcessor subProcessor = new SubscriptionProcessor(client, subscriptionMap, topicFilter, callback, maxConcurrency, maxMessages);
-        subProcessor.qos = qos.ordinal();
+        subProcessor.qos = qos;
         subscriptionMap.put(topicFilter, subProcessor);
         try
         {
-            client.subscribe(topicFilter, qos.ordinal());
+            client.subscribe(topicFilter, qos);
         }
         catch (MqttException e)
         {
@@ -593,14 +578,14 @@ public final class StandaloneMessagingProvider extends MessagingProvider
 
     public void subscribe(String topicFilter, BiConsumer<String, Message> callback, int maxConcurrency, int maxMessages)
     {
-        internalSubscribe(localMqttClient, topicFilter, callback, QOS.AT_LEAST_ONCE, maxConcurrency, maxMessages, localSubscriptionProcessors);
+        internalSubscribe(localMqttClient, topicFilter, callback, localSubscribeQos, maxConcurrency, maxMessages, localSubscriptionProcessors);
     }
 
     @Override
-    public void subscribeToIoTCore(String topicFilter, BiConsumer<String, Message> callback, QOS qos,
+    public void subscribeNorthbound(String topicFilter, BiConsumer<String, Message> callback, Qos qos,
                                    int maxConcurrency, int maxMessages)
     {
-        internalSubscribe(requireIotCore(), topicFilter, callback, qos, maxConcurrency, maxMessages, iotCoreSubscriptionProcessors);
+        internalSubscribe(requireIotCore(), topicFilter, callback, qos.mqttLevel(), maxConcurrency, maxMessages, iotCoreSubscriptionProcessors);
     }
 
     private void internalUnsubscribe(MqttClient client, String topicFilter, ConcurrentHashMap<String,SubscriptionProcessor> subscriptionMap)
@@ -628,7 +613,7 @@ public final class StandaloneMessagingProvider extends MessagingProvider
     }
 
     @Override
-    public void unsubscribeFromIoTCore(String topicFilter)
+    public void unsubscribeNorthbound(String topicFilter)
     {
         internalUnsubscribe(requireIotCore(), topicFilter, iotCoreSubscriptionProcessors);
     }
@@ -677,43 +662,43 @@ public final class StandaloneMessagingProvider extends MessagingProvider
     }
 
     @Override
-    public ReplyFuture requestFromIoTCore(String topic, Message message)
+    public ReplyFuture requestNorthbound(String topic, Message message)
     {
-        return requestFromIoTCore(topic, message, null);
+        return requestNorthbound(topic, message, null);
     }
 
     @Override
-    public ReplyFuture requestFromIoTCore(String topic, Message message, Duration timeout)
+    public ReplyFuture requestNorthbound(String topic, Message message, Duration timeout)
     {
         String replyTo = message.makeRequest();
         ReplyFuture future = new ReplyFuture(replyTo);
         responseFutures.put(replyTo, future);
-        internalSubscribe(requireIotCore(), replyTo, null, QOS.AT_MOST_ONCE, 1, -1, iotCoreSubscriptionProcessors);
+        internalSubscribe(requireIotCore(), replyTo, null, iotCoreSubscribeQos, 1, -1, iotCoreSubscriptionProcessors);
         armRequestDeadline(future, effectiveRequestTimeout(timeout), () -> {
-            unsubscribeFromIoTCore(replyTo);
+            unsubscribeNorthbound(replyTo);
             responseFutures.remove(replyTo);
         });
-        publishToIoTCore(topic, message, QOS.AT_MOST_ONCE);
+        internalPublish(requireIotCore(), topic, message, iotCorePublishQos);
         return future;
     }
 
     @Override
-    public void cancelRequestFromIoTCore(ReplyFuture future)
+    public void cancelRequestNorthbound(ReplyFuture future)
     {
         if (!future.trySettle())
         {
             return;  // reply or deadline already settled + cleaned up this request
         }
-        unsubscribeFromIoTCore(future.replyTopic);
+        unsubscribeNorthbound(future.replyTopic);
         responseFutures.remove(future.replyTopic);
         future.complete(null);
     }
 
     @Override
-    public void replyToIoTCore(Message request, Message reply)
+    public void replyNorthbound(Message request, Message reply)
     {
         reply.setCorrelationId(request.getHeader().getCorrelationId());
-        publishToIoTCore(request.getHeader().getReplyTo(), reply, QOS.AT_MOST_ONCE);
+        internalPublish(requireIotCore(), request.getHeader().getReplyTo(), reply, iotCorePublishQos);
     }
 
     // --- test seams (package-private): observe subscription / pending-request state ------------
@@ -743,7 +728,7 @@ public final class StandaloneMessagingProvider extends MessagingProvider
     }
 
     @Override
-    public Object getNativeIotCoreClient() { return iotCoreMqttClient; }
+    public Object getNativeNorthboundClient() { return iotCoreMqttClient; }
 
     /**
      * Reports the <em>local</em> broker connection state (Paho {@link MqttClient#isConnected()}) — the

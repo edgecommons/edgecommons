@@ -20,7 +20,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import software.amazon.awssdk.aws.greengrass.model.QOS;
+import com.mbreissi.edgecommons.messaging.Qos;
 
 import java.net.ServerSocket;
 import java.nio.charset.StandardCharsets;
@@ -43,7 +43,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * broker (plaintext, anonymous). These cover the local-broker code paths the integration test does
  * not: bounded-queue drop-on-overflow, wildcard subscription routing, JSON-vs-raw payload parsing in
  * {@code messageArrived}, request/reply correlation completion, unsubscribe of an unknown topic, and
- * the {@code requireIotCore} guards on every IoT-Core delegate when no {@code iotCore} section is
+ * the {@code requireIotCore} guards on every IoT-Core delegate when no {@code northbound} section is
  * configured.
  *
  * <p>The TLS/cert plumbing ({@code createSslContext}, {@code getSocketFactory}, PEM parsing) is
@@ -87,7 +87,7 @@ class StandaloneMessagingProviderTest {
         }
     }
 
-    /** Builds a local-only (no iotCore) provider connected to the in-process broker. */
+    /** Builds a local-only (no northbound) provider connected to the in-process broker. */
     private StandaloneMessagingProvider localProvider(String clientId) {
         String json = """
                 { "messaging": { "local": { "host": "127.0.0.1", "port": %d, "clientId": "%s" } } }"""
@@ -106,8 +106,8 @@ class StandaloneMessagingProviderTest {
     void connectsAndExposesNativeLocalClientOnly() {
         provider = localProvider("native-clients");
         assertNotNull(provider.getNativeLocalClient());
-        // No iotCore section -> no IoT Core client.
-        assertNull(provider.getNativeIotCoreClient());
+        // No northbound section -> no northbound client.
+        assertNull(provider.getNativeNorthboundClient());
     }
 
     @Test
@@ -244,7 +244,7 @@ class StandaloneMessagingProviderTest {
         assertNotNull(got.get());
     }
 
-    // --- IoT Core guard branches (no iotCore section configured) -----------------------------------
+    // --- IoT Core API guard branches (no northbound section configured) -----------------------------
 
     @Test
     void iotCoreDelegatesThrowWhenNotConfigured() {
@@ -253,19 +253,19 @@ class StandaloneMessagingProviderTest {
         JsonObject raw = new JsonObject();
 
         assertThrows(IllegalStateException.class,
-                () -> provider.publishToIoTCore("iot/t", m, QOS.AT_LEAST_ONCE));
+                () -> provider.publishNorthbound("iot/t", m, Qos.AT_LEAST_ONCE));
         assertThrows(IllegalStateException.class,
-                () -> provider.publishToIoTCoreRaw("iot/t", raw, QOS.AT_LEAST_ONCE));
+                () -> provider.publishNorthboundRaw("iot/t", raw, Qos.AT_LEAST_ONCE));
         assertThrows(IllegalStateException.class,
-                () -> provider.subscribeToIoTCore("iot/t", (t, msg) -> {}, QOS.AT_MOST_ONCE, 1, -1));
+                () -> provider.subscribeNorthbound("iot/t", (t, msg) -> {}, Qos.AT_MOST_ONCE, 1, -1));
         assertThrows(IllegalStateException.class,
-                () -> provider.unsubscribeFromIoTCore("iot/t"));
+                () -> provider.unsubscribeNorthbound("iot/t"));
         assertThrows(IllegalStateException.class,
-                () -> provider.requestFromIoTCore("iot/t", m));
+                () -> provider.requestNorthbound("iot/t", m));
         assertThrows(IllegalStateException.class,
-                () -> provider.replyToIoTCore(m, m));
+                () -> provider.replyNorthbound(m, m));
         assertThrows(IllegalStateException.class,
-                () -> provider.cancelRequestFromIoTCore(new ReplyFuture("iot/reply")));
+                () -> provider.cancelRequestNorthbound(new ReplyFuture("iot/reply")));
     }
 
     // --- username/password auth branch in the constructor ----------------------------------------
@@ -321,7 +321,7 @@ class StandaloneMessagingProviderTest {
     @Test
     void getSocketFactoryReturnsNullOnMissingFiles() {
         // Nonexistent cert/key/CA paths -> the catch block logs and returns null (the guard the
-        // provider relies on to refuse an unauthenticated IoT Core connection).
+        // provider relies on to refuse a TLS connection when configured certificate files are missing).
         assertNull(StandaloneMessagingProvider.getSocketFactory(
                 "/no/such/ca.crt", "/no/such/client.crt", "/no/such/client.key"));
     }

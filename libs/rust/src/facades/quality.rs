@@ -65,7 +65,10 @@ mod tests {
 
     #[test]
     fn serde_uses_the_wire_tokens() {
-        assert_eq!(serde_json::to_value(Quality::Good).unwrap(), serde_json::json!("GOOD"));
+        assert_eq!(
+            serde_json::to_value(Quality::Good).unwrap(),
+            serde_json::json!("GOOD")
+        );
         assert_eq!(
             serde_json::from_value::<Quality>(serde_json::json!("UNCERTAIN")).unwrap(),
             Quality::Uncertain

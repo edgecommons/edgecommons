@@ -6,7 +6,7 @@ package com.mbreissi.edgecommons.messaging;
 
 import com.google.gson.JsonObject;
 import org.junit.jupiter.api.Test;
-import software.amazon.awssdk.aws.greengrass.model.QOS;
+import com.mbreissi.edgecommons.messaging.Qos;
 
 import java.time.Duration;
 import java.util.concurrent.ExecutionException;
@@ -34,25 +34,25 @@ class MessagingProviderDeadlineTest {
     /** Minimal no-op provider exposing the base-class deadline machinery. */
     private static final class NoopProvider extends MessagingProvider {
         @Override public void publish(String topic, Message message) { }
-        @Override public void publishToIoTCore(String topic, Message message, QOS qos) { }
+        @Override public void publishNorthbound(String topic, Message message, Qos qos) { }
         @Override public void publishRaw(String topic, JsonObject payload) { }
-        @Override public void publishToIoTCoreRaw(String topic, JsonObject payload, QOS qos) { }
+        @Override public void publishNorthboundRaw(String topic, JsonObject payload, Qos qos) { }
         @Override public void subscribe(String topicFilter, BiConsumer<String, Message> callback,
                                         int maxConcurrency, int maxMessages) { }
-        @Override public void subscribeToIoTCore(String topicFilter, BiConsumer<String, Message> callback,
-                                                 QOS qos, int maxConcurrency, int maxMessages) { }
+        @Override public void subscribeNorthbound(String topicFilter, BiConsumer<String, Message> callback,
+                                                 Qos qos, int maxConcurrency, int maxMessages) { }
         @Override public void unsubscribe(String topicFilter) { }
-        @Override public void unsubscribeFromIoTCore(String topicFilter) { }
+        @Override public void unsubscribeNorthbound(String topicFilter) { }
         @Override public ReplyFuture request(String topic, Message message) { return null; }
         @Override public ReplyFuture request(String topic, Message message, Duration timeout) { return null; }
         @Override public void cancelRequest(ReplyFuture future) { }
         @Override public void reply(Message request, Message reply) { }
-        @Override public ReplyFuture requestFromIoTCore(String topic, Message request) { return null; }
-        @Override public ReplyFuture requestFromIoTCore(String topic, Message request, Duration timeout) { return null; }
-        @Override public void cancelRequestFromIoTCore(ReplyFuture future) { }
-        @Override public void replyToIoTCore(Message request, Message reply) { }
+        @Override public ReplyFuture requestNorthbound(String topic, Message request) { return null; }
+        @Override public ReplyFuture requestNorthbound(String topic, Message request, Duration timeout) { return null; }
+        @Override public void cancelRequestNorthbound(ReplyFuture future) { }
+        @Override public void replyNorthbound(Message request, Message reply) { }
         @Override public Object getNativeLocalClient() { return null; }
-        @Override public Object getNativeIotCoreClient() { return null; }
+        @Override public Object getNativeNorthboundClient() { return null; }
     }
 
     // --- effective-timeout resolution ------------------------------------------------------------

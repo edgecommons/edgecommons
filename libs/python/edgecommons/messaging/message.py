@@ -4,6 +4,7 @@
 # Customer and Amazon Web Services, Inc.
 
 import base64
+import binascii
 import json
 import logging
 from dataclasses import dataclass, field
@@ -14,15 +15,60 @@ from edgecommons.messaging.identity import MessageIdentity
 from edgecommons.utils import Utils
 
 
+MAX_BINARY_BODY_BYTES = 64 * 1024
+BINARY_BODY_KEY = "_edgecommonsBinary"
+BINARY_ENCODING = "base64"
+
+
+def _binary_marker(data: bytes) -> dict:
+    if len(data) > MAX_BINARY_BODY_BYTES:
+        raise ValueError(f"Binary message body exceeds {MAX_BINARY_BODY_BYTES} bytes")
+    return {
+        BINARY_BODY_KEY: {
+            "encoding": BINARY_ENCODING,
+            "length": len(data),
+            "data": base64.b64encode(data).decode("ascii"),
+        }
+    }
+
+
 def _encode_body(body: Any) -> Any:
-    """#16: a ``bytes`` body travels as a base64 JSON string — the portable cross-language interim for
-    binary bodies (a raw ``bytes`` payload has no portable JSON form; Python's ``json.dumps`` would
-    otherwise raise). Matches Java ``byte[]`` -> base64 and TS ``Buffer`` -> base64, scoped to a
-    top-level binary body (not nested bytes), pending a first-class binary message type. Non-bytes
-    bodies pass through unchanged."""
+    """Encode a top-level binary body as the first-class bounded binary marker."""
     if isinstance(body, (bytes, bytearray)):
-        return base64.b64encode(bytes(body)).decode("ascii")
+        return _binary_marker(bytes(body))
     return body
+
+
+def _binary_descriptor(value: Any) -> Optional[dict]:
+    if isinstance(value, dict):
+        if BINARY_BODY_KEY not in value:
+            return None
+        descriptor = value[BINARY_BODY_KEY]
+        if not isinstance(descriptor, dict):
+            raise ValueError("Binary message body marker must be an object")
+        return descriptor
+    return None
+
+
+def _decode_binary_descriptor(descriptor: dict) -> bytes:
+    if descriptor.get("encoding") != BINARY_ENCODING:
+        raise ValueError("Binary message body encoding must be base64")
+    declared_length = descriptor.get("length")
+    if not isinstance(declared_length, int) or declared_length < 0:
+        raise ValueError("Binary message body length must be a non-negative integer")
+    if declared_length > MAX_BINARY_BODY_BYTES:
+        raise ValueError(f"Binary message body exceeds {MAX_BINARY_BODY_BYTES} bytes")
+    encoded = descriptor.get("data")
+    if not isinstance(encoded, str):
+        raise ValueError("Binary message body data is required")
+    try:
+        decoded = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError("Binary message body data is not valid base64") from exc
+    if len(decoded) != declared_length:
+        raise ValueError("Binary message body length does not match decoded data")
+    return decoded
+
 
 if TYPE_CHECKING:
     from edgecommons.config.manager.config_manager import ConfigManager
@@ -191,6 +237,20 @@ class Message:
     def get_payload(self):
         """Backward compatibility alias for get_body()"""
         return self.get_body()
+
+    def is_binary_body(self) -> bool:
+        return isinstance(self.body, (bytes, bytearray)) or (
+            isinstance(self.body, dict) and BINARY_BODY_KEY in self.body
+        )
+
+    def get_binary_body(self) -> Optional[bytes]:
+        if isinstance(self.body, (bytes, bytearray)):
+            data = bytes(self.body)
+            if len(data) > MAX_BINARY_BODY_BYTES:
+                raise ValueError(f"Binary message body exceeds {MAX_BINARY_BODY_BYTES} bytes")
+            return data
+        descriptor = _binary_descriptor(self.body)
+        return None if descriptor is None else _decode_binary_descriptor(descriptor)
 
     def get_raw(self):
         return self.raw

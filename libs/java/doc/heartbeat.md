@@ -40,7 +40,7 @@ hard cut. The section is now:
 | `enabled` | boolean | `true` | Whether the heartbeat (keepalive + `sys` metric) runs. |
 | `intervalSecs` | integer ≥ 1 | `5` | Tick interval in seconds. |
 | `measures` | object | cpu+memory on | Which system measures the `sys` metric carries: `cpu`, `memory`, `disk`, `threads`, `files`, `fds` (booleans). |
-| `destination` | `"local"` \| `"iotcore"` | `"local"` | Transport of the **state keepalive only**. The measures always route through the metric subsystem's own target. |
+| `destination` | `"local"` \| `"northbound"` | `"local"` | Transport of the **state keepalive only**. The measures always route through the metric subsystem's own target. |
 
 ## 4. Sample Configurations
 
@@ -80,7 +80,7 @@ behaves the same.)
 {
     "heartbeat": {
         "intervalSecs": 60,
-        "destination": "iotcore"
+        "destination": "northbound"
     }
 }
 ```

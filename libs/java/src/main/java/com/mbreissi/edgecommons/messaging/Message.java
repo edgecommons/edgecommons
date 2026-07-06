@@ -11,7 +11,6 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import com.google.gson.JsonPrimitive;
 import com.google.gson.JsonSyntaxException;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -28,6 +27,9 @@ import java.util.Map;
 public class Message
 {
     protected static final Logger LOGGER = LogManager.getLogger(Message.class);
+    public static final int MAX_BINARY_BODY_BYTES = 64 * 1024;
+    private static final String BINARY_BODY_KEY = "_edgecommonsBinary";
+    private static final String BINARY_ENCODING = "base64";
 
     /** Default serializer: omits null members (Gson default), used for POJO/record/List payloads. */
     private static final Gson DEFAULT_GSON = new Gson();
@@ -88,8 +90,7 @@ public class Message
     /**
      * Coerces a message body/raw value to a Gson {@link JsonElement} for serialization. A value that
      * is already a {@link JsonElement} is returned as-is; {@code null} becomes {@link JsonNull}; a
-     * {@code byte[]} is base64-encoded to a JSON string (#16, the portable cross-language interim for
-     * binary bodies — see the binary-message feature request); a {@link Map} is converted with
+     * {@code byte[]} is encoded as the first-class bounded binary body marker; a {@link Map} is converted with
      * null-valued entries preserved as JSON {@code null} (#15); any other object (POJO, {@code List},
      * primitive wrapper, etc.) is converted via Gson's default reflective adapter (which omits null
      * members). This lets callers pass a plain {@code Map}/POJO to
@@ -107,9 +108,7 @@ public class Message
         if (value instanceof JsonElement element)
             return element;
         if (value instanceof byte[] bytes)
-            // #16 interim: binary bodies travel as a base64 JSON string (portable across all four
-            // libraries) until a first-class header-carrying binary message type lands.
-            return new JsonPrimitive(Base64.getEncoder().encodeToString(bytes));
+            return binaryBodyJson(bytes);
         if (value instanceof Map<?, ?>)
             // #15: a Map carries key presence, so a null value is an explicit JSON null (not an
             // ambiguous unset POJO field) — serialize it as such, matching Python/TS/serde. We go via
@@ -117,6 +116,49 @@ public class Message
             // maps; the string path with serializeNulls preserves them at every nesting level.
             return JsonParser.parseString(NULL_SERIALIZING_GSON.toJson(value));
         return DEFAULT_GSON.toJsonTree(value);
+    }
+
+    private static JsonObject binaryBodyJson(byte[] bytes)
+    {
+        if (bytes.length > MAX_BINARY_BODY_BYTES)
+            throw new IllegalArgumentException(
+                "Binary message body exceeds " + MAX_BINARY_BODY_BYTES + " bytes");
+        JsonObject descriptor = new JsonObject();
+        descriptor.addProperty("encoding", BINARY_ENCODING);
+        descriptor.addProperty("length", bytes.length);
+        descriptor.addProperty("data", Base64.getEncoder().encodeToString(bytes));
+        JsonObject marker = new JsonObject();
+        marker.add(BINARY_BODY_KEY, descriptor);
+        return marker;
+    }
+
+    private static JsonObject binaryDescriptor(Object value)
+    {
+        if (value instanceof JsonObject obj && obj.has(BINARY_BODY_KEY))
+        {
+            if (!obj.get(BINARY_BODY_KEY).isJsonObject())
+                throw new IllegalArgumentException("Binary message body marker must be an object");
+            return obj.getAsJsonObject(BINARY_BODY_KEY);
+        }
+        return null;
+    }
+
+    private static byte[] decodeBinaryDescriptor(JsonObject descriptor)
+    {
+        if (!descriptor.has("encoding") || !BINARY_ENCODING.equals(descriptor.get("encoding").getAsString()))
+            throw new IllegalArgumentException("Binary message body encoding must be base64");
+        if (!descriptor.has("length") || !descriptor.get("length").isJsonPrimitive())
+            throw new IllegalArgumentException("Binary message body length is required");
+        int declaredLength = descriptor.get("length").getAsInt();
+        if (declaredLength < 0 || declaredLength > MAX_BINARY_BODY_BYTES)
+            throw new IllegalArgumentException(
+                "Binary message body exceeds " + MAX_BINARY_BODY_BYTES + " bytes");
+        if (!descriptor.has("data") || !descriptor.get("data").isJsonPrimitive())
+            throw new IllegalArgumentException("Binary message body data is required");
+        byte[] decoded = Base64.getDecoder().decode(descriptor.get("data").getAsString());
+        if (decoded.length != declaredLength)
+            throw new IllegalArgumentException("Binary message body length does not match decoded data");
+        return decoded;
     }
 
     @Override
@@ -190,6 +232,35 @@ public class Message
     public Object getBody()
     {
         return body;
+    }
+
+    /**
+     * Returns true when the payload is a first-class binary body.
+     *
+     * @return true for an outbound byte[] payload or an inbound binary marker object
+     */
+    public boolean isBinaryBody()
+    {
+        return body instanceof byte[] || (body instanceof JsonObject obj && obj.has(BINARY_BODY_KEY));
+    }
+
+    /**
+     * Decodes the first-class binary message body.
+     *
+     * @return the decoded bytes, or null when the body is not binary
+     * @throws IllegalArgumentException when the inbound binary marker is malformed or too large
+     */
+    public byte[] getBinaryBody()
+    {
+        if (body instanceof byte[] bytes)
+        {
+            if (bytes.length > MAX_BINARY_BODY_BYTES)
+                throw new IllegalArgumentException(
+                    "Binary message body exceeds " + MAX_BINARY_BODY_BYTES + " bytes");
+            return bytes.clone();
+        }
+        JsonObject descriptor = binaryDescriptor(body);
+        return descriptor == null ? null : decodeBinaryDescriptor(descriptor);
     }
 
     /**

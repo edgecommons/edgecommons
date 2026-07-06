@@ -3,7 +3,7 @@
 > **Status (updated 2026-07-05): Phases 1–3 SHIPPED, all four languages, merged to `main`** and
 > released as **v0.2.0** (release commit `b1d8d85`) — every API shape below (`MessageIdentity`, `gg.uns()`/`UnsClass`/`UnsScope`,
 > the `gg.instance()` handle, the reserved-class guard + per-language internal seam, the `request()`
-> deadline, MQTT LWT, IoTCore casing, the library-owned `state`/`metric`/`cfg` publishers, the
+> deadline, MQTT LWT, northbound API naming, the library-owned `state`/`metric`/`cfg` publishers, the
 > `uns-test-vectors/` conformance suite, and the interop UNS suite) is real, tested code — see the
 > "Build plan — phase checklist" at the bottom for the per-item status and DESIGN-uns.md §13 for the
 > phase-level summary. Phase 3 (`uns-bridge` + the `_bcast` listener) has also shipped — see
@@ -352,8 +352,8 @@ reject if tokens[0] == "ecv1"
   a rooted reserved topic) is accepted: the guard is **misuse prevention, not a security boundary** —
   per-device broker ACLs are the durable enforcement (DESIGN-uns §7.5 pt 3).
 - **Guarded methods** (every public path that emits a client-chosen topic): `publish`, `publishRaw`,
-  `publishToIoTCore`, `publishToIoTCoreRaw` (D‑U8), `request`, `requestFromIoTCore`, **and `reply` /
-  `replyToIoTCore`** — the reply pair matters: a hostile requester could set `header.reply_to` to a
+  `publishNorthbound`, `publishNorthboundRaw` (D‑U8), `request`, `requestNorthbound`, **and `reply` /
+  `replyNorthbound`** — the reply pair matters: a hostile requester could set `header.reply_to` to a
   victim's reserved topic and turn an innocent responder into a forger
   (`GreengrassMessagingProvider.reply:235` publishes straight to `getReplyTo()`).
 - `subscribe*` is never guarded (consumers must read reserved classes).
@@ -377,7 +377,7 @@ internal path the guard does not apply to:
   public final class ReservedPublisher {
       public void publish(String topic, Message msg);                    // no guard
       public void publishRaw(String topic, JsonObject payload);
-      public void publishToIoTCore(String topic, Message msg, QOS qos);
+      public void publishNorthbound(String topic, Message msg, QOS qos);
   }
   ```
 - **Python** — `MessagingClient._publish_reserved(topic, msg)` / `_publish_reserved_raw(...)`
@@ -438,7 +438,7 @@ broadcast):**
 
 Heartbeat config reshape (resolves #33 / M11 in this phase — Risks #1): `heartbeat.targets[]` is
 **removed** (where the topic drift knobs live); replaced by `heartbeat: { enabled (bool, default true),
-intervalSecs (5, min 1), measures {…unchanged}, destination ("local"|"iotcore", default "local") }`. Flips
+intervalSecs (5, min 1), measures {…unchanged}, destination ("local"|"northbound", default "local") }`. Flips
 Rust/TS from effectively-off (empty default targets) and Java (`metric` default) and Python
 (`messaging`+legacy topic) all onto **on / 5 s / state-on-local** (D‑U14). Validate on the HOST smoke.
 
@@ -466,37 +466,34 @@ Rust/TS from effectively-off (empty default targets) and Java (`metric` default)
 
 | Lang | API | Timer | Failure signal |
 |---|---|---|---|
-| **Java** | `request(String, Message)` + `request(String, Message, Duration)` (same for `requestFromIoTCore`) on `MessagingClient` + both providers | one shared lazy 1-thread daemon `ScheduledExecutorService` per provider; `ScheduledFuture` canceled on settle | `future.completeExceptionally(new java.util.concurrent.TimeoutException(...))` (`ReplyFuture extends CompletableFuture<Message>` already carries `replyTopic`) |
+| **Java** | `request(String, Message)` + `request(String, Message, Duration)` (same for `requestNorthbound`) on `MessagingClient` + both providers | one shared lazy 1-thread daemon `ScheduledExecutorService` per provider; `ScheduledFuture` canceled on settle | `future.completeExceptionally(new java.util.concurrent.TimeoutException(...))` (`ReplyFuture extends CompletableFuture<Message>` already carries `replyTopic`) |
 | **Python** | `request(topic, msg, timeout_secs: float \| None = None)` (None = default, 0 = off) | `threading.Timer(deadline, _on_deadline)` per request, `.cancel()`ed on settle; settle guarded by a per-entry lock/flag | `Iou` gains `set_error(exc)`; `Iou.get()` **raises** `RequestTimeoutError` (contract change to `iou.py:25–31` — pre-1.0 accepted, flagged) |
 | **Rust** | `request(...)` (default) + `request_with_timeout(topic, msg, Option<Duration>)` (no overloading) | restructure `start_request` into a **spawned supervisor task** owning the reply subscription: `tokio::select! { reply = rx => …, _ = sleep(d) => … }`, then unsubscribe + send `Result<Message>` down a `oneshot`; `ReplyFuture` wraps the `oneshot::Receiver` + a cancel handle (Drop still cancels — preserving today's contract, `service.rs:129–137`). Closes Rust's real gap (stored-but-never-polled future) | future resolves `Err(EdgeCommonsError::RequestTimeout { topic, secs })` (new variant) |
 | **TS** | already present (`timeoutMs?`, `service.ts:154–160`) — change only the default: `undefined` now resolves to `requestTimeoutSeconds * 1000` (was 0 = off); explicit `0` still disables | existing `setTimeout` + `finish()` | narrow existing `Error` to `class RequestTimeoutError extends Error` for parity |
 
 ---
 
-### 6. MQTT LWT provider hook (IPC no-ops; NO retain)
+### 6. Site-broker LWT belongs to `uns-bridge` (NO generic `messaging.lwt`)
 
-Config-driven only (the bridge is a component with config); minimal shape added to `messaging`:
+The canonical component `messaging` section is broker topology, request timeout, and QoS defaults only. It
+does **not** carry a generic MQTT Last-Will. A normal component's liveness is expressed through the library
+`state` heartbeat/metric path; there is no first-party subscriber that consumes arbitrary component LWTs on
+the local broker.
 
-```jsonc
-"messaging": {
-  "local":  { },  "iotCore": { },
-  "requestTimeoutSeconds": 30,
-  "lwt": {
-    "topic":   "ecv1/gw-01/uns-bridge/main/state",   // required
-    "payload": { "status": "UNREACHABLE" },          // string or object; published VERBATIM
-    "qos": 1                                          // 0|1, default 1. NO retain field — hard omit (D9).
-  }
-}
-```
+The load-bearing LWT is the `uns-bridge` site-uplink will because that is the connection whose abrupt loss
+means the whole edge site is unreachable from the site/enterprise broker. It is a private bridge-console
+contract, not component configuration:
 
-- Applies to the **local-broker connection only** (a bridge's "local" config *is* the site broker on its
-  named client). IoT Core LWT deferred; IPC provider logs DEBUG and no-ops.
-- Wiring: Java Paho `MqttConnectOptions.setWill(topic, bytes, qos, false)`; Rust rumqttc
-  `MqttOptions::set_last_will(LastWill{ retain: false, .. })`; Python paho `client.will_set(...,
-  retain=False)`; TS mqtt.js `will: { retain: false }`. All re-register the will on reconnect.
-- The will is **registered at CONNECT, not routed through `publish()`** — the guard does not (cannot)
-  apply; document this. Broker ACLs govern wills. LWT payload timestamp is connect-time-stale by nature;
-  consumers MUST treat it as "event time = delivery time" (the console FleetModel timestamps on receipt).
+- The canonical schema rejects stale `messaging.lwt`; `uns-bridge` also rejects
+  `component.instances[site].lwt`.
+- The bridge derives the will topic from its resolved UNS state topic
+  (`ecv1/{device}/uns-bridge/main/state`) and uses the fixed payload `{"status":"UNREACHABLE"}` with QoS 1.
+- The bridge registers the will only on its **site MQTT connection**. It is not registered on normal
+  component local MQTT connections, and it is not an IPC/Greengrass transport feature.
+- Rust wiring: `uns-bridge` builds `MqttLastWill` internally and calls
+  `MqttProvider::connect_with_last_will(..., Some(&will))`. `retain` remains hard `false`; QoS is fixed to 1.
+- The will is registered at CONNECT, not routed through `publish()`; broker ACLs govern it. Consumers treat
+  delivery time as the event time.
 
 ---
 
@@ -504,7 +501,7 @@ Config-driven only (the bridge is a component with config); minimal shape added 
 
 **In scope now:** `identity`+`hierarchy` resolution + top-level envelope element; `uns()` (+ `UnsScope`,
 validation, vectors); the instance handle (`uns()` + `newMessage()` only); the reserved-class guard +
-per-language internal seam; the `request()` deadline; MQTT LWT; IoTCore casing normalization; the
+per-language internal seam; the `request()` deadline; MQTT LWT; northbound API naming; the
 library-owned **state / metric / cfg** publishers on UNS topics; the CONFIG_COMPONENT rendezvous remap;
 the M8 named client (Rust only); schema changes + `uns-test-vectors` + the interop UNS suite.
 
@@ -537,7 +534,7 @@ southbound command family (M9); D‑U15/16 (Phase 5).
 
 **Schema deltas** (edit `schema/edgecommons-config-schema.json`, then `schema/sync-schema.sh`): ADD
 top-level `hierarchy {levels: string[]}`, `identity` (patternProperties `^[A-Za-z0-9_-]+$` → string),
-`topic {includeRoot: bool=false}`; `messaging` += `requestTimeoutSeconds`, `lwt`; `heartbeat` −=
+`topic {includeRoot: bool=false}`; `messaging` += `requestTimeoutSeconds`; `heartbeat` −=
 `targets` (+`enabled`, +`destination`); `metricEmission.targetConfig` −= `topic` (keep `destination`,
 D‑U9). Top-level `additionalProperties:false` then fails every stale config with a precise error —
 intended (§10 hard cut).
@@ -554,14 +551,13 @@ via args/env → publishes one `state` + one `data` envelope through the real fa
 role (attempts a reserved publish, must exit with the documented error); new `test_uns_*` functions in
 `test_interop.py` assert byte-identical topics + structurally-identical `identity`, auto-picked-up.
 
-**Casing normalization (D‑U7), exact rename list:** Java `MessagingClient.publishToIotCore →
-publishToIoTCore`, `publishToIotCoreRaw → publishToIoTCoreRaw` (provider layer already `IoTCore`); update
-the 6+ internal call sites. TS: whole family `Iot → IoT` (`publishToIotCore`, `publishToIotCoreRaw`,
-`subscribeToIotCore`, `unsubscribeFromIotCore`, `requestFromIotCore`, `replyToIotCore`,
-`cancelRequestFromIotCore`, enum member `Destination.IotCore → Destination.IoTCore`) — the enum's **string
-value `"iotcore"` and all config-enum tokens are unchanged**. Python: methods stay snake_case; rename
-internal `IotCoreSubscriptionHandler → IoTCoreSubscriptionHandler` (cosmetic). Rust: **keeps
-`IotCore`/`_iot_core`** (RFC-430 acronym convention — per-language idiom, not a divergence).
+**Northbound API normalization (D‑U7, superseded by the channel-2 hard cut):** public messaging APIs
+use the northbound family in all four languages. Java/TypeScript expose `publishNorthbound`,
+`publishNorthboundRaw`, `subscribeNorthbound`, `unsubscribeNorthbound`, `requestNorthbound`,
+`replyNorthbound`, and `cancelRequestNorthbound`; Python/Rust expose the matching
+`*_northbound` methods; Rust/TypeScript use `Destination::Northbound` / `Destination.Northbound`
+with string value `"northbound"`. The old IoT-Core-named public APIs are not retained as aliases.
+Greengrass SDK operation names such as `PublishToIoTCore` remain only at the provider boundary.
 
 ---
 
@@ -575,7 +571,7 @@ internal `IotCoreSubscriptionHandler → IoTCoreSubscriptionHandler` (cosmetic).
 | D‑U4 | Privileged internal publish | per-language seams (§4.2): Java `ReservedPublisher`, Python `_publish_reserved`, Rust `pub(crate) trait ReservedMessaging` (real enforcement), TS `@internal`+`stripInternal`. Guard = misuse prevention; broker ACL = boundary | High | Easy | no |
 | D‑U5 | Request deadline config | `messaging.requestTimeoutSeconds`, default 30, 0=off; per-call override; late-bound in Java/Python | High | Easy | no |
 | D‑U6 | Keep `edgecommons/reply-` prefix | non-UNS, ephemeral; guard keys on `ecv1` root so reply topics are structurally exempt | High | Easy | no |
-| D‑U7 | Normalize IoTCore casing now | per-language idiom: Java+TS → `IoTCore`; Rust keeps `IotCore`; Python snake untouched; **all string/config tokens (`"iotcore"`) unchanged** | High | Easy | no |
+| D‑U7 | Normalize channel-2 naming to northbound | public APIs and config use northbound consistently; AWS IoT Core naming remains only for the Greengrass SDK bridge | High | Easy | no |
 | D‑U8 | Guard `publishRaw` too | confirmed + extended: `request*` and **`reply*`** also guarded (hostile `reply_to` forgery) | High | Easy | no |
 | D‑U9 | Keep `destination`, drop topic overrides | confirmed for `metricEmission.targetConfig`; for heartbeat, subsumed by D‑U20 (`targets[]` removed wholesale, `destination` survives as scalar) | High | Easy | no |
 | D‑U10 | Top-level `hierarchy`+`identity` schema props | confirmed; zero-config default `levels=["device"]`; level names strict `^[A-Za-z0-9_-]+$` (future Parquet columns) | High | Easy | no |
@@ -588,7 +584,7 @@ internal `IotCoreSubscriptionHandler → IoTCoreSubscriptionHandler` (cosmetic).
 | **D‑U17** | M8 the bridge's site connection | ✅ **FINAL 2026-07-03 → NO CORE CHANGE (any language).** The site broker is the uns-bridge's **external system** (like the opcua-adapter's OPC UA endpoints), configured in the bridge's own `component.instances[]` and built by **reusing the core's already-`pub` MQTT objects** (`MqttProvider::connect` + `DefaultMessagingService`/raw `MessagingProvider`), inside the bridge. **No `messaging.connections` schema, no `gg.messaging()` API change, no keyed registry, no Java/Python/TS change** (at most a 1-line Rust `pub use`). Supersedes the earlier "named connection in the core" reading. §2.3, DESIGN-uns-bridge §1 | High | Easy | resolved |
 | **D‑U18** | `identity.component` = **sanitized short name** (existing `{ComponentName}` semantics), not reverse-DNS full name | ✅ **confirmed 2026-07-02** (user agreed). Matches every existing topic site + the design examples; dots legal in-level so full name stays possible later; cross-vendor collision on one device accepted pre-1.0 | High | Hard once fleets deploy | resolved |
 | **D‑U19** | Config-command addressing | ✅ **resolved 2026-07-02 → component-inbox + broadcast** (user). **Flow A** (config-source fetch) stays a request to `config/main` (server is sole subscriber, requester self-IDs). **Flow B** (console→component verbs incl. `get-configuration`) → the target component's OWN inbox `ecv1/{device}/{component}/{instance}/cmd/{verb}` (topic-selective, uniform for all verbs, no body-filtering); **broadcast** via reserved `_bcast` (`ecv1/{device}/_bcast/main/cmd/{verb}`). `set-config` push = component inbox. §4.3 | High | Moderate | resolved |
-| **D‑U20** | Heartbeat `targets[]` REMOVED → `enabled/intervalSecs/measures/destination`; measures emit metric **`sys`** via normal metric subsystem | ✅ **confirmed 2026-07-02** (user). The measures **keep full sink flexibility** — they now flow through the metric subsystem's own targets (messaging/cloudwatch-component/EMF/local-log), which `heartbeat.targets[]` did not provide for measures; `heartbeat.destination` (local\|iotcore) governs only the lightweight `state` keepalive. Supersedes the letter of D‑U9 for heartbeat | High | Moderate (schema break, intended) | resolved |
+| **D‑U20** | Heartbeat `targets[]` REMOVED → `enabled/intervalSecs/measures/destination`; measures emit metric **`sys`** via normal metric subsystem | ✅ **confirmed 2026-07-02** (user). The measures **keep full sink flexibility** — they now flow through the metric subsystem's own targets (messaging/cloudwatch-component/EMF/local-log), which `heartbeat.targets[]` did not provide for measures; `heartbeat.destination` (local\|northbound) governs only the lightweight `state` keepalive. Supersedes the letter of D‑U9 for heartbeat | High | Moderate (schema break, intended) | resolved |
 | D‑U21 | `cloudwatch/metric/put` unchanged | external AWS Greengrass component contract; non-`ecv1` so guard-exempt | High | Easy | no |
 | D‑U22 | Topics byte-identical; envelopes structurally identical (member order not normative) | the four serializers already differ in order + the interop harness compares structurally; byte order would churn all four for zero consumer value | High | Easy | no |
 | D‑U23 | Error identities: `UnsValidationException`(+code)/`ReservedTopicException`/`TimeoutException`(Java std)/`RequestTimeoutError`(Py/TS)/`EdgeCommonsError::{UnsValidation,ReservedTopic,RequestTimeout}`(Rust); Python `Iou.get()` now raises on deadline | confirmed; the Python `Iou` contract change is the sharpest edge (pre-1.0 accepted) | High | Easy | no |
@@ -649,11 +645,11 @@ internal `IotCoreSubscriptionHandler → IoTCoreSubscriptionHandler` (cosmetic).
 (this is the bulk of the "core" work; guard/deadline/LWT/casing from the doc's Phase 2 are folded in
 where coupled) — **DONE, all four languages:**
 - [x] **Schema** (`schema/edgecommons-config-schema.json` + `sync-schema.sh` → 5 copies): +`hierarchy`,
-  +`identity`, +`topic.includeRoot`, `messaging` += `requestTimeoutSeconds`/`lwt`, `heartbeat` reshape,
+  +`identity`, +`topic.includeRoot`, `messaging` += `requestTimeoutSeconds`, `heartbeat` reshape,
   drop drift knobs. Drift gate green.
 - [x] **Java canonical**: `MessageIdentity` + envelope; `MessageBuilder` stamping; `ConfigManager.getComponentIdentity`;
-  `Uns` builder/validator; reserved guard + `ReservedPublisher`; `request()` deadline; MQTT LWT; IoTCore
-  casing; heartbeat→state (M11) + metric `sys`; metric→UNS; cfg publisher; config-component remap. Unit
+  `Uns` builder/validator; reserved guard + `ReservedPublisher`; `request()` deadline; MQTT provider hook for the bridge LWT; northbound
+  API naming; heartbeat→state (M11) + metric `sys`; metric→UNS; cfg publisher; config-component remap. Unit
   tests → JaCoCo 90%.
 - [x] **`uns-test-vectors/`** (Java generator) + Java loader test.
 - [x] **Mirrors** (parallel): Python, Rust, TS — each vs the vectors; per-lang unit tests → 90% (Linux/WSL

@@ -66,16 +66,109 @@
 
 use std::collections::BTreeMap;
 
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use serde::de::{self, Deserializer};
 use serde::ser::{SerializeMap, Serializer};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use time::format_description::well_known::Rfc3339;
+use serde_json::{Map, Value};
 use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
 use uuid::Uuid;
 
 use crate::config::model::Config;
 use crate::error::{EdgeCommonsError, Result};
+
+/// Maximum decoded size for the first-class binary message body marker.
+pub const MAX_BINARY_BODY_BYTES: usize = 64 * 1024;
+const BINARY_BODY_KEY: &str = "_edgecommonsBinary";
+const BINARY_ENCODING: &str = "base64";
+
+fn binary_body_value(bytes: &[u8]) -> Result<Value> {
+    if bytes.len() > MAX_BINARY_BODY_BYTES {
+        return Err(EdgeCommonsError::Messaging(format!(
+            "Binary message body exceeds {MAX_BINARY_BODY_BYTES} bytes"
+        )));
+    }
+    let mut descriptor = Map::new();
+    descriptor.insert(
+        "encoding".to_string(),
+        Value::String(BINARY_ENCODING.to_string()),
+    );
+    descriptor.insert("length".to_string(), Value::Number(bytes.len().into()));
+    descriptor.insert(
+        "data".to_string(),
+        Value::String(BASE64_STANDARD.encode(bytes)),
+    );
+    let mut marker = Map::new();
+    marker.insert(BINARY_BODY_KEY.to_string(), Value::Object(descriptor));
+    Ok(Value::Object(marker))
+}
+
+fn has_binary_marker(value: &Value) -> bool {
+    value
+        .as_object()
+        .is_some_and(|obj| obj.contains_key(BINARY_BODY_KEY))
+}
+
+fn binary_descriptor(value: &Value) -> Result<Option<&Map<String, Value>>> {
+    let Some(obj) = value.as_object() else {
+        return Ok(None);
+    };
+    let Some(descriptor) = obj.get(BINARY_BODY_KEY) else {
+        return Ok(None);
+    };
+    descriptor.as_object().map(Some).ok_or_else(|| {
+        EdgeCommonsError::Messaging("Binary message body marker must be an object".to_string())
+    })
+}
+
+fn decode_binary_descriptor(descriptor: &Map<String, Value>) -> Result<Vec<u8>> {
+    let encoding = descriptor
+        .get("encoding")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            EdgeCommonsError::Messaging("Binary message body encoding must be base64".to_string())
+        })?;
+    if encoding != BINARY_ENCODING {
+        return Err(EdgeCommonsError::Messaging(
+            "Binary message body encoding must be base64".to_string(),
+        ));
+    }
+    let declared_length = descriptor
+        .get("length")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| {
+            EdgeCommonsError::Messaging(
+                "Binary message body length must be a non-negative integer".to_string(),
+            )
+        })?;
+    let declared_length = usize::try_from(declared_length).map_err(|_| {
+        EdgeCommonsError::Messaging(format!(
+            "Binary message body exceeds {MAX_BINARY_BODY_BYTES} bytes"
+        ))
+    })?;
+    if declared_length > MAX_BINARY_BODY_BYTES {
+        return Err(EdgeCommonsError::Messaging(format!(
+            "Binary message body exceeds {MAX_BINARY_BODY_BYTES} bytes"
+        )));
+    }
+    let encoded = descriptor
+        .get("data")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            EdgeCommonsError::Messaging("Binary message body data is required".to_string())
+        })?;
+    let decoded = BASE64_STANDARD.decode(encoded).map_err(|_| {
+        EdgeCommonsError::Messaging("Binary message body data is not valid base64".to_string())
+    })?;
+    if decoded.len() != declared_length {
+        return Err(EdgeCommonsError::Messaging(
+            "Binary message body length does not match decoded data".to_string(),
+        ));
+    }
+    Ok(decoded)
+}
 
 /// Message metadata. Field names serialize as snake_case (`correlation_id`,
 /// `reply_to`) to match the Java/Python `MessageHeader` wire format.
@@ -174,12 +267,21 @@ impl MessageIdentity {
                 "MessageIdentity component must be non-empty".to_string(),
             ));
         }
-        let path = hier.iter().map(|e| e.value.as_str()).collect::<Vec<_>>().join("/");
+        let path = hier
+            .iter()
+            .map(|e| e.value.as_str())
+            .collect::<Vec<_>>()
+            .join("/");
         let instance = match instance {
             Some(i) if !i.is_empty() => i,
             _ => Self::DEFAULT_INSTANCE.to_string(),
         };
-        Ok(MessageIdentity { hier, path, component, instance })
+        Ok(MessageIdentity {
+            hier,
+            path,
+            component,
+            instance,
+        })
     }
 
     /// Returns the ordered hierarchy entries (the last entry is the device).
@@ -231,8 +333,12 @@ impl MessageIdentity {
     /// Infallible internal variant of [`Self::with_instance`] for the builder's
     /// stamping site (empty falls back to [`Self::DEFAULT_INSTANCE`]).
     pub(crate) fn with_instance_or_default(&self, instance: &str) -> MessageIdentity {
-        let instance =
-            if instance.is_empty() { Self::DEFAULT_INSTANCE } else { instance }.to_string();
+        let instance = if instance.is_empty() {
+            Self::DEFAULT_INSTANCE
+        } else {
+            instance
+        }
+        .to_string();
         MessageIdentity {
             hier: self.hier.clone(),
             path: self.path.clone(),
@@ -250,10 +356,15 @@ impl MessageIdentity {
     /// delivers.
     pub fn from_wire(src: &Value) -> Option<MessageIdentity> {
         let Some(obj) = src.as_object() else {
-            tracing::warn!("Malformed message identity: 'identity' is not an object; dropping identity");
+            tracing::warn!(
+                "Malformed message identity: 'identity' is not an object; dropping identity"
+            );
             return None;
         };
-        let Some(hier_arr) = obj.get("hier").and_then(Value::as_array).filter(|a| !a.is_empty())
+        let Some(hier_arr) = obj
+            .get("hier")
+            .and_then(Value::as_array)
+            .filter(|a| !a.is_empty())
         else {
             tracing::warn!(
                 "Malformed message identity: 'hier' missing, not an array, or empty; dropping identity"
@@ -263,29 +374,47 @@ impl MessageIdentity {
         let mut hier = Vec::with_capacity(hier_arr.len());
         for entry in hier_arr {
             let Some(entry_obj) = entry.as_object() else {
-                tracing::warn!("Malformed message identity: hier entry is not an object; dropping identity");
+                tracing::warn!(
+                    "Malformed message identity: hier entry is not an object; dropping identity"
+                );
                 return None;
             };
             let level = non_empty_str(entry_obj.get("level"));
             let value = non_empty_str(entry_obj.get("value"));
             let (Some(level), Some(value)) = (level, value) else {
-                tracing::warn!("Malformed message identity: hier entry missing level/value; dropping identity");
+                tracing::warn!(
+                    "Malformed message identity: hier entry missing level/value; dropping identity"
+                );
                 return None;
             };
-            hier.push(HierEntry { level: level.to_string(), value: value.to_string() });
+            hier.push(HierEntry {
+                level: level.to_string(),
+                value: value.to_string(),
+            });
         }
         let Some(component) = non_empty_str(obj.get("component")) else {
-            tracing::warn!("Malformed message identity: 'component' missing or empty; dropping identity");
+            tracing::warn!(
+                "Malformed message identity: 'component' missing or empty; dropping identity"
+            );
             return None;
         };
         let path = match non_empty_str(obj.get("path")) {
             Some(p) => p.to_string(), // present => taken as-is (publisher is authoritative)
-            None => hier.iter().map(|e| e.value.as_str()).collect::<Vec<_>>().join("/"),
+            None => hier
+                .iter()
+                .map(|e| e.value.as_str())
+                .collect::<Vec<_>>()
+                .join("/"),
         };
         let instance = non_empty_str(obj.get("instance"))
             .unwrap_or(Self::DEFAULT_INSTANCE)
             .to_string();
-        Some(MessageIdentity { hier, path, component: component.to_string(), instance })
+        Some(MessageIdentity {
+            hier,
+            path,
+            component: component.to_string(),
+            instance,
+        })
     }
 }
 
@@ -393,6 +522,22 @@ impl Message {
         self.raw.as_ref()
     }
 
+    /// Whether the payload is a first-class binary body marker.
+    pub fn is_binary_body(&self) -> bool {
+        has_binary_marker(&self.body)
+    }
+
+    /// Decode the first-class binary message body.
+    ///
+    /// Returns `Ok(None)` when the body is not binary. Returns an error when the
+    /// inbound binary marker is malformed or exceeds [`MAX_BINARY_BODY_BYTES`].
+    pub fn binary_body(&self) -> Result<Option<Vec<u8>>> {
+        let Some(descriptor) = binary_descriptor(&self.body)? else {
+            return Ok(None);
+        };
+        decode_binary_descriptor(descriptor).map(Some)
+    }
+
     /// Classify a parsed JSON value into an envelope or a raw message.
     ///
     /// An object carrying any of `header`/`identity`/`tags`/`body` is treated as an
@@ -417,7 +562,13 @@ impl Message {
                     None => None,
                 };
                 let body = map.get("body").cloned().unwrap_or(Value::Null);
-                return Ok(Message { header, identity, tags, body, raw: None });
+                return Ok(Message {
+                    header,
+                    identity,
+                    tags,
+                    body,
+                    raw: None,
+                });
             }
         }
         // Non-envelope (or non-object): deliver as raw, matching Java/Python.
@@ -513,6 +664,16 @@ impl MessageBuilder {
         self
     }
 
+    /// Set the message body from bytes using the first-class bounded binary marker.
+    ///
+    /// # Errors
+    /// [`EdgeCommonsError::Messaging`] when the decoded body exceeds
+    /// [`MAX_BINARY_BODY_BYTES`].
+    pub fn binary_payload(mut self, bytes: impl AsRef<[u8]>) -> Result<Self> {
+        self.body = binary_body_value(bytes.as_ref())?;
+        Ok(self)
+    }
+
     /// Override the correlation id (e.g. to correlate a reply with its request).
     pub fn correlation_id(mut self, id: impl Into<String>) -> Self {
         self.header.correlation_id = id.into();
@@ -543,7 +704,9 @@ impl MessageBuilder {
 
     /// Add a single tag (creates the envelope `tags` member if absent).
     pub fn tag(mut self, key: impl Into<String>, value: Value) -> Self {
-        self.tags.get_or_insert_with(BTreeMap::new).insert(key.into(), value);
+        self.tags
+            .get_or_insert_with(BTreeMap::new)
+            .insert(key.into(), value);
         self
     }
 
@@ -588,7 +751,9 @@ impl MessageBuilder {
         } else {
             self.config_identity.map(|component_identity| {
                 component_identity.with_instance_or_default(
-                    self.instance.as_deref().unwrap_or(MessageIdentity::DEFAULT_INSTANCE),
+                    self.instance
+                        .as_deref()
+                        .unwrap_or(MessageIdentity::DEFAULT_INSTANCE),
                 )
             })
         };
@@ -622,8 +787,14 @@ mod tests {
     fn test_identity() -> MessageIdentity {
         MessageIdentity::new(
             vec![
-                HierEntry { level: "site".into(), value: "dallas".into() },
-                HierEntry { level: "device".into(), value: "gw-01".into() },
+                HierEntry {
+                    level: "site".into(),
+                    value: "dallas".into(),
+                },
+                HierEntry {
+                    level: "device".into(),
+                    value: "gw-01".into(),
+                },
             ],
             "opcua-adapter",
             None,
@@ -638,7 +809,10 @@ mod tests {
         assert!(!m.header.correlation_id.is_empty());
         assert!(m.header.timestamp.contains('T'));
         assert!(m.header.reply_to.is_none());
-        assert!(m.identity.is_none(), "no config, no override => no identity");
+        assert!(
+            m.identity.is_none(),
+            "no config, no override => no identity"
+        );
         assert!(m.tags.is_none(), "no config, no tags => no tags member");
     }
 
@@ -651,7 +825,10 @@ mod tests {
             .build();
         assert_eq!(m.header.uuid, "00000000-0000-4000-8000-000000000001");
         assert_eq!(m.header.timestamp, "2026-07-01T12:00:00Z");
-        assert_eq!(m.header.correlation_id, "00000000-0000-4000-8000-000000000002");
+        assert_eq!(
+            m.header.correlation_id,
+            "00000000-0000-4000-8000-000000000002"
+        );
     }
 
     #[test]
@@ -670,11 +847,59 @@ mod tests {
         assert_eq!(value["header"]["correlation_id"], "corr-123");
         assert_eq!(value["header"]["reply_to"], "reply/here");
         assert_eq!(value["tags"]["site"], "factory-1");
-        assert!(value.get("identity").is_none(), "identity omitted when absent");
+        assert!(
+            value.get("identity").is_none(),
+            "identity omitted when absent"
+        );
         assert_eq!(value["body"]["v"], 42);
 
         let back = Message::from_slice(&bytes).unwrap();
         assert_eq!(back, m);
+    }
+
+    #[test]
+    fn binary_payload_serializes_as_marker_and_decodes() {
+        let bytes = [0, 1, 2, 254, 255];
+        let m = MessageBuilder::new("Bin", "1.0")
+            .binary_payload(bytes)
+            .unwrap()
+            .build();
+
+        let value: Value = serde_json::from_slice(&m.to_vec().unwrap()).unwrap();
+
+        assert_eq!(value["body"]["_edgecommonsBinary"]["encoding"], "base64");
+        assert_eq!(value["body"]["_edgecommonsBinary"]["length"], 5);
+        assert_eq!(value["body"]["_edgecommonsBinary"]["data"], "AAEC/v8=");
+        assert!(m.is_binary_body());
+        assert_eq!(m.binary_body().unwrap().unwrap(), bytes);
+
+        let back = Message::from_slice(&m.to_vec().unwrap()).unwrap();
+        assert!(back.is_binary_body());
+        assert_eq!(back.binary_body().unwrap().unwrap(), bytes);
+    }
+
+    #[test]
+    fn binary_marker_validates_length_and_size() {
+        let bytes = serde_json::to_vec(&json!({
+            "body": {
+                "_edgecommonsBinary": {
+                    "encoding": "base64",
+                    "length": 4,
+                    "data": "AAEC/v8="
+                }
+            }
+        }))
+        .unwrap();
+        let m = Message::from_slice(&bytes).unwrap();
+        assert!(m.is_binary_body());
+        assert!(m.binary_body().is_err());
+
+        let oversized = vec![0_u8; MAX_BINARY_BODY_BYTES + 1];
+        assert!(
+            MessageBuilder::new("Bin", "1.0")
+                .binary_payload(&oversized)
+                .is_err()
+        );
     }
 
     #[test]
@@ -716,10 +941,16 @@ mod tests {
 
     #[test]
     fn identity_constructor_validates() {
-        assert!(MessageIdentity::new(vec![], "c", None).is_err(), "empty hier");
+        assert!(
+            MessageIdentity::new(vec![], "c", None).is_err(),
+            "empty hier"
+        );
         assert!(
             MessageIdentity::new(
-                vec![HierEntry { level: "".into(), value: "v".into() }],
+                vec![HierEntry {
+                    level: "".into(),
+                    value: "v".into()
+                }],
                 "c",
                 None
             )
@@ -728,7 +959,10 @@ mod tests {
         );
         assert!(
             MessageIdentity::new(
-                vec![HierEntry { level: "device".into(), value: "".into() }],
+                vec![HierEntry {
+                    level: "device".into(),
+                    value: "".into()
+                }],
                 "c",
                 None
             )
@@ -737,7 +971,10 @@ mod tests {
         );
         assert!(
             MessageIdentity::new(
-                vec![HierEntry { level: "device".into(), value: "d".into() }],
+                vec![HierEntry {
+                    level: "device".into(),
+                    value: "d".into()
+                }],
                 "",
                 None
             )
@@ -770,7 +1007,9 @@ mod tests {
         assert!(MessageIdentity::from_wire(&json!("not an object")).is_none());
         assert!(MessageIdentity::from_wire(&json!({ "component": "c" })).is_none());
         assert!(MessageIdentity::from_wire(&json!({ "hier": [], "component": "c" })).is_none());
-        assert!(MessageIdentity::from_wire(&json!({ "hier": ["bad"], "component": "c" })).is_none());
+        assert!(
+            MessageIdentity::from_wire(&json!({ "hier": ["bad"], "component": "c" })).is_none()
+        );
         assert!(
             MessageIdentity::from_wire(&json!({
                 "hier": [ { "level": "device" } ], "component": "c"
@@ -811,7 +1050,10 @@ mod tests {
         }))
         .unwrap();
         let m = Message::from_slice(&bytes).unwrap();
-        assert!(!m.is_raw(), "an object with an identity member is an envelope");
+        assert!(
+            !m.is_raw(),
+            "an object with an identity member is an envelope"
+        );
         assert_eq!(m.identity.unwrap().device(), "gw-01");
     }
 
@@ -888,13 +1130,19 @@ mod tests {
         assert_eq!(identity.instance(), "main");
         let tags = m.tags.expect("config-bound builder stamps tags");
         assert_eq!(tags.extra.get("site"), Some(&json!("f1")));
-        assert!(!tags.extra.contains_key("thing"), "no synthesized thing tag (hard cut)");
+        assert!(
+            !tags.extra.contains_key("thing"),
+            "no synthesized thing tag (hard cut)"
+        );
     }
 
     #[test]
     fn instance_token_applies_to_config_identity_only() {
         let cfg = Config::from_value("c", "thing-9", json!({})).unwrap();
-        let m = MessageBuilder::new("N", "1.0").from_config(&cfg).instance("kep1").build();
+        let m = MessageBuilder::new("N", "1.0")
+            .from_config(&cfg)
+            .instance("kep1")
+            .build();
         assert_eq!(m.identity.unwrap().instance(), "kep1");
 
         // An explicit override is stamped verbatim; the instance token is ignored.
@@ -906,7 +1154,10 @@ mod tests {
         assert_eq!(m.identity.unwrap().instance(), "main");
 
         // An empty instance token falls back to the default.
-        let m = MessageBuilder::new("N", "1.0").from_config(&cfg).instance("").build();
+        let m = MessageBuilder::new("N", "1.0")
+            .from_config(&cfg)
+            .instance("")
+            .build();
         assert_eq!(m.identity.unwrap().instance(), "main");
     }
 

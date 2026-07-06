@@ -84,11 +84,7 @@ pub fn new_reply_topic() -> String {
 /// assert!(!try_deliver_reply(&tx, "edgecommons/reply-1".into(), b"dup".to_vec()));
 /// assert_eq!(rx.try_recv().unwrap().1, b"ok");
 /// ```
-pub fn try_deliver_reply(
-    out: &Sender<(String, Vec<u8>)>,
-    topic: String,
-    payload: Vec<u8>,
-) -> bool {
+pub fn try_deliver_reply(out: &Sender<(String, Vec<u8>)>, topic: String, payload: Vec<u8>) -> bool {
     match out.try_send((topic.clone(), payload)) {
         Ok(()) => true,
         Err(TrySendError::Full(_)) => {
@@ -160,7 +156,11 @@ mod tests {
         // has no sender. The closest observable case is a closed channel — exercised
         // above. Here we assert the helper is total over arbitrary topic strings.
         let (tx, mut rx) = tokio::sync::mpsc::channel::<(String, Vec<u8>)>(1);
-        assert!(try_deliver_reply(&tx, "edgecommons/reply-unknown-id".into(), vec![]));
+        assert!(try_deliver_reply(
+            &tx,
+            "edgecommons/reply-unknown-id".into(),
+            vec![]
+        ));
         assert!(rx.try_recv().is_ok());
     }
 }

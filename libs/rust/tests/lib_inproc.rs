@@ -110,7 +110,7 @@ async fn handle_conn(mut sock: TcpStream) {
                 }
             }
             14 => return, // DISCONNECT
-            _ => {}        // PUBLISH (QoS0) and others: nothing to ack.
+            _ => {}       // PUBLISH (QoS0) and others: nothing to ack.
         }
     }
 }
@@ -189,7 +189,10 @@ async fn builds_full_runtime_against_inprocess_broker() {
 
     // Messaging is wired and the CONNACK from the fake broker has been observed.
     let messaging = gg.messaging().expect("messaging available in STANDALONE");
-    assert!(messaging.connected(), "the fake broker's CONNACK should mark the link live");
+    assert!(
+        messaging.connected(),
+        "the fake broker's CONNACK should mark the link live"
+    );
     let _metrics = gg.metrics();
 
     // A real publish flows through the wired provider to the in-process broker (QoS0, no ack).
@@ -197,29 +200,50 @@ async fn builds_full_runtime_against_inprocess_broker() {
         .from_config(&cfg)
         .payload(serde_json::json!({ "ok": true }))
         .build();
-    messaging.publish("inproc/ping", &msg).await.expect("publish");
+    messaging
+        .publish("inproc/ping", &msg)
+        .await
+        .expect("publish");
 
     // Streaming wired from config with the {ThingName} buffer-path template resolved.
     let streams = gg.streams();
     assert_eq!(streams.stream_names(), vec!["telemetry"]);
     let h = streams.stream("telemetry").expect("configured stream");
     for i in 0..3u64 {
-        h.append(edgecommons::streaming::StreamRecord::new("k", 1000 + i, b"v")).unwrap();
+        h.append(edgecommons::streaming::StreamRecord::new(
+            "k",
+            1000 + i,
+            b"v",
+        ))
+        .unwrap();
     }
     h.flush().unwrap();
     assert_eq!(streams.stats("telemetry").expect("stats").appended_total, 3);
-    assert!(dir.join("stream-inproc-thing").is_dir(), "buffer path template resolved");
+    assert!(
+        dir.join("stream-inproc-thing").is_dir(),
+        "buffer path template resolved"
+    );
 
     // Credentials wired from config with the {ThingName} vault-path template resolved.
     let creds = gg.credentials().expect("credentials configured");
     creds
-        .put("db/password", b"s3cr3t", edgecommons::credentials::PutOptions::default())
+        .put(
+            "db/password",
+            b"s3cr3t",
+            edgecommons::credentials::PutOptions::default(),
+        )
         .unwrap();
     assert_eq!(creds.get_string("db/password").unwrap().unwrap(), "s3cr3t");
-    assert!(dir.join("vault-inproc-thing").exists(), "vault path template resolved");
+    assert!(
+        dir.join("vault-inproc-thing").exists(),
+        "vault path template resolved"
+    );
 
     // Parameters wired from config (env source); the service is present.
-    assert!(gg.parameters().is_some(), "parameters service should be wired from the config section");
+    assert!(
+        gg.parameters().is_some(),
+        "parameters service should be wired from the config section"
+    );
 
     // Readiness + shutdown flags.
     gg.set_ready(false);

@@ -37,6 +37,30 @@ envelope. **Java is the canonical reference.**
 behavior in one, check whether the others need the matching change. See `.validation/` for the
 parity register when present.
 
+**On-the-wire changes require full transport interop before completion.** Any core change or
+enhancement that alters wire behavior or structure — message envelope keys, body encoding, binary
+message bodies/markers, header/request-reply semantics, UNS topic/class behavior, reserved-topic
+handling, raw publish conventions, or config that changes emitted/accepted wire data — must extend
+the interop skeletons/tests and run Java/Python/Rust/TypeScript interop with every language acting as
+producer and consumer. The mandatory floor is the `test-infra/interop/` matrix over a real MQTT
+broker. When the same behavior is reachable through Greengrass IPC, completion also requires a
+deployed Greengrass IPC interop run on `lab-5950x` with all four language skeleton/components. Binary
+message work is explicitly in this category: prove the exact byte payload survives cross-language
+publish/subscribe, and request/reply if affected, over both local MQTT and Greengrass IPC. Per-language
+serialization/unit tests, mocked IPC tests, one-language checks, and "component is RUNNING" smoke
+tests are necessary but not sufficient. If either matrix cannot be run in the environment, call that
+out as a blocking validation gap and do not claim the change is done.
+
+**New capabilities require deployed Greengrass regression.** Any new core feature/capability, or
+behavioral change reachable by a Greengrass component, must be deployed and exercised on the
+`lab-5950x` Greengrass device (`ssh marc@192.168.1.229`, thing `lab-5950x`, us-east-1) before the
+work is complete. Build the component artifact locally when needed, copy it to the lab box, deploy
+with `greengrass-cli deployment create`, and verify the feature through the running component/logs or
+broker/cloud observation. For messaging/wire changes, this must be a cross-language IPC exercise of
+the new behavior, not just a baseline component smoke. If the feature is not Greengrass-applicable,
+say so explicitly and still run a baseline Greengrass component regression to prove the runtime path
+did not break.
+
 ## Core concepts (shared across all four languages)
 
 Every component runs on a **platform** with a messaging **transport**, selected at startup via
@@ -75,7 +99,7 @@ exists to abstract these differences away so the same business logic runs everyw
 - **messaging** — one interface over two transports (Greengrass IPC vs dual-MQTT);
   connections/subscriptions block until confirmed; request/reply with correlation **and a
   framework-owned deadline** (`messaging.requestTimeoutSeconds`, default 30 s); per-subscription
-  concurrency cap; optional MQTT LWT (`messaging.lwt`, local connection, never retained; IPC no-ops).
+  concurrency cap.
   The message envelope — `{header, identity, tags, body}` — is identical across languages: every
   config-built message is stamped with the top-level **`identity`** element
   (`{hier, path, component, instance}`, from the top-level `hierarchy`/`identity` config; the old
@@ -209,9 +233,11 @@ All of these run from the dev machine — none is "manual / can't automate":
 | Path | Where | Infra |
 |------|-------|-------|
 | Per-language unit/integration suites | this machine | Java (`mvn verify`, JaCoCo 90%), Python (`pytest`), Rust (`cargo test`, standalone — **no `greengrass` feature on Windows**), TS (`vitest` + coverage). Java toolchain is at `C:\Users\breis\tools\{jdk,maven}` (not on PATH). |
+| **Cross-language wire interop: local MQTT** | this machine | Mandatory for any core wire-contract change. Use EMQX on `localhost:1883` and `python -m pytest test-infra/interop/test_interop.py -v` after extending `test-infra/interop/{python_node.py,java_node,rust_node,ts_node}` for the new wire behavior. The matrix must make every affected language produce and consume the new wire shape; for binary bodies, assert exact byte equality. A green per-language suite does **not** satisfy this gate. |
 | **`--platform HOST`** (dual-MQTT) end-to-end | this machine | EMQX `localhost:1883` (plaintext) / `8883` (mTLS) + floci `localhost:4566`, both in Docker (`edgecommons-emqx`, `edgestreamlog-floci`). Restart them before a HOST smoke — they crash under heavy parallel-build load. |
 | Rust **`greengrass` feature** build/tests (Linux-only) | **WSL** (Ubuntu, `cargo`+`cmake`+`cc`) | `wsl.exe bash -lc`, `CARGO_TARGET_DIR=/tmp`; the native GG SDK can't compile on Windows. |
-| **`--platform GREENGRASS`** (IPC) on-device | **lab-5950x** (`ssh marc@192.168.1.229`, passwordless sudo; thing `lab-5950x`, us-east-1) | real Greengrass nucleus + `greengrass-cli` 2.17.0, Java 25. `gdk` is **not** installed → build the jar here, copy over, deploy with `greengrass-cli deployment create --recipeDir … --artifactDir … --merge "<Comp>=<ver>"` (`--remove` to tear down). Cloud deployments via `aws greengrassv2` (account 162499689067). |
+| **Cross-language wire interop: Greengrass IPC** | **lab-5950x** (`ssh marc@192.168.1.229`, passwordless sudo; thing `lab-5950x`, us-east-1) | Mandatory for any Greengrass-reachable wire-contract change. Stand up/deploy the Java, Python, Rust, and TypeScript skeleton/components and verify the same new wire behavior through real Greengrass IPC, not mocks. For binary messages, each language must publish and consume the canonical bytes through IPC. |
+| **`--platform GREENGRASS`** (IPC) on-device | **lab-5950x** (`ssh marc@192.168.1.229`, passwordless sudo; thing `lab-5950x`, us-east-1) | real Greengrass nucleus + `greengrass-cli` 2.17.0, Java 25. Mandatory deployed-component regression for new capabilities and Greengrass-reachable behavior changes. For messaging/wire changes, the deployed regression must exercise the new behavior cross-language over IPC; a RUNNING component or baseline smoke alone is insufficient. `gdk` is **not** installed → build artifacts here, copy over, deploy with `greengrass-cli deployment create --recipeDir … --artifactDir … --merge "<Comp>=<ver>"` (`--remove` to tear down). Cloud deployments via `aws greengrassv2` (account 162499689067). |
 
 Always unsubscribe + handle SIGTERM before exit, or a run leaks subscriptions/threads and trips the shared-connection quota.
 
@@ -220,6 +246,19 @@ Always unsubscribe + handle SIGTERM before exit, or a run leaks subscriptions/th
 - **Maintain four-way parity.** The same config schema, CLI flags, subsystem boundaries, and message
   wire format apply to all four libraries. Java is canonical. Don't diverge an API in one language
   without the matching change (or an explicit decision) in the others.
+- **Mandatory wire interop.** When the core wire contract changes or is enhanced, update the
+  cross-language interop nodes/tests in the same change and run the full matrix. This applies to
+  envelope/body shape, binary encodings, headers, request/reply, UNS topics/classes, raw-message
+  conventions, and any config knob that affects what is emitted or accepted on the wire. "Full
+  matrix" means every affected language acts as producer and consumer; if the behavior is reachable
+  through Greengrass IPC, run the four-language deployed IPC matrix on `lab-5950x` as well as local
+  MQTT. Binary messages require exact-byte assertions over both transports.
+- **Mandatory Greengrass deployment regression.** When adding a feature/capability or changing
+  Greengrass-reachable behavior, deploy and exercise an actual component on `lab-5950x` as part of
+  completion. For messaging/wire changes, deploy the relevant four-language interop components and
+  verify the new behavior through real IPC. Do not treat local HOST, unit, mocked IPC, or component
+  RUNNING checks as enough. If a feature does not apply to Greengrass, document the reason and run a
+  baseline deployed-component smoke anyway.
 - **Construct via builders**, not raw constructors (`EdgeCommonsBuilder` / `EdgeCommonsBuilder`,
   `MessageBuilder`, `MetricBuilder`, …). `MetricBuilder` replaces the deprecated direct `Metric` constructor.
 - **Backward compatibility.** Builders are the construction path in all four libs. Legacy direct
@@ -286,13 +325,28 @@ Follow this for **every** code change, in the language(s) you touched:
      (needs `cargo-llvm-cov` + `llvm-tools`; excludes test-support + the AWS/HSM-gated infra not built here).
    Don't lower a gate or `pragma`/exclude genuinely-testable code to pass — add tests.
 4. **Parity check.** If the change alters public behavior, the config schema, the CLI contract, or
-   the message envelope, note whether the other three languages need the matching change.
+   the message envelope, note whether the other three languages need the matching change. If it
+   changes or enhances core on-the-wire behavior/structure, also update and run the full
+   cross-language interop matrix (`test-infra/interop/`) before calling the work complete. For
+   Greengrass-reachable wire behavior, also run the deployed four-language IPC matrix on `lab-5950x`.
+   Binary message changes require exact-byte interop assertions over both local MQTT and Greengrass IPC.
+5. **Greengrass deployment check.** If the change adds a capability or touches behavior reachable by a
+   Greengrass component, deploy an exercising component to `lab-5950x` and verify it in the real
+   nucleus runtime. For messaging/wire changes, this must exercise the new behavior over real IPC,
+   preferably with all four language skeletons/components participating. If it is not applicable to
+   Greengrass, document why and run a baseline deployed component regression before calling the work
+   complete.
 
 ## Documentation standards
 
 Keep docs accurate and up to date with every change; document structs/classes/traits/enums, public
 functions, and important constants. Update the relevant `doc/`/`docs/` page when changing a
 subsystem's public behavior, and re-run `schema/sync-schema.sh` after any schema edit.
+
+Reference documentation describes the current public contract only. Do not narrate removals,
+abandoned designs, migration history, or internal rationale in reference pages unless the page is
+explicitly a migration guide, changelog, or decision record. Tables with a `Meaning` column must
+explain the allowed values and their behavior, not merely restate the field name.
 
 **Rust** additionally follows rustdoc conventions: `//!` module-level docs and `///` item docs on
 every public module/function/type, covering purpose, parameters/return, pre/post-conditions, errors,

@@ -120,7 +120,7 @@ describe("EventsFacade", () => {
 
     it("a northbound transport failure is swallowed (readiness stays local)", async () => {
       const { facade, messaging } = makeFacade();
-      messaging.publishToIoTCore = async () => {
+      messaging.publishNorthbound = async () => {
         throw new Error("iot core down");
       };
       await expect(facade.via(Channel.NORTHBOUND).emit(Severity.Critical, "overtemp")).resolves.toBeUndefined();

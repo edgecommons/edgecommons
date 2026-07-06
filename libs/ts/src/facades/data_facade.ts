@@ -252,7 +252,7 @@ export class DataFacade {
         break;
       case "northbound":
         try {
-          await this.messaging.publishToIoTCore(topic, msg, Qos.AtLeastOnce);
+          await this.messaging.publishNorthbound(topic, msg, Qos.AtLeastOnce);
         } catch (e) {
           logger.warn(`Northbound data publish on '${topic}' failed (local readiness unaffected): ${errMsg(e)}`);
         }

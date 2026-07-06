@@ -35,13 +35,13 @@
 | Reserved-class guard | `check_reserved` on every `publish*`/`request*`/`reply*` (`service.rs:341–353`, predicate `uns::reserved_class_of`, `uns.rs:585`) | The bridge relays at the **raw `MessagingProvider` level** (§1.3), so the guard is **not in the relay path** — no per-connection opt-out is needed. |
 | Request deadline | `set_default_request_timeout` (`service.rs:314`), late-bound from `messaging.requestTimeoutSeconds` (`lib.rs:386–389`, `config/model.rs:497`) | Also per-instance — named connections get the same deadline default bound at build. |
 | Guard root binding | `set_guard_include_root` bound to `Config::effective_include_root()` (`service.rs:333`, `model.rs:489`) | Same late-bind applies to each named connection. |
-| MQTT provider | `MqttProvider::connect(&MessagingConfig)` — dual-broker, blocks ≤ 10 s for the local CONNACK (`provider/mqtt.rs:153`, `CONNECT_TIMEOUT` `mqtt.rs:64`); re-subscribes every filter on each CONNACK (`mqtt.rs:318–329`) | The bridge **reuses this provider verbatim** for its site connection (§1.1); the CONNACK re-subscribe machinery makes the bridge's own reconnect loop transparent (§1.4). |
-| LWT | `messaging.lwt` (`messaging/config.rs:52–82`), applied to the provider's **local** connection at CONNECT, retain hard-wired `false`, re-registered on reconnect (`mqtt.rs:156–161`, `build_last_will` `mqtt.rs:398–419`); never routed through `publish()` | The bridge sets `lwt` on **its site connection** (`MessagingConfig.lwt`, reused verbatim), landing on the site broker — exactly the load-bearing D9/§9.3 use. |
+| MQTT provider | `MqttProvider::connect(&MessagingConfig)` for normal component MQTT and `MqttProvider::connect_with_last_will(..., Option<&MqttLastWill>)` for the bridge site uplink; dual-broker, blocks <= 10 s for the local CONNACK (`provider/mqtt.rs`, `CONNECT_TIMEOUT`); re-subscribes every filter on each CONNACK | The bridge reuses the core broker/provider machinery for its site connection, but passes a private Last-Will derived from the bridge's resolved state topic (§1.1). |
+| LWT | There is no generic `messaging.lwt`, and no configurable `component.instances[site].lwt`. The first-party LWT is derived internally by `uns-bridge` as `MqttLastWill`; retain is hard-wired `false` and the will is never routed through `publish()` | The bridge registers the derived will only on **its site connection**, landing on the site broker - exactly the load-bearing D9/§9.3 use. |
 | Reply topics | `edgecommons/reply-<uuid>` (`request_reply.rs:44`), non-`ecv1` ⇒ structurally guard-exempt (D‑U6) | The bridge mints device-side reply topics with the same prefix (§3.5). |
 | Envelope tags | `MessageTags { extra: BTreeMap<String, serde_json::Value> }` (`message.rs:302–306`) — arbitrary JSON values | The hop tag `tags._relay` can be a JSON array (§3.4). |
 | Filters | `Uns::filter(cls, &UnsScope)` appends `/#` for channeled classes (`uns.rs:392–404`); `UnsScope::all()/device()` (`uns.rs:214–222`) | The bridge builds its six uplink filters and its pinned downlink filter through the library, never by hand. |
 | Library publishers | heartbeat/state via the crate-private `ReservedMessaging` seam (`heartbeat.rs:180–207`; seam `service.rs:166`) | The bridge's **own** state/metric/cfg appear on the device bus like any component's — and the bridge relays itself (§3.9). |
-| Schema | `messaging` section is strict (`additionalProperties:false`) with `local`/`iotCore`/`requestTimeoutSeconds`/`lwt` (`schema/edgecommons-config-schema.json:304–346`) | The new `connections` key must be added to the **canonical** schema (one file, synced 4-ways) — there is no Rust-only schema. |
+| Schema | `messaging` section is strict (`additionalProperties:false`) with `local`/`northbound`/`requestTimeoutSeconds`; broker QoS lives inside `local.qos` / `northbound.qos` (`schema/edgecommons-config-schema.json`), and `lwt` is rejected | The site Last-Will is a bridge-private derived value; no canonical `messaging` schema change or bridge instance `lwt` property is used for it. |
 | Runtime wiring site | messaging built **before** config; UNS knobs late-bound **after** `Config::from_value` (`lib.rs:358–389`) | Named connections are config-declared, so they are built at exactly that post-config point (§2.3). |
 
 ---
@@ -56,7 +56,7 @@
 > opcua-adapter's), configured in the bridge's OWN component config and built by **reusing the core's
 > already-public MQTT objects** — a Rust-component concern, not a library API.
 
-### 1.1 The core already exposes everything the bridge needs (zero contract change)
+### 1.1 The core exposes the broker/provider pieces the bridge needs
 
 The Rust lib builds its *primary* connection from two already-`pub` calls (`lib.rs:756–768`):
 
@@ -66,21 +66,20 @@ let service  = DefaultMessagingService::new(provider);        // service.rs:280 
 ```
 
 The `uns-bridge`, a Rust component depending on the `edgecommons` crate, constructs its **site connection
-the same way**, from its own config — no new library API, no schema section, no cross-language change.
-The only thing possibly owed is a **one-line Rust-only `pub use`** re-export so the paths
-(`edgecommons::messaging::provider::mqtt::MqttProvider`, `…::service::DefaultMessagingService`) are
-reachable from an external crate (verify the module-path visibility during P3‑1; add the re-export only
-if the modules aren't `pub` all the way down). That is a Rust ergonomics tweak, **not** a contract
-change, and touches no other language. **No `messaging.connections`. No `gg.messaging_named()`. No
-canonical-schema delta. No Java/Python/TS change.**
+from its own config** by reusing the core broker shape and MQTT provider. The site Last-Will is not part
+of `MessagingConfig`; the bridge derives `MqttLastWill` from its own resolved state topic and calls
+`MqttProvider::connect_with_last_will`. This is a Rust provider hook for the bridge site uplink, not a
+cross-language component messaging contract. **No `messaging.connections`. No `gg.messaging_named()`. No
+canonical-schema delta. No Java/Python/TS LWT config.**
 
 ### 1.2 Config — the site broker lives in the bridge's own `component.instances[]`
 
 The bridge declares its site broker as an entry in its **own `component.instances[]`** — the existing
 per-instance config surface every component already has, exactly how the opcua-adapter configures its
-OPC UA endpoints — reusing the existing `MessagingConfig`/`mqttBroker` shape (`messaging/config.rs`),
-which already carries `lwt` (Phase 1). **No canonical-schema change** (`component.instances[]` exists
-and its per-instance body is permissive). Sketch (finalized in §2.7):
+OPC UA endpoints. The `siteBroker` object reuses the core `mqttBroker`/`BrokerConfig` shape. The site LWT
+is not configurable; it is derived internally so the console reachability contract cannot be broken by a
+topic typo. **No canonical-schema change**
+(`component.instances[]` exists and its per-instance body is permissive). Sketch (finalized in §2.7):
 
 ```jsonc
 "component": {
@@ -92,15 +91,13 @@ and its per-instance body is permissive). Sketch (finalized in §2.7):
     { "id": "site",
       "siteBroker": { "host": "site-broker.dallas.example", "port": 8883,
                       "credentials": { "certPath": "…", "keyPath": "…", "caPath": "…" } },
-      "lwt": { "topic": "ecv1/{ThingName}/uns-bridge/main/state",
-               "payload": { "status": "UNREACHABLE" }, "qos": 1 },
       "uplink": { "classes": ["state","cfg","evt","metric","data","log"], "rateCaps": { } } }
   ]
 }
 ```
 
-Template substitution (`{ThingName}` → the sanitized device token) applies as usual, so the LWT topic
-matches the bridge's real state topic.
+The bridge derives the LWT topic from the sanitized device token and its canonical UNS state topic, so no
+template substitution is exposed for the will.
 
 ### 1.3 The reserved-class guard is simply not in the path (raw-provider relay)
 
@@ -175,8 +172,8 @@ ACL scope (§5.4).
 - Subscriptions use `max_concurrency = 1` (serial, ordered per class — `service.rs:204–210`) and a
   bounded `max_messages` queue per class (defaults: `data` 512, others 64); overflow drops at the
   provider with a warning (`mqtt.rs:345–351`) and is surfaced by the drop counters (§3.6). QoS:
-  the service's local publish path is fixed at QoS 1 (`LOCAL_QOS`, `service.rs:66`); a per-class
-  QoS-0 option for `data` is a deferred knob.
+  the service's local publish/subscribe defaults are config-backed via `messaging.local.qos`; a
+  per-class QoS override for `data` is a deferred knob.
 
 ### 2.3 (§3.4) Hop-tag loop protection — `tags._relay`
 
@@ -315,9 +312,9 @@ Normative points:
 
 ### 2.6 (§3.7) LWT reachability — whole-device UNREACHABLE
 
-The load-bearing D9/§9.3 LWT use, now concrete. Declared entirely in config on the **site**
-connection (§1.1 example) — the committed `messaging.lwt` shape and provider wiring are reused
-verbatim (`config.rs:64–82`, `mqtt.rs:279–297,398–419`):
+The load-bearing D9/§9.3 LWT use, now concrete. The bridge derives it internally for the **site**
+connection (§1.1 example); neither generic `messaging.lwt` nor `component.instances[site].lwt` is user
+configuration:
 
 - **Topic**: `ecv1/{device}/uns-bridge/main/state` — the bridge's **own UNS state topic** (the
   exact string the committed tests already pin, `config.rs:293–299`, `mqtt.rs:590–601`). There is
@@ -338,10 +335,10 @@ verbatim (`config.rs:64–82`, `mqtt.rs:279–297,398–419`):
   sequence on graceful stop is: (possibly) relayed component `STOPPED` states → bridge's own
   best-effort `STOPPED` → broker-published `UNREACHABLE` — final state UNREACHABLE, which is the
   truth. Documented as intended (no DISCONNECT-suppression work).
-- **Startup cross-check** (cheap, catches the classic misconfig): the bridge compares the
-  template-resolved `connections.site.lwt.topic` against its own `gg.uns().topic(UnsClass::State)`
-  and logs **WARN on mismatch** (e.g. an unsanitized literal device token). Config remains
-  authoritative — the check is advisory.
+- **No startup cross-check is needed**: the bridge derives the will topic from
+  `gg.uns().topic(UnsClass::State)`, the same topic its heartbeat uses. A configured
+  `component.instances[site].lwt` is rejected because a typo here would silently break console
+  reachability.
 - Latency: broker-detected TCP close → immediate will publish; a half-open link resolves at the
   broker's keepalive expiry (provider keepalive 30 s, `mqtt.rs:286` → worst case ~45 s at EMQX's
   1.5× rule). Both far faster and cheaper than consumer-side keepalive-miss inference across every
@@ -356,8 +353,8 @@ verbatim (`config.rs:64–82`, `mqtt.rs:279–297,398–419`):
 
   "messaging": {
     // PRIMARY: HOST = the device-local broker (this section doubles as the
-    // --transport MQTT file shape); GREENGRASS = absent (IPC). No `connections` — the
-    // site broker is NOT a core messaging feature (§1).
+    // --transport MQTT file shape); GREENGRASS uses the same HOST/MQTT shape against
+    // a device-local broker. No `connections` — the site broker is NOT a core messaging feature (§1).
     "local": { "host": "localhost", "port": 1883, "clientId": "uns-bridge-{ThingName}" },
     "requestTimeoutSeconds": 30
   },
@@ -378,8 +375,6 @@ verbatim (`config.rs:64–82`, `mqtt.rs:279–297,398–419`):
         "siteBroker": { "host": "site-broker.dallas.example", "port": 8883,
                         "clientId": "uns-bridge-{ThingName}",
                         "credentials": { "certPath": "…", "keyPath": "…", "caPath": "…" } },
-        "lwt": { "topic": "ecv1/{ThingName}/uns-bridge/main/state",
-                 "payload": { "status": "UNREACHABLE" }, "qos": 1 },
         "uplink": { /* §3.6 policy block */ },
         "reply":  { "ttlSecs": 60, "maxPending": 1024 },   // §3.5
         "maxHops": 4,                                       // hop-tag cap (§3.4)
@@ -393,7 +388,7 @@ Device identity comes from the standard chain (`-t` ▸ platform env ▸ …, D�
 identity config of its own. The component's full name (e.g. `com.mbreissi.edgecommons.UnsBridge`) is supplied
 by the runtime builder — the GG recipe's `ComponentName`, or the HOST/KUBERNETES invocation — never
 by this config file (`component.name` is not a legal key, above). It is chosen so the sanitized
-short name (the UNS token, D‑U18) is exactly **`uns-bridge`** — the token the LWT topic, the
+short name (the UNS token, D‑U18) is exactly **`uns-bridge`** — the token the derived LWT topic, the
 console, and this document all assume.
 
 ### 2.8 (§3.9) The bridge's own observability + command inbox
@@ -402,7 +397,7 @@ Nothing bespoke: heartbeat publishes the bridge's `state` keepalive on the **dev
 library seam (`heartbeat.rs:180–207`); the metric subsystem emits the §3.6 counters; the `cfg`
 publisher announces its (redacted) effective config. All of it matches the uplink filters and is
 **relayed by the bridge itself** (own-message delivery is inherent to MQTT subscriptions), so the
-site broker sees the bridge exactly as it sees any component — plus the LWT that only it sets. The
+site broker sees the bridge exactly as it sees any component — plus the private derived LWT that only it sets. The
 bridge also subscribes its own command inbox `ecv1/{device}/uns-bridge/+/cmd/#` on the device bus
 (the standard Flow-B pattern), so a console `ping`/`describe`/policy verb round-trips through the
 same downlink + reply-rewrite path as commands to any other component — the relay needs no
@@ -579,7 +574,7 @@ broker *and* a site broker:
 
 | ID | Decision | Resolution (recommended) | Conf. | Reversible? | Needs user? |
 |---|---|---|---|---|---|
-| D‑B1 | Where the site-broker connection is configured | ✅ **REVISED 2026-07-03 (user): the bridge's OWN `component.instances[]`** — the site broker is the bridge's external system (like the opcua-adapter's OPC UA endpoints), reusing the existing `MessagingConfig`/`mqttBroker` shape (with `lwt`). **No shared-schema `messaging.connections`; no canonical-schema change.** §1.2 | High | Easy | resolved |
+| D‑B1 | Where the site-broker connection is configured | ✅ **REVISED 2026-07-03 (user), refined 2026-07-06: the bridge's OWN `component.instances[]`** — the site broker is the bridge's external system (like the opcua-adapter's OPC UA endpoints), reusing the existing `MessagingConfig`/`mqttBroker` shape for the endpoint only. The site LWT is private and derived, not configured. **No shared-schema `messaging.connections`; no canonical-schema change.** §1.2 | High | Easy | resolved |
 | D‑B2 | How the bridge obtains the 2nd connection | ✅ **REVISED: reuse the core's already-`pub` MQTT objects directly** — `MqttProvider::connect(&site_cfg)` (`mqtt.rs:153`) + raw `MessagingProvider` relay, inside the bridge. **No `gg.messaging_named()`/`gg.messaging("name")` core API in any language.** At most a one-line Rust-only `pub use` re-export for path ergonomics. §1.1 | High | Easy | resolved |
 | D‑B3 | Site-connection lifecycle | ✅ **REVISED: bridge-owned.** The bridge builds `MqttProvider::connect(&site_cfg)` and retries in its own loop (non-fatal uplink; CONNACK re-subscribe `mqtt.rs:318` makes reconnection transparent); shutdown = the bridge dropping its handle. **No library lifecycle change.** §1.4 | High | Easy | resolved |
 | D‑B4 | Guard vs relay | ✅ **REVISED: no guard flag needed** — the bridge relays at the raw `MessagingProvider` level (byte relay), which carries no reserved-class guard. **No `guardReservedClasses` config, no `ReservedMessaging` seam change.** Site-broker ACL = the durable boundary. §1.3 | High | Easy | resolved |
@@ -589,7 +584,7 @@ broker *and* a site broker:
 | D‑B8 | Loop protection | Reserved tag key `tags._relay` = JSON array of hop ids (`{device}/uns-bridge`), drop-if-self + `maxHops` (default 4); raw messages covered by uplink/downlink class disjointness; `_`-prefixed tag keys become library-reserved; same-tier broker-to-broker cycles unsupported (documented residual) | Med-High | Easy | no |
 | D‑B9 | Reply correlation map | Bridge-minted `edgecommons/reply-` device topics; TTL 60 s (2× the 30 s request default, paired knob), `maxPending` 1024 evict-oldest; expiry unsubscribes + counts; reply relays verbatim (correlation_id preserved) | High | Easy | no |
 | D‑B10 | Disconnect durability | Live path drops + counts by default (durability = streaming's job); **exception: bounded `evt` replay buffer (default on, 1000, drop-oldest)**; `state`/`cfg` rehydrate via `republish-*` `_bcast` on reconnect (the §9.3 late-join lever) | Med | Easy | **yes** — scope of the evt buffer (evt-only vs none vs all classes) |
-| D‑B11 | LWT | Topic = the bridge's own state topic `ecv1/{device}/uns-bridge/main/state`; payload = bare `{"status":"UNREACHABLE"}` (raw, event-time = delivery-time); QoS 1, no retain; fires on graceful stop too — **intended** (a stopped bridge = an unreachable device); advisory startup topic cross-check | High | Easy | no |
+| D‑B11 | LWT | Private bridge-console contract derived by the bridge. Topic = the bridge's own state topic `ecv1/{device}/uns-bridge/main/state`; payload = bare `{"status":"UNREACHABLE"}` (raw, event-time = delivery-time); QoS 1, no retain; fires on graceful stop too — **intended** (a stopped bridge = an unreachable device); no configurable LWT or advisory cross-check | High | Easy | no |
 | D‑B12 | Multi-site rooting across the bridge | Relay never rewrites topics; a rooted site broker means components set `topic.includeRoot` end-to-end (D2/D‑U11); bridge-side root injection deferred to an enterprise-tier phase | Med | Moderate | no |
 | D‑B13 | Recipe home | `uns-bridge/deploy/site-broker/` (broker+bridge deploy as a pair; docs-site syncs it); EMQX everywhere; ACL file = the durable enforcement | Med-High | Easy | no |
 | D‑B14 | Test infra | Dual-EMQX compose in the bridge repo (site broker on 1884/8884; device broker reuses/mirrors `edgecommons-emqx`); relay core is pure-logic over trait fakes for the 90 % gate; e2e list in §6 | High | Easy | no |
@@ -611,7 +606,7 @@ broker *and* a site broker:
 | **P3-1 site-connection reuse (minimal, Rust-only if anything)** | Verify `MqttProvider`/`DefaultMessagingService`/`MessagingProvider` module paths are reachable from an external crate; add a one-line `pub use` re-export ONLY if needed; smoke-test that a second `MqttProvider::connect` + raw relay works. **No schema, no core API, no other-language change.** Folds into P3-2 if nothing is owed | monorepo (if any) | done (folded into P3-2; nothing was owed) |
 | **P3-2 bridge core** | Repo scaffold (`edgecommons/uns-bridge`, rev-pinned, `.cargo` override); relay engine over two `MessagingService` handles: six uplink filters + pinned downlink filter, topic-verbatim republish, hop tag (`_relay`, maxHops); unit (fakes) + dual-EMQX relay/loop e2e | uns-bridge | **done** |
 | **P3-3 reply_to rewrite** | Correlation map + TTL sweep + maxPending eviction + reply back-haul; round-trip + expiry e2e | uns-bridge | **done** |
-| **P3-4 uplink policy + LWT** | Per-class enable/rate caps/evt buffer; drop-counter metrics; reconnect `republish-*` broadcast (+ the library's Phase-3 `_bcast` listener if not yet landed); `connections.site.lwt` config + startup cross-check; rate-cap/disconnect/LWT e2e | uns-bridge (+ small monorepo bit for the `_bcast` listener) | **done** (the `_bcast` listener also shipped, all four languages) |
+| **P3-4 uplink policy + LWT** | Per-class enable/rate caps/evt buffer; drop-counter metrics; reconnect `republish-*` broadcast (+ the library's Phase-3 `_bcast` listener if not yet landed); private derived site LWT; rate-cap/disconnect/LWT e2e | uns-bridge (+ small monorepo bit for the `_bcast` listener) | **done** (the `_bcast` listener also shipped, all four languages) |
 | **P3-5 recipes (M2)** | `deploy/site-broker/`: HOST compose, GG DockerApplicationManager recipe, k8s notes + boundary-bridge Deployment, ACL file, TLS notes; docs pages | uns-bridge | **done** |
 | **P3-6 org integration + validation** | Registry entry (`category: bridge`) → profile regen; docs-site sync; validation matrix: HOST dual-broker on dev box, GREENGRASS on lab-5950x (site broker = dev box), kind boundary case | registry / .github / website | **the bridge-level dual-EMQX e2e proof is done** (9/9 assertions) and the registry entry + repo CI have landed; **docs-site sync and the lab/kind validation matrix remain** |
 ---

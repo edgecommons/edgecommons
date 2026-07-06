@@ -3,7 +3,9 @@ import com.mbreissi.edgecommons.messaging.MessageBuilder;
 import com.mbreissi.edgecommons.messaging.MessageIdentity;
 import com.mbreissi.edgecommons.messaging.MessagingClient;
 import com.mbreissi.edgecommons.messaging.MessagingConfiguration;
+import com.mbreissi.edgecommons.messaging.MessagingProvider;
 import com.mbreissi.edgecommons.messaging.ReservedTopicException;
+import com.mbreissi.edgecommons.messaging.providers.greengrass.GreengrassMessagingProvider;
 import com.mbreissi.edgecommons.messaging.providers.standalone.StandaloneMessagingProvider;
 import com.mbreissi.edgecommons.uns.Uns;
 import com.mbreissi.edgecommons.uns.UnsClass;
@@ -13,6 +15,11 @@ import com.google.gson.JsonObject;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.HexFormat;
+import java.util.Map;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.charset.StandardCharsets;
 
 /**
  * Cross-language interop node (Java) for edgecommons. Shared CLI contract:
@@ -52,6 +59,45 @@ public class InteropNode {
             return je;
         }
         return GSON.toJsonTree(o);
+    }
+
+    static String ggTopic(String runId, String publisher, String subscriber) {
+        return "edgecommons/interop/binary/" + runId + "/" + publisher + "/" + subscriber;
+    }
+
+    static String publisherFromGgTopic(String topic) {
+        String[] parts = topic.split("/");
+        return parts.length >= 2 ? parts[parts.length - 2] : null;
+    }
+
+    static Path ggReadyPath(String runId, String lang) {
+        return Path.of("/tmp", "edgecommons_gg_ipc_binary_ready_" + lang + "_" + runId);
+    }
+
+    static java.util.List<String> waitForGgReady(String runId, String[] expectedLangs)
+            throws InterruptedException {
+        long readyWaitMs = (long) (Double.parseDouble(
+                System.getenv().getOrDefault("EDGECOMMONS_GG_READY_WAIT_SECS", "180")) * 1000);
+        long deadline = System.currentTimeMillis() + readyWaitMs;
+        while (System.currentTimeMillis() < deadline) {
+            java.util.ArrayList<String> missing = new java.util.ArrayList<>();
+            for (String lang : expectedLangs) {
+                if (!Files.exists(ggReadyPath(runId, lang))) {
+                    missing.add(lang);
+                }
+            }
+            if (missing.isEmpty()) {
+                return missing;
+            }
+            Thread.sleep(200);
+        }
+        java.util.ArrayList<String> missing = new java.util.ArrayList<>();
+        for (String lang : expectedLangs) {
+            if (!Files.exists(ggReadyPath(runId, lang))) {
+                missing.add(lang);
+            }
+        }
+        return missing;
     }
 
     /**
@@ -175,6 +221,149 @@ public class InteropNode {
             prov.publishRaw(topic, payload);
             Thread.sleep(500);
             prov.close();
+        } else if (role.equals("binary-sub")) {
+            String topic = args[1];
+            String expectedHex = args[2].toLowerCase(java.util.Locale.ROOT);
+            StandaloneMessagingProvider prov = provider("binsub");
+            final CountDownLatch latch = new CountDownLatch(1);
+            final Message[] box = new Message[1];
+            final String[] error = new String[1];
+            prov.subscribe(topic, (t, m) -> {
+                try {
+                    box[0] = m;
+                } catch (Exception e) {
+                    error[0] = e.toString();
+                } finally {
+                    latch.countDown();
+                }
+            }, 1);
+            System.out.println("READY");
+            System.out.flush();
+            JsonObject out = new JsonObject();
+            if (!latch.await(10, TimeUnit.SECONDS)) {
+                out.addProperty("ok", false);
+                out.addProperty("error", "timeout");
+                System.out.println(out);
+                System.exit(1);
+            }
+            boolean isBinary = box[0] != null && box[0].isBinaryBody();
+            String hex = null;
+            try {
+                byte[] bytes = isBinary ? box[0].getBinaryBody() : null;
+                hex = bytes == null ? null : HexFormat.of().formatHex(bytes);
+            } catch (Exception e) {
+                error[0] = e.toString();
+            }
+            boolean ok = isBinary && expectedHex.equals(hex);
+            out.addProperty("ok", ok);
+            out.addProperty("is_binary", isBinary);
+            if (hex != null) {
+                out.addProperty("hex", hex);
+            }
+            if (error[0] != null) {
+                out.addProperty("error", error[0]);
+            }
+            System.out.println(out);
+            prov.close();
+            System.exit(ok ? 0 : 1);
+        } else if (role.equals("binary-pub")) {
+            String topic = args[1];
+            byte[] bytes = HexFormat.of().parseHex(args[2]);
+            StandaloneMessagingProvider prov = provider("binpub");
+            Message msg = MessageBuilder.create("InteropBinary", "1.0")
+                    .withPayload(bytes).build();
+            prov.publish(topic, msg);
+            Thread.sleep(500);
+            prov.close();
+        } else if (role.equals("gg-binary-matrix")) {
+            String runId = args[1];
+            String[] expectedLangs = args[2].split(",");
+            String[] readyLangs = System.getenv().getOrDefault("EDGECOMMONS_GG_READY_LANGS", args[2]).split(",");
+            String readyLang = System.getenv().getOrDefault("EDGECOMMONS_GG_READY_LANG", LANG);
+            String expectedHex = args[3].toLowerCase(java.util.Locale.ROOT);
+            byte[] expectedBytes = HexFormat.of().parseHex(expectedHex);
+            long subscribeDelayMs = (long) (Double.parseDouble(
+                    System.getenv().getOrDefault("EDGECOMMONS_GG_SUBSCRIBE_DELAY_SECS", "8")) * 1000);
+            long waitMs = (long) (Double.parseDouble(
+                    System.getenv().getOrDefault("EDGECOMMONS_GG_WAIT_SECS", "35")) * 1000);
+            MessagingProvider prov = new GreengrassMessagingProvider(true);
+            java.util.concurrent.ConcurrentHashMap<String, JsonObject> received = new java.util.concurrent.ConcurrentHashMap<>();
+            java.util.concurrent.ConcurrentHashMap<String, String> errors = new java.util.concurrent.ConcurrentHashMap<>();
+            CountDownLatch latch = new CountDownLatch(expectedLangs.length);
+            prov.subscribe(ggTopic(runId, "+", LANG), (topic, m) -> {
+                String publisher = publisherFromGgTopic(topic);
+                if (publisher == null) publisher = "unknown";
+                try {
+                    boolean isBinary = m.isBinaryBody();
+                    byte[] body = isBinary ? m.getBinaryBody() : null;
+                    String hex = body == null ? null : HexFormat.of().formatHex(body);
+                    boolean ok = isBinary && java.util.Arrays.equals(body, expectedBytes);
+                    JsonObject item = new JsonObject();
+                    item.addProperty("is_binary", isBinary);
+                    if (hex != null) item.addProperty("hex", hex);
+                    item.addProperty("ok", ok);
+                    if (received.putIfAbsent(publisher, item) == null) {
+                        latch.countDown();
+                    }
+                } catch (Exception e) {
+                    errors.put(publisher == null ? "unknown" : publisher, e.toString());
+                    JsonObject item = new JsonObject();
+                    item.addProperty("is_binary", false);
+                    item.addProperty("ok", false);
+                    received.put(publisher, item);
+                    latch.countDown();
+                }
+            }, 1, 64);
+            System.out.println("READY");
+            System.out.flush();
+            Files.writeString(ggReadyPath(runId, readyLang), Long.toString(System.currentTimeMillis()), StandardCharsets.UTF_8);
+            java.util.List<String> readyMissing = waitForGgReady(runId, readyLangs);
+            Thread.sleep(subscribeDelayMs);
+            if (readyMissing.isEmpty()) {
+                Message msg = MessageBuilder.create("InteropBinary", "1.0")
+                        .withPayload(expectedBytes).build();
+                for (String target : expectedLangs) {
+                    prov.publish(ggTopic(runId, LANG, target), msg);
+                }
+            }
+            latch.await(waitMs, TimeUnit.MILLISECONDS);
+            JsonObject receivedJson = new JsonObject();
+            for (Map.Entry<String, JsonObject> entry : received.entrySet()) {
+                receivedJson.add(entry.getKey(), entry.getValue());
+            }
+            JsonObject errorsJson = new JsonObject();
+            for (Map.Entry<String, String> entry : errors.entrySet()) {
+                errorsJson.addProperty(entry.getKey(), entry.getValue());
+            }
+            com.google.gson.JsonArray readyMissingJson = new com.google.gson.JsonArray();
+            for (String lang : readyMissing) {
+                readyMissingJson.add(lang);
+            }
+            com.google.gson.JsonArray missing = new com.google.gson.JsonArray();
+            boolean ok = errors.isEmpty() && readyMissing.isEmpty();
+            for (String lang : expectedLangs) {
+                if (!received.containsKey(lang)) {
+                    missing.add(lang);
+                    ok = false;
+                } else if (!received.get(lang).get("ok").getAsBoolean()) {
+                    ok = false;
+                }
+            }
+            JsonObject out = new JsonObject();
+            out.addProperty("ok", ok);
+            out.addProperty("lang", LANG);
+            out.addProperty("run_id", runId);
+            out.addProperty("expected_hex", expectedHex);
+            out.add("ready_missing", readyMissingJson);
+            out.add("received", receivedJson);
+            out.add("missing", missing);
+            out.add("errors", errorsJson);
+            Files.writeString(
+                    Path.of("/tmp", "edgecommons_gg_ipc_binary_" + LANG + "_" + runId + ".json"),
+                    out.toString(), StandardCharsets.UTF_8);
+            System.out.println(out);
+            prov.close();
+            System.exit(ok ? 0 : 1);
         } else if (role.equals("uns-pub")) {
             // uns-pub <identityJson> <class> [channel] — mint the topic with the real Uns
             // builder (includeRoot=false), stamp the identity via the real MessageBuilder,

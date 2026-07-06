@@ -41,8 +41,9 @@ const SCHEMA: &str = include_str!("../../resources/edgecommons-config-schema.jso
 
 /// Validate `instance` against the embedded config schema.
 pub fn validate(instance: &Value) -> Result<()> {
-    let schema: Value = serde_json::from_str(SCHEMA)
-        .map_err(|e| EdgeCommonsError::Validation(format!("embedded schema is not valid JSON: {e}")))?;
+    let schema: Value = serde_json::from_str(SCHEMA).map_err(|e| {
+        EdgeCommonsError::Validation(format!("embedded schema is not valid JSON: {e}"))
+    })?;
 
     let validator = jsonschema::validator_for(&schema)
         .map_err(|e| EdgeCommonsError::Validation(format!("embedded schema is invalid: {e}")))?;
@@ -74,11 +75,50 @@ mod tests {
             "hierarchy": { "levels": ["site", "device"] },
             "identity": { "site": "dallas" },
             "topic": { "includeRoot": true },
-            "messaging": { "requestTimeoutSeconds": 30,
-                           "lwt": { "topic": "ecv1/d/c/main/state", "qos": 1 } },
+            "messaging": { "requestTimeoutSeconds": 30 },
             "component": { "global": {}, "instances": [] }
         });
         assert!(validate(&cfg).is_ok());
+    }
+
+    #[test]
+    fn rejects_generic_messaging_lwt() {
+        let cfg = json!({
+            "component": { "global": {} },
+            "messaging": { "lwt": { "topic": "ecv1/d/c/main/state", "qos": 1 } }
+        });
+        assert!(validate(&cfg).is_err());
+    }
+
+    #[test]
+    fn accepts_broker_qos_and_rejects_top_level_qos() {
+        let valid = json!({
+            "component": { "global": {} },
+            "messaging": {
+                "local": {
+                    "host": "localhost",
+                    "port": 1883,
+                    "clientId": "local",
+                    "qos": { "publish": 1, "subscribe": 1 }
+                },
+                "northbound": {
+                    "host": "broker.example.com",
+                    "port": 8883,
+                    "clientId": "northbound",
+                    "qos": { "publish": 2, "subscribe": 1 }
+                }
+            }
+        });
+        assert!(validate(&valid).is_ok());
+
+        let stale = json!({
+            "component": { "global": {} },
+            "messaging": {
+                "local": { "host": "localhost", "port": 1883, "clientId": "local" },
+                "qos": { "local": { "publish": 1 } }
+            }
+        });
+        assert!(validate(&stale).is_err());
     }
 
     #[test]

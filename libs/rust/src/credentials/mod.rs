@@ -34,10 +34,10 @@
 //! Design: `docs/CREDENTIALS.md`. Streaming sinks will consume this in phase 3 (closes that
 //! design's §7).
 
+pub mod audit;
 pub mod bridge;
 pub mod central;
 pub mod config;
-pub mod audit;
 mod crypto;
 pub mod format;
 pub mod keyprovider;
@@ -49,16 +49,21 @@ pub mod views;
 
 pub use audit::{AuditEvent, AuditSink, LogAuditSink};
 pub use central::{CentralSecret, CentralVaultSource};
-pub use config::{open, open_namespaced, open_namespaced_with_default, AuditConfig, CentralConfig, CredentialsConfig, KeyProviderConfig, SyncEntry, SyncSelect, VaultConfig};
+pub use config::{
+    AuditConfig, CentralConfig, CredentialsConfig, KeyProviderConfig, SyncEntry, SyncSelect,
+    VaultConfig, open, open_namespaced, open_namespaced_with_default,
+};
 // Convenience re-export consumed only by the parameter cache (`parameters` feature). The
 // credentials module itself calls the function via its `config::` path, so gate the re-export to
 // avoid an unused-import warning in credentials-only builds.
+pub use bridge::CredentialMetricsBridge;
 #[cfg(feature = "parameters")]
 pub(crate) use config::build_key_provider;
-pub use keyprovider::{EnvKeyProvider, FileKeyProvider, KeyProvider, DEFAULT_KEK_ENV_VAR};
+pub use keyprovider::{DEFAULT_KEK_ENV_VAR, EnvKeyProvider, FileKeyProvider, KeyProvider};
 pub use secretref::resolve_secret_refs;
-pub use bridge::CredentialMetricsBridge;
-pub use service::{CredentialService, CredentialStats, DefaultCredentialService, Secret, SecretMeta};
+pub use service::{
+    CredentialService, CredentialStats, DefaultCredentialService, Secret, SecretMeta,
+};
 pub use sync::SyncEngine;
 pub use vault::{LocalVault, PutOptions};
 pub use views::{AwsCredentials, BasicAuth, KafkaSasl, TlsBundle};
@@ -88,7 +93,10 @@ mod tests {
         struct VecSink(Mutex<Vec<String>>);
         impl AuditSink for VecSink {
             fn record(&self, e: &AuditEvent) {
-                self.0.lock().unwrap().push(format!("{}:{}:{}", e.op, e.name, e.outcome));
+                self.0
+                    .lock()
+                    .unwrap()
+                    .push(format!("{}:{}:{}", e.op, e.name, e.outcome));
             }
         }
 
@@ -96,16 +104,29 @@ mod tests {
         let sink = Arc::new(VecSink(Mutex::new(Vec::new())));
         let c = file_vault(dir.path()).with_audit(Some(sink.clone() as Arc<dyn AuditSink>));
 
-        c.put("db/password", b"s3cr3t", PutOptions::default()).unwrap();
+        c.put("db/password", b"s3cr3t", PutOptions::default())
+            .unwrap();
         c.get("db/password").unwrap();
         c.get("missing").unwrap();
         c.delete("db/password").unwrap();
 
         let events = sink.0.lock().unwrap().clone();
-        assert!(events.contains(&"put:db/password:ok".to_string()), "{events:?}");
-        assert!(events.contains(&"get:db/password:hit".to_string()), "{events:?}");
-        assert!(events.contains(&"get:missing:miss".to_string()), "{events:?}");
-        assert!(events.contains(&"delete:db/password:ok".to_string()), "{events:?}");
+        assert!(
+            events.contains(&"put:db/password:ok".to_string()),
+            "{events:?}"
+        );
+        assert!(
+            events.contains(&"get:db/password:hit".to_string()),
+            "{events:?}"
+        );
+        assert!(
+            events.contains(&"get:missing:miss".to_string()),
+            "{events:?}"
+        );
+        assert!(
+            events.contains(&"delete:db/password:ok".to_string()),
+            "{events:?}"
+        );
         // The value must never appear in any audit record.
         assert!(events.iter().all(|e| !e.contains("s3cr3t")), "{events:?}");
     }
@@ -124,8 +145,10 @@ mod tests {
     fn put_get_roundtrip_and_typed_views() {
         let dir = tempfile::tempdir().unwrap();
         let c = file_vault(dir.path());
-        c.put("db/password", b"s3cr3t", PutOptions::default()).unwrap();
-        c.put("svc/config", br#"{"k":1}"#, PutOptions::default()).unwrap();
+        c.put("db/password", b"s3cr3t", PutOptions::default())
+            .unwrap();
+        c.put("svc/config", br#"{"k":1}"#, PutOptions::default())
+            .unwrap();
 
         assert_eq!(c.get_string("db/password").unwrap().unwrap(), "s3cr3t");
         assert_eq!(c.get_json("svc/config").unwrap().unwrap()["k"], 1);
@@ -140,10 +163,30 @@ mod tests {
     fn typed_views_parse() {
         let dir = tempfile::tempdir().unwrap();
         let c = file_vault(dir.path());
-        c.put("aws", br#"{"accessKeyId":"AKIA","secretAccessKey":"sk","sessionToken":"tok"}"#, PutOptions::default()).unwrap();
-        c.put("basic", br#"{"username":"u","password":"p"}"#, PutOptions::default()).unwrap();
-        c.put("tls", br#"{"certPem":"C","keyPem":"K"}"#, PutOptions::default()).unwrap();
-        c.put("kafka", br#"{"username":"ku","password":"kp"}"#, PutOptions::default()).unwrap();
+        c.put(
+            "aws",
+            br#"{"accessKeyId":"AKIA","secretAccessKey":"sk","sessionToken":"tok"}"#,
+            PutOptions::default(),
+        )
+        .unwrap();
+        c.put(
+            "basic",
+            br#"{"username":"u","password":"p"}"#,
+            PutOptions::default(),
+        )
+        .unwrap();
+        c.put(
+            "tls",
+            br#"{"certPem":"C","keyPem":"K"}"#,
+            PutOptions::default(),
+        )
+        .unwrap();
+        c.put(
+            "kafka",
+            br#"{"username":"ku","password":"kp"}"#,
+            PutOptions::default(),
+        )
+        .unwrap();
 
         let aws = c.get_aws_credentials("aws").unwrap().unwrap();
         assert_eq!(aws.access_key_id, "AKIA");
@@ -168,7 +211,14 @@ mod tests {
         // Only the newest 2 retained.
         assert_eq!(c.versions("k").unwrap(), vec!["00000002", "00000003"]);
         assert_eq!(c.get("k").unwrap().unwrap().as_str().unwrap(), "v3");
-        assert_eq!(c.get_version("k", "00000002").unwrap().unwrap().as_str().unwrap(), "v2");
+        assert_eq!(
+            c.get_version("k", "00000002")
+                .unwrap()
+                .unwrap()
+                .as_str()
+                .unwrap(),
+            "v2"
+        );
         assert!(c.get_version("k", "00000001").unwrap().is_none());
     }
 
@@ -190,7 +240,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let c = file_vault(dir.path());
         c.put("kafka/pw", b"s3cr3t", PutOptions::default()).unwrap();
-        c.put("kafka/sasl", br#"{"username":"u","password":"p"}"#, PutOptions::default()).unwrap();
+        c.put(
+            "kafka/sasl",
+            br#"{"username":"u","password":"p"}"#,
+            PutOptions::default(),
+        )
+        .unwrap();
 
         let mut cfg = serde_json::json!({
             "sink": { "type": "kafka", "properties": {
@@ -222,14 +277,32 @@ mod tests {
         let comp1 = DefaultCredentialService::with_sync(open(), None, "thing-1/CompA".to_string());
         let comp2 = DefaultCredentialService::with_sync(open(), None, "thing-1/CompB".to_string());
 
-        comp1.put("db/password", b"a-secret", PutOptions::default()).unwrap();
-        comp2.put("db/password", b"b-secret", PutOptions::default()).unwrap();
+        comp1
+            .put("db/password", b"a-secret", PutOptions::default())
+            .unwrap();
+        comp2
+            .put("db/password", b"b-secret", PutOptions::default())
+            .unwrap();
 
         // Same caller-facing key, no collision: each sees only its own value.
-        assert_eq!(comp1.get_string("db/password").unwrap().unwrap(), "a-secret");
-        assert_eq!(comp2.get_string("db/password").unwrap().unwrap(), "b-secret");
+        assert_eq!(
+            comp1.get_string("db/password").unwrap().unwrap(),
+            "a-secret"
+        );
+        assert_eq!(
+            comp2.get_string("db/password").unwrap().unwrap(),
+            "b-secret"
+        );
         // list() is scoped to the component's namespace and returns the relative name.
-        assert_eq!(comp1.list("").unwrap().iter().map(|m| m.name.clone()).collect::<Vec<_>>(), vec!["db/password"]);
+        assert_eq!(
+            comp1
+                .list("")
+                .unwrap()
+                .iter()
+                .map(|m| m.name.clone())
+                .collect::<Vec<_>>(),
+            vec!["db/password"]
+        );
 
         // On disk both are present under distinct namespaced keys.
         let raw = std::fs::read_to_string(&path).unwrap();
@@ -273,8 +346,13 @@ mod tests {
         // Flip a byte inside a ciphertext field; reopening must fail the integrity check.
         let mut text = std::fs::read_to_string(&path).unwrap();
         let mut vf: serde_json::Value = serde_json::from_str(&text).unwrap();
-        let ct = vf["secrets"]["k"]["versions"][0]["ciphertext"].as_str().unwrap().to_string();
-        let mut bytes = base64::engine::general_purpose::STANDARD.decode(&ct).unwrap();
+        let ct = vf["secrets"]["k"]["versions"][0]["ciphertext"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let mut bytes = base64::engine::general_purpose::STANDARD
+            .decode(&ct)
+            .unwrap();
         bytes[0] ^= 0x01;
         vf["secrets"]["k"]["versions"][0]["ciphertext"] =
             serde_json::Value::String(base64::engine::general_purpose::STANDARD.encode(&bytes));
@@ -282,7 +360,10 @@ mod tests {
         std::fs::write(&path, text).unwrap();
 
         let provider = Arc::new(FileKeyProvider::from_bytes([7u8; 32])) as Arc<dyn KeyProvider>;
-        assert!(LocalVault::open(&path, provider, 2).is_err(), "tampered vault must fail to open");
+        assert!(
+            LocalVault::open(&path, provider, 2).is_err(),
+            "tampered vault must fail to open"
+        );
     }
 
     use base64::Engine as _;
@@ -294,7 +375,7 @@ mod tests {
     #[test]
     fn cross_language_test_vectors() {
         use super::crypto;
-        use super::format::{self, KekInfo, SecretEntry, VaultFile, VersionEntry, FORMAT_VERSION};
+        use super::format::{self, FORMAT_VERSION, KekInfo, SecretEntry, VaultFile, VersionEntry};
         use std::collections::BTreeMap;
         let b64 = base64::engine::general_purpose::STANDARD;
 
@@ -305,15 +386,32 @@ mod tests {
         let wrap_nonce: [u8; 12] = std::array::from_fn(|i| (0xA0 + i) as u8);
 
         let records: [(&str, &str, [u8; 12], &[u8]); 2] = [
-            ("alpha", "00000001", std::array::from_fn(|i| (0xB0 + i) as u8), b"hello"),
-            ("beta", "00000001", std::array::from_fn(|i| (0xC0 + i) as u8), br#"{"x":1}"#),
+            (
+                "alpha",
+                "00000001",
+                std::array::from_fn(|i| (0xB0 + i) as u8),
+                b"hello",
+            ),
+            (
+                "beta",
+                "00000001",
+                std::array::from_fn(|i| (0xC0 + i) as u8),
+                br#"{"x":1}"#,
+            ),
         ];
 
-        let wrapped_dek = crypto::seal(&kek, &wrap_nonce, &format::dek_wrap_aad(vault_id), &dek).unwrap();
+        let wrapped_dek =
+            crypto::seal(&kek, &wrap_nonce, &format::dek_wrap_aad(vault_id), &dek).unwrap();
         let mut secrets: BTreeMap<String, SecretEntry> = BTreeMap::new();
         let mut record_vectors = Vec::new();
         for (name, version, nonce, plaintext) in records {
-            let ct = crypto::seal(&dek, &nonce, &format::record_aad(vault_id, name, version), plaintext).unwrap();
+            let ct = crypto::seal(
+                &dek,
+                &nonce,
+                &format::record_aad(vault_id, name, version),
+                plaintext,
+            )
+            .unwrap();
             secrets.insert(
                 name.to_string(),
                 SecretEntry {
@@ -379,7 +477,10 @@ mod tests {
 
         // Determinism lock: the committed vault.json must equal a fresh recomputation.
         let on_disk = std::fs::read(&vault_path).unwrap();
-        assert_eq!(on_disk, vault_json, "vault.json drifted from the reference computation");
+        assert_eq!(
+            on_disk, vault_json,
+            "vault.json drifted from the reference computation"
+        );
 
         // The reference implementation must open the committed vault and decrypt it.
         let provider = Arc::new(FileKeyProvider::from_bytes(kek)) as Arc<dyn KeyProvider>;
@@ -393,7 +494,7 @@ mod tests {
     // vault-test-vectors/ files (to avoid cross-agent races).
 
     use crate::credentials::config::build_key_provider;
-    use crate::platform::{profile_credentials_key_provider, Platform};
+    use crate::platform::{Platform, profile_credentials_key_provider};
 
     fn b64(bytes: &[u8]) -> String {
         base64::engine::general_purpose::STANDARD.encode(bytes)
@@ -424,7 +525,8 @@ mod tests {
             let provider = build_key_provider(&env_kp(var), &key_path, None).unwrap();
             assert_eq!(provider.provider_id(), "env");
             let c = DefaultCredentialService::new(LocalVault::open(&path, provider, 2).unwrap());
-            c.put("db/password", b"s3cr3t", PutOptions::default()).unwrap();
+            c.put("db/password", b"s3cr3t", PutOptions::default())
+                .unwrap();
         }
         // Reopen with a fresh env provider built from the same var.
         let provider = build_key_provider(&env_kp(var), &key_path, None).unwrap();
@@ -471,11 +573,17 @@ mod tests {
 
         let env_wrapped = env_p.wrap_dek(vault_id, &dek).unwrap();
         assert_eq!(env_wrapped.provider, "env");
-        assert_eq!(&file_p.unwrap_dek(vault_id, &env_wrapped).unwrap()[..], &dek[..]);
+        assert_eq!(
+            &file_p.unwrap_dek(vault_id, &env_wrapped).unwrap()[..],
+            &dek[..]
+        );
 
         let file_wrapped = file_p.wrap_dek(vault_id, &dek).unwrap();
         assert_eq!(file_wrapped.provider, "file");
-        assert_eq!(&env_p.unwrap_dek(vault_id, &file_wrapped).unwrap()[..], &dek[..]);
+        assert_eq!(
+            &env_p.unwrap_dek(vault_id, &file_wrapped).unwrap()[..],
+            &dek[..]
+        );
 
         unsafe { std::env::remove_var(var) };
     }
@@ -483,7 +591,9 @@ mod tests {
     // (c) Error cases: unset, empty, invalid base64, wrong length — clear errors, never panics.
     #[test]
     fn env_provider_errors_on_unset_invalid_and_wrong_length() {
-        let err = EnvKeyProvider::from_env("GGTEST_VAULT_KEK_DOES_NOT_EXIST_ZZZ").err().unwrap();
+        let err = EnvKeyProvider::from_env("GGTEST_VAULT_KEK_DOES_NOT_EXIST_ZZZ")
+            .err()
+            .unwrap();
         assert!(err.to_string().contains("not set"), "{err}");
 
         let var_empty = "GGTEST_VAULT_KEK_EMPTY";
@@ -511,8 +621,17 @@ mod tests {
         assert_eq!(DEFAULT_KEK_ENV_VAR, "EDGECOMMONS_VAULT_KEK");
         unsafe { std::env::set_var(DEFAULT_KEK_ENV_VAR, b64(&[9u8; 32])) };
         let dir = tempfile::tempdir().unwrap();
-        let kp = KeyProviderConfig { kind: Some("env".to_string()), env_var: None, ..Default::default() };
-        let p = build_key_provider(&kp, &format!("{}.key", dir.path().join("v").display()), None).unwrap();
+        let kp = KeyProviderConfig {
+            kind: Some("env".to_string()),
+            env_var: None,
+            ..Default::default()
+        };
+        let p = build_key_provider(
+            &kp,
+            &format!("{}.key", dir.path().join("v").display()),
+            None,
+        )
+        .unwrap();
         assert_eq!(p.provider_id(), "env");
         unsafe { std::env::remove_var(DEFAULT_KEK_ENV_VAR) };
     }
@@ -526,10 +645,19 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
 
         // Absent type + KUBERNETES default ("env") → env provider.
-        let kp_absent_env = KeyProviderConfig { kind: None, env_var: Some(var.to_string()), ..Default::default() };
+        let kp_absent_env = KeyProviderConfig {
+            kind: None,
+            env_var: Some(var.to_string()),
+            ..Default::default()
+        };
         let k8s_default = profile_credentials_key_provider(Platform::Kubernetes);
         assert_eq!(k8s_default, Some("env"));
-        let p = build_key_provider(&kp_absent_env, &format!("{}.key", dir.path().join("k8s").display()), k8s_default).unwrap();
+        let p = build_key_provider(
+            &kp_absent_env,
+            &format!("{}.key", dir.path().join("k8s").display()),
+            k8s_default,
+        )
+        .unwrap();
         assert_eq!(p.provider_id(), "env");
 
         // Absent type + HOST/GREENGRASS (no profile default) → library default `file`.
@@ -537,12 +665,20 @@ mod tests {
             let default = profile_credentials_key_provider(platform);
             assert_eq!(default, None);
             let kp_absent = KeyProviderConfig::default(); // kind = None
-            let p = build_key_provider(&kp_absent, &format!("{}.key", dir.path().join(label).display()), default).unwrap();
+            let p = build_key_provider(
+                &kp_absent,
+                &format!("{}.key", dir.path().join(label).display()),
+                default,
+            )
+            .unwrap();
             assert_eq!(p.provider_id(), "file", "{label}");
         }
 
         // Explicit type ALWAYS wins, even on KUBERNETES (explicit `file` stays `file`).
-        let kp_file = KeyProviderConfig { kind: Some("file".to_string()), ..Default::default() };
+        let kp_file = KeyProviderConfig {
+            kind: Some("file".to_string()),
+            ..Default::default()
+        };
         let p = build_key_provider(
             &kp_file,
             &format!("{}.key", dir.path().join("explicit").display()),
@@ -563,7 +699,10 @@ mod tests {
     fn profile_default_does_not_enable_credentials_without_a_section() {
         use crate::config::model::Config;
         // The KUBERNETES profile advertises an "env" default ...
-        assert_eq!(profile_credentials_key_provider(Platform::Kubernetes), Some("env"));
+        assert_eq!(
+            profile_credentials_key_provider(Platform::Kubernetes),
+            Some("env")
+        );
         // ... but a config without a `credentials` section means no vault is opened (any platform).
         let cfg = Config::from_value(
             "com.example.C",
@@ -571,8 +710,14 @@ mod tests {
             serde_json::json!({ "logging": { "level": "INFO" } }),
         )
         .unwrap();
-        assert!(cfg.raw.get("credentials").is_none(), "no credentials section present");
+        assert!(
+            cfg.raw.get("credentials").is_none(),
+            "no credentials section present"
+        );
         let would_open = cfg.raw.get("credentials").is_some();
-        assert!(!would_open, "credentials must stay OFF without a section, even on KUBERNETES");
+        assert!(
+            !would_open,
+            "credentials must stay OFF without a section, even on KUBERNETES"
+        );
     }
 }

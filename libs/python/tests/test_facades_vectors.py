@@ -103,7 +103,7 @@ class _RecordingMessaging:
     def publish(self, topic, msg):
         self.local.append((topic, msg))
 
-    def publish_to_iot_core(self, topic, msg, qos):
+    def publish_northbound(self, topic, msg, qos):
         self.iotcore.append((topic, msg))
 
 

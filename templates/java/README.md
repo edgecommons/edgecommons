@@ -10,7 +10,7 @@ and heartbeat — so you write only business logic in your component class
 
 ```bash
 mvn clean package
-# Provide an MQTT messaging-config JSON (messaging.local required, messaging.iotCore optional):
+# Provide an MQTT messaging-config JSON (messaging.local required, messaging.northbound optional):
 java -jar target/<<JARNAME>>-1.0.0.jar --platform HOST --transport MQTT ./standalone-messaging.json -c FILE test-configs/<<COMPONENTNAME>>.json -t my-thing-name
 ```
 

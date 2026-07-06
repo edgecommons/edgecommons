@@ -9,11 +9,11 @@ import com.mbreissi.edgecommons.messaging.Message;
 import com.mbreissi.edgecommons.messaging.MessageBuilder;
 import com.mbreissi.edgecommons.messaging.MessageIdentity;
 import com.mbreissi.edgecommons.messaging.MessagingClient;
+import com.mbreissi.edgecommons.messaging.Qos;
 import com.mbreissi.edgecommons.metrics.Metric;
 import com.mbreissi.edgecommons.uns.Uns;
 import com.mbreissi.edgecommons.uns.UnsClass;
 import com.google.gson.JsonObject;
-import software.amazon.awssdk.aws.greengrass.model.QOS;
 
 import java.util.Map;
 
@@ -22,7 +22,7 @@ import java.util.Map;
  * library-owned UNS metric topic {@code ecv1/{device}/{component}/main/metric/{metricName}} (the
  * metric name sanitized as a channel token) through the privileged
  * {@link com.mbreissi.edgecommons.messaging.ReservedPublisher} seam — the {@code metric} class is
- * reserved. {@code metricEmission.targetConfig.destination} still selects local/IPC vs IoT Core
+ * reserved. {@code metricEmission.targetConfig.destination} still selects local/IPC vs northbound
  * (D-U9); the legacy {@code targetConfig.topic} override is removed.
  */
 public final class Messaging extends MetricTarget {
@@ -34,17 +34,17 @@ public final class Messaging extends MetricTarget {
 
     public Messaging(ConfigManager configManager) {
         super(configManager);
-        this.sendToIpc = !isIotCoreDestination(metricConfig.getDestination());
+        this.sendToIpc = !isNorthboundDestination(metricConfig.getDestination());
     }
 
     /**
-     * IoT Core is selected only by "iot_core"/"iotcore"; everything else (the
-     * canonical "ipc", the legacy "local", and any unrecognized value) uses the
-     * local/IPC transport, so a metric never routes to a possibly-unconfigured
-     * IoT Core. Matches the heartbeat destination and the Python/Rust metric targets.
+     * Northbound is selected only by "northbound"; everything else (the canonical "ipc",
+     * "local", and any unrecognized value) uses the local/IPC transport, so a metric never routes
+     * to a possibly-unconfigured northbound broker. Matches the heartbeat destination and the
+     * Python/Rust metric targets.
      */
-    private static boolean isIotCoreDestination(String destination) {
-        return destination.equalsIgnoreCase("iot_core") || destination.equalsIgnoreCase("iotcore");
+    private static boolean isNorthboundDestination(String destination) {
+        return destination != null && destination.equalsIgnoreCase("northbound");
     }
 
     public void setMessagingService(MessagingClient messagingService) {
@@ -101,7 +101,7 @@ public final class Messaging extends MetricTarget {
         if (sendToIpc)
             messagingService.reservedPublisher().publish(topic, message);
         else
-            messagingService.reservedPublisher().publishToIoTCore(topic, message, QOS.AT_LEAST_ONCE);
+            messagingService.reservedPublisher().publishNorthbound(topic, message, Qos.AT_LEAST_ONCE);
         LOGGER.trace("Metric emitted for {} emitted", metric);
     }
 
@@ -109,7 +109,7 @@ public final class Messaging extends MetricTarget {
     public boolean onConfigurationChanged()
     {
         LOGGER.info("Configuration changed. Reconfiguring metric messaging destination");
-        this.sendToIpc = !isIotCoreDestination(configManager.getMetricConfig().getDestination());
+        this.sendToIpc = !isNorthboundDestination(configManager.getMetricConfig().getDestination());
         return true;
     }
 

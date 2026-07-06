@@ -20,9 +20,9 @@ use serde::{Deserialize, Deserializer};
 
 use super::service::{DefaultParameterService, ParameterService};
 use super::source::{EnvSource, MountedDirSource, ParameterSource};
-use crate::credentials::{build_key_provider, KeyProviderConfig, LocalVault};
-use crate::error::EdgeCommonsError;
 use crate::Result;
+use crate::credentials::{KeyProviderConfig, LocalVault, build_key_provider};
+use crate::error::EdgeCommonsError;
 
 // Greengrass stores config numbers as doubles (e.g. 300.0). Accept an int or an integer-valued
 // float for the numeric fields below.
@@ -32,7 +32,9 @@ fn lenient_u64<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<u64, D::E
             .as_u64()
             .or_else(|| n.as_f64().map(|f| f as u64))
             .ok_or_else(|| serde::de::Error::custom("expected a non-negative integer")),
-        other => Err(serde::de::Error::custom(format!("expected a number, got {other}"))),
+        other => Err(serde::de::Error::custom(format!(
+            "expected a number, got {other}"
+        ))),
     }
 }
 
@@ -120,7 +122,11 @@ pub struct CacheConfig {
 
 impl Default for CacheConfig {
     fn default() -> Self {
-        Self { persist: None, path: "param-cache".to_string(), key_provider: KeyProviderConfig::default() }
+        Self {
+            persist: None,
+            path: "param-cache".to_string(),
+            key_provider: KeyProviderConfig::default(),
+        }
     }
 }
 
@@ -152,7 +158,10 @@ impl<'de> Deserialize<'de> for PathEntry {
             },
         }
         Ok(match Raw::deserialize(d)? {
-            Raw::Str(path) => PathEntry { path, recursive: true },
+            Raw::Str(path) => PathEntry {
+                path,
+                recursive: true,
+            },
             Raw::Obj { path, recursive } => PathEntry { path, recursive },
         })
     }
@@ -166,15 +175,20 @@ fn default_true() -> bool {
 fn build_source(source: &ParamSourceConfig) -> Result<Arc<dyn ParameterSource>> {
     match source.kind.as_str() {
         "env" => {
-            let prefix = source.prefix.clone().unwrap_or_else(|| "GG_PARAM_".to_string());
+            let prefix = source
+                .prefix
+                .clone()
+                .unwrap_or_else(|| "GG_PARAM_".to_string());
             Ok(Arc::new(EnvSource::new(prefix)))
         }
         "mountedDir" => {
-            let root = source
-                .root
-                .clone()
-                .ok_or_else(|| EdgeCommonsError::Parameters("mountedDir source requires source.root".into()))?;
-            Ok(Arc::new(MountedDirSource::new(root, source.secure_paths.clone())))
+            let root = source.root.clone().ok_or_else(|| {
+                EdgeCommonsError::Parameters("mountedDir source requires source.root".into())
+            })?;
+            Ok(Arc::new(MountedDirSource::new(
+                root,
+                source.secure_paths.clone(),
+            )))
         }
         #[cfg(feature = "parameters-aws")]
         "awsSsm" => {
@@ -205,18 +219,28 @@ fn build_source(source: &ParamSourceConfig) -> Result<Arc<dyn ParameterSource>> 
 pub fn open(config: &ParametersConfig) -> Result<DefaultParameterService> {
     let source = build_source(&config.source)?;
     let sync_names = config.sync.names.clone();
-    let sync_paths: Vec<(String, bool)> =
-        config.sync.paths.iter().map(|p| (p.path.clone(), p.recursive)).collect();
+    let sync_paths: Vec<(String, bool)> = config
+        .sync
+        .paths
+        .iter()
+        .map(|p| (p.path.clone(), p.recursive))
+        .collect();
 
     // Source-aware default: remote sources persist encrypted (survive restart/offline); local
     // sources stay in memory (the backend is itself always available). `cache.persist` overrides.
-    let persist = config.cache.persist.unwrap_or_else(|| config.source.is_remote());
+    let persist = config
+        .cache
+        .persist
+        .unwrap_or_else(|| config.source.is_remote());
 
     let service = if persist {
         // The parameter cache has no platform-profile KEK default (FR-CRED-6 applies only to the
         // credentials vault) — pass `None` so the library default `file` is preserved.
-        let provider =
-            build_key_provider(&config.cache.key_provider, &format!("{}.key", config.cache.path), None)?;
+        let provider = build_key_provider(
+            &config.cache.key_provider,
+            &format!("{}.key", config.cache.path),
+            None,
+        )?;
         // keep_versions = 1: the cache only ever needs the latest value of each parameter.
         let vault = LocalVault::open(&config.cache.path, provider, 1)?;
         let vault = Arc::new(Mutex::new(vault));

@@ -11,7 +11,7 @@ Status: **Complete — all phases delivered and validated on-device** (HOST plat
 > `ecv1/{device}/{component}/{instance}/{class}` via the `gg.uns()` builder (`edgecommons::uns`), the
 > reserved classes (`state`/`metric`/`cfg`/`log`) are guarded (`EdgeCommonsError::ReservedTopic`), `request()`
 > arms a framework deadline (`messaging.requestTimeoutSeconds`, default 30 s;
-> `EdgeCommonsError::RequestTimeout`), MQTT LWT is configurable (`messaging.lwt`), and the heartbeat became the
+> `EdgeCommonsError::RequestTimeout`), generic component messaging config deliberately has no MQTT LWT, and the heartbeat became the
 > UNS `state` keepalive + `sys` metric (`heartbeat.targets[]` removed). Per D‑U7, Rust deliberately
 > keeps the `IotCore`/`_iot_core` spelling (RFC-430 idiom) where Java/TS normalized to `IoTCore`.
 > Sections below describe the pre-UNS surface where they differ.
@@ -239,7 +239,7 @@ pub trait MessagingProvider: Send + Sync {
     async fn subscribe(&self, filter: &str, dest: Destination, qos: Qos) -> Result<Subscription>;
     async fn unsubscribe(&self, filter: &str, dest: Destination) -> Result<()>;
 }
-// Destination = { Local, IotCore }   Subscription yields a stream of (topic, payload)
+// Destination = { Local, Northbound }   Subscription yields a stream of (topic, payload)
 ```
 
 - `MqttProvider` (feature `standalone`): two `rumqttc` clients (local broker + IoT Core), `rustls` mTLS to IoT Core, username/password or cert auth to the local broker. Blocking-until-confirmed semantics preserved by awaiting CONNACK/SUBACK. Auto-reconnect + re-subscribe (fixes Java M11 TODO no-op).
@@ -286,7 +286,7 @@ pub trait MetricTarget: Send + Sync {
 
 A `tokio` interval task. Since the UNS change it does two things per tick: publishes the **`state`
 keepalive** to `ecv1/{device}/{component}/main/state` through the crate-private reserved-publish seam
-(on by default, 5 s, `heartbeat.destination: local|iotcore`; best-effort `STOPPED` on graceful
+(on by default, 5 s, `heartbeat.destination: local|northbound`; best-effort `STOPPED` on graceful
 shutdown), and emits the enabled system measures (via `sysinfo`: CPU %, memory RSS, disk, threads;
 FDs via `/proc/self/fd` on Linux / `sysinfo` handles elsewhere) as the **`sys` metric** through
 `MetricService` (the legacy `heartbeat.targets[]` routing is removed). The tick body is wrapped so a
@@ -358,7 +358,7 @@ Builders (`EdgeCommonsBuilder`, `MessageBuilder`, `MetricBuilder`) mirror the Ja
 
 | Java finding | Severity | Rust resolution |
 |---|---|---|
-| C1/C2 — `requestFromIoTCore` wrong transport / wrong unsubscribe | Critical | Request/reply built **once** over a transport trait; provider only does pub/sub. Cannot diverge. |
+| C1/C2 — `requestNorthbound` wrong transport / wrong unsubscribe | Critical | Request/reply built **once** over a transport trait; provider only does pub/sub. Cannot diverge. |
 | C3 — silent TLS fallback to no client creds | Critical | Credential load failure is a hard `EdgeCommonsError`; never connects unauthenticated. |
 | C4/C5 — heartbeat Timer dies on exception / null config NPE | Critical | `tokio` task with wrapped body; `Option` config handled by the type system. |
 | C6 — config hot-reload data races | Critical | `ArcSwap<Arc<Config>>` snapshot publish; borrow checker forbids unsynchronized shared mutation. |
@@ -389,11 +389,11 @@ and the UNS sections are added):
 logging:        { level, format, fileLogging: { enabled, filePath }, loggers: {name: level}, globalControl }
 metricEmission: { target: log|messaging|cloudwatch|cloudwatchcomponent|prometheus, namespace, largeFleetWorkaround,
                   targetConfig: { logFileName, maxFileSize, destination, intervalSecs, buffer, port, path } }
-heartbeat:      { enabled, intervalSecs, measures: { cpu, memory, disk, threads, files, fds }, destination: local|iotcore }
+heartbeat:      { enabled, intervalSecs, measures: { cpu, memory, disk, threads, files, fds }, destination: local|northbound }
 hierarchy:      { levels: [ "site", ..., "device" ] }        # UNS enterprise hierarchy (last level = the node)
 identity:       { <level>: <value>, ... }                    # values for every level except the last
 topic:          { includeRoot }                              # UNS topic-building options
-messaging:      { local, iotCore, requestTimeoutSeconds, lwt: { topic, payload, qos } }
+messaging:      { local{qos}, northbound{qos}, requestTimeoutSeconds }
 tags:           { <key>: <value>, ... }
 component:      { global: {...}, instances: [ { id, ... }, ... ] }
 ```
@@ -479,10 +479,10 @@ The speculative `GetConfiguration` whole-config + Rust-side key extraction chang
 
 **Additionally validated on-device (2026-06-16, non-root):**
 - **Inbound local pub/sub delivery + full request/reply correlation** over IPC — a self-request was published, the subscribed handler was invoked (`received request`), replied, and the reply was correlated back to the requester (`request/reply round-trip OK`).
-- **IoT Core bridge, device side** — `subscribe_to_iot_core` registered the command topic and `publish_to_iot_core` mirrored telemetry every tick with no authorization/IPC errors (the recipe's `aws.greengrass.ipc.mqttproxy` accessControl grants it). The cloud→device round trip and observing telemetry in the cloud were not exercised (the provisioning IAM identity lacks `iot:Publish` data-plane permission; confirm via the AWS IoT MQTT test client).
+- **IoT Core bridge, device side** — `subscribe_northbound` registered the command topic and `publish_northbound` mirrored telemetry every tick with no authorization/IPC errors (the recipe's `aws.greengrass.ipc.mqttproxy` accessControl grants it). The cloud→device round trip and observing telemetry in the cloud were not exercised (the provisioning IAM identity lacks `iot:Publish` data-plane permission; confirm via the AWS IoT MQTT test client).
 - **Config-update hot reload** — a deployment config change to `publish_interval` triggered `SubscribeToConfigurationUpdate` → the `IpcRuntime` re-fetch → atomic snapshot swap (`configuration reloaded`) → listener notifications (`metric target reconfigured after config change`). Note: the demo app reads a one-time `gg.config()` snapshot in its publish loop, so its cadence didn't change; the library reload + listener path (and the heartbeat, which reads the live snapshot per tick) is what this validates.
 
-**IoT Core bridge — validated end-to-end (2026-06-16):** cloud→device confirmed (`aws iot-data publish` → the component's `subscribe_to_iot_core` handler fired); device→cloud confirmed (a SigV4 MQTT-over-WebSocket subscriber observed the component's `publish_to_iot_core` telemetry arriving in the cloud as edgecommons `Message` envelopes). Note: the subscribe dispatcher only accepts the edgecommons envelope (header/tags/body) — a raw external IoT Core payload is dropped as unparseable (consistent with Java/Python; a `subscribe_*_raw` variant would be a future enhancement for arbitrary-publisher interop).
+**IoT Core bridge — validated end-to-end (2026-06-16):** cloud→device confirmed (`aws iot-data publish` → the component's `subscribe_northbound` handler fired); device→cloud confirmed (a SigV4 MQTT-over-WebSocket subscriber observed the component's `publish_northbound` telemetry arriving in the cloud as edgecommons `Message` envelopes). Note: the subscribe dispatcher only accepts the edgecommons envelope (header/tags/body) — a raw external IoT Core payload is dropped as unparseable (consistent with Java/Python; a `subscribe_*_raw` variant would be a future enhancement for arbitrary-publisher interop).
 
 **`SHADOW` config source — validated end-to-end (2026-06-16):** deployed AWS `ShadowManager` (2.3.14) with classic-shadow sync; set the device shadow's `state.desired` to a full edgecommons config; ran the skeleton with `-c SHADOW`. It started `config_source="SHADOW"` and applied the shadow's values (the `publish_interval: 8` from the shadow drove an 8s publish cadence — distinct from the GG_CONFIG defaults), confirming `ShadowConfigSource` → IPC `GetThingShadow` → extract `state.desired` → validate → `Config`. **Real-time updates also confirmed:** changing the cloud shadow's `desired.publish_interval` (8→3) on the running component triggered the `update/delta` subscription → re-fetch → atomic reload → `ConfigurationChangeListener`, and the publish cadence shifted to 3s with no restart (seq counter unbroken).
 

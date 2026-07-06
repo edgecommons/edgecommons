@@ -23,7 +23,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
-import software.amazon.awssdk.aws.greengrass.model.QOS;
+import com.mbreissi.edgecommons.messaging.Qos;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -179,21 +179,21 @@ class StandaloneMessagingIntegrationTest {
 
     @Test
     void iotCoreMethodsThrowWhenNotConfigured() {
-        // The integration config has no iotCore section, so IoT Core operations must fail clearly.
+        // The integration config has no northbound section, so northbound operations must fail clearly.
         Message m = msg("X", "k", "v");
-        assertThrows(IllegalStateException.class, () -> provider.publishToIoTCore("itest/iot", m, QOS.AT_LEAST_ONCE));
+        assertThrows(IllegalStateException.class, () -> provider.publishNorthbound("itest/iot", m, Qos.AT_LEAST_ONCE));
         assertThrows(IllegalStateException.class,
-                () -> provider.publishToIoTCoreRaw("itest/iot", new JsonObject(), QOS.AT_LEAST_ONCE));
+                () -> provider.publishNorthboundRaw("itest/iot", new JsonObject(), Qos.AT_LEAST_ONCE));
         assertThrows(IllegalStateException.class,
-                () -> provider.subscribeToIoTCore("itest/iot", (t, msg) -> { }, QOS.AT_LEAST_ONCE, 1));
-        assertThrows(IllegalStateException.class, () -> provider.unsubscribeFromIoTCore("itest/iot"));
-        assertThrows(IllegalStateException.class, () -> provider.requestFromIoTCore("itest/iot", m));
+                () -> provider.subscribeNorthbound("itest/iot", (t, msg) -> { }, Qos.AT_LEAST_ONCE, 1));
+        assertThrows(IllegalStateException.class, () -> provider.unsubscribeNorthbound("itest/iot"));
+        assertThrows(IllegalStateException.class, () -> provider.requestNorthbound("itest/iot", m));
     }
 
     @Test
     void nativeClientsReflectConfiguration() {
         assertNotNull(provider.getNativeLocalClient());
-        assertNull(provider.getNativeIotCoreClient(), "iotCore client is null when not configured");
+        assertNull(provider.getNativeNorthboundClient(), "northbound client is null when not configured");
     }
 
     @Test

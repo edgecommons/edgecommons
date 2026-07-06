@@ -41,7 +41,7 @@
 //! - [`super`], [`crate::ipc`].
 
 use async_trait::async_trait;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
 use super::ConfigSource;
@@ -73,7 +73,13 @@ impl ShadowConfigSource {
 /// across the Java/Python/Rust/TS libraries so they agree on the same shadow.
 fn sanitize_shadow_name(name: &str) -> String {
     name.chars()
-        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, ':' | '_' | '-') { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, ':' | '_' | '-') {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -144,7 +150,10 @@ impl ConfigSource for ShadowConfigSource {
         rt.connect().await?;
         // The raw `ComponentConfig` string is reported back verbatim so it byte-matches
         // `desired` and clears the delta; it is also parsed into the config we return.
-        let config_str = match rt.get_shadow(&self.thing_name, Some(self.shadow_name.clone())).await {
+        let config_str = match rt
+            .get_shadow(&self.thing_name, Some(self.shadow_name.clone()))
+            .await
+        {
             Ok(bytes) if !bytes.is_empty() => {
                 let doc: Value = serde_json::from_slice(&bytes)?;
                 extract_config_str(&doc).unwrap_or_else(default_config_str)
@@ -178,7 +187,10 @@ impl ConfigSource for ShadowConfigSource {
             // Local IPC pub/sub on the shadow's event topics (served by ShadowManager).
             let filter = format!("$aws/things/{thing}/shadow/name/{shadow}/+/+");
             let (tx, mut rx) = mpsc::channel::<(String, Vec<u8>)>(16);
-            if let Err(e) = rt.subscribe(&filter, Destination::Local, Qos::AtLeastOnce, tx).await {
+            if let Err(e) = rt
+                .subscribe(&filter, Destination::Local, Qos::AtLeastOnce, tx)
+                .await
+            {
                 tracing::warn!(error = %e, "SHADOW watch: subscribe failed");
                 return;
             }
@@ -230,10 +242,14 @@ mod tests {
     #[test]
     fn extract_config_str_preserves_desired_string_verbatim() {
         // Note the deliberately non-alphabetical key order.
-        let desired = r#"{"logging":{"level":"DEBUG"},"component":{"global":{"publish_interval":7}}}"#;
+        let desired =
+            r#"{"logging":{"level":"DEBUG"},"component":{"global":{"publish_interval":7}}}"#;
         let doc = json!({ "state": { "desired": { "ComponentConfig": desired } } });
         let extracted = extract_config_str(&doc).expect("desired present");
-        assert_eq!(extracted, desired, "must be byte-identical (no re-serialization)");
+        assert_eq!(
+            extracted, desired,
+            "must be byte-identical (no re-serialization)"
+        );
     }
 
     #[test]
@@ -258,13 +274,20 @@ mod tests {
 
     #[test]
     fn sanitizes_dotted_component_name_default() {
-        assert_eq!(sanitize_shadow_name("com.example.MyComponent"), "com_example_MyComponent");
+        assert_eq!(
+            sanitize_shadow_name("com.example.MyComponent"),
+            "com_example_MyComponent"
+        );
         assert_eq!(sanitize_shadow_name("a.b/c+d#e f"), "a_b_c_d_e_f");
         assert_eq!(sanitize_shadow_name("My-Shadow_1:v2"), "My-Shadow_1:v2");
         // No explicit name -> sanitized component name; explicit name -> verbatim.
         let s = ShadowConfigSource::new(None, "thing-1", "com.example.MyComponent");
         assert_eq!(s.shadow_name, "com_example_MyComponent");
-        let s2 = ShadowConfigSource::new(Some("my.explicit".to_string()), "thing-1", "com.example.MyComponent");
+        let s2 = ShadowConfigSource::new(
+            Some("my.explicit".to_string()),
+            "thing-1",
+            "com.example.MyComponent",
+        );
         assert_eq!(s2.shadow_name, "my.explicit");
     }
 }

@@ -66,13 +66,13 @@ class _RecordingMessaging:
     def publish(self, topic, msg):
         self.local.append((topic, msg))
 
-    def publish_to_iot_core(self, topic, msg, qos):
+    def publish_northbound(self, topic, msg, qos):
         self.iotcore.append((topic, msg))
         self.iotcore_qos.append(qos)
 
 
 class _ThrowingIotCoreMessaging(_RecordingMessaging):
-    def publish_to_iot_core(self, topic, msg, qos):
+    def publish_northbound(self, topic, msg, qos):
         raise RuntimeError("iot core down")
 
 
@@ -90,8 +90,6 @@ class TestChannel:
         assert Channel.from_config("local") is Channel.LOCAL
         assert Channel.from_config("LOCAL") is Channel.LOCAL
         assert Channel.from_config("northbound") is Channel.NORTHBOUND
-        assert Channel.from_config("iotcore") is Channel.NORTHBOUND
-        assert Channel.from_config("iot_core") is Channel.NORTHBOUND
         stream = Channel.from_config("stream:hot")
         assert stream.kind is Channel.Kind.STREAM
         assert stream.stream_name == "hot"
@@ -101,6 +99,8 @@ class TestChannel:
         assert Channel.from_config("") is None
         assert Channel.from_config("   ") is None
         assert Channel.from_config("bogus") is None
+        assert Channel.from_config("iotcore") is None
+        assert Channel.from_config("iot_core") is None
         assert Channel.from_config("stream:") is None, "an empty stream name is not valid"
 
     def test_stream_rejects_empty_name(self):
@@ -291,13 +291,13 @@ class TestDataFacade:
         assert sample["serverTs"] == "2026-07-01T11:00:01Z", "caller serverTs is not overwritten"
 
     def test_northbound_override_routes_to_iot_core(self):
-        from awsiot.greengrasscoreipc.model import QOS
+        from edgecommons.messaging.qos import Qos
 
         messaging = _RecordingMessaging()
         facade = DataFacade(_FakeConfigManager(), "kep1", _uns(), messaging, clock=FIXED_CLOCK)
         facade.signal("temp").add_sample(21.5).via(Channel.NORTHBOUND).publish()
         assert not messaging.local
-        assert messaging.iotcore_qos == [QOS.AT_LEAST_ONCE]
+        assert messaging.iotcore_qos == [Qos.AT_LEAST_ONCE]
 
     def test_northbound_transport_failure_is_swallowed(self):
         messaging = _ThrowingIotCoreMessaging()
@@ -496,11 +496,11 @@ class TestEventsFacade:
         assert messaging.local[0][0] == "ecv1/gw-01/opcua-adapter/main/evt/warning/degraded"
 
     def test_via_northbound_routes_to_iot_core(self):
-        from awsiot.greengrasscoreipc.model import QOS
+        from edgecommons.messaging.qos import Qos
 
         facade, messaging = self._facade()
         facade.via(Channel.NORTHBOUND).emit("overtemp", "escalate", severity=Severity.CRITICAL)
-        assert messaging.iotcore_qos == [QOS.AT_LEAST_ONCE]
+        assert messaging.iotcore_qos == [Qos.AT_LEAST_ONCE]
 
     def test_via_stream_is_rejected(self):
         facade, _ = self._facade()
@@ -554,11 +554,11 @@ class TestAppFacade:
         assert messaging.local[0][0] == "ecv1/gw-01/opcua-adapter/main/app/a_b"
 
     def test_northbound_routing_goes_to_iot_core(self):
-        from awsiot.greengrasscoreipc.model import QOS
+        from edgecommons.messaging.qos import Qos
 
         facade, messaging = self._facade()
         facade.publish("CloudEvent", "cloud", {}, Channel.NORTHBOUND)
-        assert messaging.iotcore_qos == [QOS.AT_LEAST_ONCE]
+        assert messaging.iotcore_qos == [Qos.AT_LEAST_ONCE]
 
     def test_stream_routing_is_rejected(self):
         facade, _ = self._facade()

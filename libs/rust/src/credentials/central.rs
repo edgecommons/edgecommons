@@ -35,10 +35,10 @@ pub use aws::AwsSecretsManagerSource;
 #[cfg(feature = "credentials-aws")]
 mod aws {
     use super::{CentralSecret, CentralVaultSource};
-    use crate::error::EdgeCommonsError;
     use crate::Result;
-    use aws_sdk_secretsmanager::error::DisplayErrorContext;
+    use crate::error::EdgeCommonsError;
     use aws_sdk_secretsmanager::Client;
+    use aws_sdk_secretsmanager::error::DisplayErrorContext;
     use std::collections::BTreeMap;
     use tokio::runtime::Runtime;
 
@@ -63,9 +63,11 @@ mod aws {
                 scope
                     .spawn(|| {
                         rt.block_on(async {
-                            let mut loader = aws_config::defaults(aws_config::BehaviorVersion::latest());
+                            let mut loader =
+                                aws_config::defaults(aws_config::BehaviorVersion::latest());
                             if let Some(r) = region {
-                                loader = loader.region(aws_sdk_secretsmanager::config::Region::new(r));
+                                loader =
+                                    loader.region(aws_sdk_secretsmanager::config::Region::new(r));
                             }
                             if let Some(url) = endpoint_url {
                                 loader = loader.endpoint_url(url);
@@ -75,7 +77,11 @@ mod aws {
                         })
                     })
                     .join()
-                    .map_err(|_| EdgeCommonsError::Credentials("secretsmanager client init thread panicked".into()))
+                    .map_err(|_| {
+                        EdgeCommonsError::Credentials(
+                            "secretsmanager client init thread panicked".into(),
+                        )
+                    })
             })?;
 
             Ok(Self { rt, client })
@@ -97,13 +103,23 @@ mod aws {
                     } else {
                         return Ok(None);
                     };
-                    Ok(Some(CentralSecret { bytes, central_version_id, labels: BTreeMap::new() }))
+                    Ok(Some(CentralSecret {
+                        bytes,
+                        central_version_id,
+                        labels: BTreeMap::new(),
+                    }))
                 }
                 Err(e) => {
-                    if e.as_service_error().map(|s| s.is_resource_not_found_exception()).unwrap_or(false) {
+                    if e.as_service_error()
+                        .map(|s| s.is_resource_not_found_exception())
+                        .unwrap_or(false)
+                    {
                         Ok(None)
                     } else {
-                        Err(EdgeCommonsError::Credentials(format!("get secret '{name}': {}", DisplayErrorContext(&e))))
+                        Err(EdgeCommonsError::Credentials(format!(
+                            "get secret '{name}': {}",
+                            DisplayErrorContext(&e)
+                        )))
                     }
                 }
             }

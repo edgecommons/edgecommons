@@ -7,7 +7,6 @@ package com.mbreissi.edgecommons.messaging;
 import com.google.gson.JsonObject;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import software.amazon.awssdk.aws.greengrass.model.QOS;
 
 import java.time.Duration;
 import java.util.concurrent.Executors;
@@ -168,14 +167,14 @@ public abstract class MessagingProvider
     }
 
     public abstract void publish(String topic, Message message);
-    public abstract void publishToIoTCore(String topic, Message message, QOS qos);
+    public abstract void publishNorthbound(String topic, Message message, Qos qos);
 
     public abstract void publishRaw(String topic, JsonObject payload);
-    public abstract void publishToIoTCoreRaw(String topic, JsonObject payload, QOS qos);
+    public abstract void publishNorthboundRaw(String topic, JsonObject payload, Qos qos);
 
     public abstract void subscribe(String topicFilter, BiConsumer<String, Message> callback,
                                    int maxConcurrency, int maxMessages);
-    public abstract void subscribeToIoTCore(String topicFilter, BiConsumer<String, Message> callback, QOS qos,
+    public abstract void subscribeNorthbound(String topicFilter, BiConsumer<String, Message> callback, Qos qos,
                                             int maxConcurrency, int maxMessages);
 
     /** Backward-compatible overload: uses the default per-subscription queue bound. */
@@ -185,13 +184,13 @@ public abstract class MessagingProvider
     }
 
     /** Backward-compatible overload: uses the default per-subscription queue bound. */
-    public void subscribeToIoTCore(String topicFilter, BiConsumer<String, Message> callback, QOS qos, int maxConcurrency)
+    public void subscribeNorthbound(String topicFilter, BiConsumer<String, Message> callback, Qos qos, int maxConcurrency)
     {
-        subscribeToIoTCore(topicFilter, callback, qos, maxConcurrency, MessagingClient.DEFAULT_MAX_MESSAGES);
+        subscribeNorthbound(topicFilter, callback, qos, maxConcurrency, MessagingClient.DEFAULT_MAX_MESSAGES);
     }
     public abstract void unsubscribe(String topicFilter);
 
-    public abstract void unsubscribeFromIoTCore(String topicFilter);
+    public abstract void unsubscribeNorthbound(String topicFilter);
 
     public abstract ReplyFuture request(String topic, Message message);
 
@@ -204,12 +203,12 @@ public abstract class MessagingProvider
     public abstract void cancelRequest(ReplyFuture future);
     public abstract void reply(Message request, Message reply);
 
-    public abstract ReplyFuture requestFromIoTCore(String topic, Message request);
+    public abstract ReplyFuture requestNorthbound(String topic, Message request);
 
     /** IoT Core variant of {@link #request(String, Message, Duration)}. */
-    public abstract ReplyFuture requestFromIoTCore(String topic, Message request, Duration timeout);
-    public abstract void cancelRequestFromIoTCore(ReplyFuture future);
-    public abstract void replyToIoTCore(Message request, Message reply);
+    public abstract ReplyFuture requestNorthbound(String topic, Message request, Duration timeout);
+    public abstract void cancelRequestNorthbound(ReplyFuture future);
+    public abstract void replyNorthbound(Message request, Message reply);
 
     // Copied from open source Paho MQTT Java client
     // (https://github.com/eclipse/paho.mqtt.java/blob/master/org.eclipse.paho.client.mqttv3/src/main/java/org/eclipse/paho/client/mqttv3/MqttTopic.java)
@@ -291,7 +290,7 @@ public abstract class MessagingProvider
 
     public abstract Object getNativeLocalClient();
 
-    public abstract Object getNativeIotCoreClient();
+    public abstract Object getNativeNorthboundClient();
 
     /**
      * Whether the underlying transport is currently connected — the messaging input to the readiness

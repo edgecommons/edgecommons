@@ -3,7 +3,7 @@
  * `aws-iot-device-sdk-v2`'s `greengrasscoreipc` client (the V1 IPC surface).
  *
  * Implements the transport {@link MessagingProvider} (local pub/sub via
- * `publishToTopic`/`subscribeToTopic`; the IoT Core bridge via
+ * `publishToTopic`/`subscribeToTopic`; the northbound bridge via Greengrass
  * `publishToIoTCore`/`subscribeToIoTCore`) and additionally exposes the Greengrass
  * config + device-shadow operations the `GG_CONFIG` / `SHADOW` config sources need.
  *
@@ -49,7 +49,14 @@ export interface IpcOptions {
 }
 
 function ipcQos(qos: Qos): model.QOS {
-  return qos === Qos.AtMostOnce ? model.QOS.AT_MOST_ONCE : model.QOS.AT_LEAST_ONCE;
+  switch (qos) {
+    case Qos.AtMostOnce:
+      return model.QOS.AT_MOST_ONCE;
+    case Qos.AtLeastOnce:
+      return model.QOS.AT_LEAST_ONCE;
+    case Qos.ExactlyOnce:
+      throw EdgeCommonsError.config("Greengrass IoT Core IPC supports only MQTT QoS 0 and 1; got ExactlyOnce");
+  }
 }
 
 /** Normalize an eventstream payload (string | ArrayBuffer | view) to a Buffer. */
@@ -99,7 +106,7 @@ export class IpcMessagingProvider implements MessagingProvider {
   }
 
   async publishBytes(topic: string, payload: Buffer, dest: Destination, qos: Qos): Promise<void> {
-    if (dest === Destination.IoTCore) {
+    if (dest === Destination.Northbound) {
       await this.client.publishToIoTCore({ topicName: topic, qos: ipcQos(qos), payload });
     } else {
       await this.client.publishToTopic({ topic, publishMessage: { binaryMessage: { message: payload } } });
@@ -112,8 +119,8 @@ export class IpcMessagingProvider implements MessagingProvider {
     qos: Qos,
     onMessage: (topic: string, payload: Buffer) => void,
   ): Promise<RawSubscription> {
-    if (dest === Destination.IoTCore) {
-      return this.subscribeIoTCoreRaw(filter, qos, onMessage);
+    if (dest === Destination.Northbound) {
+      return this.subscribeNorthboundRaw(filter, qos, onMessage);
     }
     return this.subscribeLocal(filter, onMessage);
   }
@@ -138,7 +145,7 @@ export class IpcMessagingProvider implements MessagingProvider {
     return this.track(op);
   }
 
-  private async subscribeIoTCoreRaw(
+  private async subscribeNorthboundRaw(
     filter: string,
     qos: Qos,
     onMessage: (topic: string, payload: Buffer) => void,

@@ -11,6 +11,7 @@ import com.mbreissi.edgecommons.messaging.Message;
 import com.mbreissi.edgecommons.messaging.MessageBuilder;
 import com.mbreissi.edgecommons.messaging.MessageIdentity;
 import com.mbreissi.edgecommons.messaging.MessagingClient;
+import com.mbreissi.edgecommons.messaging.Qos;
 import com.mbreissi.edgecommons.messaging.ReservedPublisher;
 import com.mbreissi.edgecommons.metrics.Metric;
 import com.mbreissi.edgecommons.metrics.MetricBuilder;
@@ -22,7 +23,6 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import software.amazon.awssdk.aws.greengrass.model.QOS;
 
 import java.util.HashMap;
 import java.util.List;
@@ -40,7 +40,7 @@ import java.util.concurrent.TimeUnit;
  * enabled system measures (cpu/memory/disk/…) as a metric named {@value #SYS_METRIC_NAME} through
  * the normal metric subsystem (D6 — the measures keep the metric subsystem's full sink routing).
  * On graceful shutdown ({@link #close()}) a best-effort {@code {"status":"STOPPED"}} state is
- * published. {@code heartbeat.destination} ({@code local}|{@code iotcore}) selects the keepalive's
+ * published. {@code heartbeat.destination} ({@code local}|{@code northbound}) selects the keepalive's
  * transport only. Defaults: on / 5 s / local (M11).
  */
 public class Heartbeat implements ConfigurationChangeListener
@@ -256,10 +256,9 @@ public class Heartbeat implements ConfigurationChangeListener
 
         ReservedPublisher publisher = messagingService.reservedPublisher();
         String destination = configurationService.getHeartbeatConfig().getDestination();
-        if (destination != null && (destination.equalsIgnoreCase("iotcore")
-                || destination.equalsIgnoreCase("iot_core")))
+        if (destination != null && destination.equalsIgnoreCase("northbound"))
         {
-            publisher.publishToIoTCore(topic, stateMessage, QOS.AT_LEAST_ONCE);
+            publisher.publishNorthbound(topic, stateMessage, Qos.AT_LEAST_ONCE);
         }
         else
         {

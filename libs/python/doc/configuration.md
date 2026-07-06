@@ -99,7 +99,7 @@ These sections are managed by edgecommons and configure framework behavior:
 - **`logging`**: Logging system configuration
 - **`heartbeat`**: Component health monitoring — a UNS `state` keepalive plus system measures as the `sys` metric (see [heartbeat.md](heartbeat.md))
 - **`hierarchy`** / **`identity`** / **`topic`**: the UNS enterprise hierarchy (`hierarchy.levels`, last level = the device), the per-level identity values (all levels except the last; the device value is always the resolved thing name), and `topic.includeRoot` (default `false`; effective only with a multi-level hierarchy)
-- **`messaging`**: `requestTimeoutSeconds` (default 30, `0` disables — the framework request deadline) and the optional `lwt` MQTT last-will section (see [messaging.md](messaging.md))
+- **`messaging`**: `requestTimeoutSeconds` (default 30, `0` disables — the framework request deadline); generic component messaging config does not define MQTT Last-Will
 - **`metricEmission`**: Metrics collection and emission configuration
 - **`tags`**: Component tagging for organization and templating
 
@@ -293,7 +293,7 @@ resolved_path = config_service.resolve_template("/data/{ThingName}/{site}/logs")
       "cpu": true,
       "memory": true
     },
-    "destination": "iotcore"
+    "destination": "northbound"
   },
   "tags": {
     "site": "plant-a",

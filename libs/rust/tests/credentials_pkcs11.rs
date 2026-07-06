@@ -41,7 +41,8 @@ fn pkcs11_wrapped_vault_round_trip_and_persists() {
     // Open a fresh vault (DEK wrapped by the HSM key), write a secret, read it back.
     let cfg: CredentialsConfig = serde_json::from_value(cfg_json.clone()).unwrap();
     let svc = credentials::open(&cfg).expect("open pkcs11 vault");
-    svc.put("db/password", b"s3cr3t", PutOptions::default()).expect("put");
+    svc.put("db/password", b"s3cr3t", PutOptions::default())
+        .expect("put");
     let got = svc.get("db/password").expect("get").expect("present");
     assert_eq!(got.bytes(), b"s3cr3t");
     drop(svc);
@@ -49,7 +50,10 @@ fn pkcs11_wrapped_vault_round_trip_and_persists() {
     // Re-open the persisted vault: the DEK must unwrap through the HSM again (fail-closed otherwise).
     let cfg2: CredentialsConfig = serde_json::from_value(cfg_json).unwrap();
     let svc2 = credentials::open(&cfg2).expect("reopen pkcs11 vault");
-    let again = svc2.get("db/password").expect("get").expect("present after reopen");
+    let again = svc2
+        .get("db/password")
+        .expect("get")
+        .expect("present after reopen");
     assert_eq!(again.bytes(), b"s3cr3t");
 
     let _ = std::fs::remove_dir_all(&dir);

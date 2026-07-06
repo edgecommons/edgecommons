@@ -32,6 +32,10 @@ import { randomUUID } from "crypto";
 
 import { logger } from "./logging";
 
+export const MAX_BINARY_BODY_BYTES = 64 * 1024;
+const BINARY_BODY_KEY = "_edgecommonsBinary";
+const BINARY_ENCODING = "base64";
+
 /** Message metadata. Field names are the snake_case wire keys. */
 export interface MessageHeader {
   name: string;
@@ -216,14 +220,66 @@ function asNonEmptyString(value: unknown): string | undefined {
 }
 
 /**
- * #16: a binary body (`Buffer`/`Uint8Array`) travels as a base64 JSON string — the portable
- * cross-language interim for binary bodies (otherwise `JSON.stringify(Buffer)` emits a non-portable
- * `{ "type": "Buffer", "data": [...] }`). Matches Java `byte[]` -> base64 and Python `bytes` ->
- * base64, scoped to a top-level binary body, pending a first-class binary message type. Non-binary
- * bodies pass through unchanged.
+ * Encode a top-level binary body (`Buffer`/`Uint8Array`) as the first-class bounded binary marker.
  */
 function encodeBody(value: unknown): unknown {
-  return value instanceof Uint8Array ? Buffer.from(value).toString("base64") : value;
+  if (!(value instanceof Uint8Array)) {
+    return value;
+  }
+  const bytes = Buffer.from(value);
+  if (bytes.length > MAX_BINARY_BODY_BYTES) {
+    throw new Error(`Binary message body exceeds ${MAX_BINARY_BODY_BYTES} bytes`);
+  }
+  return {
+    [BINARY_BODY_KEY]: {
+      encoding: BINARY_ENCODING,
+      length: bytes.length,
+      data: bytes.toString("base64"),
+    },
+  };
+}
+
+function binaryDescriptor(value: unknown): Record<string, unknown> | undefined {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const obj = value as Record<string, unknown>;
+  if (!(BINARY_BODY_KEY in obj)) {
+    return undefined;
+  }
+  const descriptor = obj[BINARY_BODY_KEY];
+  if (descriptor === null || typeof descriptor !== "object" || Array.isArray(descriptor)) {
+    throw new Error("Binary message body marker must be an object");
+  }
+  return descriptor as Record<string, unknown>;
+}
+
+function decodeBinaryDescriptor(descriptor: Record<string, unknown>): Buffer {
+  if (descriptor.encoding !== BINARY_ENCODING) {
+    throw new Error("Binary message body encoding must be base64");
+  }
+  if (!Number.isInteger(descriptor.length) || (descriptor.length as number) < 0) {
+    throw new Error("Binary message body length must be a non-negative integer");
+  }
+  const declaredLength = descriptor.length as number;
+  if (declaredLength > MAX_BINARY_BODY_BYTES) {
+    throw new Error(`Binary message body exceeds ${MAX_BINARY_BODY_BYTES} bytes`);
+  }
+  if (typeof descriptor.data !== "string" || !isStrictBase64(descriptor.data)) {
+    throw new Error("Binary message body data is not valid base64");
+  }
+  const decoded = Buffer.from(descriptor.data, "base64");
+  if (decoded.length !== declaredLength) {
+    throw new Error("Binary message body length does not match decoded data");
+  }
+  return decoded;
+}
+
+function isStrictBase64(value: string): boolean {
+  if (value === "") {
+    return true;
+  }
+  return /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value);
 }
 
 /**
@@ -288,6 +344,32 @@ export class Message {
   /** The message body (envelope payload). */
   getBody(): unknown {
     return this.body;
+  }
+
+  /** Whether the payload is a first-class binary body. */
+  isBinaryBody(): boolean {
+    return (
+      this.body instanceof Uint8Array ||
+      (this.body !== null && typeof this.body === "object" && !Array.isArray(this.body) && BINARY_BODY_KEY in this.body)
+    );
+  }
+
+  /**
+   * Decode the first-class binary message body.
+   *
+   * @returns the decoded bytes, or `undefined` when the body is not binary
+   * @throws Error when the inbound binary marker is malformed or too large
+   */
+  getBinaryBody(): Buffer | undefined {
+    if (this.body instanceof Uint8Array) {
+      const bytes = Buffer.from(this.body);
+      if (bytes.length > MAX_BINARY_BODY_BYTES) {
+        throw new Error(`Binary message body exceeds ${MAX_BINARY_BODY_BYTES} bytes`);
+      }
+      return bytes;
+    }
+    const descriptor = binaryDescriptor(this.body);
+    return descriptor === undefined ? undefined : decodeBinaryDescriptor(descriptor);
   }
 
   /**

@@ -45,7 +45,7 @@ The legacy `heartbeat.targets[]` array (per-target topic/destination overrides) 
 | `enabled` | boolean | `true` | Whether the heartbeat (keepalive + `sys` metric) runs. |
 | `intervalSecs` | integer ≥ 1 | `5` | Tick interval in seconds. |
 | `measures` | object | cpu+memory on | Which system measures the `sys` metric carries (booleans, table below). |
-| `destination` | `"local"` \| `"iotcore"` | `"local"` | Transport of the **state keepalive only**. The measures always route through the metric subsystem's own target. |
+| `destination` | `"local"` \| `"northbound"` | `"local"` | Transport of the **state keepalive only**. The measures always route through the metric subsystem's own target. |
 
 ```json
 {

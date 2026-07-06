@@ -5,7 +5,6 @@
 package com.mbreissi.edgecommons.messaging;
 
 import com.google.gson.JsonObject;
-import software.amazon.awssdk.aws.greengrass.model.QOS;
 
 import java.util.Objects;
 
@@ -56,7 +55,7 @@ public final class ReservedPublisher {
      * @param msg   the message to publish
      * @param qos   the delivery quality of service
      */
-    public void publishToIoTCore(String topic, Message msg, QOS qos) {
-        client.publishReservedToIoTCore(topic, msg, qos);
+    public void publishNorthbound(String topic, Message msg, Qos qos) {
+        client.publishReservedNorthbound(topic, msg, qos);
     }
 }

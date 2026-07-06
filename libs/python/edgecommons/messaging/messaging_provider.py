@@ -5,8 +5,8 @@ from abc import abstractmethod
 from typing import Callable, Optional
 from edgecommons.messaging.errors import RequestTimeoutError
 from edgecommons.messaging.message import Message
+from edgecommons.messaging.qos import Qos
 from edgecommons.utils.iou import Iou
-from awsiot.greengrasscoreipc.model import QOS
 
 # Default per-subscription queue bound (drop on overflow) when a caller doesn't specify one.
 DEFAULT_MAX_MESSAGES = 10000
@@ -110,11 +110,11 @@ class MessagingProvider(metaclass=abc.ABCMeta):
         pass
 
     @abstractmethod
-    def publish_to_iot_core(self, topic: str, msg: Message, qos: str):
+    def publish_northbound(self, topic: str, msg: Message, qos: Qos):
         pass
 
     @abstractmethod
-    def publish_to_iot_core_raw(self, topic: str, msg: dict, qos: str):
+    def publish_northbound_raw(self, topic: str, msg: dict, qos: Qos):
         pass
 
     @abstractmethod
@@ -128,11 +128,11 @@ class MessagingProvider(metaclass=abc.ABCMeta):
         pass
 
     @abstractmethod
-    def subscribe_to_iot_core(
+    def subscribe_northbound(
         self,
         topic: str,
         callback: Callable[[str, Message], None],
-        qos: QOS,
+        qos: Qos,
         max_concurrency: int = None,
         max_messages: int = None,
     ):
@@ -143,7 +143,7 @@ class MessagingProvider(metaclass=abc.ABCMeta):
         pass
 
     @abstractmethod
-    def unsubscribe_from_iot_core(self, topic: str):
+    def unsubscribe_northbound(self, topic: str):
         pass
 
     @abstractmethod
@@ -155,9 +155,9 @@ class MessagingProvider(metaclass=abc.ABCMeta):
         pass
 
     @abstractmethod
-    def request_from_iot_core(self, topic: str, msg: Message,
+    def request_northbound(self, topic: str, msg: Message,
                               timeout_secs: Optional[float] = None) -> Iou:
-        """IoT Core variant of :meth:`request` (same deadline semantics)."""
+        """Northbound variant of :meth:`request` (same deadline semantics)."""
         pass
 
     @abstractmethod
@@ -165,7 +165,7 @@ class MessagingProvider(metaclass=abc.ABCMeta):
         pass
 
     @abstractmethod
-    def reply_to_iot_core(self, request_msg: Message, response_msg: Message):
+    def reply_northbound(self, request_msg: Message, response_msg: Message):
         pass
 
     @abstractmethod
@@ -173,7 +173,7 @@ class MessagingProvider(metaclass=abc.ABCMeta):
         pass
 
     @abstractmethod
-    def cancel_request_from_iot_core(self, iou: Iou):
+    def cancel_request_northbound(self, iou: Iou):
         pass
 
     @abstractmethod

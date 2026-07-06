@@ -21,9 +21,9 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use crate::error::{EdgeCommonsError, Result};
+use crate::messaging::Qos;
 use crate::messaging::message::Message;
 use crate::messaging::service::{MessageHandler, MessagingService, ReplyFuture, ReservedMessaging};
-use crate::messaging::Qos;
 use crate::metrics::{Metric, MetricService};
 
 /// A [`MessagingService`] (+ crate-private [`ReservedMessaging`] seam) that records
@@ -42,16 +42,16 @@ pub(crate) struct RecordingMessaging {
     pub subscribed: Mutex<Vec<String>>,
     /// Live subscription handlers (local + IoT Core share one map — no test so far needs both
     /// destinations subscribed to the same filter), keyed by filter: inserted by
-    /// `subscribe`/`subscribe_to_iot_core`, removed by `unsubscribe`/`unsubscribe_from_iot_core`.
+    /// `subscribe`/`subscribe_northbound`, removed by `unsubscribe`/`unsubscribe_northbound`.
     /// Backs [`Self::subscribed_topics`] / [`Self::simulate_message`] for tests exercising a
     /// `MessageHandler` (e.g. [`crate::uns::RepublishListener`], [`crate::commands::CommandInbox`]).
     pub handlers: Mutex<HashMap<String, Arc<dyn MessageHandler>>>,
     /// `(reply_to topic, reply message)` recorded by [`MessagingService::reply`] /
-    /// `reply_to_iot_core` — the correlation id is stamped from the request first, mirroring
+    /// `reply_northbound` — the correlation id is stamped from the request first, mirroring
     /// [`crate::messaging::service::DefaultMessagingService`]'s real `reply()`. Backs
     /// [`Self::replies`] (the command-inbox tests' reply assertions).
     pub replied: Mutex<Vec<(String, Message)>>,
-    /// When `true`, `reply`/`reply_to_iot_core` return an error instead of recording — drives
+    /// When `true`, `reply`/`reply_northbound` return an error instead of recording — drives
     /// the "a failing reply publish is swallowed" tests. Set via [`Self::set_fail_reply`].
     pub fail_reply: AtomicBool,
     /// Monotonic timestamps of each publish (any path), for timing tests.
@@ -98,8 +98,8 @@ impl RecordingMessaging {
         self.connected.store(connected, Ordering::SeqCst);
     }
 
-    /// The currently-subscribed filter set — grows on `subscribe`/`subscribe_to_iot_core`,
-    /// shrinks on `unsubscribe`/`unsubscribe_from_iot_core`. Mirrors the Java
+    /// The currently-subscribed filter set — grows on `subscribe`/`subscribe_northbound`,
+    /// shrinks on `unsubscribe`/`unsubscribe_northbound`. Mirrors the Java
     /// `MockMessagingService.getSubscribedTopics()`.
     pub fn subscribed_topics(&self) -> std::collections::HashSet<String> {
         self.handlers.lock().unwrap().keys().cloned().collect()
@@ -124,12 +124,12 @@ impl RecordingMessaging {
         }
     }
 
-    /// All `(reply_to topic, reply message)` pairs recorded via `reply`/`reply_to_iot_core`.
+    /// All `(reply_to topic, reply message)` pairs recorded via `reply`/`reply_northbound`.
     pub fn replies(&self) -> Vec<(String, Message)> {
         self.replied.lock().unwrap().clone()
     }
 
-    /// Make the next (and every subsequent) `reply`/`reply_to_iot_core` call fail instead of
+    /// Make the next (and every subsequent) `reply`/`reply_northbound` call fail instead of
     /// recording — simulates a broker/publish failure so tests can assert it is swallowed.
     pub fn set_fail_reply(&self, fail: bool) {
         self.fail_reply.store(fail, Ordering::SeqCst);
@@ -140,18 +140,24 @@ impl RecordingMessaging {
 impl ReservedMessaging for RecordingMessaging {
     async fn publish_reserved(&self, topic: &str, msg: &Message) -> Result<()> {
         self.publish_times.lock().unwrap().push(Instant::now());
-        self.reserved_published.lock().unwrap().push((topic.to_string(), msg.clone()));
+        self.reserved_published
+            .lock()
+            .unwrap()
+            .push((topic.to_string(), msg.clone()));
         Ok(())
     }
 
-    async fn publish_reserved_to_iot_core(
+    async fn publish_reserved_northbound(
         &self,
         topic: &str,
         msg: &Message,
         _qos: Qos,
     ) -> Result<()> {
         self.publish_times.lock().unwrap().push(Instant::now());
-        self.reserved_iot_published.lock().unwrap().push((topic.to_string(), msg.clone()));
+        self.reserved_iot_published
+            .lock()
+            .unwrap()
+            .push((topic.to_string(), msg.clone()));
         Ok(())
     }
 }
@@ -160,13 +166,19 @@ impl ReservedMessaging for RecordingMessaging {
 impl MessagingService for RecordingMessaging {
     async fn publish(&self, topic: &str, msg: &Message) -> Result<()> {
         self.publish_times.lock().unwrap().push(Instant::now());
-        self.published.lock().unwrap().push((topic.to_string(), msg.clone()));
+        self.published
+            .lock()
+            .unwrap()
+            .push((topic.to_string(), msg.clone()));
         Ok(())
     }
 
-    async fn publish_to_iot_core(&self, topic: &str, msg: &Message, _qos: Qos) -> Result<()> {
+    async fn publish_northbound(&self, topic: &str, msg: &Message, _qos: Qos) -> Result<()> {
         self.publish_times.lock().unwrap().push(Instant::now());
-        self.iot_published.lock().unwrap().push((topic.to_string(), msg.clone()));
+        self.iot_published
+            .lock()
+            .unwrap()
+            .push((topic.to_string(), msg.clone()));
         Ok(())
     }
 
@@ -174,14 +186,20 @@ impl MessagingService for RecordingMessaging {
         // Record as a raw message so tests can read it via `get_raw()`.
         let msg = Message::raw(payload.clone());
         self.publish_times.lock().unwrap().push(Instant::now());
-        self.published.lock().unwrap().push((topic.to_string(), msg));
+        self.published
+            .lock()
+            .unwrap()
+            .push((topic.to_string(), msg));
         Ok(())
     }
 
-    async fn publish_to_iot_core_raw(&self, topic: &str, payload: &Value, _qos: Qos) -> Result<()> {
+    async fn publish_northbound_raw(&self, topic: &str, payload: &Value, _qos: Qos) -> Result<()> {
         let msg = Message::raw(payload.clone());
         self.publish_times.lock().unwrap().push(Instant::now());
-        self.iot_published.lock().unwrap().push((topic.to_string(), msg));
+        self.iot_published
+            .lock()
+            .unwrap()
+            .push((topic.to_string(), msg));
         Ok(())
     }
 
@@ -193,11 +211,14 @@ impl MessagingService for RecordingMessaging {
         _max_concurrency: usize,
     ) -> Result<()> {
         self.subscribed.lock().unwrap().push(filter.to_string());
-        self.handlers.lock().unwrap().insert(filter.to_string(), handler);
+        self.handlers
+            .lock()
+            .unwrap()
+            .insert(filter.to_string(), handler);
         Ok(())
     }
 
-    async fn subscribe_to_iot_core(
+    async fn subscribe_northbound(
         &self,
         filter: &str,
         handler: Arc<dyn MessageHandler>,
@@ -206,7 +227,10 @@ impl MessagingService for RecordingMessaging {
         _max_concurrency: usize,
     ) -> Result<()> {
         self.subscribed.lock().unwrap().push(filter.to_string());
-        self.handlers.lock().unwrap().insert(filter.to_string(), handler);
+        self.handlers
+            .lock()
+            .unwrap()
+            .insert(filter.to_string(), handler);
         Ok(())
     }
 
@@ -215,17 +239,21 @@ impl MessagingService for RecordingMessaging {
         Ok(())
     }
 
-    async fn unsubscribe_from_iot_core(&self, filter: &str) -> Result<()> {
+    async fn unsubscribe_northbound(&self, filter: &str) -> Result<()> {
         self.handlers.lock().unwrap().remove(filter);
         Ok(())
     }
 
     async fn request(&self, _topic: &str, _msg: Message) -> Result<ReplyFuture> {
-        Err(EdgeCommonsError::Messaging("request not supported by RecordingMessaging".into()))
+        Err(EdgeCommonsError::Messaging(
+            "request not supported by RecordingMessaging".into(),
+        ))
     }
 
-    async fn request_from_iot_core(&self, _topic: &str, _msg: Message) -> Result<ReplyFuture> {
-        Err(EdgeCommonsError::Messaging("request not supported by RecordingMessaging".into()))
+    async fn request_northbound(&self, _topic: &str, _msg: Message) -> Result<ReplyFuture> {
+        Err(EdgeCommonsError::Messaging(
+            "request not supported by RecordingMessaging".into(),
+        ))
     }
 
     async fn request_with_timeout(
@@ -234,21 +262,27 @@ impl MessagingService for RecordingMessaging {
         _msg: Message,
         _timeout: Option<std::time::Duration>,
     ) -> Result<ReplyFuture> {
-        Err(EdgeCommonsError::Messaging("request not supported by RecordingMessaging".into()))
+        Err(EdgeCommonsError::Messaging(
+            "request not supported by RecordingMessaging".into(),
+        ))
     }
 
-    async fn request_from_iot_core_with_timeout(
+    async fn request_northbound_with_timeout(
         &self,
         _topic: &str,
         _msg: Message,
         _timeout: Option<std::time::Duration>,
     ) -> Result<ReplyFuture> {
-        Err(EdgeCommonsError::Messaging("request not supported by RecordingMessaging".into()))
+        Err(EdgeCommonsError::Messaging(
+            "request not supported by RecordingMessaging".into(),
+        ))
     }
 
     async fn reply(&self, request: &Message, reply: Message) -> Result<()> {
         if self.fail_reply.load(Ordering::SeqCst) {
-            return Err(EdgeCommonsError::Messaging("simulated reply failure".to_string()));
+            return Err(EdgeCommonsError::Messaging(
+                "simulated reply failure".to_string(),
+            ));
         }
         let topic = request.header.reply_to.clone().ok_or_else(|| {
             EdgeCommonsError::Messaging("cannot reply: request has no reply_to".to_string())
@@ -259,13 +293,13 @@ impl MessagingService for RecordingMessaging {
         Ok(())
     }
 
-    async fn reply_to_iot_core(&self, request: &Message, reply: Message) -> Result<()> {
+    async fn reply_northbound(&self, request: &Message, reply: Message) -> Result<()> {
         self.reply(request, reply).await
     }
 
     fn cancel_request(&self, _reply_future: ReplyFuture) {}
 
-    fn cancel_request_from_iot_core(&self, _reply_future: ReplyFuture) {}
+    fn cancel_request_northbound(&self, _reply_future: ReplyFuture) {}
 
     fn connected(&self) -> bool {
         self.connected.load(Ordering::SeqCst)
@@ -293,7 +327,10 @@ impl RecordingMetrics {
 #[async_trait]
 impl MetricService for RecordingMetrics {
     fn define_metric(&self, metric: Metric) {
-        self.defined.lock().unwrap().push(metric.get_name().to_string());
+        self.defined
+            .lock()
+            .unwrap()
+            .push(metric.get_name().to_string());
     }
 
     fn is_metric_defined(&self, name: &str) -> bool {
@@ -301,12 +338,18 @@ impl MetricService for RecordingMetrics {
     }
 
     async fn emit_metric(&self, name: &str, values: HashMap<String, f64>) -> Result<()> {
-        self.emitted.lock().unwrap().push((name.to_string(), values));
+        self.emitted
+            .lock()
+            .unwrap()
+            .push((name.to_string(), values));
         Ok(())
     }
 
     async fn emit_metric_now(&self, name: &str, values: HashMap<String, f64>) -> Result<()> {
-        self.emitted.lock().unwrap().push((name.to_string(), values));
+        self.emitted
+            .lock()
+            .unwrap()
+            .push((name.to_string(), values));
         Ok(())
     }
 

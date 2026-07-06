@@ -12,6 +12,7 @@ import { randomUUID } from "crypto";
 import { logger } from "../logging";
 import { Message } from "../message";
 import { reservedClassOf } from "../uns";
+import { QosConfig, defaultQosConfig } from "./config";
 import {
   Destination,
   IMessagingService,
@@ -24,9 +25,6 @@ import {
   ReservedTopicError,
   REPLY_TOPIC_PREFIX,
 } from "./types";
-
-/** Default QoS for local operations (the Java/Python contract has no explicit QoS). */
-const LOCAL_QOS = Qos.AtLeastOnce;
 
 /**
  * The built-in default `request()` deadline (ms) that applies before the config model is
@@ -106,7 +104,22 @@ export class DefaultMessagingService implements IMessagingService {
    */
   private defaultRequestTimeoutMs = BUILT_IN_REQUEST_TIMEOUT_MS;
 
-  constructor(private readonly provider: MessagingProvider) {}
+  private readonly qos: QosConfig;
+
+  constructor(
+    private readonly provider: MessagingProvider,
+    qos?: QosConfig,
+  ) {
+    this.qos = qos ?? defaultQosConfig();
+  }
+
+  private publishQos(dest: Destination): Qos {
+    return dest === Destination.Northbound ? this.qos.northbound.publish : this.qos.local.publish;
+  }
+
+  private subscribeQos(dest: Destination): Qos {
+    return dest === Destination.Northbound ? this.qos.northbound.subscribe : this.qos.local.subscribe;
+  }
 
   private static key(dest: Destination, filter: string): string {
     return `${dest} ${filter}`;
@@ -154,22 +167,22 @@ export class DefaultMessagingService implements IMessagingService {
 
   async publish(topic: string, msg: Message): Promise<void> {
     this.checkReservedTopic(topic);
-    await this.provider.publishBytes(topic, Buffer.from(msg.toJSON(), "utf8"), Destination.Local, LOCAL_QOS);
+    await this.provider.publishBytes(topic, Buffer.from(msg.toJSON(), "utf8"), Destination.Local, this.publishQos(Destination.Local));
   }
 
-  async publishToIoTCore(topic: string, msg: Message, qos: Qos = Qos.AtLeastOnce): Promise<void> {
+  async publishNorthbound(topic: string, msg: Message, qos: Qos = Qos.AtLeastOnce): Promise<void> {
     this.checkReservedTopic(topic);
-    await this.provider.publishBytes(topic, Buffer.from(msg.toJSON(), "utf8"), Destination.IoTCore, qos);
+    await this.provider.publishBytes(topic, Buffer.from(msg.toJSON(), "utf8"), Destination.Northbound, qos);
   }
 
   async publishRaw(topic: string, payload: unknown): Promise<void> {
     this.checkReservedTopic(topic);
-    await this.provider.publishBytes(topic, Buffer.from(JSON.stringify(payload), "utf8"), Destination.Local, LOCAL_QOS);
+    await this.provider.publishBytes(topic, Buffer.from(JSON.stringify(payload), "utf8"), Destination.Local, this.publishQos(Destination.Local));
   }
 
-  async publishToIoTCoreRaw(topic: string, payload: unknown, qos: Qos = Qos.AtLeastOnce): Promise<void> {
+  async publishNorthboundRaw(topic: string, payload: unknown, qos: Qos = Qos.AtLeastOnce): Promise<void> {
     this.checkReservedTopic(topic);
-    await this.provider.publishBytes(topic, Buffer.from(JSON.stringify(payload), "utf8"), Destination.IoTCore, qos);
+    await this.provider.publishBytes(topic, Buffer.from(JSON.stringify(payload), "utf8"), Destination.Northbound, qos);
   }
 
   /**
@@ -181,31 +194,31 @@ export class DefaultMessagingService implements IMessagingService {
    * (`stripInternal`).
    */
   async publishReserved(topic: string, msg: Message): Promise<void> {
-    await this.provider.publishBytes(topic, Buffer.from(msg.toJSON(), "utf8"), Destination.Local, LOCAL_QOS);
+    await this.provider.publishBytes(topic, Buffer.from(msg.toJSON(), "utf8"), Destination.Local, this.publishQos(Destination.Local));
   }
 
   /** @internal Unguarded raw local publish — the privileged seam (§4.2). */
   async publishReservedRaw(topic: string, payload: unknown): Promise<void> {
-    await this.provider.publishBytes(topic, Buffer.from(JSON.stringify(payload), "utf8"), Destination.Local, LOCAL_QOS);
+    await this.provider.publishBytes(topic, Buffer.from(JSON.stringify(payload), "utf8"), Destination.Local, this.publishQos(Destination.Local));
   }
 
-  /** @internal Unguarded IoT Core publish — the privileged seam (§4.2). */
-  async publishReservedToIoTCore(topic: string, msg: Message, qos: Qos = Qos.AtLeastOnce): Promise<void> {
-    await this.provider.publishBytes(topic, Buffer.from(msg.toJSON(), "utf8"), Destination.IoTCore, qos);
+  /** @internal Unguarded northbound publish — the privileged seam (§4.2). */
+  async publishReservedNorthbound(topic: string, msg: Message, qos: Qos = Qos.AtLeastOnce): Promise<void> {
+    await this.provider.publishBytes(topic, Buffer.from(msg.toJSON(), "utf8"), Destination.Northbound, qos);
   }
 
   async subscribe(filter: string, handler: MessageHandler, maxMessages = 32, maxConcurrency = 1): Promise<void> {
-    await this.startSubscription(filter, Destination.Local, LOCAL_QOS, handler, maxMessages, maxConcurrency);
+    await this.startSubscription(filter, Destination.Local, this.subscribeQos(Destination.Local), handler, maxMessages, maxConcurrency);
   }
 
-  async subscribeToIoTCore(
+  async subscribeNorthbound(
     filter: string,
     handler: MessageHandler,
     qos: Qos = Qos.AtLeastOnce,
     maxMessages = 32,
     maxConcurrency = 1,
   ): Promise<void> {
-    await this.startSubscription(filter, Destination.IoTCore, qos, handler, maxMessages, maxConcurrency);
+    await this.startSubscription(filter, Destination.Northbound, qos, handler, maxMessages, maxConcurrency);
   }
 
   private async startSubscription(
@@ -231,8 +244,8 @@ export class DefaultMessagingService implements IMessagingService {
     await this.stopSubscription(filter, Destination.Local);
   }
 
-  async unsubscribeFromIoTCore(filter: string): Promise<void> {
-    await this.stopSubscription(filter, Destination.IoTCore);
+  async unsubscribeNorthbound(filter: string): Promise<void> {
+    await this.stopSubscription(filter, Destination.Northbound);
   }
 
   private async stopSubscription(filter: string, dest: Destination): Promise<void> {
@@ -247,15 +260,36 @@ export class DefaultMessagingService implements IMessagingService {
 
   request(topic: string, msg: Message, timeoutMs?: number): ReplyFuture {
     this.checkReservedTopic(topic);
-    return this.startRequest(topic, msg, Destination.Local, LOCAL_QOS, timeoutMs ?? this.defaultRequestTimeoutMs);
+    return this.startRequest(
+      topic,
+      msg,
+      Destination.Local,
+      this.subscribeQos(Destination.Local),
+      this.publishQos(Destination.Local),
+      timeoutMs ?? this.defaultRequestTimeoutMs,
+    );
   }
 
-  requestFromIoTCore(topic: string, msg: Message, timeoutMs?: number): ReplyFuture {
+  requestNorthbound(topic: string, msg: Message, timeoutMs?: number): ReplyFuture {
     this.checkReservedTopic(topic);
-    return this.startRequest(topic, msg, Destination.IoTCore, Qos.AtLeastOnce, timeoutMs ?? this.defaultRequestTimeoutMs);
+    return this.startRequest(
+      topic,
+      msg,
+      Destination.Northbound,
+      this.subscribeQos(Destination.Northbound),
+      this.publishQos(Destination.Northbound),
+      timeoutMs ?? this.defaultRequestTimeoutMs,
+    );
   }
 
-  private startRequest(topic: string, msg: Message, dest: Destination, qos: Qos, timeoutMs: number): ReplyFuture {
+  private startRequest(
+    topic: string,
+    msg: Message,
+    dest: Destination,
+    subscribeQos: Qos,
+    publishQos: Qos,
+    timeoutMs: number,
+  ): ReplyFuture {
     const replyTopic = `${REPLY_TOPIC_PREFIX}${randomUUID()}`;
     msg.header.reply_to = replyTopic;
 
@@ -296,9 +330,9 @@ export class DefaultMessagingService implements IMessagingService {
         }
         finish(() => resolve(reply));
       };
-      this.startSubscription(replyTopic, dest, qos, handler, 1, 1)
+      this.startSubscription(replyTopic, dest, subscribeQos, handler, 1, 1)
         .then(() =>
-          this.provider.publishBytes(topic, Buffer.from(msg.toJSON(), "utf8"), dest, qos),
+          this.provider.publishBytes(topic, Buffer.from(msg.toJSON(), "utf8"), dest, publishQos),
         )
         .catch((err) => finish(() => reject(err)));
     });
@@ -316,13 +350,13 @@ export class DefaultMessagingService implements IMessagingService {
    */
   async reply(request: Message, reply: Message): Promise<void> {
     this.checkReservedTopic(request.getReplyTo());
-    await this.sendReply(request, reply, Destination.Local, LOCAL_QOS);
+    await this.sendReply(request, reply, Destination.Local, this.publishQos(Destination.Local));
   }
 
-  /** IoT Core variant of {@link reply} — the request's `reply_to` topic is guarded the same way. */
-  async replyToIoTCore(request: Message, reply: Message): Promise<void> {
+  /** Northbound variant of {@link reply} — the request's `reply_to` topic is guarded the same way. */
+  async replyNorthbound(request: Message, reply: Message): Promise<void> {
     this.checkReservedTopic(request.getReplyTo());
-    await this.sendReply(request, reply, Destination.IoTCore, Qos.AtLeastOnce);
+    await this.sendReply(request, reply, Destination.Northbound, this.publishQos(Destination.Northbound));
   }
 
   private async sendReply(request: Message, reply: Message, dest: Destination, qos: Qos): Promise<void> {
@@ -338,7 +372,7 @@ export class DefaultMessagingService implements IMessagingService {
     reply.cancel();
   }
 
-  cancelRequestFromIoTCore(reply: ReplyFuture): void {
+  cancelRequestNorthbound(reply: ReplyFuture): void {
     reply.cancel();
   }
 
@@ -368,16 +402,16 @@ export async function publishReservedVia(
   svc: IMessagingService,
   topic: string,
   msg: Message,
-  destination: "local" | "iotcore" = "local",
+  destination: "local" | "northbound" = "local",
 ): Promise<void> {
   const seam = svc as Partial<
-    Pick<DefaultMessagingService, "publishReserved" | "publishReservedToIoTCore">
+    Pick<DefaultMessagingService, "publishReserved" | "publishReservedNorthbound">
   >;
-  if (destination === "iotcore") {
-    if (typeof seam.publishReservedToIoTCore === "function") {
-      await seam.publishReservedToIoTCore(topic, msg, Qos.AtLeastOnce);
+  if (destination === "northbound") {
+    if (typeof seam.publishReservedNorthbound === "function") {
+      await seam.publishReservedNorthbound(topic, msg, Qos.AtLeastOnce);
     } else {
-      await svc.publishToIoTCore(topic, msg, Qos.AtLeastOnce);
+      await svc.publishNorthbound(topic, msg, Qos.AtLeastOnce);
     }
     return;
   }

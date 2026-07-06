@@ -23,24 +23,24 @@ class _FakeProvider:
     def publish_raw(self, topic, msg):
         self.published_raw.append((topic, msg))
 
-    def publish_to_iot_core(self, topic, msg, qos):
+    def publish_northbound(self, topic, msg, qos):
         self.published_iot.append((topic, msg, qos))
 
-    def publish_to_iot_core_raw(self, topic, msg, qos):
+    def publish_northbound_raw(self, topic, msg, qos):
         self.published_iot_raw.append((topic, msg, qos))
 
     def request(self, topic, msg, timeout_secs=None):
         self.requests.append((topic, msg, timeout_secs))
         return "iou"
 
-    def request_from_iot_core(self, topic, msg, timeout_secs=None):
+    def request_northbound(self, topic, msg, timeout_secs=None):
         self.requests.append((topic, msg, timeout_secs))
         return "iou"
 
     def reply(self, request, reply):
         self.replies.append((request, reply))
 
-    def reply_to_iot_core(self, request, reply):
+    def reply_northbound(self, request, reply):
         self.replies.append((request, reply))
 
     def set_default_request_timeout(self, secs):
@@ -113,14 +113,14 @@ class TestGuardedMethods:
             MessagingClient.publish_raw("ecv1/gw/comp/main/metric/cpu", {"v": 1})
         assert provider.published_raw == []
 
-    def test_publish_to_iot_core_rejects_reserved(self, provider):
+    def test_publish_northbound_rejects_reserved(self, provider):
         with pytest.raises(ReservedTopicError):
-            MessagingClient.publish_to_iot_core("ecv1/gw/comp/main/cfg", _msg(), 1)
+            MessagingClient.publish_northbound("ecv1/gw/comp/main/cfg", _msg(), 1)
         assert provider.published_iot == []
 
-    def test_publish_to_iot_core_raw_rejects_reserved(self, provider):
+    def test_publish_northbound_raw_rejects_reserved(self, provider):
         with pytest.raises(ReservedTopicError):
-            MessagingClient.publish_to_iot_core_raw("ecv1/gw/comp/main/log/x", {}, 1)
+            MessagingClient.publish_northbound_raw("ecv1/gw/comp/main/log/x", {}, 1)
         assert provider.published_iot_raw == []
 
     def test_request_rejects_reserved(self, provider):
@@ -128,9 +128,9 @@ class TestGuardedMethods:
             MessagingClient.request("ecv1/gw/comp/main/state", _msg())
         assert provider.requests == []
 
-    def test_request_from_iot_core_rejects_reserved(self, provider):
+    def test_request_northbound_rejects_reserved(self, provider):
         with pytest.raises(ReservedTopicError):
-            MessagingClient.request_from_iot_core("ecv1/gw/comp/main/state", _msg())
+            MessagingClient.request_northbound("ecv1/gw/comp/main/state", _msg())
         assert provider.requests == []
 
     def test_reply_guards_hostile_reply_to(self, provider):
@@ -141,10 +141,10 @@ class TestGuardedMethods:
             MessagingClient.reply(request, _msg())
         assert provider.replies == []
 
-    def test_reply_to_iot_core_guards_hostile_reply_to(self, provider):
+    def test_reply_northbound_guards_hostile_reply_to(self, provider):
         request = _msg(reply_to="ecv1/gw/victim/main/cfg")
         with pytest.raises(ReservedTopicError):
-            MessagingClient.reply_to_iot_core(request, _msg())
+            MessagingClient.reply_northbound(request, _msg())
         assert provider.replies == []
 
     def test_reply_without_header_passes_to_provider(self, provider):
@@ -181,8 +181,8 @@ class TestPrivilegedSeam:
         MessagingClient._publish_reserved_raw("ecv1/gw/comp/main/metric/cpu", {"v": 1})
         assert len(provider.published_raw) == 1
 
-    def test_publish_reserved_to_iot_core_bypasses_guard(self, provider):
-        MessagingClient._publish_reserved_to_iot_core("ecv1/gw/comp/main/cfg", _msg(), 1)
+    def test_publish_reserved_northbound_bypasses_guard(self, provider):
+        MessagingClient._publish_reserved_northbound("ecv1/gw/comp/main/cfg", _msg(), 1)
         assert len(provider.published_iot) == 1
 
 

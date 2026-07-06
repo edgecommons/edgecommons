@@ -48,7 +48,8 @@ fn init_logs() {
 }
 
 fn broker() -> (String, String) {
-    let host = std::env::var("EDGECOMMONS_IT_MQTT_HOST").unwrap_or_else(|_| "localhost".to_string());
+    let host =
+        std::env::var("EDGECOMMONS_IT_MQTT_HOST").unwrap_or_else(|_| "localhost".to_string());
     let port = std::env::var("EDGECOMMONS_IT_MQTT_PORT").unwrap_or_else(|_| "1883".to_string());
     (host, port)
 }
@@ -151,7 +152,10 @@ async fn heartbeat_publishes_uns_state_keepalive() {
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    assert!(count.load(Ordering::SeqCst) >= 2, "expected >=2 state keepalives");
+    assert!(
+        count.load(Ordering::SeqCst) >= 2,
+        "expected >=2 state keepalives"
+    );
 
     {
         let messages = received.lock().unwrap();
@@ -159,8 +163,14 @@ async fn heartbeat_publishes_uns_state_keepalive() {
         assert_eq!(msg.header.name, "state");
         assert_eq!(msg.header.version, "1.0");
         assert_eq!(msg.body["status"], "RUNNING");
-        assert!(msg.body["uptimeSecs"].is_u64(), "RUNNING carries uptimeSecs");
-        let identity = msg.identity.as_ref().expect("state envelope carries identity");
+        assert!(
+            msg.body["uptimeSecs"].is_u64(),
+            "RUNNING carries uptimeSecs"
+        );
+        let identity = msg
+            .identity
+            .as_ref()
+            .expect("state envelope carries identity");
         assert_eq!(identity.device(), thing);
         assert_eq!(identity.component(), "HbIt");
         assert_eq!(identity.instance(), "main");
@@ -171,13 +181,21 @@ async fn heartbeat_publishes_uns_state_keepalive() {
     drop(gg);
     let mut saw_stopped = false;
     for _ in 0..60 {
-        if received.lock().unwrap().iter().any(|m| m.body["status"] == "STOPPED") {
+        if received
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|m| m.body["status"] == "STOPPED")
+        {
             saw_stopped = true;
             break;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    assert!(saw_stopped, "a STOPPED state should be published on graceful shutdown");
+    assert!(
+        saw_stopped,
+        "a STOPPED state should be published on graceful shutdown"
+    );
     let stopped: Vec<_> = received
         .lock()
         .unwrap()
@@ -186,7 +204,10 @@ async fn heartbeat_publishes_uns_state_keepalive() {
         .cloned()
         .collect();
     assert_eq!(stopped.len(), 1, "STOPPED is published at most once");
-    assert!(stopped[0].body.get("uptimeSecs").is_none(), "STOPPED omits uptimeSecs");
+    assert!(
+        stopped[0].body.get("uptimeSecs").is_none(),
+        "STOPPED omits uptimeSecs"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
     info!("=== PASS heartbeat_publishes_uns_state_keepalive ===");

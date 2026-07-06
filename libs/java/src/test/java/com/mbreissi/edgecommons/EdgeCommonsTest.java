@@ -15,7 +15,7 @@ import com.google.gson.JsonSyntaxException;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.junit.jupiter.api.*;
-import software.amazon.awssdk.aws.greengrass.model.QOS;
+import com.mbreissi.edgecommons.messaging.Qos;
 
 
 import java.io.File;
@@ -77,8 +77,8 @@ class EdgeCommonsTest
             messagingService.unsubscribe("test/testIpcTopic");
             messagingService.unsubscribe("test/+");
             messagingService.unsubscribe("test/request");
-            messagingService.unsubscribeFromIoTCore("test/testIotCoreTopic");
-            messagingService.unsubscribeFromIoTCore("test/iot_core_request");
+            messagingService.unsubscribeNorthbound("test/testIotCoreTopic");
+            messagingService.unsubscribeNorthbound("test/iot_core_request");
         } catch (Exception e) {
             // Ignore cleanup errors
         }
@@ -175,17 +175,17 @@ class EdgeCommonsTest
     }
 //
     @Test
-    void publishIotCoreMessage()
+    void publishNorthboundMessage()
     {
         String topic = "test/testIotCoreTopic";
-        messagingService.subscribeToIoTCore(topic, this::iotCoreMessageHandler, QOS.AT_LEAST_ONCE);
+        messagingService.subscribeNorthbound(topic, this::iotCoreMessageHandler, Qos.AT_LEAST_ONCE);
         JsonObject jsonPayload = new JsonObject();
         jsonPayload.addProperty("message", "Test IoT Core message");
         Message msg = MessageBuilder.create("IoTCoreMessage", "1.0")
                 .withPayload(jsonPayload)
                 .withConfig(configService)
                 .build();
-        messagingService.publishToIoTCore(topic, msg, QOS.AT_LEAST_ONCE);
+        messagingService.publishNorthbound(topic, msg, Qos.AT_LEAST_ONCE);
         Utils.sleep(200);
         assertNotNull(receivedMessage);
         assertEquals("IoTCoreMessage", receivedMessage.getHeader().getName());
@@ -240,7 +240,7 @@ class EdgeCommonsTest
                 .build();
         String correlationId = request.getCorrelationId();
         LOGGER.info("Sending request to IoT Core on {}", requestTopic);
-        Message reply = messagingService.requestFromIoTCore(requestTopic, request).get(1000, TimeUnit.MILLISECONDS);
+        Message reply = messagingService.requestNorthbound(requestTopic, request).get(1000, TimeUnit.MILLISECONDS);
         assertNotNull(reply);
         assertEquals(correlationId, reply.getCorrelationId());
     }
@@ -277,9 +277,9 @@ class EdgeCommonsTest
         }, 1);
 
         LOGGER.info("Subscribing to IOT CORE messages on {}", topic);
-        messagingService.subscribeToIoTCore(topic, (t, m) -> {
+        messagingService.subscribeNorthbound(topic, (t, m) -> {
             LOGGER.info("Received message on IOT CORE: {}", m.getHeader().getName());
-        }, QOS.AT_LEAST_ONCE, 1);
+        }, Qos.AT_LEAST_ONCE, 1);
         
         // Publish to local - should only trigger local callback
         JsonObject localPayload = new JsonObject();
@@ -299,12 +299,12 @@ class EdgeCommonsTest
                 .withConfig(configService)
                 .build();
         LOGGER.info("Publishing message to IOT CORE on topic");
-        messagingService.publishToIoTCore(topic, iotMsg, QOS.AT_LEAST_ONCE);
+        messagingService.publishNorthbound(topic, iotMsg, Qos.AT_LEAST_ONCE);
         
         Utils.sleep(500);
         
         // Clean up
         messagingService.unsubscribe(topic);
-        messagingService.unsubscribeFromIoTCore(topic);
+        messagingService.unsubscribeNorthbound(topic);
     }
 }

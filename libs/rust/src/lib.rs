@@ -31,6 +31,8 @@
 pub mod cli;
 pub mod commands;
 pub mod config;
+#[cfg(feature = "credentials")]
+pub mod credentials;
 pub mod error;
 pub mod facades;
 pub mod health;
@@ -41,14 +43,12 @@ pub mod ipc;
 pub mod logging;
 pub mod messaging;
 pub mod metrics;
-pub mod platform;
-pub mod uns;
-#[cfg(feature = "credentials")]
-pub mod credentials;
 #[cfg(feature = "parameters")]
 pub mod parameters;
+pub mod platform;
 #[cfg(feature = "streaming")]
 pub mod streaming;
+pub mod uns;
 
 #[cfg(test)]
 mod testutil;
@@ -362,14 +362,20 @@ impl EdgeCommons {
     ///
     /// Mirrors the Java/Python `addConfigurationChangeListener`. The listener fires on
     /// successful reloads of a watchable config source (e.g. `FILE`).
-    pub fn add_config_change_listener(&self, listener: Arc<dyn config::ConfigurationChangeListener>) {
+    pub fn add_config_change_listener(
+        &self,
+        listener: Arc<dyn config::ConfigurationChangeListener>,
+    ) {
         if let Ok(mut listeners) = self.listeners.lock() {
             listeners.push(listener);
         }
     }
 
     /// Remove a previously-registered config-change listener (by identity).
-    pub fn remove_config_change_listener(&self, listener: &Arc<dyn config::ConfigurationChangeListener>) {
+    pub fn remove_config_change_listener(
+        &self,
+        listener: &Arc<dyn config::ConfigurationChangeListener>,
+    ) {
         if let Ok(mut listeners) = self.listeners.lock() {
             listeners.retain(|existing| !Arc::ptr_eq(existing, listener));
         }
@@ -449,10 +455,12 @@ impl EdgeCommonsBuilder {
             self.receive_own_messages,
         )
         .await?;
-        let messaging: Option<Arc<dyn messaging::MessagingService>> =
-            messaging_impl.clone().map(|s| s as Arc<dyn messaging::MessagingService>);
-        let reserved: Option<Arc<dyn messaging::ReservedMessaging>> =
-            messaging_impl.clone().map(|s| s as Arc<dyn messaging::ReservedMessaging>);
+        let messaging: Option<Arc<dyn messaging::MessagingService>> = messaging_impl
+            .clone()
+            .map(|s| s as Arc<dyn messaging::MessagingService>);
+        let reserved: Option<Arc<dyn messaging::ReservedMessaging>> = messaging_impl
+            .clone()
+            .map(|s| s as Arc<dyn messaging::ReservedMessaging>);
 
         // `Arc`, not `Box`: the `reload-config` command action (below) needs a long-lived clone
         // alongside the final `_config_source` field.
@@ -477,16 +485,6 @@ impl EdgeCommonsBuilder {
             service.set_default_request_timeout(cfg.messaging_request_timeout());
             service.set_guard_include_root(cfg.effective_include_root());
         }
-        // §6: the MQTT LWT is registered at CONNECT by the MQTT provider; the IPC
-        // transport has no CONNECT-time will — a configured messaging.lwt is a
-        // documented no-op there (DEBUG, not a failure).
-        if parsed.transport == Transport::Ipc && cfg.parsed.messaging.lwt.is_some() {
-            tracing::debug!(
-                "messaging.lwt is configured but the IPC transport has no MQTT \
-                 Last-Will-and-Testament; ignoring it (LWT applies to the local MQTT connection)"
-            );
-        }
-
         // Logging is configured from the component CONFIG, which loads after the resolver. The
         // resolved platform is already known, so its profile's default logging format (json on
         // KUBERNETES — FR-LOG-1) is threaded in to seed the format when the config omits one
@@ -545,8 +543,11 @@ impl EdgeCommonsBuilder {
         // class is reserved, so it publishes through the crate-private seam. `Arc`-wrapped so
         // the _bcast republish listener's `republish-state` action can share it (§9.3/§9.4,
         // below).
-        let heartbeat =
-            Arc::new(heartbeat::Heartbeat::start(config.clone(), metrics.clone(), reserved.clone()));
+        let heartbeat = Arc::new(heartbeat::Heartbeat::start(
+            config.clone(),
+            metrics.clone(),
+            reserved.clone(),
+        ));
 
         // Credentials / local vault (feature-gated): open the shared vault when the config has a
         // `credentials` section, resolving path templates ({ThingName}/{ComponentFullName}) first.
@@ -554,10 +555,14 @@ impl EdgeCommonsBuilder {
         // no section is present.
         #[cfg(feature = "credentials")]
         let (credentials, credential_metrics) = {
-            let creds: Option<Arc<dyn credentials::CredentialService>> = match snapshot.raw.get("credentials") {
+            let creds: Option<Arc<dyn credentials::CredentialService>> = match snapshot
+                .raw
+                .get("credentials")
+            {
                 None => None,
                 Some(value) => {
-                    let mut cfg: credentials::CredentialsConfig = serde_json::from_value(value.clone())?;
+                    let mut cfg: credentials::CredentialsConfig =
+                        serde_json::from_value(value.clone())?;
                     cfg.vault.path = config::template::resolve(&snapshot, &cfg.vault.path);
                     if let Some(kp) = cfg.vault.key_provider.key_path.as_mut() {
                         *kp = config::template::resolve(&snapshot, kp);
@@ -571,8 +576,10 @@ impl EdgeCommonsBuilder {
                     // logging-format / metric-target defaults are; an explicit type always wins.
                     // This only changes the default provider TYPE — it never enables credentials
                     // (we are already inside the `Some(credentials section present)` arm).
-                    let default_kind = crate::platform::profile_credentials_key_provider(parsed.platform);
-                    let svc = credentials::open_namespaced_with_default(&cfg, &namespace, default_kind)?;
+                    let default_kind =
+                        crate::platform::profile_credentials_key_provider(parsed.platform);
+                    let svc =
+                        credentials::open_namespaced_with_default(&cfg, &namespace, default_kind)?;
                     Some(Arc::new(svc) as Arc<dyn credentials::CredentialService>)
                 }
             };
@@ -587,18 +594,20 @@ impl EdgeCommonsBuilder {
         // section. Sibling to credentials — externalized config from a pluggable source, offline-first.
         // The persistent-cache path is templated ({ThingName}/{ComponentFullName}) like the vault.
         #[cfg(feature = "parameters")]
-        let params: Option<Arc<dyn parameters::ParameterService>> = match snapshot.raw.get("parameters") {
-            None => None,
-            Some(value) => {
-                let mut cfg: parameters::ParametersConfig = serde_json::from_value(value.clone())?;
-                cfg.cache.path = config::template::resolve(&snapshot, &cfg.cache.path);
-                if let Some(kp) = cfg.cache.key_provider.key_path.as_mut() {
-                    *kp = config::template::resolve(&snapshot, kp);
+        let params: Option<Arc<dyn parameters::ParameterService>> =
+            match snapshot.raw.get("parameters") {
+                None => None,
+                Some(value) => {
+                    let mut cfg: parameters::ParametersConfig =
+                        serde_json::from_value(value.clone())?;
+                    cfg.cache.path = config::template::resolve(&snapshot, &cfg.cache.path);
+                    if let Some(kp) = cfg.cache.key_provider.key_path.as_mut() {
+                        *kp = config::template::resolve(&snapshot, kp);
+                    }
+                    let svc = parameters::open(&cfg)?;
+                    Some(Arc::new(svc) as Arc<dyn parameters::ParameterService>)
                 }
-                let svc = parameters::open(&cfg)?;
-                Some(Arc::new(svc) as Arc<dyn parameters::ParameterService>)
-            }
-        };
+            };
 
         // Telemetry streaming (feature-gated): open/recover configured streams and bridge their
         // stats into the metric targets. Empty + no bridge when no `streaming` section exists.
@@ -680,14 +689,17 @@ impl EdgeCommonsBuilder {
         // Watch channel the signal watcher flips on shutdown; `EdgeCommons::shutdown_signal` awaits it
         // so apps await one library-owned future instead of hand-rolling `tokio::signal`.
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-        let signal_task =
-            AbortOnDrop(spawn_signal_watcher(health_state.clone(), Arc::new(shutdown_tx)));
+        let signal_task = AbortOnDrop(spawn_signal_watcher(
+            health_state.clone(),
+            Arc::new(shutdown_tx),
+        ));
 
         // Internal listeners reconfigure the metric target and logging on hot reload.
         let listeners: ConfigListeners = Arc::new(std::sync::Mutex::new(Vec::new()));
         if let Ok(mut l) = listeners.lock() {
             l.push(emitter as Arc<dyn config::ConfigurationChangeListener>);
-            l.push(Arc::new(logging::LoggingReconfigurer) as Arc<dyn config::ConfigurationChangeListener>);
+            l.push(Arc::new(logging::LoggingReconfigurer)
+                as Arc<dyn config::ConfigurationChangeListener>);
         }
 
         // §4.3: announce the effective (redacted) configuration on the UNS cfg topic
@@ -695,8 +707,9 @@ impl EdgeCommonsBuilder {
         // re-announces. Best-effort (publish_now never fails the build).
         let mut republish_listener: Option<Arc<uns::RepublishListener>> = None;
         if let Some(reserved) = &reserved {
-            let cfg_publisher =
-                Arc::new(config::effective::EffectiveConfigPublisher::new(reserved.clone()));
+            let cfg_publisher = Arc::new(config::effective::EffectiveConfigPublisher::new(
+                reserved.clone(),
+            ));
             cfg_publisher.publish_now(&snapshot).await;
 
             // §9.3/§9.4: the _bcast republish listener (the late-join lever) — subscribe the
@@ -719,11 +732,8 @@ impl EdgeCommonsBuilder {
                     let cfg = config_for_republish.clone();
                     Box::pin(async move { publisher.publish_now(&cfg.load_full()).await })
                 });
-                let listener = uns::RepublishListener::new(
-                    messaging_svc.clone(),
-                    state_action,
-                    cfg_action,
-                );
+                let listener =
+                    uns::RepublishListener::new(messaging_svc.clone(), state_action, cfg_action);
                 let device = snapshot.identity().device().to_string();
                 listener.clone().start(&device).await;
                 republish_listener = Some(listener);
@@ -948,7 +958,7 @@ async fn wait_for_shutdown(rx: &mut tokio::sync::watch::Receiver<bool>) {
 async fn wait_for_terminate() {
     #[cfg(unix)]
     {
-        use tokio::signal::unix::{signal, SignalKind};
+        use tokio::signal::unix::{SignalKind, signal};
         match signal(SignalKind::terminate()) {
             Ok(mut term) => {
                 tokio::select! {
@@ -1011,7 +1021,10 @@ async fn init_messaging(
                 })?;
                 let mc = MessagingConfig::load(path).await?;
                 let provider = Arc::new(MqttProvider::connect(&mc).await?);
-                Ok(Some(Arc::new(DefaultMessagingService::new(provider))))
+                let qos = mc.messaging.qos_config();
+                Ok(Some(Arc::new(DefaultMessagingService::new_with_qos(
+                    provider, &qos,
+                ))))
             }
             #[cfg(not(feature = "standalone"))]
             {
@@ -1062,22 +1075,24 @@ async fn init_messaging(
 /// Common imports for component authors.
 pub mod prelude {
     pub use crate::cli::{ConfigSourceSpec, ParsedArgs};
-    pub use crate::commands::{command_handler, CommandError, CommandHandler, CommandInbox};
-    pub use crate::config::model::Config;
+    pub use crate::commands::{CommandError, CommandHandler, CommandInbox, command_handler};
     pub use crate::config::ConfigurationChangeListener;
+    pub use crate::config::model::Config;
     pub use crate::facades::{
         AppFacade, Channel, DataFacade, EventsFacade, Quality, Sample, Severity, SignalUpdate,
     };
-    pub use crate::platform::{Platform, Transport};
-    pub use crate::messaging::{
-        message_handler, MessageHandler, MessageIdentity, MessagingService, Qos, ReplyFuture,
-    };
     pub use crate::heartbeat::{InstanceConnectivity, InstanceConnectivityProvider};
+    pub use crate::messaging::{
+        MessageHandler, MessageIdentity, MessagingService, Qos, ReplyFuture, message_handler,
+    };
     pub use crate::metrics::{Measure, Metric, MetricBuilder, MetricService};
-    pub use crate::uns::{Uns, UnsClass, UnsScope};
+    pub use crate::platform::{Platform, Transport};
     #[cfg(feature = "streaming")]
-    pub use crate::streaming::{StreamHandle, StreamRecord, StreamService, Stats as StreamStats};
-    pub use crate::{EdgeCommons, EdgeCommonsBuilder, EdgeCommonsError, EdgeCommonsInstance, Result};
+    pub use crate::streaming::{Stats as StreamStats, StreamHandle, StreamRecord, StreamService};
+    pub use crate::uns::{Uns, UnsClass, UnsScope};
+    pub use crate::{
+        EdgeCommons, EdgeCommonsBuilder, EdgeCommonsError, EdgeCommonsInstance, Result,
+    };
 }
 
 #[cfg(test)]
@@ -1127,8 +1142,8 @@ mod reload_tests {
     use crate::error::EdgeCommonsError;
     use async_trait::async_trait;
     use serde_json::json;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex as StdMutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// A [`ConfigSource`] whose `load()` replays a scripted sequence of results.
     struct FakeSource {
@@ -1137,7 +1152,9 @@ mod reload_tests {
 
     impl FakeSource {
         fn new(results: Vec<Result<Value>>) -> Self {
-            Self { results: StdMutex::new(results) }
+            Self {
+                results: StdMutex::new(results),
+            }
         }
     }
 
@@ -1197,7 +1214,10 @@ mod reload_tests {
         let config = Arc::new(ArcSwap::from_pointee(original));
         let notified = Arc::new(AtomicUsize::new(0));
         let listeners = empty_listeners();
-        listeners.lock().unwrap().push(Arc::new(CountingListener(notified.clone())) as _);
+        listeners
+            .lock()
+            .unwrap()
+            .push(Arc::new(CountingListener(notified.clone())) as _);
 
         let applied = apply_reloaded_config(
             json!({ "component": { "global": { "v": 2 } } }),
@@ -1209,7 +1229,11 @@ mod reload_tests {
         .await;
 
         assert!(applied);
-        assert_eq!(notified.load(Ordering::SeqCst), 1, "the listener must fire on a successful apply");
+        assert_eq!(
+            notified.load(Ordering::SeqCst),
+            1,
+            "the listener must fire on a successful apply"
+        );
         // The fullConfig-staleness check: the live snapshot (what get-configuration / the cfg
         // publisher read) reflects the reload immediately.
         assert_eq!(config.load_full().raw["component"]["global"]["v"], 2);
@@ -1224,7 +1248,9 @@ mod reload_tests {
     async fn reload_from_provider_keeps_previous_on_fetch_failure() {
         let original = Arc::new(Config::from_value("C", "t", json!({ "component": {} })).unwrap());
         let config = Arc::new(ArcSwap::from(original.clone()));
-        let source = FakeSource::new(vec![Err(EdgeCommonsError::Config("broker down".to_string()))]);
+        let source = FakeSource::new(vec![Err(EdgeCommonsError::Config(
+            "broker down".to_string(),
+        ))]);
 
         let ok = reload_from_provider(&source, &config, &empty_listeners(), "C", "t").await;
 

@@ -68,16 +68,16 @@ use serde_json::{Map, Value};
 use async_trait::async_trait;
 use tracing::field::{Field, Visit};
 use tracing::{Event, Subscriber};
-use tracing_subscriber::fmt::time::{FormatTime, SystemTime};
 use tracing_subscriber::fmt::MakeWriter;
+use tracing_subscriber::fmt::time::{FormatTime, SystemTime};
 use tracing_subscriber::layer::Context;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::registry::LookupSpan;
-use tracing_subscriber::{fmt, reload, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt, reload};
 
+use crate::config::ConfigurationChangeListener;
 use crate::config::model::Config;
 use crate::config::template::resolve;
-use crate::config::ConfigurationChangeListener;
 
 /// Type-erased "reload the level filter" callback, installed once by [`init`].
 static RECONFIGURE: OnceLock<Box<dyn Fn(EnvFilter) + Send + Sync>> = OnceLock::new();
@@ -124,13 +124,16 @@ pub fn init(config: &Config, profile_format_default: Option<&str>) {
         // A non-json token template → render every event through the token layer (console + file).
         Some(template) => tracing_subscriber::registry()
             .with(filter_layer)
-            .with(TokenLayer { template, file: file_writer })
+            .with(TokenLayer {
+                template,
+                file: file_writer,
+            })
             .try_init()
             .is_ok(),
         // Library default: the plain `fmt` console layer + optional rotating-file layer.
         None => {
-            let file_layer = file_writer
-                .map(|writer| fmt::layer().with_ansi(false).with_writer(writer));
+            let file_layer =
+                file_writer.map(|writer| fmt::layer().with_ansi(false).with_writer(writer));
             tracing_subscriber::registry()
                 .with(filter_layer)
                 .with(fmt::layer())
@@ -190,7 +193,13 @@ struct TokenLayer {
 }
 
 /// Render a `rust_format` token template. Unknown `{...}` tokens are left as-is.
-fn render_template(template: &str, timestamp: &str, level: &str, target: &str, message: &str) -> String {
+fn render_template(
+    template: &str,
+    timestamp: &str,
+    level: &str,
+    target: &str,
+    message: &str,
+) -> String {
     template
         .replace("{timestamp}", timestamp)
         .replace("{level}", level)
@@ -272,12 +281,14 @@ impl Visit for JsonVisitor<'_> {
         self.0.insert(field.name().to_string(), Value::from(value));
     }
     fn record_error(&mut self, field: &Field, value: &(dyn std::error::Error + 'static)) {
-        self.0.insert(field.name().to_string(), Value::from(value.to_string()));
+        self.0
+            .insert(field.name().to_string(), Value::from(value.to_string()));
     }
     fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
         // The `message` field and any non-primitive field arrive here; `{:?}` of `format_args!`
         // renders the message text without extra quoting (matches the token-layer visitor).
-        self.0.insert(field.name().to_string(), Value::from(format!("{value:?}")));
+        self.0
+            .insert(field.name().to_string(), Value::from(format!("{value:?}")));
     }
 }
 
@@ -475,7 +486,12 @@ impl RotatingFileWriter {
     /// Ensure the active file handle is open, returning a mutable reference.
     fn file_mut(&mut self) -> io::Result<&mut File> {
         if self.file.is_none() {
-            self.file = Some(OpenOptions::new().create(true).append(true).open(&self.path)?);
+            self.file = Some(
+                OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&self.path)?,
+            );
         }
         Ok(self.file.as_mut().expect("file just opened"))
     }
@@ -504,7 +520,12 @@ impl RotatingFileWriter {
             }
         }
 
-        self.file = Some(OpenOptions::new().create(true).append(true).open(&self.path)?);
+        self.file = Some(
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&self.path)?,
+        );
         self.current_size = 0;
         Ok(())
     }
@@ -599,7 +620,10 @@ mod tests {
             "edgecommons::x",
             "hello world",
         );
-        assert_eq!(line, "2026-01-01T00:00:00Z INFO edgecommons::x: hello world");
+        assert_eq!(
+            line,
+            "2026-01-01T00:00:00Z INFO edgecommons::x: hello world"
+        );
         // Unknown tokens are left as-is; a different layout is honored.
         assert_eq!(
             render_template("[{level}] {message} {nope}", "t", "WARN", "tgt", "m"),
@@ -615,7 +639,10 @@ mod tests {
             serde_json::json!({ "logging": { "rust_format": "{level}|{message}" } }),
         )
         .unwrap();
-        assert_eq!(cfg.parsed.logging.rust_format.as_deref(), Some("{level}|{message}"));
+        assert_eq!(
+            cfg.parsed.logging.rust_format.as_deref(),
+            Some("{level}|{message}")
+        );
     }
 
     #[test]
@@ -658,7 +685,10 @@ mod tests {
         assert_eq!(read(&base), "DDDDDD");
         assert_eq!(read(&w.backup_path(1)), "CCCCCC");
         assert_eq!(read(&w.backup_path(2)), "BBBBBB");
-        assert!(!w.backup_path(3).exists(), "backup_count=2 must not keep .3");
+        assert!(
+            !w.backup_path(3).exists(),
+            "backup_count=2 must not keep .3"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -672,7 +702,10 @@ mod tests {
         w.write_all(b"BBBBBB").unwrap(); // triggers rotation -> old discarded
         w.flush().unwrap();
         assert_eq!(read(&base), "BBBBBB");
-        assert!(!w.backup_path(1).exists(), "backup_count=0 keeps no backups");
+        assert!(
+            !w.backup_path(1).exists(),
+            "backup_count=0 keeps no backups"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -723,7 +756,10 @@ mod tests {
             }),
         )
         .unwrap();
-        assert!(file_make_writer(&cfg).is_some(), "writer should be built when enabled");
+        assert!(
+            file_make_writer(&cfg).is_some(),
+            "writer should be built when enabled"
+        );
 
         let cfg_off = Config::from_value(
             "com.example.C",
@@ -731,7 +767,10 @@ mod tests {
             serde_json::json!({ "logging": { "fileLogging": { "enabled": false } } }),
         )
         .unwrap();
-        assert!(file_make_writer(&cfg_off).is_none(), "writer should be absent when disabled");
+        assert!(
+            file_make_writer(&cfg_off).is_none(),
+            "writer should be absent when disabled"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -749,19 +788,29 @@ mod tests {
         .unwrap();
         assert!(file_make_writer(&cfg).is_some());
         // The short component name must have been substituted into the path.
-        assert!(dir.join("MyComp.log").exists(), "template-resolved log file should be created");
+        assert!(
+            dir.join("MyComp.log").exists(),
+            "template-resolved log file should be created"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     // ---------- FR-LOG: stdout-JSON sink selection + precedence ----------
 
     fn env(pairs: &[(&str, &str)]) -> HashMap<String, String> {
-        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     fn cfg_with(logging: serde_json::Value) -> Config {
-        Config::from_value("com.example.C", "thing-1", serde_json::json!({ "logging": logging }))
-            .unwrap()
+        Config::from_value(
+            "com.example.C",
+            "thing-1",
+            serde_json::json!({ "logging": logging }),
+        )
+        .unwrap()
     }
 
     #[test]
@@ -785,7 +834,10 @@ mod tests {
         );
         // No explicit config → the platform-profile default applies (json on KUBERNETES).
         let cfg = cfg_with(serde_json::json!({}));
-        assert_eq!(Some("json".to_string()), effective_format(&cfg, Some("json")));
+        assert_eq!(
+            Some("json".to_string()),
+            effective_format(&cfg, Some("json"))
+        );
         // No explicit config and no profile default (GREENGRASS/HOST) → library default (None).
         assert_eq!(None, effective_format(&cfg, None));
     }
@@ -890,9 +942,16 @@ mod tests {
         // embedded newline is escaped, not split across physical lines.
         let mut fields = Map::new();
         fields.insert("message".to_string(), Value::from("line1\nline2"));
-        fields.insert("exception".to_string(), Value::from("BrokenPipe: connection reset"));
+        fields.insert(
+            "exception".to_string(),
+            Value::from("BrokenPipe: connection reset"),
+        );
         let line = build_json_line("t", "ERROR", "tgt", fields, &[]).unwrap();
-        assert_eq!(1, line.lines().count(), "embedded newline must stay one physical line");
+        assert_eq!(
+            1,
+            line.lines().count(),
+            "embedded newline must stay one physical line"
+        );
         let v: Value = serde_json::from_str(&line).unwrap();
         assert_eq!("line1\nline2", v["message"]);
         assert_eq!("BrokenPipe: connection reset", v["exception"]);
@@ -906,7 +965,10 @@ mod tests {
         fields.insert("message".to_string(), Value::from("m"));
         let line = build_json_line("t", "INFO", "tgt", fields, &[]).unwrap();
         let v: Value = serde_json::from_str(&line).unwrap();
-        assert_eq!("INFO", v["level"], "the real level must win over a colliding field");
+        assert_eq!(
+            "INFO", v["level"],
+            "the real level must win over a colliding field"
+        );
     }
 
     // ---------- FR-LOG-3: correlation_fields from the Downward API ----------
@@ -939,7 +1001,10 @@ mod tests {
         ]);
         let fields = correlation_fields(&e, "thing-1");
         assert_eq!(
-            vec![("node", "node-1".to_string()), ("thing", "thing-1".to_string())],
+            vec![
+                ("node", "node-1".to_string()),
+                ("thing", "thing-1".to_string())
+            ],
             fields
         );
     }
@@ -947,7 +1012,10 @@ mod tests {
     #[test]
     fn correlation_fields_omits_thing_when_identity_empty() {
         let fields = correlation_fields(&env(&[]), "");
-        assert!(fields.is_empty(), "no env and empty identity → no correlation noise");
+        assert!(
+            fields.is_empty(),
+            "no env and empty identity → no correlation noise"
+        );
     }
 
     // ---------- init / reconfigure (the subscriber install + the three sink branches) ----------
@@ -970,7 +1038,10 @@ mod tests {
         init(&cfg_default, None);
 
         // JSON sink branch (captures correlation fields from the env + identity).
-        init(&cfg_with(serde_json::json!({ "rust_format": "json", "level": "INFO" })), None);
+        init(
+            &cfg_with(serde_json::json!({ "rust_format": "json", "level": "INFO" })),
+            None,
+        );
 
         // Token sink branch + file appender.
         let cfg_token = Config::from_value(
@@ -984,15 +1055,18 @@ mod tests {
 
         // reconfigure re-applies the level (incl. a per-logger override directive). Safe no-op when
         // the subscriber was never installed; here it is, so the reload handle swaps the filter.
-        let cfg_reload = cfg_with(serde_json::json!({ "level": "WARN", "loggers": { "edgecommons": "debug" } }));
+        let cfg_reload =
+            cfg_with(serde_json::json!({ "level": "WARN", "loggers": { "edgecommons": "debug" } }));
         reconfigure(&cfg_reload);
 
         // The hot-reload listener wrapper drives reconfigure on a config change.
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
-            assert!(LoggingReconfigurer
-                .on_configuration_change(Arc::new(cfg_reload))
-                .await);
+            assert!(
+                LoggingReconfigurer
+                    .on_configuration_change(Arc::new(cfg_reload))
+                    .await
+            );
         });
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -1007,7 +1081,10 @@ mod tests {
         // Rendering the filter is enough to prove the directives parse; the EnvFilter Display lists
         // them. (A malformed per-logger entry would fall back to the bare root level.)
         let rendered = level_filter(&cfg).to_string();
-        assert!(rendered.contains("edgecommons::messaging=debug"), "got {rendered}");
+        assert!(
+            rendered.contains("edgecommons::messaging=debug"),
+            "got {rendered}"
+        );
         assert!(rendered.contains("rumqttc=error"), "got {rendered}");
     }
 
@@ -1032,8 +1109,14 @@ mod tests {
         });
         // The rendered line must have reached the rotating file via the MakeWriter + locked writer.
         let contents = read(&base);
-        assert!(contents.contains("INFO|"), "level token rendered, got {contents:?}");
-        assert!(contents.contains("|hello token"), "message token rendered, got {contents:?}");
+        assert!(
+            contents.contains("INFO|"),
+            "level token rendered, got {contents:?}"
+        );
+        assert!(
+            contents.contains("|hello token"),
+            "message token rendered, got {contents:?}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

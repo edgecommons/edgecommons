@@ -42,10 +42,7 @@ impl Drop for StreamMetricsBridge {
 impl StreamMetricsBridge {
     /// Start emitting stats for all of `streams`' streams through `metrics` every
     /// `DEFAULT_INTERVAL_SECS`. Returns `None` if there are no streams to report.
-    pub fn start(
-        streams: Arc<dyn StreamService>,
-        metrics: Arc<dyn MetricService>,
-    ) -> Option<Self> {
+    pub fn start(streams: Arc<dyn StreamService>, metrics: Arc<dyn MetricService>) -> Option<Self> {
         Self::start_with_interval(streams, metrics, Duration::from_secs(DEFAULT_INTERVAL_SECS))
     }
 
@@ -112,7 +109,10 @@ fn stats_measures(s: &Stats) -> HashMap<String, f64> {
     m.insert("retriesTotal".to_string(), s.retries_total as f64);
     m.insert("failedTotal".to_string(), s.failed_total as f64);
     m.insert("diskBytes".to_string(), s.disk_bytes as f64);
-    m.insert("oldestUnackedAgeMs".to_string(), s.oldest_unacked_age_ms as f64);
+    m.insert(
+        "oldestUnackedAgeMs".to_string(),
+        s.oldest_unacked_age_ms as f64,
+    );
     m
 }
 
@@ -146,14 +146,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let config = cfg(dir.path());
 
-        let factory = |_n: &str, _s: &super::super::SinkConfig| -> edgestreamlog::Result<Option<Box<dyn Sink>>> {
+        let factory = |_n: &str,
+                       _s: &super::super::SinkConfig|
+         -> edgestreamlog::Result<Option<Box<dyn Sink>>> {
             Ok(Some(Box::new(FakeSink::new())))
         };
         let svc: Arc<dyn StreamService> =
             Arc::new(DefaultStreamService::open_with(&config, &factory).unwrap());
         let h = svc.stream("telemetry").unwrap();
         for i in 0..20u64 {
-            h.append(Record::new("pk", 1000 + i, format!("v{i}").as_bytes())).unwrap();
+            h.append(Record::new("pk", 1000 + i, format!("v{i}").as_bytes()))
+                .unwrap();
         }
 
         let metrics: Arc<dyn MetricService> =
@@ -172,14 +175,20 @@ mod tests {
         let log_path = dir.path().join("m.log");
         let mut wrote = false;
         for _ in 0..40 {
-            if std::fs::read_to_string(&log_path).map(|c| !c.trim().is_empty()).unwrap_or(false) {
+            if std::fs::read_to_string(&log_path)
+                .map(|c| !c.trim().is_empty())
+                .unwrap_or(false)
+            {
                 wrote = true;
                 break;
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
         drop(bridge);
-        assert!(wrote, "bridge should have emitted at least one stats line to the metric target");
+        assert!(
+            wrote,
+            "bridge should have emitted at least one stats line to the metric target"
+        );
     }
 
     #[test]

@@ -380,7 +380,7 @@ cross-language `uns-test-vectors/` conformance suite):
 - The top-level `identity` envelope element + the `hierarchy`/`identity`/`topic` config blocks.
 - The library-owned publishers: the `state` keepalive ([heartbeat](/guides/heartbeat/)), UNS
   `metric` topics, and the `cfg` effective-config announcements.
-- The `request()` internal deadline, MQTT [Last Will](/guides/messaging/#mqtt-last-will-lwt), and
+- The `request()` internal deadline, MQTT [Last Will](/guides/heartbeat/#behavior-notes), and
   the `CONFIG_COMPONENT` command remap.
 - The `_bcast` `republish-state`/`republish-cfg` broadcast listener every component runs.
 - The **`data()`/`events()`/`app()` class-publish facades** — see

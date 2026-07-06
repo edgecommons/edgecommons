@@ -167,7 +167,7 @@ describe("DataFacade", () => {
       await facade.signal("temp").addSample(21.5).via(Channel.NORTHBOUND).publish();
 
       const rec = messaging.published[0];
-      expect(rec.qos, "northbound uses publishToIoTCore").toBe(Qos.AtLeastOnce);
+      expect(rec.qos, "northbound uses publishNorthbound").toBe(Qos.AtLeastOnce);
     });
 
     it("a stream override appends to the stream with the signal.id partition key", async () => {
@@ -247,7 +247,7 @@ describe("DataFacade", () => {
   describe("transport-failure isolation (readiness stays local)", () => {
     it("a northbound transport failure is swallowed", async () => {
       const messaging = new RecordingMessagingService();
-      messaging.publishToIoTCore = vi.fn(async () => {
+      messaging.publishNorthbound = vi.fn(async () => {
         throw new Error("iot core down");
       });
       const { facade } = makeFacade({ messaging });

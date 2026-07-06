@@ -9,7 +9,7 @@ reserved), and emits the enabled system measures (cpu/memory/disk/...) as a metr
 named ``sys`` through the normal metric subsystem (D6 — the measures keep the metric
 subsystem's full sink routing). On graceful shutdown (:meth:`EnhancedHeartbeat.stop`)
 a best-effort ``{"status":"STOPPED"}`` state is published. ``heartbeat.destination``
-(``local`` | ``iotcore``) selects the keepalive's transport only. Defaults: on / 5 s /
+(``local`` | ``northbound``) selects the keepalive's transport only. Defaults: on / 5 s /
 local (M11).
 """
 
@@ -19,6 +19,7 @@ import time
 from typing import Optional, Dict, Any, TYPE_CHECKING
 from edgecommons.config.manager.configuration_change_listener import ConfigurationChangeListener
 from edgecommons.heartbeat.heartbeat_monitor import HeartbeatMonitor
+from edgecommons.messaging.qos import Qos
 from edgecommons.uns import Uns, UnsClass
 
 if TYPE_CHECKING:
@@ -339,9 +340,8 @@ class EnhancedHeartbeat(ConfigurationChangeListener):
         # (§4.2). heartbeat.destination selects the keepalive's transport only.
         heartbeat_config = self._get_heartbeat_config()
         destination = heartbeat_config.get_destination() if heartbeat_config else "local"
-        if destination and destination.lower() in ("iotcore", "iot_core"):
-            from awsiot.greengrasscoreipc.model import QOS
-            self._messaging_service._publish_reserved_to_iot_core(topic, message, QOS.AT_LEAST_ONCE)
+        if destination and destination.lower() == "northbound":
+            self._messaging_service._publish_reserved_northbound(topic, message, Qos.AT_LEAST_ONCE)
         else:
             self._messaging_service._publish_reserved(topic, message)
         logger.debug(f"Published heartbeat state '{status}' on topic: {topic}")

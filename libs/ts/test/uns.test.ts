@@ -197,7 +197,7 @@ describe("reserved-class guard (§4.1)", () => {
     expect(reservedClassOf(undefined, false)).toBeUndefined();
   });
 
-  it("guards publish/publishRaw/publishToIoTCore*/request*/reply* on the messaging service", async () => {
+  it("guards publish/publishRaw/publishNorthbound*/request*/reply* on the messaging service", async () => {
     const provider = new FakeMessagingProvider();
     const svc = new DefaultMessagingService(provider);
     const reserved = "ecv1/gw-01/comp/main/state";
@@ -205,15 +205,15 @@ describe("reserved-class guard (§4.1)", () => {
 
     await expect(svc.publish(reserved, msg())).rejects.toBeInstanceOf(ReservedTopicError);
     await expect(svc.publishRaw(reserved, {})).rejects.toBeInstanceOf(ReservedTopicError);
-    await expect(svc.publishToIoTCore(reserved, msg())).rejects.toBeInstanceOf(ReservedTopicError);
-    await expect(svc.publishToIoTCoreRaw(reserved, {})).rejects.toBeInstanceOf(ReservedTopicError);
+    await expect(svc.publishNorthbound(reserved, msg())).rejects.toBeInstanceOf(ReservedTopicError);
+    await expect(svc.publishNorthboundRaw(reserved, {})).rejects.toBeInstanceOf(ReservedTopicError);
     expect(() => svc.request(reserved, msg())).toThrow(ReservedTopicError);
-    expect(() => svc.requestFromIoTCore(reserved, msg())).toThrow(ReservedTopicError);
+    expect(() => svc.requestNorthbound(reserved, msg())).toThrow(ReservedTopicError);
     // Hostile reply_to forgery (D-U8): a request whose reply_to targets a reserved topic.
     const forged = MessageBuilder.create("x", "1").withReplyTo(reserved).build();
     const reply = msg();
     await expect(svc.reply(forged, reply)).rejects.toBeInstanceOf(ReservedTopicError);
-    await expect(svc.replyToIoTCore(forged, reply)).rejects.toBeInstanceOf(ReservedTopicError);
+    await expect(svc.replyNorthbound(forged, reply)).rejects.toBeInstanceOf(ReservedTopicError);
     // The error names the topic and the class token.
     await svc.publish(reserved, msg()).catch((e: ReservedTopicError) => {
       expect(e.topic).toBe(reserved);
@@ -245,23 +245,23 @@ describe("reserved-class guard (§4.1)", () => {
     const msg = MessageBuilder.create("state", "1.0").withPayload({ status: "RUNNING" }).build();
     await svc.publishReserved(reserved, msg);
     await svc.publishReservedRaw(reserved, { raw: 1 });
-    await svc.publishReservedToIoTCore(reserved, msg);
+    await svc.publishReservedNorthbound(reserved, msg);
     expect(provider.published).toHaveLength(3);
 
     // publishReservedVia prefers the seam...
     await publishReservedVia(svc, reserved, msg);
     expect(provider.published).toHaveLength(4);
-    await publishReservedVia(svc, reserved, msg, "iotcore");
+    await publishReservedVia(svc, reserved, msg, "northbound");
     expect(provider.published).toHaveLength(5);
 
     // ...and falls back to the public path for services without one (they carry no guard).
     const bare = new RecordingMessagingService();
     // Shadow the seam methods to simulate a plain IMessagingService implementation.
     (bare as unknown as Record<string, unknown>).publishReserved = undefined;
-    (bare as unknown as Record<string, unknown>).publishReservedToIoTCore = undefined;
+    (bare as unknown as Record<string, unknown>).publishReservedNorthbound = undefined;
     await publishReservedVia(bare, reserved, msg);
-    await publishReservedVia(bare, reserved, msg, "iotcore");
-    expect(bare.published.map((p) => p.kind)).toEqual(["publish", "publishToIoTCore"]);
+    await publishReservedVia(bare, reserved, msg, "northbound");
+    expect(bare.published.map((p) => p.kind)).toEqual(["publish", "publishNorthbound"]);
   });
 });
 

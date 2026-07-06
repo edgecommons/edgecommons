@@ -10,7 +10,7 @@
 //! 1. a **`state` keepalive** to `ecv1/{device}/{component}/main/state` — header
 //!    name `state`, body `{"status":"RUNNING","uptimeSecs":<n>}` — through the
 //!    privileged [`ReservedMessaging`] seam (the `state` class is reserved).
-//!    `heartbeat.destination` (`local` | `iotcore`) selects the keepalive's
+//!    `heartbeat.destination` (`local` | `northbound`) selects the keepalive's
 //!    transport only;
 //! 2. the enabled system measures (cpu/memory/disk/…) as a metric named
 //!    [`SYS_METRIC_NAME`] through the normal metric subsystem (D6 — the measures
@@ -39,7 +39,7 @@ use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwap;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use tokio::task::JoinHandle;
 
 use crate::config::model::{Config, Measures};
@@ -72,7 +72,11 @@ pub struct InstanceConnectivity {
 impl InstanceConnectivity {
     /// Full constructor.
     pub fn new(instance: impl Into<String>, connected: bool, detail: Option<String>) -> Self {
-        Self { instance: instance.into(), connected, detail }
+        Self {
+            instance: instance.into(),
+            connected,
+            detail,
+        }
     }
 
     /// Convenience factory without a detail.
@@ -224,7 +228,9 @@ impl Heartbeat {
     /// surface. Best-effort: failures are logged and swallowed (via [`publish_state`]); with no
     /// messaging seam (no transport) this is a silent no-op.
     pub(crate) async fn publish_state_now(&self) {
-        let Some(reserved) = self.reserved.as_deref() else { return };
+        let Some(reserved) = self.reserved.as_deref() else {
+            return;
+        };
         let cfg = self.config.load_full();
         if !cfg.parsed.heartbeat.enabled {
             tracing::debug!(
@@ -234,8 +240,14 @@ impl Heartbeat {
             return;
         }
         let conns = self.connectivity.read().unwrap().clone();
-        publish_state(&cfg, reserved, "RUNNING", Some(self.start_instant.elapsed().as_secs()), conns)
-            .await;
+        publish_state(
+            &cfg,
+            reserved,
+            "RUNNING",
+            Some(self.start_instant.elapsed().as_secs()),
+            conns,
+        )
+        .await;
     }
 
     /// Registers (or clears with `None`) the per-instance connectivity provider whose result is
@@ -320,11 +332,9 @@ async fn publish_state(
         .build();
 
     let destination = config.parsed.heartbeat.destination();
-    let result = if destination.eq_ignore_ascii_case("iotcore")
-        || destination.eq_ignore_ascii_case("iot_core")
-    {
+    let result = if destination.eq_ignore_ascii_case("northbound") {
         reserved
-            .publish_reserved_to_iot_core(&topic, &message, Qos::AtLeastOnce)
+            .publish_reserved_northbound(&topic, &message, Qos::AtLeastOnce)
             .await
     } else {
         reserved.publish_reserved(&topic, &message).await
@@ -343,7 +353,9 @@ impl Drop for Heartbeat {
         if let Some(task) = self.task.take() {
             task.abort();
         }
-        let Some(reserved) = self.reserved.clone() else { return };
+        let Some(reserved) = self.reserved.clone() else {
+            return;
+        };
         let config = self.config.load_full();
         if !config.parsed.heartbeat.enabled {
             return;
@@ -548,7 +560,7 @@ fn open_file_count() -> Option<u64> {
 mod windows_counters {
     use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
-        CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
+        CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
     };
     use windows_sys::Win32::System::Threading::{
         GetCurrentProcess, GetCurrentProcessId, GetProcessHandleCount,
@@ -689,11 +701,20 @@ mod tests {
         assert_eq!(msg.header.version, "1.0");
         assert_eq!(msg.body["status"], "RUNNING");
         assert_eq!(msg.body["uptimeSecs"], 42);
-        let identity = msg.identity.as_ref().expect("state envelope carries identity");
+        let identity = msg
+            .identity
+            .as_ref()
+            .expect("state envelope carries identity");
         assert_eq!(identity.device(), "thing-1");
         assert_eq!(identity.instance(), "main");
-        assert!(recorder.reserved_iot().is_empty(), "local destination must not hit IoT Core");
-        assert!(recorder.local().is_empty(), "the keepalive must use the SEAM, not publish()");
+        assert!(
+            recorder.reserved_iot().is_empty(),
+            "local destination must not hit IoT Core"
+        );
+        assert!(
+            recorder.local().is_empty(),
+            "the keepalive must use the SEAM, not publish()"
+        );
     }
 
     /// The #1c per-instance connectivity surface: a provider's result rides the RUNNING state
@@ -709,7 +730,14 @@ mod tests {
             ]
         });
 
-        publish_state(&config, recorder.as_ref(), "RUNNING", Some(1), Some(provider)).await;
+        publish_state(
+            &config,
+            recorder.as_ref(),
+            "RUNNING",
+            Some(1),
+            Some(provider),
+        )
+        .await;
 
         let published = recorder.reserved_local();
         let instances = published[0].1.body["instances"].as_array().unwrap();
@@ -737,9 +765,13 @@ mod tests {
         assert!(r2.reserved_local()[0].1.body.get("instances").is_none());
 
         let r3 = RecordingMessaging::new();
-        let p: Arc<InstanceConnectivityProvider> = Arc::new(|| vec![InstanceConnectivity::of("x", true)]);
+        let p: Arc<InstanceConnectivityProvider> =
+            Arc::new(|| vec![InstanceConnectivity::of("x", true)]);
         publish_state(&config, r3.as_ref(), "STOPPED", None, Some(p)).await;
-        assert!(r3.reserved_local()[0].1.body.get("instances").is_none(), "STOPPED carries no instances");
+        assert!(
+            r3.reserved_local()[0].1.body.get("instances").is_none(),
+            "STOPPED carries no instances"
+        );
     }
 
     /// Best-effort: a panicking provider omits `instances[]` but never suppresses the keepalive.
@@ -750,11 +782,22 @@ mod tests {
         let prev = std::panic::take_hook();
         std::panic::set_hook(Box::new(|_| {})); // silence the expected panic print
         let provider: Arc<InstanceConnectivityProvider> = Arc::new(|| panic!("boom"));
-        publish_state(&config, recorder.as_ref(), "RUNNING", Some(1), Some(provider)).await;
+        publish_state(
+            &config,
+            recorder.as_ref(),
+            "RUNNING",
+            Some(1),
+            Some(provider),
+        )
+        .await;
         std::panic::set_hook(prev);
 
         let published = recorder.reserved_local();
-        assert_eq!(published.len(), 1, "a panicking provider must not suppress the keepalive");
+        assert_eq!(
+            published.len(),
+            1,
+            "a panicking provider must not suppress the keepalive"
+        );
         assert_eq!(published[0].1.body["status"], "RUNNING");
         assert!(published[0].1.body.get("instances").is_none());
     }
@@ -762,7 +805,8 @@ mod tests {
     #[test]
     fn instance_connectivity_serializes() {
         assert_eq!(
-            InstanceConnectivity::new("plc1", true, Some("tcp://10.0.0.50:502".to_string())).to_json(),
+            InstanceConnectivity::new("plc1", true, Some("tcp://10.0.0.50:502".to_string()))
+                .to_json(),
             json!({ "instance": "plc1", "connected": true, "detail": "tcp://10.0.0.50:502" })
         );
         assert_eq!(
@@ -770,7 +814,10 @@ mod tests {
             json!({ "instance": "plc1", "connected": false })
         );
         assert!(
-            InstanceConnectivity::new("plc1", false, Some("  ".to_string())).to_json().get("detail").is_none(),
+            InstanceConnectivity::new("plc1", false, Some("  ".to_string()))
+                .to_json()
+                .get("detail")
+                .is_none(),
             "blank detail -> omitted"
         );
     }
@@ -790,7 +837,10 @@ mod tests {
         hb.publish_state_now().await;
 
         let states = recorder.reserved_local();
-        assert!(!states.is_empty(), "at least the out-of-band RUNNING keepalive");
+        assert!(
+            !states.is_empty(),
+            "at least the out-of-band RUNNING keepalive"
+        );
         let (topic, msg) = states.last().unwrap();
         assert_eq!(topic, "ecv1/thing-1/MyComp/main/state");
         assert_eq!(msg.header.name, "state");
@@ -835,15 +885,18 @@ mod tests {
         assert!(msg.body.get("uptimeSecs").is_none());
     }
 
-    /// `heartbeat.destination: iotcore` routes the keepalive to IoT Core.
+    /// `heartbeat.destination: northbound` routes the keepalive to the northbound broker.
     #[tokio::test]
-    async fn state_destination_iotcore_routes_to_iot_core() {
-        let config = heartbeat_config(json!({ "destination": "iotcore" }));
+    async fn state_destination_northbound_routes_to_iot_core_api() {
+        let config = heartbeat_config(json!({ "destination": "northbound" }));
         let recorder = RecordingMessaging::new();
         publish_state(&config, recorder.as_ref(), "RUNNING", Some(1), None).await;
         assert!(recorder.reserved_local().is_empty());
         assert_eq!(recorder.reserved_iot().len(), 1);
-        assert_eq!(recorder.reserved_iot()[0].0, "ecv1/thing-1/MyComp/main/state");
+        assert_eq!(
+            recorder.reserved_iot()[0].0,
+            "ecv1/thing-1/MyComp/main/state"
+        );
     }
 
     /// includeRoot with a multi-level hierarchy prepends the site level (D-U25).
@@ -861,7 +914,10 @@ mod tests {
         .unwrap();
         let recorder = RecordingMessaging::new();
         publish_state(&config, recorder.as_ref(), "RUNNING", Some(1), None).await;
-        assert_eq!(recorder.reserved_local()[0].0, "ecv1/dallas/gw-01/MyComp/main/state");
+        assert_eq!(
+            recorder.reserved_local()[0].0,
+            "ecv1/dallas/gw-01/MyComp/main/state"
+        );
     }
 
     /// The running heartbeat publishes the state keepalive AND emits the `sys`
@@ -883,13 +939,26 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
         let states = recorder.reserved_local();
-        assert!(states.len() >= 2, "expected >=2 keepalives, got {}", states.len());
-        assert!(states.iter().all(|(t, _)| t == "ecv1/thing-1/MyComp/main/state"));
+        assert!(
+            states.len() >= 2,
+            "expected >=2 keepalives, got {}",
+            states.len()
+        );
+        assert!(
+            states
+                .iter()
+                .all(|(t, _)| t == "ecv1/thing-1/MyComp/main/state")
+        );
         assert!(states.iter().all(|(_, m)| m.body["status"] == "RUNNING"));
         // uptimeSecs is present and non-decreasing.
-        let uptimes: Vec<u64> =
-            states.iter().map(|(_, m)| m.body["uptimeSecs"].as_u64().unwrap()).collect();
-        assert!(uptimes.windows(2).all(|w| w[0] <= w[1]), "uptime must not decrease: {uptimes:?}");
+        let uptimes: Vec<u64> = states
+            .iter()
+            .map(|(_, m)| m.body["uptimeSecs"].as_u64().unwrap())
+            .collect();
+        assert!(
+            uptimes.windows(2).all(|w| w[0] <= w[1]),
+            "uptime must not decrease: {uptimes:?}"
+        );
 
         let emissions = metrics_recorder.emissions();
         assert!(emissions.len() >= 2);
@@ -915,7 +984,10 @@ mod tests {
             .filter(|(_, m)| m.body["status"] == "STOPPED")
             .collect();
         assert_eq!(stopped.len(), 1, "exactly one best-effort STOPPED state");
-        assert!(stopped[0].1.body.get("uptimeSecs").is_none(), "STOPPED omits uptimeSecs");
+        assert!(
+            stopped[0].1.body.get("uptimeSecs").is_none(),
+            "STOPPED omits uptimeSecs"
+        );
     }
 
     /// `heartbeat.enabled: false` publishes nothing (and drop publishes no STOPPED).
@@ -932,7 +1004,10 @@ mod tests {
         assert!(recorder.reserved_iot().is_empty());
         drop(hb);
         tokio::time::sleep(Duration::from_millis(200)).await;
-        assert!(recorder.reserved_local().is_empty(), "no STOPPED when disabled");
+        assert!(
+            recorder.reserved_local().is_empty(),
+            "no STOPPED when disabled"
+        );
     }
 
     /// No messaging seam (no transport) — the sys metric still flows.
@@ -950,7 +1025,10 @@ mod tests {
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        assert!(!metrics_recorder.emissions().is_empty(), "sys metric emitted without messaging");
+        assert!(
+            !metrics_recorder.emissions().is_empty(),
+            "sys metric emitted without messaging"
+        );
     }
 
     /// Raising `intervalSecs` via hot-reload rebuilds the ticker so later keepalives
@@ -971,12 +1049,17 @@ mod tests {
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        handle.store(Arc::new(heartbeat_config(json!({ "intervalSecs": 3, "measures": { "cpu": true } }))));
+        handle.store(Arc::new(heartbeat_config(
+            json!({ "intervalSecs": 3, "measures": { "cpu": true } }),
+        )));
         let before = recorder.times().len();
         // Within ~1.5s the old 1s cadence would have added multiple keepalives; the
         // new 3s cadence should add at most one.
         tokio::time::sleep(Duration::from_millis(1500)).await;
         let added = recorder.times().len() - before;
-        assert!(added <= 1, "after widening to 3s, expected <=1 new keepalive in 1.5s, got {added}");
+        assert!(
+            added <= 1,
+            "after widening to 3s, expected <=1 new keepalive in 1.5s, got {added}"
+        );
     }
 }

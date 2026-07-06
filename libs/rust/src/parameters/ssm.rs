@@ -6,14 +6,14 @@
 //! async `build()`. Uses the default credential chain — TES on Greengrass, ambient creds in
 //! STANDALONE.
 
+use aws_sdk_ssm::Client;
 use aws_sdk_ssm::error::DisplayErrorContext;
 use aws_sdk_ssm::types::{Parameter, ParameterType};
-use aws_sdk_ssm::Client;
 use tokio::runtime::Runtime;
 
 use super::source::{ParamValue, ParameterSource};
-use crate::error::EdgeCommonsError;
 use crate::Result;
+use crate::error::EdgeCommonsError;
 
 /// AWS SSM Parameter Store [`ParameterSource`].
 pub struct AwsSsmSource {
@@ -24,7 +24,11 @@ pub struct AwsSsmSource {
 
 impl AwsSsmSource {
     /// Build the SSM client (dedicated thread; `endpoint_url` overrides for floci/LocalStack/VPC).
-    pub fn new(region: Option<String>, endpoint_url: Option<String>, with_decryption: bool) -> Result<Self> {
+    pub fn new(
+        region: Option<String>,
+        endpoint_url: Option<String>,
+        with_decryption: bool,
+    ) -> Result<Self> {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .thread_name("edgecommons-ssm")
@@ -34,7 +38,8 @@ impl AwsSsmSource {
             scope
                 .spawn(|| {
                     rt.block_on(async {
-                        let mut loader = aws_config::defaults(aws_config::BehaviorVersion::latest());
+                        let mut loader =
+                            aws_config::defaults(aws_config::BehaviorVersion::latest());
                         if let Some(r) = region {
                             loader = loader.region(aws_sdk_ssm::config::Region::new(r));
                         }
@@ -47,20 +52,32 @@ impl AwsSsmSource {
                 .join()
                 .map_err(|_| EdgeCommonsError::Parameters("ssm client init thread panicked".into()))
         })?;
-        Ok(Self { rt, client, with_decryption })
+        Ok(Self {
+            rt,
+            client,
+            with_decryption,
+        })
     }
 
     fn to_value(p: &Parameter) -> Option<ParamValue> {
         let value = p.value()?.to_string();
         let secure = p.r#type() == Some(&ParameterType::SecureString);
-        Some(ParamValue { value: value.into_bytes(), secure, version: Some(p.version().to_string()) })
+        Some(ParamValue {
+            value: value.into_bytes(),
+            secure,
+            version: Some(p.version().to_string()),
+        })
     }
 }
 
 impl ParameterSource for AwsSsmSource {
     fn fetch(&self, name: &str) -> Result<Option<ParamValue>> {
         let resp = self.rt.block_on(
-            self.client.get_parameter().name(name).with_decryption(self.with_decryption).send(),
+            self.client
+                .get_parameter()
+                .name(name)
+                .with_decryption(self.with_decryption)
+                .send(),
         );
         match resp {
             Ok(r) => Ok(r.parameter().and_then(Self::to_value)),
@@ -69,7 +86,10 @@ impl ParameterSource for AwsSsmSource {
                 if svc.is_parameter_not_found() {
                     Ok(None)
                 } else {
-                    Err(EdgeCommonsError::Parameters(format!("ssm get_parameter: {}", DisplayErrorContext(&svc))))
+                    Err(EdgeCommonsError::Parameters(format!(
+                        "ssm get_parameter: {}",
+                        DisplayErrorContext(&svc)
+                    )))
                 }
             }
         }
@@ -88,10 +108,12 @@ impl ParameterSource for AwsSsmSource {
             if let Some(t) = &next {
                 req = req.next_token(t);
             }
-            let resp = self
-                .rt
-                .block_on(req.send())
-                .map_err(|e| EdgeCommonsError::Parameters(format!("ssm get_parameters_by_path: {}", DisplayErrorContext(&e))))?;
+            let resp = self.rt.block_on(req.send()).map_err(|e| {
+                EdgeCommonsError::Parameters(format!(
+                    "ssm get_parameters_by_path: {}",
+                    DisplayErrorContext(&e)
+                ))
+            })?;
             for p in resp.parameters() {
                 if let (Some(name), Some(v)) = (p.name(), Self::to_value(p)) {
                     out.push((name.to_string(), v));
@@ -163,24 +185,45 @@ mod floci_it {
                     .expect("seed put_parameter");
             });
         };
-        put(format!("{prefix}/plain"), "us-east-1", ParameterType::String);
-        put(format!("{prefix}/secure"), "p@ss", ParameterType::SecureString);
+        put(
+            format!("{prefix}/plain"),
+            "us-east-1",
+            ParameterType::String,
+        );
+        put(
+            format!("{prefix}/secure"),
+            "p@ss",
+            ParameterType::SecureString,
+        );
         put(format!("{prefix}/tree/a"), "1", ParameterType::String);
         put(format!("{prefix}/tree/b"), "2", ParameterType::String);
 
         // --- read back via the source under test (with_decryption = true) ---
         let src = AwsSsmSource::new(Some("us-east-1".into()), Some(endpoint()), true).unwrap();
 
-        let plain = src.fetch(&format!("{prefix}/plain")).unwrap().expect("plain present");
+        let plain = src
+            .fetch(&format!("{prefix}/plain"))
+            .unwrap()
+            .expect("plain present");
         assert_eq!(String::from_utf8(plain.value).unwrap(), "us-east-1");
         assert!(!plain.secure, "String must not be flagged secure");
         assert!(plain.version.is_some(), "version should be populated");
 
-        let secure = src.fetch(&format!("{prefix}/secure")).unwrap().expect("secure present");
-        assert_eq!(String::from_utf8(secure.value).unwrap(), "p@ss", "SecureString must decrypt");
+        let secure = src
+            .fetch(&format!("{prefix}/secure"))
+            .unwrap()
+            .expect("secure present");
+        assert_eq!(
+            String::from_utf8(secure.value).unwrap(),
+            "p@ss",
+            "SecureString must decrypt"
+        );
         assert!(secure.secure, "SecureString must be flagged secure");
 
-        assert!(src.fetch(&format!("{prefix}/missing")).unwrap().is_none(), "missing -> None");
+        assert!(
+            src.fetch(&format!("{prefix}/missing")).unwrap().is_none(),
+            "missing -> None"
+        );
 
         let tree: HashMap<String, String> = src
             .fetch_by_path(&format!("{prefix}/tree"), true)
@@ -188,8 +231,14 @@ mod floci_it {
             .into_iter()
             .map(|(k, v)| (k, String::from_utf8(v.value).unwrap()))
             .collect();
-        assert_eq!(tree.get(&format!("{prefix}/tree/a")).map(String::as_str), Some("1"));
-        assert_eq!(tree.get(&format!("{prefix}/tree/b")).map(String::as_str), Some("2"));
+        assert_eq!(
+            tree.get(&format!("{prefix}/tree/a")).map(String::as_str),
+            Some("1")
+        );
+        assert_eq!(
+            tree.get(&format!("{prefix}/tree/b")).map(String::as_str),
+            Some("2")
+        );
 
         // cleanup (best-effort)
         for suffix in ["/plain", "/secure", "/tree/a", "/tree/b"] {

@@ -111,6 +111,26 @@ are **identical across all four languages** so they interoperate.
   only when tags were stamped.
 - **`body`** — your payload. Any JSON value.
 
+For small binary payloads, the body uses an explicit marker object rather than a bare base64 string:
+
+```json
+{
+  "_edgecommonsBinary": {
+    "encoding": "base64",
+    "length": 5,
+    "data": "AAEC/v8="
+  }
+}
+```
+
+This is intentionally bounded control-payload support, not a frame/video streaming transport:
+decoded binary bodies are limited to **64 KiB**. Java `byte[]`, Python `bytes`/`bytearray`, and
+TypeScript `Buffer`/`Uint8Array` payloads serialize to this marker. Rust uses
+`MessageBuilder::binary_payload(...)`. Consumers keep using `getBody()` / `get_body()` /
+`getBody()` / `body` for the raw JSON marker, or use the typed binary accessors
+`getBinaryBody()` / `get_binary_body()` / `binary_body()` / `getBinaryBody()` to decode and
+validate it.
+
 A **raw** message has no envelope — it serializes as `{ "raw": <value> }` instead. When a component
 receives a payload that is not an envelope (none of `header`/`identity`/`tags`/`body`), or non-JSON
 bytes, it is delivered to your handler as a **raw message** (non-JSON bytes become a raw string).
@@ -540,55 +560,78 @@ Each subscription has two independent bounds:
 Remember the argument-order divergence (see the [warning above](#publish-and-subscribe)): Java/Python
 take `maxConcurrency` first, Rust/TypeScript take `maxMessages` first.
 
-## Destination: local vs IoT Core, and QoS
+## Destination: local vs northbound, and QoS
 
 With the dual-MQTT transport, the plain methods (`publish`, `subscribe`, `request`, `reply`) target
-the **local** broker. Mirror methods target **AWS IoT Core** directly and take a **QoS**:
+the **local** broker. Northbound methods target the configured **northbound** transport and take a
+**QoS**:
 
-| Local | IoT Core |
-|-------|----------|
-| `publish` / `publishRaw` | `publishToIoTCore` / `publishToIoTCoreRaw` |
-| `subscribe` | `subscribeToIoTCore` |
-| `request` | `requestFromIoTCore` |
-| `reply` | `replyToIoTCore` |
-| `unsubscribe` | `unsubscribeFromIoTCore` |
+| Local | Northbound |
+|-------|------------|
+| `publish` / `publishRaw` | `publishNorthbound` / `publishNorthboundRaw` |
+| `subscribe` | `subscribeNorthbound` |
+| `request` | `requestNorthbound` |
+| `reply` | `replyNorthbound` |
+| `unsubscribe` | `unsubscribeNorthbound` |
 
 <Aside type="note">
-The casing follows each language's idiom, uniformly within each SDK: **Java and TypeScript** spell
-the whole family `IoTCore` (`publishToIoTCore`, `subscribeToIoTCore`, ...); **Rust** uses the
-RFC-430 acronym convention `_iot_core` / `Destination::IotCore`; **Python** is snake_case
-(`publish_to_iot_core`). All config/string tokens (`"iotcore"`) are unchanged.
+The northbound family is named consistently in each SDK: **Java and TypeScript** use
+`publishNorthbound` / `subscribeNorthbound`, **Rust** uses `publish_northbound` plus
+`Destination::Northbound`, and **Python** uses snake_case (`publish_northbound`). Config uses
+`northbound` for the optional second broker and related route selectors.
 </Aside>
 
-**QoS** has two levels — at-most-once and at-least-once — which the MQTT provider maps to QoS `0` and
-`1` respectively. The enum origin differs: **Java and Python reuse the AWS SDK** `QOS` enum
-(`AT_MOST_ONCE` / `AT_LEAST_ONCE`), while **Rust and TypeScript define their own** `Qos` enum
-(`AtMostOnce` / `AtLeastOnce`).
+**QoS** defaults are config-backed for operations that do not carry an explicit QoS parameter. The
+standalone **local** and **northbound** MQTT brokers support QoS `0` (at most once), `1` (at least
+once), and `2` (exactly once). Greengrass IoT Core IPC APIs support only QoS `0` and `1` through
+their explicit SDK enums. Direct northbound methods that take a QoS argument still use that
+per-call value.
 
-QoS is only a parameter on the explicit IoT-Core mirror methods; the **local** methods use a
-fixed, implicit QoS. On the dual-MQTT provider, local `publish` / `subscribe` / `request` (and the
-ephemeral reply subscription `request` creates) use **QoS 1 (at-least-once)**, whereas the IoT-Core
-request/reply path (`requestFromIoTCore` / `replyToIoTCore`, and their reply subscription) is forced
-to **QoS 0 (at-most-once)** regardless of any QoS you pass elsewhere.
+All four languages expose an EdgeCommons-owned `Qos` enum for messaging APIs. The config file uses
+numeric MQTT QoS values:
+
+```json
+{
+  "messaging": {
+    "local": {
+      "host": "localhost",
+      "port": 1883,
+      "clientId": "my-component-local",
+      "qos": { "publish": 1, "subscribe": 1 }
+    },
+    "northbound": {
+      "host": "northbound-broker.example.com",
+      "port": 8883,
+      "clientId": "my-component-northbound",
+      "qos": { "publish": 2, "subscribe": 1 }
+    }
+  }
+}
+```
+
+`messaging.local.qos.publish` drives local `publish`, `publishRaw`, request publish, and reply publish.
+`messaging.local.qos.subscribe` drives local `subscribe` and request reply subscriptions. The matching
+`messaging.northbound.qos` defaults drive northbound MQTT request/reply operations that do not expose
+an explicit QoS argument.
 
 <Tabs syncKey="lang">
 <TabItem label="Java">
 
 ```java
-import software.amazon.awssdk.aws.greengrass.model.QOS;
+import com.mbreissi.edgecommons.messaging.Qos;
 
-messaging.publishToIoTCore("cloud/telemetry", msg, QOS.AT_LEAST_ONCE);
-messaging.subscribeToIoTCore("cloud/cmd", (topic, m) -> handle(m), QOS.AT_LEAST_ONCE, 1);
+messaging.publishNorthbound("cloud/telemetry", msg, Qos.AT_LEAST_ONCE);
+messaging.subscribeNorthbound("cloud/cmd", (topic, m) -> handle(m), Qos.AT_LEAST_ONCE, 1);
 ```
 
 </TabItem>
 <TabItem label="Python">
 
 ```python
-from awsiot.greengrasscoreipc.model import QOS
+from edgecommons.messaging.qos import Qos
 
-messaging.publish_to_iot_core("cloud/telemetry", msg, QOS.AT_LEAST_ONCE)
-messaging.subscribe_to_iot_core("cloud/cmd", handler, QOS.AT_LEAST_ONCE, 1)
+messaging.publish_northbound("cloud/telemetry", msg, Qos.AT_LEAST_ONCE)
+messaging.subscribe_northbound("cloud/cmd", handler, Qos.AT_LEAST_ONCE, 1)
 ```
 
 </TabItem>
@@ -597,8 +640,8 @@ messaging.subscribe_to_iot_core("cloud/cmd", handler, QOS.AT_LEAST_ONCE, 1)
 ```rust
 use edgecommons::messaging::Qos;
 
-messaging.publish_to_iot_core("cloud/telemetry", &msg, Qos::AtLeastOnce).await?;
-messaging.subscribe_to_iot_core(
+messaging.publish_northbound("cloud/telemetry", &msg, Qos::AtLeastOnce).await?;
+messaging.subscribe_northbound(
     "cloud/cmd",
     message_handler(|_t, m| async move { handle(m).await }),
     Qos::AtLeastOnce,
@@ -613,16 +656,16 @@ messaging.subscribe_to_iot_core(
 ```typescript
 import { Qos } from "@edgecommons/edgecommons";
 
-await messaging.publishToIoTCore("cloud/telemetry", msg, Qos.AtLeastOnce);
-// subscribeToIoTCore's qos arg defaults to Qos.AtLeastOnce
-await messaging.subscribeToIoTCore("cloud/cmd", (_t, m) => handle(m), Qos.AtLeastOnce, 32, 1);
+await messaging.publishNorthbound("cloud/telemetry", msg, Qos.AtLeastOnce);
+// subscribeNorthbound's qos arg defaults to Qos.AtLeastOnce
+await messaging.subscribeNorthbound("cloud/cmd", (_t, m) => handle(m), Qos.AtLeastOnce, 32, 1);
 ```
 
 </TabItem>
 </Tabs>
 
 <Aside type="tip">
-`connected()` reports the **local** broker link only — an IoT Core outage does not flip it. It backs
+`connected()` reports the **local** broker link only — a northbound outage does not flip it. It backs
 the `/readyz` health check (never `/livez`), so a component stays "ready" through transient cloud
 disconnects.
 </Aside>
@@ -646,16 +689,18 @@ keys are silently ignored rather than rejected, so double-check the field names 
       "host": "localhost",
       "port": 8883,
       "clientId": "my-component",
+      "qos": { "publish": 1, "subscribe": 1 },
       "credentials": {
         "caPath": "/certs/ca.crt",
         "certPath": "/certs/client.crt",
         "keyPath": "/certs/client.key"
       }
     },
-    "iotCore": {
+    "northbound": {
       "endpoint": "xxxx-ats.iot.us-east-1.amazonaws.com",
       "port": 8883,
       "clientId": "my-component",
+      "qos": { "publish": 2, "subscribe": 1 },
       "credentials": {
         "caPath": "/certs/AmazonRootCA1.pem",
         "certPath": "/certs/device.pem.crt",
@@ -669,8 +714,8 @@ keys are silently ignored rather than rejected, so double-check the field names 
 
 Key rules (all verified, identical across the four languages):
 
-- **`iotCore` is optional.** Omit it for a **local-only** ("single-broker") deployment — the IoT Core
-  mirror methods are simply unused.
+- **`northbound` is optional.** Omit it for a **local-only** ("single-broker") deployment — the
+  northbound methods are simply unused.
 - **Local-broker TLS is keyed solely on `caPath` presence.** TLS is enabled when (and only when) the
   local `credentials.caPath` is set (`useSSL = credentials != null && caPath != null`); if `caPath` is
   absent, the connection is plaintext.
@@ -680,42 +725,16 @@ Key rules (all verified, identical across the four languages):
   - **`username`/`password` apply only to a plaintext (no-`caPath`) local broker.** They are set in the
     `else` branch under `if (!useSSL)`, so they are **mutually exclusive with TLS**: once `caPath` is
     present the connection goes TLS-only and any username/password is ignored.
-- **IoT Core requires full mutual-TLS credentials** (`caPath` + `certPath` + `keyPath`) or it refuses
-  to connect.
+- **Northbound is a generic MQTT broker.** It is plaintext when `caPath` is absent, server-TLS when
+  `caPath` is present, and mutual TLS when `certPath` + `keyPath` are also present.
 - **`host` is an opaque string** — a Kubernetes `Service` DNS name works unchanged.
 - **`local.type` is optional and ignored** — it is parsed into the config record but never read; there
   is **no** defaulting to `"mqtt"`.
 - **`requestTimeoutSeconds`** (number, default `30`, `0` = off) sets the default
   [request deadline](#requestreply-with-correlation).
-
-### MQTT Last Will (LWT)
-
-An optional `messaging.lwt` block registers an MQTT **Last-Will-and-Testament** on the
-**local-broker connection** at CONNECT (and re-registers it on every reconnect). The broker
-publishes the will when the component disconnects ungracefully — the fastest way for consumers to
-learn a publisher vanished:
-
-```json
-{
-  "messaging": {
-    "local": { "host": "localhost", "port": 1883, "clientId": "my-component" },
-    "lwt": {
-      "topic": "ecv1/gw-01/my-component/main/state",
-      "payload": { "status": "UNREACHABLE" },
-      "qos": 1
-    }
-  }
-}
-```
-
-- `topic` is required; `payload` (string or JSON object) is published **verbatim**; `qos` is `0` or
-  `1` (default `1`). There is **no retain option** by design.
-- The will applies to the **local MQTT connection only**. The **IPC transport no-ops** it (logged at
-  DEBUG), so behavior on Greengrass is identical minus the acceleration. IoT Core LWT is not
-  supported.
-- The will is registered at CONNECT, **not** routed through `publish()` — so the reserved-class
-  guard cannot apply to it; broker ACLs govern wills. Consumers must treat a will's event time as
-  its delivery time.
+- **`local.qos` / `northbound.qos`** set MQTT QoS defaults for operations on that broker without an
+  explicit QoS argument. `publish` and `subscribe` accept `0` (at most once), `1` (at least once), or
+  `2` (exactly once).
 
 <Aside type="tip">
 For local development, bring up the bundled EMQX broker (plaintext `1883`, mutual-TLS `8883`):
@@ -828,5 +847,5 @@ subscriptions or threads can trip the shared-connection quota on Greengrass.
 <LinkCard
   title="Configuration schema: messaging section"
   href="/reference/configuration-schema/"
-  description="The schema for the messaging config section — brokers, requestTimeoutSeconds, and lwt."
+  description="The schema for the messaging config section - brokers, requestTimeoutSeconds, and QoS."
 />

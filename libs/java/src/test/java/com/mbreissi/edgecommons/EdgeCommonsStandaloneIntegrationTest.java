@@ -27,7 +27,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
-import software.amazon.awssdk.aws.greengrass.model.QOS;
+import com.mbreissi.edgecommons.messaging.Qos;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -190,12 +190,12 @@ class EdgeCommonsStandaloneIntegrationTest {
 
         // IoT Core is not configured in this standalone config -> delegation must throw.
         Message m = MessageBuilder.create("X", "1.0").withPayload(raw).withConfig(gg.getConfigManager()).build();
-        assertThrows(IllegalStateException.class, () -> mc.publishToIoTCore("iot/t", m, QOS.AT_LEAST_ONCE));
-        assertThrows(IllegalStateException.class, () -> mc.subscribeToIoTCore("iot/t", (t, msg) -> {}, QOS.AT_LEAST_ONCE));
-        assertThrows(IllegalStateException.class, () -> mc.unsubscribeFromIoTCore("iot/t"));
-        assertThrows(IllegalStateException.class, () -> mc.publishToIoTCoreRaw("iot/t", raw, QOS.AT_LEAST_ONCE));
-        assertThrows(IllegalStateException.class, () -> mc.replyToIoTCore(m, m));
-        assertThrows(IllegalStateException.class, () -> mc.cancelRequestFromIoTCore(new ReplyFuture("x")));
+        assertThrows(IllegalStateException.class, () -> mc.publishNorthbound("iot/t", m, Qos.AT_LEAST_ONCE));
+        assertThrows(IllegalStateException.class, () -> mc.subscribeNorthbound("iot/t", (t, msg) -> {}, Qos.AT_LEAST_ONCE));
+        assertThrows(IllegalStateException.class, () -> mc.unsubscribeNorthbound("iot/t"));
+        assertThrows(IllegalStateException.class, () -> mc.publishNorthboundRaw("iot/t", raw, Qos.AT_LEAST_ONCE));
+        assertThrows(IllegalStateException.class, () -> mc.replyNorthbound(m, m));
+        assertThrows(IllegalStateException.class, () -> mc.cancelRequestNorthbound(new ReplyFuture("x")));
 
         // local cancel of an unanswered request
         Message req2 = MessageBuilder.create("Q2", "1.0").withPayload(raw).withConfig(gg.getConfigManager()).build();

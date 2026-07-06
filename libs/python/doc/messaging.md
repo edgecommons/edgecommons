@@ -40,7 +40,7 @@ Messages in EdgeCommons follow a header-payload model consisting of:
 Basic pub-sub messaging using either MQTT or Greengrass IPC:
 ```python
 from edgecommons.interfaces import IMessagingService
-from awsiot.greengrasscoreipc.model import QOS
+from edgecommons.messaging.qos import Qos
 
 # Get messaging service through dependency injection
 messaging_service = edgecommons.get_service(IMessagingService)
@@ -48,14 +48,14 @@ messaging_service = edgecommons.get_service(IMessagingService)
 # Publishing to local broker
 messaging_service.publish(topic, message)
 
-# Publishing to IoT Core
-messaging_service.publish_to_iot_core(topic, message, QOS.AT_LEAST_ONCE)
+# Publishing northbound
+messaging_service.publish_northbound(topic, message, Qos.AT_LEAST_ONCE)
 
 # Subscribing to local broker
 messaging_service.subscribe(topic_filter, message_handler)
 
-# Subscribing to IoT Core
-messaging_service.subscribe_to_iot_core(topic_filter, message_handler, QOS.AT_MOST_ONCE)
+# Subscribing northbound
+messaging_service.subscribe_northbound(topic_filter, message_handler, Qos.AT_MOST_ONCE)
 ```
 
 #### 2. Request-Reply
@@ -65,8 +65,8 @@ Synchronous and asynchronous request-reply patterns:
 future = messaging_service.request(topic, request_message)
 success, response = future.get(timeout_seconds)  # Blocking
 
-# Making a request to IoT Core
-future = messaging_service.request_from_iot_core(topic, request_message)
+# Making a request northbound
+future = messaging_service.request_northbound(topic, request_message)
 success, response = future.get(timeout_seconds)  # Blocking
 
 # Replying to requests (automatically routes to correct broker)
@@ -106,8 +106,8 @@ default is late-bound right after the `ConfigManager` exists; until then the bui
 The UNS classes `state`, `metric`, `cfg` and `log` are **library-owned** (UNS-CANONICAL-DESIGN
 §4.1): the heartbeat publishes the `state` keepalive, the metric subsystem publishes `metric`,
 and the effective-config publisher announces `cfg`. Every publish path that takes a client-chosen
-topic — `publish`, `publish_raw`, `publish_to_iot_core`, `publish_to_iot_core_raw`, `request`,
-`request_from_iot_core`, and `reply`/`reply_to_iot_core` (via the request's `reply_to`) — rejects
+topic — `publish`, `publish_raw`, `publish_northbound`, `publish_northbound_raw`, `request`,
+`request_northbound`, and `reply`/`reply_northbound` (via the request's `reply_to`) — rejects
 a topic whose UNS class position holds a reserved token with a `ReservedTopicError`:
 
 ```
@@ -124,7 +124,7 @@ guarded — consumers must read the reserved classes.
 
 The guard is **misuse prevention, not a security boundary** (per-device broker ACLs are). The
 library's own publishers reach the reserved classes through the
-`MessagingClient._publish_reserved` / `_publish_reserved_raw` / `_publish_reserved_to_iot_core`
+`MessagingClient._publish_reserved` / `_publish_reserved_raw` / `_publish_reserved_northbound`
 staticmethods, which bypass the guard. The underscore marks them library-internal — component
 code should not use them.
 
@@ -313,10 +313,10 @@ The `MQTT` transport (e.g. the `HOST` platform) requires a messaging configurati
         "password": "mqtt-password"
       }
     },
-    "iotCore": {
+    "northbound": {
       "endpoint": "your-endpoint.iot.us-east-1.amazonaws.com",
       "port": 8883,
-      "clientId": "my-component-iotcore",
+      "clientId": "my-component-northbound",
       "credentials": {
         "certPath": "/certs/device-cert.pem",
         "keyPath": "/certs/private-key.pem",
@@ -337,30 +337,11 @@ The `MQTT` transport (e.g. the `HOST` platform) requires a messaging configurati
 - Must provide `certPath`, `keyPath`, and `caPath`
 - No username/password option available
 
-### MQTT Last-Will-and-Testament (`messaging.lwt`)
-An optional `lwt` section registers an MQTT will on the **local-broker connection only** at
-CONNECT (re-registered automatically on reconnect). The broker publishes it if the component
-disconnects ungracefully — it never passes through `publish()`. There is **no retain option by
-design** (the will is always registered with `retain=False`). The IPC (GREENGRASS) transport has
-no CONNECT packet, so `lwt` is an explicit no-op there (DEBUG log).
+### MQTT Last-Will
 
-```json
-{
-  "messaging": {
-    "local":  { "host": "mqtt-broker.local", "port": 1883, "clientId": "bridge" },
-    "lwt": {
-      "topic":   "ecv1/gw-01/uns-bridge/main/state",
-      "payload": { "status": "UNREACHABLE" },
-      "qos": 1
-    }
-  }
-}
-```
-
-- `topic` (required): the will topic.
-- `payload`: a **string** is published verbatim as UTF-8 bytes; an **object** is serialized to
-  compact JSON bytes; absent => empty payload.
-- `qos`: `0` or `1`, default `1`.
+Generic component messaging config does not define an MQTT Last-Will. The first-party LWT use is
+the `uns-bridge` site-broker uplink, where the bridge derives a private Last-Will from its resolved
+UNS state topic and the site broker publishes whole-device `UNREACHABLE`.
 
 ### Dual Connectivity Benefits
 1. **Local Communication**: Fast, low-latency messaging for edge processing
@@ -384,10 +365,10 @@ data:
           "port": 1883,
           "clientId": "my-component-local"
         },
-        "iotCore": {
+        "northbound": {
           "endpoint": "your-endpoint.iot.us-east-1.amazonaws.com",
           "port": 8883,
-          "clientId": "my-component-iotcore",
+          "clientId": "my-component-northbound",
           "credentials": {
             "certPath": "/certs/device-cert.pem",
             "keyPath": "/certs/private-key.pem",
@@ -401,22 +382,22 @@ data:
 ## Advanced Features
 
 ### Dual Subscription Testing
-Test that local and IoT Core subscriptions work independently:
+Test that local and northbound subscriptions work independently:
 ```python
 def test_dual_subscription():
     topic = "test/dualTopic"
     local_received = []
-    iot_core_received = []
+    northbound_received = []
     
     def local_handler(t, m):
         local_received.append(m)
         
-    def iot_core_handler(t, m):
-        iot_core_received.append(m)
+    def northbound_handler(t, m):
+        northbound_received.append(m)
     
     # Subscribe to same topic on both brokers
     messaging_service.subscribe(topic, local_handler)
-    messaging_service.subscribe_to_iot_core(topic, iot_core_handler, QOS.AT_MOST_ONCE)
+    messaging_service.subscribe_northbound(topic, northbound_handler, Qos.AT_MOST_ONCE)
     
     # Publish to local - only local handler should receive
     local_msg = MessageBuilder.create("LocalMessage", "1.0") \
@@ -424,11 +405,11 @@ def test_dual_subscription():
         .build()
     messaging_service.publish(topic, local_msg)
     
-    # Publish to IoT Core - only IoT Core handler should receive
-    iot_msg = MessageBuilder.create("IoTCoreMessage", "1.0") \
-        .with_payload({"source": "iotcore"}) \
+    # Publish northbound - only northbound handler should receive
+    northbound_msg = MessageBuilder.create("NorthboundMessage", "1.0") \
+        .with_payload({"source": "northbound"}) \
         .build()
-    messaging_service.publish_to_iot_core(topic, iot_msg, QOS.AT_LEAST_ONCE)
+    messaging_service.publish_northbound(topic, northbound_msg, Qos.AT_LEAST_ONCE)
 ```
 
 ### Connection Management
@@ -494,10 +475,10 @@ Enable debug logging for messaging components:
 ### Connection Verification
 ```python
 # Check native clients
-clients = messaging_service.get_native_local_client()
+clients = messaging_service.get_native_client()
 local_client = clients.get('local')
-iot_core_client = clients.get('iot_core')
+northbound_client = clients.get('northbound')
 
 print(f"Local connected: {local_client.is_connected() if local_client else False}")
-print(f"IoT Core connected: {iot_core_client.is_connected() if iot_core_client else False}")
+print(f"Northbound connected: {northbound_client.is_connected() if northbound_client else False}")
 ```

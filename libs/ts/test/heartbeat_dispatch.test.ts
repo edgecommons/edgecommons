@@ -95,13 +95,13 @@ describe("Heartbeat.start (UNS state keepalive + sys metric, §4.3)", () => {
     await hb.stop();
   });
 
-  it("destination iotcore routes the keepalive to IoT Core (measures unaffected)", async () => {
+  it("destination northbound routes the keepalive to the northbound broker (measures unaffected)", async () => {
     const metrics = new RecordingMetricService();
     const svc = new RecordingMessagingService();
-    const config = cfg({ measures: { memory: true }, destination: "iotcore" });
+    const config = cfg({ measures: { memory: true }, destination: "northbound" });
     const hb = Heartbeat.start(() => config, metrics, svc);
     await vi.advanceTimersByTimeAsync(0);
-    expect(svc.published[0].kind).toBe("publishReservedToIoTCore");
+    expect(svc.published[0].kind).toBe("publishReservedNorthbound");
     expect(svc.published[0].topic).toBe(STATE_TOPIC);
     expect(metrics.emittedNow[0].name).toBe("sys");
     await hb.stop();

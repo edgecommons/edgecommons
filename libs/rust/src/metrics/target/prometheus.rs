@@ -102,16 +102,17 @@ impl PrometheusTarget {
     /// thread cannot be spawned — propagated so a hot-reload rebuild keeps the previous target.
     pub fn start(namespace: impl Into<String>, port: u16, path: &str) -> Result<Self> {
         let registry = Registry::new();
-        let listener = TcpListener::bind(("0.0.0.0", port))
-            .map_err(|e| EdgeCommonsError::Metrics(format!("prometheus target cannot bind port {port}: {e}")))?;
-        let addr = listener
-            .local_addr()
-            .map_err(|e| EdgeCommonsError::Metrics(format!("prometheus target local_addr failed: {e}")))?;
+        let listener = TcpListener::bind(("0.0.0.0", port)).map_err(|e| {
+            EdgeCommonsError::Metrics(format!("prometheus target cannot bind port {port}: {e}"))
+        })?;
+        let addr = listener.local_addr().map_err(|e| {
+            EdgeCommonsError::Metrics(format!("prometheus target local_addr failed: {e}"))
+        })?;
         // Non-blocking accept + a short poll lets the thread observe the stop flag on shutdown
         // without an extra dependency (same pattern as the health server).
-        listener
-            .set_nonblocking(true)
-            .map_err(|e| EdgeCommonsError::Metrics(format!("prometheus target set_nonblocking failed: {e}")))?;
+        listener.set_nonblocking(true).map_err(|e| {
+            EdgeCommonsError::Metrics(format!("prometheus target set_nonblocking failed: {e}"))
+        })?;
 
         let stop = Arc::new(AtomicBool::new(false));
         let stop_thread = stop.clone();
@@ -120,7 +121,9 @@ impl PrometheusTarget {
         let handle = std::thread::Builder::new()
             .name("edgecommons-prometheus".to_string())
             .spawn(move || serve(listener, path, registry_thread, stop_thread))
-            .map_err(|e| EdgeCommonsError::Metrics(format!("prometheus target thread spawn failed: {e}")))?;
+            .map_err(|e| {
+                EdgeCommonsError::Metrics(format!("prometheus target thread spawn failed: {e}"))
+            })?;
 
         tracing::info!(addr = %addr, "prometheus metric target listening");
         Ok(Self {
@@ -167,27 +170,36 @@ impl PrometheusTarget {
             label_values.push(value.clone());
         }
 
-        let mut gauges = self
-            .gauges
-            .lock()
-            .map_err(|_| EdgeCommonsError::Metrics("prometheus gauge registry mutex poisoned".to_string()))?;
+        let mut gauges = self.gauges.lock().map_err(|_| {
+            EdgeCommonsError::Metrics("prometheus gauge registry mutex poisoned".to_string())
+        })?;
 
         for (measure_name, value) in values {
-            let gauge_name =
-                sanitize_metric_name(&format!("{}_{}", self.namespace, measure_name).to_lowercase());
+            let gauge_name = sanitize_metric_name(
+                &format!("{}_{}", self.namespace, measure_name).to_lowercase(),
+            );
 
             if !gauges.contains_key(&gauge_name) {
                 let name_refs: Vec<&str> = label_names.iter().map(String::as_str).collect();
                 let help = format!("edgecommons metric {gauge_name}");
-                let vec = GaugeVec::new(Opts::new(gauge_name.clone(), help), &name_refs).map_err(|e| {
-                    EdgeCommonsError::Metrics(format!("prometheus gauge '{gauge_name}' construction failed: {e}"))
-                })?;
+                let vec = GaugeVec::new(Opts::new(gauge_name.clone(), help), &name_refs).map_err(
+                    |e| {
+                        EdgeCommonsError::Metrics(format!(
+                            "prometheus gauge '{gauge_name}' construction failed: {e}"
+                        ))
+                    },
+                )?;
                 self.registry.register(Box::new(vec.clone())).map_err(|e| {
-                    EdgeCommonsError::Metrics(format!("prometheus gauge '{gauge_name}' registration failed: {e}"))
+                    EdgeCommonsError::Metrics(format!(
+                        "prometheus gauge '{gauge_name}' registration failed: {e}"
+                    ))
                 })?;
                 gauges.insert(
                     gauge_name.clone(),
-                    CachedGauge { vec, label_names: label_names.clone() },
+                    CachedGauge {
+                        vec,
+                        label_names: label_names.clone(),
+                    },
                 );
             }
 
@@ -204,7 +216,9 @@ impl PrometheusTarget {
             }
             match cached.vec.get_metric_with_label_values(&label_values) {
                 Ok(gauge) => gauge.set(*value),
-                Err(e) => tracing::warn!(gauge = %gauge_name, error = %e, "prometheus gauge update failed"),
+                Err(e) => {
+                    tracing::warn!(gauge = %gauge_name, error = %e, "prometheus gauge update failed")
+                }
             }
         }
         Ok(())
@@ -244,7 +258,13 @@ impl MetricTarget for PrometheusTarget {
 fn sanitize_metric_name(lowercased: &str) -> String {
     let mut out: String = lowercased
         .chars()
-        .map(|c| if matches!(c, 'a'..='z' | '0'..='9' | '_') { c } else { '_' })
+        .map(|c| {
+            if matches!(c, 'a'..='z' | '0'..='9' | '_') {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     if out.starts_with(|c: char| c.is_ascii_digit()) {
         out.insert(0, '_');
@@ -258,7 +278,13 @@ fn sanitize_metric_name(lowercased: &str) -> String {
 fn sanitize_label_name(name: &str) -> String {
     let mut out: String = name
         .chars()
-        .map(|c| if matches!(c, 'a'..='z' | 'A'..='Z' | '0'..='9' | '_') { c } else { '_' })
+        .map(|c| {
+            if matches!(c, 'a'..='z' | 'A'..='Z' | '0'..='9' | '_') {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     if out.starts_with(|c: char| c.is_ascii_digit()) {
         out.insert(0, '_');
@@ -305,7 +331,13 @@ fn handle_connection(mut stream: TcpStream, path: &str, registry: &Registry) {
             let _ = write_response(&mut stream, 404, "Not Found", "text/plain", b"not found");
         }
         None => {
-            let _ = write_response(&mut stream, 400, "Bad Request", "text/plain", b"bad request");
+            let _ = write_response(
+                &mut stream,
+                400,
+                "Bad Request",
+                "text/plain",
+                b"bad request",
+            );
         }
     }
 }
@@ -372,7 +404,10 @@ mod tests {
         let target = SocketAddr::from(([127, 0, 0, 1], addr.port()));
         let mut stream = TcpStream::connect(target).expect("connect to prometheus server");
         stream
-            .write_all(format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").as_bytes())
+            .write_all(
+                format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+                    .as_bytes(),
+            )
             .expect("send request");
         let mut response = String::new();
         stream.read_to_string(&mut response).expect("read response");
@@ -385,7 +420,13 @@ mod tests {
         let content_type = response
             .lines()
             .find(|l| l.to_ascii_lowercase().starts_with("content-type:"))
-            .map(|l| l.split_once(':').map(|x| x.1).unwrap_or("").trim().to_string())
+            .map(|l| {
+                l.split_once(':')
+                    .map(|x| x.1)
+                    .unwrap_or("")
+                    .trim()
+                    .to_string()
+            })
             .unwrap_or_default();
         let body = response.split("\r\n\r\n").nth(1).unwrap_or("").to_string();
         (status, content_type, body)
@@ -395,7 +436,10 @@ mod tests {
 
     #[test]
     fn sanitize_metric_name_replaces_invalid_and_prefixes_digit() {
-        assert_eq!(sanitize_metric_name("edgecommons_count"), "edgecommons_count");
+        assert_eq!(
+            sanitize_metric_name("edgecommons_count"),
+            "edgecommons_count"
+        );
         // hostile chars (already lowercased) → '_'
         assert_eq!(sanitize_metric_name("my-ns_cpu.usage%"), "my_ns_cpu_usage_");
         // leading digit → '_' prefix
@@ -427,13 +471,28 @@ mod tests {
         let (status, content_type, body) = http_get(addr, "/metrics");
         assert_eq!(status, 200);
         // Prometheus 3.x rejects a blank type; the client lib sets a valid one.
-        assert!(content_type.starts_with("text/plain"), "content-type was '{content_type}'");
+        assert!(
+            content_type.starts_with("text/plain"),
+            "content-type was '{content_type}'"
+        );
         // gauge name = sanitize(lowercase("edgecommons_count"))
-        assert!(body.contains("edgecommons_count"), "body missing gauge name:\n{body}");
+        assert!(
+            body.contains("edgecommons_count"),
+            "body missing gauge name:\n{body}"
+        );
         // dimensions became labels (category = metric name, coreName, component)
-        assert!(body.contains("category=\"requests\""), "missing category label:\n{body}");
-        assert!(body.contains("coreName=\"thing-1\""), "missing coreName label:\n{body}");
-        assert!(body.contains("component=\"com.example.C\""), "missing component label:\n{body}");
+        assert!(
+            body.contains("category=\"requests\""),
+            "missing category label:\n{body}"
+        );
+        assert!(
+            body.contains("coreName=\"thing-1\""),
+            "missing coreName label:\n{body}"
+        );
+        assert!(
+            body.contains("component=\"com.example.C\""),
+            "missing component label:\n{body}"
+        );
         // latest value
         assert!(body.contains(" 5"), "missing gauge value:\n{body}");
     }
@@ -442,7 +501,9 @@ mod tests {
     async fn emit_now_sets_latest_value() {
         let target = PrometheusTarget::start("ns", 0, "/metrics").expect("start");
         let addr = target.local_addr();
-        let metric = MetricBuilder::create("m").add_measure("v", "None", 60).build();
+        let metric = MetricBuilder::create("m")
+            .add_measure("v", "None", 60)
+            .build();
 
         target.emit(&metric, &values("v", 1.0)).await.unwrap();
         target.emit_now(&metric, &values("v", 42.0)).await.unwrap();
@@ -453,14 +514,19 @@ mod tests {
             .lines()
             .find(|l| l.starts_with("ns_v{") || l.starts_with("ns_v "))
             .unwrap_or("");
-        assert!(line.contains("42"), "expected latest value 42, body:\n{body}");
+        assert!(
+            line.contains("42"),
+            "expected latest value 42, body:\n{body}"
+        );
     }
 
     #[tokio::test]
     async fn flush_is_a_delivery_no_op() {
         // flush() must not error and must not deliver anything (a pull target has nothing to push).
         let target = PrometheusTarget::start("ns", 0, "/metrics").expect("start");
-        let metric = MetricBuilder::create("m").add_measure("v", "None", 60).build();
+        let metric = MetricBuilder::create("m")
+            .add_measure("v", "None", 60)
+            .build();
         target.emit(&metric, &values("v", 1.0)).await.unwrap();
         target.flush().await.unwrap();
         // The value is still only visible via a scrape, not pushed anywhere.
@@ -479,10 +545,16 @@ mod tests {
     #[tokio::test]
     async fn custom_path_is_served() {
         let target = PrometheusTarget::start("ns", 0, "/prom").expect("start");
-        let metric = MetricBuilder::create("m").add_measure("v", "None", 60).build();
+        let metric = MetricBuilder::create("m")
+            .add_measure("v", "None", 60)
+            .build();
         target.emit(&metric, &values("v", 7.0)).await.unwrap();
         assert_eq!(http_get(target.local_addr(), "/prom").0, 200);
-        assert_eq!(http_get(target.local_addr(), "/metrics").0, 404, "default path off when remapped");
+        assert_eq!(
+            http_get(target.local_addr(), "/metrics").0,
+            404,
+            "default path off when remapped"
+        );
     }
 
     #[tokio::test]
@@ -496,8 +568,14 @@ mod tests {
         target.emit(&metric, &values("v", 1.0)).await.unwrap();
 
         let (_, _, body) = http_get(target.local_addr(), "/metrics");
-        assert!(body.contains("bad_dim_name=\"v1\""), "hostile dim not sanitized:\n{body}");
-        assert!(body.contains("_9starts=\"v2\""), "leading-digit dim not sanitized:\n{body}");
+        assert!(
+            body.contains("bad_dim_name=\"v1\""),
+            "hostile dim not sanitized:\n{body}"
+        );
+        assert!(
+            body.contains("_9starts=\"v2\""),
+            "leading-digit dim not sanitized:\n{body}"
+        );
     }
 
     #[tokio::test]
@@ -519,7 +597,10 @@ mod tests {
             }
             std::thread::sleep(Duration::from_millis(25));
         }
-        assert!(bound, "prometheus server did not release its port after shutdown");
+        assert!(
+            bound,
+            "prometheus server did not release its port after shutdown"
+        );
     }
 
     #[tokio::test]

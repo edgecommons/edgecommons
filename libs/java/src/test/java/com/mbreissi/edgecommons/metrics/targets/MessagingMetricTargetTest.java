@@ -20,9 +20,9 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Verifies the {@link Messaging} metric target routes by destination: IoT Core only
- * for {@code iot_core}/{@code iotcore}, otherwise the local/IPC transport (incl. the
- * canonical {@code ipc} and the legacy {@code local}). Both routes carry the UNS metric
+ * Verifies the {@link Messaging} metric target routes by destination: northbound only for
+ * {@code northbound}, otherwise the local/IPC transport (incl. {@code ipc} and {@code local}).
+ * Both routes carry the UNS metric
  * topic and go through the privileged reserved-publish seam (§4.3).
  */
 class MessagingMetricTargetTest {
@@ -72,20 +72,19 @@ class MessagingMetricTargetTest {
     }
 
     @Test
-    void iotCoreDestinationsPublishToIotCore() {
-        for (String dest : new String[]{"iot_core", "iotcore"}) {
-            Messaging target = new Messaging(new MsgConfig(dest));
-            MockMessagingService client = new MockMessagingService();
-            target.setMessagingService(client);
+    void northboundDestinationPublishesToIotCoreApi() {
+        String dest = "northbound";
+        Messaging target = new Messaging(new MsgConfig(dest));
+        MockMessagingService client = new MockMessagingService();
+        target.setMessagingService(client);
 
-            emit(target);
+        emit(target);
 
-            List<MockMessagingService.PublishedMessage> published = client.getPublishedMessages();
-            assertEquals(1, published.size(), "destination " + dest);
-            assertNotNull(published.get(0).qos,
-                    "IoT Core publishes carry a QOS (destination " + dest + ")");
-            assertTrue(published.get(0).reserved);
-            assertEquals("ecv1/test-thing/TestComponent/main/metric/m", published.get(0).topic);
-        }
+        List<MockMessagingService.PublishedMessage> published = client.getPublishedMessages();
+        assertEquals(1, published.size(), "destination " + dest);
+        assertNotNull(published.get(0).qos,
+                "northbound publishes carry a QOS (destination " + dest + ")");
+        assertTrue(published.get(0).reserved);
+        assertEquals("ecv1/test-thing/TestComponent/main/metric/m", published.get(0).topic);
     }
 }

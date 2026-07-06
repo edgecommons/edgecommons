@@ -24,7 +24,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * Unit tests for the {@link Messaging} metric target on its UNS topic scheme (UNS-CANONICAL-DESIGN
  * §4.3): each metric publishes to {@code ecv1/{device}/{component}/main/metric/{metricName}} (the
  * name sanitized as a channel token) through the privileged {@code ReservedPublisher} seam, with
- * {@code targetConfig.destination} still selecting local vs IoT Core (D-U9). Uses
+ * {@code targetConfig.destination} still selecting local vs northbound (D-U9). Uses
  * {@link MockMessagingService} to capture publishes without a broker.
  */
 class MessagingTest {
@@ -87,8 +87,8 @@ class MessagingTest {
     }
 
     @Test
-    void emitMetricNowPublishesToIotCoreWhenDestinationIotCore() {
-        var messaging = new Messaging(new MsgConfig("iotcore", false));
+    void emitMetricNowPublishesToIotCoreApiWhenDestinationNorthbound() {
+        var messaging = new Messaging(new MsgConfig("northbound", false));
         var mock = new MockMessagingService();
         messaging.setMessagingService(mock);
 
@@ -97,7 +97,7 @@ class MessagingTest {
         List<MockMessagingService.PublishedMessage> published = mock.getPublishedMessages();
         assertEquals(1, published.size());
         assertEquals(METRIC_TOPIC_PREFIX + "m1", published.get(0).topic);
-        assertNotNull(published.get(0).qos, "iotcore destination publishes via publishToIoTCore");
+        assertNotNull(published.get(0).qos, "northbound destination publishes via publishNorthbound");
         assertTrue(published.get(0).reserved);
     }
 

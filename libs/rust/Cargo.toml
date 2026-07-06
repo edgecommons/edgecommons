@@ -49,7 +49,7 @@ streaming-file-avro = ["streaming", "edgestreamlog/avro"]
 # builds everywhere). The AWS Secrets Manager central source is a later, separately-gated add.
 credentials = [
     "dep:aes-gcm", "dep:hmac", "dep:sha2", "dep:hkdf",
-    "dep:zeroize", "dep:getrandom", "dep:base64", "dep:fs4",
+    "dep:zeroize", "dep:getrandom", "dep:fs4",
 ]
 # Central sync from AWS Secrets Manager + KMS-wrapped DEK (adds the AWS SDK; off by default).
 credentials-aws = ["credentials", "dep:aws-config", "dep:aws-sdk-secretsmanager", "dep:aws-sdk-kms"]
@@ -112,7 +112,7 @@ sha2 = { version = "0.10", optional = true }
 hkdf = { version = "0.12", optional = true }
 zeroize = { version = "1", optional = true }
 getrandom = { version = "0.2", optional = true }
-base64 = { version = "0.22", optional = true }
+base64 = "0.22"
 fs4 = { version = "0.13", optional = true, features = ["sync"] }
 # Central source (feature = "credentials-aws"): AWS Secrets Manager via the AWS SDK
 # (aws-config is already an optional dep above for the cloudwatch feature).

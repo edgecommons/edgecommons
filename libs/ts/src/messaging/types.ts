@@ -4,9 +4,7 @@
  *
  * Mirrors the Rust `MessagingProvider` (raw bytes transport) / `MessagingService`
  * (message-level publish/subscribe + request/reply) split, and the Java/Python
- * `IMessagingService` contract — explicit local / IoT Core method pairs (Java/TS
- * casing is `IoTCore` — D-U7; the enum's string value `"iotcore"` and all config
- * tokens are unchanged).
+ * `IMessagingService` contract — explicit local / northbound method pairs.
  */
 import type { Message } from "../message";
 
@@ -14,14 +12,16 @@ import type { Message } from "../message";
 export enum Destination {
   /** Local broker (STANDALONE MQTT) or Greengrass IPC local pub/sub. */
   Local = "local",
-  /** AWS IoT Core. */
-  IoTCore = "iotcore",
+  /** The northbound transport. */
+  Northbound = "northbound",
 }
 
 /** MQTT quality of service. */
 export enum Qos {
   AtMostOnce = "atMostOnce",
   AtLeastOnce = "atLeastOnce",
+  /** MQTT QoS 2. Supported only by the standalone local MQTT provider. */
+  ExactlyOnce = "exactlyOnce",
 }
 
 /** A handler invoked for each message delivered to a subscription. */
@@ -124,14 +124,14 @@ export class ReservedTopicError extends Error {
 
 /**
  * Transport-agnostic messaging operations over {@link Message}s, with explicit
- * local / IoT Core method pairs (mirrors the Java/Python `IMessagingService` and
+ * local / northbound method pairs (mirrors the Java/Python `IMessagingService` and
  * Rust `MessagingService`).
  */
 export interface IMessagingService {
   publish(topic: string, msg: Message): Promise<void>;
-  publishToIoTCore(topic: string, msg: Message, qos?: Qos): Promise<void>;
+  publishNorthbound(topic: string, msg: Message, qos?: Qos): Promise<void>;
   publishRaw(topic: string, payload: unknown): Promise<void>;
-  publishToIoTCoreRaw(topic: string, payload: unknown, qos?: Qos): Promise<void>;
+  publishNorthboundRaw(topic: string, payload: unknown, qos?: Qos): Promise<void>;
 
   /**
    * Register a callback for `filter` on the local broker. `maxMessages` bounds the
@@ -139,7 +139,7 @@ export interface IMessagingService {
    * (`1` = serial, ordered).
    */
   subscribe(filter: string, handler: MessageHandler, maxMessages?: number, maxConcurrency?: number): Promise<void>;
-  subscribeToIoTCore(
+  subscribeNorthbound(
     filter: string,
     handler: MessageHandler,
     qos?: Qos,
@@ -148,7 +148,7 @@ export interface IMessagingService {
   ): Promise<void>;
 
   unsubscribe(filter: string): Promise<void>;
-  unsubscribeFromIoTCore(filter: string): Promise<void>;
+  unsubscribeNorthbound(filter: string): Promise<void>;
 
   /**
    * Send a request on the local broker; await/timeout the returned {@link ReplyFuture}.
@@ -158,13 +158,13 @@ export interface IMessagingService {
    * the future rejects with {@link RequestTimeoutError} — even if the caller never awaits it.
    */
   request(topic: string, msg: Message, timeoutMs?: number): ReplyFuture;
-  requestFromIoTCore(topic: string, msg: Message, timeoutMs?: number): ReplyFuture;
+  requestNorthbound(topic: string, msg: Message, timeoutMs?: number): ReplyFuture;
 
   reply(request: Message, reply: Message): Promise<void>;
-  replyToIoTCore(request: Message, reply: Message): Promise<void>;
+  replyNorthbound(request: Message, reply: Message): Promise<void>;
 
   cancelRequest(reply: ReplyFuture): void;
-  cancelRequestFromIoTCore(reply: ReplyFuture): void;
+  cancelRequestNorthbound(reply: ReplyFuture): void;
 
   /**
    * Whether the underlying messaging transport is currently connected. The readiness signal behind the

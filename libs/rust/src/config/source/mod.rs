@@ -87,9 +87,9 @@ pub fn build(
 ) -> Result<Box<dyn ConfigSource>> {
     Ok(match spec {
         ConfigSourceSpec::File { path } => Box::new(file::FileConfigSource::new(path.clone())),
-        ConfigSourceSpec::ConfigMap { mount_dir, key } => {
-            Box::new(configmap::ConfigMapConfigSource::new(mount_dir.clone(), key.clone())?)
-        }
+        ConfigSourceSpec::ConfigMap { mount_dir, key } => Box::new(
+            configmap::ConfigMapConfigSource::new(mount_dir.clone(), key.clone())?,
+        ),
         ConfigSourceSpec::Env { var } => Box::new(env::EnvConfigSource::new(var.clone())),
         ConfigSourceSpec::ConfigComponent => {
             let messaging = messaging.ok_or_else(|| {
@@ -104,9 +104,9 @@ pub fn build(
             ))
         }
         #[cfg(feature = "greengrass")]
-        ConfigSourceSpec::Greengrass { component, key } => {
-            Box::new(greengrass::GreengrassConfigSource::new(component.clone(), key.clone()))
-        }
+        ConfigSourceSpec::Greengrass { component, key } => Box::new(
+            greengrass::GreengrassConfigSource::new(component.clone(), key.clone()),
+        ),
         #[cfg(feature = "greengrass")]
         ConfigSourceSpec::Shadow { name } => Box::new(shadow::ShadowConfigSource::new(
             name.clone(),
@@ -131,7 +131,9 @@ mod tests {
     #[test]
     fn builds_file_and_env_sources() {
         let file = build(
-            &ConfigSourceSpec::File { path: PathBuf::from("config.json") },
+            &ConfigSourceSpec::File {
+                path: PathBuf::from("config.json"),
+            },
             None,
             "thing",
             "comp",
@@ -139,7 +141,15 @@ mod tests {
         .unwrap();
         assert_eq!(file.source_name(), "FILE");
 
-        let env = build(&ConfigSourceSpec::Env { var: "CONFIG".into() }, None, "thing", "comp").unwrap();
+        let env = build(
+            &ConfigSourceSpec::Env {
+                var: "CONFIG".into(),
+            },
+            None,
+            "thing",
+            "comp",
+        )
+        .unwrap();
         assert_eq!(env.source_name(), "ENV");
     }
 
@@ -152,21 +162,39 @@ mod tests {
     #[test]
     fn config_component_builds_with_messaging() {
         let svc: Arc<dyn MessagingService> = crate::testutil::RecordingMessaging::new();
-        let source =
-            build(&ConfigSourceSpec::ConfigComponent, Some(svc), "thing", "comp").unwrap();
+        let source = build(
+            &ConfigSourceSpec::ConfigComponent,
+            Some(svc),
+            "thing",
+            "comp",
+        )
+        .unwrap();
         assert_eq!(source.source_name(), "CONFIG_COMPONENT");
     }
 
     #[cfg(not(feature = "greengrass"))]
     #[test]
     fn greengrass_sources_require_the_feature() {
-        assert!(build(
-            &ConfigSourceSpec::Greengrass { component: None, key: "ComponentConfig".into() },
-            None,
-            "thing",
-            "comp"
-        )
-        .is_err());
-        assert!(build(&ConfigSourceSpec::Shadow { name: None }, None, "thing", "comp").is_err());
+        assert!(
+            build(
+                &ConfigSourceSpec::Greengrass {
+                    component: None,
+                    key: "ComponentConfig".into()
+                },
+                None,
+                "thing",
+                "comp"
+            )
+            .is_err()
+        );
+        assert!(
+            build(
+                &ConfigSourceSpec::Shadow { name: None },
+                None,
+                "thing",
+                "comp"
+            )
+            .is_err()
+        );
     }
 }

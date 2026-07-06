@@ -1,7 +1,7 @@
 //! # Messaging — standalone configuration
 //!
 //! **One-liner purpose**: Parse the `-m STANDALONE <path>` messaging config file
-//! describing the local broker and (optionally) AWS IoT Core.
+//! describing the local broker and (optionally) a generic northbound MQTT broker.
 //!
 //! ## Overview
 //! The file shape matches the Java/Python `standalone-messaging-sample.json`:
@@ -9,16 +9,17 @@
 //! ```json
 //! { "messaging": {
 //!     "local":   { "host": "localhost", "port": 1883, "clientId": "c-local",
+//!                  "qos": { "publish": 1, "subscribe": 1 },
 //!                  "credentials": { "username": "u", "password": "p" } },
-//!     "iotCore": { "endpoint": "...", "port": 8883, "clientId": "c-iot",
+//!     "northbound": { "host": "...", "port": 8883, "clientId": "c-north",
+//!                  "qos": { "publish": 1, "subscribe": 1 },
 //!                  "credentials": { "certPath": "...", "keyPath": "...", "caPath": "..." } } } }
 //! ```
 //!
 //! ## Semantics & Architecture
 //! - Pure deserialization (`serde`); the only I/O is reading the file in [`MessagingConfig::load`].
-//! - `iotCore` is optional. Its TLS connection is implemented in a later
-//!   sub-step; until then, attempting to use it surfaces a clear error rather
-//!   than connecting insecurely.
+//! - `northbound` is optional. It is a normal MQTT broker connection; TLS/auth are selected
+//!   from its credentials block the same way as `local`.
 //! - Error handling: [`crate::error::Result`]; no panics.
 //!
 //! ## Usage Example
@@ -38,7 +39,7 @@ use std::path::Path;
 
 use serde::Deserialize;
 
-use crate::error::Result;
+use crate::error::{EdgeCommonsError, Result};
 
 /// Top-level standalone messaging configuration.
 #[derive(Debug, Clone, Deserialize)]
@@ -46,64 +47,101 @@ pub struct MessagingConfig {
     pub messaging: Messaging,
 }
 
-/// The `messaging` object: a required local broker, an optional IoT Core, and an
-/// optional MQTT Last-Will-and-Testament.
+/// The `messaging` object: a required local broker and an optional northbound broker.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Messaging {
     pub local: BrokerConfig,
-    #[serde(rename = "iotCore", default)]
-    pub iot_core: Option<BrokerConfig>,
-    /// The optional `messaging.lwt` section (UNS-CANONICAL-DESIGN §6): an MQTT
-    /// Last-Will-and-Testament registered on the **local-broker** connection at
-    /// CONNECT (rumqttc re-sends the same options on reconnect, so the will is
-    /// re-registered for free). The IPC transport DEBUG-logs and ignores it.
     #[serde(default)]
-    pub lwt: Option<LwtConfig>,
+    pub northbound: Option<BrokerConfig>,
 }
 
-/// The `messaging.lwt` section (UNS-CANONICAL-DESIGN §6, D-U9/M7).
-///
-/// There is deliberately NO retain field — the will is always registered with
-/// `retain=false` (D9). `payload` is kept as a raw JSON value: a string is
-/// published verbatim as UTF-8 bytes; any other JSON value is serialized to
-/// compact JSON bytes; absent = empty bytes. `qos` accepts `0`/`1` (number-tolerant:
-/// Greengrass-style `1.0` parses too) and defaults to `1`.
+/// Effective QoS defaults aggregated from `messaging.local.qos` and
+/// `messaging.northbound.qos`.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct LwtConfig {
-    /// The will topic (e.g. the component's UNS state topic). Required.
-    pub topic: String,
-    /// The will payload, published VERBATIM (a string or a JSON object).
+pub struct QosConfig {
+    /// Local MQTT broker defaults. Supports QoS 0/1/2.
     #[serde(default)]
-    pub payload: Option<serde_json::Value>,
-    /// Will QoS (0 or 1), default 1. Number-tolerant (accepts `1` and `1.0`).
+    pub local: QosDefaults,
+    /// Northbound MQTT broker defaults. Supports QoS 0/1/2.
     #[serde(default)]
-    pub qos: Option<serde_json::Value>,
+    pub northbound: QosDefaults,
 }
 
-impl LwtConfig {
-    /// The effective QoS: the configured value, or the schema default 1 when
-    /// absent. Non-numeric shapes surface as the raw value at validation time
-    /// (see the provider's `build_last_will`).
-    pub fn qos_or_default(&self) -> i64 {
-        match &self.qos {
-            None => 1,
-            Some(v) => v
-                .as_i64()
-                .or_else(|| v.as_f64().filter(|f| f.fract() == 0.0).map(|f| f as i64))
-                .unwrap_or(-1), // out-of-domain sentinel — rejected by build_last_will
+impl Default for QosConfig {
+    fn default() -> Self {
+        Self {
+            local: QosDefaults::default(),
+            northbound: QosDefaults::default(),
         }
     }
+}
 
-    /// The will payload bytes: a JSON string verbatim as UTF-8 bytes; any other
-    /// JSON value as its compact JSON bytes; absent/null as empty bytes.
-    pub fn payload_bytes(&self) -> Vec<u8> {
-        match &self.payload {
-            None | Some(serde_json::Value::Null) => Vec::new(),
-            Some(serde_json::Value::String(s)) => s.clone().into_bytes(),
-            Some(other) => other.to_string().into_bytes(),
+impl Messaging {
+    pub fn qos_config(&self) -> QosConfig {
+        QosConfig {
+            local: self.local.qos.clone(),
+            northbound: self
+                .northbound
+                .as_ref()
+                .map(|broker| broker.qos.clone())
+                .unwrap_or_default(),
         }
     }
+}
+
+/// Publish/subscribe QoS defaults for one broker side.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QosDefaults {
+    #[serde(default = "default_qos_one")]
+    pub publish: u8,
+    #[serde(default = "default_qos_one")]
+    pub subscribe: u8,
+}
+
+impl Default for QosDefaults {
+    fn default() -> Self {
+        Self {
+            publish: 1,
+            subscribe: 1,
+        }
+    }
+}
+
+fn default_qos_one() -> u8 {
+    1
+}
+
+impl QosConfig {
+    /// Validate local and northbound values are in 0..=2.
+    ///
+    /// # Errors
+    /// Returns a config error when a configured value exceeds the broker-side domain.
+    pub fn validate(&self) -> Result<()> {
+        validate_qos(self.local.publish, 2, "messaging.local.qos.publish")?;
+        validate_qos(self.local.subscribe, 2, "messaging.local.qos.subscribe")?;
+        validate_qos(
+            self.northbound.publish,
+            2,
+            "messaging.northbound.qos.publish",
+        )?;
+        validate_qos(
+            self.northbound.subscribe,
+            2,
+            "messaging.northbound.qos.subscribe",
+        )?;
+        Ok(())
+    }
+}
+
+fn validate_qos(value: u8, max: u8, field: &str) -> Result<()> {
+    if value > max {
+        return Err(crate::error::EdgeCommonsError::Config(format!(
+            "{field} must be 0..{max} (got {value})"
+        )));
+    }
+    Ok(())
 }
 
 /// Connection settings for a single broker.
@@ -118,6 +156,8 @@ pub struct BrokerConfig {
     pub endpoint: Option<String>,
     pub port: u16,
     pub client_id: String,
+    #[serde(default)]
+    pub qos: QosDefaults,
     #[serde(default)]
     pub credentials: Option<Credentials>,
 }
@@ -134,7 +174,9 @@ impl BrokerConfig {
             .as_deref()
             .or(self.endpoint.as_deref())
             .ok_or_else(|| {
-                crate::error::EdgeCommonsError::Config("broker config has no host/endpoint".to_string())
+                crate::error::EdgeCommonsError::Config(
+                    "broker config has no host/endpoint".to_string(),
+                )
             })
     }
 }
@@ -169,7 +211,30 @@ impl MessagingConfig {
     /// | `EdgeCommonsError::Json` | File is not valid messaging JSON | Fix the file shape |
     pub async fn load(path: impl AsRef<Path>) -> Result<MessagingConfig> {
         let bytes = tokio::fs::read(path.as_ref()).await?;
-        Ok(serde_json::from_slice(&bytes)?)
+        let value: serde_json::Value = serde_json::from_slice(&bytes)?;
+        if value
+            .get("messaging")
+            .and_then(|messaging| messaging.get("lwt"))
+            .is_some()
+        {
+            return Err(EdgeCommonsError::Config(
+                "messaging.lwt is not supported; uns-bridge derives its site Last-Will internally"
+                    .to_string(),
+            ));
+        }
+        if value
+            .get("messaging")
+            .and_then(|messaging| messaging.get("qos"))
+            .is_some()
+        {
+            return Err(EdgeCommonsError::Config(
+                "messaging.qos is not supported; configure QoS under messaging.local.qos and messaging.northbound.qos"
+                    .to_string(),
+            ));
+        }
+        let config: MessagingConfig = serde_json::from_value(value)?;
+        config.messaging.qos_config().validate()?;
+        Ok(config)
     }
 }
 
@@ -184,7 +249,7 @@ mod tests {
         let mc: MessagingConfig = serde_json::from_str(json).unwrap();
         assert_eq!(mc.messaging.local.resolved_host().unwrap(), "localhost");
         assert_eq!(mc.messaging.local.port, 1883);
-        assert!(mc.messaging.iot_core.is_none());
+        assert!(mc.messaging.northbound.is_none());
     }
 
     #[test]
@@ -202,43 +267,78 @@ mod tests {
     }
 
     #[test]
-    fn single_broker_topology_when_iotcore_absent() {
-        // FR-MSG-3: no `iotCore` section => single-broker (local only / air-gapped).
+    fn single_broker_topology_when_northbound_absent() {
+        // FR-MSG-3: no `northbound` section => single-broker (local only / air-gapped).
         let json = r#"{ "messaging": { "local": {
             "host": "emqx.mqtt.svc.cluster.local", "port": 1883, "clientId": "c" } } }"#;
         let mc: MessagingConfig = serde_json::from_str(json).unwrap();
         assert!(
-            mc.messaging.iot_core.is_none(),
-            "absent iotCore => single-broker topology"
+            mc.messaging.northbound.is_none(),
+            "absent northbound => single-broker topology"
         );
     }
 
     #[test]
-    fn dual_broker_topology_when_iotcore_present() {
-        // FR-MSG-3: an `iotCore` section => dual-MQTT (local broker + AWS IoT Core).
+    fn dual_broker_topology_when_northbound_present() {
+        // FR-MSG-3: a `northbound` section => dual-MQTT (local broker + northbound MQTT).
         let json = r#"{ "messaging": {
             "local": { "host": "emqx.mqtt.svc.cluster.local", "port": 1883, "clientId": "l" },
-            "iotCore": { "endpoint": "x.iot.amazonaws.com", "port": 8883, "clientId": "i",
+            "northbound": { "host": "broker.example.com", "port": 8883, "clientId": "n",
                          "credentials": { "certPath": "c.pem", "keyPath": "k.pem", "caPath": "ca.pem" } } } }"#;
         let mc: MessagingConfig = serde_json::from_str(json).unwrap();
         assert!(
-            mc.messaging.iot_core.is_some(),
-            "present iotCore => dual-broker topology"
+            mc.messaging.northbound.is_some(),
+            "present northbound => dual-broker topology"
         );
         assert_eq!(
-            mc.messaging.iot_core.unwrap().resolved_host().unwrap(),
-            "x.iot.amazonaws.com"
+            mc.messaging.northbound.unwrap().resolved_host().unwrap(),
+            "broker.example.com"
         );
     }
 
     #[test]
-    fn parses_iotcore_endpoint_alias() {
+    fn parses_qos_defaults() {
+        let json = r#"{ "messaging": {
+            "local": { "host": "localhost", "port": 1883, "clientId": "l",
+                       "qos": { "publish": 2, "subscribe": 0 } },
+            "northbound": { "host": "broker.example.com", "port": 8883, "clientId": "n",
+                            "qos": { "publish": 2, "subscribe": 0 } } } }"#;
+        let mc: MessagingConfig = serde_json::from_str(json).unwrap();
+        let qos = mc.messaging.qos_config();
+        assert_eq!(qos.local.publish, 2);
+        assert_eq!(qos.local.subscribe, 0);
+        assert_eq!(qos.northbound.publish, 2);
+        assert_eq!(qos.northbound.subscribe, 0);
+        qos.validate().unwrap();
+    }
+
+    #[test]
+    fn qos_defaults_to_one_and_rejects_out_of_range_northbound_qos() {
+        let json = r#"{ "messaging": { "local": {
+            "host": "localhost", "port": 1883, "clientId": "l" } } }"#;
+        let mc: MessagingConfig = serde_json::from_str(json).unwrap();
+        let qos = mc.messaging.qos_config();
+        assert_eq!(qos.local.publish, 1);
+        assert_eq!(qos.local.subscribe, 1);
+        assert_eq!(qos.northbound.publish, 1);
+        assert_eq!(qos.northbound.subscribe, 1);
+
+        let invalid = r#"{ "messaging": {
+            "local": { "host": "localhost", "port": 1883, "clientId": "l" },
+            "northbound": { "host": "broker.example.com", "port": 8883, "clientId": "n",
+                            "qos": { "publish": 3 } } } }"#;
+        let mc: MessagingConfig = serde_json::from_str(invalid).unwrap();
+        assert!(mc.messaging.qos_config().validate().is_err());
+    }
+
+    #[test]
+    fn parses_northbound_endpoint_alias() {
         let json = r#"{ "messaging": {
             "local": { "host": "localhost", "port": 1883, "clientId": "l" },
-            "iotCore": { "endpoint": "x.iot.amazonaws.com", "port": 8883, "clientId": "i" } } }"#;
+            "northbound": { "endpoint": "broker.example.com", "port": 8883, "clientId": "n" } } }"#;
         let mc: MessagingConfig = serde_json::from_str(json).unwrap();
-        let iot = mc.messaging.iot_core.unwrap();
-        assert_eq!(iot.resolved_host().unwrap(), "x.iot.amazonaws.com");
+        let northbound = mc.messaging.northbound.unwrap();
+        assert_eq!(northbound.resolved_host().unwrap(), "broker.example.com");
     }
 
     #[test]
@@ -253,16 +353,16 @@ mod tests {
         let json = r#"{ "messaging": {
             "local": { "host": "h", "port": 1883, "clientId": "l",
                        "credentials": { "username": "u", "password": "p" } },
-            "iotCore": { "endpoint": "e", "port": 8883, "clientId": "i",
+            "northbound": { "endpoint": "e", "port": 8883, "clientId": "n",
                          "credentials": { "certPath": "c.pem", "keyPath": "k.pem", "caPath": "ca.pem" } } } }"#;
         let mc: MessagingConfig = serde_json::from_str(json).unwrap();
         let local_creds = mc.messaging.local.credentials.unwrap();
         assert_eq!(local_creds.username.as_deref(), Some("u"));
         assert_eq!(local_creds.password.as_deref(), Some("p"));
-        let iot_creds = mc.messaging.iot_core.unwrap().credentials.unwrap();
-        assert_eq!(iot_creds.cert_path.as_deref(), Some("c.pem"));
-        assert_eq!(iot_creds.key_path.as_deref(), Some("k.pem"));
-        assert_eq!(iot_creds.ca_path.as_deref(), Some("ca.pem"));
+        let northbound_creds = mc.messaging.northbound.unwrap().credentials.unwrap();
+        assert_eq!(northbound_creds.cert_path.as_deref(), Some("c.pem"));
+        assert_eq!(northbound_creds.key_path.as_deref(), Some("k.pem"));
+        assert_eq!(northbound_creds.ca_path.as_deref(), Some("ca.pem"));
     }
 
     #[tokio::test]
@@ -286,34 +386,39 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[test]
-    fn parses_lwt_section_with_defaults() {
-        let json = r#"{ "messaging": {
-            "local": { "host": "h", "port": 1883, "clientId": "c" },
-            "lwt": { "topic": "ecv1/gw-01/uns-bridge/main/state" } } }"#;
-        let mc: MessagingConfig = serde_json::from_str(json).unwrap();
-        let lwt = mc.messaging.lwt.expect("lwt parsed");
-        assert_eq!(lwt.topic, "ecv1/gw-01/uns-bridge/main/state");
-        assert_eq!(lwt.qos_or_default(), 1, "qos defaults to 1");
-        assert!(lwt.payload_bytes().is_empty(), "absent payload => empty bytes");
+    #[tokio::test]
+    async fn load_rejects_generic_messaging_lwt() {
+        let dir = std::env::temp_dir().join(format!("edgecommons-mc-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("messaging.json");
+        std::fs::write(
+            &path,
+            r#"{ "messaging": {
+                "local": { "host": "localhost", "port": 1884, "clientId": "c" },
+                "lwt": { "topic": "ecv1/d/uns-bridge/main/state" }
+            } }"#,
+        )
+        .unwrap();
+
+        let err = MessagingConfig::load(&path).await.unwrap_err();
+        assert!(err.to_string().contains("messaging.lwt is not supported"));
     }
 
-    #[test]
-    fn lwt_string_payload_is_verbatim_and_object_is_compact_json() {
-        let json = r#"{ "messaging": {
-            "local": { "host": "h", "port": 1883, "clientId": "c" },
-            "lwt": { "topic": "t", "payload": "gone", "qos": 0 } } }"#;
-        let mc: MessagingConfig = serde_json::from_str(json).unwrap();
-        let lwt = mc.messaging.lwt.unwrap();
-        assert_eq!(lwt.payload_bytes(), b"gone");
-        assert_eq!(lwt.qos_or_default(), 0);
+    #[tokio::test]
+    async fn load_rejects_top_level_messaging_qos() {
+        let dir = std::env::temp_dir().join(format!("edgecommons-mc-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("messaging.json");
+        std::fs::write(
+            &path,
+            r#"{ "messaging": {
+                "local": { "host": "localhost", "port": 1884, "clientId": "c" },
+                "qos": { "local": { "publish": 1 } }
+            } }"#,
+        )
+        .unwrap();
 
-        let json = r#"{ "messaging": {
-            "local": { "host": "h", "port": 1883, "clientId": "c" },
-            "lwt": { "topic": "t", "payload": { "status": "UNREACHABLE" }, "qos": 1.0 } } }"#;
-        let mc: MessagingConfig = serde_json::from_str(json).unwrap();
-        let lwt = mc.messaging.lwt.unwrap();
-        assert_eq!(lwt.payload_bytes(), br#"{"status":"UNREACHABLE"}"#);
-        assert_eq!(lwt.qos_or_default(), 1, "number-tolerant qos (1.0 == 1)");
+        let err = MessagingConfig::load(&path).await.unwrap_err();
+        assert!(err.to_string().contains("messaging.qos is not supported"));
     }
 }

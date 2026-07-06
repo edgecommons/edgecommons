@@ -74,13 +74,13 @@ async function buildTarget(
       return logTarget();
     case "messaging": {
       const svc = requireMessaging(messaging, "messaging");
-      // Canonical "iot_core" (schema) plus legacy "iotcore" both select IoT Core;
-      // everything else (e.g. "ipc"/"local") is the local transport. The topic is minted per
+      // Canonical "northbound" selects the configured northbound broker; everything else
+      // (e.g. "ipc"/"local") is the local transport. The topic is minted per
       // metric on the library-owned UNS metric class (UNS-CANONICAL-DESIGN §4.3) — the legacy
       // `targetConfig.topic` override is removed (D-U9).
       const dest = mc.destination().toLowerCase();
-      const iotCore = dest === "iot_core" || dest === "iotcore";
-      return new MessagingMetricTarget(svc, config, iotCore, namespace, largeFleet);
+      const northbound = dest === "northbound";
+      return new MessagingMetricTarget(svc, config, northbound, namespace, largeFleet);
     }
     case "cloudwatchcomponent": {
       const svc = requireMessaging(messaging, "cloudwatchcomponent");

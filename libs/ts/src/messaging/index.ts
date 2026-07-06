@@ -6,7 +6,7 @@
  * carry raw bytes; {@link DefaultMessagingService} adds the message envelope,
  * dispatch, and request/reply on top.
  */
-export { Message, MessageBuilder, MessageIdentity } from "../message";
+export { MAX_BINARY_BODY_BYTES, Message, MessageBuilder, MessageIdentity } from "../message";
 export type { MessageHeader, MessageTags, HierLevel } from "../message";
 export {
   Destination,
@@ -30,4 +30,4 @@ export {
   loadMessagingConfig,
   resolvedHost,
 } from "./config";
-export type { MessagingConfig, BrokerConfig, Credentials, LwtConfig } from "./config";
+export type { MessagingConfig, BrokerConfig, Credentials } from "./config";

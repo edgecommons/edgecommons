@@ -99,7 +99,10 @@ impl LogTarget {
                 std::fs::create_dir_all(parent)?;
             }
         }
-        OpenOptions::new().create(true).append(true).open(&self.path)
+        OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)
     }
 
     /// Ensure the file is open, opening it lazily on first use. Returns `false`
@@ -145,10 +148,9 @@ impl LogTarget {
             if state.size > 0 && state.size + needed > self.max_bytes {
                 self.rotate(&mut state)?;
             }
-            let file = state
-                .file
-                .as_mut()
-                .ok_or_else(|| EdgeCommonsError::Metrics("metric log file is closed".to_string()))?;
+            let file = state.file.as_mut().ok_or_else(|| {
+                EdgeCommonsError::Metrics("metric log file is closed".to_string())
+            })?;
             writeln!(file, "{line}")?;
             state.size += needed;
         }
@@ -165,7 +167,10 @@ impl LogTarget {
         let rolled = self.rolled_path();
         std::fs::rename(&self.path, &rolled)?;
         self.prune_backups();
-        let file = OpenOptions::new().create(true).append(true).open(&self.path)?;
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)?;
         state.file = Some(file);
         state.size = 0;
         Ok(())
@@ -173,13 +178,20 @@ impl LogTarget {
 
     /// Compute a unique timestamped backup path: `<stem>-<UTC ts>[ -<n> ]<ext>`.
     fn rolled_path(&self) -> PathBuf {
-        let dir = self.path.parent().map(Path::to_path_buf).unwrap_or_default();
+        let dir = self
+            .path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_default();
         let stem = self
             .path
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| "metric".to_string());
-        let ext = self.path.extension().map(|s| s.to_string_lossy().into_owned());
+        let ext = self
+            .path
+            .extension()
+            .map(|s| s.to_string_lossy().into_owned());
         let ts = timestamp_compact();
 
         let build = |suffix: Option<usize>| -> PathBuf {
@@ -205,13 +217,18 @@ impl LogTarget {
 
     /// Delete the oldest rolled files beyond [`MAX_BACKUPS`].
     fn prune_backups(&self) {
-        let Some(dir) = self.path.parent() else { return };
+        let Some(dir) = self.path.parent() else {
+            return;
+        };
         let stem = self
             .path
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default();
-        let ext = self.path.extension().map(|s| s.to_string_lossy().into_owned());
+        let ext = self
+            .path
+            .extension()
+            .map(|s| s.to_string_lossy().into_owned());
         let prefix = format!("{stem}-");
 
         let mut rolled: Vec<(SystemTime, PathBuf)> = match std::fs::read_dir(dir) {
@@ -327,7 +344,9 @@ mod tests {
         let path = dir.join("metric.log");
         let target = LogTarget::new(&path, "ns", false, "10MB").unwrap();
 
-        let metric = MetricBuilder::create("requests").add_measure("count", "Count", 60).build();
+        let metric = MetricBuilder::create("requests")
+            .add_measure("count", "Count", 60)
+            .build();
         target.emit_now(&metric, &values(3.0)).await.unwrap();
         target.flush().await.unwrap();
 
@@ -374,7 +393,9 @@ mod tests {
 
         // Construction must not fail (lazy open).
         let target = LogTarget::new(&path, "ns", false, "10MB").unwrap();
-        let metric = MetricBuilder::create("requests").add_measure("count", "Count", 60).build();
+        let metric = MetricBuilder::create("requests")
+            .add_measure("count", "Count", 60)
+            .build();
 
         // Emitting must not error even though the file can't be opened (fail-soft).
         target.emit_now(&metric, &values(1.0)).await.unwrap();
@@ -390,7 +411,9 @@ mod tests {
         let path = dir.join("metric.log");
         // Tiny max so each write rotates; keeps at most MAX_BACKUPS rolled files.
         let target = LogTarget::new(&path, "ns", false, "200B").unwrap();
-        let metric = MetricBuilder::create("requests").add_measure("count", "Count", 60).build();
+        let metric = MetricBuilder::create("requests")
+            .add_measure("count", "Count", 60)
+            .build();
 
         // Each EMF line is well over 200 bytes, so each emit after the first rotates.
         for i in 0..(MAX_BACKUPS + 3) {
@@ -409,7 +432,10 @@ mod tests {
                 n.starts_with("metric-") && n.ends_with(".log")
             })
             .count();
-        assert!(rolled <= MAX_BACKUPS, "expected <= {MAX_BACKUPS} backups, got {rolled}");
+        assert!(
+            rolled <= MAX_BACKUPS,
+            "expected <= {MAX_BACKUPS} backups, got {rolled}"
+        );
         assert!(rolled >= 1, "expected at least one rolled backup");
 
         let _ = std::fs::remove_dir_all(&dir);

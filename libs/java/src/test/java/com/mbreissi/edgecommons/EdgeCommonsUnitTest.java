@@ -17,7 +17,7 @@ import com.google.gson.JsonObject;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import software.amazon.awssdk.aws.greengrass.model.QOS;
+import com.mbreissi.edgecommons.messaging.Qos;
 
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
@@ -230,16 +230,16 @@ class EdgeCommonsUnitTest {
                 .withConfig(mockConfigService)
                 .build();
 
-        mockMessagingService.publishToIoTCore(topic, message, QOS.AT_LEAST_ONCE);
+        mockMessagingService.publishNorthbound(topic, message, Qos.AT_LEAST_ONCE);
 
         assertEquals(1, mockMessagingService.getPublishedMessages().size());
         MockMessagingService.PublishedMessage published = mockMessagingService.getPublishedMessages().get(0);
         assertEquals(topic, published.topic);
         assertEquals(message, published.message);
-        assertEquals(QOS.AT_LEAST_ONCE, published.qos);
+        assertEquals(Qos.AT_LEAST_ONCE, published.qos);
 
         var handler = new TestMessageHandler();
-        mockMessagingService.subscribeToIoTCore(topic, handler::handle, QOS.AT_MOST_ONCE);
+        mockMessagingService.subscribeNorthbound(topic, handler::handle, Qos.AT_MOST_ONCE);
 
         mockMessagingService.simulateMessage(topic, message);
         assertTrue(handler.wasHandlerCalled());

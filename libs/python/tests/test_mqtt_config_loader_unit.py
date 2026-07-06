@@ -1,7 +1,7 @@
 """Unit tests for ``MessagingConfiguration.load_from_file`` and ``validate``.
 
 These exercise the JSON-parse path of the standalone MQTT broker config (local
-broker + credentials + cloud/IoT-Core broker) and every branch of ``validate()``,
+broker + credentials + cloud/northbound broker) and every branch of ``validate()``,
 using only ``tmp_path`` JSON files and in-memory dataclasses. No broker, no AWS,
 no network -- pure parsing/validation, so they belong in the CI gate.
 
@@ -10,7 +10,7 @@ whose *nodeid* contains the substring ``messaging``, ``iot`` or ``edgecommons`` 
 ``aws`` (and the CI gate runs ``-m "not aws"``). The sibling file
 ``test_messaging_config_unit.py`` is therefore *deselected* under the gate and
 its coverage never counts. This file deliberately avoids those substrings in its
-path, class and function names (using ``cloud`` for the IoT-Core broker) so the
+path, class and function names (using ``cloud`` for the northbound broker) so the
 same logic is actually measured under ``-m "not slow and not integration and not aws"``.
 The ``from edgecommons...`` import lives in the module body, not the nodeid, so it
 does not trigger the auto-marker.
@@ -23,7 +23,7 @@ from edgecommons.messaging.messaging_config import (
     MessagingConfiguration,
     MessagingConfigData,
     LocalMqttConfig,
-    IoTCoreConfig,
+    NorthboundMqttConfig,
     CredentialsConfig,
 )
 
@@ -36,7 +36,7 @@ def _write(tmp_path, data):
 
 
 def _cloud_section():
-    """A complete IoT-Core ("cloud") section with full mutual-TLS credentials."""
+    """A complete northbound ("cloud") section with full mutual-TLS credentials."""
     return {
         "endpoint": "cloud.example.com",
         "port": 8883,
@@ -58,7 +58,7 @@ class TestLoad:
                         "certPath": "lc", "keyPath": "lk", "caPath": "la",
                     },
                 },
-                "iotCore": _cloud_section(),
+                "northbound": _cloud_section(),
             }
         })
         cfg = MessagingConfiguration.load_from_file(path)
@@ -74,7 +74,7 @@ class TestLoad:
         assert local.credentials.key_path == "lk"
         assert local.credentials.ca_path == "la"
 
-        cloud = cfg.messaging.iot_core
+        cloud = cfg.messaging.northbound
         assert cloud.endpoint == "cloud.example.com"
         assert cloud.port == 8883
         assert cloud.client_id == "cloud-cid"
@@ -96,10 +96,10 @@ class TestLoad:
         cfg = MessagingConfiguration.load_from_file(path)
         assert cfg.messaging.local.credentials.username == "only-user"
         assert cfg.messaging.local.credentials.password is None
-        assert cfg.messaging.iot_core is None
+        assert cfg.messaging.northbound is None
 
     def test_local_only_no_cloud(self, tmp_path):
-        """Local-only standalone deployment: no IoT-Core section at all."""
+        """Local-only standalone deployment: no northbound section at all."""
         path = _write(tmp_path, {
             "messaging": {"local": {"type": "mqtt", "host": "h", "port": 1883, "clientId": "c"}}
         })
@@ -107,30 +107,69 @@ class TestLoad:
         assert cfg.messaging.local.host == "h"
         assert cfg.messaging.local.port == 1883
         assert cfg.messaging.local.credentials is None
-        assert cfg.messaging.iot_core is None
+        assert cfg.messaging.northbound is None
 
     def test_cloud_only(self, tmp_path):
-        """Cloud (IoT-Core) only, no local broker."""
-        path = _write(tmp_path, {"messaging": {"iotCore": _cloud_section()}})
+        """Cloud/northbound only, no local broker."""
+        path = _write(tmp_path, {"messaging": {"northbound": _cloud_section()}})
         cfg = MessagingConfiguration.load_from_file(path)
         assert cfg.messaging.local is None
-        assert cfg.messaging.iot_core.endpoint == "cloud.example.com"
-        assert cfg.messaging.iot_core.credentials.ca_path == "ap"
+        assert cfg.messaging.northbound.endpoint == "cloud.example.com"
+        assert cfg.messaging.northbound.credentials.ca_path == "ap"
 
     def test_empty_msg_section(self, tmp_path):
         """An empty 'messaging' object parses to a config with neither broker."""
         path = _write(tmp_path, {"messaging": {}})
         cfg = MessagingConfiguration.load_from_file(path)
         assert cfg.messaging.local is None
-        assert cfg.messaging.iot_core is None
+        assert cfg.messaging.northbound is None
 
-    def test_cloud_without_credentials_raises_value_error(self, tmp_path):
-        """IoT-Core section without a credentials block -> ValueError (also exercises
-        the generic ``except Exception`` re-raise wrapper)."""
+    def test_cloud_without_credentials_is_valid(self, tmp_path):
+        """Northbound section without a credentials block is valid plaintext MQTT."""
         path = _write(tmp_path, {
-            "messaging": {"iotCore": {"endpoint": "ep", "port": 8883, "clientId": "ic"}}
+            "messaging": {"northbound": {"endpoint": "ep", "port": 8883, "clientId": "ic"}}
         })
-        with pytest.raises(ValueError, match="IoT Core credentials are required"):
+        cfg = MessagingConfiguration.load_from_file(path)
+        assert cfg.messaging.northbound.endpoint == "ep"
+        assert cfg.messaging.northbound.credentials is None
+
+    def test_nested_broker_qos_is_loaded(self, tmp_path):
+        path = _write(tmp_path, {
+            "messaging": {
+                "local": {
+                    "type": "mqtt", "host": "h", "port": 1883, "clientId": "c",
+                    "qos": {"publish": 2, "subscribe": 0},
+                },
+                "northbound": {
+                    **_cloud_section(),
+                    "qos": {"publish": 2, "subscribe": 0},
+                },
+            }
+        })
+        cfg = MessagingConfiguration.load_from_file(path)
+        assert cfg.messaging.local.qos.publish == 2
+        assert cfg.messaging.local.qos.subscribe == 0
+        assert cfg.messaging.northbound.qos.publish == 2
+        assert cfg.messaging.northbound.qos.subscribe == 0
+
+    def test_top_level_qos_is_rejected(self, tmp_path):
+        path = _write(tmp_path, {
+            "messaging": {
+                "local": {"type": "mqtt", "host": "h", "port": 1883, "clientId": "c"},
+                "qos": {"local": {"publish": 1}},
+            }
+        })
+        with pytest.raises(ValueError, match=r"messaging\.qos is not supported"):
+            MessagingConfiguration.load_from_file(path)
+
+    def test_cloud_qos_range_is_validated(self, tmp_path):
+        path = _write(tmp_path, {
+            "messaging": {
+                "local": {"type": "mqtt", "host": "h", "port": 1883, "clientId": "c"},
+                "northbound": {**_cloud_section(), "qos": {"publish": 3}},
+            }
+        })
+        with pytest.raises(ValueError, match=r"messaging\.northbound\.qos\.publish"):
             MessagingConfiguration.load_from_file(path)
 
     def test_missing_file_raises_file_not_found(self, tmp_path):
@@ -166,7 +205,7 @@ class TestValidate:
         cfg = self._load(tmp_path, {
             "messaging": {
                 "local": {"type": "mqtt", "host": "h", "port": 1883, "clientId": "c"},
-                "iotCore": _cloud_section(),
+                "northbound": _cloud_section(),
             }
         })
         assert cfg.validate() is True
@@ -182,39 +221,36 @@ class TestValidate:
         assert cfg.validate() is False
 
     def test_cloud_with_none_credentials_false(self):
-        """Cloud broker whose credentials object is None -> invalid (the
-        ``if not iot_creds`` guard, unreachable via the loader which always builds
-        a credentials object, so constructed directly)."""
+        """Cloud broker with missing endpoint -> invalid."""
         cfg = MessagingConfiguration()
         cfg.messaging = MessagingConfigData(
-            iot_core=IoTCoreConfig(
-                endpoint="ep", port=8883, client_id="ic", credentials=None
+            northbound=NorthboundMqttConfig(
+                endpoint=None, port=8883, client_id="ic", credentials=None
             )
         )
         assert cfg.validate() is False
 
-    def test_cloud_with_empty_credentials_false(self):
-        """Cloud broker with a credentials object but every path missing -> invalid,
-        exercising all three missing-credential branches (cert/key/ca)."""
+    def test_cloud_with_empty_credentials_true(self):
+        """Cloud broker may carry an empty credentials object for plaintext MQTT."""
         cfg = MessagingConfiguration()
         cfg.messaging = MessagingConfigData(
-            iot_core=IoTCoreConfig(
+            northbound=NorthboundMqttConfig(
                 endpoint="ep", port=8883, client_id="ic",
                 credentials=CredentialsConfig(),  # all paths None
             )
         )
-        assert cfg.validate() is False
+        assert cfg.validate() is True
 
-    def test_cloud_missing_only_key_and_ca_false(self):
-        """Cert present but key + CA missing -> hits the key-path and CA-path
-        missing branches specifically."""
+    def test_cloud_missing_port_false(self):
+        """Cloud broker missing port -> invalid."""
         cfg = MessagingConfiguration()
         cfg.messaging = MessagingConfigData(
-            iot_core=IoTCoreConfig(
+            northbound=NorthboundMqttConfig(
                 endpoint="ep", port=8883, client_id="ic",
-                credentials=CredentialsConfig(cert_path="cp"),  # key/ca None
+                credentials=CredentialsConfig(cert_path="cp"),
             )
         )
+        cfg.messaging.northbound.port = 0
         assert cfg.validate() is False
 
     def test_local_missing_host_false(self, tmp_path):

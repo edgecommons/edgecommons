@@ -1,6 +1,6 @@
-from awsiot.greengrasscoreipc.model import QOS
 from edgecommons.messaging.message_builder import MessageBuilder
 from edgecommons.messaging.messaging_client import MessagingClient
+from edgecommons.messaging.qos import Qos
 from edgecommons.config.manager.config_manager import ConfigManager
 from edgecommons.metrics.targets.emf_helper import build_metric_data_emf
 from edgecommons.metrics.targets.metric_target import MetricTarget
@@ -8,14 +8,13 @@ from edgecommons.uns import Uns, UnsClass
 
 
 def _is_local_destination(destination: str) -> bool:
-    """True for the local/IPC transport, False for IoT Core.
+    """True for the local/IPC transport, False for northbound.
 
-    IoT Core is selected only by "iot_core"/"iotcore"; everything else (the
-    canonical "ipc", the legacy "local", and any unrecognized value) uses the
-    local transport, so a metric never fails by routing to an unconfigured IoT
-    Core. Matches the Java/Rust metric targets and the config schema.
+    Northbound is selected only by "northbound"; everything else ("ipc", "local", and any
+    unrecognized value) uses the local transport, so a metric never fails by routing to an
+    unconfigured northbound broker. Matches the Java/Rust metric targets and the config schema.
     """
-    return destination.lower() not in ("iot_core", "iotcore")
+    return destination is None or destination.lower() != "northbound"
 
 
 class Messaging(MetricTarget):
@@ -24,7 +23,7 @@ class Messaging(MetricTarget):
     ``ecv1/{device}/{component}/main/metric/{metricName}`` (the metric name sanitized
     as a channel token) through the privileged ``MessagingClient._publish_reserved*``
     seam — the ``metric`` class is reserved. ``metricEmission.targetConfig.destination``
-    still selects local/IPC vs IoT Core (D-U9); the legacy ``targetConfig.topic``
+    still selects local/IPC vs northbound (D-U9); the legacy ``targetConfig.topic``
     override is removed."""
 
     def __init__(self, config_manager: ConfigManager):
@@ -77,7 +76,7 @@ class Messaging(MetricTarget):
         )
 
     def __publish_message(self, topic: str, metric_dict: dict):
-        destination = "local" if self.send_to_local else "IoT Core"
+        destination = "local" if self.send_to_local else "northbound"
         self.logger.debug(f"Publishing metric message to {destination} on topic: {topic}")
 
         message = MessageBuilder.create("Metric", "1.0") \
@@ -90,16 +89,16 @@ class Messaging(MetricTarget):
         if self.send_to_local:
             MessagingClient._publish_reserved(topic, message)
         else:
-            MessagingClient._publish_reserved_to_iot_core(topic, message, QOS.AT_LEAST_ONCE)
+            MessagingClient._publish_reserved_northbound(topic, message, Qos.AT_LEAST_ONCE)
 
     def on_configuration_change(self, configuration) -> bool:
         self.logger.info("Metric messaging configuration changed, reconfiguring target")
 
-        old_destination = "local" if self.send_to_local else "IoT Core"
+        old_destination = "local" if self.send_to_local else "northbound"
         self.send_to_local = _is_local_destination(
             self.config_manager.get_metric_config().get_destination()
         )
-        new_destination = "local" if self.send_to_local else "IoT Core"
+        new_destination = "local" if self.send_to_local else "northbound"
 
         self.logger.info(f"Metric messaging reconfigured - destination: {old_destination} -> {new_destination}")
         return True

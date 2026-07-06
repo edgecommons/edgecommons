@@ -188,10 +188,7 @@ class ConfigManagerIdentityTest {
                      "hierarchy":{"levels":["site","device"]},
                      "identity":{"site":"dallas"},
                      "topic":{"includeRoot":false},
-                     "messaging":{"requestTimeoutSeconds":30,
-                                  "lwt":{"topic":"ecv1/gw-01/c/main/state",
-                                         "payload":{"status":"UNREACHABLE"},
-                                         "qos":1}}}""");
+                     "messaging":{"requestTimeoutSeconds":30}}""");
         }
         com.mbreissi.edgecommons.ParsedCommandLine cmdLine = new com.mbreissi.edgecommons.ParsedCommandLine();
         cmdLine.configArgs = new String[]{"FILE", tempFile.getAbsolutePath()};

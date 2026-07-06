@@ -1,0 +1,9 @@
+packages:
+  - "libs/rust-streamlog/bindings/node"
+  - "libs/ts"
+  - "examples/ts"
+  - "test-infra/interop/ts_node"
+
+allowBuilds:
+  aws-crt: set this to true or false
+  pkcs11js: set this to true or false

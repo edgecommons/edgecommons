@@ -38,7 +38,9 @@ use crate::messaging::message::{HierEntry, MessageIdentity};
 /// Strict UNS hierarchy level-name rule: `^[A-Za-z0-9_-]+$` (future Parquet columns).
 fn is_valid_level_name(level: &str) -> bool {
     !level.is_empty()
-        && level.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        && level
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
 /// Builds the uniform fail-fast identity-resolution startup error.
@@ -77,7 +79,9 @@ fn configured_component_token(raw: &Value) -> Result<Option<&str>> {
         return Ok(None);
     };
     let Some(token) = token_el.as_str().filter(|v| !v.is_empty()) else {
-        return Err(identity_error("'component.token' must be a non-empty string"));
+        return Err(identity_error(
+            "'component.token' must be a non-empty string",
+        ));
     };
     Ok(Some(token))
 }
@@ -98,10 +102,14 @@ pub(crate) fn resolve(
     let mut levels: Vec<String> = Vec::new();
     if let Some(hierarchy) = raw.get("hierarchy") {
         let Some(levels_el) = hierarchy.as_object().and_then(|h| h.get("levels")) else {
-            return Err(identity_error("'hierarchy' must be an object with a 'levels' array"));
+            return Err(identity_error(
+                "'hierarchy' must be an object with a 'levels' array",
+            ));
         };
         let Some(levels_arr) = levels_el.as_array().filter(|a| !a.is_empty()) else {
-            return Err(identity_error("'hierarchy.levels' must be a non-empty array of level names"));
+            return Err(identity_error(
+                "'hierarchy.levels' must be a non-empty array of level names",
+            ));
         };
         for level_el in levels_arr {
             let Some(level) = level_el.as_str() else {
@@ -122,7 +130,9 @@ pub(crate) fn resolve(
             )));
         }
         if seen.contains(&level.as_str()) {
-            return Err(identity_error(format!("duplicate hierarchy level name '{level}'")));
+            return Err(identity_error(format!(
+                "duplicate hierarchy level name '{level}'"
+            )));
         }
         seen.push(level);
     }
@@ -134,9 +144,9 @@ pub(crate) fn resolve(
     let empty = serde_json::Map::new();
     let identity_config = match raw.get("identity") {
         None => &empty,
-        Some(identity_el) => identity_el.as_object().ok_or_else(|| {
-            identity_error("'identity' must be an object of level-name -> value")
-        })?,
+        Some(identity_el) => identity_el
+            .as_object()
+            .ok_or_else(|| identity_error("'identity' must be an object of level-name -> value"))?,
     };
     for key in identity_config.keys() {
         if *key == device_level {
@@ -155,7 +165,11 @@ pub(crate) fn resolve(
     let mut hier: Vec<HierEntry> = Vec::with_capacity(levels.len());
     let mut missing: Vec<&str> = Vec::new();
     for level in value_levels {
-        match identity_config.get(level).and_then(Value::as_str).filter(|v| !v.is_empty()) {
+        match identity_config
+            .get(level)
+            .and_then(Value::as_str)
+            .filter(|v| !v.is_empty())
+        {
             Some(value) => hier.push(HierEntry {
                 level: level.clone(),
                 value: sanitized_identity_value(level, value),
@@ -204,7 +218,11 @@ mod tests {
         assert_eq!(id.hier()[0].level, "device");
         assert_eq!(id.device(), "gw-01");
         assert_eq!(id.path(), "gw-01");
-        assert_eq!(id.component(), "OpcuaAdapter", "short name (segment after last '.')");
+        assert_eq!(
+            id.component(),
+            "OpcuaAdapter",
+            "short name (segment after last '.')"
+        );
         assert_eq!(id.instance(), "main");
     }
 
@@ -234,7 +252,10 @@ mod tests {
         });
         let id = resolve(&raw, "gw-01", "opcua-adapter").unwrap();
         assert_eq!(
-            id.hier().iter().map(|e| e.value.as_str()).collect::<Vec<_>>(),
+            id.hier()
+                .iter()
+                .map(|e| e.value.as_str())
+                .collect::<Vec<_>>(),
             vec!["dallas", "finishing", "zone-3", "gw-01"]
         );
         assert_eq!(id.path(), "dallas/finishing/zone-3/gw-01");
@@ -294,7 +315,10 @@ mod tests {
             "identity": { "site": "dallas", "zone": "typo" }
         });
         let err = resolve(&raw, "t", "c").unwrap_err().to_string();
-        assert!(err.contains("'identity.zone' is not a declared hierarchy level"), "{err}");
+        assert!(
+            err.contains("'identity.zone' is not a declared hierarchy level"),
+            "{err}"
+        );
     }
 
     #[test]
@@ -304,7 +328,10 @@ mod tests {
             "identity": { "site": "dallas" }
         });
         let err = resolve(&raw, "t", "c").unwrap_err().to_string();
-        assert!(err.contains("missing value(s)") && err.contains("zone"), "{err}");
+        assert!(
+            err.contains("missing value(s)") && err.contains("zone"),
+            "{err}"
+        );
     }
 
     #[test]

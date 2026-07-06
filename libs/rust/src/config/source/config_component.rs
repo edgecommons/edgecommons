@@ -47,7 +47,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
 use super::ConfigSource;
@@ -55,7 +55,7 @@ use crate::config::identity::short_component_name;
 use crate::config::template::sanitize;
 use crate::error::{EdgeCommonsError, Result};
 use crate::messaging::message::MessageBuilder;
-use crate::messaging::{message_handler, MessagingService};
+use crate::messaging::{MessagingService, message_handler};
 
 /// Flow-A GET request topic template (§4.3): the config server's rendezvous under
 /// the reserved-by-convention logical component name `config`, instance `main`.
@@ -100,7 +100,11 @@ impl ConfigComponentSource {
         let component_token = sanitize(short_component_name(component_name));
         Self {
             get_topic: mint_topic(GET_TOPIC_TEMPLATE, &device_token, &component_token),
-            set_config_topic: mint_topic(SET_CONFIG_TOPIC_TEMPLATE, &device_token, &component_token),
+            set_config_topic: mint_topic(
+                SET_CONFIG_TOPIC_TEMPLATE,
+                &device_token,
+                &component_token,
+            ),
             component_token,
             messaging,
         }
@@ -211,7 +215,10 @@ mod tests {
     impl MessagingProvider for FakeProvider {
         async fn publish(&self, t: &str, payload: Vec<u8>, _d: Destination, _q: Qos) -> Result<()> {
             if let Ok(req) = Message::from_slice(&payload) {
-                self.requests.lock().unwrap().push((t.to_string(), req.clone()));
+                self.requests
+                    .lock()
+                    .unwrap()
+                    .push((t.to_string(), req.clone()));
                 if let Some(body) = &self.reply_body {
                     if let Some(reply_to) = req.header.reply_to.clone() {
                         let reply = crate::messaging::message::MessageBuilder::new("Config", "1.0")
@@ -261,7 +268,8 @@ mod tests {
     #[tokio::test]
     async fn load_fetches_config_and_self_identifies_in_the_body() {
         let provider = FakeProvider::new(Some(serde_json::json!({ "feature": "on", "n": 5 })));
-        let svc: Arc<dyn MessagingService> = Arc::new(DefaultMessagingService::new(provider.clone()));
+        let svc: Arc<dyn MessagingService> =
+            Arc::new(DefaultMessagingService::new(provider.clone()));
         let src = ConfigComponentSource::new(svc, "thing-1", "com.example.MyComp");
 
         let doc = src.load().await.unwrap();
@@ -274,18 +282,28 @@ mod tests {
         let requests = provider.requests.lock().unwrap();
         let (topic, request) = &requests[0];
         assert_eq!(topic, "ecv1/thing-1/config/main/cmd/get-configuration");
-        assert_eq!(request.body["component"], "MyComp", "sanitized short name in the body");
-        assert!(request.identity.is_none(), "bootstrap request carries no identity");
+        assert_eq!(
+            request.body["component"], "MyComp",
+            "sanitized short name in the body"
+        );
+        assert!(
+            request.identity.is_none(),
+            "bootstrap request carries no identity"
+        );
     }
 
     #[tokio::test]
     async fn tokens_are_sanitized_into_the_topics() {
         let provider = FakeProvider::new(Some(serde_json::json!({})));
-        let svc: Arc<dyn MessagingService> = Arc::new(DefaultMessagingService::new(provider.clone()));
+        let svc: Arc<dyn MessagingService> =
+            Arc::new(DefaultMessagingService::new(provider.clone()));
         let src = ConfigComponentSource::new(svc, "thing+1", "com.example.My/Comp");
         let _ = src.load().await.unwrap();
         let requests = provider.requests.lock().unwrap();
-        assert_eq!(requests[0].0, "ecv1/thing_1/config/main/cmd/get-configuration");
+        assert_eq!(
+            requests[0].0,
+            "ecv1/thing_1/config/main/cmd/get-configuration"
+        );
         assert_eq!(requests[0].1.body["component"], "My_Comp");
     }
 
@@ -300,7 +318,8 @@ mod tests {
     #[tokio::test]
     async fn watch_forwards_set_config_pushes_from_the_own_inbox() {
         let provider = FakeProvider::new(None);
-        let svc: Arc<dyn MessagingService> = Arc::new(DefaultMessagingService::new(provider.clone()));
+        let svc: Arc<dyn MessagingService> =
+            Arc::new(DefaultMessagingService::new(provider.clone()));
         let src = ConfigComponentSource::new(svc, "thing-1", "com.example.MyComp");
 
         let mut rx = src.watch().unwrap();
@@ -311,7 +330,10 @@ mod tests {
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
-        assert!(provider.has_sub(inbox), "watch should subscribe to the set-config inbox");
+        assert!(
+            provider.has_sub(inbox),
+            "watch should subscribe to the set-config inbox"
+        );
 
         let update = crate::messaging::message::MessageBuilder::new("cmd", "1.0")
             .payload(serde_json::json!({ "v": 9 }))

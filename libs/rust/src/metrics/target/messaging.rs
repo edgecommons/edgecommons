@@ -9,7 +9,7 @@
 //! metric from the component's resolved UNS identity — the metric name passes the
 //! template sanitizer to become the channel token (§2.2) — and the destination
 //! comes from `metricEmission.targetConfig.destination` (`ipc`/`local` or
-//! `iotcore`/`iot_core`, D-U9). The legacy `targetConfig.topic` override is removed
+//! `northbound`, D-U9). The legacy `targetConfig.topic` override is removed
 //! — hard cut.
 //!
 //! ## Semantics & Architecture
@@ -53,7 +53,7 @@ pub struct MessagingMetricTarget {
 
 impl MessagingMetricTarget {
     /// Create the target (crate-private — the `metric` class is reserved, §4.2).
-    /// `iot_core` selects AWS IoT Core over the local broker.
+    /// `true` selects the northbound broker over the local broker.
     pub(crate) fn new(
         reserved: Arc<dyn ReservedMessaging>,
         iot_core: bool,
@@ -75,14 +75,18 @@ impl MessagingMetricTarget {
     /// passed through the template sanitizer (the §2.2 channel-token rule).
     fn metric_topic(&self, metric: &Metric) -> Result<String> {
         // The RAW includeRoot flag (Java parity): Uns applies D-U25 internally.
-        Uns::new(self.config.identity().clone(), self.config.topic_include_root())
-            .topic_with_channel(UnsClass::Metric, &sanitize(metric.get_name()))
+        Uns::new(
+            self.config.identity().clone(),
+            self.config.topic_include_root(),
+        )
+        .topic_with_channel(UnsClass::Metric, &sanitize(metric.get_name()))
     }
 
     async fn publish(&self, metric: &Metric, values: &HashMap<String, f64>) -> Result<()> {
         let topic = self.metric_topic(metric)?;
         // large_fleet_workaround emits both the normal and the coreName="ALL" record.
-        for emf in build_emf_variants(&self.namespace, metric, values, self.large_fleet_workaround) {
+        for emf in build_emf_variants(&self.namespace, metric, values, self.large_fleet_workaround)
+        {
             let message = MessageBuilder::new("Metric", "1.0")
                 .payload(emf)
                 .from_config(&self.config)
@@ -90,7 +94,7 @@ impl MessagingMetricTarget {
             // The metric class is reserved (§4.1) — publish through the seam (§4.2).
             if self.iot_core {
                 self.reserved
-                    .publish_reserved_to_iot_core(&topic, &message, Qos::AtLeastOnce)
+                    .publish_reserved_northbound(&topic, &message, Qos::AtLeastOnce)
                     .await?;
             } else {
                 self.reserved.publish_reserved(&topic, &message).await?;
@@ -125,7 +129,9 @@ mod tests {
     }
 
     fn metric(name: &str) -> Metric {
-        MetricBuilder::create(name).add_measure("count", "Count", 60).build()
+        MetricBuilder::create(name)
+            .add_measure("count", "Count", 60)
+            .build()
     }
 
     fn config() -> Config {
@@ -137,7 +143,11 @@ mod tests {
         .unwrap()
     }
 
-    fn target(recorder: Arc<RecordingMessaging>, iot_core: bool, large_fleet: bool) -> MessagingMetricTarget {
+    fn target(
+        recorder: Arc<RecordingMessaging>,
+        iot_core: bool,
+        large_fleet: bool,
+    ) -> MessagingMetricTarget {
         MessagingMetricTarget::new(recorder, iot_core, "demo", large_fleet, config())
     }
 
@@ -148,7 +158,10 @@ mod tests {
         t.emit(&metric("requests"), &values()).await.unwrap();
 
         assert!(recorder.reserved_iot().is_empty());
-        assert!(recorder.local().is_empty(), "must use the SEAM, not publish()");
+        assert!(
+            recorder.local().is_empty(),
+            "must use the SEAM, not publish()"
+        );
         let published = recorder.reserved_local();
         assert_eq!(published.len(), 1);
         let (topic, msg) = &published[0];

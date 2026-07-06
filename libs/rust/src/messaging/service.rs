@@ -1,7 +1,7 @@
 //! # Messaging — service layer
 //!
 //! **One-liner purpose**: The user-facing [`MessagingService`] — explicit local /
-//! IoT Core method pairs for publish, subscribe, request/reply — over any
+//! northbound method pairs for publish, subscribe, request/reply — over any
 //! [`MessagingProvider`], with the UNS reserved-class publish guard and the
 //! framework-owned request deadline.
 //!
@@ -10,10 +10,10 @@
 //! message (de)serialization, the callback dispatch model, request/reply
 //! correlation, the reserved-class publish guard (UNS-CANONICAL-DESIGN §4.1), and
 //! the `request()` deadline (§5). The surface mirrors the Java `MessagingClient`:
-//! `publish`/`publish_to_iot_core`, `publish_raw`/`publish_to_iot_core_raw`,
-//! `subscribe`/`subscribe_to_iot_core`, `unsubscribe`/`unsubscribe_from_iot_core`,
-//! `request`/`request_from_iot_core` (+ `_with_timeout` variants),
-//! `reply`/`reply_to_iot_core`, `cancel_request`/`cancel_request_from_iot_core`.
+//! `publish`/`publish_northbound`, `publish_raw`/`publish_northbound_raw`,
+//! `subscribe`/`subscribe_northbound`, `unsubscribe`/`unsubscribe_northbound`,
+//! `request`/`request_northbound` (+ `_with_timeout` variants),
+//! `reply`/`reply_northbound`, `cancel_request`/`cancel_request_northbound`.
 //!
 //! ## Reserved-class publish guard (§4.1, D-U4/D-U8/D-U24/D-U27)
 //! Every public path that emits a **client-chosen topic** — `publish*`, `request*`,
@@ -54,16 +54,16 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use serde_json::Value;
-use tokio::sync::{oneshot, Semaphore};
+use tokio::sync::{Semaphore, oneshot};
 use tokio::task::JoinHandle;
 
+use super::config::QosConfig;
 use super::message::Message;
-use super::{request_reply, Destination, MessagingProvider, Qos, Subscription};
+use super::{Destination, MessagingProvider, Qos, Subscription, request_reply};
 use crate::error::{EdgeCommonsError, Result};
 
-/// Default QoS for local (IPC-style) operations, which have no explicit QoS in the
-/// Java/Python contract.
-const LOCAL_QOS: Qos = Qos::AtLeastOnce;
+/// Default QoS for operations without configured MQTT QoS.
+const DEFAULT_QOS: Qos = Qos::AtLeastOnce;
 /// Reply subscriptions only ever receive one message.
 const REPLY_QUEUE_SIZE: usize = 1;
 /// The built-in `request()` deadline (ms) that applies until the config-model
@@ -167,8 +167,8 @@ pub(crate) trait ReservedMessaging: Send + Sync {
     /// Publish a message to a reserved topic on the local broker, without the guard.
     async fn publish_reserved(&self, topic: &str, msg: &Message) -> Result<()>;
 
-    /// Publish a message to a reserved topic on AWS IoT Core, without the guard.
-    async fn publish_reserved_to_iot_core(
+    /// Publish a message to a reserved topic on the northbound transport, without the guard.
+    async fn publish_reserved_northbound(
         &self,
         topic: &str,
         msg: &Message,
@@ -177,7 +177,7 @@ pub(crate) trait ReservedMessaging: Send + Sync {
 }
 
 /// Transport-agnostic messaging operations over [`Message`]s, with explicit local /
-/// IoT Core method pairs (mirroring the Java/Python `IMessagingService`).
+/// northbound method pairs (mirroring the Java/Python `IMessagingService`).
 ///
 /// Client-chosen publish topics are subject to the reserved-class guard (see the
 /// [module docs](self)); `subscribe*` is never guarded.
@@ -188,14 +188,14 @@ pub trait MessagingService: Send + Sync {
     /// # Errors
     /// [`EdgeCommonsError::ReservedTopic`] when `topic` targets a reserved UNS class (§4.1).
     async fn publish(&self, topic: &str, msg: &Message) -> Result<()>;
-    /// Publish a message to `topic` on AWS IoT Core at `qos` (guarded like
+    /// Publish a message to `topic` on the northbound transport at `qos` (guarded like
     /// [`Self::publish`]).
-    async fn publish_to_iot_core(&self, topic: &str, msg: &Message, qos: Qos) -> Result<()>;
+    async fn publish_northbound(&self, topic: &str, msg: &Message, qos: Qos) -> Result<()>;
 
     /// Publish a raw JSON payload to `topic` on the local broker (guarded — D-U8).
     async fn publish_raw(&self, topic: &str, payload: &Value) -> Result<()>;
-    /// Publish a raw JSON payload to `topic` on AWS IoT Core at `qos` (guarded).
-    async fn publish_to_iot_core_raw(&self, topic: &str, payload: &Value, qos: Qos) -> Result<()>;
+    /// Publish a raw JSON payload to `topic` on the northbound transport at `qos` (guarded).
+    async fn publish_northbound_raw(&self, topic: &str, payload: &Value, qos: Qos) -> Result<()>;
 
     /// Register a callback for `filter` on the local broker.
     ///
@@ -209,8 +209,8 @@ pub trait MessagingService: Send + Sync {
         max_concurrency: usize,
     ) -> Result<()>;
 
-    /// Register a callback for `filter` on AWS IoT Core at `qos`. Never guarded.
-    async fn subscribe_to_iot_core(
+    /// Register a callback for `filter` on the northbound transport at `qos`. Never guarded.
+    async fn subscribe_northbound(
         &self,
         filter: &str,
         handler: Arc<dyn MessageHandler>,
@@ -221,8 +221,8 @@ pub trait MessagingService: Send + Sync {
 
     /// Stop the local subscription for `filter` (aborts dispatch + broker UNSUBSCRIBE).
     async fn unsubscribe(&self, filter: &str) -> Result<()>;
-    /// Stop the IoT Core subscription for `filter`.
-    async fn unsubscribe_from_iot_core(&self, filter: &str) -> Result<()>;
+    /// Stop the northbound subscription for `filter`.
+    async fn unsubscribe_northbound(&self, filter: &str) -> Result<()>;
 
     /// Send a request on the local broker; await the returned [`ReplyFuture`].
     ///
@@ -234,9 +234,9 @@ pub trait MessagingService: Send + Sync {
     /// # Errors
     /// [`EdgeCommonsError::ReservedTopic`] when `topic` targets a reserved UNS class.
     async fn request(&self, topic: &str, msg: Message) -> Result<ReplyFuture>;
-    /// Send a request on AWS IoT Core; await the returned [`ReplyFuture`]. Same
+    /// Send a request on the northbound transport; await the returned [`ReplyFuture`]. Same
     /// deadline + guard semantics as [`Self::request`].
-    async fn request_from_iot_core(&self, topic: &str, msg: Message) -> Result<ReplyFuture>;
+    async fn request_northbound(&self, topic: &str, msg: Message) -> Result<ReplyFuture>;
 
     /// [`Self::request`] with an explicit per-call deadline (§5, D-U5): an explicit
     /// value always wins over the configured default; `None` uses the default;
@@ -247,8 +247,8 @@ pub trait MessagingService: Send + Sync {
         msg: Message,
         timeout: Option<Duration>,
     ) -> Result<ReplyFuture>;
-    /// IoT Core variant of [`Self::request_with_timeout`].
-    async fn request_from_iot_core_with_timeout(
+    /// Northbound variant of [`Self::request_with_timeout`].
+    async fn request_northbound_with_timeout(
         &self,
         topic: &str,
         msg: Message,
@@ -260,13 +260,13 @@ pub trait MessagingService: Send + Sync {
     /// requester could otherwise set it to a victim's reserved topic and turn an
     /// innocent responder into a forger.
     async fn reply(&self, request: &Message, reply: Message) -> Result<()>;
-    /// Reply to a received request on AWS IoT Core (guarded the same way).
-    async fn reply_to_iot_core(&self, request: &Message, reply: Message) -> Result<()>;
+    /// Reply to a received request on the northbound transport (guarded the same way).
+    async fn reply_northbound(&self, request: &Message, reply: Message) -> Result<()>;
 
     /// Abandon a pending local request, cleaning up its reply subscription.
     fn cancel_request(&self, reply_future: ReplyFuture);
-    /// Abandon a pending IoT Core request, cleaning up its reply subscription.
-    fn cancel_request_from_iot_core(&self, reply_future: ReplyFuture);
+    /// Abandon a pending northbound request, cleaning up its reply subscription.
+    fn cancel_request_northbound(&self, reply_future: ReplyFuture);
 
     /// Whether the messaging transport currently has a live connection.
     ///
@@ -292,16 +292,61 @@ pub struct DefaultMessagingService {
     /// [`Self::set_guard_include_root`]; `false` pre-bind — nothing publishes
     /// rooted topics pre-config.
     guard_include_root: AtomicBool,
+    local_publish_qos: Qos,
+    local_subscribe_qos: Qos,
+    northbound_publish_qos: Qos,
+    northbound_subscribe_qos: Qos,
 }
 
 impl DefaultMessagingService {
     /// Wrap a provider in the default service.
     pub fn new(provider: Arc<dyn MessagingProvider>) -> Self {
+        Self::new_with_qos(provider, &QosConfig::default())
+    }
+
+    /// Wrap a provider with MQTT QoS defaults loaded from each broker's `qos` section.
+    ///
+    /// Explicit method QoS arguments still win for `publish_northbound*`
+    /// and `subscribe_northbound`; these defaults affect operations that do not
+    /// carry a QoS argument, including local/northbound publish/subscribe/request/reply.
+    pub fn new_with_qos(provider: Arc<dyn MessagingProvider>, qos: &QosConfig) -> Self {
+        let local_publish_qos =
+            Qos::from_mqtt_value(qos.local.publish, "messaging.local.qos.publish")
+                .unwrap_or(DEFAULT_QOS);
+        let local_subscribe_qos =
+            Qos::from_mqtt_value(qos.local.subscribe, "messaging.local.qos.subscribe")
+                .unwrap_or(DEFAULT_QOS);
+        let northbound_publish_qos =
+            Qos::from_mqtt_value(qos.northbound.publish, "messaging.northbound.qos.publish")
+                .unwrap_or(DEFAULT_QOS);
+        let northbound_subscribe_qos = Qos::from_mqtt_value(
+            qos.northbound.subscribe,
+            "messaging.northbound.qos.subscribe",
+        )
+        .unwrap_or(DEFAULT_QOS);
         Self {
             provider,
             subscriptions: Mutex::new(HashMap::new()),
             default_request_timeout_ms: AtomicU64::new(BUILT_IN_REQUEST_TIMEOUT_MS),
             guard_include_root: AtomicBool::new(false),
+            local_publish_qos,
+            local_subscribe_qos,
+            northbound_publish_qos,
+            northbound_subscribe_qos,
+        }
+    }
+
+    fn publish_qos(&self, dest: Destination) -> Qos {
+        match dest {
+            Destination::Local => self.local_publish_qos,
+            Destination::Northbound => self.northbound_publish_qos,
+        }
+    }
+
+    fn subscribe_qos(&self, dest: Destination) -> Qos {
+        match dest {
+            Destination::Local => self.local_subscribe_qos,
+            Destination::Northbound => self.northbound_subscribe_qos,
         }
     }
 
@@ -312,9 +357,14 @@ impl DefaultMessagingService {
     /// applies — deliberately, so the bootstrap request gets a deadline instead of
     /// hanging. `None` or a zero duration disables the default deadline.
     pub fn set_default_request_timeout(&self, timeout: Option<Duration>) {
-        let ms = timeout.map(|d| d.as_millis().min(u128::from(u64::MAX)) as u64).unwrap_or(0);
+        let ms = timeout
+            .map(|d| d.as_millis().min(u128::from(u64::MAX)) as u64)
+            .unwrap_or(0);
         self.default_request_timeout_ms.store(ms, Ordering::Relaxed);
-        tracing::debug!(timeout_ms = ms, "default request timeout bound (0 = disabled)");
+        tracing::debug!(
+            timeout_ms = ms,
+            "default request timeout bound (0 = disabled)"
+        );
     }
 
     /// The default `request()` deadline currently in effect (`None` = disabled).
@@ -331,7 +381,8 @@ impl DefaultMessagingService {
     /// no-ops includeRoot on a single-level hierarchy (D-U25). Before the bind only
     /// the always-checked class position 4 applies.
     pub fn set_guard_include_root(&self, include_root: bool) {
-        self.guard_include_root.store(include_root, Ordering::Relaxed);
+        self.guard_include_root
+            .store(include_root, Ordering::Relaxed);
         tracing::debug!(include_root, "reserved-topic guard includeRoot bound");
     }
 
@@ -362,14 +413,16 @@ impl DefaultMessagingService {
         max_concurrency: usize,
         handler: Arc<dyn MessageHandler>,
     ) -> Result<()> {
-        let sub = self.provider.subscribe(filter, dest, qos, max_messages).await?;
+        let sub = self
+            .provider
+            .subscribe(filter, dest, qos, max_messages)
+            .await?;
         let task = tokio::spawn(run_dispatcher(sub, handler, max_concurrency));
 
         let previous = {
-            let mut map = self
-                .subscriptions
-                .lock()
-                .map_err(|_| EdgeCommonsError::Messaging("subscription map poisoned".to_string()))?;
+            let mut map = self.subscriptions.lock().map_err(|_| {
+                EdgeCommonsError::Messaging("subscription map poisoned".to_string())
+            })?;
             map.insert((dest, filter.to_string()), task)
         };
         if let Some(old) = previous {
@@ -381,10 +434,9 @@ impl DefaultMessagingService {
     /// Abort the dispatcher (if any) and UNSUBSCRIBE at the broker.
     async fn stop_subscription(&self, filter: &str, dest: Destination) -> Result<()> {
         let task = {
-            let mut map = self
-                .subscriptions
-                .lock()
-                .map_err(|_| EdgeCommonsError::Messaging("subscription map poisoned".to_string()))?;
+            let mut map = self.subscriptions.lock().map_err(|_| {
+                EdgeCommonsError::Messaging("subscription map poisoned".to_string())
+            })?;
             map.remove(&(dest, filter.to_string()))
         };
         if let Some(task) = task {
@@ -419,13 +471,14 @@ impl DefaultMessagingService {
         topic: &str,
         msg: Message,
         dest: Destination,
-        qos: Qos,
+        subscribe_qos: Qos,
+        publish_qos: Qos,
         timeout: Option<Duration>,
     ) -> Result<ReplyFuture> {
         let reply_topic = request_reply::new_reply_topic();
         let mut sub = self
             .provider
-            .subscribe(&reply_topic, dest, qos, REPLY_QUEUE_SIZE)
+            .subscribe(&reply_topic, dest, subscribe_qos, REPLY_QUEUE_SIZE)
             .await?;
 
         let mut request = msg;
@@ -439,7 +492,11 @@ impl DefaultMessagingService {
                 return Err(e);
             }
         };
-        if let Err(e) = self.provider.publish(topic, payload, dest, qos).await {
+        if let Err(e) = self
+            .provider
+            .publish(topic, payload, dest, publish_qos)
+            .await
+        {
             drop(sub);
             let _ = self.provider.unsubscribe(&reply_topic, dest).await;
             return Err(e);
@@ -492,7 +549,10 @@ impl DefaultMessagingService {
             let _ = result_tx.send(outcome);
         });
 
-        Ok(ReplyFuture { rx: result_rx, cancel: Some(cancel_tx) })
+        Ok(ReplyFuture {
+            rx: result_rx,
+            cancel: Some(cancel_tx),
+        })
     }
 
     /// Publish a reply correlated with `request` on `dest`.
@@ -503,7 +563,7 @@ impl DefaultMessagingService {
         let mut reply = reply;
         reply.header.correlation_id = request.header.correlation_id.clone();
         self.provider
-            .publish(&topic, reply.to_vec()?, dest, LOCAL_QOS)
+            .publish(&topic, reply.to_vec()?, dest, self.publish_qos(dest))
             .await
     }
 }
@@ -523,19 +583,24 @@ impl ReservedMessaging for DefaultMessagingService {
     /// §4.2: the privileged local publish — bypasses the reserved-class guard.
     async fn publish_reserved(&self, topic: &str, msg: &Message) -> Result<()> {
         self.provider
-            .publish(topic, msg.to_vec()?, Destination::Local, LOCAL_QOS)
+            .publish(
+                topic,
+                msg.to_vec()?,
+                Destination::Local,
+                self.local_publish_qos,
+            )
             .await
     }
 
     /// §4.2: the privileged IoT Core publish — bypasses the reserved-class guard.
-    async fn publish_reserved_to_iot_core(
+    async fn publish_reserved_northbound(
         &self,
         topic: &str,
         msg: &Message,
         qos: Qos,
     ) -> Result<()> {
         self.provider
-            .publish(topic, msg.to_vec()?, Destination::IotCore, qos)
+            .publish(topic, msg.to_vec()?, Destination::Northbound, qos)
             .await
     }
 }
@@ -545,28 +610,43 @@ impl MessagingService for DefaultMessagingService {
     async fn publish(&self, topic: &str, msg: &Message) -> Result<()> {
         self.check_reserved(Some(topic))?;
         self.provider
-            .publish(topic, msg.to_vec()?, Destination::Local, LOCAL_QOS)
+            .publish(
+                topic,
+                msg.to_vec()?,
+                Destination::Local,
+                self.local_publish_qos,
+            )
             .await
     }
 
-    async fn publish_to_iot_core(&self, topic: &str, msg: &Message, qos: Qos) -> Result<()> {
+    async fn publish_northbound(&self, topic: &str, msg: &Message, qos: Qos) -> Result<()> {
         self.check_reserved(Some(topic))?;
         self.provider
-            .publish(topic, msg.to_vec()?, Destination::IotCore, qos)
+            .publish(topic, msg.to_vec()?, Destination::Northbound, qos)
             .await
     }
 
     async fn publish_raw(&self, topic: &str, payload: &Value) -> Result<()> {
         self.check_reserved(Some(topic))?;
         self.provider
-            .publish(topic, serde_json::to_vec(payload)?, Destination::Local, LOCAL_QOS)
+            .publish(
+                topic,
+                serde_json::to_vec(payload)?,
+                Destination::Local,
+                self.local_publish_qos,
+            )
             .await
     }
 
-    async fn publish_to_iot_core_raw(&self, topic: &str, payload: &Value, qos: Qos) -> Result<()> {
+    async fn publish_northbound_raw(&self, topic: &str, payload: &Value, qos: Qos) -> Result<()> {
         self.check_reserved(Some(topic))?;
         self.provider
-            .publish(topic, serde_json::to_vec(payload)?, Destination::IotCore, qos)
+            .publish(
+                topic,
+                serde_json::to_vec(payload)?,
+                Destination::Northbound,
+                qos,
+            )
             .await
     }
 
@@ -580,7 +660,7 @@ impl MessagingService for DefaultMessagingService {
         self.start_subscription(
             filter,
             Destination::Local,
-            LOCAL_QOS,
+            self.local_subscribe_qos,
             max_messages,
             max_concurrency,
             handler,
@@ -588,7 +668,7 @@ impl MessagingService for DefaultMessagingService {
         .await
     }
 
-    async fn subscribe_to_iot_core(
+    async fn subscribe_northbound(
         &self,
         filter: &str,
         handler: Arc<dyn MessageHandler>,
@@ -598,7 +678,7 @@ impl MessagingService for DefaultMessagingService {
     ) -> Result<()> {
         self.start_subscription(
             filter,
-            Destination::IotCore,
+            Destination::Northbound,
             qos,
             max_messages,
             max_concurrency,
@@ -611,16 +691,17 @@ impl MessagingService for DefaultMessagingService {
         self.stop_subscription(filter, Destination::Local).await
     }
 
-    async fn unsubscribe_from_iot_core(&self, filter: &str) -> Result<()> {
-        self.stop_subscription(filter, Destination::IotCore).await
+    async fn unsubscribe_northbound(&self, filter: &str) -> Result<()> {
+        self.stop_subscription(filter, Destination::Northbound).await
     }
 
     async fn request(&self, topic: &str, msg: Message) -> Result<ReplyFuture> {
         self.request_with_timeout(topic, msg, None).await
     }
 
-    async fn request_from_iot_core(&self, topic: &str, msg: Message) -> Result<ReplyFuture> {
-        self.request_from_iot_core_with_timeout(topic, msg, None).await
+    async fn request_northbound(&self, topic: &str, msg: Message) -> Result<ReplyFuture> {
+        self.request_northbound_with_timeout(topic, msg, None)
+            .await
     }
 
     async fn request_with_timeout(
@@ -630,19 +711,33 @@ impl MessagingService for DefaultMessagingService {
         timeout: Option<Duration>,
     ) -> Result<ReplyFuture> {
         self.check_reserved(Some(topic))?;
-        self.start_request(topic, msg, Destination::Local, LOCAL_QOS, timeout)
-            .await
+        self.start_request(
+            topic,
+            msg,
+            Destination::Local,
+            self.subscribe_qos(Destination::Local),
+            self.publish_qos(Destination::Local),
+            timeout,
+        )
+        .await
     }
 
-    async fn request_from_iot_core_with_timeout(
+    async fn request_northbound_with_timeout(
         &self,
         topic: &str,
         msg: Message,
         timeout: Option<Duration>,
     ) -> Result<ReplyFuture> {
         self.check_reserved(Some(topic))?;
-        self.start_request(topic, msg, Destination::IotCore, Qos::AtLeastOnce, timeout)
-            .await
+        self.start_request(
+            topic,
+            msg,
+            Destination::Northbound,
+            self.subscribe_qos(Destination::Northbound),
+            self.publish_qos(Destination::Northbound),
+            timeout,
+        )
+        .await
     }
 
     async fn reply(&self, request: &Message, reply: Message) -> Result<()> {
@@ -650,16 +745,16 @@ impl MessagingService for DefaultMessagingService {
         self.send_reply(request, reply, Destination::Local).await
     }
 
-    async fn reply_to_iot_core(&self, request: &Message, reply: Message) -> Result<()> {
+    async fn reply_northbound(&self, request: &Message, reply: Message) -> Result<()> {
         self.check_reserved(request.header.reply_to.as_deref())?;
-        self.send_reply(request, reply, Destination::IotCore).await
+        self.send_reply(request, reply, Destination::Northbound).await
     }
 
     fn cancel_request(&self, reply_future: ReplyFuture) {
         drop(reply_future); // Drop signals the supervisor's cancel arm.
     }
 
-    fn cancel_request_from_iot_core(&self, reply_future: ReplyFuture) {
+    fn cancel_request_northbound(&self, reply_future: ReplyFuture) {
         drop(reply_future);
     }
 
@@ -723,6 +818,10 @@ mod tests {
         unsubscribed_dests: Mutex<Vec<Destination>>,
         /// `(topic, payload)` of each publish.
         published: Mutex<Vec<RawMessage>>,
+        /// `(destination, qos)` of each publish.
+        published_qos: Mutex<Vec<(Destination, Qos)>>,
+        /// `(destination, qos)` of each subscribe.
+        subscribed_qos: Mutex<Vec<(Destination, Qos)>>,
     }
 
     impl FakeProvider {
@@ -732,6 +831,8 @@ mod tests {
                 unsubscribed: AtomicUsize::new(0),
                 unsubscribed_dests: Mutex::new(Vec::new()),
                 published: Mutex::new(Vec::new()),
+                published_qos: Mutex::new(Vec::new()),
+                subscribed_qos: Mutex::new(Vec::new()),
             }
         }
         fn push(&self, topic: &str, msg: &Message) {
@@ -743,17 +844,19 @@ mod tests {
 
     #[async_trait]
     impl MessagingProvider for FakeProvider {
-        async fn publish(&self, t: &str, p: Vec<u8>, _d: Destination, _q: Qos) -> Result<()> {
+        async fn publish(&self, t: &str, p: Vec<u8>, d: Destination, q: Qos) -> Result<()> {
             self.published.lock().unwrap().push((t.to_string(), p));
+            self.published_qos.lock().unwrap().push((d, q));
             Ok(())
         }
         async fn subscribe(
             &self,
             _f: &str,
-            _d: Destination,
-            _q: Qos,
+            d: Destination,
+            q: Qos,
             max_messages: usize,
         ) -> Result<Subscription> {
+            self.subscribed_qos.lock().unwrap().push((d, q));
             let (tx, rx) = tokio::sync::mpsc::channel(max_messages.max(1));
             *self.sender.lock().unwrap() = Some(tx);
             Ok(Subscription::new(rx, Box::new(())))
@@ -906,7 +1009,11 @@ mod tests {
         wait_for(&count, 1).await;
 
         svc.unsubscribe("t").await.unwrap();
-        assert_eq!(provider.unsubscribed.load(Ordering::SeqCst), 1, "broker unsubscribe called");
+        assert_eq!(
+            provider.unsubscribed.load(Ordering::SeqCst),
+            1,
+            "broker unsubscribe called"
+        );
 
         tokio::time::sleep(Duration::from_millis(50)).await;
         provider.push("t", &msg(2));
@@ -952,7 +1059,10 @@ mod tests {
 
         let reply_future = svc.request("svc/op", msg(1)).await.unwrap();
         let result = tokio::time::timeout(Duration::from_millis(50), reply_future).await;
-        assert!(result.is_err(), "expected the caller-side await to time out");
+        assert!(
+            result.is_err(),
+            "expected the caller-side await to time out"
+        );
 
         wait_for(&provider.unsubscribed, 1).await;
     }
@@ -994,7 +1104,10 @@ mod tests {
 
         let reply_future = svc.request("svc/op", msg(1)).await.unwrap();
         let err = reply_future.await.unwrap_err();
-        assert!(matches!(err, EdgeCommonsError::RequestTimeout { .. }), "got {err}");
+        assert!(
+            matches!(err, EdgeCommonsError::RequestTimeout { .. }),
+            "got {err}"
+        );
         wait_for(&provider.unsubscribed, 1).await;
     }
 
@@ -1052,27 +1165,65 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn configured_qos_defaults_drive_local_and_iot_request_paths() {
+        let provider = Arc::new(FakeProvider::new());
+        let qos = QosConfig {
+            local: super::super::config::QosDefaults {
+                publish: 2,
+                subscribe: 0,
+            },
+            northbound: super::super::config::QosDefaults {
+                publish: 2,
+                subscribe: 1,
+            },
+        };
+        let svc = DefaultMessagingService::new_with_qos(provider.clone(), &qos);
+
+        svc.publish("local/qos", &msg(1)).await.unwrap();
+        let _ = svc
+            .request_northbound_with_timeout("iot/qos", msg(2), Some(Duration::from_millis(20)))
+            .await
+            .unwrap()
+            .await;
+
+        assert_eq!(
+            provider.published_qos.lock().unwrap().as_slice(),
+            &[
+                (Destination::Local, Qos::ExactlyOnce),
+                (Destination::Northbound, Qos::ExactlyOnce),
+            ]
+        );
+        assert_eq!(
+            provider.subscribed_qos.lock().unwrap().as_slice(),
+            &[(Destination::Northbound, Qos::AtLeastOnce)]
+        );
+    }
+
+    #[tokio::test]
     async fn request_unsubscribes_on_the_request_destination() {
         // Wrong-side-unsubscribe guard: an IoT Core request must clean up its reply
         // subscription on the IoT Core side, not the local side.
         let provider = Arc::new(FakeProvider::new());
         let svc = DefaultMessagingService::new(provider.clone());
         let reply_future = svc
-            .request_from_iot_core_with_timeout("svc/op", msg(1), Some(Duration::from_millis(30)))
+            .request_northbound_with_timeout("svc/op", msg(1), Some(Duration::from_millis(30)))
             .await
             .unwrap();
         let _ = reply_future.await;
         wait_for(&provider.unsubscribed, 1).await;
         assert_eq!(
             provider.unsubscribed_dests.lock().unwrap().as_slice(),
-            &[Destination::IotCore]
+            &[Destination::Northbound]
         );
     }
 
     // ---------- §4.1 reserved-class publish guard ----------
 
     fn assert_reserved(err: EdgeCommonsError) {
-        assert!(matches!(err, EdgeCommonsError::ReservedTopic(_)), "expected ReservedTopic, got {err}");
+        assert!(
+            matches!(err, EdgeCommonsError::ReservedTopic(_)),
+            "expected ReservedTopic, got {err}"
+        );
     }
 
     #[tokio::test]
@@ -1083,17 +1234,27 @@ mod tests {
 
         assert_reserved(svc.publish(reserved, &msg(1)).await.unwrap_err());
         assert_reserved(
-            svc.publish_to_iot_core(reserved, &msg(1), Qos::AtLeastOnce).await.unwrap_err(),
+            svc.publish_northbound(reserved, &msg(1), Qos::AtLeastOnce)
+                .await
+                .unwrap_err(),
         );
         assert_reserved(svc.publish_raw(reserved, &json!({})).await.unwrap_err());
         assert_reserved(
-            svc.publish_to_iot_core_raw(reserved, &json!({}), Qos::AtLeastOnce)
+            svc.publish_northbound_raw(reserved, &json!({}), Qos::AtLeastOnce)
                 .await
                 .unwrap_err(),
         );
         assert_reserved(svc.request(reserved, msg(1)).await.err().unwrap());
-        assert_reserved(svc.request_from_iot_core(reserved, msg(1)).await.err().unwrap());
-        assert!(provider.published.lock().unwrap().is_empty(), "nothing reached the provider");
+        assert_reserved(
+            svc.request_northbound(reserved, msg(1))
+                .await
+                .err()
+                .unwrap(),
+        );
+        assert!(
+            provider.published.lock().unwrap().is_empty(),
+            "nothing reached the provider"
+        );
     }
 
     #[tokio::test]
@@ -1106,7 +1267,7 @@ mod tests {
             .reply_to("ecv1/victim/comp/main/cfg")
             .build();
         assert_reserved(svc.reply(&request, msg(1)).await.unwrap_err());
-        assert_reserved(svc.reply_to_iot_core(&request, msg(1)).await.unwrap_err());
+        assert_reserved(svc.reply_northbound(&request, msg(1)).await.unwrap_err());
         assert!(provider.published.lock().unwrap().is_empty());
     }
 
@@ -1114,8 +1275,12 @@ mod tests {
     async fn guard_allows_app_topics_and_non_uns_topics() {
         let provider = Arc::new(FakeProvider::new());
         let svc = DefaultMessagingService::new(provider.clone());
-        svc.publish("ecv1/gw-01/comp/main/data/temp", &msg(1)).await.unwrap();
-        svc.publish("ecv1/gw-01/comp/main/app/state", &msg(1)).await.unwrap();
+        svc.publish("ecv1/gw-01/comp/main/data/temp", &msg(1))
+            .await
+            .unwrap();
+        svc.publish("ecv1/gw-01/comp/main/app/state", &msg(1))
+            .await
+            .unwrap();
         svc.publish("edgecommons/reply-42", &msg(1)).await.unwrap();
         svc.publish("cloudwatch/metric/put", &msg(1)).await.unwrap();
         assert_eq!(provider.published.lock().unwrap().len(), 4);
@@ -1132,7 +1297,11 @@ mod tests {
         svc.set_guard_include_root(true);
         assert_reserved(svc.publish(rooted_state, &msg(1)).await.unwrap_err());
         // Position 4 stays checked either way.
-        assert_reserved(svc.publish("ecv1/d/c/i/metric/x", &msg(1)).await.unwrap_err());
+        assert_reserved(
+            svc.publish("ecv1/d/c/i/metric/x", &msg(1))
+                .await
+                .unwrap_err(),
+        );
     }
 
     #[tokio::test]
@@ -1142,9 +1311,16 @@ mod tests {
         let provider = Arc::new(FakeProvider::new());
         let svc = DefaultMessagingService::new(provider.clone());
         let reserved: &dyn ReservedMessaging = &svc;
-        reserved.publish_reserved("ecv1/gw-01/comp/main/state", &msg(1)).await.unwrap();
         reserved
-            .publish_reserved_to_iot_core("ecv1/gw-01/comp/main/metric/sys", &msg(1), Qos::AtLeastOnce)
+            .publish_reserved("ecv1/gw-01/comp/main/state", &msg(1))
+            .await
+            .unwrap();
+        reserved
+            .publish_reserved_northbound(
+                "ecv1/gw-01/comp/main/metric/sys",
+                &msg(1),
+                Qos::AtLeastOnce,
+            )
             .await
             .unwrap();
         assert_eq!(provider.published.lock().unwrap().len(), 2);
@@ -1155,13 +1331,8 @@ mod tests {
         let provider = Arc::new(FakeProvider::new());
         let svc = DefaultMessagingService::new(provider.clone());
         // Consumers must be able to read reserved classes.
-        svc.subscribe(
-            "ecv1/+/+/+/state",
-            message_handler(|_t, _m| async {}),
-            4,
-            1,
-        )
-        .await
-        .unwrap();
+        svc.subscribe("ecv1/+/+/+/state", message_handler(|_t, _m| async {}), 4, 1)
+            .await
+            .unwrap();
     }
 }

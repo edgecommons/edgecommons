@@ -37,7 +37,7 @@ import { DefaultMessagingService } from "./messaging/service";
 import { IMessagingService } from "./messaging/types";
 import { StandaloneMqttProvider } from "./messaging/standalone-provider";
 import { IpcMessagingProvider } from "./messaging/ipc-provider";
-import { loadMessagingConfig } from "./messaging/config";
+import { loadMessagingConfig, qosConfigFromBrokers } from "./messaging/config";
 import { MetricEmitter } from "./metrics/service";
 import { MetricService } from "./metrics/types";
 import { RepublishListener } from "./republish_listener";
@@ -585,12 +585,6 @@ export class EdgeCommonsBuilder {
         current.topicIncludeRoot && current.componentIdentity.hier.length >= 2,
       );
     }
-    // The MQTT LWT (§6) is a CONNECT-time, MQTT-only facility: on the IPC transport a
-    // configured messaging.lwt section is ignored (log DEBUG and no-op, per the design).
-    if (transportIsIpc(parsed.transport) && hasLwtSection(current.raw)) {
-      logger.debug("messaging.lwt is MQTT-only; the IPC provider ignores it (no-op)");
-    }
-
     // Thread the resolved platform's default logging format into the configurator (Phase 1c / FR-LOG-1):
     // a KUBERNETES pod with no `logging.ts_format` logs structured stdout-JSON, while explicit config
     // still wins and HOST/GREENGRASS keep today's console/text default. The platform is known here
@@ -832,17 +826,6 @@ function transportIsIpc(transport: Transport): boolean {
   return transport === Transport.IPC;
 }
 
-/** Whether the component config document carries a `messaging.lwt` section. */
-function hasLwtSection(raw: Record<string, unknown>): boolean {
-  const messaging = raw.messaging;
-  return (
-    messaging !== null &&
-    typeof messaging === "object" &&
-    !Array.isArray(messaging) &&
-    (messaging as Record<string, unknown>).lwt !== undefined
-  );
-}
-
 /**
  * Initialize the messaging service + IPC provider handle for the resolved transport (DESIGN-core
  * §4.2 transport-injection site). Branches on the resolved {@link Transport}, not a legacy mode enum.
@@ -860,7 +843,7 @@ async function initMessaging(
     }
     const mc = await loadMessagingConfig(messagingConfigPath);
     const provider = await StandaloneMqttProvider.connect(mc);
-    return { service: new DefaultMessagingService(provider) };
+    return { service: new DefaultMessagingService(provider, qosConfigFromBrokers(mc)) };
   }
   // IPC (GREENGRASS)
   const provider = await IpcMessagingProvider.connect({ receiveOwnMessages });

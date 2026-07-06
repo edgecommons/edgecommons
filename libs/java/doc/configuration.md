@@ -284,7 +284,7 @@ String resolvedPath = configManager.resolveTemplate("/data/{ThingName}/{site}/lo
       "cpu": true,
       "memory": true
     },
-    "destination": "iotcore"
+    "destination": "northbound"
   },
   "tags": {
     "site": "plant-a",

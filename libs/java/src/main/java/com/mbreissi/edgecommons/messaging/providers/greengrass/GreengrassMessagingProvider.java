@@ -6,6 +6,7 @@ package com.mbreissi.edgecommons.messaging.providers.greengrass;
 
 import com.mbreissi.edgecommons.messaging.Message;
 import com.mbreissi.edgecommons.messaging.MessagingProvider;
+import com.mbreissi.edgecommons.messaging.Qos;
 import com.mbreissi.edgecommons.messaging.ReplyFuture;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
@@ -43,7 +44,6 @@ public final class GreengrassMessagingProvider extends MessagingProvider
             ipcClient = GreengrassCoreIPCClientV2.builder().build();
             ipcSubscriptionStreams = new ConcurrentHashMap<>();
             iotCoreSubscriptionStreams = new ConcurrentHashMap<>();
-            logLwtNoOp();
         }
         catch (IOException e)
         {
@@ -52,16 +52,14 @@ public final class GreengrassMessagingProvider extends MessagingProvider
         }
     }
 
-    /**
-     * MQTT LWT is an explicit <b>no-op</b> on the Greengrass IPC transport
-     * (UNS-CANONICAL-DESIGN §6): IPC has no CONNECT packet to register a will on, so any
-     * {@code messaging.lwt} config is ignored (the LWT applies to the MQTT local-broker connection
-     * only). Logged at DEBUG once at construction.
-     */
-    static void logLwtNoOp()
+    private static QOS toGreengrassQos(Qos qos)
     {
-        LOGGER.debug("MQTT LWT (messaging.lwt) is not supported over Greengrass IPC; "
-                + "any configured lwt section is ignored (no-op)");
+        return switch (qos) {
+            case AT_MOST_ONCE -> QOS.AT_MOST_ONCE;
+            case AT_LEAST_ONCE -> QOS.AT_LEAST_ONCE;
+            case EXACTLY_ONCE -> throw new IllegalArgumentException(
+                    "Greengrass IoT Core IPC supports only MQTT QoS 0 and 1; got EXACTLY_ONCE");
+        };
     }
 
     @Override
@@ -98,14 +96,14 @@ public final class GreengrassMessagingProvider extends MessagingProvider
     }
 
     @Override
-    public void publishToIoTCore(String topic, Message message, QOS qos)
+    public void publishNorthbound(String topic, Message message, Qos qos)
     {
         try
         {
             PublishToIoTCoreRequest pubRequest = new PublishToIoTCoreRequest()
                     .withTopicName(topic)
                     .withPayload(message.toString().getBytes(StandardCharsets.UTF_8))
-                    .withQos(qos);
+                    .withQos(toGreengrassQos(qos));
             ipcClient.publishToIoTCore(pubRequest);
         }
         catch (InterruptedException e)
@@ -134,14 +132,14 @@ public final class GreengrassMessagingProvider extends MessagingProvider
     }
 
     @Override
-    public void publishToIoTCoreRaw(String topic, JsonObject payload, QOS qos)
+    public void publishNorthboundRaw(String topic, JsonObject payload, Qos qos)
     {
         try
         {
             PublishToIoTCoreRequest pubRequest = new PublishToIoTCoreRequest()
                     .withTopicName(topic)
                     .withPayload(payload.toString().getBytes(StandardCharsets.UTF_8))
-                    .withQos(qos);
+                    .withQos(toGreengrassQos(qos));
             ipcClient.publishToIoTCore(pubRequest);
         }
         catch (InterruptedException e)
@@ -168,14 +166,14 @@ public final class GreengrassMessagingProvider extends MessagingProvider
         }
     }
 
-    public void subscribeToIoTCore(String topicFilter, BiConsumer<String, Message> callback, QOS qos,
+    public void subscribeNorthbound(String topicFilter, BiConsumer<String, Message> callback, Qos qos,
                                    int maxConcurrency, int maxMessages)
     {
         try
         {
             SubscribeToIoTCoreRequest subRequest = new SubscribeToIoTCoreRequest()
                     .withTopicName(topicFilter)
-                    .withQos(qos);
+                    .withQos(toGreengrassQos(qos));
             GreengrassCoreIPCClientV2.StreamingResponse<SubscribeToIoTCoreResponse,
                     SubscribeToIoTCoreResponseHandler> response =
                     ipcClient.subscribeToIoTCore(subRequest, new IotCoreSubscriptionHandler(topicFilter, callback, maxConcurrency, maxMessages));
@@ -204,7 +202,7 @@ public final class GreengrassMessagingProvider extends MessagingProvider
     }
 
     @Override
-    public void unsubscribeFromIoTCore(String topicFilter)
+    public void unsubscribeNorthbound(String topicFilter)
     {
         SubscribeToIoTCoreResponseHandler responseHandler = iotCoreSubscriptionStreams.getOrDefault(topicFilter, null);
         if (responseHandler != null)
@@ -272,53 +270,53 @@ public final class GreengrassMessagingProvider extends MessagingProvider
     }
 
     @Override
-    public ReplyFuture requestFromIoTCore(String topic, Message request)
+    public ReplyFuture requestNorthbound(String topic, Message request)
     {
-        return requestFromIoTCore(topic, request, null);
+        return requestNorthbound(topic, request, null);
     }
 
     @Override
-    public ReplyFuture requestFromIoTCore(String topic, Message request, Duration timeout)
+    public ReplyFuture requestNorthbound(String topic, Message request, Duration timeout)
     {
         String replyTo = request.makeRequest();
         ReplyFuture future = new ReplyFuture(replyTo);
         responseFutures.put(replyTo, future);
-        subscribeToIoTCore(replyTo, (t, m) -> {
+        subscribeNorthbound(replyTo, (t, m) -> {
             // Same single idempotent settle path as request() (§5.1).
             ReplyFuture f = responseFutures.get(t);
             if (f == null || !f.trySettle()) {
                 LOGGER.debug("Dropping straggler reply on '{}' (request already settled)", t);
                 return;
             }
-            unsubscribeFromIoTCore(t);
+            unsubscribeNorthbound(t);
             responseFutures.remove(t);
             f.complete(m);
-        }, QOS.AT_MOST_ONCE, 1, -1); // one-shot reply sub: unbounded is fine
+        }, Qos.AT_MOST_ONCE, 1, -1); // one-shot reply sub: unbounded is fine
         armRequestDeadline(future, effectiveRequestTimeout(timeout), () -> {
-            unsubscribeFromIoTCore(replyTo);
+            unsubscribeNorthbound(replyTo);
             responseFutures.remove(replyTo);
         });
-        publishToIoTCore(topic, request, QOS.AT_MOST_ONCE);
+        publishNorthbound(topic, request, Qos.AT_MOST_ONCE);
         return future;
     }
 
     @Override
-    public void cancelRequestFromIoTCore(ReplyFuture future)
+    public void cancelRequestNorthbound(ReplyFuture future)
     {
         if (!future.trySettle())
         {
             return;  // reply or deadline already settled + cleaned up this request
         }
-        unsubscribeFromIoTCore(future.replyTopic);
+        unsubscribeNorthbound(future.replyTopic);
         responseFutures.remove(future.replyTopic);
         future.complete(null);
     }
 
     @Override
-    public void replyToIoTCore(Message request, Message reply)
+    public void replyNorthbound(Message request, Message reply)
     {
         reply.setCorrelationId(request.getHeader().getCorrelationId());
-        publishToIoTCore(request.getHeader().getReplyTo(), reply, QOS.AT_MOST_ONCE);
+        publishNorthbound(request.getHeader().getReplyTo(), reply, Qos.AT_MOST_ONCE);
     }
 
     @Override
@@ -328,7 +326,7 @@ public final class GreengrassMessagingProvider extends MessagingProvider
     }
 
     @Override
-    public Object getNativeIotCoreClient()
+    public Object getNativeNorthboundClient()
     {
         return ipcClient;
     }

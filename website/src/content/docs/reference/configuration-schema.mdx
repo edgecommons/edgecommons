@@ -78,7 +78,7 @@ subsystem stays dormant) unless its config section is present. The thirteen top-
 | `identity` | The UNS identity values for the levels above the device. |
 | `topic` | UNS topic-building options (`includeRoot`). |
 | `component` (**required**) | Your component's own config — global and per-instance. |
-| `messaging` | Dual-MQTT broker config (local + optional IoT Core), the request deadline, LWT. |
+| `messaging` | Dual-MQTT broker config (local + optional generic northbound MQTT) and the request deadline. |
 | `streaming` | High-rate telemetry streams to Kinesis/Kafka via the embedded buffer. |
 | `credentials` | Encrypted local vault + optional central sync from AWS Secrets Manager. |
 | `parameters` | Offline-first externalized config (env / mountedDir / AWS SSM). |
@@ -168,15 +168,14 @@ applied in code, not by the schema).
 |-------|------|---------|----------------|---------|
 | `logFileName` | string | (code: `/greengrass/v2/logs/{ComponentFullName}.metric.log`) | — | File for the `log` target (template variables). Overridden to a local path on HOST/Kubernetes — see [Precedence](#precedence-and-platform-defaults). |
 | `maxFileSize` | string | (code: `10MB`) | — | Rotation size for the `log` target. |
-| `destination` | string | (code: `ipc`) | `ipc`, `local`, `iotcore`, `iot_core` | Destination for the `messaging` target. `ipc`/`local` = local transport; `iotcore`/`iot_core` = IoT Core. |
+| `destination` | string | (code: `ipc`) | `ipc`, `local`, `northbound` | Destination for the `messaging` target. `ipc`/`local` = local transport; `northbound` = configured northbound broker. |
 | `intervalSecs` | integer (min 1) | (code: `5`) | — | Batch flush interval for the `cloudwatch` target. |
 | `port` | integer (1–65535) | `9090` | — | HTTP port for the `prometheus` target. |
 | `path` | string | `/metrics` | — | OpenMetrics exposition path for the `prometheus` target. |
 | `buffer` | object (strict) | — | — | Durable store-and-forward buffer for the `cloudwatch` target (below). |
 
-<Aside type="danger" title="There is no targetConfig.topic override">
-There is no `targetConfig.topic` override — a config that carries it **fails validation**. The
-`messaging` target always publishes to the fixed UNS metric topic
+<Aside type="note" title="Messaging metric topic">
+The `messaging` target publishes to the fixed UNS metric topic
 `ecv1/{device}/{component}/main/metric/{metricName}`, and the `cloudwatchcomponent` target always
 uses the external AWS contract topic `cloudwatch/metric/put`. See the
 [Unified Namespace](/guides/unified-namespace/).
@@ -207,13 +206,12 @@ as the metric **`sys`** through the metric subsystem. Object, strict.
 | `enabled` | boolean | `true` | — | Whether the heartbeat (state keepalive + `sys` measures metric) runs. |
 | `intervalSecs` | integer (min 1) | `5` | — | Heartbeat interval in seconds. |
 | `measures` | object (strict) | — | — | Which system measures the `sys` metric includes (below). |
-| `destination` | string | `local` | `local`, `iotcore` | Publish destination of the **state keepalive only**. The measures route through `metricEmission`. |
+| `destination` | string | `local` | `local`, `northbound` | Publish destination of the **state keepalive only**. The measures route through `metricEmission`. |
 
-<Aside type="danger" title="There is no heartbeat.targets[] array">
-There is no `heartbeat.targets[]` array (or its `config.destination`/`config.topic` overrides) — the
-keepalive topic is always the component's UNS state topic. A config carrying `heartbeat.targets`
-**fails validation** with a precise error. See the
-[Heartbeat guide](/guides/heartbeat/#configuration).
+<Aside type="note" title="Heartbeat state topic">
+The keepalive topic is always the component's UNS state topic. `heartbeat.destination` selects only
+the publish destination for that state message; system measures route through `metricEmission`. See
+the [Heartbeat guide](/guides/heartbeat/#configuration).
 </Aside>
 
 ### `heartbeat.measures`
@@ -282,7 +280,7 @@ Your component's own configuration. Object, strict at this level; the nested `gl
 
 ## `messaging`
 
-Dual-MQTT broker configuration — a local broker plus an optional AWS IoT Core connection. The same
+Dual-MQTT broker configuration: a local broker plus an optional generic northbound MQTT broker. The same
 shape is used as the standalone messaging-config file passed via
 `--platform HOST --transport MQTT <file>`. In `GREENGRASS` mode, messaging uses IPC and this section
 is typically absent. Object, strict.
@@ -290,20 +288,26 @@ is typically absent. Object, strict.
 | Field | Type | Meaning |
 |-------|------|---------|
 | `local` | object (`mqttBroker`) | The local MQTT broker connection (required when using the MQTT transport). |
-| `iotCore` | object (`mqttBroker`) | The optional AWS IoT Core connection (mutual TLS). |
+| `northbound` | object (`mqttBroker`) | The optional generic northbound MQTT broker connection. |
 | `requestTimeoutSeconds` | number (min 0), default `30` | The default `request()` deadline: on expiry the reply future completes exceptionally and the ephemeral reply subscription is cleaned up. `0` disables the default; an explicit per-call timeout always wins. |
-| `lwt` | object (strict) | Optional MQTT Last-Will-and-Testament registered on the **local-broker** connection at CONNECT (re-registered on reconnect); the IPC transport ignores it. Fields below. |
 
-### `messaging.lwt`
+### `mqttBroker.qos`
 
-The will is broker-published on ungraceful disconnect; it never passes through `publish()`. There is
-**no retain option by design**.
+Default MQTT QoS for operations on that broker that do not take an explicit QoS argument. Configure it
+under each broker: `messaging.local.qos` and, when present, `messaging.northbound.qos`.
+
+MQTT QoS values are:
+
+| Value | Meaning |
+|-------|---------|
+| `0` | At most once. The broker/client sends once and does not acknowledge delivery. |
+| `1` | At least once. Delivery is acknowledged; duplicates are possible. |
+| `2` | Exactly once. MQTT's two-phase handshake avoids duplicate delivery. |
 
 | Field | Type | Default | Meaning |
 |-------|------|---------|---------|
-| `topic` | string | (**required**) | The will topic (e.g. the component's UNS state topic). |
-| `payload` | string \| object | (none) | The will payload, published **verbatim**. |
-| `qos` | number | `1` | Will QoS (`0` or `1`). |
+| `publish` | integer enum `0` \| `1` \| `2` | `1` | QoS level for `publish`, `publishRaw`, request publish, and reply publish on this broker. |
+| `subscribe` | integer enum `0` \| `1` \| `2` | `1` | QoS level for `subscribe` and request reply subscriptions on this broker. |
 
 ### `mqttBroker`
 
@@ -312,32 +316,31 @@ A single MQTT broker connection. Object, strict.
 | Field | Type | Default | Allowed values | Meaning |
 |-------|------|---------|----------------|---------|
 | `type` | string | (none) | — | Broker type tag (e.g. `mqtt`). Set by the Java/Python samples; **ignored by Rust/TS**. |
-| `host` | string | (none) | — | Broker host (used by the `local` broker). |
-| `endpoint` | string | (none) | — | Broker endpoint FQDN (used by the `iotCore` broker). |
+| `host` | string | (none) | — | Broker host. |
+| `endpoint` | string | (none) | — | Broker endpoint FQDN. Equivalent to `host` for northbound broker configs. |
 | `port` | integer (1–65535) | (none) | — | Broker port (e.g. `1883` plaintext, `8883` TLS). |
 | `clientId` | string | (none) | — | MQTT client id. |
+| `qos` | object (`mqttBroker.qos`) | `{ "publish": 1, "subscribe": 1 }` | — | MQTT publish/subscribe QoS defaults for this broker (`0` at most once, `1` at least once, `2` exactly once). |
 | `credentials` | object (`mqttCredentials`) | — | — | Broker authentication (below). |
 
 ### `mqttCredentials`
 
-Broker authentication. Object, strict. There is **no boolean TLS flag**. For the **local** broker,
-TLS is triggered **solely by the presence of `caPath`** (`useSSL = credentials != null && caPath != null`),
-not by the client certificate fields.
+Broker authentication. Object, strict. For local and northbound brokers, TLS is triggered **solely by
+the presence of `caPath`** (`useSSL = credentials != null && caPath != null`), not by the client
+certificate fields.
 
 | Field | Type | Default | Meaning |
 |-------|------|---------|---------|
-| `username` | string | (none) | Username (local broker, plaintext auth). |
-| `password` | string | (none) | Password (local broker, plaintext auth). |
+| `username` | string | (none) | Username for plaintext MQTT auth. |
+| `password` | string | (none) | Password for plaintext MQTT auth. |
 | `certPath` | string | (none) | Client certificate path (TLS / mutual TLS). |
 | `keyPath` | string | (none) | Client private-key path (TLS / mutual TLS). |
 | `caPath` | string | (none) | CA bundle path (server-trust / mutual TLS). |
 
-**TLS trigger rules (local broker):** TLS is keyed **only on `caPath`**. `caPath` alone ⇒ server-trust
-TLS (no client cert); `caPath` + `certPath` + `keyPath` ⇒ mutual TLS. A `certPath`/`keyPath` supplied
+**TLS trigger rules:** TLS is keyed **only on `caPath`**. `caPath` alone ⇒ server-trust TLS
+(no client cert); `caPath` + `certPath` + `keyPath` ⇒ mutual TLS. A `certPath`/`keyPath` supplied
 **without** `caPath` stays **plaintext** — the client cert is ignored. `username`/`password` apply
-**only** to a plaintext (no-`caPath`) local broker and are **ignored under TLS** (they sit in the
-`else` branch of `if (!useSSL)`, so they are mutually exclusive with TLS). The `iotCore` broker is
-always full mutual TLS (`caPath` + `certPath` + `keyPath` all required).
+only to plaintext MQTT auth.
 
 ## `streaming`
 

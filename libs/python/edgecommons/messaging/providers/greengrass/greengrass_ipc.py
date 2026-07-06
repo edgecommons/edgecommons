@@ -2,15 +2,16 @@ import logging
 import json
 import time
 from typing import Callable, Optional
-from edgecommons.messaging.messaging_client import MessagingProvider
+from edgecommons.messaging.messaging_provider import MessagingProvider
 from edgecommons.messaging.message import Message
+from edgecommons.messaging.qos import Qos
 import awsiot.greengrasscoreipc
 from awsiot.greengrasscoreipc.clientv2 import GreengrassCoreIPCClientV2
 from awsiot.greengrasscoreipc.model import (
     PublishMessage,
     UnauthorizedError,
     BinaryMessage,
-    QOS,
+    QOS as GreengrassQOS,
     JsonMessage,
 )
 from edgecommons.messaging.providers.greengrass.iotcore_subscription_handler import (
@@ -29,21 +30,21 @@ class GreengrassIpcProvider(MessagingProvider):
         super().__init__()
         self._ipc_subscription_handlers = {}
         self._ipc_subscription_operations = {}
-        self._iot_core_subscription_handlers = {}
-        self._iot_core_subscription_operations = {}
+        self._northbound_subscription_handlers = {}
+        self._northbound_subscription_operations = {}
         self._response_ious = {}
         self._receive_mode = "RECEIVE_MESSAGES_FROM_OTHERS"
         if receive_own_messages:
             self._receive_mode = "RECEIVE_ALL_MESSAGES"
-        # MQTT LWT is an explicit no-op on the Greengrass IPC transport
-        # (UNS-CANONICAL-DESIGN §6): IPC has no CONNECT packet to register a will on,
-        # so any messaging.lwt config is ignored (the LWT applies to the MQTT
-        # local-broker connection only).
-        logger.debug(
-            "MQTT LWT (messaging.lwt) is not supported over Greengrass IPC; "
-            "any configured lwt section is ignored (no-op)"
-        )
         self._ipc_client = self._connect_with_retry()
+
+    @staticmethod
+    def _greengrass_qos(qos: Qos):
+        if qos == Qos.AT_MOST_ONCE:
+            return GreengrassQOS.AT_MOST_ONCE
+        if qos == Qos.AT_LEAST_ONCE:
+            return GreengrassQOS.AT_LEAST_ONCE
+        raise ValueError("Greengrass IoT Core IPC supports only MQTT QoS 0 and 1; got EXACTLY_ONCE")
 
     @staticmethod
     def _connect_with_retry(attempts: int = 5, connect_timeout: float = 30.0):
@@ -83,8 +84,8 @@ class GreengrassIpcProvider(MessagingProvider):
         # and unsubscribe on the matching transport.
         for topic_filter in list(self._ipc_subscription_handlers):
             self.unsubscribe(topic_filter)
-        for topic_filter in list(self._iot_core_subscription_handlers):
-            self.unsubscribe_from_iot_core(topic_filter)
+        for topic_filter in list(self._northbound_subscription_handlers):
+            self.unsubscribe_northbound(topic_filter)
         self._ipc_client.client.close()
         self._ipc_client = None
 
@@ -103,13 +104,17 @@ class GreengrassIpcProvider(MessagingProvider):
             publish_message=PublishMessage(json_message=JsonMessage(message=msg)),
         )
 
-    def publish_to_iot_core(self, topic: str, msg: Message, qos: str):
+    def publish_northbound(self, topic: str, msg: Message, qos: Qos):
         payload = msg.dumps()
-        self._ipc_client.publish_to_iot_core(topic_name=topic, payload=payload, qos=qos)
+        self._ipc_client.publish_to_iot_core(
+            topic_name=topic, payload=payload, qos=self._greengrass_qos(qos)
+        )
 
-    def publish_to_iot_core_raw(self, topic: str, msg: dict, qos: str):
+    def publish_northbound_raw(self, topic: str, msg: dict, qos: Qos):
         payload = json.dumps(msg)
-        self._ipc_client.publish_to_iot_core(topic_name=topic, payload=payload, qos=qos)
+        self._ipc_client.publish_to_iot_core(
+            topic_name=topic, payload=payload, qos=self._greengrass_qos(qos)
+        )
 
     def subscribe(
         self,
@@ -144,38 +149,38 @@ class GreengrassIpcProvider(MessagingProvider):
                 f"Unable to subscribe to IPC topic filter ({topic_filter}): {error}"
             )
 
-    def subscribe_to_iot_core(
+    def subscribe_northbound(
         self,
         topic_filter: str,
         callback: Callable[[str, Message], None],
-        qos: str,
+        qos: Qos,
         max_concurrency: int = None,
         max_messages: int = None,
     ):
-        logger.info(f"Subscribing to iot core messages on topic {topic_filter}")
+        logger.info(f"Subscribing to northbound messages on topic {topic_filter}")
         handler = IoTCoreSubscriptionHandler(topic_filter, callback, max_concurrency, max_messages)
         try:
             _, operation = self._ipc_client.subscribe_to_iot_core(
                 topic_name=topic_filter,
-                qos=qos,
+                qos=self._greengrass_qos(qos),
                 on_stream_event=handler.on_stream_event,
                 on_stream_error=handler.on_stream_error,
                 on_stream_closed=handler.on_stream_closed,
             )
-            self._iot_core_subscription_operations[topic_filter] = operation
-            self._iot_core_subscription_handlers[topic_filter] = handler
+            self._northbound_subscription_operations[topic_filter] = operation
+            self._northbound_subscription_handlers[topic_filter] = handler
             logger.debug(
-                f"Successfully subscribed to the topic filter: {topic_filter} on IoT Core"
+                f"Successfully subscribed to the topic filter: {topic_filter} on northbound"
             )
         except UnauthorizedError:
             logger.error(
-                f"Unauthorized error while subscribing to topic filter {topic_filter} on IoT Core. "
+                f"Unauthorized error while subscribing to topic filter {topic_filter} on northbound. "
                 f"Ensure access control policy is "
                 f"defined in the component configuration"
             )
         except (ValueError, Exception) as error:
             logger.error(
-                f"Unable to subscribe to IoT Core topic filter ({topic_filter}): {error}"
+                f"Unable to subscribe to northbound topic filter ({topic_filter}): {error}"
             )
 
     def unsubscribe(self, topic_filter: str):
@@ -188,14 +193,14 @@ class GreengrassIpcProvider(MessagingProvider):
                 f"Attempt to unsubscribe from unknown IPC topic {topic_filter}"
             )
 
-    def unsubscribe_from_iot_core(self, topic_filter: str):
-        if topic_filter in self._iot_core_subscription_operations:
-            self._iot_core_subscription_operations[topic_filter].close()
-            del self._iot_core_subscription_operations[topic_filter]
-            del self._iot_core_subscription_handlers[topic_filter]
+    def unsubscribe_northbound(self, topic_filter: str):
+        if topic_filter in self._northbound_subscription_operations:
+            self._northbound_subscription_operations[topic_filter].close()
+            del self._northbound_subscription_operations[topic_filter]
+            del self._northbound_subscription_handlers[topic_filter]
         else:
             logger.warning(
-                f"Attempt to unsubscribe from unknown IoT Core topic {topic_filter}"
+                f"Attempt to unsubscribe from unknown northbound topic {topic_filter}"
             )
 
     def request(self, topic: str, msg: Message, timeout_secs: Optional[float] = None) -> Iou:
@@ -241,46 +246,46 @@ class GreengrassIpcProvider(MessagingProvider):
         self._response_ious.pop(topic, None)
         iou.set_result(reply)
 
-    def _on_iot_core_reply_received(self, topic: str, reply: Message) -> None:
+    def _on_northbound_reply_received(self, topic: str, reply: Message) -> None:
         # Same single idempotent settle path as _on_reply_received (§5.1).
         iou = self._response_ious.get(topic)
         if iou is None or not iou.try_settle():
             logger.debug(f"Dropping straggler reply on '{topic}' (request already settled)")
             return
-        logger.debug(f"Received IoT Core reply message on topic: {topic}")
-        self.unsubscribe_from_iot_core(topic)
+        logger.debug(f"Received northbound reply message on topic: {topic}")
+        self.unsubscribe_northbound(topic)
         self._response_ious.pop(topic, None)
         iou.set_result(reply)
 
-    def request_from_iot_core(self, topic: str, msg: Message,
-                              timeout_secs: Optional[float] = None) -> Iou:
+    def request_northbound(self, topic: str, msg: Message,
+                           timeout_secs: Optional[float] = None) -> Iou:
         reply_to = msg.make_request()
         iou = Iou(reply_to)
         self._response_ious[reply_to] = iou
-        self.subscribe_to_iot_core(
-            reply_to, self._on_iot_core_reply_received, QOS.AT_MOST_ONCE, 1
+        self.subscribe_northbound(
+            reply_to, self._on_northbound_reply_received, Qos.AT_MOST_ONCE, 1
         )
 
         def _deadline_cleanup():
             self._response_ious.pop(reply_to, None)
-            self.unsubscribe_from_iot_core(reply_to)
+            self.unsubscribe_northbound(reply_to)
 
         self._arm_request_deadline(iou, self._effective_request_timeout(timeout_secs),
                                    _deadline_cleanup)
-        self.publish_to_iot_core(topic, msg, QOS.AT_MOST_ONCE)
+        self.publish_northbound(topic, msg, Qos.AT_MOST_ONCE)
         return iou
 
-    def reply_to_iot_core(self, request: Message, reply: Message):
+    def reply_northbound(self, request: Message, reply: Message):
         reply.set_correlation_id(request.get_correlation_id())
-        self.publish_to_iot_core(
-            request.get_header().get_reply_to(), reply, QOS.AT_MOST_ONCE
+        self.publish_northbound(
+            request.get_header().get_reply_to(), reply, Qos.AT_MOST_ONCE
         )
 
-    def cancel_request_from_iot_core(self, iou: Iou):
+    def cancel_request_northbound(self, iou: Iou):
         if not iou.try_settle():
             return  # reply or deadline already settled + cleaned up this request
         reply_to = iou.get_user_data()
-        self.unsubscribe_from_iot_core(reply_to)
+        self.unsubscribe_northbound(reply_to)
         self._response_ious.pop(reply_to, None)
         iou.set_result(None)
 

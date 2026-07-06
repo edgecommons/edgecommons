@@ -179,9 +179,10 @@ class TestMessagingTarget:
         assert _is_local_destination("ipc") is True
         assert _is_local_destination("local") is True
         assert _is_local_destination("anything") is True
-        assert _is_local_destination("iot_core") is False
-        assert _is_local_destination("iotcore") is False
-        assert _is_local_destination("IoTCore") is False
+        assert _is_local_destination("iot_core") is True
+        assert _is_local_destination("iotcore") is True
+        assert _is_local_destination("northbound") is False
+        assert _is_local_destination("NORTHBOUND") is False
 
     def test_emit_publishes_local_on_uns_metric_topic(self, monkeypatch):
         # UNS-CANONICAL-DESIGN par. 4.3: the messaging target publishes to
@@ -204,15 +205,15 @@ class TestMessagingTarget:
         assert topic == "ecv1/thing-1/comp/main/metric/perf"
         assert "_aws" in msg.get_body()
 
-    def test_emit_publishes_iot_core(self, monkeypatch):
+    def test_emit_publishes_northbound(self, monkeypatch):
         published = []
         monkeypatch.setattr(
-            messaging_mod.MessagingClient, "_publish_reserved_to_iot_core",
+            messaging_mod.MessagingClient, "_publish_reserved_northbound",
             staticmethod(lambda topic, msg, qos: published.append((topic, msg, qos))),
         )
         mc = MetricConfiguration({
             "target": "messaging",
-            "targetConfig": {"destination": "iot_core"},
+            "targetConfig": {"destination": "northbound"},
         })
         target = Messaging(FakeConfigManager(mc))
         assert target.send_to_local is False
@@ -275,7 +276,7 @@ class TestMessagingTarget:
         target = Messaging(cm)
         assert target.send_to_local is True
         # mutate the underlying metric config and re-apply
-        mc._destination = "iot_core"
+        mc._destination = "northbound"
         assert target.on_configuration_change(None) is True
         assert target.send_to_local is False
 

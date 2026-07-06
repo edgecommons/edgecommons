@@ -8,12 +8,12 @@ import com.mbreissi.edgecommons.config.ConfigManager;
 import com.mbreissi.edgecommons.messaging.Message;
 import com.mbreissi.edgecommons.messaging.MessageBuilder;
 import com.mbreissi.edgecommons.messaging.MessagingClient;
+import com.mbreissi.edgecommons.messaging.Qos;
 import com.mbreissi.edgecommons.uns.Uns;
 import com.mbreissi.edgecommons.uns.UnsClass;
 import com.google.gson.JsonObject;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import software.amazon.awssdk.aws.greengrass.model.QOS;
 
 import java.util.Objects;
 
@@ -96,7 +96,7 @@ public final class AppFacade {
                 .build();
         if (routing != null && routing.kind() == Channel.Kind.NORTHBOUND) {
             try {
-                messaging.publishToIoTCore(topic, msg, QOS.AT_LEAST_ONCE);
+                messaging.publishNorthbound(topic, msg, Qos.AT_LEAST_ONCE);
             } catch (Exception e) {
                 LOGGER.warn("Northbound app publish on '{}' failed (local readiness unaffected): {}",
                         topic, e.toString());

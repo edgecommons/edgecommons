@@ -23,8 +23,8 @@ def _provider_without_connect():
     p._response_ious = {}
     p._ipc_subscription_operations = {}
     p._ipc_subscription_handlers = {}
-    p._iot_core_subscription_operations = {}
-    p._iot_core_subscription_handlers = {}
+    p._northbound_subscription_operations = {}
+    p._northbound_subscription_handlers = {}
     return p
 
 
@@ -40,9 +40,9 @@ def test_on_reply_received_no_iou_does_not_raise():
     assert "reply/absent/topic" not in p._response_ious
 
 
-def test_on_iot_core_reply_received_no_iou_does_not_raise():
+def test_on_northbound_reply_received_no_iou_does_not_raise():
     p = _provider_without_connect()
-    p._on_iot_core_reply_received(
+    p._on_northbound_reply_received(
         "reply/absent/topic", Message.from_object({"body": "late"})
     )
     assert "reply/absent/topic" not in p._response_ious

@@ -7,7 +7,7 @@
  * 1. publishes a UNS **state keepalive** to `ecv1[/{site}]/{device}/{component}/main/state` —
  *    header name `state`, body `{"status":"RUNNING","uptimeSecs":n}` — through the privileged
  *    reserved-publish seam (the `state` class is library-owned); `heartbeat.destination`
- *    (`local`|`iotcore`) selects the keepalive's transport only;
+ *    (`local`|`northbound`) selects the keepalive's transport only;
  * 2. emits the enabled system measures (cpu/memory/disk/…) as a metric named **`sys`** through
  *    the normal metric subsystem (D6/D-U20 — the measures keep the metric subsystem's full
  *    sink routing).
@@ -356,7 +356,7 @@ export class Heartbeat {
       .withConfig(cfg)
       .build();
     const destination = cfg.parsed.heartbeat.destination.toLowerCase();
-    const dest = destination === "iotcore" || destination === "iot_core" ? "iotcore" : "local";
+    const dest = destination === "northbound" ? "northbound" : "local";
     await publishReservedVia(this.messaging, topic, stateMessage, dest);
   }
 

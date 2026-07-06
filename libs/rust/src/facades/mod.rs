@@ -70,10 +70,10 @@ mod severity;
 mod signal_update;
 mod stream_sink;
 
-pub use app::{AppFacade, APP_MESSAGE_VERSION};
+pub use app::{APP_MESSAGE_VERSION, AppFacade};
 pub use channel::Channel;
-pub use data::{DataFacade, DATA_MESSAGE_NAME, DATA_MESSAGE_VERSION, QUALITY_UNSPECIFIED};
-pub use events::{EventsFacade, EVT_MESSAGE_NAME, EVT_MESSAGE_VERSION};
+pub use data::{DATA_MESSAGE_NAME, DATA_MESSAGE_VERSION, DataFacade, QUALITY_UNSPECIFIED};
+pub use events::{EVT_MESSAGE_NAME, EVT_MESSAGE_VERSION, EventsFacade};
 pub use quality::Quality;
 pub use severity::Severity;
 pub use signal_update::{Sample, SignalUpdate, SignalUpdateBuilder};
@@ -107,7 +107,7 @@ pub fn system_clock() -> Clock {
 mod vector_tests {
     use super::*;
     use crate::config::model::Config;
-    use crate::messaging::{MessagingService, Message};
+    use crate::messaging::{Message, MessagingService};
     use crate::testutil::RecordingMessaging;
     use crate::uns::{Uns, UnsClass};
     use serde_json::Value;
@@ -127,8 +127,8 @@ mod vector_tests {
     }
 
     fn load(dir: &std::path::Path, file: &str) -> Value {
-        let bytes = std::fs::read(dir.join(file))
-            .unwrap_or_else(|e| panic!("failed to read {file}: {e}"));
+        let bytes =
+            std::fs::read(dir.join(file)).unwrap_or_else(|e| panic!("failed to read {file}: {e}"));
         serde_json::from_slice(&bytes).unwrap_or_else(|e| panic!("{file} is not valid JSON: {e}"))
     }
 
@@ -160,8 +160,12 @@ mod vector_tests {
             timestamp_ms: u64,
             payload: Vec<u8>,
         ) -> crate::error::Result<()> {
-            *self.last.lock().unwrap() =
-                Some((stream_name.to_string(), partition_key.to_string(), timestamp_ms, payload));
+            *self.last.lock().unwrap() = Some((
+                stream_name.to_string(),
+                partition_key.to_string(),
+                timestamp_ms,
+                payload,
+            ));
             Ok(())
         }
     }
@@ -174,20 +178,27 @@ mod vector_tests {
             return (topic.clone(), "local", msg.body.clone());
         }
         let iot = messaging.iot();
-        let (topic, msg) =
-            iot.first().unwrap_or_else(|| panic!("no local or IoT Core publish recorded"));
+        let (topic, msg) = iot
+            .first()
+            .unwrap_or_else(|| panic!("no local or IoT Core publish recorded"));
         (topic.clone(), "northbound", msg.body.clone())
     }
 
     /// Runs one `data.json` case through a live [`DataFacade`]; returns `{topic, route, body[,
     /// partitionKey]}` or `{throws: true}` — the same shape `expected` pins.
     async fn run_data_case(input: &Value) -> Value {
-        let instance_id =
-            input.get("instance").and_then(Value::as_str).unwrap_or("kep1").to_string();
+        let instance_id = input
+            .get("instance")
+            .and_then(Value::as_str)
+            .unwrap_or("kep1")
+            .to_string();
         let config = facade_config();
         let messaging = RecordingMessaging::new();
         let sink = Arc::new(RecordingStreamSink::default());
-        let identity = config.identity().with_instance(instance_id.clone()).unwrap();
+        let identity = config
+            .identity()
+            .with_instance(instance_id.clone())
+            .unwrap();
         let uns = Uns::new(identity, false);
         let facade = DataFacade::new(
             config.clone(),
@@ -218,10 +229,22 @@ mod vector_tests {
             for s in samples {
                 let sample = Sample {
                     value: s.get("value").cloned(),
-                    quality: s.get("quality").and_then(Value::as_str).and_then(Quality::from_wire),
-                    quality_raw: s.get("qualityRaw").and_then(Value::as_str).map(str::to_string),
-                    source_ts: s.get("sourceTs").and_then(Value::as_str).map(str::to_string),
-                    server_ts: s.get("serverTs").and_then(Value::as_str).map(str::to_string),
+                    quality: s
+                        .get("quality")
+                        .and_then(Value::as_str)
+                        .and_then(Quality::from_wire),
+                    quality_raw: s
+                        .get("qualityRaw")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                    source_ts: s
+                        .get("sourceTs")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                    server_ts: s
+                        .get("serverTs")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
                 };
                 builder = builder.sample(sample);
             }
@@ -246,11 +269,15 @@ mod vector_tests {
                         .and_then(Value::as_str)
                         .or_else(|| input.get("signalId").and_then(Value::as_str))
                         .expect("signalPath or signalId");
-                    let topic =
-                        uns.topic_with_channel(UnsClass::Data, &facade.channel_token(path).unwrap())
-                            .unwrap();
-                    let (stream_name, partition_key, _ts_millis, payload) =
-                        sink.last.lock().unwrap().clone().expect("a stream append was recorded");
+                    let topic = uns
+                        .topic_with_channel(UnsClass::Data, &facade.channel_token(path).unwrap())
+                        .unwrap();
+                    let (stream_name, partition_key, _ts_millis, payload) = sink
+                        .last
+                        .lock()
+                        .unwrap()
+                        .clone()
+                        .expect("a stream append was recorded");
                     let envelope: Message = serde_json::from_slice(&payload).unwrap();
                     serde_json::json!({
                         "topic": topic,
@@ -277,28 +304,60 @@ mod vector_tests {
         );
         if let Some(over) = input.get("override").and_then(Value::as_str) {
             if let Some(ch) = Channel::from_config(over) {
-                facade = facade.via(ch).expect("override is never a stream channel in evt.json");
+                facade = facade
+                    .via(ch)
+                    .expect("override is never a stream channel in evt.json");
             }
         }
 
         let kind = input["kind"].as_str().unwrap();
         let event_type = input["type"].as_str().unwrap().to_string();
-        let message = input.get("message").and_then(Value::as_str).map(str::to_string);
+        let message = input
+            .get("message")
+            .and_then(Value::as_str)
+            .map(str::to_string);
         let context = input.get("context").filter(|v| v.is_object()).cloned();
-        let severity = input.get("severity").and_then(Value::as_str).and_then(Severity::from_wire);
+        let severity = input
+            .get("severity")
+            .and_then(Value::as_str)
+            .and_then(Severity::from_wire);
 
         let result = match kind {
             "emit" => match severity {
-                None => facade.emit_message(event_type.clone(), message.clone().unwrap()).await,
-                Some(sev) => facade.emit(sev, event_type.clone(), message.clone(), context.clone()).await,
+                None => {
+                    facade
+                        .emit_message(event_type.clone(), message.clone().unwrap())
+                        .await
+                }
+                Some(sev) => {
+                    facade
+                        .emit(sev, event_type.clone(), message.clone(), context.clone())
+                        .await
+                }
             },
             "raise" => match severity {
-                None => facade.raise_alarm_default(event_type.clone(), message.clone(), context.clone()).await,
-                Some(sev) => facade.raise_alarm(sev, event_type.clone(), message.clone(), context.clone()).await,
+                None => {
+                    facade
+                        .raise_alarm_default(event_type.clone(), message.clone(), context.clone())
+                        .await
+                }
+                Some(sev) => {
+                    facade
+                        .raise_alarm(sev, event_type.clone(), message.clone(), context.clone())
+                        .await
+                }
             },
             "clear" => match severity {
-                None => facade.clear_alarm_default(event_type.clone(), context.clone()).await,
-                Some(sev) => facade.clear_alarm(sev, event_type.clone(), context.clone()).await,
+                None => {
+                    facade
+                        .clear_alarm_default(event_type.clone(), context.clone())
+                        .await
+                }
+                Some(sev) => {
+                    facade
+                        .clear_alarm(sev, event_type.clone(), context.clone())
+                        .await
+                }
             },
             other => panic!("unknown evt kind '{other}'"),
         };
@@ -313,13 +372,24 @@ mod vector_tests {
         let config = facade_config();
         let messaging = RecordingMessaging::new();
         let uns = Uns::new(config.identity().clone(), false);
-        let facade =
-            AppFacade::new(config, "main".to_string(), uns, Some(messaging.clone() as Arc<dyn MessagingService>));
+        let facade = AppFacade::new(
+            config,
+            "main".to_string(),
+            uns,
+            Some(messaging.clone() as Arc<dyn MessagingService>),
+        );
 
         let name = input["name"].as_str().unwrap().to_string();
         let channel = input["channel"].as_str().unwrap().to_string();
-        let body = input.get("body").filter(|v| v.is_object()).cloned().unwrap_or(serde_json::json!({}));
-        let routing = input.get("override").and_then(Value::as_str).and_then(Channel::from_config);
+        let body = input
+            .get("body")
+            .filter(|v| v.is_object())
+            .cloned()
+            .unwrap_or(serde_json::json!({}));
+        let routing = input
+            .get("override")
+            .and_then(Value::as_str)
+            .and_then(Channel::from_config);
         facade
             .publish_via(name, channel, body, routing)
             .await
@@ -390,9 +460,15 @@ mod vector_tests {
         };
 
         let data = by_name("data-signal");
-        assert_eq!(data["envelope"]["body"]["signal"]["id"], "ns=2;s=Line1.Temp");
+        assert_eq!(
+            data["envelope"]["body"]["signal"]["id"],
+            "ns=2;s=Line1.Temp"
+        );
         assert_eq!(data["envelope"]["body"]["samples"][0]["quality"], "GOOD");
-        assert_eq!(data["envelope"]["body"]["samples"][0]["qualityRaw"], "unspecified");
+        assert_eq!(
+            data["envelope"]["body"]["samples"][0]["qualityRaw"],
+            "unspecified"
+        );
 
         let evt = by_name("evt-info-door-open");
         assert_eq!(evt["envelope"]["body"]["severity"], "info");

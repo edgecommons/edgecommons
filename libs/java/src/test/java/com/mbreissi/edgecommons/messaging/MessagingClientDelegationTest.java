@@ -9,7 +9,7 @@ import com.google.gson.JsonObject;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
-import software.amazon.awssdk.aws.greengrass.model.QOS;
+import com.mbreissi.edgecommons.messaging.Qos;
 
 import java.lang.reflect.Field;
 import java.util.function.BiConsumer;
@@ -53,10 +53,10 @@ class MessagingClientDelegationTest {
     }
 
     @Test
-    void publishToIoTCoreDelegates() {
+    void publishNorthboundDelegates() {
         Message msg = loggableMessage();
-        client.publishToIoTCore("topic/a", msg, QOS.AT_LEAST_ONCE);
-        verify(provider).publishToIoTCore("topic/a", msg, QOS.AT_LEAST_ONCE);
+        client.publishNorthbound("topic/a", msg, Qos.AT_LEAST_ONCE);
+        verify(provider).publishNorthbound("topic/a", msg, Qos.AT_LEAST_ONCE);
     }
 
     @Test
@@ -68,10 +68,10 @@ class MessagingClientDelegationTest {
     }
 
     @Test
-    void publishToIoTCoreRawDelegates() {
+    void publishNorthboundRawDelegates() {
         JsonObject obj = new JsonObject();
-        client.publishToIoTCoreRaw("topic/raw", obj, QOS.AT_MOST_ONCE);
-        verify(provider).publishToIoTCoreRaw("topic/raw", obj, QOS.AT_MOST_ONCE);
+        client.publishNorthboundRaw("topic/raw", obj, Qos.AT_MOST_ONCE);
+        verify(provider).publishNorthboundRaw("topic/raw", obj, Qos.AT_MOST_ONCE);
     }
 
     @Test
@@ -96,24 +96,24 @@ class MessagingClientDelegationTest {
     }
 
     @Test
-    void subscribeToIoTCoreSingleArgDefaults() {
+    void subscribeNorthboundSingleArgDefaults() {
         BiConsumer<String, Message> cb = (t, m) -> { };
-        client.subscribeToIoTCore("f/+", cb, QOS.AT_LEAST_ONCE);
-        verify(provider).subscribeToIoTCore("f/+", cb, QOS.AT_LEAST_ONCE, -1, MessagingClient.DEFAULT_MAX_MESSAGES);
+        client.subscribeNorthbound("f/+", cb, Qos.AT_LEAST_ONCE);
+        verify(provider).subscribeNorthbound("f/+", cb, Qos.AT_LEAST_ONCE, -1, MessagingClient.DEFAULT_MAX_MESSAGES);
     }
 
     @Test
-    void subscribeToIoTCoreWithConcurrencyDefaultQueue() {
+    void subscribeNorthboundWithConcurrencyDefaultQueue() {
         BiConsumer<String, Message> cb = (t, m) -> { };
-        client.subscribeToIoTCore("f/+", cb, QOS.AT_LEAST_ONCE, 7);
-        verify(provider).subscribeToIoTCore("f/+", cb, QOS.AT_LEAST_ONCE, 7, MessagingClient.DEFAULT_MAX_MESSAGES);
+        client.subscribeNorthbound("f/+", cb, Qos.AT_LEAST_ONCE, 7);
+        verify(provider).subscribeNorthbound("f/+", cb, Qos.AT_LEAST_ONCE, 7, MessagingClient.DEFAULT_MAX_MESSAGES);
     }
 
     @Test
-    void subscribeToIoTCoreFullArgsPassThrough() {
+    void subscribeNorthboundFullArgsPassThrough() {
         BiConsumer<String, Message> cb = (t, m) -> { };
-        client.subscribeToIoTCore("f/+", cb, QOS.AT_LEAST_ONCE, 7, 42);
-        verify(provider).subscribeToIoTCore("f/+", cb, QOS.AT_LEAST_ONCE, 7, 42);
+        client.subscribeNorthbound("f/+", cb, Qos.AT_LEAST_ONCE, 7, 42);
+        verify(provider).subscribeNorthbound("f/+", cb, Qos.AT_LEAST_ONCE, 7, 42);
     }
 
     @Test
@@ -125,11 +125,11 @@ class MessagingClientDelegationTest {
     }
 
     @Test
-    void requestFromIoTCoreDelegatesAndReturnsFuture() {
+    void requestNorthboundDelegatesAndReturnsFuture() {
         Message req = MessageBuilder.fromObject("q");
         ReplyFuture rf = new ReplyFuture("reply/x");
-        when(provider.requestFromIoTCore("topic/req", req)).thenReturn(rf);
-        assertSame(rf, client.requestFromIoTCore("topic/req", req));
+        when(provider.requestNorthbound("topic/req", req)).thenReturn(rf);
+        assertSame(rf, client.requestNorthbound("topic/req", req));
     }
 
     @Test
@@ -143,11 +143,11 @@ class MessagingClientDelegationTest {
     }
 
     @Test
-    void requestFromIoTCoreWithTimeoutDelegatesAndReturnsFuture() {
+    void requestNorthboundWithTimeoutDelegatesAndReturnsFuture() {
         Message req = MessageBuilder.fromObject("q");
         ReplyFuture rf = new ReplyFuture("reply/x");
-        when(provider.requestFromIoTCore("topic/req", req, java.time.Duration.ZERO)).thenReturn(rf);
-        assertSame(rf, client.requestFromIoTCore("topic/req", req, java.time.Duration.ZERO));
+        when(provider.requestNorthbound("topic/req", req, java.time.Duration.ZERO)).thenReturn(rf);
+        assertSame(rf, client.requestNorthbound("topic/req", req, java.time.Duration.ZERO));
     }
 
     @Test
@@ -181,10 +181,10 @@ class MessagingClientDelegationTest {
     }
 
     @Test
-    void cancelRequestFromIoTCoreDelegates() {
+    void cancelRequestNorthboundDelegates() {
         ReplyFuture rf = new ReplyFuture("reply/x");
-        client.cancelRequestFromIoTCore(rf);
-        verify(provider).cancelRequestFromIoTCore(rf);
+        client.cancelRequestNorthbound(rf);
+        verify(provider).cancelRequestNorthbound(rf);
     }
 
     @Test
@@ -201,11 +201,11 @@ class MessagingClientDelegationTest {
     }
 
     @Test
-    void replyToIoTCoreDelegates() {
+    void replyNorthboundDelegates() {
         Message request = loggableMessage();
         Message reply = loggableMessage();
-        client.replyToIoTCore(request, reply);
-        verify(provider).replyToIoTCore(request, reply);
+        client.replyNorthbound(request, reply);
+        verify(provider).replyNorthbound(request, reply);
     }
 
     @Test
@@ -215,9 +215,9 @@ class MessagingClientDelegationTest {
     }
 
     @Test
-    void unsubscribeFromIoTCoreDelegates() {
-        client.unsubscribeFromIoTCore("f/+");
-        verify(provider).unsubscribeFromIoTCore("f/+");
+    void unsubscribeNorthboundDelegates() {
+        client.unsubscribeNorthbound("f/+");
+        verify(provider).unsubscribeNorthbound("f/+");
     }
 
     @Test
@@ -228,10 +228,10 @@ class MessagingClientDelegationTest {
     }
 
     @Test
-    void getNativeIotCoreClientDelegates() {
+    void getNativeNorthboundClientDelegates() {
         Object nativeObj = new Object();
-        when(provider.getNativeIotCoreClient()).thenReturn(nativeObj);
-        assertSame(nativeObj, client.getNativeIotCoreClient());
+        when(provider.getNativeNorthboundClient()).thenReturn(nativeObj);
+        assertSame(nativeObj, client.getNativeNorthboundClient());
     }
 
     @Test

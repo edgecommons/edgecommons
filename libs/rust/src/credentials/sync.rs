@@ -134,7 +134,9 @@ impl SyncInner {
                     };
                     let _ = v.reload_if_changed();
                     // Skip if the latest local version already reflects this upstream version.
-                    if v.latest_central_version_id(&local_key).as_deref() == Some(cs.central_version_id.as_str()) {
+                    if v.latest_central_version_id(&local_key).as_deref()
+                        == Some(cs.central_version_id.as_str())
+                    {
                         continue;
                     }
                     let opts = PutOptions {
@@ -205,11 +207,16 @@ mod tests {
             if self.fail.contains(name) {
                 return Err(crate::EdgeCommonsError::Credentials("offline".into()));
             }
-            Ok(self.data.lock().unwrap().get(name).map(|(bytes, ver)| CentralSecret {
-                bytes: bytes.clone(),
-                central_version_id: ver.clone(),
-                labels: BTreeMap::new(),
-            }))
+            Ok(self
+                .data
+                .lock()
+                .unwrap()
+                .get(name)
+                .map(|(bytes, ver)| CentralSecret {
+                    bytes: bytes.clone(),
+                    central_version_id: ver.clone(),
+                    labels: BTreeMap::new(),
+                }))
         }
     }
 
@@ -226,7 +233,10 @@ mod tests {
         let source = Arc::new(FakeSource {
             data: Mutex::new(HashMap::from([
                 ("ns/a".to_string(), (b"alpha".to_vec(), "v1".to_string())),
-                ("fleet/x".to_string(), (b"shared".to_vec(), "s1".to_string())),
+                (
+                    "fleet/x".to_string(),
+                    (b"shared".to_vec(), "s1".to_string()),
+                ),
             ])),
             // "ns/b" is absent (Ok(None)); "ns/c" errors (offline-first keeps cache).
             fail: HashSet::from(["ns/c".to_string()]),
@@ -253,19 +263,32 @@ mod tests {
             let v = vault.lock().unwrap();
             assert_eq!(v.get("ns/a").unwrap().unwrap().bytes(), b"alpha");
             assert_eq!(v.get("ns/shared").unwrap().unwrap().bytes(), b"shared");
-            assert!(v.get("ns/b").unwrap().is_none(), "absent upstream → nothing written");
-            assert!(v.get("ns/c").unwrap().is_none(), "errored fetch → cache untouched");
+            assert!(
+                v.get("ns/b").unwrap().is_none(),
+                "absent upstream → nothing written"
+            );
+            assert!(
+                v.get("ns/c").unwrap().is_none(),
+                "errored fetch → cache untouched"
+            );
             assert_eq!(v.latest_central_version_id("ns/a").as_deref(), Some("v1"));
         }
 
         let (last_ok, failures, rotations) = engine.stats();
-        assert!(last_ok.is_some(), "at least one fetch succeeded → last_success recorded");
+        assert!(
+            last_ok.is_some(),
+            "at least one fetch succeeded → last_success recorded"
+        );
         assert_eq!(failures, 1, "the offline fetch counts as one failure");
         assert_eq!(rotations, 2, "two secrets were written (a + shared)");
 
         // A second pass with identical upstream versions must skip (no new rotations).
         engine.sync_now();
-        assert_eq!(engine.stats().2, 2, "unchanged upstream versions are not rewritten");
+        assert_eq!(
+            engine.stats().2,
+            2,
+            "unchanged upstream versions are not rewritten"
+        );
     }
 
     #[test]
@@ -290,8 +313,14 @@ mod tests {
 
         // Wait for the background thread to complete one refresh tick (>1s).
         std::thread::sleep(Duration::from_millis(1300));
-        assert!(source.calls.load(Ordering::Relaxed) >= 1, "the refresh thread fetched at least once");
-        assert_eq!(vault.lock().unwrap().get("k").unwrap().unwrap().bytes(), b"val");
+        assert!(
+            source.calls.load(Ordering::Relaxed) >= 1,
+            "the refresh thread fetched at least once"
+        );
+        assert_eq!(
+            vault.lock().unwrap().get("k").unwrap().unwrap().bytes(),
+            b"val"
+        );
 
         // Dropping the engine flips `stop` and joins the thread without hanging.
         drop(engine);

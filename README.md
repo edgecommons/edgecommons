@@ -116,7 +116,8 @@ and `recipe.yaml`.
 - **messaging** — one interface over two transports: Greengrass **IPC** and **dual-MQTT**
   (local + IoT Core). Connections/subscriptions block until confirmed; request/reply with
   correlation and a framework deadline (`messaging.requestTimeoutSeconds`); a per-subscription
-  concurrency cap; TLS (server-only or mutual); optional MQTT LWT. Identical envelope across
+  concurrency cap; TLS (server-only or mutual). Generic component messaging config has no MQTT LWT;
+  `uns-bridge` derives its private site-broker LWT internally from its resolved UNS state topic. Identical envelope across
   languages — `{header, identity, tags, body}`, with the top-level **`identity`** element
   (`{hier, path, component, instance}`) stamped on every config-built message.
 - **uns** (`gg.uns()`) — the **Unified Namespace**: every component addresses the bus as

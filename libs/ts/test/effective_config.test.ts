@@ -77,14 +77,14 @@ describe("redact (redaction v1, §4.3)", () => {
     const out = redact({
       messaging: {
         local: { credentials: { username: "u" } },
-        iotCore: { credentials: { certPath: "c" } },
+        northbound: { credentials: { certPath: "c" } },
       },
       streaming: { credentials: { should: "stay" } },
       nested: { messaging: { credentials: { should: "stay" } } },
     });
     const messaging = out.messaging as Record<string, Record<string, unknown>>;
     expect(messaging.local.credentials).toBe(REDACTED);
-    expect(messaging.iotCore.credentials).toBe(REDACTED);
+    expect(messaging.northbound.credentials).toBe(REDACTED);
     expect((out.streaming as Record<string, unknown>).credentials).toEqual({ should: "stay" });
     expect(((out.nested as Record<string, unknown>).messaging as Record<string, unknown>).credentials).toEqual({
       should: "stay",

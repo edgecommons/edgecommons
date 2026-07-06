@@ -1,7 +1,7 @@
 //! # Messaging — MQTT provider (standalone)
 //!
 //! **One-liner purpose**: A [`MessagingProvider`] backed by `rumqttc`, managing a
-//! local broker connection and an optional AWS IoT Core connection, both supporting TLS.
+//! local broker connection and an optional generic northbound MQTT connection.
 //!
 //! ## Overview
 //! On connect, the provider spawns a background task that drives the `rumqttc`
@@ -18,10 +18,9 @@
 //!   survive reconnects (closing the Java `connectionLost` no-op gap).
 //! - **Cleanup (RAII)**: dropping a [`Subscription`] removes its routing entry;
 //!   dropping the provider aborts the event-loop task.
-//! - **Transport/TLS**: the local broker uses plain TCP, server TLS (CA only), or
-//!   mutual TLS (CA + client cert/key) depending on its `credentials`; AWS IoT Core
-//!   always uses mutual TLS (CA + cert + key, all required). Missing/unreadable
-//!   credential files are a hard error — there is no insecure fallback.
+//! - **Transport/TLS**: local and northbound brokers use plain TCP, server TLS (CA only), or
+//!   mutual TLS (CA + client cert/key) depending on their `credentials`. Missing/unreadable
+//!   configured credential files are a hard error.
 //! - Error handling: [`crate::error::Result`]; transport failures are logged and
 //!   retried by the event loop, never `panic`.
 //!
@@ -51,14 +50,16 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use rumqttc::{AsyncClient, Event, LastWill, MqttOptions, Packet, QoS, TlsConfiguration, Transport};
-use tokio::sync::mpsc::{self, error::TrySendError, Sender};
+use rumqttc::{
+    AsyncClient, Event, LastWill, MqttOptions, Packet, QoS, TlsConfiguration, Transport,
+};
+use tokio::sync::mpsc::{self, Sender, error::TrySendError};
 use tokio::sync::{oneshot, watch};
 use tokio::task::JoinHandle;
 
 use crate::error::{EdgeCommonsError, Result};
-use crate::messaging::config::{BrokerConfig, Credentials, LwtConfig, MessagingConfig};
-use crate::messaging::{topic_matches, Destination, MessagingProvider, Qos, Subscription};
+use crate::messaging::config::{BrokerConfig, Credentials, MessagingConfig};
+use crate::messaging::{Destination, MessagingProvider, Qos, Subscription, topic_matches};
 
 /// How long [`MqttProvider::connect`] waits for the first `CONNACK`.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -113,17 +114,29 @@ impl Drop for BrokerConn {
     }
 }
 
-/// Whether a broker connection is the local broker or AWS IoT Core (which mandates mTLS).
+/// Whether a broker connection is the local broker or the optional northbound broker.
 #[derive(Debug, Clone, Copy)]
 enum BrokerRole {
     Local,
-    IotCore,
+    Northbound,
 }
 
 /// MQTT [`MessagingProvider`] over one or more broker connections.
 pub struct MqttProvider {
     local: BrokerConn,
-    iot_core: Option<BrokerConn>,
+    northbound: Option<BrokerConn>,
+}
+
+/// Explicit MQTT Last-Will for specialized callers that own a non-generic MQTT
+/// connection, such as `uns-bridge`'s site-broker uplink.
+///
+/// This is deliberately not part of the generic `messaging` configuration schema.
+/// Retain is hard-wired to `false`.
+#[derive(Debug, Clone)]
+pub struct MqttLastWill {
+    pub topic: String,
+    pub payload: Vec<u8>,
+    pub qos: Qos,
 }
 
 impl MqttProvider {
@@ -143,35 +156,44 @@ impl MqttProvider {
     /// # Errors
     /// | Error Variant | Condition | Recovery |
     /// |---------------|-----------|----------|
-    /// | `EdgeCommonsError::Config` | Missing host, or missing/unreadable TLS credentials (IoT Core requires caPath/certPath/keyPath) | Fix the messaging config / credential paths |
+    /// | `EdgeCommonsError::Config` | Missing host, or missing/unreadable TLS credentials | Fix the messaging config / credential paths |
     /// | `EdgeCommonsError::Messaging` | CONNACK not received within the connect timeout | Verify the broker is up and reachable |
     ///
-    /// The local broker connects over plain TCP unless its credentials include a
-    /// `caPath` (then TLS). AWS IoT Core always connects over mutual TLS
-    /// (caPath + certPath + keyPath, all required). Missing/unreadable credential
-    /// files are a hard error — there is no insecure fallback.
+    /// Each broker connects over plain TCP unless its credentials include a `caPath`
+    /// (then TLS). A cert/key pair additionally enables mutual TLS. Missing/unreadable
+    /// configured credential files are a hard error.
     pub async fn connect(config: &MessagingConfig) -> Result<MqttProvider> {
-        // §6: the MQTT Last-Will-and-Testament applies to the LOCAL-broker
-        // connection only (IoT Core LWT is deferred; IPC no-ops it).
-        let local = connect_broker(
-            &config.messaging.local,
-            BrokerRole::Local,
-            config.messaging.lwt.as_ref(),
-        )
-        .await?;
-        let iot_core = match &config.messaging.iot_core {
-            Some(broker) => Some(connect_broker(broker, BrokerRole::IotCore, None).await?),
+        Self::connect_with_last_will(config, None).await
+    }
+
+    /// Connect to the broker(s) described by `config`, registering `local_last_will`
+    /// on the local connection when supplied.
+    ///
+    /// This exists for explicit, component-owned MQTT uplinks (currently
+    /// `uns-bridge`'s site-broker connection). The generic EdgeCommons
+    /// `messaging` config no longer carries LWT.
+    pub async fn connect_with_last_will(
+        config: &MessagingConfig,
+        local_last_will: Option<&MqttLastWill>,
+    ) -> Result<MqttProvider> {
+        config.messaging.qos_config().validate()?;
+        let local =
+            connect_broker(&config.messaging.local, BrokerRole::Local, local_last_will).await?;
+        let northbound = match &config.messaging.northbound {
+            Some(broker) => Some(connect_broker(broker, BrokerRole::Northbound, None).await?),
             None => None,
         };
-        Ok(MqttProvider { local, iot_core })
+        Ok(MqttProvider { local, northbound })
     }
 
     /// Resolve the broker connection for a destination.
     fn conn(&self, dest: Destination) -> Result<&BrokerConn> {
         match dest {
             Destination::Local => Ok(&self.local),
-            Destination::IotCore => self.iot_core.as_ref().ok_or_else(|| {
-                EdgeCommonsError::Messaging("IoT Core destination is not configured".to_string())
+            Destination::Northbound => self.northbound.as_ref().ok_or_else(|| {
+                EdgeCommonsError::Messaging(
+                    "northbound MQTT destination is not configured".to_string(),
+                )
             }),
         }
     }
@@ -206,10 +228,9 @@ impl MessagingProvider for MqttProvider {
         let id = conn.next_id.fetch_add(1, Ordering::Relaxed);
 
         {
-            let mut map = conn
-                .registry
-                .lock()
-                .map_err(|_| EdgeCommonsError::Messaging("subscription registry poisoned".to_string()))?;
+            let mut map = conn.registry.lock().map_err(|_| {
+                EdgeCommonsError::Messaging("subscription registry poisoned".to_string())
+            })?;
             map.insert(
                 id,
                 SubEntry {
@@ -230,10 +251,9 @@ impl MessagingProvider for MqttProvider {
             q.push_back(ack_tx);
         }
 
-        conn.client
-            .subscribe(filter, rqos)
-            .await
-            .map_err(|e| EdgeCommonsError::Messaging(format!("subscribe to '{filter}' failed: {e}")))?;
+        conn.client.subscribe(filter, rqos).await.map_err(|e| {
+            EdgeCommonsError::Messaging(format!("subscribe to '{filter}' failed: {e}"))
+        })?;
 
         // Block until the broker confirms the subscription (SUBACK), so a publish issued right
         // after subscribe isn't lost — parity with Java/Python/TS. Fall back to proceeding (the
@@ -255,10 +275,9 @@ impl MessagingProvider for MqttProvider {
         if let Ok(mut map) = conn.registry.lock() {
             map.retain(|_, e| e.filter != filter);
         }
-        conn.client
-            .unsubscribe(filter)
-            .await
-            .map_err(|e| EdgeCommonsError::Messaging(format!("unsubscribe from '{filter}' failed: {e}")))
+        conn.client.unsubscribe(filter).await.map_err(|e| {
+            EdgeCommonsError::Messaging(format!("unsubscribe from '{filter}' failed: {e}"))
+        })
     }
 
     fn connected(&self) -> bool {
@@ -269,9 +288,8 @@ impl MessagingProvider for MqttProvider {
     }
 }
 
-/// Establish one broker connection and block until its first CONNACK. When an
-/// `lwt` is supplied (local-broker connection only, UNS-CANONICAL-DESIGN §6), the
-/// MQTT Last-Will-and-Testament is registered on the CONNECT options — rumqttc
+/// Establish one broker connection and block until its first CONNACK. When a
+/// `last_will` is supplied, it is registered on the CONNECT options — rumqttc
 /// re-sends the same options on every automatic reconnect, so the will is
 /// re-registered for free. The will is registered at CONNECT, **not routed through
 /// `publish()`** — the reserved-class guard does not (cannot) apply; broker ACLs
@@ -279,14 +297,14 @@ impl MessagingProvider for MqttProvider {
 async fn connect_broker(
     broker: &BrokerConfig,
     role: BrokerRole,
-    lwt: Option<&LwtConfig>,
+    last_will: Option<&MqttLastWill>,
 ) -> Result<BrokerConn> {
     let host = broker.resolved_host()?.to_string();
     let mut options = MqttOptions::new(broker.client_id.clone(), host.clone(), broker.port);
     options.set_keep_alive(Duration::from_secs(30));
     options.set_clean_session(true);
-    if let Some(lwt) = lwt {
-        options.set_last_will(build_last_will(lwt)?);
+    if let Some(last_will) = last_will {
+        options.set_last_will(build_last_will(last_will)?);
     }
 
     match build_tls(broker.credentials.as_ref(), role)? {
@@ -388,62 +406,48 @@ async fn connect_broker(
     }
 }
 
-/// Build the rumqttc [`LastWill`] from a validated `messaging.lwt` section
-/// (UNS-CANONICAL-DESIGN §6): retain is hard-wired to `false` (there is no retain
-/// knob by design, D9); a string payload is published verbatim as UTF-8 bytes and
-/// an object payload as compact JSON bytes.
+/// Build the rumqttc [`LastWill`] from an explicit MQTT provider option. Retain is
+/// hard-wired to `false`; the caller owns the payload bytes.
 ///
 /// # Errors
 /// [`EdgeCommonsError::Config`] on a missing/empty topic or a QoS outside `{0, 1}`.
-fn build_last_will(lwt: &LwtConfig) -> Result<LastWill> {
-    if lwt.topic.is_empty() {
+fn build_last_will(last_will: &MqttLastWill) -> Result<LastWill> {
+    if last_will.topic.is_empty() {
         return Err(EdgeCommonsError::Config(
-            "messaging.lwt.topic is required when an lwt section is present".to_string(),
+            "MQTT last will topic is required".to_string(),
         ));
     }
-    let qos = match lwt.qos_or_default() {
-        0 => QoS::AtMostOnce,
-        1 => QoS::AtLeastOnce,
-        other => {
+    let qos = match last_will.qos {
+        Qos::AtMostOnce => QoS::AtMostOnce,
+        Qos::AtLeastOnce => QoS::AtLeastOnce,
+        Qos::ExactlyOnce => {
             return Err(EdgeCommonsError::Config(format!(
-                "messaging.lwt.qos must be 0 or 1 (got {other})"
+                "MQTT last will QoS must be 0 or 1 (got {})",
+                last_will.qos as u8
             )));
         }
     };
     tracing::info!(
-        topic = %lwt.topic,
+        topic = %last_will.topic,
         qos = ?qos,
-        "registering MQTT LWT on the local connection (retain=false)"
+        "registering MQTT last will (retain=false)"
     );
-    Ok(LastWill::new(lwt.topic.clone(), lwt.payload_bytes(), qos, false))
+    Ok(LastWill::new(
+        last_will.topic.clone(),
+        last_will.payload.clone(),
+        qos,
+        false,
+    ))
 }
 
 /// Build the TLS configuration for a broker, or `None` for a plain connection.
 ///
 /// # Algorithmic Choices
-/// - **IoT Core** always uses mutual TLS: `caPath`, `certPath`, and `keyPath` are all
-///   required; any missing/unreadable file is a hard error (never an insecure fallback,
-///   unlike the Java implementation which silently connected without credentials).
-/// - **Local** uses TLS only when `caPath` is set (with optional client auth via
-///   `certPath`/`keyPath`); otherwise it connects plain.
+/// - Local and northbound use TLS only when `caPath` is set (with optional client auth
+///   via `certPath`/`keyPath`); otherwise they connect plain.
 fn build_tls(creds: Option<&Credentials>, role: BrokerRole) -> Result<Option<TlsConfiguration>> {
     match role {
-        BrokerRole::IotCore => {
-            let creds = creds.ok_or_else(|| {
-                EdgeCommonsError::Config(
-                    "IoT Core requires TLS credentials (caPath, certPath, keyPath)".to_string(),
-                )
-            })?;
-            let ca = read_credential_file(creds.ca_path.as_deref(), "caPath")?;
-            let cert = read_credential_file(creds.cert_path.as_deref(), "certPath")?;
-            let key = read_credential_file(creds.key_path.as_deref(), "keyPath")?;
-            Ok(Some(TlsConfiguration::Simple {
-                ca,
-                alpn: None,
-                client_auth: Some((cert, key)),
-            }))
-        }
-        BrokerRole::Local => {
+        BrokerRole::Local | BrokerRole::Northbound => {
             let Some(creds) = creds else { return Ok(None) };
             let Some(ca_path) = creds.ca_path.as_deref() else {
                 return Ok(None); // no CA configured => plain connection
@@ -469,7 +473,9 @@ fn build_tls(creds: Option<&Credentials>, role: BrokerRole) -> Result<Option<Tls
 /// path is missing or unreadable.
 fn read_credential_file(path: Option<&str>, field: &str) -> Result<Vec<u8>> {
     let path = path.ok_or_else(|| {
-        EdgeCommonsError::Config(format!("TLS requires '{field}' in the messaging credentials"))
+        EdgeCommonsError::Config(format!(
+            "TLS requires '{field}' in the messaging credentials"
+        ))
     })?;
     std::fs::read(path)
         .map_err(|e| EdgeCommonsError::Config(format!("failed to read {field} '{path}': {e}")))
@@ -479,6 +485,7 @@ fn to_rumqttc_qos(qos: Qos) -> QoS {
     match qos {
         Qos::AtMostOnce => QoS::AtMostOnce,
         Qos::AtLeastOnce => QoS::AtLeastOnce,
+        Qos::ExactlyOnce => QoS::ExactlyOnce,
     }
 }
 
@@ -520,9 +527,16 @@ mod tests {
         let ca = temp_pem("ca-bytes");
         let c = creds(Some(&ca), None, None);
         match build_tls(Some(&c), BrokerRole::Local).unwrap() {
-            Some(TlsConfiguration::Simple { ca: ca_bytes, client_auth, .. }) => {
+            Some(TlsConfiguration::Simple {
+                ca: ca_bytes,
+                client_auth,
+                ..
+            }) => {
                 assert_eq!(ca_bytes, b"ca-bytes");
-                assert!(client_auth.is_none(), "ca-only => server TLS, no client auth");
+                assert!(
+                    client_auth.is_none(),
+                    "ca-only => server TLS, no client auth"
+                );
             }
             _ => panic!("expected Simple TLS"),
         }
@@ -534,7 +548,10 @@ mod tests {
         let (ca, cert, key) = (temp_pem("ca"), temp_pem("cert"), temp_pem("key"));
         let c = creds(Some(&ca), Some(&cert), Some(&key));
         match build_tls(Some(&c), BrokerRole::Local).unwrap() {
-            Some(TlsConfiguration::Simple { client_auth: Some((cert_b, key_b)), .. }) => {
+            Some(TlsConfiguration::Simple {
+                client_auth: Some((cert_b, key_b)),
+                ..
+            }) => {
                 assert_eq!(cert_b, b"cert");
                 assert_eq!(key_b, b"key");
             }
@@ -546,24 +563,31 @@ mod tests {
     }
 
     #[test]
-    fn iot_core_requires_ca_cert_and_key() {
-        // No credentials at all.
-        assert!(build_tls(None, BrokerRole::IotCore).is_err());
-        // Missing key => error (no insecure fallback).
-        let (ca, cert) = (temp_pem("ca"), temp_pem("cert"));
-        let c = creds(Some(&ca), Some(&cert), None);
-        assert!(build_tls(Some(&c), BrokerRole::IotCore).is_err());
-        for p in [ca, cert] {
-            let _ = std::fs::remove_file(p);
-        }
+    fn northbound_without_ca_is_plain_mqtt() {
+        assert!(build_tls(None, BrokerRole::Northbound).unwrap().is_none());
+        let c = Credentials {
+            username: Some("u".into()),
+            password: Some("p".into()),
+            cert_path: None,
+            key_path: None,
+            ca_path: None,
+        };
+        assert!(
+            build_tls(Some(&c), BrokerRole::Northbound)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
-    fn iot_core_with_all_three_is_mutual_tls() {
+    fn northbound_with_all_three_is_mutual_tls() {
         let (ca, cert, key) = (temp_pem("ca"), temp_pem("cert"), temp_pem("key"));
         let c = creds(Some(&ca), Some(&cert), Some(&key));
-        match build_tls(Some(&c), BrokerRole::IotCore).unwrap() {
-            Some(TlsConfiguration::Simple { client_auth: Some(_), .. }) => {}
+        match build_tls(Some(&c), BrokerRole::Northbound).unwrap() {
+            Some(TlsConfiguration::Simple {
+                client_auth: Some(_),
+                ..
+            }) => {}
             _ => panic!("expected mutual TLS"),
         }
         for p in [ca, cert, key] {
@@ -580,46 +604,53 @@ mod tests {
         );
     }
 
-    // ---------- MQTT LWT (UNS-CANONICAL-DESIGN §6) ----------
+    // ---------- Explicit MQTT last will provider option ----------
 
-    fn lwt(topic: &str, payload: Option<serde_json::Value>, qos: Option<serde_json::Value>) -> LwtConfig {
-        LwtConfig { topic: topic.to_string(), payload, qos }
+    fn last_will(topic: &str, payload: impl Into<Vec<u8>>, qos: Qos) -> MqttLastWill {
+        MqttLastWill {
+            topic: topic.to_string(),
+            payload: payload.into(),
+            qos,
+        }
     }
 
     #[test]
     fn last_will_is_registered_with_retain_false_and_defaults() {
-        let will = build_last_will(&lwt(
+        let will = build_last_will(&last_will(
             "ecv1/gw-01/uns-bridge/main/state",
-            Some(serde_json::json!({ "status": "UNREACHABLE" })),
-            None,
+            br#"{"status":"UNREACHABLE"}"#.to_vec(),
+            Qos::AtLeastOnce,
         ))
         .unwrap();
         assert_eq!(will.topic, "ecv1/gw-01/uns-bridge/main/state");
-        assert_eq!(will.qos, QoS::AtLeastOnce, "qos defaults to 1");
-        assert!(!will.retain, "retain is hard-wired to false (no knob by design)");
+        assert_eq!(will.qos, QoS::AtLeastOnce);
+        assert!(
+            !will.retain,
+            "retain is hard-wired to false (no knob by design)"
+        );
         assert_eq!(&will.message[..], br#"{"status":"UNREACHABLE"}"#);
     }
 
     #[test]
     fn last_will_string_payload_is_verbatim_and_qos_zero_accepted() {
-        let will =
-            build_last_will(&lwt("t", Some(serde_json::json!("gone")), Some(serde_json::json!(0))))
-                .unwrap();
-        assert_eq!(&will.message[..], b"gone", "string payload published verbatim (no JSON quoting)");
+        let will = build_last_will(&last_will("t", b"gone".to_vec(), Qos::AtMostOnce)).unwrap();
+        assert_eq!(
+            &will.message[..],
+            b"gone",
+            "caller-owned bytes are published verbatim"
+        );
         assert_eq!(will.qos, QoS::AtMostOnce);
-        // Number-tolerant qos: Greengrass-style 1.0.
-        let will = build_last_will(&lwt("t", None, Some(serde_json::json!(1.0)))).unwrap();
-        assert_eq!(will.qos, QoS::AtLeastOnce);
-        assert!(will.message.is_empty(), "absent payload => empty bytes");
     }
 
     #[test]
     fn last_will_rejects_bad_topic_and_qos() {
-        assert!(build_last_will(&lwt("", None, None)).is_err(), "empty topic");
-        assert!(build_last_will(&lwt("t", None, Some(serde_json::json!(2)))).is_err(), "qos 2");
         assert!(
-            build_last_will(&lwt("t", None, Some(serde_json::json!("one")))).is_err(),
-            "non-numeric qos"
+            build_last_will(&last_will("", Vec::new(), Qos::AtLeastOnce)).is_err(),
+            "empty topic"
+        );
+        assert!(
+            build_last_will(&last_will("t", Vec::new(), Qos::ExactlyOnce)).is_err(),
+            "qos 2 is invalid for MQTT last will"
         );
     }
 }

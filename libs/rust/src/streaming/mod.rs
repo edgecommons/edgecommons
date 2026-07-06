@@ -42,7 +42,8 @@ pub use bridge::StreamMetricsBridge;
 // The config schema + the core orchestration live in `edgestreamlog`; this module is a thin
 // libs-side wrapper (template resolution against the component `Config` + the metrics bridge).
 pub use edgestreamlog::{
-    LogStats, Record as StreamRecord, ServiceStats, Sink, SinkFactory, StreamConfig, StreamingConfig,
+    LogStats, Record as StreamRecord, ServiceStats, Sink, SinkFactory, StreamConfig,
+    StreamingConfig,
 };
 
 /// Map a core streaming error into the library error type.
@@ -139,7 +140,9 @@ impl crate::facades::StreamSink for StreamServiceSink {
         timestamp_ms: u64,
         payload: Vec<u8>,
     ) -> Result<()> {
-        self.0.stream(stream_name)?.append(Record::new(partition_key, timestamp_ms, payload))
+        self.0
+            .stream(stream_name)?
+            .append(Record::new(partition_key, timestamp_ms, payload))
     }
 }
 
@@ -157,7 +160,8 @@ impl DefaultStreamService {
     ///
     /// `buffer.path` and the sink's stream name / brokers are template-substituted against `config`.
     pub fn open(config: &Config) -> Result<Self> {
-        let inner = edgestreamlog::StreamService::open(resolved_config(config)?).map_err(map_err)?;
+        let inner =
+            edgestreamlog::StreamService::open(resolved_config(config)?).map_err(map_err)?;
         Ok(Self { inner })
     }
 
@@ -174,8 +178,13 @@ impl StreamService for DefaultStreamService {
     fn stream(&self, name: &str) -> Result<StreamHandle> {
         self.inner
             .stream(name)
-            .map(|log| StreamHandle { name: name.to_string(), log })
-            .ok_or_else(|| EdgeCommonsError::Streaming(format!("stream '{name}' is not configured")))
+            .map(|log| StreamHandle {
+                name: name.to_string(),
+                log,
+            })
+            .ok_or_else(|| {
+                EdgeCommonsError::Streaming(format!("stream '{name}' is not configured"))
+            })
     }
 
     fn stream_names(&self) -> Vec<String> {
@@ -213,12 +222,20 @@ fn resolved_config(config: &Config) -> Result<StreamingConfig> {
 /// name or a Kafka topic/broker list).
 fn resolve_sink(config: &Config, sink: SinkConfig) -> SinkConfig {
     match sink {
-        SinkConfig::Kinesis { stream_name, region, endpoint_url } => SinkConfig::Kinesis {
+        SinkConfig::Kinesis {
+            stream_name,
+            region,
+            endpoint_url,
+        } => SinkConfig::Kinesis {
             stream_name: resolve(config, &stream_name),
             region,
             endpoint_url,
         },
-        SinkConfig::Kafka { bootstrap_servers, topic, properties } => SinkConfig::Kafka {
+        SinkConfig::Kafka {
+            bootstrap_servers,
+            topic,
+            properties,
+        } => SinkConfig::Kafka {
             bootstrap_servers: resolve(config, &bootstrap_servers),
             topic: resolve(config, &topic),
             properties,
@@ -295,7 +312,8 @@ mod tests {
         assert_eq!(svc.stream_names(), vec!["telemetry"]);
         let h = svc.stream("telemetry").unwrap();
         for i in 0..10u64 {
-            h.append(Record::new("pk", 1000 + i, format!("v{i}").as_bytes())).unwrap();
+            h.append(Record::new("pk", 1000 + i, format!("v{i}").as_bytes()))
+                .unwrap();
         }
         h.flush().unwrap();
         let s = svc.stats("telemetry").unwrap();
@@ -322,7 +340,10 @@ mod tests {
         h.append(Record::new("k", 1, b"x")).unwrap();
         h.flush().unwrap();
         // The {ThingName}-substituted directory must now exist on disk.
-        assert!(dir.path().join("thing-9").is_dir(), "buffer path template should resolve to thing-9");
+        assert!(
+            dir.path().join("thing-9").is_dir(),
+            "buffer path template should resolve to thing-9"
+        );
     }
 
     #[test]
@@ -331,13 +352,15 @@ mod tests {
         let cfg = config_with_streams(dir.path());
         // Inject a FakeSink instead of Kinesis so the engine drains without AWS. The factory
         // returns the core's Result type (edgestreamlog::StreamService::open_with's contract).
-        let factory = |_name: &str, _sink: &SinkConfig| -> edgestreamlog::Result<Option<Box<dyn Sink>>> {
-            Ok(Some(Box::new(FakeSink::new())))
-        };
+        let factory =
+            |_name: &str, _sink: &SinkConfig| -> edgestreamlog::Result<Option<Box<dyn Sink>>> {
+                Ok(Some(Box::new(FakeSink::new())))
+            };
         let svc = DefaultStreamService::open_with(&cfg, &factory).unwrap();
         let h = svc.stream("telemetry").unwrap();
         for i in 0..100u64 {
-            h.append(Record::new("pk", 1000 + i, format!("v{i}").as_bytes())).unwrap();
+            h.append(Record::new("pk", 1000 + i, format!("v{i}").as_bytes()))
+                .unwrap();
         }
 
         let start = Instant::now();
@@ -351,7 +374,11 @@ mod tests {
             std::thread::sleep(Duration::from_millis(20));
         };
         let s = svc.stats("telemetry").unwrap();
-        assert!(drained, "engine should drain all 100 records, got exported={}", s.exported_total);
+        assert!(
+            drained,
+            "engine should drain all 100 records, got exported={}",
+            s.exported_total
+        );
         assert_eq!(s.exported_total, 100);
         assert_eq!(s.failed_total, 0);
     }

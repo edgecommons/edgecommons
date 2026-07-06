@@ -4,6 +4,15 @@ Proves the four edgecommons libraries (Python, Java, Rust, TypeScript) interoper
 MQTT: the message envelope and the request/reply convention (`reply_to` topic +
 `correlation_id`) are mutually intelligible across languages.
 
+## Mandatory scope
+
+This suite is the required validation gate for any core change that changes or enhances
+on-the-wire behavior or structure. That includes the message envelope, body encodings
+or markers, headers, request/reply semantics, raw-message conventions, UNS topics and
+classes, reserved-topic handling, and config options that change what the libraries emit
+or accept on MQTT. Extend all four interop nodes and the matrix assertions in the same
+change; per-language unit tests alone do not prove interoperability.
+
 ## How it works
 
 Each language ships a small dual-role **interop node** that talks to the shared

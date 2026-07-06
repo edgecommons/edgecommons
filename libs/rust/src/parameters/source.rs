@@ -7,8 +7,8 @@
 
 use std::path::PathBuf;
 
-use crate::error::EdgeCommonsError;
 use crate::Result;
+use crate::error::EdgeCommonsError;
 
 /// A parameter value fetched from a source. `secure` values (SSM SecureString, a `mountedDir`
 /// secret path, …) must never be logged.
@@ -25,7 +25,11 @@ pub struct ParamValue {
 impl ParamValue {
     /// Construct a non-secure value.
     pub fn plain(value: impl Into<Vec<u8>>) -> Self {
-        Self { value: value.into(), secure: false, version: None }
+        Self {
+            value: value.into(),
+            secure: false,
+            version: None,
+        }
     }
 }
 
@@ -54,7 +58,9 @@ pub struct EnvSource {
 impl EnvSource {
     /// New source reading vars under `prefix` (e.g. `"GG_PARAM_"`).
     pub fn new(prefix: impl Into<String>) -> Self {
-        Self { prefix: prefix.into() }
+        Self {
+            prefix: prefix.into(),
+        }
     }
 
     /// Map a parameter name to its env-var name.
@@ -79,7 +85,9 @@ impl EnvSource {
 
 impl ParameterSource for EnvSource {
     fn fetch(&self, name: &str) -> Result<Option<ParamValue>> {
-        Ok(std::env::var(self.to_env(name)).ok().map(|v| ParamValue::plain(v.into_bytes())))
+        Ok(std::env::var(self.to_env(name))
+            .ok()
+            .map(|v| ParamValue::plain(v.into_bytes())))
     }
 
     fn fetch_by_path(&self, path: &str, _recursive: bool) -> Result<Vec<(String, ParamValue)>> {
@@ -115,11 +123,16 @@ pub struct MountedDirSource {
 impl MountedDirSource {
     /// New source rooted at `root`; parameters under any `secure_paths` prefix are sensitive.
     pub fn new(root: impl Into<PathBuf>, secure_paths: Vec<String>) -> Self {
-        Self { root: root.into(), secure_paths }
+        Self {
+            root: root.into(),
+            secure_paths,
+        }
     }
 
     fn is_secure(&self, name: &str) -> bool {
-        self.secure_paths.iter().any(|p| name.starts_with(p.as_str()))
+        self.secure_paths
+            .iter()
+            .any(|p| name.starts_with(p.as_str()))
     }
 
     fn name_to_path(&self, name: &str) -> PathBuf {
@@ -129,11 +142,21 @@ impl MountedDirSource {
     /// Recursively collect files under `dir` into `out`, keyed by parameter name (relative to root,
     /// `/`-separated). Skips dotfiles/dirs — K8s projects volumes with internal `..data` /
     /// `..2025_…` symlinked entries that must not be surfaced as parameters.
-    fn walk(&self, dir: &std::path::Path, recursive: bool, out: &mut Vec<(String, ParamValue)>) -> Result<()> {
+    fn walk(
+        &self,
+        dir: &std::path::Path,
+        recursive: bool,
+        out: &mut Vec<(String, ParamValue)>,
+    ) -> Result<()> {
         let entries = match std::fs::read_dir(dir) {
             Ok(e) => e,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(e) => return Err(EdgeCommonsError::Parameters(format!("read dir {}: {e}", dir.display()))),
+            Err(e) => {
+                return Err(EdgeCommonsError::Parameters(format!(
+                    "read dir {}: {e}",
+                    dir.display()
+                )));
+            }
         };
         for entry in entries.flatten() {
             let file_name = entry.file_name();
@@ -156,10 +179,18 @@ impl MountedDirSource {
                 // Parameter name = "/" + path relative to root, with platform separators normalized.
                 let rel = path.strip_prefix(&self.root).unwrap_or(&path);
                 let name = format!("/{}", rel.to_string_lossy().replace('\\', "/"));
-                let value = std::fs::read(&path)
-                    .map_err(|e| EdgeCommonsError::Parameters(format!("read {}: {e}", path.display())))?;
+                let value = std::fs::read(&path).map_err(|e| {
+                    EdgeCommonsError::Parameters(format!("read {}: {e}", path.display()))
+                })?;
                 let secure = self.is_secure(&name);
-                out.push((name, ParamValue { value, secure, version: None }));
+                out.push((
+                    name,
+                    ParamValue {
+                        value,
+                        secure,
+                        version: None,
+                    },
+                ));
             }
         }
         Ok(())
@@ -170,11 +201,18 @@ impl ParameterSource for MountedDirSource {
     fn fetch(&self, name: &str) -> Result<Option<ParamValue>> {
         let path = self.name_to_path(name);
         match std::fs::read(&path) {
-            Ok(value) => Ok(Some(ParamValue { value, secure: self.is_secure(name), version: None })),
+            Ok(value) => Ok(Some(ParamValue {
+                value,
+                secure: self.is_secure(name),
+                version: None,
+            })),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             // A directory (not a file) at that name is "not a parameter".
             Err(e) if matches!(e.raw_os_error(), Some(21)) => Ok(None),
-            Err(e) => Err(EdgeCommonsError::Parameters(format!("read {}: {e}", path.display()))),
+            Err(e) => Err(EdgeCommonsError::Parameters(format!(
+                "read {}: {e}",
+                path.display()
+            ))),
         }
     }
 

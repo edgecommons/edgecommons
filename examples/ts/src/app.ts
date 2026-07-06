@@ -321,11 +321,11 @@ export class SkeletonApp {
     logger.info(`subscribed for requests on ${this.requestTopic}`);
 
     // 2. Subscribe to commands from AWS IoT Core (the IoT Core bridge); ack each one
-    //    back to IoT Core on the `evt/cmd-ack` channel (exercises subscribeToIoTCore +
-    //    publishToIoTCore). Non-fatal: builds/modes without an IoT Core transport
+    //    back to IoT Core on the `evt/cmd-ack` channel (exercises subscribeNorthbound +
+    //    publishNorthbound). Non-fatal: builds/modes without an IoT Core transport
     //    (e.g. local-only STANDALONE) skip the bridge instead of failing the whole component.
     try {
-      await messaging.subscribeToIoTCore(
+      await messaging.subscribeNorthbound(
         this.cmdTopic,
         async (topic, msg) => {
           logger.info(`received IoT Core command on ${topic}`);
@@ -334,7 +334,7 @@ export class SkeletonApp {
             .withPayload({ ack: msg.getBody() })
             .build();
           try {
-            await messaging.publishToIoTCore(ackTopic, ack, Qos.AtLeastOnce);
+            await messaging.publishNorthbound(ackTopic, ack, Qos.AtLeastOnce);
           } catch (e) {
             logger.warn(`failed to ack IoT Core command: ${String(e)}`);
           }
@@ -369,7 +369,7 @@ export class SkeletonApp {
    * Publish one data message, mirror it to AWS IoT Core, and emit the publish metric.
    * Demonstrates config-driven periodic publishing plus metric emission. The mirror uses
    * the SAME UNS topic — a UNS address is broker-independent; `publish` vs
-   * `publishToIoTCore` picks the broker.
+   * `publishNorthbound` picks the broker.
    */
   private async publishOnce(messaging: IMessagingService, dataTopic: string): Promise<void> {
     this.seq += 1;
@@ -379,9 +379,9 @@ export class SkeletonApp {
       .build();
     try {
       await messaging.publish(dataTopic, msg);
-      // Also mirror to AWS IoT Core (exercises the IoT Core bridge / publishToIoTCore).
+      // Also mirror to AWS IoT Core (exercises the IoT Core bridge / publishNorthbound).
       try {
-        await messaging.publishToIoTCore(dataTopic, msg, Qos.AtLeastOnce);
+        await messaging.publishNorthbound(dataTopic, msg, Qos.AtLeastOnce);
       } catch (e) {
         logger.warn(`failed to publish telemetry to IoT Core: ${String(e)}`);
       }
@@ -414,7 +414,7 @@ export class SkeletonApp {
     if (!messaging) return;
     try {
       if (this.requestTopic) await messaging.unsubscribe(this.requestTopic);
-      if (this.cmdTopic && this.cmdSubscribed) await messaging.unsubscribeFromIoTCore(this.cmdTopic);
+      if (this.cmdTopic && this.cmdSubscribed) await messaging.unsubscribeNorthbound(this.cmdTopic);
     } catch (e) {
       logger.warn(`error while unsubscribing: ${String(e)}`);
     }

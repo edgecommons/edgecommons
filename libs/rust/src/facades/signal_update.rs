@@ -35,12 +35,19 @@ pub struct Sample {
 impl Sample {
     /// A value-only sample: quality defaults to [`Quality::Good`], `server_ts` to now.
     pub fn new(value: impl Into<Value>) -> Sample {
-        Sample { value: Some(value.into()), ..Default::default() }
+        Sample {
+            value: Some(value.into()),
+            ..Default::default()
+        }
     }
 
     /// A value + explicit quality sample (`server_ts` defaults to now).
     pub fn with_quality(value: impl Into<Value>, quality: Quality) -> Sample {
-        Sample { value: Some(value.into()), quality: Some(quality), ..Default::default() }
+        Sample {
+            value: Some(value.into()),
+            quality: Some(quality),
+            ..Default::default()
+        }
     }
 
     /// A value + quality + device-timestamp sample (`server_ts` defaults to now).
@@ -208,7 +215,10 @@ mod tests {
 
     #[test]
     fn effective_signal_path_falls_back_to_signal_id() {
-        let update = SignalUpdate::builder().signal_id("temp").sample(Sample::new(1)).build();
+        let update = SignalUpdate::builder()
+            .signal_id("temp")
+            .sample(Sample::new(1))
+            .build();
         assert_eq!(update.effective_signal_path(), Some("temp"));
     }
 

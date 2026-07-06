@@ -54,6 +54,7 @@ EXPECTED_TYPES = {
     "nested": {"k": [1, {"d": 2}]},
     "ea": [], "eo": {},
 }
+BINARY_BODY_HEX = "000102030a0d1f207f80feff"
 
 
 def _payload_eq(exp, act):
@@ -145,10 +146,15 @@ def commands():
     # instead of skipping.)
     node, npm = shutil.which("node"), shutil.which("npm")
     if node and npm:
-        # npm is a .cmd shim on Windows; run via shell there.
-        r = subprocess.run(f'"{npm}" install', cwd=WORKSPACE, capture_output=True, text=True,
-                           timeout=600, shell=True)
-        assert r.returncode == 0, f"ts npm install failed:\n{r.stderr}"
+        ts_bin = WORKSPACE / "libs" / "ts" / "node_modules" / ".bin"
+        tsc = ts_bin / ("tsc.cmd" if os.name == "nt" else "tsc")
+        if not tsc.exists():
+            # npm is a .cmd shim on Windows; run via shell there.
+            r = subprocess.run(f'"{npm}" install', cwd=WORKSPACE, capture_output=True, text=True,
+                               timeout=600, shell=True)
+            assert r.returncode == 0, f"ts npm install failed:\n{r.stderr}"
+        env = os.environ.copy()
+        env["PATH"] = str(ts_bin) + os.pathsep + env.get("PATH", "")
         # #14 guard: force-clean the TS build outputs so the ts_node can never silently run against a
         # stale libs/ts build (the "old library" trap that made the ts raw-publisher time out even
         # though publishRaw was correct). The plain `tsc` build below then regenerates both dists from
@@ -159,9 +165,12 @@ def commands():
             for info in ts_dir.glob("*.tsbuildinfo"):
                 info.unlink(missing_ok=True)
         r = subprocess.run(
-            f'"{npm}" run build --workspace=@edgecommons/edgecommons --workspace=edgecommons-interop-ts-node',
-            cwd=WORKSPACE, capture_output=True, text=True, timeout=300, shell=True)
-        assert r.returncode == 0, f"ts build failed:\n{r.stderr}\n{r.stdout}"
+            f'"{npm}" run build --workspace=@edgecommons/edgecommons',
+            cwd=WORKSPACE, env=env, capture_output=True, text=True, timeout=300, shell=True)
+        assert r.returncode == 0, f"ts lib build failed:\n{r.stderr}\n{r.stdout}"
+        r = subprocess.run([str(tsc), "-p", str(HERE / "ts_node" / "tsconfig.json")],
+                           cwd=WORKSPACE, env=env, capture_output=True, text=True, timeout=300)
+        assert r.returncode == 0, f"ts node build failed:\n{r.stderr}\n{r.stdout}"
         node_js = HERE / "ts_node" / "dist" / "interop_node.js"
         if node_js.exists():
             cmd["ts"] = lambda *a, _n=node, _js=str(node_js): [_n, _js, *a]
@@ -301,6 +310,46 @@ def test_interop_raw_publish(commands, publisher, subscriber):
         assert payload["ok"] is True, f"{publisher}->{subscriber} raw failed: {payload}"
         assert payload["is_raw"] is True, "non-envelope payload must arrive as a raw message"
         assert payload["raw_token"] == token, "raw payload must round-trip intact"
+    finally:
+        if sub_proc.poll() is None:
+            sub_proc.terminate()
+            try:
+                sub_proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                sub_proc.kill()
+
+
+@pytest.mark.parametrize("subscriber", LANGS)
+@pytest.mark.parametrize("publisher", LANGS)
+def test_interop_binary_body_publish(commands, publisher, subscriber):
+    """One language publishes a first-class binary message body; another ingests and
+    decodes it through its public binary body API. All ordered pairs prove exact-byte
+    wire compatibility for the binary marker over the local MQTT transport."""
+    for lang in (publisher, subscriber):
+        if lang not in commands:
+            pytest.skip(f"{lang} toolchain/artifact unavailable")
+
+    topic = f"interop/binary/{subscriber}/{uuid.uuid4()}"
+
+    sub_proc, lines, ready = _launch(commands[subscriber]("binary-sub", topic, BINARY_BODY_HEX))
+    try:
+        assert ready.wait(20), f"{subscriber} binary-sub never signalled READY"
+
+        pub = subprocess.run(commands[publisher]("binary-pub", topic, BINARY_BODY_HEX),
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                             timeout=30, cwd=str(RUN_DIR))
+        assert pub.returncode == 0, f"{publisher} binary-pub failed: {pub.stdout}\n{pub.stderr}"
+
+        try:
+            sub_proc.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            pass
+
+        payload = _last_json(lines)
+        assert payload is not None, f"no JSON from {subscriber} binary-sub; lines={lines}"
+        assert payload["ok"] is True, f"{publisher}->{subscriber} binary failed: {payload}"
+        assert payload["is_binary"] is True, "envelope body must be recognized as binary"
+        assert payload["hex"] == BINARY_BODY_HEX, "binary body bytes must survive exactly"
     finally:
         if sub_proc.poll() is None:
             sub_proc.terminate()

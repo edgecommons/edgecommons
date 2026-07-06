@@ -169,6 +169,162 @@ def run_raw_pub(topic, token):
         prov.disconnect()
 
 
+def run_binary_sub(topic, expected_hex):
+    prov = _provider("binsub")
+    state = {}
+    got = threading.Event()
+
+    def handler(_t, m):
+        try:
+            data = m.get_binary_body() if m.is_binary_body() else None
+            state["result"] = {
+                "is_binary": m.is_binary_body(),
+                "hex": data.hex() if data is not None else None,
+            }
+        except Exception as exc:  # pragma: no cover - exercised by subprocess harness
+            state["result"] = {"is_binary": False, "hex": None, "error": str(exc)}
+        got.set()
+
+    prov.subscribe(topic, handler)
+    print("READY", flush=True)
+    try:
+        if not got.wait(10):
+            print(json.dumps({"ok": False, "error": "timeout"}), flush=True)
+            return 1
+        result = state["result"]
+        ok = result["is_binary"] and result["hex"] == expected_hex.lower()
+        result["ok"] = bool(ok)
+        print(json.dumps(result), flush=True)
+        return 0 if ok else 1
+    finally:
+        prov.disconnect()
+
+
+def run_binary_pub(topic, body_hex):
+    prov = _provider("binpub")
+    try:
+        msg = (
+            MessageBuilder.create("InteropBinary", "1.0")
+            .with_payload(bytes.fromhex(body_hex))
+            .with_tags({"from": LANG})
+            .build()
+        )
+        prov.publish(topic, msg)
+        time.sleep(0.5)  # let the QoS-0 publish drain before disconnect
+        return 0
+    finally:
+        prov.disconnect()
+
+
+def _gg_topic(run_id, publisher, subscriber):
+    return f"edgecommons/interop/binary/{run_id}/{publisher}/{subscriber}"
+
+
+def _publisher_from_gg_topic(topic):
+    parts = topic.split("/")
+    return parts[-2] if len(parts) >= 2 else None
+
+
+def _gg_ready_path(run_id, lang):
+    return f"/tmp/edgecommons_gg_ipc_binary_ready_{lang}_{run_id}"
+
+
+def _gg_wait_for_ready(run_id, expected_langs):
+    ready_wait = float(os.environ.get("EDGECOMMONS_GG_READY_WAIT_SECS", "180"))
+    deadline = time.monotonic() + ready_wait
+    while time.monotonic() < deadline:
+        missing = [
+            lang for lang in expected_langs
+            if not os.path.exists(_gg_ready_path(run_id, lang))
+        ]
+        if not missing:
+            return []
+        time.sleep(0.2)
+    return [
+        lang for lang in expected_langs
+        if not os.path.exists(_gg_ready_path(run_id, lang))
+    ]
+
+
+def run_gg_binary_matrix(run_id, langs_csv, expected_hex):
+    from edgecommons.messaging.providers.greengrass.greengrass_ipc import GreengrassIpcProvider
+
+    expected_langs = [p for p in langs_csv.split(",") if p]
+    ready_langs = [
+        p for p in os.environ.get("EDGECOMMONS_GG_READY_LANGS", langs_csv).split(",") if p
+    ]
+    ready_lang = os.environ.get("EDGECOMMONS_GG_READY_LANG", LANG)
+    expected_bytes = bytes.fromhex(expected_hex)
+    subscribe_delay = float(os.environ.get("EDGECOMMONS_GG_SUBSCRIBE_DELAY_SECS", "8"))
+    wait_secs = float(os.environ.get("EDGECOMMONS_GG_WAIT_SECS", "35"))
+    prov = GreengrassIpcProvider(receive_own_messages=True)
+    received = {}
+    errors = {}
+    lock = threading.Lock()
+    done = threading.Event()
+
+    def handler(topic, m):
+        publisher = _publisher_from_gg_topic(topic)
+        try:
+            is_binary = m.is_binary_body()
+            data = m.get_binary_body() if is_binary else None
+            hex_value = data.hex() if data is not None else None
+            ok = is_binary and data == expected_bytes
+            with lock:
+                received[publisher] = {
+                    "is_binary": is_binary,
+                    "hex": hex_value,
+                    "ok": ok,
+                }
+                if set(received) >= set(expected_langs):
+                    done.set()
+        except Exception as exc:  # pragma: no cover - exercised on device
+            with lock:
+                errors[publisher or "unknown"] = str(exc)
+                received[publisher] = {"is_binary": False, "hex": None, "ok": False}
+
+    topic_filter = _gg_topic(run_id, "+", LANG)
+    prov.subscribe(topic_filter, handler, max_concurrency=1, max_messages=64)
+    print("READY", flush=True)
+    with open(_gg_ready_path(run_id, ready_lang), "w", encoding="utf-8") as f:
+        f.write(str(time.time()))
+    try:
+        ready_missing = _gg_wait_for_ready(run_id, ready_langs)
+        time.sleep(subscribe_delay)
+        if not ready_missing:
+            msg = (
+                MessageBuilder.create("InteropBinary", "1.0")
+                .with_payload(expected_bytes)
+                .with_tags({"from": LANG})
+                .build()
+            )
+            for target in expected_langs:
+                prov.publish(_gg_topic(run_id, LANG, target), msg)
+        done.wait(wait_secs)
+        with lock:
+            missing = [lang for lang in expected_langs if lang not in received]
+            ok = not ready_missing and not missing and not errors and all(
+                received.get(lang, {}).get("ok") for lang in expected_langs
+            )
+            result = {
+                "ok": bool(ok),
+                "lang": LANG,
+                "run_id": run_id,
+                "expected_hex": expected_hex.lower(),
+                "ready_missing": ready_missing,
+                "received": received,
+                "missing": missing,
+                "errors": errors,
+            }
+        result_path = f"/tmp/edgecommons_gg_ipc_binary_{LANG}_{run_id}.json"
+        with open(result_path, "w", encoding="utf-8") as f:
+            json.dump(result, f, sort_keys=True)
+        print(json.dumps(result, sort_keys=True), flush=True)
+        return 0 if ok else 1
+    finally:
+        pass
+
+
 def run_uns_pub(identity_json, cls_token, channel=None):
     """Publish one envelope stamped with the given identity on the Uns-minted topic."""
     identity = MessageIdentity.from_dict(json.loads(identity_json))
@@ -258,6 +414,12 @@ if __name__ == "__main__":
         sys.exit(run_raw_sub(sys.argv[2], sys.argv[3]))
     elif role == "raw-pub":
         sys.exit(run_raw_pub(sys.argv[2], sys.argv[3]))
+    elif role == "binary-sub":
+        sys.exit(run_binary_sub(sys.argv[2], sys.argv[3]))
+    elif role == "binary-pub":
+        sys.exit(run_binary_pub(sys.argv[2], sys.argv[3]))
+    elif role == "gg-binary-matrix":
+        sys.exit(run_gg_binary_matrix(sys.argv[2], sys.argv[3], sys.argv[4]))
     elif role == "uns-pub":
         sys.exit(run_uns_pub(sys.argv[2], sys.argv[3],
                              sys.argv[4] if len(sys.argv) > 4 else None))

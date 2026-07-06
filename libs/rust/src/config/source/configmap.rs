@@ -51,7 +51,7 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use notify::{recommended_watcher, RecursiveMode, Watcher};
+use notify::{RecursiveMode, Watcher, recommended_watcher};
 use serde_json::Value;
 use tokio::sync::mpsc::{self, UnboundedReceiver};
 
@@ -332,7 +332,11 @@ mod tests {
 
     /// Block until `pred` is true (polling the receiver) or the deadline elapses; returns the last
     /// value that satisfied `pred`, if any.
-    fn recv_until<F>(rx: &mut UnboundedReceiver<Value>, timeout: Duration, mut pred: F) -> Option<Value>
+    fn recv_until<F>(
+        rx: &mut UnboundedReceiver<Value>,
+        timeout: Duration,
+        mut pred: F,
+    ) -> Option<Value>
     where
         F: FnMut(&Value) -> bool,
     {
@@ -344,7 +348,9 @@ mod tests {
                         return Some(v);
                     }
                 }
-                Err(mpsc::error::TryRecvError::Empty) => std::thread::sleep(Duration::from_millis(50)),
+                Err(mpsc::error::TryRecvError::Empty) => {
+                    std::thread::sleep(Duration::from_millis(50))
+                }
                 Err(mpsc::error::TryRecvError::Disconnected) => return None,
             }
         }
@@ -358,9 +364,11 @@ mod tests {
         let mount = tempfile::tempdir().unwrap();
         write(&mount.path().join("config.json"), &config_json(7));
 
-        let source =
-            ConfigMapConfigSource::new(Some(mount.path().to_path_buf()), Some("config.json".into()))
-                .unwrap();
+        let source = ConfigMapConfigSource::new(
+            Some(mount.path().to_path_buf()),
+            Some("config.json".into()),
+        )
+        .unwrap();
         let loaded = source.load().await.unwrap();
         assert_eq!(loaded["version"], 7);
         assert_eq!(source.source_name(), "CONFIGMAP");
@@ -370,9 +378,11 @@ mod tests {
     async fn load_fails_loudly_for_missing_key_on_initial_load() {
         // The initial load must fail loudly (parity with FILE), unlike a reload (reject-and-keep).
         let mount = tempfile::tempdir().unwrap();
-        let source =
-            ConfigMapConfigSource::new(Some(mount.path().to_path_buf()), Some("config.json".into()))
-                .unwrap();
+        let source = ConfigMapConfigSource::new(
+            Some(mount.path().to_path_buf()),
+            Some("config.json".into()),
+        )
+        .unwrap();
         let err = source.load().await.unwrap_err();
         assert!(err.to_string().contains("config.json"));
     }
@@ -381,7 +391,10 @@ mod tests {
     fn applies_default_mount_dir_and_key_when_none() {
         // Defaults: /etc/edgecommons + config.json. The dir need not exist to construct.
         let source = ConfigMapConfigSource::new(None, None).unwrap();
-        assert_eq!(source.config_file, Path::new(DEFAULT_MOUNT_DIR).join(DEFAULT_KEY));
+        assert_eq!(
+            source.config_file,
+            Path::new(DEFAULT_MOUNT_DIR).join(DEFAULT_KEY)
+        );
         assert_eq!(source.key, DEFAULT_KEY);
     }
 
@@ -411,9 +424,11 @@ mod tests {
         // No '..data' symlink -> looks like a subPath mount; the source warns but still loads.
         let mount = tempfile::tempdir().unwrap();
         write(&mount.path().join("config.json"), &config_json(1));
-        let source =
-            ConfigMapConfigSource::new(Some(mount.path().to_path_buf()), Some("config.json".into()))
-                .unwrap();
+        let source = ConfigMapConfigSource::new(
+            Some(mount.path().to_path_buf()),
+            Some("config.json".into()),
+        )
+        .unwrap();
         assert_eq!(source.load().await.unwrap()["version"], 1);
     }
 
@@ -463,9 +478,11 @@ mod tests {
         write(&file, &config_json(1));
         std::fs::create_dir(mount.path().join("..data")).unwrap(); // whole-volume look: no subPath warn
 
-        let source =
-            ConfigMapConfigSource::new(Some(mount.path().to_path_buf()), Some("config.json".into()))
-                .unwrap();
+        let source = ConfigMapConfigSource::new(
+            Some(mount.path().to_path_buf()),
+            Some("config.json".into()),
+        )
+        .unwrap();
         let mut rx = source.watch().unwrap();
         std::thread::sleep(Duration::from_millis(800)); // let the watch arm
 
@@ -495,7 +512,10 @@ mod tests {
         write(&mount.join("config.json"), &config_json(5));
 
         let got = recv_until(&mut rx, Duration::from_secs(10), |v| v["version"] == 5);
-        assert_eq!(got.expect("watcher should re-arm and fire once the dir appears")["version"], 5);
+        assert_eq!(
+            got.expect("watcher should re-arm and fire once the dir appears")["version"],
+            5
+        );
     }
 
     #[cfg(unix)]
@@ -528,6 +548,9 @@ mod tests {
         std::fs::rename(m.join("..data_tmp"), m.join("..data")).unwrap();
 
         let got = recv_until(&mut rx, Duration::from_secs(10), |v| v["version"] == 2);
-        assert_eq!(got.expect("reload should survive the ..data swap")["version"], 2);
+        assert_eq!(
+            got.expect("reload should survive the ..data swap")["version"],
+            2
+        );
     }
 }

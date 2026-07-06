@@ -71,50 +71,41 @@ class ConfigurationValidatorTest {
     }
 
     @Test
-    void messagingRequestTimeoutAndLwtValidate() {
-        // UNS slice 1a/1c: messaging.requestTimeoutSeconds (number, min 0) and messaging.lwt
-        // (topic required; payload string|object; qos enum [0,1]) must pass schema validation.
+    void messagingRequestTimeoutValidates() {
+        // messaging.requestTimeoutSeconds remains a generic messaging config knob.
         JsonObject valid = obj("""
                 {"component":{"global":{}},\
-                "messaging":{"requestTimeoutSeconds":30,\
-                "lwt":{"topic":"ecv1/gw-01/bridge/main/state",\
-                "payload":{"status":"UNREACHABLE"},"qos":1}}}""");
+                "messaging":{"requestTimeoutSeconds":30}}""");
+        assertDoesNotThrow(() -> ConfigurationValidator.validate(valid));
+    }
+
+    @Test
+    void messagingBrokerQosValidatesAndTopLevelQosIsRejected() {
+        JsonObject valid = obj("""
+                {"component":{"global":{}},\
+                "messaging":{\
+                "local":{"host":"localhost","port":1883,"clientId":"local",\
+                "qos":{"publish":1,"subscribe":1}},\
+                "northbound":{"host":"broker.example.com","port":8883,"clientId":"northbound",\
+                "qos":{"publish":2,"subscribe":1}}}}""");
         assertDoesNotThrow(() -> ConfigurationValidator.validate(valid));
 
-        JsonObject stringPayloadQos0 = obj("""
+        JsonObject staleTopLevelQos = obj("""
                 {"component":{"global":{}},\
-                "messaging":{"lwt":{"topic":"t","payload":"OFFLINE","qos":0}}}""");
-        assertDoesNotThrow(() -> ConfigurationValidator.validate(stringPayloadQos0));
+                "messaging":{"local":{"host":"localhost","port":1883,"clientId":"local"},\
+                "qos":{"local":{"publish":1}}}}""");
+        assertThrows(ConfigurationValidator.ConfigurationValidationException.class,
+                () -> ConfigurationValidator.validate(staleTopLevelQos));
     }
 
     @Test
-    void lwtQosAsLosslessDoubleValidates() {
-        // The flagged 1b case: the schema types qos as "number" with enum [0,1]; a source that
-        // delivers 1.0 (e.g. a numeric round-trip through a double) must still validate, since
-        // JSON-Schema numeric comparison is mathematical, not lexical.
-        JsonObject qosDouble = obj("""
+    void genericMessagingLwtIsRejected() {
+        JsonObject staleGenericLwt = obj("""
                 {"component":{"global":{}},\
-                "messaging":{"lwt":{"topic":"t","qos":1.0}}}""");
-        assertDoesNotThrow(() -> ConfigurationValidator.validate(qosDouble));
-    }
-
-    @Test
-    void lwtRejectsBadQosMissingTopicAndRetain() {
-        // qos outside the enum
-        JsonObject badQos = obj("""
-                {"component":{"global":{}},"messaging":{"lwt":{"topic":"t","qos":2}}}""");
+                "messaging":{"lwt":{"topic":"ecv1/gw-01/bridge/main/state",\
+                "payload":{"status":"UNREACHABLE"},"qos":1}}}""");
         assertThrows(ConfigurationValidator.ConfigurationValidationException.class,
-                () -> ConfigurationValidator.validate(badQos));
-        // topic is required
-        JsonObject noTopic = obj("""
-                {"component":{"global":{}},"messaging":{"lwt":{"payload":"x"}}}""");
-        assertThrows(ConfigurationValidator.ConfigurationValidationException.class,
-                () -> ConfigurationValidator.validate(noTopic));
-        // NO retain knob by design (additionalProperties:false inside lwt)
-        JsonObject retain = obj("""
-                {"component":{"global":{}},"messaging":{"lwt":{"topic":"t","retain":true}}}""");
-        assertThrows(ConfigurationValidator.ConfigurationValidationException.class,
-                () -> ConfigurationValidator.validate(retain));
+                () -> ConfigurationValidator.validate(staleGenericLwt));
     }
 
     @Test
@@ -126,9 +117,9 @@ class ConfigurationValidatorTest {
                 "measures":{"cpu":true,"memory":true},"destination":"local"}}""");
         assertDoesNotThrow(() -> ConfigurationValidator.validate(valid));
 
-        JsonObject iotcore = obj("""
-                {"component":{"global":{}},"heartbeat":{"destination":"iotcore"}}""");
-        assertDoesNotThrow(() -> ConfigurationValidator.validate(iotcore));
+        JsonObject northbound = obj("""
+                {"component":{"global":{}},"heartbeat":{"destination":"northbound"}}""");
+        assertDoesNotThrow(() -> ConfigurationValidator.validate(northbound));
 
         // The legacy targets[] array (the topic-override drift knobs) is REMOVED - a stale config
         // must fail with a precise error (§10 hard cut).
@@ -138,11 +129,15 @@ class ConfigurationValidatorTest {
         assertThrows(ConfigurationValidator.ConfigurationValidationException.class,
                 () -> ConfigurationValidator.validate(staleTargets));
 
-        // destination is a closed enum: local | iotcore (no legacy ipc/iot_core aliases).
+        // destination is a closed enum: local | northbound (no legacy iotcore/iot_core aliases).
         JsonObject badDestination = obj("""
                 {"component":{"global":{}},"heartbeat":{"destination":"iot_core"}}""");
         assertThrows(ConfigurationValidator.ConfigurationValidationException.class,
                 () -> ConfigurationValidator.validate(badDestination));
+        JsonObject staleIotcore = obj("""
+                {"component":{"global":{}},"heartbeat":{"destination":"iotcore"}}""");
+        assertThrows(ConfigurationValidator.ConfigurationValidationException.class,
+                () -> ConfigurationValidator.validate(staleIotcore));
     }
 
     @Test

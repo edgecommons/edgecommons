@@ -53,11 +53,17 @@ pub enum ConfigSourceSpec {
     File { path: PathBuf },
     /// `CONFIGMAP [mountDir] [key]` — Kubernetes-native: a mounted ConfigMap directory
     /// (defaults: dir `/etc/edgecommons`, key `config.json`). The default source on KUBERNETES.
-    ConfigMap { mount_dir: Option<PathBuf>, key: Option<String> },
+    ConfigMap {
+        mount_dir: Option<PathBuf>,
+        key: Option<String>,
+    },
     /// `ENV [var]` — JSON in an environment variable (default `CONFIG`).
     Env { var: String },
     /// `GG_CONFIG [component] [key]` — Greengrass deployment config (default key `ComponentConfig`).
-    Greengrass { component: Option<String>, key: String },
+    Greengrass {
+        component: Option<String>,
+        key: String,
+    },
     /// `SHADOW [name]` — IoT named device shadow.
     Shadow { name: Option<String> },
     /// `CONFIG_COMPONENT` — dedicated configuration component (over messaging).
@@ -102,8 +108,10 @@ pub fn command() -> Command {
                 .num_args(1..=3)
                 .value_parser(clap::value_parser!(String))
                 .value_name("SOURCE")
-                .help("Config source: FILE|CONFIGMAP|ENV|GG_CONFIG|SHADOW|CONFIG_COMPONENT [args...] \
-                       (default: from the resolved platform profile)"),
+                .help(
+                    "Config source: FILE|CONFIGMAP|ENV|GG_CONFIG|SHADOW|CONFIG_COMPONENT [args...] \
+                       (default: from the resolved platform profile)",
+                ),
         )
         .arg(
             Arg::new("platform")
@@ -119,8 +127,10 @@ pub fn command() -> Command {
                 .num_args(1..=2)
                 .value_parser(clap::value_parser!(String))
                 .value_name("TRANSPORT")
-                .help("Messaging transport: IPC | MQTT <messaging_config_path> \
-                       (default: derived from the platform)"),
+                .help(
+                    "Messaging transport: IPC | MQTT <messaging_config_path> \
+                       (default: derived from the platform)",
+                ),
         )
         .arg(
             Arg::new("thing")
@@ -221,11 +231,8 @@ where
     // config source) — never by reading the ConfigMap via the config source first (that runs after
     // messaging init). The explicit-path behavior is unchanged; HOST is unaffected (it defaults to
     // FILE, not CONFIGMAP, so no default is synthesized and MQTT still requires a path).
-    let messaging_config_path = default_messaging_config_path(
-        messaging_config_path,
-        resolved.transport,
-        &config,
-    );
+    let messaging_config_path =
+        default_messaging_config_path(messaging_config_path, resolved.transport, &config);
 
     Ok(ParsedArgs {
         platform: resolved.platform,
@@ -282,7 +289,9 @@ fn parse_config_source(args: &[String]) -> Result<ConfigSourceSpec> {
     let arg = |i: usize| args.get(i).cloned();
     Ok(match source.as_str() {
         "FILE" => ConfigSourceSpec::File {
-            path: arg(1).map(PathBuf::from).unwrap_or_else(|| PathBuf::from(DEFAULT_CONFIG_FILE)),
+            path: arg(1)
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(DEFAULT_CONFIG_FILE)),
         },
         // -c CONFIGMAP [mountDir] [key]; defaults applied inside the source (/etc/edgecommons,
         // config.json). The k8s-native source; the default on the KUBERNETES platform.
@@ -299,7 +308,11 @@ fn parse_config_source(args: &[String]) -> Result<ConfigSourceSpec> {
         },
         "SHADOW" => ConfigSourceSpec::Shadow { name: arg(1) },
         "CONFIG_COMPONENT" => ConfigSourceSpec::ConfigComponent,
-        other => return Err(EdgeCommonsError::Cli(format!("unknown config source '{other}'"))),
+        other => {
+            return Err(EdgeCommonsError::Cli(format!(
+                "unknown config source '{other}'"
+            )));
+        }
     })
 }
 
@@ -320,7 +333,10 @@ mod tests {
         assert_eq!(a.transport, Transport::Ipc);
         assert_eq!(
             a.config,
-            ConfigSourceSpec::Greengrass { component: None, key: "ComponentConfig".into() }
+            ConfigSourceSpec::Greengrass {
+                component: None,
+                key: "ComponentConfig".into()
+            }
         );
         assert_eq!(a.thing, None);
     }
@@ -336,19 +352,37 @@ mod tests {
     fn file_source_with_and_without_path() {
         assert_eq!(
             parse(&["--platform", "HOST", "-c", "FILE"]).unwrap().config,
-            ConfigSourceSpec::File { path: PathBuf::from("config.json") }
+            ConfigSourceSpec::File {
+                path: PathBuf::from("config.json")
+            }
         );
         assert_eq!(
-            parse(&["--platform", "HOST", "-c", "FILE", "custom.json"]).unwrap().config,
-            ConfigSourceSpec::File { path: PathBuf::from("custom.json") }
+            parse(&["--platform", "HOST", "-c", "FILE", "custom.json"])
+                .unwrap()
+                .config,
+            ConfigSourceSpec::File {
+                path: PathBuf::from("custom.json")
+            }
         );
     }
 
     #[test]
     fn gg_config_component_and_key() {
         assert_eq!(
-            parse(&["--platform", "GREENGRASS", "-c", "GG_CONFIG", "com.other", "MyKey"]).unwrap().config,
-            ConfigSourceSpec::Greengrass { component: Some("com.other".into()), key: "MyKey".into() }
+            parse(&[
+                "--platform",
+                "GREENGRASS",
+                "-c",
+                "GG_CONFIG",
+                "com.other",
+                "MyKey"
+            ])
+            .unwrap()
+            .config,
+            ConfigSourceSpec::Greengrass {
+                component: Some("com.other".into()),
+                key: "MyKey".into()
+            }
         );
     }
 
@@ -367,7 +401,13 @@ mod tests {
         // the messaging-config path defaults to the resolved ConfigMap file (/etc/edgecommons/config.json).
         let a = parse(&["--platform", "KUBERNETES"]).unwrap();
         assert_eq!(a.transport, Transport::Mqtt);
-        assert_eq!(a.config, ConfigSourceSpec::ConfigMap { mount_dir: None, key: None });
+        assert_eq!(
+            a.config,
+            ConfigSourceSpec::ConfigMap {
+                mount_dir: None,
+                key: None
+            }
+        );
         assert_eq!(
             a.messaging_config_path,
             Some(PathBuf::from("/etc/edgecommons").join("config.json"))
@@ -377,7 +417,15 @@ mod tests {
     #[test]
     fn configmap_mqtt_default_path_uses_custom_dir_and_key() {
         // The default tracks the SAME (dir, key) the CONFIGMAP source resolved from `-c CONFIGMAP`.
-        let a = parse(&["--platform", "KUBERNETES", "-c", "CONFIGMAP", "/mnt/cfg", "app.json"]).unwrap();
+        let a = parse(&[
+            "--platform",
+            "KUBERNETES",
+            "-c",
+            "CONFIGMAP",
+            "/mnt/cfg",
+            "app.json",
+        ])
+        .unwrap();
         assert_eq!(
             a.messaging_config_path,
             Some(PathBuf::from("/mnt/cfg").join("app.json"))
@@ -397,10 +445,17 @@ mod tests {
         // The old explicit-path behavior is unchanged: an explicit `--transport MQTT <path>`
         // overrides the CONFIGMAP default.
         let a = parse(&[
-            "--platform", "KUBERNETES", "--transport", "MQTT", "explicit.json",
+            "--platform",
+            "KUBERNETES",
+            "--transport",
+            "MQTT",
+            "explicit.json",
         ])
         .unwrap();
-        assert_eq!(a.messaging_config_path, Some(PathBuf::from("explicit.json")));
+        assert_eq!(
+            a.messaging_config_path,
+            Some(PathBuf::from("explicit.json"))
+        );
     }
 
     #[test]
@@ -409,18 +464,36 @@ mod tests {
         // so HOST+MQTT still requires an explicit path (enforced later, at messaging init).
         let a = parse(&["--platform", "HOST"]).unwrap();
         assert_eq!(a.transport, Transport::Mqtt);
-        assert_eq!(a.config, ConfigSourceSpec::File { path: PathBuf::from("config.json") });
+        assert_eq!(
+            a.config,
+            ConfigSourceSpec::File {
+                path: PathBuf::from("config.json")
+            }
+        );
         assert_eq!(a.messaging_config_path, None);
     }
 
     #[test]
     fn file_source_mqtt_does_not_synthesize_a_messaging_path() {
         // Only CONFIGMAP triggers the default; an explicit FILE source under MQTT does not.
-        let a = parse(&["--platform", "HOST", "--transport", "MQTT", "-c", "FILE", "config.json"]);
+        let a = parse(&[
+            "--platform",
+            "HOST",
+            "--transport",
+            "MQTT",
+            "-c",
+            "FILE",
+            "config.json",
+        ]);
         // Note: order — the positional path is consumed by --transport; here we give none, so
         // FILE has its own path and messaging stays None.
         let a = a.unwrap();
-        assert_eq!(a.config, ConfigSourceSpec::File { path: PathBuf::from("config.json") });
+        assert_eq!(
+            a.config,
+            ConfigSourceSpec::File {
+                path: PathBuf::from("config.json")
+            }
+        );
         assert_eq!(a.messaging_config_path, None);
     }
 
@@ -435,7 +508,13 @@ mod tests {
         let a = parse(&["--platform", "KUBERNETES"]).unwrap();
         assert_eq!(a.platform, Platform::Kubernetes);
         assert_eq!(a.transport, Transport::Mqtt);
-        assert_eq!(a.config, ConfigSourceSpec::ConfigMap { mount_dir: None, key: None });
+        assert_eq!(
+            a.config,
+            ConfigSourceSpec::ConfigMap {
+                mount_dir: None,
+                key: None
+            }
+        );
     }
 
     #[test]
@@ -447,13 +526,25 @@ mod tests {
     #[test]
     fn configmap_source_with_and_without_args() {
         assert_eq!(
-            parse(&["--platform", "KUBERNETES", "-c", "CONFIGMAP"]).unwrap().config,
-            ConfigSourceSpec::ConfigMap { mount_dir: None, key: None }
-        );
-        assert_eq!(
-            parse(&["--platform", "KUBERNETES", "-c", "CONFIGMAP", "/mnt/cfg", "app.json"])
+            parse(&["--platform", "KUBERNETES", "-c", "CONFIGMAP"])
                 .unwrap()
                 .config,
+            ConfigSourceSpec::ConfigMap {
+                mount_dir: None,
+                key: None
+            }
+        );
+        assert_eq!(
+            parse(&[
+                "--platform",
+                "KUBERNETES",
+                "-c",
+                "CONFIGMAP",
+                "/mnt/cfg",
+                "app.json"
+            ])
+            .unwrap()
+            .config,
             ConfigSourceSpec::ConfigMap {
                 mount_dir: Some(PathBuf::from("/mnt/cfg")),
                 key: Some("app.json".into())

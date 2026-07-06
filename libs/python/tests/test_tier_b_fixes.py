@@ -18,14 +18,14 @@ def test_heartbeat_to_dict_round_trips():
             "cpu": True, "memory": False, "disk": True,
             "files": True, "threads": False, "fds": True,
         },
-        "destination": "iotcore",
+        "destination": "northbound",
     }
     hb = HeartbeatConfiguration(src)
     d = hb.to_dict()  # previously raised AttributeError/TypeError
     assert d["enabled"] is True
     assert d["intervalSecs"] == 7
     assert d["measures"] == src["measures"]
-    assert d["destination"] == "iotcore"
+    assert d["destination"] == "northbound"
     # Feeding to_dict() output back in reproduces the same dict.
     assert HeartbeatConfiguration(d).to_dict() == d
 

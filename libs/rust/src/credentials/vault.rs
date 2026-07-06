@@ -24,17 +24,17 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as B64;
 use fs4::fs_std::FileExt;
 use zeroize::Zeroizing;
 
 use super::crypto;
-use super::format::{self, KekInfo, SecretEntry, VaultFile, VersionEntry, FORMAT_VERSION};
+use super::format::{self, FORMAT_VERSION, KekInfo, SecretEntry, VaultFile, VersionEntry};
 use super::keyprovider::KeyProvider;
 use super::service::{Secret, SecretMeta};
-use crate::error::EdgeCommonsError;
 use crate::Result;
+use crate::error::EdgeCommonsError;
 
 /// Options controlling a `put`.
 #[derive(Debug, Clone, Default)]
@@ -69,7 +69,11 @@ impl LocalVault {
     /// # Post-conditions
     /// On success the DEK is unwrapped and (for an existing file) the MAC verified. A new vault is
     /// created with a random `vaultId` + DEK, the DEK wrapped via `key_provider`, and persisted.
-    pub fn open(path: impl AsRef<Path>, key_provider: Arc<dyn KeyProvider>, keep_versions: usize) -> Result<Self> {
+    pub fn open(
+        path: impl AsRef<Path>,
+        key_provider: Arc<dyn KeyProvider>,
+        keep_versions: usize,
+    ) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
         let keep_versions = keep_versions.max(1);
         if path.exists() {
@@ -77,7 +81,8 @@ impl LocalVault {
             Self::from_file(path, vf, key_provider, keep_versions)
         } else {
             if let Some(dir) = path.parent() {
-                std::fs::create_dir_all(dir).map_err(|e| EdgeCommonsError::Credentials(format!("create vault dir: {e}")))?;
+                std::fs::create_dir_all(dir)
+                    .map_err(|e| EdgeCommonsError::Credentials(format!("create vault dir: {e}")))?;
             }
             let vault_id = uuid::Uuid::new_v4().to_string();
             let dek = Zeroizing::new(crypto::random::<{ crypto::KEY_LEN }>());
@@ -97,9 +102,17 @@ impl LocalVault {
         }
     }
 
-    fn from_file(path: PathBuf, vf: VaultFile, key_provider: Arc<dyn KeyProvider>, keep_versions: usize) -> Result<Self> {
+    fn from_file(
+        path: PathBuf,
+        vf: VaultFile,
+        key_provider: Arc<dyn KeyProvider>,
+        keep_versions: usize,
+    ) -> Result<Self> {
         if vf.format != FORMAT_VERSION {
-            return Err(EdgeCommonsError::Credentials(format!("unsupported vault format {}", vf.format)));
+            return Err(EdgeCommonsError::Credentials(format!(
+                "unsupported vault format {}",
+                vf.format
+            )));
         }
         let dek = key_provider.unwrap_dek(&vf.vault_id, &vf.kek)?;
         verify_mac(&dek, &vf)?;
@@ -131,7 +144,11 @@ impl LocalVault {
 
     /// A specific version of `name`, decrypted.
     pub fn get_version(&self, name: &str, version: &str) -> Result<Option<Secret>> {
-        match self.secrets.get(name).and_then(|e| e.versions.iter().find(|v| v.version == version)) {
+        match self
+            .secrets
+            .get(name)
+            .and_then(|e| e.versions.iter().find(|v| v.version == version))
+        {
             Some(v) => Ok(Some(self.decrypt(name, v)?)),
             None => Ok(None),
         }
@@ -139,7 +156,9 @@ impl LocalVault {
 
     /// Whether a secret exists (no decryption).
     pub fn exists(&self, name: &str) -> bool {
-        self.secrets.get(name).is_some_and(|e| !e.versions.is_empty())
+        self.secrets
+            .get(name)
+            .is_some_and(|e| !e.versions.is_empty())
     }
 
     /// Metadata for all secrets whose name starts with `prefix` (empty = all). Never decrypts.
@@ -180,11 +199,17 @@ impl LocalVault {
             source: opts.source.unwrap_or_else(|| "local".to_string()),
             central_version_id: opts.central_version_id,
             labels: opts.labels,
-            content_type: opts.content_type.unwrap_or_else(|| "application/octet-stream".to_string()),
+            content_type: opts
+                .content_type
+                .unwrap_or_else(|| "application/octet-stream".to_string()),
             nonce: B64.encode(nonce),
             ciphertext: B64.encode(ct),
         };
-        let versions = &mut self.secrets.entry(name.to_string()).or_insert_with(|| SecretEntry { versions: vec![] }).versions;
+        let versions = &mut self
+            .secrets
+            .entry(name.to_string())
+            .or_insert_with(|| SecretEntry { versions: vec![] })
+            .versions;
         versions.push(entry);
         let keep = self.keep_versions;
         if versions.len() > keep {
@@ -236,7 +261,9 @@ impl LocalVault {
             .ok()
             .and_then(|b| b.try_into().ok())
             .ok_or_else(|| EdgeCommonsError::Credentials("bad record nonce".into()))?;
-        let ct = B64.decode(&v.ciphertext).map_err(|_| EdgeCommonsError::Credentials("bad ciphertext".into()))?;
+        let ct = B64
+            .decode(&v.ciphertext)
+            .map_err(|_| EdgeCommonsError::Credentials("bad ciphertext".into()))?;
         let aad = format::record_aad(&self.vault_id, name, &v.version);
         let bytes = crypto::open(&self.dek, &nonce, &aad, &ct)?;
         Ok(Secret {
@@ -262,16 +289,21 @@ impl LocalVault {
             secrets: self.secrets.clone(),
             mac,
         };
-        let json = serde_json::to_vec_pretty(&vf).map_err(|e| EdgeCommonsError::Credentials(format!("serialize vault: {e}")))?;
+        let json = serde_json::to_vec_pretty(&vf)
+            .map_err(|e| EdgeCommonsError::Credentials(format!("serialize vault: {e}")))?;
 
         // Coordinate concurrent writers (shared device vault) via an advisory lock on a sidecar.
         let lock_path = self.path.with_extension("lock");
-        let lock = File::create(&lock_path).map_err(|e| EdgeCommonsError::Credentials(format!("open vault lock: {e}")))?;
-        lock.lock_exclusive().map_err(|e| EdgeCommonsError::Credentials(format!("lock vault: {e}")))?;
+        let lock = File::create(&lock_path)
+            .map_err(|e| EdgeCommonsError::Credentials(format!("open vault lock: {e}")))?;
+        lock.lock_exclusive()
+            .map_err(|e| EdgeCommonsError::Credentials(format!("lock vault: {e}")))?;
 
         let tmp = self.path.with_extension("tmp");
-        std::fs::write(&tmp, &json).map_err(|e| EdgeCommonsError::Credentials(format!("write vault tmp: {e}")))?;
-        std::fs::rename(&tmp, &self.path).map_err(|e| EdgeCommonsError::Credentials(format!("rename vault: {e}")))?;
+        std::fs::write(&tmp, &json)
+            .map_err(|e| EdgeCommonsError::Credentials(format!("write vault tmp: {e}")))?;
+        std::fs::rename(&tmp, &self.path)
+            .map_err(|e| EdgeCommonsError::Credentials(format!("rename vault: {e}")))?;
         let _ = FileExt::unlock(&lock);
 
         self.stamp = file_stamp(&self.path).ok();
@@ -280,18 +312,24 @@ impl LocalVault {
 }
 
 fn read_file(path: &Path) -> Result<VaultFile> {
-    let bytes = std::fs::read(path).map_err(|e| EdgeCommonsError::Credentials(format!("read vault: {e}")))?;
-    serde_json::from_slice(&bytes).map_err(|e| EdgeCommonsError::Credentials(format!("parse vault: {e}")))
+    let bytes = std::fs::read(path)
+        .map_err(|e| EdgeCommonsError::Credentials(format!("read vault: {e}")))?;
+    serde_json::from_slice(&bytes)
+        .map_err(|e| EdgeCommonsError::Credentials(format!("parse vault: {e}")))
 }
 
 fn verify_mac(dek: &[u8; crypto::KEY_LEN], vf: &VaultFile) -> Result<()> {
     let mac_key = crypto::derive_mac_key(dek, &vf.vault_id);
     let input = format::mac_input(&vf.vault_id, &vf.secrets, decode_b64);
-    let expected = B64.decode(&vf.mac).map_err(|_| EdgeCommonsError::Credentials("bad MAC encoding".into()))?;
+    let expected = B64
+        .decode(&vf.mac)
+        .map_err(|_| EdgeCommonsError::Credentials("bad MAC encoding".into()))?;
     if crypto::hmac_verify(&mac_key, &input, &expected) {
         Ok(())
     } else {
-        Err(EdgeCommonsError::Credentials("vault integrity check failed (tampered or wrong key)".into()))
+        Err(EdgeCommonsError::Credentials(
+            "vault integrity check failed (tampered or wrong key)".into(),
+        ))
     }
 }
 
@@ -311,7 +349,10 @@ fn meta_of(name: &str, v: &VersionEntry) -> SecretMeta {
 }
 
 fn now_ms() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 fn file_stamp(path: &Path) -> std::io::Result<(SystemTime, u64)> {

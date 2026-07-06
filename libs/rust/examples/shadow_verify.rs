@@ -21,7 +21,10 @@ async fn main() {
     if let Err(e) = run().await {
         let _ = fs::write(
             RESULT,
-            format!("{}\n", json!({ "lang": "rust", "connected": false, "error": e.to_string() })),
+            format!(
+                "{}\n",
+                json!({ "lang": "rust", "connected": false, "error": e.to_string() })
+            ),
         );
         std::process::exit(1);
     }
@@ -42,7 +45,10 @@ async fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
         ConfigSourceSpec::Env { .. } => "ENV",
         ConfigSourceSpec::ConfigComponent => "CONFIG_COMPONENT",
     };
-    let publish_interval = cfg.global().get("publish_interval").and_then(|v| v.as_f64());
+    let publish_interval = cfg
+        .global()
+        .get("publish_interval")
+        .and_then(|v| v.as_f64());
     let site = cfg.parsed.tags.get("site").and_then(|v| v.as_str());
 
     let out = json!({

@@ -70,7 +70,14 @@ impl DataFacade {
         stream_sink: Option<Arc<dyn StreamSink>>,
         clock: Clock,
     ) -> DataFacade {
-        DataFacade { config, instance_id, uns, messaging, stream_sink, clock }
+        DataFacade {
+            config,
+            instance_id,
+            uns,
+            messaging,
+            stream_sink,
+            clock,
+        }
     }
 
     // ===================== fluent builder entry point =====================
@@ -165,15 +172,21 @@ impl DataFacade {
                 )
             })?;
         if update.samples.is_empty() {
-            return Err(EdgeCommonsError::Facade("data publish requires at least one sample".to_string()));
+            return Err(EdgeCommonsError::Facade(
+                "data publish requires at least one sample".to_string(),
+            ));
         }
         let body = self.build_body(&update)?;
-        let path = update.effective_signal_path().unwrap_or(&signal_id).to_string();
+        let path = update
+            .effective_signal_path()
+            .unwrap_or(&signal_id)
+            .to_string();
         let channel = self.channel_token(&path)?;
         let topic = self.uns.topic_with_channel(UnsClass::Data, &channel)?;
         let msg = self.message(body.clone());
         let ts_millis = first_server_ts_millis(&body);
-        self.route(update.via.clone(), &topic, msg, &signal_id, ts_millis).await
+        self.route(update.via.clone(), &topic, msg, &signal_id, ts_millis)
+            .await
     }
 
     // ===================== body construction (THE contract) =====================
@@ -225,7 +238,10 @@ impl DataFacade {
 
         let quality_defaulted = sample.quality.is_none();
         let quality = sample.quality.unwrap_or(Quality::Good);
-        out.insert("quality".to_string(), Value::String(quality.wire().to_string()));
+        out.insert(
+            "quality".to_string(),
+            Value::String(quality.wire().to_string()),
+        );
 
         let quality_raw = match (&sample.quality_raw, quality_defaulted) {
             (Some(raw), _) => Some(raw.clone()),
@@ -249,7 +265,8 @@ impl DataFacade {
     /// Resolves the effective channel: per-call `via` override ▸ config `publish.channel`
     /// (instance ▸ global) ▸ [`Channel::Local`] (DESIGN-class-facades §4, D1).
     pub fn resolve_channel(&self, via: Option<Channel>) -> Channel {
-        via.or_else(|| self.configured_channel()).unwrap_or(Channel::Local)
+        via.or_else(|| self.configured_channel())
+            .unwrap_or(Channel::Local)
     }
 
     /// Reads the config `publish.channel` default (Option C): the bound instance's
@@ -276,7 +293,9 @@ impl DataFacade {
             Channel::Local => self.messaging()?.publish(topic, &msg).await,
             Channel::Northbound => {
                 let messaging = self.messaging()?;
-                if let Err(e) = messaging.publish_to_iot_core(topic, &msg, Qos::AtLeastOnce).await
+                if let Err(e) = messaging
+                    .publish_northbound(topic, &msg, Qos::AtLeastOnce)
+                    .await
                 {
                     tracing::warn!(
                         topic,
@@ -287,7 +306,8 @@ impl DataFacade {
                 Ok(())
             }
             Channel::Stream(name) => {
-                self.append_to_stream(&name, topic, &msg, partition_key, ts_millis).await
+                self.append_to_stream(&name, topic, &msg, partition_key, ts_millis)
+                    .await
             }
         }
     }
@@ -332,9 +352,15 @@ impl DataFacade {
     /// [`EdgeCommonsError::Facade`] when `signal_path` is empty.
     pub fn channel_token(&self, signal_path: &str) -> Result<String> {
         if signal_path.is_empty() {
-            return Err(EdgeCommonsError::Facade("data signal path must be non-empty".to_string()));
+            return Err(EdgeCommonsError::Facade(
+                "data signal path must be non-empty".to_string(),
+            ));
         }
-        Ok(signal_path.split('/').map(sanitize).collect::<Vec<_>>().join("/"))
+        Ok(signal_path
+            .split('/')
+            .map(sanitize)
+            .collect::<Vec<_>>()
+            .join("/"))
     }
 
     /// Builds the identity-stamped envelope with the signal-update header.
@@ -440,7 +466,9 @@ mod tests {
     async fn explicit_quality_is_not_marked_unspecified() {
         let messaging = RecordingMessaging::new();
         let f = facade(messaging.clone());
-        f.publish_value_with_quality("temp", 0, Quality::Bad).await.unwrap();
+        f.publish_value_with_quality("temp", 0, Quality::Bad)
+            .await
+            .unwrap();
         let (_, msg) = &messaging.local()[0];
         assert_eq!(msg.body["samples"][0]["quality"], "BAD");
         assert!(msg.body["samples"][0].get("qualityRaw").is_none());
@@ -451,7 +479,10 @@ mod tests {
         let messaging = RecordingMessaging::new();
         let f = facade(messaging);
         let update = SignalUpdate::builder().sample(Sample::new(1)).build();
-        assert!(matches!(f.publish(update).await, Err(EdgeCommonsError::Facade(_))));
+        assert!(matches!(
+            f.publish(update).await,
+            Err(EdgeCommonsError::Facade(_))
+        ));
     }
 
     #[tokio::test]
@@ -459,7 +490,10 @@ mod tests {
         let messaging = RecordingMessaging::new();
         let f = facade(messaging);
         let update = SignalUpdate::builder().signal_id("temp").build();
-        assert!(matches!(f.publish(update).await, Err(EdgeCommonsError::Facade(_))));
+        assert!(matches!(
+            f.publish(update).await,
+            Err(EdgeCommonsError::Facade(_))
+        ));
     }
 
     #[tokio::test]
@@ -468,29 +502,45 @@ mod tests {
         let f = facade(messaging);
         let update = SignalUpdate::builder()
             .signal_id("temp")
-            .sample(Sample { quality: Some(Quality::Bad), ..Default::default() })
+            .sample(Sample {
+                quality: Some(Quality::Bad),
+                ..Default::default()
+            })
             .build();
-        assert!(matches!(f.publish(update).await, Err(EdgeCommonsError::Facade(_))));
+        assert!(matches!(
+            f.publish(update).await,
+            Err(EdgeCommonsError::Facade(_))
+        ));
     }
 
     #[tokio::test]
     async fn channel_path_is_sanitized() {
         let messaging = RecordingMessaging::new();
         let f = facade(messaging.clone());
-        f.publish(f.signal("s2").sample(Sample::new(1.0)).signal_path("a+b").build())
-            .await
-            .unwrap();
+        f.publish(
+            f.signal("s2")
+                .sample(Sample::new(1.0))
+                .signal_path("a+b")
+                .build(),
+        )
+        .await
+        .unwrap();
         let (topic, _) = &messaging.local()[0];
         assert_eq!(topic, "ecv1/gw-01/opcua-adapter/kep1/data/a_b");
     }
 
     #[tokio::test]
-    async fn northbound_override_routes_to_iot_core() {
+    async fn northbound_override_routes_to_northbound() {
         let messaging = RecordingMessaging::new();
         let f = facade(messaging.clone());
-        f.publish(f.signal("temp").sample(Sample::new(1.0)).via(Channel::Northbound).build())
-            .await
-            .unwrap();
+        f.publish(
+            f.signal("temp")
+                .sample(Sample::new(1.0))
+                .via(Channel::Northbound)
+                .build(),
+        )
+        .await
+        .unwrap();
         assert!(messaging.local().is_empty());
         assert_eq!(messaging.iot().len(), 1);
     }
@@ -508,8 +558,12 @@ mod tests {
                 timestamp_ms: u64,
                 payload: Vec<u8>,
             ) -> Result<()> {
-                *self.0.lock().unwrap() =
-                    Some((stream_name.to_string(), partition_key.to_string(), timestamp_ms, payload));
+                *self.0.lock().unwrap() = Some((
+                    stream_name.to_string(),
+                    partition_key.to_string(),
+                    timestamp_ms,
+                    payload,
+                ));
                 Ok(())
             }
         }
@@ -526,12 +580,23 @@ mod tests {
             fixed_clock(),
         );
         f.publish(
-            f.signal("temp").sample(Sample::new(21.5)).via(Channel::stream("hot").unwrap()).build(),
+            f.signal("temp")
+                .sample(Sample::new(21.5))
+                .via(Channel::stream("hot").unwrap())
+                .build(),
         )
         .await
         .unwrap();
-        assert!(messaging.local().is_empty(), "the stream route must not also publish locally");
-        let recorded = sink.0.lock().unwrap().take().expect("stream append recorded");
+        assert!(
+            messaging.local().is_empty(),
+            "the stream route must not also publish locally"
+        );
+        let recorded = sink
+            .0
+            .lock()
+            .unwrap()
+            .take()
+            .expect("stream append recorded");
         assert_eq!(recorded.0, "hot");
         assert_eq!(recorded.1, "temp");
     }
@@ -541,18 +606,27 @@ mod tests {
         let messaging = RecordingMessaging::new();
         let f = facade(messaging.clone()); // built with stream_sink = None
         f.publish(
-            f.signal("temp").sample(Sample::new(21.5)).via(Channel::stream("hot").unwrap()).build(),
+            f.signal("temp")
+                .sample(Sample::new(21.5))
+                .via(Channel::stream("hot").unwrap())
+                .build(),
         )
         .await
         .unwrap();
-        assert_eq!(messaging.local().len(), 1, "no sink wired -> LOCAL fallback (D1a)");
+        assert_eq!(
+            messaging.local().len(),
+            1,
+            "no sink wired -> LOCAL fallback (D1a)"
+        );
     }
 
     #[tokio::test]
     async fn raw_escape_hatch_publishes_the_body_verbatim() {
         let messaging = RecordingMessaging::new();
         let f = facade(messaging.clone());
-        f.publish_body("temp", json!({ "custom": true })).await.unwrap();
+        f.publish_body("temp", json!({ "custom": true }))
+            .await
+            .unwrap();
         let (topic, msg) = &messaging.local()[0];
         assert_eq!(topic, "ecv1/gw-01/opcua-adapter/kep1/data/temp");
         assert_eq!(msg.body, json!({ "custom": true }));

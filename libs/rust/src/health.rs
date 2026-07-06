@@ -38,8 +38,8 @@
 
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -100,7 +100,10 @@ impl HealthState {
     /// Whether the messaging transport reports a live connection. `false` when no messaging is
     /// wired (an unwired runtime is not ready).
     pub fn messaging_connected(&self) -> bool {
-        self.messaging.as_ref().map(|m| m.connected()).unwrap_or(false)
+        self.messaging
+            .as_ref()
+            .map(|m| m.connected())
+            .unwrap_or(false)
     }
 
     /// `/livez`: always `true` here. Liveness is "the process/health-thread is running"; it
@@ -325,11 +328,17 @@ mod tests {
     #[test]
     fn explicit_health_enabled_overrides_platform_default() {
         // Explicit true turns it on even on HOST/GREENGRASS...
-        let on = HealthConfig { enabled: Some(true), ..Default::default() };
+        let on = HealthConfig {
+            enabled: Some(true),
+            ..Default::default()
+        };
         assert!(resolve_enabled(&on, Platform::Host));
         assert!(resolve_enabled(&on, Platform::Greengrass));
         // ...and explicit false turns it off even on KUBERNETES.
-        let off = HealthConfig { enabled: Some(false), ..Default::default() };
+        let off = HealthConfig {
+            enabled: Some(false),
+            ..Default::default()
+        };
         assert!(!resolve_enabled(&off, Platform::Kubernetes));
     }
 
@@ -428,15 +437,25 @@ mod tests {
         assert_eq!(route("/alive", &cfg, &state), (200, "ok"));
         assert_eq!(route("/ready", &cfg, &state), (200, "ok"));
         assert_eq!(route("/started", &cfg, &state), (200, "ok"));
-        assert_eq!(route("/livez", &cfg, &state), (404, "not found"), "default paths off when remapped");
+        assert_eq!(
+            route("/livez", &cfg, &state),
+            (404, "not found"),
+            "default paths off when remapped"
+        );
     }
 
     // ---------- request parsing ----------
 
     #[test]
     fn parses_target_and_strips_query() {
-        assert_eq!(parse_request_target(b"GET /livez HTTP/1.1\r\n\r\n").as_deref(), Some("/livez"));
-        assert_eq!(parse_request_target(b"GET /readyz?probe=1 HTTP/1.1\r\n").as_deref(), Some("/readyz"));
+        assert_eq!(
+            parse_request_target(b"GET /livez HTTP/1.1\r\n\r\n").as_deref(),
+            Some("/livez")
+        );
+        assert_eq!(
+            parse_request_target(b"GET /readyz?probe=1 HTTP/1.1\r\n").as_deref(),
+            Some("/readyz")
+        );
         assert_eq!(parse_request_target(b"garbage"), None);
         assert_eq!(parse_request_target(b""), None);
     }
@@ -450,7 +469,10 @@ mod tests {
         let target = SocketAddr::from(([127, 0, 0, 1], addr.port()));
         let mut stream = TcpStream::connect(target).expect("connect to health server");
         stream
-            .write_all(format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").as_bytes())
+            .write_all(
+                format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+                    .as_bytes(),
+            )
             .expect("send request");
         let mut response = String::new();
         stream.read_to_string(&mut response).expect("read response");
@@ -473,7 +495,11 @@ mod tests {
         // livez is 200 even when disconnected; flip connected off to prove liveness ignores it.
         messaging.set_connected(false);
         assert_eq!(http_get(addr, "/livez").0, 200, "livez ignores the broker");
-        assert_eq!(http_get(addr, "/readyz").0, 503, "readyz 503 while disconnected");
+        assert_eq!(
+            http_get(addr, "/readyz").0,
+            503,
+            "readyz 503 while disconnected"
+        );
 
         // Reconnect → ready.
         messaging.set_connected(true);
@@ -490,7 +516,11 @@ mod tests {
         // shutdown flips readiness to 503 immediately.
         state.begin_shutdown();
         assert_eq!(http_get(addr, "/readyz").0, 503);
-        assert_eq!(http_get(addr, "/livez").0, 200, "livez stays 200 during shutdown");
+        assert_eq!(
+            http_get(addr, "/livez").0,
+            200,
+            "livez stays 200 during shutdown"
+        );
 
         // unknown path → 404.
         assert_eq!(http_get(addr, "/nope").0, 404);

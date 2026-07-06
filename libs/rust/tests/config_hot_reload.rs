@@ -35,7 +35,8 @@ fn skipped() -> bool {
 
 /// Write a messaging-config file for the local broker and return its path.
 fn write_messaging_config(dir: &std::path::Path) -> std::path::PathBuf {
-    let host = std::env::var("EDGECOMMONS_IT_MQTT_HOST").unwrap_or_else(|_| "localhost".to_string());
+    let host =
+        std::env::var("EDGECOMMONS_IT_MQTT_HOST").unwrap_or_else(|_| "localhost".to_string());
     let port = std::env::var("EDGECOMMONS_IT_MQTT_PORT").unwrap_or_else(|_| "1883".to_string());
     let path = dir.join("messaging.json");
     std::fs::write(
@@ -50,7 +51,11 @@ fn write_messaging_config(dir: &std::path::Path) -> std::path::PathBuf {
 }
 
 /// Build a HOST/MQTT runtime with a FILE config source (broker required).
-async fn build_runtime(component: &str, dir: &std::path::Path, config_path: &std::path::Path) -> EdgeCommons {
+async fn build_runtime(
+    component: &str,
+    dir: &std::path::Path,
+    config_path: &std::path::Path,
+) -> EdgeCommons {
     let messaging_path = write_messaging_config(dir);
     EdgeCommonsBuilder::new(component.to_string())
         .args([
@@ -128,9 +133,16 @@ async fn file_config_hot_reloads_and_notifies_listeners() {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
-    assert!(reloaded, "config should have hot-reloaded within the timeout");
+    assert!(
+        reloaded,
+        "config should have hot-reloaded within the timeout"
+    );
     assert_eq!(gg.config().global()["v"], 2, "snapshot updated");
-    assert_eq!(*listener.last_v.lock().unwrap(), Some(2), "listener saw new value");
+    assert_eq!(
+        *listener.last_v.lock().unwrap(),
+        Some(2),
+        "listener saw new value"
+    );
     assert!(listener.count.load(Ordering::SeqCst) >= 1, "listener fired");
 
     let _ = std::fs::remove_dir_all(&dir);
@@ -162,7 +174,9 @@ async fn multi_instance_config_is_exposed_through_the_runtime() {
     let cfg = gg.config();
     assert_eq!(cfg.instance_ids(), vec!["lineA", "lineB"]);
     assert_eq!(
-        cfg.instance("lineB").and_then(|i| i.get("sensor")).and_then(|v| v.as_str()),
+        cfg.instance("lineB")
+            .and_then(|i| i.get("sensor"))
+            .and_then(|v| v.as_str()),
         Some("/dev/ttyUSB1"),
         "per-instance config is accessible by id"
     );
@@ -186,7 +200,11 @@ async fn metric_target_reconfigures_on_reload() {
     let gg = build_runtime("com.example.MetricReload", &dir, &config_path).await;
 
     let metrics = gg.metrics();
-    metrics.define_metric(MetricBuilder::create("m").add_measure("count", "Count", 60).build());
+    metrics.define_metric(
+        MetricBuilder::create("m")
+            .add_measure("count", "Count", 60)
+            .build(),
+    );
     let mut values = HashMap::new();
     values.insert("count".to_string(), 1.0);
     metrics.emit_metric_now("m", values.clone()).await.unwrap();
@@ -212,14 +230,20 @@ async fn metric_target_reconfigures_on_reload() {
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    assert!(listener.count.load(Ordering::SeqCst) >= 1, "reload happened");
+    assert!(
+        listener.count.load(Ordering::SeqCst) >= 1,
+        "reload happened"
+    );
 
     let mut values2 = HashMap::new();
     values2.insert("count".to_string(), 2.0);
     metrics.emit_metric_now("m", values2).await.unwrap();
     metrics.flush_metrics().await.unwrap();
     assert!(
-        !std::fs::read_to_string(&log_b).unwrap_or_default().trim().is_empty(),
+        !std::fs::read_to_string(&log_b)
+            .unwrap_or_default()
+            .trim()
+            .is_empty(),
         "after reload, metrics go to the reconfigured log file"
     );
 

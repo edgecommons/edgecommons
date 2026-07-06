@@ -11,11 +11,11 @@
 
 use serde::{Deserialize, Deserializer};
 
-use super::keyprovider::{EnvKeyProvider, FileKeyProvider, DEFAULT_KEK_ENV_VAR};
+use super::keyprovider::{DEFAULT_KEK_ENV_VAR, EnvKeyProvider, FileKeyProvider};
 use super::service::DefaultCredentialService;
 use super::vault::LocalVault;
-use crate::error::EdgeCommonsError;
 use crate::Result;
+use crate::error::EdgeCommonsError;
 
 // Greengrass stores config numbers as doubles (e.g. 300.0). Accept an int or an integer-valued
 // float for the numeric fields below.
@@ -25,7 +25,9 @@ fn lenient_u64<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<u64, D::E
             .as_u64()
             .or_else(|| n.as_f64().map(|f| f as u64))
             .ok_or_else(|| serde::de::Error::custom("expected a non-negative integer")),
-        other => Err(serde::de::Error::custom(format!("expected a number, got {other}"))),
+        other => Err(serde::de::Error::custom(format!(
+            "expected a number, got {other}"
+        ))),
     }
 }
 
@@ -192,7 +194,10 @@ pub(crate) fn build_key_provider(
     let kind = kp.kind.as_deref().or(default_kind).unwrap_or("file");
     match kind {
         "file" => {
-            let key_path = kp.key_path.clone().unwrap_or_else(|| default_key_path.to_string());
+            let key_path = kp
+                .key_path
+                .clone()
+                .unwrap_or_else(|| default_key_path.to_string());
             if let Some(dir) = std::path::Path::new(&key_path).parent() {
                 let _ = std::fs::create_dir_all(dir);
             }
@@ -213,38 +218,54 @@ pub(crate) fn build_key_provider(
         }
         #[cfg(feature = "credentials-aws")]
         "kms" | "greengrass" => {
-            let key_id = kp
-                .kms_key_id
-                .clone()
-                .ok_or_else(|| EdgeCommonsError::Credentials("kms key provider requires keyProvider.kmsKeyId".to_string()))?;
-            let p = super::keyprovider::KmsKeyProvider::new(key_id, kp.region.clone(), kp.endpoint_url.clone())?;
+            let key_id = kp.kms_key_id.clone().ok_or_else(|| {
+                EdgeCommonsError::Credentials(
+                    "kms key provider requires keyProvider.kmsKeyId".to_string(),
+                )
+            })?;
+            let p = super::keyprovider::KmsKeyProvider::new(
+                key_id,
+                kp.region.clone(),
+                kp.endpoint_url.clone(),
+            )?;
             Ok(std::sync::Arc::new(p))
         }
         #[cfg(feature = "credentials-pkcs11")]
         "pkcs11" => {
-            let module_path = kp
-                .module_path
-                .clone()
-                .ok_or_else(|| EdgeCommonsError::Credentials("pkcs11 key provider requires keyProvider.modulePath".into()))?;
-            let token_label = kp
-                .token_label
-                .clone()
-                .ok_or_else(|| EdgeCommonsError::Credentials("pkcs11 key provider requires keyProvider.tokenLabel".into()))?;
-            let key_label = kp
-                .key_label
-                .clone()
-                .ok_or_else(|| EdgeCommonsError::Credentials("pkcs11 key provider requires keyProvider.keyLabel".into()))?;
+            let module_path = kp.module_path.clone().ok_or_else(|| {
+                EdgeCommonsError::Credentials(
+                    "pkcs11 key provider requires keyProvider.modulePath".into(),
+                )
+            })?;
+            let token_label = kp.token_label.clone().ok_or_else(|| {
+                EdgeCommonsError::Credentials(
+                    "pkcs11 key provider requires keyProvider.tokenLabel".into(),
+                )
+            })?;
+            let key_label = kp.key_label.clone().ok_or_else(|| {
+                EdgeCommonsError::Credentials(
+                    "pkcs11 key provider requires keyProvider.keyLabel".into(),
+                )
+            })?;
             let pin = match (&kp.pin_env, &kp.pin) {
-                (Some(env), _) => std::env::var(env)
-                    .map_err(|_| EdgeCommonsError::Credentials(format!("pkcs11 keyProvider.pinEnv '{env}' is not set")))?,
+                (Some(env), _) => std::env::var(env).map_err(|_| {
+                    EdgeCommonsError::Credentials(format!(
+                        "pkcs11 keyProvider.pinEnv '{env}' is not set"
+                    ))
+                })?,
                 (None, Some(p)) => p.clone(),
                 (None, None) => {
                     return Err(EdgeCommonsError::Credentials(
                         "pkcs11 key provider requires keyProvider.pinEnv or keyProvider.pin".into(),
-                    ))
+                    ));
                 }
             };
-            let p = super::keyprovider::Pkcs11KeyProvider::new(&module_path, &token_label, key_label, pin)?;
+            let p = super::keyprovider::Pkcs11KeyProvider::new(
+                &module_path,
+                &token_label,
+                key_label,
+                pin,
+            )?;
             Ok(std::sync::Arc::new(p))
         }
         other => Err(EdgeCommonsError::Credentials(format!(
@@ -264,7 +285,10 @@ pub fn open(config: &CredentialsConfig) -> Result<DefaultCredentialService> {
 /// Uses the library default KEK custodian (`file`) when `keyProvider.type` is unspecified. The
 /// runtime builder calls [`open_namespaced_with_default`] to apply the platform-profile default
 /// (env on KUBERNETES, FR-CRED-6).
-pub fn open_namespaced(config: &CredentialsConfig, namespace: &str) -> Result<DefaultCredentialService> {
+pub fn open_namespaced(
+    config: &CredentialsConfig,
+    namespace: &str,
+) -> Result<DefaultCredentialService> {
     open_namespaced_with_default(config, namespace, None)
 }
 
@@ -279,8 +303,11 @@ pub fn open_namespaced_with_default(
     namespace: &str,
     default_kind: Option<&str>,
 ) -> Result<DefaultCredentialService> {
-    let provider =
-        build_key_provider(&config.vault.key_provider, &format!("{}.key", config.vault.path), default_kind)?;
+    let provider = build_key_provider(
+        &config.vault.key_provider,
+        &format!("{}.key", config.vault.path),
+        default_kind,
+    )?;
 
     let vault = LocalVault::open(&config.vault.path, provider, config.vault.keep_versions)?;
 
@@ -290,7 +317,11 @@ pub fn open_namespaced_with_default(
             DefaultCredentialService::with_sync(shared, None, namespace.to_string())
         }
         "awsSecretsManager" => open_central(vault, &config.central, namespace)?,
-        other => return Err(EdgeCommonsError::Credentials(format!("central source '{other}' is not supported"))),
+        other => {
+            return Err(EdgeCommonsError::Credentials(format!(
+                "central source '{other}' is not supported"
+            )));
+        }
     };
 
     // Access auditing on by default (config can disable) — logs op/name/version/source/outcome,
@@ -300,16 +331,26 @@ pub fn open_namespaced_with_default(
 }
 
 #[cfg(feature = "credentials-aws")]
-fn open_central(vault: LocalVault, central: &CentralConfig, namespace: &str) -> Result<DefaultCredentialService> {
+fn open_central(
+    vault: LocalVault,
+    central: &CentralConfig,
+    namespace: &str,
+) -> Result<DefaultCredentialService> {
     use super::central::{AwsSecretsManagerSource, CentralVaultSource};
     use super::sync::SyncEngine;
     use std::sync::{Arc, Mutex};
 
-    let source: Arc<dyn CentralVaultSource> =
-        Arc::new(AwsSecretsManagerSource::new(central.region.clone(), central.endpoint_url.clone())?);
+    let source: Arc<dyn CentralVaultSource> = Arc::new(AwsSecretsManagerSource::new(
+        central.region.clone(),
+        central.endpoint_url.clone(),
+    )?);
     let vault = Arc::new(Mutex::new(vault));
-    let secrets: Vec<(String, Option<String>)> =
-        central.sync.secrets.iter().map(|e| (e.name.clone(), e.from.clone())).collect();
+    let secrets: Vec<(String, Option<String>)> = central
+        .sync
+        .secrets
+        .iter()
+        .map(|e| (e.name.clone(), e.from.clone()))
+        .collect();
     let sync = SyncEngine::start(
         vault.clone(),
         source,
@@ -318,11 +359,19 @@ fn open_central(vault: LocalVault, central: &CentralConfig, namespace: &str) -> 
         central.refresh_interval_secs,
         central.bootstrap_on_start,
     );
-    Ok(DefaultCredentialService::with_sync(vault, Some(sync), namespace.to_string()))
+    Ok(DefaultCredentialService::with_sync(
+        vault,
+        Some(sync),
+        namespace.to_string(),
+    ))
 }
 
 #[cfg(not(feature = "credentials-aws"))]
-fn open_central(_vault: LocalVault, _central: &CentralConfig, _namespace: &str) -> Result<DefaultCredentialService> {
+fn open_central(
+    _vault: LocalVault,
+    _central: &CentralConfig,
+    _namespace: &str,
+) -> Result<DefaultCredentialService> {
     Err(EdgeCommonsError::Credentials(
         "central source 'awsSecretsManager' requires the 'credentials-aws' feature".to_string(),
     ))
@@ -332,8 +381,8 @@ fn open_central(_vault: LocalVault, _central: &CentralConfig, _namespace: &str) 
 mod tests {
     use super::*;
     use crate::credentials::CredentialService;
-    use base64::engine::general_purpose::STANDARD as B64;
     use base64::Engine as _;
+    use base64::engine::general_purpose::STANDARD as B64;
 
     #[test]
     fn build_key_provider_file_generates_then_loads_a_keyfile() {
@@ -346,7 +395,10 @@ mod tests {
         };
         // First call generates the keyfile; the second loads the same one (both arms covered).
         let _p1 = build_key_provider(&kp, "ignored.key", None).expect("generate keyfile");
-        assert!(key_path.exists(), "the file provider must create its keyfile");
+        assert!(
+            key_path.exists(),
+            "the file provider must create its keyfile"
+        );
         let _p2 = build_key_provider(&kp, "ignored.key", None).expect("load existing keyfile");
     }
 
@@ -356,8 +408,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let kp = KeyProviderConfig::default();
         let default_key = dir.path().join("default.key");
-        let _ = build_key_provider(&kp, &default_key.to_string_lossy(), Some("file")).expect("file default");
-        assert!(default_key.exists(), "the default key path is used when keyPath is absent");
+        let _ = build_key_provider(&kp, &default_key.to_string_lossy(), Some("file"))
+            .expect("file default");
+        assert!(
+            default_key.exists(),
+            "the default key path is used when keyPath is absent"
+        );
     }
 
     #[test]
@@ -388,7 +444,10 @@ mod tests {
             Err(e) => e,
             Ok(_) => panic!("an unknown key provider kind must error"),
         };
-        assert!(format!("{err}").contains("nonsense"), "error names the bad provider: {err}");
+        assert!(
+            format!("{err}").contains("nonsense"),
+            "error names the bad provider: {err}"
+        );
     }
 
     #[test]
@@ -402,7 +461,12 @@ mod tests {
             ..CredentialsConfig::default()
         };
         let svc = open_namespaced_with_default(&cfg, "thing/comp", None).expect("open local vault");
-        svc.put("api/token", b"xyz", super::super::vault::PutOptions::default()).unwrap();
+        svc.put(
+            "api/token",
+            b"xyz",
+            super::super::vault::PutOptions::default(),
+        )
+        .unwrap();
         assert_eq!(svc.get_string("api/token").unwrap().unwrap(), "xyz");
         // The namespace is transparent: the caller sees the bare key, not "thing/comp/api/token".
         let names: Vec<_> = svc.list("").unwrap().into_iter().map(|m| m.name).collect();
@@ -417,10 +481,16 @@ mod tests {
                 path: dir.path().join("v").to_string_lossy().into_owned(),
                 ..VaultConfig::default()
             },
-            central: CentralConfig { kind: "mysteryCloud".to_string(), ..CentralConfig::default() },
+            central: CentralConfig {
+                kind: "mysteryCloud".to_string(),
+                ..CentralConfig::default()
+            },
             ..CredentialsConfig::default()
         };
-        assert!(open(&cfg).is_err(), "an unknown central.type must be rejected");
+        assert!(
+            open(&cfg).is_err(),
+            "an unknown central.type must be rejected"
+        );
     }
 
     #[test]
@@ -433,12 +503,18 @@ mod tests {
                 path: dir.path().join("v").to_string_lossy().into_owned(),
                 ..VaultConfig::default()
             },
-            central: CentralConfig { kind: "awsSecretsManager".to_string(), ..CentralConfig::default() },
+            central: CentralConfig {
+                kind: "awsSecretsManager".to_string(),
+                ..CentralConfig::default()
+            },
             ..CredentialsConfig::default()
         };
         let result = open(&cfg);
         #[cfg(not(feature = "credentials-aws"))]
-        assert!(result.is_err(), "awsSecretsManager needs the credentials-aws feature");
+        assert!(
+            result.is_err(),
+            "awsSecretsManager needs the credentials-aws feature"
+        );
         // (With the feature on, opening may instead fail later on AWS config — not asserted here.)
         let _ = result;
     }
@@ -450,7 +526,8 @@ mod tests {
         assert!(bare.from.is_none());
 
         let obj: SyncEntry =
-            serde_json::from_value(serde_json::json!({ "name": "tls", "from": "fleet/tls" })).unwrap();
+            serde_json::from_value(serde_json::json!({ "name": "tls", "from": "fleet/tls" }))
+                .unwrap();
         assert_eq!(obj.name, "tls");
         assert_eq!(obj.from.as_deref(), Some("fleet/tls"));
     }

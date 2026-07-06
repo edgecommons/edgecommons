@@ -8,7 +8,7 @@
  *  - `emit` and `emitNow` both publish immediately (no batching).
  *  - For each EMF variant the object is wrapped in a `Message` envelope
  *    (`name = "Metric"`, `version = "1.0"`, body = EMF, identity + tags from the config-bound
- *    builder) and sent to the local transport or AWS IoT Core per
+ *    builder) and sent to the local transport or northbound broker per
  *    `metricEmission.targetConfig.destination` (D-U9; the legacy `targetConfig.topic` override
  *    is removed).
  *  - `largeFleetWorkaround` emits both the normal and the `coreName="ALL"` record.
@@ -28,25 +28,25 @@ import { Uns, UnsClass } from "../../uns";
 export class MessagingMetricTarget implements MetricTarget {
   private readonly messaging: IMessagingService;
   private readonly config: Config;
-  private readonly iotCore: boolean;
+  private readonly northbound: boolean;
   private readonly namespace: string;
   private readonly largeFleetWorkaround: boolean;
   private readonly uns: Uns;
 
   /**
-   * Create the target. `iotCore` selects AWS IoT Core over the local broker for the metric
+   * Create the target. `northbound` selects the northbound broker over the local broker for the metric
    * envelopes; the topic is minted per metric from the config's resolved UNS identity.
    */
   constructor(
     messaging: IMessagingService,
     config: Config,
-    iotCore: boolean,
+    northbound: boolean,
     namespace: string,
     largeFleetWorkaround: boolean,
   ) {
     this.messaging = messaging;
     this.config = config;
-    this.iotCore = iotCore;
+    this.northbound = northbound;
     this.namespace = namespace;
     this.largeFleetWorkaround = largeFleetWorkaround;
     this.uns = new Uns(config.componentIdentity, config.topicIncludeRoot);
@@ -70,7 +70,7 @@ export class MessagingMetricTarget implements MetricTarget {
         .withConfig(this.config)
         .build();
       // The metric class is reserved (§4.1) - publish through the privileged seam (§4.2).
-      await publishReservedVia(this.messaging, topic, message, this.iotCore ? "iotcore" : "local");
+      await publishReservedVia(this.messaging, topic, message, this.northbound ? "northbound" : "local");
     }
   }
 

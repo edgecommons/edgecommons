@@ -78,7 +78,7 @@ ComponentConfiguration:
           resources:
             - "*"
       aws.greengrass.ipc.mqttproxy:
-        "com.mbreissi.edgecommons.TsComponentSkeleton:iotcore:1":
+        "com.mbreissi.edgecommons.TsComponentSkeleton:northbound:1":
           policyDescription: Allows access to publish/subscribe to all topics on IoT Core.
           operations:
             - "aws.greengrass#PublishToIoTCore"

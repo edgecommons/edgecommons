@@ -74,7 +74,7 @@ Config supports template-variable substitution (component/thing/custom tags), ho
 `MetricEmitter` (static `init`) emits to pluggable `MetricTarget`s under `targets/`: `cloudwatch` (EMF format via `emf_helper`), `cloudwatch_component`, `messaging`, `metric_log`. Targets and component/thing dimensions are configured, not hardcoded.
 
 ### Heartbeat (`edgecommons/heartbeat/`)
-`EnhancedHeartbeat` is the library-owned liveness signal (UNS model — on by default, every 5 s): each tick it publishes the **`state` keepalive** to the UNS topic `ecv1/{device}/{component}/main/state` (through the library-internal `MessagingClient._publish_reserved*` seam — the `state` class is reserved) and emits the enabled system measures (CPU/memory/disk/threads/FDs via `psutil`) as the **`sys` metric** through the metric subsystem. It has services *injected* (messaging + metric) rather than reaching for globals. The legacy `heartbeat.targets[]` config is removed — the section is `{enabled, intervalSecs, measures, destination}` (`destination` governs only the keepalive: `local`|`iotcore`). Consume heartbeats by subscribing `ecv1/+/+/+/state`.
+`EnhancedHeartbeat` is the library-owned liveness signal (UNS model — on by default, every 5 s): each tick it publishes the **`state` keepalive** to the UNS topic `ecv1/{device}/{component}/main/state` (through the library-internal `MessagingClient._publish_reserved*` method — the `state` class is reserved) and emits the enabled system measures (CPU/memory/disk/threads/FDs via `psutil`) as the **`sys` metric** through the metric subsystem. It has services *injected* (messaging + metric) rather than reaching for globals. The legacy `heartbeat.targets[]` config is removed — the section is `{enabled, intervalSecs, measures, destination}` (`destination` governs only the keepalive: `local`|`northbound`). Consume heartbeats by subscribing `ecv1/+/+/+/state`.
 
 ### Singleton/static lifecycle caveat
 `MessagingClient` and `MetricEmitter` use class-level static state (`init`/`shutdown`). This is process-global, so be careful in tests — state leaks across tests unless reset. The DI/interface layer is the testable seam; prefer injecting mock services over driving these statics.
@@ -92,5 +92,16 @@ The legacy `-m/--mode` flag has been removed and now errors with guidance to the
 ## Conventions
 
 - Backward compatibility with the pre-rearch API is intended to be preserved; new patterns (builders, service interfaces) and legacy patterns can coexist. Don't break the old surface when adding the new one.
+- Wire-format or messaging-behavior changes in Python are core contract changes: update the
+  Java/Rust/TS mirrors, extend `../../test-infra/interop/` across all four language nodes, and run
+  the full local MQTT interop matrix before calling the work complete. Every affected language must
+  act as producer and consumer; for binary bodies, assert exact byte equality.
+- If that wire/messaging behavior is reachable through Greengrass IPC, also deploy the four language
+  skeleton/components on `lab-5950x` and verify the same behavior through real IPC. Binary message
+  changes explicitly require both local MQTT and Greengrass IPC cross-language interop. Unit tests,
+  mocked IPC tests, single-language component runs, and RUNNING-state smoke checks are not enough.
+- New Python capabilities or Greengrass-reachable behavior changes must also be deployed and exercised
+  as a real Greengrass component on `lab-5950x`; if a feature is not Greengrass-applicable, document
+  why and run a baseline deployed-component regression.
 - Tests are pytest-style (`Test*` classes, `test_*` functions) — the suite was migrated off `unittest`. New tests should follow the pytest conventions, not add `unittest.TestCase` subclasses.
 - Per-feature docs live in `doc/` (`architecture.md`, `messaging.md`, `configuration.md`, `metric-emission.md`, `heartbeat.md`, `logging.md`, `builder-patterns.md`, `configuration-validation.md`, `command-line-options.md`). Update the relevant doc when changing a subsystem's public behavior. (`dependency-injection.md` and `migration-guide.md` were removed — they documented a DI/service-interface layer and a legacy `init()` migration that never existed in Python; see the DI correction note above. `architecture.md` still has stale DI references and needs a rewrite.)

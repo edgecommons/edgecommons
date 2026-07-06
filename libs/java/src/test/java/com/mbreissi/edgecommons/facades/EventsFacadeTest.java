@@ -12,7 +12,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import software.amazon.awssdk.aws.greengrass.model.QOS;
+import com.mbreissi.edgecommons.messaging.Qos;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -130,7 +130,7 @@ class EventsFacadeTest {
     @Test
     void viaNorthboundRoutesToIoTCore() {
         facade.via(Channel.NORTHBOUND).emit(Severity.CRITICAL, "overtemp", "escalate", null);
-        assertEquals(QOS.AT_LEAST_ONCE, last().qos);
+        assertEquals(Qos.AT_LEAST_ONCE, last().qos);
     }
 
     @Test

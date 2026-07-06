@@ -269,12 +269,10 @@ async fn build_target(
                         .to_string(),
                 )
             })?;
-            // Canonical "iot_core" (schema) plus the legacy "iotcore" spelling both
-            // select IoT Core; everything else (e.g. "ipc"/"local") is the local
-            // transport. Matches the heartbeat destination handling.
+            // Canonical "northbound" selects the configured northbound broker; everything else
+            // (e.g. "ipc"/"local") is the local transport. Matches heartbeat destination handling.
             let dest = metric_config.destination();
-            let iot_core =
-                dest.eq_ignore_ascii_case("iot_core") || dest.eq_ignore_ascii_case("iotcore");
+            let iot_core = dest.eq_ignore_ascii_case("northbound");
             Arc::new(target::messaging::MessagingMetricTarget::new(
                 reserved,
                 iot_core,
@@ -287,15 +285,22 @@ async fn build_target(
             let messaging = require_messaging(messaging, "cloudwatchcomponent")?;
             // D-U21: the external Greengrass CloudWatch-component contract topic is
             // unchanged (non-ecv1, guard-exempt); the topic override is removed.
-            Arc::new(target::cloudwatch_component::CloudWatchComponentTarget::new(
-                messaging,
-                CLOUDWATCH_COMPONENT_TOPIC,
-                namespace,
-            ))
+            Arc::new(
+                target::cloudwatch_component::CloudWatchComponentTarget::new(
+                    messaging,
+                    CLOUDWATCH_COMPONENT_TOPIC,
+                    namespace,
+                ),
+            )
         }
         "cloudwatch" => {
-            build_cloudwatch_target(config, &namespace, large_fleet, metric_config.interval_secs())
-                .await?
+            build_cloudwatch_target(
+                config,
+                &namespace,
+                large_fleet,
+                metric_config.interval_secs(),
+            )
+            .await?
         }
         "prometheus" => build_prometheus_target(config, &namespace)?,
         other => {
@@ -314,7 +319,9 @@ fn require_messaging(
     target: &str,
 ) -> Result<Arc<dyn MessagingService>> {
     messaging.ok_or_else(|| {
-        EdgeCommonsError::Metrics(format!("metric target '{target}' requires a messaging service"))
+        EdgeCommonsError::Metrics(format!(
+            "metric target '{target}' requires a messaging service"
+        ))
     })
 }
 
@@ -350,8 +357,12 @@ async fn build_cloudwatch_target(
     #[cfg(feature = "cloudwatch")]
     {
         Ok(Arc::new(
-            target::cloudwatch::CloudWatchTarget::new(namespace, large_fleet_workaround, interval_secs)
-                .await?,
+            target::cloudwatch::CloudWatchTarget::new(
+                namespace,
+                large_fleet_workaround,
+                interval_secs,
+            )
+            .await?,
         ))
     }
     #[cfg(not(feature = "cloudwatch"))]
@@ -380,7 +391,8 @@ fn build_prometheus_target(config: &Config, namespace: &str) -> Result<Arc<dyn M
     #[cfg(not(feature = "metrics-prometheus"))]
     {
         Err(EdgeCommonsError::Metrics(
-            "metric target 'prometheus' requires the 'metrics-prometheus' cargo feature".to_string(),
+            "metric target 'prometheus' requires the 'metrics-prometheus' cargo feature"
+                .to_string(),
         ))
     }
 }
@@ -434,7 +446,10 @@ impl MetricService for MetricEmitter {
     }
 
     fn is_metric_defined(&self, name: &str) -> bool {
-        self.metrics.lock().map(|m| m.contains_key(name)).unwrap_or(false)
+        self.metrics
+            .lock()
+            .map(|m| m.contains_key(name))
+            .unwrap_or(false)
     }
 
     async fn emit_metric(&self, name: &str, values: HashMap<String, f64>) -> Result<()> {
@@ -472,8 +487,13 @@ impl MetricService for MetricEmitter {
 impl crate::config::ConfigurationChangeListener for MetricEmitter {
     /// Rebuild the metric target from the new config (keeping the previous one on error).
     async fn on_configuration_change(&self, config: Arc<Config>) -> bool {
-        match build_target(&config, self.messaging.clone(), self.reserved.clone(), self.platform)
-            .await
+        match build_target(
+            &config,
+            self.messaging.clone(),
+            self.reserved.clone(),
+            self.platform,
+        )
+        .await
         {
             Ok(target) => {
                 if let Ok(mut slot) = self.target.lock() {
@@ -510,12 +530,19 @@ mod tests {
         let emitter = MetricEmitter::new(&config, None).await.unwrap();
 
         assert!(!emitter.is_metric_defined("requests"));
-        emitter.define_metric(MetricBuilder::create("requests").add_measure("count", "Count", 60).build());
+        emitter.define_metric(
+            MetricBuilder::create("requests")
+                .add_measure("count", "Count", 60)
+                .build(),
+        );
         assert!(emitter.is_metric_defined("requests"));
 
         let mut values = HashMap::new();
         values.insert("count".to_string(), 2.0);
-        emitter.emit_metric("requests", values.clone()).await.unwrap();
+        emitter
+            .emit_metric("requests", values.clone())
+            .await
+            .unwrap();
         // Undefined metric is ignored, not an error.
         emitter.emit_metric("nope", values).await.unwrap();
         emitter.flush_metrics().await.unwrap();
@@ -544,7 +571,11 @@ mod tests {
     }
 
     fn define(emitter: &MetricEmitter) {
-        emitter.define_metric(MetricBuilder::create("m").add_measure("count", "Count", 60).build());
+        emitter.define_metric(
+            MetricBuilder::create("m")
+                .add_measure("count", "Count", 60)
+                .build(),
+        );
     }
 
     #[tokio::test]
@@ -563,31 +594,38 @@ mod tests {
         define(&emitter);
         emitter.emit_metric("m", one_value()).await.unwrap();
         let published = recorder.reserved_local();
-        assert_eq!(published.len(), 1, "messaging target should publish EMF via the seam");
+        assert_eq!(
+            published.len(),
+            1,
+            "messaging target should publish EMF via the seam"
+        );
         assert_eq!(published[0].0, "ecv1/t/C/main/metric/m");
     }
 
     #[tokio::test]
-    async fn messaging_target_iot_core_destination_routes_to_iot_core() {
-        // The schema-valid "iot_core" (underscore) must select the IoT Core
-        // transport, not only the legacy "iotcore" spelling.
-        for dest in ["iot_core", "iotcore"] {
-            let raw = json!({ "metricEmission": { "target": "messaging", "targetConfig": { "destination": dest } } });
-            let config = Config::from_value("c", "t", raw).unwrap();
-            let recorder = crate::testutil::RecordingMessaging::new();
-            let emitter = MetricEmitter::new_internal(
-                &config,
-                Some(recorder.clone()),
-                Some(recorder.clone()),
-                Platform::Host,
-            )
-            .await
-            .unwrap();
-            define(&emitter);
-            emitter.emit_metric_now("m", one_value()).await.unwrap();
-            assert_eq!(recorder.reserved_iot().len(), 1, "dest {dest} should publish to IoT Core");
-            assert!(recorder.reserved_local().is_empty(), "dest {dest} must not publish locally");
-        }
+    async fn messaging_target_northbound_destination_routes_to_iot_core_api() {
+        let raw = json!({ "metricEmission": { "target": "messaging", "targetConfig": { "destination": "northbound" } } });
+        let config = Config::from_value("c", "t", raw).unwrap();
+        let recorder = crate::testutil::RecordingMessaging::new();
+        let emitter = MetricEmitter::new_internal(
+            &config,
+            Some(recorder.clone()),
+            Some(recorder.clone()),
+            Platform::Host,
+        )
+        .await
+        .unwrap();
+        define(&emitter);
+        emitter.emit_metric_now("m", one_value()).await.unwrap();
+        assert_eq!(
+            recorder.reserved_iot().len(),
+            1,
+            "northbound should publish to the second broker"
+        );
+        assert!(
+            recorder.reserved_local().is_empty(),
+            "northbound must not publish locally"
+        );
     }
 
     #[tokio::test]
@@ -595,7 +633,9 @@ mod tests {
         let raw = json!({ "metricEmission": { "target": "cloudwatchcomponent" } });
         let config = Config::from_value("c", "t", raw).unwrap();
         let recorder = crate::testutil::RecordingMessaging::new();
-        let emitter = MetricEmitter::new(&config, Some(recorder.clone())).await.unwrap();
+        let emitter = MetricEmitter::new(&config, Some(recorder.clone()))
+            .await
+            .unwrap();
         define(&emitter);
         emitter.emit_metric_now("m", one_value()).await.unwrap();
         assert_eq!(recorder.local().len(), 1);
@@ -652,17 +692,27 @@ mod tests {
         // Reconfigure to a messaging target.
         let raw_msg = json!({ "metricEmission": { "target": "messaging", "targetConfig": { "destination": "ipc" } } });
         let new_cfg = Arc::new(Config::from_value("c", "t", raw_msg).unwrap());
-        assert!(emitter.on_configuration_change(new_cfg).await, "rebuild should succeed");
+        assert!(
+            emitter.on_configuration_change(new_cfg).await,
+            "rebuild should succeed"
+        );
 
         emitter.emit_metric_now("m", one_value()).await.unwrap();
-        assert_eq!(recorder.reserved_local().len(), 1, "metrics now flow to the messaging target");
+        assert_eq!(
+            recorder.reserved_local().len(),
+            1,
+            "metrics now flow to the messaging target"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     // ---------- effective-target precedence (FR-MET-1 / FR-RT-3) ----------
 
     fn metric_config(raw: serde_json::Value) -> MetricConfig {
-        Config::from_value("c", "t", raw).unwrap().parsed.metric_emission
+        Config::from_value("c", "t", raw)
+            .unwrap()
+            .parsed
+            .metric_emission
     }
 
     #[test]
@@ -677,9 +727,15 @@ mod tests {
     fn explicit_target_overrides_platform_default() {
         // Explicit config wins everywhere, including over the KUBERNETES prometheus default.
         let mc = metric_config(json!({ "metricEmission": { "target": "messaging" } }));
-        assert_eq!(resolve_effective_target(&mc, Platform::Kubernetes), "messaging");
+        assert_eq!(
+            resolve_effective_target(&mc, Platform::Kubernetes),
+            "messaging"
+        );
         let mc_log = metric_config(json!({ "metricEmission": { "target": "log" } }));
-        assert_eq!(resolve_effective_target(&mc_log, Platform::Kubernetes), "log");
+        assert_eq!(
+            resolve_effective_target(&mc_log, Platform::Kubernetes),
+            "log"
+        );
     }
 
     // ---------- HOST-aware metric-log path precedence ----------
@@ -688,8 +744,14 @@ mod tests {
     fn log_path_template_host_uses_local_default() {
         // No explicit logFileName + HOST/KUBERNETES → the local platform default (not /greengrass).
         let mc = metric_config(json!({ "metricEmission": { "target": "log" } }));
-        assert_eq!(log_path_template(&mc, Platform::Host), crate::platform::METRIC_LOG_PATH_LOCAL);
-        assert_eq!(log_path_template(&mc, Platform::Kubernetes), crate::platform::METRIC_LOG_PATH_LOCAL);
+        assert_eq!(
+            log_path_template(&mc, Platform::Host),
+            crate::platform::METRIC_LOG_PATH_LOCAL
+        );
+        assert_eq!(
+            log_path_template(&mc, Platform::Kubernetes),
+            crate::platform::METRIC_LOG_PATH_LOCAL
+        );
     }
 
     #[test]
@@ -709,7 +771,10 @@ mod tests {
             json!({ "metricEmission": { "target": "log", "targetConfig": { "logFileName": "/custom/x.log" } } }),
         );
         assert_eq!(log_path_template(&mc, Platform::Host), "/custom/x.log");
-        assert_eq!(log_path_template(&mc, Platform::Greengrass), "/custom/x.log");
+        assert_eq!(
+            log_path_template(&mc, Platform::Greengrass),
+            "/custom/x.log"
+        );
     }
 
     #[test]
@@ -724,7 +789,10 @@ mod tests {
     #[test]
     fn kubernetes_default_selects_prometheus_with_feature() {
         let mc = metric_config(json!({ "metricEmission": {} }));
-        assert_eq!(resolve_effective_target(&mc, Platform::Kubernetes), "prometheus");
+        assert_eq!(
+            resolve_effective_target(&mc, Platform::Kubernetes),
+            "prometheus"
+        );
     }
 
     #[cfg(not(feature = "metrics-prometheus"))]
@@ -784,7 +852,9 @@ mod tests {
             .expect("k8s should build the prometheus target with the feature");
 
         emitter.define_metric(
-            MetricBuilder::create("requests").add_measure("count", "Count", 60).build(),
+            MetricBuilder::create("requests")
+                .add_measure("count", "Count", 60)
+                .build(),
         );
         emitter.emit_metric("requests", one_value()).await.unwrap();
         // flush is a no-op for prometheus (pull); it must not error.
@@ -798,8 +868,14 @@ mod tests {
             .unwrap();
         let mut response = String::new();
         stream.read_to_string(&mut response).unwrap();
-        assert!(response.contains("200 OK"), "expected 200, got:\n{response}");
-        assert!(response.contains("edgecommons_count"), "missing gauge in:\n{response}");
+        assert!(
+            response.contains("200 OK"),
+            "expected 200, got:\n{response}"
+        );
+        assert!(
+            response.contains("edgecommons_count"),
+            "missing gauge in:\n{response}"
+        );
 
         // close() stops the listener.
         emitter.shutdown().await;

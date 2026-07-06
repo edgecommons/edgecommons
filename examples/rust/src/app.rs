@@ -386,15 +386,15 @@ impl SkeletonApp {
         tracing::info!(topic = %request_topic, "subscribed for requests");
 
         // 2. Subscribe to commands from AWS IoT Core (the IoT Core bridge); ack each
-        //    one back to IoT Core (exercises subscribe_to_iot_core + publish_to_iot_core).
+        //    one back to IoT Core (exercises subscribe_northbound + publish_northbound).
         //    Non-fatal: builds/modes without an IoT Core transport (e.g. local-only STANDALONE)
         //    simply skip the command bridge instead of failing the whole component — matching the
-        //    already-non-fatal publish_to_iot_core in the publish loop.
+        //    already-non-fatal publish_northbound in the publish loop.
         let acker = messaging.clone();
         let ack_config = self.config.clone();
         let ack_topic = telemetry_topic.clone();
         let iot_core_subscribed = messaging
-            .subscribe_to_iot_core(
+            .subscribe_northbound(
                 &cmd_topic,
                 message_handler(move |topic, msg| {
                     let acker = acker.clone();
@@ -406,7 +406,7 @@ impl SkeletonApp {
                             .from_config(&ack_config)
                             .payload(json!({ "ack": msg.body }))
                             .build();
-                        if let Err(e) = acker.publish_to_iot_core(&ack_topic, &ack, Qos::AtLeastOnce).await {
+                        if let Err(e) = acker.publish_northbound(&ack_topic, &ack, Qos::AtLeastOnce).await {
                             tracing::warn!(error = %e, "failed to ack IoT Core command");
                         }
                     }
@@ -435,7 +435,7 @@ impl SkeletonApp {
         // 4. Clean up subscriptions before the runtime drops (only the ones established).
         messaging.unsubscribe(&request_topic).await?;
         if iot_core_subscribed {
-            messaging.unsubscribe_from_iot_core(&cmd_topic).await?;
+            messaging.unsubscribe_northbound(&cmd_topic).await?;
         }
         Ok(())
     }
@@ -503,9 +503,9 @@ impl SkeletonApp {
                 .payload(json!({ "seq": seq }))
                 .build();
             messaging.publish(&topic, &msg).await?;
-            // Also mirror to AWS IoT Core (exercises the IoT Core bridge / publish_to_iot_core).
+            // Also mirror to AWS IoT Core (exercises the IoT Core bridge / publish_northbound).
             if let Err(e) = messaging
-                .publish_to_iot_core(&telemetry_topic, &msg, Qos::AtLeastOnce)
+                .publish_northbound(&telemetry_topic, &msg, Qos::AtLeastOnce)
                 .await
             {
                 tracing::warn!(error = %e, "failed to publish telemetry to IoT Core");

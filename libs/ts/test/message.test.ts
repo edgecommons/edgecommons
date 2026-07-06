@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-import { Message, MessageBuilder, MessageIdentity } from "../src/message";
+import { MAX_BINARY_BODY_BYTES, Message, MessageBuilder, MessageIdentity } from "../src/message";
 
 const IDENTITY = new MessageIdentity(
   [
@@ -44,16 +44,42 @@ describe("Message / MessageBuilder", () => {
     expect(header.correlation_id).toBe("00000000-0000-4000-8000-000000000002");
   });
 
-  it("serializes a Buffer body as a base64 string (#16)", () => {
-    // A binary body travels as a base64 JSON string (portable cross-language interim), not the
-    // non-portable `{ type: "Buffer", data: [...] }`. The canonical vector {0,1,2,254,255}
-    // base64-encodes to "AAEC/v8=" — the same string Java/Python produce for the same bytes.
+  it("serializes a Buffer body as a binary marker (#16)", () => {
     const msg = MessageBuilder.create("bin", "1.0.0")
       .withPayload(Buffer.from([0, 1, 2, 254, 255]))
       .build();
     const obj = msg.toObject();
-    expect(obj.body).toBe("AAEC/v8=");
-    expect(JSON.parse(msg.toJSON()).body).toBe("AAEC/v8=");
+    expect(obj.body).toEqual({
+      _edgecommonsBinary: {
+        encoding: "base64",
+        length: 5,
+        data: "AAEC/v8=",
+      },
+    });
+    expect(JSON.parse(msg.toJSON()).body._edgecommonsBinary.data).toBe("AAEC/v8=");
+    expect(msg.isBinaryBody()).toBe(true);
+    expect(msg.getBinaryBody()).toEqual(Buffer.from([0, 1, 2, 254, 255]));
+  });
+
+  it("decodes inbound binary markers and validates length", () => {
+    const msg = Message.fromObject({
+      body: {
+        _edgecommonsBinary: {
+          encoding: "base64",
+          length: 5,
+          data: "AAEC/v8=",
+        },
+      },
+    });
+    expect(msg.isBinaryBody()).toBe(true);
+    expect(msg.getBinaryBody()).toEqual(Buffer.from([0, 1, 2, 254, 255]));
+    (msg.body as Record<string, Record<string, unknown>>)._edgecommonsBinary.length = 4;
+    expect(() => msg.getBinaryBody()).toThrow(/length does not match/);
+  });
+
+  it("rejects oversized binary bodies", () => {
+    const msg = MessageBuilder.create("bin", "1").withPayload(Buffer.alloc(MAX_BINARY_BODY_BYTES + 1)).build();
+    expect(() => msg.toObject()).toThrow(/exceeds/);
   });
 
   it("preserves an explicit null map entry in the body (#15)", () => {

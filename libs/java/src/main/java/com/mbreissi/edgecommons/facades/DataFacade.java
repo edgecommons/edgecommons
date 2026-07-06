@@ -7,16 +7,16 @@ package com.mbreissi.edgecommons.facades;
 import com.mbreissi.edgecommons.config.ConfigManager;
 import com.mbreissi.edgecommons.messaging.Message;
 import com.mbreissi.edgecommons.messaging.MessageBuilder;
+import com.mbreissi.edgecommons.messaging.MessagingClient;
+import com.mbreissi.edgecommons.messaging.Qos;
 import com.mbreissi.edgecommons.uns.Uns;
 import com.mbreissi.edgecommons.uns.UnsClass;
-import com.mbreissi.edgecommons.messaging.MessagingClient;
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import software.amazon.awssdk.aws.greengrass.model.QOS;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
@@ -326,7 +326,7 @@ public final class DataFacade {
             case LOCAL -> messaging.publish(topic, msg);
             case NORTHBOUND -> {
                 try {
-                    messaging.publishToIoTCore(topic, msg, QOS.AT_LEAST_ONCE);
+                    messaging.publishNorthbound(topic, msg, Qos.AT_LEAST_ONCE);
                 } catch (Exception e) {
                     LOGGER.warn("Northbound data publish on '{}' failed (local readiness"
                             + " unaffected): {}", topic, e.toString());

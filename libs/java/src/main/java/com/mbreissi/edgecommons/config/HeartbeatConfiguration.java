@@ -29,7 +29,7 @@ import org.apache.logging.log4j.Logger;
  * emitted as the metric {@code sys} through the normal metric subsystem. The legacy
  * {@code targets[]} array (the heartbeat topic-override drift knobs) is removed — hard cut;
  * {@link #getDestination()} governs only the state keepalive's transport ({@code local} vs
- * {@code iotcore}); the measures route through the metric subsystem's own target.
+ * {@code northbound}); the measures route through the metric subsystem's own target.
  */
 public class HeartbeatConfiguration
 {
@@ -156,8 +156,8 @@ public class HeartbeatConfiguration
 
     /**
      * The publish destination of the {@code state} keepalive only — {@code "local"} (the
-     * local/IPC transport, the default) or {@code "iotcore"} (AWS IoT Core). The measures route
-     * through the metric subsystem's own target and are unaffected.
+     * local/IPC transport, the default) or {@code "northbound"}. The measures route through the
+     * metric subsystem's own target and are unaffected.
      */
     public String getDestination()
     {

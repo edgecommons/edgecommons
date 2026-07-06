@@ -23,7 +23,7 @@ class HeartbeatConfiguration:
     graceful shutdown), with the enabled system measures emitted as the metric ``sys``
     through the normal metric subsystem. The legacy ``targets[]`` array (the heartbeat
     topic-override drift knobs) is removed — hard cut; :meth:`get_destination` governs
-    only the state keepalive's transport (``local`` vs ``iotcore``); the measures route
+    only the state keepalive's transport (``local`` vs ``northbound``); the measures route
     through the metric subsystem's own target. Defaults: on / 5 s / local (M11)."""
 
     #: The schema default for ``heartbeat.destination`` — the local/IPC transport.
@@ -103,6 +103,6 @@ class HeartbeatConfiguration:
 
     def get_destination(self) -> str:
         """The publish destination of the ``state`` keepalive only — ``"local"`` (the
-        local/IPC transport, the default) or ``"iotcore"`` (AWS IoT Core). The measures
+        local/IPC transport, the default) or ``"northbound"``. The measures
         route through the metric subsystem's own target and are unaffected."""
         return self._destination

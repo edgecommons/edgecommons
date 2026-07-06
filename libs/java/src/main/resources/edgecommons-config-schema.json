@@ -112,8 +112,8 @@
             },
             "destination": {
               "type": "string",
-              "enum": ["ipc", "local", "iotcore", "iot_core"],
-              "description": "Messaging destination (for messaging target). 'ipc'/'local' are aliases for the local/IPC transport; 'iotcore'/'iot_core' are aliases for IoT Core."
+              "enum": ["ipc", "local", "northbound"],
+              "description": "Messaging destination (for messaging target). 'ipc'/'local' are aliases for the local/IPC transport; 'northbound' routes to the configured northbound broker."
             },
             "intervalSecs": {
               "type": "integer",
@@ -224,9 +224,9 @@
         },
         "destination": {
           "type": "string",
-          "enum": ["local", "iotcore"],
+          "enum": ["local", "northbound"],
           "default": "local",
-          "description": "Publish destination of the state keepalive only ('local' = the local/IPC transport, 'iotcore' = AWS IoT Core). The measures route through the metric subsystem's own target (metricEmission)."
+          "description": "Publish destination of the state keepalive only ('local' = the local/IPC transport, 'northbound' = the configured northbound broker). The measures route through the metric subsystem's own target (metricEmission)."
         }
       },
       "additionalProperties": false
@@ -309,43 +309,21 @@
     },
     "messaging": {
       "type": "object",
-      "description": "Dual-MQTT broker configuration (local broker + optional AWS IoT Core) for the HOST/MQTT transport. The same shape is used as the separate messaging-config JSON file passed via `--platform HOST --transport MQTT <file>`. In GREENGRASS mode messaging uses IPC and this section is typically absent.",
+      "description": "Dual-MQTT broker configuration (local broker + optional generic northbound MQTT broker) for the HOST/MQTT transport. The same shape is used as the separate messaging-config JSON file passed via `--platform HOST --transport MQTT <file>`. In GREENGRASS mode messaging uses IPC and this section is typically absent.",
       "properties": {
         "local": {
           "$ref": "#/definitions/mqttBroker",
           "description": "The local MQTT broker connection (required for the HOST/MQTT transport)."
         },
-        "iotCore": {
+        "northbound": {
           "$ref": "#/definitions/mqttBroker",
-          "description": "The optional AWS IoT Core connection (mutual-TLS)."
+          "description": "The optional northbound/cloud MQTT broker connection. TLS and mutual TLS are selected by the credentials fields."
         },
         "requestTimeoutSeconds": {
           "type": "number",
           "minimum": 0,
           "default": 30,
           "description": "Default request() deadline in seconds; on expiry the reply future completes exceptionally and the ephemeral reply subscription is cleaned up. 0 disables the default deadline. An explicit per-call timeout always wins."
-        },
-        "lwt": {
-          "type": "object",
-          "description": "MQTT Last-Will-and-Testament registered on the local-broker connection at CONNECT (re-registered on reconnect). Applies to the local MQTT connection only; the IPC transport ignores it. The will is broker-published on ungraceful disconnect; it never passes through publish(). No retain option by design.",
-          "properties": {
-            "topic": {
-              "type": "string",
-              "description": "The will topic (e.g. the component's UNS state topic)."
-            },
-            "payload": {
-              "type": ["string", "object"],
-              "description": "The will payload, published VERBATIM (a string or a JSON object)."
-            },
-            "qos": {
-              "type": "number",
-              "enum": [0, 1],
-              "default": 1,
-              "description": "Will QoS (0 or 1)."
-            }
-          },
-          "required": ["topic"],
-          "additionalProperties": false
         }
       },
       "additionalProperties": false
@@ -451,7 +429,7 @@
         },
         "endpoint": {
           "type": "string",
-          "description": "Broker endpoint FQDN (used by the iotCore broker)."
+          "description": "Broker endpoint FQDN. Equivalent to host for northbound broker configs."
         },
         "port": {
           "type": "integer",
@@ -463,13 +441,35 @@
           "type": "string",
           "description": "MQTT client id."
         },
+        "qos": {
+          "$ref": "#/definitions/mqttQosDefaults",
+          "description": "Default MQTT Quality of Service for operations on this broker that do not carry an explicit QoS argument. Values are MQTT QoS levels: 0 = at most once, 1 = at least once, 2 = exactly once."
+        },
         "credentials": { "$ref": "#/definitions/mqttCredentials" }
+      },
+      "additionalProperties": false
+    },
+    "mqttQosDefaults": {
+      "type": "object",
+      "properties": {
+        "publish": {
+          "type": "integer",
+          "enum": [0, 1, 2],
+          "default": 1,
+          "description": "Default MQTT QoS level for publish, publishRaw, request publish, and reply publish. 0 = at most once, 1 = at least once, 2 = exactly once."
+        },
+        "subscribe": {
+          "type": "integer",
+          "enum": [0, 1, 2],
+          "default": 1,
+          "description": "Default MQTT QoS level for subscribe and request reply subscriptions. 0 = at most once, 1 = at least once, 2 = exactly once."
+        }
       },
       "additionalProperties": false
     },
     "mqttCredentials": {
       "type": "object",
-      "description": "Broker auth: username/password for the local broker, or certPath/keyPath/caPath for TLS (mutual TLS / IoT Core).",
+      "description": "Broker auth: username/password for username/password MQTT auth, caPath for TLS server trust, and optional certPath/keyPath for mutual TLS.",
       "properties": {
         "username": { "type": "string" },
         "password": { "type": "string" },

@@ -886,7 +886,7 @@ global) **▸ `LOCAL`**. Only `data()` accepts a `stream:<name>` route — `even
 at build time, since alarms and app messages are low-rate control-plane, not bulk telemetry.
 
 - **`local`** — the default; publishes on the local bus (`messaging().publish`).
-- **`northbound`** — publishes straight to AWS IoT Core (`messaging().publishToIoTCore`); a
+- **`northbound`** — publishes straight to AWS IoT Core (`messaging().publishNorthbound`); a
   northbound outage is caught, logged, and never flips local readiness.
 - **`stream:<name>`** (`data()` only) — serializes the same envelope and appends it to
   `streams().stream(name)` (partition key = `signal.id`, timestamp = the sample's `serverTs`) instead
@@ -945,8 +945,8 @@ to, never a crash.
 
 ## The reserved-class publish guard
 
-Every publish path that takes a client-chosen topic — `publish`, `publishRaw`, `publishToIoTCore`,
-`publishToIoTCoreRaw`, `request`, `requestFromIoTCore`, and `reply`/`replyToIoTCore` (a hostile
+Every publish path that takes a client-chosen topic — `publish`, `publishRaw`, `publishNorthbound`,
+`publishNorthboundRaw`, `request`, `requestNorthbound`, and `reply`/`replyNorthbound` (a hostile
 `reply_to` must not turn a responder into a forger) — rejects a topic whose class position is a
 reserved class (`state` | `metric` | `cfg` | `log`) under the `ecv1` root. `subscribe*` is never
 guarded (consumers must read reserved classes), and non-`ecv1` topics (reply topics,

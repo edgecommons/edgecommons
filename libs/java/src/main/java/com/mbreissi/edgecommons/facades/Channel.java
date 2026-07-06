@@ -12,7 +12,7 @@ import java.util.Objects;
  *
  * <ul>
  *   <li>{@link #LOCAL} — the local/IPC bus ({@code messaging().publish}). The default.</li>
- *   <li>{@link #NORTHBOUND} — AWS IoT Core ({@code messaging().publishToIoTCore}).</li>
+ *   <li>{@link #NORTHBOUND} — the northbound/cloud broker ({@code messaging().publishNorthbound}).</li>
  *   <li>{@link #stream(String)} — the named durable telemetry stream
  *       ({@code getStreams().stream(name).append(...)}); <b>only {@link DataFacade} honors it</b>
  *       — {@code events()}/{@code app()} reject a stream channel (they are low-rate control-plane,
@@ -21,7 +21,7 @@ import java.util.Objects;
  *
  * <p>Modeled as a value class rather than a bare enum because the {@code stream} target carries a
  * stream name. {@link #fromConfig(String)} parses the config {@code publish.channel} string
- * (Option C, DESIGN-class-facades §4): {@code "local"}, {@code "northbound"}/{@code "iotcore"}, or
+ * (Option C, DESIGN-class-facades §4): {@code "local"}, {@code "northbound"}, or
  * {@code "stream:<name>"}.
  *
  * <p><b>Mirror note (Python/Rust/TS):</b> a small tagged union with the same three variants and the
@@ -35,7 +35,7 @@ public final class Channel {
     /** The local/IPC bus channel (the default). */
     public static final Channel LOCAL = new Channel(Kind.LOCAL, null);
 
-    /** The AWS IoT Core (northbound) channel. */
+    /** The northbound/cloud channel. */
     public static final Channel NORTHBOUND = new Channel(Kind.NORTHBOUND, null);
 
     private final Kind kind;
@@ -72,8 +72,8 @@ public final class Channel {
 
     /**
      * Parses a config {@code publish.channel} string into a channel (DESIGN-class-facades §4,
-     * Option C). Recognized: {@code "local"} → {@link #LOCAL}; {@code "northbound"} /
-     * {@code "iotcore"} / {@code "iot_core"} → {@link #NORTHBOUND}; {@code "stream:<name>"} →
+     * Option C). Recognized: {@code "local"} → {@link #LOCAL}; {@code "northbound"} →
+     * {@link #NORTHBOUND}; {@code "stream:<name>"} →
      * {@link #stream(String)}. Any other (or null/empty) value yields {@code null} so the caller
      * can fall through to its own default.
      *
@@ -92,7 +92,7 @@ public final class Channel {
         if (lower.equals("local")) {
             return LOCAL;
         }
-        if (lower.equals("northbound") || lower.equals("iotcore") || lower.equals("iot_core")) {
+        if (lower.equals("northbound")) {
             return NORTHBOUND;
         }
         if (lower.startsWith("stream:")) {

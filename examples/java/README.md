@@ -58,10 +58,10 @@ For non-Greengrass deployments, create a messaging configuration file:
         "password": "mqtt-password"
       }
     },
-    "iotCore": {
-      "endpoint": "your-iot-endpoint.iot.us-east-1.amazonaws.com",
+    "northbound": {
+      "endpoint": "northbound.mqtt.example.com",
       "port": 8883,
-      "clientId": "java-component-skeleton-iotcore",
+      "clientId": "java-component-skeleton-northbound",
       "credentials": {
         "certPath": "/path/to/device-cert.pem",
         "keyPath": "/path/to/private-key.pem",
@@ -78,7 +78,7 @@ For non-Greengrass deployments, create a messaging configuration file:
    request topics via the UNS topic builder (`gg.getUns().topic(UnsClass.APP, ...)` →
    `ecv1/{device}/{component}/main/app/hello-world` and `.../app/request`)
 2. **Request-Reply Demo**: Sends sample requests and processes replies
-3. **Message Publishing**: Continuously publishes hello world messages to both local and IoT Core
+3. **Message Publishing**: Continuously publishes hello world messages to both local and northbound transports
 4. **Metrics Emission**: Emits performance metrics including message count and latency
 5. **Configuration Changes**: Responds to runtime configuration updates
 6. **Graceful Shutdown**: Cleans up subscriptions and resources on termination

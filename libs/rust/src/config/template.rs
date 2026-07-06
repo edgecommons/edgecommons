@@ -108,7 +108,10 @@ mod tests {
             resolve(&cfg, "heartbeat/{ThingName}/{ComponentName}"),
             "heartbeat/thing-7/MyComponent"
         );
-        assert_eq!(resolve(&cfg, "/var/log/{site}.log"), "/var/log/factory-1.log");
+        assert_eq!(
+            resolve(&cfg, "/var/log/{site}.log"),
+            "/var/log/factory-1.log"
+        );
     }
 
     #[test]
@@ -116,7 +119,10 @@ mod tests {
         let cfg = Config::from_value("com.example.MyComponent", "t", json!({})).unwrap();
         // {ComponentName} is the segment after the last '.', {ComponentFullName} is the whole name.
         assert_eq!(resolve(&cfg, "{ComponentName}"), "MyComponent");
-        assert_eq!(resolve(&cfg, "{ComponentFullName}"), "com.example.MyComponent");
+        assert_eq!(
+            resolve(&cfg, "{ComponentFullName}"),
+            "com.example.MyComponent"
+        );
         // A name with no dots: short == full.
         let cfg2 = Config::from_value("Simple", "t", json!({})).unwrap();
         assert_eq!(resolve(&cfg2, "{ComponentName}"), "Simple");
@@ -141,7 +147,10 @@ mod tests {
 
         // Path separators and traversal in the value are neutralized; the template's
         // own separators are preserved.
-        assert_eq!(resolve(&cfg, "/logs/{ThingName}.log"), "/logs/____etc_passwd.log");
+        assert_eq!(
+            resolve(&cfg, "/logs/{ThingName}.log"),
+            "/logs/____etc_passwd.log"
+        );
         assert_eq!(resolve(&cfg, "t/{evil}/x"), "t/a____/x");
     }
 

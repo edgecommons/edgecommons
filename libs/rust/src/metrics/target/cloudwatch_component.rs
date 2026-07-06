@@ -36,7 +36,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::MetricTarget;
 use crate::error::Result;
@@ -134,7 +134,8 @@ mod tests {
     #[tokio::test]
     async fn publishes_putmetricdata_request_per_measure() {
         let recorder = RecordingMessaging::new();
-        let target = CloudWatchComponentTarget::new(recorder.clone(), "cloudwatch/metric/put", "demo");
+        let target =
+            CloudWatchComponentTarget::new(recorder.clone(), "cloudwatch/metric/put", "demo");
         // Two measures → two published messages (one per measure).
         let metric = MetricBuilder::create("requests")
             .with_thing_name("thing-1")
@@ -160,11 +161,20 @@ mod tests {
         assert!(md.get("unit").is_some());
         // timestamp is epoch SECONDS (~1.7e9 in 2026), not milliseconds.
         let ts = md["timestamp"].as_u64().unwrap();
-        assert!(ts > 1_000_000_000 && ts < 100_000_000_000, "timestamp must be seconds, got {ts}");
+        assert!(
+            ts > 1_000_000_000 && ts < 100_000_000_000,
+            "timestamp must be seconds, got {ts}"
+        );
         // dimensions is an array of {name,value} that EXCLUDES coreName.
         let dims = md["dimensions"].as_array().unwrap();
-        assert!(dims.iter().all(|d| d["name"] != "coreName"), "coreName must be excluded");
-        assert!(dims.iter().any(|d| d["name"] == "category"), "category dimension present");
+        assert!(
+            dims.iter().all(|d| d["name"] != "coreName"),
+            "coreName must be excluded"
+        );
+        assert!(
+            dims.iter().any(|d| d["name"] == "category"),
+            "category dimension present"
+        );
 
         // Also exercises the default no-op flush/shutdown trait methods.
         target.emit_now(&metric, &vals).await.unwrap();

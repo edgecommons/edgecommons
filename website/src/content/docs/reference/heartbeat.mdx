@@ -395,7 +395,7 @@ public class HeartbeatConfiguration {
     public boolean includeThreads();
     public boolean includeFiles();
     public boolean includeFds();
-    public String  getDestination();     // "local" | "iotcore"
+    public String  getDestination();     // "local" | "northbound"
 }
 ```
 
@@ -416,7 +416,7 @@ class HeartbeatConfiguration:
     def include_threads(self) -> bool: ...
     def include_files(self) -> bool: ...
     def include_fds(self) -> bool: ...
-    def get_destination(self) -> str: ...      # "local" | "iotcore"
+    def get_destination(self) -> str: ...      # "local" | "northbound"
 ```
 
 </TabItem>
@@ -434,7 +434,7 @@ pub struct HeartbeatConfig {
 
 impl HeartbeatConfig {
     pub const DEFAULT_DESTINATION: &'static str = "local";
-    pub fn destination(&self) -> &str;   // resolved ("local" | "iotcore")
+    pub fn destination(&self) -> &str;   // resolved ("local" | "northbound")
 }
 
 pub struct Measures {                  // Default: cpu/memory true, rest false
@@ -453,7 +453,7 @@ export class HeartbeatConfig {
   enabled: boolean;        // default true
   intervalSecs: number;    // default 5, minimum 1 (out-of-range falls back to 5)
   measures: Measures;      // cpu/memory default ON, the rest off
-  destination: string;     // "local" (default) | "iotcore" — the state keepalive only
+  destination: string;     // "local" (default) | "northbound" — the state keepalive only
 }
 
 export interface Measures {
@@ -494,7 +494,7 @@ The section is validated against the `heartbeat` schema section of
 | `enabled` | boolean | `true` | Turns the whole heartbeat (keepalive + `sys` metric) on/off. |
 | `intervalSecs` | integer (min 1) | `5` | Tick period. |
 | `measures.cpu` ... `measures.fds` | boolean | `cpu`/`memory` on, rest off | Per-measure toggles for the `sys` metric. |
-| `destination` | string | `local` | `local` \| `iotcore` — the **state keepalive** destination only; measures route via `metricEmission`. |
+| `destination` | string | `local` | `local` \| `northbound` — the **state keepalive** destination only; measures route via `metricEmission`. |
 
 The `sys` metric's `storageResolution` is `1` when `intervalSecs` is under `60`, otherwise `60`
 (all four languages).

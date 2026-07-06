@@ -144,7 +144,10 @@ pub fn mac_input(
             out.extend_from_slice(&v.created_ms.to_le_bytes());
             out.extend_from_slice(&v.ttl_secs.unwrap_or(0).to_le_bytes());
             lp(&mut out, v.source.as_bytes());
-            lp(&mut out, v.central_version_id.as_deref().unwrap_or("").as_bytes());
+            lp(
+                &mut out,
+                v.central_version_id.as_deref().unwrap_or("").as_bytes(),
+            );
             lp(&mut out, &decode_b64(&v.nonce));
             lp(&mut out, &decode_b64(&v.ciphertext));
         }

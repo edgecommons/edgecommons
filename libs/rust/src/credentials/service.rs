@@ -17,8 +17,8 @@ use zeroize::Zeroizing;
 
 use super::sync::SyncEngine;
 use super::vault::{LocalVault, PutOptions};
-use crate::error::EdgeCommonsError;
 use crate::Result;
+use crate::error::EdgeCommonsError;
 
 /// A decrypted secret value plus its metadata. The bytes are zeroized on drop and redacted from
 /// `Debug`; do not log or serialize them.
@@ -41,12 +41,14 @@ impl Secret {
 
     /// The value as UTF-8 (errors if not valid UTF-8).
     pub fn as_str(&self) -> Result<&str> {
-        std::str::from_utf8(&self.bytes).map_err(|_| EdgeCommonsError::Credentials("secret is not valid UTF-8".into()))
+        std::str::from_utf8(&self.bytes)
+            .map_err(|_| EdgeCommonsError::Credentials("secret is not valid UTF-8".into()))
     }
 
     /// The value parsed as JSON.
     pub fn as_json(&self) -> Result<serde_json::Value> {
-        serde_json::from_slice(&self.bytes).map_err(|e| EdgeCommonsError::Credentials(format!("secret is not JSON: {e}")))
+        serde_json::from_slice(&self.bytes)
+            .map_err(|e| EdgeCommonsError::Credentials(format!("secret is not JSON: {e}")))
     }
 }
 
@@ -55,7 +57,10 @@ impl std::fmt::Debug for Secret {
         f.debug_struct("Secret")
             .field("name", &self.name)
             .field("version", &self.version)
-            .field("bytes", &format_args!("<{} bytes redacted>", self.bytes.len()))
+            .field(
+                "bytes",
+                &format_args!("<{} bytes redacted>", self.bytes.len()),
+            )
             .field("source", &self.source)
             .finish()
     }
@@ -180,12 +185,26 @@ pub struct DefaultCredentialService {
 impl DefaultCredentialService {
     /// Wrap an opened [`LocalVault`] (standalone, no central sync, no namespacing, no audit).
     pub fn new(vault: LocalVault) -> Self {
-        Self { vault: Arc::new(Mutex::new(vault)), _sync: None, namespace: String::new(), audit: None }
+        Self {
+            vault: Arc::new(Mutex::new(vault)),
+            _sync: None,
+            namespace: String::new(),
+            audit: None,
+        }
     }
 
     /// Wrap a shared vault that a [`SyncEngine`] also writes to, with the given key namespace.
-    pub fn with_sync(vault: Arc<Mutex<LocalVault>>, sync: Option<SyncEngine>, namespace: String) -> Self {
-        Self { vault, _sync: sync, namespace, audit: None }
+    pub fn with_sync(
+        vault: Arc<Mutex<LocalVault>>,
+        sync: Option<SyncEngine>,
+        namespace: String,
+    ) -> Self {
+        Self {
+            vault,
+            _sync: sync,
+            namespace,
+            audit: None,
+        }
     }
 
     /// Attach (or clear) the audit sink — access events are emitted to it. Fluent; returns `self`.
@@ -195,7 +214,14 @@ impl DefaultCredentialService {
     }
 
     /// Emit an audit event if an audit sink is configured (no-op otherwise).
-    fn audit_event(&self, op: &'static str, name: &str, version: &str, source: &str, outcome: &'static str) {
+    fn audit_event(
+        &self,
+        op: &'static str,
+        name: &str,
+        version: &str,
+        source: &str,
+        outcome: &'static str,
+    ) {
         if let Some(sink) = &self.audit {
             sink.record(&super::audit::AuditEvent {
                 op,
@@ -230,7 +256,9 @@ impl DefaultCredentialService {
         if self.namespace.is_empty() {
             full.to_string()
         } else {
-            full.strip_prefix(&format!("{}/", self.namespace)).unwrap_or(full).to_string()
+            full.strip_prefix(&format!("{}/", self.namespace))
+                .unwrap_or(full)
+                .to_string()
         }
     }
 }
@@ -304,7 +332,13 @@ impl CredentialService for DefaultCredentialService {
             v.reload_if_changed()?;
             v.delete(&self.full(name))?
         };
-        self.audit_event("delete", name, "-", "-", if deleted { "ok" } else { "miss" });
+        self.audit_event(
+            "delete",
+            name,
+            "-",
+            "-",
+            if deleted { "ok" } else { "miss" },
+        );
         Ok(deleted)
     }
     fn refresh(&self) -> Result<()> {
@@ -319,11 +353,20 @@ impl CredentialService for DefaultCredentialService {
         let (last_sync_age_ms, sync_failures, rotations) = match &self._sync {
             Some(s) => {
                 let (last_ok, failures, rotations) = s.stats();
-                (last_ok.map(|ms| now_ms_service().saturating_sub(ms)), failures, rotations)
+                (
+                    last_ok.map(|ms| now_ms_service().saturating_sub(ms)),
+                    failures,
+                    rotations,
+                )
             }
             None => (None, 0, 0),
         };
-        CredentialStats { secret_count, last_sync_age_ms, sync_failures, rotations }
+        CredentialStats {
+            secret_count,
+            last_sync_age_ms,
+            sync_failures,
+            rotations,
+        }
     }
 }
 

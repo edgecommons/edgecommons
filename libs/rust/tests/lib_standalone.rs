@@ -35,7 +35,8 @@ async fn standalone_runtime_exposes_all_services_and_accessors() {
         return;
     }
 
-    let host = std::env::var("EDGECOMMONS_IT_MQTT_HOST").unwrap_or_else(|_| "localhost".to_string());
+    let host =
+        std::env::var("EDGECOMMONS_IT_MQTT_HOST").unwrap_or_else(|_| "localhost".to_string());
     let port = std::env::var("EDGECOMMONS_IT_MQTT_PORT").unwrap_or_else(|_| "1883".to_string());
 
     let dir = std::env::temp_dir().join(format!("edgecommons-lib-{}", uuid::Uuid::new_v4()));
@@ -115,7 +116,10 @@ async fn standalone_runtime_exposes_all_services_and_accessors() {
         .from_config(&cfg)
         .payload(serde_json::json!({ "ok": true }))
         .build();
-    messaging.publish("lib-it/ping", &msg).await.expect("publish");
+    messaging
+        .publish("lib-it/ping", &msg)
+        .await
+        .expect("publish");
 
     // Telemetry streaming is wired into build() under the `streaming` feature: gg.streams() is
     // populated from the config's `streaming` section (templates resolved) and ready to append.
@@ -125,14 +129,22 @@ async fn standalone_runtime_exposes_all_services_and_accessors() {
         assert_eq!(streams.stream_names(), vec!["telemetry"]);
         let h = streams.stream("telemetry").expect("configured stream");
         for i in 0..5u64 {
-            h.append(edgecommons::streaming::StreamRecord::new("k", 1000 + i, b"v")).unwrap();
+            h.append(edgecommons::streaming::StreamRecord::new(
+                "k",
+                1000 + i,
+                b"v",
+            ))
+            .unwrap();
         }
         h.flush().unwrap();
         let s = streams.stats("telemetry").expect("stats");
         assert_eq!(s.appended_total, 5);
         assert_eq!(s.next_offset, 5);
         // {ThingName} in the buffer path was resolved during build().
-        assert!(dir.join("stream-lib-thing").is_dir(), "buffer path template resolved");
+        assert!(
+            dir.join("stream-lib-thing").is_dir(),
+            "buffer path template resolved"
+        );
     }
 
     // Credentials are wired into build() under the `credentials` feature: gg.credentials() is the
@@ -141,11 +153,18 @@ async fn standalone_runtime_exposes_all_services_and_accessors() {
     {
         let creds = gg.credentials().expect("credentials configured");
         creds
-            .put("db/password", b"s3cr3t", edgecommons::credentials::PutOptions::default())
+            .put(
+                "db/password",
+                b"s3cr3t",
+                edgecommons::credentials::PutOptions::default(),
+            )
             .unwrap();
         assert_eq!(creds.get_string("db/password").unwrap().unwrap(), "s3cr3t");
         // {ThingName} in the vault path was resolved during build().
-        assert!(dir.join("vault-lib-thing").exists(), "vault path template resolved");
+        assert!(
+            dir.join("vault-lib-thing").exists(),
+            "vault path template resolved"
+        );
     }
 
     // Listener add/remove (identity-based remove).

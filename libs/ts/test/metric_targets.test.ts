@@ -114,11 +114,11 @@ describe("MessagingMetricTarget (UNS metric topics, §4.3)", () => {
     expect(body.count).toBe(3);
   });
 
-  it("routes to IoT Core with AtLeastOnce when iotCore is set", async () => {
+  it("routes to the northbound broker with AtLeastOnce when selected", async () => {
     const svc = new RecordingMessagingService();
     const t = new MessagingMetricTarget(svc, config, true, "ns", false);
     await t.emitNow(metric(), { count: 1 });
-    expect(svc.published[0].kind).toBe("publishReservedToIoTCore");
+    expect(svc.published[0].kind).toBe("publishReservedNorthbound");
     expect(svc.published[0].topic).toBe(METRIC_TOPIC);
     expect(svc.published[0].qos).toBe(Qos.AtLeastOnce);
   });

@@ -20,12 +20,14 @@ import {
   MessageBuilder,
   MessageIdentity,
   DefaultMessagingService,
+  IpcMessagingProvider,
   StandaloneMqttProvider,
   ReservedTopicError,
   Uns,
   unsClassFromToken,
-} from "@edgecommons/edgecommons";
-import type { MessagingConfig } from "@edgecommons/edgecommons";
+} from "../../../../libs/ts/dist/index";
+import type { MessagingConfig } from "../../../../libs/ts/dist/index";
+import { existsSync, writeFileSync } from "fs";
 
 const LANG = "ts";
 const HOST = process.env.EDGECOMMONS_IT_MQTT_HOST ?? "localhost";
@@ -53,6 +55,11 @@ async function service(suffix: string): Promise<DefaultMessagingService> {
     local: { host: HOST, port: PORT, clientId: `interop-${LANG}-${suffix}-${process.pid}` },
   };
   const provider = await StandaloneMqttProvider.connect(mc);
+  return new DefaultMessagingService(provider);
+}
+
+async function ipcService(): Promise<DefaultMessagingService> {
+  const provider = await IpcMessagingProvider.connect({ receiveOwnMessages: true });
   return new DefaultMessagingService(provider);
 }
 
@@ -128,6 +135,146 @@ async function runRawPub(topic: string, token: string): Promise<number> {
     await svc.publishRaw(topic, { token, from: LANG });
     await new Promise((r) => setTimeout(r, 500));
     return 0;
+  } finally {
+    await svc.disconnect();
+  }
+}
+
+async function runBinarySub(topic: string, expectedHex: string): Promise<number> {
+  const svc = await service("binsub");
+  try {
+    const got = new Promise<Message>((resolve) => {
+      void svc.subscribe(topic, (_t, m) => resolve(m)).then(() => process.stdout.write("READY\n"));
+    });
+    const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 10_000));
+    const m = await Promise.race([got, timeout]);
+    if (m === null) {
+      emit({ ok: false, error: "timeout" });
+      return 1;
+    }
+    let hex: string | null = null;
+    let error: string | undefined;
+    const isBinary = m.isBinaryBody();
+    try {
+      hex = m.getBinaryBody()?.toString("hex") ?? null;
+    } catch (e) {
+      error = String(e);
+    }
+    const ok = isBinary && hex === expectedHex.toLowerCase();
+    emit({ ok, is_binary: isBinary, hex, ...(error ? { error } : {}) });
+    return ok ? 0 : 1;
+  } finally {
+    await svc.disconnect();
+  }
+}
+
+async function runBinaryPub(topic: string, bodyHex: string): Promise<number> {
+  const svc = await service("binpub");
+  try {
+    const bytes = Buffer.from(bodyHex, "hex");
+    const msg = MessageBuilder.create("InteropBinary", "1.0")
+      .withPayload(bytes)
+      .withTags({ from: LANG })
+      .build();
+    await svc.publish(topic, msg);
+    await new Promise((r) => setTimeout(r, 500));
+    return 0;
+  } finally {
+    await svc.disconnect();
+  }
+}
+
+function ggTopic(runId: string, publisher: string, subscriber: string): string {
+  return `edgecommons/interop/binary/${runId}/${publisher}/${subscriber}`;
+}
+
+function publisherFromGgTopic(topic: string): string {
+  const parts = topic.split("/");
+  return parts.length >= 2 ? parts[parts.length - 2] : "unknown";
+}
+
+function ggReadyPath(runId: string, lang: string): string {
+  return `/tmp/edgecommons_gg_ipc_binary_ready_${lang}_${runId}`;
+}
+
+async function waitForGgReady(runId: string, expectedLangs: string[]): Promise<string[]> {
+  const readyWaitSecs = Number(process.env.EDGECOMMONS_GG_READY_WAIT_SECS ?? "180");
+  const deadline = Date.now() + readyWaitSecs * 1000;
+  while (Date.now() < deadline) {
+    const missing = expectedLangs.filter((lang) => !existsSync(ggReadyPath(runId, lang)));
+    if (missing.length === 0) return [];
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  return expectedLangs.filter((lang) => !existsSync(ggReadyPath(runId, lang)));
+}
+
+async function runGgBinaryMatrix(runId: string, langsCsv: string, expectedHex: string): Promise<number> {
+  const expectedLangs = langsCsv.split(",").filter(Boolean);
+  const readyLangs = (process.env.EDGECOMMONS_GG_READY_LANGS ?? langsCsv).split(",").filter(Boolean);
+  const readyLang = process.env.EDGECOMMONS_GG_READY_LANG ?? LANG;
+  const expectedBytes = Buffer.from(expectedHex, "hex");
+  const subscribeDelaySecs = Number(process.env.EDGECOMMONS_GG_SUBSCRIBE_DELAY_SECS ?? "8");
+  const waitSecs = Number(process.env.EDGECOMMONS_GG_WAIT_SECS ?? "35");
+  const svc = await ipcService();
+  const received = new Map<string, { is_binary: boolean; hex: string | null; ok: boolean }>();
+  const errors = new Map<string, string>();
+  try {
+    await svc.subscribe(
+      ggTopic(runId, "+", LANG),
+      (_topic, m) => {
+        const publisher = publisherFromGgTopic(_topic);
+        try {
+          const isBinary = m.isBinaryBody();
+          const bytes = isBinary ? m.getBinaryBody() : undefined;
+          const hex = bytes?.toString("hex") ?? null;
+          const ok = isBinary && bytes !== undefined && Buffer.compare(bytes, expectedBytes) === 0;
+          if (!received.has(publisher)) received.set(publisher, { is_binary: isBinary, hex, ok });
+        } catch (e) {
+          errors.set(publisher, String(e));
+          if (!received.has(publisher)) received.set(publisher, { is_binary: false, hex: null, ok: false });
+        }
+      },
+      64,
+      1,
+    );
+    process.stdout.write("READY\n");
+    writeFileSync(ggReadyPath(runId, readyLang), String(Date.now()), "utf8");
+    const readyMissing = await waitForGgReady(runId, readyLangs);
+    await new Promise((r) => setTimeout(r, subscribeDelaySecs * 1000));
+    if (readyMissing.length === 0) {
+      const msg = MessageBuilder.create("InteropBinary", "1.0")
+        .withPayload(expectedBytes)
+        .withTags({ from: LANG })
+        .build();
+      for (const target of expectedLangs) {
+        await svc.publish(ggTopic(runId, LANG, target), msg);
+      }
+    }
+    const deadline = Date.now() + waitSecs * 1000;
+    while (Date.now() < deadline && !expectedLangs.every((lang) => received.has(lang))) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    const missing = expectedLangs.filter((lang) => !received.has(lang));
+    const receivedObj = Object.fromEntries(received.entries());
+    const errorsObj = Object.fromEntries(errors.entries());
+    const ok =
+      readyMissing.length === 0 &&
+      missing.length === 0 &&
+      errors.size === 0 &&
+      expectedLangs.every((lang) => received.get(lang)?.ok === true);
+    const result = {
+      ok,
+      lang: LANG,
+      run_id: runId,
+      expected_hex: expectedHex.toLowerCase(),
+      ready_missing: readyMissing,
+      received: receivedObj,
+      missing,
+      errors: errorsObj,
+    };
+    writeFileSync(`/tmp/edgecommons_gg_ipc_binary_${LANG}_${runId}.json`, JSON.stringify(result), "utf8");
+    emit(result);
+    return ok ? 0 : 1;
   } finally {
     await svc.disconnect();
   }
@@ -224,6 +371,12 @@ async function main(): Promise<void> {
       process.exit(await runRawSub(a, b));
     case "raw-pub":
       process.exit(await runRawPub(a, b));
+    case "binary-sub":
+      process.exit(await runBinarySub(a, b));
+    case "binary-pub":
+      process.exit(await runBinaryPub(a, b));
+    case "gg-binary-matrix":
+      process.exit(await runGgBinaryMatrix(a, b, c));
     case "uns-pub":
       process.exit(await runUnsPub(a, b, c));
     case "uns-sub":

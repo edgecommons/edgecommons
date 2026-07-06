@@ -20,7 +20,7 @@
   },
   "heartbeat": {
     "intervalSecs": 60,
-    "destination": "iotcore"
+    "destination": "northbound"
   },
   "metricEmission": {
     "target": "cloudwatch",

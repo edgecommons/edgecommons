@@ -9,8 +9,8 @@
 use serde_json::Value;
 
 use super::service::CredentialService;
-use crate::error::EdgeCommonsError;
 use crate::Result;
+use crate::error::EdgeCommonsError;
 
 /// Recursively replace `$secret` references in `value` with values resolved from `creds`.
 ///
@@ -21,7 +21,10 @@ pub fn resolve_secret_refs(value: &mut Value, creds: &dyn CredentialService) -> 
         Value::Object(map) => {
             if let Some(Value::String(name)) = map.get("$secret") {
                 let name = name.clone();
-                let field = map.get("field").and_then(|v| v.as_str()).map(str::to_string);
+                let field = map
+                    .get("field")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
                 let resolved = resolve_one(&name, field.as_deref(), creds)?;
                 *value = Value::String(resolved);
                 return Ok(());
@@ -41,9 +44,9 @@ pub fn resolve_secret_refs(value: &mut Value, creds: &dyn CredentialService) -> 
 }
 
 fn resolve_one(name: &str, field: Option<&str>, creds: &dyn CredentialService) -> Result<String> {
-    let secret = creds
-        .get(name)?
-        .ok_or_else(|| EdgeCommonsError::Credentials(format!("secretRef '{name}' not found in the vault")))?;
+    let secret = creds.get(name)?.ok_or_else(|| {
+        EdgeCommonsError::Credentials(format!("secretRef '{name}' not found in the vault"))
+    })?;
     match field {
         None => Ok(secret.as_str()?.to_string()),
         Some(f) => secret
@@ -51,6 +54,10 @@ fn resolve_one(name: &str, field: Option<&str>, creds: &dyn CredentialService) -
             .get(f)
             .and_then(|v| v.as_str())
             .map(str::to_string)
-            .ok_or_else(|| EdgeCommonsError::Credentials(format!("secretRef '{name}' field '{f}' missing or not a string"))),
+            .ok_or_else(|| {
+                EdgeCommonsError::Credentials(format!(
+                    "secretRef '{name}' field '{f}' missing or not a string"
+                ))
+            }),
     }
 }

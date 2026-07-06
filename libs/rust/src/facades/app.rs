@@ -46,7 +46,12 @@ impl AppFacade {
         uns: Uns,
         messaging: Option<Arc<dyn MessagingService>>,
     ) -> AppFacade {
-        AppFacade { config, instance_id, uns, messaging }
+        AppFacade {
+            config,
+            instance_id,
+            uns,
+            messaging,
+        }
     }
 
     /// Publishes a free-form message on `app/{channel}` locally.
@@ -77,10 +82,14 @@ impl AppFacade {
         let name = name.into();
         let channel = channel.into();
         if name.is_empty() {
-            return Err(EdgeCommonsError::Facade("app publish requires a non-empty header name".to_string()));
+            return Err(EdgeCommonsError::Facade(
+                "app publish requires a non-empty header name".to_string(),
+            ));
         }
         if channel.is_empty() {
-            return Err(EdgeCommonsError::Facade("app publish requires a non-empty channel".to_string()));
+            return Err(EdgeCommonsError::Facade(
+                "app publish requires a non-empty channel".to_string(),
+            ));
         }
         if routing.as_ref().is_some_and(Channel::is_stream) {
             return Err(EdgeCommonsError::Facade(
@@ -88,7 +97,11 @@ impl AppFacade {
                     .to_string(),
             ));
         }
-        let token = channel.split('/').map(sanitize).collect::<Vec<_>>().join("/");
+        let token = channel
+            .split('/')
+            .map(sanitize)
+            .collect::<Vec<_>>()
+            .join("/");
         let topic = self.uns.topic_with_channel(UnsClass::App, &token)?;
         let msg = MessageBuilder::new(name, APP_MESSAGE_VERSION)
             .from_config(&self.config)
@@ -97,7 +110,10 @@ impl AppFacade {
             .build();
         if matches!(routing, Some(Channel::Northbound)) {
             let messaging = self.messaging()?;
-            if let Err(e) = messaging.publish_to_iot_core(&topic, &msg, Qos::AtLeastOnce).await {
+            if let Err(e) = messaging
+                .publish_northbound(&topic, &msg, Qos::AtLeastOnce)
+                .await
+            {
                 tracing::warn!(
                     topic,
                     error = %e,
@@ -134,16 +150,25 @@ mod tests {
     fn facade(messaging: Arc<RecordingMessaging>) -> AppFacade {
         let config = Arc::new(Config::from_value("opcua-adapter", "gw-01", json!({})).unwrap());
         let uns = Uns::new(config.identity().clone(), false);
-        AppFacade::new(config, "main".to_string(), uns, Some(messaging as Arc<dyn MessagingService>))
+        AppFacade::new(
+            config,
+            "main".to_string(),
+            uns,
+            Some(messaging as Arc<dyn MessagingService>),
+        )
     }
 
     #[tokio::test]
     async fn publish_passes_the_body_verbatim_with_the_named_header() {
         let messaging = RecordingMessaging::new();
         let f = facade(messaging.clone());
-        f.publish("OrderReceived", "order/received", json!({ "orderId": "A-42", "qty": 3 }))
-            .await
-            .unwrap();
+        f.publish(
+            "OrderReceived",
+            "order/received",
+            json!({ "orderId": "A-42", "qty": 3 }),
+        )
+        .await
+        .unwrap();
         let (topic, msg) = &messaging.local()[0];
         assert_eq!(topic, "ecv1/gw-01/opcua-adapter/main/app/order/received");
         assert_eq!(msg.header.name, "OrderReceived");
@@ -155,15 +180,24 @@ mod tests {
         let messaging = RecordingMessaging::new();
         let f = facade(messaging.clone());
         f.publish("Ping", "a+b", json!({ "n": 1 })).await.unwrap();
-        assert_eq!(messaging.local()[0].0, "ecv1/gw-01/opcua-adapter/main/app/a_b");
+        assert_eq!(
+            messaging.local()[0].0,
+            "ecv1/gw-01/opcua-adapter/main/app/a_b"
+        );
     }
 
     #[tokio::test]
     async fn empty_name_or_channel_is_rejected() {
         let messaging = RecordingMessaging::new();
         let f = facade(messaging);
-        assert!(matches!(f.publish("", "c", json!({})).await, Err(EdgeCommonsError::Facade(_))));
-        assert!(matches!(f.publish("N", "", json!({})).await, Err(EdgeCommonsError::Facade(_))));
+        assert!(matches!(
+            f.publish("", "c", json!({})).await,
+            Err(EdgeCommonsError::Facade(_))
+        ));
+        assert!(matches!(
+            f.publish("N", "", json!({})).await,
+            Err(EdgeCommonsError::Facade(_))
+        ));
     }
 
     #[tokio::test]
@@ -171,18 +205,24 @@ mod tests {
         let messaging = RecordingMessaging::new();
         let f = facade(messaging);
         assert!(matches!(
-            f.publish_via("N", "c", json!({}), Some(Channel::stream("hot").unwrap())).await,
+            f.publish_via("N", "c", json!({}), Some(Channel::stream("hot").unwrap()))
+                .await,
             Err(EdgeCommonsError::Facade(_))
         ));
     }
 
     #[tokio::test]
-    async fn northbound_routing_publishes_to_iot_core() {
+    async fn northbound_routing_publishes_to_northbound() {
         let messaging = RecordingMessaging::new();
         let f = facade(messaging.clone());
-        f.publish_via("CloudEvent", "cloud", json!({ "k": "v" }), Some(Channel::Northbound))
-            .await
-            .unwrap();
+        f.publish_via(
+            "CloudEvent",
+            "cloud",
+            json!({ "k": "v" }),
+            Some(Channel::Northbound),
+        )
+        .await
+        .unwrap();
         assert!(messaging.local().is_empty());
         assert_eq!(messaging.iot().len(), 1);
     }

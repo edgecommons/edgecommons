@@ -75,9 +75,9 @@ messaging(): IMessagingService;   // EdgeCommons.messaging()
 ## The messaging client / service
 
 The primary type carrying all publish/subscribe/request/reply methods. Plain methods target the
-**local** broker (or Greengrass IPC); the IoT-Core mirror methods target AWS IoT Core directly and
-take a QoS. The IoT-Core casing follows each language's idiom, uniformly: Java/TypeScript
-`IoTCore`, Rust `_iot_core`, Python `_iot_core` (snake_case).
+**local** broker (or Greengrass IPC); northbound methods target the configured northbound transport
+and take a QoS. The northbound transport is a generic MQTT broker in standalone mode and the
+Greengrass IoT Core bridge in Greengrass mode.
 
 <Tabs syncKey="lang">
 <TabItem label="Java">
@@ -93,34 +93,34 @@ provider takes no such flag and **ignores it** (an MQTT broker has no own-messag
 public static final int DEFAULT_MAX_MESSAGES = 10_000;
 
 void publish(String topic, Message msg);
-void publishToIoTCore(String topic, Message msg, QOS qos);
+void publishNorthbound(String topic, Message msg, Qos qos);
 void publishRaw(String topic, JsonObject metricObject);
-void publishToIoTCoreRaw(String topic, JsonObject metricObject, QOS qos);
+void publishNorthboundRaw(String topic, JsonObject metricObject, Qos qos);
 
 void subscribe(String topicFilter, BiConsumer<String,Message> callback);
 void subscribe(String topicFilter, BiConsumer<String,Message> callback, int maxConcurrency);
 void subscribe(String topicFilter, BiConsumer<String,Message> callback, int maxConcurrency, int maxMessages);
-void subscribeToIoTCore(String topicFilter, BiConsumer<String,Message> callback, QOS qos);
-void subscribeToIoTCore(String topicFilter, BiConsumer<String,Message> callback, QOS qos, int maxConcurrency);
-void subscribeToIoTCore(String topicFilter, BiConsumer<String,Message> callback, QOS qos, int maxConcurrency, int maxMessages);
+void subscribeNorthbound(String topicFilter, BiConsumer<String,Message> callback, Qos qos);
+void subscribeNorthbound(String topicFilter, BiConsumer<String,Message> callback, Qos qos, int maxConcurrency);
+void subscribeNorthbound(String topicFilter, BiConsumer<String,Message> callback, Qos qos, int maxConcurrency, int maxMessages);
 
 ReplyFuture request(String topic, Message request);                     // default deadline (30 s)
 ReplyFuture request(String topic, Message request, Duration timeout);   // null = default, ZERO = off
-ReplyFuture requestFromIoTCore(String topic, Message request);
-ReplyFuture requestFromIoTCore(String topic, Message request, Duration timeout);
+ReplyFuture requestNorthbound(String topic, Message request);
+ReplyFuture requestNorthbound(String topic, Message request, Duration timeout);
 void cancelRequest(ReplyFuture replyFuture);
-void cancelRequestFromIoTCore(ReplyFuture replyFuture);
+void cancelRequestNorthbound(ReplyFuture replyFuture);
 void reply(Message request, Message reply);
-void replyToIoTCore(Message request, Message reply);
+void replyNorthbound(Message request, Message reply);
 
 void unsubscribe(String topicFilter);
-void unsubscribeFromIoTCore(String topicFilter);
+void unsubscribeNorthbound(String topicFilter);
 
 static boolean topicMatchesFilter(String topicFilter, String topic);
 boolean connected();
 void close();
 Object getNativeLocalClient();
-Object getNativeIotCoreClient();
+Object getNativeNorthboundClient();
 
 ReservedPublisher reservedPublisher();   // library-internal: the privileged publish seam
                                          // the guard does not apply to (heartbeat/metric/cfg)
@@ -144,30 +144,30 @@ def connected() -> bool: ...         # never raises
 
 def publish(topic: str, msg: Message) -> None: ...
 def publish_raw(topic: str, msg: dict) -> None: ...
-def publish_to_iot_core(topic: str, msg: Message, qos: str) -> None: ...
-def publish_to_iot_core_raw(topic: str, msg: dict, qos: str) -> None: ...
+def publish_northbound(topic: str, msg: Message, qos: Qos) -> None: ...
+def publish_northbound_raw(topic: str, msg: dict, qos: Qos) -> None: ...
 
 def subscribe(topic, callback, max_concurrency=None, max_messages=None) -> None: ...
-def subscribe_to_iot_core(topic, callback, qos, max_concurrency=None, max_messages=None) -> None: ...
+def subscribe_northbound(topic, callback, qos: Qos, max_concurrency=None, max_messages=None) -> None: ...
 
 def unsubscribe(topic) -> None: ...
-def unsubscribe_from_iot_core(topic) -> None: ...
+def unsubscribe_northbound(topic) -> None: ...
 
 # timeout_secs: None = the configured default (30 s), 0 = disabled for this call
 def request(topic, msg, timeout_secs: float | None = None) -> Iou: ...
-def request_from_iot_core(topic, msg, timeout_secs: float | None = None) -> Iou: ...
+def request_northbound(topic, msg, timeout_secs: float | None = None) -> Iou: ...
 def cancel_request(iou) -> Iou: ...
-def cancel_request_from_iot_core(iou) -> Iou: ...
+def cancel_request_northbound(iou) -> Iou: ...
 def reply(request, reply) -> None: ...
-def reply_to_iot_core(request, reply) -> None: ...
+def reply_northbound(request, reply) -> None: ...
 
 def topic_matches_sub(sub, topic) -> bool: ...
-def get_native_client(): ...         # -> {'local': ..., 'iot_core': ...}
+def get_native_client(): ...         # -> {'local': ..., 'northbound': ...}
 ```
 
 The 3rd positional arg of `subscribe` is **`max_concurrency`** (matching Java); `max_messages` is
-4th. There is a single `get_native_client()` (returning a `{'local', 'iot_core'}` dict), not
-separate local/IoT-Core getters. The library-internal privileged publish seam is the
+4th. There is a single `get_native_client()` (returning a `{'local', 'northbound'}` dict), not
+separate local/northbound getters. The library-internal privileged publish seam is the
 `_publish_reserved*` staticmethods (underscore convention — not for component code).
 
 </TabItem>
@@ -180,32 +180,32 @@ an `async_trait`; everything is `async` except `cancel_request*` and `connected`
 #[async_trait]
 pub trait MessagingService: Send + Sync {
     async fn publish(&self, topic: &str, msg: &Message) -> Result<()>;
-    async fn publish_to_iot_core(&self, topic: &str, msg: &Message, qos: Qos) -> Result<()>;
+    async fn publish_northbound(&self, topic: &str, msg: &Message, qos: Qos) -> Result<()>;
     async fn publish_raw(&self, topic: &str, payload: &Value) -> Result<()>;
-    async fn publish_to_iot_core_raw(&self, topic: &str, payload: &Value, qos: Qos) -> Result<()>;
+    async fn publish_northbound_raw(&self, topic: &str, payload: &Value, qos: Qos) -> Result<()>;
 
     // NOTE: max_messages THEN max_concurrency (opposite order from Java/Python)
     async fn subscribe(&self, filter: &str, handler: Arc<dyn MessageHandler>,
                        max_messages: usize, max_concurrency: usize) -> Result<()>;
-    async fn subscribe_to_iot_core(&self, filter: &str, handler: Arc<dyn MessageHandler>,
+    async fn subscribe_northbound(&self, filter: &str, handler: Arc<dyn MessageHandler>,
                        qos: Qos, max_messages: usize, max_concurrency: usize) -> Result<()>;
 
     async fn unsubscribe(&self, filter: &str) -> Result<()>;
-    async fn unsubscribe_from_iot_core(&self, filter: &str) -> Result<()>;
+    async fn unsubscribe_northbound(&self, filter: &str) -> Result<()>;
 
     // request() applies the configured default deadline (30 s);
     // request_with_timeout: None = default, Some(Duration::ZERO) = disabled
     async fn request(&self, topic: &str, msg: Message) -> Result<ReplyFuture>;
     async fn request_with_timeout(&self, topic: &str, msg: Message,
                                   timeout: Option<Duration>) -> Result<ReplyFuture>;
-    async fn request_from_iot_core(&self, topic: &str, msg: Message) -> Result<ReplyFuture>;
-    async fn request_from_iot_core_with_timeout(&self, topic: &str, msg: Message,
+    async fn request_northbound(&self, topic: &str, msg: Message) -> Result<ReplyFuture>;
+    async fn request_northbound_with_timeout(&self, topic: &str, msg: Message,
                                   timeout: Option<Duration>) -> Result<ReplyFuture>;
     async fn reply(&self, request: &Message, reply: Message) -> Result<()>;
-    async fn reply_to_iot_core(&self, request: &Message, reply: Message) -> Result<()>;
+    async fn reply_northbound(&self, request: &Message, reply: Message) -> Result<()>;
 
     fn cancel_request(&self, reply_future: ReplyFuture);
-    fn cancel_request_from_iot_core(&self, reply_future: ReplyFuture);
+    fn cancel_request_northbound(&self, reply_future: ReplyFuture);
 
     fn connected(&self) -> bool;
 }
@@ -243,27 +243,27 @@ Construct it with `new DefaultMessagingService(provider: MessagingProvider)`.
 ```typescript
 interface IMessagingService {
   publish(topic: string, msg: Message): Promise<void>;
-  publishToIoTCore(topic: string, msg: Message, qos?: Qos): Promise<void>;
+  publishNorthbound(topic: string, msg: Message, qos?: Qos): Promise<void>;
   publishRaw(topic: string, payload: unknown): Promise<void>;
-  publishToIoTCoreRaw(topic: string, payload: unknown, qos?: Qos): Promise<void>;
+  publishNorthboundRaw(topic: string, payload: unknown, qos?: Qos): Promise<void>;
 
   // NOTE: maxMessages THEN maxConcurrency; defaults 32 and 1
   subscribe(filter: string, handler: MessageHandler,
             maxMessages?: number, maxConcurrency?: number): Promise<void>;
-  subscribeToIoTCore(filter: string, handler: MessageHandler,
+  subscribeNorthbound(filter: string, handler: MessageHandler,
             qos?: Qos, maxMessages?: number, maxConcurrency?: number): Promise<void>;
 
   unsubscribe(filter: string): Promise<void>;
-  unsubscribeFromIoTCore(filter: string): Promise<void>;
+  unsubscribeNorthbound(filter: string): Promise<void>;
 
   // timeoutMs: omitted = the configured default (30 s), explicit 0 = disabled
   request(topic: string, msg: Message, timeoutMs?: number): ReplyFuture;   // synchronous return
-  requestFromIoTCore(topic: string, msg: Message, timeoutMs?: number): ReplyFuture;
+  requestNorthbound(topic: string, msg: Message, timeoutMs?: number): ReplyFuture;
   reply(request: Message, reply: Message): Promise<void>;
-  replyToIoTCore(request: Message, reply: Message): Promise<void>;
+  replyNorthbound(request: Message, reply: Message): Promise<void>;
 
   cancelRequest(reply: ReplyFuture): void;
-  cancelRequestFromIoTCore(reply: ReplyFuture): void;
+  cancelRequestNorthbound(reply: ReplyFuture): void;
 
   connected(): boolean;
 }
@@ -274,7 +274,7 @@ type MessageHandler = (topic: string, message: Message) => void | Promise<void>;
 `subscribe` takes **`maxMessages` first, then `maxConcurrency`** (defaults `32` and `1`).
 `request` returns the `ReplyFuture` **synchronously**; an omitted `timeoutMs` resolves to the
 configured `messaging.requestTimeoutSeconds` default (30 s), and an explicit `0` disables the
-deadline. `subscribeToIoTCore`'s `qos` defaults to `Qos.AtLeastOnce`; the Java/Python IoT-Core
+deadline. `subscribeNorthbound`'s `qos` defaults to `Qos.AtLeastOnce`; the Java/Python northbound
 methods require an explicit QoS. The library-internal privileged publish seam is the `@internal`
 reserved publish on `DefaultMessagingService` (stripped from the published typings).
 
@@ -296,7 +296,7 @@ in TypeScript.
 - **`maxMessages`** — bounded in-memory queue depth per subscription; on overflow, new messages are
   **dropped with a warning** (the subscription never blocks). Default `10000` in Java/Python
   (`DEFAULT_MAX_MESSAGES`), `32` in TypeScript, caller-supplied in Rust.
-- **`connected()`** reports the **local** broker link only (an IoT Core outage does not flip it); it
+- **`connected()`** reports the **local** broker link only (a northbound outage does not flip it); it
   backs `/readyz`, never `/livez`.
 
 ## The `Message` envelope
@@ -310,6 +310,22 @@ emitted only when tags were stamped. A received payload with none of
 `header`/`identity`/`tags`/`body` (or non-JSON bytes) is delivered as a **raw** message; non-JSON
 bytes become a raw string. A malformed inbound `identity` parses leniently to null/absent with a
 warning — the message still delivers.
+
+Binary bodies are first-class but deliberately bounded: a decoded binary body is limited to
+**64 KiB** and travels inside `body` as:
+
+```json
+{
+  "_edgecommonsBinary": {
+    "encoding": "base64",
+    "length": 5,
+    "data": "AAEC/v8="
+  }
+}
+```
+
+The normal body accessors return that marker object on inbound messages. Use the binary-specific
+accessors below to decode and validate it.
 
 <Tabs syncKey="lang">
 <TabItem label="Java">
@@ -325,6 +341,8 @@ MessageIdentity getIdentity();     // null when the message carries no identity
 MessageTags getTags();
 void injectTag(String key, String value);
 Object getBody();
+boolean isBinaryBody();
+byte[] getBinaryBody();            // null when body is not binary; validates marker + 64 KiB limit
 Object getRaw();
 String makeRequest();              // also: makeRequest(String replyTo)
 void setCorrelationId(String id);
@@ -351,6 +369,8 @@ def get_header(self) -> MessageHeader: ...
 def get_identity(self) -> Optional[MessageIdentity]: ...
 def get_tags(self) -> MessageTags: ...
 def get_body(self): ...
+def is_binary_body(self) -> bool: ...
+def get_binary_body(self) -> Optional[bytes]: ...   # None when body is not binary; validates marker + 64 KiB limit
 def get_raw(self): ...
 def get_source(self): ...           # alias of get_tags
 def get_payload(self): ...          # alias of get_body
@@ -369,7 +389,7 @@ def from_object(msg_contents) -> "Message": ...
 pub struct Message {
     pub header: MessageHeader,
     pub identity: Option<MessageIdentity>,   // skipped when None
-    pub tags: MessageTags,
+    pub tags: Option<MessageTags>,           // skipped when None
     pub body: Value,
     pub raw: Option<Value>,
 }
@@ -378,9 +398,15 @@ impl Message {
     pub fn raw(value: Value) -> Self;
     pub fn is_raw(&self) -> bool;
     pub fn get_raw(&self) -> Option<&Value>;
+    pub fn is_binary_body(&self) -> bool;
+    pub fn binary_body(&self) -> Result<Option<Vec<u8>>>;   // validates marker + 64 KiB limit
     pub fn to_vec(&self) -> Result<Vec<u8>>;
     pub fn from_slice(bytes: &[u8]) -> Result<Message>;   // non-JSON → raw string
     pub fn correlation_id(&self) -> &str;
+}
+
+impl MessageBuilder {
+    pub fn binary_payload(self, bytes: impl AsRef<[u8]>) -> Result<Self>;
 }
 ```
 
@@ -405,6 +431,8 @@ class Message {
   isRaw(): boolean;
   getRaw(): unknown;
   getBody(): unknown;
+  isBinaryBody(): boolean;
+  getBinaryBody(): Buffer | undefined;   // validates marker + 64 KiB limit
   getCorrelationId(): string;
   getReplyTo(): string | undefined;
   toObject(): unknown;
@@ -709,43 +737,43 @@ const reply = await messaging.request("svc/op", req);     // 30 s default deadli
 
 ## `Qos` and `Destination` enums
 
-Two QoS levels — at-most-once and at-least-once — which the MQTT provider maps to QoS `0` and `1`.
-**Java and Python reuse the AWS SDK enum**; **Rust and TypeScript define their own.** `Destination`
-exists in Rust/TS as a `Local` / IoT-Core selector used by the lower-level provider (Rust
-`Destination::IotCore`, TypeScript `Destination.IoTCore` — string value `"iotcore"` in both);
-Java/Python do not expose an equivalent enum (they have the per-destination method pairs instead).
+MQTT QoS defaults are configured under each broker, `messaging.local.qos` and
+`messaging.northbound.qos`, for operations that do not carry an explicit QoS parameter. The
+standalone local and northbound MQTT brokers support QoS `0`/`1`/`2`: `0` is at most once, `1` is at
+least once, and `2` is exactly once. All four language APIs expose EdgeCommons-owned QoS enums.
+Greengrass IoT Core IPC accepts only QoS `0`/`1`; calls using QoS `2` fail at the IPC provider
+boundary. Direct northbound methods that take a QoS argument still use that per-call value.
 
-QoS is a parameter only on the explicit IoT-Core mirror methods. The **local** methods use a
-fixed, implicit QoS: on the standalone (dual-MQTT) provider, local `publish` / `subscribe` / `request`
-(and the ephemeral reply subscription) use **QoS 1 (`AT_LEAST_ONCE`)**, while the IoT-Core
-request/reply path (`requestFromIoTCore` / `replyToIoTCore` and their reply subscription) is forced to
-**QoS 0 (`AT_MOST_ONCE`)**.
+`Destination` exists in Rust/TS as a `Local` / `Northbound` selector used by the lower-level provider
+(Rust `Destination::Northbound`, TypeScript `Destination.Northbound` — string value `"northbound"` in both);
+Java/Python do not expose an equivalent enum because they use per-destination method pairs.
 
 <Tabs syncKey="lang">
 <TabItem label="Java">
 
-`QOS` is the **AWS SDK type** `software.amazon.awssdk.aws.greengrass.model.QOS`, values
-`AT_MOST_ONCE` / `AT_LEAST_ONCE`. There is no separate `Destination` enum — use the plain vs
-`*ToIotCore` method pairs.
+`Qos` is the Java-native EdgeCommons enum. There is no separate `Destination` enum — use the plain
+vs `*Northbound` method pairs.
 
 ```java
-import software.amazon.awssdk.aws.greengrass.model.QOS;
+import com.mbreissi.edgecommons.messaging.Qos;
 
-QOS.AT_MOST_ONCE;    // mapped to MQTT QoS 0
-QOS.AT_LEAST_ONCE;   // mapped to MQTT QoS 1
+Qos.AT_MOST_ONCE;    // MQTT QoS 0
+Qos.AT_LEAST_ONCE;   // MQTT QoS 1
+Qos.EXACTLY_ONCE;    // MQTT QoS 2; standalone MQTT only
 ```
 
 </TabItem>
 <TabItem label="Python">
 
-`QOS` is the **AWS SDK type** `from awsiot.greengrasscoreipc.model import QOS`. No separate
-`Destination` enum — use the plain vs `*_to_iot_core` method pairs.
+`Qos` is the Python-native EdgeCommons enum. No separate `Destination` enum — use the plain vs
+`*_northbound` method pairs.
 
 ```python
-from awsiot.greengrasscoreipc.model import QOS
+from edgecommons.messaging.qos import Qos
 
-QOS.AT_MOST_ONCE     # mapped to MQTT QoS 0
-QOS.AT_LEAST_ONCE    # mapped to MQTT QoS 1
+Qos.AT_MOST_ONCE     # MQTT QoS 0
+Qos.AT_LEAST_ONCE    # MQTT QoS 1
+Qos.EXACTLY_ONCE     # MQTT QoS 2; standalone MQTT only
 ```
 
 </TabItem>
@@ -754,8 +782,8 @@ QOS.AT_LEAST_ONCE    # mapped to MQTT QoS 1
 `Qos` is a Rust-native enum. `Destination` is used only by the lower-level `MessagingProvider` trait.
 
 ```rust
-pub enum Qos { AtMostOnce, AtLeastOnce }
-pub enum Destination { Local, IotCore }   // RFC-430 acronym casing (Rust idiom)
+pub enum Qos { AtMostOnce, AtLeastOnce, ExactlyOnce }
+pub enum Destination { Local, Northbound }   // RFC-430 acronym casing (Rust idiom)
 ```
 
 </TabItem>
@@ -764,8 +792,8 @@ pub enum Destination { Local, IotCore }   // RFC-430 acronym casing (Rust idiom)
 `Qos` and `Destination` are TS-native string enums.
 
 ```typescript
-enum Qos { AtMostOnce = "atMostOnce", AtLeastOnce = "atLeastOnce" }
-enum Destination { Local = "local", IoTCore = "iotcore" }
+enum Qos { AtMostOnce = "atMostOnce", AtLeastOnce = "atLeastOnce", ExactlyOnce = "exactlyOnce" }
+enum Destination { Local = "local", Northbound = "northbound" }
 ```
 
 </TabItem>
@@ -844,7 +872,8 @@ const svc: IMessagingService = new DefaultMessagingService(fakeProvider);
 ## Messaging (broker) config types
 
 With the MQTT transport, the broker config is a JSON `messaging` section with a `local` block and an
-optional `iotCore` block, plus the request-deadline default and an optional LWT. The wire shape is
+optional `northbound` block, plus the request-deadline default. QoS defaults belong inside each
+broker block. The wire shape is
 identical across the four languages (each maps it to its own config type — Java
 `MessagingConfiguration`, Python `messaging_config.py` dataclasses, Rust `config.rs`, TS
 `config.ts`).
@@ -856,6 +885,7 @@ identical across the four languages (each maps it to its own config type — Jav
       "host": "localhost",
       "port": 8883,
       "clientId": "my-component",
+      "qos": { "publish": 1, "subscribe": 1 },
       "credentials": {
         "caPath": "/certs/ca.crt",
         "certPath": "/certs/client.crt",
@@ -864,40 +894,36 @@ identical across the four languages (each maps it to its own config type — Jav
         "password": "optional-pass"
       }
     },
-    "iotCore": {
-      "endpoint": "xxxx-ats.iot.us-east-1.amazonaws.com",
+    "northbound": {
+      "endpoint": "northbound-broker.example.com",
       "port": 8883,
       "clientId": "my-component",
+      "qos": { "publish": 1, "subscribe": 1 },
       "credentials": {
-        "caPath": "/certs/AmazonRootCA1.pem",
+        "caPath": "/certs/northbound-ca.pem",
         "certPath": "/certs/device.pem.crt",
         "keyPath": "/certs/private.pem.key"
       }
     },
-    "requestTimeoutSeconds": 30,
-    "lwt": {
-      "topic": "ecv1/gw-01/my-component/main/state",
-      "payload": { "status": "UNREACHABLE" },
-      "qos": 1
-    }
+    "requestTimeoutSeconds": 30
   }
 }
 ```
 
 Field reference (verified, identical across all four languages):
 
-- **`local`** — `host` (string), `port` (int), `clientId` (string), optional `credentials`.
-- **`iotCore`** — `endpoint` (string), `port` (int), `clientId` (string), required `credentials`.
-  The whole `iotCore` block is **optional**: omit it for a local-only ("single-broker") deployment.
+- **`local`** — `host` (string), `port` (int), `clientId` (string), optional `qos` and
+  `credentials`.
+- **`northbound`** — `host` or `endpoint` (string), `port` (int), `clientId` (string), optional
+  `qos` and `credentials`. The whole `northbound` block is **optional**: omit it for a local-only
+  ("single-broker") deployment.
 - **`credentials`** — `caPath`, `certPath`, `keyPath`, and optional `username` / `password`.
 - **`requestTimeoutSeconds`** — number, min 0, default `30`; the default
   [request deadline](#requestreply-future-and-the-internal-deadline). `0` disables it; an explicit
   per-call timeout always wins.
-- **`lwt`** — optional MQTT Last-Will registered on the **local-broker connection** at CONNECT
-  (re-registered on reconnect): `topic` (required), `payload` (string or object, published
-  verbatim), `qos` (`0`|`1`, default `1`). **No retain option by design.** The IPC transport
-  no-ops it; the will never passes through `publish()`, so the reserved-class guard does not apply
-  to it. See the [guide](/guides/messaging/#mqtt-last-will-lwt).
+- **`local.qos` / `northbound.qos`** — optional MQTT QoS defaults for operations on that broker
+  without an explicit QoS argument. `publish` and `subscribe` accept `0` (at most once), `1` (at
+  least once), or `2` (exactly once).
 
 Rules:
 
@@ -906,8 +932,7 @@ Rules:
   **without** `caPath` stays plaintext (the cert is ignored). **`username`/`password` apply only to a
   plaintext (no-`caPath`) local broker** — they are set in the `else` branch under `if (!useSSL)`, so
   they are mutually exclusive with TLS and ignored once `caPath` is present.
-- **IoT Core requires full mutual-TLS credentials** (`caPath` + `certPath` + `keyPath`) or it refuses
-  to connect.
+- **A TLS northbound broker may require full mutual-TLS credentials** (`caPath` + `certPath` + `keyPath`).
 - **`host` is an opaque string** — a Kubernetes `Service` DNS name works unchanged.
 - **`local.type` is optional and ignored** — parsed into the config record but never read; there is no
   defaulting to `"mqtt"`.

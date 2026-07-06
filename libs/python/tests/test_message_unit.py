@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from edgecommons.messaging.message import Message, MessageHeader, MessageTags
+from edgecommons.messaging.message import MAX_BINARY_BODY_BYTES, Message, MessageHeader, MessageTags
 from edgecommons.messaging.message_builder import MessageBuilder
 
 
@@ -82,16 +82,42 @@ class TestMessage:
         m.raw = "raw-string"
         assert m.to_dict() == {"raw": "raw-string"}
 
-    def test_bytes_body_serializes_as_base64_string(self):
-        # #16: a bytes body travels as a base64 JSON string (portable cross-language interim), not a
-        # Python-specific form (json.dumps(bytes) would otherwise raise). The canonical vector
-        # {0,1,2,254,255} base64-encodes to "AAEC/v8=" — the same string Java/TS produce.
+    def test_bytes_body_serializes_as_binary_marker(self):
         m = Message()
         m.body = bytes([0, 1, 2, 254, 255])
         d = m.to_dict()
-        assert d["body"] == "AAEC/v8="
-        # And it must be JSON-serializable end-to-end (it was not before the fix).
-        assert json.loads(str(m))["body"] == "AAEC/v8="
+        assert d["body"] == {
+            "_edgecommonsBinary": {
+                "encoding": "base64",
+                "length": 5,
+                "data": "AAEC/v8=",
+            }
+        }
+        assert json.loads(str(m))["body"]["_edgecommonsBinary"]["data"] == "AAEC/v8="
+        assert m.is_binary_body()
+        assert m.get_binary_body() == bytes([0, 1, 2, 254, 255])
+
+    def test_binary_marker_decodes_and_validates_length(self):
+        m = Message.from_object({
+            "body": {
+                "_edgecommonsBinary": {
+                    "encoding": "base64",
+                    "length": 5,
+                    "data": "AAEC/v8=",
+                }
+            }
+        })
+        assert m.is_binary_body()
+        assert m.get_binary_body() == bytes([0, 1, 2, 254, 255])
+        m.body["_edgecommonsBinary"]["length"] = 4
+        with pytest.raises(ValueError):
+            m.get_binary_body()
+
+    def test_oversized_binary_body_is_rejected(self):
+        m = Message()
+        m.body = bytes(MAX_BINARY_BODY_BYTES + 1)
+        with pytest.raises(ValueError):
+            m.to_dict()
 
     def test_to_dict_preserves_explicit_null_map_entry(self):
         # #15 parity: an explicit None entry in a dict body round-trips as JSON null (Python already

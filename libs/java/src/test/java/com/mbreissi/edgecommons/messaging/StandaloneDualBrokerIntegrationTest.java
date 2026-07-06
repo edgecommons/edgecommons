@@ -9,7 +9,7 @@ import com.mbreissi.edgecommons.test.MockConfigurationService;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import org.junit.jupiter.api.Test;
-import software.amazon.awssdk.aws.greengrass.model.QOS;
+import com.mbreissi.edgecommons.messaging.Qos;
 
 import java.io.File;
 import java.util.concurrent.CountDownLatch;
@@ -23,11 +23,11 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Combined STANDALONE dual-broker integration test: a single
- * {@link StandaloneMessagingProvider} connected to BOTH a local broker AND IoT Core at the
- * same time, exercising both transports.
+ * {@link StandaloneMessagingProvider} connected to BOTH a local broker AND a northbound broker at
+ * the same time, exercising both transports.
  *
- * <p>To run without real AWS, the {@code iotCore} endpoint is pointed at the SAME shared EMQX
- * as {@code local} but over the mutual-TLS listener (:8883) — so the real dual-client /
+ * <p>To run without cloud infrastructure, the {@code northbound} endpoint is pointed at the SAME
+ * shared EMQX as {@code local} but over the mutual-TLS listener (:8883) — so the real dual-client /
  * dual-transport code path runs end-to-end. Because both point at one broker, this validates
  * that both connections are live and both method sets work; distinct topics are used per
  * transport (true cross-broker isolation would need two separate brokers).
@@ -59,7 +59,7 @@ class StandaloneDualBrokerIntegrationTest {
         return """
                 { "messaging": {
                   "local": {"host": "localhost", "port": 1883, "clientId": "edgecommons-java-dual-local"},
-                  "iotCore": {"endpoint": "localhost", "port": 8883, "clientId": "edgecommons-java-dual-iot",
+                  "northbound": {"host": "localhost", "port": 8883, "clientId": "edgecommons-java-dual-northbound",
                     "credentials": {"caPath": "%s", "certPath": "%s", "keyPath": "%s"}}
                 } }"""
                 .formatted(ca, cert, key);
@@ -72,7 +72,7 @@ class StandaloneDualBrokerIntegrationTest {
                 new Gson().fromJson(dualJson(dir), MessagingConfiguration.class);
         // The config must carry BOTH brokers.
         assertNotNull(config.getMessaging().getLocal(), "local broker config");
-        assertNotNull(config.getMessaging().getIotCore(), "iotCore broker config");
+        assertNotNull(config.getMessaging().getNorthbound(), "northbound broker config");
         try {
             return new StandaloneMessagingProvider(config, "edgecommons-java-dual-it");
         } catch (Exception e) {
@@ -93,7 +93,7 @@ class StandaloneDualBrokerIntegrationTest {
         try {
             // Both native clients exist when both sections are configured.
             assertNotNull(provider.getNativeLocalClient(), "local client");
-            assertNotNull(provider.getNativeIotCoreClient(), "iotCore client");
+            assertNotNull(provider.getNativeNorthboundClient(), "northbound client");
 
             String localTopic = "edgecommons/dual/java/local/" + System.nanoTime();
             String iotTopic = "edgecommons/dual/java/iot/" + System.nanoTime();
@@ -103,19 +103,19 @@ class StandaloneDualBrokerIntegrationTest {
             var iotMsg = new AtomicReference<Message>();
 
             provider.subscribe(localTopic, (t, m) -> { localMsg.set(m); localLatch.countDown(); }, 1);
-            provider.subscribeToIoTCore(iotTopic, (t, m) -> { iotMsg.set(m); iotLatch.countDown(); },
-                    QOS.AT_LEAST_ONCE, 1);
+            provider.subscribeNorthbound(iotTopic, (t, m) -> { iotMsg.set(m); iotLatch.countDown(); },
+                    Qos.AT_LEAST_ONCE, 1);
 
             provider.publish(localTopic, msg("LocalMsg", "via", "local"));
-            provider.publishToIoTCore(iotTopic, msg("IotMsg", "via", "iot"), QOS.AT_LEAST_ONCE);
+            provider.publishNorthbound(iotTopic, msg("IotMsg", "via", "iot"), Qos.AT_LEAST_ONCE);
 
             assertTrue(localLatch.await(5, TimeUnit.SECONDS), "local transport should deliver");
-            assertTrue(iotLatch.await(5, TimeUnit.SECONDS), "IoT Core transport should deliver");
+            assertTrue(iotLatch.await(5, TimeUnit.SECONDS), "northbound transport should deliver");
             assertEquals("LocalMsg", localMsg.get().getHeader().getName());
             assertEquals("IotMsg", iotMsg.get().getHeader().getName());
 
             provider.unsubscribe(localTopic);
-            provider.unsubscribeFromIoTCore(iotTopic);
+            provider.unsubscribeNorthbound(iotTopic);
         } finally {
             provider.close();
         }
@@ -135,18 +135,18 @@ class StandaloneDualBrokerIntegrationTest {
             assertEquals(localCid, localReply.getCorrelationId());
 
             String iotReq = "edgecommons/dual/java/iot/req/" + System.nanoTime();
-            provider.subscribeToIoTCore(iotReq,
-                    (t, req) -> provider.replyToIoTCore(req, msg("IReply", "answer", "iot")),
-                    QOS.AT_LEAST_ONCE, 1);
+            provider.subscribeNorthbound(iotReq,
+                    (t, req) -> provider.replyNorthbound(req, msg("IReply", "answer", "iot")),
+                    Qos.AT_LEAST_ONCE, 1);
             Message iotRequest = msg("IReq", "q", "2");
             String iotCid = iotRequest.getCorrelationId();
-            Message iotReply = provider.requestFromIoTCore(iotReq, iotRequest).get(5, TimeUnit.SECONDS);
+            Message iotReply = provider.requestNorthbound(iotReq, iotRequest).get(5, TimeUnit.SECONDS);
             assertNotNull(iotReply);
             assertEquals("IReply", iotReply.getHeader().getName());
             assertEquals(iotCid, iotReply.getCorrelationId());
 
             provider.unsubscribe(localReq);
-            provider.unsubscribeFromIoTCore(iotReq);
+            provider.unsubscribeNorthbound(iotReq);
         } finally {
             provider.close();
         }

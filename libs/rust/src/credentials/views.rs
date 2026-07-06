@@ -13,13 +13,14 @@
 use serde::Deserialize;
 
 use super::service::Secret;
-use crate::error::EdgeCommonsError;
 use crate::Result;
+use crate::error::EdgeCommonsError;
 
 /// Parse a secret's bytes into a typed view `T`, with a non-sensitive error naming the expectation.
 pub(crate) fn parse<T: serde::de::DeserializeOwned>(secret: &Secret, kind: &str) -> Result<T> {
-    serde_json::from_slice(secret.bytes())
-        .map_err(|e| EdgeCommonsError::Credentials(format!("secret '{}' is not {kind} JSON: {e}", secret.name)))
+    serde_json::from_slice(secret.bytes()).map_err(|e| {
+        EdgeCommonsError::Credentials(format!("secret '{}' is not {kind} JSON: {e}", secret.name))
+    })
 }
 
 /// AWS credentials stored as a secret.

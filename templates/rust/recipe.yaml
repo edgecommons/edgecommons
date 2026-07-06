@@ -21,7 +21,7 @@ ComponentConfiguration:
       heartbeat:
         enabled: true
         intervalSecs: 5
-        # UNS state keepalive destination ("local" | "iotcore"); the enabled
+        # UNS state keepalive destination ("local" | "northbound"); the enabled
         # measures are emitted as the metric 'sys' via metricEmission.
         destination: "local"
         measures:
@@ -51,7 +51,7 @@ ComponentConfiguration:
           resources:
             - "*"
       aws.greengrass.ipc.mqttproxy:
-        "<<COMPONENTFULLNAME>>:iotcore:1":
+        "<<COMPONENTFULLNAME>>:northbound:1":
           policyDescription: Allows access to publish/subscribe to all topics on IoT Core.
           operations:
             - "aws.greengrass#PublishToIoTCore"

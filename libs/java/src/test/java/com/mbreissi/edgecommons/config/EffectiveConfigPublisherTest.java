@@ -128,13 +128,13 @@ class EffectiveConfigPublisherTest {
         JsonObject redacted = EffectiveConfigPublisher.redact(obj("""
                 {"messaging":{
                    "local":{"credentials":{"username":"u","password":"p"},"host":"h"},
-                   "iotCore":{"credentials":"inline-string"},
+                   "northbound":{"credentials":"inline-string"},
                    "requestTimeoutSeconds":30}}"""));
 
         JsonObject messaging = redacted.getAsJsonObject("messaging");
         assertEquals("***", messaging.getAsJsonObject("local").get("credentials").getAsString(),
                 "messaging.*.credentials must be replaced wholesale with ***");
-        assertEquals("***", messaging.getAsJsonObject("iotCore").get("credentials").getAsString());
+        assertEquals("***", messaging.getAsJsonObject("northbound").get("credentials").getAsString());
         assertEquals("h", messaging.getAsJsonObject("local").get("host").getAsString());
         assertEquals(30, messaging.get("requestTimeoutSeconds").getAsInt());
     }

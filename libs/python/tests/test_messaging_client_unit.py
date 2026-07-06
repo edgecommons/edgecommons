@@ -14,7 +14,7 @@ import edgecommons.messaging.messaging_client as mc_mod
 from edgecommons.messaging.messaging_client import MessagingClient
 from edgecommons.messaging.message import Message
 from edgecommons.platform import Transport
-from awsiot.greengrasscoreipc.model import QOS
+from edgecommons.messaging.qos import Qos
 
 
 @pytest.fixture(autouse=True)
@@ -133,62 +133,62 @@ class TestDelegation:
         MessagingClient.publish_raw("t", {"a": 1})
         self.prov.publish_raw.assert_called_once_with("t", {"a": 1})
 
-    def test_publish_to_iot_core(self):
+    def test_publish_northbound(self):
         m = Message()
-        MessagingClient.publish_to_iot_core("t", m, QOS.AT_LEAST_ONCE)
-        self.prov.publish_to_iot_core.assert_called_once_with("t", m, QOS.AT_LEAST_ONCE)
+        MessagingClient.publish_northbound("t", m, Qos.AT_LEAST_ONCE)
+        self.prov.publish_northbound.assert_called_once_with("t", m, Qos.AT_LEAST_ONCE)
 
-    def test_publish_to_iot_core_raw(self):
-        MessagingClient.publish_to_iot_core_raw("t", {"a": 1}, QOS.AT_LEAST_ONCE)
-        self.prov.publish_to_iot_core_raw.assert_called_once_with("t", {"a": 1}, QOS.AT_LEAST_ONCE)
+    def test_publish_northbound_raw(self):
+        MessagingClient.publish_northbound_raw("t", {"a": 1}, Qos.AT_LEAST_ONCE)
+        self.prov.publish_northbound_raw.assert_called_once_with("t", {"a": 1}, Qos.AT_LEAST_ONCE)
 
     def test_subscribe(self):
         cb = lambda t, m: None
         MessagingClient.subscribe("t", cb, 2, 5)
         self.prov.subscribe.assert_called_once_with("t", cb, 2, 5)
 
-    def test_subscribe_to_iot_core(self):
+    def test_subscribe_northbound(self):
         cb = lambda t, m: None
-        MessagingClient.subscribe_to_iot_core("t", cb, QOS.AT_MOST_ONCE, 1, 3)
-        self.prov.subscribe_to_iot_core.assert_called_once_with("t", cb, QOS.AT_MOST_ONCE, 1, 3)
+        MessagingClient.subscribe_northbound("t", cb, Qos.AT_MOST_ONCE, 1, 3)
+        self.prov.subscribe_northbound.assert_called_once_with("t", cb, Qos.AT_MOST_ONCE, 1, 3)
 
     def test_unsubscribe(self):
         MessagingClient.unsubscribe("t")
         self.prov.unsubscribe.assert_called_once_with("t")
 
-    def test_unsubscribe_from_iot_core(self):
-        MessagingClient.unsubscribe_from_iot_core("t")
-        self.prov.unsubscribe_from_iot_core.assert_called_once_with("t")
+    def test_unsubscribe_northbound(self):
+        MessagingClient.unsubscribe_northbound("t")
+        self.prov.unsubscribe_northbound.assert_called_once_with("t")
 
     def test_request(self):
         m = Message()
         MessagingClient.request("t", m)
         self.prov.request.assert_called_once_with("t", m, None)
 
-    def test_request_from_iot_core(self):
+    def test_request_northbound(self):
         m = Message()
-        MessagingClient.request_from_iot_core("t", m)
-        self.prov.request_from_iot_core.assert_called_once_with("t", m, None)
+        MessagingClient.request_northbound("t", m)
+        self.prov.request_northbound.assert_called_once_with("t", m, None)
 
     def test_cancel_request(self):
         iou = object()
         MessagingClient.cancel_request(iou)
         self.prov.cancel_request.assert_called_once_with(iou)
 
-    def test_cancel_request_from_iot_core(self):
+    def test_cancel_request_northbound(self):
         iou = object()
-        MessagingClient.cancel_request_from_iot_core(iou)
-        self.prov.cancel_request_from_iot_core.assert_called_once_with(iou)
+        MessagingClient.cancel_request_northbound(iou)
+        self.prov.cancel_request_northbound.assert_called_once_with(iou)
 
     def test_reply(self):
         req, rep = Message(), Message()
         MessagingClient.reply(req, rep)
         self.prov.reply.assert_called_once_with(req, rep)
 
-    def test_reply_to_iot_core(self):
+    def test_reply_northbound(self):
         req, rep = Message(), Message()
-        MessagingClient.reply_to_iot_core(req, rep)
-        self.prov.reply_to_iot_core.assert_called_once_with(req, rep)
+        MessagingClient.reply_northbound(req, rep)
+        self.prov.reply_northbound.assert_called_once_with(req, rep)
 
     def test_get_native_client(self):
         self.prov.get_native_client.return_value = {"x": 1}

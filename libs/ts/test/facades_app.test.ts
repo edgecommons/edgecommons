@@ -64,7 +64,7 @@ describe("AppFacade", () => {
 
   it("a northbound transport failure is swallowed (readiness stays local)", async () => {
     const { facade, messaging } = makeFacade();
-    messaging.publishToIoTCore = async () => {
+    messaging.publishNorthbound = async () => {
       throw new Error("iot core down");
     };
     await expect(facade.publish("CloudEvent", "cloud", { k: "v" }, Channel.NORTHBOUND)).resolves.toBeUndefined();

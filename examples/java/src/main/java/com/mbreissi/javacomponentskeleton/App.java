@@ -55,8 +55,8 @@ public class App implements ConfigurationChangeListener
     private final EdgeCommons edgeCommons;
     /** Durable {@code telemetry} stream handle, or {@code null} if the config has no streaming section. */
     private final StreamHandle stream;
-    /** Whether the IoT Core command subscription was established (so shutdown only unsubscribes it then). */
-    private volatile boolean iotCoreSubscribed = false;
+    /** Whether the northbound command subscription was established (so shutdown only unsubscribes it then). */
+    private volatile boolean northboundSubscribed = false;
 
     /**
      * UNS-minted app topics (never hand-write topic strings): the {@code app} class is the free
@@ -162,15 +162,15 @@ public class App implements ConfigurationChangeListener
             .build();
         metricService.defineMetric(localPerformanceMetric);
         
-        // Define performance metrics for IOT_CORE broker
-        Metric iotCorePerformanceMetric = MetricBuilder.create("performance_iotcore")
+        // Define performance metrics for NORTHBOUND broker
+        Metric northboundPerformanceMetric = MetricBuilder.create("performance_northbound")
             .withConfig(configService)
             .addMeasure("replyLatency", "Milliseconds", 1)
             .addMeasure("messageCount", "Count", 1)
             .addMeasure("errorCount", "Count", 60)
-            .addDimension("broker", "IOT_CORE")
+            .addDimension("broker", "NORTHBOUND")
             .build();
-        metricService.defineMetric(iotCorePerformanceMetric);
+        metricService.defineMetric(northboundPerformanceMetric);
         
         LOGGER.info("Metrics defined successfully");
     }
@@ -284,15 +284,15 @@ public class App implements ConfigurationChangeListener
         messagingService.subscribe(reqTopic, requestHandler, 1);
         LOGGER.info("Subscribed to request topic: {}", reqTopic);
         
-        // Subscribe to hello world topic on both local and IoT Core. The IoT Core subscribe is
+        // Subscribe to hello world topic on both local and northbound. The northbound subscribe is
         // non-fatal: builds/modes without an IoT Core transport (e.g. local-only STANDALONE) skip
         // the bridge instead of failing component startup.
         messagingService.subscribe(pubTopic, ipcHelloWorldHandler, 3);
         try {
-            messagingService.subscribeToIoTCore(pubTopic, iotCoreHelloWorldHandler, QOS.AT_LEAST_ONCE, 2);
-            iotCoreSubscribed = true;
+            messagingService.subscribeNorthbound(pubTopic, iotCoreHelloWorldHandler, QOS.AT_LEAST_ONCE, 2);
+            northboundSubscribed = true;
         } catch (Exception e) {
-            LOGGER.warn("IoT Core unavailable; skipping IoT Core subscribe: {}", e.getMessage());
+            LOGGER.warn("northbound transport unavailable; skipping northbound subscribe: {}", e.getMessage());
         }
         LOGGER.info("Subscribed to hello world topic: {}", pubTopic);
     }
@@ -460,12 +460,12 @@ public class App implements ConfigurationChangeListener
             .withConfig(configService)
             .build();
         
-        // Publish to both local and IoT Core to demonstrate dual connectivity (IoT Core non-fatal).
+        // Publish to both local and northbound to demonstrate dual connectivity (northbound non-fatal).
         messagingService.publish(pubTopic, msg);
         try {
-            messagingService.publishToIoTCore(pubTopic, msg, QOS.AT_LEAST_ONCE);
+            messagingService.publishNorthbound(pubTopic, msg, QOS.AT_LEAST_ONCE);
         } catch (Exception e) {
-            LOGGER.warn("failed to publish to IoT Core: {}", e.getMessage());
+            LOGGER.warn("failed to publish northbound: {}", e.getMessage());
         }
 
         // Append the data point to the durable telemetry stream (partitioned by Thing). Append
@@ -483,18 +483,18 @@ public class App implements ConfigurationChangeListener
             }
         }
 
-        LOGGER.debug("Published hello world message {} to both local and IoT Core", messageId);
+        LOGGER.debug("Published hello world message {} to both local and northbound", messageId);
     }
     
     private void measureRequestReplyLatency(int messageId) {
         // Measure LOCAL broker latency
         measureLatency("latency_test_local_" + messageId, "LOCAL");
 
-        // Measure IOT_CORE broker latency only when IoT Core is available (skipped in
-        // local-only STANDALONE; otherwise requestFromIoTCore throws synchronously and would
+        // Measure NORTHBOUND broker latency only when the northbound transport is available (skipped in
+        // local-only STANDALONE; otherwise requestNorthbound throws synchronously and would
         // bubble to the main loop before the interval sleep, busy-spinning the publisher).
-        if (iotCoreSubscribed) {
-            measureLatency("latency_test_iotcore_" + messageId, "IOT_CORE");
+        if (northboundSubscribed) {
+            measureLatency("latency_test_northbound_" + messageId, "NORTHBOUND");
         }
     }
     
@@ -513,13 +513,13 @@ public class App implements ConfigurationChangeListener
             .build();
         
         // Use different request methods for different brokers. Guard against a synchronous
-        // throw (e.g. IoT Core not connected) so it never escapes to the main publish loop.
+        // throw (e.g. northbound not connected) so it never escapes to the main publish loop.
         ReplyFuture requestFuture;
         try {
             if ("LOCAL".equals(brokerType)) {
                 requestFuture = messagingService.request(reqTopic, request);
             } else {
-                requestFuture = messagingService.requestFromIoTCore(reqTopic, request);
+                requestFuture = messagingService.requestNorthbound(reqTopic, request);
             }
         } catch (Exception e) {
             LOGGER.warn("latency request dispatch failed for {} broker: {}", brokerType, e.getMessage());
@@ -539,7 +539,7 @@ public class App implements ConfigurationChangeListener
                 metrics.put("replyLatency", (float) latency);
                 metrics.put("messageCount", 1.0f);
                 
-                String metricName = "LOCAL".equals(brokerType) ? "performance_local" : "performance_iotcore";
+                String metricName = "LOCAL".equals(brokerType) ? "performance_local" : "performance_northbound";
                 metricService.emitMetric(metricName, metrics);
                 
                 LOGGER.debug("Measured {} latency: {}ms for request {}", brokerType, latency, requestId);
@@ -547,7 +547,7 @@ public class App implements ConfigurationChangeListener
             .exceptionally(throwable -> {
                 LOGGER.warn("Latency measurement failed for {} broker, request {}: {}",
                            brokerType, requestId, throwable.getMessage());
-                // No reply arrived (e.g. IoT Core not connected): the library only auto-unsubscribes
+                // No reply arrived (e.g. northbound not connected): the library only auto-unsubscribes
                 // the reply topic on a *received* reply, so a timed-out request must be cancelled
                 // explicitly. Without this the orphaned edgecommons/reply-<uuid> subscription (and its
                 // pending-future entry) accumulate every cycle and eventually exhaust the IPC
@@ -555,7 +555,7 @@ public class App implements ConfigurationChangeListener
                 if ("LOCAL".equals(brokerType)) {
                     messagingService.cancelRequest(pending);
                 } else {
-                    messagingService.cancelRequestFromIoTCore(pending);
+                    messagingService.cancelRequestNorthbound(pending);
                 }
                 emitErrorMetric();
                 return null;
@@ -573,11 +573,11 @@ public class App implements ConfigurationChangeListener
         running = false;
         
         try {
-            // Unsubscribe from topics (only unsubscribe IoT Core if we subscribed).
+            // Unsubscribe from topics (only unsubscribe northbound if we subscribed).
             messagingService.unsubscribe(pubTopic);
             messagingService.unsubscribe(reqTopic);
-            if (iotCoreSubscribed) {
-                messagingService.unsubscribeFromIoTCore(pubTopic);
+            if (northboundSubscribed) {
+                messagingService.unsubscribeNorthbound(pubTopic);
             }
             LOGGER.info("Unsubscribed from all topics");
         } catch (Exception e) {

@@ -40,8 +40,9 @@ impl EnvConfigSource {
 #[async_trait]
 impl ConfigSource for EnvConfigSource {
     async fn load(&self) -> Result<Value> {
-        let raw = std::env::var(&self.var)
-            .map_err(|_| EdgeCommonsError::Config(format!("environment variable '{}' is not set", self.var)))?;
+        let raw = std::env::var(&self.var).map_err(|_| {
+            EdgeCommonsError::Config(format!("environment variable '{}' is not set", self.var))
+        })?;
         Ok(serde_json::from_str(&raw)?)
     }
 

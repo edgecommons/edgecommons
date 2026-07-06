@@ -326,7 +326,10 @@ pub fn profiled_platforms() -> [Platform; 3] {
 /// # Errors
 /// Returns [`EdgeCommonsError::Cli`] if the resolved platform has no profile, or the platform/transport
 /// combination is illegal (the IPC lock, §4.1).
-pub fn resolve_profile(inputs: ResolverInputs, env: &HashMap<String, String>) -> Result<ResolvedProfile> {
+pub fn resolve_profile(
+    inputs: ResolverInputs,
+    env: &HashMap<String, String>,
+) -> Result<ResolvedProfile> {
     let platform = match inputs.platform {
         Some(p) => p,
         None => detect_platform(env),
@@ -409,7 +412,11 @@ pub fn validate(platform: Platform, transport: Transport) -> Result<()> {
 /// argument is now load-bearing). Empty env values are ignored at every tier. The resolved
 /// value is not mangled here — it is sanitized later by template substitution
 /// ([`crate::config::template`]) wherever it is interpolated into a path/topic.
-pub fn resolve_identity(thing: Option<&str>, platform: Platform, env: &HashMap<String, String>) -> String {
+pub fn resolve_identity(
+    thing: Option<&str>,
+    platform: Platform,
+    env: &HashMap<String, String>,
+) -> String {
     if let Some(t) = thing {
         return t.to_string();
     }
@@ -440,7 +447,10 @@ mod tests {
     use super::*;
 
     fn env(pairs: &[(&str, &str)]) -> HashMap<String, String> {
-        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     // ---------- detect_platform ----------
@@ -546,7 +556,10 @@ mod tests {
             ..Default::default()
         };
         let r = resolve_profile(inputs, &env(&[])).unwrap();
-        assert_eq!(vec!["FILE".to_string(), "/etc/cfg.json".to_string()], r.config_source);
+        assert_eq!(
+            vec!["FILE".to_string(), "/etc/cfg.json".to_string()],
+            r.config_source
+        );
     }
 
     #[test]
@@ -623,7 +636,10 @@ mod tests {
             ..Default::default()
         };
         let err = resolve_profile(inputs, &env(&[])).unwrap_err();
-        assert!(err.to_string().contains("IPC transport requires --platform GREENGRASS"));
+        assert!(
+            err.to_string()
+                .contains("IPC transport requires --platform GREENGRASS")
+        );
     }
 
     #[test]
@@ -634,7 +650,10 @@ mod tests {
             ..Default::default()
         };
         let err = resolve_profile(inputs, &env(&[])).unwrap_err();
-        assert!(err.to_string().contains("IPC transport requires --platform GREENGRASS"));
+        assert!(
+            err.to_string()
+                .contains("IPC transport requires --platform GREENGRASS")
+        );
     }
 
     // ---------- validate ----------
@@ -656,7 +675,10 @@ mod tests {
 
     #[test]
     fn resolve_identity_prefers_explicit_thing() {
-        assert_eq!("t1", resolve_identity(Some("t1"), Platform::Greengrass, &env(&[])));
+        assert_eq!(
+            "t1",
+            resolve_identity(Some("t1"), Platform::Greengrass, &env(&[]))
+        );
     }
 
     #[test]
@@ -669,7 +691,10 @@ mod tests {
 
     #[test]
     fn resolve_identity_defaults_when_nothing_available() {
-        assert_eq!(DEFAULT_IDENTITY, resolve_identity(None, Platform::Host, &env(&[])));
+        assert_eq!(
+            DEFAULT_IDENTITY,
+            resolve_identity(None, Platform::Host, &env(&[]))
+        );
     }
 
     #[test]
@@ -708,7 +733,10 @@ mod tests {
         let r = resolve_identity(
             None,
             Platform::Kubernetes,
-            &env(&[(ENV_K8S_THING_NAME, "annotated"), (ENV_K8S_POD_NAME, "pod-xyz")]),
+            &env(&[
+                (ENV_K8S_THING_NAME, "annotated"),
+                (ENV_K8S_POD_NAME, "pod-xyz"),
+            ]),
         );
         assert_eq!("annotated", r);
     }
@@ -764,7 +792,10 @@ mod tests {
         let r = resolve_identity(
             Some("cli-thing"),
             Platform::Kubernetes,
-            &env(&[(ENV_K8S_THING_NAME, "annotated"), (ENV_K8S_POD_NAME, "pod-1")]),
+            &env(&[
+                (ENV_K8S_THING_NAME, "annotated"),
+                (ENV_K8S_POD_NAME, "pod-1"),
+            ]),
         );
         assert_eq!("cli-thing", r);
     }
@@ -773,9 +804,15 @@ mod tests {
     fn non_k8s_platforms_ignore_the_k8s_identity_tier() {
         // The Downward-API tier is gated on platform==KUBERNETES; HOST/GREENGRASS ignore it and
         // use only the generic AWS_IOT_THING_NAME probe.
-        let e = env(&[(ENV_K8S_THING_NAME, "annotated"), (ENV_K8S_POD_NAME, "pod-1")]);
+        let e = env(&[
+            (ENV_K8S_THING_NAME, "annotated"),
+            (ENV_K8S_POD_NAME, "pod-1"),
+        ]);
         assert_eq!(DEFAULT_IDENTITY, resolve_identity(None, Platform::Host, &e));
-        assert_eq!(DEFAULT_IDENTITY, resolve_identity(None, Platform::Greengrass, &e));
+        assert_eq!(
+            DEFAULT_IDENTITY,
+            resolve_identity(None, Platform::Greengrass, &e)
+        );
         // ... and the generic probe still wins for them.
         let e2 = env(&[(ENV_K8S_POD_NAME, "pod-1"), (ENV_THING_NAME, "iot-thing")]);
         assert_eq!("iot-thing", resolve_identity(None, Platform::Host, &e2));
@@ -794,10 +831,16 @@ mod tests {
             Platform::Kubernetes,
             &env(&[(ENV_K8S_POD_NAME, "../../etc/passwd")]),
         );
-        assert_eq!("../../etc/passwd", identity, "resolver returns the raw value");
+        assert_eq!(
+            "../../etc/passwd", identity,
+            "resolver returns the raw value"
+        );
 
         let cfg = Config::from_value("com.example.C", &identity, serde_json::json!({})).unwrap();
-        assert_eq!(resolve(&cfg, "/logs/{ThingName}.log"), "/logs/____etc_passwd.log");
+        assert_eq!(
+            resolve(&cfg, "/logs/{ThingName}.log"),
+            "/logs/____etc_passwd.log"
+        );
     }
 
     // ---------- profiles + enums ----------
@@ -820,7 +863,10 @@ mod tests {
     #[test]
     fn kubernetes_profile_defaults_logging_to_json() {
         // FR-LOG-1: the KUBERNETES profile's default logging format is the stdout-JSON sink.
-        assert_eq!(Some("json"), profile(Platform::Kubernetes).unwrap().logging_format);
+        assert_eq!(
+            Some("json"),
+            profile(Platform::Kubernetes).unwrap().logging_format
+        );
     }
 
     #[test]
@@ -852,14 +898,20 @@ mod tests {
         // registry; GREENGRASS/HOST carry no profile default (None) so the library default (log)
         // is unchanged off-Kubernetes. (This is pure profile data; the Rust feature gate is applied
         // by the metric-target selector, not here.)
-        assert_eq!(Some("prometheus"), profile(Platform::Kubernetes).unwrap().metric_target);
+        assert_eq!(
+            Some("prometheus"),
+            profile(Platform::Kubernetes).unwrap().metric_target
+        );
         assert_eq!(None, profile(Platform::Greengrass).unwrap().metric_target);
         assert_eq!(None, profile(Platform::Host).unwrap().metric_target);
     }
 
     #[test]
     fn profile_metric_target_helper_matches_profiles() {
-        assert_eq!(Some("prometheus"), profile_metric_target(Platform::Kubernetes));
+        assert_eq!(
+            Some("prometheus"),
+            profile_metric_target(Platform::Kubernetes)
+        );
         assert_eq!(None, profile_metric_target(Platform::Greengrass));
         assert_eq!(None, profile_metric_target(Platform::Host));
     }
@@ -869,15 +921,27 @@ mod tests {
         // The HOST-aware metric-log-path default: HOST/KUBERNETES default to a local path (neither
         // has /greengrass/v2/logs); GREENGRASS carries no profile default (None) so the library
         // default (/greengrass/v2/logs) is unchanged.
-        assert_eq!(Some(METRIC_LOG_PATH_LOCAL), profile(Platform::Host).unwrap().metric_log_path);
-        assert_eq!(Some(METRIC_LOG_PATH_LOCAL), profile(Platform::Kubernetes).unwrap().metric_log_path);
+        assert_eq!(
+            Some(METRIC_LOG_PATH_LOCAL),
+            profile(Platform::Host).unwrap().metric_log_path
+        );
+        assert_eq!(
+            Some(METRIC_LOG_PATH_LOCAL),
+            profile(Platform::Kubernetes).unwrap().metric_log_path
+        );
         assert_eq!(None, profile(Platform::Greengrass).unwrap().metric_log_path);
     }
 
     #[test]
     fn profile_metric_log_path_helper_matches_profiles() {
-        assert_eq!(Some(METRIC_LOG_PATH_LOCAL), profile_metric_log_path(Platform::Host));
-        assert_eq!(Some(METRIC_LOG_PATH_LOCAL), profile_metric_log_path(Platform::Kubernetes));
+        assert_eq!(
+            Some(METRIC_LOG_PATH_LOCAL),
+            profile_metric_log_path(Platform::Host)
+        );
+        assert_eq!(
+            Some(METRIC_LOG_PATH_LOCAL),
+            profile_metric_log_path(Platform::Kubernetes)
+        );
         assert_eq!(None, profile_metric_log_path(Platform::Greengrass));
     }
 
@@ -887,14 +951,30 @@ mod tests {
         // software-KEK from a mounted Secret); GREENGRASS/HOST carry no profile default (None) so
         // the library default (`file`) is unchanged off-Kubernetes. Pure profile data — it does not
         // enable credentials, only changes the default provider type when credentials is configured.
-        assert_eq!(Some("env"), profile(Platform::Kubernetes).unwrap().credentials_key_provider);
-        assert_eq!(None, profile(Platform::Greengrass).unwrap().credentials_key_provider);
-        assert_eq!(None, profile(Platform::Host).unwrap().credentials_key_provider);
+        assert_eq!(
+            Some("env"),
+            profile(Platform::Kubernetes)
+                .unwrap()
+                .credentials_key_provider
+        );
+        assert_eq!(
+            None,
+            profile(Platform::Greengrass)
+                .unwrap()
+                .credentials_key_provider
+        );
+        assert_eq!(
+            None,
+            profile(Platform::Host).unwrap().credentials_key_provider
+        );
     }
 
     #[test]
     fn profile_credentials_key_provider_helper_matches_profiles() {
-        assert_eq!(Some("env"), profile_credentials_key_provider(Platform::Kubernetes));
+        assert_eq!(
+            Some("env"),
+            profile_credentials_key_provider(Platform::Kubernetes)
+        );
         assert_eq!(None, profile_credentials_key_provider(Platform::Greengrass));
         assert_eq!(None, profile_credentials_key_provider(Platform::Host));
     }
@@ -911,8 +991,14 @@ mod tests {
     #[test]
     fn platform_parse_handles_auto_and_known_and_unknown() {
         assert_eq!(None, Platform::parse("auto").unwrap());
-        assert_eq!(Some(Platform::Greengrass), Platform::parse("greengrass").unwrap());
-        assert_eq!(Some(Platform::Kubernetes), Platform::parse("KUBERNETES").unwrap());
+        assert_eq!(
+            Some(Platform::Greengrass),
+            Platform::parse("greengrass").unwrap()
+        );
+        assert_eq!(
+            Some(Platform::Kubernetes),
+            Platform::parse("KUBERNETES").unwrap()
+        );
         assert!(Platform::parse("bogus").is_err());
     }
 

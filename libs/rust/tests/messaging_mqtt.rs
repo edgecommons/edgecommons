@@ -83,7 +83,8 @@ fn as_json(m: &Message) -> String {
 
 /// Build a local-only messaging config pointing at the test broker.
 fn local_config(client_id: &str) -> MessagingConfig {
-    let host = std::env::var("EDGECOMMONS_IT_MQTT_HOST").unwrap_or_else(|_| "localhost".to_string());
+    let host =
+        std::env::var("EDGECOMMONS_IT_MQTT_HOST").unwrap_or_else(|_| "localhost".to_string());
     let port = std::env::var("EDGECOMMONS_IT_MQTT_PORT").unwrap_or_else(|_| "1883".to_string());
     let json = format!(
         r#"{{ "messaging": {{ "local": {{ "host": "{host}", "port": {port}, "clientId": "{client_id}" }} }} }}"#
@@ -117,7 +118,12 @@ async fn publish_subscribe_invokes_handler() {
     let count = Arc::new(AtomicUsize::new(0));
     let (received_h, count_h) = (received.clone(), count.clone());
 
-    info!(topic, max_messages = MAX_MESSAGES, max_concurrency = 1, "subscribing");
+    info!(
+        topic,
+        max_messages = MAX_MESSAGES,
+        max_concurrency = 1,
+        "subscribing"
+    );
     svc.subscribe(
         &topic,
         message_handler(move |topic, msg| {
@@ -148,7 +154,11 @@ async fn publish_subscribe_invokes_handler() {
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    let got = received.lock().unwrap().clone().expect("handler was invoked");
+    let got = received
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("handler was invoked");
     info!(topic = %got.0, body = %got.1, "asserting received body");
     assert_eq!(got.0, topic);
     assert_eq!(got.1["n"], 1);
@@ -198,7 +208,10 @@ async fn request_reply_roundtrip() {
     let correlation = request.header.correlation_id.clone();
 
     info!(req_topic, request = %as_json(&request), "sending request");
-    let reply_future = svc.request(&req_topic, request).await.expect("request issued");
+    let reply_future = svc
+        .request(&req_topic, request)
+        .await
+        .expect("request issued");
     let reply = tokio::time::timeout(Duration::from_secs(5), reply_future)
         .await
         .expect("did not time out")
@@ -282,7 +295,10 @@ async fn request_times_out_with_no_responder() {
     let result = tokio::time::timeout(Duration::from_millis(400), reply_future).await;
 
     info!(timed_out = result.is_err(), "request await completed");
-    assert!(result.is_err(), "expected the await to time out, got {result:?}");
+    assert!(
+        result.is_err(),
+        "expected the await to time out, got {result:?}"
+    );
     info!("=== PASS request_times_out_with_no_responder ===");
 }
 
@@ -314,7 +330,9 @@ async fn publish_raw_is_received_as_raw() {
     tokio::time::sleep(Duration::from_millis(300)).await;
 
     let payload = json!({ "sensor": "temp", "value": 21.5 });
-    svc.publish_raw(&topic, &payload).await.expect("publish_raw");
+    svc.publish_raw(&topic, &payload)
+        .await
+        .expect("publish_raw");
 
     for _ in 0..50 {
         if received.lock().unwrap().is_some() {
@@ -323,8 +341,15 @@ async fn publish_raw_is_received_as_raw() {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
-    let (is_raw, raw) = received.lock().unwrap().clone().expect("received a message");
-    assert!(is_raw, "a non-envelope payload must be delivered as a raw message");
+    let (is_raw, raw) = received
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("received a message");
+    assert!(
+        is_raw,
+        "a non-envelope payload must be delivered as a raw message"
+    );
     assert_eq!(raw.expect("raw value"), payload);
     info!("=== PASS publish_raw_is_received_as_raw ===");
 }

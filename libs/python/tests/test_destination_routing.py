@@ -2,7 +2,7 @@
 
 The heartbeat ``state`` keepalive (UNS-CANONICAL-DESIGN §4.3) routes on
 ``heartbeat.destination``: ``"local"`` (default) -> the local/IPC transport,
-``"iotcore"``/``"iot_core"`` -> IoT Core; anything else falls back to local. The
+``"northbound"`` -> the northbound transport; anything else falls back to local. The
 publish goes through the privileged ``_publish_reserved*`` seam (the ``state`` class
 is reserved).
 """
@@ -22,7 +22,7 @@ class _FakeMessaging:
     def _publish_reserved(self, topic, message):
         self.local.append((topic, message))
 
-    def _publish_reserved_to_iot_core(self, topic, message, qos):
+    def _publish_reserved_northbound(self, topic, message, qos):
         self.iot.append((topic, message))
 
 
@@ -73,10 +73,9 @@ def test_heartbeat_local_destination_publishes_locally():
     assert "uptimeSecs" in message.get_body()
 
 
-@pytest.mark.parametrize("destination", ["iotcore", "iot_core", "IOTCORE"])
-def test_heartbeat_iot_core_destinations_publish_to_iot_core(destination):
+def test_heartbeat_northbound_destination_publishes_to_iot_core_api():
     fm = _FakeMessaging()
-    _heartbeat(fm, destination)._publish_state("RUNNING", include_uptime=True)
+    _heartbeat(fm, "northbound")._publish_state("RUNNING", include_uptime=True)
     assert len(fm.iot) == 1 and len(fm.local) == 0
 
 
@@ -97,9 +96,9 @@ def test_heartbeat_unrecognized_destination_falls_back_to_local():
 
 @pytest.mark.parametrize(
     "destination,is_local",
-    # IoT Core only for iot_core/iotcore; everything else (incl. unrecognized) is local.
+    # Northbound only for northbound; everything else (incl. unrecognized) is local.
     [("ipc", True), ("local", True), ("IPC", True), ("bogus", True),
-     ("iot_core", False), ("iotcore", False), ("IOT_CORE", False)],
+     ("iot_core", True), ("iotcore", True), ("northbound", False), ("NORTHBOUND", False)],
 )
 def test_metric_is_local_destination(destination, is_local):
     assert _is_local_destination(destination) is is_local

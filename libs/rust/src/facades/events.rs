@@ -53,7 +53,14 @@ impl EventsFacade {
         messaging: Option<Arc<dyn MessagingService>>,
         clock: Clock,
     ) -> EventsFacade {
-        EventsFacade { config, instance_id, uns, messaging, clock, via: None }
+        EventsFacade {
+            config,
+            instance_id,
+            uns,
+            messaging,
+            clock,
+            via: None,
+        }
     }
 
     /// Returns a channel-bound view for a per-call routing override (LOCAL or NORTHBOUND).
@@ -84,7 +91,8 @@ impl EventsFacade {
         message: Option<String>,
         context: Option<Value>,
     ) -> Result<()> {
-        self.publish(severity, event_type.into(), message, context, None).await
+        self.publish(severity, event_type.into(), message, context, None)
+            .await
     }
 
     /// Message-only convenience — severity defaults to [`Severity::Info`].
@@ -93,7 +101,8 @@ impl EventsFacade {
         event_type: impl Into<String>,
         message: impl Into<String>,
     ) -> Result<()> {
-        self.emit(Severity::Info, event_type, Some(message.into()), None).await
+        self.emit(Severity::Info, event_type, Some(message.into()), None)
+            .await
     }
 
     // ===================== alarms =====================
@@ -106,7 +115,8 @@ impl EventsFacade {
         message: Option<String>,
         context: Option<Value>,
     ) -> Result<()> {
-        self.publish(severity, event_type.into(), message, context, Some(true)).await
+        self.publish(severity, event_type.into(), message, context, Some(true))
+            .await
     }
 
     /// Raises a stateful alarm — severity defaults to [`Severity::Critical`] so raises and clears
@@ -118,7 +128,8 @@ impl EventsFacade {
         message: Option<String>,
         context: Option<Value>,
     ) -> Result<()> {
-        self.raise_alarm(Severity::Critical, event_type, message, context).await
+        self.raise_alarm(Severity::Critical, event_type, message, context)
+            .await
     }
 
     /// Clears a stateful alarm (`alarm=true, active=false`) with an explicit severity (must match
@@ -129,7 +140,8 @@ impl EventsFacade {
         event_type: impl Into<String>,
         context: Option<Value>,
     ) -> Result<()> {
-        self.publish(severity, event_type.into(), None, context, Some(false)).await
+        self.publish(severity, event_type.into(), None, context, Some(false))
+            .await
     }
 
     /// Clears a stateful alarm — severity defaults to [`Severity::Critical`] so the clear tracks
@@ -139,7 +151,8 @@ impl EventsFacade {
         event_type: impl Into<String>,
         context: Option<Value>,
     ) -> Result<()> {
-        self.clear_alarm(Severity::Critical, event_type, context).await
+        self.clear_alarm(Severity::Critical, event_type, context)
+            .await
     }
 
     // ===================== body construction + routing =====================
@@ -168,7 +181,10 @@ impl EventsFacade {
             ));
         }
         let mut body = Map::new();
-        body.insert("severity".to_string(), Value::String(severity.wire().to_string()));
+        body.insert(
+            "severity".to_string(),
+            Value::String(severity.wire().to_string()),
+        );
         body.insert("type".to_string(), Value::String(event_type.to_string()));
         if let Some(message) = message {
             body.insert("message".to_string(), Value::String(message.to_string()));
@@ -190,7 +206,9 @@ impl EventsFacade {
     /// [`EdgeCommonsError::Facade`] when `event_type` is empty.
     pub fn channel_for(severity: Severity, event_type: &str) -> Result<String> {
         if event_type.is_empty() {
-            return Err(EdgeCommonsError::Facade("evt requires a non-empty type".to_string()));
+            return Err(EdgeCommonsError::Facade(
+                "evt requires a non-empty type".to_string(),
+            ));
         }
         Ok(format!("{}/{}", severity.wire(), sanitize(event_type)))
     }
@@ -203,8 +221,13 @@ impl EventsFacade {
         context: Option<Value>,
         active: Option<bool>,
     ) -> Result<()> {
-        let body =
-            self.build_body(severity, &event_type, message.as_deref(), context.as_ref(), active)?;
+        let body = self.build_body(
+            severity,
+            &event_type,
+            message.as_deref(),
+            context.as_ref(),
+            active,
+        )?;
         let channel = Self::channel_for(severity, &event_type)?;
         let topic = self.uns.topic_with_channel(UnsClass::Evt, &channel)?;
         let msg = MessageBuilder::new(EVT_MESSAGE_NAME, EVT_MESSAGE_VERSION)
@@ -219,7 +242,10 @@ impl EventsFacade {
     async fn route(&self, topic: &str, msg: crate::messaging::message::Message) -> Result<()> {
         if matches!(self.via, Some(Channel::Northbound)) {
             let messaging = self.messaging()?;
-            if let Err(e) = messaging.publish_to_iot_core(topic, &msg, Qos::AtLeastOnce).await {
+            if let Err(e) = messaging
+                .publish_northbound(topic, &msg, Qos::AtLeastOnce)
+                .await
+            {
                 tracing::warn!(
                     topic,
                     error = %e,
@@ -273,7 +299,9 @@ mod tests {
     async fn emit_message_only_defaults_to_info() {
         let messaging = RecordingMessaging::new();
         let f = facade(messaging.clone());
-        f.emit_message("door-open", "front door opened").await.unwrap();
+        f.emit_message("door-open", "front door opened")
+            .await
+            .unwrap();
         let (topic, msg) = &messaging.local()[0];
         assert_eq!(topic, "ecv1/gw-01/opcua-adapter/main/evt/info/door-open");
         assert_eq!(msg.body["severity"], "info");
@@ -290,11 +318,19 @@ mod tests {
         f.raise_alarm_default("connection-lost", Some("link down".to_string()), None)
             .await
             .unwrap();
-        f.clear_alarm_default("connection-lost", None).await.unwrap();
+        f.clear_alarm_default("connection-lost", None)
+            .await
+            .unwrap();
         let published = messaging.local();
         assert_eq!(published.len(), 2);
-        assert_eq!(published[0].0, "ecv1/gw-01/opcua-adapter/main/evt/critical/connection-lost");
-        assert_eq!(published[1].0, published[0].0, "raise and clear share the same channel");
+        assert_eq!(
+            published[0].0,
+            "ecv1/gw-01/opcua-adapter/main/evt/critical/connection-lost"
+        );
+        assert_eq!(
+            published[1].0, published[0].0,
+            "raise and clear share the same channel"
+        );
         assert_eq!(published[0].1.body["alarm"], true);
         assert_eq!(published[0].1.body["active"], true);
         assert_eq!(published[1].1.body["active"], false);
@@ -304,8 +340,13 @@ mod tests {
     async fn channel_type_is_sanitized() {
         let messaging = RecordingMessaging::new();
         let f = facade(messaging.clone());
-        f.emit(Severity::Info, "a+b", Some("x".to_string()), None).await.unwrap();
-        assert_eq!(messaging.local()[0].0, "ecv1/gw-01/opcua-adapter/main/evt/info/a_b");
+        f.emit(Severity::Info, "a+b", Some("x".to_string()), None)
+            .await
+            .unwrap();
+        assert_eq!(
+            messaging.local()[0].0,
+            "ecv1/gw-01/opcua-adapter/main/evt/info/a_b"
+        );
     }
 
     #[tokio::test]
@@ -324,7 +365,10 @@ mod tests {
         let f = facade(messaging.clone());
         assert!(f.via(Channel::stream("hot").unwrap()).is_err());
         let north = f.via(Channel::Northbound).unwrap();
-        north.emit(Severity::Critical, "overtemp", None, None).await.unwrap();
+        north
+            .emit(Severity::Critical, "overtemp", None, None)
+            .await
+            .unwrap();
         assert!(messaging.local().is_empty());
         assert_eq!(messaging.iot().len(), 1);
     }

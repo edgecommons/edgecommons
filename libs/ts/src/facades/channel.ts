@@ -3,7 +3,7 @@
  * `{ local, northbound, stream:<name> }` routing target the publish facades resolve on.
  *
  * - `LOCAL` — the local/IPC bus (`messaging().publish`). The default.
- * - `NORTHBOUND` — AWS IoT Core (`messaging().publishToIoTCore`).
+ * - `NORTHBOUND` — the northbound/cloud broker (`messaging().publishNorthbound`).
  * - `stream(name)` — the named durable telemetry stream (`getStreams().stream(name).append(...)`
  *   via the {@link StreamSink} seam); **only {@link DataFacade} honors it** —
  *   `events()`/`app()` reject a stream channel (they are low-rate control-plane, not bulk
@@ -24,7 +24,7 @@ export interface LocalChannel {
   readonly kind: "local";
 }
 
-/** The AWS IoT Core (northbound) channel. */
+/** The northbound/cloud channel. */
 export interface NorthboundChannel {
   readonly kind: "northbound";
 }
@@ -46,7 +46,7 @@ export const Channel = {
   /** The local/IPC bus channel (the default). */
   LOCAL: { kind: "local" } as LocalChannel,
 
-  /** The AWS IoT Core (northbound) channel. */
+  /** The northbound/cloud channel. */
   NORTHBOUND: { kind: "northbound" } as NorthboundChannel,
 
   /**
@@ -63,8 +63,8 @@ export const Channel = {
 
   /**
    * Parses a config `publish.channel` string into a {@link Channel} (DESIGN-class-facades §4,
-   * Option C). Recognized: `"local"` → {@link Channel.LOCAL}; `"northbound"` / `"iotcore"` /
-   * `"iot_core"` → {@link Channel.NORTHBOUND}; `"stream:<name>"` → {@link Channel.stream}. Any
+   * Option C). Recognized: `"local"` → {@link Channel.LOCAL}; `"northbound"` →
+   * {@link Channel.NORTHBOUND}; `"stream:<name>"` → {@link Channel.stream}. Any
    * other (or null/empty/absent) value yields `undefined` so the caller can fall through to its
    * own default.
    */
@@ -80,7 +80,7 @@ export const Channel = {
     if (lower === "local") {
       return Channel.LOCAL;
     }
-    if (lower === "northbound" || lower === "iotcore" || lower === "iot_core") {
+    if (lower === "northbound") {
       return Channel.NORTHBOUND;
     }
     if (lower.startsWith("stream:")) {

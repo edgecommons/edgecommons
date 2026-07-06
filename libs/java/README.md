@@ -177,10 +177,10 @@ Create a `standalone-messaging.json` file (the `--transport MQTT` payload) for n
         "password": "mqtt-pass"
       }
     },
-    "iotCore": {
-      "endpoint": "your-iot-endpoint.iot.region.amazonaws.com",
+    "northbound": {
+      "endpoint": "northbound.mqtt.example.com",
       "port": 8883,
-      "clientId": "my-component-iotcore",
+      "clientId": "my-component-northbound",
       "credentials": {
         "certPath": "/path/to/device-cert.pem",
         "keyPath": "/path/to/private-key.pem",

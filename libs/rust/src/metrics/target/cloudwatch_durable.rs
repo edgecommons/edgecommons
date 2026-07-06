@@ -102,8 +102,11 @@ pub trait PutMetricDataSender: Send {
     /// Send one chunk (`≤1000` datums, single namespace) to CloudWatch. `Ok(())` = the whole chunk
     /// was accepted; `Err((retryable, msg))` = the request failed (throttle/5xx/transport are
     /// retryable; a malformed request is not).
-    fn put(&self, namespace: &str, datums: &[SerializableDatum])
-        -> std::result::Result<(), (bool, String)>;
+    fn put(
+        &self,
+        namespace: &str,
+        datums: &[SerializableDatum],
+    ) -> std::result::Result<(), (bool, String)>;
 }
 
 /// A [`Sink`] that drains buffered datums to CloudWatch via a [`PutMetricDataSender`].
@@ -120,7 +123,10 @@ impl<S: PutMetricDataSender> CloudWatchSink<S> {
     /// Wrap a sender. `dropped_stale` is a shared counter incremented for each datum dropped for
     /// falling outside CloudWatch's accept window.
     pub fn new(sender: S, dropped_stale: Arc<std::sync::atomic::AtomicU64>) -> Self {
-        Self { sender, dropped_stale }
+        Self {
+            sender,
+            dropped_stale,
+        }
     }
 
     /// Whether `ts_ms` is within CloudWatch's accept window relative to `now_ms`.
@@ -179,8 +185,12 @@ impl<S: PutMetricDataSender> Sink for CloudWatchSink<S> {
         let now_ms = now_millis();
         let (groups, dropped) = group_fresh(decoded, now_ms);
         if dropped > 0 {
-            self.dropped_stale.fetch_add(dropped, std::sync::atomic::Ordering::Relaxed);
-            tracing::warn!(dropped, "dropped CloudWatch datums outside the accept window");
+            self.dropped_stale
+                .fetch_add(dropped, std::sync::atomic::Ordering::Relaxed);
+            tracing::warn!(
+                dropped,
+                "dropped CloudWatch datums outside the accept window"
+            );
         }
 
         // Everything that remained was either sent or aged out → the batch's offsets are all
@@ -264,7 +274,9 @@ impl CloudWatchDurableTarget {
             },
             delivery: Default::default(), // maxRetries = -1: retry forever (the disconnect case)
         };
-        let cfg = StreamingConfig { streams: vec![stream] };
+        let cfg = StreamingConfig {
+            streams: vec![stream],
+        };
 
         let sender = sender_factory()?;
         let dropped_for_sink = Arc::clone(&dropped_stale);
@@ -277,9 +289,9 @@ impl CloudWatchDurableTarget {
                     SinkConfig::Callback { .. } => {
                         let sink = sink_slot.lock().unwrap().take().ok_or_else(|| {
                             ggstreamlog::EdgeStreamError::Sink(
-                                "CloudWatch sink already taken (only one cloudwatch stream is opened)"
-                                    .into(),
-                            )
+                            "CloudWatch sink already taken (only one cloudwatch stream is opened)"
+                                .into(),
+                        )
                         })?;
                         Ok(Some(Box::new(sink)))
                     }
@@ -287,8 +299,9 @@ impl CloudWatchDurableTarget {
                 }
             };
 
-        let service = StreamService::open_with(cfg, &factory)
-            .map_err(|e| EdgeCommonsError::Metrics(format!("opening durable CloudWatch buffer: {e}")))?;
+        let service = StreamService::open_with(cfg, &factory).map_err(|e| {
+            EdgeCommonsError::Metrics(format!("opening durable CloudWatch buffer: {e}"))
+        })?;
 
         Ok(Self {
             service,
@@ -300,7 +313,8 @@ impl CloudWatchDurableTarget {
 
     /// Number of datums dropped so far for being outside CloudWatch's accept window.
     pub fn dropped_stale(&self) -> u64 {
-        self.dropped_stale.load(std::sync::atomic::Ordering::Relaxed)
+        self.dropped_stale
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// A stats snapshot of the underlying buffer (`None` if the stream is gone).
@@ -310,7 +324,11 @@ impl CloudWatchDurableTarget {
 
     /// Build the buffered datums for one emission (one record per measure value, plus the
     /// `coreName="ALL"` masked set when the large-fleet workaround is on).
-    fn buffered_datums(&self, metric: &Metric, values: &HashMap<String, f64>) -> Vec<BufferedDatum> {
+    fn buffered_datums(
+        &self,
+        metric: &Metric,
+        values: &HashMap<String, f64>,
+    ) -> Vec<BufferedDatum> {
         let mut out = self.datums_for(metric, values, false);
         if self.large_fleet_workaround {
             out.extend(self.datums_for(metric, values, true));
@@ -333,7 +351,10 @@ impl CloudWatchDurableTarget {
                 } else {
                     v.clone()
                 };
-                SerializableDimension { name: k.clone(), value }
+                SerializableDimension {
+                    name: k.clone(),
+                    value,
+                }
             })
             .collect();
         let ts_ms = now_millis();
@@ -371,7 +392,9 @@ impl CloudWatchDurableTarget {
                 .map_err(|e| EdgeCommonsError::Metrics(format!("serializing datum: {e}")))?;
             let ts = bd.datum.ts_ms.max(0) as u64;
             log.append(&Record::new(bd.namespace, ts, payload))
-                .map_err(|e| EdgeCommonsError::Metrics(format!("appending datum to buffer: {e}")))?;
+                .map_err(|e| {
+                    EdgeCommonsError::Metrics(format!("appending datum to buffer: {e}"))
+                })?;
         }
         Ok(())
     }
@@ -392,7 +415,8 @@ impl MetricTarget for CloudWatchDurableTarget {
     async fn flush(&self) -> Result<()> {
         // Force the buffer durably to disk; the export engine drains asynchronously.
         if let Some(log) = self.service.stream("cloudwatch") {
-            log.flush().map_err(|e| EdgeCommonsError::Metrics(format!("flushing buffer: {e}")))?;
+            log.flush()
+                .map_err(|e| EdgeCommonsError::Metrics(format!("flushing buffer: {e}")))?;
         }
         Ok(())
     }
@@ -411,9 +435,9 @@ pub use aws::AwsPutMetricDataSender;
 #[cfg(feature = "cloudwatch")]
 mod aws {
     use super::{PutMetricDataSender, SerializableDatum};
+    use aws_sdk_cloudwatch::Client;
     use aws_sdk_cloudwatch::primitives::DateTime;
     use aws_sdk_cloudwatch::types::{Dimension, MetricDatum, StandardUnit};
-    use aws_sdk_cloudwatch::Client;
     use tokio::runtime::Runtime;
 
     /// `PutMetricData` sender backed by the AWS SDK.
@@ -430,21 +454,24 @@ mod aws {
                 .enable_all()
                 .thread_name("edgecommons-cw-durable")
                 .build()
-                .map_err(|e| crate::error::EdgeCommonsError::Metrics(format!("tokio runtime: {e}")))?;
+                .map_err(|e| {
+                    crate::error::EdgeCommonsError::Metrics(format!("tokio runtime: {e}"))
+                })?;
             let client = std::thread::scope(|scope| {
                 scope
                     .spawn(|| {
                         rt.block_on(async {
-                            let conf = aws_config::load_defaults(
-                                aws_config::BehaviorVersion::latest(),
-                            )
-                            .await;
+                            let conf =
+                                aws_config::load_defaults(aws_config::BehaviorVersion::latest())
+                                    .await;
                             Client::new(&conf)
                         })
                     })
                     .join()
                     .map_err(|_| {
-                        crate::error::EdgeCommonsError::Metrics("CloudWatch client init panicked".into())
+                        crate::error::EdgeCommonsError::Metrics(
+                            "CloudWatch client init panicked".into(),
+                        )
                     })
             })?;
             Ok(Self { rt, client })
@@ -454,7 +481,12 @@ mod aws {
             let dimensions: Vec<Dimension> = d
                 .dimensions
                 .iter()
-                .map(|dim| Dimension::builder().name(&dim.name).value(&dim.value).build())
+                .map(|dim| {
+                    Dimension::builder()
+                        .name(&dim.name)
+                        .value(&dim.value)
+                        .build()
+                })
                 .collect();
             MetricDatum::builder()
                 .metric_name(&d.metric_name)
@@ -493,8 +525,8 @@ mod aws {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Mutex;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     fn datum(ns: &str, name: &str, value: f64, ts_ms: i64) -> BufferedDatum {
         BufferedDatum {
@@ -540,21 +572,26 @@ mod tests {
     fn stale_drop_at_window_boundaries() {
         let now: i64 = 2_000_000_000_000;
         let recs = vec![
-            datum("A", "fresh", 1.0, now),                       // now: keep
-            datum("A", "just_past", 1.0, now - MAX_PAST_MS),     // exactly 2wk past: keep
-            datum("A", "too_old", 1.0, now - MAX_PAST_MS - 1),   // 1ms older: drop
-            datum("A", "just_future", 1.0, now + MAX_FUTURE_MS), // exactly 2h future: keep
+            datum("A", "fresh", 1.0, now),                          // now: keep
+            datum("A", "just_past", 1.0, now - MAX_PAST_MS),        // exactly 2wk past: keep
+            datum("A", "too_old", 1.0, now - MAX_PAST_MS - 1),      // 1ms older: drop
+            datum("A", "just_future", 1.0, now + MAX_FUTURE_MS),    // exactly 2h future: keep
             datum("A", "too_future", 1.0, now + MAX_FUTURE_MS + 1), // 1ms beyond: drop
         ];
         let (groups, dropped) = group_fresh(recs, now);
         assert_eq!(dropped, 2, "the two out-of-window datums must be dropped");
-        assert_eq!(groups["A"].len(), 3, "the three in-window datums must survive");
+        assert_eq!(
+            groups["A"].len(),
+            3,
+            "the three in-window datums must survive"
+        );
     }
 
     #[test]
     fn chunks_at_1000_datum_limit() {
-        let datums: Vec<SerializableDatum> =
-            (0..2500).map(|i| datum("A", "m", i as f64, 1).datum).collect();
+        let datums: Vec<SerializableDatum> = (0..2500)
+            .map(|i| datum("A", "m", i as f64, 1).datum)
+            .collect();
         let chunks = chunk_datums(&datums);
         // 1MB / 400B ~= 2500 by bytes, but the 1000 datum cap dominates → 3 chunks of ≤1000.
         assert_eq!(chunks.len(), 3);
@@ -606,7 +643,10 @@ mod tests {
                 self.fail_remaining.fetch_sub(1, Ordering::Relaxed);
                 return Err((self.fail_retryable, "injected failure".into()));
             }
-            self.sent.lock().unwrap().push((namespace.to_string(), datums.to_vec()));
+            self.sent
+                .lock()
+                .unwrap()
+                .push((namespace.to_string(), datums.to_vec()));
             Ok(())
         }
     }
@@ -643,7 +683,10 @@ mod tests {
         let mut sink = CloudWatchSink::new(sender, Arc::clone(&counter));
         let now = now_millis();
         let recs = vec![datum("A", "m1", 1.0, now), datum("B", "m2", 2.0, now)];
-        assert!(matches!(send_through(&mut sink, &recs), SendOutcome::AllAcked));
+        assert!(matches!(
+            send_through(&mut sink, &recs),
+            SendOutcome::AllAcked
+        ));
         let sent = sent.lock().unwrap();
         // One PutMetricData call per namespace.
         assert_eq!(sent.len(), 2);
@@ -688,8 +731,15 @@ mod tests {
             datum("A", "fresh", 1.0, now),
             datum("A", "old", 1.0, now - MAX_PAST_MS - 60_000), // aged out
         ];
-        assert!(matches!(send_through(&mut sink, &recs), SendOutcome::AllAcked));
-        assert_eq!(counter.load(Ordering::Relaxed), 1, "one stale datum dropped");
+        assert!(matches!(
+            send_through(&mut sink, &recs),
+            SendOutcome::AllAcked
+        ));
+        assert_eq!(
+            counter.load(Ordering::Relaxed),
+            1,
+            "one stale datum dropped"
+        );
         // Only the fresh datum was sent.
         let sent = sent.lock().unwrap();
         assert_eq!(sent.len(), 1);
@@ -703,7 +753,12 @@ mod tests {
         let counter = Arc::new(AtomicU64::new(0));
         let mut sink = CloudWatchSink::new(sender, counter);
         let bad = b"not json".to_vec();
-        let recs = vec![ExportRecord { offset: 0, partition_key: b"A", ts_ms: 1, payload: &bad }];
+        let recs = vec![ExportRecord {
+            offset: 0,
+            partition_key: b"A",
+            ts_ms: 1,
+            payload: &bad,
+        }];
         match sink.send(&recs) {
             SendOutcome::Failed { retryable, .. } => assert!(!retryable),
             _ => panic!("expected non-retryable Failed"),
@@ -744,7 +799,8 @@ mod tests {
             if !self.connected.load(Ordering::Relaxed) {
                 return Err((true, "disconnected".into()));
             }
-            self.sent_count.fetch_add(datums.len() as u64, Ordering::Relaxed);
+            self.sent_count
+                .fetch_add(datums.len() as u64, Ordering::Relaxed);
             Ok(())
         }
     }
@@ -767,7 +823,9 @@ mod tests {
     }
     impl CountingSender {
         fn new() -> Self {
-            Self { sent: Arc::new(AtomicU64::new(0)) }
+            Self {
+                sent: Arc::new(AtomicU64::new(0)),
+            }
         }
         fn count(&self) -> u64 {
             self.sent.load(Ordering::Relaxed)
@@ -809,13 +867,9 @@ mod tests {
             max_disk_bytes: 128 * 1024 * 1024,
             ..settings
         };
-        let target = CloudWatchDurableTarget::open(
-            "MyApp",
-            false,
-            settings_big,
-            move || Ok(sf.clone()),
-        )
-        .expect("open production durable target");
+        let target =
+            CloudWatchDurableTarget::open("MyApp", false, settings_big, move || Ok(sf.clone()))
+                .expect("open production durable target");
 
         let metric = defined_metric();
         let mut values = HashMap::new();
@@ -827,7 +881,11 @@ mod tests {
         target.flush().await.unwrap();
 
         let drained = wait_until(|| sender.count() >= 2, std::time::Duration::from_secs(10));
-        assert!(drained, "engine should drain both emitted datums, got {}", sender.count());
+        assert!(
+            drained,
+            "engine should drain both emitted datums, got {}",
+            sender.count()
+        );
         assert_eq!(target.dropped_stale(), 0);
         assert!(target.buffer_stats().is_some());
         target.shutdown().await; // flush-to-disk, no error
@@ -852,15 +910,26 @@ mod tests {
         let mut values = HashMap::new();
         values.insert("v".to_string(), 5.0);
         let datums = target.buffered_datums(&metric, &values);
-        assert_eq!(datums.len(), 2, "large-fleet workaround duplicates each measure value");
+        assert_eq!(
+            datums.len(),
+            2,
+            "large-fleet workaround duplicates each measure value"
+        );
         let masked = datums.iter().any(|d| {
-            d.datum.dimensions.iter().any(|dim| dim.name == "coreName" && dim.value == "ALL")
+            d.datum
+                .dimensions
+                .iter()
+                .any(|dim| dim.name == "coreName" && dim.value == "ALL")
         });
         assert!(masked, "one datum set must carry the masked coreName=ALL");
 
         target.emit(&metric, &values).await.unwrap();
         let drained = wait_until(|| sender.count() >= 2, std::time::Duration::from_secs(10));
-        assert!(drained, "both (normal + masked) datums drain, got {}", sender.count());
+        assert!(
+            drained,
+            "both (normal + masked) datums drain, got {}",
+            sender.count()
+        );
     }
 
     #[tokio::test]
@@ -876,7 +945,8 @@ mod tests {
             fsync: FsyncPolicy::PerBatch,
         };
         let target =
-            CloudWatchDurableTarget::open("MyApp", false, settings, move || Ok(sf.clone())).unwrap();
+            CloudWatchDurableTarget::open("MyApp", false, settings, move || Ok(sf.clone()))
+                .unwrap();
         let metric = defined_metric();
         let mut values = HashMap::new();
         values.insert("undefined_measure".to_string(), 9.0);
@@ -922,7 +992,9 @@ mod tests {
         values.insert("v".to_string(), 1.0);
 
         for _ in 0..2000 {
-            target.append_all(target.buffered_datums(&metric, &values)).unwrap();
+            target
+                .append_all(target.buffered_datums(&metric, &values))
+                .unwrap();
         }
         // Also append some datums with an aged-out timestamp (older than the 2-week window).
         let stale = BufferedDatum {
@@ -943,14 +1015,25 @@ mod tests {
         // Let the engine attempt (and fail) to drain while disconnected.
         std::thread::sleep(std::time::Duration::from_millis(150));
         let s = target.buffer_stats().expect("stats");
-        assert_eq!(sender.sent(), 0, "nothing should be sent while disconnected");
-        assert!(s.appended_total >= 2020, "all appends recorded, got {}", s.appended_total);
+        assert_eq!(
+            sender.sent(),
+            0,
+            "nothing should be sent while disconnected"
+        );
+        assert!(
+            s.appended_total >= 2020,
+            "all appends recorded, got {}",
+            s.appended_total
+        );
         assert!(
             s.disk_bytes <= cap,
             "disk backlog must be bounded by maxDiskBytes ({cap}), got {}",
             s.disk_bytes
         );
-        assert!(s.dropped_total > 0, "a tiny cap with DropOldest must drop oldest on disk");
+        assert!(
+            s.dropped_total > 0,
+            "a tiny cap with DropOldest must drop oldest on disk"
+        );
 
         // 2) Reconnect → the engine drains the surviving backlog; stale datums are dropped+counted.
         sender.connect();
@@ -965,7 +1048,10 @@ mod tests {
             sender.sent(),
             final_stats.backlog
         );
-        assert!(sender.sent() > 0, "fresh datums must reach CloudWatch after reconnect");
+        assert!(
+            sender.sent() > 0,
+            "fresh datums must reach CloudWatch after reconnect"
+        );
         // Some of the stale datums (those not dropped from disk by DropOldest) age out at drain.
         // dropped_stale is best-effort: assert it is queryable and consistent (>= 0). If any stale
         // record survived the disk DropOldest, it must have been counted.
@@ -1012,23 +1098,27 @@ where
             ..Default::default()
         },
     };
-    let cfg = StreamingConfig { streams: vec![stream] };
+    let cfg = StreamingConfig {
+        streams: vec![stream],
+    };
     let sender = sender_factory()?;
     let dropped_for_sink = Arc::clone(&dropped_stale);
     let sink_slot = std::sync::Mutex::new(Some(CloudWatchSink::new(sender, dropped_for_sink)));
-    let factory = move |_name: &str, sc: &SinkConfig| -> ggstreamlog::Result<Option<Box<dyn Sink>>> {
-        match sc {
-            SinkConfig::Callback { .. } => {
-                let sink = sink_slot.lock().unwrap().take().ok_or_else(|| {
-                    ggstreamlog::EdgeStreamError::Sink("sink already taken".into())
-                })?;
-                Ok(Some(Box::new(sink)))
+    let factory =
+        move |_name: &str, sc: &SinkConfig| -> ggstreamlog::Result<Option<Box<dyn Sink>>> {
+            match sc {
+                SinkConfig::Callback { .. } => {
+                    let sink = sink_slot.lock().unwrap().take().ok_or_else(|| {
+                        ggstreamlog::EdgeStreamError::Sink("sink already taken".into())
+                    })?;
+                    Ok(Some(Box::new(sink)))
+                }
+                _ => Ok(None),
             }
-            _ => Ok(None),
-        }
-    };
-    let service = StreamService::open_with(cfg, &factory)
-        .map_err(|e| EdgeCommonsError::Metrics(format!("opening durable CloudWatch buffer: {e}")))?;
+        };
+    let service = StreamService::open_with(cfg, &factory).map_err(|e| {
+        EdgeCommonsError::Metrics(format!("opening durable CloudWatch buffer: {e}"))
+    })?;
     Ok(CloudWatchDurableTarget {
         service,
         namespace: namespace.to_string(),

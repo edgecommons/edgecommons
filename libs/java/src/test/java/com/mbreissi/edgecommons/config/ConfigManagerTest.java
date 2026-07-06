@@ -228,7 +228,7 @@ class ConfigManagerTest {
                 {
                   "logging": {"level": "INFO"},
                   "metricEmission": {"target": "log"},
-                  "heartbeat": {"enabled": true, "intervalSecs": 60, "destination": "iotcore"},
+                  "heartbeat": {"enabled": true, "intervalSecs": 60, "destination": "northbound"},
                   "tags": {},
                   "component": {"global": {}}
                 }""";
@@ -238,7 +238,7 @@ class ConfigManagerTest {
             assertNotNull(heartbeatConfig);
             assertTrue(heartbeatConfig.isEnabled());
             assertEquals(60, heartbeatConfig.getIntervalSecs());
-            assertEquals("iotcore", heartbeatConfig.getDestination());
+            assertEquals("northbound", heartbeatConfig.getDestination());
         });
     }
 

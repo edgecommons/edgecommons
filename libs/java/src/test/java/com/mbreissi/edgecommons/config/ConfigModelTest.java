@@ -133,14 +133,14 @@ class ConfigModelTest {
         // Messaging target builds the UNS metric topic itself.
         MetricConfiguration cfg = new MetricConfiguration(obj("""
                 {"target":"messaging",\
-                "targetConfig":{"destination":"iotcore"}}"""));
+                "targetConfig":{"destination":"northbound"}}"""));
         assertEquals("messaging", cfg.getTarget());
         assertNull(cfg.getTopic(), "the messaging target no longer carries a configured topic");
-        assertEquals("iotcore", cfg.getDestination());
+        assertEquals("northbound", cfg.getDestination());
 
         JsonObject tc = cfg.toDict().getAsJsonObject("targetConfig");
         assertFalse(tc.has("topic"), "toDict must not emit a topic for the messaging target");
-        assertEquals("iotcore", tc.get("destination").getAsString());
+        assertEquals("northbound", tc.get("destination").getAsString());
     }
 
     @Test
@@ -216,11 +216,11 @@ class ConfigModelTest {
         HeartbeatConfiguration cfg = new HeartbeatConfiguration(obj("""
                 {"enabled":false,"intervalSecs":15,\
                 "measures":{"cpu":false,"memory":true,"disk":true,"threads":true,"files":true,"fds":true},\
-                "destination":"iotcore"}"""));
+                "destination":"northbound"}"""));
 
         assertFalse(cfg.isEnabled());
         assertEquals(15, cfg.getIntervalSecs());
-        assertEquals("iotcore", cfg.getDestination());
+        assertEquals("northbound", cfg.getDestination());
         assertFalse(cfg.includeCpu());
         assertTrue(cfg.includeMemory());
         // disk/fds are now honored in Java (collected via File + Unix OS MXBean).
@@ -233,7 +233,7 @@ class ConfigModelTest {
         JsonObject dict = cfg.toDict();
         assertFalse(dict.get("enabled").getAsBoolean());
         assertEquals(15, dict.get("intervalSecs").getAsInt());
-        assertEquals("iotcore", dict.get("destination").getAsString());
+        assertEquals("northbound", dict.get("destination").getAsString());
         assertFalse(dict.has("targets"), "the legacy targets[] array is removed (D-U20)");
         assertEquals(dict.toString(), cfg.toString());
     }

@@ -60,7 +60,7 @@ edits (benign for ConfigMap swaps); identity falling back to `NOT_GREENGRASS` if
 **Seam today.** `MessagingClient` chooses the provider once at init from `mode`
 (`MessagingClient.java:42-61`): GREENGRASS→IPC; STANDALONE→`StandaloneMessagingProvider` with a
 `MessagingConfiguration.loadFromFile(<positional path>)` holding a **required `local`** broker + optional
-`iotCore` (mutual TLS, no insecure fallback). The wire envelope — `header`/`identity`/`tags`/`body`
+`northbound` (generic MQTT; TLS keyed on `caPath`). The wire envelope — `header`/`identity`/`tags`/`body`
 (snake_case keys) since the UNS change added the top-level `identity` element and removed `tags.thing`
 ([DESIGN-uns.md](DESIGN-uns.md) §5) — is identical across languages and **must not change** further
 here; topics follow the UNS grammar `ecv1/{device}/{component}/{instance}/{class}` with the reserved
@@ -88,7 +88,7 @@ selects, messaging configures* (DESIGN-core §8). Existing STANDALONE `messaging
 - The provider **MUST** reconnect-and-resume to IoT Core on link return (set the MQTT keep-alive below the
   interface-endpoint/NLB **idle timeout** — deployment-specific, commonly ~350 s — when reaching IoT Core
   via a PrivateLink interface VPC endpoint on private clusters).
-- For private clusters, support pointing `iotCore.endpoint` at an interface VPC endpoint
+- For private clusters, support pointing `northbound.endpoint` at an interface VPC endpoint
   (PrivateLink) so the cloud path doesn't depend on NAT egress.
 - Known gap to track: TLS certs load once at init (rotation needs restart). *(The former
   request-timeout gap is closed: the UNS train gave `request()` a framework-owned internal deadline
@@ -234,7 +234,7 @@ follow-ups are recorded for a deliberate later decision:
 
 **Seam today.** The heartbeat is the library-owned liveness signal (reshaped by the UNS train —
 UNS-CANONICAL-DESIGN §4.3): each tick it publishes the **`state` keepalive** to
-`ecv1/{device}/{component}/main/state` (on by default, 5 s, `heartbeat.destination: local|iotcore`;
+`ecv1/{device}/{component}/main/state` (on by default, 5 s, `heartbeat.destination: local|northbound`;
 best-effort `STOPPED` on graceful shutdown) and emits the enabled CPU/mem/disk/threads/FDs measures as
 the **`sys` metric** through the metric subsystem. The legacy `heartbeat.targets[]` array is removed.
 At the time this design was grounded there was **no HTTP health endpoint** and **no auto-wired

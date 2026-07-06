@@ -70,12 +70,12 @@ use std::sync::{Arc, Mutex};
 
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::config::model::Config;
 use crate::error::{EdgeCommonsError, Result};
 use crate::messaging::message::{Message, MessageBuilder};
-use crate::messaging::{message_handler, MessagingService};
+use crate::messaging::{MessagingService, message_handler};
 use crate::uns::{Uns, UnsClass, UnsScope};
 
 /// The liveness/echo built-in verb.
@@ -128,7 +128,10 @@ pub struct CommandError {
 impl CommandError {
     /// Creates a coded command error.
     pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
-        Self { code: code.into(), message: message.into() }
+        Self {
+            code: code.into(),
+            message: message.into(),
+        }
     }
 
     /// A generic, uncoded failure — [`ERR_HANDLER_ERROR`] with `message`'s `Display` text. The
@@ -203,7 +206,8 @@ where
 /// new snapshot and notifies listeners (production: [`crate::apply_reloaded_config`] over the
 /// source captured at build time). Returns `true` on success. An infallible, best-effort async
 /// callback — failures are logged internally, mirroring [`crate::uns::RepublishAction`].
-pub(crate) type ReloadAction = Arc<dyn Fn() -> Pin<Box<dyn Future<Output = bool> + Send>> + Send + Sync>;
+pub(crate) type ReloadAction =
+    Arc<dyn Fn() -> Pin<Box<dyn Future<Output = bool> + Send>> + Send + Sync>;
 
 /// Lifecycle flags + the resolved inbox topic, behind one lock (no `.await` ever happens while
 /// holding it) — mirrors [`crate::uns::RepublishListener`]'s `Inner`.
@@ -257,7 +261,11 @@ impl CommandInbox {
             PING.to_string(),
             command_handler(move |_request| {
                 let uptime_secs = uptime_secs.clone();
-                async move { Ok(Some(json!({ "status": "RUNNING", "uptimeSecs": (uptime_secs)() }))) }
+                async move {
+                    Ok(Some(
+                        json!({ "status": "RUNNING", "uptimeSecs": (uptime_secs)() }),
+                    ))
+                }
             }),
         );
 
@@ -387,8 +395,11 @@ impl CommandInbox {
         let uns = Uns::new(identity.clone(), snapshot.topic_include_root());
         // Pin every scope token to this component's own identity: the site value is consulted
         // only under an effective root mode (D-U25 makes it a no-op otherwise).
-        let site =
-            if identity.hier().len() >= 2 { Some(identity.hier()[0].value.clone()) } else { None };
+        let site = if identity.hier().len() >= 2 {
+            Some(identity.hier()[0].value.clone())
+        } else {
+            None
+        };
         let scope = UnsScope {
             site,
             device: Some(identity.device().to_string()),
@@ -426,7 +437,12 @@ impl CommandInbox {
         });
         if let Err(e) = self
             .messaging
-            .subscribe(&filter, handler, SUBSCRIBE_MAX_MESSAGES, SUBSCRIBE_MAX_CONCURRENCY)
+            .subscribe(
+                &filter,
+                handler,
+                SUBSCRIBE_MAX_MESSAGES,
+                SUBSCRIBE_MAX_CONCURRENCY,
+            )
             .await
         {
             tracing::warn!(
@@ -490,11 +506,19 @@ impl CommandInbox {
 
     /// Dispatches a well-formed request to its handler and replies (when `reply_to` is set).
     async fn dispatch(inbox: Arc<Self>, verb: String, request: Message) {
-        let wants_reply = request.header.reply_to.as_deref().is_some_and(|s| !s.is_empty());
+        let wants_reply = request
+            .header
+            .reply_to
+            .as_deref()
+            .is_some_and(|s| !s.is_empty());
         let handler = { inbox.handlers.lock().unwrap().get(&verb).cloned() };
         let Some(handler) = handler else {
             if wants_reply {
-                tracing::debug!(verb, code = ERR_UNKNOWN_VERB, "unknown verb; sending error reply");
+                tracing::debug!(
+                    verb,
+                    code = ERR_UNKNOWN_VERB,
+                    "unknown verb; sending error reply"
+                );
                 inbox
                     .send_reply(
                         &request,
@@ -522,7 +546,9 @@ impl CommandInbox {
             }
             Err(e) => {
                 if wants_reply {
-                    inbox.send_reply(&request, &verb, error_body(&e.code, e.message)).await;
+                    inbox
+                        .send_reply(&request, &verb, error_body(&e.code, e.message))
+                        .await;
                 } else {
                     tracing::warn!(verb, code = %e.code, message = %e.message, "fire-and-forget verb failed");
                 }
@@ -554,7 +580,11 @@ impl CommandInbox {
             return None;
         }
         inner.closed = true;
-        if inner.started { inner.inbox_filter.clone() } else { None }
+        if inner.started {
+            inner.inbox_filter.clone()
+        } else {
+            None
+        }
     }
 
     /// Test-only deterministic teardown: the same unsubscribe-before-exit logic as
@@ -578,7 +608,9 @@ impl Drop for CommandInbox {
     /// rule) — on a spawned fire-and-forget task, since `Drop` cannot `.await`. A no-op when
     /// never started, already closed, or no `tokio` runtime is available to spawn on.
     fn drop(&mut self) {
-        let Some(filter) = self.mark_closed() else { return };
+        let Some(filter) = self.mark_closed() else {
+            return;
+        };
         let messaging = self.messaging.clone();
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             handle.spawn(async move {
@@ -617,7 +649,10 @@ mod tests {
 
     /// A well-formed request for a verb: `header.name` = verb, pinned `reply_to`.
     fn request(verb: &str) -> Message {
-        MessageBuilder::new(verb, "1.0").payload(json!({})).reply_to(REPLY_TO).build()
+        MessageBuilder::new(verb, "1.0")
+            .payload(json!({}))
+            .reply_to(REPLY_TO)
+            .build()
     }
 
     /// A well-formed fire-and-forget command (no `reply_to`).
@@ -640,8 +675,9 @@ mod tests {
         let config = test_config();
         let uptime = Arc::new(AtomicU64::new(42));
         let reload_ok = Arc::new(AtomicBool::new(true));
-        let redacted =
-            Arc::new(Mutex::new(Some(json!({ "component": { "global": { "v": 1 } } }))));
+        let redacted = Arc::new(Mutex::new(Some(
+            json!({ "component": { "global": { "v": 1 } } }),
+        )));
 
         let uptime_secs: Arc<dyn Fn() -> u64 + Send + Sync> = {
             let uptime = uptime.clone();
@@ -659,9 +695,20 @@ mod tests {
             Arc::new(move || redacted.lock().unwrap().clone())
         };
 
-        let inbox =
-            CommandInbox::new(messaging.clone(), config, uptime_secs, reload_action, redacted_config);
-        Fixture { messaging, uptime, reload_ok, redacted, inbox }
+        let inbox = CommandInbox::new(
+            messaging.clone(),
+            config,
+            uptime_secs,
+            reload_action,
+            redacted_config,
+        );
+        Fixture {
+            messaging,
+            uptime,
+            reload_ok,
+            redacted,
+            inbox,
+        }
     }
 
     /// The single recorded reply (topic must be the request's `reply_to`).
@@ -669,7 +716,10 @@ mod tests {
         let replies = messaging.replies();
         assert_eq!(replies.len(), 1, "exactly one reply expected");
         let (topic, msg) = &replies[0];
-        assert_eq!(topic, REPLY_TO, "the reply must go to the request's reply_to");
+        assert_eq!(
+            topic, REPLY_TO,
+            "the reply must go to the request's reply_to"
+        );
         msg.body.clone()
     }
 
@@ -707,7 +757,9 @@ mod tests {
             "close() must unsubscribe the inbox (unsubscribe-before-exit)"
         );
         // A late (queued) delivery after close is ignored.
-        f.messaging.simulate_message(&topic(PING), request(PING)).await;
+        f.messaging
+            .simulate_message(&topic(PING), request(PING))
+            .await;
         assert!(f.messaging.replies().is_empty());
     }
 
@@ -728,7 +780,9 @@ mod tests {
         let f = fixture();
         f.uptime.store(1234, Ordering::SeqCst);
         f.inbox.clone().start().await;
-        f.messaging.simulate_message(&topic(PING), request(PING)).await;
+        f.messaging
+            .simulate_message(&topic(PING), request(PING))
+            .await;
         let body = only_reply_body(&f.messaging);
         assert!(body["ok"].as_bool().unwrap());
         assert_eq!(body["result"]["status"], "RUNNING");
@@ -740,7 +794,9 @@ mod tests {
         let f = fixture();
         f.inbox.clone().start().await;
         let ping = request(PING);
-        f.messaging.simulate_message(&topic(PING), ping.clone()).await;
+        f.messaging
+            .simulate_message(&topic(PING), ping.clone())
+            .await;
         let replies = f.messaging.replies();
         let (_, reply) = &replies[0];
         assert_eq!(
@@ -749,14 +805,19 @@ mod tests {
         );
         assert_eq!(reply.header.name, PING, "the reply header.name is the verb");
         assert_eq!(reply.header.version, CMD_MESSAGE_VERSION);
-        assert!(reply.identity.is_some(), "the reply is config-stamped with the responder's identity");
+        assert!(
+            reply.identity.is_some(),
+            "the reply is config-stamped with the responder's identity"
+        );
     }
 
     #[tokio::test]
     async fn reload_config_replies_ack_on_success() {
         let f = fixture();
         f.inbox.clone().start().await;
-        f.messaging.simulate_message(&topic(RELOAD_CONFIG), request(RELOAD_CONFIG)).await;
+        f.messaging
+            .simulate_message(&topic(RELOAD_CONFIG), request(RELOAD_CONFIG))
+            .await;
         let body = only_reply_body(&f.messaging);
         assert!(body["ok"].as_bool().unwrap());
         assert!(body["result"]["reloaded"].as_bool().unwrap());
@@ -767,7 +828,9 @@ mod tests {
         let f = fixture();
         f.reload_ok.store(false, Ordering::SeqCst);
         f.inbox.clone().start().await;
-        f.messaging.simulate_message(&topic(RELOAD_CONFIG), request(RELOAD_CONFIG)).await;
+        f.messaging
+            .simulate_message(&topic(RELOAD_CONFIG), request(RELOAD_CONFIG))
+            .await;
         let body = only_reply_body(&f.messaging);
         assert!(!body["ok"].as_bool().unwrap());
         assert_eq!(body["error"]["code"], ERR_RELOAD_FAILED);
@@ -778,7 +841,9 @@ mod tests {
     async fn get_configuration_replies_the_redacted_effective_config() {
         let f = fixture();
         f.inbox.clone().start().await;
-        f.messaging.simulate_message(&topic(GET_CONFIGURATION), request(GET_CONFIGURATION)).await;
+        f.messaging
+            .simulate_message(&topic(GET_CONFIGURATION), request(GET_CONFIGURATION))
+            .await;
         let body = only_reply_body(&f.messaging);
         assert!(body["ok"].as_bool().unwrap());
         assert_eq!(
@@ -793,7 +858,9 @@ mod tests {
         let f = fixture();
         *f.redacted.lock().unwrap() = None;
         f.inbox.clone().start().await;
-        f.messaging.simulate_message(&topic(GET_CONFIGURATION), request(GET_CONFIGURATION)).await;
+        f.messaging
+            .simulate_message(&topic(GET_CONFIGURATION), request(GET_CONFIGURATION))
+            .await;
         let body = only_reply_body(&f.messaging);
         assert!(!body["ok"].as_bool().unwrap());
         assert_eq!(body["error"]["code"], ERR_NO_CONFIG);
@@ -811,7 +878,9 @@ mod tests {
                 command_handler(|_req| async move { Ok(Some(json!({ "restarted": true }))) }),
             )
             .unwrap();
-        f.messaging.simulate_message(&topic("restart-pipeline"), request("restart-pipeline")).await;
+        f.messaging
+            .simulate_message(&topic("restart-pipeline"), request("restart-pipeline"))
+            .await;
         let body = only_reply_body(&f.messaging);
         assert!(body["ok"].as_bool().unwrap());
         assert!(body["result"]["restarted"].as_bool().unwrap());
@@ -820,12 +889,20 @@ mod tests {
     #[tokio::test]
     async fn namespaced_custom_verb_dispatches() {
         let f = fixture();
-        f.inbox.register("sb/status", command_handler(|_req| async move { Ok(None) })).unwrap();
+        f.inbox
+            .register("sb/status", command_handler(|_req| async move { Ok(None) }))
+            .unwrap();
         f.inbox.clone().start().await;
-        f.messaging.simulate_message(&topic("sb/status"), request("sb/status")).await;
+        f.messaging
+            .simulate_message(&topic("sb/status"), request("sb/status"))
+            .await;
         let body = only_reply_body(&f.messaging);
         assert!(body["ok"].as_bool().unwrap());
-        assert_eq!(body["result"], json!({}), "a None handler result must reply an empty result object");
+        assert_eq!(
+            body["result"],
+            json!({}),
+            "a None handler result must reply an empty result object"
+        );
     }
 
     #[tokio::test]
@@ -840,7 +917,9 @@ mod tests {
             )
             .unwrap();
         f.inbox.clone().start().await;
-        f.messaging.simulate_message(&topic("guarded"), request("guarded")).await;
+        f.messaging
+            .simulate_message(&topic("guarded"), request("guarded"))
+            .await;
         let body = only_reply_body(&f.messaging);
         assert!(!body["ok"].as_bool().unwrap());
         assert_eq!(body["error"]["code"], "NOT_ALLOWED");
@@ -857,7 +936,9 @@ mod tests {
             )
             .unwrap();
         f.inbox.clone().start().await;
-        f.messaging.simulate_message(&topic("boomy"), request("boomy")).await;
+        f.messaging
+            .simulate_message(&topic("boomy"), request("boomy"))
+            .await;
         let body = only_reply_body(&f.messaging);
         assert!(!body["ok"].as_bool().unwrap());
         assert_eq!(body["error"]["code"], ERR_HANDLER_ERROR);
@@ -867,24 +948,33 @@ mod tests {
     async fn register_rejects_shadowing_and_invalid_verbs() {
         let f = fixture();
         assert!(matches!(
-            f.inbox.register(PING, command_handler(|_r| async move { Ok(None) })),
+            f.inbox
+                .register(PING, command_handler(|_r| async move { Ok(None) })),
             Err(EdgeCommonsError::Command(_))
         ));
         assert!(matches!(
-            f.inbox.register(SET_CONFIG_VERB, command_handler(|_r| async move { Ok(None) })),
+            f.inbox.register(
+                SET_CONFIG_VERB,
+                command_handler(|_r| async move { Ok(None) })
+            ),
             Err(EdgeCommonsError::Command(_))
         ));
-        f.inbox.register("mine", command_handler(|_r| async move { Ok(None) })).unwrap();
+        f.inbox
+            .register("mine", command_handler(|_r| async move { Ok(None) }))
+            .unwrap();
         assert!(matches!(
-            f.inbox.register("mine", command_handler(|_r| async move { Ok(None) })),
+            f.inbox
+                .register("mine", command_handler(|_r| async move { Ok(None) })),
             Err(EdgeCommonsError::Command(_))
         ));
         assert!(matches!(
-            f.inbox.register("bad+verb", command_handler(|_r| async move { Ok(None) })),
+            f.inbox
+                .register("bad+verb", command_handler(|_r| async move { Ok(None) })),
             Err(EdgeCommonsError::UnsValidation { .. })
         ));
         assert!(matches!(
-            f.inbox.register("sb//x", command_handler(|_r| async move { Ok(None) })),
+            f.inbox
+                .register("sb//x", command_handler(|_r| async move { Ok(None) })),
             Err(EdgeCommonsError::UnsValidation { .. })
         ));
     }
@@ -892,23 +982,35 @@ mod tests {
     #[tokio::test]
     async fn unregister_removes_custom_verbs_but_never_built_ins() {
         let f = fixture();
-        f.inbox.register("mine", command_handler(|_r| async move { Ok(None) })).unwrap();
+        f.inbox
+            .register("mine", command_handler(|_r| async move { Ok(None) }))
+            .unwrap();
         assert!(f.inbox.verbs().contains("mine"));
         f.inbox.unregister("mine").unwrap();
         assert!(!f.inbox.verbs().contains("mine"));
         f.inbox.unregister("mine").unwrap(); // unknown -> no-op
-        assert!(matches!(f.inbox.unregister(RELOAD_CONFIG), Err(EdgeCommonsError::Command(_))));
+        assert!(matches!(
+            f.inbox.unregister(RELOAD_CONFIG),
+            Err(EdgeCommonsError::Command(_))
+        ));
 
         // The unregistered verb now gets the unknown-verb error.
         f.inbox.clone().start().await;
-        f.messaging.simulate_message(&topic("mine"), request("mine")).await;
-        assert_eq!(only_reply_body(&f.messaging)["error"]["code"], ERR_UNKNOWN_VERB);
+        f.messaging
+            .simulate_message(&topic("mine"), request("mine"))
+            .await;
+        assert_eq!(
+            only_reply_body(&f.messaging)["error"]["code"],
+            ERR_UNKNOWN_VERB
+        );
     }
 
     #[tokio::test]
     async fn verbs_snapshot_contains_built_ins_and_customs() {
         let f = fixture();
-        f.inbox.register("mine", command_handler(|_r| async move { Ok(None) })).unwrap();
+        f.inbox
+            .register("mine", command_handler(|_r| async move { Ok(None) }))
+            .unwrap();
         assert_eq!(
             f.inbox.verbs(),
             std::collections::HashSet::from([
@@ -926,7 +1028,9 @@ mod tests {
     async fn unknown_verb_request_gets_an_unknown_verb_error_reply() {
         let f = fixture();
         f.inbox.clone().start().await;
-        f.messaging.simulate_message(&topic("no-such-verb"), request("no-such-verb")).await;
+        f.messaging
+            .simulate_message(&topic("no-such-verb"), request("no-such-verb"))
+            .await;
         let body = only_reply_body(&f.messaging);
         assert!(!body["ok"].as_bool().unwrap());
         assert_eq!(body["error"]["code"], ERR_UNKNOWN_VERB);
@@ -936,7 +1040,9 @@ mod tests {
     async fn unknown_fire_and_forget_verb_is_ignored() {
         let f = fixture();
         f.inbox.clone().start().await;
-        f.messaging.simulate_message(&topic("no-such-verb"), notification("no-such-verb")).await;
+        f.messaging
+            .simulate_message(&topic("no-such-verb"), notification("no-such-verb"))
+            .await;
         assert!(
             f.messaging.replies().is_empty(),
             "an unknown fire-and-forget verb must not be replied to"
@@ -961,8 +1067,13 @@ mod tests {
             )
             .unwrap();
         f.inbox.clone().start().await;
-        f.messaging.simulate_message(&topic("do-it"), notification("do-it")).await;
-        assert!(ran.load(Ordering::SeqCst), "a fire-and-forget command must still run the handler");
+        f.messaging
+            .simulate_message(&topic("do-it"), notification("do-it"))
+            .await;
+        assert!(
+            ran.load(Ordering::SeqCst),
+            "a fire-and-forget command must still run the handler"
+        );
         assert!(f.messaging.replies().is_empty(), "...but never reply");
     }
 
@@ -976,7 +1087,9 @@ mod tests {
             )
             .unwrap();
         f.inbox.clone().start().await;
-        f.messaging.simulate_message(&topic("do-it"), notification("do-it")).await;
+        f.messaging
+            .simulate_message(&topic("do-it"), notification("do-it"))
+            .await;
         assert!(f.messaging.replies().is_empty());
     }
 
@@ -985,17 +1098,26 @@ mod tests {
         let f = fixture();
         f.inbox.clone().start().await;
         // header.name does not equal the topic verb (foreign convention on a cmd topic).
-        f.messaging.simulate_message(&topic(PING), request("something-else")).await;
+        f.messaging
+            .simulate_message(&topic(PING), request("something-else"))
+            .await;
         // A raw (headerless) envelope - junk JSON on the inbox.
-        f.messaging.simulate_message(&topic(PING), Message::raw(json!({ "junk": true }))).await;
-        assert!(f.messaging.replies().is_empty(), "malformed/foreign payloads must never be replied to");
+        f.messaging
+            .simulate_message(&topic(PING), Message::raw(json!({ "junk": true })))
+            .await;
+        assert!(
+            f.messaging.replies().is_empty(),
+            "malformed/foreign payloads must never be replied to"
+        );
     }
 
     #[tokio::test]
     async fn delegated_set_config_is_ignored_even_as_a_request() {
         let f = fixture();
         f.inbox.clone().start().await;
-        f.messaging.simulate_message(&topic(SET_CONFIG_VERB), request(SET_CONFIG_VERB)).await;
+        f.messaging
+            .simulate_message(&topic(SET_CONFIG_VERB), request(SET_CONFIG_VERB))
+            .await;
         assert!(
             f.messaging.replies().is_empty(),
             "set-config is owned by the CONFIG_COMPONENT subscription - never dispatched or replied to here"
@@ -1019,7 +1141,9 @@ mod tests {
         f.inbox.clone().start().await;
         f.messaging.set_fail_reply(true);
         // Must not panic even though the reply publish fails.
-        f.messaging.simulate_message(&topic(PING), request(PING)).await;
+        f.messaging
+            .simulate_message(&topic(PING), request(PING))
+            .await;
         assert!(f.messaging.replies().is_empty());
     }
 }
@@ -1048,13 +1172,15 @@ mod vector_tests {
     }
 
     fn load(dir: &std::path::Path, file: &str) -> Value {
-        let bytes = std::fs::read(dir.join(file))
-            .unwrap_or_else(|e| panic!("failed to read {file}: {e}"));
+        let bytes =
+            std::fs::read(dir.join(file)).unwrap_or_else(|e| panic!("failed to read {file}: {e}"));
         serde_json::from_slice(&bytes).unwrap_or_else(|e| panic!("{file} is not valid JSON: {e}"))
     }
 
     fn str_field<'a>(v: &'a Value, key: &str) -> &'a str {
-        v.get(key).and_then(Value::as_str).unwrap_or_else(|| panic!("missing string '{key}' in {v}"))
+        v.get(key)
+            .and_then(Value::as_str)
+            .unwrap_or_else(|| panic!("missing string '{key}' in {v}"))
     }
 
     /// The `gw-01`/`opcua-adapter`/`main` identity every case in `commands.json` is keyed to.
@@ -1087,7 +1213,10 @@ mod vector_tests {
         assert_eq!(str_field(input, "device"), "gw-01");
         assert_eq!(str_field(input, "component"), "opcua-adapter");
         assert_eq!(str_field(input, "instance"), "main");
-        assert!(!input["includeRoot"].as_bool().unwrap(), "the vectors are rootless");
+        assert!(
+            !input["includeRoot"].as_bool().unwrap(),
+            "the vectors are rootless"
+        );
         assert_eq!(str_field(input, "class"), "cmd");
 
         let messaging = RecordingMessaging::new();
@@ -1134,22 +1263,44 @@ mod vector_tests {
             messaging.simulate_message(topic, request).await;
 
             let replies = messaging.replies();
-            let (reply_topic, reply) =
-                replies.last().unwrap_or_else(|| panic!("verb '{verb}': no reply recorded"));
-            assert_eq!(reply_topic, expected_reply_to, "verb '{verb}': reply topic mismatch");
-            assert_eq!(reply.header.name, verb, "verb '{verb}': reply header.name mismatch");
-            assert_eq!(reply.header.version, "1.0", "verb '{verb}': reply header.version mismatch");
+            let (reply_topic, reply) = replies
+                .last()
+                .unwrap_or_else(|| panic!("verb '{verb}': no reply recorded"));
+            assert_eq!(
+                reply_topic, expected_reply_to,
+                "verb '{verb}': reply topic mismatch"
+            );
+            assert_eq!(
+                reply.header.name, verb,
+                "verb '{verb}': reply header.name mismatch"
+            );
+            assert_eq!(
+                reply.header.version, "1.0",
+                "verb '{verb}': reply header.version mismatch"
+            );
             assert_eq!(
                 reply.header.correlation_id, expected_correlation_id,
                 "verb '{verb}': reply must carry the request's correlation_id"
             );
-            assert_eq!(reply.body, case["reply"]["body"], "verb '{verb}': reply body mismatch");
+            assert_eq!(
+                reply.body, case["reply"]["body"],
+                "verb '{verb}': reply body mismatch"
+            );
 
-            let identity = reply.identity.as_ref().unwrap_or_else(|| panic!("verb '{verb}': reply carries no identity"));
+            let identity = reply
+                .identity
+                .as_ref()
+                .unwrap_or_else(|| panic!("verb '{verb}': reply carries no identity"));
             let expected_identity = &case["reply"]["identity"];
             assert_eq!(identity.path(), str_field(expected_identity, "path"));
-            assert_eq!(identity.component(), str_field(expected_identity, "component"));
-            assert_eq!(identity.instance(), str_field(expected_identity, "instance"));
+            assert_eq!(
+                identity.component(),
+                str_field(expected_identity, "component")
+            );
+            assert_eq!(
+                identity.instance(),
+                str_field(expected_identity, "instance")
+            );
         }
 
         // ---- UNKNOWN_VERB (the library-composed message text is pinned) ----
@@ -1157,9 +1308,14 @@ mod vector_tests {
         assert_eq!(errors.len(), 1, "unknown-verb");
         let unknown = &errors[0];
         let request = request_message(&unknown["request"]);
-        messaging.simulate_message(str_field(unknown, "topic"), request).await;
+        messaging
+            .simulate_message(str_field(unknown, "topic"), request)
+            .await;
         let (_, reply) = messaging.replies().last().unwrap().clone();
-        assert_eq!(reply.body, unknown["reply"]["body"], "UNKNOWN_VERB reply body mismatch");
+        assert_eq!(
+            reply.body, unknown["reply"]["body"],
+            "UNKNOWN_VERB reply body mismatch"
+        );
 
         // ---- behavior flags/sets (normative for every language's command inbox) ----
         let behavior = &doc["behavior"];
@@ -1167,14 +1323,26 @@ mod vector_tests {
         assert!(behavior["headerNameMustEqualVerb"].as_bool().unwrap());
         assert!(behavior["fireAndForgetWithoutReplyTo"].as_bool().unwrap());
         assert!(behavior["malformedIgnoredWithoutReply"].as_bool().unwrap());
-        let built_ins: Vec<&str> =
-            behavior["builtInVerbs"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
+        let built_ins: Vec<&str> = behavior["builtInVerbs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
         assert_eq!(built_ins, BUILT_IN_VERBS.to_vec(), "builtInVerbs");
-        let delegated: Vec<&str> =
-            behavior["delegatedVerbs"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
+        let delegated: Vec<&str> = behavior["delegatedVerbs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
         assert_eq!(delegated, DELEGATED_VERBS.to_vec(), "delegatedVerbs");
-        let error_codes: std::collections::HashSet<&str> =
-            behavior["errorCodes"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
+        let error_codes: std::collections::HashSet<&str> = behavior["errorCodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
         assert_eq!(
             error_codes,
             std::collections::HashSet::from([

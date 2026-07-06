@@ -104,7 +104,7 @@ function parseMeasures(raw: Record<string, unknown>): Measures {
  * best-effort `{"status":"STOPPED"}` on graceful shutdown), with the enabled system measures
  * emitted as the metric `sys` through the normal metric subsystem. The legacy `targets[]`
  * array (the heartbeat topic-override drift knobs) is removed — hard cut; {@link destination}
- * governs only the state keepalive's transport (`local` vs `iotcore`). Defaults: on / 5 s /
+ * governs only the state keepalive's transport (`local` vs `northbound`). Defaults: on / 5 s /
  * local (D-U14).
  */
 export class HeartbeatConfig {
@@ -115,7 +115,7 @@ export class HeartbeatConfig {
   measures: Measures;
   /**
    * The publish destination of the `state` keepalive only — `"local"` (the local/IPC
-   * transport, the default) or `"iotcore"` (AWS IoT Core). The measures route through the
+   * transport, the default) or `"northbound"`. The measures route through the
    * metric subsystem's own target and are unaffected.
    */
   destination: string;
@@ -187,7 +187,7 @@ export class MetricConfig {
     return this.targetConfigStr("maxFileSize") ?? "10MB";
   }
 
-  /** `targetConfig.destination` (messaging target): `ipc`/`local` or `iotcore`; default `ipc`. */
+  /** `targetConfig.destination` (messaging target): `ipc`/`local` or `northbound`; default `ipc`. */
   destination(): string {
     return this.targetConfigStr("destination") ?? "ipc";
   }

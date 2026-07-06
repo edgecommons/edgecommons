@@ -7,7 +7,7 @@ package com.mbreissi.edgecommons.messaging;
 import com.google.gson.JsonObject;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import software.amazon.awssdk.aws.greengrass.model.QOS;
+import com.mbreissi.edgecommons.messaging.Qos;
 
 import java.lang.reflect.Field;
 import java.time.Duration;
@@ -78,16 +78,16 @@ class ReservedTopicGuardTest {
     }
 
     @Test
-    void publishToIoTCoreRejectsReservedTopics() {
+    void publishNorthboundRejectsReservedTopics() {
         assertThrows(ReservedTopicException.class,
-                () -> client.publishToIoTCore(RESERVED_STATE, message(), QOS.AT_LEAST_ONCE));
+                () -> client.publishNorthbound(RESERVED_STATE, message(), Qos.AT_LEAST_ONCE));
         verifyNoInteractions(provider);
     }
 
     @Test
-    void publishToIoTCoreRawRejectsReservedTopics() {
+    void publishNorthboundRawRejectsReservedTopics() {
         assertThrows(ReservedTopicException.class,
-                () -> client.publishToIoTCoreRaw(RESERVED_CFG, new JsonObject(), QOS.AT_MOST_ONCE));
+                () -> client.publishNorthboundRaw(RESERVED_CFG, new JsonObject(), Qos.AT_MOST_ONCE));
         verifyNoInteractions(provider);
     }
 
@@ -100,11 +100,11 @@ class ReservedTopicGuardTest {
     }
 
     @Test
-    void requestFromIoTCoreRejectsReservedTopicsBothOverloads() {
+    void requestNorthboundRejectsReservedTopicsBothOverloads() {
         assertThrows(ReservedTopicException.class,
-                () -> client.requestFromIoTCore(RESERVED_LOG, message()));
+                () -> client.requestNorthbound(RESERVED_LOG, message()));
         assertThrows(ReservedTopicException.class,
-                () -> client.requestFromIoTCore(RESERVED_LOG, message(), Duration.ZERO));
+                () -> client.requestNorthbound(RESERVED_LOG, message(), Duration.ZERO));
         verifyNoInteractions(provider);
     }
 
@@ -115,7 +115,7 @@ class ReservedTopicGuardTest {
         assertThrows(ReservedTopicException.class,
                 () -> client.reply(requestWithReplyTo(RESERVED_STATE), message()));
         assertThrows(ReservedTopicException.class,
-                () -> client.replyToIoTCore(requestWithReplyTo(RESERVED_METRIC), message()));
+                () -> client.replyNorthbound(requestWithReplyTo(RESERVED_METRIC), message()));
         verifyNoInteractions(provider);
     }
 
@@ -175,8 +175,8 @@ class ReservedTopicGuardTest {
         BiConsumer<String, Message> cb = (t, m) -> { };
         client.subscribe("ecv1/+/+/+/state", cb);
         verify(provider).subscribe(eq("ecv1/+/+/+/state"), eq(cb), anyInt(), anyInt());
-        client.subscribeToIoTCore(RESERVED_STATE, cb, QOS.AT_LEAST_ONCE);
-        verify(provider).subscribeToIoTCore(eq(RESERVED_STATE), eq(cb), eq(QOS.AT_LEAST_ONCE),
+        client.subscribeNorthbound(RESERVED_STATE, cb, Qos.AT_LEAST_ONCE);
+        verify(provider).subscribeNorthbound(eq(RESERVED_STATE), eq(cb), eq(Qos.AT_LEAST_ONCE),
                 anyInt(), anyInt());
     }
 
@@ -238,8 +238,8 @@ class ReservedTopicGuardTest {
         publisher.publishRaw(RESERVED_METRIC, raw);
         verify(provider).publishRaw(RESERVED_METRIC, raw);
 
-        publisher.publishToIoTCore(RESERVED_CFG, message(), QOS.AT_LEAST_ONCE);
-        verify(provider).publishToIoTCore(eq(RESERVED_CFG), any(Message.class), eq(QOS.AT_LEAST_ONCE));
+        publisher.publishNorthbound(RESERVED_CFG, message(), Qos.AT_LEAST_ONCE);
+        verify(provider).publishNorthbound(eq(RESERVED_CFG), any(Message.class), eq(Qos.AT_LEAST_ONCE));
     }
 
     @Test

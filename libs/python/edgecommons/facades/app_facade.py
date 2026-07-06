@@ -21,6 +21,7 @@ from typing import Any, Dict, Optional
 from edgecommons.facades.channel import Channel
 from edgecommons.facades.util import sanitize_channel_path
 from edgecommons.messaging.message_builder import MessageBuilder
+from edgecommons.messaging.qos import Qos
 from edgecommons.uns import UnsClass
 
 logger = logging.getLogger("AppFacade")
@@ -80,8 +81,7 @@ class AppFacade:
         )
         if routing is not None and routing.kind is Channel.Kind.NORTHBOUND:
             try:
-                from awsiot.greengrasscoreipc.model import QOS
-                self._messaging.publish_to_iot_core(topic, msg, QOS.AT_LEAST_ONCE)
+                self._messaging.publish_northbound(topic, msg, Qos.AT_LEAST_ONCE)
             except Exception as e:  # noqa: BLE001 - a northbound outage must not propagate
                 logger.warning("Northbound app publish on '%s' failed (local readiness"
                                " unaffected): %s", topic, e)

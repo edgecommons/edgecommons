@@ -62,7 +62,7 @@ Each tick publishes one envelope to `ecv1/{device}/{component}/main/state`:
 - The message name and version are `state` / `1.0` in **all four languages**.
 - `uptimeSecs` is the seconds since component start (monotonic clock). The shutdown `STOPPED` state
   omits it.
-- **`heartbeat.destination`** (`local` | `iotcore`, default `local`) selects where the keepalive
+- **`heartbeat.destination`** (`local` | `northbound`, default `local`) selects where the keepalive
   goes: the local/IPC transport, or AWS IoT Core. It governs the **keepalive only** — the measures
   route through the metric subsystem's own target (`metricEmission`).
 
@@ -232,7 +232,7 @@ so an absent section gives you a working keepalive out of the box:
 | `enabled` | boolean | `true` | Whether the heartbeat (state keepalive + `sys` measures metric) runs. |
 | `intervalSecs` | integer (min 1) | `5` | Tick period in seconds. |
 | `measures.*` | boolean | `cpu`/`memory` on, rest off | Per-measure toggles for the `sys` metric. |
-| `destination` | string | `local` | `local` or `iotcore` — where the **state keepalive** publishes. The measures route through `metricEmission`. |
+| `destination` | string | `local` | `local` or `northbound` — where the **state keepalive** publishes. The measures route through `metricEmission`. |
 
 <Aside type="danger" title="There is no heartbeat.targets[]">
 The `heartbeat` section has no `targets[]` array, and the heartbeat topic is **not configurable** —
@@ -257,10 +257,11 @@ via the configuration-change listener; Rust and TypeScript re-read the live conf
 - **No messaging transport** (a metrics-only run) skips the keepalive; the `sys` metric still flows
   through the metric subsystem.
 - **The `STOPPED` state is best-effort** — published at most once on graceful shutdown
-  (`SIGTERM`/`close`); a hard kill obviously cannot publish it. For faster crash detection on MQTT,
-  a component may also register an [LWT](/guides/messaging/#mqtt-last-will-lwt).
+  (`SIGTERM`/`close`); a hard kill obviously cannot publish it. Generic component MQTT config does
+  not expose Last-Will; the only first-party LWT is the private derived `uns-bridge` site-uplink
+  reachability signal.
 - Liveness consumers should treat a missed keepalive window (e.g. 2–3 intervals) as *stale*, and the
-  `STOPPED` state or an LWT as authoritative offline signals.
+  `STOPPED` state or the `uns-bridge` site LWT as authoritative offline signals.
 
 ## Related
 

@@ -378,7 +378,7 @@ Pick your language with the tabs in each code block — the tabs stay in sync ac
 </Tabs>
 
    The MQTT transport needs a small messaging-config JSON (the `--transport MQTT <path>` payload):
-   `messaging.local` is required and `messaging.iotCore` is optional. Each running process needs a
+   `messaging.local` is required and `messaging.northbound` is optional. Each running process needs a
    unique `clientId`. The Rust and TypeScript templates already ship one at
    `test-configs/standalone-messaging.json`; for Java and Python, create a
    `standalone-messaging.json` in the component directory:

@@ -51,8 +51,8 @@
 use std::any::Any;
 use std::collections::HashMap;
 use std::mem::MaybeUninit;
-use std::sync::mpsc::{Receiver as StdReceiver, Sender as StdSender};
 use std::sync::OnceLock;
+use std::sync::mpsc::{Receiver as StdReceiver, Sender as StdSender};
 
 use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
@@ -173,10 +173,7 @@ impl IpcRuntime {
     }
 
     /// Dispatch a command that produces a reply and await it.
-    async fn call<T>(
-        &self,
-        make: impl FnOnce(oneshot::Sender<Result<T>>) -> Command,
-    ) -> Result<T> {
+    async fn call<T>(&self, make: impl FnOnce(oneshot::Sender<Result<T>>) -> Command) -> Result<T> {
         let (reply_tx, reply_rx) = oneshot::channel();
         self.tx
             .send(make(reply_tx))
@@ -200,8 +197,14 @@ impl IpcRuntime {
         qos: Qos,
     ) -> Result<()> {
         let topic = topic.to_string();
-        self.call(move |reply| Command::Publish { topic, payload, dest, qos, reply })
-            .await
+        self.call(move |reply| Command::Publish {
+            topic,
+            payload,
+            dest,
+            qos,
+            reply,
+        })
+        .await
     }
 
     /// Subscribe to `filter` on `dest`; messages are delivered on `out`. Returns a
@@ -214,8 +217,14 @@ impl IpcRuntime {
         out: Delivery,
     ) -> Result<u64> {
         let filter = filter.to_string();
-        self.call(move |reply| Command::Subscribe { filter, dest, qos, out, reply })
-            .await
+        self.call(move |reply| Command::Subscribe {
+            filter,
+            dest,
+            qos,
+            out,
+            reply,
+        })
+        .await
     }
 
     /// Stop a subscription (best-effort; closes it at the broker).
@@ -229,8 +238,12 @@ impl IpcRuntime {
         key_path: Vec<String>,
         component: Option<String>,
     ) -> Result<Value> {
-        self.call(move |reply| Command::GetConfig { key_path, component, reply })
-            .await
+        self.call(move |reply| Command::GetConfig {
+            key_path,
+            component,
+            reply,
+        })
+        .await
     }
 
     /// Watch a configuration key path; the re-fetched JSON document is sent on `out`
@@ -241,15 +254,24 @@ impl IpcRuntime {
         key_path: Vec<String>,
         out: mpsc::UnboundedSender<Value>,
     ) -> Result<u64> {
-        self.call(move |reply| Command::WatchConfig { component, key_path, out, reply })
-            .await
+        self.call(move |reply| Command::WatchConfig {
+            component,
+            key_path,
+            out,
+            reply,
+        })
+        .await
     }
 
     /// Get a thing shadow document.
     pub async fn get_shadow(&self, thing: &str, shadow: Option<String>) -> Result<Vec<u8>> {
         let thing = thing.to_string();
-        self.call(move |reply| Command::GetShadow { thing, shadow, reply })
-            .await
+        self.call(move |reply| Command::GetShadow {
+            thing,
+            shadow,
+            reply,
+        })
+        .await
     }
 
     /// Update a thing shadow with `payload`.
@@ -260,23 +282,36 @@ impl IpcRuntime {
         payload: Vec<u8>,
     ) -> Result<()> {
         let thing = thing.to_string();
-        self.call(move |reply| Command::UpdateShadow { thing, shadow, payload, reply })
-            .await
+        self.call(move |reply| Command::UpdateShadow {
+            thing,
+            shadow,
+            payload,
+            reply,
+        })
+        .await
     }
 
     /// Delete a thing shadow.
     pub async fn delete_shadow(&self, thing: &str, shadow: Option<String>) -> Result<()> {
         let thing = thing.to_string();
-        self.call(move |reply| Command::DeleteShadow { thing, shadow, reply })
-            .await
+        self.call(move |reply| Command::DeleteShadow {
+            thing,
+            shadow,
+            reply,
+        })
+        .await
     }
 }
 
-/// Map our [`Qos`] onto the SDK's.
-fn sdk_qos(qos: Qos) -> gg_sdk::Qos {
+/// Map our [`Qos`] onto the SDK's IoT-Core QoS domain.
+fn sdk_qos(qos: Qos) -> Result<gg_sdk::Qos> {
     match qos {
-        Qos::AtMostOnce => gg_sdk::Qos::AtMostOnce,
-        Qos::AtLeastOnce => gg_sdk::Qos::AtLeastOnce,
+        Qos::AtMostOnce => Ok(gg_sdk::Qos::AtMostOnce),
+        Qos::AtLeastOnce => Ok(gg_sdk::Qos::AtLeastOnce),
+        Qos::ExactlyOnce => Err(EdgeCommonsError::Ipc(
+            "QoS 2 is supported only on the local MQTT broker; Greengrass IoT Core supports QoS 0/1"
+                .to_string(),
+        )),
     }
 }
 
@@ -334,28 +369,49 @@ fn worker(rx: StdReceiver<Command>, internal_tx: StdSender<Command>) {
                 let _ = reply.send(result);
             }
 
-            Command::Publish { topic, payload, dest, qos, reply } => {
+            Command::Publish {
+                topic,
+                payload,
+                dest,
+                qos,
+                reply,
+            } => {
                 let result = match dest {
                     Destination::Local => sdk
                         .publish_to_topic_binary(&topic, &payload)
                         .map_err(ipc_err),
-                    Destination::IotCore => sdk
-                        .publish_to_iot_core(&topic, &payload, sdk_qos(qos))
-                        .map_err(ipc_err),
+                    Destination::Northbound => match sdk_qos(qos) {
+                        Ok(mapped) => sdk
+                            .publish_to_iot_core(&topic, &payload, mapped)
+                            .map_err(ipc_err),
+                        Err(e) => Err(e),
+                    },
                 };
                 let _ = reply.send(result);
             }
 
-            Command::Subscribe { filter, dest, qos, out, reply } => {
+            Command::Subscribe {
+                filter,
+                dest,
+                qos,
+                out,
+                reply,
+            } => {
                 let id = next_id;
                 next_id += 1;
                 let result = match dest {
                     Destination::Local => start_local_sub(&sdk, &filter, out),
-                    Destination::IotCore => start_iot_sub(&sdk, &filter, qos, out),
+                    Destination::Northbound => start_iot_sub(&sdk, &filter, qos, out),
                 };
                 match result {
                     Ok(sub) => {
-                        subs.insert(id, SubEntry { _sub: sub, config_watch: None });
+                        subs.insert(
+                            id,
+                            SubEntry {
+                                _sub: sub,
+                                config_watch: None,
+                            },
+                        );
                         let _ = reply.send(Ok(id));
                     }
                     Err(e) => {
@@ -368,11 +424,20 @@ fn worker(rx: StdReceiver<Command>, internal_tx: StdSender<Command>) {
                 subs.remove(&id); // Drop closes the broker subscription.
             }
 
-            Command::GetConfig { key_path, component, reply } => {
+            Command::GetConfig {
+                key_path,
+                component,
+                reply,
+            } => {
                 let _ = reply.send(do_get_config(&sdk, &key_path, component.as_deref()));
             }
 
-            Command::WatchConfig { component, key_path, out, reply } => {
+            Command::WatchConfig {
+                component,
+                key_path,
+                out,
+                reply,
+            } => {
                 let id = next_id;
                 next_id += 1;
                 let cb_tx = internal_tx.clone();
@@ -392,7 +457,11 @@ fn worker(rx: StdReceiver<Command>, internal_tx: StdSender<Command>) {
                             id,
                             SubEntry {
                                 _sub: Box::new(sub),
-                                config_watch: Some(ConfigWatch { component, key_path, out }),
+                                config_watch: Some(ConfigWatch {
+                                    component,
+                                    key_path,
+                                    out,
+                                }),
                             },
                         );
                         let _ = reply.send(Ok(id));
@@ -415,7 +484,11 @@ fn worker(rx: StdReceiver<Command>, internal_tx: StdSender<Command>) {
                 }
             }
 
-            Command::GetShadow { thing, shadow, reply } => {
+            Command::GetShadow {
+                thing,
+                shadow,
+                reply,
+            } => {
                 let mut buf = vec![MaybeUninit::<u8>::uninit(); IPC_RESULT_BUF];
                 let result = sdk
                     .get_thing_shadow(&thing, shadow.as_deref(), &mut buf)
@@ -424,7 +497,12 @@ fn worker(rx: StdReceiver<Command>, internal_tx: StdSender<Command>) {
                 let _ = reply.send(result);
             }
 
-            Command::UpdateShadow { thing, shadow, payload, reply } => {
+            Command::UpdateShadow {
+                thing,
+                shadow,
+                payload,
+                reply,
+            } => {
                 let result = sdk
                     .update_thing_shadow(&thing, shadow.as_deref(), &payload, None)
                     .map(|_| ())
@@ -432,7 +510,11 @@ fn worker(rx: StdReceiver<Command>, internal_tx: StdSender<Command>) {
                 let _ = reply.send(result);
             }
 
-            Command::DeleteShadow { thing, shadow, reply } => {
+            Command::DeleteShadow {
+                thing,
+                shadow,
+                reply,
+            } => {
                 let result = sdk
                     .delete_thing_shadow(&thing, shadow.as_deref())
                     .map_err(ipc_err);
@@ -491,24 +573,15 @@ fn start_local_sub(sdk: &gg_sdk::Sdk, filter: &str, out: Delivery) -> Result<Box
 ///
 /// As with [`start_local_sub`], the delivery body runs on an SDK thread and is
 /// panic-contained, and late/duplicate replies are dropped rather than panicked on.
-fn start_iot_sub(
-    sdk: &gg_sdk::Sdk,
-    filter: &str,
-    qos: Qos,
-    out: Delivery,
-) -> Result<Box<dyn Any>> {
+fn start_iot_sub(sdk: &gg_sdk::Sdk, filter: &str, qos: Qos, out: Delivery) -> Result<Box<dyn Any>> {
     let cb: &'static _ = Box::leak(Box::new(move |topic: &str, payload: &[u8]| {
         let topic_owned = topic.to_string();
         contain_callback(topic, || {
-            crate::messaging::request_reply::try_deliver_reply(
-                &out,
-                topic_owned,
-                payload.to_vec(),
-            );
+            crate::messaging::request_reply::try_deliver_reply(&out, topic_owned, payload.to_vec());
         });
     }));
     let sub = sdk
-        .subscribe_to_iot_core(filter, sdk_qos(qos), cb)
+        .subscribe_to_iot_core(filter, sdk_qos(qos)?, cb)
         .map_err(ipc_err)?;
     Ok(Box::new(sub))
 }

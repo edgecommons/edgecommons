@@ -38,7 +38,7 @@
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::metrics::metric::Metric;
 
@@ -160,16 +160,20 @@ mod tests {
         assert_eq!(emf["category"], "requests");
         assert_eq!(emf["_aws"]["CloudWatchMetrics"][0]["Namespace"], "MyApp");
         // Single dimension set listing the dimension keys.
-        assert!(emf["_aws"]["CloudWatchMetrics"][0]["Dimensions"][0]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|k| k == "coreName"));
+        assert!(
+            emf["_aws"]["CloudWatchMetrics"][0]["Dimensions"][0]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|k| k == "coreName")
+        );
     }
 
     #[test]
     fn timestamp_is_in_milliseconds() {
-        let metric = MetricBuilder::create("m").add_measure("v", "None", 60).build();
+        let metric = MetricBuilder::create("m")
+            .add_measure("v", "None", 60)
+            .build();
         let emf = build_emf("ns", &metric, &values(), false);
         // Milliseconds since epoch are ~1.7e12 in 2026; seconds would be ~1.7e9.
         assert!(emf["_aws"]["Timestamp"].as_u64().unwrap() > 1_000_000_000_000);

@@ -8,8 +8,9 @@ view.
 ## Schema
 
 The schema (`resources/edgecommons-config-schema.json`, embedded with `include_str!`)
-matches the Java/Python schema. All sections are optional and `additionalProperties`
-is permissive, so component-specific keys pass through untouched.
+matches the Java/Python/TypeScript schema. Known top-level sections are strict
+(`additionalProperties: false`); component-specific keys pass through only in
+`component.global` and `component.instances[]`.
 
 ```
 logging:        { level, format, fileLogging: { enabled, filePath }, loggers, globalControl }
@@ -18,7 +19,7 @@ heartbeat:      { enabled, intervalSecs, measures: { cpu, memory, disk, threads,
 hierarchy:      { levels: [ "site", ..., "device" ] }    # UNS hierarchy — last level = the node (thing name)
 identity:       { <level>: <value>, ... }                # values for every level except the last
 topic:          { includeRoot }                          # UNS topic-building options
-messaging:      { local, iotCore, requestTimeoutSeconds, lwt }
+messaging:      { local{qos}, northbound{qos}, requestTimeoutSeconds }
 tags:           { <key>: <value>, ... }
 component:      { global: {...}, instances: [ { id, ... }, ... ] }
 ```

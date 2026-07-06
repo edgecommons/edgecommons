@@ -28,7 +28,7 @@ import static org.junit.jupiter.api.Assertions.*;
  *       {@code ReservedPublisher} seam — header name {@code "state"}, body
  *       {@code {"status":"RUNNING","uptimeSecs":n}};</li>
  *   <li>the measures are emitted as the metric {@code sys} through the metric subsystem;</li>
- *   <li>{@code destination: iotcore} routes the keepalive via {@code publishToIoTCore};</li>
+ *   <li>{@code destination: northbound} routes the keepalive via {@code publishNorthbound};</li>
  *   <li>{@code close()} publishes a best-effort {@code {"status":"STOPPED"}} state (once);</li>
  *   <li>{@code enabled: false} disables everything;</li>
  *   <li>no resolved identity -> the keepalive is skipped but the {@code sys} metric still flows.</li>
@@ -122,9 +122,9 @@ class HeartbeatPublishTest {
     }
 
     @Test
-    void iotCoreDestinationPublishesTheKeepaliveToIotCore() {
+    void northboundDestinationPublishesTheKeepaliveToIotCore() {
         MockConfigurationService config =
-                configWithHeartbeat("{\"intervalSecs\":3600,\"destination\":\"iotcore\"}");
+                configWithHeartbeat("{\"intervalSecs\":3600,\"destination\":\"northbound\"}");
         MockMessagingService messaging = new MockMessagingService();
 
         Heartbeat heartbeat = HeartbeatBuilder.create(config)
@@ -134,10 +134,10 @@ class HeartbeatPublishTest {
         try {
             awaitAtLeastOnePublish(messaging);
             List<MockMessagingService.PublishedMessage> published = messaging.getPublishedMessages();
-            assertFalse(published.isEmpty(), "iotcore destination must still publish the keepalive");
+            assertFalse(published.isEmpty(), "northbound destination must still publish the keepalive");
             assertEquals(STATE_TOPIC, published.get(0).topic);
             assertNotNull(published.get(0).qos,
-                    "destination iotcore must publish via publishToIoTCore (carries a QOS)");
+                    "destination northbound must publish via publishNorthbound (carries a QOS)");
             assertTrue(published.get(0).reserved);
         } finally {
             heartbeat.close();

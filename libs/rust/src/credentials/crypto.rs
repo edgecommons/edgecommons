@@ -27,8 +27,8 @@ use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use zeroize::Zeroizing;
 
-use crate::error::EdgeCommonsError;
 use crate::Result;
+use crate::error::EdgeCommonsError;
 
 /// AES-256-GCM key/DEK/KEK length in bytes.
 pub const KEY_LEN: usize = 32;
@@ -52,20 +52,46 @@ pub fn random<const N: usize>() -> [u8; N] {
 /// # Pre-conditions
 /// `nonce` must be unique per `(key, message)`. The vault generates a fresh random nonce per
 /// record version and per DEK-wrap, stored alongside the ciphertext.
-pub fn seal(key: &[u8; KEY_LEN], nonce: &[u8; NONCE_LEN], aad: &[u8], plaintext: &[u8]) -> Result<Vec<u8>> {
+pub fn seal(
+    key: &[u8; KEY_LEN],
+    nonce: &[u8; NONCE_LEN],
+    aad: &[u8],
+    plaintext: &[u8],
+) -> Result<Vec<u8>> {
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
     cipher
-        .encrypt(Nonce::from_slice(nonce), Payload { msg: plaintext, aad })
+        .encrypt(
+            Nonce::from_slice(nonce),
+            Payload {
+                msg: plaintext,
+                aad,
+            },
+        )
         .map_err(|_| EdgeCommonsError::Credentials("AEAD seal failed".into()))
 }
 
 /// AES-256-GCM open of `ciphertext || tag`. Fails (does not panic) on a bad key/nonce/AAD/tag.
-pub fn open(key: &[u8; KEY_LEN], nonce: &[u8; NONCE_LEN], aad: &[u8], ct_and_tag: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
+pub fn open(
+    key: &[u8; KEY_LEN],
+    nonce: &[u8; NONCE_LEN],
+    aad: &[u8],
+    ct_and_tag: &[u8],
+) -> Result<Zeroizing<Vec<u8>>> {
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
     cipher
-        .decrypt(Nonce::from_slice(nonce), Payload { msg: ct_and_tag, aad })
+        .decrypt(
+            Nonce::from_slice(nonce),
+            Payload {
+                msg: ct_and_tag,
+                aad,
+            },
+        )
         .map(Zeroizing::new)
-        .map_err(|_| EdgeCommonsError::Credentials("AEAD open failed (wrong key, tampered data, or AAD mismatch)".into()))
+        .map_err(|_| {
+            EdgeCommonsError::Credentials(
+                "AEAD open failed (wrong key, tampered data, or AAD mismatch)".into(),
+            )
+        })
 }
 
 /// Derive the vault MAC key from the DEK: `HKDF-SHA256(ikm=DEK, salt=vaultId, info="…/mac")`.

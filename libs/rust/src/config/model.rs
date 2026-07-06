@@ -122,7 +122,7 @@ impl FileLogging {
 /// measures emitted as the metric `sys` through the normal metric subsystem. The
 /// legacy `targets[]` array (the heartbeat topic-override drift knobs) is removed —
 /// hard cut; [`destination`](Self::destination) governs only the state keepalive's
-/// transport (`local` vs `iotcore`). Defaults: **on / 5 s / local** (D-U14).
+/// transport (`local` vs `northbound`). Defaults: **on / 5 s / local** (D-U14).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct HeartbeatConfig {
@@ -133,7 +133,7 @@ pub struct HeartbeatConfig {
     pub interval_secs: Option<u64>,
     pub measures: Measures,
     /// Publish destination of the state keepalive only (`"local"` — the default —
-    /// or `"iotcore"`). The measures route through the metric subsystem's own target.
+    /// or `"northbound"`). The measures route through the metric subsystem's own target.
     pub destination: Option<String>,
 }
 
@@ -155,7 +155,9 @@ impl HeartbeatConfig {
     /// The resolved state-keepalive destination (default
     /// [`Self::DEFAULT_DESTINATION`]).
     pub fn destination(&self) -> &str {
-        self.destination.as_deref().unwrap_or(Self::DEFAULT_DESTINATION)
+        self.destination
+            .as_deref()
+            .unwrap_or(Self::DEFAULT_DESTINATION)
     }
 }
 
@@ -175,7 +177,14 @@ pub struct Measures {
 
 impl Default for Measures {
     fn default() -> Self {
-        Measures { cpu: true, memory: true, disk: false, threads: false, files: false, fds: false }
+        Measures {
+            cpu: true,
+            memory: true,
+            disk: false,
+            threads: false,
+            files: false,
+            fds: false,
+        }
     }
 }
 
@@ -283,12 +292,14 @@ impl MetricConfig {
 
     /// `targetConfig.maxFileSize` (log target); default `10MB`.
     pub fn max_file_size(&self) -> String {
-        self.target_config_str("maxFileSize").unwrap_or_else(|| "10MB".to_string())
+        self.target_config_str("maxFileSize")
+            .unwrap_or_else(|| "10MB".to_string())
     }
 
-    /// `targetConfig.destination` (messaging target): `ipc`/`local` or `iotcore`; default `ipc`.
+    /// `targetConfig.destination` (messaging target): `ipc`/`local` or `northbound`; default `ipc`.
     pub fn destination(&self) -> String {
-        self.target_config_str("destination").unwrap_or_else(|| "ipc".to_string())
+        self.target_config_str("destination")
+            .unwrap_or_else(|| "ipc".to_string())
     }
 
     /// `targetConfig.intervalSecs` (cloudwatch batch flush); default 5, minimum 1.
@@ -323,9 +334,7 @@ impl MetricConfig {
             .and_then(|b| b.get("path"))
             .and_then(Value::as_str)
             .map(str::to_string)
-            .unwrap_or_else(|| {
-                "/var/lib/edgecommons/metrics/{ComponentName}/cw".to_string()
-            })
+            .unwrap_or_else(|| "/var/lib/edgecommons/metrics/{ComponentName}/cw".to_string())
     }
 
     /// `targetConfig.buffer.maxDiskBytes`; default ~128 MiB.
@@ -368,7 +377,8 @@ impl MetricConfig {
 
     /// `targetConfig.path` (prometheus target OpenMetrics exposition path); default `/metrics`.
     pub fn prometheus_path(&self) -> String {
-        self.target_config_str("path").unwrap_or_else(|| "/metrics".to_string())
+        self.target_config_str("path")
+            .unwrap_or_else(|| "/metrics".to_string())
     }
 }
 
@@ -402,10 +412,6 @@ pub struct MessagingSectionConfig {
     /// Absent = the schema default 30.
     #[serde(default, deserialize_with = "de_lenient_opt_f64")]
     pub request_timeout_seconds: Option<f64>,
-    /// The raw `messaging.lwt` section, retained only for presence checks (the MQTT
-    /// provider parses the typed shape from the messaging-config document; the IPC
-    /// transport DEBUG-logs and no-ops it — §6).
-    pub lwt: Option<Value>,
 }
 
 /// The full typed configuration, deserialized from the raw JSON document.
@@ -465,7 +471,13 @@ impl Config {
                  Declare a multi-level hierarchy.levels or remove topic.includeRoot."
             );
         }
-        Ok(Self { component_name, thing_name, parsed, raw, identity })
+        Ok(Self {
+            component_name,
+            thing_name,
+            parsed,
+            raw,
+            identity,
+        })
     }
 
     /// The component's resolved UNS identity (instance
@@ -496,11 +508,13 @@ impl Config {
     /// timeout always wins over this default.
     pub fn messaging_request_timeout(&self) -> Option<std::time::Duration> {
         match self.parsed.messaging.request_timeout_seconds {
-            None => Some(std::time::Duration::from_secs(DEFAULT_REQUEST_TIMEOUT_SECONDS)),
+            None => Some(std::time::Duration::from_secs(
+                DEFAULT_REQUEST_TIMEOUT_SECONDS,
+            )),
             Some(0.0) => None,
-            Some(secs) if secs < 0.0 => {
-                Some(std::time::Duration::from_secs(DEFAULT_REQUEST_TIMEOUT_SECONDS))
-            }
+            Some(secs) if secs < 0.0 => Some(std::time::Duration::from_secs(
+                DEFAULT_REQUEST_TIMEOUT_SECONDS,
+            )),
             Some(secs) => Some(std::time::Duration::from_secs_f64(secs)),
         }
     }
@@ -551,7 +565,10 @@ mod tests {
         assert_eq!(cfg.parsed.logging.level.as_deref(), Some("DEBUG"));
         assert_eq!(cfg.parsed.heartbeat.interval_secs, Some(10));
         assert!(cfg.parsed.heartbeat.measures.cpu);
-        assert_eq!(cfg.parsed.metric_emission.namespace.as_deref(), Some("demo"));
+        assert_eq!(
+            cfg.parsed.metric_emission.namespace.as_deref(),
+            Some("demo")
+        );
         assert_eq!(cfg.instance_ids(), vec!["main", "second"]);
         assert!(cfg.instance("main").is_some());
     }
@@ -605,7 +622,7 @@ mod tests {
                 "targetConfig": {
                     "logFileName": "/x.log",
                     "maxFileSize": "5MB",
-                    "destination": "iotcore",
+                    "destination": "northbound",
                     "intervalSecs": 10
                 }
             } }),
@@ -617,7 +634,7 @@ mod tests {
         assert!(m.large_fleet_workaround);
         assert_eq!(m.log_file_name(), "/x.log");
         assert_eq!(m.max_file_size(), "5MB");
-        assert_eq!(m.destination(), "iotcore");
+        assert_eq!(m.destination(), "northbound");
         assert_eq!(m.interval_secs(), 10);
     }
 
@@ -628,10 +645,18 @@ mod tests {
         let cfg = Config::from_value("c", "t", json!({})).unwrap();
         let hb = &cfg.parsed.heartbeat;
         assert!(hb.enabled, "heartbeat defaults ON (D-U14)");
-        assert_eq!(hb.interval_secs, None, "interval default applied by the runtime (5s)");
+        assert_eq!(
+            hb.interval_secs, None,
+            "interval default applied by the runtime (5s)"
+        );
         assert_eq!(hb.destination(), "local");
-        assert!(hb.measures.cpu && hb.measures.memory, "cpu/memory default on");
-        assert!(!hb.measures.disk && !hb.measures.threads && !hb.measures.files && !hb.measures.fds);
+        assert!(
+            hb.measures.cpu && hb.measures.memory,
+            "cpu/memory default on"
+        );
+        assert!(
+            !hb.measures.disk && !hb.measures.threads && !hb.measures.files && !hb.measures.fds
+        );
     }
 
     #[test]
@@ -643,16 +668,19 @@ mod tests {
                 "enabled": false,
                 "intervalSecs": 9,
                 "measures": { "cpu": false, "disk": true },
-                "destination": "iotcore"
+                "destination": "northbound"
             } }),
         )
         .unwrap();
         let hb = &cfg.parsed.heartbeat;
         assert!(!hb.enabled);
         assert_eq!(hb.interval_secs, Some(9));
-        assert_eq!(hb.destination(), "iotcore");
+        assert_eq!(hb.destination(), "northbound");
         assert!(!hb.measures.cpu, "explicit false wins");
-        assert!(hb.measures.memory, "absent measure keeps its default (true)");
+        assert!(
+            hb.measures.memory,
+            "absent measure keeps its default (true)"
+        );
         assert!(hb.measures.disk);
     }
 
@@ -712,12 +740,22 @@ mod tests {
     fn messaging_request_timeout_default_zero_and_fractional() {
         use std::time::Duration;
         let default = Config::from_value("c", "t", json!({})).unwrap();
-        assert_eq!(default.messaging_request_timeout(), Some(Duration::from_secs(30)));
+        assert_eq!(
+            default.messaging_request_timeout(),
+            Some(Duration::from_secs(30))
+        );
 
-        let disabled =
-            Config::from_value("c", "t", json!({ "messaging": { "requestTimeoutSeconds": 0 } }))
-                .unwrap();
-        assert_eq!(disabled.messaging_request_timeout(), None, "0 disables the default deadline");
+        let disabled = Config::from_value(
+            "c",
+            "t",
+            json!({ "messaging": { "requestTimeoutSeconds": 0 } }),
+        )
+        .unwrap();
+        assert_eq!(
+            disabled.messaging_request_timeout(),
+            None,
+            "0 disables the default deadline"
+        );
 
         let fractional = Config::from_value(
             "c",
@@ -725,7 +763,10 @@ mod tests {
             json!({ "messaging": { "requestTimeoutSeconds": 2.5 } }),
         )
         .unwrap();
-        assert_eq!(fractional.messaging_request_timeout(), Some(Duration::from_secs_f64(2.5)));
+        assert_eq!(
+            fractional.messaging_request_timeout(),
+            Some(Duration::from_secs_f64(2.5))
+        );
 
         // A (schema-invalid) negative value falls back to the default.
         let negative = Config::from_value(
@@ -734,32 +775,29 @@ mod tests {
             json!({ "messaging": { "requestTimeoutSeconds": -1 } }),
         )
         .unwrap();
-        assert_eq!(negative.messaging_request_timeout(), Some(Duration::from_secs(30)));
-    }
-
-    #[test]
-    fn messaging_section_reads_lwt_presence() {
-        let cfg = Config::from_value(
-            "c",
-            "t",
-            json!({ "messaging": { "lwt": { "topic": "ecv1/t/c/main/state" } } }),
-        )
-        .unwrap();
-        assert!(cfg.parsed.messaging.lwt.is_some());
-        let none = Config::from_value("c", "t", json!({})).unwrap();
-        assert!(none.parsed.messaging.lwt.is_none());
+        assert_eq!(
+            negative.messaging_request_timeout(),
+            Some(Duration::from_secs(30))
+        );
     }
 
     #[test]
     fn cloudwatch_buffer_defaults_to_durable_when_absent() {
-        let cfg = Config::from_value("c", "t", json!({ "metricEmission": { "target": "cloudwatch" } }))
-            .unwrap();
+        let cfg = Config::from_value(
+            "c",
+            "t",
+            json!({ "metricEmission": { "target": "cloudwatch" } }),
+        )
+        .unwrap();
         let m = &cfg.parsed.metric_emission;
         assert_eq!(m.buffer_type(), "durable", "default buffer is durable");
         assert_eq!(m.buffer_max_disk_bytes(), 134_217_728);
         assert_eq!(m.buffer_on_full(), "dropoldest");
         assert_eq!(m.buffer_fsync(), "perbatch");
-        assert_eq!(m.buffer_path(), "/var/lib/edgecommons/metrics/{ComponentName}/cw");
+        assert_eq!(
+            m.buffer_path(),
+            "/var/lib/edgecommons/metrics/{ComponentName}/cw"
+        );
     }
 
     #[test]
@@ -812,7 +850,10 @@ mod tests {
     fn health_config_defaults() {
         let cfg = Config::from_value("c", "t", json!({})).unwrap();
         let h = &cfg.parsed.health;
-        assert_eq!(h.enabled, None, "enabled is unset by default (profile decides)");
+        assert_eq!(
+            h.enabled, None,
+            "enabled is unset by default (profile decides)"
+        );
         assert_eq!(h.port(), 8081);
         assert_eq!(h.liveness_path(), "/livez");
         assert_eq!(h.readiness_path(), "/readyz");
@@ -844,8 +885,7 @@ mod tests {
     #[test]
     fn health_port_accepts_float_from_greengrass() {
         // Greengrass delivers config numbers as doubles (e.g. 8082.0).
-        let cfg =
-            Config::from_value("c", "t", json!({ "health": { "port": 8082.0 } })).unwrap();
+        let cfg = Config::from_value("c", "t", json!({ "health": { "port": 8082.0 } })).unwrap();
         assert_eq!(cfg.parsed.health.port(), 8082);
     }
 

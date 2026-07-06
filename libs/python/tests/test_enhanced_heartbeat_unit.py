@@ -129,7 +129,7 @@ class TestPublishState:
             h._publish_state("RUNNING", include_uptime=True)
             h._publish_state("RUNNING", include_uptime=True)
             msg._publish_reserved.assert_not_called()
-            msg._publish_reserved_to_iot_core.assert_not_called()
+            msg._publish_reserved_northbound.assert_not_called()
         finally:
             h.stop()
 

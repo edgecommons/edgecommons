@@ -12,7 +12,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import software.amazon.awssdk.aws.greengrass.model.QOS;
+import com.mbreissi.edgecommons.messaging.Qos;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -91,7 +91,7 @@ class DataFacadeTest {
 
         MockMessagingService.PublishedMessage pm = messaging.getPublishedMessages().get(0);
         assertEquals("ecv1/gw-01/opcua-adapter/kep1/data/temp", pm.topic);
-        assertNull(pm.qos, "LOCAL route is the default (no QOS)");
+        assertNull(pm.qos, "LOCAL route is the default (no QoS)");
         JsonObject sample = firstSample(lastBody());
         assertEquals(21.5, sample.get("value").getAsDouble());
         assertEquals("GOOD", sample.get("quality").getAsString());
@@ -223,7 +223,7 @@ class DataFacadeTest {
         facade().signal("temp").addSample(21.5).via(Channel.NORTHBOUND).publish();
 
         MockMessagingService.PublishedMessage pm = messaging.getPublishedMessages().get(0);
-        assertEquals(QOS.AT_LEAST_ONCE, pm.qos, "northbound uses publishToIoTCore");
+        assertEquals(Qos.AT_LEAST_ONCE, pm.qos, "northbound uses publishNorthbound");
     }
 
     @Test
@@ -262,7 +262,7 @@ class DataFacadeTest {
                         + "\"publish\":{\"channel\":\"northbound\"}}]}}").getAsJsonObject());
         facade(config, null).publish("temp", 21.5);
 
-        assertEquals(QOS.AT_LEAST_ONCE, messaging.getPublishedMessages().get(0).qos,
+        assertEquals(Qos.AT_LEAST_ONCE, messaging.getPublishedMessages().get(0).qos,
                 "config publish.channel=northbound routes northbound with no per-call override");
     }
 
@@ -274,7 +274,7 @@ class DataFacadeTest {
                 .getAsJsonObject());
         facade(config, null).publish("temp", 21.5);
 
-        assertEquals(QOS.AT_LEAST_ONCE, messaging.getPublishedMessages().get(0).qos);
+        assertEquals(Qos.AT_LEAST_ONCE, messaging.getPublishedMessages().get(0).qos);
     }
 
     @Test
@@ -313,8 +313,8 @@ class DataFacadeTest {
     void northboundTransportFailureIsSwallowed() {
         messaging = new MockMessagingService() {
             @Override
-            public void publishToIoTCore(String topic,
-                    com.mbreissi.edgecommons.messaging.Message message, QOS qos) {
+            public void publishNorthbound(String topic,
+                    com.mbreissi.edgecommons.messaging.Message message, Qos qos) {
                 throw new RuntimeException("iot core down");
             }
         };

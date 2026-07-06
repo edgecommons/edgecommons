@@ -35,11 +35,11 @@ class HeartbeatConfigurationBuilderTest {
         // The §4.3 heartbeat shape: enabled/intervalSecs/measures/destination — targets[] is gone.
         HeartbeatConfiguration config = HeartbeatConfigurationBuilder.create()
                 .withEnabled(false)
-                .withDestination("iotcore")
+                .withDestination("northbound")
                 .build();
 
         assertFalse(config.isEnabled());
-        assertEquals("iotcore", config.getDestination());
+        assertEquals("northbound", config.getDestination());
     }
 
     @Test
@@ -83,6 +83,8 @@ class HeartbeatConfigurationBuilderTest {
     void testDestinationValidation() {
         assertThrows(IllegalArgumentException.class, () ->
             HeartbeatConfigurationBuilder.create().withDestination("iot_core"));
+        assertThrows(IllegalArgumentException.class, () ->
+            HeartbeatConfigurationBuilder.create().withDestination("iotcore"));
         assertThrows(IllegalArgumentException.class, () ->
             HeartbeatConfigurationBuilder.create().withDestination("bogus"));
     }

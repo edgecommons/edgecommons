@@ -169,7 +169,7 @@ Returns the heartbeat interval in seconds.
 ```java
 public String getDestination()
 ```
-The state keepalive's publish destination — `"local"` (default) or `"iotcore"`. (The legacy
+The state keepalive's publish destination — `"local"` (default) or `"northbound"`. (The legacy
 `targets[]` array is removed; the measures route through the metric subsystem as the `sys` metric.)
 
 ```java
@@ -267,14 +267,14 @@ Subscribes to IPC messages.
 - **maxMessages**: Maximum concurrent messages
 
 ```java
-public static void subscribeToIoTCore(String topic, MessageHandler handler, QOS qos)
+public static void subscribeNorthbound(String topic, MessageHandler handler, Qos qos)
 ```
-Subscribes to IoT Core messages.
+Subscribes to northbound messages.
 
 ```java
-public static void subscribeToIoTCore(String topic, MessageHandler handler, QOS qos, int maxMessages)
+public static void subscribeNorthbound(String topic, MessageHandler handler, Qos qos, int maxMessages)
 ```
-Subscribes to IoT Core messages with concurrency control.
+Subscribes to northbound messages with concurrency control.
 
 #### Publishing Methods
 
@@ -284,9 +284,9 @@ public static void publish(String topic, Message message)
 Publishes message via IPC.
 
 ```java
-public static void publishToIoTCore(String topic, Message message, QOS qos)
+public static void publishNorthbound(String topic, Message message, Qos qos)
 ```
-Publishes message to IoT Core.
+Publishes message to the configured northbound transport.
 
 ```java
 public static void publishRaw(String topic, JsonObject payload)
@@ -301,9 +301,9 @@ public static CompletableFuture<Message> request(String topic, Message message)
 Sends request via IPC and returns future for response.
 
 ```java
-public static CompletableFuture<Message> requestFromIoTCore(String topic, Message message)
+public static CompletableFuture<Message> requestNorthbound(String topic, Message message)
 ```
-Sends request via IoT Core and returns future for response.
+Sends request via the configured northbound transport and returns future for response.
 
 ```java
 public static void reply(Message originalMessage, Message replyMessage)

@@ -5,7 +5,7 @@ This module provides configuration classes for the messaging system
 that matches the Java implementation schema and behavior.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, Any
 import logging
 import json
@@ -25,40 +25,55 @@ class CredentialsConfig:
 
 
 @dataclass
+class QosDefaults:
+    """Default MQTT QoS for publish/subscribe operations without an explicit QoS."""
+
+    publish: int = 1
+    subscribe: int = 1
+
+
+@dataclass
 class LocalMqttConfig:
     """Configuration for local MQTT broker."""
-    
+
     type: str
     host: str
     port: int
     client_id: str
+    qos: QosDefaults = field(default_factory=QosDefaults)
     credentials: Optional[CredentialsConfig] = None
 
 
 @dataclass
-class IoTCoreConfig:
-    """Configuration for IoT Core broker."""
-    
+class NorthboundMqttConfig:
+    """Configuration for the optional generic northbound MQTT broker."""
+
     endpoint: str
     port: int
     client_id: str
-    credentials: CredentialsConfig
+    qos: QosDefaults = field(default_factory=QosDefaults)
+    credentials: Optional[CredentialsConfig] = None
+
+    @property
+    def host(self) -> str:
+        return self.endpoint
 
 
-@dataclass
-class LwtConfig:
-    """The optional ``messaging.lwt`` section (UNS-CANONICAL-DESIGN §6): an MQTT
-    Last-Will-and-Testament registered on the **local-broker** connection at CONNECT
-    (re-registered automatically on reconnect — paho re-sends the will). There is
-    deliberately NO retain field — the will is always registered with retain=False.
+def _parse_qos_value(section: dict, key: str, max_value: int, field: str) -> int:
+    raw = section.get(key, 1)
+    if isinstance(raw, float) and raw.is_integer():
+        raw = int(raw)
+    if not isinstance(raw, int) or raw < 0 or raw > max_value:
+        raise ValueError(f"{field} must be 0..{max_value} (got {raw})")
+    return raw
 
-    ``payload`` is kept raw: a string is published verbatim as UTF-8 bytes; an object
-    is serialized to compact JSON bytes. ``qos`` accepts 0 or 1 (schema enum) and
-    defaults to 1 when absent (a JSON ``1.0`` is coerced at registration time)."""
 
-    topic: Optional[str] = None
-    payload: Any = None
-    qos: Optional[Any] = None
+def _parse_qos_defaults(raw: Any, max_value: int, prefix: str) -> QosDefaults:
+    section = raw if isinstance(raw, dict) else {}
+    return QosDefaults(
+        publish=_parse_qos_value(section, "publish", max_value, f"{prefix}.publish"),
+        subscribe=_parse_qos_value(section, "subscribe", max_value, f"{prefix}.subscribe"),
+    )
 
 
 @dataclass
@@ -66,8 +81,7 @@ class MessagingConfigData:
     """Inner messaging configuration data."""
 
     local: Optional[LocalMqttConfig] = None
-    iot_core: Optional[IoTCoreConfig] = None
-    lwt: Optional[LwtConfig] = None
+    northbound: Optional[NorthboundMqttConfig] = None
 
 
 class MessagingConfiguration:
@@ -92,6 +106,15 @@ class MessagingConfiguration:
             
             if not messaging_data:
                 logger.warning("No 'messaging' section found in configuration file")
+
+            if 'lwt' in messaging_data:
+                raise ValueError(
+                    "messaging.lwt is not supported; uns-bridge derives its site Last-Will internally"
+                )
+            if 'qos' in messaging_data:
+                raise ValueError(
+                    "messaging.qos is not supported; configure QoS under messaging.local.qos and messaging.northbound.qos"
+                )
             
             # Parse local broker config
             local_config = None
@@ -126,6 +149,7 @@ class MessagingConfiguration:
                     host=local_data['host'],
                     port=local_data['port'],
                     client_id=local_data['clientId'],
+                    qos=_parse_qos_defaults(local_data.get('qos'), 2, "messaging.local.qos"),
                     credentials=credentials
                 )
                 
@@ -133,51 +157,44 @@ class MessagingConfiguration:
             else:
                 logger.info("No local broker configuration found")
             
-            # Parse IoT Core config (optional — parity with Java/Rust, which allow a
-            # local-only standalone deployment). When present it must carry creds.
-            iot_config = None
-            if 'iotCore' in messaging_data:
-                logger.debug("Parsing IoT Core broker configuration")
-                iot_data = messaging_data['iotCore']
+            # Parse generic northbound broker config (optional). It is a normal
+            # MQTT broker: plaintext, username/password, server TLS, or mutual TLS
+            # are selected from the credentials block the same way as local.
+            northbound_config = None
+            if 'northbound' in messaging_data:
+                logger.debug("Parsing northbound broker configuration")
+                northbound_data = messaging_data['northbound']
 
-                if 'credentials' not in iot_data:
-                    logger.error("IoT Core credentials are required but not found")
-                    raise ValueError("IoT Core credentials are required")
+                northbound_credentials = None
+                if 'credentials' in northbound_data:
+                    cred_data = northbound_data['credentials']
+                    northbound_credentials = CredentialsConfig(
+                        username=cred_data.get('username'),
+                        password=cred_data.get('password'),
+                        cert_path=cred_data.get('certPath'),
+                        key_path=cred_data.get('keyPath'),
+                        ca_path=cred_data.get('caPath')
+                    )
 
-                iot_credentials = CredentialsConfig(
-                    cert_path=iot_data['credentials']['certPath'],
-                    key_path=iot_data['credentials']['keyPath'],
-                    ca_path=iot_data['credentials']['caPath']
+                northbound_host = northbound_data.get('host') or northbound_data.get('endpoint')
+                northbound_config = NorthboundMqttConfig(
+                    endpoint=northbound_host,
+                    port=northbound_data['port'],
+                    client_id=northbound_data['clientId'],
+                    qos=_parse_qos_defaults(northbound_data.get('qos'), 2, "messaging.northbound.qos"),
+                    credentials=northbound_credentials
                 )
 
-                iot_config = IoTCoreConfig(
-                    endpoint=iot_data['endpoint'],
-                    port=iot_data['port'],
-                    client_id=iot_data['clientId'],
-                    credentials=iot_credentials
+                logger.info(
+                    f"Northbound broker configured: {northbound_config.endpoint}:{northbound_config.port} "
+                    f"(client_id: {northbound_config.client_id})"
                 )
-
-                logger.info(f"IoT Core broker configured: {iot_config.endpoint}:{iot_config.port} (client_id: {iot_config.client_id})")
-                logger.debug(f"IoT Core certificate paths - CA: {iot_credentials.ca_path}, Cert: {iot_credentials.cert_path}, Key: {iot_credentials.key_path}")
             else:
-                logger.info("No IoT Core configuration found (local-only standalone)")
-
-            # Parse the optional MQTT Last-Will-and-Testament section (UNS §6). Kept
-            # lenient here (the provider validates topic/qos at CONNECT registration).
-            lwt_config = None
-            if 'lwt' in messaging_data:
-                lwt_data = messaging_data['lwt']
-                lwt_config = LwtConfig(
-                    topic=lwt_data.get('topic'),
-                    payload=lwt_data.get('payload'),
-                    qos=lwt_data.get('qos'),
-                )
-                logger.info(f"MQTT LWT configured for the local connection: topic={lwt_config.topic}")
+                logger.info("No northbound broker configuration found (local-only standalone)")
 
             config.messaging = MessagingConfigData(
                 local=local_config,
-                iot_core=iot_config,
-                lwt=lwt_config
+                northbound=northbound_config
             )
             
             logger.info(f"Successfully loaded messaging configuration from {config_path}")
@@ -204,29 +221,15 @@ class MessagingConfiguration:
             logger.error("Messaging configuration is required but not provided")
             return False
 
-        # At least one broker (local or IoT Core) must be configured.
-        if not self.messaging.local and not self.messaging.iot_core:
-            logger.error("At least one of 'local' or 'iotCore' must be configured")
+        # At least one broker (local or northbound) must be configured.
+        if not self.messaging.local and not self.messaging.northbound:
+            logger.error("At least one of 'local' or 'northbound' must be configured")
             return False
 
-        # IoT Core, when configured, must carry complete certificate credentials.
-        if self.messaging.iot_core:
-            logger.debug("Validating IoT Core configuration")
-            iot_creds = self.messaging.iot_core.credentials
-            if not iot_creds:
-                logger.error("IoT Core credentials are required but not provided")
-                return False
-
-            missing_creds = []
-            if not iot_creds.cert_path:
-                missing_creds.append("certificate path")
-            if not iot_creds.key_path:
-                missing_creds.append("private key path")
-            if not iot_creds.ca_path:
-                missing_creds.append("CA certificate path")
-
-            if missing_creds:
-                logger.error(f"IoT Core missing required credentials: {', '.join(missing_creds)}")
+        if self.messaging.northbound:
+            logger.debug("Validating northbound broker configuration")
+            if not self.messaging.northbound.endpoint or not self.messaging.northbound.port:
+                logger.error("Northbound broker requires host/endpoint and port")
                 return False
 
         # Validate local broker if configured

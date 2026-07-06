@@ -48,7 +48,8 @@ fn init_logs() {
 }
 
 fn broker() -> (String, String) {
-    let host = std::env::var("EDGECOMMONS_IT_MQTT_HOST").unwrap_or_else(|_| "localhost".to_string());
+    let host =
+        std::env::var("EDGECOMMONS_IT_MQTT_HOST").unwrap_or_else(|_| "localhost".to_string());
     let port = std::env::var("EDGECOMMONS_IT_MQTT_PORT").unwrap_or_else(|_| "1883".to_string());
     (host, port)
 }
@@ -142,7 +143,10 @@ async fn messaging_metric_target_publishes_emf_on_the_uns_topic() {
     let mut values = HashMap::new();
     values.insert("count".to_string(), 5.0);
     info!(topic = %metric_topic, "emitting metric");
-    metrics.emit_metric_now("requests", values).await.expect("emit");
+    metrics
+        .emit_metric_now("requests", values)
+        .await
+        .expect("emit");
 
     let (recv_topic, bytes) = tokio::time::timeout(Duration::from_secs(5), raw_sub.recv())
         .await
@@ -151,7 +155,10 @@ async fn messaging_metric_target_publishes_emf_on_the_uns_topic() {
     let envelope = Message::from_slice(&bytes).expect("valid envelope");
     info!(topic = %recv_topic, "received metric envelope");
 
-    assert_eq!(recv_topic, metric_topic, "metric lands on the UNS metric topic");
+    assert_eq!(
+        recv_topic, metric_topic,
+        "metric lands on the UNS metric topic"
+    );
     assert_eq!(envelope.header.name, "Metric");
     assert_eq!(envelope.header.version, "1.0");
     // The EMF object travels in the envelope BODY.

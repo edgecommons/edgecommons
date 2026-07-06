@@ -42,7 +42,8 @@ fn skipped() -> Option<String> {
 async fn tls_publish_subscribe_roundtrip() {
     let Some(ca_path) = skipped() else { return };
 
-    let host = std::env::var("EDGECOMMONS_IT_MQTT_HOST").unwrap_or_else(|_| "localhost".to_string());
+    let host =
+        std::env::var("EDGECOMMONS_IT_MQTT_HOST").unwrap_or_else(|_| "localhost".to_string());
     let port = std::env::var("EDGECOMMONS_IT_MQTT_TLS_PORT").unwrap_or_else(|_| "8883".to_string());
     let cert = std::env::var("EDGECOMMONS_IT_MQTT_CERT").ok();
     let key = std::env::var("EDGECOMMONS_IT_MQTT_KEY").ok();
@@ -82,7 +83,9 @@ async fn tls_publish_subscribe_roundtrip() {
     .expect("subscribe over TLS");
     tokio::time::sleep(Duration::from_millis(300)).await;
 
-    let msg = MessageBuilder::new("Evt", "1.0").payload(json!({ "n": 7 })).build();
+    let msg = MessageBuilder::new("Evt", "1.0")
+        .payload(json!({ "n": 7 }))
+        .build();
     svc.publish(&topic, &msg).await.expect("publish over TLS");
 
     for _ in 0..50 {
@@ -91,6 +94,10 @@ async fn tls_publish_subscribe_roundtrip() {
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    let body = received.lock().unwrap().clone().expect("received a message over TLS");
+    let body = received
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("received a message over TLS");
     assert_eq!(body["n"], 7);
 }

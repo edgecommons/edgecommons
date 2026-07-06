@@ -58,12 +58,12 @@ public class HeartbeatConfigurationBuilder {
 
     /**
      * Sets the state keepalive's publish destination — {@code "local"} (default) or
-     * {@code "iotcore"}.
+     * {@code "northbound"}.
      */
     public HeartbeatConfigurationBuilder withDestination(String destination) {
-        if (!"local".equalsIgnoreCase(destination) && !"iotcore".equalsIgnoreCase(destination)) {
+        if (!"local".equalsIgnoreCase(destination) && !"northbound".equalsIgnoreCase(destination)) {
             throw new IllegalArgumentException(
-                    "Heartbeat destination must be 'local' or 'iotcore' (got '" + destination + "')");
+                    "Heartbeat destination must be 'local' or 'northbound' (got '" + destination + "')");
         }
         this.destination = destination;
         return this;

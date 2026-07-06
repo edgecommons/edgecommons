@@ -6,6 +6,8 @@
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
+    "types": ["node"],
+    "typeRoots": ["../../../libs/ts/node_modules/@types"],
     "outDir": "dist",
     "rootDir": "src"
   },

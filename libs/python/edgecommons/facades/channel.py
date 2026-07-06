@@ -3,7 +3,8 @@ uniform ``{ local, northbound, stream:<name> }`` routing target the publish faca
 resolve on.
 
 - :attr:`Channel.LOCAL` -- the local/IPC bus (``MessagingClient.publish``). The default.
-- :attr:`Channel.NORTHBOUND` -- AWS IoT Core (``MessagingClient.publish_to_iot_core``).
+- :attr:`Channel.NORTHBOUND` -- the northbound/cloud broker
+  (``MessagingClient.publish_northbound``).
 - :meth:`Channel.stream` -- the named durable telemetry stream
   (``get_streams().stream(name).append(...)``); **only**
   :class:`~edgecommons.facades.data_facade.DataFacade` honors it -- ``events()``/``app()``
@@ -12,7 +13,7 @@ resolve on.
 Modeled as a small tagged-union value class (mirroring Java's ``Channel``) rather than a
 bare enum because the ``stream`` variant carries a stream name. :meth:`Channel.from_config`
 parses the config ``publish.channel`` string (Option C, DESIGN-class-facades §4):
-``"local"``, ``"northbound"``/``"iotcore"``/``"iot_core"``, or ``"stream:<name>"``.
+``"local"``, ``"northbound"``, or ``"stream:<name>"``.
 """
 from enum import Enum
 from typing import Optional
@@ -56,8 +57,8 @@ class Channel:
     @staticmethod
     def from_config(value: Optional[str]) -> Optional["Channel"]:
         """Parses a config ``publish.channel`` string into a channel (DESIGN-class-facades
-        §4, Option C). Recognized: ``"local"`` -> :attr:`LOCAL`; ``"northbound"`` /
-        ``"iotcore"`` / ``"iot_core"`` -> :attr:`NORTHBOUND`; ``"stream:<name>"`` ->
+        §4, Option C). Recognized: ``"local"`` -> :attr:`LOCAL`; ``"northbound"`` ->
+        :attr:`NORTHBOUND`; ``"stream:<name>"`` ->
         :meth:`stream`. Any other (or ``None``/empty) value yields ``None`` so the caller
         can fall through to its own default.
         """
@@ -69,7 +70,7 @@ class Channel:
         lower = v.lower()
         if lower == "local":
             return Channel.LOCAL
-        if lower in ("northbound", "iotcore", "iot_core"):
+        if lower == "northbound":
             return Channel.NORTHBOUND
         if lower.startswith("stream:"):
             name = v[len("stream:"):]
@@ -100,5 +101,5 @@ class Channel:
 
 #: The local/IPC bus channel (the default).
 Channel.LOCAL = Channel(Channel.Kind.LOCAL)
-#: The AWS IoT Core (northbound) channel.
+#: The northbound/cloud channel.
 Channel.NORTHBOUND = Channel(Channel.Kind.NORTHBOUND)

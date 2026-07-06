@@ -6,6 +6,7 @@ from edgecommons.messaging.errors import ReservedTopicError
 from edgecommons.messaging.message import Message
 from edgecommons.messaging.messaging_provider import MessagingProvider
 from edgecommons.messaging.messaging_config import MessagingConfiguration
+from edgecommons.messaging.qos import Qos
 from edgecommons.messaging.providers.greengrass.greengrass_ipc import (
     GreengrassIpcProvider,
 )
@@ -13,7 +14,6 @@ from edgecommons.messaging.providers.standalone_provider import StandaloneProvid
 from edgecommons.platform import Transport
 from edgecommons.uns import Uns, RESERVED_CLASSES
 from edgecommons.utils.iou import Iou
-from awsiot.greengrasscoreipc.model import QOS
 
 logger = logging.getLogger("MessagingClient")
 
@@ -202,10 +202,10 @@ class MessagingClient:
         MessagingClient._messaging_provider.publish_raw(topic, msg)
 
     @staticmethod
-    def _publish_reserved_to_iot_core(topic: str, msg: Message, qos):
-        """Unguarded IoT Core publish — the privileged seam (§4.2)."""
-        MessagingClient._messaging_provider.publish_to_iot_core(topic, msg, qos)
-        logger.debug(f"Published reserved IoT Core message on topic '{topic}'")
+    def _publish_reserved_northbound(topic: str, msg: Message, qos):
+        """Unguarded northbound publish — the privileged seam (§4.2)."""
+        MessagingClient._messaging_provider.publish_northbound(topic, msg, qos)
+        logger.debug(f"Published reserved northbound message on topic '{topic}'")
 
     # ----- public messaging surface (guarded) -------------------------------------------
 
@@ -231,23 +231,23 @@ class MessagingClient:
         MessagingClient._messaging_provider.publish_raw(topic, msg)
 
     @staticmethod
-    def publish_to_iot_core(topic: str, msg: Message, qos: str):
-        """Publishes to AWS IoT Core. Reserved-class UNS topics are rejected (§4.1).
+    def publish_northbound(topic: str, msg: Message, qos: Qos):
+        """Publishes to the northbound transport. Reserved-class UNS topics are rejected (§4.1).
 
         :raises ReservedTopicError: when the topic targets a reserved UNS class
         """
         MessagingClient._check_reserved_topic(topic)
-        logger.debug(f"Publishing message to IoT Core topic: {topic}, QoS: {qos}")
-        MessagingClient._messaging_provider.publish_to_iot_core(topic, msg, qos)
+        logger.debug(f"Publishing message to northbound topic: {topic}, QoS: {qos}")
+        MessagingClient._messaging_provider.publish_northbound(topic, msg, qos)
 
     @staticmethod
-    def publish_to_iot_core_raw(topic: str, msg: dict, qos: str):
-        """Raw IoT Core publish. Reserved-class UNS topics are rejected (§4.1, D-U8).
+    def publish_northbound_raw(topic: str, msg: dict, qos: Qos):
+        """Raw northbound publish. Reserved-class UNS topics are rejected (§4.1, D-U8).
 
         :raises ReservedTopicError: when the topic targets a reserved UNS class
         """
         MessagingClient._check_reserved_topic(topic)
-        MessagingClient._messaging_provider.publish_to_iot_core_raw(topic, msg, qos)
+        MessagingClient._messaging_provider.publish_northbound_raw(topic, msg, qos)
 
     @staticmethod
     def subscribe(
@@ -260,15 +260,15 @@ class MessagingClient:
         MessagingClient._messaging_provider.subscribe(topic, callback, max_concurrency, max_messages)
 
     @staticmethod
-    def subscribe_to_iot_core(
+    def subscribe_northbound(
         topic: str,
         callback: Callable[[str, Message], None],
-        qos: QOS,
+        qos: Qos,
         max_concurrency: int = None,
         max_messages: int = None,
     ):
-        logger.debug(f"Subscribing to IoT Core topic: {topic}, QoS: {qos}, max_concurrency: {max_concurrency}, max_messages: {max_messages}")
-        MessagingClient._messaging_provider.subscribe_to_iot_core(
+        logger.debug(f"Subscribing to northbound topic: {topic}, QoS: {qos}, max_concurrency: {max_concurrency}, max_messages: {max_messages}")
+        MessagingClient._messaging_provider.subscribe_northbound(
             topic, callback, qos, max_concurrency, max_messages
         )
 
@@ -277,8 +277,8 @@ class MessagingClient:
         MessagingClient._messaging_provider.unsubscribe(topic)
 
     @staticmethod
-    def unsubscribe_from_iot_core(topic: str):
-        MessagingClient._messaging_provider.unsubscribe_from_iot_core(topic)
+    def unsubscribe_northbound(topic: str):
+        MessagingClient._messaging_provider.unsubscribe_northbound(topic)
 
     @staticmethod
     def request(topic: str, msg: Message, timeout_secs: Optional[float] = None) -> Iou:
@@ -297,15 +297,15 @@ class MessagingClient:
         return MessagingClient._messaging_provider.request(topic, msg, timeout_secs)
 
     @staticmethod
-    def request_from_iot_core(topic: str, msg: Message,
+    def request_northbound(topic: str, msg: Message,
                               timeout_secs: Optional[float] = None) -> Iou:
-        """IoT Core variant of :meth:`request` (same deadline + guard semantics).
+        """Northbound variant of :meth:`request` (same deadline + guard semantics).
 
         :raises ReservedTopicError: when the topic targets a reserved UNS class
         """
         MessagingClient._check_reserved_topic(topic)
-        logger.debug(f"Sending request to IoT Core topic: {topic}")
-        return MessagingClient._messaging_provider.request_from_iot_core(
+        logger.debug(f"Sending request to northbound topic: {topic}")
+        return MessagingClient._messaging_provider.request_northbound(
             topic, msg, timeout_secs
         )
 
@@ -335,8 +335,8 @@ class MessagingClient:
         return MessagingClient._messaging_provider.cancel_request(iou)
 
     @staticmethod
-    def cancel_request_from_iot_core(iou: Iou) -> Iou:
-        return MessagingClient._messaging_provider.cancel_request_from_iot_core(iou)
+    def cancel_request_northbound(iou: Iou) -> Iou:
+        return MessagingClient._messaging_provider.cancel_request_northbound(iou)
 
     @staticmethod
     def reply(request: Message, reply: Message):
@@ -352,15 +352,15 @@ class MessagingClient:
         MessagingClient._messaging_provider.reply(request, reply)
 
     @staticmethod
-    def reply_to_iot_core(request: Message, reply: Message):
-        """IoT Core variant of :meth:`reply` — the request's ``reply_to`` topic is
+    def reply_northbound(request: Message, reply: Message):
+        """Northbound variant of :meth:`reply` — the request's ``reply_to`` topic is
         guarded the same way.
 
         :raises ReservedTopicError: when the request's reply topic targets a reserved
             UNS class
         """
         MessagingClient._check_reserved_topic(MessagingClient._reply_topic_of(request))
-        MessagingClient._messaging_provider.reply_to_iot_core(request, reply)
+        MessagingClient._messaging_provider.reply_northbound(request, reply)
 
     @staticmethod
     def topic_matches_sub(sub: str, topic: str) -> bool:

@@ -119,7 +119,7 @@ The validation schema covers all edgecommons configuration sections:
 - `enabled`: Must be boolean (default true)
 - `intervalSecs`: Must be a positive integer (minimum 1)
 - `measures`: All properties must be boolean
-- `destination`: Must be "local" or "iotcore" (the state keepalive's transport only)
+- `destination`: Must be "local" or "northbound" (the state keepalive's transport only)
 - The legacy `targets[]` array is removed (UNS hard cut) and now fails validation
 
 ### Metric Emission Configuration
@@ -142,7 +142,7 @@ The validation schema covers all edgecommons configuration sections:
 **Validation Rules:**
 - `target`: Must be "cloudwatch", "log", "messaging", "cloudwatchcomponent" or "prometheus"
 - `intervalSecs`: Must be positive integer
-- `targetConfig.destination`: Must be one of "ipc", "local", "iotcore", "iot_core"
+- `targetConfig.destination`: Must be one of "ipc", "local", "northbound"
 - The former `targetConfig.topic` override is removed (UNS hard cut): the messaging target
   publishes to the UNS metric topic `ecv1/{device}/{component}/main/metric/{metricName}` and
   the cloudwatchcomponent topic is the fixed external contract `cloudwatch/metric/put`

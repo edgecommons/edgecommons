@@ -2,7 +2,7 @@
  * Shared test fakes/helpers reused across the new coverage suites.
  *
  * - {@link RecordingMessagingService}: an `IMessagingService` that records every
- *   publish / publishToIoTCore / publishRaw call and supports a scripted request
+ *   publish / publishNorthbound / publishRaw call and supports a scripted request
  *   reply, for asserting routing + envelope shape without a transport.
  * - {@link FakeMessagingProvider}: an in-memory `MessagingProvider` (topic->subscribers
  *   with MQTT wildcard matching) that loops published messages back to matching
@@ -27,13 +27,13 @@ import { topicMatches } from "../src/messaging/standalone-provider";
 export interface PublishRecord {
   kind:
     | "publish"
-    | "publishToIoTCore"
+    | "publishNorthbound"
     | "publishRaw"
-    | "publishToIoTCoreRaw"
+    | "publishNorthboundRaw"
     | "publishReserved"
-    | "publishReservedToIoTCore"
+    | "publishReservedNorthbound"
     | "reply"
-    | "replyToIoTCore";
+    | "replyNorthbound";
   topic: string;
   message?: Message;
   payload?: unknown;
@@ -57,34 +57,34 @@ export class RecordingMessagingService implements IMessagingService {
   async publish(topic: string, msg: Message): Promise<void> {
     this.published.push({ kind: "publish", topic, message: msg });
   }
-  async publishToIoTCore(topic: string, msg: Message, qos: Qos = Qos.AtLeastOnce): Promise<void> {
-    this.published.push({ kind: "publishToIoTCore", topic, message: msg, qos });
+  async publishNorthbound(topic: string, msg: Message, qos: Qos = Qos.AtLeastOnce): Promise<void> {
+    this.published.push({ kind: "publishNorthbound", topic, message: msg, qos });
   }
   async publishRaw(topic: string, payload: unknown): Promise<void> {
     this.published.push({ kind: "publishRaw", topic, payload });
   }
-  async publishToIoTCoreRaw(topic: string, payload: unknown, qos: Qos = Qos.AtLeastOnce): Promise<void> {
-    this.published.push({ kind: "publishToIoTCoreRaw", topic, payload, qos });
+  async publishNorthboundRaw(topic: string, payload: unknown, qos: Qos = Qos.AtLeastOnce): Promise<void> {
+    this.published.push({ kind: "publishNorthboundRaw", topic, payload, qos });
   }
   /** The privileged reserved seam (mirrors DefaultMessagingService.publishReserved). */
   async publishReserved(topic: string, msg: Message): Promise<void> {
     this.published.push({ kind: "publishReserved", topic, message: msg });
   }
-  async publishReservedToIoTCore(topic: string, msg: Message, qos: Qos = Qos.AtLeastOnce): Promise<void> {
-    this.published.push({ kind: "publishReservedToIoTCore", topic, message: msg, qos });
+  async publishReservedNorthbound(topic: string, msg: Message, qos: Qos = Qos.AtLeastOnce): Promise<void> {
+    this.published.push({ kind: "publishReservedNorthbound", topic, message: msg, qos });
   }
 
   async subscribe(filter: string, handler: MessageHandler): Promise<void> {
     this.subscriptions.set(filter, handler);
   }
-  async subscribeToIoTCore(filter: string, handler: MessageHandler): Promise<void> {
+  async subscribeNorthbound(filter: string, handler: MessageHandler): Promise<void> {
     this.subscriptions.set(filter, handler);
   }
   async unsubscribe(filter: string): Promise<void> {
     this.unsubscribed.push(filter);
     this.subscriptions.delete(filter);
   }
-  async unsubscribeFromIoTCore(filter: string): Promise<void> {
+  async unsubscribeNorthbound(filter: string): Promise<void> {
     this.unsubscribed.push(filter);
     this.subscriptions.delete(filter);
   }
@@ -108,7 +108,7 @@ export class RecordingMessagingService implements IMessagingService {
     });
     return new ReplyFuture(promise, () => undefined);
   }
-  requestFromIoTCore(topic: string, msg: Message, timeoutMs = 0): ReplyFuture {
+  requestNorthbound(topic: string, msg: Message, timeoutMs = 0): ReplyFuture {
     return this.request(topic, msg, timeoutMs);
   }
   /**
@@ -120,14 +120,14 @@ export class RecordingMessagingService implements IMessagingService {
     reply.header.correlation_id = request.getCorrelationId();
     this.published.push({ kind: "reply", topic: request.getReplyTo() ?? "", message: reply });
   }
-  async replyToIoTCore(request: Message, reply: Message): Promise<void> {
+  async replyNorthbound(request: Message, reply: Message): Promise<void> {
     reply.header.correlation_id = request.getCorrelationId();
-    this.published.push({ kind: "replyToIoTCore", topic: request.getReplyTo() ?? "", message: reply });
+    this.published.push({ kind: "replyNorthbound", topic: request.getReplyTo() ?? "", message: reply });
   }
   cancelRequest(reply: ReplyFuture): void {
     reply.cancel();
   }
-  cancelRequestFromIoTCore(reply: ReplyFuture): void {
+  cancelRequestNorthbound(reply: ReplyFuture): void {
     reply.cancel();
   }
   /** Toggle to drive the /readyz readiness signal in tests. */

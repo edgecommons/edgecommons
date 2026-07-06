@@ -32,9 +32,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
+use aws_sdk_cloudwatch::Client;
 use aws_sdk_cloudwatch::primitives::DateTime;
 use aws_sdk_cloudwatch::types::{Dimension, MetricDatum, StandardUnit};
-use aws_sdk_cloudwatch::Client;
 use tokio::task::JoinHandle;
 
 use super::MetricTarget;
@@ -130,7 +130,12 @@ impl CloudWatchTarget {
             .map(|(measure_name, value)| {
                 let (unit, resolution) = metric
                     .get_measure(measure_name)
-                    .map(|m| (StandardUnit::from(m.get_unit()), m.get_storage_resolution() as i32))
+                    .map(|m| {
+                        (
+                            StandardUnit::from(m.get_unit()),
+                            m.get_storage_resolution() as i32,
+                        )
+                    })
                     .unwrap_or((StandardUnit::None, 60));
                 MetricDatum::builder()
                     .metric_name(measure_name)
@@ -184,7 +189,10 @@ impl MetricTarget for CloudWatchTarget {
 
 /// Drain the pending buffer.
 fn take_all(pending: &Arc<Mutex<Vec<MetricDatum>>>) -> Vec<MetricDatum> {
-    pending.lock().map(|mut p| std::mem::take(&mut *p)).unwrap_or_default()
+    pending
+        .lock()
+        .map(|mut p| std::mem::take(&mut *p))
+        .unwrap_or_default()
 }
 
 /// Send datums in ≤1000-item batches; log (don't propagate) per-batch failures.

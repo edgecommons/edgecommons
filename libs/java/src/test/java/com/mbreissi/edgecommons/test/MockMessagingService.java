@@ -8,7 +8,7 @@ import com.mbreissi.edgecommons.messaging.Message;
 import com.mbreissi.edgecommons.messaging.MessagingClient;
 import com.mbreissi.edgecommons.messaging.ReplyFuture;
 import com.google.gson.JsonObject;
-import software.amazon.awssdk.aws.greengrass.model.QOS;
+import com.mbreissi.edgecommons.messaging.Qos;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -35,15 +35,15 @@ public class MockMessagingService extends MessagingClient {
         public final String topic;
         public final Message message;
         public final JsonObject rawPayload;
-        public final QOS qos;
+        public final Qos qos;
         /** Whether the publish came through the privileged {@code ReservedPublisher} seam. */
         public final boolean reserved;
 
-        public PublishedMessage(String topic, Message message, QOS qos) {
+        public PublishedMessage(String topic, Message message, Qos qos) {
             this(topic, message, qos, false);
         }
 
-        public PublishedMessage(String topic, Message message, QOS qos, boolean reserved) {
+        public PublishedMessage(String topic, Message message, Qos qos, boolean reserved) {
             this.topic = topic;
             this.message = message;
             this.rawPayload = null;
@@ -75,12 +75,12 @@ public class MockMessagingService extends MessagingClient {
     }
 
     @Override
-    public void subscribeToIoTCore(String topic, BiConsumer<String, Message> handler, QOS qos) {
+    public void subscribeNorthbound(String topic, BiConsumer<String, Message> handler, Qos qos) {
         subscriptions.put(topic, handler);
     }
 
     @Override
-    public void subscribeToIoTCore(String topic, BiConsumer<String, Message> handler, QOS qos, int maxConcurrency) {
+    public void subscribeNorthbound(String topic, BiConsumer<String, Message> handler, Qos qos, int maxConcurrency) {
         subscriptions.put(topic, handler);
     }
 
@@ -90,7 +90,7 @@ public class MockMessagingService extends MessagingClient {
     }
 
     @Override
-    public void publishToIoTCore(String topic, Message message, QOS qos) {
+    public void publishNorthbound(String topic, Message message, Qos qos) {
         publishedMessages.add(new PublishedMessage(topic, message, qos));
     }
 
@@ -100,7 +100,7 @@ public class MockMessagingService extends MessagingClient {
     }
 
     @Override
-    public void publishToIoTCoreRaw(String topic, JsonObject payload, QOS qos) {
+    public void publishNorthboundRaw(String topic, JsonObject payload, Qos qos) {
         publishedMessages.add(new PublishedMessage(topic, payload));
     }
 
@@ -118,7 +118,7 @@ public class MockMessagingService extends MessagingClient {
     }
 
     @Override
-    protected void publishReservedToIoTCore(String topic, Message message, QOS qos) {
+    protected void publishReservedNorthbound(String topic, Message message, Qos qos) {
         publishedMessages.add(new PublishedMessage(topic, message, qos, true));
     }
 
@@ -131,8 +131,8 @@ public class MockMessagingService extends MessagingClient {
     }
 
     @Override
-    public ReplyFuture requestFromIoTCore(String topic, Message message) {
-        publishToIoTCore(topic, message, QOS.AT_LEAST_ONCE);
+    public ReplyFuture requestNorthbound(String topic, Message message) {
+        publishNorthbound(topic, message, Qos.AT_LEAST_ONCE);
         var future = new ReplyFuture(topic);
         future.complete(message); // Echo back for testing
         return future;
@@ -153,7 +153,7 @@ public class MockMessagingService extends MessagingClient {
     }
 
     @Override
-    public void replyToIoTCore(Message request, Message reply) {
+    public void replyNorthbound(Message request, Message reply) {
         publishedMessages.add(new PublishedMessage("iot_core_reply", reply, null));
     }
 
@@ -163,7 +163,7 @@ public class MockMessagingService extends MessagingClient {
     }
 
     @Override
-    public void unsubscribeFromIoTCore(String topicFilter) {
+    public void unsubscribeNorthbound(String topicFilter) {
         subscriptions.remove(topicFilter);
     }
 
@@ -173,7 +173,7 @@ public class MockMessagingService extends MessagingClient {
     }
 
     @Override
-    public void cancelRequestFromIoTCore(ReplyFuture replyFuture) {
+    public void cancelRequestNorthbound(ReplyFuture replyFuture) {
         // Mock implementation - no-op
     }
 
@@ -203,7 +203,7 @@ public class MockMessagingService extends MessagingClient {
     }
 
     @Override
-    public Object getNativeIotCoreClient() {
+    public Object getNativeNorthboundClient() {
         return "MockIotCoreClient";
     }
 

@@ -4,7 +4,7 @@ Messaging is a two-layer design — a deliberate structural improvement over the
 library, which duplicated request/reply inside each provider and let them drift.
 
 - **Layer 1 — `MessagingProvider`** moves bytes on topics for a `Destination`
-  (`Local` or `IotCore`) at a given `Qos`. Implementations: `MqttProvider`
+  (`Local` or `Northbound`) at a given `Qos`. Implementations: `MqttProvider`
   (the MQTT transport, dual broker) and `IpcProvider` (the IPC transport — Greengrass
   IPC, `greengrass` feature).
 - **Layer 2 — `MessagingService`** is transport-agnostic and built **once** over any
@@ -14,24 +14,25 @@ library, which duplicated request/reply inside each provider and let them drift.
 Obtain it from the runtime: `let svc = gg.messaging()?;` (returns `Err` only on the
 IPC transport — i.e. `--platform GREENGRASS` — when the `greengrass` feature is disabled).
 
-## Explicit local / IoT Core method pairs
+## Explicit local / northbound method pairs
 
 Mirroring the Greengrass v2 API and the Java/Python `IMessagingService`, every
-operation has an explicit local and IoT Core form (rather than a destination
+operation has an explicit local and northbound form (rather than a destination
 argument):
 
-| Local | IoT Core |
-|-------|----------|
-| `publish` | `publish_to_iot_core` (+ `qos`) |
-| `publish_raw` | `publish_to_iot_core_raw` (+ `qos`) |
-| `subscribe` | `subscribe_to_iot_core` (+ `qos`) |
-| `unsubscribe` | `unsubscribe_from_iot_core` |
-| `request` / `request_with_timeout` | `request_from_iot_core` / `request_from_iot_core_with_timeout` |
-| `reply` | `reply_to_iot_core` |
-| `cancel_request` | `cancel_request_from_iot_core` |
+| Local | Northbound |
+|-------|------------|
+| `publish` | `publish_northbound` (+ `qos`) |
+| `publish_raw` | `publish_northbound_raw` (+ `qos`) |
+| `subscribe` | `subscribe_northbound` (+ `qos`) |
+| `unsubscribe` | `unsubscribe_northbound` |
+| `request` / `request_with_timeout` | `request_northbound` / `request_northbound_with_timeout` |
+| `reply` | `reply_northbound` |
+| `cancel_request` | `cancel_request_northbound` |
 
-(Per the cross-language casing decision D‑U7, Rust keeps the `_iot_core` / `IotCore` spelling —
-RFC-430 idiom — where Java/TS renamed to `IoTCore`.)
+The public Rust API uses `northbound` consistently: `Destination::Northbound` and
+`*_northbound` method names. AWS IoT Core remains one possible northbound broker/Greengrass bridge,
+not the public method family name.
 
 ## UNS topics & the reserved-class guard
 
@@ -50,7 +51,7 @@ let data = inst.uns().topic_with_channel(UnsClass::Data, "press12/temperature")?
 ```
 
 The four **reserved platform classes** — `state`, `metric`, `cfg`, `log` — are library-owned: every
-publish-side method (`publish`, `publish_raw`, `request*`, `reply*`, and their IoT Core variants)
+publish-side method (`publish`, `publish_raw`, `request*`, `reply*`, and their northbound variants)
 rejects a client-chosen reserved-class `ecv1/…` topic with `EdgeCommonsError::ReservedTopic`. Use
 `gg.uns()` / the heartbeat/metric subsystems instead; `subscribe*` is never guarded. Non-`ecv1`
 topics (the `edgecommons/reply-…` prefix, `cloudwatch/metric/put`, external/legacy MQTT) pass
@@ -73,6 +74,21 @@ let msg = MessageBuilder::new("ProcessData", "1.0")
     .build();
 svc.publish("plant/line-a/data", &msg).await?;
 ```
+
+For small binary payloads, use `binary_payload` instead of trying to put bytes into
+`serde_json::Value`:
+
+```rust
+let msg = MessageBuilder::new("Blob", "1.0")
+    .binary_payload([0, 1, 2, 254, 255])?
+    .build();
+assert_eq!(msg.binary_body()?.unwrap(), vec![0, 1, 2, 254, 255]);
+```
+
+The wire body is the shared first-class binary marker
+`{ "_edgecommonsBinary": { "encoding": "base64", "length": n, "data": "..." } }`.
+Decoded binary bodies are limited to `MAX_BINARY_BODY_BYTES` (64 KiB). This is for
+bounded control payloads, not frame/video streaming.
 
 `uuid`, `correlation_id`, and the RFC3339 `timestamp` are stamped at construction.
 
@@ -172,10 +188,10 @@ The MQTT transport requires a messaging-config JSON file (passed after
       "clientId": "my-component-local",
       "credentials": { "username": "u", "password": "p" }
     },
-    "iotCore": {
+    "northbound": {
       "endpoint": "xxxx-ats.iot.us-east-1.amazonaws.com",
       "port": 8883,
-      "clientId": "my-component-iotcore",
+      "clientId": "my-component-northbound",
       "credentials": {
         "certPath": "/certs/device.pem.crt",
         "keyPath": "/certs/private.pem.key",
@@ -186,15 +202,15 @@ The MQTT transport requires a messaging-config JSON file (passed after
 }
 ```
 
-- The `local` broker is required; `iotCore` is optional.
-- IoT Core uses mutual TLS — `caPath` + `certPath` + `keyPath` are all required and a
-  load failure is a hard error (never an unauthenticated fallback). A `caPath` on the
-  local broker enables local TLS.
+- The `local` broker is required; `northbound` is optional.
+- Local and northbound brokers are generic MQTT connections. `caPath` enables TLS; adding
+  `certPath` + `keyPath` enables mutual TLS. Without `caPath`, the connection is plaintext.
 - Connections and subscriptions block until confirmed (CONNACK/SUBACK); the provider
   auto-reconnects and re-subscribes on disconnect.
 - The `messaging` section also takes **`requestTimeoutSeconds`** (the request-deadline
-  default, 30; `0` disables) and **`lwt`** (`{ topic, payload, qos }` — an MQTT
-  Last-Will registered on the **local** connection at CONNECT, published verbatim by
-  the broker on ungraceful disconnect; never retained, and the IPC provider no-ops it).
-  The will is registered at CONNECT, not routed through `publish()`, so the
-  reserved-class guard does not apply to it — broker ACLs govern wills.
+  default, 30; `0` disables). Each broker can carry **`qos`** defaults:
+  `messaging.local.qos.publish`, `messaging.local.qos.subscribe`,
+  `messaging.northbound.qos.publish`, and `messaging.northbound.qos.subscribe` accept `0`/`1`/`2`.
+- Generic component messaging config does not define MQTT Last-Will. The first-party LWT use is
+  `uns-bridge`'s private site-broker uplink Last-Will, derived internally from its resolved UNS
+  state topic.

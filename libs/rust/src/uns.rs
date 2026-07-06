@@ -68,7 +68,7 @@ use rand::Rng;
 
 use crate::error::{EdgeCommonsError, Result};
 use crate::messaging::message::{HierEntry, Message, MessageIdentity};
-use crate::messaging::{message_handler, MessagingService};
+use crate::messaging::{MessagingService, message_handler};
 
 /// The machine-readable UNS validation failure codes (the exact §2.2 set, pinned in
 /// `uns-test-vectors/topics.json` so all four languages fail identically).
@@ -125,7 +125,10 @@ impl std::fmt::Display for UnsValidationCode {
 
 /// Builds a [`EdgeCommonsError::UnsValidation`] with the given code and detail.
 fn violation(code: UnsValidationCode, detail: impl Into<String>) -> EdgeCommonsError {
-    EdgeCommonsError::UnsValidation { code, detail: detail.into() }
+    EdgeCommonsError::UnsValidation {
+        code,
+        detail: detail.into(),
+    }
 }
 
 /// The closed UNS class set (UNS-CANONICAL-DESIGN §2.1) — the class topic level of
@@ -178,7 +181,10 @@ impl UnsClass {
 
     /// Whether this is a library-owned publish class (`state | metric | cfg | log`).
     pub const fn is_reserved(self) -> bool {
-        matches!(self, UnsClass::State | UnsClass::Metric | UnsClass::Cfg | UnsClass::Log)
+        matches!(
+            self,
+            UnsClass::State | UnsClass::Metric | UnsClass::Cfg | UnsClass::Log
+        )
     }
 
     /// Resolves a wire token to its class, or `None` when the token is outside the
@@ -225,7 +231,10 @@ impl UnsScope {
 
     /// All components/instances on one device.
     pub fn device(device: impl Into<String>) -> UnsScope {
-        UnsScope { device: Some(device.into()), ..UnsScope::default() }
+        UnsScope {
+            device: Some(device.into()),
+            ..UnsScope::default()
+        }
     }
 
     /// All instances of one component on one device.
@@ -287,7 +296,10 @@ impl Uns {
     /// default `false`). Effective only for identities with a multi-level hierarchy
     /// (≥ 2 `hier` entries) — a no-op otherwise (D-U25).
     pub fn new(identity: MessageIdentity, include_root: bool) -> Uns {
-        Uns { identity, include_root }
+        Uns {
+            identity,
+            include_root,
+        }
     }
 
     /// Returns the bound identity.
@@ -338,7 +350,10 @@ impl Uns {
         let mut segments: Vec<&str> = Vec::with_capacity(Self::MAX_TOPIC_SLASHES + 1);
         segments.push(Self::ROOT);
         if rooted {
-            segments.push(checked_token(&target.hier()[0].value, "site (hier[0]) value")?);
+            segments.push(checked_token(
+                &target.hier()[0].value,
+                "site (hier[0]) value",
+            )?);
         }
         segments.push(checked_token(target.device(), "device")?);
         segments.push(checked_token(target.component(), "component")?);
@@ -359,7 +374,10 @@ impl Uns {
         if !cls.is_leaf() && !channel_supplied {
             return Err(violation(
                 UnsValidationCode::ChannelRequired,
-                format!("class '{}' requires at least one channel token", cls.token()),
+                format!(
+                    "class '{}' requires at least one channel token",
+                    cls.token()
+                ),
             ));
         }
         if channel_supplied {
@@ -573,7 +591,10 @@ fn check_length(topic: &str) -> Result<()> {
     if bytes > Uns::MAX_TOPIC_UTF8_BYTES {
         return Err(violation(
             UnsValidationCode::LengthExceeded,
-            format!("topic is {bytes} UTF-8 bytes (max {})", Uns::MAX_TOPIC_UTF8_BYTES),
+            format!(
+                "topic is {bytes} UTF-8 bytes (max {})",
+                Uns::MAX_TOPIC_UTF8_BYTES
+            ),
         ));
     }
     Ok(())
@@ -641,8 +662,8 @@ mod vector_tests {
     }
 
     fn load(dir: &std::path::Path, file: &str) -> Value {
-        let bytes = std::fs::read(dir.join(file))
-            .unwrap_or_else(|e| panic!("failed to read {file}: {e}"));
+        let bytes =
+            std::fs::read(dir.join(file)).unwrap_or_else(|e| panic!("failed to read {file}: {e}"));
         // Some inputs deliberately contain raw C1 control bytes — parse as JSON,
         // do not preprocess.
         serde_json::from_slice(&bytes).unwrap_or_else(|e| panic!("{file} is not valid JSON: {e}"))
@@ -659,14 +680,19 @@ mod vector_tests {
     /// (the config identity-resolution path — pins the D-U26 "sanitized ⇒ valid"
     /// equivalence); `instance` verbatim (a validated token, never sanitized).
     fn case_identity(input: &Value) -> MessageIdentity {
-        let levels = input["hierarchyLevels"].as_array().expect("hierarchyLevels");
+        let levels = input["hierarchyLevels"]
+            .as_array()
+            .expect("hierarchyLevels");
         let values = input["identityValues"].as_object().expect("identityValues");
         let hier: Vec<HierEntry> = levels
             .iter()
             .map(|level| {
                 let level = level.as_str().expect("level name");
                 let value = values[level].as_str().expect("identity value");
-                HierEntry { level: level.to_string(), value: sanitize(value) }
+                HierEntry {
+                    level: level.to_string(),
+                    value: sanitize(value),
+                }
             })
             .collect();
         MessageIdentity::new(
@@ -683,8 +709,14 @@ mod vector_tests {
     fn multi_level_identity() -> MessageIdentity {
         MessageIdentity::new(
             vec![
-                HierEntry { level: "site".into(), value: "dallas".into() },
-                HierEntry { level: "device".into(), value: "gw-01".into() },
+                HierEntry {
+                    level: "site".into(),
+                    value: "dallas".into(),
+                },
+                HierEntry {
+                    level: "device".into(),
+                    value: "gw-01".into(),
+                },
             ],
             "opcua-adapter",
             None,
@@ -700,7 +732,9 @@ mod vector_tests {
                 Err(EdgeCommonsError::UnsValidation { code, .. }) => {
                     assert_eq!(code.as_str(), error_code, "case '{name}': wrong error code");
                 }
-                Err(other) => panic!("case '{name}': expected UnsValidation[{error_code}], got {other}"),
+                Err(other) => {
+                    panic!("case '{name}': expected UnsValidation[{error_code}], got {other}")
+                }
                 Ok(got) => panic!("case '{name}': expected error {error_code}, got Ok({got:?})"),
             }
             return;
@@ -709,7 +743,11 @@ mod vector_tests {
         if let Some(topic) = expected.get("topic").and_then(Value::as_str) {
             assert_eq!(got.as_deref(), Some(topic), "case '{name}': topic mismatch");
         } else if let Some(filter) = expected.get("filter").and_then(Value::as_str) {
-            assert_eq!(got.as_deref(), Some(filter), "case '{name}': filter mismatch");
+            assert_eq!(
+                got.as_deref(),
+                Some(filter),
+                "case '{name}': filter mismatch"
+            );
         } else if expected.get("ok").and_then(Value::as_bool) == Some(true) {
             assert_eq!(got, None, "case '{name}': expected plain ok");
         } else {
@@ -758,10 +796,22 @@ mod vector_tests {
             let include_root = input["includeRoot"].as_bool().expect("includeRoot");
             let scope_in = &input["scope"];
             let scope = UnsScope {
-                site: scope_in.get("site").and_then(Value::as_str).map(str::to_string),
-                device: scope_in.get("device").and_then(Value::as_str).map(str::to_string),
-                component: scope_in.get("component").and_then(Value::as_str).map(str::to_string),
-                instance: scope_in.get("instance").and_then(Value::as_str).map(str::to_string),
+                site: scope_in
+                    .get("site")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                device: scope_in
+                    .get("device")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                component: scope_in
+                    .get("component")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                instance: scope_in
+                    .get("instance")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
             };
             let cls = UnsClass::from_token(str_field(input, "class")).expect("class token");
             let uns = Uns::new(multi_level_identity(), include_root);
@@ -776,7 +826,9 @@ mod vector_tests {
             let name = str_field(case, "name");
             let input = &case["input"];
             let include_root = input["includeRoot"].as_bool().expect("includeRoot");
-            let expected = case["expected"]["reserved"].as_bool().expect("expected.reserved");
+            let expected = case["expected"]["reserved"]
+                .as_bool()
+                .expect("expected.reserved");
             let got = reserved_class_of(str_field(input, "topic"), include_root).is_some();
             assert_eq!(got, expected, "guard case '{name}'");
         }
@@ -807,15 +859,19 @@ mod vector_tests {
 
             // 1. Rebuild through the builder (pinned uuid/timestamp/correlation_id,
             //    D-U13) and compare STRUCTURALLY (member order not normative, D-U22).
-            let rebuilt = MessageBuilder::new(str_field(header, "name"), str_field(header, "version"))
-                .uuid(str_field(header, "uuid"))
-                .timestamp(str_field(header, "timestamp"))
-                .correlation_id(str_field(header, "correlation_id"))
-                .identity(identity.clone())
-                .payload(envelope["body"].clone())
-                .build();
+            let rebuilt =
+                MessageBuilder::new(str_field(header, "name"), str_field(header, "version"))
+                    .uuid(str_field(header, "uuid"))
+                    .timestamp(str_field(header, "timestamp"))
+                    .correlation_id(str_field(header, "correlation_id"))
+                    .identity(identity.clone())
+                    .payload(envelope["body"].clone())
+                    .build();
             let rebuilt_value = serde_json::to_value(&rebuilt).expect("serialize rebuilt envelope");
-            assert_eq!(&rebuilt_value, envelope, "vector '{name}': envelope mismatch");
+            assert_eq!(
+                &rebuilt_value, envelope,
+                "vector '{name}': envelope mismatch"
+            );
 
             // Both directions: the golden JSON parses back into the same message.
             let parsed = crate::messaging::message::Message::from_slice(
@@ -829,10 +885,19 @@ mod vector_tests {
             let cls = UnsClass::from_token(str_field(vector, "class")).expect("class token");
             let channel = vector.get("channel").and_then(Value::as_str);
             let uns = Uns::new(identity.clone(), false);
-            let topic = uns.topic_for(&identity, cls, channel).expect("vector topic builds");
-            assert_eq!(topic, str_field(vector, "topic"), "vector '{name}': topic mismatch");
+            let topic = uns
+                .topic_for(&identity, cls, channel)
+                .expect("vector topic builds");
+            assert_eq!(
+                topic,
+                str_field(vector, "topic"),
+                "vector '{name}': topic mismatch"
+            );
         }
-        eprintln!("uns-test-vectors envelopes.json: {} golden envelopes OK", vectors.len());
+        eprintln!(
+            "uns-test-vectors envelopes.json: {} golden envelopes OK",
+            vectors.len()
+        );
     }
 
     /// Cross-language conformance for the `_bcast` republish listener (DESIGN-uns §9.4; the
@@ -852,8 +917,16 @@ mod vector_tests {
         for case in commands {
             let name = str_field(case, "name");
             let input = &case["input"];
-            assert_eq!(str_field(input, "device"), device, "case '{name}': device mismatch");
-            assert_eq!(str_field(input, "component"), BCAST_COMPONENT, "case '{name}': component");
+            assert_eq!(
+                str_field(input, "device"),
+                device,
+                "case '{name}': device mismatch"
+            );
+            assert_eq!(
+                str_field(input, "component"),
+                BCAST_COMPONENT,
+                "case '{name}': component"
+            );
             assert_eq!(
                 str_field(input, "instance"),
                 MessageIdentity::DEFAULT_INSTANCE,
@@ -865,7 +938,10 @@ mod vector_tests {
             );
 
             let identity = MessageIdentity::new(
-                vec![HierEntry { level: "device".to_string(), value: device.to_string() }],
+                vec![HierEntry {
+                    level: "device".to_string(),
+                    value: device.to_string(),
+                }],
                 BCAST_COMPONENT,
                 Some(MessageIdentity::DEFAULT_INSTANCE.to_string()),
             )
@@ -875,13 +951,23 @@ mod vector_tests {
             let topic = uns
                 .topic_with_channel(cls, str_field(input, "channel"))
                 .expect("bcast topic builds");
-            assert_eq!(topic, str_field(case, "topic"), "case '{name}': topic mismatch");
+            assert_eq!(
+                topic,
+                str_field(case, "topic"),
+                "case '{name}': topic mismatch"
+            );
 
             // Envelope structure (D-U22): no identity/tags/reply_to; empty body; header.name is
             // the verb — fire-and-forget, never replied to.
             let envelope = &case["envelope"];
-            assert!(envelope.get("identity").is_none(), "case '{name}': no identity element");
-            assert!(envelope.get("tags").is_none(), "case '{name}': no tags element");
+            assert!(
+                envelope.get("identity").is_none(),
+                "case '{name}': no identity element"
+            );
+            assert!(
+                envelope.get("tags").is_none(),
+                "case '{name}': no tags element"
+            );
             assert!(
                 envelope["header"].get("reply_to").is_none(),
                 "case '{name}': no reply_to (fire-and-forget)"
@@ -891,11 +977,22 @@ mod vector_tests {
         }
 
         let behavior = &doc["behavior"];
-        assert_eq!(behavior["jitterWindowMs"].as_u64().unwrap(), JITTER_WINDOW_MS, "jitterWindowMs");
-        assert_eq!(behavior["cooldownMs"].as_u64().unwrap(), COOLDOWN_MS, "cooldownMs");
+        assert_eq!(
+            behavior["jitterWindowMs"].as_u64().unwrap(),
+            JITTER_WINDOW_MS,
+            "jitterWindowMs"
+        );
+        assert_eq!(
+            behavior["cooldownMs"].as_u64().unwrap(),
+            COOLDOWN_MS,
+            "cooldownMs"
+        );
         assert!(!behavior["replyTo"].as_bool().unwrap(), "replyTo");
 
-        eprintln!("uns-test-vectors bcast.json: {} commands OK", commands.len());
+        eprintln!(
+            "uns-test-vectors bcast.json: {} commands OK",
+            commands.len()
+        );
     }
 }
 
@@ -908,7 +1005,10 @@ mod tests {
         MessageIdentity::new(
             levels
                 .iter()
-                .map(|(l, v)| HierEntry { level: (*l).to_string(), value: (*v).to_string() })
+                .map(|(l, v)| HierEntry {
+                    level: (*l).to_string(),
+                    value: (*v).to_string(),
+                })
                 .collect(),
             component,
             Some(instance.to_string()),
@@ -949,7 +1049,10 @@ mod tests {
     #[test]
     fn builds_leaf_and_channeled_topics() {
         let uns = Uns::new(single(), false);
-        assert_eq!(uns.topic(UnsClass::State).unwrap(), "ecv1/gw-01/opcua-adapter/main/state");
+        assert_eq!(
+            uns.topic(UnsClass::State).unwrap(),
+            "ecv1/gw-01/opcua-adapter/main/state"
+        );
         assert_eq!(
             uns.topic_with_channel(UnsClass::Cmd, "sb/status").unwrap(),
             "ecv1/gw-01/opcua-adapter/main/cmd/sb/status"
@@ -960,7 +1063,10 @@ mod tests {
     fn include_root_applies_only_with_multi_level_hierarchy() {
         // D-U25: single-level + includeRoot is a no-op.
         let uns = Uns::new(single(), true);
-        assert_eq!(uns.topic(UnsClass::State).unwrap(), "ecv1/gw-01/opcua-adapter/main/state");
+        assert_eq!(
+            uns.topic(UnsClass::State).unwrap(),
+            "ecv1/gw-01/opcua-adapter/main/state"
+        );
         // Multi-level + includeRoot prepends hier[0] (the site).
         let rooted = Uns::new(multi(), true);
         assert_eq!(
@@ -980,7 +1086,8 @@ mod tests {
         let uns = Uns::new(single(), false);
         let peer = identity(&[("device", "gw-02")], "modbus-adapter", "kep1");
         assert_eq!(
-            uns.topic_for(&peer, UnsClass::Cmd, Some("set-config")).unwrap(),
+            uns.topic_for(&peer, UnsClass::Cmd, Some("set-config"))
+                .unwrap(),
             "ecv1/gw-02/modbus-adapter/kep1/cmd/set-config"
         );
     }
@@ -992,26 +1099,56 @@ mod tests {
             code(uns.topic_with_channel(UnsClass::State, "x").unwrap_err()),
             UnsValidationCode::ChannelOnLeaf
         );
-        assert_eq!(code(uns.topic(UnsClass::Data).unwrap_err()), UnsValidationCode::ChannelRequired);
+        assert_eq!(
+            code(uns.topic(UnsClass::Data).unwrap_err()),
+            UnsValidationCode::ChannelRequired
+        );
         // An empty channel means "no channel".
         assert_eq!(
             code(uns.topic_with_channel(UnsClass::Data, "").unwrap_err()),
             UnsValidationCode::ChannelRequired
         );
-        assert_eq!(uns.topic_with_channel(UnsClass::Cfg, "").unwrap(), "ecv1/gw-01/opcua-adapter/main/cfg");
+        assert_eq!(
+            uns.topic_with_channel(UnsClass::Cfg, "").unwrap(),
+            "ecv1/gw-01/opcua-adapter/main/cfg"
+        );
     }
 
     #[test]
     fn token_rule_rejects_bad_tokens() {
-        assert_eq!(code(check_token("", "t").unwrap_err()), UnsValidationCode::EmptyToken);
-        assert_eq!(code(check_token("a+b", "t").unwrap_err()), UnsValidationCode::BadChar);
-        assert_eq!(code(check_token("a#b", "t").unwrap_err()), UnsValidationCode::BadChar);
-        assert_eq!(code(check_token("a\\b", "t").unwrap_err()), UnsValidationCode::BadChar);
-        assert_eq!(code(check_token("a\u{0001}b", "t").unwrap_err()), UnsValidationCode::BadChar);
-        assert_eq!(code(check_token("a\u{007f}b", "t").unwrap_err()), UnsValidationCode::BadChar);
+        assert_eq!(
+            code(check_token("", "t").unwrap_err()),
+            UnsValidationCode::EmptyToken
+        );
+        assert_eq!(
+            code(check_token("a+b", "t").unwrap_err()),
+            UnsValidationCode::BadChar
+        );
+        assert_eq!(
+            code(check_token("a#b", "t").unwrap_err()),
+            UnsValidationCode::BadChar
+        );
+        assert_eq!(
+            code(check_token("a\\b", "t").unwrap_err()),
+            UnsValidationCode::BadChar
+        );
+        assert_eq!(
+            code(check_token("a\u{0001}b", "t").unwrap_err()),
+            UnsValidationCode::BadChar
+        );
+        assert_eq!(
+            code(check_token("a\u{007f}b", "t").unwrap_err()),
+            UnsValidationCode::BadChar
+        );
         // D-U26: C1 controls (U+0080-U+009F) are rejected too.
-        assert_eq!(code(check_token("a\u{0085}b", "t").unwrap_err()), UnsValidationCode::BadChar);
-        assert_eq!(code(check_token("a..b", "t").unwrap_err()), UnsValidationCode::Traversal);
+        assert_eq!(
+            code(check_token("a\u{0085}b", "t").unwrap_err()),
+            UnsValidationCode::BadChar
+        );
+        assert_eq!(
+            code(check_token("a..b", "t").unwrap_err()),
+            UnsValidationCode::Traversal
+        );
         // Dots and spaces are legal (D5: literal-within-a-level; sanitized values pass).
         assert!(check_token("v1.2", "t").is_ok());
         assert!(check_token("gw 01", "t").is_ok());
@@ -1022,13 +1159,20 @@ mod tests {
         let uns = Uns::new(single(), false);
         assert!(uns.topic_with_channel(UnsClass::Data, "a/b/c").is_ok());
         assert_eq!(
-            code(uns.topic_with_channel(UnsClass::Data, "a/b/c/d").unwrap_err()),
+            code(
+                uns.topic_with_channel(UnsClass::Data, "a/b/c/d")
+                    .unwrap_err()
+            ),
             UnsValidationCode::DepthExceeded
         );
         let rooted = Uns::new(multi(), true);
         assert!(rooted.topic_with_channel(UnsClass::Data, "a/b").is_ok());
         assert_eq!(
-            code(rooted.topic_with_channel(UnsClass::Data, "a/b/c").unwrap_err()),
+            code(
+                rooted
+                    .topic_with_channel(UnsClass::Data, "a/b/c")
+                    .unwrap_err()
+            ),
             UnsValidationCode::DepthExceeded
         );
     }
@@ -1042,7 +1186,10 @@ mod tests {
         let over_channel = "x".repeat(Uns::MAX_TOPIC_UTF8_BYTES - data_base + 1);
         assert!(uns.topic_with_channel(UnsClass::Data, &ok_channel).is_ok());
         assert_eq!(
-            code(uns.topic_with_channel(UnsClass::Data, &over_channel).unwrap_err()),
+            code(
+                uns.topic_with_channel(UnsClass::Data, &over_channel)
+                    .unwrap_err()
+            ),
             UnsValidationCode::LengthExceeded
         );
     }
@@ -1050,34 +1197,57 @@ mod tests {
     #[test]
     fn filters_render_wildcards_and_channel_hash() {
         let uns = Uns::new(single(), false);
-        assert_eq!(uns.filter(UnsClass::Data, &UnsScope::all()).unwrap(), "ecv1/+/+/+/data/#");
-        assert_eq!(uns.filter(UnsClass::State, &UnsScope::all()).unwrap(), "ecv1/+/+/+/state");
         assert_eq!(
-            uns.filter(UnsClass::Evt, &UnsScope::component("gw-01", "opcua-adapter")).unwrap(),
+            uns.filter(UnsClass::Data, &UnsScope::all()).unwrap(),
+            "ecv1/+/+/+/data/#"
+        );
+        assert_eq!(
+            uns.filter(UnsClass::State, &UnsScope::all()).unwrap(),
+            "ecv1/+/+/+/state"
+        );
+        assert_eq!(
+            uns.filter(
+                UnsClass::Evt,
+                &UnsScope::component("gw-01", "opcua-adapter")
+            )
+            .unwrap(),
             "ecv1/gw-01/opcua-adapter/+/evt/#"
         );
         assert_eq!(
-            uns.filter(UnsClass::Cmd, &UnsScope::instance("gw-01", "opcua-adapter", "kep1"))
-                .unwrap(),
+            uns.filter(
+                UnsClass::Cmd,
+                &UnsScope::instance("gw-01", "opcua-adapter", "kep1")
+            )
+            .unwrap(),
             "ecv1/gw-01/opcua-adapter/kep1/cmd/#"
         );
         // Rooted: the site position exists (and can be pinned).
         let rooted = Uns::new(multi(), true);
-        assert_eq!(rooted.filter(UnsClass::Data, &UnsScope::all()).unwrap(), "ecv1/+/+/+/+/data/#");
+        assert_eq!(
+            rooted.filter(UnsClass::Data, &UnsScope::all()).unwrap(),
+            "ecv1/+/+/+/+/data/#"
+        );
         assert_eq!(
             rooted
-                .filter(UnsClass::Data, &UnsScope::device("gw-01").with_site("dallas"))
+                .filter(
+                    UnsClass::Data,
+                    &UnsScope::device("gw-01").with_site("dallas")
+                )
                 .unwrap(),
             "ecv1/dallas/gw-01/+/+/data/#"
         );
         // Rootless ignores a pinned site (no site position exists).
         assert_eq!(
-            uns.filter(UnsClass::Data, &UnsScope::all().with_site("dallas")).unwrap(),
+            uns.filter(UnsClass::Data, &UnsScope::all().with_site("dallas"))
+                .unwrap(),
             "ecv1/+/+/+/data/#"
         );
         // A pinned field still passes the token rule.
         assert_eq!(
-            code(uns.filter(UnsClass::Data, &UnsScope::device("gw+01")).unwrap_err()),
+            code(
+                uns.filter(UnsClass::Data, &UnsScope::device("gw+01"))
+                    .unwrap_err()
+            ),
             UnsValidationCode::BadChar
         );
     }
@@ -1086,8 +1256,14 @@ mod tests {
     fn validate_accepts_good_topics_and_pins_codes() {
         let uns = Uns::new(multi(), false);
         assert!(uns.validate("ecv1/gw-01/opcua-adapter/main/state").is_ok());
-        assert!(uns.validate("ecv1/gw-01/opcua-adapter/main/cmd/sb/status").is_ok());
-        assert_eq!(code(uns.validate("").unwrap_err()), UnsValidationCode::EmptyToken);
+        assert!(
+            uns.validate("ecv1/gw-01/opcua-adapter/main/cmd/sb/status")
+                .is_ok()
+        );
+        assert_eq!(
+            code(uns.validate("").unwrap_err()),
+            UnsValidationCode::EmptyToken
+        );
         assert_eq!(
             code(uns.validate("ecv1//c/i/state").unwrap_err()),
             UnsValidationCode::EmptyToken
@@ -1109,7 +1285,10 @@ mod tests {
             UnsValidationCode::BadClass
         );
         // Too short => the class position is missing => BAD_CLASS (pinned by D-U26 note).
-        assert_eq!(code(uns.validate("ecv1/d/c/i").unwrap_err()), UnsValidationCode::BadClass);
+        assert_eq!(
+            code(uns.validate("ecv1/d/c/i").unwrap_err()),
+            UnsValidationCode::BadClass
+        );
         assert_eq!(
             code(uns.validate("ecv1/d/c/i/state/extra").unwrap_err()),
             UnsValidationCode::ChannelOnLeaf
@@ -1128,9 +1307,17 @@ mod tests {
     fn validate_is_root_mode_sensitive() {
         // Rooted mode expects the class at position 5.
         let rooted = Uns::new(multi(), true);
-        assert!(rooted.validate("ecv1/dallas/gw-01/opcua-adapter/main/state").is_ok());
+        assert!(
+            rooted
+                .validate("ecv1/dallas/gw-01/opcua-adapter/main/state")
+                .is_ok()
+        );
         assert_eq!(
-            code(rooted.validate("ecv1/gw-01/opcua-adapter/main/state").unwrap_err()),
+            code(
+                rooted
+                    .validate("ecv1/gw-01/opcua-adapter/main/state")
+                    .unwrap_err()
+            ),
             UnsValidationCode::BadClass
         );
         // Single-level + includeRoot is a no-op (D-U25): still the rootless positions.
@@ -1140,15 +1327,33 @@ mod tests {
 
     #[test]
     fn guard_predicate_matches_d_u24() {
-        assert_eq!(reserved_class_of("ecv1/d/c/i/state", false), Some(UnsClass::State));
-        assert_eq!(reserved_class_of("ecv1/d/c/i/metric/cpu", false), Some(UnsClass::Metric));
-        assert_eq!(reserved_class_of("ecv1/d/c/i/cfg", false), Some(UnsClass::Cfg));
-        assert_eq!(reserved_class_of("ecv1/d/c/i/log/tail", false), Some(UnsClass::Log));
+        assert_eq!(
+            reserved_class_of("ecv1/d/c/i/state", false),
+            Some(UnsClass::State)
+        );
+        assert_eq!(
+            reserved_class_of("ecv1/d/c/i/metric/cpu", false),
+            Some(UnsClass::Metric)
+        );
+        assert_eq!(
+            reserved_class_of("ecv1/d/c/i/cfg", false),
+            Some(UnsClass::Cfg)
+        );
+        assert_eq!(
+            reserved_class_of("ecv1/d/c/i/log/tail", false),
+            Some(UnsClass::Log)
+        );
         assert_eq!(reserved_class_of("ecv1/d/c/i/data/temp", false), None);
         // Position 4 is checked even under root mode.
-        assert_eq!(reserved_class_of("ecv1/d/c/i/cfg", true), Some(UnsClass::Cfg));
+        assert_eq!(
+            reserved_class_of("ecv1/d/c/i/cfg", true),
+            Some(UnsClass::Cfg)
+        );
         // Position 5 only when includeRoot is effective.
-        assert_eq!(reserved_class_of("ecv1/s/d/c/i/state", true), Some(UnsClass::State));
+        assert_eq!(
+            reserved_class_of("ecv1/s/d/c/i/state", true),
+            Some(UnsClass::State)
+        );
         assert_eq!(reserved_class_of("ecv1/s/d/c/i/state", false), None);
         // app/state at position 5 rootless is a legit channel.
         assert_eq!(reserved_class_of("ecv1/d/c/i/app/state", false), None);
@@ -1199,7 +1404,8 @@ const CFG_IDX: usize = 1;
 /// [`crate::config::effective::EffectiveConfigPublisher::publish_now`]) already log-and-swallow
 /// their own failures, so [`RepublishListener::fire`] has nothing to catch — unlike the Java
 /// canonical's `try/catch` around a throwing `Runnable`.
-pub(crate) type RepublishAction = Arc<dyn Fn() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
+pub(crate) type RepublishAction =
+    Arc<dyn Fn() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
 
 /// A boxed, already-built future — what a [`Delayer`] schedules.
 type BoxFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
@@ -1369,8 +1575,14 @@ impl RepublishListener {
         Arc::new(RepublishListener {
             messaging,
             verb_defs: [
-                RepublishVerb { name: REPUBLISH_STATE, action: state_action },
-                RepublishVerb { name: REPUBLISH_CFG, action: cfg_action },
+                RepublishVerb {
+                    name: REPUBLISH_STATE,
+                    action: state_action,
+                },
+                RepublishVerb {
+                    name: REPUBLISH_CFG,
+                    action: cfg_action,
+                },
             ],
             inner: Mutex::new(Inner::default()),
             delayer,
@@ -1400,7 +1612,10 @@ impl RepublishListener {
         // broadcast shape is shared by every component on the device bus, whatever their own
         // hierarchy/root mode (Java canonical: `new Uns(bcast, false)`).
         let identity = match MessageIdentity::new(
-            vec![HierEntry { level: "device".to_string(), value: device.to_string() }],
+            vec![HierEntry {
+                level: "device".to_string(),
+                value: device.to_string(),
+            }],
             BCAST_COMPONENT,
             Some(MessageIdentity::DEFAULT_INSTANCE.to_string()),
         ) {
@@ -1442,7 +1657,12 @@ impl RepublishListener {
             });
             if let Err(e) = self
                 .messaging
-                .subscribe(topic, handler, SUBSCRIBE_MAX_MESSAGES, SUBSCRIBE_MAX_CONCURRENCY)
+                .subscribe(
+                    topic,
+                    handler,
+                    SUBSCRIBE_MAX_MESSAGES,
+                    SUBSCRIBE_MAX_CONCURRENCY,
+                )
                 .await
             {
                 tracing::warn!(
@@ -1477,7 +1697,10 @@ impl RepublishListener {
     async fn handle(listener: Arc<Self>, verb_index: usize, message: Message) {
         let verb_name = listener.verb_defs[verb_index].name;
         if message.is_raw() || message.header.name != verb_name {
-            tracing::debug!(verb = verb_name, "ignoring foreign/malformed _bcast payload");
+            tracing::debug!(
+                verb = verb_name,
+                "ignoring foreign/malformed _bcast payload"
+            );
             return;
         }
         Self::on_broadcast(listener, verb_index).await;
@@ -1502,7 +1725,11 @@ impl RepublishListener {
             return;
         }
         let delay_millis = (listener.jitter)(JITTER_WINDOW_MS);
-        tracing::info!(verb = verb_name, delay_millis, "broadcast accepted; re-announcing");
+        tracing::info!(
+            verb = verb_name,
+            delay_millis,
+            "broadcast accepted; re-announcing"
+        );
 
         // Weak, like the subscribe handler: a pending re-announce must not keep the listener
         // (and therefore its subscriptions) alive past its owner's lifetime.
@@ -1600,7 +1827,9 @@ mod republish_tests {
     }
 
     fn broadcast(verb: &str) -> Message {
-        MessageBuilder::new(verb, "1.0").payload(serde_json::json!({})).build()
+        MessageBuilder::new(verb, "1.0")
+            .payload(serde_json::json!({}))
+            .build()
     }
 
     // ---------- the pure RepublishGate (no tokio needed) ----------
@@ -1610,7 +1839,10 @@ mod republish_tests {
         let mut gate = RepublishGate::default();
         let t0 = Instant::now();
         assert!(gate.accept(t0), "the first trigger must be accepted");
-        assert!(!gate.accept(t0), "a re-announce is already pending -> coalesce");
+        assert!(
+            !gate.accept(t0),
+            "a re-announce is already pending -> coalesce"
+        );
     }
 
     #[test]
@@ -1670,7 +1902,12 @@ mod republish_tests {
 
         /// Take the single scheduled task (for the panic-isolation test).
         fn take_one(&self) -> BoxFuture {
-            self.tasks.lock().unwrap().pop().expect("a task was scheduled").1
+            self.tasks
+                .lock()
+                .unwrap()
+                .pop()
+                .expect("a task was scheduled")
+                .1
         }
     }
 
@@ -1684,7 +1921,10 @@ mod republish_tests {
 
     impl FakeClock {
         fn new() -> Self {
-            Self { base: Instant::now(), offset_ms: Arc::new(AtomicU64::new(0)) }
+            Self {
+                base: Instant::now(),
+                offset_ms: Arc::new(AtomicU64::new(0)),
+            }
         }
         fn set(&self, ms: u64) {
             self.offset_ms.store(ms, Ordering::SeqCst);
@@ -1698,13 +1938,12 @@ mod republish_tests {
     fn action_counter() -> (RepublishAction, Arc<AtomicUsize>) {
         let counter = Arc::new(AtomicUsize::new(0));
         let counter_for_action = counter.clone();
-        let action: RepublishAction =
-            Arc::new(move || {
-                let c = counter_for_action.clone();
-                Box::pin(async move {
-                    c.fetch_add(1, Ordering::SeqCst);
-                })
-            });
+        let action: RepublishAction = Arc::new(move || {
+            let c = counter_for_action.clone();
+            Box::pin(async move {
+                c.fetch_add(1, Ordering::SeqCst);
+            })
+        });
         (action, counter)
     }
 
@@ -1771,21 +2010,45 @@ mod republish_tests {
     async fn republish_state_re_emits_the_state_keepalive() {
         let r = rig();
         r.listener.clone().start(DEVICE).await;
-        r.messaging.simulate_message(STATE_TOPIC, broadcast(REPUBLISH_STATE)).await;
-        assert_eq!(r.state_calls.load(Ordering::SeqCst), 0, "the re-announce must wait for the jitter delay");
+        r.messaging
+            .simulate_message(STATE_TOPIC, broadcast(REPUBLISH_STATE))
+            .await;
+        assert_eq!(
+            r.state_calls.load(Ordering::SeqCst),
+            0,
+            "the re-announce must wait for the jitter delay"
+        );
         r.delayer.run_all().await;
-        assert_eq!(r.state_calls.load(Ordering::SeqCst), 1, "republish-state must re-run the state action");
-        assert_eq!(r.cfg_calls.load(Ordering::SeqCst), 0, "republish-state must not touch the cfg action");
+        assert_eq!(
+            r.state_calls.load(Ordering::SeqCst),
+            1,
+            "republish-state must re-run the state action"
+        );
+        assert_eq!(
+            r.cfg_calls.load(Ordering::SeqCst),
+            0,
+            "republish-state must not touch the cfg action"
+        );
     }
 
     #[tokio::test]
     async fn republish_cfg_re_runs_the_effective_config_publisher() {
         let r = rig();
         r.listener.clone().start(DEVICE).await;
-        r.messaging.simulate_message(CFG_TOPIC, broadcast(REPUBLISH_CFG)).await;
+        r.messaging
+            .simulate_message(CFG_TOPIC, broadcast(REPUBLISH_CFG))
+            .await;
         r.delayer.run_all().await;
-        assert_eq!(r.cfg_calls.load(Ordering::SeqCst), 1, "republish-cfg must re-run the cfg action");
-        assert_eq!(r.state_calls.load(Ordering::SeqCst), 0, "republish-cfg must not touch the state action");
+        assert_eq!(
+            r.cfg_calls.load(Ordering::SeqCst),
+            1,
+            "republish-cfg must re-run the cfg action"
+        );
+        assert_eq!(
+            r.state_calls.load(Ordering::SeqCst),
+            0,
+            "republish-cfg must not touch the state action"
+        );
     }
 
     #[tokio::test]
@@ -1793,23 +2056,39 @@ mod republish_tests {
         let r = rig();
         r.next_jitter.store(1234, Ordering::SeqCst);
         r.listener.clone().start(DEVICE).await;
-        r.messaging.simulate_message(STATE_TOPIC, broadcast(REPUBLISH_STATE)).await;
+        r.messaging
+            .simulate_message(STATE_TOPIC, broadcast(REPUBLISH_STATE))
+            .await;
         assert_eq!(
             r.jitter_window_seen.load(Ordering::SeqCst),
             JITTER_WINDOW_MS,
             "the jitter source must be asked for a delay within the normative window"
         );
-        assert_eq!(r.delayer.delays(), vec![1234], "the scheduled delay must be exactly the jittered value");
+        assert_eq!(
+            r.delayer.delays(),
+            vec![1234],
+            "the scheduled delay must be exactly the jittered value"
+        );
     }
 
     #[tokio::test]
     async fn broadcasts_coalesce_while_a_re_announce_is_pending() {
         let r = rig();
         r.listener.clone().start(DEVICE).await;
-        r.messaging.simulate_message(STATE_TOPIC, broadcast(REPUBLISH_STATE)).await;
-        r.messaging.simulate_message(STATE_TOPIC, broadcast(REPUBLISH_STATE)).await;
-        r.messaging.simulate_message(STATE_TOPIC, broadcast(REPUBLISH_STATE)).await;
-        assert_eq!(r.delayer.pending(), 1, "a looping broadcast must coalesce to a single pending re-announce");
+        r.messaging
+            .simulate_message(STATE_TOPIC, broadcast(REPUBLISH_STATE))
+            .await;
+        r.messaging
+            .simulate_message(STATE_TOPIC, broadcast(REPUBLISH_STATE))
+            .await;
+        r.messaging
+            .simulate_message(STATE_TOPIC, broadcast(REPUBLISH_STATE))
+            .await;
+        assert_eq!(
+            r.delayer.pending(),
+            1,
+            "a looping broadcast must coalesce to a single pending re-announce"
+        );
         r.delayer.run_all().await;
         assert_eq!(r.state_calls.load(Ordering::SeqCst), 1);
     }
@@ -1818,17 +2097,31 @@ mod republish_tests {
     async fn broadcasts_coalesce_within_the_cooldown_and_accept_after_it() {
         let r = rig();
         r.listener.clone().start(DEVICE).await;
-        r.messaging.simulate_message(STATE_TOPIC, broadcast(REPUBLISH_STATE)).await;
+        r.messaging
+            .simulate_message(STATE_TOPIC, broadcast(REPUBLISH_STATE))
+            .await;
         r.delayer.run_all().await; // fired; cooldown runs from the ACCEPTED trigger at t=0
 
         r.clock.set(COOLDOWN_MS - 1);
-        r.messaging.simulate_message(STATE_TOPIC, broadcast(REPUBLISH_STATE)).await;
-        assert_eq!(r.delayer.pending(), 0, "a broadcast inside the cooldown must coalesce");
+        r.messaging
+            .simulate_message(STATE_TOPIC, broadcast(REPUBLISH_STATE))
+            .await;
+        assert_eq!(
+            r.delayer.pending(),
+            0,
+            "a broadcast inside the cooldown must coalesce"
+        );
         assert_eq!(r.state_calls.load(Ordering::SeqCst), 1);
 
         r.clock.set(COOLDOWN_MS);
-        r.messaging.simulate_message(STATE_TOPIC, broadcast(REPUBLISH_STATE)).await;
-        assert_eq!(r.delayer.pending(), 1, "the cooldown boundary must accept again");
+        r.messaging
+            .simulate_message(STATE_TOPIC, broadcast(REPUBLISH_STATE))
+            .await;
+        assert_eq!(
+            r.delayer.pending(),
+            1,
+            "the cooldown boundary must accept again"
+        );
         r.delayer.run_all().await;
         assert_eq!(r.state_calls.load(Ordering::SeqCst), 2);
     }
@@ -1837,10 +2130,18 @@ mod republish_tests {
     async fn the_verbs_rate_limit_independently() {
         let r = rig();
         r.listener.clone().start(DEVICE).await;
-        r.messaging.simulate_message(STATE_TOPIC, broadcast(REPUBLISH_STATE)).await;
+        r.messaging
+            .simulate_message(STATE_TOPIC, broadcast(REPUBLISH_STATE))
+            .await;
         // With a state re-announce pending, a cfg broadcast must still be accepted.
-        r.messaging.simulate_message(CFG_TOPIC, broadcast(REPUBLISH_CFG)).await;
-        assert_eq!(r.delayer.pending(), 2, "state and cfg coalesce/cooldown independently");
+        r.messaging
+            .simulate_message(CFG_TOPIC, broadcast(REPUBLISH_CFG))
+            .await;
+        assert_eq!(
+            r.delayer.pending(),
+            2,
+            "state and cfg coalesce/cooldown independently"
+        );
         r.delayer.run_all().await;
         assert_eq!(r.state_calls.load(Ordering::SeqCst), 1);
         assert_eq!(r.cfg_calls.load(Ordering::SeqCst), 1);
@@ -1851,10 +2152,18 @@ mod republish_tests {
         let r = rig();
         r.listener.clone().start(DEVICE).await;
         // Wrong verb name in the header (foreign command on the topic).
-        r.messaging.simulate_message(STATE_TOPIC, broadcast("something-else")).await;
+        r.messaging
+            .simulate_message(STATE_TOPIC, broadcast("something-else"))
+            .await;
         // A raw (headerless) envelope - e.g. junk JSON published on the broadcast topic.
-        r.messaging.simulate_message(STATE_TOPIC, Message::raw(serde_json::json!({ "x": 1 }))).await;
-        assert_eq!(r.delayer.pending(), 0, "foreign/malformed payloads must never schedule");
+        r.messaging
+            .simulate_message(STATE_TOPIC, Message::raw(serde_json::json!({ "x": 1 })))
+            .await;
+        assert_eq!(
+            r.delayer.pending(),
+            0,
+            "foreign/malformed payloads must never schedule"
+        );
         assert_eq!(r.state_calls.load(Ordering::SeqCst), 0);
         assert_eq!(r.cfg_calls.load(Ordering::SeqCst), 0);
     }
@@ -1888,33 +2197,52 @@ mod republish_tests {
             Box::new(|_| 0),
         );
         listener.clone().start(DEVICE).await;
-        messaging.simulate_message(STATE_TOPIC, broadcast(REPUBLISH_STATE)).await;
+        messaging
+            .simulate_message(STATE_TOPIC, broadcast(REPUBLISH_STATE))
+            .await;
 
         // pending was cleared BEFORE the action ran, so the panic (isolated to its own spawned
         // task, standard tokio behavior) must not wedge the verb.
         let task = delayer.take_one();
         let result = tokio::spawn(task).await;
-        assert!(result.is_err(), "the panic must not escape the spawned task");
+        assert!(
+            result.is_err(),
+            "the panic must not escape the spawned task"
+        );
 
         clock.set(COOLDOWN_MS);
-        messaging.simulate_message(STATE_TOPIC, broadcast(REPUBLISH_STATE)).await;
-        assert_eq!(delayer.pending(), 1, "the verb accepts again after the cooldown");
+        messaging
+            .simulate_message(STATE_TOPIC, broadcast(REPUBLISH_STATE))
+            .await;
+        assert_eq!(
+            delayer.pending(),
+            1,
+            "the verb accepts again after the cooldown"
+        );
     }
 
     #[tokio::test]
     async fn close_unsubscribes_both_topics_and_drops_pending_re_announces() {
         let r = rig();
         r.listener.clone().start(DEVICE).await;
-        r.messaging.simulate_message(STATE_TOPIC, broadcast(REPUBLISH_STATE)).await;
+        r.messaging
+            .simulate_message(STATE_TOPIC, broadcast(REPUBLISH_STATE))
+            .await;
         r.listener.close().await;
         assert!(
             r.messaging.subscribed_topics().is_empty(),
             "close() must unsubscribe both _bcast topics (unsubscribe-before-exit)"
         );
         r.delayer.run_all().await;
-        assert_eq!(r.state_calls.load(Ordering::SeqCst), 0, "a pending re-announce must not fire after close()");
+        assert_eq!(
+            r.state_calls.load(Ordering::SeqCst),
+            0,
+            "a pending re-announce must not fire after close()"
+        );
         // A late broadcast (e.g. a stale queued delivery) is ignored - nothing is subscribed.
-        r.messaging.simulate_message(STATE_TOPIC, broadcast(REPUBLISH_STATE)).await;
+        r.messaging
+            .simulate_message(STATE_TOPIC, broadcast(REPUBLISH_STATE))
+            .await;
         assert_eq!(r.delayer.pending(), 0);
     }
 
@@ -1934,8 +2262,14 @@ mod republish_tests {
         r.listener.clone().start(DEVICE).await;
         r.listener.clone().start(DEVICE).await;
         assert_eq!(r.messaging.subscribed_topics(), topics());
-        r.messaging.simulate_message(STATE_TOPIC, broadcast(REPUBLISH_STATE)).await;
-        assert_eq!(r.delayer.pending(), 1, "a double start must not double-schedule");
+        r.messaging
+            .simulate_message(STATE_TOPIC, broadcast(REPUBLISH_STATE))
+            .await;
+        assert_eq!(
+            r.delayer.pending(),
+            1,
+            "a double start must not double-schedule"
+        );
     }
 
     #[tokio::test]
@@ -1966,14 +2300,20 @@ mod republish_tests {
         let messaging = RecordingMessaging::new();
         let (state_action, _state_calls) = action_counter();
         let (cfg_action, cfg_calls) = action_counter();
-        let listener =
-            RepublishListener::new(messaging.clone() as Arc<dyn MessagingService>, state_action, cfg_action);
+        let listener = RepublishListener::new(
+            messaging.clone() as Arc<dyn MessagingService>,
+            state_action,
+            cfg_action,
+        );
 
         listener.clone().start(DEVICE).await;
         assert_eq!(messaging.subscribed_topics(), topics());
-        messaging.simulate_message(CFG_TOPIC, broadcast(REPUBLISH_CFG)).await;
+        messaging
+            .simulate_message(CFG_TOPIC, broadcast(REPUBLISH_CFG))
+            .await;
 
-        let deadline = Instant::now() + Duration::from_millis(JITTER_WINDOW_MS) + Duration::from_secs(3);
+        let deadline =
+            Instant::now() + Duration::from_millis(JITTER_WINDOW_MS) + Duration::from_secs(3);
         while cfg_calls.load(Ordering::SeqCst) == 0 && Instant::now() < deadline {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }

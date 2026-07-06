@@ -45,7 +45,10 @@ fn bootstrap_refresh_and_rotation_from_secrets_manager() {
     }
 
     let name = format!("edgecommons-cred-it-{}", uuid::Uuid::new_v4());
-    sm("secretsmanager.CreateSecret", &format!(r#"{{"Name":"{name}","SecretString":"v1"}}"#));
+    sm(
+        "secretsmanager.CreateSecret",
+        &format!(r#"{{"Name":"{name}","SecretString":"v1"}}"#),
+    );
 
     let dir = std::env::temp_dir().join(format!("ggcred-{}", uuid::Uuid::new_v4()));
     let vault_path = dir.join("vault");
@@ -72,28 +75,51 @@ fn bootstrap_refresh_and_rotation_from_secrets_manager() {
     assert_eq!(creds.list("").unwrap().len(), 1);
 
     // Rotate upstream, refresh, and confirm the new value — with the previous version retained.
-    sm("secretsmanager.PutSecretValue", &format!(r#"{{"SecretId":"{name}","SecretString":"v2"}}"#));
+    sm(
+        "secretsmanager.PutSecretValue",
+        &format!(r#"{{"SecretId":"{name}","SecretString":"v2"}}"#),
+    );
     creds.refresh().unwrap();
     assert_eq!(creds.get_string(&name).unwrap().unwrap(), "v2");
-    assert!(creds.versions(&name).unwrap().len() >= 2, "previous version retained for rotation grace");
+    assert!(
+        creds.versions(&name).unwrap().len() >= 2,
+        "previous version retained for rotation grace"
+    );
 
     // Idempotency: a refresh with no upstream change adds no new version.
     let before = creds.versions(&name).unwrap().len();
     creds.refresh().unwrap();
-    assert_eq!(creds.versions(&name).unwrap().len(), before, "no churn when unchanged");
+    assert_eq!(
+        creds.versions(&name).unwrap().len(),
+        before,
+        "no churn when unchanged"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
-    sm("secretsmanager.DeleteSecret", &format!(r#"{{"SecretId":"{name}","ForceDeleteWithoutRecovery":true}}"#));
+    sm(
+        "secretsmanager.DeleteSecret",
+        &format!(r#"{{"SecretId":"{name}","ForceDeleteWithoutRecovery":true}}"#),
+    );
 }
 
 /// POST to floci and return the response body.
 fn floci_out(target: &str, body: &str) -> String {
     let out = std::process::Command::new("curl")
         .args([
-            "-s", "-m", "10", "-X", "POST", "http://localhost:4566/",
-            "-H", &format!("X-Amz-Target: {target}"),
-            "-H", "Content-Type:application/x-amz-json-1.1",
-            "-H", "Authorization: x", "-d", body,
+            "-s",
+            "-m",
+            "10",
+            "-X",
+            "POST",
+            "http://localhost:4566/",
+            "-H",
+            &format!("X-Amz-Target: {target}"),
+            "-H",
+            "Content-Type:application/x-amz-json-1.1",
+            "-H",
+            "Authorization: x",
+            "-d",
+            body,
         ])
         .output()
         .expect("curl available");
@@ -114,7 +140,10 @@ fn kms_key_provider_round_trip() {
     // Create a CMK in floci (KMS service target prefix is "TrentService").
     let created = floci_out("TrentService.CreateKey", "{}");
     let v: serde_json::Value = serde_json::from_str(&created).expect("CreateKey JSON");
-    let key_id = v["KeyMetadata"]["KeyId"].as_str().expect("KeyId").to_string();
+    let key_id = v["KeyMetadata"]["KeyId"]
+        .as_str()
+        .expect("KeyId")
+        .to_string();
 
     let dir = std::env::temp_dir().join(format!("ggcred-kms-{}", uuid::Uuid::new_v4()));
     let cfg: CredentialsConfig = serde_json::from_value(serde_json::json!({

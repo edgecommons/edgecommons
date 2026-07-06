@@ -6,7 +6,7 @@ import pytest
 import logging
 import time
 
-from awsiot.greengrasscoreipc.model import QOS
+from edgecommons.messaging.qos import Qos
 from edgecommons.messaging.message import Message
 from edgecommons.edgecommons_builder import EdgeCommonsBuilder
 from edgecommons.messaging.message_builder import MessageBuilder
@@ -118,8 +118,8 @@ def test_pub_sub_iot_core_message(messaging_service, config_service, received_me
         received_messages.append(message)
 
     topic = "test/testIotCoreTopic"
-    messaging_service.subscribe_to_iot_core(
-        topic, message_handler, QOS.AT_MOST_ONCE
+    messaging_service.subscribe_northbound(
+        topic, message_handler, Qos.AT_MOST_ONCE
     )
     payload = {"message": "Test IoT Core message"}
     message = MessageBuilder.create("IoTCoreMessageTest", "1.0") \
@@ -128,7 +128,7 @@ def test_pub_sub_iot_core_message(messaging_service, config_service, received_me
         .build()
     correlation_id = message.get_header().correlation_id
     uuid = message.get_header().uuid
-    messaging_service.publish_to_iot_core(topic, message, QOS.AT_LEAST_ONCE)
+    messaging_service.publish_northbound(topic, message, Qos.AT_LEAST_ONCE)
     time.sleep(2)
     
     if received_messages:
@@ -222,7 +222,7 @@ def test_metric_builder_pattern():
 def test_dual_subscription(messaging_service, config_service):
     """Test that local and IoT Core subscriptions on same topic don't interfere.
 
-    Requires real AWS IoT Core connectivity (the messaging fixture's iotCore
+    Requires real AWS IoT Core connectivity (the messaging fixture's northbound
     endpoint), hence @pytest.mark.aws. For an AWS-free dual-broker check see
     tests/test_dual_broker_integration.py."""
     topic = "test/dualTopic"
@@ -242,7 +242,7 @@ def test_dual_subscription(messaging_service, config_service):
     messaging_service.subscribe(topic, local_handler, 1)
     
     logger.info(f"Subscribing to IOT CORE messages on {topic}")
-    messaging_service.subscribe_to_iot_core(topic, iot_core_handler, QOS.AT_LEAST_ONCE, 1)
+    messaging_service.subscribe_northbound(topic, iot_core_handler, Qos.AT_LEAST_ONCE, 1)
     
     # Publish to local - should only trigger local callback
     local_payload = {"source": "local"}
@@ -260,7 +260,7 @@ def test_dual_subscription(messaging_service, config_service):
         .with_config(config_service) \
         .build()
     logger.info("Publishing message to IOT CORE on topic")
-    messaging_service.publish_to_iot_core(topic, iot_msg, QOS.AT_LEAST_ONCE)
+    messaging_service.publish_northbound(topic, iot_msg, Qos.AT_LEAST_ONCE)
     
     time.sleep(0.5)
     
@@ -276,7 +276,7 @@ def test_dual_subscription(messaging_service, config_service):
     
     # Clean up
     messaging_service.unsubscribe(topic)
-    messaging_service.unsubscribe_from_iot_core(topic)
+    messaging_service.unsubscribe_northbound(topic)
 
 
 @pytest.mark.integration

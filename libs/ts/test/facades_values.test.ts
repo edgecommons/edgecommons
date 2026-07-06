@@ -17,8 +17,6 @@ describe("Channel", () => {
     expect(Channel.fromConfig("local")).toEqual(Channel.LOCAL);
     expect(Channel.fromConfig("LOCAL")).toEqual(Channel.LOCAL);
     expect(Channel.fromConfig("northbound")).toEqual(Channel.NORTHBOUND);
-    expect(Channel.fromConfig("iotcore")).toEqual(Channel.NORTHBOUND);
-    expect(Channel.fromConfig("iot_core")).toEqual(Channel.NORTHBOUND);
     expect(Channel.fromConfig("stream:hot")).toEqual(Channel.stream("hot"));
   });
 
@@ -28,6 +26,8 @@ describe("Channel", () => {
     expect(Channel.fromConfig("")).toBeUndefined();
     expect(Channel.fromConfig("   ")).toBeUndefined();
     expect(Channel.fromConfig("bogus")).toBeUndefined();
+    expect(Channel.fromConfig("iotcore")).toBeUndefined();
+    expect(Channel.fromConfig("iot_core")).toBeUndefined();
     expect(Channel.fromConfig("stream:"), "an empty stream name is not a valid channel").toBeUndefined();
   });
 

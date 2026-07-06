@@ -244,7 +244,7 @@ class GreengrassApp(ConfigurationChangeListener, ABC):
             # Non-fatal: setups without an IoT Core transport (e.g. a local-only MQTT broker)
             # skip the IoT Core bridge instead of failing the whole component.
             try:
-                MessagingClient.subscribe_to_iot_core(
+                MessagingClient.subscribe_northbound(
                     self._hello_topic,
                     self.iot_core_hello_world_handler,
                     QOS.AT_LEAST_ONCE,
@@ -272,7 +272,7 @@ class GreengrassApp(ConfigurationChangeListener, ABC):
                 MessagingClient.publish(self._hello_topic, test_message)
                 logger.info(f"Publishing message {i} to iot core")
                 try:
-                    MessagingClient.publish_to_iot_core(
+                    MessagingClient.publish_northbound(
                         self._hello_topic, test_message, QOS.AT_LEAST_ONCE
                     )
                 except Exception as e:

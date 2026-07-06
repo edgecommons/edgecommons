@@ -111,6 +111,13 @@ open `trait`/`interface` seams in Rust/TS — a compile error if forgotten (safe
   messaging.
 - **Cross-language:** the interop harness node entrypoints (`test-infra/interop/*_node/*`) migrate to the
   new flags simultaneously so the matrix stays green.
+- **Wire-contract gate:** any core enhancement/change to emitted or accepted wire data extends the
+  interop nodes and assertions in the same change, then passes the full Java/Python/Rust/TypeScript
+  matrix over MQTT. Unit tests and same-language serialization tests do not satisfy this gate.
+- **Greengrass deployed regression:** every new feature/capability, and every Greengrass-reachable
+  behavior change, is deployed and exercised as a real component on `lab-5950x`. If the feature is not
+  Greengrass-applicable, record why and still run a baseline deployed-component smoke to catch runtime
+  regressions.
 
 ## 6. Docs & schema obligations
 

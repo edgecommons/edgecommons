@@ -32,13 +32,18 @@ fn put_get_and_the_convenience_value_accessors() {
     let dir = tempfile::tempdir().unwrap();
     let svc = open_service(dir.path());
 
-    svc.put("svc/token", b"top-secret", PutOptions::default()).unwrap();
+    svc.put("svc/token", b"top-secret", PutOptions::default())
+        .unwrap();
 
     // bytes / string / json convenience accessors all see the same value.
-    assert_eq!(svc.get_bytes("svc/token").unwrap().unwrap().as_slice(), b"top-secret");
+    assert_eq!(
+        svc.get_bytes("svc/token").unwrap().unwrap().as_slice(),
+        b"top-secret"
+    );
     assert_eq!(svc.get_string("svc/token").unwrap().unwrap(), "top-secret");
 
-    svc.put("svc/json", br#"{"a":1,"b":"two"}"#, PutOptions::default()).unwrap();
+    svc.put("svc/json", br#"{"a":1,"b":"two"}"#, PutOptions::default())
+        .unwrap();
     let v = svc.get_json("svc/json").unwrap().unwrap();
     assert_eq!(v["a"], 1);
     assert_eq!(v["b"], "two");
@@ -67,7 +72,10 @@ fn versions_list_get_version_and_delete() {
 
     // The latest is "two"; an explicit older version still reads "one".
     assert_eq!(svc.get("rotating").unwrap().unwrap().bytes(), b"two");
-    assert_eq!(svc.get_version("rotating", &v1).unwrap().unwrap().bytes(), b"one");
+    assert_eq!(
+        svc.get_version("rotating", &v1).unwrap().unwrap().bytes(),
+        b"one"
+    );
     assert!(svc.get_version("rotating", "99999999").unwrap().is_none());
 
     // list returns metadata only (no value) for each secret.
@@ -75,8 +83,14 @@ fn versions_list_get_version_and_delete() {
     assert_eq!(metas.len(), 1);
     assert_eq!(metas[0].name, "rotating");
 
-    assert!(svc.delete("rotating").unwrap(), "deleting an existing secret returns true");
-    assert!(!svc.delete("rotating").unwrap(), "deleting a missing secret returns false");
+    assert!(
+        svc.delete("rotating").unwrap(),
+        "deleting an existing secret returns true"
+    );
+    assert!(
+        !svc.delete("rotating").unwrap(),
+        "deleting a missing secret returns false"
+    );
     assert!(svc.get("rotating").unwrap().is_none());
 
     // refresh is a no-op without a central source (and must not error); stats reports the count.
@@ -85,7 +99,10 @@ fn versions_list_get_version_and_delete() {
     svc.put("b", b"2", PutOptions::default()).unwrap();
     let stats = svc.stats();
     assert_eq!(stats.secret_count, 2);
-    assert!(stats.last_sync_age_ms.is_none(), "no central sync configured");
+    assert!(
+        stats.last_sync_age_ms.is_none(),
+        "no central sync configured"
+    );
 }
 
 #[test]
@@ -104,16 +121,34 @@ fn typed_views_parse_well_known_json_shapes() {
     assert_eq!(aws.secret_access_key, "sk");
     assert_eq!(aws.session_token.as_deref(), Some("tok"));
 
-    svc.put("basic", br#"{"username":"u","password":"p"}"#, PutOptions::default()).unwrap();
+    svc.put(
+        "basic",
+        br#"{"username":"u","password":"p"}"#,
+        PutOptions::default(),
+    )
+    .unwrap();
     let basic = svc.get_basic_auth("basic").unwrap().unwrap();
-    assert_eq!((basic.username.as_str(), basic.password.as_str()), ("u", "p"));
+    assert_eq!(
+        (basic.username.as_str(), basic.password.as_str()),
+        ("u", "p")
+    );
 
-    svc.put("tls", br#"{"certPem":"CERT","keyPem":"KEY"}"#, PutOptions::default()).unwrap();
+    svc.put(
+        "tls",
+        br#"{"certPem":"CERT","keyPem":"KEY"}"#,
+        PutOptions::default(),
+    )
+    .unwrap();
     let tls = svc.get_tls_bundle("tls").unwrap().unwrap();
     assert_eq!(tls.cert_pem, "CERT");
     assert!(tls.ca_pem.is_none());
 
-    svc.put("kafka", br#"{"username":"ku","password":"kp"}"#, PutOptions::default()).unwrap();
+    svc.put(
+        "kafka",
+        br#"{"username":"ku","password":"kp"}"#,
+        PutOptions::default(),
+    )
+    .unwrap();
     let kafka = svc.get_kafka_sasl("kafka").unwrap().unwrap();
     assert_eq!(kafka.mechanism, "PLAIN", "mechanism defaults to PLAIN");
     assert_eq!(kafka.username, "ku");
@@ -130,11 +165,18 @@ fn typed_views_parse_well_known_json_shapes() {
 fn secret_debug_redacts_the_value() {
     let dir = tempfile::tempdir().unwrap();
     let svc = open_service(dir.path());
-    svc.put("pw", b"do-not-leak", PutOptions::default()).unwrap();
+    svc.put("pw", b"do-not-leak", PutOptions::default())
+        .unwrap();
     let secret = svc.get("pw").unwrap().unwrap();
     let rendered = format!("{secret:?}");
-    assert!(rendered.contains("redacted"), "Debug must redact: {rendered}");
-    assert!(!rendered.contains("do-not-leak"), "the value must never appear in Debug: {rendered}");
+    assert!(
+        rendered.contains("redacted"),
+        "Debug must redact: {rendered}"
+    );
+    assert!(
+        !rendered.contains("do-not-leak"),
+        "the value must never appear in Debug: {rendered}"
+    );
 }
 
 #[test]
@@ -153,8 +195,10 @@ fn audit_default_log_sink_records_access_without_panicking() {
 fn secret_refs_in_config_resolve_from_the_vault() {
     let dir = tempfile::tempdir().unwrap();
     let svc = open_service(dir.path());
-    svc.put("db/password", b"hunter2", PutOptions::default()).unwrap();
-    svc.put("blob", br#"{"token":"abc123"}"#, PutOptions::default()).unwrap();
+    svc.put("db/password", b"hunter2", PutOptions::default())
+        .unwrap();
+    svc.put("blob", br#"{"token":"abc123"}"#, PutOptions::default())
+        .unwrap();
 
     // Whole-value ref, a field ref, and refs nested inside an array (exercises every branch).
     let mut config = serde_json::json!({
@@ -188,10 +232,16 @@ fn vault_id_and_latest_central_version_id_and_format_mismatch() {
         v.put(
             "synced",
             b"value",
-            PutOptions { central_version_id: Some("upstream-7".to_string()), ..PutOptions::default() },
+            PutOptions {
+                central_version_id: Some("upstream-7".to_string()),
+                ..PutOptions::default()
+            },
         )
         .unwrap();
-        assert_eq!(v.latest_central_version_id("synced").as_deref(), Some("upstream-7"));
+        assert_eq!(
+            v.latest_central_version_id("synced").as_deref(),
+            Some("upstream-7")
+        );
         assert!(v.latest_central_version_id("absent").is_none());
     }
 

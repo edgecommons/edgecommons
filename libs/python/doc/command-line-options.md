@@ -172,7 +172,7 @@ When using the `MQTT` transport (e.g. the `HOST` platform), you must provide a s
         "password": "mqtt-pass"
       }
     },
-    "iotCore": {
+    "northbound": {
       "endpoint": "your-endpoint.iot.us-east-1.amazonaws.com",
       "port": 8883,
       "clientId": "my-component-iotcore",
@@ -190,7 +190,7 @@ When using the `MQTT` transport (e.g. the `HOST` platform), you must provide a s
 ```json
 {
   "messaging": {
-    "iotCore": {
+    "northbound": {
       "endpoint": "your-endpoint.iot.us-east-1.amazonaws.com",
       "port": 8883,
       "clientId": "my-device",

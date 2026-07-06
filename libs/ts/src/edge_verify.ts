@@ -161,7 +161,7 @@ async function main(): Promise<void> {
     const cmdTopic = `edgecommons/${thing}/ts-edge-verify/cmd`;
     const telemetryTopic = `edgecommons/${thing}/ts-edge-verify/telemetry`;
     try {
-      await svc.subscribeToIoTCore(
+      await svc.subscribeNorthbound(
         cmdTopic,
         (_t, m) => {
           results.iot_command_received = { ok: true, body: m.isRaw() ? m.getRaw() : m.getBody() };
@@ -169,13 +169,13 @@ async function main(): Promise<void> {
         },
         Qos.AtLeastOnce,
       );
-      cleanups.push(() => svc.unsubscribeFromIoTCore(cmdTopic));
+      cleanups.push(() => svc.unsubscribeNorthbound(cmdTopic));
       results.iot_subscribe = { ok: true, topic: cmdTopic };
     } catch (e) {
       results.iot_subscribe = { ok: false, error: errDetail(e) };
     }
     try {
-      await svc.publishToIoTCore(
+      await svc.publishNorthbound(
         telemetryTopic,
         MessageBuilder.create("Telemetry", "1.0").withConfig(cfg).withPayload({ seq: 1 }).build(),
         Qos.AtLeastOnce,

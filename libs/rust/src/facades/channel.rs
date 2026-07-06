@@ -9,19 +9,19 @@ use crate::error::{EdgeCommonsError, Result};
 /// A publish-channel address: the uniform `{ local, northbound, stream:<name> }` routing target.
 ///
 /// - [`Channel::Local`] — the local bus (`messaging().publish`). The default.
-/// - [`Channel::Northbound`] — AWS IoT Core (`messaging().publish_to_iot_core`).
+/// - [`Channel::Northbound`] — the northbound/cloud broker (`messaging().publish_northbound`).
 /// - [`Channel::Stream`] — the named durable telemetry stream
 ///   (`streams().stream(name).append(...)`); **only [`crate::facades::DataFacade`] honors it** —
 ///   `events()`/`app()` reject a stream channel (they are low-rate control-plane, not bulk
 ///   telemetry).
 ///
 /// [`Channel::from_config`] parses the config `publish.channel` string (DESIGN-class-facades §4
-/// Option C): `"local"`, `"northbound"`/`"iotcore"`/`"iot_core"`, or `"stream:<name>"`.
+/// Option C): `"local"`, `"northbound"`, or `"stream:<name>"`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Channel {
     /// The local bus channel (the default).
     Local,
-    /// The AWS IoT Core (northbound) channel.
+    /// The northbound/cloud channel.
     Northbound,
     /// The named durable-stream channel (`data()` only).
     Stream(String),
@@ -35,7 +35,9 @@ impl Channel {
     pub fn stream(name: impl Into<String>) -> Result<Channel> {
         let name = name.into();
         if name.is_empty() {
-            return Err(EdgeCommonsError::Facade("stream channel name must be non-empty".to_string()));
+            return Err(EdgeCommonsError::Facade(
+                "stream channel name must be non-empty".to_string(),
+            ));
         }
         Ok(Channel::Stream(name))
     }
@@ -47,8 +49,8 @@ impl Channel {
     }
 
     /// Parses a config `publish.channel` string into a channel (DESIGN-class-facades §4, Option
-    /// C). Recognized: `"local"` → [`Channel::Local`]; `"northbound"` / `"iotcore"` /
-    /// `"iot_core"` → [`Channel::Northbound`]; `"stream:<name>"` → [`Channel::Stream`]. Any other
+    /// C). Recognized: `"local"` → [`Channel::Local`]; `"northbound"` →
+    /// [`Channel::Northbound`]; `"stream:<name>"` → [`Channel::Stream`]. Any other
     /// (or empty) value yields `None` so the caller can fall through to its own default.
     pub fn from_config(value: &str) -> Option<Channel> {
         let trimmed = value.trim();
@@ -59,11 +61,15 @@ impl Channel {
         if lower == "local" {
             return Some(Channel::Local);
         }
-        if lower == "northbound" || lower == "iotcore" || lower == "iot_core" {
+        if lower == "northbound" {
             return Some(Channel::Northbound);
         }
         if let Some(name) = trimmed.strip_prefix("stream:") {
-            return if name.is_empty() { None } else { Some(Channel::Stream(name.to_string())) };
+            return if name.is_empty() {
+                None
+            } else {
+                Some(Channel::Stream(name.to_string()))
+            };
         }
         None
     }
@@ -87,11 +93,17 @@ mod tests {
     #[test]
     fn from_config_recognizes_all_forms() {
         assert_eq!(Channel::from_config("local"), Some(Channel::Local));
-        assert_eq!(Channel::from_config("northbound"), Some(Channel::Northbound));
-        assert_eq!(Channel::from_config("iotcore"), Some(Channel::Northbound));
-        assert_eq!(Channel::from_config("iot_core"), Some(Channel::Northbound));
-        assert_eq!(Channel::from_config("stream:hot"), Some(Channel::Stream("hot".to_string())));
+        assert_eq!(
+            Channel::from_config("northbound"),
+            Some(Channel::Northbound)
+        );
+        assert_eq!(
+            Channel::from_config("stream:hot"),
+            Some(Channel::Stream("hot".to_string()))
+        );
         assert_eq!(Channel::from_config(""), None);
+        assert_eq!(Channel::from_config("iotcore"), None);
+        assert_eq!(Channel::from_config("iot_core"), None);
         assert_eq!(Channel::from_config("stream:"), None);
         assert_eq!(Channel::from_config("bogus"), None);
     }

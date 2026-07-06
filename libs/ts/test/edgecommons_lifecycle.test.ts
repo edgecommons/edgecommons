@@ -22,7 +22,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // is real, but we never publish through it here.
 const standaloneConnect = vi.fn(async () => ({ kind: "standalone-provider", connected: () => true }));
 const ipcConnect = vi.fn(async () => ({ kind: "ipc-provider", connected: () => true }));
-const loadMessagingConfigMock = vi.fn(async () => ({ messaging: { local: { host: "h", port: 1 } } }));
+const loadMessagingConfigMock = vi.fn(async () => ({ local: { host: "h", port: 1, clientId: "c" } }));
 
 // Health server: spy on start (keep ReadinessState + evaluateHealth real) so platform/config gating is
 // asserted without binding a socket. start() resolves to a stub with a no-op stop().
@@ -40,7 +40,14 @@ vi.mock("../src/messaging/standalone-provider", async (importOriginal) => {
 vi.mock("../src/messaging/ipc-provider", () => ({
   IpcMessagingProvider: { connect: (...a: unknown[]) => ipcConnect(...a) },
 }));
-vi.mock("../src/messaging/config", () => ({ loadMessagingConfig: (...a: unknown[]) => loadMessagingConfigMock(...a) }));
+vi.mock("../src/messaging/config", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/messaging/config")>();
+  return {
+    ...actual,
+    loadMessagingConfig: (...a: unknown[]) => loadMessagingConfigMock(...a),
+    qosConfigFromBrokers: actual.defaultQosConfig,
+  };
+});
 
 // Metric emitter: a ConfigurationChangeListener + MetricService double.
 const metricShutdown = vi.fn(async () => undefined);
@@ -100,7 +107,7 @@ beforeEach(() => {
   standaloneConnect.mockResolvedValue({ kind: "standalone-provider", connected: () => true });
   ipcConnect.mockResolvedValue({ kind: "ipc-provider", connected: () => true });
   healthStart.mockResolvedValue({ stop: healthStop, port: () => 0 });
-  loadMessagingConfigMock.mockResolvedValue({ messaging: { local: { host: "h", port: 1 } } });
+  loadMessagingConfigMock.mockResolvedValue({ local: { host: "h", port: 1, clientId: "c" } });
   credOpen.mockResolvedValue({ kind: "cred-svc" });
   paramOpen.mockResolvedValue({ kind: "param-svc", close: paramClose });
   streamOpen.mockReturnValue({ kind: "stream-svc", close: streamSvcClose });

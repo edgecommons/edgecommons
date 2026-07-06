@@ -68,8 +68,8 @@ HOST/MQTT is configured by a **messaging config JSON** file, passed as the posit
 
 - **`local`** (required) — the local broker. Fields: `host`, `port`, `clientId`, optional `type`,
   optional `credentials`.
-- **`iotCore`** (optional) — an AWS IoT Core connection. Fields: `endpoint`, `port`, `clientId`,
-  `credentials`.
+- **`northbound`** (optional) — a generic northbound MQTT broker. Fields: `host` or `endpoint`,
+  `port`, `clientId`, optional `credentials`.
 
 TLS is configured inside `credentials`: `caPath` (the CA to verify the broker) plus `certPath` and
 `keyPath` (the client cert/key for mutual TLS). For a plaintext local broker on `1883` you omit
@@ -79,7 +79,7 @@ Where the file comes from differs per SDK. The **Rust/TS** scaffolds ship a read
 `test-configs/standalone-messaging.json` (the minimal local-only form; `type` is ignored by Rust/TS).
 The **Java/Python** scaffolds do **not** include this file — you create `./standalone-messaging.json`
 yourself, as the generated `README` instructs ("Provide an MQTT messaging-config JSON"). A full
-sample that sets `type` and includes an `iotCore` block lives in the library repo at
+sample that sets `type` and includes a `northbound` block lives in the library repo at
 `libs/java/standalone-messaging-sample.json` / `libs/python/standalone-messaging-sample.json` — copy
 it and edit. Each running process must use a **unique `clientId`**.
 
@@ -87,8 +87,8 @@ it and edit. Each running process must use a **unique `clientId`**.
 <TabItem label="Java">
 
 Create `./standalone-messaging.json` yourself (the Java scaffold does not ship it — copy
-`libs/java/standalone-messaging-sample.json` from the library repo). Full sample with an optional IoT
-Core connection:
+`libs/java/standalone-messaging-sample.json` from the library repo). Full sample with an optional
+northbound connection:
 
 ```json
 {
@@ -99,7 +99,7 @@ Core connection:
       "port": 1883,
       "clientId": "my-component-local"
     },
-    "iotCore": {
+    "northbound": {
       "endpoint": "xxxx-ats.iot.us-east-1.amazonaws.com",
       "port": 8883,
       "clientId": "my-component",
@@ -118,7 +118,7 @@ Core connection:
 
 Create `./standalone-messaging.json` yourself (the Python scaffold does not ship it — copy
 `libs/python/standalone-messaging-sample.json` from the library repo). Full sample with an optional
-IoT Core connection:
+northbound connection:
 
 ```json
 {
@@ -129,7 +129,7 @@ IoT Core connection:
       "port": 1883,
       "clientId": "my-component-local"
     },
-    "iotCore": {
+    "northbound": {
       "endpoint": "xxxx-ats.iot.us-east-1.amazonaws.com",
       "port": 8883,
       "clientId": "my-component",
@@ -276,17 +276,19 @@ You should see periodic `state` envelopes on `ecv1/<device>/<component>/main/sta
 on your own topics, and the [Configuration guide](/guides/configuration/) to drive behavior from
 the `-c FILE` config.
 
-## Connecting to AWS IoT Core
+## Connecting to a Northbound Broker
 
-The `iotCore` block makes the component connect to AWS IoT Core **in addition** to the local broker —
-the dual-MQTT provider bridges both. It always uses **mutual TLS** on port `8883`:
+The `northbound` block makes the component connect to a second MQTT broker **in addition** to the
+local broker. AWS IoT Core is one valid northbound broker, but k8s and standalone deployments can
+point this at any MQTT broker.
 
-- `endpoint` — your account's `xxxx-ats.iot.<region>.amazonaws.com` ATS data endpoint.
-- `credentials.certPath` / `credentials.keyPath` — the device certificate and private key.
-- `credentials.caPath` — the Amazon Root CA used to verify IoT Core.
+- `host` or `endpoint` — the northbound broker host, such as an AWS IoT Core ATS endpoint.
+- `credentials.caPath` — enables TLS and verifies the broker certificate.
+- `credentials.certPath` / `credentials.keyPath` — optional client certificate and private key for
+  mutual TLS.
 
 Provision a Thing, certificate, and policy in AWS IoT, then point `certPath`/`keyPath`/`caPath` at the
-downloaded files (paths are resolved relative to the working directory). Omit the whole `iotCore`
+downloaded files (paths are resolved relative to the working directory). Omit the whole `northbound`
 block to run purely against the local broker.
 
 ## Containerizing for a bare host

@@ -43,7 +43,9 @@ pub mod source;
 #[cfg(feature = "parameters-aws")]
 pub mod ssm;
 
-pub use config::{open, CacheConfig, ParamSourceConfig, ParamSyncSelect, ParametersConfig, PathEntry};
+pub use config::{
+    CacheConfig, ParamSourceConfig, ParamSyncSelect, ParametersConfig, PathEntry, open,
+};
 pub use service::{DefaultParameterService, ParameterService, ParameterStats};
 pub use source::{EnvSource, MountedDirSource, ParamValue, ParameterSource};
 
@@ -69,7 +71,10 @@ mod tests {
         unsafe { std::env::set_var("GGTEST_ENV_MYAPP_DB_HOST", "db.example.com") };
         unsafe { std::env::set_var("GGTEST_ENV_MYAPP_DB_POOLSIZE", "8") };
         let s = svc_env("GGTEST_ENV_", &["/myapp/db/host", "/myapp/db/poolSize"]);
-        assert_eq!(s.get("/myapp/db/host").unwrap().as_deref(), Some("db.example.com"));
+        assert_eq!(
+            s.get("/myapp/db/host").unwrap().as_deref(),
+            Some("db.example.com")
+        );
         assert_eq!(s.get_int("/myapp/db/poolSize").unwrap(), Some(8));
         // Missing parameter is None, not an error.
         assert_eq!(s.get("/myapp/db/missing").unwrap(), None);
@@ -82,8 +87,14 @@ mod tests {
         unsafe { std::env::set_var("GGTEST_TYPED_OBJ", r#"{"k":1}"#) };
         let s = svc_env("GGTEST_TYPED_", &["/flag", "/list", "/obj"]);
         assert_eq!(s.get_bool("/flag").unwrap(), Some(true));
-        assert_eq!(s.get_string_list("/list").unwrap(), Some(vec!["a".into(), "b".into(), "c".into()]));
-        assert_eq!(s.get_json("/obj").unwrap().unwrap()["k"], serde_json::json!(1));
+        assert_eq!(
+            s.get_string_list("/list").unwrap(),
+            Some(vec!["a".into(), "b".into(), "c".into()])
+        );
+        assert_eq!(
+            s.get_json("/obj").unwrap().unwrap()["k"],
+            serde_json::json!(1)
+        );
     }
 
     #[test]
@@ -98,7 +109,10 @@ mod tests {
         // K8s projects an internal "..data" symlink dir that must be skipped.
         std::fs::create_dir_all(dir.join("..data")).unwrap();
 
-        let source = Arc::new(MountedDirSource::new(dir.clone(), vec!["/secret".to_string()]));
+        let source = Arc::new(MountedDirSource::new(
+            dir.clone(),
+            vec!["/secret".to_string()],
+        ));
         let s = DefaultParameterService::with_memory_cache(
             source,
             vec![],
@@ -106,7 +120,10 @@ mod tests {
         );
         s.refresh().unwrap();
 
-        assert_eq!(s.get("/myapp/db/host").unwrap().as_deref(), Some("cfg.example.com"));
+        assert_eq!(
+            s.get("/myapp/db/host").unwrap().as_deref(),
+            Some("cfg.example.com")
+        );
         assert_eq!(s.get("/secret/token").unwrap().as_deref(), Some("s3cr3t"));
         let names = s.names("/").unwrap();
         assert!(names.contains(&"/myapp/db/host".to_string()));
@@ -123,7 +140,11 @@ mod tests {
         unsafe { std::env::set_var("GGTEST_PATH_MYAPP_B", "2") };
         unsafe { std::env::set_var("GGTEST_PATH_OTHER_C", "3") };
         let source = Arc::new(EnvSource::new("GGTEST_PATH_"));
-        let s = DefaultParameterService::with_memory_cache(source, vec![], vec![("/myapp".to_string(), true)]);
+        let s = DefaultParameterService::with_memory_cache(
+            source,
+            vec![],
+            vec![("/myapp".to_string(), true)],
+        );
         s.refresh().unwrap();
         let sub = s.get_by_path("/myapp").unwrap();
         assert_eq!(sub.get("/myapp/a").map(String::as_str), Some("1"));
@@ -137,7 +158,11 @@ mod tests {
         fn fetch(&self, _name: &str) -> crate::Result<Option<ParamValue>> {
             Err(crate::error::EdgeCommonsError::Parameters("offline".into()))
         }
-        fn fetch_by_path(&self, _path: &str, _recursive: bool) -> crate::Result<Vec<(String, ParamValue)>> {
+        fn fetch_by_path(
+            &self,
+            _path: &str,
+            _recursive: bool,
+        ) -> crate::Result<Vec<(String, ParamValue)>> {
             Err(crate::error::EdgeCommonsError::Parameters("offline".into()))
         }
         fn source_id(&self) -> &str {
@@ -188,7 +213,10 @@ mod tests {
         });
         let cfg: ParametersConfig = serde_json::from_value(raw).unwrap();
         let s = open(&cfg).unwrap();
-        assert_eq!(s.get("/myapp/region").unwrap().as_deref(), Some("us-east-1"));
+        assert_eq!(
+            s.get("/myapp/region").unwrap().as_deref(),
+            Some("us-east-1")
+        );
         assert_eq!(s.stats().source, "env");
     }
 
@@ -263,9 +291,17 @@ mod tests {
         struct SecretSource;
         impl ParameterSource for SecretSource {
             fn fetch(&self, _n: &str) -> crate::Result<Option<ParamValue>> {
-                Ok(Some(ParamValue { value: b"hunter2".to_vec(), secure: true, version: Some("7".into()) }))
+                Ok(Some(ParamValue {
+                    value: b"hunter2".to_vec(),
+                    secure: true,
+                    version: Some("7".into()),
+                }))
             }
-            fn fetch_by_path(&self, _p: &str, _r: bool) -> crate::Result<Vec<(String, ParamValue)>> {
+            fn fetch_by_path(
+                &self,
+                _p: &str,
+                _r: bool,
+            ) -> crate::Result<Vec<(String, ParamValue)>> {
                 Ok(vec![])
             }
             fn source_id(&self) -> &str {
@@ -289,8 +325,9 @@ mod tests {
     fn background_refresh_observes_changes() {
         unsafe { std::env::set_var("GGTEST_BG_VAL", "1") };
         let source = Arc::new(EnvSource::new("GGTEST_BG_"));
-        let s = DefaultParameterService::with_memory_cache(source, vec!["/val".to_string()], vec![])
-            .with_refresh(1);
+        let s =
+            DefaultParameterService::with_memory_cache(source, vec!["/val".to_string()], vec![])
+                .with_refresh(1);
         s.refresh().unwrap();
         assert_eq!(s.get("/val").unwrap().as_deref(), Some("1"));
         unsafe { std::env::set_var("GGTEST_BG_VAL", "2") };
@@ -331,7 +368,8 @@ mod tests {
         assert!(open(&cfg).is_err());
         // mountedDir without a root is a config error.
         let cfg: ParametersConfig =
-            serde_json::from_value(serde_json::json!({ "source": { "type": "mountedDir" } })).unwrap();
+            serde_json::from_value(serde_json::json!({ "source": { "type": "mountedDir" } }))
+                .unwrap();
         assert!(open(&cfg).is_err());
     }
 
@@ -355,7 +393,10 @@ mod tests {
 
     #[test]
     fn mounted_dir_missing_base_is_empty() {
-        let src = MountedDirSource::new(std::env::temp_dir().join("ggparam-does-not-exist-xyz"), vec![]);
+        let src = MountedDirSource::new(
+            std::env::temp_dir().join("ggparam-does-not-exist-xyz"),
+            vec![],
+        );
         assert!(src.fetch_by_path("/", true).unwrap().is_empty());
     }
 
@@ -370,7 +411,8 @@ mod tests {
     #[test]
     fn path_entry_object_defaults_recursive_true() {
         let cfg: ParametersConfig =
-            serde_json::from_value(serde_json::json!({ "sync": { "paths": [{ "path": "/p" }] } })).unwrap();
+            serde_json::from_value(serde_json::json!({ "sync": { "paths": [{ "path": "/p" }] } }))
+                .unwrap();
         assert!(cfg.sync.paths[0].recursive);
     }
 
@@ -382,7 +424,12 @@ mod tests {
         let s = svc_env("GGTEST_TB_", &["/off", "/empty", "/bad"]);
         assert_eq!(s.get_bool("/off").unwrap(), Some(false));
         assert_eq!(s.get_string_list("/empty").unwrap(), Some(vec![]));
-        assert!(s.get_int("/bad").unwrap_err().to_string().contains("not an integer"));
+        assert!(
+            s.get_int("/bad")
+                .unwrap_err()
+                .to_string()
+                .contains("not an integer")
+        );
         // Missing names => None across typed accessors.
         assert_eq!(s.get_int("/nope").unwrap(), None);
         assert_eq!(s.get_bool("/nope").unwrap(), None);

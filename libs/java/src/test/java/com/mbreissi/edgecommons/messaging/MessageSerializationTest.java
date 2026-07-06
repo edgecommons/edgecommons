@@ -10,9 +10,11 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import org.junit.jupiter.api.Test;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -59,21 +61,50 @@ class MessageSerializationTest {
     }
 
     /**
-     * #16: a {@code byte[]} body must serialize as a base64 JSON string (portable cross-language
-     * interim), not as a Gson number array. The canonical vector {0,1,2,254,255} base64-encodes to
-     * "AAEC/v8=" — the same string Python/TS produce for the same bytes.
+     * #16: a {@code byte[]} body must serialize as the first-class binary body marker, not as a
+     * Gson number array or a lossy bare string.
      */
     @Test
-    void byteArrayBodySerializesAsBase64String() {
+    void byteArrayBodySerializesAsBinaryMarker() {
         byte[] bytes = new byte[] {0, 1, 2, (byte) 254, (byte) 255};
 
         Message m = MessageBuilder.create("Bin", "1.0").withPayload(bytes)
             .withConfig(new MockConfigurationService()).build();
         JsonElement body = m.toDict().get("body");
 
-        assertTrue(body.isJsonPrimitive() && body.getAsJsonPrimitive().isString(),
-            "a byte[] body must serialize as a base64 JSON string, not a number array");
-        assertEquals("AAEC/v8=", body.getAsString());
+        JsonObject marker = body.getAsJsonObject().getAsJsonObject("_edgecommonsBinary");
+        assertEquals("base64", marker.get("encoding").getAsString());
+        assertEquals(5, marker.get("length").getAsInt());
+        assertEquals("AAEC/v8=", marker.get("data").getAsString());
+        assertTrue(m.isBinaryBody());
+        assertArrayEquals(bytes, m.getBinaryBody());
+    }
+
+    @Test
+    void inboundBinaryMarkerDecodesAndValidatesLength() {
+        JsonObject marker = new JsonObject();
+        JsonObject descriptor = new JsonObject();
+        descriptor.addProperty("encoding", "base64");
+        descriptor.addProperty("length", 5);
+        descriptor.addProperty("data", "AAEC/v8=");
+        marker.add("_edgecommonsBinary", descriptor);
+        JsonObject msg = new JsonObject();
+        msg.add("body", marker);
+
+        Message m = MessageBuilder.fromObject(msg);
+
+        assertTrue(m.isBinaryBody());
+        assertArrayEquals(new byte[] {0, 1, 2, (byte) 254, (byte) 255}, m.getBinaryBody());
+        descriptor.addProperty("length", 4);
+        assertThrows(IllegalArgumentException.class, m::getBinaryBody);
+    }
+
+    @Test
+    void oversizedBinaryBodyIsRejected() {
+        byte[] bytes = new byte[Message.MAX_BINARY_BODY_BYTES + 1];
+        Message m = MessageBuilder.create("Bin", "1.0").withPayload(bytes).build();
+
+        assertThrows(IllegalArgumentException.class, m::toDict);
     }
 
     /**

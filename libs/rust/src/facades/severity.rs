@@ -58,7 +58,12 @@ mod tests {
 
     #[test]
     fn wire_tokens_round_trip() {
-        for s in [Severity::Critical, Severity::Warning, Severity::Info, Severity::Debug] {
+        for s in [
+            Severity::Critical,
+            Severity::Warning,
+            Severity::Info,
+            Severity::Debug,
+        ] {
             assert_eq!(Severity::from_wire(s.wire()), Some(s));
         }
         assert_eq!(Severity::from_wire("bogus"), None);
@@ -66,7 +71,10 @@ mod tests {
 
     #[test]
     fn serde_uses_the_wire_tokens() {
-        assert_eq!(serde_json::to_value(Severity::Critical).unwrap(), serde_json::json!("critical"));
+        assert_eq!(
+            serde_json::to_value(Severity::Critical).unwrap(),
+            serde_json::json!("critical")
+        );
         assert_eq!(
             serde_json::from_value::<Severity>(serde_json::json!("debug")).unwrap(),
             Severity::Debug

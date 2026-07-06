@@ -12,7 +12,6 @@ import com.mbreissi.edgecommons.uns.UnsClass;
 import com.google.gson.JsonObject;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import software.amazon.awssdk.aws.greengrass.model.QOS;
 
 import java.time.Duration;
 import java.util.function.BiConsumer;
@@ -94,18 +93,18 @@ public class MessagingClient
     }
 
     /**
-     * Publishes a message to AWS IoT Core with specified quality of service. Reserved-class UNS
+     * Publishes a message to the northbound transport with specified quality of service. Reserved-class UNS
      * topics are rejected (§4.1).
      *
-     * @param topic The IoT Core topic to publish to
+     * @param topic The northbound topic to publish to
      * @param msg The message to publish
      * @param qos The quality of service level for message delivery
      * @throws ReservedTopicException when the topic targets a reserved UNS class
      */
-    public void publishToIoTCore(String topic, Message msg, QOS qos)
+    public void publishNorthbound(String topic, Message msg, Qos qos)
     {
         checkReservedTopic(topic);
-        messagingProvider.publishToIoTCore(topic, msg, qos);
+        messagingProvider.publishNorthbound(topic, msg, qos);
         LOGGER.debug("Published IoT Core message on topic '{}': {}", topic, msg.toString());
     }
 
@@ -131,10 +130,10 @@ public class MessagingClient
      * @param metricObject The JSON object to publish
      * @throws ReservedTopicException when the topic targets a reserved UNS class
      */
-    public void publishToIoTCoreRaw(String topic, JsonObject metricObject, QOS qos)
+    public void publishNorthboundRaw(String topic, JsonObject metricObject, Qos qos)
     {
         checkReservedTopic(topic);
-        messagingProvider.publishToIoTCoreRaw(topic, metricObject, qos);
+        messagingProvider.publishNorthboundRaw(topic, metricObject, qos);
     }
 
     /**
@@ -171,21 +170,21 @@ public class MessagingClient
      * @param callback The callback to invoke when messages are received
      * @param qos The quality of service level for the subscription
      */
-    public void subscribeToIoTCore(String topicFilter, BiConsumer<String, Message> callback, QOS qos)
+    public void subscribeNorthbound(String topicFilter, BiConsumer<String, Message> callback, Qos qos)
     {
-        subscribeToIoTCore(topicFilter, callback, qos, -1);
+        subscribeNorthbound(topicFilter, callback, qos, -1);
     }
 
-    public void subscribeToIoTCore(String topicFilter, BiConsumer<String, Message> callback, QOS qos, int maxConcurrency)
+    public void subscribeNorthbound(String topicFilter, BiConsumer<String, Message> callback, Qos qos, int maxConcurrency)
     {
-        subscribeToIoTCore(topicFilter, callback, qos, maxConcurrency, DEFAULT_MAX_MESSAGES);
+        subscribeNorthbound(topicFilter, callback, qos, maxConcurrency, DEFAULT_MAX_MESSAGES);
     }
 
     /** @param maxMessages per-subscription queue bound (drop-oldest + warn on overflow); {@code <= 0} = unbounded. */
-    public void subscribeToIoTCore(String topicFilter, BiConsumer<String, Message> callback, QOS qos, int maxConcurrency, int maxMessages)
+    public void subscribeNorthbound(String topicFilter, BiConsumer<String, Message> callback, Qos qos, int maxConcurrency, int maxMessages)
     {
-        messagingProvider.subscribeToIoTCore(topicFilter, callback, qos, maxConcurrency, maxMessages);
-        LOGGER.debug("Subscribed to IoT Core messages on topic filter {}", topicFilter);
+        messagingProvider.subscribeNorthbound(topicFilter, callback, qos, maxConcurrency, maxMessages);
+        LOGGER.debug("Subscribed to northbound messages on topic filter {}", topicFilter);
     }
 
     /**
@@ -225,30 +224,30 @@ public class MessagingClient
      * Sends a request message to IoT Core and returns a future for handling the reply. Carries the
      * same framework-owned default deadline as {@link #request(String, Message)}.
      *
-     * @param topic The IoT Core topic to send the request to
+     * @param topic The northbound topic to send the request to
      * @param request The request message
      * @return A ReplyFuture for handling the response
      */
-    public ReplyFuture requestFromIoTCore(String topic, Message request)
+    public ReplyFuture requestNorthbound(String topic, Message request)
     {
         checkReservedTopic(topic);
-        return messagingProvider.requestFromIoTCore(topic, request);
+        return messagingProvider.requestNorthbound(topic, request);
     }
 
     /**
-     * {@link #requestFromIoTCore(String, Message)} with an explicit per-call deadline (§5, D-U5):
+     * {@link #requestNorthbound(String, Message)} with an explicit per-call deadline (§5, D-U5):
      * an explicit value wins over the configured default; {@code null} uses the default;
      * {@link Duration#ZERO} disables the deadline for this call.
      *
-     * @param topic The IoT Core topic to send the request to
+     * @param topic The northbound topic to send the request to
      * @param request The request message
      * @param timeout The per-call deadline ({@code null} = default, zero = disabled)
      * @return A ReplyFuture for handling the response
      */
-    public ReplyFuture requestFromIoTCore(String topic, Message request, Duration timeout)
+    public ReplyFuture requestNorthbound(String topic, Message request, Duration timeout)
     {
         checkReservedTopic(topic);
-        return messagingProvider.requestFromIoTCore(topic, request, timeout);
+        return messagingProvider.requestNorthbound(topic, request, timeout);
     }
 
     /**
@@ -292,9 +291,9 @@ public class MessagingClient
         messagingProvider.cancelRequest(replyFuture);
     }
 
-    public void cancelRequestFromIoTCore(ReplyFuture replyFuture)
+    public void cancelRequestNorthbound(ReplyFuture replyFuture)
     {
-        messagingProvider.cancelRequestFromIoTCore(replyFuture);
+        messagingProvider.cancelRequestNorthbound(replyFuture);
     }
 
     /**
@@ -320,10 +319,10 @@ public class MessagingClient
      *
      * @throws ReservedTopicException when the request's reply topic targets a reserved UNS class
      */
-    public void replyToIoTCore(Message request, Message reply)
+    public void replyNorthbound(Message request, Message reply)
     {
         checkReservedTopic(replyTopicOf(request));
-        messagingProvider.replyToIoTCore(request, reply);
+        messagingProvider.replyNorthbound(request, reply);
     }
 
     /** The request's {@code reply_to} topic, or {@code null} when it has no header/reply-to. */
@@ -446,9 +445,9 @@ public class MessagingClient
     }
 
     /** Unguarded IoT Core publish — the {@link ReservedPublisher} delegate (§4.2). */
-    protected void publishReservedToIoTCore(String topic, Message msg, QOS qos)
+    protected void publishReservedNorthbound(String topic, Message msg, Qos qos)
     {
-        messagingProvider.publishToIoTCore(topic, msg, qos);
+        messagingProvider.publishNorthbound(topic, msg, qos);
         LOGGER.debug("Published reserved IoT Core message on topic '{}'", topic);
     }
 
@@ -463,9 +462,9 @@ public class MessagingClient
         LOGGER.debug("Unsubscribed to IPC messages on topic filter {}", topicFilter);
     }
 
-    public void unsubscribeFromIoTCore(String topicFilter)
+    public void unsubscribeNorthbound(String topicFilter)
     {
-        messagingProvider.unsubscribeFromIoTCore(topicFilter);
+        messagingProvider.unsubscribeNorthbound(topicFilter);
         LOGGER.debug("Unsubscribed to IPC messages on topic filter {}", topicFilter);
     }
 
@@ -520,9 +519,9 @@ public class MessagingClient
      *
      * @return The native messaging client object
      */
-    public Object getNativeIotCoreClient()
+    public Object getNativeNorthboundClient()
     {
-        return messagingProvider.getNativeIotCoreClient();
+        return messagingProvider.getNativeNorthboundClient();
     }
 
 }

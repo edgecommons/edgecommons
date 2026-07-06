@@ -23,12 +23,12 @@ from edgecommons.messaging.messaging_config import (
     MessagingConfiguration,
     MessagingConfigData,
     LocalMqttConfig,
-    IoTCoreConfig,
+    NorthboundMqttConfig,
     CredentialsConfig,
 )
 from edgecommons.messaging.message import Message, MessageHeader
 from edgecommons.messaging.message_builder import MessageBuilder
-from awsiot.greengrasscoreipc.model import QOS
+from edgecommons.messaging.qos import Qos
 
 
 # --------------------------------------------------------------------------- fakes
@@ -131,7 +131,7 @@ def _local_only_config():
     cfg = MessagingConfiguration()
     cfg.messaging = MessagingConfigData(
         local=LocalMqttConfig(type="mqtt", host="localhost", port=1883, client_id="local-cid"),
-        iot_core=None,
+        northbound=None,
     )
     return cfg
 
@@ -140,10 +140,10 @@ def _dual_config():
     cfg = MessagingConfiguration()
     cfg.messaging = MessagingConfigData(
         local=LocalMqttConfig(type="mqtt", host="localhost", port=1883, client_id="local-cid"),
-        iot_core=IoTCoreConfig(
-            endpoint="iot.example.com",
+        northbound=NorthboundMqttConfig(
+            endpoint="northbound.example.com",
             port=8883,
-            client_id="iot-cid",
+            client_id="northbound-cid",
             credentials=CredentialsConfig(cert_path="c.pem", key_path="k.pem", ca_path="a.pem"),
         ),
     )
@@ -152,7 +152,7 @@ def _dual_config():
 
 @pytest.fixture
 def _patch_ssl(monkeypatch):
-    """Avoid real cert file IO when the iotcore/local TLS path runs."""
+    """Avoid real cert file IO when the northbound/local TLS path runs."""
     import ssl as _ssl
 
     monkeypatch.setattr(_ssl, "create_default_context", lambda *a, **k: SimpleNamespace(
@@ -176,7 +176,7 @@ class TestInitAndConnect:
         prov = StandaloneProvider(_local_only_config(), "thing-1")
         clients = prov.get_native_client()
         assert clients["local"] is not None
-        assert clients["iot_core"] is None
+        assert clients["northbound"] is None
         assert clients["local"].host == "localhost"
         assert clients["local"].port == 1883
         assert clients["local"].loop_started is True
@@ -187,10 +187,10 @@ class TestInitAndConnect:
     def test_dual_broker_initializes_both(self, _patch_ssl):
         prov = StandaloneProvider(_dual_config(), "thing-1")
         clients = prov.get_native_client()
-        assert clients["local"] is not None and clients["iot_core"] is not None
-        # IoT Core must have had a TLS context configured.
-        assert clients["iot_core"].tls_context is not None
-        assert clients["iot_core"].host == "iot.example.com"
+        assert clients["local"] is not None and clients["northbound"] is not None
+        # Northbound has a CA path, so it must have a TLS context configured.
+        assert clients["northbound"].tls_context is not None
+        assert clients["northbound"].host == "northbound.example.com"
         prov.disconnect()
 
     def test_client_id_falls_back_to_thing_name(self):
@@ -249,11 +249,12 @@ class TestInitAndConnect:
 
 
 class TestTls:
-    def test_iotcore_refuses_incomplete_creds(self):
+    def test_northbound_without_ca_uses_plain_mqtt(self):
         cfg = _dual_config()
-        cfg.messaging.iot_core.credentials = CredentialsConfig(cert_path="c", key_path=None, ca_path="a")
-        with pytest.raises(RuntimeError, match="IoT Core"):
-            StandaloneProvider(cfg, "t")
+        cfg.messaging.northbound.credentials = CredentialsConfig(cert_path="c", key_path=None, ca_path=None)
+        prov = StandaloneProvider(cfg, "t")
+        assert prov.get_native_client()["northbound"].tls_context is None
+        prov.disconnect()
 
 
 class TestSubscribeDispatch:
@@ -281,18 +282,18 @@ class TestSubscribeDispatch:
         prov.publish("out/topic", _msg("Hello", {"a": 1}))
         pubs = prov.get_native_client()["local"].published
         assert len(pubs) == 1
-        topic, payload, qos = pubs[0]
+        topic, payload, qos_value = pubs[0]
         assert topic == "out/topic"
         assert json.loads(payload)["body"] == {"a": 1}
-        assert qos == 0
+        assert qos_value == 1
         prov.disconnect()
 
     def test_publish_raw(self):
         prov = StandaloneProvider(_local_only_config(), "t")
         prov.publish_raw("raw/topic", {"x": 9})
-        topic, payload, qos = prov.get_native_client()["local"].published[0]
+        topic, payload, qos_value = prov.get_native_client()["local"].published[0]
         assert json.loads(payload) == {"x": 9}
-        assert qos == 1  # local raw uses QoS 1
+        assert qos_value == 1  # local raw uses QoS 1
         prov.disconnect()
 
     def test_non_json_payload_becomes_raw(self):
@@ -341,7 +342,7 @@ class TestSubscribeDispatch:
     def test_suback_failure_still_unblocks(self):
         prov = StandaloneProvider(_local_only_config(), "t")
         prov.get_native_client()["local"].suback_failure_topics.add("bad/topic")
-        # 0x80 granted QoS -> logged as failure but subscribe() still returns
+        # 0x80 granted Qos -> logged as failure but subscribe() still returns
         prov.subscribe("bad/topic", lambda t, m: None)
         assert "bad/topic" in prov._local.subscriptions
         prov.disconnect()
@@ -420,43 +421,43 @@ class TestRequestReply:
 class TestIotCoreWrappers:
     def test_iotcore_publish_and_subscribe(self, _patch_ssl):
         prov = StandaloneProvider(_dual_config(), "t")
-        prov.publish_to_iot_core("iot/out", _msg("M", {"k": 1}), QOS.AT_LEAST_ONCE)
-        iot = prov.get_native_client()["iot_core"]
-        topic, _payload, qos = iot.published[-1]
-        assert topic == "iot/out" and qos == 1  # AT_LEAST_ONCE -> 1
+        prov.publish_northbound("iot/out", _msg("M", {"k": 1}), Qos.AT_LEAST_ONCE)
+        iot = prov.get_native_client()["northbound"]
+        topic, _payload, qos_value = iot.published[-1]
+        assert topic == "iot/out" and qos_value == 1  # AT_LEAST_ONCE -> 1
 
         got = threading.Event()
-        prov.subscribe_to_iot_core("iot/in", lambda t, m: got.set(), QOS.AT_MOST_ONCE)
+        prov.subscribe_northbound("iot/in", lambda t, m: got.set(), Qos.AT_MOST_ONCE)
         # AT_MOST_ONCE subscribed at QoS 0
         assert ("iot/in", 0) in iot.subscribed
         iot.deliver("iot/in", {"body": 1})
         assert got.wait(2)
-        prov.unsubscribe_from_iot_core("iot/in")
+        prov.unsubscribe_northbound("iot/in")
         assert "iot/in" in iot.unsubscribed
         prov.disconnect()
 
     def test_iotcore_request_reply_and_cancel(self, _patch_ssl):
         prov = StandaloneProvider(_dual_config(), "t")
-        iou = prov.request_from_iot_core("iot/req", _msg("Q", {"q": 1}))
+        iou = prov.request_northbound("iot/req", _msg("Q", {"q": 1}))
         reply_topic = iou.get_user_data()
-        iot = prov.get_native_client()["iot_core"]
+        iot = prov.get_native_client()["northbound"]
         # request published at QoS 1
         assert any(t == "iot/req" and q == 1 for (t, _p, q) in iot.published)
 
         request = _msg("Req", {})
         request.get_header().reply_to = "edgecommons/reply-iot"
-        prov.reply_to_iot_core(request, _msg("Resp", {"a": 1}))
+        prov.reply_northbound(request, _msg("Resp", {"a": 1}))
         assert any(t == "edgecommons/reply-iot" for (t, _p, _q) in iot.published)
 
-        prov.cancel_request_from_iot_core(iou)
+        prov.cancel_request_northbound(iou)
         assert reply_topic not in prov._response_ious
         prov.disconnect()
 
     def test_iotcore_publish_raw(self, _patch_ssl):
         prov = StandaloneProvider(_dual_config(), "t")
-        prov.publish_to_iot_core_raw("iot/raw", {"z": 1}, QOS.AT_LEAST_ONCE)
-        topic, payload, qos = prov.get_native_client()["iot_core"].published[-1]
-        assert topic == "iot/raw" and json.loads(payload) == {"z": 1} and qos == 1
+        prov.publish_northbound_raw("iot/raw", {"z": 1}, Qos.AT_LEAST_ONCE)
+        topic, payload, qos_value = prov.get_native_client()["northbound"].published[-1]
+        assert topic == "iot/raw" and json.loads(payload) == {"z": 1} and qos_value == 1
         prov.disconnect()
 
 
@@ -523,16 +524,16 @@ class TestPublishErrors:
 
     def test_require_client_raises_when_absent(self):
         prov = StandaloneProvider(_local_only_config(), "t")
-        prov._iot_core.client = None
-        with pytest.raises(RuntimeError, match="IoT Core"):
-            prov.publish_to_iot_core("x", _msg("M", {}), QOS.AT_MOST_ONCE)
+        prov._northbound.client = None
+        with pytest.raises(RuntimeError, match="Northbound"):
+            prov.publish_northbound("x", _msg("M", {}), Qos.AT_MOST_ONCE)
         prov.disconnect()
 
 
 class TestStaticHelpers:
     def test_mqtt_qos_mapping(self):
-        assert StandaloneProvider._mqtt_qos(QOS.AT_MOST_ONCE) == 0
-        assert StandaloneProvider._mqtt_qos(QOS.AT_LEAST_ONCE) == 1
+        assert StandaloneProvider._mqtt_qos(Qos.AT_MOST_ONCE) == 0
+        assert StandaloneProvider._mqtt_qos(Qos.AT_LEAST_ONCE) == 1
 
     def test_make_semaphore(self):
         assert StandaloneProvider._make_semaphore(0) is None

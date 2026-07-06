@@ -71,9 +71,9 @@ KUBERNETES | auto`, default `auto`, which auto-detects from the environment) and
 `-m/--mode` axis has been removed.
 
 - **`--platform HOST`** (transport defaults to `MQTT`) — dual-broker MQTT over
-  [`mqtt.js`](https://github.com/mqttjs/MQTT.js): a local broker plus an optional AWS
-  IoT Core leg (mutual-TLS). Needs a `--transport MQTT <messaging_config.json>` file
-  (`messaging.local` required, `messaging.iotCore` optional). No native build.
+  [`mqtt.js`](https://github.com/mqttjs/MQTT.js): a local broker plus an optional generic
+  northbound MQTT leg. Needs a `--transport MQTT <messaging_config.json>` file
+  (`messaging.local` required, `messaging.northbound` optional). No native build.
 - **`--platform GREENGRASS`** (transport defaults to `IPC`) — Greengrass IPC over
   `aws-iot-device-sdk-v2`'s `greengrasscoreipc` client (the **V1** IPC surface —
   `subscribeToTopic(...).on('message', …)` + `.activate()`; the simplified clientV2 is

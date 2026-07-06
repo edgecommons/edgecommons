@@ -8,7 +8,7 @@ import com.mbreissi.edgecommons.ParsedCommandLine;
 import com.google.gson.JsonObject;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import software.amazon.awssdk.aws.greengrass.model.QOS;
+import com.mbreissi.edgecommons.messaging.Qos;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**

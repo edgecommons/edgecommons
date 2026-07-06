@@ -22,12 +22,12 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use crate::config::model::Config;
 use crate::config::ConfigurationChangeListener;
-use crate::messaging::message::MessageBuilder;
+use crate::config::model::Config;
 use crate::messaging::ReservedMessaging;
+use crate::messaging::message::MessageBuilder;
 use crate::uns::{Uns, UnsClass};
 
 /// The cfg announcement's envelope header name (§4.3).
@@ -68,7 +68,9 @@ impl EffectiveConfigPublisher {
             .from_config(config)
             .build();
         match self.reserved.publish_reserved(&topic, &message).await {
-            Ok(()) => tracing::debug!(topic = %topic, "published effective (redacted) configuration"),
+            Ok(()) => {
+                tracing::debug!(topic = %topic, "published effective (redacted) configuration")
+            }
             Err(e) => tracing::warn!(error = %e, topic = %topic, "effective-config publish failed"),
         }
     }
@@ -108,7 +110,11 @@ fn redact_value(value: &mut Value, in_messaging: bool, top_level: bool) {
                     *entry = Value::String(REDACTED.to_string());
                     continue;
                 }
-                redact_value(entry, in_messaging || (top_level && key == "messaging"), false);
+                redact_value(
+                    entry,
+                    in_messaging || (top_level && key == "messaging"),
+                    false,
+                );
             }
         }
         Value::Array(items) => {
@@ -146,13 +152,13 @@ mod tests {
         let raw = json!({
             "messaging": {
                 "local": { "credentials": { "username": "u", "certPath": "c" } },
-                "iotCore": { "credentials": { "keyPath": "k" } }
+                "northbound": { "credentials": { "keyPath": "k" } }
             },
             "component": { "global": { "credentials": { "token": "keep-me" } } }
         });
         let redacted = redact(&raw);
         assert_eq!(redacted["messaging"]["local"]["credentials"], "***");
-        assert_eq!(redacted["messaging"]["iotCore"]["credentials"], "***");
+        assert_eq!(redacted["messaging"]["northbound"]["credentials"], "***");
         assert_eq!(
             redacted["component"]["global"]["credentials"]["token"], "keep-me",
             "a credentials key OUTSIDE the top-level messaging section is untouched"
@@ -172,7 +178,10 @@ mod tests {
             "component": { "global": { "messaging": { "credentials": "keep" } } }
         });
         let redacted = redact(&raw);
-        assert_eq!(redacted["component"]["global"]["messaging"]["credentials"], "keep");
+        assert_eq!(
+            redacted["component"]["global"]["messaging"]["credentials"],
+            "keep"
+        );
     }
 
     #[test]
@@ -205,18 +214,29 @@ mod tests {
         assert_eq!(topic, "ecv1/thing-1/MyComp/main/cfg");
         assert_eq!(msg.header.name, "cfg");
         assert_eq!(msg.header.version, "1.0");
-        assert_eq!(msg.body["config"]["messaging"]["local"]["credentials"], "***");
-        assert_eq!(msg.body["config"]["component"]["global"]["publish_interval"], 3);
-        let identity = msg.identity.as_ref().expect("cfg envelope carries identity");
+        assert_eq!(
+            msg.body["config"]["messaging"]["local"]["credentials"],
+            "***"
+        );
+        assert_eq!(
+            msg.body["config"]["component"]["global"]["publish_interval"],
+            3
+        );
+        let identity = msg
+            .identity
+            .as_ref()
+            .expect("cfg envelope carries identity");
         assert_eq!(identity.component(), "MyComp");
-        assert!(recorder.local().is_empty(), "must use the SEAM, not publish()");
+        assert!(
+            recorder.local().is_empty(),
+            "must use the SEAM, not publish()"
+        );
     }
 
     #[tokio::test]
     async fn republishes_on_configuration_change() {
-        let config = Arc::new(
-            Config::from_value("com.example.MyComp", "thing-1", json!({})).unwrap(),
-        );
+        let config =
+            Arc::new(Config::from_value("com.example.MyComp", "thing-1", json!({})).unwrap());
         let recorder = RecordingMessaging::new();
         let publisher = EffectiveConfigPublisher::new(recorder.clone());
         assert!(publisher.on_configuration_change(config).await);

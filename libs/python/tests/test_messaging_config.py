@@ -14,8 +14,9 @@ try:
         MessagingConfiguration,
         MessagingConfigData,
         LocalMqttConfig,
-        IoTCoreConfig,
-        CredentialsConfig
+        NorthboundMqttConfig,
+        CredentialsConfig,
+        QosDefaults,
     )
     from edgecommons.messaging.providers.standalone_provider import StandaloneProvider
 except ImportError:
@@ -49,11 +50,11 @@ def _local_section(host="localhost"):
     return {"type": "mqtt", "host": host, "port": 1883, "clientId": "local-client"}
 
 
-def _iot_core_section(endpoint="test.iot.amazonaws.com"):
+def _northbound_section(host="northbound.example.com"):
     return {
-        "endpoint": endpoint,
+        "host": host,
         "port": 8883,
-        "clientId": "iot-client",
+        "clientId": "northbound-client",
         "credentials": {"certPath": "cert.pem", "keyPath": "key.pem", "caPath": "ca.pem"},
     }
 
@@ -74,10 +75,10 @@ def valid_config():
                     "password": "pass"
                 }
             },
-            "iotCore": {
-                "endpoint": "test.iot.amazonaws.com",
+            "northbound": {
+                "host": "northbound.example.com",
                 "port": 8883,
-                "clientId": "iot-client",
+                "clientId": "northbound-client",
                 "credentials": {
                     "certPath": "cert.pem",
                     "keyPath": "key.pem",
@@ -158,23 +159,23 @@ def test_local_mqtt_config_init_with_credentials():
     assert config.credentials == creds
 
 
-# IoTCoreConfig tests
-def test_iot_core_config_init():
+# NorthboundMqttConfig tests
+def test_northbound_mqtt_config_init():
     """Test initialization."""
     creds = CredentialsConfig(
         cert_path="cert.pem",
         key_path="key.pem",
         ca_path="ca.pem"
     )
-    config = IoTCoreConfig(
-        endpoint="test.iot.amazonaws.com",
+    config = NorthboundMqttConfig(
+        endpoint="northbound.example.com",
         port=8883,
-        client_id="iot-client",
+        client_id="northbound-client",
         credentials=creds
     )
-    assert config.endpoint == "test.iot.amazonaws.com"
+    assert config.endpoint == "northbound.example.com"
     assert config.port == 8883
-    assert config.client_id == "iot-client"
+    assert config.client_id == "northbound-client"
     assert config.credentials == creds
 
 
@@ -192,7 +193,7 @@ def test_messaging_configuration_load_from_file_valid(temp_config_file):
     # Verify structure
     assert config.messaging is not None
     assert config.messaging.local is not None
-    assert config.messaging.iot_core is not None
+    assert config.messaging.northbound is not None
     
     # Verify local config
     local = config.messaging.local
@@ -204,25 +205,106 @@ def test_messaging_configuration_load_from_file_valid(temp_config_file):
     assert local.credentials.username == "user"
     assert local.credentials.password == "pass"
     
-    # Verify IoT Core config
-    iot_core = config.messaging.iot_core
-    assert iot_core.endpoint == "test.iot.amazonaws.com"
-    assert iot_core.port == 8883
-    assert iot_core.client_id == "iot-client"
-    assert iot_core.credentials is not None
-    assert iot_core.credentials.cert_path == "cert.pem"
-    assert iot_core.credentials.key_path == "key.pem"
-    assert iot_core.credentials.ca_path == "ca.pem"
+    # Verify northbound config
+    northbound = config.messaging.northbound
+    assert northbound.endpoint == "northbound.example.com"
+    assert northbound.port == 8883
+    assert northbound.client_id == "northbound-client"
+    assert northbound.credentials is not None
+    assert northbound.credentials.cert_path == "cert.pem"
+    assert northbound.credentials.key_path == "key.pem"
+    assert northbound.credentials.ca_path == "ca.pem"
 
 
-def test_messaging_configuration_load_from_file_iot_core_only():
-    """Test loading configuration with IoT Core only."""
-    iot_only_config = {
+def test_messaging_configuration_loads_qos_defaults():
+    """QoS defaults are config-backed: local and northbound MQTT allow 0/1/2."""
+    cfg = {
         "messaging": {
-            "iotCore": {
-                "endpoint": "test.iot.amazonaws.com",
+            "local": _local_section(),
+            "northbound": {
+                **_northbound_section(),
+                "qos": {"publish": 2, "subscribe": 0},
+            },
+        }
+    }
+    cfg["messaging"]["local"]["qos"] = {"publish": 2, "subscribe": 0}
+    path = _write_config(cfg)
+    try:
+        config = MessagingConfiguration.load_from_file(path)
+        assert config.messaging.local.qos.publish == 2
+        assert config.messaging.local.qos.subscribe == 0
+        assert config.messaging.northbound.qos.publish == 2
+        assert config.messaging.northbound.qos.subscribe == 0
+    finally:
+        os.unlink(path)
+
+
+def test_messaging_configuration_rejects_out_of_range_northbound_qos():
+    cfg = {
+        "messaging": {
+            "local": _local_section(),
+            "northbound": {**_northbound_section(), "qos": {"publish": 3}},
+        }
+    }
+    path = _write_config(cfg)
+    try:
+        with pytest.raises(ValueError, match=r"messaging\.northbound\.qos\.publish"):
+            MessagingConfiguration.load_from_file(path)
+    finally:
+        os.unlink(path)
+
+
+def test_messaging_configuration_rejects_top_level_qos():
+    cfg = {
+        "messaging": {
+            "local": _local_section(),
+            "qos": {"local": {"publish": 1}},
+        }
+    }
+    path = _write_config(cfg)
+    try:
+        with pytest.raises(ValueError, match=r"messaging\.qos is not supported"):
+            MessagingConfiguration.load_from_file(path)
+    finally:
+        os.unlink(path)
+
+
+def test_standalone_provider_uses_configured_qos_defaults(monkeypatch):
+    config = MessagingConfiguration()
+    config.messaging = MessagingConfigData(
+        local=LocalMqttConfig(
+            type="mqtt",
+            host="localhost",
+            port=1883,
+            client_id="local-client",
+            qos=QosDefaults(publish=2, subscribe=0),
+        ),
+        northbound=NorthboundMqttConfig(
+            endpoint="northbound.example.com",
+            port=8883,
+            client_id="northbound-client",
+            qos=QosDefaults(publish=2, subscribe=0),
+            credentials=CredentialsConfig(cert_path="cert.pem", key_path="key.pem", ca_path="ca.pem"),
+        ),
+    )
+    provider, _connected = _provider_capturing_connects(config, monkeypatch)
+    try:
+        assert provider._local_publish_qos == 2
+        assert provider._local_subscribe_qos == 0
+        assert provider._northbound_publish_qos == 2
+        assert provider._northbound_subscribe_qos == 0
+    finally:
+        provider.disconnect()
+
+
+def test_messaging_configuration_load_from_file_northbound_only():
+    """Test loading configuration with northbound only."""
+    northbound_only_config = {
+        "messaging": {
+            "northbound": {
+                "host": "northbound.example.com",
                 "port": 8883,
-                "clientId": "iot-client",
+                "clientId": "northbound-client",
                 "credentials": {
                     "certPath": "cert.pem",
                     "keyPath": "key.pem",
@@ -233,20 +315,20 @@ def test_messaging_configuration_load_from_file_iot_core_only():
     }
     
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-        json.dump(iot_only_config, f)
+        json.dump(northbound_only_config, f)
         temp_path = f.name
     
     try:
         config = MessagingConfiguration.load_from_file(temp_path)
         assert config.messaging is not None
         assert config.messaging.local is None
-        assert config.messaging.iot_core is not None
+        assert config.messaging.northbound is not None
     finally:
         os.unlink(temp_path)
 
 
-def test_messaging_configuration_load_from_file_missing_iot_core():
-    """Loading a local-only config (no IoT Core) is valid: IoT Core is optional."""
+def test_messaging_configuration_load_from_file_missing_northbound():
+    """Loading a local-only config (no northbound) is valid: northbound is optional."""
     local_only_config = {
         "messaging": {
             "local": {
@@ -265,7 +347,7 @@ def test_messaging_configuration_load_from_file_missing_iot_core():
     try:
         config = MessagingConfiguration.load_from_file(temp_path)
         assert config.messaging.local is not None
-        assert config.messaging.iot_core is None
+        assert config.messaging.northbound is None
     finally:
         os.unlink(temp_path)
 
@@ -288,24 +370,24 @@ def test_messaging_configuration_validate_no_messaging():
     assert config.validate() is False
 
 
-def test_messaging_configuration_validate_no_iot_core():
-    """Test validation with no IoT Core configuration."""
+def test_messaging_configuration_validate_no_brokers():
+    """Test validation with no broker configuration."""
     config = MessagingConfiguration()
     config.messaging = MessagingConfigData()
     assert config.validate() is False
 
 
-def test_messaging_configuration_validate_iot_core_missing_credentials():
-    """Test validation with IoT Core missing credentials."""
+def test_messaging_configuration_validate_northbound_plaintext_allowed():
+    """Northbound is generic MQTT, so credentials are optional."""
     config = MessagingConfiguration()
     config.messaging = MessagingConfigData()
-    config.messaging.iot_core = IoTCoreConfig(
-        endpoint="test.iot.amazonaws.com",
+    config.messaging.northbound = NorthboundMqttConfig(
+        endpoint="northbound.example.com",
         port=8883,
         client_id="test",
-        credentials=CredentialsConfig()  # Empty credentials
+        credentials=None
     )
-    assert config.validate() is False
+    assert config.validate() is True
 
 
 # ---------- FR-MSG-2: a Kubernetes Service DNS name is an opaque host (accepted/used) ----------
@@ -339,33 +421,33 @@ def test_service_dns_host_is_used_to_connect(monkeypatch):
         os.unlink(path)
 
 
-def test_service_dns_endpoint_is_accepted_for_iot_core():
-    cfg = {"messaging": {"iotCore": _iot_core_section(endpoint="iot.endpoints.svc.cluster.local")}}
+def test_service_dns_host_is_accepted_for_northbound():
+    cfg = {"messaging": {"northbound": _northbound_section(host="northbound.mqtt.svc.cluster.local")}}
     path = _write_config(cfg)
     try:
         config = MessagingConfiguration.load_from_file(path)
         assert config.validate() is True
-        assert config.messaging.iot_core.endpoint == "iot.endpoints.svc.cluster.local"
+        assert config.messaging.northbound.endpoint == "northbound.mqtt.svc.cluster.local"
     finally:
         os.unlink(path)
 
 
-# ---------- FR-MSG-3: single- (local only) vs dual- (local + IoT Core) MQTT topology ----------
+# ---------- FR-MSG-3: single- (local only) vs dual- (local + northbound) MQTT topology ----------
 
 def test_single_broker_topology_local_only(monkeypatch):
     """Air-gapped single-broker: only `messaging.local` -> the provider connects the local channel
-    and never creates an IoT Core client (FR-MSG-3)."""
+    and never creates a northbound client (FR-MSG-3)."""
     cfg = {"messaging": {"local": _local_section(host="emqx.mqtt.svc.cluster.local")}}
     path = _write_config(cfg)
     try:
         config = MessagingConfiguration.load_from_file(path)
         assert config.messaging.local is not None
-        assert config.messaging.iot_core is None  # single topology selected at config parse
+        assert config.messaging.northbound is None  # single topology selected at config parse
 
         provider, connected = _provider_capturing_connects(config, monkeypatch)
         try:
             assert [name for name, _ in connected] == ["local"]
-            assert provider._iot_core.client is None  # no IoT Core connection
+            assert provider._northbound.client is None  # no northbound connection
             assert provider._local.client is not None
         finally:
             provider.disconnect()
@@ -373,46 +455,42 @@ def test_single_broker_topology_local_only(monkeypatch):
         os.unlink(path)
 
 
-def test_dual_broker_topology_when_iot_core_present(monkeypatch):
-    """Dual-broker: `messaging.iotCore` present alongside `local` -> the provider connects BOTH
-    the local and IoT Core channels (FR-MSG-3)."""
+def test_dual_broker_topology_when_northbound_present(monkeypatch):
+    """Dual-broker: `messaging.northbound` present alongside `local` -> the provider connects BOTH
+    the local and northbound channels (FR-MSG-3)."""
     cfg = {
         "messaging": {
             "local": _local_section(host="emqx.mqtt.svc.cluster.local"),
-            "iotCore": _iot_core_section(),
+            "northbound": _northbound_section(),
         }
     }
     path = _write_config(cfg)
     try:
         config = MessagingConfiguration.load_from_file(path)
         assert config.messaging.local is not None
-        assert config.messaging.iot_core is not None  # dual topology selected at config parse
+        assert config.messaging.northbound is not None  # dual topology selected at config parse
 
         provider, connected = _provider_capturing_connects(config, monkeypatch)
         try:
-            assert [name for name, _ in connected] == ["local", "iotcore"]
+            assert [name for name, _ in connected] == ["local", "northbound"]
             assert provider._local.client is not None
-            assert provider._iot_core.client is not None
+            assert provider._northbound.client is not None
         finally:
             provider.disconnect()
     finally:
         os.unlink(path)
 
 
-# ---------- FR-MSG-3 guard: IoT Core keeps mutual TLS, with NO insecure fallback ----------
-
-def test_iot_core_refuses_to_connect_without_complete_tls_credentials():
-    """The IoT Core path requires mutual TLS (caPath+certPath+keyPath); a missing credential must
-    raise rather than silently fall back to an unauthenticated/plaintext connection (FR-MSG-3)."""
+def test_northbound_without_ca_uses_plain_mqtt():
+    """Northbound is generic MQTT: without caPath the TLS setup is a no-op."""
     config = MessagingConfiguration()
     config.messaging = MessagingConfigData(
-        iot_core=IoTCoreConfig(
-            endpoint="test.iot.amazonaws.com",
+        northbound=NorthboundMqttConfig(
+            endpoint="northbound.example.com",
             port=8883,
-            client_id="iot-client",
-            credentials=CredentialsConfig(cert_path="cert.pem", key_path="key.pem"),  # caPath missing
+            client_id="northbound-client",
+            credentials=CredentialsConfig(username="u", password="p"),
         )
     )
     provider = StandaloneProvider.__new__(StandaloneProvider)
-    with pytest.raises(RuntimeError, match="without complete TLS credentials"):
-        provider._configure_tls(MagicMock(), config.messaging.iot_core, "iotcore")
+    provider._configure_tls(MagicMock(), config.messaging.northbound, "northbound")

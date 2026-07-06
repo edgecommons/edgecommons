@@ -182,9 +182,11 @@ impl MetricBuilder {
     /// Build the metric, injecting the standard `coreName` / `category` /
     /// `component` dimensions where known (matching the Python library).
     pub fn build(mut self) -> Metric {
-        self.dimensions.insert("category".to_string(), self.name.clone());
+        self.dimensions
+            .insert("category".to_string(), self.name.clone());
         if let Some(thing) = &self.thing_name {
-            self.dimensions.insert("coreName".to_string(), thing.clone());
+            self.dimensions
+                .insert("coreName".to_string(), thing.clone());
         }
         if let Some(component) = &self.component_name {
             self.dimensions
@@ -251,17 +253,25 @@ mod tests {
         let dims = m.get_dimensions();
         assert_eq!(dims.get("category").map(String::as_str), Some("requests"));
         assert_eq!(dims.get("coreName").map(String::as_str), Some("thing-1"));
-        assert_eq!(dims.get("component").map(String::as_str), Some("com.example.C"));
+        assert_eq!(
+            dims.get("component").map(String::as_str),
+            Some("com.example.C")
+        );
         assert_eq!(dims.get("instance").map(String::as_str), Some("main"));
         assert!(m.get_measure("count").is_some());
     }
 
     #[test]
     fn builder_without_thing_or_component_omits_those_dimensions() {
-        let m = MetricBuilder::create("m").add_measure("v", "None", 60).build();
+        let m = MetricBuilder::create("m")
+            .add_measure("v", "None", 60)
+            .build();
         assert!(m.get_dimensions().get("coreName").is_none());
         assert!(m.get_dimensions().get("component").is_none());
-        assert_eq!(m.get_dimensions().get("category").map(String::as_str), Some("m"));
+        assert_eq!(
+            m.get_dimensions().get("category").map(String::as_str),
+            Some("m")
+        );
     }
 
     #[test]
@@ -278,8 +288,17 @@ mod tests {
         let m = b.build();
         assert_eq!(m.get_dimensions().len(), MAX_DIMENSIONS);
         // The injected dimensions are always retained.
-        assert_eq!(m.get_dimensions().get("category").map(String::as_str), Some("m"));
-        assert_eq!(m.get_dimensions().get("coreName").map(String::as_str), Some("t"));
-        assert_eq!(m.get_dimensions().get("component").map(String::as_str), Some("c"));
+        assert_eq!(
+            m.get_dimensions().get("category").map(String::as_str),
+            Some("m")
+        );
+        assert_eq!(
+            m.get_dimensions().get("coreName").map(String::as_str),
+            Some("t")
+        );
+        assert_eq!(
+            m.get_dimensions().get("component").map(String::as_str),
+            Some("c")
+        );
     }
 }

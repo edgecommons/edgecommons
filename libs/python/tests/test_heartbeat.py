@@ -10,7 +10,7 @@ import json
 import tempfile
 import os
 
-from awsiot.greengrasscoreipc.model import QOS
+from edgecommons.messaging.qos import Qos
 from edgecommons.messaging.message import Message
 from edgecommons.edgecommons_builder import EdgeCommonsBuilder
 from edgecommons import MessagingClient
@@ -95,7 +95,7 @@ def heartbeat_metric_config():
 
 @pytest.fixture
 def heartbeat_iotcore_config():
-    """Create temporary heartbeat configuration targeting IoT Core."""
+    """Create temporary heartbeat configuration targeting northbound."""
     config = {
         "heartbeat": {
             "intervalSecs": 2,
@@ -103,12 +103,12 @@ def heartbeat_iotcore_config():
                 "cpu": True,
                 "memory": True
             },
-            "destination": "iotcore"
+            "destination": "northbound"
         },
         "metricEmission": {
             "target": "messaging",
             "targetConfig": {
-                "destination": "iotcore"
+                "destination": "northbound"
             }
         },
         "component": {
@@ -322,7 +322,7 @@ def test_heartbeat_messaging_target_iot_core(edgecommons_heartbeat_iotcore):
     
     # Subscribe to heartbeat topic on IoT Core
     heartbeat_topic = "heartbeat/heartbeat_test/heartbeat-test-thing"
-    messaging_service.subscribe_to_iot_core(heartbeat_topic, heartbeat_handler, QOS.AT_LEAST_ONCE)
+    messaging_service.subscribe_northbound(heartbeat_topic, heartbeat_handler, Qos.AT_LEAST_ONCE)
     
     # Wait for heartbeat messages
     time.sleep(5)
@@ -384,7 +384,7 @@ def test_heartbeat_dual_targets(edgecommons_heartbeat_dual):
     # Subscribe to both local and IoT Core topics
     topic = "heartbeat/heartbeat_test/heartbeat-test-thing"
     messaging_service.subscribe(topic, local_handler)
-    messaging_service.subscribe_to_iot_core(topic, iot_core_handler, QOS.AT_LEAST_ONCE)
+    messaging_service.subscribe_northbound(topic, iot_core_handler, Qos.AT_LEAST_ONCE)
     
     # Wait for heartbeat messages
     time.sleep(5)

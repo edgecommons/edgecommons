@@ -242,17 +242,17 @@ file-replicator's `cmd | evt | state` intuition survives — it just stops inven
 
 ## 7. The messaging model — `messaging()`, `uns()`, and the platform facades
 
-### 7.1 `gg.messaging()` — the raw bus (unchanged surface + one hardening)
+### 7.1 `gg.messaging()` — the raw bus (northbound surface + one hardening)
 
 Takes a **literal topic**; no hidden construction. The full existing surface remains, **including the
-IoT-Core variants**:
+northbound variants**:
 
 | Method | Notes |
 |---|---|
 | `publish(topic, msg)` | exactly what hits the wire — UNS-compliant **or** an external, non-UNS topic (for components that bridge a legacy MQTT system) |
 | `subscribe(topicFilter, handler)` · `reply(request, response)` | **unchanged** from today |
 | `request(topic, msg[, timeout])` | returns today's future/IoU; **hardened** per §7.4 |
-| `publishToIoTCore` / `subscribeToIoTCore` / `requestFromIoTCore` / `replyToIoTCore` | **retained** — the local↔cloud split is orthogonal to the UNS; a `uns()`-built topic is IoT-Core-depth-safe by construction. *(Normalize the pre-existing casing wart `publishToIotCore` vs `subscribeToIoTCore` to one `IoTCore` spelling while here.)* |
+| `publishNorthbound` / `subscribeNorthbound` / `requestNorthbound` / `replyNorthbound` | **retained** — the local↔northbound split is orthogonal to the UNS; a `uns()`-built topic is IoT-Core-depth-safe by construction. |
 
 ### 7.2 `gg.uns()` — the explicit topic builder + validator
 
@@ -611,10 +611,10 @@ a precise error — silent coexistence of old and new topics is the worst outcom
 | M1 | **`uns-bridge`** component (Rust; one per device bus) — envelope-aware relay, `reply_to` rewrite (TTL'd map), per-class uplink policy with visible drop counters, hop-tag loop protection, LWT reachability | P0 |
 | M2 | **Site-broker deploy recipes** (EMQX; HOST Docker / GG container / K8s notes) | P0 |
 | M3 | **The UNS grammar** — `ecv1/{device}/{component}/{instance}/{class}`, the message classes, `/`-delimited verbs | P0 |
-| M4 | **Messaging model** — `messaging()` (arbitrary topics; `*ToIoTCore` retained; `request()` hardened) + `uns()` builder/validator + reserved facades; reserved-class guard | P0 |
+| M4 | **Messaging model** — `messaging()` (arbitrary topics; northbound method family; `request()` hardened) + `uns()` builder/validator + reserved facades; reserved-class guard | P0 |
 | M5 | **`identity` + `hierarchy`** — configurable hierarchy schema (last = node); top-level `identity` (ordered `hier` + `path`; per-message `instance`); distributed via SHARED_CONFIG base layer; `tags.thing` removed | P0 |
 | M6 | **Request/reply hardening** — internal default deadline + optional timeout overload + guaranteed reply-topic cleanup; `reply()`/`subscribe()` unchanged | P0 |
-| M7 | **MQTT LWT** in `MessagingProvider` — the `uns-bridge` sets it on the site-broker connection → whole-device UNREACHABLE; HOST/K8s components may optionally set one; IPC no-ops. **Retain deferred** (redundant with broadcast `republish-state` + the consumer's timestamped cache; can't express staleness; if ever wanted, owned by the bridge). | P0 |
+| M7 | **MQTT LWT hook** in `MessagingProvider` — `uns-bridge` derives and sets it on the site-broker connection → whole-device UNREACHABLE; generic HOST/K8s component config does not expose an LWT. **Retain deferred** (redundant with broadcast `republish-state` + the consumer's timestamped cache; can't express staleness; if ever wanted, owned by the bridge). | P0 |
 | M8 | **Named/secondary MessagingClient** (two connections in one process; the bridge needs it) | P0 |
 | M9 | **Southbound command family** — `sb/browse` (paged), `sb/read` (ref-accepting), **confirmed `sb/write`** (with optional read-back), `sb/subscribe-preview` + adapter `writes.allow[]`; an adapter-contract change | P1 |
 | M11 | **Heartbeat defaults + parity** — on / 5 s / local target in all four languages, reconciled into the `state` keepalive ([edgecommons#33](https://github.com/edgecommons/edgecommons/issues/33)) | P1 |
@@ -643,8 +643,8 @@ a precise error — silent coexistence of old and new topics is the worst outcom
    `heartbeat.targets[]` — where the topic drift knobs live — is dropped in the same schema break;
    deferring it would break the heartbeat config twice. See
    [`UNS-CANONICAL-DESIGN.md`](UNS-CANONICAL-DESIGN.md) Risks #1.)*
-2. **[DONE]** **Reserved-class guard, `request()` hardening, MQTT LWT (retain deferred), IoTCore
-   casing normalization.** The "named MessagingClient (Rust only — D‑U17)" item originally scoped
+2. **[DONE]** **Reserved-class guard, `request()` hardening, MQTT LWT (retain deferred), northbound
+   API naming.** The "named MessagingClient (Rust only — D‑U17)" item originally scoped
    here was superseded by D‑U17's final resolution (see [`UNS-CANONICAL-DESIGN.md`](UNS-CANONICAL-DESIGN.md)
    §2.3): no core "named client" API was built or is needed — the `uns-bridge` builds its second
    connection by reusing the core's already-public `MqttProvider`/`DefaultMessagingService`

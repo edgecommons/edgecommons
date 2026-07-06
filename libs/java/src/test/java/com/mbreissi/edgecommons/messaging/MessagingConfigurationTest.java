@@ -13,10 +13,12 @@ import java.nio.file.Files;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Tests for {@link MessagingConfiguration} deserialization and accessors, covering the local +
- * IoT Core sections and both credential styles (username/password and cert/key/CA).
+ * northbound sections and both credential styles (username/password and cert/key/CA).
  */
 class MessagingConfigurationTest {
 
@@ -24,7 +26,7 @@ class MessagingConfigurationTest {
             { "messaging": {\
             "local": {"type":"mqtt","host":"localhost","port":1883,"clientId":"loc",\
               "credentials":{"username":"u","password":"p"}},\
-            "iotCore": {"endpoint":"x.iot.amazonaws.com","port":8883,"clientId":"iot",\
+            "northbound": {"endpoint":"x.mqtt.example.com","port":8883,"clientId":"north",\
               "credentials":{"certPath":"c.pem","keyPath":"k.pem","caPath":"ca.pem"}} } }""";
 
     @Test
@@ -41,13 +43,13 @@ class MessagingConfigurationTest {
         assertEquals("u", local.getCredentials().getUsername());
         assertEquals("p", local.getCredentials().getPassword());
 
-        MessagingConfiguration.IoTCoreConfig iot = m.getIotCore();
-        assertEquals("x.iot.amazonaws.com", iot.getEndpoint());
-        assertEquals(8883, iot.getPort());
-        assertEquals("iot", iot.getClientId());
-        assertEquals("c.pem", iot.getCredentials().getCertPath());
-        assertEquals("k.pem", iot.getCredentials().getKeyPath());
-        assertEquals("ca.pem", iot.getCredentials().getCaPath());
+        MessagingConfiguration.NorthboundMqttConfig northbound = m.getNorthbound();
+        assertEquals("x.mqtt.example.com", northbound.getEndpoint());
+        assertEquals(8883, northbound.getPort());
+        assertEquals("north", northbound.getClientId());
+        assertEquals("c.pem", northbound.getCredentials().getCertPath());
+        assertEquals("k.pem", northbound.getCredentials().getKeyPath());
+        assertEquals("ca.pem", northbound.getCredentials().getCaPath());
     }
 
     @Test
@@ -58,7 +60,57 @@ class MessagingConfigurationTest {
 
         MessagingConfiguration cfg = MessagingConfiguration.loadFromFile(tmp.getAbsolutePath());
         assertEquals(1883, cfg.getMessaging().getLocal().getPort());
-        assertEquals(8883, cfg.getMessaging().getIotCore().getPort());
+        assertEquals(8883, cfg.getMessaging().getNorthbound().getPort());
+    }
+
+    @Test
+    void loadFromFileRejectsGenericMessagingLwt() throws Exception {
+        File tmp = File.createTempFile("messaging-lwt", ".json");
+        tmp.deleteOnExit();
+        Files.write(tmp.toPath(), """
+                { "messaging": {
+                  "local": {"host":"localhost","port":1883,"clientId":"loc"},
+                  "lwt": {"topic":"ecv1/d/uns-bridge/main/state"}
+                } }""".getBytes());
+
+        IllegalArgumentException err = assertThrows(
+                IllegalArgumentException.class,
+                () -> MessagingConfiguration.loadFromFile(tmp.getAbsolutePath()));
+        assertTrue(err.getMessage().contains("messaging.lwt is not supported"));
+    }
+
+    @Test
+    void deserializesQosDefaults() {
+        String json = """
+                { "messaging": {
+                  "local": {"type":"mqtt","host":"localhost","port":1883,"clientId":"c",
+                            "qos": {"publish":2,"subscribe":0}},
+                  "northbound": {"host":"broker.example.com","port":8883,"clientId":"n",
+                                 "qos": {"publish":2,"subscribe":0}}
+                } }""";
+        MessagingConfiguration cfg = new Gson().fromJson(json, MessagingConfiguration.class);
+        assertNotNull(cfg.getMessaging().getLocal().getQos());
+        assertEquals(2, cfg.getMessaging().getLocal().getQos().publishOrDefault());
+        assertEquals(0, cfg.getMessaging().getLocal().getQos().subscribeOrDefault());
+        assertNotNull(cfg.getMessaging().getNorthbound().getQos());
+        assertEquals(2, cfg.getMessaging().getNorthbound().getQos().publishOrDefault());
+        assertEquals(0, cfg.getMessaging().getNorthbound().getQos().subscribeOrDefault());
+    }
+
+    @Test
+    void loadFromFileRejectsTopLevelMessagingQos() throws Exception {
+        File tmp = File.createTempFile("messaging-qos", ".json");
+        tmp.deleteOnExit();
+        Files.write(tmp.toPath(), """
+                { "messaging": {
+                  "local": {"host":"localhost","port":1883,"clientId":"loc"},
+                  "qos": {"local": {"publish": 1}}
+                } }""".getBytes());
+
+        IllegalArgumentException err = assertThrows(
+                IllegalArgumentException.class,
+                () -> MessagingConfiguration.loadFromFile(tmp.getAbsolutePath()));
+        assertTrue(err.getMessage().contains("messaging.qos is not supported"));
     }
 
     @Test
@@ -75,34 +127,32 @@ class MessagingConfigurationTest {
     }
 
     @Test
-    void singleBrokerTopologyWhenIotCoreAbsent() {
-        // FR-MSG-3: no 'iotCore' section => single-broker topology (local only / air-gapped). The
-        // provider constructs only the local client and leaves the IoT Core client null.
+    void singleBrokerTopologyWhenNorthboundAbsent() {
+        // FR-MSG-3: no 'northbound' section => single-broker topology (local only / air-gapped). The
+        // provider constructs only the local client and leaves the northbound client null.
         String json = """
                 { "messaging": { "local": {
                   "type":"mqtt","host":"emqx.mqtt.svc.cluster.local","port":1883,"clientId":"c" } } }""";
         MessagingConfiguration cfg = new Gson().fromJson(json, MessagingConfiguration.class);
         assertNotNull(cfg.getMessaging().getLocal());
-        assertNull(cfg.getMessaging().getIotCore(), "absent iotCore => single-broker topology");
+        assertNull(cfg.getMessaging().getNorthbound(), "absent northbound => single-broker topology");
     }
 
     @Test
-    void dualBrokerTopologyWhenIotCorePresent() {
-        // FR-MSG-3: an 'iotCore' section => dual-MQTT (local broker + AWS IoT Core). The IoT Core leg
-        // is mutual-TLS (cert/key/CA) with no insecure fallback (StandaloneMessagingProvider refuses to
-        // connect when the socket factory can't be built).
+    void dualBrokerTopologyWhenNorthboundPresent() {
+        // FR-MSG-3: a 'northbound' section => dual-MQTT (local broker + generic northbound broker).
+        // TLS is selected when a CA path is present; cert/key may add mutual TLS.
         String json = """
                 { "messaging": {
                   "local": {"type":"mqtt","host":"emqx.mqtt.svc.cluster.local","port":1883,"clientId":"l"},
-                  "iotCore": {"endpoint":"x.iot.amazonaws.com","port":8883,"clientId":"i",
+                  "northbound": {"endpoint":"x.mqtt.example.com","port":8883,"clientId":"n",
                     "credentials":{"certPath":"c.pem","keyPath":"k.pem","caPath":"ca.pem"}} } }""";
         MessagingConfiguration cfg = new Gson().fromJson(json, MessagingConfiguration.class);
-        assertNotNull(cfg.getMessaging().getIotCore(), "present iotCore => dual-broker topology");
-        assertEquals("x.iot.amazonaws.com", cfg.getMessaging().getIotCore().getEndpoint());
-        assertEquals(8883, cfg.getMessaging().getIotCore().getPort());
-        // mutual-TLS material is present (no username/password / insecure path on the IoT Core leg).
-        assertEquals("c.pem", cfg.getMessaging().getIotCore().getCredentials().getCertPath());
-        assertEquals("k.pem", cfg.getMessaging().getIotCore().getCredentials().getKeyPath());
-        assertEquals("ca.pem", cfg.getMessaging().getIotCore().getCredentials().getCaPath());
+        assertNotNull(cfg.getMessaging().getNorthbound(), "present northbound => dual-broker topology");
+        assertEquals("x.mqtt.example.com", cfg.getMessaging().getNorthbound().getEndpoint());
+        assertEquals(8883, cfg.getMessaging().getNorthbound().getPort());
+        assertEquals("c.pem", cfg.getMessaging().getNorthbound().getCredentials().getCertPath());
+        assertEquals("k.pem", cfg.getMessaging().getNorthbound().getCredentials().getKeyPath());
+        assertEquals("ca.pem", cfg.getMessaging().getNorthbound().getCredentials().getCaPath());
     }
 }

@@ -2,7 +2,7 @@
  * Messaging provider — STANDALONE dual-broker MQTT (over `mqtt.js`).
  *
  * The STANDALONE-mode {@link MessagingProvider}: a local broker (always) plus an
- * optional AWS IoT Core broker (mutual-TLS). Connects block until confirmed;
+ * optional generic northbound MQTT broker. Connects block until confirmed;
  * subscribe blocks until SUBACK. Inbound routing matches MQTT wildcards per
  * subscription (mqtt.js delivers every message on one `message` event).
  */
@@ -12,7 +12,7 @@ import mqtt, { MqttClient } from "mqtt";
 
 import { EdgeCommonsError } from "../errors";
 import { logger } from "../logging";
-import { BrokerConfig, LwtConfig, MessagingConfig, lwtPayloadBytes, resolvedHost } from "./config";
+import { BrokerConfig, MessagingConfig, resolvedHost } from "./config";
 import { Destination, MessagingProvider, Qos, RawSubscription } from "./types";
 
 interface Sub {
@@ -21,8 +21,10 @@ interface Sub {
   onMessage: (topic: string, payload: Buffer) => void;
 }
 
-function qosNum(qos: Qos): 0 | 1 {
-  return qos === Qos.AtMostOnce ? 0 : 1;
+function qosNum(qos: Qos): 0 | 1 | 2 {
+  if (qos === Qos.AtMostOnce) return 0;
+  if (qos === Qos.AtLeastOnce) return 1;
+  return 2;
 }
 
 /** Whether an MQTT topic `filter` (with `+`/`#`) matches a concrete `topic`. */
@@ -82,17 +84,16 @@ export class StandaloneMqttProvider implements MessagingProvider {
     // a CA stays plaintext (the other three ignore it), so the four languages agree.
     const lc = config.local.credentials;
     const localTls = !!lc?.caPath;
-    // The MQTT LWT (UNS-CANONICAL-DESIGN §6) applies to the LOCAL-broker connection only; the
-    // will is registered at CONNECT (and re-registered on reconnect — mqtt.js reuses the same
-    // connect options), never routed through publish(), always retain=false.
-    const local = new BrokerChannel(await connectBroker(config.local, localTls, config.lwt));
-    const iot = config.iotCore ? new BrokerChannel(await connectBroker(config.iotCore, true)) : undefined;
+    const local = new BrokerChannel(await connectBroker(config.local, localTls));
+    const nc = config.northbound?.credentials;
+    const northboundTls = !!nc?.caPath;
+    const iot = config.northbound ? new BrokerChannel(await connectBroker(config.northbound, northboundTls)) : undefined;
     return new StandaloneMqttProvider(local, iot);
   }
 
   private channel(dest: Destination): BrokerChannel {
-    if (dest === Destination.IoTCore) {
-      if (!this.iot) throw EdgeCommonsError.messaging("no IoT Core broker configured (messaging.iotCore)");
+    if (dest === Destination.Northbound) {
+      if (!this.iot) throw EdgeCommonsError.messaging("no northbound broker configured (messaging.northbound)");
       return this.iot;
     }
     return this.local;
@@ -137,7 +138,7 @@ export class StandaloneMqttProvider implements MessagingProvider {
   /**
    * Whether the transport is connected (FR-HB-1). Reports the **local** broker's `mqtt.js`
    * `client.connected` flag: the local broker is the always-present, primary uplink (it stands in for
-   * Greengrass IPC), so it gates readiness. An optional IoT Core bridge being down is deliberately NOT
+     * Greengrass IPC), so it gates readiness. An optional northbound bridge being down is deliberately NOT
    * a readiness failure — the design keeps `/readyz` tolerant of cloud-uplink outages.
    */
   connected(): boolean {
@@ -154,7 +155,7 @@ export class StandaloneMqttProvider implements MessagingProvider {
 }
 
 /** Connect one broker, resolving on CONNACK and rejecting on the first error. */
-function connectBroker(broker: BrokerConfig, tls: boolean, lwt?: LwtConfig): Promise<MqttClient> {
+function connectBroker(broker: BrokerConfig, tls: boolean): Promise<MqttClient> {
   const host = resolvedHost(broker);
   const url = `${tls ? "mqtts" : "mqtt"}://${host}:${broker.port}`;
   const options: mqtt.IClientOptions = {
@@ -164,18 +165,6 @@ function connectBroker(broker: BrokerConfig, tls: boolean, lwt?: LwtConfig): Pro
     reconnectPeriod: 5_000,
     connectTimeout: 15_000,
   };
-  if (lwt !== undefined) {
-    // §6: retain=false is a hard invariant (no config knob exists — D9).
-    options.will = {
-      topic: lwt.topic,
-      payload: lwtPayloadBytes(lwt.payload),
-      qos: lwt.qos,
-      retain: false,
-    };
-    logger.info(
-      `edgecommons: registered MQTT LWT on the local connection: topic='${lwt.topic}', qos=${lwt.qos}, retain=false`,
-    );
-  }
   const creds = broker.credentials;
   if (creds?.username) options.username = creds.username;
   if (creds?.password) options.password = creds.password;

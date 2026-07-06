@@ -125,7 +125,7 @@ Publishes metrics through the messaging system in EMF format, supporting both lo
 **Configuration options:**
 - **`destination`**: Specify message destination (Default: "ipc")
   - `"ipc"` / `"local"`: local bus (Greengrass IPC or the local MQTT broker)
-  - `"iotcore"` / `"iot_core"`: publish to AWS IoT Core
+  - `"northbound"`: publish to the configured northbound broker
 
 **Example:**
 ```json
@@ -134,7 +134,7 @@ Publishes metrics through the messaging system in EMF format, supporting both lo
     "target": "messaging",
     "namespace": "MyApp/Metrics",
     "targetConfig": {
-      "destination": "iot_core"
+      "destination": "northbound"
     }
   }
 }
@@ -242,7 +242,7 @@ platform default.
     "target": "messaging",
     "namespace": "Telemetry/Sensors",
     "targetConfig": {
-      "destination": "iot_core"
+      "destination": "northbound"
     }
   }
 }

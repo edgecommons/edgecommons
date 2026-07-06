@@ -14,9 +14,9 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, RwLock};
 
 use super::source::ParameterSource;
+use crate::Result;
 use crate::credentials::{LocalVault, PutOptions};
 use crate::error::EdgeCommonsError;
-use crate::Result;
 
 const SECURE_LABEL: &str = "secure";
 const VERSION_LABEL: &str = "pversion";
@@ -44,7 +44,9 @@ struct MemoryCache {
 
 impl MemoryCache {
     fn new() -> Self {
-        Self { map: RwLock::new(BTreeMap::new()) }
+        Self {
+            map: RwLock::new(BTreeMap::new()),
+        }
     }
     fn guard_read(&self) -> std::sync::RwLockReadGuard<'_, BTreeMap<String, Cached>> {
         self.map.read().unwrap_or_else(|p| p.into_inner())
@@ -56,7 +58,10 @@ impl ParamCache for MemoryCache {
         Ok(self.guard_read().get(name).cloned())
     }
     fn put(&self, name: &str, c: &Cached) -> Result<()> {
-        self.map.write().unwrap_or_else(|p| p.into_inner()).insert(name.to_string(), c.clone());
+        self.map
+            .write()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(name.to_string(), c.clone());
         Ok(())
     }
     fn entries(&self, prefix: &str) -> Result<Vec<(String, Cached)>> {
@@ -91,7 +96,11 @@ impl ParamCache for VaultCache {
         v.reload_if_changed()?;
         Ok(v.get(name)?.map(|s| Cached {
             value: s.bytes().to_vec(),
-            secure: s.labels.get(SECURE_LABEL).map(|x| x == "true").unwrap_or(false),
+            secure: s
+                .labels
+                .get(SECURE_LABEL)
+                .map(|x| x == "true")
+                .unwrap_or(false),
             version: s.labels.get(VERSION_LABEL).cloned(),
         }))
     }
@@ -101,7 +110,11 @@ impl ParamCache for VaultCache {
         if let Some(ver) = &c.version {
             labels.insert(VERSION_LABEL.to_string(), ver.clone());
         }
-        let opts = PutOptions { source: Some("parameter".to_string()), labels, ..PutOptions::default() };
+        let opts = PutOptions {
+            source: Some("parameter".to_string()),
+            labels,
+            ..PutOptions::default()
+        };
         let mut v = self.locked();
         v.reload_if_changed()?;
         v.put(name, &c.value, opts)?;
@@ -118,7 +131,11 @@ impl ParamCache for VaultCache {
                     name,
                     Cached {
                         value: s.bytes().to_vec(),
-                        secure: s.labels.get(SECURE_LABEL).map(|x| x == "true").unwrap_or(false),
+                        secure: s
+                            .labels
+                            .get(SECURE_LABEL)
+                            .map(|x| x == "true")
+                            .unwrap_or(false),
                         version: s.labels.get(VERSION_LABEL).cloned(),
                     },
                 ));
@@ -161,11 +178,9 @@ pub trait ParameterService: Send + Sync {
     /// The value parsed as an integer.
     fn get_int(&self, name: &str) -> Result<Option<i64>> {
         match self.get(name)? {
-            Some(s) => s
-                .trim()
-                .parse::<i64>()
-                .map(Some)
-                .map_err(|e| EdgeCommonsError::Parameters(format!("parameter '{name}' is not an integer: {e}"))),
+            Some(s) => s.trim().parse::<i64>().map(Some).map_err(|e| {
+                EdgeCommonsError::Parameters(format!("parameter '{name}' is not an integer: {e}"))
+            }),
             None => Ok(None),
         }
     }
@@ -175,7 +190,9 @@ pub trait ParameterService: Send + Sync {
             Some(s) => match s.trim().to_ascii_lowercase().as_str() {
                 "true" | "1" | "yes" | "on" => Ok(Some(true)),
                 "false" | "0" | "no" | "off" => Ok(Some(false)),
-                other => Err(EdgeCommonsError::Parameters(format!("parameter '{name}' is not a boolean: {other}"))),
+                other => Err(EdgeCommonsError::Parameters(format!(
+                    "parameter '{name}' is not a boolean: {other}"
+                ))),
             },
             None => Ok(None),
         }
@@ -183,9 +200,9 @@ pub trait ParameterService: Send + Sync {
     /// The value parsed as JSON.
     fn get_json(&self, name: &str) -> Result<Option<serde_json::Value>> {
         match self.get_bytes(name)? {
-            Some(b) => serde_json::from_slice(&b)
-                .map(Some)
-                .map_err(|e| EdgeCommonsError::Parameters(format!("parameter '{name}' is not JSON: {e}"))),
+            Some(b) => serde_json::from_slice(&b).map(Some).map_err(|e| {
+                EdgeCommonsError::Parameters(format!("parameter '{name}' is not JSON: {e}"))
+            }),
             None => Ok(None),
         }
     }
@@ -219,7 +236,14 @@ impl Inner {
         for name in &self.sync_names {
             match self.source.fetch(name) {
                 Ok(Some(v)) => {
-                    let _ = self.cache.put(name, &Cached { value: v.value, secure: v.secure, version: v.version });
+                    let _ = self.cache.put(
+                        name,
+                        &Cached {
+                            value: v.value,
+                            secure: v.secure,
+                            version: v.version,
+                        },
+                    );
                 }
                 Ok(None) => {}
                 Err(e) => {
@@ -232,7 +256,14 @@ impl Inner {
             match self.source.fetch_by_path(path, *recursive) {
                 Ok(items) => {
                     for (name, v) in items {
-                        let _ = self.cache.put(&name, &Cached { value: v.value, secure: v.secure, version: v.version });
+                        let _ = self.cache.put(
+                            &name,
+                            &Cached {
+                                value: v.value,
+                                secure: v.secure,
+                                version: v.version,
+                            },
+                        );
                     }
                 }
                 Err(e) => {
@@ -248,7 +279,10 @@ impl Inner {
                 return Err(e);
             }
         } else {
-            *self.last_refresh_ms.lock().unwrap_or_else(|p| p.into_inner()) = Some(now_ms());
+            *self
+                .last_refresh_ms
+                .lock()
+                .unwrap_or_else(|p| p.into_inner()) = Some(now_ms());
         }
         Ok(())
     }
@@ -284,7 +318,10 @@ impl Refresher {
                 }
             })
         };
-        Self { stop, handle: Some(handle) }
+        Self {
+            stop,
+            handle: Some(handle),
+        }
     }
 }
 
@@ -331,7 +368,12 @@ impl DefaultParameterService {
         sync_names: Vec<String>,
         sync_paths: Vec<(String, bool)>,
     ) -> Self {
-        Self::new(source, Arc::new(VaultCache { vault }), sync_names, sync_paths)
+        Self::new(
+            source,
+            Arc::new(VaultCache { vault }),
+            sync_names,
+            sync_paths,
+        )
     }
 
     /// Build with an in-memory cache — for already-local sources (`mountedDir`, `env`).
@@ -356,9 +398,9 @@ impl DefaultParameterService {
 impl ParameterService for DefaultParameterService {
     fn get(&self, name: &str) -> Result<Option<String>> {
         match self.get_bytes(name)? {
-            Some(b) => Ok(Some(
-                String::from_utf8(b).map_err(|_| EdgeCommonsError::Parameters(format!("parameter '{name}' is not UTF-8")))?,
-            )),
+            Some(b) => Ok(Some(String::from_utf8(b).map_err(|_| {
+                EdgeCommonsError::Parameters(format!("parameter '{name}' is not UTF-8"))
+            })?)),
             None => Ok(None),
         }
     }
@@ -375,17 +417,31 @@ impl ParameterService for DefaultParameterService {
         Ok(out)
     }
     fn names(&self, prefix: &str) -> Result<Vec<String>> {
-        Ok(self.inner.cache.entries(prefix)?.into_iter().map(|(n, _)| n).collect())
+        Ok(self
+            .inner
+            .cache
+            .entries(prefix)?
+            .into_iter()
+            .map(|(n, _)| n)
+            .collect())
     }
     fn refresh(&self) -> Result<()> {
         self.inner.refresh()
     }
     fn stats(&self) -> ParameterStats {
-        let last = *self.inner.last_refresh_ms.lock().unwrap_or_else(|p| p.into_inner());
+        let last = *self
+            .inner
+            .last_refresh_ms
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         ParameterStats {
             parameter_count: self.inner.cache.len() as u64,
             last_refresh_age_ms: last.map(|ms| now_ms().saturating_sub(ms)),
-            refresh_failures: *self.inner.failures.lock().unwrap_or_else(|p| p.into_inner()),
+            refresh_failures: *self
+                .inner
+                .failures
+                .lock()
+                .unwrap_or_else(|p| p.into_inner()),
             source: self.inner.source.source_id().to_string(),
         }
     }

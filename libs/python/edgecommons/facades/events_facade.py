@@ -40,6 +40,7 @@ from edgecommons.facades.channel import Channel
 from edgecommons.facades.severity import Severity
 from edgecommons.facades.util import format_instant
 from edgecommons.messaging.message_builder import MessageBuilder
+from edgecommons.messaging.qos import Qos
 from edgecommons.uns import UnsClass
 
 logger = logging.getLogger("EventsFacade")
@@ -193,8 +194,7 @@ class EventsFacade:
         channel = self._override if self._override is not None else Channel.LOCAL
         if channel.kind is Channel.Kind.NORTHBOUND:
             try:
-                from awsiot.greengrasscoreipc.model import QOS
-                self._messaging.publish_to_iot_core(topic, msg, QOS.AT_LEAST_ONCE)
+                self._messaging.publish_northbound(topic, msg, Qos.AT_LEAST_ONCE)
             except Exception as e:  # noqa: BLE001 - a northbound outage must not propagate
                 logger.warning("Northbound evt publish on '%s' failed (local readiness"
                                " unaffected): %s", topic, e)

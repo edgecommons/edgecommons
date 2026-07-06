@@ -45,4 +45,4 @@ and fails the build if any copy has drifted from the canonical source.
   sections but kept permissive (`additionalProperties: true`).
 - Structural sections (`logging`, `heartbeat`, `metricEmission`, `component`, `tags`) are
   fully described and strict. Cross-language/legacy vocabulary that all libraries accept is
-  reflected here (e.g. messaging `destination` accepts `ipc`/`local` and `iotcore`/`iot_core`).
+  reflected here (e.g. messaging `destination` accepts `ipc`/`local` and `northbound`).

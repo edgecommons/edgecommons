@@ -6,10 +6,10 @@
       "port": 1883,
       "clientId": "my-component-local"
     },
-    "iotCore": {
-      "endpoint": "a2djc899idbttw-ats.iot.us-east-1.amazonaws.com",
+    "northbound": {
+      "endpoint": "northbound.mqtt.example.com",
       "port": 8883,
-      "clientId": "edgecommons-test-2",
+      "clientId": "edgecommons-test-northbound",
       "credentials": {
         "certPath": "c:/Users/breis/source/edgecommons/edgecommons-python-lib/creds/edgecommons-test-2.cert.pem",
         "keyPath": "c:/Users/breis/source/edgecommons/edgecommons-python-lib/creds/edgecommons-test-2.private.key",

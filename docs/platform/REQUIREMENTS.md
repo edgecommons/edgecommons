@@ -308,6 +308,19 @@ the vault on-disk format/conformance vectors.
 - **NFR-PARITY-1 (four-way).** Every public behavior change **MUST** land in all four languages or be
   explicitly deferred with a tracked parity note (Java canonical first). *Acceptance:* parity register
   updated; no silent divergence.
+- **NFR-INTEROP-1 (wire-contract gate).** Every core change that changes or enhances on-the-wire
+  behavior or structure **MUST** extend and pass the cross-language interop harness across Java,
+  Python, Rust, and TypeScript. This includes envelope/body shape, body encodings or markers,
+  headers, request/reply semantics, UNS topics/classes, reserved-topic behavior, raw-message
+  conventions, and config that changes emitted/accepted wire data. *Acceptance:* `test-infra/interop/`
+  nodes/tests cover the new behavior and the full matrix passes against a real MQTT broker; if the
+  matrix cannot be run, the work is not complete and the validation gap is surfaced explicitly.
+- **NFR-GG-REGRESSION-1 (deployed component gate).** Every new core feature/capability, and every
+  behavior change reachable by a Greengrass component, **MUST** be validated by deploying and
+  exercising an actual component on the `lab-5950x` Greengrass device. Local unit tests, HOST MQTT
+  tests, and mocks do not satisfy this gate. *Acceptance:* the feature is observed through the running
+  Greengrass component/logs/broker/cloud path; if the feature is not applicable to Greengrass, the
+  non-applicability is documented and a baseline deployed-component regression passes.
 - **NFR-PORT-1 (vanilla k8s).** All k8s features **MUST** be *operable* on a generic CNCF cluster with no
   AWS dependency; AWS integrations are an **expected-but-intermittent cooperation layer**, not a baseline
   requirement (a cluster with no AWS reachability still runs components fully). *Acceptance:* the full

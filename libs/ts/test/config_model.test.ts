@@ -85,12 +85,12 @@ describe("Config.fromValue", () => {
         metricEmission: {
           target: "messaging",
           namespace: "MyNs",
-          targetConfig: { destination: "iotcore" },
+          targetConfig: { destination: "northbound" },
         },
       }).parsed.metricEmission;
       expect(mc.target()).toBe("messaging");
       expect(mc.namespace()).toBe("MyNs");
-      expect(mc.destination()).toBe("iotcore");
+      expect(mc.destination()).toBe("northbound");
     });
   });
 
@@ -116,14 +116,14 @@ describe("Config.fromValue", () => {
         heartbeat: {
           enabled: false,
           measures: { cpu: false, memory: true, disk: true },
-          destination: "iotcore",
+          destination: "northbound",
         },
       }).parsed.heartbeat;
       expect(hb.enabled).toBe(false);
       expect(hb.measures.cpu).toBe(false);
       expect(hb.measures.memory).toBe(true);
       expect(hb.measures.disk).toBe(true);
-      expect(hb.destination).toBe("iotcore");
+      expect(hb.destination).toBe("northbound");
     });
   });
 

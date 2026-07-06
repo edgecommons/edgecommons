@@ -39,7 +39,7 @@ Selected by `metricEmission.target` (default `log`):
 | Target | Behavior | Notes |
 |--------|----------|-------|
 | `log` | Append EMF JSON lines to a file | Size-based rotation (5 backups); `largeFleetWorkaround` double-emits (normal + `coreName=ALL`) |
-| `messaging` | Publish EMF in a `Metric` message envelope on the library-owned UNS metric topic `ecv1[/{site}]/{device}/{component}/main/metric/{metricName}` (via the reserved-publish seam; the legacy `targetConfig.topic` override is removed) | `targetConfig.destination`: `ipc`/`local` or `iotcore` |
+| `messaging` | Publish EMF in a `Metric` message envelope on the library-owned UNS metric topic `ecv1[/{site}]/{device}/{component}/main/metric/{metricName}` (via the reserved-publish seam; the legacy `targetConfig.topic` override is removed) | `targetConfig.destination`: `ipc`/`local` or `northbound` |
 | `cloudwatchcomponent` | Publish a `{request:{namespace,metricData}}` PutMetricData message **per measure** | Fixed topic `cloudwatch/metric/put` (external Greengrass component contract — unchanged by the UNS, D‑U21) |
 | `cloudwatch` | Send to CloudWatch via the AWS SDK (`PutMetricData`) | Requires the `cloudwatch` cargo feature; batched on an interval. **Validated on-device.** |
 | `prometheus` | **Pull-based**: maintain an in-process registry and serve it as OpenMetrics text at an HTTP `/metrics` endpoint | Requires the `metrics-prometheus` cargo feature; the **default on KUBERNETES**. See below. |

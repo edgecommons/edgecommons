@@ -1,13 +1,13 @@
 """
 Standalone messaging provider for dual broker MQTT connections.
 
-This provider supports connecting to both local and IoT Core brokers
+This provider supports connecting to both local and northbound brokers
 simultaneously in STANDALONE mode, similar to the Java version.
 
-The two transports (local broker and IoT Core) are identical apart from their
+The two transports (local broker and northbound broker) are identical apart from their
 connection details and per-call QoS, so each broker's state lives in a
 ``_BrokerChannel`` and every operation is implemented once against a channel.
-The public ``*_to_iot_core`` / ``*_from_iot_core`` methods are thin wrappers that
+The public ``*_northbound`` methods are thin wrappers that
 select the channel and the right QoS.
 """
 
@@ -21,22 +21,22 @@ from typing import Callable, Dict, Optional
 from concurrent.futures import ThreadPoolExecutor
 
 import paho.mqtt.client as mqtt
-from awsiot.greengrasscoreipc.model import QOS
 
 from edgecommons.messaging.message import Message
 from edgecommons.messaging.messaging_provider import MessagingProvider, DEFAULT_MAX_MESSAGES
-from edgecommons.messaging.messaging_config import MessagingConfiguration
+from edgecommons.messaging.qos import Qos
+from edgecommons.messaging.messaging_config import MessagingConfiguration, QosDefaults
 from edgecommons.utils.iou import Iou
 
 logger = logging.getLogger(__name__)
 
 # Human-readable label per channel name, used in messages/logs.
-_BROKER_LABEL = {"local": "Local", "iotcore": "IoT Core"}
+_BROKER_LABEL = {"local": "Local", "northbound": "Northbound"}
 
 
 class _BrokerChannel:
     """Per-broker connection state (one MQTT client plus its subscription
-    bookkeeping). ``name`` is "local" or "iotcore" and is also the key used by
+    bookkeeping). ``name`` is "local" or "northbound" and is also the key used by
     the TLS/auth/connect logic and log messages."""
 
     def __init__(self, name: str):
@@ -51,7 +51,7 @@ class StandaloneProvider(MessagingProvider):
     """
     Standalone messaging provider supporting dual broker connections.
 
-    Connects to both local and IoT Core brokers simultaneously, routing
+    Connects to both local and northbound brokers simultaneously, routing
     messages appropriately based on destination.
     """
 
@@ -61,7 +61,7 @@ class StandaloneProvider(MessagingProvider):
         self._messaging_config = config.messaging
         self._thing_name = thing_name
         self._local = _BrokerChannel("local")
-        self._iot_core = _BrokerChannel("iotcore")
+        self._northbound = _BrokerChannel("northbound")
         # Pending request/reply futures, keyed by (unique) reply topic. Shared
         # across both channels — reply topics are unique, so a reply arriving on
         # either broker resolves the right Iou.
@@ -71,6 +71,26 @@ class StandaloneProvider(MessagingProvider):
         self._subscription_timeout = 5.0
 
         self._initialize_clients()
+
+    @property
+    def _local_publish_qos(self) -> int:
+        qos = self._messaging_config.local.qos if self._messaging_config.local else QosDefaults()
+        return qos.publish
+
+    @property
+    def _local_subscribe_qos(self) -> int:
+        qos = self._messaging_config.local.qos if self._messaging_config.local else QosDefaults()
+        return qos.subscribe
+
+    @property
+    def _northbound_publish_qos(self) -> int:
+        qos = self._messaging_config.northbound.qos if self._messaging_config.northbound else QosDefaults()
+        return qos.publish
+
+    @property
+    def _northbound_subscribe_qos(self) -> int:
+        qos = self._messaging_config.northbound.qos if self._messaging_config.northbound else QosDefaults()
+        return qos.subscribe
 
     def _initialize_clients(self):
         """Initialize MQTT clients for the configured brokers."""
@@ -85,13 +105,13 @@ class StandaloneProvider(MessagingProvider):
             else:
                 logger.info("Local broker configuration not provided, skipping local connection")
 
-            if self._messaging_config.iot_core:
-                cfg = self._messaging_config.iot_core
-                logger.info(f"Configuring IoT Core broker connection to {cfg.endpoint}:{cfg.port}")
-                self._iot_core.client = self._create_mqtt_client(cfg, self._iot_core)
-                self._connect_client(self._iot_core, cfg)
+            if self._messaging_config.northbound:
+                cfg = self._messaging_config.northbound
+                logger.info(f"Configuring northbound broker connection to {cfg.endpoint}:{cfg.port}")
+                self._northbound.client = self._create_mqtt_client(cfg, self._northbound)
+                self._connect_client(self._northbound, cfg)
             else:
-                logger.info("IoT Core broker configuration not provided, skipping IoT Core connection")
+                logger.info("Northbound broker configuration not provided, skipping northbound connection")
 
             logger.info("STANDALONE mode dual broker initialization completed successfully")
 
@@ -100,9 +120,9 @@ class StandaloneProvider(MessagingProvider):
             raise
 
     @staticmethod
-    def _mqtt_qos(qos: QOS) -> int:
-        """Map a Greengrass QOS to a paho MQTT QoS level (0 or 1)."""
-        return 0 if qos == QOS.AT_MOST_ONCE else 1
+    def _mqtt_qos(qos: Qos) -> int:
+        """Map an EdgeCommons QoS to a paho MQTT QoS level (0, 1, or 2)."""
+        return qos.mqtt_level
 
     def _create_mqtt_client(self, broker_config, channel: _BrokerChannel) -> mqtt.Client:
         """Create and configure an MQTT client for ``channel``."""
@@ -112,27 +132,20 @@ class StandaloneProvider(MessagingProvider):
 
         client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
 
-        # MQTT Last-Will-and-Testament (UNS-CANONICAL-DESIGN §6): registered at CONNECT
-        # on the LOCAL-broker connection only (paho re-sends it on every automatic
-        # reconnect). Never routed through publish(), so the reserved-class guard does
-        # not (cannot) apply — broker ACLs govern wills.
-        if broker_type == "local":
-            self._apply_lwt(client, getattr(self._messaging_config, "lwt", None))
-
-        # Configure TLS for IoT Core (required) or the local broker (when a CA is
-        # configured — server-only or, with a client cert, mutual TLS).
-        if broker_type == "iotcore":
-            self._configure_tls(client, broker_config, "iotcore")
-        elif broker_type == "local" and getattr(broker_config, 'credentials', None):
+        # Configure TLS when a CA is configured — server-only or, with a client cert,
+        # mutual TLS. This applies equally to local and northbound brokers.
+        if broker_type in ("local", "northbound") and getattr(broker_config, 'credentials', None):
             creds = broker_config.credentials
-            if creds.ca_path:
-                self._configure_tls(client, broker_config, "local")
+            if getattr(creds, "ca_path", None):
+                self._configure_tls(client, broker_config, broker_type)
 
-        # Configure username/password authentication for the local broker.
-        if broker_type == "local" and getattr(broker_config, 'credentials', None):
+        # Configure username/password authentication for either broker.
+        if broker_type in ("local", "northbound") and getattr(broker_config, 'credentials', None):
             creds = broker_config.credentials
-            if creds.username and creds.password:
-                client.username_pw_set(creds.username, creds.password)
+            username = getattr(creds, "username", None)
+            password = getattr(creds, "password", None)
+            if username and password:
+                client.username_pw_set(username, password)
 
         # Wire callbacks to this channel.
         client.on_message = lambda c, u, m: self._process_message(m, channel)
@@ -142,39 +155,6 @@ class StandaloneProvider(MessagingProvider):
 
         logger.debug(f"Successfully created and configured {broker_type} MQTT client")
         return client
-
-    @staticmethod
-    def _apply_lwt(client: mqtt.Client, lwt) -> None:
-        """Registers the configured MQTT Last-Will-and-Testament on a client
-        (UNS-CANONICAL-DESIGN §6, D-U9/M7). Local-broker connection only; retain is
-        hard-wired to ``False`` (there is no retain knob by design). A string payload
-        is published verbatim as UTF-8 bytes; an object payload is serialized to
-        compact JSON bytes. No-op when ``lwt`` is None (section absent).
-
-        :raises ValueError: on a missing/empty topic or a QoS outside {0, 1}
-        """
-        if lwt is None:
-            return
-        topic = lwt.topic
-        if not topic:
-            raise ValueError("messaging.lwt.topic is required when an lwt section is present")
-        qos = lwt.qos if lwt.qos is not None else 1
-        # Coerce a JSON float (1.0) to its integral QoS value.
-        if isinstance(qos, float) and qos.is_integer():
-            qos = int(qos)
-        if qos not in (0, 1):
-            raise ValueError(f"messaging.lwt.qos must be 0 or 1 (got {lwt.qos})")
-        payload = lwt.payload
-        if payload is None:
-            payload_bytes = b""
-        elif isinstance(payload, str):
-            payload_bytes = payload.encode("utf-8")
-        else:
-            payload_bytes = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-        client.will_set(topic, payload_bytes, qos=qos, retain=False)  # retain=false, hard
-        logger.info(
-            f"Registered MQTT LWT on the local connection: topic='{topic}', qos={qos}, retain=False"
-        )
 
     def _generate_client_id(self, broker_config, broker_type: str) -> str:
         """Generate client ID for MQTT connection."""
@@ -187,33 +167,15 @@ class StandaloneProvider(MessagingProvider):
     def _configure_tls(self, client: mqtt.Client, broker_config, broker_type: str):
         """Configure TLS for an MQTT client.
 
-        IoT Core requires mutual TLS: if any of caPath/certPath/keyPath is missing
-        we refuse to connect rather than silently falling back to an unauthenticated
-        plaintext connection (C3). For the local broker, TLS is keyed on caPath
-        alone (parity with Java/Rust): with a CA only we do server-only TLS
-        (verify the broker's certificate); if a client cert+key are also present we
-        additionally present them for mutual TLS.
+        TLS is keyed on caPath for both local and northbound brokers: with a CA
+        only we do server-only TLS (verify the broker's certificate); if a client
+        cert+key are also present we additionally present them for mutual TLS.
         """
         creds = getattr(broker_config, 'credentials', None)
         ca = getattr(creds, 'ca_path', None) if creds else None
         cert = getattr(creds, 'cert_path', None) if creds else None
         key = getattr(creds, 'key_path', None) if creds else None
 
-        if broker_type == "iotcore":
-            if not (ca and cert and key):
-                raise RuntimeError(
-                    "Refusing to connect to IoT Core without complete TLS credentials "
-                    "(caPath, certPath and keyPath are all required)"
-                )
-            ssl_context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
-            ssl_context.load_verify_locations(ca)
-            ssl_context.load_cert_chain(cert, key)
-            ssl_context.check_hostname = False
-            ssl_context.verify_mode = ssl.CERT_REQUIRED
-            client.tls_set_context(ssl_context)
-            return
-
-        # Local broker: TLS only when a CA is configured; client cert/key optional.
         if not ca:
             return
         ssl_context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
@@ -228,10 +190,7 @@ class StandaloneProvider(MessagingProvider):
         """Connect a channel's MQTT client to its broker and block until connected."""
         client = channel.client
         try:
-            if channel.name == "iotcore":
-                host = broker_config.endpoint
-            else:
-                host = broker_config.host
+            host = getattr(broker_config, "host", None) or getattr(broker_config, "endpoint", None)
             client.connect_async(host, broker_config.port, 60)
             client.loop_start()
 
@@ -398,8 +357,8 @@ class StandaloneProvider(MessagingProvider):
         """Report the broker connection state for readiness (FR-HB-1).
 
         Tracks the **local** broker ONLY — it carries in-cluster pub/sub and is the connection
-        readiness should gate on; an IoT Core drop alone must not flip readiness while the local
-        broker serves. There is deliberately NO IoT Core fallback, matching the canonical Java
+        readiness should gate on; a northbound drop alone must not flip readiness while the local
+        broker serves. There is deliberately NO northbound fallback, matching the canonical Java
         ``StandaloneMessagingProvider.connected()`` (local-only) and the Rust/TS providers. Returns
         ``False`` when the local client is absent or down. Backed by paho's ``client.is_connected()``.
         """
@@ -415,7 +374,7 @@ class StandaloneProvider(MessagingProvider):
         """Disconnect from all brokers and release resources."""
         logger.info("Initiating STANDALONE mode broker disconnection")
 
-        for channel in (self._local, self._iot_core):
+        for channel in (self._local, self._northbound):
             if channel.client:
                 channel.client.loop_stop()
                 channel.client.disconnect()
@@ -552,12 +511,12 @@ class StandaloneProvider(MessagingProvider):
 
     def publish(self, topic: str, msg: Message):
         """Publish message to local broker."""
-        self._publish(self._local, topic, msg, 0)
+        self._publish(self._local, topic, msg, self._local_publish_qos)
 
     def subscribe(self, topic: str, callback: Callable[[str, Message], None], max_concurrency: int = None,
                   max_messages: int = None):
         """Subscribe to topic on local broker and wait for confirmation."""
-        self._subscribe(self._local, topic, callback, 0, max_concurrency, max_messages)
+        self._subscribe(self._local, topic, callback, self._local_subscribe_qos, max_concurrency, max_messages)
 
     def request(self, topic: str, msg: Message, timeout_secs: Optional[float] = None) -> Iou:
         """Send request to local broker and wait for response.
@@ -565,16 +524,16 @@ class StandaloneProvider(MessagingProvider):
         ``timeout_secs``: the per-call deadline (UNS-CANONICAL-DESIGN §5) — ``None``
         uses the configured default; ``0`` disables the deadline for this call.
         """
-        return self._request(self._local, topic, msg, reply_qos=0, publish_qos=0,
+        return self._request(self._local, topic, msg, reply_qos=self._local_subscribe_qos, publish_qos=self._local_publish_qos,
                              timeout_secs=timeout_secs)
 
     def reply(self, request: Message, reply: Message):
         """Send reply to local broker."""
-        self._reply(self._local, request, reply, publish_qos=0)
+        self._reply(self._local, request, reply, publish_qos=self._local_publish_qos)
 
     def publish_raw(self, topic: str, msg: dict):
         """Publish raw message to local broker."""
-        self._publish_raw(self._local, topic, msg, mqtt_qos=1)
+        self._publish_raw(self._local, topic, msg, mqtt_qos=self._local_publish_qos)
 
     def unsubscribe(self, topic: str):
         """Unsubscribe from topic on local broker."""
@@ -584,44 +543,44 @@ class StandaloneProvider(MessagingProvider):
         """Cancel pending request to local broker."""
         self._cancel_request(self._local, iou)
 
-    # ----- public messaging API (IoT Core transport) ----------------------------------
+    # ----- public messaging API (northbound transport) --------------------------------
 
-    def publish_to_iot_core(self, topic: str, msg: Message, qos: QOS):
-        """Publish message to IoT Core broker."""
-        self._publish(self._iot_core, topic, msg, self._mqtt_qos(qos))
+    def publish_northbound(self, topic: str, msg: Message, qos: Qos):
+        """Publish message to the northbound broker."""
+        self._publish(self._northbound, topic, msg, self._mqtt_qos(qos))
 
-    def subscribe_to_iot_core(self, topic: str, callback: Callable[[str, Message], None],
-                              qos: QOS, max_concurrency: int = None, max_messages: int = None):
-        """Subscribe to topic on IoT Core broker and wait for confirmation."""
-        self._subscribe(self._iot_core, topic, callback, self._mqtt_qos(qos), max_concurrency, max_messages)
+    def subscribe_northbound(self, topic: str, callback: Callable[[str, Message], None],
+                              qos: Qos, max_concurrency: int = None, max_messages: int = None):
+        """Subscribe to topic on the northbound broker and wait for confirmation."""
+        self._subscribe(self._northbound, topic, callback, self._mqtt_qos(qos), max_concurrency, max_messages)
 
-    def request_from_iot_core(self, topic: str, msg: Message,
+    def request_northbound(self, topic: str, msg: Message,
                               timeout_secs: Optional[float] = None) -> Iou:
-        """Send request to IoT Core broker and wait for response (same deadline
+        """Send request to the northbound broker and wait for response (same deadline
         semantics as :meth:`request`)."""
-        # Subscribe to the reply at QoS 0 (AT_MOST_ONCE); publish the request at
-        # QoS 1 (AT_LEAST_ONCE) — matching the previous behavior.
-        return self._request(self._iot_core, topic, msg, reply_qos=0, publish_qos=1,
+        # Standalone northbound MQTT defaults come from messaging.northbound.qos.
+        return self._request(self._northbound, topic, msg, reply_qos=self._northbound_subscribe_qos,
+                             publish_qos=self._northbound_publish_qos,
                              timeout_secs=timeout_secs)
 
-    def reply_to_iot_core(self, request: Message, reply: Message):
-        """Send reply to IoT Core broker."""
-        self._reply(self._iot_core, request, reply, publish_qos=1)
+    def reply_northbound(self, request: Message, reply: Message):
+        """Send reply to the northbound broker."""
+        self._reply(self._northbound, request, reply, publish_qos=self._northbound_publish_qos)
 
-    def publish_to_iot_core_raw(self, topic: str, msg: dict, qos: str):
-        """Publish raw message to IoT Core broker."""
-        self._publish_raw(self._iot_core, topic, msg, self._mqtt_qos(qos))
+    def publish_northbound_raw(self, topic: str, msg: dict, qos: Qos):
+        """Publish raw message to the northbound broker."""
+        self._publish_raw(self._northbound, topic, msg, self._mqtt_qos(qos))
 
-    def unsubscribe_from_iot_core(self, topic: str):
-        """Unsubscribe from topic on IoT Core broker."""
-        self._unsubscribe(self._iot_core, topic)
+    def unsubscribe_northbound(self, topic: str):
+        """Unsubscribe from topic on the northbound broker."""
+        self._unsubscribe(self._northbound, topic)
 
-    def cancel_request_from_iot_core(self, iou: Iou):
-        """Cancel pending request to IoT Core broker."""
-        self._cancel_request(self._iot_core, iou)
+    def cancel_request_northbound(self, iou: Iou):
+        """Cancel pending request to the northbound broker."""
+        self._cancel_request(self._northbound, iou)
 
     # ----- misc ------------------------------------------------------------------------
 
     def get_native_client(self):
         """Get native MQTT clients."""
-        return {'local': self._local.client, 'iot_core': self._iot_core.client}
+        return {'local': self._local.client, 'northbound': self._northbound.client}

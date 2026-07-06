@@ -27,8 +27,6 @@ class FacadeValueTypesTest {
         assertSame(Channel.LOCAL, Channel.fromConfig("local"));
         assertSame(Channel.LOCAL, Channel.fromConfig("LOCAL"));
         assertSame(Channel.NORTHBOUND, Channel.fromConfig("northbound"));
-        assertSame(Channel.NORTHBOUND, Channel.fromConfig("iotcore"));
-        assertSame(Channel.NORTHBOUND, Channel.fromConfig("iot_core"));
         assertEquals(Channel.Kind.STREAM, Channel.fromConfig("stream:hot").kind());
         assertEquals("hot", Channel.fromConfig("stream:hot").streamName());
     }
@@ -39,6 +37,8 @@ class FacadeValueTypesTest {
         assertNull(Channel.fromConfig(""));
         assertNull(Channel.fromConfig("   "));
         assertNull(Channel.fromConfig("bogus"));
+        assertNull(Channel.fromConfig("iotcore"));
+        assertNull(Channel.fromConfig("iot_core"));
         assertNull(Channel.fromConfig("stream:"), "an empty stream name is not a valid channel");
     }
 

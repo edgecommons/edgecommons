@@ -71,7 +71,7 @@ shared **file sink** in the streaming core, and the registry entry.
   windows and percentile reducers are deferred (§12).
 - **Not a replacement for the messaging control plane.** Request/reply and on-demand command surfaces
   stay with the adapters; the processor is a one-way telemetry transform-and-forward stage.
-- **Not a new transport.** Routing targets reuse `publish` / `publish_to_iot_core` /
+- **Not a new transport.** Routing targets reuse `publish` / `publish_northbound` /
   `gg.streams().stream(n).append` verbatim — net-new code is only the dispatch glue (§6).
 - **Not exactly-once.** Output to a `stream:` target inherits the streaming subsystem's at-least-once +
   downstream-dedup contract (`docs/TELEMETRY_STREAMING.md` §1); the file sink documents its own
@@ -102,7 +102,7 @@ shared **file sink** in the streaming core, and the registry entry.
                           └───┬──────────┬───────────┬────────┘
                               │          │           │
                    target=local    target=northbound   target=stream:<name>
-              publish(topic,msg)  publish_to_iot_core   gg.streams().stream(n).append(rec)
+              publish(topic,msg)  publish_northbound   gg.streams().stream(n).append(rec)
                                                               │
                                             ┌─────────────────┴─────────────────┐
                                        kinesis sink        kafka sink        FILE sink (new)
@@ -263,7 +263,7 @@ Net-new code is only the dispatch glue; every target reuses an existing API.
 | `target` | Implementation | Reused API |
 |----------|----------------|------------|
 | `local` | republish the processed message to a local topic (template from `publish.topic`) | `MessagingService::publish` |
-| `northbound` | publish to IoT Core / northbound MQTT, QoS configurable | `publish_to_iot_core` |
+| `northbound` | publish to IoT Core / northbound MQTT, QoS configurable | `publish_northbound` |
 | `stream:<name>` | append to a durable stream (→ kinesis / kafka / **file**) | `gg.streams().stream(n).append(Record)` |
 
 For a `stream:` target the partition key defaults to **`body.signal.id`** — the southbound contract's

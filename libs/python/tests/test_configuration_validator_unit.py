@@ -70,6 +70,26 @@ class TestValidateHappyPath:
         }
         assert ConfigurationValidator.validate(config) is None
 
+    def test_broker_qos_validates(self):
+        config = {
+            "component": {"global": {}},
+            "messaging": {
+                "local": {
+                    "host": "localhost",
+                    "port": 1883,
+                    "clientId": "local",
+                    "qos": {"publish": 1, "subscribe": 1},
+                },
+                "northbound": {
+                    "host": "broker.example.com",
+                    "port": 8883,
+                    "clientId": "northbound",
+                    "qos": {"publish": 2, "subscribe": 1},
+                },
+            },
+        }
+        assert ConfigurationValidator.validate(config) is None
+
     def test_schema_is_cached_after_first_load(self):
         first = ConfigurationValidator._load_schema()
         second = ConfigurationValidator._load_schema()
@@ -96,6 +116,18 @@ class TestValidateErrors:
         # Top level is additionalProperties:false.
         with pytest.raises(ConfigurationValidationException):
             ConfigurationValidator.validate({"component": {}, "notAReal": 1})
+
+    def test_top_level_messaging_qos_is_rejected(self):
+        with pytest.raises(ConfigurationValidationException):
+            ConfigurationValidator.validate(
+                {
+                    "component": {},
+                    "messaging": {
+                        "local": {"host": "localhost", "port": 1883, "clientId": "local"},
+                        "qos": {"local": {"publish": 1}},
+                    },
+                }
+            )
 
     def test_wrong_type_includes_path_in_message(self):
         # `component` must be an object; a string trips a typed error with a path,

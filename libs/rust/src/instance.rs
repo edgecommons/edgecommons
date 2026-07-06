@@ -35,8 +35,8 @@ use std::sync::Arc;
 use crate::config::model::Config;
 use crate::error::Result;
 use crate::facades::{AppFacade, Clock, DataFacade, EventsFacade, StreamSink};
-use crate::messaging::message::MessageBuilder;
 use crate::messaging::MessagingService;
+use crate::messaging::message::MessageBuilder;
 use crate::uns::Uns;
 
 /// The per-instance seam (UNS-CANONICAL-DESIGN §3, D-U3): an instance-scoped
@@ -73,7 +73,14 @@ impl EdgeCommonsInstance {
         // The RAW includeRoot flag, like gg.uns(): Uns applies it per-target only
         // for multi-level hierarchies (D-U25).
         let uns = Uns::new(identity, config.topic_include_root());
-        Ok(EdgeCommonsInstance { id, config, uns, messaging, stream_sink, clock })
+        Ok(EdgeCommonsInstance {
+            id,
+            config,
+            uns,
+            messaging,
+            stream_sink,
+            clock,
+        })
     }
 
     /// Returns this handle's instance token.
@@ -127,7 +134,12 @@ impl EdgeCommonsInstance {
     /// The `app()` publish facade bound to this instance (DESIGN-class-facades §2.3): free-form
     /// inter-component pub/sub on the `app` class (named header + verbatim body).
     pub fn app(&self) -> AppFacade {
-        AppFacade::new(self.config.clone(), self.id.clone(), self.uns.clone(), self.messaging.clone())
+        AppFacade::new(
+            self.config.clone(),
+            self.id.clone(),
+            self.uns.clone(),
+            self.messaging.clone(),
+        )
     }
 }
 
@@ -155,10 +167,16 @@ mod tests {
         let handle = handle("kep1", None);
         assert_eq!(handle.id(), "kep1");
         assert_eq!(
-            handle.uns().topic_with_channel(UnsClass::Data, "temp").unwrap(),
+            handle
+                .uns()
+                .topic_with_channel(UnsClass::Data, "temp")
+                .unwrap(),
             "ecv1/gw-01/MyComp/kep1/data/temp"
         );
-        let msg = handle.message("data", "1.0").payload(json!({ "v": 1 })).build();
+        let msg = handle
+            .message("data", "1.0")
+            .payload(json!({ "v": 1 }))
+            .build();
         assert_eq!(msg.identity.unwrap().instance(), "kep1");
         assert_eq!(msg.header.name, "data");
     }
@@ -169,8 +187,16 @@ mod tests {
         let handle = handle("kep1", Some(messaging.clone() as Arc<dyn MessagingService>));
 
         handle.data().publish_value("temp", 21.5).await.unwrap();
-        handle.events().emit_message("door-open", "front door opened").await.unwrap();
-        handle.app().publish("Hello", "hello", json!({ "greeting": "hi" })).await.unwrap();
+        handle
+            .events()
+            .emit_message("door-open", "front door opened")
+            .await
+            .unwrap();
+        handle
+            .app()
+            .publish("Hello", "hello", json!({ "greeting": "hi" }))
+            .await
+            .unwrap();
 
         let published = messaging.local();
         assert_eq!(published.len(), 3);

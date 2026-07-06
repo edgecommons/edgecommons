@@ -15,7 +15,7 @@ def test_messaging_config_classes_exist():
             MessagingConfiguration,
             CredentialsConfig,
             LocalMqttConfig,
-            IoTCoreConfig
+            NorthboundMqttConfig
         )
         # If we get here, import was successful
         assert True
@@ -30,7 +30,7 @@ def test_java_compatible_config_structure():
             MessagingConfiguration,
             CredentialsConfig,
             LocalMqttConfig,
-            IoTCoreConfig
+            NorthboundMqttConfig
         )
         
         # Test CredentialsConfig
@@ -56,20 +56,20 @@ def test_java_compatible_config_structure():
         assert local_config.host == "localhost"
         assert local_config.port == 1883
         
-        # Test IoTCoreConfig
-        iot_creds = CredentialsConfig(
+        # Test NorthboundMqttConfig
+        northbound_creds = CredentialsConfig(
             cert_path="cert.pem",
             key_path="key.pem",
             ca_path="ca.pem"
         )
-        iot_config = IoTCoreConfig(
-            endpoint="test.iot.amazonaws.com",
+        northbound_config = NorthboundMqttConfig(
+            endpoint="test.mqtt.example.com",
             port=8883,
-            client_id="iot-client",
-            credentials=iot_creds
+            client_id="northbound-client",
+            credentials=northbound_creds
         )
-        assert iot_config.endpoint == "test.iot.amazonaws.com"
-        assert iot_config.port == 8883
+        assert northbound_config.endpoint == "test.mqtt.example.com"
+        assert northbound_config.port == 8883
         
     except ImportError as e:
         pytest.skip(f"Skipping due to missing dependencies: {e}")
@@ -83,8 +83,8 @@ def test_configuration_file_loading():
         # Create test config
         config_data = {
             "messaging": {
-                "iotCore": {
-                    "endpoint": "test.iot.amazonaws.com",
+                "northbound": {
+                    "host": "test.mqtt.example.com",
                     "port": 8883,
                     "clientId": "test-client",
                     "credentials": {
@@ -107,8 +107,8 @@ def test_configuration_file_loading():
             
             # Verify structure
             assert config.messaging is not None
-            assert config.messaging.iot_core is not None
-            assert config.messaging.iot_core.endpoint == "test.iot.amazonaws.com"
+            assert config.messaging.northbound is not None
+            assert config.messaging.northbound.endpoint == "test.mqtt.example.com"
             
             # Test validation
             assert config.validate() is True

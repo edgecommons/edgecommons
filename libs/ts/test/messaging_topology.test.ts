@@ -7,10 +7,9 @@
  *
  *  - FR-MSG-2: a Kubernetes Service-DNS host (`emqx.mqtt.svc.cluster.local`) is an opaque string and
  *    is used verbatim in the broker URL (no special handling, no insecure behavior).
- *  - FR-MSG-3: `messaging.iotCore` presence selects the topology — single broker (air-gapped, local
- *    only) when absent, dual (local + AWS IoT Core) when present. The IoT Core leg keeps mutual TLS
- *    (mqtts + cert/key/ca) with NO insecure fallback (no `rejectUnauthorized: false`); SNI is left to
- *    mqtt.js, which derives the servername from the URL host.
+ *  - FR-MSG-3: `messaging.northbound` presence selects the topology — single broker (air-gapped,
+ *    local only) when absent, dual (local + northbound MQTT) when present. The northbound leg is a
+ *    generic MQTT connection: plaintext unless a CA is configured, TLS when `caPath` is present.
  *
  * FR-MSG-4 (the message envelope) is untouched — these tests do not serialize/parse envelopes.
  */
@@ -68,29 +67,54 @@ afterEach(() => {
 });
 
 describe("FR-MSG-3: single-broker (air-gapped) topology", () => {
-  it("connects only the local broker when messaging.iotCore is absent", async () => {
+  it("connects only the local broker when messaging.northbound is absent", async () => {
     const cfg = await loadMessagingConfig(
       tmpFile(
         "single.json",
         JSON.stringify({ messaging: { local: { host: "localhost", port: 1883, clientId: "c-local" } } }),
       ),
     );
-    expect(cfg.iotCore).toBeUndefined(); // the loader's topology decision: single
+    expect(cfg.northbound).toBeUndefined(); // the loader's topology decision: single
 
     const provider = await StandaloneMqttProvider.connect(cfg);
     expect(hoisted.connectCalls).toHaveLength(1); // exactly one broker connection
     expect(hoisted.connectCalls[0].url).toBe("mqtt://localhost:1883");
 
-    // No IoT Core channel exists: publishing to IoT Core throws synchronously.
+    // No northbound channel exists: publishing to the second broker throws synchronously.
     expect(() =>
-      provider.publishBytes("t", Buffer.from("x"), Destination.IoTCore, Qos.AtLeastOnce),
+      provider.publishBytes("t", Buffer.from("x"), Destination.Northbound, Qos.AtLeastOnce),
     ).toThrow(EdgeCommonsError);
     await provider.disconnect();
   });
 });
 
-describe("FR-MSG-3: dual-MQTT topology + IoT Core mutual TLS", () => {
-  it("connects both brokers when messaging.iotCore is present, IoT Core over mutual TLS with no insecure fallback", async () => {
+describe("FR-MSG-3: dual-MQTT topology + northbound broker", () => {
+  it("connects both brokers when messaging.northbound is present over plaintext MQTT by default", async () => {
+    const cfg = await loadMessagingConfig(
+      tmpFile(
+        "dual-plain.json",
+        JSON.stringify({
+          messaging: {
+            local: { host: "localhost", port: 1883, clientId: "c-local" },
+            northbound: { host: "northbound.mqtt.svc.cluster.local", port: 1884, clientId: "c-north" },
+          },
+        }),
+      ),
+    );
+    expect(cfg.northbound).toBeDefined(); // the loader's topology decision: dual
+
+    const provider = await StandaloneMqttProvider.connect(cfg);
+    expect(hoisted.connectCalls).toHaveLength(2); // local + northbound
+    expect(hoisted.connectCalls[0].url).toBe("mqtt://localhost:1883");
+    expect(hoisted.connectCalls[1].url).toBe("mqtt://northbound.mqtt.svc.cluster.local:1884");
+
+    await expect(
+      provider.publishBytes("t", Buffer.from("x"), Destination.Northbound, Qos.ExactlyOnce),
+    ).resolves.toBeUndefined();
+    await provider.disconnect();
+  });
+
+  it("uses TLS for northbound when caPath is configured", async () => {
     const certPath = tmpFile("cert.pem", "CERTDATA");
     const keyPath = tmpFile("key.pem", "KEYDATA");
     const caPath = tmpFile("ca.pem", "CADATA");
@@ -100,39 +124,39 @@ describe("FR-MSG-3: dual-MQTT topology + IoT Core mutual TLS", () => {
         JSON.stringify({
           messaging: {
             local: { host: "localhost", port: 1883, clientId: "c-local" },
-            iotCore: {
-              endpoint: "abc123.iot.us-east-1.amazonaws.com",
+            northbound: {
+              host: "cloud-mqtt.example.com",
               port: 8883,
-              clientId: "c-iot",
+              clientId: "c-north",
               credentials: { certPath, keyPath, caPath },
             },
           },
         }),
       ),
     );
-    expect(cfg.iotCore).toBeDefined(); // the loader's topology decision: dual
+    expect(cfg.northbound).toBeDefined(); // the loader's topology decision: dual
 
     const provider = await StandaloneMqttProvider.connect(cfg);
-    expect(hoisted.connectCalls).toHaveLength(2); // local + IoT Core
+    expect(hoisted.connectCalls).toHaveLength(2); // local + northbound
 
     // call[0] = local broker (plaintext mqtt:// — no TLS material configured on the local leg).
     expect(hoisted.connectCalls[0].url).toBe("mqtt://localhost:1883");
 
-    // call[1] = IoT Core broker over mutual TLS (mqtts) with cert/key/ca material loaded.
-    const iot = hoisted.connectCalls[1];
-    expect(iot.url).toBe("mqtts://abc123.iot.us-east-1.amazonaws.com:8883");
-    expect(Buffer.isBuffer(iot.options.cert)).toBe(true);
-    expect(Buffer.isBuffer(iot.options.key)).toBe(true);
-    expect(Buffer.isBuffer(iot.options.ca)).toBe(true);
-    expect((iot.options.cert as Buffer).toString()).toBe("CERTDATA");
+    // call[1] = northbound broker over TLS (mqtts) with cert/key/ca material loaded.
+    const northbound = hoisted.connectCalls[1];
+    expect(northbound.url).toBe("mqtts://cloud-mqtt.example.com:8883");
+    expect(Buffer.isBuffer(northbound.options.cert)).toBe(true);
+    expect(Buffer.isBuffer(northbound.options.key)).toBe(true);
+    expect(Buffer.isBuffer(northbound.options.ca)).toBe(true);
+    expect((northbound.options.cert as Buffer).toString()).toBe("CERTDATA");
     // NO insecure fallback: rejectUnauthorized is never disabled (left to mqtt.js default = true);
     // SNI is derived from the URL host by mqtt.js (no override).
-    expect(iot.options.rejectUnauthorized).toBeUndefined();
-    expect("servername" in iot.options).toBe(false);
+    expect(northbound.options.rejectUnauthorized).toBeUndefined();
+    expect("servername" in northbound.options).toBe(false);
 
-    // The IoT Core channel is reachable (no throw on a publish attempt).
+    // The northbound channel is reachable (no throw on a publish attempt).
     await expect(
-      provider.publishBytes("t", Buffer.from("x"), Destination.IoTCore, Qos.AtLeastOnce),
+      provider.publishBytes("t", Buffer.from("x"), Destination.Northbound, Qos.AtLeastOnce),
     ).resolves.toBeUndefined();
     await provider.disconnect();
   });

@@ -110,7 +110,6 @@ export type {
   MessagingConfig,
   BrokerConfig,
   Credentials,
-  LwtConfig,
 } from "./messaging";
 
 // Metrics

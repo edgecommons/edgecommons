@@ -53,7 +53,10 @@ impl CredentialMetricsBridge {
                 let s = creds.stats();
                 let mut m = HashMap::with_capacity(4);
                 m.insert("secretCount".to_string(), s.secret_count as f64);
-                m.insert("lastSyncAgeMs".to_string(), s.last_sync_age_ms.unwrap_or(0) as f64);
+                m.insert(
+                    "lastSyncAgeMs".to_string(),
+                    s.last_sync_age_ms.unwrap_or(0) as f64,
+                );
                 m.insert("syncFailures".to_string(), s.sync_failures as f64);
                 m.insert("rotations".to_string(), s.rotations as f64);
                 if let Err(e) = metrics.emit_metric(METRIC, m).await {
@@ -79,14 +82,30 @@ mod tests {
     /// A credential service that only reports fixed stats (the only thing the bridge reads).
     struct StatsOnlyCreds(CredentialStats);
     impl CredentialService for StatsOnlyCreds {
-        fn get(&self, _: &str) -> Result<Option<Secret>> { Ok(None) }
-        fn get_version(&self, _: &str, _: &str) -> Result<Option<Secret>> { Ok(None) }
-        fn exists(&self, _: &str) -> Result<bool> { Ok(false) }
-        fn list(&self, _: &str) -> Result<Vec<SecretMeta>> { Ok(Vec::new()) }
-        fn versions(&self, _: &str) -> Result<Vec<String>> { Ok(Vec::new()) }
-        fn put(&self, _: &str, _: &[u8], _: PutOptions) -> Result<String> { Ok("1".into()) }
-        fn delete(&self, _: &str) -> Result<bool> { Ok(false) }
-        fn stats(&self) -> CredentialStats { self.0.clone() }
+        fn get(&self, _: &str) -> Result<Option<Secret>> {
+            Ok(None)
+        }
+        fn get_version(&self, _: &str, _: &str) -> Result<Option<Secret>> {
+            Ok(None)
+        }
+        fn exists(&self, _: &str) -> Result<bool> {
+            Ok(false)
+        }
+        fn list(&self, _: &str) -> Result<Vec<SecretMeta>> {
+            Ok(Vec::new())
+        }
+        fn versions(&self, _: &str) -> Result<Vec<String>> {
+            Ok(Vec::new())
+        }
+        fn put(&self, _: &str, _: &[u8], _: PutOptions) -> Result<String> {
+            Ok("1".into())
+        }
+        fn delete(&self, _: &str) -> Result<bool> {
+            Ok(false)
+        }
+        fn stats(&self) -> CredentialStats {
+            self.0.clone()
+        }
     }
 
     /// A metric service that records define/emit calls for assertions.
@@ -110,7 +129,9 @@ mod tests {
         async fn emit_metric_now(&self, n: &str, v: Map<String, f64>) -> Result<()> {
             self.emit_metric(n, v).await
         }
-        async fn flush_metrics(&self) -> Result<()> { Ok(()) }
+        async fn flush_metrics(&self) -> Result<()> {
+            Ok(())
+        }
         async fn shutdown(&self) {}
     }
 

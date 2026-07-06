@@ -2,7 +2,7 @@
 //!
 //! **One-liner purpose**: Transport-agnostic messaging — callback-based
 //! publish/subscribe and request/reply — mirroring the Java/Python
-//! `IMessagingService` contract (explicit local vs IoT Core method pairs).
+//! `IMessagingService` contract (explicit local vs northbound method pairs).
 //!
 //! ## Overview
 //! The subsystem has two layers:
@@ -12,8 +12,7 @@
 //!    MQTT via `rumqttc`) and the Greengrass implementation is [`provider::ipc`]
 //!    (behind the `greengrass` feature).
 //! 2. [`MessagingService`] — the user-facing contract, built **once** over any
-//!    provider. It exposes **explicit `…`/`…ToIoTCore` method pairs** (mirroring
-//!    the Greengrass v2 / Java / Python API), owns [`message::Message`]
+//!    provider. It exposes **explicit local / northbound method pairs**, owns [`message::Message`]
 //!    (de)serialization, the callback dispatch model, and request/reply.
 //!
 //! ## Semantics & Architecture
@@ -25,7 +24,7 @@
 //!   with a warning), and `max_concurrency` is how many queued messages a
 //!   subscription processes at once (`1` = serial, ordered).
 //! - **Stopping**: [`MessagingService::unsubscribe`] /
-//!   [`MessagingService::unsubscribe_from_iot_core`] abort the dispatcher **and**
+//!   [`MessagingService::unsubscribe_northbound`] abort the dispatcher **and**
 //!   UNSUBSCRIBE at the broker; the service stops all dispatchers on drop.
 //! - **Request/reply** returns a [`service::ReplyFuture`] handle (the Rust analog of
 //!   Java's `CompletableFuture` / Python's `Iou`) carrying a **framework-owned
@@ -66,7 +65,7 @@
 //!
 //! ## Design Choices
 //! - The user-facing service mirrors the Java/Python explicit-pair surface
-//!   (`publish`/`publish_to_iot_core`, etc.) intentionally; the lower-level provider
+//!   (`publish`/`publish_northbound`, etc.) intentionally; the lower-level provider
 //!   keeps a `Destination` argument as an internal transport detail.
 //! - Request/reply uses a dedicated ephemeral reply topic per request; cleanup runs
 //!   on completion, cancel, or timeout.
@@ -84,12 +83,12 @@ pub mod request_reply;
 pub mod service;
 
 pub use message::{Message, MessageBuilder, MessageIdentity};
-pub use service::{
-    message_handler, DefaultMessagingService, MessageHandler, MessagingService, ReplyFuture,
-};
 /// The crate-private reserved-publish seam (UNS-CANONICAL-DESIGN §4.2, D-U4) —
 /// re-exported for the library's own publishers (heartbeat/metrics/cfg).
 pub(crate) use service::ReservedMessaging;
+pub use service::{
+    DefaultMessagingService, MessageHandler, MessagingService, ReplyFuture, message_handler,
+};
 
 use std::task::{Context, Poll};
 
@@ -103,8 +102,8 @@ use crate::error::Result;
 pub enum Destination {
     /// Local broker (standalone) or local IPC pub/sub (Greengrass).
     Local,
-    /// AWS IoT Core.
-    IotCore,
+    /// The northbound transport.
+    Northbound,
 }
 
 /// MQTT-style quality of service (the subset the library uses).
@@ -112,6 +111,26 @@ pub enum Destination {
 pub enum Qos {
     AtMostOnce,
     AtLeastOnce,
+    /// MQTT QoS 2. Supported only by the standalone local MQTT provider; AWS IoT
+    /// Core / Greengrass IoT-Core APIs expose QoS 0/1 only.
+    ExactlyOnce,
+}
+
+impl Qos {
+    /// Convert a numeric MQTT QoS value into the shared enum.
+    ///
+    /// # Errors
+    /// Returns a config error when `value` is not 0, 1, or 2.
+    pub fn from_mqtt_value(value: u8, field: &str) -> Result<Self> {
+        match value {
+            0 => Ok(Self::AtMostOnce),
+            1 => Ok(Self::AtLeastOnce),
+            2 => Ok(Self::ExactlyOnce),
+            other => Err(crate::error::EdgeCommonsError::Config(format!(
+                "{field} must be 0..2 (got {other})"
+            ))),
+        }
+    }
 }
 
 /// A live, raw subscription: the **bounded** internal queue of `(topic, payload)`
@@ -155,8 +174,13 @@ impl Subscription {
 #[async_trait]
 pub trait MessagingProvider: Send + Sync {
     /// Publish raw bytes to `topic` on `dest` at `qos`.
-    async fn publish(&self, topic: &str, payload: Vec<u8>, dest: Destination, qos: Qos)
-        -> Result<()>;
+    async fn publish(
+        &self,
+        topic: &str,
+        payload: Vec<u8>,
+        dest: Destination,
+        qos: Qos,
+    ) -> Result<()>;
 
     /// Subscribe to `filter` on `dest`, returning a [`Subscription`] whose internal
     /// queue is bounded to `max_messages` entries.

@@ -32,6 +32,11 @@ Messages in EdgeCommons follow a header-payload model consisting of:
    - Added dynamically at runtime
    
 3. **Body** - The actual payload/content of the message
+   - JSON values are carried directly.
+   - Small binary payloads (`byte[]`) are carried as a first-class bounded marker in
+     `body._edgecommonsBinary` with `encoding: "base64"`, a decoded `length`, and
+     base64 `data`. Decoded binary bodies are limited to 64 KiB; use
+     `Message.isBinaryBody()` / `Message.getBinaryBody()` to detect and decode them.
 
 ### Communication Patterns
 
@@ -85,8 +90,8 @@ applies (deliberately — the CONFIG_COMPONENT bootstrap request gets a deadline
 The UNS classes `state`, `metric`, `cfg` and `log` are **library-owned** (UNS-CANONICAL-DESIGN
 §4.1): the heartbeat publishes the `state` keepalive, the metric subsystem publishes `metric`,
 and the effective-config publisher announces `cfg`. Every publish path that takes a client-chosen
-topic — `publish`, `publishRaw`, `publishToIoTCore`, `publishToIoTCoreRaw`, `request`,
-`requestFromIoTCore`, and `reply`/`replyToIoTCore` (via the request's `reply_to`) — rejects a
+topic — `publish`, `publishRaw`, `publishNorthbound`, `publishNorthboundRaw`, `request`,
+`requestNorthbound`, and `reply`/`replyNorthbound` (via the request's `reply_to`) — rejects a
 topic whose UNS class position holds a reserved token with a `ReservedTopicException`:
 
 ```
@@ -102,7 +107,7 @@ on legitimate `app` channels such as `ecv1/d/c/i/app/state`. Non-`ecv1` topics p
 
 The guard is **misuse prevention, not a security boundary** (per-device broker ACLs are). The
 library's own publishers reach the reserved classes through `MessagingClient.reservedPublisher()`
-— a `ReservedPublisher` (`publish` / `publishRaw` / `publishToIoTCore`) that bypasses the guard.
+— a `ReservedPublisher` (`publish` / `publishRaw` / `publishNorthbound`) that bypasses the guard.
 It is public only because the library publishers live in other packages; component code should
 not use it.
 
@@ -122,7 +127,7 @@ The library includes three messaging providers:
 3. **StandaloneMessagingProvider** (NEW!):
    - **Dual MQTT clients** for maximum flexibility
    - **Local MQTT client**: For local/edge communication
-   - **IoT Core MQTT client**: Direct AWS IoT Core connectivity
+   - **IoT Core MQTT client**: Direct the northbound transport connectivity
    - **Independent subscriptions**: Subscribe to same topic on both clients
    - **Multiple authentication**: Certificate-based and username/password
    - **Container-ready**: Perfect for Kubernetes, Docker, ECS, etc.
@@ -144,7 +149,7 @@ Message msg = Message.build(messageContents);
 
 1. **Topic Structure**
    - Use consistent topic hierarchies
-   - Follow Greengrass/IoT Core topic naming conventions
+   - Follow Greengrass/northbound topic naming conventions
 
 2. **Message Versioning**
    - Always include message versions in headers
@@ -256,7 +261,7 @@ The MQTT transport (used by the `HOST` and `KUBERNETES` platforms) requires a me
         "password": "mqtt-password"
       }
     },
-    "iotCore": {
+    "northbound": {
       "endpoint": "your-endpoint.iot.us-east-1.amazonaws.com",
       "port": 8883,
       "clientId": "my-component-iotcore",
@@ -274,34 +279,46 @@ The MQTT transport (used by the `HOST` and `KUBERNETES` platforms) requires a me
 - **Username/Password**: For development or brokers with basic auth
 - **Certificate-based**: For production with mutual TLS authentication
 
-### MQTT Last-Will-and-Testament (`messaging.lwt`)
-An optional `lwt` section registers an MQTT will on the **local-broker connection only** at
-CONNECT (re-registered automatically on reconnect). The broker publishes it if the component
-disconnects ungracefully — it never passes through `publish()`. There is **no retain option by
-design** (the will is always registered with `retain=false`). The IPC (GREENGRASS) transport has
-no CONNECT packet, so `lwt` is an explicit no-op there (DEBUG log).
+### MQTT QoS defaults (`messaging.local.qos` / `messaging.northbound.qos`)
+Each broker's `qos` object configures MQTT QoS for operations on that broker that do not carry an
+explicit QoS argument. Standalone local and northbound MQTT brokers accept QoS `0`, `1`, or `2`.
+Greengrass northbound IPC accepts the EdgeCommons `Qos` enum but supports only QoS `0` and `1`.
 
 ```json
 {
   "messaging": {
-    "local":  { "host": "mqtt-broker.local", "port": 1883, "clientId": "bridge" },
-    "lwt": {
-      "topic":   "ecv1/gw-01/uns-bridge/main/state",
-      "payload": { "status": "UNREACHABLE" },
-      "qos": 1
+    "local":  {
+      "host": "mqtt-broker.local",
+      "port": 1883,
+      "clientId": "bridge-local",
+      "qos": { "publish": 1, "subscribe": 1 }
+    },
+    "northbound": {
+      "host": "northbound-broker.example.com",
+      "port": 8883,
+      "clientId": "bridge-northbound",
+      "qos": { "publish": 2, "subscribe": 1 }
     }
   }
 }
 ```
 
-- `topic` (required): the will topic.
-- `payload`: a **string** is published verbatim as UTF-8 bytes; an **object** is serialized to
-  compact JSON bytes; absent ⇒ empty payload.
-- `qos`: `0` or `1`, default `1`.
+- `local.qos.publish`: local `publish`, `publishRaw`, request publish, and reply publish.
+- `local.qos.subscribe`: local `subscribe` and request reply subscriptions.
+- `northbound.qos.publish`: northbound MQTT request publish and reply publish when no explicit QoS
+  argument exists.
+- `northbound.qos.subscribe`: northbound MQTT request reply subscriptions when no explicit QoS
+  argument exists.
+
+### MQTT Last-Will
+
+Generic component messaging config does not define an MQTT Last-Will. The first-party LWT use is
+the `uns-bridge` site-broker uplink, where the bridge derives a private Last-Will from its resolved
+UNS state topic and the site broker publishes whole-device `UNREACHABLE`.
 
 ### Dual Connectivity Benefits
 1. **Local Communication**: Fast, low-latency messaging for edge processing
-2. **Cloud Integration**: Direct AWS IoT Core connectivity for telemetry and commands
+2. **Cloud Integration**: Direct the northbound transport connectivity for telemetry and commands
 3. **Independent Subscriptions**: Subscribe to same topic on both brokers
 4. **Flexible Routing**: Route messages based on content, priority, or destination
 
@@ -320,7 +337,7 @@ data:
           "port": 1883,
           "clientId": "my-component-local"
         },
-        "iotCore": {
+        "northbound": {
           "endpoint": "your-endpoint.iot.us-east-1.amazonaws.com",
           "port": 8883,
           "clientId": "my-component-iotcore",

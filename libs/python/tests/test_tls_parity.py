@@ -1,8 +1,8 @@
 """
 Unit tests for TLS / messaging-config parity (no broker required):
-- C3: IoT Core refuses to connect without complete TLS credentials
+- northbound without caPath remains plaintext; caPath enables TLS
 - local broker TLS is keyed on caPath (server-only) with optional client cert (mutual)
-- IoT Core is now optional in the standalone messaging config (parity with Java/Rust)
+- northbound is optional in the standalone messaging config (parity with Java/Rust)
 
 The TLS-context construction tests need real cert files; they are skipped unless
 certs are available. Certs live in the shared edgecommons-test-infra repo; point at
@@ -49,12 +49,10 @@ def _provider():
     return object.__new__(StandaloneProvider)
 
 
-def test_iot_core_refuses_without_complete_credentials():
+def test_northbound_without_ca_is_plaintext():
     prov = _provider()
     client = _FakeClient()
-    # Missing cert+key -> must refuse rather than silently connect without TLS (C3).
-    with pytest.raises(RuntimeError, match="without complete TLS credentials"):
-        prov._configure_tls(client, _Broker(_Creds(ca="/x/ca.crt")), "iotcore")
+    prov._configure_tls(client, _Broker(_Creds(cert="/x/client.crt", key="/x/client.key")), "northbound")
     assert client.ctx is None
 
 
@@ -65,7 +63,7 @@ def test_local_without_ca_is_plaintext():
     assert client.ctx is None  # no TLS configured
 
 
-def test_iot_core_optional_local_only_config(tmp_path):
+def test_northbound_optional_local_only_config(tmp_path):
     cfg = {
         "messaging": {
             "local": {
@@ -79,7 +77,7 @@ def test_iot_core_optional_local_only_config(tmp_path):
     path = tmp_path / "m.json"
     path.write_text(json.dumps(cfg))
     mc = MessagingConfiguration.load_from_file(str(path))
-    assert mc.messaging.iot_core is None
+    assert mc.messaging.northbound is None
     assert mc.messaging.local is not None
     assert mc.validate() is True
 
@@ -120,7 +118,7 @@ def test_local_mutual_tls_builds_context():
 
 
 @pytest.mark.skipif(not HAVE_CERTS, reason=_SKIP_REASON)
-def test_iot_core_complete_creds_builds_context():
+def test_northbound_complete_creds_builds_context():
     prov = _provider()
     client = _FakeClient()
     prov._configure_tls(
@@ -132,6 +130,6 @@ def test_iot_core_complete_creds_builds_context():
                 key=os.path.join(CERTS, "client.key"),
             )
         ),
-        "iotcore",
+        "northbound",
     )
     assert client.ctx is not None
