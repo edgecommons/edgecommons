@@ -8,11 +8,13 @@ on:
     branches: ["main"]
     paths:
       - "libs/**"
+      - "examples/python/**"
       - "test-infra/k8s/**"
       - ".github/workflows/k8s.yml"
   pull_request:
     paths:
       - "libs/**"
+      - "examples/python/**"
       - "test-infra/k8s/**"
       - ".github/workflows/k8s.yml"
 
