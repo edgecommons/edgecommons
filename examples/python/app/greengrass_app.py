@@ -4,7 +4,6 @@ import time
 from abc import ABC
 from random import random
 
-from awsiot.greengrasscoreipc.model import QOS
 from edgecommons.utils.iou import Iou
 from edgecommons.metrics.metric_emitter import MetricEmitter
 from edgecommons.metrics.metric_builder import MetricBuilder
@@ -15,6 +14,7 @@ from edgecommons.messaging.errors import RequestTimeoutError
 from edgecommons.messaging.message import Message
 from edgecommons.messaging.message_builder import MessageBuilder
 from edgecommons.messaging.messaging_client import MessagingClient
+from edgecommons.messaging.qos import Qos
 from edgecommons.uns import UnsClass
 
 logger = logging.getLogger("GreengrassApp")
@@ -241,16 +241,16 @@ class GreengrassApp(ConfigurationChangeListener, ABC):
             MessagingClient.subscribe(
                 self._hello_topic, self.ipc_hello_world_handler, True
             )
-            # Non-fatal: setups without an IoT Core transport (e.g. a local-only MQTT broker)
-            # skip the IoT Core bridge instead of failing the whole component.
+            # Non-fatal: setups without a northbound transport (e.g. a local-only MQTT broker)
+            # skip the northbound bridge instead of failing the whole component.
             try:
                 MessagingClient.subscribe_northbound(
                     self._hello_topic,
                     self.northbound_hello_world_handler,
-                    QOS.AT_LEAST_ONCE,
+                    Qos.AT_LEAST_ONCE,
                 )
             except Exception as e:
-                logger.warning(f"IoT Core unavailable; skipping IoT Core subscribe: {e}")
+                logger.warning(f"northbound unavailable; skipping northbound subscribe: {e}")
             MessagingClient.subscribe(self._request_topic, self.request_callback)
 
             iou_1 = self.publish_request(msg_id="1", execution_time=0)
@@ -270,13 +270,13 @@ class GreengrassApp(ConfigurationChangeListener, ABC):
                 )
                 logger.info(f"Publishing message {i} to ipc")
                 MessagingClient.publish(self._hello_topic, test_message)
-                logger.info(f"Publishing message {i} to iot core")
+                logger.info(f"Publishing message {i} to northbound")
                 try:
                     MessagingClient.publish_northbound(
-                        self._hello_topic, test_message, QOS.AT_LEAST_ONCE
+                        self._hello_topic, test_message, Qos.AT_LEAST_ONCE
                     )
                 except Exception as e:
-                    logger.warning(f"failed to publish to IoT Core: {e}")
+                    logger.warning(f"failed to publish northbound: {e}")
                 # Append the data point to the durable telemetry stream (partitioned by Thing).
                 if self._stream is not None:
                     thing = self._config_manager.get_thing_name()
