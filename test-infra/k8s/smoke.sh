@@ -120,7 +120,7 @@ assert_log "Received an (ipc|local) hello world message on topic ecv1/.*/app/hel
 # startup; assert it equals this pod's actual name.
 POD="$("${KUBECTL}" -n "${NAMESPACE}" get pods -l "${SELECTOR}" -o jsonpath='{.items[0].metadata.name}')"
 [[ -n "${POD}" ]] || fail "could not determine the component pod name"
-assert_log "Component identity .thing name.: ${POD}" "Downward-API identity resolved to POD_NAME=${POD} (FR-RT-7)"
+assert_log "Component identity: .*thing name: ${POD}" "Downward-API identity resolved to POD_NAME=${POD} (FR-RT-7)"
 
 # FR-LOG-1/3: on KUBERNETES the default logging sink is structured stdout-JSON (one JSON object per
 # line), and each line carries Downward-API correlation fields. Assert a JSON line whose `thing`
