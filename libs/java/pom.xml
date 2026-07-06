@@ -2,12 +2,12 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>com.mbreissi</groupId>
-    <artifactId>ggcommons</artifactId>
+    <groupId>com.mbreissi.edgecommons</groupId>
+    <artifactId>edgecommons</artifactId>
     <version>0.2.0</version>
     <packaging>jar</packaging>
 
-    <name>ggcommons</name>
+    <name>edgecommons</name>
     <url>https://maven.apache.org</url>
 
     <properties>
@@ -17,14 +17,14 @@
         <!--      <maven.compiler.release>19</maven.compiler.release>-->
         <!--      <java.version>8</java.version>-->
         <!-- Language level: Java 25 (LTS). The Foreign Function and Memory API (Panama,
-             JEP 454) is stable as of Java 22, so the native ggstreamlog binding needs
+             JEP 454) is stable as of Java 22, so the native edgestreamlog binding needs
              no preview flag. Built and deployed on JDK 25 (lab-5950x runs 25). -->
         <maven.compiler.release>25</maven.compiler.release>
-        <!-- Directory holding the built ggstreamlog cdylib (from a release cargo build with the
+        <!-- Directory holding the built edgestreamlog cdylib (from a release cargo build with the
              cabi feature, plus kinesis for export). Packaged into the jar under /native/os-arch/
-             so the streaming binding loads with no ggstreamlog.library.path system property.
+             so the streaming binding loads with no edgestreamlog.library.path system property.
              Override for a custom build location. -->
-        <ggstreamlog.lib.dir>${project.basedir}/../rust-streamlog/target/release</ggstreamlog.lib.dir>
+        <edgestreamlog.lib.dir>${project.basedir}/../rust-streamlog/target/release</edgestreamlog.lib.dir>
     </properties>
     <dependencyManagement>
         <dependencies>
@@ -219,7 +219,7 @@
                     <release>${maven.compiler.release}</release>
                 </configuration>
             </plugin>
-            <!-- Copy the platform ggstreamlog cdylib into the jar (/native/<os>-<arch>/<lib>) so the
+            <!-- Copy the platform edgestreamlog cdylib into the jar (/native/<os>-<arch>/<lib>) so the
                  streaming binding loads with no -D flag. No-op (quiet) if the lib isn't built, so a
                  Java-only build still succeeds; CI builds the cdylib per-platform first. -->
             <plugin>
@@ -239,13 +239,13 @@
                                 <condition property="nlib.arch" value="x86_64"><os arch="amd64"/></condition>
                                 <condition property="nlib.arch" value="aarch64"><or><os arch="aarch64"/><os arch="arm64"/></or></condition>
                                 <property name="nlib.arch" value="${os.arch}"/>
-                                <condition property="nlib.name" value="ggstreamlog.dll"><os family="windows"/></condition>
-                                <condition property="nlib.name" value="libggstreamlog.dylib"><os family="mac"/></condition>
-                                <property name="nlib.name" value="libggstreamlog.so"/>
-                                <copy file="${ggstreamlog.lib.dir}/${nlib.name}"
+                                <condition property="nlib.name" value="edgestreamlog.dll"><os family="windows"/></condition>
+                                <condition property="nlib.name" value="libedgestreamlog.dylib"><os family="mac"/></condition>
+                                <property name="nlib.name" value="libedgestreamlog.so"/>
+                                <copy file="${edgestreamlog.lib.dir}/${nlib.name}"
                                       todir="${project.build.outputDirectory}/native/${nlib.os}-${nlib.arch}"
                                       failonerror="false" quiet="true"/>
-                                <echo message="ggstreamlog native: ${ggstreamlog.lib.dir}/${nlib.name} -> native/${nlib.os}-${nlib.arch}/ (skipped if absent)"/>
+                                <echo message="edgestreamlog native: ${edgestreamlog.lib.dir}/${nlib.name} -> native/${nlib.os}-${nlib.arch}/ (skipped if absent)"/>
                             </target>
                         </configuration>
                     </execution>
@@ -263,13 +263,13 @@
                          KeyProvider config-path tests (EnvKeyProvider / type=env) run deterministically
                          in the forked JVM; Java has no portable in-process env setter under JDK 25. -->
                     <environmentVariables>
-                        <GGCOMMONS_TEST_VAULT_KEK>AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=</GGCOMMONS_TEST_VAULT_KEK>
+                        <EDGECOMMONS_TEST_VAULT_KEK>AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=</EDGECOMMONS_TEST_VAULT_KEK>
                     </environmentVariables>
                     <!-- These require live infrastructure (a real broker / IoT Core for the
-                         STANDALONE GGCommonsTest, and a Greengrass Nucleus for MessagingClientTest)
+                         STANDALONE EdgeCommonsTest, and a Greengrass Nucleus for MessagingClientTest)
                          and are run manually, not in the self-contained unit/integration suite. -->
                     <excludes>
-                        <exclude>**/GGCommonsTest.java</exclude>
+                        <exclude>**/EdgeCommonsTest.java</exclude>
                         <exclude>**/MessagingClientTest.java</exclude>
                     </excludes>
                 </configuration>
@@ -280,16 +280,16 @@
                 <version>0.8.15</version>
                 <configuration>
                     <!-- Greengrass IPC paths only execute against a live Nucleus; they are
-                         validated on-device and by the manual GGCommonsTest integration test,
+                         validated on-device and by the manual EdgeCommonsTest integration test,
                          so they are excluded from the in-process coverage gate. -->
                     <excludes>
-                        <exclude>com/mbreissi/ggcommons/messaging/providers/greengrass/**</exclude>
-                        <exclude>com/mbreissi/ggcommons/config/provider/GreengrassConfigProvider*</exclude>
-                        <exclude>com/mbreissi/ggcommons/config/provider/ShadowConfigProvider*</exclude>
-                        <exclude>com/mbreissi/ggcommons/config/provider/ConfigComponentProvider*</exclude>
-                        <!-- Native FFI glue (Panama): only executes with the ggstreamlog cdylib
+                        <exclude>com/mbreissi/edgecommons/messaging/providers/greengrass/**</exclude>
+                        <exclude>com/mbreissi/edgecommons/config/provider/GreengrassConfigProvider*</exclude>
+                        <exclude>com/mbreissi/edgecommons/config/provider/ShadowConfigProvider*</exclude>
+                        <exclude>com/mbreissi/edgecommons/config/provider/ConfigComponentProvider*</exclude>
+                        <!-- Native FFI glue (Panama): only executes with the edgestreamlog cdylib
                              present; validated by the gated native test + the Rust C smoke test. -->
-                        <exclude>com/mbreissi/ggcommons/streaming/**</exclude>
+                        <exclude>com/mbreissi/edgecommons/streaming/**</exclude>
                     </excludes>
                 </configuration>
                 <executions>
@@ -338,12 +338,12 @@
         <repository>
             <id>github</id>
             <name>GitHub Packages</name>
-            <url>https://maven.pkg.github.com/edgecommons/ggcommons</url>
+            <url>https://maven.pkg.github.com/edgecommons/edgecommons</url>
         </repository>
         <snapshotRepository>
             <id>github</id>
             <name>GitHub Packages</name>
-            <url>https://maven.pkg.github.com/edgecommons/ggcommons</url>
+            <url>https://maven.pkg.github.com/edgecommons/edgecommons</url>
         </snapshotRepository>
     </distributionManagement>
 </project>

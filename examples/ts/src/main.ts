@@ -1,7 +1,7 @@
 /**
  * TypeScript Component Skeleton — entry point.
  *
- * A worked-example AWS IoT Greengrass v2 component built on the `ggcommons`
+ * A worked-example AWS IoT Greengrass v2 component built on the `edgecommons`
  * TypeScript library, mirroring the Java, Python, and Rust skeletons. It
  * initializes the runtime from the standard CLI contract
  * (`-c`/`--platform`/`--transport`/`-t`), then
@@ -20,17 +20,17 @@
  *   -t my-thing
  * ```
  */
-import { GGCommonsBuilder, logger } from "@edgecommons/ggcommons";
+import { EdgeCommonsBuilder, logger } from "@edgecommons/edgecommons";
 
 import { SkeletonApp } from "./app";
 
 /** The component's full name (matches `recipe.yaml` / `gdk-config.json`). */
-const COMPONENT_NAME = "com.mbreissi.greengrass.TsComponentSkeleton";
+const COMPONENT_NAME = "com.mbreissi.edgecommons.TsComponentSkeleton";
 
 /** Boot the component: build the runtime from CLI args, run the app, shut down cleanly. */
 async function main(): Promise<void> {
   // `process.argv.slice(2)` drops the `node` and script-path prefix.
-  const gg = await new GGCommonsBuilder(COMPONENT_NAME).args(process.argv.slice(2)).build();
+  const gg = await new EdgeCommonsBuilder(COMPONENT_NAME).args(process.argv.slice(2)).build();
 
   logger.info(
     `TypeScript Component Skeleton starting: component=${gg.componentName()} thing=${gg.config().thingName}`,
@@ -38,7 +38,7 @@ async function main(): Promise<void> {
 
   const app = new SkeletonApp(gg);
 
-  // Graceful shutdown is owned by the LIBRARY now (Phase 1c / FR-HB-2): GGCommonsBuilder.build()
+  // Graceful shutdown is owned by the LIBRARY now (Phase 1c / FR-HB-2): EdgeCommonsBuilder.build()
   // wires SIGTERM and SIGINT so that on receipt the runtime flips /readyz to 503, runs the
   // idempotent gg.close() (unsubscribe every tracked subscription + bounded-close
   // messaging/streams/heartbeat/vault), then exits 0. The skeleton therefore no longer installs its

@@ -1,11 +1,11 @@
 # Java on-device validation
 
-`shadow-verify/` (a small shaded Maven app depending on `com.mbreissi:ggcommons`)
-+ `com.ggcommons.JavaShadowVerify-1.0.0.yaml` validate the **sanitized default SHADOW
+`shadow-verify/` (a small shaded Maven app depending on `com.mbreissi.edgecommons:edgecommons`)
++ `com.mbreissi.edgecommons.JavaShadowVerify-1.0.0.yaml` validate the **sanitized default SHADOW
 name** end-to-end on a live Greengrass nucleus: run as `java -jar shadow-verify.jar
 -c SHADOW` (no name), the SHADOW provider defaults the shadow name to the component
-name and sanitizes it (`com.ggcommons.JavaShadowVerify` →
-`com_ggcommons_JavaShadowVerify`), then loads config from that named shadow.
+name and sanitizes it (`com.mbreissi.edgecommons.JavaShadowVerify` →
+`com_mbreissi_edgecommons_JavaShadowVerify`), then loads config from that named shadow.
 
 ## Build & deploy
 
@@ -13,14 +13,14 @@ name and sanitizes it (`com.ggcommons.JavaShadowVerify` →
 # Build the lib into ~/.m2, then the shaded harness jar:
 mvn -DskipTests -f libs/java/pom.xml install
 mvn -f libs/java/deploy/shadow-verify/pom.xml package      # -> target/shadow-verify.jar
-# Deploy as a raw-jar artifact at <artifactDir>/com.ggcommons.JavaShadowVerify/1.0.0/shadow-verify.jar
+# Deploy as a raw-jar artifact at <artifactDir>/com.mbreissi.edgecommons.JavaShadowVerify/1.0.0/shadow-verify.jar
 sudo greengrass-cli deployment create --recipeDir recipes --artifactDir artifacts \
-  --merge "com.ggcommons.JavaShadowVerify=1.0.0"
+  --merge "com.mbreissi.edgecommons.JavaShadowVerify=1.0.0"
 # Result -> /tmp/java_shadow_verify_result.json
 ```
 
 Result observed (name fix confirmed via the log
-`Will load configuration from Named shadow (shadow name: 'com_ggcommons_JavaShadowVerify')`,
+`Will load configuration from Named shadow (shadow name: 'com_mbreissi_edgecommons_JavaShadowVerify')`,
 and the loaded marker values):
 `{"lang":"java","connected":true,"config_loaded":{"publish_interval":37,"site":"java-shadow",...}}`
 

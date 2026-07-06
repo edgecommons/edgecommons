@@ -176,4 +176,4 @@ export interface IMessagingService {
 }
 
 /** Prefix for generated reply topics. Matches the other libraries exactly. */
-export const REPLY_TOPIC_PREFIX = "ggcommons/reply-";
+export const REPLY_TOPIC_PREFIX = "edgecommons/reply-";

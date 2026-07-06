@@ -21,10 +21,10 @@
 //! ## Usage
 //! ```no_run
 //! # #[cfg(feature = "credentials")] {
-//! use ggcommons::credentials::{self, CredentialsConfig};
+//! use edgecommons::credentials::{self, CredentialsConfig};
 //! let cfg = CredentialsConfig::default();              // file provider, local-only vault
 //! let creds = credentials::open(&cfg).unwrap();
-//! use ggcommons::credentials::CredentialService;
+//! use edgecommons::credentials::CredentialService;
 //! creds.put("db/password", b"s3cr3t", Default::default()).unwrap();
 //! let pw = creds.get_string("db/password").unwrap().unwrap();
 //! # }
@@ -357,7 +357,7 @@ mod tests {
         };
         let vault_json = serde_json::to_vec_pretty(&vault).unwrap();
         let vectors = serde_json::to_vec_pretty(&serde_json::json!({
-            "description": "ggcommons vault v1 cross-language conformance vectors",
+            "description": "edgecommons vault v1 cross-language conformance vectors",
             "kekB64": b64.encode(kek),
             "dekB64": b64.encode(dek),
             "vaultId": vault_id,
@@ -505,10 +505,10 @@ mod tests {
         unsafe { std::env::remove_var(var_short) };
     }
 
-    // The env var NAME defaults to GGCOMMONS_VAULT_KEK when keyProvider.envVar is absent.
+    // The env var NAME defaults to EDGECOMMONS_VAULT_KEK when keyProvider.envVar is absent.
     #[test]
-    fn env_provider_defaults_env_var_name_to_ggcommons_vault_kek() {
-        assert_eq!(DEFAULT_KEK_ENV_VAR, "GGCOMMONS_VAULT_KEK");
+    fn env_provider_defaults_env_var_name_to_edgecommons_vault_kek() {
+        assert_eq!(DEFAULT_KEK_ENV_VAR, "EDGECOMMONS_VAULT_KEK");
         unsafe { std::env::set_var(DEFAULT_KEK_ENV_VAR, b64(&[9u8; 32])) };
         let dir = tempfile::tempdir().unwrap();
         let kp = KeyProviderConfig { kind: Some("env".to_string()), env_var: None, ..Default::default() };
@@ -556,7 +556,7 @@ mod tests {
 
     // (e) Credentials stay OPT-IN: the KUBERNETES profile default only changes the provider TYPE; it
     // must NOT auto-enable credentials when no `credentials` section is configured. This mirrors the
-    // gating in GgCommonsBuilder::build (credentials are opened only inside the
+    // gating in EdgeCommonsBuilder::build (credentials are opened only inside the
     // `snapshot.raw.get("credentials") == Some` arm, where the default is consulted). The full
     // build() path is exercised by the broker-gated integration test `tests/lib_standalone.rs`.
     #[test]

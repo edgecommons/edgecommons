@@ -1,5 +1,5 @@
 {
-  "purpose": "ggcommons credentials Phase 3 real-AWS validation (Secrets Manager over TES)",
+  "purpose": "edgecommons credentials Phase 3 real-AWS validation (Secrets Manager over TES)",
   "created": "2026-06-21",
   "status": "VALIDATED then TORN DOWN 2026-06-21 (both resources deleted; re-create with setup.ps1)",
   "account": "162499689067",
@@ -9,15 +9,15 @@
   "resources": [
     {
       "type": "secretsmanager.secret",
-      "name": "lab-5950x/ggcommons-cred-validation/db/password",
-      "arn": "arn:aws:secretsmanager:us-east-1:162499689067:secret:lab-5950x/ggcommons-cred-validation/db/password-xsLLop",
+      "name": "lab-5950x/edgecommons-cred-validation/db/password",
+      "arn": "arn:aws:secretsmanager:us-east-1:162499689067:secret:lab-5950x/edgecommons-cred-validation/db/password-xsLLop",
       "teardown": "aws secretsmanager delete-secret --secret-id <arn> --force-delete-without-recovery --region us-east-1"
     },
     {
       "type": "iam.role-inline-policy",
       "role": "GreengrassV2TokenExchangeRole",
-      "policyName": "ggcommons-cred-validation",
-      "teardown": "aws iam delete-role-policy --role-name GreengrassV2TokenExchangeRole --policy-name ggcommons-cred-validation"
+      "policyName": "edgecommons-cred-validation",
+      "teardown": "aws iam delete-role-policy --role-name GreengrassV2TokenExchangeRole --policy-name edgecommons-cred-validation"
     }
   ]
 }

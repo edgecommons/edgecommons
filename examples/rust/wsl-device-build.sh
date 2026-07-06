@@ -5,7 +5,7 @@
 set -euo pipefail
 export PATH="$HOME/.cargo/bin:$PATH"
 export CARGO_TARGET_DIR=/tmp/ggrust-target
-cd /mnt/c/Users/breis/source/ggcommons-monorepo/examples/rust
+cd /mnt/c/Users/breis/source/edgecommons-monorepo/examples/rust
 cargo build --release --no-default-features \
   --features greengrass,credentials,parameters,streaming-kinesis
 BIN="$CARGO_TARGET_DIR/release/rust-component-skeleton"

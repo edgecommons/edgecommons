@@ -7,8 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from ggcommons.heartbeat.heartbeat_monitor import HeartbeatMonitor
-from ggcommons.config.heartbeat_config import HeartbeatConfiguration
+from edgecommons.heartbeat.heartbeat_monitor import HeartbeatMonitor
+from edgecommons.config.heartbeat_config import HeartbeatConfiguration
 
 
 class FakeConfigService:

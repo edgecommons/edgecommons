@@ -1,18 +1,18 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "ggcommons.fullname" . }}
+  name: {{ include "edgecommons.fullname" . }}
   labels:
-    {{- include "ggcommons.labels" . | nindent 4 }}
+    {{- include "edgecommons.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicas }}
   selector:
     matchLabels:
-      {{- include "ggcommons.selectorLabels" . | nindent 6 }}
+      {{- include "edgecommons.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "ggcommons.selectorLabels" . | nindent 8 }}
+        {{- include "edgecommons.selectorLabels" . | nindent 8 }}
         {{- with .Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -27,7 +27,7 @@ spec:
         with `kubectl patch` (not `helm upgrade`) and asserts the running pod reloads.
       */}}
     spec:
-      serviceAccountName: {{ include "ggcommons.serviceAccountName" . }}
+      serviceAccountName: {{ include "edgecommons.serviceAccountName" . }}
       # Keep the projected SA token mounted — it is the platform=KUBERNETES auto-detect signal.
       automountServiceAccountToken: true
       terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
@@ -49,8 +49,8 @@ spec:
           {{- end }}
           env:
             # Downward-API identity (FR-RT-7 / FR-CFG-6). The library's KUBERNETES identity tier
-            # reads GGCOMMONS_THING_NAME (set from .Values.thingName below, conceptually the
-            # `ggcommons.io/thing-name` annotation) then POD_NAME (metadata.name). POD_NAMESPACE /
+            # reads EDGECOMMONS_THING_NAME (set from .Values.thingName below, conceptually the
+            # `edgecommons.io/thing-name` annotation) then POD_NAME (metadata.name). POD_NAMESPACE /
             # NODE_NAME are provided for general use. fieldRef cannot read annotations into env, so
             # the thing-name annotation is surfaced as an explicit value here.
             - name: POD_NAME
@@ -66,17 +66,17 @@ spec:
                 fieldRef:
                   fieldPath: spec.nodeName
             {{- if .Values.thingName }}
-            - name: GGCOMMONS_THING_NAME
+            - name: EDGECOMMONS_THING_NAME
               value: {{ .Values.thingName | quote }}
             {{- end }}
             {{- if .Values.credentials.enabled }}
             # The vault KEK for the `env` KeyProvider (Phase 1d), from the mounted Secret. The component
             # base64-decodes it to unlock the encrypted vault offline (no cloud).
-            - name: GGCOMMONS_VAULT_KEK
+            - name: EDGECOMMONS_VAULT_KEK
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "ggcommons.fullname" . }}-vault-kek
-                  key: GGCOMMONS_VAULT_KEK
+                  name: {{ include "edgecommons.fullname" . }}-vault-kek
+                  key: EDGECOMMONS_VAULT_KEK
             {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
@@ -125,16 +125,16 @@ spec:
           volumeMounts:
             # WHOLE volume, never subPath — subPath mounts never receive the kubelet
             # ..data swap, so hot-reload would be silently dead (FR-CFG-3).
-            - name: ggcommons-config
+            - name: edgecommons-config
               mountPath: {{ .Values.configMountPath }}
               readOnly: true
             # Writable scratch for the log metric target (read-only root FS).
             - name: tmp
               mountPath: /tmp
       volumes:
-        - name: ggcommons-config
+        - name: edgecommons-config
           configMap:
-            name: {{ include "ggcommons.configMapName" . }}
+            name: {{ include "edgecommons.configMapName" . }}
         - name: tmp
           emptyDir: {}
       {{- with .Values.nodeSelector }}

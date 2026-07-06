@@ -4,14 +4,14 @@ import time
 
 import pytest
 
-from ggcommons.credentials.config import open_from_config
-from ggcommons.credentials.service import (
+from edgecommons.credentials.config import open_from_config
+from edgecommons.credentials.service import (
     CredentialService,
     DefaultCredentialService,
     Secret,
     CredentialStats,
 )
-from ggcommons.credentials.errors import CredentialError
+from edgecommons.credentials.errors import CredentialError
 
 
 @pytest.fixture

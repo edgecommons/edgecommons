@@ -9,13 +9,13 @@
 use serde_json::Value;
 
 use super::service::CredentialService;
-use crate::error::GgError;
+use crate::error::EdgeCommonsError;
 use crate::Result;
 
 /// Recursively replace `$secret` references in `value` with values resolved from `creds`.
 ///
 /// # Errors
-/// `GgError::Credentials` if a referenced secret (or requested field) is absent.
+/// `EdgeCommonsError::Credentials` if a referenced secret (or requested field) is absent.
 pub fn resolve_secret_refs(value: &mut Value, creds: &dyn CredentialService) -> Result<()> {
     match value {
         Value::Object(map) => {
@@ -43,7 +43,7 @@ pub fn resolve_secret_refs(value: &mut Value, creds: &dyn CredentialService) -> 
 fn resolve_one(name: &str, field: Option<&str>, creds: &dyn CredentialService) -> Result<String> {
     let secret = creds
         .get(name)?
-        .ok_or_else(|| GgError::Credentials(format!("secretRef '{name}' not found in the vault")))?;
+        .ok_or_else(|| EdgeCommonsError::Credentials(format!("secretRef '{name}' not found in the vault")))?;
     match field {
         None => Ok(secret.as_str()?.to_string()),
         Some(f) => secret
@@ -51,6 +51,6 @@ fn resolve_one(name: &str, field: Option<&str>, creds: &dyn CredentialService) -
             .get(f)
             .and_then(|v| v.as_str())
             .map(str::to_string)
-            .ok_or_else(|| GgError::Credentials(format!("secretRef '{name}' field '{f}' missing or not a string"))),
+            .ok_or_else(|| EdgeCommonsError::Credentials(format!("secretRef '{name}' field '{f}' missing or not a string"))),
     }
 }

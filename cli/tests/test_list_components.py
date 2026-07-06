@@ -3,8 +3,8 @@ from types import SimpleNamespace
 
 import pytest
 
-import ggcommons_cli.commands.list_components as lc
-from ggcommons_cli.commands.list_components import ListComponents, _filter, _load_catalog
+import edgecommons_cli.commands.list_components as lc
+from edgecommons_cli.commands.list_components import ListComponents, _filter, _load_catalog
 
 SAMPLE = {
     "schemaVersion": 1,
@@ -89,7 +89,7 @@ class TestListComponents:
 
     def test_default_reads_private_registry_via_gh(self, monkeypatch, capsys):
         # No --source / env → the gh-authenticated path is used.
-        monkeypatch.delenv("GGCOMMONS_REGISTRY_URL", raising=False)
+        monkeypatch.delenv("EDGECOMMONS_REGISTRY_URL", raising=False)
         monkeypatch.setattr(lc, "_load_text_via_gh", lambda repo, path, ref: json.dumps(SAMPLE))
         ListComponents().execute_command({})
         out = capsys.readouterr().out

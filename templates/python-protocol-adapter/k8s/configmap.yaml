@@ -1,4 +1,4 @@
-# Component config for Kubernetes, mounted as a DIRECTORY at /etc/ggcommons (CONFIGMAP source watches
+# Component config for Kubernetes, mounted as a DIRECTORY at /etc/edgecommons (CONFIGMAP source watches
 # the ..data swap and hot-reloads). Carries the component config + the in-cluster broker. Add your
 # device instances under component.instances[]; `kubectl apply -f k8s/` to hot-reload.
 apiVersion: v1

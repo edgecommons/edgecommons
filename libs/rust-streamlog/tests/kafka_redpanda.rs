@@ -5,9 +5,9 @@
 //! ```sh
 //! docker run -d -p 9092:9092 redpandadata/redpanda redpanda start --smp 1 \
 //!   --kafka-addr PLAINTEXT://0.0.0.0:9092 --advertise-kafka-addr PLAINTEXT://127.0.0.1:9092
-//! cargo test -p ggstreamlog --features kafka --test kafka_redpanda -- --ignored --nocapture
+//! cargo test -p edgestreamlog --features kafka --test kafka_redpanda -- --ignored --nocapture
 //! ```
-//! Override the broker with `GGSTREAMLOG_KAFKA_BOOTSTRAP` (default `127.0.0.1:9092`).
+//! Override the broker with `EDGESTREAMLOG_KAFKA_BOOTSTRAP` (default `127.0.0.1:9092`).
 //!
 //! Exercises the real path: append -> ExportEngine -> KafkaSink -> broker, then consumes the topic
 //! back and asserts no records were lost.
@@ -18,19 +18,19 @@ use std::time::{Duration, Instant};
 use rdkafka::config::ClientConfig;
 use rdkafka::consumer::{BaseConsumer, Consumer};
 
-use ggstreamlog::config::{BatchConfig, BufferConfig, DeliveryConfig, FsyncPolicy, OnFull};
-use ggstreamlog::{EmbeddedLog, ExportEngine, KafkaSink, Record};
+use edgestreamlog::config::{BatchConfig, BufferConfig, DeliveryConfig, FsyncPolicy, OnFull};
+use edgestreamlog::{EmbeddedLog, ExportEngine, KafkaSink, Record};
 
 const N: usize = 500;
 
 fn bootstrap() -> String {
-    std::env::var("GGSTREAMLOG_KAFKA_BOOTSTRAP").unwrap_or_else(|_| "127.0.0.1:9092".to_string())
+    std::env::var("EDGESTREAMLOG_KAFKA_BOOTSTRAP").unwrap_or_else(|_| "127.0.0.1:9092".to_string())
 }
 
 #[test]
 #[ignore = "requires a local Kafka broker (Redpanda/Kafka) on :9092"]
 fn kafka_sink_delivers_to_broker() {
-    let topic = format!("ggstreamlog-it-{}", std::process::id());
+    let topic = format!("edgestreamlog-it-{}", std::process::id());
     let dir = tempfile::tempdir().unwrap();
     let log = Arc::new(
         EmbeddedLog::open(BufferConfig {
@@ -82,7 +82,7 @@ fn payload(i: usize) -> String {
 fn consume_all(topic: &str) -> usize {
     let consumer: BaseConsumer = ClientConfig::new()
         .set("bootstrap.servers", bootstrap())
-        .set("group.id", format!("ggsl-it-{}", std::process::id()))
+        .set("group.id", format!("esl-it-{}", std::process::id()))
         .set("auto.offset.reset", "earliest")
         .set("enable.auto.commit", "false")
         .create()

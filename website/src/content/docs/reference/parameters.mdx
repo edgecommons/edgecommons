@@ -23,7 +23,7 @@ example Java `getParameters()`, Python `get_parameters()`, Rust `parameters()`, 
 
 ## The accessor
 
-Fetch the `ParameterService` from your `GGCommons` instance. It is `null` / `None` / `undefined`
+Fetch the `ParameterService` from your `EdgeCommons` instance. It is `null` / `None` / `undefined`
 when the `parameters` section is absent (Rust: also when the `parameters` feature is off). Depend on
 the `ParameterService` interface, not the concrete `DefaultParameterService`.
 
@@ -44,7 +44,7 @@ additionally needs `parameters-aws`. Without `parameters`, `gg.parameters()` alw
 
 ```toml
 [dependencies]
-ggcommons = { version = "*", features = ["parameters"] }
+edgecommons = { version = "*", features = ["parameters"] }
 # add "parameters-aws" as well to use the awsSsm source
 ```
 

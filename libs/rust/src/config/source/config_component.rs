@@ -38,7 +38,7 @@
 //!   `parentConfigManager` bug, this path holds no config-manager reference at all —
 //!   the runtime's reload task owns validation and the snapshot swap.)
 //! - `Send + Sync`; async via `async_trait`. Errors map to
-//!   [`crate::error::GgError::Config`].
+//!   [`crate::error::EdgeCommonsError::Config`].
 //!
 //! ## Related Modules
 //! - [`super`], [`crate::messaging`].
@@ -53,7 +53,7 @@ use tokio::sync::mpsc;
 use super::ConfigSource;
 use crate::config::identity::short_component_name;
 use crate::config::template::sanitize;
-use crate::error::{GgError, Result};
+use crate::error::{EdgeCommonsError, Result};
 use crate::messaging::message::MessageBuilder;
 use crate::messaging::{message_handler, MessagingService};
 
@@ -127,7 +127,7 @@ impl ConfigSource for ConfigComponentSource {
                 .await?;
             match reply_future.await {
                 Ok(reply) => return Ok(reply.body),
-                Err(GgError::RequestTimeout { .. }) => {
+                Err(EdgeCommonsError::RequestTimeout { .. }) => {
                     last_err = format!("timed out after {}s", REPLY_TIMEOUT.as_secs());
                     tracing::warn!(
                         attempt,
@@ -138,7 +138,7 @@ impl ConfigSource for ConfigComponentSource {
                 Err(e) => last_err = e.to_string(),
             }
         }
-        Err(GgError::Config(format!(
+        Err(EdgeCommonsError::Config(format!(
             "failed to load configuration from the config component after {MAX_ATTEMPTS} attempts: {last_err}"
         )))
     }

@@ -1,4 +1,4 @@
-"""Extra coverage for ``ggcommons.credentials.config`` success/build branches.
+"""Extra coverage for ``edgecommons.credentials.config`` success/build branches.
 
 The existing ``test_credentials_config_unit.py`` covers the file/env providers and the
 config-validation *error* branches. The branches below are the *successful* construction paths that
@@ -14,11 +14,11 @@ import base64
 
 import pytest
 
-import ggcommons.credentials.config as config_mod
-import ggcommons.credentials.central as central_mod
-import ggcommons.credentials.sync as sync_mod
-from ggcommons.credentials.config import build_key_provider, open_from_config
-from ggcommons.credentials import crypto
+import edgecommons.credentials.config as config_mod
+import edgecommons.credentials.central as central_mod
+import edgecommons.credentials.sync as sync_mod
+from edgecommons.credentials.config import build_key_provider, open_from_config
+from edgecommons.credentials import crypto
 
 
 class TestKmsProviderBuild:

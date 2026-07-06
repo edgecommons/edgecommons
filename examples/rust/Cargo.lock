@@ -1384,7 +1384,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ggcommons"
+name = "edgecommons"
 version = "0.1.1"
 dependencies = [
  "aes-gcm",
@@ -1400,7 +1400,7 @@ dependencies = [
  "clap",
  "fs4",
  "getrandom 0.2.17",
- "ggstreamlog",
+ "edgestreamlog",
  "hkdf",
  "hmac 0.12.1",
  "jsonschema",
@@ -1421,7 +1421,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ggstreamlog"
+name = "edgestreamlog"
 version = "0.1.0"
 dependencies = [
  "aws-config",
@@ -2653,7 +2653,7 @@ version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "ggcommons",
+ "edgecommons",
  "serde_json",
  "tokio",
  "tracing",

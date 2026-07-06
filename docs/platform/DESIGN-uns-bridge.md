@@ -1,4 +1,4 @@
-# ggcommons UNS Phase 3 — named messaging connections, the `uns-bridge`, and the site-broker recipe
+# edgecommons UNS Phase 3 — named messaging connections, the `uns-bridge`, and the site-broker recipe
 
 > **Status (2026-07-03): SHIPPED.** This design has been implemented and tested, not merely reviewed.
 > The `uns-bridge` component (Rust; sibling repo, local-only — see §3 for its exact status) implements
@@ -11,7 +11,7 @@
 > GREENGRASS/IPC variant (today only the HOST/KUBERNETES dual-MQTT variant is built) is a documented
 > follow-up. The org-integration items are now **done**: the repo is pushed to GitHub as
 > `edgecommons/uns-bridge`, has a `registry/components.json` entry (`category: bridge`), and its
-> `Cargo.toml` `ggcommons` git-rev pin is `b1d8d85` — the **v0.2.0 UNS release on `main`**, which
+> `Cargo.toml` `edgecommons` git-rev pin is `b1d8d85` — the **v0.2.0 UNS release on `main`**, which
 > contains the UNS core — so a pure git-rev build resolves it (local dev still uses the sibling
 > `[patch]` override).
 >
@@ -37,11 +37,11 @@
 | Guard root binding | `set_guard_include_root` bound to `Config::effective_include_root()` (`service.rs:333`, `model.rs:489`) | Same late-bind applies to each named connection. |
 | MQTT provider | `MqttProvider::connect(&MessagingConfig)` — dual-broker, blocks ≤ 10 s for the local CONNACK (`provider/mqtt.rs:153`, `CONNECT_TIMEOUT` `mqtt.rs:64`); re-subscribes every filter on each CONNACK (`mqtt.rs:318–329`) | The bridge **reuses this provider verbatim** for its site connection (§1.1); the CONNACK re-subscribe machinery makes the bridge's own reconnect loop transparent (§1.4). |
 | LWT | `messaging.lwt` (`messaging/config.rs:52–82`), applied to the provider's **local** connection at CONNECT, retain hard-wired `false`, re-registered on reconnect (`mqtt.rs:156–161`, `build_last_will` `mqtt.rs:398–419`); never routed through `publish()` | The bridge sets `lwt` on **its site connection** (`MessagingConfig.lwt`, reused verbatim), landing on the site broker — exactly the load-bearing D9/§9.3 use. |
-| Reply topics | `ggcommons/reply-<uuid>` (`request_reply.rs:44`), non-`ecv1` ⇒ structurally guard-exempt (D‑U6) | The bridge mints device-side reply topics with the same prefix (§3.5). |
+| Reply topics | `edgecommons/reply-<uuid>` (`request_reply.rs:44`), non-`ecv1` ⇒ structurally guard-exempt (D‑U6) | The bridge mints device-side reply topics with the same prefix (§3.5). |
 | Envelope tags | `MessageTags { extra: BTreeMap<String, serde_json::Value> }` (`message.rs:302–306`) — arbitrary JSON values | The hop tag `tags._relay` can be a JSON array (§3.4). |
 | Filters | `Uns::filter(cls, &UnsScope)` appends `/#` for channeled classes (`uns.rs:392–404`); `UnsScope::all()/device()` (`uns.rs:214–222`) | The bridge builds its six uplink filters and its pinned downlink filter through the library, never by hand. |
 | Library publishers | heartbeat/state via the crate-private `ReservedMessaging` seam (`heartbeat.rs:180–207`; seam `service.rs:166`) | The bridge's **own** state/metric/cfg appear on the device bus like any component's — and the bridge relays itself (§3.9). |
-| Schema | `messaging` section is strict (`additionalProperties:false`) with `local`/`iotCore`/`requestTimeoutSeconds`/`lwt` (`schema/ggcommons-config-schema.json:304–346`) | The new `connections` key must be added to the **canonical** schema (one file, synced 4-ways) — there is no Rust-only schema. |
+| Schema | `messaging` section is strict (`additionalProperties:false`) with `local`/`iotCore`/`requestTimeoutSeconds`/`lwt` (`schema/edgecommons-config-schema.json:304–346`) | The new `connections` key must be added to the **canonical** schema (one file, synced 4-ways) — there is no Rust-only schema. |
 | Runtime wiring site | messaging built **before** config; UNS knobs late-bound **after** `Config::from_value` (`lib.rs:358–389`) | Named connections are config-declared, so they are built at exactly that post-config point (§2.3). |
 
 ---
@@ -65,10 +65,10 @@ let provider = Arc::new(MqttProvider::connect(&mc).await?);   // mqtt.rs:124 (pu
 let service  = DefaultMessagingService::new(provider);        // service.rs:280 (pub) / :299 (pub new)
 ```
 
-The `uns-bridge`, a Rust component depending on the `ggcommons` crate, constructs its **site connection
+The `uns-bridge`, a Rust component depending on the `edgecommons` crate, constructs its **site connection
 the same way**, from its own config — no new library API, no schema section, no cross-language change.
 The only thing possibly owed is a **one-line Rust-only `pub use`** re-export so the paths
-(`ggcommons::messaging::provider::mqtt::MqttProvider`, `…::service::DefaultMessagingService`) are
+(`edgecommons::messaging::provider::mqtt::MqttProvider`, `…::service::DefaultMessagingService`) are
 reachable from an external crate (verify the module-path visibility during P3‑1; add the re-export only
 if the modules aren't `pub` all the way down). That is a Rust ergonomics tweak, **not** a contract
 change, and touches no other language. **No `messaging.connections`. No `gg.messaging_named()`. No
@@ -128,7 +128,7 @@ still no contract change; but the component-owned retry loop needs nothing new.)
 ## 2. The `uns-bridge` component (M1)
 
 One `uns-bridge` per **device bus** (not per component): an envelope-aware relay between the
-device-local bus and the site UNS broker. Rust; own repo (§4); a normal ggcommons component —
+device-local bus and the site UNS broker. Rust; own repo (§4); a normal edgecommons component —
 it scaffolds, configures, health-checks, and observes itself like any other.
 
 ### 2.1 The two connections, per platform
@@ -152,7 +152,7 @@ renaming; default `"site"`).
 |---|---|---|---|---|
 | **Uplink** device → site | `state`, `cfg`, `evt`, `metric`, `data`, `log` — the six consumer wildcards (DESIGN-uns §4); **`app` optional, default OFF** (§3.6 policy) | PRIMARY | `ecv1/+/+/+/state` · `ecv1/+/+/+/cfg` · `ecv1/+/+/+/evt/#` · `ecv1/+/+/+/metric/#` · `ecv1/+/+/+/data/#` · `ecv1/+/+/+/log/#` | NAMED, **same topic string** |
 | **Downlink** site → device | `cmd` only (incl. broadcast: `+` on the component position matches `_bcast`) | NAMED | `ecv1/{device}/+/+/cmd/#` — **pinned to this bridge's own device token** | PRIMARY, same topic string (after `reply_to` rewrite §3.5) |
-| **Reply back-haul** device → site | replies to rewritten `reply_to` topics | PRIMARY (per-request ephemeral subscription) | `ggcommons/reply-<uuid>` (bridge-minted) | NAMED, to the original site-side reply topic |
+| **Reply back-haul** device → site | replies to rewritten `reply_to` topics | PRIMARY (per-request ephemeral subscription) | `edgecommons/reply-<uuid>` (bridge-minted) | NAMED, to the original site-side reply topic |
 
 Explicit non-flows (v1): `cmd` is **never uplinked** (a device component cannot command a peer
 across devices through the bridge — cross-device request/reply is deferred; the disjointness of
@@ -211,7 +211,7 @@ operator-added broker-native bridge alongside `uns-bridge`.
 ### 2.4 (§3.5) `reply_to` rewrite — the TTL'd correlation map
 
 Request/reply crossing the bridge breaks without rewriting: a site-side requester (console) sets
-`header.reply_to = ggcommons/reply-<uuid>` — an **ephemeral topic on the site broker**
+`header.reply_to = edgecommons/reply-<uuid>` — an **ephemeral topic on the site broker**
 (`request_reply.rs:44–52`). Relayed verbatim, the device-side responder would `reply()` onto the
 device bus where nobody is subscribed. The bridge therefore proxies the reply path:
 
@@ -222,9 +222,9 @@ sequenceDiagram
   participant BR as uns-bridge
   participant DB as device bus
   participant AD as opcua-adapter
-  Con->>SB: cmd reload-config, reply_to = R_site (ggcommons/reply-a1)
+  Con->>SB: cmd reload-config, reply_to = R_site (edgecommons/reply-a1)
   SB->>BR: downlink delivery (filter ecv1/gw-01/+/+/cmd/#)
-  Note over BR: mint R_dev = ggcommons/reply-7f3<br/>subscribe R_dev on PRIMARY<br/>map R_dev -> (R_site, now+TTL)<br/>rewrite header.reply_to = R_dev, append hop tag
+  Note over BR: mint R_dev = edgecommons/reply-7f3<br/>subscribe R_dev on PRIMARY<br/>map R_dev -> (R_site, now+TTL)<br/>rewrite header.reply_to = R_dev, append hop tag
   BR->>DB: cmd reload-config, reply_to = R_dev
   DB->>AD: deliver; adapter replies via reply()
   AD->>DB: reply on R_dev (correlation_id preserved)
@@ -239,7 +239,7 @@ Normative points:
 - **Outbound (downlink) rewrite** happens only when `header.reply_to` is present (a `cmd` without
   `reply_to` is a notification-style command — normative per §4.3 of the canonical doc — and
   relays untouched, e.g. `set-config` push).
-- `R_dev` uses the **standard `ggcommons/reply-` prefix** (`request_reply.rs:44`) so it is
+- `R_dev` uses the **standard `edgecommons/reply-` prefix** (`request_reply.rs:44`) so it is
   structurally exempt from the reserved-class guard (D‑U6) and indistinguishable from any other
   reply topic to the responder. The bridge subscribes it via the public
   `messaging().subscribe(R_dev, …, max_messages=1, max_concurrency=1)` and explicitly
@@ -367,7 +367,7 @@ verbatim (`config.rs:64–82`, `mqtt.rs:279–297,398–419`):
 
   "component": {
     // No `name` key here — the canonical schema's `component` object is `{global, instances}`
-    // only, `additionalProperties:false` (`schema/ggcommons-config-schema.json`); the component's
+    // only, `additionalProperties:false` (`schema/edgecommons-config-schema.json`); the component's
     // full name is supplied by the runtime builder, not by config (see the prose below).
     //
     // The SITE broker is the bridge's EXTERNAL SYSTEM, declared as an instance (like an
@@ -390,7 +390,7 @@ verbatim (`config.rs:64–82`, `mqtt.rs:279–297,398–419`):
 ```
 
 Device identity comes from the standard chain (`-t` ▸ platform env ▸ …, D‑U1) — the bridge adds no
-identity config of its own. The component's full name (e.g. `com.mbreissi.uns-bridge`) is supplied
+identity config of its own. The component's full name (e.g. `com.mbreissi.edgecommons.UnsBridge`) is supplied
 by the runtime builder — the GG recipe's `ComponentName`, or the HOST/KUBERNETES invocation — never
 by this config file (`component.name` is not a legal key, above). It is chosen so the sanitized
 short name (the UNS token, D‑U18) is exactly **`uns-bridge`** — the token the LWT topic, the
@@ -412,7 +412,7 @@ self-special-case.
 
 ## 3. Where the `uns-bridge` lives (D‑B6)
 
-**Recommendation: a NEW sibling repo `edgecommons/uns-bridge`** — not inside the ggcommons
+**Recommendation: a NEW sibling repo `edgecommons/uns-bridge`** — not inside the edgecommons
 monorepo.
 
 - **It is the org model.** Components live as flat-named sibling repos pinned to the library by
@@ -422,12 +422,12 @@ monorepo.
   coupled, and the rev-pin bump train (library `main` first, then one migration PR per component)
   is the established mechanism.
 - **Everything downstream keys on the registry**: `registry/components.json` drives
-  `ggcommons list-components`, the org profile tables, and `clone.sh` (which auto-clones every
+  `edgecommons list-components`, the org profile tables, and `clone.sh` (which auto-clones every
   registry component — verified: it iterates `components[].repo`). The docs site syncs each
   component's `docs/` (`website/scripts/sync-component-docs.mjs`). An in-monorepo bridge would be
   the one component invisible to all of that.
 - **Local dev** uses the telemetry-processor pattern: a gitignored `.cargo/config.toml` `paths`
-  override pointing at `../ggcommons/libs/rust`, so local builds use the sibling library while CI
+  override pointing at `../core/libs/rust`, so local builds use the sibling library while CI
   uses the pinned rev.
 
 **Status update (2026-07-03): the repo now exists** — `git init`'d locally at
@@ -437,12 +437,12 @@ The org-integration items below are now **done**:
 1. **Pushed to GitHub** as `edgecommons/uns-bridge` (`origin` configured; `origin/main` published).
 2. **Registry entry** added to `registry/components.json`: `name: uns-bridge`, `repo: edgecommons/uns-bridge`,
    `language: RUST`, **`category: "bridge"`** (the profile generator renders categories generically),
-   `platforms: [GREENGRASS, HOST, KUBERNETES]`, `library: ggcommons`.
+   `platforms: [GREENGRASS, HOST, KUBERNETES]`, `library: edgecommons`.
 3. `clone.sh` needs **no change** (registry-driven) — the entry above drives it. Reusable CI
    (`component-ci.yml` from `edgecommons/.github`, plus the two-broker compose for the integration
    job §6) is wired in the repo's own `.github/`.
-4. `Cargo.toml` pins `ggcommons = { git =
-   "https://github.com/edgecommons/ggcommons.git", rev = "b1d8d85…", default-features = false }` — the
+4. `Cargo.toml` pins `edgecommons = { git =
+   "https://github.com/edgecommons/edgecommons.git", rev = "b1d8d85…", default-features = false }` — the
    **v0.2.0 UNS release on `main`**, which contains the UNS core, so a pure git-rev build resolves it;
    local dev still builds against the sibling checkout via a gitignored `.cargo/config.toml` `[patch]`
    override.
@@ -468,7 +468,7 @@ per-device client certs; 1883 disabled or firewalled to the gateway host.
 
 ### 4.2 GREENGRASS — a GG-managed container on the gateway core
 
-A Greengrass component `com.mbreissi.site-broker` whose recipe runs the same compose file via the
+A Greengrass component `com.mbreissi.edgecommons.SiteBroker` whose recipe runs the same compose file via the
 stock `aws.greengrass.DockerApplicationManager`:
 
 ```yaml
@@ -509,30 +509,30 @@ Two principals; usernames from mTLS cert CN. EMQX 5 authz file sketch:
 
 ```erlang
 %% Device bridges: username == the device token (CN=gw-01).
-{allow, all, publish,   ["ecv1/${username}/#", "ggcommons/+"]}.      % own subtree + reply back-haul
-{allow, all, subscribe, ["ecv1/${username}/+/+/cmd/#", "ggcommons/+"]}.  % own downlink cmds + (defensive) replies
+{allow, all, publish,   ["ecv1/${username}/#", "edgecommons/+"]}.      % own subtree + reply back-haul
+{allow, all, subscribe, ["ecv1/${username}/+/+/cmd/#", "edgecommons/+"]}.  % own downlink cmds + (defensive) replies
 %% Site consumers (console/historian/MES; CN in a consumer group — separate listener or user prefix):
 %%   subscribe the six class wildcards + reply topics; publish cmd + reply topics only.
-{allow, {username, {re, "^consumer-"}}, subscribe, ["ecv1/#", "ggcommons/+"]}.
-{allow, {username, {re, "^consumer-"}}, publish,   ["ecv1/+/+/+/cmd/#", "ecv1/+/_bcast/main/cmd/#", "ggcommons/+"]}.
+{allow, {username, {re, "^consumer-"}}, subscribe, ["ecv1/#", "edgecommons/+"]}.
+{allow, {username, {re, "^consumer-"}}, publish,   ["ecv1/+/+/+/cmd/#", "ecv1/+/_bcast/main/cmd/#", "edgecommons/+"]}.
 {deny, all}.
 ```
 
 This ACL is what makes the raw-provider relay (§1.3) safe: a bridge can relay **its own device's**
-reserved classes and nothing else. (Reply topics are 2-level — `ggcommons/reply-…` — hence the
-`ggcommons/+` grants.)
+reserved classes and nothing else. (Reply topics are 2-level — `edgecommons/reply-…` — hence the
+`edgecommons/+` grants.)
 
 ---
 
 ## 5. Local testability (two brokers on one dev box)
 
-The existing infra has **one** EMQX (`ggcommons-emqx`, 1883/8883). The bridge needs a device
+The existing infra has **one** EMQX (`edgecommons-emqx`, 1883/8883). The bridge needs a device
 broker *and* a site broker:
 
 - **`test-infra/compose.dual.yaml` in the `uns-bridge` repo**: two EMQX services —
   `device` (host ports **1883/8883**, reusing the monorepo's cert layout so it can double as the
   standard broker) and `site` (host ports **1884/8884**, container name `uns-bridge-emqx-site`).
-  On a machine already running `ggcommons-emqx`, a device-only override reuses it and starts just
+  On a machine already running `edgecommons-emqx`, a device-only override reuses it and starts just
   the site broker — the compose file keys both brokers' ports off env vars so the interop machine
   and CI agree.
 - **Test pyramid**:
@@ -549,7 +549,7 @@ broker *and* a site broker:
      - **reply_to rewrite round-trip**: fake responder on the device broker
        (`…/comp/main/cmd/ping` → `reply()`); site-side client requests with `reply_to`; assert the
        reply lands on the site-side reply topic with `correlation_id` preserved, **and** that the
-       device side observed a *different* `ggcommons/reply-…` topic (the rewrite happened).
+       device side observed a *different* `edgecommons/reply-…` topic (the rewrite happened).
      - **TTL expiry**: request with no responder → after `ttlSecs` the `relay_reply_expired`
        metric increments and `relay_pending_replies` returns to 0 (observed via the bridge's
        metric messages on the device broker).
@@ -587,12 +587,12 @@ broker *and* a site broker:
 | D‑B6 | Where the bridge lives | New sibling repo `edgecommons/uns-bridge` (org model; registry/clone.sh/docs-sync/CI all key on it); monorepo holds no components; `.cargo` paths override for local dev | High | Hard once published | **yes** — repo creation + registry entry are org actions |
 | D‑B7 | Relay matrix | Uplink = the six classes (`app` optional, default off) with `+` device; downlink = `cmd` only, **pinned to own `{device}`** (covers `_bcast` via the `+` component position); no cross-device request/reply v1; relay is topic-verbatim | High | Easy | no |
 | D‑B8 | Loop protection | Reserved tag key `tags._relay` = JSON array of hop ids (`{device}/uns-bridge`), drop-if-self + `maxHops` (default 4); raw messages covered by uplink/downlink class disjointness; `_`-prefixed tag keys become library-reserved; same-tier broker-to-broker cycles unsupported (documented residual) | Med-High | Easy | no |
-| D‑B9 | Reply correlation map | Bridge-minted `ggcommons/reply-` device topics; TTL 60 s (2× the 30 s request default, paired knob), `maxPending` 1024 evict-oldest; expiry unsubscribes + counts; reply relays verbatim (correlation_id preserved) | High | Easy | no |
+| D‑B9 | Reply correlation map | Bridge-minted `edgecommons/reply-` device topics; TTL 60 s (2× the 30 s request default, paired knob), `maxPending` 1024 evict-oldest; expiry unsubscribes + counts; reply relays verbatim (correlation_id preserved) | High | Easy | no |
 | D‑B10 | Disconnect durability | Live path drops + counts by default (durability = streaming's job); **exception: bounded `evt` replay buffer (default on, 1000, drop-oldest)**; `state`/`cfg` rehydrate via `republish-*` `_bcast` on reconnect (the §9.3 late-join lever) | Med | Easy | **yes** — scope of the evt buffer (evt-only vs none vs all classes) |
 | D‑B11 | LWT | Topic = the bridge's own state topic `ecv1/{device}/uns-bridge/main/state`; payload = bare `{"status":"UNREACHABLE"}` (raw, event-time = delivery-time); QoS 1, no retain; fires on graceful stop too — **intended** (a stopped bridge = an unreachable device); advisory startup topic cross-check | High | Easy | no |
 | D‑B12 | Multi-site rooting across the bridge | Relay never rewrites topics; a rooted site broker means components set `topic.includeRoot` end-to-end (D2/D‑U11); bridge-side root injection deferred to an enterprise-tier phase | Med | Moderate | no |
 | D‑B13 | Recipe home | `uns-bridge/deploy/site-broker/` (broker+bridge deploy as a pair; docs-site syncs it); EMQX everywhere; ACL file = the durable enforcement | Med-High | Easy | no |
-| D‑B14 | Test infra | Dual-EMQX compose in the bridge repo (site broker on 1884/8884; device broker reuses/mirrors `ggcommons-emqx`); relay core is pure-logic over trait fakes for the 90 % gate; e2e list in §6 | High | Easy | no |
+| D‑B14 | Test infra | Dual-EMQX compose in the bridge repo (site broker on 1884/8884; device broker reuses/mirrors `edgecommons-emqx`); relay core is pure-logic over trait fakes for the 90 % gate; e2e list in §6 | High | Easy | no |
 | D‑B15 | K8s posture | No bridge inside a cluster (in-cluster broker = aggregation point); boundary bridge = `replicas: 1` + `Recreate` (duplication hazard); CONFIGMAP + Downward-API standard | High | Easy | no |
 
 ---

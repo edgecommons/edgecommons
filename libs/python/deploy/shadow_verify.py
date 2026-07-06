@@ -2,7 +2,7 @@
 
 Run as a Greengrass component with `-c SHADOW` (no explicit name): the SHADOW config
 manager defaults the shadow name to the component name and sanitizes it
-(``com.ggcommons.PyShadowVerify`` -> ``com_ggcommons_PyShadowVerify``), then loads
+(``com.mbreissi.edgecommons.PyShadowVerify`` -> ``com_mbreissi_edgecommons_PyShadowVerify``), then loads
 config from that named shadow via ShadowManager IPC. ``get_config_source()`` reports
 the resolved shadow name, and the loaded marker values (set in the cloud shadow under
 the sanitized name) prove the default->sanitize->GetThingShadow path runs end-to-end.
@@ -10,9 +10,9 @@ the sanitized name) prove the default->sanitize->GetThingShadow path runs end-to
 import json
 import sys
 
-from ggcommons import GGCommonsBuilder
+from edgecommons import EdgeCommonsBuilder
 
-COMPONENT = "com.ggcommons.PyShadowVerify"
+COMPONENT = "com.mbreissi.edgecommons.PyShadowVerify"
 RESULT = "/tmp/python_shadow_verify_result.json"
 
 
@@ -20,7 +20,7 @@ def main():
     out = {"lang": "python"}
     try:
         gg = (
-            GGCommonsBuilder.create(COMPONENT)
+            EdgeCommonsBuilder.create(COMPONENT)
             .with_args(sys.argv[1:])
             .receive_own_messages(False)
             .build()

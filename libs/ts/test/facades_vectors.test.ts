@@ -19,7 +19,7 @@ import { join } from "path";
 import { describe, expect, it } from "vitest";
 
 import { Config } from "../src/config/model";
-import { GgError } from "../src/errors";
+import { EdgeCommonsError } from "../src/errors";
 import { AppFacade } from "../src/facades/app_facade";
 import { Channel } from "../src/facades/channel";
 import { DataFacade } from "../src/facades/data_facade";
@@ -105,7 +105,7 @@ async function runDataCase(input: Record<string, unknown>): Promise<Record<strin
   try {
     await facade.publish(builder.build());
   } catch (e) {
-    if (e instanceof GgError) {
+    if (e instanceof EdgeCommonsError) {
       return { throws: true };
     }
     throw e;

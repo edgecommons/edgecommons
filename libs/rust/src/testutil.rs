@@ -20,7 +20,7 @@ use std::time::Instant;
 use async_trait::async_trait;
 use serde_json::Value;
 
-use crate::error::{GgError, Result};
+use crate::error::{EdgeCommonsError, Result};
 use crate::messaging::message::Message;
 use crate::messaging::service::{MessageHandler, MessagingService, ReplyFuture, ReservedMessaging};
 use crate::messaging::Qos;
@@ -221,11 +221,11 @@ impl MessagingService for RecordingMessaging {
     }
 
     async fn request(&self, _topic: &str, _msg: Message) -> Result<ReplyFuture> {
-        Err(GgError::Messaging("request not supported by RecordingMessaging".into()))
+        Err(EdgeCommonsError::Messaging("request not supported by RecordingMessaging".into()))
     }
 
     async fn request_from_iot_core(&self, _topic: &str, _msg: Message) -> Result<ReplyFuture> {
-        Err(GgError::Messaging("request not supported by RecordingMessaging".into()))
+        Err(EdgeCommonsError::Messaging("request not supported by RecordingMessaging".into()))
     }
 
     async fn request_with_timeout(
@@ -234,7 +234,7 @@ impl MessagingService for RecordingMessaging {
         _msg: Message,
         _timeout: Option<std::time::Duration>,
     ) -> Result<ReplyFuture> {
-        Err(GgError::Messaging("request not supported by RecordingMessaging".into()))
+        Err(EdgeCommonsError::Messaging("request not supported by RecordingMessaging".into()))
     }
 
     async fn request_from_iot_core_with_timeout(
@@ -243,15 +243,15 @@ impl MessagingService for RecordingMessaging {
         _msg: Message,
         _timeout: Option<std::time::Duration>,
     ) -> Result<ReplyFuture> {
-        Err(GgError::Messaging("request not supported by RecordingMessaging".into()))
+        Err(EdgeCommonsError::Messaging("request not supported by RecordingMessaging".into()))
     }
 
     async fn reply(&self, request: &Message, reply: Message) -> Result<()> {
         if self.fail_reply.load(Ordering::SeqCst) {
-            return Err(GgError::Messaging("simulated reply failure".to_string()));
+            return Err(EdgeCommonsError::Messaging("simulated reply failure".to_string()));
         }
         let topic = request.header.reply_to.clone().ok_or_else(|| {
-            GgError::Messaging("cannot reply: request has no reply_to".to_string())
+            EdgeCommonsError::Messaging("cannot reply: request has no reply_to".to_string())
         })?;
         let mut reply = reply;
         reply.header.correlation_id = request.header.correlation_id.clone();

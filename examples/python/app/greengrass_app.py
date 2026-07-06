@@ -5,17 +5,17 @@ from abc import ABC
 from random import random
 
 from awsiot.greengrasscoreipc.model import QOS
-from ggcommons.utils.iou import Iou
-from ggcommons.metrics.metric_emitter import MetricEmitter
-from ggcommons.metrics.metric_builder import MetricBuilder
-from ggcommons.config.manager.configuration_change_listener import (
+from edgecommons.utils.iou import Iou
+from edgecommons.metrics.metric_emitter import MetricEmitter
+from edgecommons.metrics.metric_builder import MetricBuilder
+from edgecommons.config.manager.configuration_change_listener import (
     ConfigurationChangeListener,
 )
-from ggcommons.messaging.errors import RequestTimeoutError
-from ggcommons.messaging.message import Message
-from ggcommons.messaging.message_builder import MessageBuilder
-from ggcommons.messaging.messaging_client import MessagingClient
-from ggcommons.uns import UnsClass
+from edgecommons.messaging.errors import RequestTimeoutError
+from edgecommons.messaging.message import Message
+from edgecommons.messaging.message_builder import MessageBuilder
+from edgecommons.messaging.messaging_client import MessagingClient
+from edgecommons.uns import UnsClass
 
 logger = logging.getLogger("GreengrassApp")
 
@@ -33,7 +33,7 @@ DEFAULT_DEMO_SECRET = "skeleton/demo-secret"
 # so they carry the component's config-resolved identity
 # (ecv1/{device}/{component}/{instance}/{class}/...). The application inherits
 # configuration management, heartbeats (the automatic `state` keepalive), logging and
-# switching between local MQTT and GG IPC from ggcommons.
+# switching between local MQTT and GG IPC from edgecommons.
 
 
 class GreengrassApp(ConfigurationChangeListener, ABC):

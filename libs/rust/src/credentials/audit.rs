@@ -20,7 +20,7 @@
 use std::sync::Arc;
 
 /// The `tracing` target the default sink emits on (filter/route the audit trail independently).
-pub const AUDIT_TARGET: &str = "ggcommons::credentials::audit";
+pub const AUDIT_TARGET: &str = "edgecommons::credentials::audit";
 
 /// A single credential-access audit event. **Never contains the secret value.**
 #[derive(Debug, Clone)]

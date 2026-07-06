@@ -5,9 +5,9 @@ Covers:
 - MessageHeader.from_dict() without a reply_to does not raise UnboundLocalError
 - ConfigManager rebuilds the instance map on reload (stale instances removed)
 """
-from ggcommons.config.heartbeat_config import HeartbeatConfiguration
-from ggcommons.config.manager.config_manager import ConfigManager
-from ggcommons.messaging.message import MessageHeader
+from edgecommons.config.heartbeat_config import HeartbeatConfiguration
+from edgecommons.config.manager.config_manager import ConfigManager
+from edgecommons.messaging.message import MessageHeader
 
 
 def test_heartbeat_to_dict_round_trips():

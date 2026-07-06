@@ -1,15 +1,15 @@
 #!/usr/bin/env pwsh
-# Repoint ggcommons package coordinates from the personal `mbreissi` GitHub owner to the
+# Repoint edgecommons package coordinates from the personal `mbreissi` GitHub owner to the
 # `edgecommons` org. See ecosystem/RUNBOOK.md (Phase 1b).
 #
 # DRY RUN by default — prints every file that would change. Add -Apply to write.
 #
 # SAFE BY DESIGN: it only rewrites GitHub-OWNER references. The three rules below do NOT match:
 #   - the Java groupId / package `com.mbreissi`   (independent of the GH Packages owner)
-#   - the docs domain `docs.ggcommons.mbreissi.com`
+#   - the docs domain `docs.edgecommons.mbreissi.com`
 #
-# -KeepAddonScope leaves the PUBLIC-npm streaming addon `@mbreissi/ggstreamlog-node` on @mbreissi
-# (its npm scope is independent of the GitHub owner); the library `@mbreissi/ggcommons` is renamed
+# -KeepAddonScope leaves the PUBLIC-npm streaming addon `@edgecommons/streamlog-node` on @mbreissi
+# (its npm scope is independent of the GitHub owner); the library `@mbreissi/edgecommons` is renamed
 # either way.
 
 [CmdletBinding()]
@@ -60,7 +60,7 @@ foreach ($f in $files) {
 
     # Rule 3: npm scope.
     if ($KeepAddonScope) {
-        $text = $text.Replace('@mbreissi/ggcommons', '@edgecommons/ggcommons')
+        $text = $text.Replace('@mbreissi/edgecommons', '@edgecommons/edgecommons')
         $text = $text.Replace('@mbreissi:registry', '@edgecommons:registry')
         $text = $text.Replace('scope: "@mbreissi"', 'scope: "@edgecommons"')
         $text = $text.Replace('"@mbreissi"', '"@edgecommons"')
@@ -83,5 +83,5 @@ if ($Apply) {
 }
 else {
     Write-Host "DRY RUN: $changed file(s) would change. No files written." -ForegroundColor Cyan
-    Write-Host "Re-run with -Apply (add -KeepAddonScope to leave @mbreissi/ggstreamlog-node)."
+    Write-Host "Re-run with -Apply (add -KeepAddonScope to leave @edgecommons/streamlog-node)."
 }

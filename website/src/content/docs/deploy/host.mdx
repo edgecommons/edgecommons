@@ -1,6 +1,6 @@
 ---
 title: Deploy to a host or Docker
-description: Run a GGCommons component on a bare host or in Docker with the HOST platform and dual-MQTT against a local broker and optional AWS IoT Core.
+description: Run a EdgeCommons component on a bare host or in Docker with the HOST platform and dual-MQTT against a local broker and optional AWS IoT Core.
 sidebar:
   order: 2
 ---
@@ -203,7 +203,7 @@ java -jar target/<jar>-1.0.0.jar \
 ```
 
 Add `--enable-native-access=ALL-UNNAMED` to the `java` command **only** when the component uses the
-streaming subsystem (which loads the native `ggstreamlog` binding via the FFM API).
+streaming subsystem (which loads the native `edgestreamlog` binding via the FFM API).
 
 </TabItem>
 <TabItem label="Python">

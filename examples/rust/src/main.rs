@@ -1,15 +1,15 @@
 //! # Rust Component Skeleton — entry point
 //!
 //! **One-liner purpose**: A worked-example AWS IoT Greengrass v2 component built on
-//! the `ggcommons` Rust library, mirroring the Java and Python skeletons.
+//! the `edgecommons` Rust library, mirroring the Java and Python skeletons.
 //!
 //! ## Overview
-//! Initializes [`ggcommons`] from the standard CLI contract
+//! Initializes [`edgecommons`] from the standard CLI contract
 //! (`-c`/`--platform`/`--transport`/`-t`), then
 //! hands control to [`app::SkeletonApp`], which demonstrates the library's
 //! messaging, configuration, metrics, and heartbeat features. The component runs
 //! until it receives a shutdown signal (Ctrl-C / SIGTERM), at which point dropping
-//! the [`ggcommons::GgCommons`] runtime releases all resources (RAII).
+//! the [`edgecommons::EdgeCommons`] runtime releases all resources (RAII).
 //!
 //! ## Running locally (HOST platform, MQTT transport, against a local MQTT broker)
 //! ```bash
@@ -24,15 +24,15 @@
 
 mod app;
 
-use ggcommons::prelude::*;
+use edgecommons::prelude::*;
 
 /// The component's full name (matches `recipe.yaml` / `gdk-config.json`).
-const COMPONENT_NAME: &str = "com.mbreissi.greengrass.RustComponentSkeleton";
+const COMPONENT_NAME: &str = "com.mbreissi.edgecommons.RustComponentSkeleton";
 
 /// Boot the component: build the runtime from CLI args, run the app, shut down cleanly.
 ///
 /// # Purpose
-/// Provide the `#[tokio::main]` entry that wires `ggcommons` and runs the demo app,
+/// Provide the `#[tokio::main]` entry that wires `edgecommons` and runs the demo app,
 /// returning a process exit status via `anyhow::Result`.
 ///
 /// # Errors
@@ -40,7 +40,7 @@ const COMPONENT_NAME: &str = "com.mbreissi.greengrass.RustComponentSkeleton";
 /// failed broker connection) or from the app's run loop.
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let gg = GgCommonsBuilder::new(COMPONENT_NAME)
+    let gg = EdgeCommonsBuilder::new(COMPONENT_NAME)
         .args(std::env::args_os())
         .build()
         .await?;

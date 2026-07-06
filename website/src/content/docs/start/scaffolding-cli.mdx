@@ -1,17 +1,17 @@
 ---
 title: Scaffolding CLI
-description: Install the ggcommons CLI and generate, validate, build, and deploy Greengrass v2 components in Java, Python, Rust, or TypeScript.
+description: Install the edgecommons CLI and generate, validate, build, and deploy Greengrass v2 components in Java, Python, Rust, or TypeScript.
 sidebar:
   order: 4
 ---
 
 import { Tabs, TabItem, Aside, LinkCard, CardGrid } from "@astrojs/starlight/components";
 
-The `ggcommons` scaffolding CLI is the fastest way to start a new Greengrass v2 component. It
-generates a ready-to-build project for any of the four languages, wires up the ggcommons
+The `edgecommons` scaffolding CLI is the fastest way to start a new Greengrass v2 component. It
+generates a ready-to-build project for any of the four languages, wires up the edgecommons
 dependency, and gives you commands to validate, build, publish, deploy, and upgrade the result.
 
-The CLI is a single Python package (`ggcommons-cli`) that ships the templates for **all four
+The CLI is a single Python package (`edgecommons-cli`) that ships the templates for **all four
 languages** inside the wheel, so once installed it scaffolds offline — no network needed to
 generate a project.
 
@@ -30,7 +30,7 @@ install); plain `pip` also works.
 <TabItem label="Linux">
 
 ```bash
-pipx install ./cli              # recommended: isolated global `ggcommons`
+pipx install ./cli              # recommended: isolated global `edgecommons`
 # or:
 python -m pip install ./cli     # plain install
 python -m pip install -e ./cli  # editable (for developing the CLI itself)
@@ -40,7 +40,7 @@ python -m pip install -e ./cli  # editable (for developing the CLI itself)
 <TabItem label="Windows">
 
 ```powershell
-pipx install ./cli              # recommended: isolated global `ggcommons`
+pipx install ./cli              # recommended: isolated global `edgecommons`
 # or:
 python -m pip install ./cli     # plain install
 python -m pip install -e ./cli  # editable (for developing the CLI itself)
@@ -49,20 +49,20 @@ python -m pip install -e ./cli  # editable (for developing the CLI itself)
 </TabItem>
 </Tabs>
 
-Two identical console entry points are installed — `ggcommons` and `ggcommons-cli` — so use
-whichever you prefer. The examples below use `ggcommons`.
+Two identical console entry points are installed — `edgecommons` and `edgecommons-cli` — so use
+whichever you prefer. The examples below use `edgecommons`.
 
 ```text
-ggcommons --version          # print the installed CLI version
-ggcommons                    # no subcommand → prints top-level help
-ggcommons <unknown>          # → "Unknown command: <unknown>" (exit 2)
+edgecommons --version          # print the installed CLI version
+edgecommons                    # no subcommand → prints top-level help
+edgecommons <unknown>          # → "Unknown command: <unknown>" (exit 2)
 ```
 
 When a command fails it prints `error: <message>` (no Python traceback) and exits non-zero.
 
 ## `doctor` — check your toolchain
 
-`ggcommons doctor` checks for the external tools needed to build and publish components and prints
+`edgecommons doctor` checks for the external tools needed to build and publish components and prints
 where each one was found. It takes no flags and reports status only — it does **not** exit non-zero
 when something is missing, so it is safe to run anytime.
 
@@ -70,14 +70,14 @@ when something is missing, so it is safe to run anytime.
 <TabItem label="Linux">
 
 ```bash
-ggcommons doctor
+edgecommons doctor
 ```
 
 </TabItem>
 <TabItem label="Windows">
 
 ```powershell
-ggcommons doctor
+edgecommons doctor
 ```
 
 </TabItem>
@@ -109,10 +109,10 @@ name (`-n`) and a language (`-l`):
 
 ```bash
 # pick one language with -l (JAVA | PYTHON | RUST | TYPESCRIPT)
-ggcommons create-component -n com.example.MyComponent -l JAVA
-ggcommons create-component -n com.example.MyComponent -l PYTHON
-ggcommons create-component -n com.example.MyComponent -l RUST
-ggcommons create-component -n com.example.MyComponent -l TYPESCRIPT
+edgecommons create-component -n com.example.MyComponent -l JAVA
+edgecommons create-component -n com.example.MyComponent -l PYTHON
+edgecommons create-component -n com.example.MyComponent -l RUST
+edgecommons create-component -n com.example.MyComponent -l TYPESCRIPT
 ```
 
 </TabItem>
@@ -120,10 +120,10 @@ ggcommons create-component -n com.example.MyComponent -l TYPESCRIPT
 
 ```powershell
 # pick one language with -l (JAVA | PYTHON | RUST | TYPESCRIPT)
-ggcommons create-component -n com.example.MyComponent -l JAVA
-ggcommons create-component -n com.example.MyComponent -l PYTHON
-ggcommons create-component -n com.example.MyComponent -l RUST
-ggcommons create-component -n com.example.MyComponent -l TYPESCRIPT
+edgecommons create-component -n com.example.MyComponent -l JAVA
+edgecommons create-component -n com.example.MyComponent -l PYTHON
+edgecommons create-component -n com.example.MyComponent -l RUST
+edgecommons create-component -n com.example.MyComponent -l TYPESCRIPT
 ```
 
 </TabItem>
@@ -149,13 +149,13 @@ issues it finds.
 | `--author` | `-a` | `Amazon Web Services` | Component author. |
 | `--bucket` | `-b` | `greengrass-component-artifacts-us-east-1` | S3 artifact bucket (written into `gdk-config.json`). |
 | `--region` | `-r` | `us-east-1` | AWS region (written into `gdk-config.json`). |
-| `--ggcommons-path` | `-g` | `libs/rust` or `libs/ts` | Absolute path to the local ggcommons library. **Rust/TypeScript only** (see below). |
+| `--edgecommons-path` | `-g` | `libs/rust` or `libs/ts` | Absolute path to the local edgecommons library. **Rust/TypeScript only** (see below). |
 | `--template-url` | `-u` | built-in template | Override the template source: a git URL (cloned) or a local directory (copied). |
 | `--template-ref` | _(none)_ | repo default branch | Git branch/tag to clone. Only applies to a git `--template-url`; ignored for local dirs. |
 | `--force` | `-f` | off | Overwrite the target directory if it already exists and is non-empty. |
 | `--interactive` | `-i` | off | Run the guided wizard (see below). |
 | `--platforms` | _(none)_ | `GREENGRASS,HOST,KUBERNETES` | Comma-separated target platforms; gates which platform-specific artifacts are emitted. |
-| `--dep-source` | _(none)_ | `local` | How the component depends on ggcommons: `local` (path/file dep) or `registry` (published artifact). |
+| `--dep-source` | _(none)_ | `local` | How the component depends on edgecommons: `local` (path/file dep) or `registry` (published artifact). |
 
 <Aside type="caution" title="Default scaffolding is offline (a local copy)">
 By default the CLI copies its bundled/in-repo template — it does **not** clone over the network.
@@ -169,21 +169,21 @@ running on a terminal (a TTY). It collects the same inputs the flags do, then ru
 generation flow. Press Enter to accept the `[default]` shown in each prompt.
 
 The prompts, in order, are: **language**, **fully-qualified name** (required), **description**,
-**target platform(s)**, **dependency source**, **local ggcommons path** (only asked for a Rust or
+**target platform(s)**, **dependency source**, **local edgecommons path** (only asked for a Rust or
 TypeScript component with `--dep-source local`), and **author**.
 
 <Tabs syncKey="os">
 <TabItem label="Linux">
 
 ```bash
-$ ggcommons create-component -i
+$ edgecommons create-component -i
 Interactive component scaffolding — press Enter to accept the [default].
 
 Language (JAVA/PYTHON/RUST/TYPESCRIPT): PYTHON
 Fully-qualified component name (e.g. com.example.MyComponent): com.example.MyComponent
 Description [This is a Greengrass v2 component]:
 Target platform(s) — comma-separated from GREENGRASS,HOST,KUBERNETES [GREENGRASS,HOST,KUBERNETES]: HOST
-ggcommons dependency source (registry/local) [local]:
+edgecommons dependency source (registry/local) [local]:
 Author [Amazon Web Services]: Marc
 ```
 
@@ -191,14 +191,14 @@ Author [Amazon Web Services]: Marc
 <TabItem label="Windows">
 
 ```powershell
-PS> ggcommons create-component -i
+PS> edgecommons create-component -i
 Interactive component scaffolding — press Enter to accept the [default].
 
 Language (JAVA/PYTHON/RUST/TYPESCRIPT): PYTHON
 Fully-qualified component name (e.g. com.example.MyComponent): com.example.MyComponent
 Description [This is a Greengrass v2 component]:
 Target platform(s) — comma-separated from GREENGRASS,HOST,KUBERNETES [GREENGRASS,HOST,KUBERNETES]: HOST
-ggcommons dependency source (registry/local) [local]:
+edgecommons dependency source (registry/local) [local]:
 Author [Amazon Web Services]: Marc
 ```
 
@@ -219,10 +219,10 @@ The headline case: the Kubernetes `Dockerfile` and `k8s/` manifests are emitted 
 
 ```bash
 # Greengrass + HOST only → no Dockerfile, no k8s/ manifests
-ggcommons create-component -n com.example.MyComponent -l RUST --platforms GREENGRASS,HOST
+edgecommons create-component -n com.example.MyComponent -l RUST --platforms GREENGRASS,HOST
 
 # include KUBERNETES → also emits Dockerfile + k8s/ (configmap.yaml, deployment.yaml)
-ggcommons create-component -n com.example.MyComponent -l RUST --platforms KUBERNETES
+edgecommons create-component -n com.example.MyComponent -l RUST --platforms KUBERNETES
 ```
 
 </TabItem>
@@ -230,10 +230,10 @@ ggcommons create-component -n com.example.MyComponent -l RUST --platforms KUBERN
 
 ```powershell
 # Greengrass + HOST only → no Dockerfile, no k8s/ manifests
-ggcommons create-component -n com.example.MyComponent -l RUST --platforms GREENGRASS,HOST
+edgecommons create-component -n com.example.MyComponent -l RUST --platforms GREENGRASS,HOST
 
 # include KUBERNETES → also emits Dockerfile + k8s/ (configmap.yaml, deployment.yaml)
-ggcommons create-component -n com.example.MyComponent -l RUST --platforms KUBERNETES
+edgecommons create-component -n com.example.MyComponent -l RUST --platforms KUBERNETES
 ```
 
 </TabItem>
@@ -241,15 +241,15 @@ ggcommons create-component -n com.example.MyComponent -l RUST --platforms KUBERN
 
 ### Dependency source (`--dep-source`)
 
-`--dep-source` decides how the generated component resolves the ggcommons library:
+`--dep-source` decides how the generated component resolves the edgecommons library:
 
 - `local` (the default) — a **path/file dependency** on a monorepo checkout, ideal for developing
   against an unpublished library.
 - `registry` — the **published artifact** (GitHub Packages / git tag).
 
-This flag (and `--ggcommons-path`) only affect **Rust and TypeScript** — the two languages whose
+This flag (and `--edgecommons-path`) only affect **Rust and TypeScript** — the two languages whose
 generated dependency is a path/file reference. For **Java and Python** the dependency is always the
-named coordinate (`com.mbreissi:ggcommons` in `pom.xml`, `greengrass-commons` in
+named coordinate (`com.mbreissi.edgecommons:edgecommons` in `pom.xml`, `edgecommons` in
 `requirements.txt`), so `--dep-source` is a no-op there.
 
 Here is the dependency declaration each language ends up with:
@@ -260,8 +260,8 @@ Here is the dependency declaration each language ends up with:
 ```xml
 <!-- pom.xml — always this coordinate; --dep-source has no effect for Java -->
 <dependency>
-  <groupId>com.mbreissi</groupId>
-  <artifactId>ggcommons</artifactId>
+  <groupId>com.mbreissi.edgecommons</groupId>
+  <artifactId>edgecommons</artifactId>
   <version>0.1.0</version>
 </dependency>
 ```
@@ -271,36 +271,36 @@ Here is the dependency declaration each language ends up with:
 
 ```text
 # requirements.txt — always the named package; --dep-source has no effect for Python
-greengrass-commons
+edgecommons
 ```
 
 </TabItem>
 <TabItem label="Rust">
 
 ```toml
-# Cargo.toml — local (default): path dependency on your --ggcommons-path
-ggcommons = { path = "/abs/path/to/libs/rust", default-features = false }
+# Cargo.toml — local (default): path dependency on your --edgecommons-path
+edgecommons = { path = "/abs/path/to/libs/rust", default-features = false }
 
 # Cargo.toml — registry: git tag
-ggcommons = { git = "https://github.com/edgecommons/ggcommons", tag = "rust-lib/v0.1.0", default-features = false }
+edgecommons = { git = "https://github.com/edgecommons/edgecommons", tag = "rust-lib/v0.1.0", default-features = false }
 ```
 
 </TabItem>
 <TabItem label="TypeScript">
 
 ```json
-// package.json — local (default): file: dependency on your --ggcommons-path
-"@edgecommons/ggcommons": "file:/abs/path/to/libs/ts"
+// package.json — local (default): file: dependency on your --edgecommons-path
+"@edgecommons/edgecommons": "file:/abs/path/to/libs/ts"
 
 // package.json — registry: version range (plus a generated .npmrc pointing at GitHub Packages)
-"@edgecommons/ggcommons": "^0.1.0"
+"@edgecommons/edgecommons": "^0.1.0"
 ```
 
 </TabItem>
 </Tabs>
 
 For a Rust or TypeScript component with `--dep-source local`, the CLI requires a valid
-`--ggcommons-path` (it defaults to `libs/rust` / `libs/ts` in this monorepo and is validated to
+`--edgecommons-path` (it defaults to `libs/rust` / `libs/ts` in this monorepo and is validated to
 exist before any files are written).
 
 <Aside type="note" title="Registry artifacts are auth-gated">
@@ -311,12 +311,12 @@ relying on a registry build.
 
 ## What you get
 
-A generated project is a complete, buildable component: the language entry point, the ggcommons
+A generated project is a complete, buildable component: the language entry point, the edgecommons
 dependency wired in, a `recipe.yaml` and `gdk-config.json` for GDK packaging, and sample
 `test-configs/`. The exact layout is language-specific (for example `pom.xml` for Java, `main.py`
 for Python, `Cargo.toml` + `build.sh` for Rust, `package.json` + `tsconfig.json` for TypeScript).
 
-The generated entry point constructs the ggcommons runtime and reads the config manager off it:
+The generated entry point constructs the edgecommons runtime and reads the config manager off it:
 
 <Tabs syncKey="lang">
 <TabItem label="Java">
@@ -324,15 +324,15 @@ The generated entry point constructs the ggcommons runtime and reads the config 
 ```java
 package com.example.mycomponent;
 
-import com.mbreissi.ggcommons.GGCommons;
-import com.mbreissi.ggcommons.config.ConfigManager;
+import com.mbreissi.edgecommons.EdgeCommons;
+import com.mbreissi.edgecommons.config.ConfigManager;
 
 public class MyComponent {
     public static void main(String[] args) { new MyComponent(args); }
 
     public MyComponent(String[] args) {
-        GGCommons ggCommons = new GGCommons("com.example.MyComponent", args);
-        ConfigManager configManager = ggCommons.getConfigManager();
+        EdgeCommons edgeCommons = new EdgeCommons("com.example.MyComponent", args);
+        ConfigManager configManager = edgeCommons.getConfigManager();
         // ... business logic ...
     }
 }
@@ -343,11 +343,11 @@ public class MyComponent {
 
 ```python
 import sys, argparse
-from ggcommons import GGCommonsBuilder
+from edgecommons import EdgeCommonsBuilder
 
 def main():
     arg_parser = argparse.ArgumentParser()
-    gg = (GGCommonsBuilder.create("MyComponent")  # short name; see note below
+    gg = (EdgeCommonsBuilder.create("MyComponent")  # short name; see note below
           .with_args(sys.argv[1:])
           .with_app_options(arg_parser)
           .receive_own_messages(True)
@@ -366,13 +366,13 @@ if __name__ == "__main__":
 <TabItem label="Rust">
 
 ```rust
-use ggcommons::prelude::*;
+use edgecommons::prelude::*;
 
 const COMPONENT_NAME: &str = "com.example.MyComponent";
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let gg = GgCommonsBuilder::new(COMPONENT_NAME)
+    let gg = EdgeCommonsBuilder::new(COMPONENT_NAME)
         .args(std::env::args_os())
         .build()
         .await?;
@@ -386,12 +386,12 @@ async fn main() -> anyhow::Result<()> {
 <TabItem label="TypeScript">
 
 ```typescript
-import { GGCommonsBuilder, logger } from "@edgecommons/ggcommons";
+import { EdgeCommonsBuilder, logger } from "@edgecommons/edgecommons";
 
 const COMPONENT_NAME = "com.example.MyComponent";
 
 async function main(): Promise<void> {
-  const gg = await new GGCommonsBuilder(COMPONENT_NAME).args(process.argv.slice(2)).build();
+  const gg = await new EdgeCommonsBuilder(COMPONENT_NAME).args(process.argv.slice(2)).build();
   logger.info(`starting: thing=${gg.config().thingName}`);
   // The runtime owns SIGTERM/SIGINT (FR-HB-2) — don't add your own handler or call process.exit().
   // ... business logic ...
@@ -405,9 +405,9 @@ main().catch((err) => { console.error("fatal:", err); process.exit(1); });
 
 <Aside type="caution" title="Python template uses the short component name">
 Unlike the full-name examples above, the shipped Python template substitutes the **short**
-component name (the last dot-segment) into `GGCommonsBuilder.create(...)` — its
+component name (the last dot-segment) into `EdgeCommonsBuilder.create(...)` — its
 `templates/python/main.py` uses the `<<COMPONENTNAME>>` token, so a component generated as
-`com.example.MyComponent` reads `GGCommonsBuilder.create("MyComponent")`. The Java, Rust, and
+`com.example.MyComponent` reads `EdgeCommonsBuilder.create("MyComponent")`. The Java, Rust, and
 TypeScript templates use the fully-qualified name (`<<COMPONENTFULLNAME>>`), matching the
 `com.example.MyComponent` strings shown in the other tabs. This is a template divergence, not a
 library difference.
@@ -415,9 +415,9 @@ library difference.
 
 <Aside type="caution" title="Java template uses the deprecated constructor">
 The shipped Java template scaffolds the deprecated (but still functional) direct
-`new GGCommons(name, args)` constructor shown above. The canonical convention — used by the Java
+`new EdgeCommons(name, args)` constructor shown above. The canonical convention — used by the Java
 *example* and by the other three languages — is the builder:
-`GGCommonsBuilder.create("com.example.MyComponent").withArgs(args).build()`. Prefer the builder in
+`EdgeCommonsBuilder.create("com.example.MyComponent").withArgs(args).build()`. Prefer the builder in
 new code.
 </Aside>
 
@@ -433,14 +433,14 @@ wheel copy, or the in-repo `templates/<lang>` directory). It takes no flags.
 <TabItem label="Linux">
 
 ```bash
-ggcommons list-templates
+edgecommons list-templates
 ```
 
 </TabItem>
 <TabItem label="Windows">
 
 ```powershell
-ggcommons list-templates
+edgecommons list-templates
 ```
 
 </TabItem>
@@ -456,12 +456,12 @@ category.
 
 The registry repo is private, so by default the catalog is fetched **authenticated via the GitHub
 CLI (`gh`)** — install `gh` and run `gh auth login` first. Override the source with `--source` (or
-the `$GGCOMMONS_REGISTRY_URL` environment variable): pass a registry URL or a local `components.json`
+the `$EDGECOMMONS_REGISTRY_URL` environment variable): pass a registry URL or a local `components.json`
 path, either of which bypasses `gh` entirely.
 
 | Flag | Default | Notes |
 |------|---------|-------|
-| `--source` | the private `edgecommons/registry` catalog via `gh` (or `$GGCOMMONS_REGISTRY_URL`) | A registry URL, or a local `components.json` path — either bypasses `gh`. |
+| `--source` | the private `edgecommons/registry` catalog via `gh` (or `$EDGECOMMONS_REGISTRY_URL`) | A registry URL, or a local `components.json` path — either bypasses `gh`. |
 | `--language` | _(all)_ | Filter by language: `JAVA` \| `PYTHON` \| `RUST` \| `TYPESCRIPT` (case-insensitive). |
 | `--category` | _(all)_ | Filter by category: `adapter` \| `processor` \| `sink` \| `bridge` \| `console` (case-insensitive). |
 | `--json` | off | Emit the matching catalog entries as raw JSON instead of the formatted table. |
@@ -470,20 +470,20 @@ path, either of which bypasses `gh` entirely.
 <TabItem label="Linux">
 
 ```bash
-ggcommons list-components                              # every registered component
-ggcommons list-components --language RUST              # only Rust components
-ggcommons list-components --category adapter --json    # adapters, as raw JSON
-ggcommons list-components --source ./components.json   # a local catalog (no gh needed)
+edgecommons list-components                              # every registered component
+edgecommons list-components --language RUST              # only Rust components
+edgecommons list-components --category adapter --json    # adapters, as raw JSON
+edgecommons list-components --source ./components.json   # a local catalog (no gh needed)
 ```
 
 </TabItem>
 <TabItem label="Windows">
 
 ```powershell
-ggcommons list-components                              # every registered component
-ggcommons list-components --language RUST              # only Rust components
-ggcommons list-components --category adapter --json    # adapters, as raw JSON
-ggcommons list-components --source ./components.json   # a local catalog (no gh needed)
+edgecommons list-components                              # every registered component
+edgecommons list-components --language RUST              # only Rust components
+edgecommons list-components --category adapter --json    # adapters, as raw JSON
+edgecommons list-components --source ./components.json   # a local catalog (no gh needed)
 ```
 
 </TabItem>
@@ -507,14 +507,14 @@ non-zero.
 <TabItem label="Linux">
 
 ```bash
-ggcommons validate -p ./MyComponent
+edgecommons validate -p ./MyComponent
 ```
 
 </TabItem>
 <TabItem label="Windows">
 
 ```powershell
-ggcommons validate -p ./MyComponent
+edgecommons validate -p ./MyComponent
 ```
 
 </TabItem>
@@ -536,18 +536,18 @@ cloud deployment with the AWS CLI.
 <TabItem label="Linux">
 
 ```bash
-ggcommons deploy -p ./MyComponent                 # build only
-ggcommons deploy -p ./MyComponent --publish       # build + publish
-ggcommons deploy -p ./MyComponent -t <target-arn> # build + publish + create deployment
+edgecommons deploy -p ./MyComponent                 # build only
+edgecommons deploy -p ./MyComponent --publish       # build + publish
+edgecommons deploy -p ./MyComponent -t <target-arn> # build + publish + create deployment
 ```
 
 </TabItem>
 <TabItem label="Windows">
 
 ```powershell
-ggcommons deploy -p ./MyComponent                 # build only
-ggcommons deploy -p ./MyComponent --publish       # build + publish
-ggcommons deploy -p ./MyComponent -t <target-arn> # build + publish + create deployment
+edgecommons deploy -p ./MyComponent                 # build only
+edgecommons deploy -p ./MyComponent --publish       # build + publish
+edgecommons deploy -p ./MyComponent -t <target-arn> # build + publish + create deployment
 ```
 
 </TabItem>
@@ -558,9 +558,9 @@ ggcommons deploy -p ./MyComponent -t <target-arn> # build + publish + create dep
 version is rejected so the exact version to deploy is unambiguous. On-device development with
 `greengrass-cli` is out of scope for this command.
 
-## `upgrade` — bump the ggcommons dependency
+## `upgrade` — bump the edgecommons dependency
 
-Updates the ggcommons dependency version in whichever manifest is present — `pom.xml` (Java),
+Updates the edgecommons dependency version in whichever manifest is present — `pom.xml` (Java),
 `requirements.txt` (Python), `Cargo.toml` (Rust), or `package.json` (TypeScript). The target
 version is required via `-t/--to`; the project path defaults to the current directory.
 
@@ -568,14 +568,14 @@ version is required via `-t/--to`; the project path defaults to the current dire
 <TabItem label="Linux">
 
 ```bash
-ggcommons upgrade -p ./MyComponent --to 1.2.3
+edgecommons upgrade -p ./MyComponent --to 1.2.3
 ```
 
 </TabItem>
 <TabItem label="Windows">
 
 ```powershell
-ggcommons upgrade -p ./MyComponent --to 1.2.3
+edgecommons upgrade -p ./MyComponent --to 1.2.3
 ```
 
 </TabItem>
@@ -584,9 +584,9 @@ ggcommons upgrade -p ./MyComponent --to 1.2.3
 A Rust `path` dependency is deliberately left untouched: `upgrade` reports it as "nothing to
 version-bump" rather than rewriting it.
 
-For TypeScript, `upgrade` keys on the bare dependency name `ggcommons` and does **not** match the
-scoped `@edgecommons/ggcommons` key the TS template generates. As a result, for a generated TS
-component `upgrade` reports `package.json: no ggcommons dependency found` — for both a local
+For TypeScript, `upgrade` keys on the bare dependency name `edgecommons` and does **not** match the
+scoped `@edgecommons/edgecommons` key the TS template generates. As a result, for a generated TS
+component `upgrade` reports `package.json: no edgecommons dependency found` — for both a local
 (`file:`) and a registry (`^0.1.0`) dependency — and the `file:`/`link:` "nothing to version-bump"
 branch is never reached.
 
@@ -598,12 +598,12 @@ for the IoT Thing name. Prefer the long forms to avoid confusion.
 
 ## Manifest-driven templates
 
-Each template directory ships a `ggcommons-template.json` manifest that fully describes how the CLI
+Each template directory ships a `edgecommons-template.json` manifest that fully describes how the CLI
 turns it into a project — adding a new language (or a forked template) needs only a template, not
 changes to the CLI. The manifest has these sections:
 
 - **`substitutions`** — maps each file to the list of `<<TOKEN>>` placeholders to replace in it
-  (for example `COMPONENTFULLNAME`, `COMPONENTNAME`, `GGCOMMONS_VERSION`).
+  (for example `COMPONENTFULLNAME`, `COMPONENTNAME`, `EDGECOMMONS_VERSION`).
 - **`renames`** — file/directory renames, including templated targets such as
   `src/main/java/{PACKAGEPATH}/{COMPONENTNAME}.java`.
 - **`required`** — substitution keys that must be provided.
@@ -640,7 +640,7 @@ That is why `--platforms KUBERNETES` is what produces the Dockerfile and `k8s/` 
 
 <CardGrid>
   <LinkCard title="Quickstart" href="/start/quickstart/" description="Build and run your scaffolded component against a local MQTT broker." />
-  <LinkCard title="Introduction" href="/start/introduction/" description="What GGCommons is and how the pieces fit together." />
+  <LinkCard title="Introduction" href="/start/introduction/" description="What EdgeCommons is and how the pieces fit together." />
   <LinkCard title="Guides" href="/guides/components/" description="Conceptual guides for every subsystem, in all four languages." />
   <LinkCard title="API Reference" href="/reference/overview/" description="The public API surface, verified against source." />
 </CardGrid>

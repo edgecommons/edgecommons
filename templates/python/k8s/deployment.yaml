@@ -1,4 +1,4 @@
-# Minimal Kubernetes Deployment for a ggcommons component. With --platform auto the library detects
+# Minimal Kubernetes Deployment for a edgecommons component. With --platform auto the library detects
 # KUBERNETES from the ServiceAccount token; config source defaults to CONFIGMAP, transport to MQTT
 # (broker config from the mounted ConfigMap), identity from the Downward API — so NO args are needed.
 # Build the image from ./Dockerfile and push to your registry (e.g. ghcr.io/<owner>/<<COMPONENTNAME>>)
@@ -52,7 +52,7 @@ spec:
             readOnlyRootFilesystem: true
             capabilities: { drop: ["ALL"] }
           volumeMounts:
-            - { name: config, mountPath: /etc/ggcommons, readOnly: true }   # WHOLE volume, never subPath (hot-reload)
+            - { name: config, mountPath: /etc/edgecommons, readOnly: true }   # WHOLE volume, never subPath (hot-reload)
             - { name: tmp, mountPath: /tmp }
       volumes:
         - name: config

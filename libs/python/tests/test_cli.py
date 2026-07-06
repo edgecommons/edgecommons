@@ -1,5 +1,5 @@
 """
-Unit tests for the CLI contract enforced by GGCommons argument processing,
+Unit tests for the CLI contract enforced by EdgeCommons argument processing,
 re-pointed from the removed ``-m/--mode`` flag to the two-axis
 ``--platform``/``--transport`` contract (DESIGN-core sec 6.1).
 
@@ -11,18 +11,18 @@ import os
 
 import pytest
 
-from ggcommons.ggcommons import GGCommons
-from ggcommons.config.manager.configmap_config_manager import (
+from edgecommons.edgecommons import EdgeCommons
+from edgecommons.config.manager.configmap_config_manager import (
     DEFAULT_KEY,
     DEFAULT_MOUNT_DIR,
 )
-from ggcommons.platform import Transport
+from edgecommons.platform import Transport
 
 
 def _parse(args):
-    """Drive only GGCommons._process_args (arg parse + profile resolution), without running the
+    """Drive only EdgeCommons._process_args (arg parse + profile resolution), without running the
     full __init__ (which would spin up messaging/metrics). Returns the parsed namespace."""
-    obj = GGCommons.__new__(GGCommons)
+    obj = EdgeCommons.__new__(EdgeCommons)
     return obj._process_args("com.test.C", args, None)
 
 
@@ -30,7 +30,7 @@ def _parse(args):
 
 def test_configmap_mqtt_defaults_messaging_path_to_mounted_configmap_file():
     # Explicit KUBERNETES + CONFIGMAP (default mount/key) + MQTT, no positional messaging path:
-    # the messaging-config path defaults to the resolved ConfigMap file (/etc/ggcommons/config.json).
+    # the messaging-config path defaults to the resolved ConfigMap file (/etc/edgecommons/config.json).
     parsed = _parse(["--platform", "KUBERNETES", "--transport", "MQTT", "-c", "CONFIGMAP"])
     assert parsed.transport == Transport.MQTT
     assert parsed.config[0].upper() == "CONFIGMAP"
@@ -89,42 +89,42 @@ def test_host_mqtt_without_path_still_raises_at_messaging_init():
     # End-to-end parity: HOST+MQTT with no messaging-config path fails fast at messaging init (the
     # first init step), before any broker/config work — confirming HOST behavior is unchanged.
     with pytest.raises(RuntimeError, match="MQTT transport requires a messaging config file path"):
-        GGCommons("com.test.C", ["--platform", "HOST", "--transport", "MQTT"])
+        EdgeCommons("com.test.C", ["--platform", "HOST", "--transport", "MQTT"])
 
 
 def test_legacy_mode_flag_is_rejected_with_guidance():
     # The removed -m/--mode flag must be rejected with guidance to the new axes.
     with pytest.raises(ValueError, match="--platform"):
-        GGCommons("com.test.C", ["-c", "FILE", "x.json", "-m", "STANDALONE"])
+        EdgeCommons("com.test.C", ["-c", "FILE", "x.json", "-m", "STANDALONE"])
 
 
 def test_legacy_long_mode_flag_is_rejected_with_guidance():
     with pytest.raises(ValueError, match="--transport"):
-        GGCommons("com.test.C", ["-c", "FILE", "x.json", "--mode", "GREENGRASS"])
+        EdgeCommons("com.test.C", ["-c", "FILE", "x.json", "--mode", "GREENGRASS"])
 
 
 def test_unknown_platform_is_rejected():
     with pytest.raises(ValueError, match="Unknown platform"):
-        GGCommons("com.test.C", ["-c", "FILE", "x.json", "--platform", "BOGUS"])
+        EdgeCommons("com.test.C", ["-c", "FILE", "x.json", "--platform", "BOGUS"])
 
 
 def test_unknown_transport_is_rejected():
     with pytest.raises(ValueError, match="Unknown transport"):
-        GGCommons("com.test.C", ["-c", "FILE", "x.json", "--platform", "HOST", "--transport", "BOGUS"])
+        EdgeCommons("com.test.C", ["-c", "FILE", "x.json", "--platform", "HOST", "--transport", "BOGUS"])
 
 
 def test_ipc_on_kubernetes_fails_the_ipc_lock():
     # Phase 1a: KUBERNETES resolves cleanly (no fail-fast), but the IPC lock still holds — only the
     # Greengrass Nucleus provides the IPC socket. This raises during resolution, before broker setup.
     with pytest.raises(ValueError, match="IPC transport requires --platform GREENGRASS"):
-        GGCommons("com.test.C", ["-c", "FILE", "x.json", "--platform", "KUBERNETES", "--transport", "IPC"])
+        EdgeCommons("com.test.C", ["-c", "FILE", "x.json", "--platform", "KUBERNETES", "--transport", "IPC"])
 
 
 def test_ipc_on_host_fails_the_ipc_lock():
     with pytest.raises(ValueError, match="IPC transport requires --platform GREENGRASS"):
-        GGCommons("com.test.C", ["-c", "FILE", "x.json", "--platform", "HOST", "--transport", "IPC"])
+        EdgeCommons("com.test.C", ["-c", "FILE", "x.json", "--platform", "HOST", "--transport", "IPC"])
 
 
 def test_unknown_config_source_is_rejected():
     with pytest.raises(ValueError, match="Unrecognized config source"):
-        GGCommons("com.test.C", ["-c", "BOGUS"])
+        EdgeCommons("com.test.C", ["-c", "BOGUS"])

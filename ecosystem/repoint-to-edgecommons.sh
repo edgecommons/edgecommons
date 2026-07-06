@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Repoint ggcommons package coordinates from `mbreissi` to the `edgecommons` org.
+# Repoint edgecommons package coordinates from `mbreissi` to the `edgecommons` org.
 # Bash equivalent of repoint-to-edgecommons.ps1 — see ecosystem/RUNBOOK.md (Phase 1b).
 #
 # Usage:
 #   ecosystem/repoint-to-edgecommons.sh            # dry run (lists files)
 #   ecosystem/repoint-to-edgecommons.sh --apply    # write changes
 #
-# SAFE: the rules below do NOT match `com.mbreissi` (Java groupId) or `docs.ggcommons.mbreissi.com`.
-# Note: `@mbreissi` -> `@edgecommons` also renames the public-npm addon @mbreissi/ggstreamlog-node;
+# SAFE: the rules below do NOT match `com.mbreissi` (Java groupId) or `docs.edgecommons.mbreissi.com`.
+# Note: `@mbreissi` -> `@edgecommons` also renames the public-npm addon @edgecommons/streamlog-node;
 # edit the sed below to keep it if desired. Run from anywhere inside the repo.
 set -euo pipefail
 

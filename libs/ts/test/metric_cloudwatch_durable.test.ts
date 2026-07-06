@@ -2,7 +2,7 @@
  * Durable CloudWatch metric target tests (TypeScript).
  *
  * Exercises the disk-backed store-and-forward CloudWatch target end-to-end over the REAL
- * `ggstreamlog` native binding (the napi sink-callback bridge), with a controllable in-process
+ * `edgestreamlog` native binding (the napi sink-callback bridge), with a controllable in-process
  * fake CloudWatch client injected via the target's `clientFactory` seam. No AWS, no module mock.
  *
  * Covers: record round-trip through the buffer, namespace grouping in the drain, the stale-drop
@@ -73,7 +73,7 @@ class FakeCloudWatch {
 let tmpDirs: string[] = [];
 
 function tmpdir(): string {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), "ggsl-cw-dur-"));
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "esl-cw-dur-"));
   tmpDirs.push(d);
   return d;
 }

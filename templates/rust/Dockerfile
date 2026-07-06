@@ -1,11 +1,11 @@
-# Container image for a ggcommons Rust component, for the KUBERNETES (and HOST/Docker) platform.
-# Requires the ggcommons crate resolvable (cargo git dep on the private repo, or crates.io);
+# Container image for a edgecommons Rust component, for the KUBERNETES (and HOST/Docker) platform.
+# Requires the edgecommons crate resolvable (cargo git dep on the private repo, or crates.io);
 # see docs/platform/DESIGN-packaging.md §13.
 #
-# Multi-stage: stage 1 compiles the standalone release binary against the ggcommons crate;
+# Multi-stage: stage 1 compiles the standalone release binary against the edgecommons crate;
 # stage 2 is a slim glibc runtime that carries only the binary, run as a non-root user.
 #
-# Build (the cargo git dep needs network + git auth to fetch the private ggcommons repo —
+# Build (the cargo git dep needs network + git auth to fetch the private edgecommons repo —
 # pass a GITHUB_TOKEN or mount an SSH agent):
 #   docker build -t <image> .
 # Then push to your registry (or `kind load docker-image <image>` for a local cluster) and set
@@ -14,7 +14,7 @@
 # ---- stage 1: build -------------------------------------------------------------------------
 FROM rust:1.85-slim AS build
 
-# Resolve the private ggcommons git dependency using the system git (honours GITHUB_TOKEN / SSH).
+# Resolve the private edgecommons git dependency using the system git (honours GITHUB_TOKEN / SSH).
 ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
 
 # git is needed for cargo to fetch the git dependency.

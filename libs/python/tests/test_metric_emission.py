@@ -10,11 +10,11 @@ import json
 import tempfile
 import os
 
-from ggcommons.messaging.message import Message
-from ggcommons.ggcommons_builder import GGCommonsBuilder
-from ggcommons.metrics.metric_builder import MetricBuilder
-from ggcommons import MessagingClient
-from ggcommons.metrics.metric_emitter import MetricEmitter
+from edgecommons.messaging.message import Message
+from edgecommons.edgecommons_builder import EdgeCommonsBuilder
+from edgecommons.metrics.metric_builder import MetricBuilder
+from edgecommons import MessagingClient
+from edgecommons.metrics.metric_emitter import MetricEmitter
 
 logger = logging.getLogger(__name__)
 
@@ -52,10 +52,10 @@ def metric_messaging_config():
 
 
 @pytest.fixture
-def ggcommons_metric_messaging(metric_messaging_config):
-    """Create GGCommons instance with metric messaging configuration."""
+def edgecommons_metric_messaging(metric_messaging_config):
+    """Create EdgeCommons instance with metric messaging configuration."""
     try:
-        ggcommons = GGCommonsBuilder.create("metric_test") \
+        edgecommons = EdgeCommonsBuilder.create("metric_test") \
             .with_args([
                 '-c', 'FILE', metric_messaging_config,
                 '--platform', 'HOST', '--transport', 'MQTT', MESSAGING_CONFIG_PATH,
@@ -63,13 +63,13 @@ def ggcommons_metric_messaging(metric_messaging_config):
             ]) \
             .build()
         
-        yield ggcommons
+        yield edgecommons
         
     except Exception as e:
-        pytest.skip(f"Failed to initialize GGCommons for metric messaging test: {e}")
+        pytest.skip(f"Failed to initialize EdgeCommons for metric messaging test: {e}")
     finally:
-        if 'ggcommons' in locals():
-            ggcommons.shutdown()
+        if 'edgecommons' in locals():
+            edgecommons.shutdown()
         try:
             MessagingClient.shutdown()
         except:
@@ -77,10 +77,10 @@ def ggcommons_metric_messaging(metric_messaging_config):
 
 
 @pytest.mark.integration
-def test_metric_emission_emf_format(ggcommons_metric_messaging):
+def test_metric_emission_emf_format(edgecommons_metric_messaging):
     """Test metric emission produces EMF format messages."""
-    messaging_service = ggcommons_metric_messaging.get_messaging()
-    metric_service = ggcommons_metric_messaging.get_metrics()
+    messaging_service = edgecommons_metric_messaging.get_messaging()
+    metric_service = edgecommons_metric_messaging.get_metrics()
     received_messages = []
     
     def metric_handler(topic: str, message: Message):
@@ -163,10 +163,10 @@ def test_metric_emission_emf_format(ggcommons_metric_messaging):
 
 
 @pytest.mark.integration
-def test_metric_emission_multiple_metrics(ggcommons_metric_messaging):
+def test_metric_emission_multiple_metrics(edgecommons_metric_messaging):
     """Test emission of multiple different metrics."""
-    messaging_service = ggcommons_metric_messaging.get_messaging()
-    metric_service = ggcommons_metric_messaging.get_metrics()
+    messaging_service = edgecommons_metric_messaging.get_messaging()
+    metric_service = edgecommons_metric_messaging.get_metrics()
     received_messages = []
     
     def metric_handler(topic: str, message: Message):
@@ -210,10 +210,10 @@ def test_metric_emission_multiple_metrics(ggcommons_metric_messaging):
 
 
 @pytest.mark.integration
-def test_metric_emission_timestamp_format(ggcommons_metric_messaging):
+def test_metric_emission_timestamp_format(edgecommons_metric_messaging):
     """Test that metric emission includes proper timestamp in EMF format."""
-    messaging_service = ggcommons_metric_messaging.get_messaging()
-    metric_service = ggcommons_metric_messaging.get_metrics()
+    messaging_service = edgecommons_metric_messaging.get_messaging()
+    metric_service = edgecommons_metric_messaging.get_metrics()
     received_messages = []
     
     def metric_handler(topic: str, message: Message):
@@ -257,7 +257,7 @@ def test_cloudwatch_target_skips_undefined_measure():
     import logging
     from unittest.mock import MagicMock
 
-    from ggcommons.metrics.targets.cloudwatch import CloudWatch
+    from edgecommons.metrics.targets.cloudwatch import CloudWatch
 
     metric = (
         MetricBuilder.create("performance")

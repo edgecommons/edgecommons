@@ -1,6 +1,6 @@
 /**
  * StreamService / StreamHandle wrapper tests — the TS-side error/close/unknown-stream paths around
- * the native `ggstreamlog-node` addon (which is built locally; buffer-only, no AWS).
+ * the native `streamlog-node` addon (which is built locally; buffer-only, no AWS).
  *
  * These exercise the JS wrapper logic the buffer-write happy-path test (streaming.test.ts) does not:
  * closed-handle/service guards, Uint8Array payload coercion, flush, idempotent close, the
@@ -12,12 +12,12 @@ import * as path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { GgStreamError, StreamHandle, StreamService } from "../src/streaming";
+import { EdgeStreamError, StreamHandle, StreamService } from "../src/streaming";
 
 const ERR_UNKNOWN_STREAM = 5;
 
 function tmpdir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "ggsl-ts-svc-"));
+  return fs.mkdtempSync(path.join(os.tmpdir(), "esl-ts-svc-"));
 }
 
 function config(dir: string): string {
@@ -129,17 +129,17 @@ describe("StreamService closed guards", () => {
 });
 
 describe("StreamService.stream() error translation", () => {
-  it("requesting an unknown stream translates to GgStreamError ERR_UNKNOWN_STREAM", () => {
+  it("requesting an unknown stream translates to EdgeStreamError ERR_UNKNOWN_STREAM", () => {
     const svc = StreamService.open(config(tmpdir()));
     try {
       // stream() (not just stats()) goes through translate() on the native ERR_UNKNOWN_STREAM.
-      expect(() => svc.stream("nope")).toThrow(GgStreamError);
+      expect(() => svc.stream("nope")).toThrow(EdgeStreamError);
       try {
         svc.stream("nope");
         expect.unreachable("should have thrown");
       } catch (e) {
-        expect(e).toBeInstanceOf(GgStreamError);
-        expect((e as GgStreamError).code).toBe(ERR_UNKNOWN_STREAM);
+        expect(e).toBeInstanceOf(EdgeStreamError);
+        expect((e as EdgeStreamError).code).toBe(ERR_UNKNOWN_STREAM);
       }
     } finally {
       svc.close();

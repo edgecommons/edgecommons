@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-`ggcommons` (PyPI package `greengrass-commons`) is a library for building AWS IoT Greengrass v2 components. It bundles the cross-cutting concerns every component needs — configuration, messaging, metrics, heartbeat, logging — behind service interfaces so component authors write only business logic. A key goal of the current work (`major-rearch` branch) is bringing the Python library to feature parity with the Java version, which is why dependency injection, builders, and JSON-schema config validation were introduced.
+`edgecommons` (PyPI package `edgecommons`) is a library for building AWS IoT Greengrass v2 components. It bundles the cross-cutting concerns every component needs — configuration, messaging, metrics, heartbeat, logging — behind service interfaces so component authors write only business logic. A key goal of the current work (`major-rearch` branch) is bringing the Python library to feature parity with the Java version, which is why dependency injection, builders, and JSON-schema config validation were introduced.
 
 Components built with this library are configured along two axes — a **platform** and a **transport** — selected at startup, and most of the architecture exists to abstract that difference away:
 - **`--platform`** (`GREENGRASS` | `HOST` | `KUBERNETES` | `auto`, default `auto` which auto-detects): `GREENGRASS` uses Greengrass IPC for messaging and reads config from the Greengrass deployment; `HOST` is a plain host / container without a Nucleus; `KUBERNETES` is declared but not yet wired (Phase 1).
@@ -41,18 +41,18 @@ There is no enforced linter in CI (the ruff/tox steps in `.gitlab-ci.yml` are co
 ## Architecture
 
 ### Initialization flow
-`GGCommons.__init__` (`ggcommons/ggcommons.py`) is the orchestrator and runs a fixed sequence: parse args → build config manager → set up service registry → init messaging → init metrics → init heartbeat → `complete_initialization()`. Construct it via the builder, not directly:
+`EdgeCommons.__init__` (`edgecommons/edgecommons.py`) is the orchestrator and runs a fixed sequence: parse args → build config manager → set up service registry → init messaging → init metrics → init heartbeat → `complete_initialization()`. Construct it via the builder, not directly:
 
 ```python
-from ggcommons import GGCommonsBuilder
-gg = GGCommonsBuilder.create("com.example.MyComponent").with_args(args).build()
+from edgecommons import EdgeCommonsBuilder
+gg = EdgeCommonsBuilder.create("com.example.MyComponent").with_args(args).build()
 svc = gg.get_service(IMessagingService)
 ```
 
 ### Dependency injection / service interfaces — NOT present in Python
 > **Correction (parity audit 2026-06-22):** earlier revisions of this file described a
-> `ggcommons/di/` `ServiceRegistry` and `ggcommons/interfaces/` (`IConfigurationService`,
-> `IMessagingService`, `IMetricService`) with `mock_services.py`/`testable_ggcommons.py`. **None of
+> `edgecommons/di/` `ServiceRegistry` and `edgecommons/interfaces/` (`IConfigurationService`,
+> `IMessagingService`, `IMetricService`) with `mock_services.py`/`testable_edgecommons.py`. **None of
 > these exist in the Python source.** The substitutable service-interface seam exists only in the
 > Rust and TS libraries (idiomatically); Java and Python do not have it (Java's was removed during
 > remediation). In Python, depend on the concrete services and the builders below; for tests, drive
@@ -60,20 +60,20 @@ svc = gg.get_service(IMessagingService)
 > cross-language register `.validation/parity-remediation-plan.md`.
 
 ### Builders
-Object construction goes through fluent builders, not raw constructors: `GGCommonsBuilder`, `ConfigManagerBuilder`, `MessageBuilder`, `MetricBuilder`. Note `MetricBuilder` exists specifically to avoid the deprecated direct `Metric` constructor — do not instantiate `Metric` directly.
+Object construction goes through fluent builders, not raw constructors: `EdgeCommonsBuilder`, `ConfigManagerBuilder`, `MessageBuilder`, `MetricBuilder`. Note `MetricBuilder` exists specifically to avoid the deprecated direct `Metric` constructor — do not instantiate `Metric` directly.
 
-### Configuration (`ggcommons/config/`)
+### Configuration (`edgecommons/config/`)
 `ConfigManagerBuilder.build()` dispatches on the `-c/--config` source to one of five managers, all subclassing `ConfigManager`:
 `FILE` → `FileConfigManager`, `ENV` → `EnvironmentConfigManager`, `GG_CONFIG` → `GreengrassConfigManager`, `SHADOW` → `ShadowConfigManager`, `CONFIG_COMPONENT` → `ConfigComponentManager`. The default source comes from the resolved platform profile (GREENGRASS → GG_CONFIG, HOST → FILE, KUBERNETES → CONFIGMAP).
-Config supports template-variable substitution (component/thing/custom tags), hot reload via `ConfigurationChangeListener`, multi-instance components (global + per-instance config), and JSON-schema validation (`ggcommons/validation/configuration_validator.py`).
+Config supports template-variable substitution (component/thing/custom tags), hot reload via `ConfigurationChangeListener`, multi-instance components (global + per-instance config), and JSON-schema validation (`edgecommons/validation/configuration_validator.py`).
 
-### Messaging (`ggcommons/messaging/`)
+### Messaging (`edgecommons/messaging/`)
 `MessagingClient.init()` picks the provider based on the resolved transport: `GreengrassIpcProvider` (`IPC` transport) or `StandaloneProvider` (`MQTT` transport — dual local-MQTT + IoT Core). Both implement `MessagingProvider`. Connections and subscriptions are **blocking** — they wait for confirmation (e.g. SUBACK) before proceeding, to avoid IoT Core connection race conditions. Standalone MQTT lives under `providers/`, Greengrass IPC/IoT-Core subscription handling under `providers/greengrass/`.
 
-### Metrics (`ggcommons/metrics/`)
+### Metrics (`edgecommons/metrics/`)
 `MetricEmitter` (static `init`) emits to pluggable `MetricTarget`s under `targets/`: `cloudwatch` (EMF format via `emf_helper`), `cloudwatch_component`, `messaging`, `metric_log`. Targets and component/thing dimensions are configured, not hardcoded.
 
-### Heartbeat (`ggcommons/heartbeat/`)
+### Heartbeat (`edgecommons/heartbeat/`)
 `EnhancedHeartbeat` is the library-owned liveness signal (UNS model — on by default, every 5 s): each tick it publishes the **`state` keepalive** to the UNS topic `ecv1/{device}/{component}/main/state` (through the library-internal `MessagingClient._publish_reserved*` seam — the `state` class is reserved) and emits the enabled system measures (CPU/memory/disk/threads/FDs via `psutil`) as the **`sys` metric** through the metric subsystem. It has services *injected* (messaging + metric) rather than reaching for globals. The legacy `heartbeat.targets[]` config is removed — the section is `{enabled, intervalSecs, measures, destination}` (`destination` governs only the keepalive: `local`|`iotcore`). Consume heartbeats by subscribing `ecv1/+/+/+/state`.
 
 ### Singleton/static lifecycle caveat

@@ -9,5 +9,5 @@ the org that doesn't provide its own.
 - **`.github/workflows/component-ci.yml`** — a **reusable** workflow component repos call via
   `uses: edgecommons/.github/.github/workflows/component-ci.yml@main`.
 
-See [`docs/ECOSYSTEM.md`](https://github.com/edgecommons/ggcommons/blob/main/docs/ECOSYSTEM.md) in
+See [`docs/ECOSYSTEM.md`](https://github.com/edgecommons/edgecommons/blob/main/docs/ECOSYSTEM.md) in
 the core repo for the ecosystem design.

@@ -13,8 +13,8 @@
 //!
 //! ## Usage Example
 //! ```
-//! use ggcommons::config::model::Config;
-//! use ggcommons::config::template::resolve;
+//! use edgecommons::config::model::Config;
+//! use edgecommons::config::template::resolve;
 //! use serde_json::json;
 //!
 //! let cfg = Config::from_value("com.example.C", "t1", json!({})).unwrap();

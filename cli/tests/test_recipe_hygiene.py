@@ -10,7 +10,7 @@ import os
 
 import pytest
 
-from ggcommons_cli.recipe_lint import lint_least_privilege, lint_recipe_text
+from edgecommons_cli.recipe_lint import lint_least_privilege, lint_recipe_text
 
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 

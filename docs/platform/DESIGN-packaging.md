@@ -1,7 +1,7 @@
 # Design — Kubernetes packaging & operations
 
 > Companion to [DESIGN-core.md](DESIGN-core.md) / [DESIGN-subsystems.md](DESIGN-subsystems.md).
-> **Status: PROPOSED.** How a ggcommons component is *deployed* on edge/on-prem Kubernetes: the Helm
+> **Status: PROPOSED.** How a edgecommons component is *deployed* on edge/on-prem Kubernetes: the Helm
 > chart shape, workload choice, ConfigMap/Secret mounts, liveness/readiness/startup probes + graceful
 > shutdown, Prometheus `ServiceMonitor`, RBAC/ServiceAccount, PVC (CSI-agnostic), edge AWS identity
 > (IRSA / IAM Roles Anywhere — **not** EKS Pod Identity), NetworkPolicy, and sidecar/init patterns.
@@ -16,11 +16,11 @@ controllers (FR-PKG-2). The division of labor:
 
 | Concern | Owner |
 |---|---|
-| Component config | ggcommons `CONFIGMAP` source ← Helm-rendered `ConfigMap` |
+| Component config | edgecommons `CONFIGMAP` source ← Helm-rendered `ConfigMap` |
 | Cloud-secret sync (optional) | **External Secrets Operator (ESO)** or **Secrets Store CSI Driver** → mounted Secret/files |
 | Scrape config | **Prometheus Operator** ← Helm-rendered `ServiceMonitor` |
 | Restart-on-change (for `subPath`/env/immutable config) | **Stakater Reloader** (annotation) |
-| Everything else (workload, probes, RBAC, PVC, NetworkPolicy) | the ggcommons Helm chart |
+| Everything else (workload, probes, RBAC, PVC, NetworkPolicy) | the edgecommons Helm chart |
 
 The chart **MUST degrade gracefully** when an operator is absent: no Prometheus Operator → emit a
 `Service` only (and document manual scrape); no ESO/CSI → use a plain `Secret`/the vault's own sync.
@@ -39,31 +39,31 @@ The chart selects via `values.workload.kind` (`Deployment`|`StatefulSet`).
 
 ```yaml
 volumes:
-  - name: ggcommons-config                      # component config (CONFIGMAP source)
+  - name: edgecommons-config                      # component config (CONFIGMAP source)
     configMap: { name: {{ .Release.Name }}-config }
-  - name: ggcommons-certs                        # MQTT mTLS material (IoT Core / broker)
+  - name: edgecommons-certs                        # MQTT mTLS material (IoT Core / broker)
     secret: { secretName: {{ .Values.messaging.tlsSecret }} }
   - name: podinfo                                # Downward API VOLUME — metadata.* ONLY (not spec.*/status.*)
     downwardAPI:
       items:
         - { path: "namespace",  fieldRef: { fieldPath: metadata.namespace } }
         - { path: "podname",    fieldRef: { fieldPath: metadata.name } }
-        - { path: "thing-name", fieldRef: { fieldPath: metadata.annotations['ggcommons.io/thing-name'] } }
+        - { path: "thing-name", fieldRef: { fieldPath: metadata.annotations['edgecommons.io/thing-name'] } }
 volumeMounts:
-  - { name: ggcommons-config, mountPath: /etc/ggcommons/config }   # WHOLE volume, never subPath (reload!)
-  - { name: ggcommons-certs,  mountPath: /etc/ggcommons/certs, readOnly: true }
+  - { name: edgecommons-config, mountPath: /etc/edgecommons/config }   # WHOLE volume, never subPath (reload!)
+  - { name: edgecommons-certs,  mountPath: /etc/edgecommons/certs, readOnly: true }
   - { name: podinfo,          mountPath: /etc/podinfo, readOnly: true }
 env:                                              # spec.*/status.* fields are env-ONLY (not volume-able)
   - { name: NODE_NAME, valueFrom: { fieldRef: { fieldPath: spec.nodeName } } }
   - { name: POD_IP,    valueFrom: { fieldRef: { fieldPath: status.podIP } } }
-args: ["--platform", "kubernetes", "-c", "CONFIGMAP", "/etc/ggcommons/config"]
+args: ["--platform", "kubernetes", "-c", "CONFIGMAP", "/etc/edgecommons/config"]
 ```
 
 - **Never `subPath`** for the config mount — it breaks hot-reload silently (DESIGN-subsystems §1). The
   chart template MUST mount the whole volume; if a user forces `subPath`, the chart adds the Reloader
   annotation (`reloader.stakater.com/auto: "true"`) and documents that reload is restart-based.
 - **Annotations/labels are exposable only via the downwardAPI volume** (its items use `fieldRef` for
-  `metadata.*`), so identity from `ggcommons.io/thing-name` uses the volume; conversely **`spec.nodeName`/
+  `metadata.*`), so identity from `edgecommons.io/thing-name` uses the volume; conversely **`spec.nodeName`/
   `status.podIP` are env-only** (`valueFrom.fieldRef`) and are **not** volume-able — hence the split above
   (DESIGN-core §6.2).
 
@@ -121,7 +121,7 @@ or EMF-over-stdout is an optional add-on when cloud connectivity exists.
 
 ## 6. RBAC & ServiceAccount (least privilege)
 
-The default ggcommons component needs **no Kubernetes API permissions**: config and secrets arrive as
+The default edgecommons component needs **no Kubernetes API permissions**: config and secrets arrive as
 *mounted volumes* (the kubelet does the fetch), metrics are *scraped* (Prometheus reads, the pod does
 not call the API), and identity comes from the Downward API. So the default `Role` is **empty**
 (NFR-SEC-2).
@@ -140,7 +140,7 @@ Cluster-admin is never used; any RBAC is namespaced and scoped to named resource
 
 ## 7. Edge AWS identity (IRSA / IAM Roles Anywhere — not Pod Identity)
 
-ggcommons constructs all AWS clients via the SDK **default credential provider chain** with **no explicit
+edgecommons constructs all AWS clients via the SDK **default credential provider chain** with **no explicit
 credentials** (DESIGN-subsystems §6/§7/§8), so identity is wired entirely in the manifest. For the
 edge/on-prem target, in priority order (FR-PKG-3):
 
@@ -152,7 +152,7 @@ STS exchange:
 ```yaml
 serviceAccount:
   annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::<acct>:role/<ggcommons-component-role>
+    eks.amazonaws.com/role-arn: arn:aws:iam::<acct>:role/<edgecommons-component-role>
 # Self-managed: register the API server's OIDC issuer as an IAM OIDC provider; the projected-token flow
 # is identical ("hand-rolled IRSA").
 ```
@@ -160,7 +160,7 @@ serviceAccount:
 **(b) IAM Roles Anywhere (X.509)** — the primary path for **private/air-gapped-leaning** clusters with no
 public API-server exposure. The chart mounts the client cert/key (from a Secret) and the credential
 helper config; the SDK process-credential provider exchanges the cert for short-lived STS creds. This
-aligns with ggcommons' existing IoT X.509 heritage.
+aligns with edgecommons' existing IoT X.509 heritage.
 
 **(c) Static keys in a Secret** — last resort (dev / fully air-gapped that still needs occasional AWS).
 Mounted as env or file; least secure; manual rotation; documented as non-default.
@@ -177,13 +177,13 @@ is mentioned only as an incidental convenience for someone who happens to run on
 ```yaml
 # StatefulSet volumeClaimTemplate — for a durable `disk` streaming buffer
 volumeClaimTemplates:
-  - metadata: { name: ggcommons-buffer }
+  - metadata: { name: edgecommons-buffer }
     spec:
       accessModes: ["ReadWriteOncePod"]           # single-writer guarantee (k8s ≥1.29); else ReadWriteOnce
       storageClassName: {{ .Values.streaming.storageClassName }}   # local-path | longhorn | ceph-rbd | vsphere | nfs | (ebs/efs on EKS)
       resources: { requests: { storage: {{ .Values.streaming.size | default "5Gi" }} } }
 volumeMounts:
-  - { name: ggcommons-buffer, mountPath: /var/lib/ggcommons/streams }
+  - { name: edgecommons-buffer, mountPath: /var/lib/edgecommons/streams }
 ```
 
 Guidance (DESIGN-subsystems §8): `storageClassName` is **operator-chosen**, never assumed to be
@@ -225,7 +225,7 @@ silently breaks IRSA and cloud cooperation (FR-PKG-4 / risk R-egress). Default o
 
 ## 11. Images
 
-- **Multi-arch** (`linux/amd64` + `linux/arm64`) so the bundled `ggstreamlog` native artifact matches the
+- **Multi-arch** (`linux/amd64` + `linux/arm64`) so the bundled `edgestreamlog` native artifact matches the
   node arch (DESIGN-subsystems §8 / FR-STREAM-7) — edge fleets are frequently arm64.
 - Java images run with `--enable-native-access=ALL-UNNAMED` (Panama/FFM requirement for streaming).
 - Prefer a read-only root filesystem + non-root `securityContext`; the stdout-JSON logging default means
@@ -240,7 +240,7 @@ silently breaks IRSA and cloud cooperation (FR-PKG-4 / risk R-egress). Default o
 platform: kubernetes
 workload: { kind: StatefulSet, replicas: 1 }
 image: { repository: ..., tag: ..., pullPolicy: IfNotPresent }
-config:    { configMapName: "" }                  # rendered ggcommons config
+config:    { configMapName: "" }                  # rendered edgecommons config
 messaging: { transport: dualMqtt, localBrokerDNS: emqx.mqtt.svc.cluster.local, iotCoreEndpoint: "", tlsSecret: "" }
 metrics:   { target: prometheus, port: 9090, serviceMonitor: { enabled: true } }
 health:    { enabled: true, port: 8081 }
@@ -261,23 +261,23 @@ cache, the IRSA `identity` binding) surface here.
 ## 13. Distribution & publishing (libraries + component images)
 
 **The problem.** A scaffolded component is built into a container image in a **clean build context** that has
-none of the monorepo. But the templates depend on the library by a **local path** (`Rust` `ggcommons = { path
-= "<<GGCOMMONS_PATH>>" }`, `TS` `"file:<<GGCOMMONS_PATH>>"`) or an **unpublished** coordinate (`Python`
-`greengrass-commons`, `Java` `com.mbreissi:ggcommons` from local `~/.m2`). So a scaffold cannot build an
+none of the monorepo. But the templates depend on the library by a **local path** (`Rust` `edgecommons = { path
+= "<<EDGECOMMONS_PATH>>" }`, `TS` `"file:<<EDGECOMMONS_PATH>>"`) or an **unpublished** coordinate (`Python`
+`edgecommons`, `Java` `com.mbreissi.edgecommons:edgecommons` from local `~/.m2`). So a scaffold cannot build an
 image — and therefore cannot be deployed to Kubernetes — until each library is obtainable from a registry the
 build can reach. (The `test-infra/k8s` image works only because it builds from the *monorepo root* and copies
 `libs/` in; that is the example, not an arbitrary scaffold.)
 
-**Decision — GitHub-native private distribution** (the repo `mbreissi/ggcommons` is private, so all of these are
+**Decision — GitHub-native private distribution** (the repo `mbreissi/edgecommons` is private, so all of these are
 private by default; resolved 2026-06-26):
 
 | Artifact | Private channel (now) | Coordinate / ref | Public later (low-cost swap) |
 |----------|-----------------------|------------------|------------------------------|
 | Component **images** | **ghcr.io** | `ghcr.io/edgecommons/<component>` | same |
-| **Java** lib | GitHub Packages **Maven** | `com.mbreissi:ggcommons` | Maven Central (same coord; add GPG signing) |
-| **TypeScript** lib | GitHub Packages **npm** | **`@edgecommons/ggcommons`** (renamed from `@breissinger`) | public npm under `@mbreissi` |
-| **Python** lib | `pip git+https` | `git+https://github.com/edgecommons/ggcommons.git#subdirectory=libs/python` | PyPI `greengrass-commons==x.y` |
-| **Rust** lib | cargo **git dep** | `ggcommons = { git = "https://github.com/edgecommons/ggcommons", tag = "rust-lib/vX.Y.Z" }` | crates.io `ggcommons = "x.y"` (⚠ verify name free before first public release) |
+| **Java** lib | GitHub Packages **Maven** | `com.mbreissi.edgecommons:edgecommons` | Maven Central (same coord; add GPG signing) |
+| **TypeScript** lib | GitHub Packages **npm** | **`@edgecommons/edgecommons`** (renamed from `@breissinger`) | public npm under `@mbreissi` |
+| **Python** lib | `pip git+https` | `git+https://github.com/edgecommons/edgecommons.git#subdirectory=libs/python` | PyPI `edgecommons==x.y` |
+| **Rust** lib | cargo **git dep** | `edgecommons = { git = "https://github.com/edgecommons/edgecommons", tag = "rust-lib/vX.Y.Z" }` | crates.io `edgecommons = "x.y"` (⚠ verify name free before first public release) |
 
 GitHub Packages has **no native PyPI/crates registry**, hence the git-based deps for Python/Rust; both resolve
 against the private repo with the built-in `GITHUB_TOKEN`. Going public is a registry URL/credential change in
@@ -285,7 +285,7 @@ against the private repo with the built-in `GITHUB_TOKEN`. Going public is a reg
 locked now (the npm scope `@mbreissi` is the only consumer-visible rename, done once, up front).
 
 **Dual-mode scaffold Dockerfile.** Each template ships a `Dockerfile` with a build arg
-`GGCOMMONS_SOURCE = registry | local`:
+`EDGECOMMONS_SOURCE = registry | local`:
 - `registry` (default) — resolves the library from the channel above (needs `GITHUB_TOKEN` build secret). The
   path real users take.
 - `local` — vendors the library from a monorepo checkout (the `test-infra` approach). Used for in-repo dev, CI,
@@ -295,7 +295,7 @@ locked now (the npm scope `@mbreissi` is the only consumer-visible rename, done 
 Multi-arch + non-root + read-only-root carry over from §11.
 
 **Per-scaffold k8s manifests.** Each template ships `k8s/` (raw, `kubectl apply`-able): `configmap.yaml`
-(component config incl. the `messaging` section, mounted as a *directory* at `/etc/ggcommons`) + `deployment.yaml`
+(component config incl. the `messaging` section, mounted as a *directory* at `/etc/edgecommons`) + `deployment.yaml`
 (image ref, Downward-API identity env, httpGet probes on `:8081`, ConfigMap volume, `/tmp` emptyDir, no args —
 `--platform auto` detects KUBERNETES from the SA token). The shared Helm chart (`test-infra/k8s/chart`) remains
 the richer path; these raw manifests are the minimal hello-world deploy.
@@ -308,8 +308,8 @@ Maven, TS→GH Packages npm (`@mbreissi`), Python→git-tag (consumers `pip git+
 **Sequencing & cost.** Decision (2026-06-26): **hold all CI** — do every file/wiring change locally, validate
 via the Dockerfile `local` mode + `kind`, and run `release.yml` only on an explicit later go (conserves the
 ~Actions budget). The interactive-CLI follow-on (a `prompts` + conditional-files extension to
-`ggcommons-template.json`) **has since been built**: `create-component`'s `--platforms`/`-i` wizard and
-`--dep-source` flag (`cli/ggcommons_cli/commands/create_component.py`) gate manifest `conditional` blocks
+`edgecommons-template.json`) **has since been built**: `create-component`'s `--platforms`/`-i` wizard and
+`--dep-source` flag (`cli/edgecommons_cli/commands/create_component.py`) gate manifest `conditional` blocks
 so the `Dockerfile`/`k8s/` artifacts emit **only when the user targets Kubernetes** and the dependency
-source (registry vs local) is chosen at scaffold time (e.g. `templates/rust/ggcommons-template.json`'s
+source (registry vs local) is chosen at scaffold time (e.g. `templates/rust/edgecommons-template.json`'s
 `conditional` entry on `platform:KUBERNETES`).

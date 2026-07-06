@@ -2,7 +2,7 @@
 byte-for-byte unchanged and the computed-default behavior is preserved."""
 import json
 
-from ggcommons.messaging.message import Message, MessageHeader, MessageTags
+from edgecommons.messaging.message import Message, MessageHeader, MessageTags
 
 
 def test_header_computed_defaults_and_explicit_values():

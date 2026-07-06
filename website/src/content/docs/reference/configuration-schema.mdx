@@ -1,13 +1,13 @@
 ---
 title: Configuration schema reference
-description: Exhaustive, language-agnostic field reference for the GGCommons config document — every section, type, default, and the platform-specific precedence rules.
+description: Exhaustive, language-agnostic field reference for the EdgeCommons config document — every section, type, default, and the platform-specific precedence rules.
 sidebar:
   order: 15
 ---
 
 import { Tabs, TabItem, Aside, LinkCard } from "@astrojs/starlight/components";
 
-Every GGCommons component is driven by a single JSON **config document** that is validated against
+Every EdgeCommons component is driven by a single JSON **config document** that is validated against
 one canonical JSON Schema. That schema is **shared, byte-for-byte, across all four SDKs** (Java,
 Python, Rust, TypeScript) — there is no language-specific config dialect. This page is the exhaustive
 field reference: for **every** section it lists each field's type, default, allowed values, and
@@ -19,8 +19,8 @@ and the [Configuration guide](/guides/configuration/).
 
 ## Where the schema lives
 
-The single source of truth is `schema/ggcommons-config-schema.json` (JSON Schema draft-07). Each
-library embeds a generated copy (`libs/java/.../resources/`, `libs/python/ggcommons/resources/`,
+The single source of truth is `schema/edgecommons-config-schema.json` (JSON Schema draft-07). Each
+library embeds a generated copy (`libs/java/.../resources/`, `libs/python/edgecommons/resources/`,
 `libs/rust/resources/`, `libs/ts/src/config/schema.json`). **Never hand-edit a per-library copy** —
 edit the canonical file, then run the sync script to propagate it. CI fails on drift.
 
@@ -47,7 +47,7 @@ edit the canonical file, then run the sync script to propagate it. CI fails on d
 
 Validation is **fail-closed** in every language: a missing schema or any validation failure is a hard
 error at startup, never a silent skip. The public entry points are `ConfigurationValidator.validate`
-(Java/Python), `ggcommons::config::validation::validate` (Rust), and `validate` (TypeScript / Ajv).
+(Java/Python), `edgecommons::config::validation::validate` (Rust), and `validate` (TypeScript / Ajv).
 
 The top level is **strict**: `additionalProperties: false` and `required: ["component"]`. An unknown
 or mistyped top-level key is rejected. Each named section (`logging`, `metricEmission`, `messaging`,
@@ -142,7 +142,7 @@ Console logging plus optional size-rotated file logging. Object, strict.
 | `fileLogging.maxFileSize` | string | `10MB` | e.g. `512KB`, `10MB`, `1GB` | Size at which the file rotates. |
 | `fileLogging.backupCount` | integer (min 0) | `5` | — | Number of rotated backups to keep. |
 | `loggers` | object | — | keys `^[a-zA-Z0-9._-]+$` → level enum | Per-logger level overrides. |
-| `globalControl` | boolean | `false` | — | Apply logging config to the whole application, not just GGCommons. |
+| `globalControl` | boolean | `false` | — | Apply logging config to the whole application, not just EdgeCommons. |
 
 Each library reads **only its own** `<lang>_format` key and ignores the other three. The
 case-insensitive token `json` in a `<lang>_format` field selects the structured stdout-JSON sink — it
@@ -155,7 +155,7 @@ Where metrics are sent, plus target-specific tuning. Object, strict.
 | Field | Type | Default | Allowed values | Meaning |
 |-------|------|---------|----------------|---------|
 | `target` | string | `log` | `log`, `messaging`, `cloudwatch`, `cloudwatchcomponent`, `prometheus` | Metric destination. `prometheus` is pull-based (in-process registry exposed as OpenMetrics over HTTP) and is the `KUBERNETES` default. |
-| `namespace` | string | `ggcommons` | — | CloudWatch namespace. |
+| `namespace` | string | `edgecommons` | — | CloudWatch namespace. |
 | `largeFleetWorkaround` | boolean | `false` | — | Enable the large-fleet emit workaround. |
 | `targetConfig` | object (strict) | — | — | Target-specific config (below). |
 
@@ -189,8 +189,8 @@ host-callback `PutMetricData` sink).
 
 | Field | Type | Default | Allowed values | Meaning |
 |-------|------|---------|----------------|---------|
-| `type` | string | `durable` | `durable`, `memory` | `durable` = ggstreamlog disk buffer + callback drain; `memory` = in-memory batching. |
-| `path` | string | (code: `/var/lib/ggcommons/metrics/{ComponentName}/cw`) | — | Buffer directory (`durable` only; template variables). |
+| `type` | string | `durable` | `durable`, `memory` | `durable` = edgestreamlog disk buffer + callback drain; `memory` = in-memory batching. |
+| `path` | string | (code: `/var/lib/edgecommons/metrics/{ComponentName}/cw`) | — | Buffer directory (`durable` only; template variables). |
 | `maxDiskBytes` | number (min 0) | `134217728` (~128 MiB) | — | Maximum on-disk backlog in bytes. |
 | `onFull` | string | `dropOldest` | `dropOldest`, `block`, `rejectNew` | Behavior when the buffer reaches `maxDiskBytes`. |
 | `fsync` | string | `perBatch` | `perBatch`, `interval`, `always` | Durability flush policy. |
@@ -467,7 +467,7 @@ and `parameters.cache.keyProvider`. Fields not used by the selected type are ign
 |-------|------|---------|----------------|---------|
 | `type` | string | `file` | `file`, `env`, `kms`, `greengrass`, `pkcs11` | KEK source. `env` is the offline software-KEK and the `KUBERNETES` default. |
 | `keyPath` | string \| null | (none) | — | `file`: path to the keyfile. |
-| `envVar` | string \| null | (default name `GGCOMMONS_VAULT_KEK`) | — | `env`: env var holding the base64-encoded 32-byte KEK (from a mounted Secret). |
+| `envVar` | string \| null | (default name `EDGECOMMONS_VAULT_KEK`) | — | `env`: env var holding the base64-encoded 32-byte KEK (from a mounted Secret). |
 | `kmsKeyId` | string \| null | (none) | — | `kms`/`greengrass`: KMS key id/ARN. |
 | `region` | string \| null | (none) | — | `kms`/`greengrass`: AWS region. |
 | `endpointUrl` | string \| null | (none) | — | `kms`/`greengrass`: override endpoint. |
@@ -571,7 +571,7 @@ A multi-section component config document (this validates clean against the sche
     "measures": { "cpu": true, "memory": true },
     "destination": "local"
   },
-  "metricEmission": { "target": "log", "namespace": "ggcommons" },
+  "metricEmission": { "target": "log", "namespace": "edgecommons" },
   "hierarchy": { "levels": ["site", "device"] },
   "identity": { "site": "factory-1" },
   "credentials": {

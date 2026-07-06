@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from ggcommons.messaging.messaging_config import MessagingConfiguration
+from edgecommons.messaging.messaging_config import MessagingConfiguration
 
 
 def _write(tmp_path, data):

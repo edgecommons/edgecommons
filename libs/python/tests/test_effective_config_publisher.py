@@ -1,12 +1,12 @@
 """Unit tests for the library-owned ``cfg`` publisher (UNS-CANONICAL-DESIGN §4.3):
 the redaction walk, the UNS topic, the privileged-seam publish, the config-change
 re-announce, and the best-effort failure handling."""
-from ggcommons.config.effective_config_publisher import (
+from edgecommons.config.effective_config_publisher import (
     EffectiveConfigPublisher,
     REDACTED,
     redact,
 )
-from ggcommons.messaging.identity import HierEntry, MessageIdentity
+from edgecommons.messaging.identity import HierEntry, MessageIdentity
 
 
 class _FakeMessaging:

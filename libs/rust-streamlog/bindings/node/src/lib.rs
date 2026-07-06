@@ -1,7 +1,7 @@
-//! napi-rs native addon (`ggstreamlog-node`) — binds the `ggstreamlog` telemetry-streaming core
-//! into Node as native classes. Wrapped by the `ggcommons` TS lib's `streaming` module.
+//! napi-rs native addon (`streamlog-node`) — binds the `edgestreamlog` telemetry-streaming core
+//! into Node as native classes. Wrapped by the `edgecommons` TS lib's `streaming` module.
 //!
-//! Errors are thrown as JS `Error`s whose message is `ggsl:<code>:<message>` (the TS wrapper parses
+//! Errors are thrown as JS `Error`s whose message is `esl:<code>:<message>` (the TS wrapper parses
 //! the status code). Core `tracing` logs are forwarded to a JS callback registered via
 //! `setLogCallback`.
 
@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::{Arc, Mutex, OnceLock};
 
-use ggstreamlog::{
+use edgestreamlog::{
     CallbackSink, EmbeddedLog, ExportRecord, Record, SendOutcome, ServiceStats, Sink,
     SinkConfig, StreamService as CoreService, StreamingConfig,
 };
@@ -18,8 +18,8 @@ use napi::bindgen_prelude::*;
 use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
 
-fn status_code(e: &ggstreamlog::GgStreamError) -> i32 {
-    use ggstreamlog::GgStreamError as E;
+fn status_code(e: &edgestreamlog::EdgeStreamError) -> i32 {
+    use edgestreamlog::EdgeStreamError as E;
     match e {
         E::Config(_) => 1,
         E::Io(_) => 2,
@@ -30,15 +30,15 @@ fn status_code(e: &ggstreamlog::GgStreamError) -> i32 {
     }
 }
 
-fn map_err(e: ggstreamlog::GgStreamError) -> Error {
-    Error::from_reason(format!("ggsl:{}:{}", status_code(&e), e))
+fn map_err(e: edgestreamlog::EdgeStreamError) -> Error {
+    Error::from_reason(format!("esl:{}:{}", status_code(&e), e))
 }
 
 fn err(code: i32, message: impl AsRef<str>) -> Error {
-    Error::from_reason(format!("ggsl:{}:{}", code, message.as_ref()))
+    Error::from_reason(format!("esl:{}:{}", code, message.as_ref()))
 }
 
-/// A snapshot of one stream's buffer + export progress (mirrors `ggsl_stats_t`).
+/// A snapshot of one stream's buffer + export progress (mirrors `esl_stats_t`).
 #[napi(object)]
 pub struct StreamStats {
     pub appended_total: f64,
@@ -109,7 +109,7 @@ impl StreamService {
     pub fn open(config_json: String) -> Result<StreamService> {
         let cfg: StreamingConfig =
             serde_json::from_str(&config_json).map_err(|e| err(1, format!("config: {e}")))?;
-        let factory = |name: &str, sink: &SinkConfig| -> ggstreamlog::Result<Option<Box<dyn Sink>>> {
+        let factory = |name: &str, sink: &SinkConfig| -> edgestreamlog::Result<Option<Box<dyn Sink>>> {
             if let SinkConfig::Callback { .. } = sink {
                 if let Some(cb) = sink_callback_for(name) {
                     return Ok(Some(Box::new(cb)));

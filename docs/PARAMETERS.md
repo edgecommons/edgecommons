@@ -9,7 +9,7 @@ all wired and tested. Open questions §9 were resolved as the recommended defaul
 sources in phase 1; `securePaths` list for `mountedDir` secret marking). Phase 2 (audit+metrics
 bridge) and Phase 3 (write-back, K8s-API watch, more cloud sources) remain.
 
-A new, **independent** ggcommons subsystem — a peer of `config` / `messaging` / `metrics` /
+A new, **independent** edgecommons subsystem — a peer of `config` / `messaging` / `metrics` /
 `credentials` — giving components offline-capable, **source-agnostic** access to externalized
 parameters/config. Exposed as `gg.parameters()` → `IParameterService`.
 
@@ -30,7 +30,7 @@ routinely use **both at the same time**:
 
 Folding SSM into `credentials` as a `CentralVaultSource` was rejected (wrong abstraction —
 forces config-grade params through the secrets-vault model, conflates two concerns). And the
-source must be **pluggable**, because ggcommons runs across multiple platforms: `GREENGRASS`
+source must be **pluggable**, because edgecommons runs across multiple platforms: `GREENGRASS`
 (AWS-native → SSM via TES) and **`HOST` / `KUBERNETES` for Docker/bare containers/k8s**, where the
 equivalent is K8s ConfigMaps/Secrets, Docker secrets, or env — not SSM.
 

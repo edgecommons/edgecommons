@@ -16,7 +16,7 @@ import * as fsp from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 
-import { GgError } from "../src/errors";
+import { EdgeCommonsError } from "../src/errors";
 import { logger } from "../src/logging";
 import { ConfigMapConfigSource } from "../src/config/source/configmap";
 import { buildConfigSource } from "../src/config/source";
@@ -66,10 +66,10 @@ describe("ConfigMapConfigSource: load", () => {
   it("load() rejects on a missing key (initial load fails loudly, like FILE)", async () => {
     const mount = tmpDir();
     const src = new ConfigMapConfigSource(mount, "config.json");
-    await expect(src.load()).rejects.toBeInstanceOf(GgError);
+    await expect(src.load()).rejects.toBeInstanceOf(EdgeCommonsError);
     await src.load().catch((e) => {
-      expect((e as GgError).kind).toBe("Io");
-      expect((e as GgError).message).toContain("config.json");
+      expect((e as EdgeCommonsError).kind).toBe("Io");
+      expect((e as EdgeCommonsError).message).toContain("config.json");
     });
   });
 
@@ -77,19 +77,19 @@ describe("ConfigMapConfigSource: load", () => {
     const mount = tmpDir();
     fs.writeFileSync(path.join(mount, "config.json"), "{ not json ]");
     const src = new ConfigMapConfigSource(mount, "config.json");
-    await src.load().catch((e) => expect((e as GgError).kind).toBe("Config"));
-    await expect(src.load()).rejects.toBeInstanceOf(GgError);
+    await src.load().catch((e) => expect((e as EdgeCommonsError).kind).toBe("Config"));
+    await expect(src.load()).rejects.toBeInstanceOf(EdgeCommonsError);
   });
 
   it("applies default mount dir + key (and warns it looks like a subPath mount)", () => {
     const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
-    const src = new ConfigMapConfigSource(); // defaults: /etc/ggcommons + config.json
+    const src = new ConfigMapConfigSource(); // defaults: /etc/edgecommons + config.json
     expect(src.sourceName()).toBe("CONFIGMAP");
-    expect(ConfigMapConfigSource.DEFAULT_MOUNT_DIR).toBe("/etc/ggcommons");
+    expect(ConfigMapConfigSource.DEFAULT_MOUNT_DIR).toBe("/etc/edgecommons");
     expect(ConfigMapConfigSource.DEFAULT_KEY).toBe("config.json");
     // The default mount dir does not exist on a dev host -> no ..data -> subPath warning fires.
     expect(warn).toHaveBeenCalled();
-    expect((warn.mock.calls[0][0] as string)).toContain("ggcommons");
+    expect((warn.mock.calls[0][0] as string)).toContain("edgecommons");
   });
 });
 
@@ -105,7 +105,7 @@ describe("ConfigMapConfigSource: dotfile filter", () => {
 
   it("rejects a key that is itself a projection artifact", () => {
     const mount = tmpDir();
-    expect(() => new ConfigMapConfigSource(mount, "..data")).toThrow(GgError);
+    expect(() => new ConfigMapConfigSource(mount, "..data")).toThrow(EdgeCommonsError);
   });
 });
 

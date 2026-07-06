@@ -5,8 +5,8 @@ cannot inject path traversal or MQTT topic wildcards, while the template's own
 separators are preserved).
 """
 
-from ggcommons.config.manager.config_manager import ConfigManager
-from ggcommons.config.tag_config import TagConfiguration
+from edgecommons.config.manager.config_manager import ConfigManager
+from edgecommons.config.tag_config import TagConfiguration
 
 
 def _manager(tags=None):

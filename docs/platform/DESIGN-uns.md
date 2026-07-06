@@ -1,4 +1,4 @@
-# ggcommons Unified Namespace (UNS) — messaging namespace, identity & site-bus realization
+# edgecommons Unified Namespace (UNS) — messaging namespace, identity & site-bus realization
 
 > **Status (updated 2026-07-05): Phases 1–3 SHIPPED in all four languages, merged to `main`** and
 > released as **v0.2.0** (release commit `b1d8d85`) — the topic grammar, the eight classes, the top-level `identity` element,
@@ -19,7 +19,7 @@
 > classes now has exactly one library-owned owner (§7.3, §4). **Phases 4 (streaming enrichment, M15)
 > and 5 (the southbound command family, M9, and D‑U15/16) remain design-only** — see §13 for the
 > per-phase breakdown. This document specifies a
-> single **Unified Namespace** for how ggcommons components address one another on the bus: the topic
+> single **Unified Namespace** for how edgecommons components address one another on the bus: the topic
 > grammar, the message classes, the identity model, the messaging API surface (`messaging()` / `uns()` /
 > the platform facades), streaming enrichment, and the physical realization of a **site-wide UNS bus**
 > across per-device brokers. Java is canonical; the build lands in all four libraries (Java / Python /
@@ -42,13 +42,13 @@
 
 ## 1. Problem & scope
 
-Today every ggcommons subsystem and every component invents its **own topic scheme**:
+Today every edgecommons subsystem and every component invents its **own topic scheme**:
 
-- heartbeat → `ggcommons/{ThingName}/{ComponentName}/heartbeat`
-- metric → `{ThingName}/{ComponentName}/metric` (note: no `ggcommons/` root — inconsistent with heartbeat)
+- heartbeat → `edgecommons/{ThingName}/{ComponentName}/heartbeat`
+- metric → `{ThingName}/{ComponentName}/metric` (note: no `edgecommons/` root — inconsistent with heartbeat)
 - southbound data → `southbound/{site}/{ComponentName}/{InstanceId}/{signalId}`
 - southbound control → `southbound/{ComponentName}/{InstanceId}/control/{status|subscriptions|signals}`
-- config push → `ggcommons/{ThingName}/config/{ComponentName}/updated`
+- config push → `edgecommons/{ThingName}/config/{ComponentName}/updated`
 - file-replicator (proposed) → `{ThingName}/file-replicator/{cmd|evt|state}/…` (yet another scheme)
 
 Any consumer that wants a **fleet-wide** view (a monitoring console, a site historian, an MES bridge)
@@ -106,7 +106,7 @@ ecv1 / {device} / {component} / {instance} / {class} [ / {channel...} ]
   bumps are `ecv1 → ecv2` (Sparkplug's `spBv1.0` precedent); *payload* versions stay in `header.version`.
 - **The topic addresses the endpoint, not the hierarchy.** `{device}` is the physical node (reachability
   + bridge + command-ACL anchor — it replaces today's `thing`); `{component}`/`{instance}` are the
-  ggcommons addressing suffix. The enterprise's logical hierarchy lives in the message `identity` (§5),
+  edgecommons addressing suffix. The enterprise's logical hierarchy lives in the message `identity` (§5),
   **not** the topic — so topic depth is **constant regardless of hierarchy depth** (D1). This buys back
   depth budget for the data-plane signal path.
 - `{class}` is one of the closed set in §4; consumers subscribe per class.
@@ -160,7 +160,7 @@ physical node** (nothing sits below it but software), so "last level = node" is 
 ```
 
 `["site","area","device"]`, `["region","plant","line","cell"]` — all valid. `component`/`instance` are
-**not** part of this; they are the ggcommons addressing suffix.
+**not** part of this; they are the edgecommons addressing suffix.
 
 ### 5.2 Top-level `identity` element (D4)
 
@@ -229,11 +229,11 @@ library stamps `identity` (with `path`) on every message; `instance` is stamped 
 
 | Legacy (today) | UNS (new) |
 |---|---|
-| `ggcommons/{Thing}/{Comp}/heartbeat` | `…/{comp}/{inst}/state` (keepalive) + `…/metric/sys` |
+| `edgecommons/{Thing}/{Comp}/heartbeat` | `…/{comp}/{inst}/state` (keepalive) + `…/metric/sys` |
 | `{Thing}/{Comp}/metric` (no root) | `…/{comp}/{inst}/metric/{name}` |
 | `southbound/{site}/{Comp}/{Inst}/{signalId}` | `…/{comp}/{inst}/data/{signalPath}` |
 | `southbound/{Comp}/{Inst}/control/status` | `…/{comp}/{inst}/cmd/sb/status` |
-| `ggcommons/{Thing}/config/{Comp}/updated` | `…/{comp}/{inst}/cmd/set-config` + outbound `…/cfg` |
+| `edgecommons/{Thing}/config/{Comp}/updated` | `…/{comp}/{inst}/cmd/set-config` + outbound `…/cfg` |
 | file-replicator `{Thing}/file-replicator/cmd\|evt\|state/…` | the standard `cmd` / `evt` / `state` classes under its identity path |
 
 file-replicator's `cmd | evt | state` intuition survives — it just stops inventing its own address.
@@ -473,8 +473,8 @@ sequenceDiagram
 
 ### 9.4 The `_bcast` republish listener — normative behavior (slice G-S1; shipped in all four languages)
 
-Layer 2 of §9.3, made concrete. **Every** ggcommons component runs a library-owned republish
-listener (Java: `uns/RepublishListener`, wired by the `GGCommons` runtime after init completes) —
+Layer 2 of §9.3, made concrete. **Every** edgecommons component runs a library-owned republish
+listener (Java: `uns/RepublishListener`, wired by the `EdgeCommons` runtime after init completes) —
 the answering half of the `uns-bridge`'s reconnect-rehydration broadcast (DESIGN-uns-bridge §2.5)
 and the lever the edge-console's config-review pulls. The wire contract is pinned by
 **`uns-test-vectors/bcast.json`** (topics byte-for-byte, envelope structural, behavior constants);
@@ -516,8 +516,8 @@ the Python/Rust/TS mirrors replicate ALL of the following (shipped, four-way par
 ### 9.5 The command inbox + built-in verbs — normative behavior (slice S2; shipped in all four languages)
 
 The minimal `commands()` facade (§7.3), sized to what the edge-console needs first: **every**
-ggcommons component runs a library-owned command inbox (Java: `commands/CommandInbox`, wired by the
-`GGCommons` runtime after init completes, right after the §9.4 republish listener) so the console —
+edgecommons component runs a library-owned command inbox (Java: `commands/CommandInbox`, wired by the
+`EdgeCommons` runtime after init completes, right after the §9.4 republish listener) so the console —
 or any peer — can address it with request/reply verbs. The wire contract is pinned by
 **`uns-test-vectors/commands.json`** (inbox filter + topics byte-for-byte, request/reply envelopes
 structural, reply bodies equal to a live inbox dispatch, behavior flags/sets normative); the
@@ -617,7 +617,7 @@ a precise error — silent coexistence of old and new topics is the worst outcom
 | M7 | **MQTT LWT** in `MessagingProvider` — the `uns-bridge` sets it on the site-broker connection → whole-device UNREACHABLE; HOST/K8s components may optionally set one; IPC no-ops. **Retain deferred** (redundant with broadcast `republish-state` + the consumer's timestamped cache; can't express staleness; if ever wanted, owned by the bridge). | P0 |
 | M8 | **Named/secondary MessagingClient** (two connections in one process; the bridge needs it) | P0 |
 | M9 | **Southbound command family** — `sb/browse` (paged), `sb/read` (ref-accepting), **confirmed `sb/write`** (with optional read-back), `sb/subscribe-preview` + adapter `writes.allow[]`; an adapter-contract change | P1 |
-| M11 | **Heartbeat defaults + parity** — on / 5 s / local target in all four languages, reconciled into the `state` keepalive ([ggcommons#33](https://github.com/edgecommons/ggcommons/issues/33)) | P1 |
+| M11 | **Heartbeat defaults + parity** — on / 5 s / local target in all four languages, reconciled into the `state` keepalive ([edgecommons#33](https://github.com/edgecommons/edgecommons/issues/33)) | P1 |
 | M14 | **`uns-test-vectors/`** — cross-language byte-identical topic + well-formed top-level `identity` assertions in the interop harness, under the 90% coverage gate | P1 |
 | M15 | **UNS in the streaming service** — auto-enrich records with identity + header + tags; Parquet/AVRO hierarchy columns + partitioning; broker-sink partition key = device; `stream:<name>` preserves originating identity | P1 |
 

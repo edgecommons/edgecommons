@@ -17,7 +17,7 @@ use zeroize::Zeroizing;
 
 use super::sync::SyncEngine;
 use super::vault::{LocalVault, PutOptions};
-use crate::error::GgError;
+use crate::error::EdgeCommonsError;
 use crate::Result;
 
 /// A decrypted secret value plus its metadata. The bytes are zeroized on drop and redacted from
@@ -41,12 +41,12 @@ impl Secret {
 
     /// The value as UTF-8 (errors if not valid UTF-8).
     pub fn as_str(&self) -> Result<&str> {
-        std::str::from_utf8(&self.bytes).map_err(|_| GgError::Credentials("secret is not valid UTF-8".into()))
+        std::str::from_utf8(&self.bytes).map_err(|_| EdgeCommonsError::Credentials("secret is not valid UTF-8".into()))
     }
 
     /// The value parsed as JSON.
     pub fn as_json(&self) -> Result<serde_json::Value> {
-        serde_json::from_slice(&self.bytes).map_err(|e| GgError::Credentials(format!("secret is not JSON: {e}")))
+        serde_json::from_slice(&self.bytes).map_err(|e| EdgeCommonsError::Credentials(format!("secret is not JSON: {e}")))
     }
 }
 

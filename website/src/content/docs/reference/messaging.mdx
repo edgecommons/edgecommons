@@ -27,11 +27,11 @@ Topics are minted through the [UNS builder](/reference/uns/) (`gg.uns()` / `gg.i
 the messaging client itself takes literal topics and enforces one rule — the
 [reserved-class publish guard](/reference/uns/#the-reserved-class-publish-guard): a client-chosen
 publish/request/reply to `ecv1/.../{state|metric|cfg|log}` is rejected
-(`ReservedTopicException` / `ReservedTopicError` / `GgError::ReservedTopic`).
+(`ReservedTopicException` / `ReservedTopicError` / `EdgeCommonsError::ReservedTopic`).
 
 ## Accessor
 
-How a component reaches the messaging service from its `GGCommons` handle.
+How a component reaches the messaging service from its `EdgeCommons` handle.
 
 <Tabs syncKey="lang">
 <TabItem label="Java">
@@ -39,7 +39,7 @@ How a component reaches the messaging service from its `GGCommons` handle.
 Returns a `MessagingClient` **instance** (instance methods).
 
 ```java
-MessagingClient getMessaging();   // GGCommons.getMessaging()
+MessagingClient getMessaging();   // EdgeCommons.getMessaging()
 ```
 
 </TabItem>
@@ -48,7 +48,7 @@ MessagingClient getMessaging();   // GGCommons.getMessaging()
 Returns the `MessagingClient` **class** — its methods are `@staticmethod`, called on the class.
 
 ```python
-def get_messaging() -> MessagingClient: ...   # GGCommons.get_messaging()
+def get_messaging() -> MessagingClient: ...   # EdgeCommons.get_messaging()
 ```
 
 </TabItem>
@@ -57,7 +57,7 @@ def get_messaging() -> MessagingClient: ...   # GGCommons.get_messaging()
 Returns `Result<Arc<dyn MessagingService>>` — errors if no transport was wired.
 
 ```rust
-fn messaging(&self) -> Result<Arc<dyn MessagingService>>;   // GgCommons::messaging()
+fn messaging(&self) -> Result<Arc<dyn MessagingService>>;   // EdgeCommons::messaging()
 ```
 
 </TabItem>
@@ -66,7 +66,7 @@ fn messaging(&self) -> Result<Arc<dyn MessagingService>>;   // GgCommons::messag
 Returns an `IMessagingService` — throws if no transport was wired.
 
 ```typescript
-messaging(): IMessagingService;   // GgCommons.messaging()
+messaging(): IMessagingService;   // EdgeCommons.messaging()
 ```
 
 </TabItem>
@@ -420,7 +420,7 @@ class Message {
 The header carries message metadata; `tags` carries **business context only** (your custom `tags`
 config keys). `tags` has no special `thing` handling in any language — the publisher's device travels
 in the top-level `identity` element, and a stray inbound `thing` key just lands in the generic tag
-map. The reply-topic prefix is the literal string `ggcommons/reply-`
+map. The reply-topic prefix is the literal string `edgecommons/reply-`
 (trailing `-`, not `/`) in all four languages; reply topics are deliberately non-UNS.
 
 <Tabs syncKey="lang">
@@ -430,7 +430,7 @@ map. The reply-topic prefix is the literal string `ggcommons/reply-`
 class MessageHeader {
     String name; String version; String timestamp;   // ISO-8601 / RFC3339 (ISO_INSTANT)
     String correlationId; String uuid; String replyTo;
-    static final String REPLY_MESSAGE_TOPIC_PREFIX = "ggcommons/reply-";
+    static final String REPLY_MESSAGE_TOPIC_PREFIX = "edgecommons/reply-";
     JsonObject toDict();   // emits name, version, timestamp, uuid, correlation_id, [reply_to]
 }
 
@@ -454,7 +454,7 @@ class MessageHeader:
     timestamp: Optional[str] = None   # ISO-8601 / RFC3339 string
     uuid: Optional[str] = None
     reply_to: Optional[str] = None
-    REPLY_MESSAGE_TOPIC_PREFIX = "ggcommons/reply-"
+    REPLY_MESSAGE_TOPIC_PREFIX = "edgecommons/reply-"
     # __post_init__ fills timestamp/correlation_id/uuid
     def to_dict(self) -> dict: ...   # snake_case: name, version, timestamp, uuid, correlation_id, [reply_to]
 
@@ -633,7 +633,7 @@ at DEBUG and dropped. As a result, a no-arg `get()`/`await` is bounded by the de
 |----------|-------------------|-------------------------|
 | Java | `request(topic, msg, Duration)` (`null` = default, `ZERO` = off) | `java.util.concurrent.TimeoutException` (exceptional completion) |
 | Python | `request(topic, msg, timeout_secs=...)` (`None` = default, `0` = off) | `Iou.get()` raises `RequestTimeoutError` |
-| Rust | `request_with_timeout(topic, msg, Option<Duration>)` | future resolves `Err(GgError::RequestTimeout { .. })` |
+| Rust | `request_with_timeout(topic, msg, Option<Duration>)` | future resolves `Err(EdgeCommonsError::RequestTimeout { .. })` |
 | TypeScript | `request(topic, msg, timeoutMs)` (omitted = default, `0` = off) | promise rejects with `RequestTimeoutError` |
 
 <Tabs syncKey="lang">
@@ -684,7 +684,7 @@ dropping the `ReplyFuture` still cancels the request and unsubscribes the reply 
 ```rust
 // ReplyFuture: impl Future<Output = Result<Message>>
 let fut = messaging.request("svc/op", request).await?;    // 30 s default deadline
-let reply = fut.await?;                                    // Err(GgError::RequestTimeout) on deadline
+let reply = fut.await?;                                    // Err(EdgeCommonsError::RequestTimeout) on deadline
 ```
 
 </TabItem>
@@ -969,7 +969,7 @@ messaging.reply(request, reply_msg)            # copies correlation id
 
 ```rust
 use serde_json::json;
-use ggcommons::messaging::message_handler;
+use edgecommons::messaging::message_handler;
 
 let messaging = gg.messaging()?;               // Arc<dyn MessagingService>
 
@@ -991,7 +991,7 @@ messaging.publish("itest/pubsub", &msg).await?;
 // request/reply: request() -> Result<ReplyFuture>, then await the future
 // (a framework deadline — default 30 s — bounds the wait)
 let fut = messaging.request("svc/op", request).await?;
-let reply = fut.await?;                          // Err(GgError::RequestTimeout) on deadline
+let reply = fut.await?;                          // Err(EdgeCommonsError::RequestTimeout) on deadline
 // responder side:
 responder.reply(&request, reply_msg).await?;    // copies correlation id
 ```

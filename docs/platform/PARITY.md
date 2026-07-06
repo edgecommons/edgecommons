@@ -24,9 +24,9 @@ net; do not begin Phase-1 native facilities until Phase 0 is merged per language
 | Change | Java | Python | Rust | TS |
 |---|---|---|---|---|
 | `Platform`/`Transport` enums + `resolveProfile` + detector | new | new | new | new |
-| Replace mode-switch with transport injection | `MessagingClient.java:42` | `MessagingClient.init` | `init_messaging` `lib.rs:461` (take `&Transport`) | `initMessaging` `ggcommons.ts:330` |
-| Default-config-provider from profile | `GGCommons.java:378` | `ggcommons.py:139` | `cli.rs:158` | `cli.ts:72` |
-| New `--platform`/`--transport` CLI; drop `-m` | `GGCommons.java:350-404` | `ggcommons.py:142-171` | `cli.rs:48-206` | `cli.ts:16-127` |
+| Replace mode-switch with transport injection | `MessagingClient.java:42` | `MessagingClient.init` | `init_messaging` `lib.rs:461` (take `&Transport`) | `initMessaging` `edgecommons.ts:330` |
+| Default-config-provider from profile | `EdgeCommons.java:378` | `edgecommons.py:139` | `cli.rs:158` | `cli.ts:72` |
+| New `--platform`/`--transport` CLI; drop `-m` | `EdgeCommons.java:350-404` | `edgecommons.py:142-171` | `cli.rs:48-206` | `cli.ts:16-127` |
 | `CONFIGMAP` config source | sealed: edit `permits` + builder | manager class | `ConfigSource` impl (open) | `ConfigSource` impl (open) |
 | `prometheus` metric target | sealed: edit `permits` + switch; `client_java` | manager + `client_python` | feature `metrics-prometheus` + `prometheus-client` | `prom-client` |
 | stdout-JSON logging sink | edit configurator (`JsonTemplateLayout`) | edit logging config | tracing JSON layer | edit logger |
@@ -54,11 +54,11 @@ open `trait`/`interface` seams in Rust/TS — a compile error if forgotten (safe
 - JaCoCo 90% gate must stay green through Phase 0 and Phase 1.
 
 ### Python (also see `libs/python/CLAUDE.md`)
-- Builder/constructor only; **no DI/interface layer** (the old `ggcommons/di/` + `ggcommons/interfaces/`
+- Builder/constructor only; **no DI/interface layer** (the old `edgecommons/di/` + `edgecommons/interfaces/`
   docs never shipped). pytest-style tests; don't add `unittest.TestCase`.
 - AWS deps lazy-imported (boto3) so optional features don't break core; the `awsSsm`/Secrets-Manager paths
   gate at runtime (not compile features).
-- **Carries the largest pre-existing parity debt** (see [[ggcommons-python-parity-backlog]] — init-order
+- **Carries the largest pre-existing parity debt** (see [[edgecommons-python-parity-backlog]] — init-order
   C1/C2, dead file-logging, H/M bugs). The Phase-0 resolver refactor touches the exact init path that
   backlog flags; **fold the k8s init-order changes into that remediation** rather than layering on top of
   known-buggy ordering. This is the riskiest per-language surface.
@@ -79,11 +79,11 @@ open `trait`/`interface` seams in Rust/TS — a compile error if forgotten (safe
 ### TypeScript
 - Builder-only greenfield; **service-interface seam** (`IMessagingService`/`MetricService`) — clean
   transport injection.
-- **SIGTERM handling already exists** (`process.on('SIGTERM'|'SIGINT')` in `gg_verify.ts`/
+- **SIGTERM handling already exists** (`process.on('SIGTERM'|'SIGINT')` in `edge_verify.ts`/
   `config_provider.ts`) — the canonical pattern the other three mirror for FR-HB-2.
 - No official Prometheus client → use `prom-client` (community, ships TS types); a **documented, accepted
   divergence** (same situation as other Node ecosystem libs).
-- **`receiveOwnMessages` defaults `false`** here vs `true` in Java/Python/Rust (`ggcommons.ts:171`) —
+- **`receiveOwnMessages` defaults `false`** here vs `true` in Java/Python/Rust (`edgecommons.ts:171`) —
   **resolved**: converge to the Java-canonical `true` in Phase 0 (DESIGN-core §12 #2).
 
 ## 4. Pre-existing parity gaps this effort touches (track, don't silently fix)

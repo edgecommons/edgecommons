@@ -2,7 +2,7 @@
 //!
 //! Deployed as a Greengrass component run as `shadow_verify -c SHADOW` (no explicit
 //! name): the SHADOW config source defaults the shadow name to the component name
-//! and sanitizes it (`com.ggcommons.RustShadowVerify` -> `com_ggcommons_RustShadowVerify`).
+//! and sanitizes it (`com.mbreissi.edgecommons.RustShadowVerify` -> `com_mbreissi_edgecommons_RustShadowVerify`).
 //! It reads the loaded config and writes a JSON result to `/tmp` so the loaded values
 //! (set in the cloud named shadow under the sanitized name) prove the default→sanitize
 //! →GetThingShadow path runs end-to-end. Build with `--features greengrass` on Linux.
@@ -10,10 +10,10 @@
 use std::fs;
 use std::time::Duration;
 
-use ggcommons::prelude::*;
+use edgecommons::prelude::*;
 use serde_json::json;
 
-const COMPONENT_NAME: &str = "com.ggcommons.RustShadowVerify";
+const COMPONENT_NAME: &str = "com.mbreissi.edgecommons.RustShadowVerify";
 const RESULT: &str = "/tmp/rust_shadow_verify_result.json";
 
 #[tokio::main]
@@ -28,7 +28,7 @@ async fn main() {
 }
 
 async fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let gg = GgCommonsBuilder::new(COMPONENT_NAME)
+    let gg = EdgeCommonsBuilder::new(COMPONENT_NAME)
         .args(std::env::args_os())
         .build()
         .await?;

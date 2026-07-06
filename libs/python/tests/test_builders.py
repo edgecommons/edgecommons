@@ -6,36 +6,36 @@ import pytest
 from unittest.mock import Mock, patch
 
 try:
-    from ggcommons.ggcommons_builder import GGCommonsBuilder
-    from ggcommons.messaging.message_builder import MessageBuilder
-    from ggcommons.metrics.metric_builder import MetricBuilder
+    from edgecommons.edgecommons_builder import EdgeCommonsBuilder
+    from edgecommons.messaging.message_builder import MessageBuilder
+    from edgecommons.metrics.metric_builder import MetricBuilder
 except ImportError:
     pytest.skip("AWS SDK dependencies not available", allow_module_level=True)
 
 
-# GGCommonsBuilder tests
-def test_ggcommons_builder_create():
+# EdgeCommonsBuilder tests
+def test_edgecommons_builder_create():
     """Test create method."""
-    builder = GGCommonsBuilder.create("com.test.Component")
-    assert isinstance(builder, GGCommonsBuilder)
+    builder = EdgeCommonsBuilder.create("com.test.Component")
+    assert isinstance(builder, EdgeCommonsBuilder)
     assert builder._component_name == "com.test.Component"
 
 
-def test_ggcommons_builder_create_empty_name():
+def test_edgecommons_builder_create_empty_name():
     """Test create with empty component name."""
     with pytest.raises(ValueError):
-        GGCommonsBuilder.create("")
+        EdgeCommonsBuilder.create("")
 
 
-def test_ggcommons_builder_create_none_name():
+def test_edgecommons_builder_create_none_name():
     """Test create with None component name."""
     with pytest.raises(ValueError):
-        GGCommonsBuilder.create(None)
+        EdgeCommonsBuilder.create(None)
 
 
-def test_ggcommons_builder_with_args():
+def test_edgecommons_builder_with_args():
     """Test with_args method."""
-    builder = GGCommonsBuilder.create("com.test.Component")
+    builder = EdgeCommonsBuilder.create("com.test.Component")
     args = ["-c", "FILE", "test-config.json", "--platform", "HOST", "--transport", "MQTT", "test-messaging-config.json"]
     
     result = builder.with_args(args)
@@ -44,9 +44,9 @@ def test_ggcommons_builder_with_args():
     assert builder._args == args
 
 
-def test_ggcommons_builder_with_app_options():
+def test_edgecommons_builder_with_app_options():
     """Test with_app_options method."""
-    builder = GGCommonsBuilder.create("com.test.Component")
+    builder = EdgeCommonsBuilder.create("com.test.Component")
     options = Mock()
     
     result = builder.with_app_options(options)
@@ -55,9 +55,9 @@ def test_ggcommons_builder_with_app_options():
     assert builder._app_options == options
 
 
-def test_ggcommons_builder_receive_own_messages():
+def test_edgecommons_builder_receive_own_messages():
     """Test receive_own_messages method."""
-    builder = GGCommonsBuilder.create("com.test.Component")
+    builder = EdgeCommonsBuilder.create("com.test.Component")
     
     result = builder.receive_own_messages(True)
     
@@ -65,9 +65,9 @@ def test_ggcommons_builder_receive_own_messages():
     assert builder._receive_own_messages is True
 
 
-def test_ggcommons_builder_build():
+def test_edgecommons_builder_build():
     """Test build method creates builder with correct parameters."""
-    builder = GGCommonsBuilder.create("com.test.Component") \
+    builder = EdgeCommonsBuilder.create("com.test.Component") \
         .with_args(["-c", "FILE", "test-config.json", "--platform", "HOST", "--transport", "MQTT", "test-messaging-config.json", "-t", "test-thing"]) \
         .receive_own_messages(False)
     

@@ -7,10 +7,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from ggcommons.config.metric_config import MetricConfiguration
-from ggcommons.metrics.metric_emitter import MetricEmitter
-from ggcommons.metrics.metric_builder import MetricBuilder
-from ggcommons.platform.platform import Platform
+from edgecommons.config.metric_config import MetricConfiguration
+from edgecommons.metrics.metric_emitter import MetricEmitter
+from edgecommons.metrics.metric_builder import MetricBuilder
+from edgecommons.platform.platform import Platform
 
 
 class FakeConfigManager:
@@ -92,7 +92,7 @@ class TestInit:
         mc = MetricConfiguration({"target": "bogus-target"})
         cm = FakeConfigManager(mc)
         MetricEmitter.init(cm)
-        from ggcommons.metrics.targets.metric_log import MetricLog
+        from edgecommons.metrics.targets.metric_log import MetricLog
         assert isinstance(MetricEmitter.metric_target, MetricLog)
 
     def test_init_is_idempotent_target(self, tmp_path):

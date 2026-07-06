@@ -6,14 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from ggcommons.credentials import (
+from edgecommons.credentials import (
     CredentialError,
     DefaultCredentialService,
     FileKeyProvider,
     LocalVault,
     open_from_config,
 )
-from ggcommons.credentials import crypto, format as fmt
+from edgecommons.credentials import crypto, format as fmt
 
 VECTORS_DIR = Path(__file__).resolve().parents[3] / "vault-test-vectors"
 
@@ -85,7 +85,7 @@ def test_typed_views(tmp_path):
 
 
 def test_namespacing_isolates_components(tmp_path):
-    from ggcommons.credentials import DefaultCredentialService
+    from edgecommons.credentials import DefaultCredentialService
 
     path = str(tmp_path / "vault")
     kek = bytes([5] * 32)
@@ -102,7 +102,7 @@ def test_namespacing_isolates_components(tmp_path):
     assert "thing-1/CompB/db/password" in raw
 
 
-@pytest.mark.skipif(os.environ.get("GGCOMMONS_IT_SM") != "1", reason="needs floci secretsmanager (GGCOMMONS_IT_SM=1)")
+@pytest.mark.skipif(os.environ.get("EDGECOMMONS_IT_SM") != "1", reason="needs floci secretsmanager (EDGECOMMONS_IT_SM=1)")
 def test_central_sync_from_secrets_manager(tmp_path):
     import uuid
 
@@ -112,7 +112,7 @@ def test_central_sync_from_secrets_manager(tmp_path):
     os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "test")
     os.environ.setdefault("AWS_REGION", "us-east-1")
     sm = boto3.client("secretsmanager", region_name="us-east-1", endpoint_url="http://localhost:4566")
-    name = f"ggcommons-py-cred-{uuid.uuid4()}"
+    name = f"edgecommons-py-cred-{uuid.uuid4()}"
     sm.create_secret(Name=name, SecretString="v1")
     try:
         cfg = {
@@ -138,7 +138,7 @@ def test_central_sync_from_secrets_manager(tmp_path):
 
 
 def test_resolve_secret_refs(tmp_path):
-    from ggcommons.credentials import resolve_secret_refs
+    from edgecommons.credentials import resolve_secret_refs
 
     c = _svc(tmp_path)
     c.put("kinesis/name", b"my-stream")
@@ -166,7 +166,7 @@ def test_resolve_secret_refs(tmp_path):
 
 
 def test_stats_and_credential_stats(tmp_path):
-    from ggcommons.credentials import CredentialStats
+    from edgecommons.credentials import CredentialStats
 
     c = _svc(tmp_path)
     s = c.stats()
@@ -187,11 +187,11 @@ def test_stats_and_credential_stats(tmp_path):
     assert s.rotations == 0
 
 
-@pytest.mark.skipif(os.environ.get("GGCOMMONS_IT_KMS") != "1", reason="needs floci KMS (GGCOMMONS_IT_KMS=1)")
+@pytest.mark.skipif(os.environ.get("EDGECOMMONS_IT_KMS") != "1", reason="needs floci KMS (EDGECOMMONS_IT_KMS=1)")
 def test_kms_key_provider_roundtrip(tmp_path):
     import boto3
 
-    from ggcommons.credentials import open_from_config
+    from edgecommons.credentials import open_from_config
 
     os.environ.setdefault("AWS_ACCESS_KEY_ID", "test")
     os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "test")
@@ -219,10 +219,10 @@ def test_kms_key_provider_roundtrip(tmp_path):
     assert creds2.get_string("db/password") == "s3cr3t"
 
 
-@pytest.mark.skipif(os.environ.get("GGCOMMONS_IT_PKCS11") != "1", reason="needs a PKCS#11 token (GGCOMMONS_IT_PKCS11=1)")
+@pytest.mark.skipif(os.environ.get("EDGECOMMONS_IT_PKCS11") != "1", reason="needs a PKCS#11 token (EDGECOMMONS_IT_PKCS11=1)")
 def test_pkcs11_key_provider_roundtrip(tmp_path):
     """PKCS#11 round-trip against a real token (e.g. SoftHSM2). Env: PKCS11_MODULE/TOKEN/KEY/PIN."""
-    from ggcommons.credentials import open_from_config
+    from edgecommons.credentials import open_from_config
 
     cfg = {
         "vault": {
@@ -285,7 +285,7 @@ def test_cross_language_conformance():
 
 # ---------- Phase 1d: EnvKeyProvider (FR-CRED-3) + KUBERNETES default (FR-CRED-6 / FR-RT-3) ----------
 
-ENV_KEK_VAR = "GGCOMMONS_VAULT_KEK"
+ENV_KEK_VAR = "EDGECOMMONS_VAULT_KEK"
 
 
 def _kek_b64(fill: int = 7) -> str:
@@ -331,7 +331,7 @@ def test_env_key_provider_writes_env_provider_label(tmp_path, monkeypatch):
 def test_env_and_file_key_providers_are_crypto_interchangeable(tmp_path, monkeypatch):
     """A vault wrapped by EnvKeyProvider(KEK=K) opens with FileKeyProvider(K), and vice versa —
     cryptographically identical envelope given the same raw 32-byte KEK."""
-    from ggcommons.credentials import EnvKeyProvider
+    from edgecommons.credentials import EnvKeyProvider
 
     k = bytes([42] * 32)
     monkeypatch.setenv(ENV_KEK_VAR, base64.b64encode(k).decode())
@@ -350,8 +350,8 @@ def test_env_and_file_key_providers_are_crypto_interchangeable(tmp_path, monkeyp
 def test_env_and_file_wrap_outputs_are_byte_identical(monkeypatch):
     """With the same raw KEK and the same nonce, EnvKeyProvider and FileKeyProvider produce the
     identical wrapNonce/wrappedDek — only the provider label differs (proves crypto identity)."""
-    from ggcommons.credentials import EnvKeyProvider
-    from ggcommons.credentials import keyprovider as kp_mod
+    from edgecommons.credentials import EnvKeyProvider
+    from edgecommons.credentials import keyprovider as kp_mod
 
     k = bytes([11] * 32)
     monkeypatch.setenv(ENV_KEK_VAR, base64.b64encode(k).decode())
@@ -380,7 +380,7 @@ def test_env_key_provider_error_unset(tmp_path, monkeypatch):
 
 
 def test_env_key_provider_error_empty(monkeypatch):
-    from ggcommons.credentials import EnvKeyProvider
+    from edgecommons.credentials import EnvKeyProvider
 
     monkeypatch.setenv(ENV_KEK_VAR, "")
     with pytest.raises(CredentialError):
@@ -388,7 +388,7 @@ def test_env_key_provider_error_empty(monkeypatch):
 
 
 def test_env_key_provider_error_invalid_base64(monkeypatch):
-    from ggcommons.credentials import EnvKeyProvider
+    from edgecommons.credentials import EnvKeyProvider
 
     monkeypatch.setenv(ENV_KEK_VAR, "not!valid!base64!")
     with pytest.raises(CredentialError):
@@ -396,7 +396,7 @@ def test_env_key_provider_error_invalid_base64(monkeypatch):
 
 
 def test_env_key_provider_error_wrong_length(monkeypatch):
-    from ggcommons.credentials import EnvKeyProvider
+    from edgecommons.credentials import EnvKeyProvider
 
     monkeypatch.setenv(ENV_KEK_VAR, base64.b64encode(bytes([7] * 16)).decode())  # 16 != 32
     with pytest.raises(CredentialError):
@@ -406,8 +406,8 @@ def test_env_key_provider_error_wrong_length(monkeypatch):
 # ---------- build_key_provider: platform-default precedence (explicit ▸ profile default ▸ file) ----------
 
 def test_build_key_provider_platform_default_env_when_type_absent(tmp_path, monkeypatch):
-    from ggcommons.credentials import EnvKeyProvider
-    from ggcommons.credentials.config import build_key_provider
+    from edgecommons.credentials import EnvKeyProvider
+    from edgecommons.credentials.config import build_key_provider
 
     monkeypatch.setenv(ENV_KEK_VAR, _kek_b64())
     p = build_key_provider({}, str(tmp_path / "x.key"), default_type="env")
@@ -415,8 +415,8 @@ def test_build_key_provider_platform_default_env_when_type_absent(tmp_path, monk
 
 
 def test_build_key_provider_explicit_type_wins_over_platform_default(tmp_path, monkeypatch):
-    from ggcommons.credentials import EnvKeyProvider
-    from ggcommons.credentials.config import build_key_provider
+    from edgecommons.credentials import EnvKeyProvider
+    from edgecommons.credentials.config import build_key_provider
 
     monkeypatch.setenv(ENV_KEK_VAR, _kek_b64())
     p = build_key_provider({"type": "file"}, str(tmp_path / "x.key"), default_type="env")
@@ -424,8 +424,8 @@ def test_build_key_provider_explicit_type_wins_over_platform_default(tmp_path, m
 
 
 def test_build_key_provider_no_default_falls_through_to_file(tmp_path):
-    from ggcommons.credentials import EnvKeyProvider
-    from ggcommons.credentials.config import build_key_provider
+    from edgecommons.credentials import EnvKeyProvider
+    from edgecommons.credentials.config import build_key_provider
 
     p = build_key_provider({}, str(tmp_path / "x.key"), default_type=None)
     assert isinstance(p, FileKeyProvider) and not isinstance(p, EnvKeyProvider)
@@ -434,7 +434,7 @@ def test_build_key_provider_no_default_falls_through_to_file(tmp_path):
 # ---------- _init_credentials: platform-default threading + opt-in gating (FR-CRED-6) ----------
 
 class _FakeConfigManager:
-    """Minimal config-manager seam for driving GGCommons._init_credentials in isolation."""
+    """Minimal config-manager seam for driving EdgeCommons._init_credentials in isolation."""
 
     def __init__(self, full_config: dict, platform):
         self._full = full_config
@@ -457,9 +457,9 @@ class _FakeConfigManager:
 
 
 def _run_init_credentials(full_config: dict, platform):
-    from ggcommons.ggcommons import GGCommons
+    from edgecommons.edgecommons import EdgeCommons
 
-    gg = GGCommons.__new__(GGCommons)
+    gg = EdgeCommons.__new__(EdgeCommons)
     gg._config_manager = _FakeConfigManager(full_config, platform)
     gg._credentials = None
     gg._credential_metrics = None
@@ -473,7 +473,7 @@ def _run_init_credentials(full_config: dict, platform):
 
 
 def test_init_credentials_kubernetes_default_selects_env(tmp_path, monkeypatch):
-    from ggcommons.platform import Platform
+    from edgecommons.platform import Platform
 
     monkeypatch.setenv(ENV_KEK_VAR, _kek_b64())
     path = tmp_path / "vault"
@@ -484,7 +484,7 @@ def test_init_credentials_kubernetes_default_selects_env(tmp_path, monkeypatch):
 
 
 def test_init_credentials_host_default_selects_file(tmp_path):
-    from ggcommons.platform import Platform
+    from edgecommons.platform import Platform
 
     path = tmp_path / "vault"
     full = {"credentials": {"vault": {"path": str(path)}}}  # no keyProvider.type
@@ -494,7 +494,7 @@ def test_init_credentials_host_default_selects_file(tmp_path):
 
 
 def test_init_credentials_explicit_type_wins_on_kubernetes(tmp_path):
-    from ggcommons.platform import Platform
+    from edgecommons.platform import Platform
 
     path = tmp_path / "vault"
     full = {"credentials": {"vault": {"path": str(path), "keyProvider": {"type": "file"}}}}
@@ -504,7 +504,7 @@ def test_init_credentials_explicit_type_wins_on_kubernetes(tmp_path):
 
 def test_init_credentials_absent_section_does_not_enable_on_kubernetes(monkeypatch):
     """The KUBERNETES profile default must NOT auto-enable credentials — it stays opt-in."""
-    from ggcommons.platform import Platform
+    from edgecommons.platform import Platform
 
     monkeypatch.setenv(ENV_KEK_VAR, _kek_b64())
     gg = _run_init_credentials({"component": {"global": {}}}, Platform.KUBERNETES)

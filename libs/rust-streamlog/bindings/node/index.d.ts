@@ -65,7 +65,7 @@ export interface SinkRecord {
   payload: Buffer
 }
 
-/** A snapshot of one stream's buffer + export progress (mirrors `ggsl_stats_t`). */
+/** A snapshot of one stream's buffer + export progress (mirrors `esl_stats_t`). */
 export interface StreamStats {
   appendedTotal: number
   exportedTotal: number

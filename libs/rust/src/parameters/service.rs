@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use super::source::ParameterSource;
 use crate::credentials::{LocalVault, PutOptions};
-use crate::error::GgError;
+use crate::error::EdgeCommonsError;
 use crate::Result;
 
 const SECURE_LABEL: &str = "secure";
@@ -165,7 +165,7 @@ pub trait ParameterService: Send + Sync {
                 .trim()
                 .parse::<i64>()
                 .map(Some)
-                .map_err(|e| GgError::Parameters(format!("parameter '{name}' is not an integer: {e}"))),
+                .map_err(|e| EdgeCommonsError::Parameters(format!("parameter '{name}' is not an integer: {e}"))),
             None => Ok(None),
         }
     }
@@ -175,7 +175,7 @@ pub trait ParameterService: Send + Sync {
             Some(s) => match s.trim().to_ascii_lowercase().as_str() {
                 "true" | "1" | "yes" | "on" => Ok(Some(true)),
                 "false" | "0" | "no" | "off" => Ok(Some(false)),
-                other => Err(GgError::Parameters(format!("parameter '{name}' is not a boolean: {other}"))),
+                other => Err(EdgeCommonsError::Parameters(format!("parameter '{name}' is not a boolean: {other}"))),
             },
             None => Ok(None),
         }
@@ -185,7 +185,7 @@ pub trait ParameterService: Send + Sync {
         match self.get_bytes(name)? {
             Some(b) => serde_json::from_slice(&b)
                 .map(Some)
-                .map_err(|e| GgError::Parameters(format!("parameter '{name}' is not JSON: {e}"))),
+                .map_err(|e| EdgeCommonsError::Parameters(format!("parameter '{name}' is not JSON: {e}"))),
             None => Ok(None),
         }
     }
@@ -215,7 +215,7 @@ struct Inner {
 
 impl Inner {
     fn refresh(&self) -> Result<()> {
-        let mut any_err: Option<GgError> = None;
+        let mut any_err: Option<EdgeCommonsError> = None;
         for name in &self.sync_names {
             match self.source.fetch(name) {
                 Ok(Some(v)) => {
@@ -357,7 +357,7 @@ impl ParameterService for DefaultParameterService {
     fn get(&self, name: &str) -> Result<Option<String>> {
         match self.get_bytes(name)? {
             Some(b) => Ok(Some(
-                String::from_utf8(b).map_err(|_| GgError::Parameters(format!("parameter '{name}' is not UTF-8")))?,
+                String::from_utf8(b).map_err(|_| EdgeCommonsError::Parameters(format!("parameter '{name}' is not UTF-8")))?,
             )),
             None => Ok(None),
         }

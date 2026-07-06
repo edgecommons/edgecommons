@@ -75,21 +75,21 @@ This document describes the available command line options provided by the AWS P
 
 ## Additional Details
 
-The command line processing is implemented in the GGCommons class using Apache Commons CLI library. Options can be provided when initializing a GGCommons instance through several constructors:
+The command line processing is implemented in the EdgeCommons class using Apache Commons CLI library. Options can be provided when initializing a EdgeCommons instance through several constructors:
 
 ### Component Initialization
 ```java
 // Basic initialization
-public GGCommons(String componentName, String[] args)
+public EdgeCommons(String componentName, String[] args)
 
 // Initialization with custom options
-public GGCommons(String componentName, String[] args, Options appOptions)
+public EdgeCommons(String componentName, String[] args, Options appOptions)
 
 // Initialization with custom options and message reception control
-public GGCommons(String componentName, String[] args, Options appOptions, boolean receiveOwnMessages)
+public EdgeCommons(String componentName, String[] args, Options appOptions, boolean receiveOwnMessages)
 ```
 
-The library supports adding custom application-specific options through these constructors. Components built on top of GGCommons can define their own command line options in addition to the core options provided by the library.
+The library supports adding custom application-specific options through these constructors. Components built on top of EdgeCommons can define their own command line options in addition to the core options provided by the library.
 
 ### Configuration Processing Flow
 1. Command line arguments are parsed using Apache Commons CLI

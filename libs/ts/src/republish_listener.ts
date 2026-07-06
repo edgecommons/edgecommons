@@ -10,10 +10,10 @@
  *
  * and, on receipt, re-announces out of band: `republish-state` re-emits the heartbeat's `state`
  * keepalive (`{"status":"RUNNING","uptimeSecs":n}`) and `republish-cfg` re-runs the
- * effective-config (`cfg`) publisher. Both actions are supplied by the caller (`GGCommons`
+ * effective-config (`cfg`) publisher. Both actions are supplied by the caller (`EdgeCommons`
  * wires `heartbeat.publishStateNow` / `effectiveConfigPublisher.publishNow`) and are expected to
  * go through the privileged reserved-publish seam themselves — this listener is just the
- * subscribe/jitter/coalesce plumbing. Mirrors the Java `com.mbreissi.ggcommons.uns.RepublishListener`.
+ * subscribe/jitter/coalesce plumbing. Mirrors the Java `com.mbreissi.edgecommons.uns.RepublishListener`.
  *
  * **Normative behavior (mirrored by the Java/Python/Rust listeners; constants pinned by
  * `uns-test-vectors/bcast.json`):**
@@ -43,7 +43,7 @@
  *   `republish-state` action still respects `heartbeat.enabled` — that check lives in
  *   `Heartbeat.publishStateNow`, not here.)
  *
- * Lifecycle: constructed and {@link start}ed by the `GGCommons` runtime after initialization
+ * Lifecycle: constructed and {@link start}ed by the `EdgeCommons` runtime after initialization
  * completes; {@link close} unsubscribes both topics (before messaging closes — the
  * unsubscribe-before-exit rule) and drops any pending re-announce. `start()` is best-effort and
  * idempotent: any failure (including a subscribe failure) logs a WARN and leaves the listener

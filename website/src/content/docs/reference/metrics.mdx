@@ -1,6 +1,6 @@
 ---
 title: Metrics API
-description: API reference for the GGCommons metrics subsystem — MetricService/MetricEmitter, MetricBuilder, Metric, Measure, targets, and constants in four languages.
+description: API reference for the EdgeCommons metrics subsystem — MetricService/MetricEmitter, MetricBuilder, Metric, Measure, targets, and constants in four languages.
 sidebar:
   order: 7
 ---
@@ -92,7 +92,7 @@ String                getComponentName();
 
 ```python
 # All methods are @staticmethod on the MetricEmitter class.
-init(config_manager)                       # wired by GGCommons during startup
+init(config_manager)                       # wired by EdgeCommons during startup
 define_metric(metric)
 is_metric_defined(name) -> bool
 emit_metric(name, measure_values)          # buffered;  measure_values: dict[str, float]
@@ -184,7 +184,7 @@ add_measure(name, unit, storage_resolution=60) # ValueError if storage_resolutio
 add_dimension(key, value)                      # ValueError if key OR value empty
 build() -> Metric                              # ValueError if assembled dims > Metric.MAX_DIMENSIONS
 # build() has NO emitter overload; if thing/component/namespace are unset it substitutes the
-# placeholders "test-thing" / "test-component" / "GGCommons/Metrics".
+# placeholders "test-thing" / "test-component" / "EdgeCommons/Metrics".
 ```
 
 </TabItem>
@@ -225,7 +225,7 @@ These differences are load-bearing — they change what valid code looks like pe
 
 - **`withConfig` and namespace.** Java, Rust, and TypeScript fill thing **+** component **+**
   namespace. **Python `with_config` fills thing + component only** — set `with_namespace(...)`
-  yourself or `build()` substitutes `GGCommons/Metrics`.
+  yourself or `build()` substitutes `EdgeCommons/Metrics`.
 - **Storage resolution.** Java, Rust, and TypeScript silently coerce (`< 60` becomes `1`, otherwise
   `60`). **Python's `add_measure` rejects** anything not exactly `1` or `60` with a `ValueError`.
   (The `Measure` value object still coerces if constructed directly — see below.)

@@ -12,7 +12,7 @@ component the cross-cutting plumbing it would otherwise rewrite by hand — conf
 messaging, metrics, heartbeat, and logging — plus opt-in **credentials**, **parameters**, and
 **telemetry streaming**. You wire it up once at startup and write only business logic.
 
-The unusual part: the `ggcommons` library is implemented **four times**, in **Java, Python, Rust, and
+The unusual part: the `edgecommons` library is implemented **four times**, in **Java, Python, Rust, and
 TypeScript**, as deliberate mirrors of one another. The same config schema, the same CLI
 contract, the same subsystem boundaries, and the same on-wire message envelope apply to all four.
 **Java is the canonical reference**; the other three track it.
@@ -87,16 +87,16 @@ profile. An explicit `--platform` or `--transport` always wins. See the
 
 ## The mental model
 
-Working with GGCommons is the same three steps in every language:
+Working with EdgeCommons is the same three steps in every language:
 
-1. **Build the runtime once.** A fluent builder (`GGCommonsBuilder` / `GgCommonsBuilder`) takes
+1. **Build the runtime once.** A fluent builder (`EdgeCommonsBuilder` / `EdgeCommonsBuilder`) takes
    your component name and the process arguments and returns a single runtime object. That object
    parses the CLI, resolves the platform profile, loads and validates config, and wires up every
    subsystem.
 2. **Reach subsystems through accessors.** Hold the runtime for your component's lifetime and ask
    it for what you need — messaging, metrics, config, and the opt-ins. Each accessor returns the
    already-wired service.
-3. **Let the library own the lifecycle.** GGCommons installs its own signal handling and tears
+3. **Let the library own the lifecycle.** EdgeCommons installs its own signal handling and tears
    subsystems down on shutdown — you do **not** register your own signal handler.
 
 <Aside type="caution" title="Don't wire your own shutdown hook">
@@ -117,12 +117,12 @@ language passes process arguments and how each one shuts down.
 <TabItem label="Java">
 
 ```java
-import com.mbreissi.ggcommons.GGCommons;
-import com.mbreissi.ggcommons.GGCommonsBuilder;
+import com.mbreissi.edgecommons.EdgeCommons;
+import com.mbreissi.edgecommons.EdgeCommonsBuilder;
 
 public static void main(String[] args) {
     // Build the runtime from the standard CLI args (use the FULL component name).
-    GGCommons gg = GGCommonsBuilder.create("com.mbreissi.greengrass.JavaComponentSkeleton")
+    EdgeCommons gg = EdgeCommonsBuilder.create("com.mbreissi.edgecommons.JavaComponentSkeleton")
             .withArgs(args)
             .build();
 
@@ -140,9 +140,9 @@ public static void main(String[] args) {
 
 ```python
 import sys
-from ggcommons.ggcommons_builder import GGCommonsBuilder
+from edgecommons.edgecommons_builder import EdgeCommonsBuilder
 
-gg = GGCommonsBuilder.create("com.example.python.Component") \
+gg = EdgeCommonsBuilder.create("com.example.python.Component") \
     .with_args(sys.argv[1:]) \
     .build()
 
@@ -151,18 +151,18 @@ messaging = gg.get_messaging()   # the MessagingClient class (its operations are
 metrics   = gg.get_metrics()
 
 # ... business logic ...
-gg.shutdown()   # or: with GGCommonsBuilder.create(...).build() as gg:
+gg.shutdown()   # or: with EdgeCommonsBuilder.create(...).build() as gg:
 ```
 
 </TabItem>
 <TabItem label="Rust">
 
 ```rust
-use ggcommons::prelude::*;
+use edgecommons::prelude::*;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let gg = GgCommonsBuilder::new("com.example.SkeletonComponent")
+    let gg = EdgeCommonsBuilder::new("com.example.SkeletonComponent")
         .args(std::env::args_os())   // argv INCLUDES the program name
         .build()
         .await?;
@@ -182,9 +182,9 @@ async fn main() -> anyhow::Result<()> {
 <TabItem label="TypeScript">
 
 ```typescript
-import { GGCommonsBuilder } from "@edgecommons/ggcommons";
+import { EdgeCommonsBuilder } from "@edgecommons/edgecommons";
 
-const gg = await new GGCommonsBuilder("com.example.Component")
+const gg = await new EdgeCommonsBuilder("com.example.Component")
   .args(process.argv.slice(2))   // argv WITHOUT the node/script prefix
   .build();
 
@@ -211,7 +211,7 @@ await gg.close();   // idempotent
 
 The four SDKs stay aligned because they share their contracts, not their code:
 
-- **One config schema.** The JSON schema lives only at `schema/ggcommons-config-schema.json` and is
+- **One config schema.** The JSON schema lives only at `schema/edgecommons-config-schema.json` and is
   synced into each library; CI fails on drift. Every library validates fail-closed against its
   embedded copy.
 - **One CLI contract.** The same flags, defaults, platform profiles, and auto-detection rules are

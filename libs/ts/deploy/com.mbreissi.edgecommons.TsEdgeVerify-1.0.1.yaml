@@ -1,0 +1,62 @@
+---
+RecipeFormatVersion: "2020-01-25"
+ComponentName: "com.mbreissi.edgecommons.TsEdgeVerify"
+ComponentVersion: "1.0.1"
+ComponentDescription: "On-device GREENGRASS-mode lifecycle verification for the edgecommons TypeScript library (GG_CONFIG load + hot-reload, heartbeat-over-IPC, metrics, request/reply, raw, IoT Core bridge)."
+ComponentPublisher: "edgecommons"
+ComponentDependencies:
+  aws.greengrass.TokenExchangeService:
+    VersionRequirement: ">=2.0.0"
+    DependencyType: "HARD"
+ComponentConfiguration:
+  DefaultConfiguration:
+    ComponentConfig:
+      logging:
+        level: "INFO"
+      heartbeat:
+        enabled: true
+        intervalSecs: 3
+        measures:
+          cpu: true
+          memory: true
+        destination: "local"
+      metricEmission:
+        target: "log"
+        namespace: "edgecommons"
+        targetConfig:
+          logFileName: "/tmp/ts_edge_metric.log"
+      tags:
+        site: "verify-site"
+        appId: "ts-edge"
+      component:
+        token: "ts-edge-verify"
+        global:
+          publish_interval: 7
+        instances: []
+    accessControl:
+      aws.greengrass.ipc.pubsub:
+        "com.mbreissi.edgecommons.TsEdgeVerify:pubsub:1":
+          policyDescription: "Allow pub/sub on all local IPC topics."
+          operations:
+            - "aws.greengrass#PublishToTopic"
+            - "aws.greengrass#SubscribeToTopic"
+          resources:
+            - "*"
+      aws.greengrass.ipc.mqttproxy:
+        "com.mbreissi.edgecommons.TsEdgeVerify:mqttproxy:1":
+          policyDescription: "Allow pub/sub on all IoT Core topics."
+          operations:
+            - "aws.greengrass#PublishToIoTCore"
+            - "aws.greengrass#SubscribeToIoTCore"
+          resources:
+            - "*"
+Manifests:
+  - Platform:
+      os: linux
+    Artifacts:
+      - URI: "s3://BUCKET/com.mbreissi.edgecommons.TsEdgeVerify/1.0.1/tsverify.zip"
+        Unarchive: ZIP
+    Lifecycle:
+      Run:
+        RequiresPrivilege: true
+        Script: "node {artifacts:decompressedPath}/tsverify/dist/edge_verify.js -c GG_CONFIG"

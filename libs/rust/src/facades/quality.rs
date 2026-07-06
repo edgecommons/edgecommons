@@ -2,7 +2,7 @@
 //!
 //! **One-liner purpose**: The protocol-independent quality verdict every `data` sample carries
 //! (DESIGN-class-facades §2.1, `docs/SOUTHBOUND.md` §3), mirroring the Java canonical
-//! `com.mbreissi.ggcommons.facades.Quality`.
+//! `com.mbreissi.edgecommons.facades.Quality`.
 
 use serde::{Deserialize, Serialize};
 

@@ -2,10 +2,10 @@
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "ggcommonsCredValidationGetSecret",
+      "Sid": "edgecommonsCredValidationGetSecret",
       "Effect": "Allow",
       "Action": "secretsmanager:GetSecretValue",
-      "Resource": "arn:aws:secretsmanager:us-east-1:162499689067:secret:lab-5950x/ggcommons-cred-validation/db/password-*"
+      "Resource": "arn:aws:secretsmanager:us-east-1:162499689067:secret:lab-5950x/edgecommons-cred-validation/db/password-*"
     }
   ]
 }

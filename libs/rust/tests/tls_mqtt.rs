@@ -1,14 +1,14 @@
 //! Integration test for the TLS transport against a live broker.
 //!
-//! Doubly gated: requires `GGCOMMONS_IT_MQTT=1` **and** `GGCOMMONS_IT_MQTT_CA`
+//! Doubly gated: requires `EDGECOMMONS_IT_MQTT=1` **and** `EDGECOMMONS_IT_MQTT_CA`
 //! pointing to a CA PEM that the broker's server certificate chains to (e.g. the
 //! EMQX `cacert.pem` for its `8883` listener). Optionally set
-//! `GGCOMMONS_IT_MQTT_CERT` / `GGCOMMONS_IT_MQTT_KEY` for mutual TLS. Without the CA
+//! `EDGECOMMONS_IT_MQTT_CERT` / `EDGECOMMONS_IT_MQTT_KEY` for mutual TLS. Without the CA
 //! it no-ops, because TLS verification needs a trust anchor (we never disable it).
 //!
 //! Run, e.g.:
 //! ```bash
-//! GGCOMMONS_IT_MQTT=1 GGCOMMONS_IT_MQTT_CA=/path/to/emqx/cacert.pem \
+//! EDGECOMMONS_IT_MQTT=1 EDGECOMMONS_IT_MQTT_CA=/path/to/emqx/cacert.pem \
 //!   cargo test --test tls_mqtt -- --nocapture
 //! ```
 
@@ -18,21 +18,21 @@ use std::time::Duration;
 use serde_json::json;
 use uuid::Uuid;
 
-use ggcommons::messaging::config::MessagingConfig;
-use ggcommons::messaging::message::MessageBuilder;
-use ggcommons::messaging::message_handler;
-use ggcommons::messaging::provider::mqtt::MqttProvider;
-use ggcommons::messaging::service::{DefaultMessagingService, MessagingService};
+use edgecommons::messaging::config::MessagingConfig;
+use edgecommons::messaging::message::MessageBuilder;
+use edgecommons::messaging::message_handler;
+use edgecommons::messaging::provider::mqtt::MqttProvider;
+use edgecommons::messaging::service::{DefaultMessagingService, MessagingService};
 
 fn skipped() -> Option<String> {
-    if std::env::var("GGCOMMONS_IT_MQTT").is_err() {
-        eprintln!("skipping TLS test (set GGCOMMONS_IT_MQTT=1)");
+    if std::env::var("EDGECOMMONS_IT_MQTT").is_err() {
+        eprintln!("skipping TLS test (set EDGECOMMONS_IT_MQTT=1)");
         return None;
     }
-    match std::env::var("GGCOMMONS_IT_MQTT_CA") {
+    match std::env::var("EDGECOMMONS_IT_MQTT_CA") {
         Ok(ca) => Some(ca),
         Err(_) => {
-            eprintln!("skipping TLS test (set GGCOMMONS_IT_MQTT_CA to the broker's CA PEM)");
+            eprintln!("skipping TLS test (set EDGECOMMONS_IT_MQTT_CA to the broker's CA PEM)");
             None
         }
     }
@@ -42,10 +42,10 @@ fn skipped() -> Option<String> {
 async fn tls_publish_subscribe_roundtrip() {
     let Some(ca_path) = skipped() else { return };
 
-    let host = std::env::var("GGCOMMONS_IT_MQTT_HOST").unwrap_or_else(|_| "localhost".to_string());
-    let port = std::env::var("GGCOMMONS_IT_MQTT_TLS_PORT").unwrap_or_else(|_| "8883".to_string());
-    let cert = std::env::var("GGCOMMONS_IT_MQTT_CERT").ok();
-    let key = std::env::var("GGCOMMONS_IT_MQTT_KEY").ok();
+    let host = std::env::var("EDGECOMMONS_IT_MQTT_HOST").unwrap_or_else(|_| "localhost".to_string());
+    let port = std::env::var("EDGECOMMONS_IT_MQTT_TLS_PORT").unwrap_or_else(|_| "8883".to_string());
+    let cert = std::env::var("EDGECOMMONS_IT_MQTT_CERT").ok();
+    let key = std::env::var("EDGECOMMONS_IT_MQTT_KEY").ok();
 
     // Build a local-broker config that uses TLS (caPath present => TLS; + cert/key => mTLS).
     let mut local = json!({

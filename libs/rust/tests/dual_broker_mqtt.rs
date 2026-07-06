@@ -9,15 +9,15 @@
 //! work; distinct topics are used per transport (true cross-broker isolation would
 //! need two separate brokers).
 //!
-//! Gated: requires `GGCOMMONS_IT_MQTT=1` plus the mutual-TLS material for IoT Core
-//! — `GGCOMMONS_IT_MQTT_CA`, `GGCOMMONS_IT_MQTT_CERT`, `GGCOMMONS_IT_MQTT_KEY`
+//! Gated: requires `EDGECOMMONS_IT_MQTT=1` plus the mutual-TLS material for IoT Core
+//! — `EDGECOMMONS_IT_MQTT_CA`, `EDGECOMMONS_IT_MQTT_CERT`, `EDGECOMMONS_IT_MQTT_KEY`
 //! (IoT Core always requires mutual TLS). No-ops otherwise.
 //!
 //! ```bash
-//! GGCOMMONS_IT_MQTT=1 \
-//!   GGCOMMONS_IT_MQTT_CA=<infra>/tls-certs/ca.crt \
-//!   GGCOMMONS_IT_MQTT_CERT=<infra>/tls-certs/client.crt \
-//!   GGCOMMONS_IT_MQTT_KEY=<infra>/tls-certs/client.key \
+//! EDGECOMMONS_IT_MQTT=1 \
+//!   EDGECOMMONS_IT_MQTT_CA=<infra>/tls-certs/ca.crt \
+//!   EDGECOMMONS_IT_MQTT_CERT=<infra>/tls-certs/client.crt \
+//!   EDGECOMMONS_IT_MQTT_KEY=<infra>/tls-certs/client.key \
 //!   cargo test --test dual_broker_mqtt -- --nocapture
 //! ```
 
@@ -27,28 +27,28 @@ use std::time::Duration;
 use serde_json::json;
 use uuid::Uuid;
 
-use ggcommons::messaging::config::MessagingConfig;
-use ggcommons::messaging::message::MessageBuilder;
-use ggcommons::messaging::message_handler;
-use ggcommons::messaging::Qos;
-use ggcommons::messaging::provider::mqtt::MqttProvider;
-use ggcommons::messaging::service::{DefaultMessagingService, MessagingService};
+use edgecommons::messaging::config::MessagingConfig;
+use edgecommons::messaging::message::MessageBuilder;
+use edgecommons::messaging::message_handler;
+use edgecommons::messaging::Qos;
+use edgecommons::messaging::provider::mqtt::MqttProvider;
+use edgecommons::messaging::service::{DefaultMessagingService, MessagingService};
 
 /// Returns (ca, cert, key) when the dual-broker scenario can run, else None.
 fn creds_or_skip() -> Option<(String, String, String)> {
-    if std::env::var("GGCOMMONS_IT_MQTT").is_err() {
-        eprintln!("skipping dual-broker test (set GGCOMMONS_IT_MQTT=1)");
+    if std::env::var("EDGECOMMONS_IT_MQTT").is_err() {
+        eprintln!("skipping dual-broker test (set EDGECOMMONS_IT_MQTT=1)");
         return None;
     }
-    let ca = std::env::var("GGCOMMONS_IT_MQTT_CA").ok();
-    let cert = std::env::var("GGCOMMONS_IT_MQTT_CERT").ok();
-    let key = std::env::var("GGCOMMONS_IT_MQTT_KEY").ok();
+    let ca = std::env::var("EDGECOMMONS_IT_MQTT_CA").ok();
+    let cert = std::env::var("EDGECOMMONS_IT_MQTT_CERT").ok();
+    let key = std::env::var("EDGECOMMONS_IT_MQTT_KEY").ok();
     match (ca, cert, key) {
         (Some(ca), Some(cert), Some(key)) => Some((ca, cert, key)),
         _ => {
             eprintln!(
                 "skipping dual-broker test (IoT Core needs mutual TLS: set \
-                 GGCOMMONS_IT_MQTT_CA/CERT/KEY)"
+                 EDGECOMMONS_IT_MQTT_CA/CERT/KEY)"
             );
             None
         }
@@ -57,12 +57,12 @@ fn creds_or_skip() -> Option<(String, String, String)> {
 
 async fn connect_dual() -> Option<Arc<DefaultMessagingService>> {
     let (ca, cert, key) = creds_or_skip()?;
-    let host = std::env::var("GGCOMMONS_IT_MQTT_HOST").unwrap_or_else(|_| "localhost".to_string());
-    let local_port: u16 = std::env::var("GGCOMMONS_IT_MQTT_PORT")
+    let host = std::env::var("EDGECOMMONS_IT_MQTT_HOST").unwrap_or_else(|_| "localhost".to_string());
+    let local_port: u16 = std::env::var("EDGECOMMONS_IT_MQTT_PORT")
         .unwrap_or_else(|_| "1883".to_string())
         .parse()
         .unwrap();
-    let tls_port: u16 = std::env::var("GGCOMMONS_IT_MQTT_TLS_PORT")
+    let tls_port: u16 = std::env::var("EDGECOMMONS_IT_MQTT_TLS_PORT")
         .unwrap_or_else(|_| "8883".to_string())
         .parse()
         .unwrap();
@@ -91,7 +91,7 @@ async fn connect_dual() -> Option<Arc<DefaultMessagingService>> {
     Some(Arc::new(DefaultMessagingService::new(provider)))
 }
 
-fn msg(name: &str, payload: serde_json::Value) -> ggcommons::messaging::message::Message {
+fn msg(name: &str, payload: serde_json::Value) -> edgecommons::messaging::message::Message {
     MessageBuilder::new(name, "1.0").payload(payload).tag("origin", serde_json::json!("dual-thing")).build()
 }
 

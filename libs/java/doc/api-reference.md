@@ -1,6 +1,6 @@
-# GGCommons Java Library - API Reference
+# EdgeCommons Java Library - API Reference
 
-This document provides a complete reference for the public API of the GGCommons Java library.
+This document provides a complete reference for the public API of the EdgeCommons Java library.
 
 ## Table of Contents
 
@@ -16,29 +16,29 @@ This document provides a complete reference for the public API of the GGCommons 
 
 ## Core Classes
 
-### GGCommons
+### EdgeCommons
 
-Main entry point for the GGCommons framework.
+Main entry point for the EdgeCommons framework.
 
 #### Constructors
 
 ```java
-public GGCommons(String componentName, String[] args)
+public EdgeCommons(String componentName, String[] args)
 ```
-Creates a GGCommons instance with default options.
+Creates a EdgeCommons instance with default options.
 - **componentName**: Fully qualified component name
 - **args**: Command line arguments
 
 ```java
-public GGCommons(String componentName, String[] args, Options appOptions)
+public EdgeCommons(String componentName, String[] args, Options appOptions)
 ```
-Creates a GGCommons instance with custom command line options.
+Creates a EdgeCommons instance with custom command line options.
 - **appOptions**: Additional Apache Commons CLI options
 
 ```java
-public GGCommons(String componentName, String[] args, Options appOptions, boolean receiveOwnMessages)
+public EdgeCommons(String componentName, String[] args, Options appOptions, boolean receiveOwnMessages)
 ```
-Creates a GGCommons instance with full customization.
+Creates a EdgeCommons instance with full customization.
 - **receiveOwnMessages**: Whether to receive messages published by this component (IPC only)
 
 #### Methods
@@ -392,7 +392,7 @@ Static utility class for metric operations.
 ```java
 public static void init(ConfigManager configManager)
 ```
-Initializes the metric emitter (called automatically by GGCommons).
+Initializes the metric emitter (called automatically by EdgeCommons).
 
 ```java
 public static void defineMetric(Metric metric)
@@ -590,12 +590,12 @@ The library uses standard Java exceptions. Common exceptions you may encounter:
 
 ```java
 public class MyComponent {
-    private GGCommons ggCommons;
+    private EdgeCommons edgeCommons;
     private ConfigManager configManager;
     
     public void initialize(String[] args) {
-        ggCommons = new GGCommons("com.example.MyComponent", args);
-        configManager = ggCommons.getConfigManager();
+        edgeCommons = new EdgeCommons("com.example.MyComponent", args);
+        configManager = edgeCommons.getConfigManager();
     }
 }
 ```

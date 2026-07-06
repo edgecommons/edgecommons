@@ -1,13 +1,13 @@
-//! Error type for `ggstreamlog`.
+//! Error type for `edgestreamlog`.
 
 use std::io;
 
 /// Result alias for the crate.
-pub type Result<T> = std::result::Result<T, GgStreamError>;
+pub type Result<T> = std::result::Result<T, EdgeStreamError>;
 
 /// Errors surfaced by the streaming log + export engine.
 #[derive(Debug, thiserror::Error)]
-pub enum GgStreamError {
+pub enum EdgeStreamError {
     /// An I/O error from the durable store.
     #[error("io: {0}")]
     Io(#[from] io::Error),

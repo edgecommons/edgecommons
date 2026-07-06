@@ -241,7 +241,7 @@ impl Heartbeat {
     /// Registers (or clears with `None`) the per-instance connectivity provider whose result is
     /// emitted in each RUNNING `state` keepalive's `instances[]` — the overridable surface a
     /// multi-connection component uses to report connectivity at the instance level without a
-    /// separate UNS instance per connection. Wired from `GgCommons::set_instance_connectivity_provider`.
+    /// separate UNS instance per connection. Wired from `EdgeCommons::set_instance_connectivity_provider`.
     pub(crate) fn set_instance_connectivity_provider(
         &self,
         provider: Option<Arc<InstanceConnectivityProvider>>,

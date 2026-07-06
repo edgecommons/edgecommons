@@ -2,11 +2,11 @@
 
 Rust/TS/Java do not require it; Python previously did (a `KeyError` on a config without it). It
 defaults to "mqtt" now so one standalone messaging config is portable across all four languages.
-(Kept out of files named *messaging*/*iot*/*ggcommons* so it runs under the coverage gate.)
+(Kept out of files named *messaging*/*iot*/*edgecommons* so it runs under the coverage gate.)
 """
 import json
 
-from ggcommons.messaging.messaging_config import MessagingConfiguration
+from edgecommons.messaging.messaging_config import MessagingConfiguration
 
 
 def _write(tmp_path, obj):

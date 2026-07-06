@@ -1,6 +1,6 @@
 ---
 title: Messaging
-description: Publish, subscribe, and request/reply over Greengrass IPC or dual-MQTT with the shared GGCommons message envelope, in all four languages.
+description: Publish, subscribe, and request/reply over Greengrass IPC or dual-MQTT with the shared EdgeCommons message envelope, in all four languages.
 sidebar:
   order: 3
 ---
@@ -26,7 +26,7 @@ does **not** by itself guarantee the broker accepted the publish/subscribe — c
 
 ## Reaching the messaging service
 
-Every component reaches messaging through its `GGCommons` handle. The accessor name and return shape
+Every component reaches messaging through its `EdgeCommons` handle. The accessor name and return shape
 differ slightly per language.
 
 <Tabs syncKey="lang">
@@ -71,7 +71,7 @@ const messaging = gg.messaging();   // IMessagingService
 
 ## The message envelope
 
-Every message GGCommons sends on the wire is a JSON object with four parts. The shape and key names
+Every message EdgeCommons sends on the wire is a JSON object with four parts. The shape and key names
 are **identical across all four languages** so they interoperate.
 
 ```json
@@ -82,7 +82,7 @@ are **identical across all four languages** so they interoperate.
     "timestamp": "2026-06-29T12:00:00Z",
     "uuid": "5f6c...",
     "correlation_id": "a1b2...",
-    "reply_to": "ggcommons/reply-..."
+    "reply_to": "edgecommons/reply-..."
   },
   "identity": {
     "hier": [
@@ -117,7 +117,7 @@ bytes, it is delivered to your handler as a **raw message** (non-JSON bytes beco
 See [Raw messages](#raw-publish-and-subscribe) below.
 
 <Aside type="note">
-The reply-topic prefix is the literal string `ggcommons/reply-` (a trailing `-`, not a `/`) in all
+The reply-topic prefix is the literal string `edgecommons/reply-` (a trailing `-`, not a `/`) in all
 four languages.
 </Aside>
 
@@ -212,7 +212,7 @@ gg.getMessaging().publish(topic, msg);   // ecv1/{device}/{component}/main/app/o
 <TabItem label="Python">
 
 ```python
-from ggcommons.uns import UnsClass
+from edgecommons.uns import UnsClass
 
 topic = gg.uns().topic(UnsClass.APP, "order/received")
 gg.get_messaging().publish(topic, msg)   # ecv1/{device}/{component}/main/app/order/received
@@ -222,7 +222,7 @@ gg.get_messaging().publish(topic, msg)   # ecv1/{device}/{component}/main/app/or
 <TabItem label="Rust">
 
 ```rust
-use ggcommons::uns::UnsClass;
+use edgecommons::uns::UnsClass;
 
 let topic = gg.uns().topic_with_channel(UnsClass::App, "order/received")?;
 gg.messaging()?.publish(&topic, &msg).await?;
@@ -232,7 +232,7 @@ gg.messaging()?.publish(&topic, &msg).await?;
 <TabItem label="TypeScript">
 
 ```typescript
-import { UnsClass } from "@edgecommons/ggcommons";
+import { UnsClass } from "@edgecommons/edgecommons";
 
 const topic = gg.uns().topic(UnsClass.App, "order/received");
 await gg.messaging().publish(topic, msg);
@@ -244,7 +244,7 @@ await gg.messaging().publish(topic, msg);
 Arbitrary **non-UNS** topics remain fully supported (bridging an external MQTT system, the
 `cloudwatch/metric/put` contract). The single restriction is the **reserved-class guard**: a raw
 publish (or `request`/`reply`) to a reserved-class UNS topic — `ecv1/.../{state|metric|cfg|log}` —
-is rejected (`ReservedTopicException` / `ReservedTopicError` / `GgError::ReservedTopic`), because
+is rejected (`ReservedTopicException` / `ReservedTopicError` / `EdgeCommonsError::ReservedTopic`), because
 those classes are library-owned: the [heartbeat](/guides/heartbeat/) publishes `state`, the
 [metrics subsystem](/guides/metrics/) publishes `metric`, and the config subsystem publishes `cfg`.
 Subscribing to reserved classes is always allowed. See the
@@ -304,7 +304,7 @@ The handler closure **must** be wrapped with `message_handler(...)` — a bare c
 The two trailing ints are `(max_messages, max_concurrency)`.
 
 ```rust
-use ggcommons::messaging::message_handler;
+use edgecommons::messaging::message_handler;
 
 messaging.subscribe(
     "sensors/temp",
@@ -337,7 +337,7 @@ await messaging.publish("sensors/temp", msg);
 ### Raw publish and subscribe
 
 Use the `*Raw` publish methods to send an unwrapped JSON value (for example to interoperate with a
-non-GGCommons producer). On the receiving side, you do **not** call a separate "subscribe raw" —
+non-EdgeCommons producer). On the receiving side, you do **not** call a separate "subscribe raw" —
 your normal `subscribe` handler receives a raw `Message` whenever the incoming payload is not an
 envelope, and you detect it with the raw accessors.
 
@@ -463,7 +463,7 @@ disabled). Its `get(timeout)` returns a **`(done, result)` tuple** — but when 
 fired first, `get()` **raises `RequestTimeoutError`**.
 
 ```python
-from ggcommons.messaging.errors import RequestTimeoutError
+from edgecommons.messaging.errors import RequestTimeoutError
 
 iou = messaging.request("svc/op", request)          # 30 s default deadline
 try:
@@ -481,7 +481,7 @@ messaging.reply(request, reply_msg)     # copies correlation id automatically
 <TabItem label="Rust">
 
 `request()` returns `Result<ReplyFuture>` — `await` the call to get the future, then `await` the
-future. On deadline it resolves `Err(GgError::RequestTimeout { .. })`. The per-call override is
+future. On deadline it resolves `Err(EdgeCommonsError::RequestTimeout { .. })`. The per-call override is
 `request_with_timeout(topic, msg, Option<Duration>)` (`None` = the default,
 `Some(Duration::ZERO)` = disabled). Dropping the `ReplyFuture` still cancels the request.
 
@@ -489,7 +489,7 @@ future. On deadline it resolves `Err(GgError::RequestTimeout { .. })`. The per-c
 use std::time::Duration;
 
 let fut = messaging.request("svc/op", request).await?;   // 30 s default deadline
-let reply = fut.await?;                                    // Err(GgError::RequestTimeout) on deadline
+let reply = fut.await?;                                    // Err(EdgeCommonsError::RequestTimeout) on deadline
 
 let fut = messaging
     .request_with_timeout("svc/op", request, Some(Duration::from_secs(120)))
@@ -595,7 +595,7 @@ messaging.subscribe_to_iot_core("cloud/cmd", handler, QOS.AT_LEAST_ONCE, 1)
 <TabItem label="Rust">
 
 ```rust
-use ggcommons::messaging::Qos;
+use edgecommons::messaging::Qos;
 
 messaging.publish_to_iot_core("cloud/telemetry", &msg, Qos::AtLeastOnce).await?;
 messaging.subscribe_to_iot_core(
@@ -611,7 +611,7 @@ messaging.subscribe_to_iot_core(
 <TabItem label="TypeScript">
 
 ```typescript
-import { Qos } from "@edgecommons/ggcommons";
+import { Qos } from "@edgecommons/edgecommons";
 
 await messaging.publishToIoTCore("cloud/telemetry", msg, Qos.AtLeastOnce);
 // subscribeToIoTCore's qos arg defaults to Qos.AtLeastOnce
@@ -776,7 +776,7 @@ your own `Arc<dyn MessagingService>`.
 
 ```rust
 use std::sync::Arc;
-use ggcommons::messaging::{DefaultMessagingService, MessagingService};
+use edgecommons::messaging::{DefaultMessagingService, MessagingService};
 
 let svc: Arc<dyn MessagingService> =
     Arc::new(DefaultMessagingService::new(fake_provider));
@@ -791,7 +791,7 @@ The user-facing type is the `IMessagingService` interface. In a test, construct
 implementing `IMessagingService`.
 
 ```typescript
-import { DefaultMessagingService } from "@edgecommons/ggcommons";
+import { DefaultMessagingService } from "@edgecommons/edgecommons";
 
 const svc: IMessagingService = new DefaultMessagingService(fakeProvider);
 await svc.publish("test/topic", msg);

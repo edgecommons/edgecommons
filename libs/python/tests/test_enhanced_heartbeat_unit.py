@@ -14,10 +14,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from ggcommons.config.heartbeat_config import HeartbeatConfiguration
-from ggcommons.config.metric_config import MetricConfiguration
-from ggcommons.heartbeat.enhanced_heartbeat import EnhancedHeartbeat
-from ggcommons.messaging.identity import HierEntry, MessageIdentity
+from edgecommons.config.heartbeat_config import HeartbeatConfiguration
+from edgecommons.config.metric_config import MetricConfiguration
+from edgecommons.heartbeat.enhanced_heartbeat import EnhancedHeartbeat
+from edgecommons.messaging.identity import HierEntry, MessageIdentity
 
 
 class FakeConfig:
@@ -166,7 +166,7 @@ class TestInstanceConnectivity:
         return msg._publish_reserved.call_args[0][1].get_body()
 
     def test_provider_result_in_state_instances(self, hb):
-        from ggcommons.heartbeat.instance_connectivity import InstanceConnectivity
+        from edgecommons.heartbeat.instance_connectivity import InstanceConnectivity
         msg = MagicMock()
         hb.set_messaging_service(msg)
         hb.set_instance_connectivity_provider(lambda: [
@@ -211,7 +211,7 @@ class TestInstanceConnectivity:
         assert "instances" not in body
 
     def test_stopped_state_omits_instances(self, hb):
-        from ggcommons.heartbeat.instance_connectivity import InstanceConnectivity
+        from edgecommons.heartbeat.instance_connectivity import InstanceConnectivity
         msg = MagicMock()
         hb.set_messaging_service(msg)
         hb.set_instance_connectivity_provider(lambda: [InstanceConnectivity.of("x", True)])
@@ -220,7 +220,7 @@ class TestInstanceConnectivity:
 
     def test_instance_connectivity_serializes_and_validates(self):
         import pytest
-        from ggcommons.heartbeat.instance_connectivity import InstanceConnectivity
+        from edgecommons.heartbeat.instance_connectivity import InstanceConnectivity
         assert InstanceConnectivity.of("plc1", True, "tcp://10.0.0.50:502").to_dict() == {
             "instance": "plc1", "connected": True, "detail": "tcp://10.0.0.50:502"}
         assert InstanceConnectivity.of("plc1", False).to_dict() == {

@@ -42,7 +42,7 @@ use ggstreamlog::{Record, Sink, StreamService};
 use serde::{Deserialize, Serialize};
 
 use super::MetricTarget;
-use crate::error::{GgError, Result};
+use crate::error::{EdgeCommonsError, Result};
 use crate::metrics::metric::Metric;
 
 /// Max datums per `PutMetricData` request (AWS hard limit).
@@ -276,7 +276,7 @@ impl CloudWatchDurableTarget {
                 match sc {
                     SinkConfig::Callback { .. } => {
                         let sink = sink_slot.lock().unwrap().take().ok_or_else(|| {
-                            ggstreamlog::GgStreamError::Sink(
+                            ggstreamlog::EdgeStreamError::Sink(
                                 "CloudWatch sink already taken (only one cloudwatch stream is opened)"
                                     .into(),
                             )
@@ -288,7 +288,7 @@ impl CloudWatchDurableTarget {
             };
 
         let service = StreamService::open_with(cfg, &factory)
-            .map_err(|e| GgError::Metrics(format!("opening durable CloudWatch buffer: {e}")))?;
+            .map_err(|e| EdgeCommonsError::Metrics(format!("opening durable CloudWatch buffer: {e}")))?;
 
         Ok(Self {
             service,
@@ -364,14 +364,14 @@ impl CloudWatchDurableTarget {
         let log = self
             .service
             .stream("cloudwatch")
-            .ok_or_else(|| GgError::Metrics("durable CloudWatch stream missing".into()))?;
+            .ok_or_else(|| EdgeCommonsError::Metrics("durable CloudWatch stream missing".into()))?;
         for bd in datums {
             let payload = bd
                 .to_payload()
-                .map_err(|e| GgError::Metrics(format!("serializing datum: {e}")))?;
+                .map_err(|e| EdgeCommonsError::Metrics(format!("serializing datum: {e}")))?;
             let ts = bd.datum.ts_ms.max(0) as u64;
             log.append(&Record::new(bd.namespace, ts, payload))
-                .map_err(|e| GgError::Metrics(format!("appending datum to buffer: {e}")))?;
+                .map_err(|e| EdgeCommonsError::Metrics(format!("appending datum to buffer: {e}")))?;
         }
         Ok(())
     }
@@ -392,7 +392,7 @@ impl MetricTarget for CloudWatchDurableTarget {
     async fn flush(&self) -> Result<()> {
         // Force the buffer durably to disk; the export engine drains asynchronously.
         if let Some(log) = self.service.stream("cloudwatch") {
-            log.flush().map_err(|e| GgError::Metrics(format!("flushing buffer: {e}")))?;
+            log.flush().map_err(|e| EdgeCommonsError::Metrics(format!("flushing buffer: {e}")))?;
         }
         Ok(())
     }
@@ -428,9 +428,9 @@ mod aws {
         pub fn new() -> crate::error::Result<Self> {
             let rt = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
-                .thread_name("ggcommons-cw-durable")
+                .thread_name("edgecommons-cw-durable")
                 .build()
-                .map_err(|e| crate::error::GgError::Metrics(format!("tokio runtime: {e}")))?;
+                .map_err(|e| crate::error::EdgeCommonsError::Metrics(format!("tokio runtime: {e}")))?;
             let client = std::thread::scope(|scope| {
                 scope
                     .spawn(|| {
@@ -444,7 +444,7 @@ mod aws {
                     })
                     .join()
                     .map_err(|_| {
-                        crate::error::GgError::Metrics("CloudWatch client init panicked".into())
+                        crate::error::EdgeCommonsError::Metrics("CloudWatch client init panicked".into())
                     })
             })?;
             Ok(Self { rt, client })
@@ -1020,7 +1020,7 @@ where
         match sc {
             SinkConfig::Callback { .. } => {
                 let sink = sink_slot.lock().unwrap().take().ok_or_else(|| {
-                    ggstreamlog::GgStreamError::Sink("sink already taken".into())
+                    ggstreamlog::EdgeStreamError::Sink("sink already taken".into())
                 })?;
                 Ok(Some(Box::new(sink)))
             }
@@ -1028,7 +1028,7 @@ where
         }
     };
     let service = StreamService::open_with(cfg, &factory)
-        .map_err(|e| GgError::Metrics(format!("opening durable CloudWatch buffer: {e}")))?;
+        .map_err(|e| EdgeCommonsError::Metrics(format!("opening durable CloudWatch buffer: {e}")))?;
     Ok(CloudWatchDurableTarget {
         service,
         namespace: namespace.to_string(),

@@ -1,4 +1,4 @@
-# Default values for the ggcommons-component test-harness chart (Phase 1a).
+# Default values for the edgecommons-component test-harness chart (Phase 1a).
 # See test-infra/k8s/README.md for the end-to-end run + the ConfigMap hot-reload test.
 
 # -- Number of pod replicas. Keep at 1 for the hot-reload smoke test (a durable
@@ -7,7 +7,7 @@ replicas: 1
 
 image:
   # -- Component image. The CI workflow builds this and `kind load`s it into the cluster.
-  repository: ggcommons-component
+  repository: edgecommons-component
   tag: ci
   # Use IfNotPresent so a `kind load`-ed local image is never re-pulled from a registry.
   pullPolicy: IfNotPresent
@@ -24,19 +24,19 @@ command: []
 # positional `--transport MQTT <path>` is needed. config.json carries an injected `messaging.local`
 # block (see configmap.yaml) pointing at the in-cluster broker, so it doubles as the messaging-config
 # file. No -t/--thing is passed, so identity comes from the Downward-API env (FR-RT-7): POD_NAME
-# (or GGCOMMONS_THING_NAME if `thingName` is set below).
+# (or EDGECOMMONS_THING_NAME if `thingName` is set below).
 #   -c CONFIGMAP <mountDir> <key>
 args:
   - "--platform"
   - "KUBERNETES"
   - "-c"
   - "CONFIGMAP"
-  - "/etc/ggcommons"
+  - "/etc/edgecommons"
   - "config.json"
 
-# -- Component identity (thing name). When set, the chart exposes it as the GGCOMMONS_THING_NAME
+# -- Component identity (thing name). When set, the chart exposes it as the EDGECOMMONS_THING_NAME
 # Downward-API env var (the highest of the KUBERNETES identity tier; conceptually the
-# `ggcommons.io/thing-name` annotation). Leave empty to let identity fall through to POD_NAME
+# `edgecommons.io/thing-name` annotation). Leave empty to let identity fall through to POD_NAME
 # (the pod's metadata.name) — which is what the smoke test asserts (FR-RT-7).
 thingName: ""
 
@@ -45,29 +45,29 @@ thingName: ""
 extraEnv: []
 
 # -- Encrypted credentials vault using the `env` KeyProvider (Phase 1d). When enabled, the chart creates
-# a Secret holding a base64 32-byte KEK, projects it as GGCOMMONS_VAULT_KEK, and injects a `credentials`
+# a Secret holding a base64 32-byte KEK, projects it as EDGECOMMONS_VAULT_KEK, and injects a `credentials`
 # section (vault under the writable /tmp; keyProvider omitted -> the KUBERNETES profile default `env`).
 # OFF by default. The smoke enables it to prove the env KeyProvider unlocks a vault on a real pod. In
 # production the operator owns the Secret (ESO / sealed-secrets); kekBase64 here is a FIXED TEST key.
 credentials:
   enabled: false
-  vaultPath: /tmp/ggcommons-vault
+  vaultPath: /tmp/edgecommons-vault
   kekBase64: "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc="
 
 # -- Directory the ConfigMap volume is mounted at. MUST match the CONFIGMAP source
 # mount dir above. Mounted as a WHOLE VOLUME (never subPath) so the kubelet's atomic
 # ..data symlink swap drives hot-reload (DESIGN-subsystems §1, FR-CFG-2/3).
-configMountPath: /etc/ggcommons
+configMountPath: /etc/edgecommons
 
 # Messaging / broker wiring. The component config points local MQTT at the in-cluster
 # EMQX broker by Service DNS (test-infra/k8s/emqx.yaml). Within the same namespace the
-# short Service name resolves; the FQDN form is ggcommons-emqx.<ns>.svc.cluster.local.
+# short Service name resolves; the FQDN form is edgecommons-emqx.<ns>.svc.cluster.local.
 messaging:
-  brokerHost: ggcommons-emqx
+  brokerHost: edgecommons-emqx
   brokerPort: 1883
-  clientId: ggcommons-k8s-smoke
+  clientId: edgecommons-k8s-smoke
 
-# The rendered ggcommons component config (config.json) placed in the ConfigMap.
+# The rendered edgecommons component config (config.json) placed in the ConfigMap.
 # A minimal VALID config: a log metric target, a heartbeat, and an MQTT messaging
 # config pointing at the in-cluster broker. `component` is the only schema-required key.
 config:
@@ -87,9 +87,9 @@ config:
   # No explicit `target`: on the KUBERNETES platform the metric target DEFAULTS to `prometheus`
   # (Phase 1c) — an in-process registry served as OpenMetrics text at :9090/metrics. So the heartbeat
   # (routed via `heartbeat.targets: [{type: metric}]`) and any app metrics are SCRAPED, not pushed.
-  # gauge name = sanitize(lower("{namespace}_{measure}")), so e.g. heartbeat memory -> ggcommons_memory_usage.
+  # gauge name = sanitize(lower("{namespace}_{measure}")), so e.g. heartbeat memory -> edgecommons_memory_usage.
   metricEmission:
-    namespace: ggcommons
+    namespace: edgecommons
   # Free-form business config; `component` is required by the schema.
   component:
     global:

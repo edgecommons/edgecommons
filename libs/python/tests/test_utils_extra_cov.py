@@ -1,4 +1,4 @@
-"""Extra coverage for the error/edge branches of ``ggcommons.utils.utils.Utils``.
+"""Extra coverage for the error/edge branches of ``edgecommons.utils.utils.Utils``.
 
 These deprecated helpers each have an error-handling branch that the existing suite does not
 exercise. The tests below drive those branches deterministically (no real sleeps, no OS-specific
@@ -14,7 +14,7 @@ import time
 
 import pytest
 
-from ggcommons.utils.utils import Utils
+from edgecommons.utils.utils import Utils
 
 
 class TestSleepInterrupt:

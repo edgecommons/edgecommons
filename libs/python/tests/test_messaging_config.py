@@ -10,14 +10,14 @@ from unittest.mock import MagicMock
 
 # Mock the AWS SDK import to avoid dependency issues in tests
 try:
-    from ggcommons.messaging.messaging_config import (
+    from edgecommons.messaging.messaging_config import (
         MessagingConfiguration,
         MessagingConfigData,
         LocalMqttConfig,
         IoTCoreConfig,
         CredentialsConfig
     )
-    from ggcommons.messaging.providers.standalone_provider import StandaloneProvider
+    from edgecommons.messaging.providers.standalone_provider import StandaloneProvider
 except ImportError:
     pytest.skip("AWS SDK dependencies not available", allow_module_level=True)
 

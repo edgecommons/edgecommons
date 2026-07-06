@@ -17,7 +17,7 @@
 //!
 //! ## Usage Example
 //! ```
-//! use ggcommons::config::model::Config;
+//! use edgecommons::config::model::Config;
 //! use serde_json::json;
 //!
 //! let cfg = Config::from_value("c", "t", json!({ "component": { "instances": [ { "id": "main" } ] } })).unwrap();
@@ -188,7 +188,7 @@ fn default_true() -> bool {
 ///
 /// Mirrors the canonical schema `health` object. [`enabled`](Self::enabled) is an `Option`: `None`
 /// means "unset", so the platform profile decides (on by default on KUBERNETES, off elsewhere —
-/// resolved in [`crate::GgCommonsBuilder::build`] via the FR-RT-3 precedence). The path/port
+/// resolved in [`crate::EdgeCommonsBuilder::build`] via the FR-RT-3 precedence). The path/port
 /// accessors apply the schema defaults when a field is absent.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -253,9 +253,9 @@ impl MetricConfig {
         self.target.as_deref().unwrap_or("log")
     }
 
-    /// CloudWatch namespace; default `ggcommons`.
+    /// CloudWatch namespace; default `edgecommons`.
     pub fn namespace(&self) -> &str {
-        self.namespace.as_deref().unwrap_or("ggcommons")
+        self.namespace.as_deref().unwrap_or("edgecommons")
     }
 
     /// Read a string field from `targetConfig`.
@@ -324,7 +324,7 @@ impl MetricConfig {
             .and_then(Value::as_str)
             .map(str::to_string)
             .unwrap_or_else(|| {
-                "/var/lib/ggcommons/metrics/{ComponentName}/cw".to_string()
+                "/var/lib/edgecommons/metrics/{ComponentName}/cw".to_string()
             })
     }
 
@@ -568,7 +568,7 @@ mod tests {
         let cfg = Config::from_value("c", "t", json!({})).unwrap();
         let m = &cfg.parsed.metric_emission;
         assert_eq!(m.target(), "log");
-        assert_eq!(m.namespace(), "ggcommons");
+        assert_eq!(m.namespace(), "edgecommons");
         assert!(m.log_file_name().contains("{ComponentFullName}"));
         assert_eq!(m.max_file_size(), "10MB");
         assert_eq!(m.destination(), "ipc");
@@ -759,7 +759,7 @@ mod tests {
         assert_eq!(m.buffer_max_disk_bytes(), 134_217_728);
         assert_eq!(m.buffer_on_full(), "dropoldest");
         assert_eq!(m.buffer_fsync(), "perbatch");
-        assert_eq!(m.buffer_path(), "/var/lib/ggcommons/metrics/{ComponentName}/cw");
+        assert_eq!(m.buffer_path(), "/var/lib/edgecommons/metrics/{ComponentName}/cw");
     }
 
     #[test]

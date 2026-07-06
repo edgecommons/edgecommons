@@ -24,7 +24,7 @@
  * ## Dimension -> label mapping (FR-MET-3 — locked for four-way parity)
  * For each measure in an emitted metric a Gauge is registered/updated:
  *  - **gauge name** = `sanitizeMetricName(lowercase("{namespace}_{measureName}"))`,
- *    where `namespace` is the configured metric namespace (default `ggcommons`);
+ *    where `namespace` is the configured metric namespace (default `edgecommons`);
  *    {@link sanitizeMetricName} replaces every char not in `[a-z0-9_]` with `_` and
  *    prefixes `_` if the result starts with a digit (Prometheus metric-name rules).
  *  - **labels** = the metric's dimensions ({@link Metric.getDimensions} — already
@@ -36,7 +36,7 @@
  *
  * `prom-client` is an optional dependency, lazily imported by the metrics service so
  * merely importing the library never pulls it in; its absence is a
- * {@link GgError.metrics} at {@link PrometheusTarget.create} (mirrors the cloudwatch
+ * {@link EdgeCommonsError.metrics} at {@link PrometheusTarget.create} (mirrors the cloudwatch
  * targets). The exposition uses the client's own writer, which sets a valid
  * `Content-Type` (`text/plain; version=0.0.4; charset=utf-8`) — Prometheus 3.x
  * rejects a blank content type.
@@ -46,7 +46,7 @@ import type { AddressInfo } from "net";
 
 import type { MetricTarget, MeasureValues } from "../types";
 import type { Metric } from "../metric";
-import { GgError } from "../../errors";
+import { EdgeCommonsError } from "../../errors";
 import { logger } from "../../logging";
 
 /** Minimal structural view of the prom-client `Gauge` bits we use (avoids a hard type dep). */
@@ -128,11 +128,11 @@ export class PrometheusTarget implements MetricTarget {
   }
 
   /**
-   * Build the target: lazily import `prom-client` (a {@link GgError.metrics} if absent), create a
+   * Build the target: lazily import `prom-client` (a {@link EdgeCommonsError.metrics} if absent), create a
    * fresh registry (NOT the process-global one, so no default process metrics leak in), and start the
    * exposition HTTP server bound `0.0.0.0:<port>` at `path`. Resolves once listening.
    *
-   * @param namespace the configured metric namespace (default `ggcommons`) — the gauge-name prefix.
+   * @param namespace the configured metric namespace (default `edgecommons`) — the gauge-name prefix.
    * @param port TCP port to bind (default 9090; `0` for an ephemeral port in tests).
    * @param path the HTTP path the exposition is served at (default `/metrics`).
    */
@@ -141,7 +141,7 @@ export class PrometheusTarget implements MetricTarget {
     try {
       mod = (await import("prom-client")) as unknown as PromModule;
     } catch {
-      throw GgError.metrics("metric target 'prometheus' requires the optional 'prom-client' dependency");
+      throw EdgeCommonsError.metrics("metric target 'prometheus' requires the optional 'prom-client' dependency");
     }
     const registry = new mod.Registry();
     const target = new PrometheusTarget(mod, registry, namespace, path);
@@ -232,7 +232,7 @@ export class PrometheusTarget implements MetricTarget {
     }
     const gauge = new this.mod.Gauge({
       name,
-      help: `ggcommons metric ${name}`,
+      help: `edgecommons metric ${name}`,
       labelNames,
       registers: [this.registry],
     });

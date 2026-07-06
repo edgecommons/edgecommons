@@ -30,7 +30,7 @@ ComponentConfiguration:
           disk: false
       metricEmission:
         target: "log"
-        namespace: "ggcommons"
+        namespace: "edgecommons"
         # Component work dir — writable by a non-root (ggc_user) component.
         targetConfig:
           logFileName: "/greengrass/v2/work/{ComponentFullName}/metric.log"

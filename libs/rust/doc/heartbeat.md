@@ -2,14 +2,14 @@
 
 The heartbeat is the library-owned liveness signal of every component
 (UNS-CANONICAL-DESIGN §4.3). It is a `tokio` interval task that starts automatically
-when the runtime is built and stops when `GgCommons` is dropped (RAII). Each tick it
+when the runtime is built and stops when `EdgeCommons` is dropped (RAII). Each tick it
 does two independent things:
 
 1. **State keepalive** — publishes a `state` envelope to the component's UNS state
    topic `ecv1/{device}/{component}/main/state` (rooted form `ecv1/{site}/{device}/…`
    when `topic.includeRoot` is true). Header `name` is `"state"`; the body is
    `{"status": "RUNNING", "uptimeSecs": <seconds since start>}`. On graceful shutdown
-   (dropping `GgCommons` / SIGTERM) a best-effort `{"status": "STOPPED"}` state is
+   (dropping `EdgeCommons` / SIGTERM) a best-effort `{"status": "STOPPED"}` state is
    published once.
 2. **System measures** — the enabled measures are emitted as a metric named **`sys`**
    through the normal [metric subsystem](metric-emission.md), so they route to
@@ -18,7 +18,7 @@ does two independent things:
 
 The `state` UNS class is **reserved** (library-owned): component code cannot publish
 to it directly — the reserved-class guard on the messaging service rejects it with
-`GgError::ReservedTopic`. The heartbeat publishes through the crate-private
+`EdgeCommonsError::ReservedTopic`. The heartbeat publishes through the crate-private
 `ReservedMessaging` seam (Rust is the one language where the seam is
 compiler-enforced). See [messaging.md](messaging.md).
 
@@ -86,7 +86,7 @@ ecv1/+/+/+/state
 or build the filter:
 
 ```rust
-use ggcommons::uns::{UnsClass, UnsScope};
+use edgecommons::uns::{UnsClass, UnsScope};
 
 let filter = gg.uns().filter(UnsClass::State, &UnsScope::all())?; // "ecv1/+/+/+/state"
 ```

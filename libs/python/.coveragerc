@@ -1,4 +1,4 @@
-# Coverage config for the 90% gate (run: pytest --cov=ggcommons --cov-fail-under=90).
+# Coverage config for the 90% gate (run: pytest --cov=edgecommons --cov-fail-under=90).
 #
 # Scope = the CI-testable surface (full-surface is ~85%; this scoping yields ~90.5%). Each omit below is
 # LIVE-INFRA-ONLY — it requires a running Greengrass Nucleus / IoT shadow / AWS Secrets Manager that the
@@ -13,7 +13,7 @@
 # The KMS / PKCS#11 KeyProvider classes (AWS KMS / HSM) are excluded via `exclude_also` so the file/env
 # KeyProvider paths in the same module still count toward the gate.
 [run]
-source = ggcommons
+source = edgecommons
 branch = false
 omit =
     */messaging/providers/greengrass/*

@@ -14,7 +14,7 @@ import { MessageBuilder, Message } from "./message";
 import { DefaultMessagingService } from "./messaging/service";
 import { IpcMessagingProvider } from "./messaging/ipc-provider";
 
-const RESULT_PATH = process.env.GGC_TS_VERIFY_OUT ?? "/tmp/ts_ipc_verify_result.json";
+const RESULT_PATH = process.env.EDGECOMMONS_TS_VERIFY_OUT ?? "/tmp/ts_ipc_verify_result.json";
 /** The UNS state keepalive filter (the heartbeat's topic, UNS-CANONICAL-DESIGN §4.3). */
 const HEARTBEAT_FILTER = "ecv1/+/+/+/state";
 const HEARTBEAT_WAIT_MS = 14000;
@@ -54,7 +54,7 @@ async function verifyHeartbeat(svc: DefaultMessagingService): Promise<Record<str
 }
 
 async function verifyRequestReply(svc: DefaultMessagingService): Promise<Record<string, unknown>> {
-  const topic = `ggcommons/interop/ipc/rr/${rid()}`;
+  const topic = `edgecommons/interop/ipc/rr/${rid()}`;
   const token = rid();
   await svc.subscribe(topic, (_t, request) => {
     const reply = MessageBuilder.create("InteropReply", "1.0")
@@ -79,7 +79,7 @@ async function verifyRequestReply(svc: DefaultMessagingService): Promise<Record<
 }
 
 async function verifyRaw(svc: DefaultMessagingService): Promise<Record<string, unknown>> {
-  const topic = `ggcommons/interop/ipc/raw/${rid()}`;
+  const topic = `edgecommons/interop/ipc/raw/${rid()}`;
   const token = rid();
   return new Promise((resolve) => {
     let done = false;

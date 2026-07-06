@@ -1,12 +1,12 @@
-"""Unit tests for builder validation: MetricBuilder, GGCommonsBuilder, and the
+"""Unit tests for builder validation: MetricBuilder, EdgeCommonsBuilder, and the
 MessagingProvider.topic_matches_sub wildcard matcher.
 """
 import pytest
 
-from ggcommons.metrics.metric_builder import MetricBuilder
-from ggcommons.metrics.metric import Metric
-from ggcommons.ggcommons_builder import GGCommonsBuilder
-from ggcommons.messaging.messaging_provider import MessagingProvider
+from edgecommons.metrics.metric_builder import MetricBuilder
+from edgecommons.metrics.metric import Metric
+from edgecommons.edgecommons_builder import EdgeCommonsBuilder
+from edgecommons.messaging.messaging_provider import MessagingProvider
 
 
 class TestMetricBuilderValidation:
@@ -72,60 +72,60 @@ class TestMetricBuilderValidation:
         assert m.get_dimensions()["component"] == "comp-x"
 
 
-class TestGGCommonsBuilderValidation:
+class TestEdgeCommonsBuilderValidation:
     def test_create_empty_raises(self):
         with pytest.raises(ValueError):
-            GGCommonsBuilder.create("")
+            EdgeCommonsBuilder.create("")
 
     def test_with_args_none_raises(self):
         with pytest.raises(ValueError):
-            GGCommonsBuilder.create("com.example.C").with_args(None)
+            EdgeCommonsBuilder.create("com.example.C").with_args(None)
 
     def test_with_app_options_none_raises(self):
         with pytest.raises(ValueError):
-            GGCommonsBuilder.create("com.example.C").with_app_options(None)
+            EdgeCommonsBuilder.create("com.example.C").with_app_options(None)
 
     def test_chaining_and_build(self, monkeypatch):
         import argparse
-        import ggcommons
+        import edgecommons
 
         captured = {}
 
-        class FakeGGCommons:
+        class FakeEdgeCommons:
             def __init__(self, component_name, args, app_options, receive_own_messages):
                 captured["component_name"] = component_name
                 captured["args"] = args
                 captured["app_options"] = app_options
                 captured["receive_own_messages"] = receive_own_messages
 
-        monkeypatch.setattr(ggcommons, "GGCommons", FakeGGCommons)
+        monkeypatch.setattr(edgecommons, "EdgeCommons", FakeEdgeCommons)
 
         parser = argparse.ArgumentParser()
         result = (
-            GGCommonsBuilder.create("com.example.C")
+            EdgeCommonsBuilder.create("com.example.C")
             .with_args(["-c", "FILE", "x.json"])
             .with_app_options(parser)
             .receive_own_messages(False)
             .build()
         )
-        assert isinstance(result, FakeGGCommons)
+        assert isinstance(result, FakeEdgeCommons)
         assert captured["component_name"] == "com.example.C"
         assert captured["args"] == ["-c", "FILE", "x.json"]
         assert captured["app_options"] is parser
         assert captured["receive_own_messages"] is False
 
     def test_build_defaults_to_empty_args(self, monkeypatch):
-        import ggcommons
+        import edgecommons
 
         captured = {}
 
-        class FakeGGCommons:
+        class FakeEdgeCommons:
             def __init__(self, component_name, args, app_options, receive_own_messages):
                 captured["args"] = args
                 captured["receive_own_messages"] = receive_own_messages
 
-        monkeypatch.setattr(ggcommons, "GGCommons", FakeGGCommons)
-        GGCommonsBuilder.create("com.example.C").build()
+        monkeypatch.setattr(edgecommons, "EdgeCommons", FakeEdgeCommons)
+        EdgeCommonsBuilder.create("com.example.C").build()
         assert captured["args"] == []
         # default receive_own_messages is True
         assert captured["receive_own_messages"] is True

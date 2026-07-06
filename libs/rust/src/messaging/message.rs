@@ -48,7 +48,7 @@
 //!
 //! ## Usage Example
 //! ```rust
-//! use ggcommons::messaging::message::MessageBuilder;
+//! use edgecommons::messaging::message::MessageBuilder;
 //! use serde_json::json;
 //!
 //! let msg = MessageBuilder::new("ProcessData", "1.0")
@@ -56,7 +56,7 @@
 //!     .build();
 //! assert_eq!(msg.header.name, "ProcessData");
 //! let bytes = msg.to_vec().unwrap();
-//! let round_tripped = ggcommons::messaging::message::Message::from_slice(&bytes).unwrap();
+//! let round_tripped = edgecommons::messaging::message::Message::from_slice(&bytes).unwrap();
 //! assert_eq!(round_tripped.header.name, "ProcessData");
 //! ```
 //!
@@ -75,7 +75,7 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 use crate::config::model::Config;
-use crate::error::{GgError, Result};
+use crate::error::{EdgeCommonsError, Result};
 
 /// Message metadata. Field names serialize as snake_case (`correlation_id`,
 /// `reply_to`) to match the Java/Python `MessageHeader` wire format.
@@ -143,7 +143,7 @@ impl MessageIdentity {
     /// [`Self::DEFAULT_INSTANCE`].
     ///
     /// # Errors
-    /// [`GgError::Messaging`] when `hier` is empty, an entry's level/value is empty,
+    /// [`EdgeCommonsError::Messaging`] when `hier` is empty, an entry's level/value is empty,
     /// or `component` is empty.
     pub fn new(
         hier: Vec<HierEntry>,
@@ -152,25 +152,25 @@ impl MessageIdentity {
     ) -> Result<MessageIdentity> {
         let component = component.into();
         if hier.is_empty() {
-            return Err(GgError::Messaging(
+            return Err(EdgeCommonsError::Messaging(
                 "MessageIdentity hier must contain at least one entry".to_string(),
             ));
         }
         for entry in &hier {
             if entry.level.is_empty() {
-                return Err(GgError::Messaging(
+                return Err(EdgeCommonsError::Messaging(
                     "MessageIdentity hier entry level must be non-empty".to_string(),
                 ));
             }
             if entry.value.is_empty() {
-                return Err(GgError::Messaging(format!(
+                return Err(EdgeCommonsError::Messaging(format!(
                     "MessageIdentity hier entry value for level '{}' must be non-empty",
                     entry.level
                 )));
             }
         }
         if component.is_empty() {
-            return Err(GgError::Messaging(
+            return Err(EdgeCommonsError::Messaging(
                 "MessageIdentity component must be non-empty".to_string(),
             ));
         }
@@ -212,11 +212,11 @@ impl MessageIdentity {
     /// Returns a copy of this identity with a different per-message instance token.
     ///
     /// # Errors
-    /// [`GgError::Messaging`] when `instance` is empty.
+    /// [`EdgeCommonsError::Messaging`] when `instance` is empty.
     pub fn with_instance(&self, instance: impl Into<String>) -> Result<MessageIdentity> {
         let instance = instance.into();
         if instance.is_empty() {
-            return Err(GgError::Messaging(
+            return Err(EdgeCommonsError::Messaging(
                 "MessageIdentity instance must be non-empty".to_string(),
             ));
         }
@@ -429,7 +429,7 @@ impl Message {
     /// # Errors
     /// | Error Variant | Condition | Recovery |
     /// |---------------|-----------|----------|
-    /// | `GgError::Json` | The body contains a value serde cannot serialize | Ensure the body is valid JSON |
+    /// | `EdgeCommonsError::Json` | The body contains a value serde cannot serialize | Ensure the body is valid JSON |
     pub fn to_vec(&self) -> Result<Vec<u8>> {
         Ok(serde_json::to_vec(self)?)
     }
@@ -444,7 +444,7 @@ impl Message {
     /// # Errors
     /// | Error Variant | Condition | Recovery |
     /// |---------------|-----------|----------|
-    /// | `GgError::Json` | Bytes are valid JSON but a present `header`/`tags` is malformed | Validate the producer's envelope shape |
+    /// | `EdgeCommonsError::Json` | Bytes are valid JSON but a present `header`/`tags` is malformed | Validate the producer's envelope shape |
     pub fn from_slice(bytes: &[u8]) -> Result<Message> {
         match serde_json::from_slice::<Value>(bytes) {
             Ok(value) => Message::from_json_value(value),

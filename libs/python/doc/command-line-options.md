@@ -90,7 +90,7 @@ python3 main.py -c FILE config.json -t my-thing-name
 
 ### Environment Variable Configuration
 ```bash
-export GGCOMMONS_CONFIG='{"logging": {"level": "DEBUG"}}'
+export EDGECOMMONS_CONFIG='{"logging": {"level": "DEBUG"}}'
 python3 main.py -c ENV -t my-thing-name
 ```
 
@@ -108,10 +108,10 @@ python3 main.py -c SHADOW my-config-shadow -t my-thing-name
 
 ### Enhanced Builder Pattern
 ```python
-from ggcommons.builders import GGCommonsBuilder
+from edgecommons.builders import EdgeCommonsBuilder
 
 # Basic initialization
-ggcommons = GGCommonsBuilder.create("com.example.MyComponent") \
+edgecommons = EdgeCommonsBuilder.create("com.example.MyComponent") \
     .with_args(sys.argv[1:]) \
     .build()
 
@@ -120,7 +120,7 @@ import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument('--custom-option', help='Custom application option')
 
-ggcommons = GGCommonsBuilder.create("com.example.MyComponent") \
+edgecommons = EdgeCommonsBuilder.create("com.example.MyComponent") \
     .with_args(sys.argv[1:]) \
     .with_app_options(parser) \
     .build()
@@ -128,14 +128,14 @@ ggcommons = GGCommonsBuilder.create("com.example.MyComponent") \
 
 ### Legacy Initialization (Still Supported)
 ```python
-import ggcommons
+import edgecommons
 import argparse
 
 def main():
     parser = argparse.ArgumentParser()
     
-    # Initialize GGCommons (legacy method)
-    args, config_manager, heartbeat = ggcommons.init(
+    # Initialize EdgeCommons (legacy method)
+    args, config_manager, heartbeat = edgecommons.init(
         "com.example.MyComponent", 
         parser
     )
@@ -209,7 +209,7 @@ When using the `MQTT` transport (e.g. the `HOST` platform), you must provide a s
 ### Custom Application Options
 ```python
 import argparse
-from ggcommons.builders import GGCommonsBuilder
+from edgecommons.builders import EdgeCommonsBuilder
 
 def main():
     # Create custom argument parser
@@ -218,14 +218,14 @@ def main():
     parser.add_argument('--batch-size', type=int, default=100, help='Batch size for processing')
     parser.add_argument('--dry-run', action='store_true', help='Run in dry-run mode')
     
-    # Initialize GGCommons with custom options
-    ggcommons = GGCommonsBuilder.create("com.example.MyComponent") \
+    # Initialize EdgeCommons with custom options
+    edgecommons = EdgeCommonsBuilder.create("com.example.MyComponent") \
         .with_args(sys.argv[1:]) \
         .with_app_options(parser) \
         .build()
     
     # Access parsed arguments
-    args = ggcommons.get_args()  # If this method exists
+    args = edgecommons.get_args()  # If this method exists
     
     # Your component logic here
     start_application(args.data_source, args.batch_size, args.dry_run)
@@ -288,9 +288,9 @@ python3 main.py -c FILE config.json -t my-thing --help
 # Test configuration loading
 python3 -c "
 import sys
-from ggcommons.builders import GGCommonsBuilder
+from edgecommons.builders import EdgeCommonsBuilder
 try:
-    ggcommons = GGCommonsBuilder.create('test').with_args(sys.argv[1:]).build()
+    edgecommons = EdgeCommonsBuilder.create('test').with_args(sys.argv[1:]).build()
     print('Configuration loaded successfully')
 except Exception as e:
     print(f'Configuration error: {e}')

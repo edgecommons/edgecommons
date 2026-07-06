@@ -6,12 +6,12 @@ import * as path from "path";
 import { Config } from "../src/config/model";
 import { MetricEmitter } from "../src/metrics/service";
 import { MetricBuilder } from "../src/metrics/metric";
-import { GgError } from "../src/errors";
+import { EdgeCommonsError } from "../src/errors";
 
 const tmpFiles: string[] = [];
 
 function tmpLogPath(): string {
-  const p = path.join(os.tmpdir(), `ggcommons-metric-${process.pid}-${Math.random().toString(36).slice(2)}.log`);
+  const p = path.join(os.tmpdir(), `edgecommons-metric-${process.pid}-${Math.random().toString(36).slice(2)}.log`);
   tmpFiles.push(p);
   return p;
 }
@@ -73,11 +73,11 @@ describe("MetricEmitter (log target)", () => {
     const config = Config.fromValue("c", "t", {
       metricEmission: { target: "messaging" },
     });
-    await expect(MetricEmitter.create(config)).rejects.toBeInstanceOf(GgError);
+    await expect(MetricEmitter.create(config)).rejects.toBeInstanceOf(EdgeCommonsError);
     try {
       await MetricEmitter.create(config);
     } catch (e) {
-      expect((e as GgError).kind).toBe("Metrics");
+      expect((e as EdgeCommonsError).kind).toBe("Metrics");
     }
   });
 });

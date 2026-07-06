@@ -1,6 +1,6 @@
 ---
 title: Errors & exceptions
-description: The GGCommons error taxonomy across Java, Python, Rust, and TypeScript — which exception or error each subsystem raises, and how to handle it.
+description: The EdgeCommons error taxonomy across Java, Python, Rust, and TypeScript — which exception or error each subsystem raises, and how to handle it.
 sidebar:
   order: 14
 ---
@@ -21,20 +21,20 @@ class per subsystem.
 <Tabs syncKey="lang">
 <TabItem label="Java">
 
-A small set of subsystem exceptions in `com.mbreissi.ggcommons`. Some are **checked** (the compiler
+A small set of subsystem exceptions in `com.mbreissi.edgecommons`. Some are **checked** (the compiler
 forces a `try/catch` or `throws`), some are **unchecked** (`RuntimeException`).
 
 ```java
-// package com.mbreissi.ggcommons.*
+// package com.mbreissi.edgecommons.*
 class ConfigurationException extends Exception                 // CHECKED — config.ConfigurationException
 class ConfigurationValidator.ConfigurationValidationException  // CHECKED — nested static in config.ConfigurationValidator
         extends Exception
 class CredentialException extends RuntimeException             // unchecked — credentials.CredentialException
 class ParameterException extends RuntimeException              // unchecked — parameters.ParameterException
-class GgStreamException extends RuntimeException {             // unchecked — streaming.GgStreamException
-    GgStreamException(int code, String message);
-    int code();                                               // the underlying ggsl_status value
-    // constants mirroring ggsl_status:
+class EdgeStreamException extends RuntimeException {             // unchecked — streaming.EdgeStreamException
+    EdgeStreamException(int code, String message);
+    int code();                                               // the underlying esl_status value
+    // constants mirroring esl_status:
     //   OK=0, ERR_CONFIG=1, ERR_IO=2, ERR_CORRUPT=3, ERR_FULL=4,
     //   ERR_UNKNOWN_STREAM=5, ERR_SINK=6, ERR_PANIC=7, ERR_INVALID_ARG=8
 }
@@ -50,18 +50,18 @@ precondition violations).
 Subsystem `Exception` subclasses, each exported from its package.
 
 ```python
-# ggcommons.credentials
+# edgecommons.credentials
 class CredentialError(Exception): ...                  # message-only
 
-# ggcommons.parameters
+# edgecommons.parameters
 class ParameterError(Exception): ...                   # message-only
 
-# ggcommons.streaming
-class GgStreamError(Exception):
+# edgecommons.streaming
+class EdgeStreamError(Exception):
     def __init__(self, code: int, message: str | None = None)
     # instance attributes: .code (int), .message
 
-# ggcommons.validation.configuration_validator
+# edgecommons.validation.configuration_validator
 class ConfigurationValidationException(Exception):
     def __init__(self, message: str, validation_errors: list | None = None)
     # instance attribute: .validation_errors
@@ -69,21 +69,21 @@ class ConfigurationValidationException(Exception):
 
 Python has **no dedicated config-load exception class**. Config-load failures surface as the
 built-in `ValueError`, as `ConfigurationValidationException`, or as a propagated stdlib exception.
-Using an accessor before the runtime is initialized raises `RuntimeError("GGCommons not properly
+Using an accessor before the runtime is initialized raises `RuntimeError("EdgeCommons not properly
 initialized")`.
 
 </TabItem>
 <TabItem label="Rust">
 
-One library-wide error enum plus a `Result` alias in `ggcommons`. Fallibility is encoded in the
+One library-wide error enum plus a `Result` alias in `edgecommons`. Fallibility is encoded in the
 return type — there are no separate per-subsystem error types.
 
 ```rust
-// ggcommons
-pub type Result<T> = std::result::Result<T, GgError>;
+// edgecommons
+pub type Result<T> = std::result::Result<T, EdgeCommonsError>;
 
 #[derive(Debug, thiserror::Error)]
-pub enum GgError {
+pub enum EdgeCommonsError {
     Cli(String),         // CLI parsing / contract violation
     Config(String),      // config loading / shape
     Validation(String),  // JSON-schema validation failure
@@ -103,8 +103,8 @@ pub enum GgError {
 }
 ```
 
-`GgError` is `Send + Sync`; constructing or matching on it cannot panic. The `#[from]` on `Io` and
-`Json` means stdlib I/O and `serde_json` errors convert into a `GgError` automatically through the
+`EdgeCommonsError` is `Send + Sync`; constructing or matching on it cannot panic. The `#[from]` on `Io` and
+`Json` means stdlib I/O and `serde_json` errors convert into a `EdgeCommonsError` automatically through the
 `?` operator. Two subsystem variants complete the set (16 in all): **`Command`** — a
 [`commands()`](/reference/uns/#the-command-inbox-commands) verb-registration error (a verb collides
 with a built-in, a delegated verb, or an already-registered one) — and **`Facade`**, the
@@ -115,27 +115,27 @@ name, ...), distinct from `UnsValidation` (topic shape) and `Messaging` (transpo
 </TabItem>
 <TabItem label="TypeScript">
 
-Two families. The core subsystems share one **tagged** `GgError`; credentials, parameters, and
+Two families. The core subsystems share one **tagged** `EdgeCommonsError`; credentials, parameters, and
 streaming are **standalone `Error` subclasses** that are *not* part of the tag union.
 
 ```typescript
-// @edgecommons/ggcommons
-type GgErrorKind =
+// @edgecommons/edgecommons
+type EdgeCommonsErrorKind =
   | "Cli" | "Config" | "Validation"
   | "Messaging" | "Metrics" | "Ipc"
   | "Io" | "Json";                       // NOTE: no Streaming/Credentials/Parameters
 
-class GgError extends Error {
-  readonly kind: GgErrorKind;            // this.name === `GgError(${kind})`
-  // static factories: GgError.cli / config / validation / messaging /
+class EdgeCommonsError extends Error {
+  readonly kind: EdgeCommonsErrorKind;            // this.name === `EdgeCommonsError(${kind})`
+  // static factories: EdgeCommonsError.cli / config / validation / messaging /
   //                   metrics / ipc / io / json
 }
 
-// separate Error subclasses (NOT covered by GgErrorKind):
+// separate Error subclasses (NOT covered by EdgeCommonsErrorKind):
 class CredentialError extends Error {}                 // this.name = "CredentialError"
 class ParameterError extends Error {}                  // this.name = "ParameterError"
-class GgStreamError extends Error {                     // this.name = "GgStreamError"
-  readonly code: number;                               // the underlying ggsl_status value
+class EdgeStreamError extends Error {                     // this.name = "EdgeStreamError"
+  readonly code: number;                               // the underlying esl_status value
 }
 class UnsValidationError extends Error {               // UNS topic build/validate failure
   readonly code: UnsValidationCode;                    // machine-readable §2.2 code
@@ -144,9 +144,9 @@ class ReservedTopicError extends Error {}              // reserved-class publish
 class RequestTimeoutError extends Error {}             // request() deadline fired
 ```
 
-Because `GgErrorKind` omits `Streaming`/`Credentials`/`Parameters`, a check like
+Because `EdgeCommonsErrorKind` omits `Streaming`/`Credentials`/`Parameters`, a check like
 `e.kind === "Streaming"` will never match — those failures are the separate classes above. Use
-`instanceof GgStreamError` / `instanceof CredentialError` / `instanceof ParameterError` instead.
+`instanceof EdgeStreamError` / `instanceof CredentialError` / `instanceof ParameterError` instead.
 
 </TabItem>
 </Tabs>
@@ -157,19 +157,19 @@ The same logical failure maps to a different type in each SDK. Read across a row
 
 | Subsystem failure | Java | Python | Rust | TypeScript |
 |---|---|---|---|---|
-| CLI / arg validation | `IllegalArgumentException` | `ValueError` | `GgError::Cli` | `GgError` kind `"Cli"` |
-| Config load | `ConfigurationException` (checked) | `ValueError` / propagated | `GgError::Config` | `GgError` kind `"Config"` |
-| Schema validation | `ConfigurationValidationException` (checked) | `ConfigurationValidationException` | `GgError::Validation` | `GgError` kind `"Validation"` |
-| Messaging | standard exception (no dedicated class) | standard exception (no dedicated class) | `GgError::Messaging` | `GgError` kind `"Messaging"` |
-| Metrics | standard exception (no dedicated class) | standard exception (no dedicated class) | `GgError::Metrics` | `GgError` kind `"Metrics"` |
-| Greengrass IPC | standard exception (no dedicated class) | standard exception (no dedicated class) | `GgError::Ipc` | `GgError` kind `"Ipc"` |
-| UNS topic build/validate | `UnsValidationException` (+`getCode()`) | `UnsValidationError` (+`.code`) | `GgError::UnsValidation { code, .. }` | `UnsValidationError` (+`.code`) |
-| Reserved-class publish | `ReservedTopicException` | `ReservedTopicError` | `GgError::ReservedTopic` | `ReservedTopicError` |
-| Request deadline | `java.util.concurrent.TimeoutException` (exceptional future) | `RequestTimeoutError` (raised by `Iou.get()`) | `GgError::RequestTimeout` | `RequestTimeoutError` (rejected promise) |
-| Credentials | `CredentialException` | `CredentialError` | `GgError::Credentials` | `CredentialError` |
-| Parameters | `ParameterException` | `ParameterError` | `GgError::Parameters` | `ParameterError` |
-| Streaming | `GgStreamException` (+`code()`) | `GgStreamError` (+`.code`) | `GgError::Streaming` (code discarded) | `GgStreamError` (+`.code`) |
-| I/O · JSON | JDK `IOException` etc. | stdlib exceptions | `GgError::Io` / `GgError::Json` | `GgError` kind `"Io"` / `"Json"` |
+| CLI / arg validation | `IllegalArgumentException` | `ValueError` | `EdgeCommonsError::Cli` | `EdgeCommonsError` kind `"Cli"` |
+| Config load | `ConfigurationException` (checked) | `ValueError` / propagated | `EdgeCommonsError::Config` | `EdgeCommonsError` kind `"Config"` |
+| Schema validation | `ConfigurationValidationException` (checked) | `ConfigurationValidationException` | `EdgeCommonsError::Validation` | `EdgeCommonsError` kind `"Validation"` |
+| Messaging | standard exception (no dedicated class) | standard exception (no dedicated class) | `EdgeCommonsError::Messaging` | `EdgeCommonsError` kind `"Messaging"` |
+| Metrics | standard exception (no dedicated class) | standard exception (no dedicated class) | `EdgeCommonsError::Metrics` | `EdgeCommonsError` kind `"Metrics"` |
+| Greengrass IPC | standard exception (no dedicated class) | standard exception (no dedicated class) | `EdgeCommonsError::Ipc` | `EdgeCommonsError` kind `"Ipc"` |
+| UNS topic build/validate | `UnsValidationException` (+`getCode()`) | `UnsValidationError` (+`.code`) | `EdgeCommonsError::UnsValidation { code, .. }` | `UnsValidationError` (+`.code`) |
+| Reserved-class publish | `ReservedTopicException` | `ReservedTopicError` | `EdgeCommonsError::ReservedTopic` | `ReservedTopicError` |
+| Request deadline | `java.util.concurrent.TimeoutException` (exceptional future) | `RequestTimeoutError` (raised by `Iou.get()`) | `EdgeCommonsError::RequestTimeout` | `RequestTimeoutError` (rejected promise) |
+| Credentials | `CredentialException` | `CredentialError` | `EdgeCommonsError::Credentials` | `CredentialError` |
+| Parameters | `ParameterException` | `ParameterError` | `EdgeCommonsError::Parameters` | `ParameterError` |
+| Streaming | `EdgeStreamException` (+`code()`) | `EdgeStreamError` (+`.code`) | `EdgeCommonsError::Streaming` (code discarded) | `EdgeStreamError` (+`.code`) |
+| I/O · JSON | JDK `IOException` etc. | stdlib exceptions | `EdgeCommonsError::Io` / `EdgeCommonsError::Json` | `EdgeCommonsError` kind `"Io"` / `"Json"` |
 
 The UNS validation errors carry the machine-readable code set pinned in `uns-test-vectors/`
 (`EMPTY_TOKEN`, `BAD_CHAR`, `DEPTH_EXCEEDED`, ... — see the
@@ -189,7 +189,7 @@ The UNS validation errors carry the machine-readable code set pinned in `uns-tes
   vault format, or corrupt JSON. Messages never include secret or key material.
 - **`ParameterException`** — parameter resolution/decryption failures (the parameters subsystem
   reuses the credentials vault as an encrypted cache).
-- **`GgStreamException`** — any non-zero `ggsl_status` from the native `ggstreamlog` engine; inspect
+- **`EdgeStreamException`** — any non-zero `esl_status` from the native `edgestreamlog` engine; inspect
   `code()` (e.g. `ERR_UNKNOWN_STREAM`, `ERR_CONFIG`, `ERR_FULL`) to branch.
 
 </TabItem>
@@ -200,85 +200,85 @@ The UNS validation errors carry the machine-readable code set pinned in `uns-tes
   resource is missing. A `None` config raises the built-in `ValueError` instead.
 - **`CredentialError`** — vault failures (wrong KEK, tamper, unsupported format, corrupt data).
 - **`ParameterError`** — parameter resolution/decryption failures.
-- **`GgStreamError`** — native streaming failures; check `.code` (e.g. `ERR_UNKNOWN_STREAM` is `5`,
+- **`EdgeStreamError`** — native streaming failures; check `.code` (e.g. `ERR_UNKNOWN_STREAM` is `5`,
   `ERR_CONFIG` is `1`). It is also raised with `.code == -1` when the native streaming wheel is not
   installed.
 - **`ValueError`** — `None`/empty inputs (validation, an empty component name in the builder, and
   other argument checks).
-- **`RuntimeError`** — `"GGCommons not properly initialized"` when an accessor is used before init.
+- **`RuntimeError`** — `"EdgeCommons not properly initialized"` when an accessor is used before init.
 
 </TabItem>
 <TabItem label="Rust">
 
-Every fallible call returns `Result<T, GgError>`; match on the variant to tell subsystems apart.
+Every fallible call returns `Result<T, EdgeCommonsError>`; match on the variant to tell subsystems apart.
 
-- **`GgError::Cli`** — CLI parsing or contract violations (unknown platform/transport, etc.).
-- **`GgError::Config`** — config loading / shape problems.
-- **`GgError::Validation`** — JSON-schema validation failures.
-- **`GgError::Messaging`** / **`GgError::Metrics`** / **`GgError::Ipc`** — the respective subsystem
-  failed; `messaging()` itself returns `Err(GgError::Messaging(...))` when the transport is unwired.
-- **`GgError::Streaming`** / **`GgError::Credentials`** / **`GgError::Parameters`** — the matching
+- **`EdgeCommonsError::Cli`** — CLI parsing or contract violations (unknown platform/transport, etc.).
+- **`EdgeCommonsError::Config`** — config loading / shape problems.
+- **`EdgeCommonsError::Validation`** — JSON-schema validation failures.
+- **`EdgeCommonsError::Messaging`** / **`EdgeCommonsError::Metrics`** / **`EdgeCommonsError::Ipc`** — the respective subsystem
+  failed; `messaging()` itself returns `Err(EdgeCommonsError::Messaging(...))` when the transport is unwired.
+- **`EdgeCommonsError::Streaming`** / **`EdgeCommonsError::Credentials`** / **`EdgeCommonsError::Parameters`** — the matching
   feature-gated subsystem failed (these variants exist only when the corresponding cargo feature is
   enabled).
-- **`GgError::Io`** / **`GgError::Json`** — propagated stdlib I/O or `serde_json` errors, converted
+- **`EdgeCommonsError::Io`** / **`EdgeCommonsError::Json`** — propagated stdlib I/O or `serde_json` errors, converted
   automatically by `?`.
 
 </TabItem>
 <TabItem label="TypeScript">
 
-- **`GgError` (kind `"Validation"`)** — thrown by `validate(...)` on a schema violation.
-- **`GgError` (kind `"Cli"` / `"Config"`)** — CLI/arg and config-load problems.
-- **`GgError` (kind `"Messaging"` / `"Metrics"` / `"Ipc"`)** — the respective subsystem failed;
-  `messaging()` **throws** `GgError.messaging(...)` when the transport is unwired, while `metrics()`
+- **`EdgeCommonsError` (kind `"Validation"`)** — thrown by `validate(...)` on a schema violation.
+- **`EdgeCommonsError` (kind `"Cli"` / `"Config"`)** — CLI/arg and config-load problems.
+- **`EdgeCommonsError` (kind `"Messaging"` / `"Metrics"` / `"Ipc"`)** — the respective subsystem failed;
+  `messaging()` **throws** `EdgeCommonsError.messaging(...)` when the transport is unwired, while `metrics()`
   returns the (always-wired) metric service.
-- **`GgError` (kind `"Io"` / `"Json"`)** — I/O and JSON failures.
+- **`EdgeCommonsError` (kind `"Io"` / `"Json"`)** — I/O and JSON failures.
 - **`CredentialError`** — vault failures (wrong KEK, tamper, unsupported format).
 - **`ParameterError`** — parameter resolution/decryption failures.
-- **`GgStreamError`** — native streaming failures; check `.code`. The helper `translate(e)` parses a
-  native `ggsl:<code>:<message>` string into a `GgStreamError`.
+- **`EdgeStreamError`** — native streaming failures; check `.code`. The helper `translate(e)` parses a
+  native `esl:<code>:<message>` string into a `EdgeStreamError`.
 
 </TabItem>
 </Tabs>
 
 ## The streaming status code
 
-Streaming is the one place that carries a numeric status (`ggsl_status` from the native
-`ggstreamlog` engine) — but only three of the four SDKs preserve it.
+Streaming is the one place that carries a numeric status (`esl_status` from the native
+`edgestreamlog` engine) — but only three of the four SDKs preserve it.
 
 <Tabs syncKey="lang">
 <TabItem label="Java">
 
-`GgStreamException.code()` returns the int, and named constants are exposed
-(`GgStreamException.ERR_FULL`, `ERR_UNKNOWN_STREAM`, …) so you can branch on a name.
+`EdgeStreamException.code()` returns the int, and named constants are exposed
+(`EdgeStreamException.ERR_FULL`, `ERR_UNKNOWN_STREAM`, …) so you can branch on a name.
 
 ```java
-GgStreamException ex = assertThrows(GgStreamException.class, () -> svc.stats("nope"));
-assertEquals(GgStreamException.ERR_UNKNOWN_STREAM, ex.code());   // 5
+EdgeStreamException ex = assertThrows(EdgeStreamException.class, () -> svc.stats("nope"));
+assertEquals(EdgeStreamException.ERR_UNKNOWN_STREAM, ex.code());   // 5
 ```
 
 </TabItem>
 <TabItem label="Python">
 
-`GgStreamError.code` holds the int, but **no named `ERR_*` constants are exposed** — compare against
+`EdgeStreamError.code` holds the int, but **no named `ERR_*` constants are exposed** — compare against
 the literal integers (or declare your own).
 
 ```python
-from ggcommons.streaming import GgStreamError
+from edgecommons.streaming import EdgeStreamError
 
-with pytest.raises(GgStreamError) as ei:
+with pytest.raises(EdgeStreamError) as ei:
     svc.stats("nope")
-assert ei.value.code == 5     # ERR_UNKNOWN_STREAM — no named constant in ggcommons.streaming
+assert ei.value.code == 5     # ERR_UNKNOWN_STREAM — no named constant in edgecommons.streaming
 ```
 
 </TabItem>
 <TabItem label="Rust">
 
-**The code is discarded.** Streaming failures stringify into `GgError::Streaming(String)`, so a Rust
-caller can read the message but **cannot branch on the numeric `ggsl_status`**.
+**The code is discarded.** Streaming failures stringify into `EdgeCommonsError::Streaming(String)`, so a Rust
+caller can read the message but **cannot branch on the numeric `esl_status`**.
 
 ```rust
-// streaming errors funnel into GgError::Streaming(e.to_string()) — no numeric code is retained
-if let Err(ggcommons::GgError::Streaming(msg)) = result {
+// streaming errors funnel into EdgeCommonsError::Streaming(e.to_string()) — no numeric code is retained
+if let Err(edgecommons::EdgeCommonsError::Streaming(msg)) = result {
     eprintln!("streaming failed: {msg}");
 }
 ```
@@ -286,13 +286,13 @@ if let Err(ggcommons::GgError::Streaming(msg)) = result {
 </TabItem>
 <TabItem label="TypeScript">
 
-`GgStreamError.code` holds the int (no named constants).
+`EdgeStreamError.code` holds the int (no named constants).
 
 ```typescript
-import { GgStreamError } from "@edgecommons/ggcommons";
+import { EdgeStreamError } from "@edgecommons/edgecommons";
 
 // e was thrown by a streaming call (or produced by translate(...))
-expect((e as GgStreamError).code).toBe(5);   // ERR_UNKNOWN_STREAM
+expect((e as EdgeStreamError).code).toBe(5);   // ERR_UNKNOWN_STREAM
 ```
 
 </TabItem>
@@ -337,7 +337,7 @@ else:
 <TabItem label="Rust">
 
 `credentials()` and `parameters()` return **`Option`**; `streams()` is gated behind the `streaming`
-feature. By contrast `messaging()` returns a **`Result`** and yields `Err(GgError::Messaging(...))`
+feature. By contrast `messaging()` returns a **`Result`** and yields `Err(EdgeCommonsError::Messaging(...))`
 when the transport is unwired.
 
 ```rust
@@ -351,7 +351,7 @@ match gg.credentials() {
 <TabItem label="TypeScript">
 
 `streams()`, `credentials()`, and `parameters()` return **`undefined`** when the section is absent.
-By contrast `messaging()` **throws** `GgError.messaging(...)` when the transport is unwired.
+By contrast `messaging()` **throws** `EdgeCommonsError.messaging(...)` when the transport is unwired.
 
 ```typescript
 const creds = gg.credentials();
@@ -374,9 +374,9 @@ branch on the streaming status code where it is available.
 <TabItem label="Java">
 
 ```java
-import com.mbreissi.ggcommons.config.ConfigurationValidator;
-import com.mbreissi.ggcommons.config.ConfigurationValidator.ConfigurationValidationException;
-import com.mbreissi.ggcommons.streaming.GgStreamException;
+import com.mbreissi.edgecommons.config.ConfigurationValidator;
+import com.mbreissi.edgecommons.config.ConfigurationValidator.ConfigurationValidationException;
+import com.mbreissi.edgecommons.streaming.EdgeStreamException;
 
 // Checked: the compiler forces you to handle (or declare) this one.
 try {
@@ -389,8 +389,8 @@ try {
 // Unchecked, code-bearing.
 try {
     var stats = gg.getStreams().stats("telemetry");
-} catch (GgStreamException e) {
-    if (e.code() == GgStreamException.ERR_FULL) {
+} catch (EdgeStreamException e) {
+    if (e.code() == EdgeStreamException.ERR_FULL) {
         // durable buffer is full — back off and retry later
     } else {
         throw e;
@@ -402,11 +402,11 @@ try {
 <TabItem label="Python">
 
 ```python
-from ggcommons.validation.configuration_validator import (
+from edgecommons.validation.configuration_validator import (
     ConfigurationValidator,
     ConfigurationValidationException,
 )
-from ggcommons.streaming import GgStreamError
+from edgecommons.streaming import EdgeStreamError
 
 try:
     ConfigurationValidator.validate(config)
@@ -416,7 +416,7 @@ except ConfigurationValidationException as e:
 
 try:
     stats = gg.get_streams().stats("telemetry")
-except GgStreamError as e:
+except EdgeStreamError as e:
     if e.code == 4:        # ERR_FULL — no named constant exported
         pass               # back off and retry later
     else:
@@ -427,19 +427,19 @@ except GgStreamError as e:
 <TabItem label="Rust">
 
 ```rust
-use ggcommons::{GgCommonsBuilder, GgError};
+use edgecommons::{EdgeCommonsBuilder, EdgeCommonsError};
 
-let gg = match GgCommonsBuilder::new("com.example.MyComponent")
+let gg = match EdgeCommonsBuilder::new("com.example.MyComponent")
     .args(std::env::args_os())
     .build()
     .await
 {
     Ok(gg) => gg,
-    Err(GgError::Cli(msg)) => {
+    Err(EdgeCommonsError::Cli(msg)) => {
         eprintln!("bad CLI args: {msg}");
         std::process::exit(2);   // the app decides to exit — the library never does
     }
-    Err(GgError::Config(msg)) | Err(GgError::Validation(msg)) => {
+    Err(EdgeCommonsError::Config(msg)) | Err(EdgeCommonsError::Validation(msg)) => {
         eprintln!("config rejected: {msg}");
         std::process::exit(1);
     }
@@ -454,12 +454,12 @@ let gg = match GgCommonsBuilder::new("com.example.MyComponent")
 <TabItem label="TypeScript">
 
 ```typescript
-import { GgError, GgStreamError } from "@edgecommons/ggcommons";
+import { EdgeCommonsError, EdgeStreamError } from "@edgecommons/edgecommons";
 
 try {
   validate(config);
 } catch (e) {
-  if (e instanceof GgError && e.kind === "Validation") {
+  if (e instanceof EdgeCommonsError && e.kind === "Validation") {
     console.error(`config rejected: ${e.message}`);
     process.exit(1);            // the app decides to exit — the library never does
   }
@@ -469,8 +469,8 @@ try {
 try {
   const stats = await gg.streams()?.stats("telemetry");
 } catch (e) {
-  // streaming is a separate class, NOT GgError kind "Streaming"
-  if (e instanceof GgStreamError && e.code === 4 /* ERR_FULL */) {
+  // streaming is a separate class, NOT EdgeCommonsError kind "Streaming"
+  if (e instanceof EdgeStreamError && e.code === 4 /* ERR_FULL */) {
     // back off and retry later
   } else {
     throw e;
@@ -490,7 +490,7 @@ when a supervisor (the Nucleus, a container runtime, Kubernetes) watches the exi
 - **Java** calls `System.exit(0)` in exactly **one** place: the `-h`/`--help` usage path, after
   printing help. Its SIGTERM/shutdown hook deliberately does **not** call `System.exit` — the JVM
   exits 0 once the hooks finish.
-- **Python**'s library error types do not exit, but the `GGCommons` orchestrator **does** call
+- **Python**'s library error types do not exit, but the `EdgeCommons` orchestrator **does** call
   `sys.exit(0)` from its SIGTERM handler. Net effect: **on SIGTERM, Python exits the process and
   Java does not.**
 - **Rust** and **TypeScript** never exit the process from the library — they return or throw and let
@@ -507,4 +507,4 @@ subscription or thread can trip the shared-connection quota on the next run.
 
 <LinkCard title="Entry point & builder" href="/reference/entry-point/" description="The accessors that surface these errors, and the opt-in null/None/Option/undefined contract." />
 <LinkCard title="Configuration reference" href="/reference/configuration-schema/" description="The config sources and JSON-schema validation that raise ConfigurationException / ConfigurationValidationException." />
-<LinkCard title="Streaming reference" href="/reference/streaming/" description="The telemetry-streaming subsystem behind GgStreamException / GgStreamError and the ggsl_status code." />
+<LinkCard title="Streaming reference" href="/reference/streaming/" description="The telemetry-streaming subsystem behind EdgeStreamException / EdgeStreamError and the esl_status code." />

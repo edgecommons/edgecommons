@@ -1,7 +1,7 @@
 {
   "name": "ts-component-skeleton",
   "version": "1.0.0",
-  "description": "Skeleton TypeScript component built on the ggcommons TypeScript library: standardized configuration, logging, messaging, metrics, and heartbeats.",
+  "description": "Skeleton TypeScript component built on the edgecommons TypeScript library: standardized configuration, logging, messaging, metrics, and heartbeats.",
   "license": "Apache-2.0",
   "private": true,
   "main": "dist/main.js",
@@ -10,7 +10,7 @@
     "start": "node dist/main.js"
   },
   "dependencies": {
-    "@edgecommons/ggcommons": "*"
+    "@edgecommons/edgecommons": "*"
   },
   "devDependencies": {
     "@types/node": "^20",

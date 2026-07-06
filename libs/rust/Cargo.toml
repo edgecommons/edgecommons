@@ -1,5 +1,5 @@
 [package]
-name = "ggcommons"
+name = "edgecommons"
 version = "0.2.0"
 edition = "2024"
 rust-version = "1.85"
@@ -8,7 +8,7 @@ description = "Greengrass Commons — Rust library for building AWS IoT Greengra
 readme = "README.md"
 
 # Coexists with the Java (canonical) and Python implementations; tracks the same
-# config schema and CLI contract. See ../GGCOMMONS_RUST_PORT.md for the full plan.
+# config schema and CLI contract. See ../EDGECOMMONS_RUST_PORT.md for the full plan.
 
 [features]
 default = ["standalone"]
@@ -28,23 +28,23 @@ cloudwatch = ["dep:aws-config", "dep:aws-sdk-cloudwatch"]
 # standard build stays light; the community `prometheus` crate is cross-platform (its optional
 # `process`/`push` collectors are NOT enabled here).
 metrics-prometheus = ["dep:prometheus"]
-# Durable CloudWatch metric buffer: store-and-forward `PutMetricData` over the ggstreamlog
+# Durable CloudWatch metric buffer: store-and-forward `PutMetricData` over the edgestreamlog
 # embedded disk buffer + export engine (a `CloudWatchSink` impl'ing the core `Sink` trait).
 # This feature alone pulls in ONLY the lightweight streaming core, so the buffer/serialize/
 # stale-drop/chunk logic + its unit tests build everywhere without the heavy AWS SDK. The real
 # `PutMetricData` send (AwsPutMetricDataSender) and production wiring additionally need the
 # `cloudwatch` feature; combine `metrics-cloudwatch-durable` + `cloudwatch` for the full target.
 metrics-cloudwatch-durable = ["streaming"]
-# Telemetry streaming: durable store-and-forward streams + export engine (ggstreamlog core).
+# Telemetry streaming: durable store-and-forward streams + export engine (edgestreamlog core).
 # `streaming` alone is buffer-only (no AWS); `streaming-kinesis` adds the real Kinesis sink.
-streaming = ["dep:ggstreamlog"]
-streaming-kinesis = ["streaming", "ggstreamlog/kinesis"]
-streaming-kafka = ["streaming", "ggstreamlog/kafka"]
+streaming = ["dep:edgestreamlog"]
+streaming-kinesis = ["streaming", "edgestreamlog/kinesis"]
+streaming-kafka = ["streaming", "edgestreamlog/kafka"]
 # File sink: rolling Parquet/AVRO files for later bulk upload to a data lake. `streaming-file` is the
 # umbrella (no encoder — not useful alone); pick `streaming-file-parquet` and/or `streaming-file-avro`.
-streaming-file = ["streaming", "ggstreamlog/file"]
-streaming-file-parquet = ["streaming", "ggstreamlog/parquet"]
-streaming-file-avro = ["streaming", "ggstreamlog/avro"]
+streaming-file = ["streaming", "edgestreamlog/file"]
+streaming-file-parquet = ["streaming", "edgestreamlog/parquet"]
+streaming-file-avro = ["streaming", "edgestreamlog/avro"]
 # Credentials / local vault: encrypted-at-rest secret store + FileKeyProvider (pure-Rust crypto,
 # builds everywhere). The AWS Secrets Manager central source is a later, separately-gated add.
 credentials = [
@@ -100,7 +100,7 @@ prometheus = { version = "0.14", optional = true }
 
 # Telemetry-streaming core (feature = "streaming"); the Kinesis sink adds the AWS SDK
 # (feature = "streaming-kinesis"). Pure-Rust core builds everywhere.
-ggstreamlog = { path = "../rust-streamlog", optional = true }
+edgestreamlog = { path = "../rust-streamlog", optional = true }
 
 # Credentials / local vault (feature = "credentials"). Universal, cross-language-portable
 # primitives (AES-256-GCM, HMAC-SHA256, HKDF-SHA256) so the on-disk vault format is identical

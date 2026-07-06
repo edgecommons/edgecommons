@@ -20,7 +20,7 @@ use aws_sdk_kinesis::Client;
 use tokio::runtime::Runtime;
 
 use super::{ExportRecord, SendOutcome, Sink};
-use crate::error::{GgStreamError, Result};
+use crate::error::{EdgeStreamError, Result};
 
 /// A [`Sink`] that writes records to an Amazon Kinesis Data Stream.
 pub struct KinesisSink {
@@ -42,9 +42,9 @@ impl KinesisSink {
     ) -> Result<Self> {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
-            .thread_name("ggstreamlog-kinesis")
+            .thread_name("edgestreamlog-kinesis")
             .build()
-            .map_err(|e| GgStreamError::Sink(format!("tokio runtime: {e}")))?;
+            .map_err(|e| EdgeStreamError::Sink(format!("tokio runtime: {e}")))?;
 
         // Loading the AWS config is async, so it needs `block_on`. But `KinesisSink::new` may be
         // called from inside a tokio runtime (the library opens streams during its async
@@ -68,7 +68,7 @@ impl KinesisSink {
                     })
                 })
                 .join()
-                .map_err(|_| GgStreamError::Sink("kinesis client init thread panicked".into()))
+                .map_err(|_| EdgeStreamError::Sink("kinesis client init thread panicked".into()))
         })?;
 
         Ok(Self { rt, client, stream_name: stream_name.into() })

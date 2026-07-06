@@ -12,6 +12,6 @@
 
 - [ ] Tests added/updated and passing
 - [ ] Docs/README updated if behavior changed
-- [ ] Builds on `ggcommons` conventions (builders, CLI contract, message envelope)
+- [ ] Builds on `edgecommons` conventions (builders, CLI contract, message envelope)
 - [ ] If this is a new component: repo topics set + entry added to `edgecommons/registry`
 - [ ] Parity considered (does an equivalent change belong in another language?)

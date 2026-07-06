@@ -10,16 +10,16 @@ The SCRAPER owns the interval (set below), not the component.
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: {{ include "ggcommons.fullname" . }}
+  name: {{ include "edgecommons.fullname" . }}
   labels:
-    {{- include "ggcommons.labels" . | nindent 4 }}
+    {{- include "edgecommons.labels" . | nindent 4 }}
     {{- with .Values.serviceMonitor.labels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
 spec:
   selector:
     matchLabels:
-      {{- include "ggcommons.selectorLabels" . | nindent 6 }}
+      {{- include "edgecommons.selectorLabels" . | nindent 6 }}
   endpoints:
     - port: metrics
       path: {{ .Values.serviceMonitor.path }}

@@ -1,6 +1,6 @@
 {{- if .Values.rbac.create -}}
 {{/*
-Minimal, namespaced, least-privilege RBAC (NFR-SEC-2). The default ggcommons
+Minimal, namespaced, least-privilege RBAC (NFR-SEC-2). The default edgecommons
 component needs NO Kubernetes API access — config and secrets arrive as mounted
 volumes (the kubelet fetches them) and identity comes from the projected token /
 Downward API (DESIGN-packaging §6). This Role is therefore OFF by default; when
@@ -10,27 +10,27 @@ Never cluster-scoped; never cluster-admin.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: {{ include "ggcommons.fullname" . }}
+  name: {{ include "edgecommons.fullname" . }}
   labels:
-    {{- include "ggcommons.labels" . | nindent 4 }}
+    {{- include "edgecommons.labels" . | nindent 4 }}
 rules:
   - apiGroups: [""]
     resources: ["configmaps"]
-    resourceNames: ["{{ include "ggcommons.configMapName" . }}"]
+    resourceNames: ["{{ include "edgecommons.configMapName" . }}"]
     verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: {{ include "ggcommons.fullname" . }}
+  name: {{ include "edgecommons.fullname" . }}
   labels:
-    {{- include "ggcommons.labels" . | nindent 4 }}
+    {{- include "edgecommons.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: {{ include "ggcommons.fullname" . }}
+  name: {{ include "edgecommons.fullname" . }}
 subjects:
   - kind: ServiceAccount
-    name: {{ include "ggcommons.serviceAccountName" . }}
+    name: {{ include "edgecommons.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
 {{- end -}}

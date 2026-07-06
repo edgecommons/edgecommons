@@ -1332,6 +1332,67 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
+name = "edgecommons"
+version = "0.2.0"
+dependencies = [
+ "aes-gcm",
+ "anyhow",
+ "arc-swap",
+ "async-trait",
+ "aws-config",
+ "aws-greengrass-component-sdk",
+ "aws-sdk-cloudwatch",
+ "aws-sdk-kms",
+ "aws-sdk-secretsmanager",
+ "aws-sdk-ssm",
+ "base64 0.22.1",
+ "clap",
+ "cryptoki",
+ "edgestreamlog",
+ "fs4",
+ "getrandom 0.2.17",
+ "hkdf",
+ "hmac",
+ "jsonschema",
+ "notify",
+ "prometheus",
+ "rand",
+ "rumqttc",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sysinfo",
+ "tempfile",
+ "thiserror 2.0.18",
+ "time",
+ "tokio",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "uuid",
+ "windows-sys 0.61.2",
+ "zeroize",
+]
+
+[[package]]
+name = "edgestreamlog"
+version = "0.1.0"
+dependencies = [
+ "apache-avro",
+ "arrow",
+ "aws-config",
+ "aws-sdk-kinesis",
+ "crc32c",
+ "parquet",
+ "rdkafka",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "either"
 version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1594,67 +1655,6 @@ dependencies = [
  "cfg-if",
  "libc",
  "r-efi 6.0.0",
-]
-
-[[package]]
-name = "ggcommons"
-version = "0.2.0"
-dependencies = [
- "aes-gcm",
- "anyhow",
- "arc-swap",
- "async-trait",
- "aws-config",
- "aws-greengrass-component-sdk",
- "aws-sdk-cloudwatch",
- "aws-sdk-kms",
- "aws-sdk-secretsmanager",
- "aws-sdk-ssm",
- "base64 0.22.1",
- "clap",
- "cryptoki",
- "fs4",
- "getrandom 0.2.17",
- "ggstreamlog",
- "hkdf",
- "hmac",
- "jsonschema",
- "notify",
- "prometheus",
- "rand",
- "rumqttc",
- "serde",
- "serde_json",
- "sha2",
- "sysinfo",
- "tempfile",
- "thiserror 2.0.18",
- "time",
- "tokio",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
- "uuid",
- "windows-sys 0.61.2",
- "zeroize",
-]
-
-[[package]]
-name = "ggstreamlog"
-version = "0.1.0"
-dependencies = [
- "apache-avro",
- "arrow",
- "aws-config",
- "aws-sdk-kinesis",
- "crc32c",
- "parquet",
- "rdkafka",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
 ]
 
 [[package]]

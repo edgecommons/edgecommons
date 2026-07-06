@@ -1,4 +1,4 @@
-# Contributing to GGCommons
+# Contributing to EdgeCommons
 
 This is a **monorepo**: the four libraries, the shared streaming core, the CLI, the templates, the
 example skeletons, the canonical config schema, and the shared test infrastructure live together so
@@ -8,7 +8,7 @@ that changes which must stay consistent can land atomically.
 
 ```
 libs/{java,python,rust,ts}     # the four libraries (Java is canonical)
-libs/rust-streamlog/           # ggstreamlog: shared telemetry-streaming core (+ bindings/)
+libs/rust-streamlog/           # edgestreamlog: shared telemetry-streaming core (+ bindings/)
 cli/                           # the scaffolding CLI
 templates/{java,python,rust,typescript}   # minimal component templates the CLI scaffolds from
 examples/{java,python,rust,ts}            # worked example components
@@ -30,7 +30,7 @@ matrix on any change under `libs/**`, so divergence is caught automatically.
 
 ## The config schema is single-source
 
-The config JSON schema lives **only** in `schema/ggcommons-config-schema.json`. After editing it,
+The config JSON schema lives **only** in `schema/edgecommons-config-schema.json`. After editing it,
 run `schema/sync-schema.sh` (or `sync-schema.ps1`) to copy it into every library — CI fails on drift
 (`schema/sync-schema.sh --check` in `.github/workflows/interop.yml`). Never hand-edit the per-library
 copies.

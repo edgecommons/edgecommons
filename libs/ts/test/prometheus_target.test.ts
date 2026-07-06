@@ -69,7 +69,7 @@ function freePort(): Promise<number> {
 
 describe("sanitizeMetricName (FR-MET-3)", () => {
   it("lowercases and replaces invalid chars with '_'", () => {
-    expect(sanitizeMetricName("ggcommons_RequestCount")).toBe("ggcommons_requestcount");
+    expect(sanitizeMetricName("edgecommons_RequestCount")).toBe("edgecommons_requestcount");
     expect(sanitizeMetricName("ns.foo-bar/baz")).toBe("ns_foo_bar_baz");
     expect(sanitizeMetricName("a b%c")).toBe("a_b_c");
   });

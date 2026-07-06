@@ -1,6 +1,6 @@
 ---
 title: Configuration API
-description: API reference for the GGCommons config manager and Config snapshot — read methods, typed sections, template resolution, and the change-listener interface.
+description: API reference for the EdgeCommons config manager and Config snapshot — read methods, typed sections, template resolution, and the change-listener interface.
 sidebar:
   order: 5
 ---
@@ -219,7 +219,7 @@ methods** on the manager; Rust/TypeScript expose a **free function** `resolve` t
 <TabItem label="Rust">
 
   ```rust
-  use ggcommons::config::template;
+  use edgecommons::config::template;
 
   let cfg = gg.config();
   let path = template::resolve(&cfg, "heartbeat/{ThingName}/{ComponentName}");
@@ -229,7 +229,7 @@ methods** on the manager; Rust/TypeScript expose a **free function** `resolve` t
 <TabItem label="TypeScript">
 
   ```typescript
-  import { resolve } from "@edgecommons/ggcommons";
+  import { resolve } from "@edgecommons/edgecommons";
 
   const cfg = gg.config();
   const path = resolve(cfg, "/data/{ThingName}/{ComponentName}.log");
@@ -363,7 +363,7 @@ language.
   ```rust
   use std::sync::Arc;
   use async_trait::async_trait;
-  use ggcommons::config::{Config, ConfigurationChangeListener};
+  use edgecommons::config::{Config, ConfigurationChangeListener};
 
   struct MyListener;
 
@@ -401,7 +401,7 @@ closed in all four.
 
 ## Construction
 
-Component authors normally receive a ready config object from the GGCommons builder/runtime and do
+Component authors normally receive a ready config object from the EdgeCommons builder/runtime and do
 not construct it directly. The underlying factory/builder is listed here for completeness.
 
 | Language | Entry point |

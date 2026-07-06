@@ -65,7 +65,7 @@ impl IpcProvider {
     /// # Errors
     /// | Error Variant | Condition | Recovery |
     /// |---------------|-----------|----------|
-    /// | `GgError::Ipc` | The nucleus is unreachable or the required env vars are unset | Run under a Greengrass core; check `SVCUID` / socket path |
+    /// | `EdgeCommonsError::Ipc` | The nucleus is unreachable or the required env vars are unset | Run under a Greengrass core; check `SVCUID` / socket path |
     pub async fn connect() -> Result<IpcProvider> {
         ipc::global().connect().await?;
         Ok(IpcProvider { _private: () })

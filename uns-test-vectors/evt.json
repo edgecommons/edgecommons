@@ -1,5 +1,5 @@
 {
-  "description": "ggcommons UNS events() publish-facade vectors (DESIGN-class-facades 2.2). input -> expected {topic, route, body} from the live facade; body STRUCTURAL (D-U22). Pins the evt/{severity}/{type} channel derived FROM the body, the four severity tokens, timestamp=now, and alarm raise/clear. instance 'main'; clock fixed at 2026-07-01T12:00:00Z",
+  "description": "edgecommons UNS events() publish-facade vectors (DESIGN-class-facades 2.2). input -> expected {topic, route, body} from the live facade; body STRUCTURAL (D-U22). Pins the evt/{severity}/{type} channel derived FROM the body, the four severity tokens, timestamp=now, and alarm raise/clear. instance 'main'; clock fixed at 2026-07-01T12:00:00Z",
   "cases": [
     {
       "name": "evt-emit-info-message-only",

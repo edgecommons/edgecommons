@@ -7,7 +7,7 @@
 
 use std::path::PathBuf;
 
-use crate::error::GgError;
+use crate::error::EdgeCommonsError;
 use crate::Result;
 
 /// A parameter value fetched from a source. `secure` values (SSM SecureString, a `mountedDir`
@@ -133,7 +133,7 @@ impl MountedDirSource {
         let entries = match std::fs::read_dir(dir) {
             Ok(e) => e,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(e) => return Err(GgError::Parameters(format!("read dir {}: {e}", dir.display()))),
+            Err(e) => return Err(EdgeCommonsError::Parameters(format!("read dir {}: {e}", dir.display()))),
         };
         for entry in entries.flatten() {
             let file_name = entry.file_name();
@@ -157,7 +157,7 @@ impl MountedDirSource {
                 let rel = path.strip_prefix(&self.root).unwrap_or(&path);
                 let name = format!("/{}", rel.to_string_lossy().replace('\\', "/"));
                 let value = std::fs::read(&path)
-                    .map_err(|e| GgError::Parameters(format!("read {}: {e}", path.display())))?;
+                    .map_err(|e| EdgeCommonsError::Parameters(format!("read {}: {e}", path.display())))?;
                 let secure = self.is_secure(&name);
                 out.push((name, ParamValue { value, secure, version: None }));
             }
@@ -174,7 +174,7 @@ impl ParameterSource for MountedDirSource {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             // A directory (not a file) at that name is "not a parameter".
             Err(e) if matches!(e.raw_os_error(), Some(21)) => Ok(None),
-            Err(e) => Err(GgError::Parameters(format!("read {}: {e}", path.display()))),
+            Err(e) => Err(EdgeCommonsError::Parameters(format!("read {}: {e}", path.display()))),
         }
     }
 

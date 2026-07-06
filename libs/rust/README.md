@@ -1,4 +1,4 @@
-# ggcommons (Rust)
+# edgecommons (Rust)
 
 Rust implementation of the Greengrass Commons library — a third implementation
 alongside the Java (canonical) and Python libraries. It lets authors build AWS IoT
@@ -9,7 +9,7 @@ configuration, messaging, metrics, heartbeat, and logging behind service traits.
 > parity, and Greengrass IPC (messaging, `GG_CONFIG`, `SHADOW`, `CONFIG_COMPONENT`)
 > are implemented and have been validated against a live Greengrass core (non-root),
 > including the real-time device-shadow round-trip. See
-> [`../GGCOMMONS_RUST_PORT.md`](../GGCOMMONS_RUST_PORT.md) for the full design and history.
+> [`../EDGECOMMONS_RUST_PORT.md`](../EDGECOMMONS_RUST_PORT.md) for the full design and history.
 
 ## Platform × transport runtime model
 

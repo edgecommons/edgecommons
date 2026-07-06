@@ -7,7 +7,7 @@ the Java (Log4j2 RollingFile) and Rust implementations.
 import logging
 from logging.handlers import RotatingFileHandler
 
-from ggcommons.config.manager.config_manager import ConfigManager
+from edgecommons.config.manager.config_manager import ConfigManager
 
 
 def _config_manager_with(config):

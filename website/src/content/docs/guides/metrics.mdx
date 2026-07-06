@@ -15,7 +15,7 @@ business logic emits the same metric regardless of platform.
 The push targets serialize to CloudWatch **EMF** (Embedded Metric Format); the pull target serves a
 Prometheus/OpenMetrics exposition.
 
-You obtain the service from your `GGCommons` instance. The accessor name differs per language:
+You obtain the service from your `EdgeCommons` instance. The accessor name differs per language:
 
 <Tabs syncKey="lang">
 <TabItem label="Java">
@@ -75,7 +75,7 @@ metrics.defineMetric(
 
 ```python
 # with_config() fills thing + component ONLY (not namespace) in Python — set the
-# namespace explicitly, or build() substitutes the placeholder "GGCommons/Metrics".
+# namespace explicitly, or build() substitutes the placeholder "EdgeCommons/Metrics".
 metric = (MetricBuilder.create("performance")
           .with_config(config)
           .with_namespace("MyApp/Metrics")
@@ -117,7 +117,7 @@ metrics.defineMetric(metric);
 - **`withConfig` and namespace.** In Java, Rust, and TypeScript, `withConfig`/`with_config` fills
   the thing name, component name, **and** namespace. In **Python**, `with_config` fills only the
   thing and component — set `with_namespace(...)` yourself, or `build()` silently substitutes the
-  placeholders `test-thing`, `test-component`, and `GGCommons/Metrics`.
+  placeholders `test-thing`, `test-component`, and `EdgeCommons/Metrics`.
 - **Storage resolution.** Java, Rust, and TypeScript silently coerce the value (`< 60` becomes `1`,
   otherwise `60`). **Python rejects** anything that is not exactly `1` or `60` with a `ValueError`.
 - **`build()` overloads.** Java has both `build()` (requires a namespace, or throws) and
@@ -316,7 +316,7 @@ values on its own schedule.
 Gauge naming: the gauge name is `sanitize(lowercase("{namespace}_{measureName}"))` (restricted to
 `[a-z0-9_]`, prefixed with `_` if it would start with a digit). Dimensions become labels, with each
 label name sanitized to `[a-zA-Z_][a-zA-Z0-9_]*`. The namespace used is the **configured**
-`metricEmission.namespace` (not the per-metric namespace), defaulting to `ggcommons`.
+`metricEmission.namespace` (not the per-metric namespace), defaulting to `edgecommons`.
 
 <Aside type="tip">
 This is why `prometheus` is the Kubernetes default: a sidecar or the cluster Prometheus scrapes the
@@ -340,7 +340,7 @@ in-memory path flushes every `targetConfig.intervalSecs`, default 5s).
       "buffer": {
         "type": "durable",
         "maxDiskBytes": 134217728,
-        "path": "/var/lib/ggcommons/metrics/{ComponentName}/cw",
+        "path": "/var/lib/edgecommons/metrics/{ComponentName}/cw",
         "onFull": "dropOldest",
         "fsync": "perBatch"
       }
@@ -361,7 +361,7 @@ shown.
 
 Behavior to be aware of:
 
-- **Durable mode fails fast** if the bundled `ggstreamlog` native core is missing — that is a
+- **Durable mode fails fast** if the bundled `edgestreamlog` native core is missing — that is a
   deployment error, since the core ships with the SDK. If the core is present but the buffer cannot
   open (bad path / IO error), it degrades to in-memory batching.
 - The drain batches up to **1000 datums** (≈900 KB) per CloudWatch request, drops datums outside

@@ -1,0 +1,20 @@
+{
+  "language": "PYTHON",
+  "description": "Python Greengrass component built on the edgecommons (edgecommons) library.",
+  "substitutions": {
+    "recipe.yaml": ["DESCRIPTION", "COMPONENTFULLNAME", "AUTHOR", "COMPONENTNAME"],
+    "gdk-config.json": ["COMPONENTFULLNAME", "AUTHOR", "BUCKET", "REGION"],
+    "main.py": ["COMPONENTNAME"],
+    "app/greengrass_app.py": ["COMPONENTNAME"],
+    "README.md": ["COMPONENTNAME", "COMPONENTFULLNAME"],
+    "Dockerfile": ["COMPONENTNAME"],
+    "k8s/configmap.yaml": ["COMPONENTNAME", "COMPONENTFULLNAME"],
+    "k8s/deployment.yaml": ["COMPONENTNAME"]
+  },
+  "renames": [
+    {"from": "app/greengrass_app.py", "to": "app/{COMPONENTNAME}.py"}
+  ],
+  "conditional": [
+    {"when": "platform:KUBERNETES", "paths": ["Dockerfile", "k8s"]}
+  ]
+}

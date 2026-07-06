@@ -11,7 +11,7 @@ import os
 def test_messaging_config_classes_exist():
     """Test that messaging config classes can be imported."""
     try:
-        from ggcommons.messaging.messaging_config import (
+        from edgecommons.messaging.messaging_config import (
             MessagingConfiguration,
             CredentialsConfig,
             LocalMqttConfig,
@@ -26,7 +26,7 @@ def test_messaging_config_classes_exist():
 def test_java_compatible_config_structure():
     """Test Java-compatible configuration structure."""
     try:
-        from ggcommons.messaging.messaging_config import (
+        from edgecommons.messaging.messaging_config import (
             MessagingConfiguration,
             CredentialsConfig,
             LocalMqttConfig,
@@ -78,7 +78,7 @@ def test_java_compatible_config_structure():
 def test_configuration_file_loading():
     """Test configuration file loading mechanism."""
     try:
-        from ggcommons.messaging.messaging_config import MessagingConfiguration
+        from edgecommons.messaging.messaging_config import MessagingConfiguration
         
         # Create test config
         config_data = {

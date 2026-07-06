@@ -21,10 +21,10 @@ import threading
 
 import pytest
 
-from ggcommons.messaging.identity import HierEntry, MessageIdentity
-from ggcommons.messaging.message import Message
-from ggcommons.messaging.message_builder import MessageBuilder
-from ggcommons.republish_listener import RepublishListener, _ThreadingDelayer
+from edgecommons.messaging.identity import HierEntry, MessageIdentity
+from edgecommons.messaging.message import Message
+from edgecommons.messaging.message_builder import MessageBuilder
+from edgecommons.republish_listener import RepublishListener, _ThreadingDelayer
 
 # The default fake identity's device is 'test-thing' (single 'device' level).
 STATE_TOPIC = "ecv1/test-thing/_bcast/main/cmd/republish-state"

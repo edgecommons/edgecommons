@@ -1,6 +1,6 @@
 # Metric Emission Configuration Guide
 
-This document provides detailed information about the metric emission targets and their configuration options in the GGCommons Java library.
+This document provides detailed information about the metric emission targets and their configuration options in the EdgeCommons Java library.
 
 The metric emission system supports multiple targets for sending metrics, each with specific behaviors and configuration options. Metrics are formatted using the Embedded Metric Format (EMF) for CloudWatch compatibility.
 
@@ -10,7 +10,7 @@ The metric emission system supports multiple targets for sending metrics, each w
 
 Metrics in the system consist of:
 - **Name**: Unique identifier for the metric
-- **Namespace**: Logical grouping for metrics (defaults to "ggcommons")
+- **Namespace**: Logical grouping for metrics (defaults to "edgecommons")
 - **Measures**: Named measurements with values, units, and storage resolution
 - **Dimensions**: Key-value pairs for metric categorization (automatically includes component and thing names)
 
@@ -29,7 +29,7 @@ Metrics in the system consist of:
   (`prometheus` on the KUBERNETES platform; nothing on GREENGRASS/HOST) ▸ **library default `"log"`**.
   So a KUBERNETES pod with no `metricEmission.target` set gets the prometheus target automatically,
   while GREENGRASS and HOST keep defaulting to `log`. An explicit `target` always wins.
-- **`namespace`**: The namespace for your metrics (Default: "ggcommons")
+- **`namespace`**: The namespace for your metrics (Default: "edgecommons")
 - **`largeFleetWorkaround`**: Boolean flag that creates aggregate metrics by replacing "coreName" dimension with "ALL" (Default: false)
 
 ### Template Variables
@@ -178,7 +178,7 @@ cloudwatchcomponent), which *push* on each emit, the prometheus target *inverts*
 
 - `emitMetric` **and** `emitMetricNow` only **update the registry** — they do **not** push anywhere.
 - `flushMetrics()` is a **no-op** w.r.t. delivery — a Prometheus scrape *pulls* the current values.
-- `close()` (via `GGCommons.shutdown()` / SIGTERM) **stops the HTTP listener**, releasing the port
+- `close()` (via `EdgeCommons.shutdown()` / SIGTERM) **stops the HTTP listener**, releasing the port
   and its daemon thread.
 
 > **Caveat:** a component relying on `emitMetricNow`/`flushMetrics` to flush-before-exit gets **nothing
@@ -189,7 +189,7 @@ emitted metric a `Gauge` is registered/updated with **latest-value** semantics (
 current value):
 
 - **Gauge name** = `sanitize(lowercase("{namespace}_{measureName}"))`, where `namespace` defaults to
-  `ggcommons`. Sanitization replaces every character not matching `[a-z0-9_]` with `_`, and prefixes
+  `edgecommons`. Sanitization replaces every character not matching `[a-z0-9_]` with `_`, and prefixes
   `_` if the result starts with a digit (Prometheus metric-name rules).
 - **Labels** = the metric's dimensions (which already include `category` (= metric name), `coreName`
   (= thing name), `component` (= component name), plus any custom dimensions). Each label **name** is

@@ -11,7 +11,7 @@
       "description": "Java reference southbound adapter (Eclipse Milo). Subscribes to OPC UA nodes and republishes value changes as SouthboundSignalUpdate messages; serves on-demand reads/writes and emits the southbound_health metric.",
       "status": "beta",
       "platforms": ["GREENGRASS", "HOST", "KUBERNETES"],
-      "library": "com.mbreissi:ggcommons",
+      "library": "com.mbreissi.edgecommons:edgecommons",
       "topics": ["edgecommons", "aws-iot-greengrass", "iiot", "opc-ua", "edgecommons-adapter"]
     },
     {
@@ -23,7 +23,7 @@
       "description": "Python reference southbound adapter (pymodbus). Polls Modbus TCP / serial RTU / RTU-over-TCP register maps and republishes value changes as SouthboundSignalUpdate messages; serves reads/writes and emits the southbound_health metric.",
       "status": "beta",
       "platforms": ["GREENGRASS", "HOST", "KUBERNETES"],
-      "library": "greengrass-commons",
+      "library": "edgecommons",
       "topics": ["edgecommons", "aws-iot-greengrass", "iiot", "modbus", "edgecommons-adapter"]
     },
     {
@@ -34,7 +34,7 @@
       "description": "Rust reference processing component: the high-throughput northbound seam between southbound adapters and the cloud. Subscribes to configured (wildcard, templated) local telemetry topics, runs a declarative per-route pipeline (filter / sample / aggregate / project / script — Rhai or Lua), and forwards results to a target: local republish, northbound MQTT/IoT Core, or a durable stream (Kinesis / Kafka / rolling Parquet-AVRO files).",
       "status": "experimental",
       "platforms": ["GREENGRASS", "HOST", "KUBERNETES"],
-      "library": "ggcommons",
+      "library": "edgecommons",
       "topics": ["edgecommons", "aws-iot-greengrass", "iiot", "telemetry", "stream-processing", "edgecommons-processor"]
     },
     {
@@ -45,7 +45,7 @@
       "description": "Envelope-aware UNS relay between a device bus and a site broker. Uplinks the six UNS consumer classes topic-verbatim with hop-tag loop protection and per-class policy (rate caps, evt replay buffer), relays own-device commands back down, and proxies request/reply across the bridge (reply_to rewrite). One uns-bridge per device bus.",
       "status": "experimental",
       "platforms": ["HOST", "KUBERNETES"],
-      "library": "ggcommons",
+      "library": "edgecommons",
       "topics": ["edgecommons", "aws-iot-greengrass", "iiot", "unified-namespace", "mqtt", "edgecommons-bridge"]
     },
     {
@@ -53,10 +53,10 @@
       "repo": "edgecommons/edge-console",
       "language": "TYPESCRIPT",
       "category": "console",
-      "description": "Edge-deployed real-time web console and the site's sole browser-to-bus bridge (HTTPS+WS in front, MQTT/UNS behind). A Node backend on the ggcommons TS library consumes the six UNS consumer classes from the site broker into a timestamped last-known-value FleetModel with console-side miss-detection (cfg-derived cadence, stale/offline ladder, whole-device UNREACHABLE from the uns-bridge LWT); an IBM Carbon/React UI serves edge-health and config-review views.",
+      "description": "Edge-deployed real-time web console and the site's sole browser-to-bus bridge (HTTPS+WS in front, MQTT/UNS behind). A Node backend on the edgecommons TS library consumes the six UNS consumer classes from the site broker into a timestamped last-known-value FleetModel with console-side miss-detection (cfg-derived cadence, stale/offline ladder, whole-device UNREACHABLE from the uns-bridge LWT); an IBM Carbon/React UI serves edge-health and config-review views.",
       "status": "experimental",
       "platforms": ["HOST", "KUBERNETES"],
-      "library": "@edgecommons/ggcommons",
+      "library": "@edgecommons/edgecommons",
       "topics": ["edgecommons", "aws-iot-greengrass", "iiot", "unified-namespace", "console", "edgecommons-console"]
     },
     {
@@ -67,7 +67,7 @@
       "description": "Rust reference sink component (northbound file delivery): watches local directories and replicates files to a destination (local, S3; SFTP/FTPS, HTTP, Azure Blob, GCS phased) on arrival or on cron schedules/windows. Resumable uploads with integrity verification, bandwidth caps, per-instance activation, on-complete delete/archive/quarantine, and a full control + event surface on a unified namespace.",
       "status": "experimental",
       "platforms": ["GREENGRASS", "HOST", "KUBERNETES"],
-      "library": "ggcommons",
+      "library": "edgecommons",
       "topics": ["edgecommons", "aws-iot-greengrass", "iiot", "file-replication", "s3", "edgecommons-sink"]
     }
   ]

@@ -1,17 +1,17 @@
 [package]
-name = "ggstreamlog-node"
+name = "streamlog-node"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.80"
 license = "Apache-2.0"
-description = "napi-rs native addon for the ggcommons telemetry-streaming core (ggstreamlog)."
+description = "napi-rs native addon for the edgecommons telemetry-streaming core (edgestreamlog)."
 publish = false
 
 [lib]
 crate-type = ["cdylib"]
 
 [dependencies]
-ggstreamlog = { path = "../.." }
+edgestreamlog = { path = "../.." }
 serde_json = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }
@@ -23,10 +23,10 @@ napi-build = "2"
 
 [features]
 # Real Kinesis export in the addon (heavy: AWS SDK + tokio). Off by default for a light dev build.
-kinesis = ["ggstreamlog/kinesis"]
+kinesis = ["edgestreamlog/kinesis"]
 # Real Kafka export in the addon. Builds librdkafka via cmake (needs cmake + a C compiler at build
 # time; vendored, so no system librdkafka at runtime). Off by default for a light dev build.
-kafka = ["ggstreamlog/kafka"]
+kafka = ["edgestreamlog/kafka"]
 
 [profile.release]
 lto = true

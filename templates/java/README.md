@@ -1,7 +1,7 @@
 # <<COMPONENTNAME>>
 
 An AWS IoT Greengrass v2 component (`<<COMPONENTFULLNAME>>`) written in Java on top of the
-`ggcommons` Java library, generated from the GGCommons Java component template by the `ggcommons`
+`edgecommons` Java library, generated from the EdgeCommons Java component template by the `edgecommons`
 CLI. It gives you the library's standard CLI contract, configuration, logging, messaging, metrics,
 and heartbeat — so you write only business logic in your component class
 (`src/main/java/.../<<COMPONENTNAME>>.java`).
@@ -18,7 +18,7 @@ Needs a local MQTT broker (e.g. `docker run -d -p 1883:1883 emqx/emqx:latest`). 
 `ecv1/+/+/+/state` to see the component's heartbeat keepalives (the library publishes them
 automatically to `ecv1/{device}/{component}/main/state`) and `ecv1/+/+/+/app/#` for the scaffold's
 status messages. If you enable the telemetry-streaming subsystem, add
-`--enable-native-access=ALL-UNNAMED` (the FFM/Panama binding to `ggstreamlog`).
+`--enable-native-access=ALL-UNNAMED` (the FFM/Panama binding to `edgestreamlog`).
 
 ### The demonstrated monitoring + command surface
 
@@ -48,20 +48,20 @@ greeting. Replace all four with your own metrics/signals/events/verbs.
 
 ### Building against the unreleased library (local-dev only)
 
-This template pins `com.mbreissi:ggcommons` by the `ggcommons.version` Maven property (default:
+This template pins `com.mbreissi.edgecommons:edgecommons` by the `edgecommons.version` Maven property (default:
 the CLI's published-pin constant). Until a version is actually released, resolve it from your own
 `~/.m2` instead of GitHub Packages:
 
 ```bash
-# Once, from the ggcommons monorepo checkout (installs whatever version its pom.xml declares):
-cd ../ggcommons/libs/java && mvn install -DskipTests
+# Once, from the edgecommons monorepo checkout (installs whatever version its pom.xml declares):
+cd ../core/libs/java && mvn install -DskipTests
 
 # Then build THIS component against that local version:
-mvn compile -Dggcommons.version=<the version mvn install just printed>
+mvn compile -Dedgecommons.version=<the version mvn install just printed>
 ```
 
-See the `ggcommons.version` property comment in `pom.xml` for details; the CLI's release-time pin
-bump (`_GGCOMMONS_VERSION` in `cli/ggcommons_cli/commands/create_component.py`) is a separate,
+See the `edgecommons.version` property comment in `pom.xml` for details; the CLI's release-time pin
+bump (`_EDGECOMMONS_VERSION` in `cli/edgecommons_cli/commands/create_component.py`) is a separate,
 later step.
 
 The component's **UNS identity** is config-driven: the top-level `hierarchy` block declares the
@@ -100,7 +100,7 @@ defaults the config source to `CONFIGMAP` (the mounted `k8s/configmap.yaml`), th
 container runs with **no args**.
 
 ```bash
-# 1. Build the image (multi-stage; needs the published com.mbreissi:ggcommons artifact resolvable).
+# 1. Build the image (multi-stage; needs the published com.mbreissi.edgecommons:edgecommons artifact resolvable).
 docker build -t <<COMPONENTNAME>>:latest .
 
 # 2a. Push it to a registry...

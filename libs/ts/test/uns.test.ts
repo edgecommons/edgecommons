@@ -148,7 +148,7 @@ describe("Uns.validate", () => {
     expect(codeOf(() => uns.validate("ecv1/gw\\01/c/i/state"))).toBe("BAD_CHAR");
     expect(codeOf(() => uns.validate("ecv1/a..b/c/i/state"))).toBe("TRAVERSAL");
     expect(codeOf(() => uns.validate("notroot/d/c/i/state"))).toBe("BAD_ROOT");
-    expect(codeOf(() => uns.validate("ggcommons/reply-42/x/main/state"))).toBe("BAD_ROOT");
+    expect(codeOf(() => uns.validate("edgecommons/reply-42/x/main/state"))).toBe("BAD_ROOT");
     expect(codeOf(() => uns.validate("ecv1/d/c/i/data/a/b/c/d"))).toBe("DEPTH_EXCEEDED");
     expect(codeOf(() => uns.validate(`ecv1/${"d".repeat(250)}/c/i/state`))).toBe("LENGTH_EXCEEDED");
     expect(codeOf(() => uns.validate("ecv1/d/c/i/state/extra"))).toBe("CHANNEL_ON_LEAF");
@@ -191,7 +191,7 @@ describe("reserved-class guard (§4.1)", () => {
     expect(reservedClassOf("ecv1/s/d/c/i/state", true)).toBe(UnsClass.State);
     expect(reservedClassOf("ecv1/s/d/c/i/state", false)).toBeUndefined();
     expect(reservedClassOf("ecv1/s/d/c/i/app/state", true)).toBeUndefined();
-    expect(reservedClassOf("ggcommons/reply-1", false)).toBeUndefined();
+    expect(reservedClassOf("edgecommons/reply-1", false)).toBeUndefined();
     expect(reservedClassOf("cloudwatch/metric/put", false)).toBeUndefined();
     expect(reservedClassOf("ecv1x/d/c/i/state", false)).toBeUndefined();
     expect(reservedClassOf(undefined, false)).toBeUndefined();

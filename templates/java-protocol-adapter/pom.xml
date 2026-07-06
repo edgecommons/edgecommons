@@ -44,9 +44,9 @@
       <scope>test</scope>
     </dependency>
     <dependency>
-      <groupId>com.mbreissi</groupId>
-      <artifactId>ggcommons</artifactId>
-      <version><<GGCOMMONS_VERSION>></version>
+      <groupId>com.mbreissi.edgecommons</groupId>
+      <artifactId>edgecommons</artifactId>
+      <version><<EDGECOMMONS_VERSION>></version>
     </dependency>
     <dependency>
       <groupId>com.google.code.gson</groupId>
@@ -109,12 +109,12 @@
 
 
   <repositories>
-    <!-- Resolve com.mbreissi:ggcommons from GitHub Packages. Auth via ~/.m2/settings.xml:
+    <!-- Resolve com.mbreissi.edgecommons:edgecommons from GitHub Packages. Auth via ~/.m2/settings.xml:
          a <server> with <id>github</id> and a GitHub token (read:packages). For a local
          monorepo build use `mvn install` on libs/java instead (then ~/.m2 satisfies it). -->
     <repository>
       <id>github</id>
-      <url>https://maven.pkg.github.com/edgecommons/ggcommons</url>
+      <url>https://maven.pkg.github.com/edgecommons/edgecommons</url>
     </repository>
   </repositories>
 

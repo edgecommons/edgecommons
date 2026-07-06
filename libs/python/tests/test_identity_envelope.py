@@ -5,9 +5,9 @@ import json
 
 import pytest
 
-from ggcommons.messaging.identity import HierEntry, MessageIdentity
-from ggcommons.messaging.message import Message, MessageTags
-from ggcommons.messaging.message_builder import MessageBuilder
+from edgecommons.messaging.identity import HierEntry, MessageIdentity
+from edgecommons.messaging.message import Message, MessageTags
+from edgecommons.messaging.message_builder import MessageBuilder
 
 
 def _identity(instance=None):

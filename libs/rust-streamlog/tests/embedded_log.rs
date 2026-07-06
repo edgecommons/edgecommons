@@ -3,8 +3,8 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use ggstreamlog::config::{BufferConfig, FsyncPolicy, OnFull};
-use ggstreamlog::{EmbeddedLog, Record};
+use edgestreamlog::config::{BufferConfig, FsyncPolicy, OnFull};
+use edgestreamlog::{EmbeddedLog, Record};
 
 fn cfg(path: &std::path::Path, segment_bytes: u64, max_disk: u64, on_full: OnFull) -> BufferConfig {
     BufferConfig {
@@ -95,7 +95,7 @@ fn reject_new_when_full() {
     for i in 0..5000u64 {
         match log.append(&rec("k", format!("payload-number-{i}").as_bytes())) {
             Ok(()) => {}
-            Err(ggstreamlog::GgStreamError::BufferFull) => {
+            Err(edgestreamlog::EdgeStreamError::BufferFull) => {
                 rejected = true;
                 break;
             }

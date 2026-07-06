@@ -5,8 +5,8 @@
     "globalControl": true,
     "loggers": {
       "com.mbreissi.javacomponentskeleton": "DEBUG",
-      "com.mbreissi.ggcommons": "DEBUG",
-      "com.mbreissi.ggcommons.messaging": "INFO",
+      "com.mbreissi.edgecommons": "DEBUG",
+      "com.mbreissi.edgecommons.messaging": "INFO",
       "org.apache.http": "WARN"
     }
   },

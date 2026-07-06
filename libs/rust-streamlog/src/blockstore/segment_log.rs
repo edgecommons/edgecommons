@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use super::checkpoint::{self, Checkpoint};
 use super::{BlockStore, OwnedRecord, RecoveryReport};
-use crate::error::{GgStreamError, Result};
+use crate::error::{EdgeStreamError, Result};
 use crate::record::{self, Decoded};
 
 struct SegMeta {
@@ -293,13 +293,13 @@ impl BlockStore for SegmentLog {
 
     fn append(&mut self, offset: u64, ts_ms: u64, pk: &[u8], payload: &[u8]) -> Result<()> {
         if offset != self.next_offset {
-            return Err(GgStreamError::Corrupt(format!(
+            return Err(EdgeStreamError::Corrupt(format!(
                 "append offset {offset} != next {}",
                 self.next_offset
             )));
         }
         if pk.len() > u16::MAX as usize {
-            return Err(GgStreamError::Config("partition key exceeds 65535 bytes".into()));
+            return Err(EdgeStreamError::Config("partition key exceeds 65535 bytes".into()));
         }
         let size = record::frame_size(pk.len(), payload.len()) as u64;
 

@@ -3,7 +3,7 @@
 //! **One-liner purpose**: The value object [`DataFacade::publish`](super::DataFacade::publish)
 //! consumes — the thing that replaces an adapter's hand-assembled JSON body — plus its fluent
 //! [`SignalUpdateBuilder`], mirroring the Java canonical
-//! `com.mbreissi.ggcommons.facades.SignalUpdate`.
+//! `com.mbreissi.edgecommons.facades.SignalUpdate`.
 
 use serde_json::Value;
 
@@ -11,7 +11,7 @@ use super::{Channel, Quality};
 
 /// One sample: a measured `value` plus the optional quality/timestamp parts.
 ///
-/// A `None` `value` is a fail-fast [`crate::GgError::Facade`] at
+/// A `None` `value` is a fail-fast [`crate::EdgeCommonsError::Facade`] at
 /// [`DataFacade::publish`](super::DataFacade::publish) (a quality-only sample is not a sample —
 /// pass `Quality::Bad`/`Quality::Uncertain` for a failed read instead). A `None` `quality` is
 /// defaulted to [`Quality::Good`] by the facade; a `None` `server_ts` is filled with now;
@@ -79,7 +79,7 @@ impl Sample {
 /// Obtain a builder from [`SignalUpdate::builder`] or [`DataFacade::signal`](super::DataFacade::signal)
 /// and terminate with [`SignalUpdateBuilder::build`], then
 /// [`DataFacade::publish`](super::DataFacade::publish). `signal_id` is the only structural
-/// requirement — a missing/empty one is a fail-fast [`crate::GgError::Facade`] at publish
+/// requirement — a missing/empty one is a fail-fast [`crate::EdgeCommonsError::Facade`] at publish
 /// (DESIGN-class-facades §5.2), never a dropped message.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SignalUpdate {

@@ -10,7 +10,7 @@ import { readFileSync } from "fs";
 
 import mqtt, { MqttClient } from "mqtt";
 
-import { GgError } from "../errors";
+import { EdgeCommonsError } from "../errors";
 import { logger } from "../logging";
 import { BrokerConfig, LwtConfig, MessagingConfig, lwtPayloadBytes, resolvedHost } from "./config";
 import { Destination, MessagingProvider, Qos, RawSubscription } from "./types";
@@ -50,7 +50,7 @@ class BrokerChannel {
           try {
             sub.onMessage(topic, payload);
           } catch (e) {
-            logger.warn(`ggcommons: MQTT message handler threw for ${topic}: ${String(e)}`);
+            logger.warn(`edgecommons: MQTT message handler threw for ${topic}: ${String(e)}`);
           }
         }
       }
@@ -61,7 +61,7 @@ class BrokerChannel {
     client.on("connect", () => {
       for (const sub of this.subs) {
         client.subscribe(sub.filter, { qos: qosNum(sub.qos) }, (err) => {
-          if (err) logger.warn(`ggcommons: resubscribe to ${sub.filter} failed: ${String(err)}`);
+          if (err) logger.warn(`edgecommons: resubscribe to ${sub.filter} failed: ${String(err)}`);
         });
       }
     });
@@ -92,7 +92,7 @@ export class StandaloneMqttProvider implements MessagingProvider {
 
   private channel(dest: Destination): BrokerChannel {
     if (dest === Destination.IoTCore) {
-      if (!this.iot) throw GgError.messaging("no IoT Core broker configured (messaging.iotCore)");
+      if (!this.iot) throw EdgeCommonsError.messaging("no IoT Core broker configured (messaging.iotCore)");
       return this.iot;
     }
     return this.local;
@@ -102,7 +102,7 @@ export class StandaloneMqttProvider implements MessagingProvider {
     const ch = this.channel(dest);
     return new Promise((resolve, reject) => {
       ch.client.publish(topic, payload, { qos: qosNum(qos) }, (err) =>
-        err ? reject(GgError.messaging(`publish to ${topic} failed: ${err}`)) : resolve(),
+        err ? reject(EdgeCommonsError.messaging(`publish to ${topic} failed: ${err}`)) : resolve(),
       );
     });
   }
@@ -117,7 +117,7 @@ export class StandaloneMqttProvider implements MessagingProvider {
     return new Promise((resolve, reject) => {
       ch.client.subscribe(filter, { qos: qosNum(qos) }, (err) => {
         if (err) {
-          reject(GgError.messaging(`subscribe to ${filter} failed: ${err}`));
+          reject(EdgeCommonsError.messaging(`subscribe to ${filter} failed: ${err}`));
           return;
         }
         const sub: Sub = { filter, qos, onMessage };
@@ -173,7 +173,7 @@ function connectBroker(broker: BrokerConfig, tls: boolean, lwt?: LwtConfig): Pro
       retain: false,
     };
     logger.info(
-      `ggcommons: registered MQTT LWT on the local connection: topic='${lwt.topic}', qos=${lwt.qos}, retain=false`,
+      `edgecommons: registered MQTT LWT on the local connection: topic='${lwt.topic}', qos=${lwt.qos}, retain=false`,
     );
   }
   const creds = broker.credentials;
@@ -191,7 +191,7 @@ function connectBroker(broker: BrokerConfig, tls: boolean, lwt?: LwtConfig): Pro
       // Initial connect failed: stop the client so auto-reconnect doesn't leak a background
       // retry loop after we reject (reconnects after a successful connect are handled silently).
       client.end(true, {}, () => {});
-      reject(GgError.messaging(`connect to ${url} failed: ${err}`));
+      reject(EdgeCommonsError.messaging(`connect to ${url} failed: ${err}`));
     });
   });
 }

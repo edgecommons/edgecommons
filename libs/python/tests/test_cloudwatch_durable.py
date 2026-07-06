@@ -1,5 +1,5 @@
 """
-Tests for the durable store-and-forward CloudWatch metric buffer (ggstreamlog host-callback sink).
+Tests for the durable store-and-forward CloudWatch metric buffer (edgestreamlog host-callback sink).
 
 Covers:
   * record round-trip (serialize/deserialize) and stale pre-filter window,
@@ -10,7 +10,7 @@ Covers:
     nonzero dropped_stale once the accept window is exceeded,
   * the CloudWatch target's durable path selection (emit -> append -> drain -> put_metric_data).
 
-The native ``ggstreamlog_native`` wheel must be installed (built from libs/rust-streamlog via
+The native ``edgestreamlog_native`` wheel must be installed (built from libs/rust-streamlog via
 maturin). Tests that need it skip cleanly when it is absent.
 """
 import json
@@ -20,7 +20,7 @@ import time
 
 import pytest
 
-from ggcommons.metrics.targets.cloudwatch_durable import (
+from edgecommons.metrics.targets.cloudwatch_durable import (
     CloudWatchDrain,
     chunk_datums,
     deserialize_record,
@@ -31,13 +31,13 @@ from ggcommons.metrics.targets.cloudwatch_durable import (
 )
 
 try:
-    from ggcommons.streaming.service import StreamService
-    import ggstreamlog_native  # noqa: F401
+    from edgecommons.streaming.service import StreamService
+    import edgestreamlog_native  # noqa: F401
     _HAVE_NATIVE = True
 except Exception:  # pragma: no cover - only when the wheel is absent
     _HAVE_NATIVE = False
 
-native_required = pytest.mark.skipif(not _HAVE_NATIVE, reason="ggstreamlog_native wheel not installed")
+native_required = pytest.mark.skipif(not _HAVE_NATIVE, reason="edgestreamlog_native wheel not installed")
 
 
 # --------------------------------------------------------------------------- fakes
@@ -275,7 +275,7 @@ class TestMetricConfigBufferParsing:
     """The real MetricConfiguration must expose the cloudwatch `buffer` block."""
 
     def _cfg(self, target_config):
-        from ggcommons.config.metric_config import MetricConfiguration
+        from edgecommons.config.metric_config import MetricConfiguration
 
         return MetricConfiguration({"target": "cloudwatch", "targetConfig": target_config})
 
@@ -461,7 +461,7 @@ class _FakeMetric:
 @native_required
 class TestCloudWatchTargetDurablePath:
     def _make_target(self, monkeypatch, tmpdir, fake_client):
-        import ggcommons.metrics.targets.cloudwatch as cw
+        import edgecommons.metrics.targets.cloudwatch as cw
 
         monkeypatch.setattr(cw.boto3, "client", lambda *a, **k: fake_client)
         buffer = {
@@ -554,7 +554,7 @@ class TestCloudWatchTargetMemoryPathUnaffected:
     """Only explicit buffer.type=memory keeps the legacy in-memory batching path."""
 
     def test_memory_buffer_uses_inmemory_path(self):
-        import ggcommons.metrics.targets.cloudwatch as cw
+        import edgecommons.metrics.targets.cloudwatch as cw
 
         cm = _FakeConfigManager({"type": "memory"})
         # boto3 client is real here but never called (we don't flush); just assert path selection.
@@ -575,8 +575,8 @@ class TestCloudWatchTargetDefaultsToDurable:
     degrades gracefully to in-memory batching."""
 
     def test_no_buffer_section_defaults_to_durable(self, monkeypatch):
-        import ggcommons.metrics.targets.cloudwatch as cw
-        import ggcommons.streaming.service as svc
+        import edgecommons.metrics.targets.cloudwatch as cw
+        import edgecommons.streaming.service as svc
 
         # Mock the durable init so the test is hermetic (no disk needed) and force the native core
         # "present" so the absent-core guard passes; asserts only the selection: an absent buffer
@@ -597,8 +597,8 @@ class TestCloudWatchTargetDefaultsToDurable:
         assert target._flush_thread is None  # no in-memory flush thread on the durable path
 
     def test_absent_native_core_fails_fast(self, monkeypatch):
-        import ggcommons.metrics.targets.cloudwatch as cw
-        import ggcommons.streaming.service as svc
+        import edgecommons.metrics.targets.cloudwatch as cw
+        import edgecommons.streaming.service as svc
 
         # Native core not installed for this platform -> durable can't be honored -> fail fast
         # (rather than silently degrading and losing metrics across a disconnect).
@@ -609,8 +609,8 @@ class TestCloudWatchTargetDefaultsToDurable:
             cw.CloudWatch(_FakeConfigManager(None))
 
     def test_open_failure_with_core_present_falls_back_to_inmemory(self, monkeypatch):
-        import ggcommons.metrics.targets.cloudwatch as cw
-        import ggcommons.streaming.service as svc
+        import edgecommons.metrics.targets.cloudwatch as cw
+        import edgecommons.streaming.service as svc
 
         # Core IS present, but opening the buffer fails (e.g. an unwritable path) -> graceful
         # fallback to in-memory batching (the absent-core case fails fast; this one does not).

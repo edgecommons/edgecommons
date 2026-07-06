@@ -1,6 +1,6 @@
 # Contributing a component to the registry
 
-1. **Scaffold** your component with the CLI (`ggcommons create-component -n <name> -l <LANG>`) and
+1. **Scaffold** your component with the CLI (`edgecommons create-component -n <name> -l <LANG>`) and
    push it to a repo under the `edgecommons` org (or your own, if external).
 2. **Name** the repo with a flat, lowercase, hyphenated name describing what it does
    (`opcua-adapter`, `s7-adapter`, `rollup-processor`, `kafka-sink`). Do **not** prefix with

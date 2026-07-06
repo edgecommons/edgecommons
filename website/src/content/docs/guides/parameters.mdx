@@ -50,13 +50,13 @@ Rust gates the whole subsystem behind the `parameters` feature, and the AWS SSM 
 
 ```toml
 [dependencies]
-ggcommons = { version = "*", features = ["parameters"] }
+edgecommons = { version = "*", features = ["parameters"] }
 # add "parameters-aws" as well if you use the awsSsm source
 ```
 
 ## Getting the service and the null contract
 
-Fetch the service from your `GGCommons` instance. It is `null` / `None` / `undefined` whenever the
+Fetch the service from your `EdgeCommons` instance. It is `null` / `None` / `undefined` whenever the
 `parameters` section is absent (Rust: also when the feature is off) — always guard before use.
 
 <Tabs syncKey="lang">

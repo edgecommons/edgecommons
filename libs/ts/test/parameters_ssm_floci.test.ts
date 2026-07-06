@@ -4,14 +4,14 @@
  * Exercises the real `@aws-sdk/client-ssm` path (excluded from unit coverage in ssm.ts): seed a
  * String, a SecureString and a 2-key tree, then read them back via the source under test and
  * assert values, the secure flag, version, missing->undefined, and get-by-path. Skips when no
- * emulator is reachable. Override the endpoint with GGCOMMONS_SSM_ENDPOINT.
+ * emulator is reachable. Override the endpoint with EDGECOMMONS_SSM_ENDPOINT.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import * as net from "node:net";
 
 import { AwsSsmSource } from "../src/parameters/ssm";
 
-const ENDPOINT = process.env.GGCOMMONS_SSM_ENDPOINT ?? "http://localhost:4566";
+const ENDPOINT = process.env.EDGECOMMONS_SSM_ENDPOINT ?? "http://localhost:4566";
 
 function reachable(endpoint: string, timeoutMs = 2000): Promise<boolean> {
   const u = new URL(endpoint);
@@ -30,7 +30,7 @@ function reachable(endpoint: string, timeoutMs = 2000): Promise<boolean> {
 
 describe("awsSsm source vs local AWS emulator (floci/LocalStack SSM :4566)", () => {
   let up = false;
-  const prefix = `/ggcommons-it-ts-${process.pid}`;
+  const prefix = `/edgecommons-it-ts-${process.pid}`;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let admin: any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

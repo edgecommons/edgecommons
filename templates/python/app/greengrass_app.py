@@ -3,14 +3,14 @@ import math
 import time
 from abc import ABC
 
-from ggcommons.command_inbox import CommandException
-from ggcommons.config.manager.configuration_change_listener import (
+from edgecommons.command_inbox import CommandException
+from edgecommons.config.manager.configuration_change_listener import (
     ConfigurationChangeListener,
 )
-from ggcommons.facades import Severity
-from ggcommons.messaging.message_builder import MessageBuilder
-from ggcommons.metrics.metric_builder import MetricBuilder
-from ggcommons.uns import UnsClass
+from edgecommons.facades import Severity
+from edgecommons.messaging.message_builder import MessageBuilder
+from edgecommons.metrics.metric_builder import MetricBuilder
+from edgecommons.uns import UnsClass
 
 logger = logging.getLogger("<<COMPONENTNAME>>")
 
@@ -23,7 +23,7 @@ SET_GREETING = "set-greeting"
 
 
 class <<COMPONENTNAME>>(ConfigurationChangeListener, ABC):
-    """Minimal GGCommons component scaffold.
+    """Minimal EdgeCommons component scaffold.
 
     The library gives you config, messaging, metrics, logging and lifecycle for free; the
     ``state`` heartbeat keepalive AND the component command inbox are both **automatic**

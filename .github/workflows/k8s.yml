@@ -42,16 +42,16 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build the component image
-        run: docker build -f test-infra/k8s/Dockerfile -t ggcommons-component:ci .
+        run: docker build -f test-infra/k8s/Dockerfile -t edgecommons-component:ci .
 
       - name: Create kind cluster
         uses: helm/kind-action@v1
         with:
-          cluster_name: ggcommons
+          cluster_name: edgecommons
           config: test-infra/k8s/kind-config.yaml
 
       - name: Load the component image into kind
-        run: kind load docker-image ggcommons-component:ci --name ggcommons
+        run: kind load docker-image edgecommons-component:ci --name edgecommons
 
       - uses: azure/setup-helm@v4
         with:
@@ -60,8 +60,8 @@ jobs:
       - name: Run the smoke test (CONFIGMAP source + ..data hot-reload)
         run: bash test-infra/k8s/smoke.sh
         env:
-          IMAGE: ggcommons-component:ci
-          NAMESPACE: ggcommons
+          IMAGE: edgecommons-component:ci
+          NAMESPACE: edgecommons
           RELEASE: ggc
           TIMEOUT: "240"
           # kubelet ConfigMap-volume propagation is slow + variable on shared CI runners; give the
@@ -72,6 +72,6 @@ jobs:
       - name: Diagnostics on failure
         if: failure()
         run: |
-          kubectl -n ggcommons get pods,svc,cm -o wide || true
-          kubectl -n ggcommons describe pods -l app.kubernetes.io/instance=ggc || true
-          kubectl -n ggcommons logs -l app.kubernetes.io/instance=ggc --tail=300 || true
+          kubectl -n edgecommons get pods,svc,cm -o wide || true
+          kubectl -n edgecommons describe pods -l app.kubernetes.io/instance=ggc || true
+          kubectl -n edgecommons logs -l app.kubernetes.io/instance=ggc --tail=300 || true

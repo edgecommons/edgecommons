@@ -22,10 +22,10 @@ the constants are the source of truth for the env vars and tokens the model keys
 
 | SDK | Module / package |
 |---|---|
-| Java | `com.mbreissi.ggcommons.platform` (the resolver, enums, and profile types); `com.mbreissi.ggcommons.GGCommons` (the parser entry point `processArgs`). |
-| Python | `ggcommons.platform` — submodules `platform` (the `Platform` enum), `transport` (the `Transport` enum), and `resolver` (everything else). |
-| Rust | `ggcommons::platform` (enums, profile types, resolver fns); `ggcommons::cli` (the `parse_from` entry point). |
-| TypeScript | the `@edgecommons/ggcommons` package root re-exports from `platform.ts` and `cli.ts`. |
+| Java | `com.mbreissi.edgecommons.platform` (the resolver, enums, and profile types); `com.mbreissi.edgecommons.EdgeCommons` (the parser entry point `processArgs`). |
+| Python | `edgecommons.platform` — submodules `platform` (the `Platform` enum), `transport` (the `Transport` enum), and `resolver` (everything else). |
+| Rust | `edgecommons::platform` (enums, profile types, resolver fns); `edgecommons::cli` (the `parse_from` entry point). |
+| TypeScript | the `@edgecommons/edgecommons` package root re-exports from `platform.ts` and `cli.ts`. |
 
 ## `Platform`
 
@@ -37,7 +37,7 @@ case-insensitively.
 <TabItem label="Java">
 
 ```java
-package com.mbreissi.ggcommons.platform;
+package com.mbreissi.edgecommons.platform;
 
 public enum Platform {
     GREENGRASS,  // on a Greengrass v2 Nucleus: IPC transport, Nucleus-managed config/identity
@@ -100,7 +100,7 @@ by `validate`); `MQTT` (the dual-MQTT provider) is valid on every platform.
 <TabItem label="Java">
 
 ```java
-package com.mbreissi.ggcommons.platform;
+package com.mbreissi.edgecommons.platform;
 
 public enum Transport {
     IPC,   // Greengrass Nucleus IPC (domain socket) — requires GREENGRASS
@@ -379,7 +379,7 @@ public final class PlatformResolver {
 <TabItem label="Python">
 
 ```python
-# module: ggcommons.platform.resolver
+# module: edgecommons.platform.resolver
 def resolve_profile(inputs: ResolverInputs,
                     env: Optional[Mapping[str, str]]) -> ResolvedProfile: ...
 
@@ -399,8 +399,8 @@ PROFILES: Mapping[Platform, PlatformProfile]
 <TabItem label="Rust">
 
 ```rust
-// module: ggcommons::platform
-// Returns GgError::Cli on the IPC lock or an unprofiled platform.
+// module: edgecommons::platform
+// Returns EdgeCommonsError::Cli on the IPC lock or an unprofiled platform.
 pub fn resolve_profile(inputs: ResolverInputs,
                        env: &HashMap<String, String>) -> Result<ResolvedProfile>;
 
@@ -421,13 +421,13 @@ pub fn profiled_platforms() -> [Platform; 3];
 <TabItem label="TypeScript">
 
 ```typescript
-// module: ggcommons (re-exported from platform.ts)
+// module: edgecommons (re-exported from platform.ts)
 export function resolveProfile(inputs: ResolverInputs, env: Env): ResolvedProfile;
 
 export function detectPlatform(
   env: Env, fileExists?: (p: string) => boolean): Platform;
 
-// throws GgError (kind "Cli") on the IPC lock
+// throws EdgeCommonsError (kind "Cli") on the IPC lock
 export function validate(platform: Platform, transport: Transport): void;
 export function resolveIdentity(
   thing: string | undefined, platform: Platform, env: Env): string;
@@ -440,7 +440,7 @@ export type Env = Record<string, string | undefined>;
 </Tabs>
 
 <Aside type="note" title="TypeScript: validate is renamed at the package root">
-`validate` is exported from the `ggcommons` package root as **`validatePlatformTransport`** (to avoid
+`validate` is exported from the `edgecommons` package root as **`validatePlatformTransport`** (to avoid
 a name clash). Importing directly from the `platform` module, it is `validate`.
 </Aside>
 
@@ -454,7 +454,7 @@ derives it from the platform (HOST → `MQTT`).
 <TabItem label="Java">
 
 ```java
-import com.mbreissi.ggcommons.platform.*;
+import com.mbreissi.edgecommons.platform.*;
 import java.util.Map;
 
 ResolvedProfile resolved = PlatformResolver.resolveProfile(
@@ -476,8 +476,8 @@ resolved.identity();   // "my-thing"
 
 ```python
 import os
-from ggcommons.platform.platform import Platform
-from ggcommons.platform.resolver import ResolverInputs, resolve_profile
+from edgecommons.platform.platform import Platform
+from edgecommons.platform.resolver import ResolverInputs, resolve_profile
 
 resolved = resolve_profile(
     ResolverInputs(
@@ -499,7 +499,7 @@ resolved.identity   # "my-thing"
 
 ```rust
 use std::collections::HashMap;
-use ggcommons::platform::{resolve_profile, Platform, ResolverInputs};
+use edgecommons::platform::{resolve_profile, Platform, ResolverInputs};
 
 let env: HashMap<String, String> = std::env::vars().collect();
 let resolved = resolve_profile(
@@ -521,7 +521,7 @@ resolved.identity;   // "my-thing"
 <TabItem label="TypeScript">
 
 ```typescript
-import { resolveProfile, Platform, type ResolverInputs } from "@edgecommons/ggcommons";
+import { resolveProfile, Platform, type ResolverInputs } from "@edgecommons/edgecommons";
 
 const resolved = resolveProfile(
   {
@@ -626,7 +626,7 @@ apply:
 - `FILE` → `config.json`
 - `ENV` → reads the `CONFIG` variable
 - `GG_CONFIG` → key `ComponentConfig`
-- `CONFIGMAP` → mount dir `/etc/ggcommons`, key `config.json`
+- `CONFIGMAP` → mount dir `/etc/edgecommons`, key `config.json`
 
 Under `MQTT` + `CONFIGMAP` with no explicit `--transport MQTT <path>`, the messaging-config path
 defaults to that same mounted ConfigMap file — one file serves as both component config and
@@ -648,7 +648,7 @@ Java, module-level in Python, `pub const` in Rust, `export const` in TypeScript)
 | `ENV_THING_NAME` | `AWS_IOT_THING_NAME` | Identity probe (Greengrass / platform-supplied). |
 | `ENV_K8S_SERVICE_HOST` | `KUBERNETES_SERVICE_HOST` | Confirming (secondary) Kubernetes signal. |
 | `K8S_SA_TOKEN_PATH` | `/var/run/secrets/kubernetes.io/serviceaccount/token` | Primary, definitive Kubernetes signal (a file probe). |
-| `ENV_K8S_THING_NAME` | `GGCOMMONS_THING_NAME` | Kubernetes Downward-API identity (primary k8s tier). |
+| `ENV_K8S_THING_NAME` | `EDGECOMMONS_THING_NAME` | Kubernetes Downward-API identity (primary k8s tier). |
 | `ENV_K8S_POD_NAME` | `POD_NAME` | Kubernetes Downward-API identity (secondary k8s tier). |
 | `ENV_K8S_POD_NAMESPACE` | `POD_NAMESPACE` | Logging-correlation field (best-effort). |
 | `ENV_K8S_NODE_NAME` | `NODE_NAME` | Logging-correlation field (best-effort). |
@@ -671,7 +671,7 @@ The token value shown for `METRIC_LOG_PATH_LOCAL` is the Java/Rust/TypeScript fo
 an underscore (`./logs/{ComponentFullName}_metric.log`) — see the caution above.
 
 ConfigMap defaults (Java names them `CONFIGMAP_DEFAULT_MOUNT_DIR` / `CONFIGMAP_DEFAULT_KEY`): mount dir
-`/etc/ggcommons`, key `config.json`.
+`/etc/edgecommons`, key `config.json`.
 
 ## Auto-detection, validation, and identity
 
@@ -683,8 +683,8 @@ These three behaviors are summarized here for the API surface; the
   `K8S_SA_TOKEN_PATH` file exists or `ENV_K8S_SERVICE_HOST` is set; (3) `HOST` otherwise. An empty env
   value is not a signal; `GREENGRASS` wins when both signal sets are present.
 - **`validate`** — rejects `transport == IPC && platform != GREENGRASS` (the IPC lock). Java raises
-  `IllegalArgumentException`, Python raises `ValueError`, Rust returns `GgError::Cli`, TypeScript
-  throws a `GgError` of kind `Cli`.
+  `IllegalArgumentException`, Python raises `ValueError`, Rust returns `EdgeCommonsError::Cli`, TypeScript
+  throws a `EdgeCommonsError` of kind `Cli`.
 - **`resolveIdentity`** — precedence: explicit `-t/--thing` ▸ (only on `KUBERNETES`:
   `ENV_K8S_THING_NAME` ▸ `ENV_K8S_POD_NAME`) ▸ `ENV_THING_NAME` ▸ `DEFAULT_IDENTITY`. Empty env values
   are ignored; the returned value is raw (sanitized later wherever `{ThingName}` is interpolated).

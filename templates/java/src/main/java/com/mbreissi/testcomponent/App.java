@@ -1,19 +1,19 @@
 package <<PACKAGE>>;
 
-import com.mbreissi.ggcommons.GGCommons;
-import com.mbreissi.ggcommons.GGCommonsBuilder;
-import com.mbreissi.ggcommons.commands.CommandException;
-import com.mbreissi.ggcommons.commands.CommandInbox;
-import com.mbreissi.ggcommons.config.ConfigManager;
-import com.mbreissi.ggcommons.facades.DataFacade;
-import com.mbreissi.ggcommons.facades.EventsFacade;
-import com.mbreissi.ggcommons.facades.Severity;
-import com.mbreissi.ggcommons.messaging.Message;
-import com.mbreissi.ggcommons.messaging.MessageBuilder;
-import com.mbreissi.ggcommons.messaging.MessagingClient;
-import com.mbreissi.ggcommons.metrics.MetricBuilder;
-import com.mbreissi.ggcommons.metrics.MetricEmitter;
-import com.mbreissi.ggcommons.uns.UnsClass;
+import com.mbreissi.edgecommons.EdgeCommons;
+import com.mbreissi.edgecommons.EdgeCommonsBuilder;
+import com.mbreissi.edgecommons.commands.CommandException;
+import com.mbreissi.edgecommons.commands.CommandInbox;
+import com.mbreissi.edgecommons.config.ConfigManager;
+import com.mbreissi.edgecommons.facades.DataFacade;
+import com.mbreissi.edgecommons.facades.EventsFacade;
+import com.mbreissi.edgecommons.facades.Severity;
+import com.mbreissi.edgecommons.messaging.Message;
+import com.mbreissi.edgecommons.messaging.MessageBuilder;
+import com.mbreissi.edgecommons.messaging.MessagingClient;
+import com.mbreissi.edgecommons.metrics.MetricBuilder;
+import com.mbreissi.edgecommons.metrics.MetricEmitter;
+import com.mbreissi.edgecommons.uns.UnsClass;
 import com.google.gson.JsonObject;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -22,10 +22,10 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
-import static com.mbreissi.ggcommons.utils.Utils.sleep;
+import static com.mbreissi.edgecommons.utils.Utils.sleep;
 
 /**
- * Minimal GGCommons component scaffold.
+ * Minimal EdgeCommons component scaffold.
  *
  * <p>The library gives you config, messaging, metrics, logging and lifecycle; identity is
  * <b>config-driven</b>: the top-level {@code hierarchy} + {@code identity} config blocks resolve
@@ -75,7 +75,7 @@ public class <<COMPONENTNAME>>
     /** The custom command verb this scaffold registers (see the class docs). */
     private static final String SET_GREETING = "set-greeting";
 
-    final GGCommons ggCommons;
+    final EdgeCommons edgeCommons;
     final ConfigManager configManager;
     final MessagingClient messaging;
     final MetricEmitter metrics;
@@ -99,13 +99,13 @@ public class <<COMPONENTNAME>>
 
     public <<COMPONENTNAME>>(String[] args)
     {
-        ggCommons = GGCommonsBuilder.create("<<COMPONENTFULLNAME>>").withArgs(args).build();
-        configManager = ggCommons.getConfigManager();
-        messaging = ggCommons.getMessaging();
-        metrics = ggCommons.getMetrics();
-        commands = ggCommons.getCommands();
-        data = ggCommons.getData();
-        events = ggCommons.getEvents();
+        edgeCommons = EdgeCommonsBuilder.create("<<COMPONENTFULLNAME>>").withArgs(args).build();
+        configManager = edgeCommons.getConfigManager();
+        messaging = edgeCommons.getMessaging();
+        metrics = edgeCommons.getMetrics();
+        commands = edgeCommons.getCommands();
+        data = edgeCommons.getData();
+        events = edgeCommons.getEvents();
 
         // --- metrics: define once, emit every tick. MetricBuilder is the sanctioned
         // construction path (never `new Metric(...)`, deprecated). Two measures show a metric
@@ -131,9 +131,9 @@ public class <<COMPONENTNAME>>
         // is the free application class for this scaffold's status publish below; the data()
         // and events() facades mint their OWN topics from the signal id / severity+type - never
         // hand-write those.
-        String statusTopic = ggCommons.getUns().topic(UnsClass.APP, "status");
+        String statusTopic = edgeCommons.getUns().topic(UnsClass.APP, "status");
         LOGGER.info("UNS identity path: {} - status={}",
-                ggCommons.getUns().identity().getPath(), statusTopic);
+                edgeCommons.getUns().identity().getPath(), statusTopic);
 
         long seq = 0;
         long startMillis = System.currentTimeMillis();

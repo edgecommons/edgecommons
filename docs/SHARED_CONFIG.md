@@ -58,9 +58,9 @@ the two on-disk files (§9).
 | D4 | Opt-out mechanism | config key · CLI flag · **both** | ✅ both: `sharedConfig:false` (component layer) **and** `--no-shared-config`; flag wins |
 | D5 | Default | **layering ON** · off | ✅ ON when a base resolves; silently no-op if none |
 | D6 | Validation timing | per-layer · **after merge only** | ✅ after merge only (layers are partial fragments) |
-| D7 | FILE base location | env var · conventional path · `extends` key · **all three** | ✅ all three, in precedence: `extends` > `$GGCOMMONS_SHARED_CONFIG` > `/etc/ggcommons/shared.json` |
+| D7 | FILE base location | env var · conventional path · `extends` key · **all three** | ✅ all three, in precedence: `extends` > `$EDGECOMMONS_SHARED_CONFIG` > `/etc/edgecommons/shared.json` |
 | D8 | GG_CONFIG base | **dedicated shared-config component** · nucleus-level config | ✅ shared-config component, read via `GetConfiguration` (same path as `CONFIG_COMPONENT`) |
-| D9 | SHADOW base | **shared named shadow** (`ggcommons-shared`) · classic shadow | ✅ shared named shadow on the same Thing |
+| D9 | SHADOW base | **shared named shadow** (`edgecommons-shared`) · classic shadow | ✅ shared named shadow on the same Thing |
 | D10 | Cross-provider mixing (base from a different provider than component) | allow · **disallow v1** | ✅ disallow v1 (base uses the same provider family); revisit later |
 | D11 | **How to share secrets/params across components** (reframed from "device-wide path") | shared on-disk file (work-dir / shared-group) · served manager · per-component vault + shared central | ✅ **per-component vault + shared *central* (option 3) near-term**; **served manager (option 2) for robust on-device sharing later** (§9). A shared on-disk vault **file is REJECTED as the primary** — it assumes all components share one OS user; lab cross-read worked only by that coincidence (verified) and breaks under `runWith`/multi-user. |
 | D12 | Vault/cache path source | hardcode · **shared-config value** | ✅ shared-config value (the A↔B/C unification) |
@@ -165,7 +165,7 @@ Only the two orange boxes are new. Everything else already exists.
 - Type conflict (base object vs component scalar at the same key) → component wins, with a `WARN`.
 
 ### 5.2 Validation timing (D6)
-Validate **only the merged result** against `schema/ggcommons-config-schema.json`. Individual layers
+Validate **only the merged result** against `schema/edgecommons-config-schema.json`. Individual layers
 are legitimate *partial fragments* (the base omits `component`; an overlay may omit framework
 sections), so per-layer validation would false-fail. Top-level `additionalProperties:false` /
 `required:[component]` apply post-merge. (The schema is now fully specified per section, so the merged
@@ -201,10 +201,10 @@ mechanism per provider:
 
 | `-c` provider | Base layer source (✅ recommended) | Notes / alternatives |
 |---------------|-----------------------------------|----------------------|
-| `FILE` | `extends` key in component file → path; else `$GGCOMMONS_SHARED_CONFIG`; else `/etc/ggcommons/shared.json` (D7) | All three supported; first hit wins. `extends` may be relative to the component file. |
-| `ENV` | `$GGCOMMONS_SHARED_CONFIG` = JSON (or `@/path`) | Containers/K8s project a shared ConfigMap into this var. |
-| `GG_CONFIG` | `GetConfiguration` on a **shared-config component** (D8), name from `$GGCOMMONS_SHARED_COMPONENT` (default `com.mbreissi.greengrass.GGCommonsSharedConfig`) | Reuses the cross-component IPC read that `CONFIG_COMPONENT` already does. Alt: nucleus-level config (rejected — fights the per-component deploy model). |
-| `SHADOW` | A shared **named shadow** `ggcommons-shared` on the same Thing (D9) | Read with `GetThingShadow(thing, "ggcommons-shared")`, watch its delta. |
+| `FILE` | `extends` key in component file → path; else `$EDGECOMMONS_SHARED_CONFIG`; else `/etc/edgecommons/shared.json` (D7) | All three supported; first hit wins. `extends` may be relative to the component file. |
+| `ENV` | `$EDGECOMMONS_SHARED_CONFIG` = JSON (or `@/path`) | Containers/K8s project a shared ConfigMap into this var. |
+| `GG_CONFIG` | `GetConfiguration` on a **shared-config component** (D8), name from `$EDGECOMMONS_SHARED_COMPONENT` (default `com.mbreissi.edgecommons.EdgeCommonsSharedConfig`) | Reuses the cross-component IPC read that `CONFIG_COMPONENT` already does. Alt: nucleus-level config (rejected — fights the per-component deploy model). |
+| `SHADOW` | A shared **named shadow** `edgecommons-shared` on the same Thing (D9) | Read with `GetThingShadow(thing, "edgecommons-shared")`, watch its delta. |
 | `CONFIG_COMPONENT` | The config component serves a base + per-component overlay (it is already the "shared" model) | The client requests the reserved base id, then its own; or the component returns `{base, overlay}`. |
 
 **Per platform**, the provider in play follows the deployment: GREENGRASS→`GG_CONFIG`/`SHADOW`;
@@ -232,7 +232,7 @@ sequenceDiagram
     App->>SRC: load() component config
     SRC-->>App: rawComponent (JSON)
     App->>BR: resolve(provider, ctx)
-    Note over BR: FILE → extends / $GGCOMMONS_SHARED_CONFIG / /etc/ggcommons/shared.json
+    Note over BR: FILE → extends / $EDGECOMMONS_SHARED_CONFIG / /etc/edgecommons/shared.json
     BR-->>App: rawBase (JSON) | none
     alt opted out (--no-shared-config or sharedConfig:false) or no base
         App->>MRG: [component]
@@ -283,7 +283,7 @@ three mirror it at the same seams (per-language seam map in §8).
 
 ```mermaid
 classDiagram
-    class GgCommonsBuilder {
+    class EdgeCommonsBuilder {
         +build() async
     }
     class config_source_build {
@@ -316,11 +316,11 @@ classDiagram
         <<existing snapshot>>
     }
 
-    GgCommonsBuilder --> config_source_build
-    GgCommonsBuilder --> BaseLayerResolver : NEW call
-    GgCommonsBuilder --> merge : NEW call
-    GgCommonsBuilder --> validation
-    GgCommonsBuilder --> Config
+    EdgeCommonsBuilder --> config_source_build
+    EdgeCommonsBuilder --> BaseLayerResolver : NEW call
+    EdgeCommonsBuilder --> merge : NEW call
+    EdgeCommonsBuilder --> validation
+    EdgeCommonsBuilder --> Config
     config_source_build --> ConfigSource
     BaseLayerResolver <|.. FileBaseResolver
     BaseLayerResolver <|.. EnvBaseResolver
@@ -332,11 +332,11 @@ New files (Rust; mirror in each lib):
 - `config/merge.rs` — `deep_merge(layers: &[Value]) -> Value` (pure; the cross-language conformance target).
 - `config/base/mod.rs` — `BaseLayerResolver` trait + `resolve_base(spec, ctx) -> Result<Option<(Value, Option<Watch>)>>` dispatch (sibling to `source::build`).
 - `config/base/{file,env,greengrass,shadow,config_component}.rs` — per-provider resolvers, each reusing the matching source's transport.
-- Build-path change in `lib.rs` (and `ConfigManagerFactory`/`ConfigManagerBuilder`/`GgCommons.build`): insert resolve-base + merge between load and validate; subscribe the base watch into the existing reload task.
+- Build-path change in `lib.rs` (and `ConfigManagerFactory`/`ConfigManagerBuilder`/`EdgeCommons.build`): insert resolve-base + merge between load and validate; subscribe the base watch into the existing reload task.
 
 Per-language seam (from §8): Rust `config::source::build` / `lib.rs build()`; Java
 `ConfigProviderBuilder.build` + `ConfigManagerFactory.create`; Python `ConfigManagerBuilder.build`
-(+ `ConfigManager._apply_config`); TS `buildConfigSource` + `GgCommons.build`.
+(+ `ConfigManager._apply_config`); TS `buildConfigSource` + `EdgeCommons.build`.
 
 ---
 
@@ -345,7 +345,7 @@ Per-language seam (from §8): Rust `config::source::build` / `lib.rs build()`; J
 | Concern | Rust | Java | Python | TS |
 |---------|------|------|--------|----|
 | Source dispatch | `config::source::build()` | `ConfigProviderBuilder.build()` | `ConfigManagerBuilder.build()` | `buildConfigSource()` |
-| Merge insert point | `lib.rs build()` after `source.load()` before `validation::validate()` | `ConfigManagerFactory.create()` after `loadConfiguration()` before `ConfigurationValidator.validate()` | `ConfigManagerBuilder.build()` before `init()/_apply_config()` | `GgCommons.build()` after `source.load()` before `validate()` |
+| Merge insert point | `lib.rs build()` after `source.load()` before `validation::validate()` | `ConfigManagerFactory.create()` after `loadConfiguration()` before `ConfigurationValidator.validate()` | `ConfigManagerBuilder.build()` before `init()/_apply_config()` | `EdgeCommons.build()` after `source.load()` before `validate()` |
 | Snapshot | `Config` + `ArcSwap` | `ConfigManager.applyConfig()` | `ConfigManager._apply_config()` | `Config.fromValue()` + ref swap |
 | Listener sig | `async on_configuration_change(Arc<Config>)->bool` | `onConfigurationChanged()->boolean` | `on_configuration_change(cfg)->bool` | `onConfigurationChange(Config)->bool` |
 | Validation | `config::validation::validate` (jsonschema) | `ConfigurationValidator` (networknt) | `ConfigurationValidator` (jsonschema) | `validate` (ajv) |
@@ -378,8 +378,8 @@ user/group model**. A robust library **cannot assume all components run as one u
 
 | Option | How "sharing" happens | OS-user-safe? | Trade-offs |
 |--------|----------------------|---------------|-----------|
-| **(1) Shared-group file** | one vault file `0640` owned `<owner>:ggcommons`; every consumer's `runWith` user joins group `ggcommons` (incl. a group-readable KEK) | only if the operator provisions every component's user into the shared group | fragile on GG (per-user group provisioning; group-readable KEK weakens the custodian); maps cleanly to **K8s `fsGroup` + shared volume** though |
-| **(2) Served manager** ✅ *(robust on-device sharing)* | a **credentials-manager component owns the vault and serves secrets over the ggcommons messaging seam** — GG **IPC** on-device, local MQTT on HOST/KUBERNETES; consumers fetch via `gg.credentials()` and keep a local per-component cache | **yes** — transport is nucleus/broker-mediated, not the filesystem | biggest build (a request/reply secrets protocol + manager component + consumer fetch path); adds a runtime dependency + first-fetch latency. **Only option that also gives per-component least-privilege** (GG recipe `accessControl` / MQTT topic ACLs decide who may fetch what) — strictly better than "device = trust boundary". This is what `aws.greengrass.SecretManager` does. |
+| **(1) Shared-group file** | one vault file `0640` owned `<owner>:edgecommons`; every consumer's `runWith` user joins group `edgecommons` (incl. a group-readable KEK) | only if the operator provisions every component's user into the shared group | fragile on GG (per-user group provisioning; group-readable KEK weakens the custodian); maps cleanly to **K8s `fsGroup` + shared volume** though |
+| **(2) Served manager** ✅ *(robust on-device sharing)* | a **credentials-manager component owns the vault and serves secrets over the edgecommons messaging seam** — GG **IPC** on-device, local MQTT on HOST/KUBERNETES; consumers fetch via `gg.credentials()` and keep a local per-component cache | **yes** — transport is nucleus/broker-mediated, not the filesystem | biggest build (a request/reply secrets protocol + manager component + consumer fetch path); adds a runtime dependency + first-fetch latency. **Only option that also gives per-component least-privilege** (GG recipe `accessControl` / MQTT topic ACLs decide who may fetch what) — strictly better than "device = trust boundary". This is what `aws.greengrass.SecretManager` does. |
 | **(3) Per-component vault + shared *central* source** ✅ *(near-term default)* | keep today's per-component vault; sharing happens at the **central store** — all components pull the same Secrets Manager id via the existing `from` override | **yes** — no shared on-device file at all | already built; cost is N× central fetches (bounded by per-component cache + refresh interval); "define once" lives in the cloud, not the device. Offline-first per component. |
 
 ### 9.2 Recommendation
@@ -474,4 +474,4 @@ shared on-disk cache file is required.
 2. **D11 (reframed)** — verified cross-read works *only* under the single-`ggc_user` model, so a shared on-disk vault file is rejected as primary (§9). Confirm the path: **option (3)** per-component vault + shared central as the near-term default, and **option (2)** served manager as the robust later phase? (And: is per-component duplicate central fetching acceptable near-term, or do you want option (2) sooner?)
 3. **D4** opt-out knob naming (`sharedConfig` / `--no-shared-config`) acceptable?
 4. **D2** arrays replace (not concat) — OK for `component.instances`, `hierarchy.levels`, etc.?
-5. Naming of the shared-config component (`com.mbreissi.greengrass.GGCommonsSharedConfig`) and whether it doubles as the credentials sync owner.
+5. Naming of the shared-config component (`com.mbreissi.edgecommons.EdgeCommonsSharedConfig`) and whether it doubles as the credentials sync owner.

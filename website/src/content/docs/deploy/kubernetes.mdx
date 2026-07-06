@@ -1,6 +1,6 @@
 ---
 title: Deploy to Kubernetes
-description: Run a GGCommons component in a cluster — image, ConfigMap, Deployment with probes, the env-KEK vault Secret, and Prometheus/JSON defaults.
+description: Run a EdgeCommons component in a cluster — image, ConfigMap, Deployment with probes, the env-KEK vault Secret, and Prometheus/JSON defaults.
 sidebar:
   order: 3
 ---
@@ -32,7 +32,7 @@ override any of them with an explicit flag or a config value — the precedence 
 | metric target | `prometheus` | in-process registry served as OpenMetrics at `:9090/metrics` (pull) |
 | credentials key provider | `env` | the vault KEK comes from an env var (a Secret) — offline, no cloud |
 | health endpoint | on | the HTTP probe server binds `:8081` (`/livez`, `/readyz`, `/startupz`) |
-| identity | Downward API | `GGCOMMONS_THING_NAME` then `POD_NAME` when `-t/--thing` is absent |
+| identity | Downward API | `EDGECOMMONS_THING_NAME` then `POD_NAME` when `-t/--thing` is absent |
 
 <Aside type="note" title="Defaults never auto-enable an opt-in subsystem">
   The `env` key-provider default only changes behavior **when a `credentials` section is already
@@ -55,7 +55,7 @@ dependency source is what makes the image build standalone (no monorepo checkout
 <TabItem label="Linux">
 
 ```bash
-ggcommons create-component -n com.example.MyComponent -l PYTHON \
+edgecommons create-component -n com.example.MyComponent -l PYTHON \
   --platforms KUBERNETES --dep-source registry
 ```
 
@@ -63,7 +63,7 @@ ggcommons create-component -n com.example.MyComponent -l PYTHON \
 <TabItem label="Windows">
 
 ```powershell
-ggcommons create-component -n com.example.MyComponent -l PYTHON `
+edgecommons create-component -n com.example.MyComponent -l PYTHON `
   --platforms KUBERNETES --dep-source registry
 ```
 
@@ -87,7 +87,7 @@ That adds exactly three artifacts to the component (`-l` is `JAVA`, `PYTHON`, `R
 
 ## Step 1 — Build the container image
 
-The Dockerfile is the one genuinely per-language artifact: each language resolves the `ggcommons`
+The Dockerfile is the one genuinely per-language artifact: each language resolves the `edgecommons`
 library from its own registry and uses a different base image. All four entrypoints take **no
 platform args** — auto-detection handles the rest.
 
@@ -95,8 +95,8 @@ platform args** — auto-detection handles the rest.
 <TabItem label="Java">
 
 ```dockerfile
-# Multi-stage: build the shaded jar against the PUBLISHED ggcommons artifact, run on a slim JRE.
-# Requires com.mbreissi:ggcommons resolvable from GitHub Packages Maven.
+# Multi-stage: build the shaded jar against the PUBLISHED edgecommons artifact, run on a slim JRE.
+# Requires com.mbreissi.edgecommons:edgecommons resolvable from GitHub Packages Maven.
 FROM maven:3.9-eclipse-temurin-25 AS build
 WORKDIR /build
 COPY pom.xml ./
@@ -115,7 +115,7 @@ ENTRYPOINT ["java", "--enable-native-access=ALL-UNNAMED", "-jar", "/app/app.jar"
 <TabItem label="Python">
 
 ```dockerfile
-# Single-stage: install greengrass-commons from the registry (requirements.txt), copy the app, run non-root.
+# Single-stage: install edgecommons from the registry (requirements.txt), copy the app, run non-root.
 FROM python:3.12-slim
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 WORKDIR /app
@@ -131,7 +131,7 @@ ENTRYPOINT ["python3", "/app/main.py"]
 <TabItem label="Rust">
 
 ```dockerfile
-# Multi-stage: build the release binary against the ggcommons crate, run on a slim glibc base.
+# Multi-stage: build the release binary against the edgecommons crate, run on a slim glibc base.
 # The private git dependency needs build-time auth (GITHUB_TOKEN or an SSH agent).
 FROM rust:1.85-slim AS build
 ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
@@ -155,7 +155,7 @@ ENTRYPOINT ["/usr/local/bin/component"]
 <TabItem label="TypeScript">
 
 ```dockerfile
-# Multi-stage: install @edgecommons/ggcommons from GitHub Packages npm, compile to dist/, run non-root.
+# Multi-stage: install @edgecommons/edgecommons from GitHub Packages npm, compile to dist/, run non-root.
 # The npm install needs an .npmrc pointing at GitHub Packages + a GITHUB_TOKEN at build time.
 FROM node:20 AS build
 WORKDIR /app
@@ -181,10 +181,10 @@ The image-build prerequisites differ by language — make sure the library is re
 
 | Language | Library source | Build-time auth |
 |---|---|---|
-| Java | `com.mbreissi:ggcommons` from GitHub Packages Maven | a `settings.xml` / token for the private Maven registry |
-| Python | `greengrass-commons` via `requirements.txt` (registry or `git+https`) | usually none (public/registry) |
-| Rust | the `ggcommons` crate as a **git dependency** | `GITHUB_TOKEN` or SSH (the build sets `CARGO_NET_GIT_FETCH_WITH_CLI=true`) |
-| TypeScript | `@edgecommons/ggcommons` from GitHub Packages npm | an `.npmrc` + `GITHUB_TOKEN` |
+| Java | `com.mbreissi.edgecommons:edgecommons` from GitHub Packages Maven | a `settings.xml` / token for the private Maven registry |
+| Python | `edgecommons` via `requirements.txt` (registry or `git+https`) | usually none (public/registry) |
+| Rust | the `edgecommons` crate as a **git dependency** | `GITHUB_TOKEN` or SSH (the build sets `CARGO_NET_GIT_FETCH_WITH_CLI=true`) |
+| TypeScript | `@edgecommons/edgecommons` from GitHub Packages npm | an `.npmrc` + `GITHUB_TOKEN` |
 
 <Aside type="tip" title="Rust on Kubernetes needs a registry/git dep">
   The Rust template's default library dependency is a local `path` dep, but the Rust Dockerfile
@@ -204,7 +204,7 @@ docker build -t ghcr.io/<owner>/my-component:latest .
 # Push to a registry...
 docker push ghcr.io/<owner>/my-component:latest
 # ...or load straight into a local kind cluster (no registry needed):
-kind load docker-image ghcr.io/<owner>/my-component:latest --name ggcommons
+kind load docker-image ghcr.io/<owner>/my-component:latest --name edgecommons
 ```
 
 </TabItem>
@@ -217,7 +217,7 @@ docker build -t ghcr.io/<owner>/my-component:latest .
 # Push to a registry...
 docker push ghcr.io/<owner>/my-component:latest
 # ...or load straight into a local kind cluster (no registry needed):
-kind load docker-image ghcr.io/<owner>/my-component:latest --name ggcommons
+kind load docker-image ghcr.io/<owner>/my-component:latest --name edgecommons
 ```
 
 </TabItem>
@@ -231,7 +231,7 @@ The Rust and TypeScript images need build-time auth to fetch the private library
 
 The generated `k8s/configmap.yaml` carries **both** the component config and the `messaging.local`
 block, under the `config.json` key (the `CONFIGMAP` source's default key). It is mounted as a **whole
-directory** at `/etc/ggcommons` — never with `subPath` — so the kubelet's atomic `..data` symlink
+directory** at `/etc/edgecommons` — never with `subPath` — so the kubelet's atomic `..data` symlink
 swap drives in-process **hot-reload** with no pod restart.
 
 ```yaml
@@ -313,7 +313,7 @@ spec:
             readOnlyRootFilesystem: true
             capabilities: { drop: ["ALL"] }
           volumeMounts:
-            - { name: config, mountPath: /etc/ggcommons, readOnly: true }   # WHOLE volume, never subPath
+            - { name: config, mountPath: /etc/edgecommons, readOnly: true }   # WHOLE volume, never subPath
             - { name: tmp, mountPath: /tmp }
       volumes:
         - name: config
@@ -332,7 +332,7 @@ A few load-bearing details:
   [Health API reference](/reference/health/).
 - **`/tmp` is a writable `emptyDir`** because the root FS is read-only — the local metric-log target
   and any scratch writes go there.
-- **The config volume is the whole ConfigMap**, mounted read-only at `/etc/ggcommons`. A `subPath`
+- **The config volume is the whole ConfigMap**, mounted read-only at `/etc/edgecommons`. A `subPath`
   mount would never receive the `..data` swap, silently killing hot-reload.
 
 ## Step 4 — Apply and verify
@@ -366,14 +366,14 @@ connected to the broker and reported ready.
 ## Identity via the Downward API
 
 On KUBERNETES, when you do not pass `-t/--thing`, the component resolves its identity from the
-environment in this order: **`GGCOMMONS_THING_NAME` ▸ `POD_NAME`** (then the non-k8s fallbacks
+environment in this order: **`EDGECOMMONS_THING_NAME` ▸ `POD_NAME`** (then the non-k8s fallbacks
 `AWS_IOT_THING_NAME` ▸ `NOT_GREENGRASS`). The generated Deployment injects `POD_NAME` from
 `metadata.name`, so each pod gets a stable identity for free. To pin a fixed thing name, add a
-`GGCOMMONS_THING_NAME` env var (a `fieldRef` cannot read it from an annotation, so set it explicitly):
+`EDGECOMMONS_THING_NAME` env var (a `fieldRef` cannot read it from an annotation, so set it explicitly):
 
 ```yaml
 env:
-  - name: GGCOMMONS_THING_NAME
+  - name: EDGECOMMONS_THING_NAME
     value: "edge-sensor-01"
 ```
 
@@ -382,18 +382,18 @@ The resolved value is interpolated wherever `{ThingName}` appears in your config
 ## The vault KEK Secret (env KeyProvider)
 
 On KUBERNETES the credentials vault's default key provider is **`env`**: the SDK reads a base64-encoded
-32-byte key-encryption key (KEK) from the `GGCOMMONS_VAULT_KEK` environment variable and uses it to
+32-byte key-encryption key (KEK) from the `EDGECOMMONS_VAULT_KEK` environment variable and uses it to
 unlock the encrypted local vault — entirely offline, no cloud or HSM.
 
 <Aside type="caution" title="The scaffolded manifests do not include this">
-  The generated `k8s/deployment.yaml` has **no** `GGCOMMONS_VAULT_KEK` env var and the scaffolder
+  The generated `k8s/deployment.yaml` has **no** `EDGECOMMONS_VAULT_KEK` env var and the scaffolder
   emits **no** Secret. To use the env-KEK vault you add three things yourself: a Secret, the
   `secretKeyRef` env var on the container, and a `credentials` section in `config.json`. The
   [shared Helm chart](#advanced-the-shared-helm-chart) wires all three when `credentials.enabled=true`.
 </Aside>
 
 
-1. Create a Secret holding the base64 KEK (its value surfaces as the `GGCOMMONS_VAULT_KEK` key):
+1. Create a Secret holding the base64 KEK (its value surfaces as the `EDGECOMMONS_VAULT_KEK` key):
 
    ```yaml
    apiVersion: v1
@@ -404,18 +404,18 @@ unlock the encrypted local vault — entirely offline, no cloud or HSM.
    stringData:
      # base64-encoded 32-byte KEK. The value below is a FIXED TEST key — never commit a real one.
      # In production the operator owns this Secret (External Secrets Operator / sealed-secrets / SOPS).
-     GGCOMMONS_VAULT_KEK: "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc="
+     EDGECOMMONS_VAULT_KEK: "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc="
    ```
 
 2. Project it into the container by adding to the Deployment's `env:`:
 
    ```yaml
    env:
-     - name: GGCOMMONS_VAULT_KEK
+     - name: EDGECOMMONS_VAULT_KEK
        valueFrom:
          secretKeyRef:
            name: my-component-vault-kek
-           key: GGCOMMONS_VAULT_KEK
+           key: EDGECOMMONS_VAULT_KEK
    ```
 
 3. Add a `credentials` section to `config.json` (omit `keyProvider` so the KUBERNETES profile default
@@ -423,7 +423,7 @@ unlock the encrypted local vault — entirely offline, no cloud or HSM.
 
    ```json
    {
-     "credentials": { "vaultPath": "/tmp/ggcommons-vault" }
+     "credentials": { "vaultPath": "/tmp/edgecommons-vault" }
    }
    ```
 
@@ -439,7 +439,7 @@ On KUBERNETES two observability defaults flip on automatically:
   registry and serves it as OpenMetrics text at `:9090/metrics`. Metrics (including the heartbeat's
   [`sys` system-measures metric](/guides/heartbeat/)) are **scraped**, not pushed. Gauge names are
   `sanitize(lower("{namespace}_{measure}"))`, so the `sys` metric's memory measure under namespace
-  `ggcommons` appears as `ggcommons_memory_usage`. Central, multi-site aggregation is the scraping
+  `edgecommons` appears as `edgecommons_memory_usage`. Central, multi-site aggregation is the scraping
   collector's outbound `remote_write` to AMP/Mimir/Thanos/Grafana Cloud — edge-initiated egress,
   never cloud→edge inbound. See the [Metrics guide](/guides/metrics/).
 - **Structured stdout-JSON logging.** The logging format defaults to `json`: one JSON object per line
@@ -461,9 +461,9 @@ Key knobs in `values.yaml`:
 
 | Value | Default | What it does |
 |---|---|---|
-| `image.repository` / `image.tag` | `ggcommons-component` / `ci` | the component image to run |
-| `thingName` | `""` | when set, injects `GGCOMMONS_THING_NAME`; else identity falls through to `POD_NAME` |
-| `credentials.enabled` | `false` | create the vault-KEK Secret, project `GGCOMMONS_VAULT_KEK`, inject a `credentials` section |
+| `image.repository` / `image.tag` | `edgecommons-component` / `ci` | the component image to run |
+| `thingName` | `""` | when set, injects `EDGECOMMONS_THING_NAME`; else identity falls through to `POD_NAME` |
+| `credentials.enabled` | `false` | create the vault-KEK Secret, project `EDGECOMMONS_VAULT_KEK`, inject a `credentials` section |
 | `credentials.kekBase64` | a fixed test key | the base64 KEK the Secret holds (replace in production) |
 | `rbac.create` | `false` | grant read-only, ConfigMap-scoped `get/list/watch` (least privilege; off because the component needs no API access) |
 | `serviceMonitor.enabled` | `false` | emit a Prometheus Operator `ServiceMonitor` scraping `:9090/metrics` |
@@ -503,21 +503,21 @@ asserts auto-detection, ConfigMap hot-reload, identity, health, metrics, and the
 <TabItem label="Linux">
 
 ```bash
-kind create cluster --name ggcommons --config test-infra/k8s/kind-config.yaml
-docker build -f test-infra/k8s/Dockerfile -t ggcommons-component:ci .
-kind load docker-image ggcommons-component:ci --name ggcommons
-IMAGE=ggcommons-component:ci NAMESPACE=ggcommons ./test-infra/k8s/smoke.sh
+kind create cluster --name edgecommons --config test-infra/k8s/kind-config.yaml
+docker build -f test-infra/k8s/Dockerfile -t edgecommons-component:ci .
+kind load docker-image edgecommons-component:ci --name edgecommons
+IMAGE=edgecommons-component:ci NAMESPACE=edgecommons ./test-infra/k8s/smoke.sh
 ```
 
 </TabItem>
 <TabItem label="Windows">
 
 ```powershell
-kind create cluster --name ggcommons --config test-infra/k8s/kind-config.yaml
-docker build -f test-infra/k8s/Dockerfile -t ggcommons-component:ci .
-kind load docker-image ggcommons-component:ci --name ggcommons
+kind create cluster --name edgecommons --config test-infra/k8s/kind-config.yaml
+docker build -f test-infra/k8s/Dockerfile -t edgecommons-component:ci .
+kind load docker-image edgecommons-component:ci --name edgecommons
 # smoke.sh is a bash script — run it under WSL or Git Bash:
-$env:IMAGE = "ggcommons-component:ci"; $env:NAMESPACE = "ggcommons"; bash test-infra/k8s/smoke.sh
+$env:IMAGE = "edgecommons-component:ci"; $env:NAMESPACE = "edgecommons"; bash test-infra/k8s/smoke.sh
 ```
 
 </TabItem>
@@ -530,7 +530,7 @@ The smoke test cleans up its namespace on exit; pass `KEEP=1` to leave it for in
 A component that uses telemetry streaming with a **durable disk buffer** needs a single writer per
 buffer, so it must run as a **StatefulSet with a per-pod PVC** rather than a Deployment. The repo
 includes a deployment-shape example at `test-infra/k8s/streaming-statefulset-example.yaml`. The
-`ggstreamlog` engine works the same way; only the workload shape differs (see the
+`edgestreamlog` engine works the same way; only the workload shape differs (see the
 [Streaming guide](/guides/streaming/)).
 
 ## Next steps

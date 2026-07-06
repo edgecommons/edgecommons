@@ -1,0 +1,46 @@
+---
+RecipeFormatVersion: "2020-01-25"
+ComponentName: "com.mbreissi.edgecommons.PyShadowVerify"
+ComponentVersion: "1.0.0"
+ComponentDescription: "On-device verification (Python) of the sanitized default SHADOW name: -c SHADOW with no name -> shadow 'com_mbreissi_edgecommons_PyShadowVerify'."
+ComponentPublisher: "edgecommons"
+ComponentDependencies:
+  aws.greengrass.TokenExchangeService:
+    VersionRequirement: ">=2.0.0"
+    DependencyType: "HARD"
+  aws.greengrass.ShadowManager:
+    VersionRequirement: ">=2.0.0"
+    DependencyType: "HARD"
+ComponentConfiguration:
+  DefaultConfiguration:
+    accessControl:
+      aws.greengrass.ipc.pubsub:
+        "com.mbreissi.edgecommons.PyShadowVerify:pubsub:1":
+          policyDescription: "Allow pub/sub on all local IPC topics (incl. shadow event topics)."
+          operations:
+            - "aws.greengrass#PublishToTopic"
+            - "aws.greengrass#SubscribeToTopic"
+          resources:
+            - "*"
+      aws.greengrass.ShadowManager:
+        "com.mbreissi.edgecommons.PyShadowVerify:shadow:1":
+          policyDescription: "Allow get/update of thing shadows."
+          operations:
+            - "aws.greengrass#GetThingShadow"
+            - "aws.greengrass#UpdateThingShadow"
+            - "aws.greengrass#DeleteThingShadow"
+          resources:
+            - "*"
+Manifests:
+  - Platform:
+      os: all
+    Artifacts:
+      - URI: "s3://BUCKET/com.mbreissi.edgecommons.PyShadowVerify/1.0.0/pyverify.zip"
+        Unarchive: ZIP
+    Lifecycle:
+      Install:
+        RequiresPrivilege: true
+        Script: "pip3 install --user --break-system-packages -r {artifacts:decompressedPath}/pyverify/requirements.txt"
+      Run:
+        RequiresPrivilege: true
+        Script: "PYTHONPATH={artifacts:decompressedPath}/pyverify python3 -u {artifacts:decompressedPath}/pyverify/shadow_verify.py -c SHADOW"

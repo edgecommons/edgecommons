@@ -9,7 +9,7 @@
 //! 1. [`HealthState`] — the shared readiness state machine. `readyz_ok = messaging-connected &&
 //!    ready && !shutting_down`. `ready` defaults to `true` (so a component is ready as soon as
 //!    messaging connects); an app gates readiness on its own subscriptions by calling
-//!    [`crate::GgCommons::set_ready`]. `shutting_down` is flipped by the library's SIGTERM watcher
+//!    [`crate::EdgeCommons::set_ready`]. `shutting_down` is flipped by the library's SIGTERM watcher
 //!    so `/readyz` returns 503 immediately on stop.
 //! 2. [`HealthServer`] — a hand-rolled [`std::net::TcpListener`] responder running in a dedicated
 //!    [`std::thread`] (no web framework, no extra crate, no new tokio feature). Dropping it stops
@@ -26,7 +26,7 @@
 //!
 //! The server binds `0.0.0.0:<port>` (default 8081). It is started only when health is enabled
 //! (explicit `health.enabled` ▸ on by default on KUBERNETES ▸ off), wired in
-//! [`crate::GgCommonsBuilder::build`].
+//! [`crate::EdgeCommonsBuilder::build`].
 //!
 //! ## Safety & Panics
 //! No `unsafe`. The accept loop never panics: malformed requests yield 400, I/O errors are logged
@@ -55,7 +55,7 @@ const POLL_INTERVAL: Duration = Duration::from_millis(50);
 const READ_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// The thread-safe readiness state shared by the health server, the SIGTERM watcher, and
-/// [`crate::GgCommons::set_ready`].
+/// [`crate::EdgeCommons::set_ready`].
 ///
 /// Cloning shares the same underlying flags (`Arc<AtomicBool>`) and messaging handle, so a clone
 /// handed to the server thread observes `set_ready` / shutdown changes made elsewhere.
@@ -167,7 +167,7 @@ impl HealthServer {
         let stop = Arc::new(AtomicBool::new(false));
         let stop_thread = stop.clone();
         let handle = std::thread::Builder::new()
-            .name("ggcommons-health".to_string())
+            .name("edgecommons-health".to_string())
             .spawn(move || serve(listener, config, state, stop_thread))?;
 
         tracing::info!(addr = %addr, "health server listening");

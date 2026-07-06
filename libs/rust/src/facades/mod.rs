@@ -2,7 +2,7 @@
 //!
 //! **One-liner purpose**: `data()`/`events()`/`app()` — the three **non-reserved**, app-usable
 //! UNS class publish facades (`docs/platform/DESIGN-class-facades.md`), mirroring the Java
-//! canonical `com.mbreissi.ggcommons.facades` package.
+//! canonical `com.mbreissi.edgecommons.facades` package.
 //!
 //! ## Overview
 //! Every one of the eight UNS classes now has exactly one library-owned owner: the reserved
@@ -29,10 +29,10 @@
 //!   onto `app/{channel}`; minimal enforcement (non-empty name/channel). LOCAL/NORTHBOUND only.
 //!
 //! ## Accessors
-//! Obtained from [`crate::GgInstance::data`]/[`crate::GgInstance::events`]/
-//! [`crate::GgInstance::app`] (primary — the data plane is inherently per-instance) or the
-//! `main`-instance convenience [`crate::GgCommons::data`]/[`crate::GgCommons::events`]/
-//! [`crate::GgCommons::app`] (== `instance("main")`).
+//! Obtained from [`crate::EdgeCommonsInstance::data`]/[`crate::EdgeCommonsInstance::events`]/
+//! [`crate::EdgeCommonsInstance::app`] (primary — the data plane is inherently per-instance) or the
+//! `main`-instance convenience [`crate::EdgeCommons::data`]/[`crate::EdgeCommons::events`]/
+//! [`crate::EdgeCommons::app`] (== `instance("main")`).
 //!
 //! ## Semantics & Architecture
 //! - **Injected clock, no inline `Instant`/`SystemTime`**: every `serverTs`/`timestamp` default
@@ -42,12 +42,12 @@
 //!   (`crate::uns::RepublishListener`).
 //! - **Reject vs default (§5.2)**: an omitted *defaultable* field (quality, serverTs, timestamp)
 //!   is silently defaulted; an omitted *structural* field (`signal.id`, `evt.type`, `app`
-//!   name/channel) is a fail-fast [`crate::GgError::Facade`] at the call site — never a dropped
+//!   name/channel) is a fail-fast [`crate::EdgeCommonsError::Facade`] at the call site — never a dropped
 //!   message.
 //! - **Feature-gated stream route**: [`StreamSink`] is defined here (not in
 //!   [`crate::streaming`]), so `DataFacade` compiles and behaves identically standalone; the
 //!   `streaming` cargo feature only adds the *production* adapter
-//!   (`crate::streaming::StreamServiceSink`) that lets [`crate::GgCommons`] wire a real sink. With
+//!   (`crate::streaming::StreamServiceSink`) that lets [`crate::EdgeCommons`] wire a real sink. With
 //!   the feature off (or no `streaming` config section), the bound sink is `None` and a
 //!   `stream:<name>` channel falls back to a LOCAL publish (readiness / no-streaming → local, D1a).
 //!

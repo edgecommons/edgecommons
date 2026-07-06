@@ -1,12 +1,12 @@
 # Telemetry Streaming — design
 
-High-throughput, store-and-forward telemetry egress for ggcommons: a pluggable model
+High-throughput, store-and-forward telemetry egress for edgecommons: a pluggable model
 for **Kinesis Data Streams** and **Apache Kafka** (SiteWise a likely later sink), with a
 **portable, embedded, persistent buffer we own** for disconnected industrial use. Works
 on both the HOST and GREENGRASS platforms. New subsystem, peer to
 `messaging`/`metrics`/`heartbeat`; opt-in; does not change existing APIs.
 
-> Status: **the core has shipped.** `ggstreamlog` (`libs/rust-streamlog/`) is built and used by all
+> Status: **the core has shipped.** `edgestreamlog` (`libs/rust-streamlog/`) is built and used by all
 > four languages via `gg.streams()` — Rust natively, Java via Panama/the C-ABI, Python via PyO3, and
 > Node via napi-rs — with the durable segment log, `KinesisSink`, and `KafkaSink` all implemented and
 > tested (see `libs/rust-streamlog/README.md`). What's still genuinely deferred: the **SiteWise
@@ -48,11 +48,11 @@ on both the HOST and GREENGRASS platforms. New subsystem, peer to
 ## 3. Architecture
 
 The buffer **and** the export engine + sinks live in **one shared Rust core**
-(`ggstreamlog`); each language ships a thin binding. Nothing is delegated to a black box,
+(`edgestreamlog`); each language ships a thin binding. Nothing is delegated to a black box,
 and there is one implementation of the hard parts.
 
 ```
- ┌─ host language (thin binding) ─┐   ┌──────────── ggstreamlog core (Rust, native) ───────────┐
+ ┌─ host language (thin binding) ─┐   ┌──────────── edgestreamlog core (Rust, native) ───────────┐
  │  append(record) (non-blocking) │──►│  StreamService → EmbeddedLog → ExportEngine → Sink ─────┼──► Kinesis | Kafka
  │  flush / stats / lifecycle     │   │   (§4 durable FIFO)   (batch/retry)  ▲   (rdkafka/aws-sdk)│
  └────────────────────────────────┘   │                       checkpoint ───┘                    │
@@ -72,7 +72,7 @@ A `StreamRecord` = `{ payload: bytes, partitionKey: string, timestampMs: u64, he
 Built via `StreamRecordBuilder`. `partitionKey` drives ordering + downstream sharding
 (e.g. `"{assetId}/{tag}"`).
 
-## 4. The durable log core (`ggstreamlog`)
+## 4. The durable log core (`edgestreamlog`)
 
 ### 4.1 Build vs. reuse — engine evaluation
 
@@ -96,7 +96,7 @@ than shipping one small Rust core. The `BlockStore` is a **pluggable interface**
 ships only the hand-rolled segment store**; RocksDB/LMDB backends can be added later behind
 the same interface without changing the upper layers.
 
-> Note: ggcommons **already ships native code** (`awscrt` under the Python/TS AWS SDKs, the
+> Note: edgecommons **already ships native code** (`awscrt` under the Python/TS AWS SDKs, the
 > `gg_sdk` C-FFI crate in Rust). A shared Rust core is consistent with that reality, not a
 > new burden category.
 
@@ -164,7 +164,7 @@ network/sink when connected. Operators tune:
 
 ### 5.1 A single Rust core exposed via a C ABI (the decision)
 
-Write `ggstreamlog` **once in Rust** (the safe language for a hand-rolled durable log),
+Write `edgestreamlog` **once in Rust** (the safe language for a hand-rolled durable log),
 compile to a C-ABI `cdylib`, and bind it into the other three. One implementation =
 benchmarked + fuzzed + crash-tested **once**; identical performance and on-disk format
 everywhere; "we control it."
@@ -195,13 +195,13 @@ it only appends and reads stats. So the ABI is append/flush/stats/lifecycle (+ a
 callback for Phase-3 Kafka), with config passed as a JSON string:
 
 ```c
-int  ggsl_open(const char* config_json, ggsl_service** out, char** err);
-int  ggsl_stream_get(ggsl_service*, const char* name, ggsl_stream** out, char** err);
-int  ggsl_append(ggsl_stream*, const uint8_t* pk, uint16_t pk_len, uint64_t ts_ms,
+int  esl_open(const char* config_json, esl_service** out, char** err);
+int  esl_stream_get(esl_service*, const char* name, esl_stream** out, char** err);
+int  esl_append(esl_stream*, const uint8_t* pk, uint16_t pk_len, uint64_t ts_ms,
                  const uint8_t* payload, uint32_t len, uint64_t* out_offset, char** err);
-int  ggsl_flush(ggsl_stream*, char** err);
-int  ggsl_stats(ggsl_stream*, ggsl_stats_t* out);
-void ggsl_shutdown(ggsl_service*);
+int  esl_flush(esl_stream*, char** err);
+int  esl_stats(esl_stream*, esl_stats_t* out);
+void esl_shutdown(esl_service*);
 ```
 
 The full, normative ABI + rules (ownership, thread-safety, `catch_unwind` at the boundary)
@@ -299,7 +299,7 @@ streaming:
     - name: "telemetry"
       sink: "kinesis"                       # kinesis | kafka
       buffer:
-        path: "/var/lib/ggcommons/streams/{ComponentName}/telemetry"
+        path: "/var/lib/edgecommons/streams/{ComponentName}/telemetry"
         segmentBytes: 67108864              # 64 MiB
         maxDiskBytes: 2147483648            # store-and-forward depth (sized to your outage × rate)
         maxAgeSecs: 172800
@@ -363,13 +363,13 @@ When it lands:
 
 ## 11. Phasing
 
-1. ✅ **MVP** (shipped): Rust `ggstreamlog` core (append/read/commit/retention/recovery, fsync
+1. ✅ **MVP** (shipped): Rust `edgestreamlog` core (append/read/commit/retention/recovery, fsync
    policies, `dropOldest`) + fuzz/crash tests + bench; `KinesisSink`; HOST; metrics. Pure-Rust
    first proves the core before bindings.
    → **Implementation-ready spec: [TELEMETRY_STREAMING_PHASE1.md](./TELEMETRY_STREAMING_PHASE1.md).**
 2. ✅ **Bindings** (shipped): napi-rs / PyO3 / Panama + `IStreamService` in TS/Python/Java.
 3. ✅/◻ `KafkaSink` **shipped** (core, librdkafka), and the host-language sink-override hook
-   **shipped** too (`SinkConfig::Callback` + `ggsl_set_sink_callback`, used today to drive the
+   **shipped** too (`SinkConfig::Callback` + `esl_set_sink_callback`, used today to drive the
    durable CloudWatch metrics buffer — see `docs/CLOUDWATCH_DURABLE_METRICS.md`) — though no one has
    used it yet for a Java `kafka-clients` override specifically. `ICredentialProvider` (File +
    SecretsManager-via-SDK refresh) remains **not implemented** — Kinesis/Kafka creds still come from

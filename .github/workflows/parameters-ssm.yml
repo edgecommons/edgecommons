@@ -8,17 +8,17 @@ on:
     branches: ["main"]
     paths:
       - "libs/rust/src/parameters/**"
-      - "libs/python/ggcommons/parameters/**"
+      - "libs/python/edgecommons/parameters/**"
       - "libs/ts/src/parameters/**"
-      - "libs/java/src/main/java/com/mbreissi/ggcommons/parameters/**"
+      - "libs/java/src/main/java/com/mbreissi/edgecommons/parameters/**"
       - "libs/*/**/test*parameters*"
       - ".github/workflows/parameters-ssm.yml"
   pull_request:
     paths:
       - "libs/rust/src/parameters/**"
-      - "libs/python/ggcommons/parameters/**"
+      - "libs/python/edgecommons/parameters/**"
       - "libs/ts/src/parameters/**"
-      - "libs/java/src/main/java/com/mbreissi/ggcommons/parameters/**"
+      - "libs/java/src/main/java/com/mbreissi/edgecommons/parameters/**"
       - "libs/*/**/test*parameters*"
       - ".github/workflows/parameters-ssm.yml"
 
@@ -40,7 +40,7 @@ jobs:
           - 4566:4566
     env:
       # Endpoint + static creds so every lib's default credential chain targets the emulator.
-      GGCOMMONS_SSM_ENDPOINT: http://localhost:4566
+      EDGECOMMONS_SSM_ENDPOINT: http://localhost:4566
       AWS_ACCESS_KEY_ID: test
       AWS_SECRET_ACCESS_KEY: test
       AWS_DEFAULT_REGION: us-east-1
@@ -90,4 +90,4 @@ jobs:
         run: mvn -B -ntp test -Dtest=AwsSsmSourceFlociTest -Dsurefire.failIfNoSpecifiedTests=false
         working-directory: libs/java
         env:
-          GGCOMMONS_IT_SSM: "1"
+          EDGECOMMONS_IT_SSM: "1"

@@ -1,10 +1,10 @@
 //! Integration tests for the standalone MQTT messaging path.
 //!
 //! These exercise the real `rumqttc` provider against a live broker and are
-//! therefore **gated**: they no-op unless `GGCOMMONS_IT_MQTT=1` is set, so the
+//! therefore **gated**: they no-op unless `EDGECOMMONS_IT_MQTT=1` is set, so the
 //! default `cargo test` run stays green on machines without a broker. They target
-//! `localhost:1883` (override host/port via `GGCOMMONS_IT_MQTT_HOST` /
-//! `GGCOMMONS_IT_MQTT_PORT`).
+//! `localhost:1883` (override host/port via `EDGECOMMONS_IT_MQTT_HOST` /
+//! `EDGECOMMONS_IT_MQTT_PORT`).
 //!
 //! Each test logs what it does (including message contents) via `tracing` to
 //! **both** a file and the console:
@@ -15,9 +15,9 @@
 //!   passing tests).
 //!
 //! ```bash
-//! GGCOMMONS_IT_MQTT=1 cargo test --test messaging_mqtt -- --nocapture --test-threads=1
+//! EDGECOMMONS_IT_MQTT=1 cargo test --test messaging_mqtt -- --nocapture --test-threads=1
 //! ```
-//! Adjust verbosity with `RUST_LOG` (default `info,ggcommons=debug`).
+//! Adjust verbosity with `RUST_LOG` (default `info,edgecommons=debug`).
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -28,20 +28,20 @@ use tracing::info;
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 use uuid::Uuid;
 
-use ggcommons::messaging::config::MessagingConfig;
-use ggcommons::messaging::message::{Message, MessageBuilder};
-use ggcommons::messaging::message_handler;
-use ggcommons::messaging::provider::mqtt::MqttProvider;
-use ggcommons::messaging::service::{DefaultMessagingService, MessagingService};
+use edgecommons::messaging::config::MessagingConfig;
+use edgecommons::messaging::message::{Message, MessageBuilder};
+use edgecommons::messaging::message_handler;
+use edgecommons::messaging::provider::mqtt::MqttProvider;
+use edgecommons::messaging::service::{DefaultMessagingService, MessagingService};
 
 const MAX_MESSAGES: usize = 32;
 
 /// Returns `true` (and prints a skip notice) when the broker-backed tests are disabled.
 fn skipped() -> bool {
-    if std::env::var("GGCOMMONS_IT_MQTT").is_ok() {
+    if std::env::var("EDGECOMMONS_IT_MQTT").is_ok() {
         return false;
     }
-    eprintln!("skipping MQTT integration test (set GGCOMMONS_IT_MQTT=1 to enable)");
+    eprintln!("skipping MQTT integration test (set EDGECOMMONS_IT_MQTT=1 to enable)");
     true
 }
 
@@ -61,7 +61,7 @@ fn init_logs() {
         let _ = std::fs::remove_file(format!("{LOG_DIR}/{LOG_FILE}"));
 
         let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,ggcommons=debug"));
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,edgecommons=debug"));
 
         // Synchronous, non-rolling file appender (no background-flush guard to keep
         // alive) tee'd with the console test writer.
@@ -83,8 +83,8 @@ fn as_json(m: &Message) -> String {
 
 /// Build a local-only messaging config pointing at the test broker.
 fn local_config(client_id: &str) -> MessagingConfig {
-    let host = std::env::var("GGCOMMONS_IT_MQTT_HOST").unwrap_or_else(|_| "localhost".to_string());
-    let port = std::env::var("GGCOMMONS_IT_MQTT_PORT").unwrap_or_else(|_| "1883".to_string());
+    let host = std::env::var("EDGECOMMONS_IT_MQTT_HOST").unwrap_or_else(|_| "localhost".to_string());
+    let port = std::env::var("EDGECOMMONS_IT_MQTT_PORT").unwrap_or_else(|_| "1883".to_string());
     let json = format!(
         r#"{{ "messaging": {{ "local": {{ "host": "{host}", "port": {port}, "clientId": "{client_id}" }} }} }}"#
     );

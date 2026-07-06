@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 
 import { validate } from "../src/config/validation";
-import { GgError } from "../src/errors";
+import { EdgeCommonsError } from "../src/errors";
 
 describe("config validation", () => {
   it("accepts a valid document", () => {
@@ -22,8 +22,8 @@ describe("config validation", () => {
       validate({});
       throw new Error("expected validation to throw");
     } catch (e) {
-      expect(e).toBeInstanceOf(GgError);
-      expect((e as GgError).kind).toBe("Validation");
+      expect(e).toBeInstanceOf(EdgeCommonsError);
+      expect((e as EdgeCommonsError).kind).toBe("Validation");
     }
   });
 
@@ -32,8 +32,8 @@ describe("config validation", () => {
       validate({ metricEmission: { target: "nope" } });
       throw new Error("expected validation to throw");
     } catch (e) {
-      expect(e).toBeInstanceOf(GgError);
-      expect((e as GgError).kind).toBe("Validation");
+      expect(e).toBeInstanceOf(EdgeCommonsError);
+      expect((e as EdgeCommonsError).kind).toBe("Validation");
     }
   });
 
@@ -55,12 +55,12 @@ describe("config validation", () => {
 
   it("rejects the removed drift knobs (heartbeat.targets / metricEmission.targetConfig.topic)", () => {
     // The UNS hard cut removed these from the schema; stale configs must fail with a precise error.
-    expect(() => validate({ component: {}, heartbeat: { targets: [{ type: "metric" }] } })).toThrow(GgError);
-    expect(() => validate({ component: {}, metricEmission: { targetConfig: { topic: "x/y" } } })).toThrow(GgError);
+    expect(() => validate({ component: {}, heartbeat: { targets: [{ type: "metric" }] } })).toThrow(EdgeCommonsError);
+    expect(() => validate({ component: {}, metricEmission: { targetConfig: { topic: "x/y" } } })).toThrow(EdgeCommonsError);
   });
 
   it("rejects an lwt without a topic and an out-of-range lwt qos", () => {
-    expect(() => validate({ component: {}, messaging: { lwt: { payload: "x" } } })).toThrow(GgError);
-    expect(() => validate({ component: {}, messaging: { lwt: { topic: "t", qos: 2 } } })).toThrow(GgError);
+    expect(() => validate({ component: {}, messaging: { lwt: { payload: "x" } } })).toThrow(EdgeCommonsError);
+    expect(() => validate({ component: {}, messaging: { lwt: { topic: "t", qos: 2 } } })).toThrow(EdgeCommonsError);
   });
 });

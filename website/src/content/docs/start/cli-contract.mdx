@@ -1,13 +1,13 @@
 ---
 title: CLI contract
-description: The command-line contract shared by all four GGCommons SDKs — config, platform, transport, and thing flags, with per-platform defaults.
+description: The command-line contract shared by all four EdgeCommons SDKs — config, platform, transport, and thing flags, with per-platform defaults.
 sidebar:
   order: 6
 ---
 
 import { Tabs, TabItem, Aside } from "@astrojs/starlight/components";
 
-Every GGCommons component selects two things at startup: a **platform** (`--platform` — where it
+Every EdgeCommons component selects two things at startup: a **platform** (`--platform` — where it
 runs) and a messaging **transport** (`--transport` — how it talks). A pure precedence *resolver*
 maps the command-line flags plus the process environment to one resolved profile, so the same
 business logic runs unchanged on Greengrass (IPC), a host or Docker container (dual-MQTT), or
@@ -40,7 +40,7 @@ When `--config` is omitted entirely, the source comes from the resolved platform
 | Source | Extra args | Default when args omitted |
 |--------|-----------|---------------------------|
 | `FILE` | `[path]` | `config.json` |
-| `CONFIGMAP` | `[mountDir] [key]` | `/etc/ggcommons` + `config.json` |
+| `CONFIGMAP` | `[mountDir] [key]` | `/etc/edgecommons` + `config.json` |
 | `ENV` | `[var]` | env var `CONFIG` |
 | `GG_CONFIG` | `[component] [key]` | key `ComponentConfig` |
 | `SHADOW` | `[name]` | the component's shadow |
@@ -87,13 +87,13 @@ Takes the full string value. When `--thing` is absent, the identity resolves in 
 
 ```text
 explicit -t/--thing
-  ▸ (KUBERNETES only) GGCOMMONS_THING_NAME ▸ POD_NAME
+  ▸ (KUBERNETES only) EDGECOMMONS_THING_NAME ▸ POD_NAME
   ▸ AWS_IOT_THING_NAME
   ▸ "NOT_GREENGRASS"
 ```
 
 Empty environment values count as absent, and the Kubernetes Downward-API tier
-(`GGCOMMONS_THING_NAME` ▸ `POD_NAME`) only applies when the platform is `KUBERNETES`. The resolver
+(`EDGECOMMONS_THING_NAME` ▸ `POD_NAME`) only applies when the platform is `KUBERNETES`. The resolver
 returns the raw value; sanitization happens later, when the name is interpolated into templates such
 as `{ThingName}`.
 
@@ -131,12 +131,12 @@ process arguments and read the resolved services back off the built instance.
 <TabItem label="Java">
 
 ```java
-import com.mbreissi.ggcommons.GGCommons;
-import com.mbreissi.ggcommons.GGCommonsBuilder;
+import com.mbreissi.edgecommons.EdgeCommons;
+import com.mbreissi.edgecommons.EdgeCommonsBuilder;
 
 public final class App {
     public static void main(String[] args) throws Exception {
-        GGCommons gg = GGCommonsBuilder.create("com.example.MyComponent")
+        EdgeCommons gg = EdgeCommonsBuilder.create("com.example.MyComponent")
                 .withArgs(args)   // parses --platform/--transport/-c/-t
                 .build();
 
@@ -152,10 +152,10 @@ public final class App {
 
 ```python
 import sys
-from ggcommons.ggcommons_builder import GGCommonsBuilder
+from edgecommons.edgecommons_builder import EdgeCommonsBuilder
 
 gg = (
-    GGCommonsBuilder.create("com.example.MyComponent")
+    EdgeCommonsBuilder.create("com.example.MyComponent")
     .with_args(sys.argv[1:])   # args WITHOUT the program name
     .build()
 )
@@ -168,14 +168,14 @@ messaging = gg.get_messaging()
 <TabItem label="Rust">
 
 ```rust
-use ggcommons::GgCommonsBuilder;
+use edgecommons::EdgeCommonsBuilder;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Rust takes the FULL argv, including the program name at index 0.
     let argv: Vec<String> = std::env::args().collect();
 
-    let gg = GgCommonsBuilder::new("com.example.MyComponent")
+    let gg = EdgeCommonsBuilder::new("com.example.MyComponent")
         .args(argv)
         .build()
         .await?;
@@ -191,10 +191,10 @@ async fn main() -> anyhow::Result<()> {
 <TabItem label="TypeScript">
 
 ```typescript
-import { GGCommonsBuilder } from "@edgecommons/ggcommons";
+import { EdgeCommonsBuilder } from "@edgecommons/edgecommons";
 
 // Supply argv WITHOUT the node/script prefix (process.argv.slice(2)).
-const gg = await new GGCommonsBuilder("com.example.MyComponent")
+const gg = await new EdgeCommonsBuilder("com.example.MyComponent")
   .args(process.argv.slice(2))
   .build();
 
@@ -284,7 +284,7 @@ java --enable-native-access=ALL-UNNAMED -jar target/my-component.jar \
 
 # KUBERNETES — transport defaults to MQTT, config to CONFIGMAP (the mounted
 # ConfigMap is both component and messaging config), identity from the
-# Downward API (GGCOMMONS_THING_NAME ▸ POD_NAME). Auto-detected in-cluster.
+# Downward API (EDGECOMMONS_THING_NAME ▸ POD_NAME). Auto-detected in-cluster.
 java --enable-native-access=ALL-UNNAMED -jar target/my-component.jar \
   --platform KUBERNETES
 ```
@@ -353,7 +353,7 @@ only if you inspect the parsed args directly rather than just reading services o
 - **Metric-log filename.** The default local metric-log path is `./logs/{ComponentFullName}.metric.log`
   in Java, Rust, and TypeScript, but `./logs/{ComponentFullName}_metric.log` (underscore) in Python —
   each library matches its own default filename suffix.
-- **Public parser entry point.** Java `GGCommons.processArgs`, Rust `cli::parse_from`, and TS
+- **Public parser entry point.** Java `EdgeCommons.processArgs`, Rust `cli::parse_from`, and TS
   `parseArgs` are public; Python's `_process_args` is private — the public Python path is the builder
   (`with_args`) only.
 

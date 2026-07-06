@@ -6,8 +6,8 @@ Parity with the Java HeartbeatSchedulingTest.
 """
 import time
 
-from ggcommons.config.heartbeat_config import HeartbeatConfiguration
-from ggcommons.heartbeat.enhanced_heartbeat import EnhancedHeartbeat
+from edgecommons.config.heartbeat_config import HeartbeatConfiguration
+from edgecommons.heartbeat.enhanced_heartbeat import EnhancedHeartbeat
 
 
 class _FakeConfig:
@@ -18,7 +18,7 @@ class _FakeConfig:
         return HeartbeatConfiguration(
             {
                 "intervalSecs": self.interval_secs,
-                "targets": [{"type": "metric"}],
+                "destination": "local",
                 "measures": {"cpu": True, "memory": True},
             }
         )

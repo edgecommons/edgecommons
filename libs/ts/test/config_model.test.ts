@@ -33,7 +33,7 @@ describe("Config.fromValue", () => {
       const mc = Config.fromValue("c", "t", {}).parsed.metricEmission;
       expect(mc.target()).toBe("log");
       expect(mc.explicitTarget()).toBeUndefined();
-      expect(mc.namespace()).toBe("ggcommons");
+      expect(mc.namespace()).toBe("edgecommons");
       expect(mc.destination()).toBe("ipc");
       expect(mc.intervalSecs()).toBe(5);
       expect(mc.logFileName()).toContain("{ComponentFullName}");
@@ -141,6 +141,13 @@ describe("Config.fromValue", () => {
       expect(cfg.messagingRequestTimeoutMs()).toBe(30_000);
     });
 
+    it("uses component.token when configured so PascalCase component names keep lower-kebab UNS tokens", () => {
+      const cfg = Config.fromValue("com.mbreissi.edgecommons.OpcUaAdapter", "thing-7", {
+        component: { token: "opcua-adapter" },
+      });
+      expect(cfg.componentIdentity.component).toBe("opcua-adapter");
+    });
+
     it("resolves a multi-level hierarchy with values from the identity object", () => {
       const cfg = Config.fromValue("com.example.C", "gw-01", {
         hierarchy: { levels: ["site", "zone", "device"] },
@@ -198,7 +205,8 @@ describe("Config.fromValue", () => {
       expect(() => Config.fromValue("c", "t", { identity: "nope" })).toThrow(/'identity' must be an object/);
       // Missing thing name / component name.
       expect(() => Config.fromValue("c", "", {})).toThrow(/resolved thing name/);
-      expect(() => Config.fromValue("", "t", {})).toThrow(/component short name/);
+      expect(() => Config.fromValue("", "t", {})).toThrow(/component name/);
+      expect(() => Config.fromValue("c", "t", { component: { token: "" } })).toThrow(/component\.token/);
     });
 
     it("parses messaging.requestTimeoutSeconds (0 = disabled; negative/malformed -> default)", () => {

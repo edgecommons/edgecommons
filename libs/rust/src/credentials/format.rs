@@ -12,9 +12,9 @@
 //! ## Semantics & Architecture
 //! - `format = 1`. `vaultId` is a stable per-vault UUID, bound into every AAD and the MAC so
 //!   records cannot be copied between vaults.
-//! - **Record AAD** (`record_aad`): `ggcommons-vault/v1|<vaultId>|<name>|<version>` — binds each
+//! - **Record AAD** (`record_aad`): `edgecommons-vault/v1|<vaultId>|<name>|<version>` — binds each
 //!   ciphertext to its identity *and* version (anti-swap, anti in-file rollback of a record).
-//! - **DEK-wrap AAD** (`dek_wrap_aad`): `ggcommons-vault/v1/dek-wrap|<vaultId>`.
+//! - **DEK-wrap AAD** (`dek_wrap_aad`): `edgecommons-vault/v1/dek-wrap|<vaultId>`.
 //! - **MAC input** (`mac_input`): length-prefixed concatenation of the full secret set (raw
 //!   nonce/ciphertext bytes, not base64); see the function for the exact layout. The MAC key is
 //!   `HKDF-SHA256(DEK, salt=vaultId, info="…/mac")`.
@@ -98,12 +98,12 @@ fn default_content_type() -> String {
 
 /// AAD binding a record's ciphertext to its vault, name, and version.
 pub fn record_aad(vault_id: &str, name: &str, version: &str) -> Vec<u8> {
-    format!("ggcommons-vault/v1|{vault_id}|{name}|{version}").into_bytes()
+    format!("edgecommons-vault/v1|{vault_id}|{name}|{version}").into_bytes()
 }
 
 /// AAD binding the wrapped DEK to its vault.
 pub fn dek_wrap_aad(vault_id: &str) -> Vec<u8> {
-    format!("ggcommons-vault/v1/dek-wrap|{vault_id}").into_bytes()
+    format!("edgecommons-vault/v1/dek-wrap|{vault_id}").into_bytes()
 }
 
 /// Build the canonical MAC input over the whole secret set.
@@ -111,7 +111,7 @@ pub fn dek_wrap_aad(vault_id: &str) -> Vec<u8> {
 /// # Semantics
 /// Layout (all integers little-endian; `lp(x)` = `u32_le(len) ‖ x`):
 /// ```text
-/// b"ggcommons-vault/v1/mac"
+/// b"edgecommons-vault/v1/mac"
 ///   ‖ lp(vaultId)
 ///   ‖ u32_le(secret_count)
 ///   ‖ for each secret (BTreeMap order = name byte order):
@@ -133,7 +133,7 @@ pub fn mac_input(
         out.extend_from_slice(bytes);
     }
     let mut out = Vec::with_capacity(256);
-    out.extend_from_slice(b"ggcommons-vault/v1/mac");
+    out.extend_from_slice(b"edgecommons-vault/v1/mac");
     lp(&mut out, vault_id.as_bytes());
     out.extend_from_slice(&(secrets.len() as u32).to_le_bytes());
     for (name, entry) in secrets {

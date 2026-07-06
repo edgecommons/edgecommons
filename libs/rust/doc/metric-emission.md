@@ -12,7 +12,7 @@ Obtain the service from the runtime: `let metrics = gg.metrics();`
 ## Defining and emitting
 
 ```rust
-use ggcommons::metrics::MetricBuilder;
+use edgecommons::metrics::MetricBuilder;
 use std::collections::HashMap;
 
 metrics.define_metric(
@@ -45,7 +45,7 @@ Selected by `metricEmission.target` (default `log`):
 | `prometheus` | **Pull-based**: maintain an in-process registry and serve it as OpenMetrics text at an HTTP `/metrics` endpoint | Requires the `metrics-prometheus` cargo feature; the **default on KUBERNETES**. See below. |
 
 Selecting `cloudwatch` (or `prometheus`) without its feature, or a messaging target without
-a messaging service, is a clear `GgError::Metrics` rather than a silent no-op.
+a messaging service, is a clear `EdgeCommonsError::Metrics` rather than a silent no-op.
 
 ### `prometheus` (pull-based, feature `metrics-prometheus`)
 
@@ -69,7 +69,7 @@ not enabled.
 **Rust feature gating of the KUBERNETES default.** The k8s profile default resolves to `prometheus`
 **only when the `metrics-prometheus` feature is compiled in**. Without it, a k8s build gracefully
 falls back to `log` (with a warning) so a feature-less build still runs; an **explicit**
-`metricEmission.target = "prometheus"` without the feature is a clear `GgError::Metrics` error
+`metricEmission.target = "prometheus"` without the feature is a clear `EdgeCommonsError::Metrics` error
 (matching the `cloudwatch`-without-feature behavior).
 
 **Dimension → label mapping (FR-MET-3, locked for four-way parity).** For each measure in an emitted
@@ -77,7 +77,7 @@ metric, one gauge is registered/updated:
 
 - **gauge name** = `sanitize(lowercase("{namespace}_{measureName}"))` — replace every char not
   matching `[a-z0-9_]` with `_`, and prefix `_` if the result starts with a digit. `namespace`
-  defaults to `ggcommons`.
+  defaults to `edgecommons`.
 - **labels** = the metric's dimensions (`category` = metric name, `coreName`, `component`, plus any
   custom dimensions). Each label **name** is sanitized to `[a-zA-Z_][a-zA-Z0-9_]*` (invalid chars →
   `_`, `_`-prefixed if it starts with a digit; case preserved, so `coreName` stays `coreName`); the

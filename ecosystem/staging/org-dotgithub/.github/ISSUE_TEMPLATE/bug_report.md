@@ -20,7 +20,7 @@ labels: bug
 **Environment**
 
 - Component + version:
-- Library (`ggcommons`) version:
+- Library (`edgecommons`) version:
 - Language: JAVA / PYTHON / RUST / TYPESCRIPT
 - Platform: GREENGRASS / HOST / KUBERNETES
 - OS / runtime:

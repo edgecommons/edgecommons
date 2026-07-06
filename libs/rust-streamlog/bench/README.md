@@ -1,4 +1,4 @@
-# ggstreamlog perf harness
+# edgestreamlog perf harness
 
 Implements the performance plan in `docs/TELEMETRY_STREAMING_PHASE1.md` §15. **There is no
 fixed throughput target** — the goal is per-(target × config) baselines, the

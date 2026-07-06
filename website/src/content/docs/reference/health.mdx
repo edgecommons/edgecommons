@@ -1,6 +1,6 @@
 ---
 title: Health API
-description: Signatures and per-language behavior for the GGCommons health server, readiness state, and Kubernetes liveness/readiness/startup probes.
+description: Signatures and per-language behavior for the EdgeCommons health server, readiness state, and Kubernetes liveness/readiness/startup probes.
 sidebar:
   order: 10
 ---
@@ -42,7 +42,7 @@ still apply.
 ## Configuration
 
 Health lives under the `health` section of the component config (the single schema in
-`schema/ggcommons-config-schema.json`, shared by all four SDKs). Every key is optional; the values
+`schema/edgecommons-config-schema.json`, shared by all four SDKs). Every key is optional; the values
 shown are the defaults.
 
 ```json
@@ -91,7 +91,7 @@ public String  getStartupPath();             // default "/startupz"
 <TabItem label="Python">
 
 ```python
-# libs/python/ggcommons/config/health_config.py
+# libs/python/edgecommons/config/health_config.py
 class HealthConfiguration:
     def __init__(self, health_json: Optional[dict]): ...   # accepts None
 
@@ -183,7 +183,7 @@ gg.setReady(false);   // hold the gate; gg.setReady(true) lifts it
 <TabItem label="Python">
 
 ```python
-# libs/python/ggcommons/health/health_server.py
+# libs/python/edgecommons/health/health_server.py
 class ReadinessState:
     def __init__(self, connected_fn: Callable[[], bool]): ...
 
@@ -261,7 +261,7 @@ public void close();     // idempotent; server.stop(0)
 <TabItem label="Python">
 
 ```python
-# libs/python/ggcommons/health/health_server.py
+# libs/python/edgecommons/health/health_server.py
 class HealthServer:
     def __init__(
         self,
@@ -369,8 +369,8 @@ evaluateHealth(
 
 ## Runtime accessors
 
-In a component you interact with health through the built runtime instance (`GGCommons` /
-`GgCommons`), not the server directly. All four SDKs expose a readiness setter; beyond that the
+In a component you interact with health through the built runtime instance (`EdgeCommons` /
+`EdgeCommons`), not the server directly. All four SDKs expose a readiness setter; beyond that the
 surface is intentionally asymmetric (see [accessor asymmetry](#runtime-accessor-asymmetry)).
 
 <Tabs syncKey="lang">
@@ -403,7 +403,7 @@ gg.set_ready(true);              // lift the gate (connectivity still required)
 while !gg.is_shutting_down() {   // PUBLIC — for cooperative run-loop exit
     // work...
 }
-// There is no shutdown() method: teardown is RAII — drop the GgCommons to stop the
+// There is no shutdown() method: teardown is RAII — drop the EdgeCommons to stop the
 // health server and abort the signal task. Messaging accessor is gg.messaging().
 ```
 
@@ -480,7 +480,7 @@ request handler with no standalone pure function.
 |-----|--------|----------|
 | Java | JDK `com.sun.net.httpserver.HttpServer` on a single daemon thread | `close()` = `server.stop(0)` (idempotent) |
 | Python | stdlib `ThreadingHTTPServer` on a daemon thread | `stop()` joins with a 5s timeout (idempotent) |
-| Rust | hand-rolled `TcpListener` on a dedicated `std::thread`; non-blocking accept polled every 50ms; 2s per-connection read timeout | RAII — dropping `HealthServer` (or `GgCommons`) stops it |
+| Rust | hand-rolled `TcpListener` on a dedicated `std::thread`; non-blocking accept polled every 50ms; 2s per-connection read timeout | RAII — dropping `HealthServer` (or `EdgeCommons`) stops it |
 | TypeScript | node `http.Server` with `server.unref()` so it never keeps the event loop alive | async `stop()` returns a `Promise`; close-after-close is a no-op |
 
 ### Graceful shutdown ordering

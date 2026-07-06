@@ -1,7 +1,7 @@
 {
-  "name": "@edgecommons/ggcommons",
+  "name": "@edgecommons/edgecommons",
   "version": "0.2.0",
-  "description": "GGCommons TypeScript library for AWS IoT Greengrass v2 components: configuration, messaging (GREENGRASS IPC + STANDALONE dual-MQTT), metrics, heartbeat, logging, credentials, parameters, and telemetry streaming — at parity with the Java/Python/Rust implementations.",
+  "description": "EdgeCommons TypeScript library for AWS IoT Greengrass v2 components: configuration, messaging (GREENGRASS IPC + STANDALONE dual-MQTT), metrics, heartbeat, logging, credentials, parameters, and telemetry streaming — at parity with the Java/Python/Rust implementations.",
   "license": "Apache-2.0",
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"
@@ -24,7 +24,7 @@
     "mqtt": "^5"
   },
   "optionalDependencies": {
-    "@mbreissi/ggstreamlog-node": "*",
+    "@edgecommons/streamlog-node": "workspace:*",
     "@aws-sdk/client-kms": "^3.1073.0",
     "@aws-sdk/client-secrets-manager": "^3.1073.0",
     "@aws-sdk/client-ssm": "^3.1073.0",

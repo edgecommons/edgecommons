@@ -26,8 +26,8 @@
 //!
 //! ## Usage Example
 //! ```no_run
-//! # use ggcommons::parameters;
-//! # fn demo(p: &dyn parameters::ParameterService) -> ggcommons::Result<()> {
+//! # use edgecommons::parameters;
+//! # fn demo(p: &dyn parameters::ParameterService) -> edgecommons::Result<()> {
 //! let host = p.get("/myapp/db/host")?;        // offline-first, from the local cache
 //! let pool = p.get_int("/myapp/db/poolSize")?;
 //! # Ok(())
@@ -135,10 +135,10 @@ mod tests {
     struct FailingSource;
     impl ParameterSource for FailingSource {
         fn fetch(&self, _name: &str) -> crate::Result<Option<ParamValue>> {
-            Err(crate::error::GgError::Parameters("offline".into()))
+            Err(crate::error::EdgeCommonsError::Parameters("offline".into()))
         }
         fn fetch_by_path(&self, _path: &str, _recursive: bool) -> crate::Result<Vec<(String, ParamValue)>> {
-            Err(crate::error::GgError::Parameters("offline".into()))
+            Err(crate::error::EdgeCommonsError::Parameters("offline".into()))
         }
         fn source_id(&self) -> &str {
             "failing"

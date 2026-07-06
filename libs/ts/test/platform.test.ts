@@ -34,7 +34,7 @@ import {
 } from "../src/platform";
 import { resolve as resolveTemplate } from "../src/config/template";
 import { Config } from "../src/config/model";
-import { GgError } from "../src/errors";
+import { EdgeCommonsError } from "../src/errors";
 
 const NO_FILES = (): boolean => false;
 const ALL_FILES = (): boolean => true;
@@ -153,21 +153,21 @@ describe("resolveProfile: failures", () => {
     ).toThrow(/IPC transport requires --platform GREENGRASS/);
   });
 
-  it("resolver failures are GgError of kind Cli", () => {
+  it("resolver failures are EdgeCommonsError of kind Cli", () => {
     try {
       resolveProfile({ platform: Platform.HOST, transport: Transport.IPC }, {});
       throw new Error("expected throw");
     } catch (e) {
-      expect(e).toBeInstanceOf(GgError);
-      expect((e as GgError).kind).toBe("Cli");
+      expect(e).toBeInstanceOf(EdgeCommonsError);
+      expect((e as EdgeCommonsError).kind).toBe("Cli");
     }
   });
 });
 
 describe("validate", () => {
   it("rejects IPC on non-Greengrass", () => {
-    expect(() => validate(Platform.HOST, Transport.IPC)).toThrow(GgError);
-    expect(() => validate(Platform.KUBERNETES, Transport.IPC)).toThrow(GgError);
+    expect(() => validate(Platform.HOST, Transport.IPC)).toThrow(EdgeCommonsError);
+    expect(() => validate(Platform.KUBERNETES, Transport.IPC)).toThrow(EdgeCommonsError);
   });
 
   it("accepts legal combos", () => {
@@ -210,19 +210,19 @@ describe("resolveIdentity", () => {
 // ---------- FR-RT-7 / FR-CFG-6: Kubernetes Downward-API identity ----------
 
 describe("resolveIdentity: KUBERNETES Downward-API (FR-RT-7)", () => {
-  it("reads GGCOMMONS_THING_NAME on KUBERNETES", () => {
+  it("reads EDGECOMMONS_THING_NAME on KUBERNETES", () => {
     expect(
       resolveIdentity(undefined, Platform.KUBERNETES, { [ENV_K8S_THING_NAME]: "edge-42" }),
     ).toBe("edge-42");
   });
 
-  it("falls back to POD_NAME on KUBERNETES when GGCOMMONS_THING_NAME is absent", () => {
+  it("falls back to POD_NAME on KUBERNETES when EDGECOMMONS_THING_NAME is absent", () => {
     expect(
       resolveIdentity(undefined, Platform.KUBERNETES, { [ENV_K8S_POD_NAME]: "ggc-pod-abc123" }),
     ).toBe("ggc-pod-abc123");
   });
 
-  it("GGCOMMONS_THING_NAME takes precedence over POD_NAME on KUBERNETES", () => {
+  it("EDGECOMMONS_THING_NAME takes precedence over POD_NAME on KUBERNETES", () => {
     expect(
       resolveIdentity(undefined, Platform.KUBERNETES, {
         [ENV_K8S_THING_NAME]: "annotated-thing",
@@ -277,7 +277,7 @@ describe("resolveIdentity: KUBERNETES Downward-API (FR-RT-7)", () => {
     ).toBe("aws-thing");
   });
 
-  it("the KUBERNETES tier is NOT consulted on other platforms (HOST ignores GGCOMMONS_THING_NAME/POD_NAME)", () => {
+  it("the KUBERNETES tier is NOT consulted on other platforms (HOST ignores EDGECOMMONS_THING_NAME/POD_NAME)", () => {
     // On HOST, the k8s Downward-API vars must be ignored; only AWS_IOT_THING_NAME / -t apply.
     expect(
       resolveIdentity(undefined, Platform.HOST, {

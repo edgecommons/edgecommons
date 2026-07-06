@@ -14,7 +14,7 @@
 //!   delivers only the changed key path, the runtime re-fetches the value and
 //!   forwards the fresh document on the channel.
 //! - `Send + Sync`; async via `async_trait`. Errors map to
-//!   [`crate::error::GgError::Ipc`].
+//!   [`crate::error::EdgeCommonsError::Ipc`].
 //!
 //! ## Status
 //! Implemented and **validated on a live Greengrass core** (non-root): `load` reads

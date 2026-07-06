@@ -1,13 +1,13 @@
 ---
 title: Health & graceful shutdown
-description: Expose Kubernetes liveness, readiness, and startup probes and drain cleanly on SIGTERM across all four GGCommons SDKs.
+description: Expose Kubernetes liveness, readiness, and startup probes and drain cleanly on SIGTERM across all four EdgeCommons SDKs.
 sidebar:
   order: 7
 ---
 
 import { Tabs, TabItem, Aside, LinkCard } from "@astrojs/starlight/components";
 
-GGCommons ships a tiny, dependency-free HTTP/1.1 health server that exposes Kubernetes-style probes,
+EdgeCommons ships a tiny, dependency-free HTTP/1.1 health server that exposes Kubernetes-style probes,
 plus library-owned signal handling that drains your subsystems cleanly on `SIGTERM`. It is **on by
 default only on the KUBERNETES platform** and off everywhere else, so you get correct probe behavior
 in a cluster without writing any HTTP code, and zero overhead on the edge.
@@ -61,7 +61,7 @@ logged and swallowed in all four SDKs — a port clash never crashes your compon
 ## Configuring the endpoint
 
 Health lives under the `health` section of your component config (the single schema in
-`schema/ggcommons-config-schema.json`, shared by all four SDKs). Every key is optional:
+`schema/edgecommons-config-schema.json`, shared by all four SDKs). Every key is optional:
 
 ```json
 {
@@ -94,7 +94,7 @@ the connectivity and shutdown parts of the predicate still apply.
 <TabItem label="Java">
 
 ```java
-// gg is your built GGCommons instance (see the Components guide for construction).
+// gg is your built EdgeCommons instance (see the Components guide for construction).
 gg.setReady(false);                 // hold /readyz at 503 during startup
 
 gg.getMessaging().subscribe("commands/+", handler);
@@ -107,7 +107,7 @@ gg.setReady(true);                  // /readyz can now return 200 (once connecte
 <TabItem label="Python">
 
 ```python
-# gg is your built GGCommons instance (see the Components guide for construction).
+# gg is your built EdgeCommons instance (see the Components guide for construction).
 gg.set_ready(False)                 # hold /readyz at 503 during startup
 
 gg.get_messaging().subscribe("commands/+", handler)
@@ -120,7 +120,7 @@ gg.set_ready(True)                  # /readyz can now return 200 (once connected
 <TabItem label="Rust">
 
 ```rust
-// gg is your built GgCommons instance (see the Components guide for construction).
+// gg is your built EdgeCommons instance (see the Components guide for construction).
 gg.set_ready(false);                // hold /readyz at 503 during startup
 
 gg.messaging()?.subscribe("commands/+", handler).await?;
@@ -133,7 +133,7 @@ gg.set_ready(true);                 // /readyz can now return 200 (once connecte
 <TabItem label="TypeScript">
 
 ```typescript
-// gg is your built GGCommons instance (see the Components guide for construction).
+// gg is your built EdgeCommons instance (see the Components guide for construction).
 gg.setReady(false);                 // hold /readyz at 503 during startup
 
 await gg.messaging().subscribe("commands/+", handler);
@@ -196,7 +196,7 @@ gg.shutdown()
 
 ```rust
 // A tokio signal watcher calls begin_shutdown() on the first signal. There is no explicit
-// shutdown() method on the runtime — teardown is RAII: drop the GgCommons to stop the health
+// shutdown() method on the runtime — teardown is RAII: drop the EdgeCommons to stop the health
 // server and abort the signal task. Use is_shutting_down() to exit your loop cooperatively:
 while !gg.is_shutting_down() {
     do_work().await;
@@ -300,5 +300,5 @@ kubectl rollout status deploy/my-component
 <LinkCard
   title="Deploy to Kubernetes"
   href="/deploy/kubernetes/"
-  description="Run a GGCommons component in a cluster, including the manifests these probes plug into."
+  description="Run a EdgeCommons component in a cluster, including the manifests these probes plug into."
 />

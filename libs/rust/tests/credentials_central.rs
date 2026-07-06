@@ -1,11 +1,11 @@
 //! Central-sync integration test: bootstrap + refresh + rotation from AWS Secrets Manager,
 //! exercised against the local floci emulator (port 4566).
 //!
-//! Gated: no-op unless `GGCOMMONS_IT_SM=1` is set (floci must be running with secretsmanager).
+//! Gated: no-op unless `EDGECOMMONS_IT_SM=1` is set (floci must be running with secretsmanager).
 
 #![cfg(feature = "credentials-aws")]
 
-use ggcommons::credentials::{self, CredentialService, CredentialsConfig};
+use edgecommons::credentials::{self, CredentialService, CredentialsConfig};
 
 /// POST a Secrets Manager JSON request to floci via curl (avoids adding the SDK as a dev-dep).
 fn sm(target: &str, body: &str) {
@@ -33,8 +33,8 @@ fn sm(target: &str, body: &str) {
 
 #[test]
 fn bootstrap_refresh_and_rotation_from_secrets_manager() {
-    if std::env::var("GGCOMMONS_IT_SM").is_err() {
-        eprintln!("skipping Secrets Manager sync test (set GGCOMMONS_IT_SM=1 + run floci)");
+    if std::env::var("EDGECOMMONS_IT_SM").is_err() {
+        eprintln!("skipping Secrets Manager sync test (set EDGECOMMONS_IT_SM=1 + run floci)");
         return;
     }
     // Dummy creds so the AWS SDK signs requests to floci (which ignores them).
@@ -44,7 +44,7 @@ fn bootstrap_refresh_and_rotation_from_secrets_manager() {
         std::env::set_var("AWS_REGION", "us-east-1");
     }
 
-    let name = format!("ggcommons-cred-it-{}", uuid::Uuid::new_v4());
+    let name = format!("edgecommons-cred-it-{}", uuid::Uuid::new_v4());
     sm("secretsmanager.CreateSecret", &format!(r#"{{"Name":"{name}","SecretString":"v1"}}"#));
 
     let dir = std::env::temp_dir().join(format!("ggcred-{}", uuid::Uuid::new_v4()));
@@ -102,8 +102,8 @@ fn floci_out(target: &str, body: &str) -> String {
 
 #[test]
 fn kms_key_provider_round_trip() {
-    if std::env::var("GGCOMMONS_IT_SM").is_err() {
-        eprintln!("skipping KMS key-provider test (set GGCOMMONS_IT_SM=1 + run floci)");
+    if std::env::var("EDGECOMMONS_IT_SM").is_err() {
+        eprintln!("skipping KMS key-provider test (set EDGECOMMONS_IT_SM=1 + run floci)");
         return;
     }
     unsafe {

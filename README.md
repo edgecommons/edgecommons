@@ -1,6 +1,6 @@
-# GGCommons — the Greengrass Commons ecosystem
+# EdgeCommons — the Greengrass Commons ecosystem
 
-GGCommons is a set of **libraries, a scaffolding CLI, and component templates** for building
+EdgeCommons is a set of **libraries, a scaffolding CLI, and component templates** for building
 **AWS IoT Greengrass v2** components. The libraries bundle the cross-cutting concerns every edge
 component needs — **configuration, messaging, metrics, heartbeat, logging, credentials, parameters,
 and telemetry streaming** — behind clean interfaces, so component authors write only business logic.
@@ -48,28 +48,28 @@ HOST → FILE, KUBERNETES → CONFIGMAP), `--platform <PLATFORM>`, `--transport 
 
 | Path | What it is | Stack |
 |------|-----------|-------|
-| `libs/java/` | The **canonical**, most complete library. Maven artifact `com.mbreissi:ggcommons`. | Java 25, Maven |
-| `libs/python/` | The Python port (PyPI `greengrass-commons`). | Python 3.9+, setuptools |
-| `libs/rust/` | The Rust port (crate `ggcommons`). | Rust (edition 2024), Cargo |
-| `libs/ts/` | The TypeScript port (npm `ggcommons`). | TypeScript 5 / Node 18+ |
-| `libs/rust-streamlog/` | Shared **`ggstreamlog`** core: the embedded telemetry-streaming engine. All four languages use it — Rust directly, the others via native bindings (Java/Panama, Python/PyO3, Node/napi-rs in `bindings/`). | Rust, Cargo |
+| `libs/java/` | The **canonical**, most complete library. Maven artifact `com.mbreissi.edgecommons:edgecommons`. | Java 25, Maven |
+| `libs/python/` | The Python port (PyPI `edgecommons`). | Python 3.9+, setuptools |
+| `libs/rust/` | The Rust port (crate `edgecommons`). | Rust (edition 2024), Cargo |
+| `libs/ts/` | The TypeScript port (npm `edgecommons`). | TypeScript 5 / Node 18+ |
+| `libs/rust-streamlog/` | Shared **`edgestreamlog`** core: the embedded telemetry-streaming engine. All four languages use it — Rust directly, the others via native bindings (Java/Panama, Python/PyO3, Node/napi-rs in `bindings/`). | Rust, Cargo |
 
 ### Tooling & shared assets
 
 | Path | What it is |
 |------|-----------|
-| `cli/` | Scaffolding CLI (`ggcommons` / `ggcommons-cli`): generate, validate, build, publish, deploy, and upgrade components. |
-| `schema/` | **Single source of truth** for the config JSON schema (`ggcommons-config-schema.json`) + `sync-schema.{sh,ps1}` that copy it into each library (CI fails on drift). |
+| `cli/` | Scaffolding CLI (`edgecommons` / `edgecommons-cli`): generate, validate, build, publish, deploy, and upgrade components. |
+| `schema/` | **Single source of truth** for the config JSON schema (`edgecommons-config-schema.json`) + `sync-schema.{sh,ps1}` that copy it into each library (CI fails on drift). |
 | `test-infra/` | Shared integration-test infra: EMQX broker (`compose.yaml`, plaintext + mutual-TLS), TLS cert generation, and the cross-language **interop** harness (`interop/`). |
 | `vault-test-vectors/` | Shared credentials/vault encryption conformance vectors used by all four languages. |
 | `uns-test-vectors/` | Shared Unified-Namespace conformance vectors (topics + golden envelopes) used by all four languages and the interop UNS suite. |
-| `docs/` | Cross-language design docs: `CREDENTIALS.md`, `PARAMETERS.md`, `TELEMETRY_STREAMING*.md`, `GGCOMMONS_RUST_PORT.md`, `SOUTHBOUND.md`, and the platform/UNS set under `docs/platform/` (`DESIGN-uns.md`, `UNS-CANONICAL-DESIGN.md`, …). |
+| `docs/` | Cross-language design docs: `CREDENTIALS.md`, `PARAMETERS.md`, `TELEMETRY_STREAMING*.md`, `EDGECOMMONS_RUST_PORT.md`, `SOUTHBOUND.md`, and the platform/UNS set under `docs/platform/` (`DESIGN-uns.md`, `UNS-CANONICAL-DESIGN.md`, …). |
 
 ### Component templates & examples
 
 | Path | What it is |
 |------|-----------|
-| `templates/{java,python,rust,typescript}/` | Minimal **manifest-driven** starting templates the CLI copies (each ships a `ggcommons-template.json` declaring placeholder substitutions + file renames). |
+| `templates/{java,python,rust,typescript}/` | Minimal **manifest-driven** starting templates the CLI copies (each ships a `edgecommons-template.json` declaring placeholder substitutions + file renames). |
 | `examples/{java,python,rust,ts}/` | Worked "best-practice" example components (skeletons) demonstrating each library. |
 
 ## How the pieces fit together
@@ -92,8 +92,8 @@ Build a new component with the CLI (see `cli/README.md` for the full reference):
 
 ```bash
 pipx install ./cli                           # or: python -m pip install ./cli
-ggcommons doctor                             # check prerequisites (git, gdk, cargo, mvn, python3, aws)
-ggcommons create-component -n com.example.MyComponent -l PYTHON   # JAVA|PYTHON|RUST|TYPESCRIPT
+edgecommons doctor                             # check prerequisites (git, gdk, cargo, mvn, python3, aws)
+edgecommons create-component -n com.example.MyComponent -l PYTHON   # JAVA|PYTHON|RUST|TYPESCRIPT
 ```
 
 Run a component locally on a bare **HOST** against a local MQTT broker:
@@ -136,7 +136,7 @@ and `recipe.yaml`.
 - **parameters** (`gg.parameters()`) — offline-first externalized config (env / mountedDir / AWS SSM),
   using the credentials vault as an encrypted cache. See `docs/PARAMETERS.md`.
 - **streaming** (`gg.streams()`) — high-rate telemetry streaming with an embedded durable (or
-  in-memory) buffer that drains to Kinesis/Kafka, backed by the shared `ggstreamlog` core. See `docs/TELEMETRY_STREAMING.md`.
+  in-memory) buffer that drains to Kinesis/Kafka, backed by the shared `edgestreamlog` core. See `docs/TELEMETRY_STREAMING.md`.
 
 The newer subsystems (credentials, parameters, streaming) are **opt-in**: the accessor returns
 nothing unless the matching config section is present (and, in Rust, the matching cargo feature is enabled).

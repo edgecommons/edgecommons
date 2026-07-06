@@ -9,15 +9,15 @@ import logging
 
 import pytest
 
-from ggcommons.config.metric_config import MetricConfiguration
-from ggcommons.metrics.metric_builder import MetricBuilder
-from ggcommons.metrics.targets.metric_log import MetricLog, _parse_size
-from ggcommons.metrics.targets.messaging import Messaging, _is_local_destination
-from ggcommons.metrics.targets.cloudwatch_component import CloudWatchComponent
-from ggcommons.metrics.targets.emf_helper import build_metric_data_emf, get_metrics_metadata_emf
-from ggcommons.messaging.identity import HierEntry, MessageIdentity
-import ggcommons.metrics.targets.messaging as messaging_mod
-import ggcommons.metrics.targets.cloudwatch_component as cwc_mod
+from edgecommons.config.metric_config import MetricConfiguration
+from edgecommons.metrics.metric_builder import MetricBuilder
+from edgecommons.metrics.targets.metric_log import MetricLog, _parse_size
+from edgecommons.metrics.targets.messaging import Messaging, _is_local_destination
+from edgecommons.metrics.targets.cloudwatch_component import CloudWatchComponent
+from edgecommons.metrics.targets.emf_helper import build_metric_data_emf, get_metrics_metadata_emf
+from edgecommons.messaging.identity import HierEntry, MessageIdentity
+import edgecommons.metrics.targets.messaging as messaging_mod
+import edgecommons.metrics.targets.cloudwatch_component as cwc_mod
 
 
 class FakeConfigManager:
@@ -121,7 +121,7 @@ class TestEmfHelper:
             .add_measure("v", "Count", 60)
             .build()
         )
-        # builder injects "GGCommons/Metrics" namespace by default, so use a metric without one
+        # builder injects "EdgeCommons/Metrics" namespace by default, so use a metric without one
         metric.namespace = None
         meta = get_metrics_metadata_emf(mc, metric)
         assert meta["Namespace"] == "Default/NS"

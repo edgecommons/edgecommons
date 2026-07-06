@@ -12,7 +12,7 @@
  * ({@link SampleOptions}) covering `quality`/`qualityRaw`/`sourceTs`/`serverTs` in one
  * unambiguous call; {@link SignalUpdateBuilder.addSamples} remains the batch/coalesced path.
  */
-import { GgError } from "../errors";
+import { EdgeCommonsError } from "../errors";
 import type { Channel } from "./channel";
 import type { Quality } from "./quality";
 
@@ -181,12 +181,12 @@ export class SignalUpdateBuilder {
   /**
    * Builds and publishes through the originating facade.
    *
-   * @throws GgError (kind `Validation`) when this builder was created detached (no facade) —
+   * @throws EdgeCommonsError (kind `Validation`) when this builder was created detached (no facade) —
    *                 use {@link build} + `DataFacade.publish(update)` instead
    */
   async publish(): Promise<void> {
     if (!this.publisher) {
-      throw GgError.validation(
+      throw EdgeCommonsError.validation(
         "this SignalUpdateBuilder is detached - call build() and pass it to DataFacade.publish(update)",
       );
     }

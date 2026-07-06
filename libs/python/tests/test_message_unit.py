@@ -3,8 +3,8 @@ import json
 
 import pytest
 
-from ggcommons.messaging.message import Message, MessageHeader, MessageTags
-from ggcommons.messaging.message_builder import MessageBuilder
+from edgecommons.messaging.message import Message, MessageHeader, MessageTags
+from edgecommons.messaging.message_builder import MessageBuilder
 
 
 class TestMessageHeader:

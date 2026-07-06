@@ -29,15 +29,15 @@ from pathlib import Path
 
 import pytest
 
-from ggcommons.command_inbox import CommandException, CommandInbox
-from ggcommons.messaging.identity import HierEntry, MessageIdentity
-from ggcommons.messaging.message import Message
-from ggcommons.messaging.message_builder import MessageBuilder
-from ggcommons.messaging.messaging_client import MessagingClient
-from ggcommons.uns import UnsValidationError
+from edgecommons.command_inbox import CommandException, CommandInbox
+from edgecommons.messaging.identity import HierEntry, MessageIdentity
+from edgecommons.messaging.message import Message
+from edgecommons.messaging.message_builder import MessageBuilder
+from edgecommons.messaging.messaging_client import MessagingClient
+from edgecommons.uns import UnsValidationError
 
 INBOX_FILTER = "ecv1/test-thing/TestComponent/main/cmd/#"
-REPLY_TO = "ggcommons/reply-test-1"
+REPLY_TO = "edgecommons/reply-test-1"
 
 
 class FakeConfig:

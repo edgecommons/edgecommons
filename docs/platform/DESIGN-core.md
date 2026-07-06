@@ -12,7 +12,7 @@
 ## 1. Today: one overloaded axis
 
 `ParsedCommandLine.Mode ∈ {GREENGRASS, STANDALONE}` (`ParsedCommandLine.java:16`) is parsed from
-`-m/--mode` (`GGCommons.java:384-405`) and consumed at exactly one runtime branch — the transport
+`-m/--mode` (`EdgeCommons.java:384-405`) and consumed at exactly one runtime branch — the transport
 switch in the messaging client constructor (`MessagingClient.java:42-61`):
 
 ```
@@ -24,7 +24,7 @@ That single enum silently encodes **three** separable concerns:
 
 1. **transport** — IPC vs dual-MQTT (the only thing the runtime actually branches on);
 2. **default config provider** — there is *no* mode→provider mapping today; the default is the
-   library-wide `GG_CONFIG` whenever `-c` is omitted (`GGCommons.java:380`), even under STANDALONE;
+   library-wide `GG_CONFIG` whenever `-c` is omitted (`EdgeCommons.java:380`), even under STANDALONE;
 3. **platform** — "on a Nucleus" vs "everywhere else"; **purely implicit**, no code represents it.
 
 IPC is **hard-locked to the Nucleus**: the IPC provider talks the Greengrass IPC protocol over the
@@ -121,10 +121,10 @@ exist:
 
 | Lang | Insert between | Transport injection | Default-config-provider injection |
 |---|---|---|---|
-| Java | `GGCommons.java:112` (`processArgs`) → `:116` (messaging) | `MessagingClient.java:42` (switch on resolved transport, not `cmdLine.mode`) | `GGCommons.java:378-381` (replace hardcoded `GG_CONFIG`) |
+| Java | `EdgeCommons.java:112` (`processArgs`) → `:116` (messaging) | `MessagingClient.java:42` (switch on resolved transport, not `cmdLine.mode`) | `EdgeCommons.java:378-381` (replace hardcoded `GG_CONFIG`) |
 | Rust | `lib.rs:252` → `:261` (`init_messaging`) | `lib.rs:461-463` (take `&Transport`) | `cli.rs:158-161` |
-| TS | `ggcommons.ts:197` → `:202` | `ggcommons.ts:330-333` (`initMessaging`) | `cli.ts:72` |
-| Python | `_process_args` (`ggcommons.py:73`) → `_init_messaging` (`:78`) | `MessagingClient.init` | `ggcommons.py:139` |
+| TS | `edgecommons.ts:197` → `:202` | `edgecommons.ts:330-333` (`initMessaging`) | `cli.ts:72` |
+| Python | `_process_args` (`edgecommons.py:73`) → `_init_messaging` (`:78`) | `MessagingClient.init` | `edgecommons.py:139` |
 
 Note (FR-RT-6 / R5): the default-provider value is computed *inside* the pure `parseArgs` today, so the
 resolved platform must be threaded into the default step — either parse, then re-default with the
@@ -175,7 +175,7 @@ auto-detect is a default-*picker*, pinnable via `--platform`, never a behavior-*
 thing = -t/--thing                                                   if present
       ▸ platform identity:
           GREENGRASS  -> AWS_IOT_THING_NAME (Nucleus)
-          KUBERNETES  -> Downward-API: annotation `ggcommons.io/thing-name`,
+          KUBERNETES  -> Downward-API: annotation `edgecommons.io/thing-name`,
                          else `${namespace}.${pod-name}` (or `${namespace}.${node}`)
           HOST        -> AWS_IOT_THING_NAME if set
       ▸ library fallback  ("NOT_GREENGRASS" today — `ConfigManagerFactory.java:91`, Rust mirror `lib.rs:254-256`)
@@ -186,12 +186,12 @@ The resolved value passes the existing template sanitizer (`ConfigManager.saniti
 **labels/annotations** are exposable only via a downwardAPI **volume** (whose items use `fieldRef` for
 `metadata.*`), **not** via `env.valueFrom.fieldRef`; conversely `spec.nodeName`/`status.podIP` are
 available **only** as env `fieldRef`, never in the volume. The chart therefore mounts a downwardAPI volume
-for the `ggcommons.io/thing-name` annotation + namespace/pod-name and uses env `fieldRef` for node name
+for the `edgecommons.io/thing-name` annotation + namespace/pod-name and uses env `fieldRef` for node name
 (see DESIGN-packaging §3).
 
 ## 7. Init order: preserved, with one inserted step
 
-The canonical subsystem init order (Java `GGCommons.init` `:109-149`, mirrored in all four) is
+The canonical subsystem init order (Java `EdgeCommons.init` `:109-149`, mirrored in all four) is
 **unchanged** except for the resolver step inserted before messaging:
 
 ```
@@ -211,12 +211,12 @@ the messaging-config payload, which *is* read before the provider connects (`Mes
 A `transport`/`platform` key inside the main component config document is therefore **advisory/validation
 only**, not authoritative for selection — documented explicitly to avoid a chicken-and-egg trap.
 
-Partial-init cleanup (Python tears down on failed init, `ggcommons.py:108-117`) must extend to the new
+Partial-init cleanup (Python tears down on failed init, `edgecommons.py:108-117`) must extend to the new
 resolver step: a resolver/validate failure must not leak an already-built messaging client.
 
 ## 8. Schema additions (additive; semantics preserved)
 
-The canonical `schema/ggcommons-config-schema.json` top level is strict
+The canonical `schema/edgecommons-config-schema.json` top level is strict
 (`additionalProperties:false, required:["component"]`, `:325-326`). New sections are **added** to
 `properties{}` + `definitions{}` (never renames); the only enum *edit* is appending `"prometheus"`.
 Every change is a **6-file commit** (canonical + 5 synced copies) gated by `schema/sync-schema.sh
@@ -255,7 +255,7 @@ and §5 detector. Unit-test the resolver and detector in isolation. *No call sit
   default), all AWS settings = TES-as-today.
 - `HOST.transport = MQTT`, `HOST.configSource = GG_CONFIG` **(deliberately unchanged)** — today STANDALONE
   does *not* flip the default to FILE (verified: the default is `GG_CONFIG` even under STANDALONE,
-  `GGCommons.java:380`), so to preserve behavior the HOST profile
+  `EdgeCommons.java:380`), so to preserve behavior the HOST profile
   must keep `GG_CONFIG` as the default config source in Phase 0. (Changing it to FILE is a *behavior
   change*, so it is out of Phase 0; **decided for Phase 1** as a labeled change — see §10 / §12 #1.)
 
@@ -276,7 +276,7 @@ new flags reproduce the old selections.
   `resolved.transport` (`MessagingClient.java:42`; Rust `init_messaging` takes `&Transport`; TS
   `initMessaging`; Python `MessagingClient.init`).
 - Default config provider: replace the hardcoded `GG_CONFIG` default with `resolved.configSource`
-  (`GGCommons.java:378-381`; `cli.rs:158-161`; `cli.ts:72`; `ggcommons.py:139`).
+  (`EdgeCommons.java:378-381`; `cli.rs:158-161`; `cli.ts:72`; `edgecommons.py:139`).
 - Identity: route the existing thing-name probe through `resolveIdentity` (no behavior change for
   GREENGRASS/HOST — same env probe).
 - Insert `resolveProfile()` at the documented point before messaging init in each lib.

@@ -6,7 +6,7 @@
  * variable (config error if unset, JSON error if invalid). No hot reload — `watch`
  * returns `undefined` (the environment is fixed for the process lifetime).
  */
-import { GgError } from "../../errors";
+import { EdgeCommonsError } from "../../errors";
 import { ConfigSource, ConfigWatch } from "./index";
 
 /** Loads configuration from an environment variable (default `CONFIG`). */
@@ -16,12 +16,12 @@ export class EnvConfigSource implements ConfigSource {
   async load(): Promise<unknown> {
     const raw = process.env[this.varName];
     if (raw === undefined) {
-      throw GgError.config(`environment variable '${this.varName}' is not set`);
+      throw EdgeCommonsError.config(`environment variable '${this.varName}' is not set`);
     }
     try {
       return JSON.parse(raw);
     } catch (e) {
-      throw GgError.json(
+      throw EdgeCommonsError.json(
         `environment variable '${this.varName}' does not contain valid JSON: ${(e as Error).message}`,
       );
     }

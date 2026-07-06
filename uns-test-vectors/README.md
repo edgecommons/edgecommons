@@ -1,6 +1,6 @@
 # UNS cross-language conformance vectors
 
-These files pin the **normative ggcommons unified-namespace (UNS) grammar** (see
+These files pin the **normative edgecommons unified-namespace (UNS) grammar** (see
 `docs/platform/UNS-CANONICAL-DESIGN.md` §2.2/§4.1 and `docs/platform/DESIGN-uns.md`):
 topic building, topic validation, subscription filters, the reserved-class publish
 guard, and the golden canonical message envelopes. The Java reference implementation

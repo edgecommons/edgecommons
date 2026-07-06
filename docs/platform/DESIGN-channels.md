@@ -39,7 +39,7 @@ The skeleton of all three already exists. The work is (a) **decoupling channel 2
 
 ## Proposed design — library level
 
-### Config schema (`schema/ggcommons-config-schema.json` → `sync-schema`)
+### Config schema (`schema/edgecommons-config-schema.json` → `sync-schema`)
 - **Add `messaging.northbound`** (a `$ref` to the existing generic `mqttBroker` definition). Keep **`messaging.iotCore` as a back-compat alias** — loaders treat `iotCore` as `northbound` when `northbound` is absent. (Fuller option: `messaging.northbound[]` as an array, for multiple northbound brokers — e.g. cloud + on-prem historian.)
 - **Generalize `mqttBroker`**: it's already generic (`host`/`endpoint`/`port`/`clientId`/`credentials`). Accept `host` **or** `endpoint` interchangeably, and document that the northbound broker supports the same auth options as local (plaintext / username-password / server-TLS / mutual-TLS) — i.e. **drop the IoT-Core-only "must be `ssl://` + mutual TLS" assumption**; key TLS on `caPath` exactly like local.
 - **Extend the `destination` enum** in `metricEmission.targetConfig.destination` and `heartbeat…destination` to include `"northbound"` (alias of `iotcore`/`iot_core`).

@@ -1,5 +1,5 @@
 {
-  "schema": "ggsl-loadgen/1",
+  "schema": "esl-loadgen/1",
   "scenario": "S1",
   "target_name": "local",
   "git_sha": "dev",
@@ -16,7 +16,7 @@
     "on_full": "DropOldest",
     "sink": "instant",
     "batch_records": 500,
-    "path": "C:/Users/breis/AppData/Local/Temp/ggsl-run-memory",
+    "path": "C:/Users/breis/AppData/Local/Temp/esl-run-memory",
     "store": "Memory"
   },
   "env": {

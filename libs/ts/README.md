@@ -1,4 +1,4 @@
-# ggcommons (TypeScript)
+# edgecommons (TypeScript)
 
 A TypeScript implementation of the Greengrass Commons library — a 4th implementation
 alongside Java (canonical), Python, and Rust. It bundles the cross-cutting concerns
@@ -13,7 +13,7 @@ same CLI contract, the same subsystem boundaries, the same on-wire message envel
 
 | Area | Module | Notes |
 |------|--------|-------|
-| Lifecycle | `src/ggcommons.ts` | `GGCommonsBuilder` / `GGCommons` — parse args, init messaging, load+validate config, init logging/metrics/heartbeat, start the health endpoint, wire hot-reload + SIGTERM/SIGINT. `setReady(bool)` gates `/readyz`; `close()` releases resources (TS has no RAII). |
+| Lifecycle | `src/edgecommons.ts` | `EdgeCommonsBuilder` / `EdgeCommons` — parse args, init messaging, load+validate config, init logging/metrics/heartbeat, start the health endpoint, wire hot-reload + SIGTERM/SIGINT. `setReady(bool)` gates `/readyz`; `close()` releases resources (TS has no RAII). |
 | CLI contract | `src/cli.ts` | `-c/--config` (FILE/ENV/GG_CONFIG/SHADOW/CONFIG_COMPONENT), `--platform` (GREENGRASS/HOST/KUBERNETES/auto), `--transport` (IPC/MQTT), `-t/--thing`. |
 | Config | `src/config/` | Typed model + defaulting accessors, template substitution (sanitized), embedded JSON schema + `ajv` validation, all 5 sources, hot reload. |
 | Messaging | `src/messaging/` | Transport/service split: `MessagingProvider` (`StandaloneMqttProvider` dual-broker, `IpcMessagingProvider` Greengrass IPC) + `DefaultMessagingService` (envelope, dispatch, request/reply). |
@@ -25,14 +25,14 @@ same CLI contract, the same subsystem boundaries, the same on-wire message envel
 | Message | `src/message.ts` | The cross-language `Message` envelope + `MessageBuilder`. |
 | Credentials | `src/credentials/` | `gg.credentials()` — encrypted local vault + key providers (File/KMS/SecretsManager); opt-in (undefined unless a `credentials` config section is present). |
 | Parameters | `src/parameters/` | `gg.parameters()` — offline-first externalized config (env / mountedDir / AWS SSM); opt-in. |
-| Streaming | `src/streaming/` | `gg.streams()` — telemetry streaming to Kinesis/Kafka via the shared `ggstreamlog` core (napi-rs native binding); opt-in. |
+| Streaming | `src/streaming/` | `gg.streams()` — telemetry streaming to Kinesis/Kafka via the shared `edgestreamlog` core (napi-rs native binding); opt-in. |
 
 ## Quick start
 
 ```ts
-import { GGCommonsBuilder, MetricBuilder, MessageBuilder, Qos } from "ggcommons";
+import { EdgeCommonsBuilder, MetricBuilder, MessageBuilder, Qos } from "edgecommons";
 
-const gg = await new GGCommonsBuilder("com.example.MyComponent")
+const gg = await new EdgeCommonsBuilder("com.example.MyComponent")
   .args(process.argv.slice(2))
   .build();
 
@@ -94,7 +94,7 @@ KUBERNETES | auto`, default `auto`, which auto-detects from the environment) and
 - **GREENGRASS IPC, on a live nucleus:** `IpcProvider` deployed as a component on a
   real AWS IoT Greengrass v2 nucleus (`deploy/`, `src/ipc_verify.ts`) confirmed
   connect + request/reply + raw over IPC, **plus cross-language Java→TS** (decoding
-  the heartbeat envelope the already-deployed Java ggcommons component publishes over
+  the heartbeat envelope the already-deployed Java edgecommons component publishes over
   IPC). See `deploy/README.md` to reproduce.
 
 ## Cross-language parity

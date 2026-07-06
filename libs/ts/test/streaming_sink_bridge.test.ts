@@ -1,6 +1,6 @@
 /**
  * Low-level tests for the napi host-callback sink bridge (`registerSinkCallback` /
- * `resolveSinkOutcome`) over the REAL `ggstreamlog` native binding. These exercise the export
+ * `resolveSinkOutcome`) over the REAL `edgestreamlog` native binding. These exercise the export
  * engine's outcome handling directly — the path the durable CloudWatch target sits on top of —
  * including the `Partial` re-delivery path (which the metrics target itself never emits).
  */
@@ -20,7 +20,7 @@ import { StreamService } from "../src/streaming/service";
 
 let tmpDirs: string[] = [];
 function tmpdir(): string {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), "ggsl-bridge-"));
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "esl-bridge-"));
   tmpDirs.push(d);
   return d;
 }

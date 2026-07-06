@@ -18,15 +18,15 @@ import http.client
 
 import pytest
 
-from ggcommons.config.metric_config import MetricConfiguration
-from ggcommons.metrics.metric_builder import MetricBuilder
-from ggcommons.metrics.metric_emitter import MetricEmitter
-from ggcommons.metrics.targets.prometheus import (
+from edgecommons.config.metric_config import MetricConfiguration
+from edgecommons.metrics.metric_builder import MetricBuilder
+from edgecommons.metrics.metric_emitter import MetricEmitter
+from edgecommons.metrics.targets.prometheus import (
     Prometheus,
     _sanitize_label_name,
     _sanitize_metric_name,
 )
-from ggcommons.platform import Platform
+from edgecommons.platform import Platform
 
 
 class _FakeConfigManager:
@@ -113,7 +113,7 @@ def test_metric_config_port_path_parsed_even_without_prometheus_target():
 # ---------------------------------------------------------------- sanitization (FR-MET-3)
 
 def test_sanitize_metric_name_lowercases_and_replaces_invalid():
-    assert _sanitize_metric_name("ggcommons_RequestCount") == "ggcommons_requestcount"
+    assert _sanitize_metric_name("edgecommons_RequestCount") == "edgecommons_requestcount"
     assert _sanitize_metric_name("My App.metric-name") == "my_app_metric_name"
 
 
@@ -134,11 +134,11 @@ def test_sanitize_label_name_prefixes_leading_digit():
 # ---------------------------------------------------------------- emit + scrape (FR-MET-1/2/3)
 
 def test_emit_updates_registry_and_metrics_endpoint_serves_openmetrics():
-    target = _make_target({"namespace": "ggcommons"})
+    target = _make_target({"namespace": "edgecommons"})
     try:
         metric = (
             MetricBuilder.create("RequestCount")
-            .with_namespace("ggcommons")
+            .with_namespace("edgecommons")
             .with_thing_name("dev-1")
             .with_component_name("com.example.App")
             .add_measure("count", "Count", 1)
@@ -153,8 +153,8 @@ def test_emit_updates_registry_and_metrics_endpoint_serves_openmetrics():
         # Prometheus 3.x rejects a blank content type; the client lib sets a valid one.
         assert content_type is not None and content_type != ""
         assert "text/plain" in content_type
-        # gauge name = sanitize(lower("ggcommons_count"))
-        assert "ggcommons_count" in body
+        # gauge name = sanitize(lower("edgecommons_count"))
+        assert "edgecommons_count" in body
         # latest value
         assert "42.0" in body or "42" in body
         # dimensions become labels (default dims + the custom one)

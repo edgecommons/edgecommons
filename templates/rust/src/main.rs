@@ -1,9 +1,9 @@
 //! # <<COMPONENTNAME>> — entry point
 //!
-//! An AWS IoT Greengrass v2 component built on the `ggcommons` Rust library.
+//! An AWS IoT Greengrass v2 component built on the `edgecommons` Rust library.
 //! Initializes the runtime from the standard CLI contract (`-c`/`--platform`/`--transport`/`-t`),
 //! then hands control to [`app::App`]. The component runs until a shutdown signal
-//! (Ctrl-C / SIGTERM); dropping the [`ggcommons::GgCommons`] runtime then releases
+//! (Ctrl-C / SIGTERM); dropping the [`edgecommons::EdgeCommons`] runtime then releases
 //! all resources (RAII).
 //!
 //! ## Running locally (HOST platform, MQTT transport, against a local MQTT broker)
@@ -16,14 +16,14 @@
 
 mod app;
 
-use ggcommons::prelude::*;
+use edgecommons::prelude::*;
 
 /// The component's full name (matches `recipe.yaml` / `gdk-config.json`).
 const COMPONENT_NAME: &str = "<<COMPONENTFULLNAME>>";
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let gg = GgCommonsBuilder::new(COMPONENT_NAME)
+    let gg = EdgeCommonsBuilder::new(COMPONENT_NAME)
         .args(std::env::args_os())
         .build()
         .await?;

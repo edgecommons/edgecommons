@@ -22,7 +22,7 @@ ComponentConfiguration:
           disk: false
       metricEmission:
         target: "cloudwatch"
-        namespace: "ggcommons"
+        namespace: "edgecommons"
         targetConfig:
           intervalSecs: 10
       # Credentials / encrypted local vault (read only when a `credentials` section is present;
@@ -62,7 +62,7 @@ ComponentConfiguration:
         instances: []
     accessControl:
       aws.greengrass.ipc.pubsub:
-        "com.mbreissi.greengrass.PythonComponentSkeleton:pubsub:1":
+        "com.mbreissi.edgecommons.PythonComponentSkeleton:pubsub:1":
           policyDescription: Allows access to publish/subscribe to all topics.
           operations:
             - "aws.greengrass#PublishToTopic"
@@ -70,7 +70,7 @@ ComponentConfiguration:
           resources:
             - "*"
       aws.greengrass.ipc.mqttproxy:
-        "com.mbreissi.greengrass.JavaComponentSkeleton:iotcore:1":
+        "com.mbreissi.edgecommons.JavaComponentSkeleton:iotcore:1":
           policyDescription: Allows access to publish/subscribe to all topics on IoT Core.
           operations:
             - "aws.greengrass#PublishToIoTCore"
@@ -78,7 +78,7 @@ ComponentConfiguration:
           resources:
             - "*"
       aws.greengrass.ShadowManager:
-        "com.mbreissi.greengrass.PythonComponentSkeleton:shadow:1":
+        "com.mbreissi.edgecommons.PythonComponentSkeleton:shadow:1":
           policyDescription: Allows access to shadows.
           operations:
             - 'aws.greengrass#GetThingShadow'

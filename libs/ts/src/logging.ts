@@ -203,7 +203,7 @@ function safeRename(src: string, dst: string): void {
 function reportError(message: string, err: unknown): void {
   try {
     const detail = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`ggcommons: ${message}: ${detail}\n`);
+    process.stderr.write(`edgecommons: ${message}: ${detail}\n`);
   } catch {
     /* fail-soft */
   }
@@ -375,7 +375,7 @@ export class Logger {
   private correlation: Correlation = {};
   readonly loggerName: string;
 
-  constructor(name = "ggcommons") {
+  constructor(name = "edgecommons") {
     this.loggerName = name;
   }
 
@@ -452,7 +452,7 @@ export class Logger {
 }
 
 /** The process-wide (root) logger used across the library (default INFO). */
-export const logger = new Logger("ggcommons");
+export const logger = new Logger("edgecommons");
 registry.set(logger.loggerName, logger);
 
 /**

@@ -1,4 +1,4 @@
-# Telemetry Streaming — Phase 1 implementation spec (`ggstreamlog` core)
+# Telemetry Streaming — Phase 1 implementation spec (`edgestreamlog` core)
 
 > Status: **Phase 1 shipped, and so has most of Phase 2/3** (see [TELEMETRY_STREAMING.md](./TELEMETRY_STREAMING.md)
 > for the current subsystem-wide status). In particular: the C-ABI is now fully implemented (not just
@@ -9,16 +9,16 @@
 > `max_disk_bytes`/`on_full` settings.
 
 Implementation-ready spec for **Phase 1** of [TELEMETRY_STREAMING.md](./TELEMETRY_STREAMING.md):
-the Rust `ggstreamlog` core + `KinesisSink`, HOST, wired into the Rust ggcommons lib,
+the Rust `edgestreamlog` core + `KinesisSink`, HOST, wired into the Rust edgecommons lib,
 with crash/fuzz/bench tests. **Pure Rust first** — language bindings, Kafka, SiteWise,
 RocksDB/LMDB backends, and GREENGRASS fan-in are later phases.
 
 ## 1. Scope
 
 **In Phase 1**
-- `ggstreamlog` crate: durable segment log + export engine + `KinesisSink` + AWS credentials
+- `edgestreamlog` crate: durable segment log + export engine + `KinesisSink` + AWS credentials
   + stats; config types; the `BlockStore`/`Sink`/`CredentialProvider` traits.
-- Rust-native `IStreamService` in `libs/rust` (`gg.streams()`), bridging stats → ggcommons metrics.
+- Rust-native `IStreamService` in `libs/rust` (`gg.streams()`), bridging stats → edgecommons metrics.
 - The **C-ABI surface designed** (header) so Phase 2 bindings aren't painted into a corner;
   its implementation was deferred to Phase 2 — **and has since shipped** (`src/ffi.rs`), along with
   the Java/Python/Node bindings that consume it (see the status note above).
@@ -31,16 +31,16 @@ GREENGRASS local-pubsub fan-in.
 
 ## 2. Crate layout
 
-A new workspace member `libs/rust-streamlog/` (crate `ggstreamlog`). The existing `ggcommons`
+A new workspace member `libs/rust-streamlog/` (crate `edgestreamlog`). The existing `edgecommons`
 Rust crate depends on it (path dep) for its `IStreamService`.
 
 ```
-ggstreamlog/
+edgestreamlog/
   Cargo.toml                # deps: serde, serde_json, crc32fast, thiserror, tokio (internal rt),
                             #       aws-config, aws-sdk-kinesis, tracing; dev: proptest, criterion
   src/
     lib.rs                  # public Rust API (StreamService, StreamHandle, Record, traits)
-    error.rs               # GgStreamError (thiserror)
+    error.rs               # EdgeStreamError (thiserror)
     config.rs              # StreamingConfig/StreamConfig/BufferConfig/BatchConfig (serde + defaults + validate)
     record.rs             # Record; frame encode/decode; crc32c
     blockstore/
@@ -76,7 +76,7 @@ All integers **little-endian**. One directory per stream.
 ### 3.1 Segment file (`.seg`)
 ```
 SegmentHeader (32 bytes):
-  [u32 magic = 0x4C53_4747 ("GGSL")][u16 format=1][u16 flags][u64 base_offset]
+  [u32 magic = 0x4C53_4747 ("ESL")][u16 format=1][u16 flags][u64 base_offset]
   [u64 created_ms][u32 header_crc32c]              # crc over the preceding 28 bytes
 Then a sequence of Records:
   [u32 frame_len]                                  # bytes that follow, i.e. crc..payload
@@ -273,24 +273,24 @@ The Rust lib bridges these into the existing `metrics`/`heartbeat` targets (incl
 > JSON string to avoid a wide struct ABI.
 
 ```c
-typedef struct ggsl_service ggsl_service;
-typedef struct ggsl_stream  ggsl_stream;
+typedef struct esl_service esl_service;
+typedef struct esl_stream  esl_stream;
 
-/* All functions: return 0 on success, non-zero on error; *err (heap str) set on error, free with ggsl_str_free. */
-int  ggsl_open(const char* config_json, ggsl_service** out, char** err);
-int  ggsl_stream_get(ggsl_service*, const char* name, ggsl_stream** out, char** err);
-int  ggsl_append(ggsl_stream*, const uint8_t* pk, uint16_t pk_len, uint64_t ts_ms,
+/* All functions: return 0 on success, non-zero on error; *err (heap str) set on error, free with esl_str_free. */
+int  esl_open(const char* config_json, esl_service** out, char** err);
+int  esl_stream_get(esl_service*, const char* name, esl_stream** out, char** err);
+int  esl_append(esl_stream*, const uint8_t* pk, uint16_t pk_len, uint64_t ts_ms,
                  const uint8_t* payload, uint32_t payload_len, uint64_t* out_offset, char** err);
-int  ggsl_flush(ggsl_stream*, char** err);
-int  ggsl_stats(ggsl_stream*, ggsl_stats_t* out);     /* caller-provided struct */
-void ggsl_shutdown(ggsl_service*);                     /* flush + stop + free */
-void ggsl_str_free(char*);
+int  esl_flush(esl_stream*, char** err);
+int  esl_stats(esl_stream*, esl_stats_t* out);     /* caller-provided struct */
+void esl_shutdown(esl_service*);                     /* flush + stop + free */
+void esl_str_free(char*);
 ```
 **ABI rules:** inputs are borrowed (caller owns); outputs are caller-struct or core-allocated +
 explicit free; `append` is thread-safe; **every entry point wraps `catch_unwind`** so a Rust panic
 never crosses the boundary (returns an error instead). Bindings: Panama (Java 21), PyO3/maturin
 (Python), napi-rs (Node) — **all shipped** (`libs/rust-streamlog/bindings/{node,python}`,
-`libs/java/.../streaming/GgStreamNative.java`).
+`libs/java/.../streaming/EdgeStreamNative.java`).
 
 ## 12. Test plan
 

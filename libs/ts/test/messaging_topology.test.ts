@@ -42,7 +42,7 @@ vi.mock("mqtt", () => {
 import { StandaloneMqttProvider } from "../src/messaging/standalone-provider";
 import { loadMessagingConfig } from "../src/messaging/config";
 import { Destination, Qos } from "../src/messaging/types";
-import { GgError } from "../src/errors";
+import { EdgeCommonsError } from "../src/errors";
 
 const tmp: string[] = [];
 function tmpFile(name: string, contents: string): string {
@@ -84,7 +84,7 @@ describe("FR-MSG-3: single-broker (air-gapped) topology", () => {
     // No IoT Core channel exists: publishing to IoT Core throws synchronously.
     expect(() =>
       provider.publishBytes("t", Buffer.from("x"), Destination.IoTCore, Qos.AtLeastOnce),
-    ).toThrow(GgError);
+    ).toThrow(EdgeCommonsError);
     await provider.disconnect();
   });
 });

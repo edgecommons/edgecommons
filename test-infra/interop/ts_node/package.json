@@ -1,15 +1,15 @@
 {
-  "name": "ggcommons-interop-ts-node",
+  "name": "edgecommons-interop-ts-node",
   "version": "0.0.0",
   "private": true,
-  "description": "Cross-language interop node (TypeScript). Consumes the public ggcommons API, mirroring rust_node / java_node / python_node. Built as part of the repo npm workspace.",
+  "description": "Cross-language interop node (TypeScript). Consumes the public edgecommons API, mirroring rust_node / java_node / python_node. Built as part of the repo npm workspace.",
   "license": "Apache-2.0",
   "main": "dist/interop_node.js",
   "scripts": {
     "build": "tsc"
   },
   "dependencies": {
-    "@edgecommons/ggcommons": "*"
+    "@edgecommons/edgecommons": "*"
   },
   "devDependencies": {
     "@types/node": "^20",

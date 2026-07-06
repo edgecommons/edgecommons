@@ -1,14 +1,14 @@
 ---
 title: Error handling
-description: Catch and handle GGCommons failures — config validation, messaging, credentials, parameters, and streaming — idiomatically in all four SDKs.
+description: Catch and handle EdgeCommons failures — config validation, messaging, credentials, parameters, and streaming — idiomatically in all four SDKs.
 sidebar:
   order: 11
 ---
 
 import { Tabs, TabItem, Aside, LinkCard, CardGrid } from "@astrojs/starlight/components";
 
-GGCommons reports failure through each language's normal error channel: Java throws exceptions,
-Python raises exceptions, Rust returns `Result<T, GgError>`, and TypeScript throws an `Error`. This
+EdgeCommons reports failure through each language's normal error channel: Java throws exceptions,
+Python raises exceptions, Rust returns `Result<T, EdgeCommonsError>`, and TypeScript throws an `Error`. This
 guide shows the error and exception types a component developer actually encounters, organized by the
 scenario that produces them — startup and config validation, messaging, credentials, parameters, and
 streaming — with idiomatic handling in each SDK.
@@ -17,7 +17,7 @@ streaming — with idiomatic handling in each SDK.
 Apart from two well-defined cases, the SDK never terminates your process: it hands the failure back
 to you to handle. The exceptions are (1) Java calls `System.exit(0)` **only** on the `-h`/`--help`
 usage path, after printing help — its SIGTERM shutdown hook deliberately does **not** exit (the JVM
-exits 0 once hooks finish); and (2) Python's GGCommons orchestrator calls `sys.exit(0)` from its
+exits 0 once hooks finish); and (2) Python's EdgeCommons orchestrator calls `sys.exit(0)` from its
 SIGTERM handler. Rust and TypeScript never exit the process from the library. See
 [Process exit and shutdown](#process-exit-and-shutdown) below.
 </Aside>
@@ -31,25 +31,25 @@ handling differs:
   `ConfigurationValidationException`) and the compiler forces you to handle them; the rest are
   unchecked (`extends RuntimeException`).
 - **Python** — one `Exception` subclass per subsystem (`CredentialError`, `ParameterError`,
-  `GgStreamError`, `ConfigurationValidationException`). No checked/unchecked distinction.
-- **Rust** — a single library-wide enum `GgError` with one variant per subsystem, returned inside
-  the alias `ggcommons::Result<T>`. You `match` on the variant or propagate with `?`.
-- **TypeScript** — a **mix**: a single tagged `GgError` (with a `kind` field) covers the core
+  `EdgeStreamError`, `ConfigurationValidationException`). No checked/unchecked distinction.
+- **Rust** — a single library-wide enum `EdgeCommonsError` with one variant per subsystem, returned inside
+  the alias `edgecommons::Result<T>`. You `match` on the variant or propagate with `?`.
+- **TypeScript** — a **mix**: a single tagged `EdgeCommonsError` (with a `kind` field) covers the core
   subsystems, while credentials, parameters, and streaming throw their own standalone `Error`
   subclasses. See [Cross-language differences](#cross-language-differences).
 
 The table below maps each failure scenario to the type you catch, per language. Generic types are in
 backticks to keep them readable.
 
-| Scenario | Java | Python | Rust (`GgError` variant) | TypeScript |
+| Scenario | Java | Python | Rust (`EdgeCommonsError` variant) | TypeScript |
 |----------|------|--------|--------------------------|------------|
-| Config load | `ConfigurationException` (checked) | `ValueError` / propagated stdlib | `GgError::Config` | `GgError` kind `"Config"` |
-| Config validation | `ConfigurationValidationException` (checked) | `ConfigurationValidationException` | `GgError::Validation` | `GgError` kind `"Validation"` |
-| CLI / bad arguments | `IllegalArgumentException` | `ValueError` | `GgError::Cli` | `GgError` kind `"Cli"` |
-| Messaging | `RuntimeException` / `IllegalStateException` | `RuntimeError` / `TimeoutError` | `GgError::Messaging`, `GgError::Ipc` | `GgError` kind `"Messaging"` / `"Ipc"` |
-| Credentials | `CredentialException` | `CredentialError` | `GgError::Credentials` | `CredentialError` (standalone) |
-| Parameters | `ParameterException` | `ParameterError` | `GgError::Parameters` | `ParameterError` (standalone) |
-| Streaming | `GgStreamException` (has `code()`) | `GgStreamError` (has `.code`) | `GgError::Streaming` (code discarded) | `GgStreamError` (standalone, has `.code`) |
+| Config load | `ConfigurationException` (checked) | `ValueError` / propagated stdlib | `EdgeCommonsError::Config` | `EdgeCommonsError` kind `"Config"` |
+| Config validation | `ConfigurationValidationException` (checked) | `ConfigurationValidationException` | `EdgeCommonsError::Validation` | `EdgeCommonsError` kind `"Validation"` |
+| CLI / bad arguments | `IllegalArgumentException` | `ValueError` | `EdgeCommonsError::Cli` | `EdgeCommonsError` kind `"Cli"` |
+| Messaging | `RuntimeException` / `IllegalStateException` | `RuntimeError` / `TimeoutError` | `EdgeCommonsError::Messaging`, `EdgeCommonsError::Ipc` | `EdgeCommonsError` kind `"Messaging"` / `"Ipc"` |
+| Credentials | `CredentialException` | `CredentialError` | `EdgeCommonsError::Credentials` | `CredentialError` (standalone) |
+| Parameters | `ParameterException` | `ParameterError` | `EdgeCommonsError::Parameters` | `ParameterError` (standalone) |
+| Streaming | `EdgeStreamException` (has `code()`) | `EdgeStreamError` (has `.code`) | `EdgeCommonsError::Streaming` (code discarded) | `EdgeStreamError` (standalone, has `.code`) |
 | Accessor used before init | (n/a) | `RuntimeError` | (n/a — typed accessors) | (n/a) |
 
 ## Startup and config validation
@@ -64,8 +64,8 @@ language: if the bundled schema resource is missing, validation throws rather th
 <TabItem label="Java">
 
 ```java
-import com.mbreissi.ggcommons.config.ConfigurationValidator;
-import com.mbreissi.ggcommons.config.ConfigurationValidator.ConfigurationValidationException;
+import com.mbreissi.edgecommons.config.ConfigurationValidator;
+import com.mbreissi.edgecommons.config.ConfigurationValidator.ConfigurationValidationException;
 import com.google.gson.JsonObject;
 
 // ConfigurationValidationException is CHECKED — handle it or declare `throws`.
@@ -84,7 +84,7 @@ try {
 <TabItem label="Python">
 
 ```python
-from ggcommons.validation.configuration_validator import (
+from edgecommons.validation.configuration_validator import (
     ConfigurationValidator,
     ConfigurationValidationException,
 )
@@ -105,14 +105,14 @@ except ValueError as e:
 <TabItem label="Rust">
 
 ```rust
-use ggcommons::GgError;
+use edgecommons::EdgeCommonsError;
 
-// `startup` is a ggcommons::Result<GgCommons>; match on the failure variant.
+// `startup` is a edgecommons::Result<EdgeCommons>; match on the failure variant.
 match startup {
     Ok(gg) => { /* run the component with gg */ }
-    Err(GgError::Validation(msg)) => eprintln!("config failed schema validation: {msg}"),
-    Err(GgError::Config(msg)) => eprintln!("could not load configuration: {msg}"),
-    Err(GgError::Cli(msg)) => eprintln!("invalid CLI arguments: {msg}"),
+    Err(EdgeCommonsError::Validation(msg)) => eprintln!("config failed schema validation: {msg}"),
+    Err(EdgeCommonsError::Config(msg)) => eprintln!("could not load configuration: {msg}"),
+    Err(EdgeCommonsError::Cli(msg)) => eprintln!("invalid CLI arguments: {msg}"),
     Err(e) => eprintln!("startup failed: {e}"),
 }
 ```
@@ -121,12 +121,12 @@ match startup {
 <TabItem label="TypeScript">
 
 ```typescript
-import { GgError } from "@edgecommons/ggcommons";
+import { EdgeCommonsError } from "@edgecommons/edgecommons";
 
 try {
-  start(); // building/initializing GGCommons loads and validates the config
+  start(); // building/initializing EdgeCommons loads and validates the config
 } catch (e) {
-  if (e instanceof GgError) {
+  if (e instanceof EdgeCommonsError) {
     switch (e.kind) {
       case "Validation":
         console.error(`config failed schema validation: ${e.message}`);
@@ -186,14 +186,14 @@ except (RuntimeError, TimeoutError) as e:
 <TabItem label="Rust">
 
 ```rust
-use ggcommons::GgError;
+use edgecommons::EdgeCommonsError;
 
-// messaging() returns Result — Err(GgError::Messaging) if the service is unwired.
+// messaging() returns Result — Err(EdgeCommonsError::Messaging) if the service is unwired.
 let messaging = gg.messaging()?;
 match messaging.publish(topic, &message).await {
     Ok(()) => {}
-    Err(GgError::Messaging(msg)) => eprintln!("publish failed: {msg}"),
-    Err(GgError::Ipc(msg)) => eprintln!("Greengrass IPC error: {msg}"),
+    Err(EdgeCommonsError::Messaging(msg)) => eprintln!("publish failed: {msg}"),
+    Err(EdgeCommonsError::Ipc(msg)) => eprintln!("Greengrass IPC error: {msg}"),
     Err(e) => eprintln!("unexpected: {e}"),
 }
 ```
@@ -202,13 +202,13 @@ match messaging.publish(topic, &message).await {
 <TabItem label="TypeScript">
 
 ```typescript
-import { GgError } from "@edgecommons/ggcommons";
+import { EdgeCommonsError } from "@edgecommons/edgecommons";
 
 try {
-  // messaging() throws GgError.messaging(...) if the service is unavailable.
+  // messaging() throws EdgeCommonsError.messaging(...) if the service is unavailable.
   await gg.messaging().publish(topic, message);
 } catch (e) {
-  if (e instanceof GgError && (e.kind === "Messaging" || e.kind === "Ipc")) {
+  if (e instanceof EdgeCommonsError && (e.kind === "Messaging" || e.kind === "Ipc")) {
     console.error(`publish failed (${e.kind}): ${e.message}`);
   } else {
     throw e;
@@ -231,9 +231,9 @@ credentials error. Error messages never include secret or key material.
 <TabItem label="Java">
 
 ```java
-import com.mbreissi.ggcommons.credentials.CredentialException;
-import com.mbreissi.ggcommons.credentials.CredentialService;
-import com.mbreissi.ggcommons.credentials.Secret;
+import com.mbreissi.edgecommons.credentials.CredentialException;
+import com.mbreissi.edgecommons.credentials.CredentialService;
+import com.mbreissi.edgecommons.credentials.Secret;
 import java.util.Optional;
 
 CredentialService creds = gg.getCredentials();   // null if no `credentials` section
@@ -254,7 +254,7 @@ try {
 <TabItem label="Python">
 
 ```python
-from ggcommons.credentials import CredentialError
+from edgecommons.credentials import CredentialError
 
 creds = gg.get_credentials()   # None if no `credentials` section
 if creds is None:
@@ -272,10 +272,10 @@ except CredentialError as e:
 <TabItem label="Rust">
 
 ```rust
-use ggcommons::GgError;
+use edgecommons::EdgeCommonsError;
 
 // credentials() returns Option — None if no `credentials` section.
-// (This fragment is inside a fn returning ggcommons::Result<()>.)
+// (This fragment is inside a fn returning edgecommons::Result<()>.)
 let Some(creds) = gg.credentials() else {
     eprintln!("credentials subsystem not configured");
     return Ok(());
@@ -283,7 +283,7 @@ let Some(creds) = gg.credentials() else {
 match creds.get_string("db-password") {        // Result<Option<String>>
     Ok(Some(password)) => connect(&password),
     Ok(None) => eprintln!("no such secret"),
-    Err(GgError::Credentials(msg)) => eprintln!("credential access failed: {msg}"),
+    Err(EdgeCommonsError::Credentials(msg)) => eprintln!("credential access failed: {msg}"),
     Err(e) => return Err(e),
 }
 ```
@@ -292,7 +292,7 @@ match creds.get_string("db-password") {        // Result<Option<String>>
 <TabItem label="TypeScript">
 
 ```typescript
-import { CredentialError } from "@edgecommons/ggcommons";
+import { CredentialError } from "@edgecommons/edgecommons";
 
 const creds = gg.credentials();   // undefined if no `credentials` section
 if (!creds) {
@@ -302,7 +302,7 @@ if (!creds) {
     const password = creds.getString("db-password");   // undefined if absent
     if (password !== undefined) connect(password);
   } catch (e) {
-    // CredentialError is a standalone Error subclass, NOT a GgError kind.
+    // CredentialError is a standalone Error subclass, NOT a EdgeCommonsError kind.
     if (e instanceof CredentialError) {
       console.error(`credential access failed: ${e.message}`);
     } else {
@@ -319,14 +319,14 @@ if (!creds) {
 
 Parameters mirror credentials: the accessor returns a missing value unless a `parameters` config
 section is present, a missing key returns empty, and a lookup/refresh failure raises the parameters
-error (`ParameterException` / `ParameterError` / `GgError::Parameters`).
+error (`ParameterException` / `ParameterError` / `EdgeCommonsError::Parameters`).
 
 <Tabs syncKey="lang">
 <TabItem label="Java">
 
 ```java
-import com.mbreissi.ggcommons.parameters.ParameterException;
-import com.mbreissi.ggcommons.parameters.ParameterService;
+import com.mbreissi.edgecommons.parameters.ParameterException;
+import com.mbreissi.edgecommons.parameters.ParameterService;
 import java.util.Optional;
 
 ParameterService params = gg.getParameters();   // null if no `parameters` section
@@ -343,7 +343,7 @@ try {
 <TabItem label="Python">
 
 ```python
-from ggcommons.parameters import ParameterError
+from edgecommons.parameters import ParameterError
 
 params = gg.get_parameters()   # None if no `parameters` section
 if params is None:
@@ -360,15 +360,15 @@ except ParameterError as e:
 <TabItem label="Rust">
 
 ```rust
-use ggcommons::GgError;
+use edgecommons::EdgeCommonsError;
 
 // parameters() returns Option — None if no `parameters` section.
-// (Inside a fn returning ggcommons::Result<()>.)
+// (Inside a fn returning edgecommons::Result<()>.)
 let Some(params) = gg.parameters() else { return Ok(()) };
 match params.get("api-endpoint") {      // Result<Option<String>>
     Ok(Some(endpoint)) => configure(&endpoint),
     Ok(None) => {}
-    Err(GgError::Parameters(msg)) => eprintln!("parameter lookup failed: {msg}"),
+    Err(EdgeCommonsError::Parameters(msg)) => eprintln!("parameter lookup failed: {msg}"),
     Err(e) => return Err(e),
 }
 ```
@@ -377,7 +377,7 @@ match params.get("api-endpoint") {      // Result<Option<String>>
 <TabItem label="TypeScript">
 
 ```typescript
-import { ParameterError } from "@edgecommons/ggcommons";
+import { ParameterError } from "@edgecommons/edgecommons";
 
 const params = gg.parameters();   // undefined if no `parameters` section
 if (params) {
@@ -385,7 +385,7 @@ if (params) {
     const endpoint = params.get("api-endpoint");   // undefined if absent
     if (endpoint !== undefined) configure(endpoint);
   } catch (e) {
-    // ParameterError is a standalone Error subclass, NOT a GgError kind.
+    // ParameterError is a standalone Error subclass, NOT a EdgeCommonsError kind.
     if (e instanceof ParameterError) {
       console.error(`parameter lookup failed: ${e.message}`);
     } else {
@@ -400,30 +400,30 @@ if (params) {
 
 ## Streaming
 
-Streaming errors come from the embedded native `ggstreamlog` engine and carry a numeric status code
+Streaming errors come from the embedded native `edgestreamlog` engine and carry a numeric status code
 (`ERR_FULL`, `ERR_UNKNOWN_STREAM`, and so on). **How much of that code survives differs by language**:
 Java exposes `code()` plus named constants, Python and TypeScript expose a `.code` integer but no
-named constants, and **Rust discards the code entirely** — it stringifies into `GgError::Streaming`,
+named constants, and **Rust discards the code entirely** — it stringifies into `EdgeCommonsError::Streaming`,
 so a Rust caller cannot branch on the status value.
 
 <Tabs syncKey="lang">
 <TabItem label="Java">
 
 ```java
-import com.mbreissi.ggcommons.streaming.GgStreamException;
-import com.mbreissi.ggcommons.streaming.StreamHandle;
-import com.mbreissi.ggcommons.streaming.StreamService;
+import com.mbreissi.edgecommons.streaming.EdgeStreamException;
+import com.mbreissi.edgecommons.streaming.StreamHandle;
+import com.mbreissi.edgecommons.streaming.StreamService;
 
 StreamService streams = gg.getStreams();   // null if no `streaming` section
 if (streams == null) return;
 try {
     StreamHandle handle = streams.stream("telemetry");
     handle.append(partitionKey, System.currentTimeMillis(), payload);
-} catch (GgStreamException e) {
+} catch (EdgeStreamException e) {
     // Branch on the native numeric status via the named constants.
-    if (e.code() == GgStreamException.ERR_FULL) {
+    if (e.code() == EdgeStreamException.ERR_FULL) {
         logger.warn("Telemetry buffer full — applying backpressure");
-    } else if (e.code() == GgStreamException.ERR_UNKNOWN_STREAM) {
+    } else if (e.code() == EdgeStreamException.ERR_UNKNOWN_STREAM) {
         logger.error("No such stream configured");
     } else {
         logger.error("Stream append failed (code {})", e.code(), e);
@@ -435,7 +435,7 @@ try {
 <TabItem label="Python">
 
 ```python
-from ggcommons.streaming import GgStreamError
+from edgecommons.streaming import EdgeStreamError
 
 streams = gg.get_streams()   # None if no `streaming` section
 if streams is None:
@@ -443,7 +443,7 @@ if streams is None:
 try:
     handle = streams.stream("telemetry")
     handle.append(partition_key, timestamp_ms, payload)
-except GgStreamError as e:
+except EdgeStreamError as e:
     # .code carries the native status, but Python exposes NO named constants —
     # compare against the integer values (4 = full, 5 = unknown stream).
     if e.code == 4:        # ERR_FULL
@@ -456,14 +456,14 @@ except GgStreamError as e:
 <TabItem label="Rust">
 
 ```rust
-use ggcommons::GgError;
+use edgecommons::EdgeCommonsError;
 
 // streams() requires the `streaming` cargo feature and returns the service
-// directly. (Inside a fn returning ggcommons::Result<()>.)
+// directly. (Inside a fn returning edgecommons::Result<()>.)
 let handle = gg.streams().stream("telemetry")?;
 match handle.append(record) {
     Ok(()) => {}
-    Err(GgError::Streaming(msg)) => {
+    Err(EdgeCommonsError::Streaming(msg)) => {
         // The native numeric status code is NOT preserved on the Rust side —
         // you cannot branch on it, only inspect the message.
         eprintln!("stream append failed: {msg}");
@@ -476,7 +476,7 @@ match handle.append(record) {
 <TabItem label="TypeScript">
 
 ```typescript
-import { GgStreamError } from "@edgecommons/ggcommons";
+import { EdgeStreamError } from "@edgecommons/edgecommons";
 
 const streams = gg.streams();   // undefined if no `streaming` section
 if (streams) {
@@ -484,9 +484,9 @@ if (streams) {
     const handle = streams.stream("telemetry");
     handle.append(partitionKey, Date.now(), payload);
   } catch (e) {
-    // GgStreamError is a standalone class (not a GgError kind). .code holds the
+    // EdgeStreamError is a standalone class (not a EdgeCommonsError kind). .code holds the
     // native status, with no named constants (4 = full, 5 = unknown stream).
-    if (e instanceof GgStreamError) {
+    if (e instanceof EdgeStreamError) {
       if (e.code === 4) {
         console.warn("telemetry buffer full — applying backpressure");
       } else {
@@ -514,12 +514,12 @@ back a usable object.
 | Credentials | `getCredentials()` → `null` | `get_credentials()` → `None` | `credentials()` → `Option` `None` | `credentials()` → `undefined` |
 | Parameters | `getParameters()` → `null` | `get_parameters()` → `None` | `parameters()` → `Option` `None` | `parameters()` → `undefined` |
 | Streaming | `getStreams()` → `null` | `get_streams()` → `None` | `streams()` is **compile-time gated** by the `streaming` feature and returns the service directly (no `Option`) | `streams()` → `undefined` |
-| Messaging | `getMessaging()` (present) | `get_messaging()` (present) | `messaging()` → `Result` (`Err(GgError::Messaging)` if unwired) | `messaging()` **throws** `GgError.messaging(...)` |
+| Messaging | `getMessaging()` (present) | `get_messaging()` (present) | `messaging()` → `Result` (`Err(EdgeCommonsError::Messaging)` if unwired) | `messaging()` **throws** `EdgeCommonsError.messaging(...)` |
 | Metrics | `getMetrics()` (present) | `get_metrics()` (present) | `metrics()` (present) | `metrics()` **throws** if unavailable |
 
 <Aside type="caution" title="Python: accessor before init">
-In Python, calling an accessor such as `get_messaging()` before GGCommons has finished initializing
-raises `RuntimeError("GGCommons not properly initialized")`. Build and initialize the GGCommons
+In Python, calling an accessor such as `get_messaging()` before EdgeCommons has finished initializing
+raises `RuntimeError("EdgeCommons not properly initialized")`. Build and initialize the EdgeCommons
 instance before reaching for any subsystem.
 </Aside>
 
@@ -532,7 +532,7 @@ errors:
 - **Java** calls `System.exit(0)` only on the `-h`/`--help` usage path, after printing help. Its
   SIGTERM/shutdown hook deliberately does **not** call `System.exit` — the JVM exits 0 once the hooks
   finish.
-- **Python's** GGCommons orchestrator calls `sys.exit(0)` from its SIGTERM handler.
+- **Python's** EdgeCommons orchestrator calls `sys.exit(0)` from its SIGTERM handler.
 - **Rust** and **TypeScript** never exit the process from the library.
 
 Net effect on **SIGTERM**: Python exits the process, while Java does not. Whatever the language, don't
@@ -544,15 +544,15 @@ SIGTERM before exiting, or a run leaks subscriptions.)
 A few shape differences are worth internalizing so a snippet from one language doesn't mislead you in
 another:
 
-- **One enum vs many classes.** Rust folds *everything* into a single `GgError` enum, including its
-  `Streaming`, `Credentials`, and `Parameters` variants. TypeScript does **not**: its `GgErrorKind`
+- **One enum vs many classes.** Rust folds *everything* into a single `EdgeCommonsError` enum, including its
+  `Streaming`, `Credentials`, and `Parameters` variants. TypeScript does **not**: its `EdgeCommonsErrorKind`
   union covers only `"Cli" | "Config" | "Validation" | "Messaging" | "Metrics" | "Ipc" | "Io" |
   "Json"`, and credentials/parameters/streaming are **separate `Error` subclasses**
-  (`CredentialError`, `ParameterError`, `GgStreamError`). Java and Python use a distinct exception
+  (`CredentialError`, `ParameterError`, `EdgeStreamError`). Java and Python use a distinct exception
   class per subsystem throughout. There is **no single error type shared across all four languages**.
 - **Checked vs unchecked is Java-only.** `ConfigurationException` and `ConfigurationValidationException`
   are checked (the compiler forces handling); `CredentialException`, `ParameterException`, and
-  `GgStreamException` are unchecked. Python and TypeScript have no such distinction, and Rust encodes
+  `EdgeStreamException` are unchecked. Python and TypeScript have no such distinction, and Rust encodes
   fallibility in the `Result` return type.
 - **Streaming status code.** Java keeps it (`code()` + named constants), Python and TypeScript keep
   the integer (no named constants), Rust drops it.

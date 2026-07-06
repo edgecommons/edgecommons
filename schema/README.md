@@ -1,7 +1,7 @@
-# GGCommons configuration schema (single source of truth)
+# EdgeCommons configuration schema (single source of truth)
 
-`ggcommons-config-schema.json` in this directory is the **canonical** JSON Schema for
-GGCommons component configuration (the `ComponentConfig` document). All four language
+`edgecommons-config-schema.json` in this directory is the **canonical** JSON Schema for
+EdgeCommons component configuration (the `ComponentConfig` document). All four language
 libraries validate config against the **same** schema.
 
 ## Why a sync step instead of one shared file reference
@@ -11,11 +11,11 @@ packaging toolchain wants the file *inside* the artifact:
 
 | Lib | Copy location | How it's loaded |
 |-----|---------------|-----------------|
-| Rust | `libs/rust/resources/ggcommons-config-schema.json` | `include_str!` at compile time |
+| Rust | `libs/rust/resources/edgecommons-config-schema.json` | `include_str!` at compile time |
 | TypeScript | `libs/ts/src/config/schema.json` | `import schema from "./schema.json"` |
-| Python | `libs/python/ggcommons/resources/ggcommons-config-schema.json` | package-data + `jsonschema` |
-| Java | `libs/java/src/main/resources/ggcommons-config-schema.json` | classpath resource |
-| (Java docs) | `libs/java/doc/ggcommons-config-schema.json` | documentation copy |
+| Python | `libs/python/edgecommons/resources/edgecommons-config-schema.json` | package-data + `jsonschema` |
+| Java | `libs/java/src/main/resources/edgecommons-config-schema.json` | classpath resource |
+| (Java docs) | `libs/java/doc/edgecommons-config-schema.json` | documentation copy |
 
 A single in-place reference would fight `cargo publish`, wheel package-data, the Maven
 jar, and `tsc` rootDir. So the canonical file here is the source of truth and the copies
@@ -23,7 +23,7 @@ are generated from it.
 
 ## Editing the schema
 
-1. Edit **`schema/ggcommons-config-schema.json`** (this file) — never edit a per-lib copy.
+1. Edit **`schema/edgecommons-config-schema.json`** (this file) — never edit a per-lib copy.
 2. Run the sync to propagate it into every library:
    ```bash
    ./schema/sync-schema.sh          # bash / Git Bash / Linux CI

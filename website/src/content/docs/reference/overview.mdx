@@ -1,6 +1,6 @@
 ---
 title: API Reference overview
-description: How the GGCommons API reference is organized, plus the cross-language accessor-name map for every subsystem in Java, Python, Rust, and TypeScript.
+description: How the EdgeCommons API reference is organized, plus the cross-language accessor-name map for every subsystem in Java, Python, Rust, and TypeScript.
 sidebar:
   order: 1
 ---
@@ -22,7 +22,7 @@ The conceptual [guides](/guides/components/) explain *why* and *when* to use a s
 reference pages give the exact *what* — signatures, return types, and per-language naming.
 
 <CardGrid>
-  <LinkCard title="Entry point, builder & lifecycle" href="/reference/entry-point/" description="GGCommonsBuilder, the GGCommons runtime, every accessor, and shutdown." />
+  <LinkCard title="Entry point, builder & lifecycle" href="/reference/entry-point/" description="EdgeCommonsBuilder, the EdgeCommons runtime, every accessor, and shutdown." />
   <LinkCard title="Configuration" href="/reference/config/" description="The config manager / snapshot accessor surface — reading, reloading, and change listeners." />
   <LinkCard title="Messaging" href="/reference/messaging/" description="The messaging service, MessageBuilder, publish/subscribe, and request/reply." />
   <LinkCard title="UNS" href="/reference/uns/" description="gg.uns() and gg.instance() — UNS topic building, validation, MessageIdentity, and the reserved-class guard." />
@@ -38,7 +38,7 @@ reference pages give the exact *what* — signatures, return types, and per-lang
 
 ## The accessor-name map
 
-Everything starts from one object: the **`GGCommons` runtime** (`GgCommons` in Rust). You build it
+Everything starts from one object: the **`EdgeCommons` runtime** (`EdgeCommons` in Rust). You build it
 once from the standard CLI args, then call typed **accessors** on it to reach each subsystem. The
 *concept* is identical in all four languages; only the **name** differs, following each language's
 convention (Java `getX()`, Python `get_x()`, Rust/TS `x()`).
@@ -47,8 +47,8 @@ This table is the map. Find the row for what you need, read across to your langu
 
 | Concern | Java | Python | Rust | TypeScript |
 |---|---|---|---|---|
-| **Build** | `GGCommonsBuilder.create(name).withArgs(args).build()` | `GGCommonsBuilder.create(name).with_args(args).build()` | `GgCommonsBuilder::new(name).args(argv).build().await` | `new GGCommonsBuilder(name).args(argv).build()` (await) |
-| **Runtime type** | `GGCommons` | `GGCommons` | `GgCommons` | `GGCommons` |
+| **Build** | `EdgeCommonsBuilder.create(name).withArgs(args).build()` | `EdgeCommonsBuilder.create(name).with_args(args).build()` | `EdgeCommonsBuilder::new(name).args(argv).build().await` | `new EdgeCommonsBuilder(name).args(argv).build()` (await) |
+| **Runtime type** | `EdgeCommons` | `EdgeCommons` | `EdgeCommons` | `EdgeCommons` |
 | **Messaging** | `getMessaging()` | `get_messaging()` | `messaging()` | `messaging()` |
 | **UNS topic builder** | `getUns()` | `uns()` | `uns()` | `uns()` |
 | **Instance handle** | `instance(id)` | `instance(id)` | `instance(id)` (`Result`) | `instance(id)` |
@@ -67,7 +67,7 @@ This table is the map. Find the row for what you need, read across to your langu
 - **Python `get_messaging()` and `get_metrics()` return the *class*, not an instance** — their
   operations are static, process-global. You call methods on the returned handle as usual; just know
   there is no per-instance object behind it.
-- **Rust has no `shutdown()`/`close()`.** Teardown is RAII: when the `GgCommons` value is dropped,
+- **Rust has no `shutdown()`/`close()`.** Teardown is RAII: when the `EdgeCommons` value is dropped,
   its background tasks (heartbeat, hot-reload, signal watcher, health server) are aborted.
 </Aside>
 
@@ -99,7 +99,7 @@ Two language-specific traps:
 <Aside type="caution" title="messaging() when no transport is wired">
 Messaging is always present, but its behavior when *no transport* is configured differs: Java and
 Python return the concrete handle; **Rust returns `Result<Arc<dyn MessagingService>>`** (an `Err`
-when none is wired); **TypeScript throws** a `GgError`. Handle the `Result`/exception accordingly.
+when none is wired); **TypeScript throws** a `EdgeCommonsError`. Handle the `Result`/exception accordingly.
 </Aside>
 
 ## How to read the signatures
@@ -130,10 +130,10 @@ transport accessor; the opt-ins are reached the same way when their config secti
 <TabItem label="Java">
 
 ```java
-import com.mbreissi.ggcommons.GGCommons;
-import com.mbreissi.ggcommons.GGCommonsBuilder;
+import com.mbreissi.edgecommons.EdgeCommons;
+import com.mbreissi.edgecommons.EdgeCommonsBuilder;
 
-GGCommons gg = GGCommonsBuilder.create("com.example.MyComponent")
+EdgeCommons gg = EdgeCommonsBuilder.create("com.example.MyComponent")
         .withArgs(args)        // already-stripped application args
         .build();
 
@@ -152,9 +152,9 @@ var metrics   = gg.getMetrics();
 ```python
 import sys
 
-from ggcommons.ggcommons_builder import GGCommonsBuilder
+from edgecommons.edgecommons_builder import EdgeCommonsBuilder
 
-gg = (GGCommonsBuilder.create("com.example.MyComponent")
+gg = (EdgeCommonsBuilder.create("com.example.MyComponent")
       .with_args(sys.argv[1:])   # already-stripped application args
       .build())
 
@@ -163,18 +163,18 @@ messaging = gg.get_messaging()    # the MessagingClient class (static handle)
 metrics   = gg.get_metrics()      # the MetricEmitter class (static handle)
 
 # ... business logic ...
-gg.shutdown()                      # or: with GGCommonsBuilder.create(...).build() as gg:
+gg.shutdown()                      # or: with EdgeCommonsBuilder.create(...).build() as gg:
 ```
 
 </TabItem>
 <TabItem label="Rust">
 
 ```rust
-use ggcommons::prelude::*;
+use edgecommons::prelude::*;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let gg = GgCommonsBuilder::new("com.example.MyComponent")
+    let gg = EdgeCommonsBuilder::new("com.example.MyComponent")
         .args(std::env::args_os())   // argv INCLUDES the program name
         .build()
         .await?;
@@ -193,9 +193,9 @@ async fn main() -> anyhow::Result<()> {
 <TabItem label="TypeScript">
 
 ```typescript
-import { GGCommonsBuilder } from "@edgecommons/ggcommons";
+import { EdgeCommonsBuilder } from "@edgecommons/edgecommons";
 
-const gg = await new GGCommonsBuilder("com.example.MyComponent")
+const gg = await new EdgeCommonsBuilder("com.example.MyComponent")
   .args(process.argv.slice(2))   // argv WITHOUT the node/script prefix
   .build();
 
@@ -215,6 +215,6 @@ await gg.close();                   // idempotent
 <CardGrid>
   <LinkCard title="Entry point reference" href="/reference/entry-point/" description="Every builder method and accessor in full, with return types and lifecycle." />
   <LinkCard title="CLI contract" href="/start/cli-contract/" description="The args you pass to the builder: --platform, --transport, -c/--config, -t/--thing." />
-  <LinkCard title="Components guide" href="/guides/components/" description="The end-to-end shape of a component built on GGCommons." />
+  <LinkCard title="Components guide" href="/guides/components/" description="The end-to-end shape of a component built on EdgeCommons." />
   <LinkCard title="Configuration schema" href="/reference/configuration-schema/" description="The canonical schema that drives every subsystem's config section." />
 </CardGrid>

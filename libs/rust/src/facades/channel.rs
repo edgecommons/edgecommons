@@ -2,9 +2,9 @@
 //!
 //! **One-liner purpose**: The uniform `{ local, northbound, stream:<name> }` routing target the
 //! publish facades resolve on (DESIGN-class-facades §4, `DESIGN-channels.md`), mirroring the Java
-//! canonical `com.mbreissi.ggcommons.facades.Channel`.
+//! canonical `com.mbreissi.edgecommons.facades.Channel`.
 
-use crate::error::{GgError, Result};
+use crate::error::{EdgeCommonsError, Result};
 
 /// A publish-channel address: the uniform `{ local, northbound, stream:<name> }` routing target.
 ///
@@ -31,11 +31,11 @@ impl Channel {
     /// The named-durable-stream channel.
     ///
     /// # Errors
-    /// [`GgError::Facade`] when `name` is empty.
+    /// [`EdgeCommonsError::Facade`] when `name` is empty.
     pub fn stream(name: impl Into<String>) -> Result<Channel> {
         let name = name.into();
         if name.is_empty() {
-            return Err(GgError::Facade("stream channel name must be non-empty".to_string()));
+            return Err(EdgeCommonsError::Facade("stream channel name must be non-empty".to_string()));
         }
         Ok(Channel::Stream(name))
     }

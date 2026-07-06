@@ -8,7 +8,7 @@ injected environments and a filesystem probe so the suite is the Phase-0 oracle.
 
 import pytest
 
-from ggcommons.platform import (
+from edgecommons.platform import (
     DEFAULT_IDENTITY,
     ENV_GG_IPC_SOCKET,
     ENV_GG_SVCUID,
@@ -201,14 +201,14 @@ def test_resolve_identity_handles_none_env():
 
 # ---------- resolve_identity: KUBERNETES Downward-API tier (FR-RT-7 / FR-CFG-6) ----------
 
-def test_k8s_identity_from_ggcommons_thing_name_env():
-    # On KUBERNETES, GGCOMMONS_THING_NAME (the mapped pod annotation) is the identity.
+def test_k8s_identity_from_edgecommons_thing_name_env():
+    # On KUBERNETES, EDGECOMMONS_THING_NAME (the mapped pod annotation) is the identity.
     env = {ENV_K8S_THING_NAME: "annotated-thing"}
     assert resolve_identity(None, Platform.KUBERNETES, env) == "annotated-thing"
 
 
 def test_k8s_identity_from_pod_name_env_when_thing_name_absent():
-    # Falls through to POD_NAME (Downward metadata.name via fieldRef) when GGCOMMONS_THING_NAME unset.
+    # Falls through to POD_NAME (Downward metadata.name via fieldRef) when EDGECOMMONS_THING_NAME unset.
     env = {ENV_K8S_POD_NAME: "my-pod-abc123"}
     assert resolve_identity(None, Platform.KUBERNETES, env) == "my-pod-abc123"
 
@@ -247,7 +247,7 @@ def test_k8s_empty_downward_env_value_falls_through():
 
 
 def test_downward_api_env_ignored_on_non_kubernetes_platforms():
-    # The KUBERNETES tier is gated on platform: HOST/GREENGRASS ignore GGCOMMONS_THING_NAME/POD_NAME.
+    # The KUBERNETES tier is gated on platform: HOST/GREENGRASS ignore EDGECOMMONS_THING_NAME/POD_NAME.
     env = {ENV_K8S_THING_NAME: "k8s-thing", ENV_K8S_POD_NAME: "k8s-pod", ENV_THING_NAME: "aws-thing"}
     assert resolve_identity(None, Platform.HOST, env) == "aws-thing"
     assert resolve_identity(None, Platform.GREENGRASS, env) == "aws-thing"
@@ -262,7 +262,7 @@ def test_k8s_identity_handles_none_env():
 
 def test_resolve_profile_wires_kubernetes_downward_identity():
     # End-to-end: resolve_profile passes the resolved platform into resolve_identity, so a
-    # KUBERNETES pod with GGCOMMONS_THING_NAME gets that identity (FR-RT-7 integration).
+    # KUBERNETES pod with EDGECOMMONS_THING_NAME gets that identity (FR-RT-7 integration).
     inputs = ResolverInputs(Platform.KUBERNETES, None, None, None)
     r = resolve_profile(inputs, {ENV_K8S_THING_NAME: "pod-thing", ENV_THING_NAME: "aws-thing"})
     assert r.identity == "pod-thing"
@@ -281,7 +281,7 @@ def test_resolved_kubernetes_identity_passes_template_sanitization():
     # FR-RT-7: the resolver returns the raw value; the existing template-variable sanitization
     # still applies when it is interpolated as {ThingName} (path separators / wildcards / traversal
     # are neutralized). A pod name with hostile characters must come out sanitized.
-    from ggcommons.config.manager.config_manager import ConfigManager, _sanitize
+    from edgecommons.config.manager.config_manager import ConfigManager, _sanitize
 
     identity = resolve_identity(None, Platform.KUBERNETES, {ENV_K8S_POD_NAME: "ns/../pod+name#x"})
     assert identity == "ns/../pod+name#x"  # resolver does not mutate the raw value

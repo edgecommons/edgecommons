@@ -34,7 +34,7 @@
 //! - **Config-update re-fetch**: `SubscribeToConfigurationUpdate` delivers only the
 //!   changed key path, so on each notification the worker re-fetches the value via
 //!   `GetConfiguration` and forwards the fresh JSON document.
-//! - **Error handling**: SDK errors are mapped to [`crate::error::GgError::Ipc`];
+//! - **Error handling**: SDK errors are mapped to [`crate::error::EdgeCommonsError::Ipc`];
 //!   nothing here panics except the unavoidable one-time `Sdk::init()` contract.
 //!
 //! ## Status
@@ -57,7 +57,7 @@ use std::sync::OnceLock;
 use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
 
-use crate::error::{GgError, Result};
+use crate::error::{EdgeCommonsError, Result};
 use crate::messaging::{Destination, Qos};
 
 /// Buffer size for `GetConfiguration` / `GetThingShadow` decode (bytes).
@@ -166,9 +166,9 @@ impl IpcRuntime {
         let (tx, rx) = std::sync::mpsc::channel::<Command>();
         let internal_tx = tx.clone();
         std::thread::Builder::new()
-            .name("ggcommons-ipc".to_string())
+            .name("edgecommons-ipc".to_string())
             .spawn(move || worker(rx, internal_tx))
-            .expect("failed to spawn ggcommons IPC worker thread");
+            .expect("failed to spawn edgecommons IPC worker thread");
         IpcRuntime { tx }
     }
 
@@ -180,10 +180,10 @@ impl IpcRuntime {
         let (reply_tx, reply_rx) = oneshot::channel();
         self.tx
             .send(make(reply_tx))
-            .map_err(|_| GgError::Ipc("IPC worker thread is not running".to_string()))?;
+            .map_err(|_| EdgeCommonsError::Ipc("IPC worker thread is not running".to_string()))?;
         reply_rx
             .await
-            .map_err(|_| GgError::Ipc("IPC worker dropped the reply".to_string()))?
+            .map_err(|_| EdgeCommonsError::Ipc("IPC worker dropped the reply".to_string()))?
     }
 
     /// Connect to the Greengrass nucleus (idempotent).
@@ -281,8 +281,8 @@ fn sdk_qos(qos: Qos) -> gg_sdk::Qos {
 }
 
 /// Map an SDK error into our error type.
-fn ipc_err(e: gg_sdk::Error) -> GgError {
-    GgError::Ipc(format!("greengrass IPC error: {e}"))
+fn ipc_err(e: gg_sdk::Error) -> EdgeCommonsError {
+    EdgeCommonsError::Ipc(format!("greengrass IPC error: {e}"))
 }
 
 /// Convert an SDK [`gg_sdk::Object`] tree into a `serde_json::Value`.

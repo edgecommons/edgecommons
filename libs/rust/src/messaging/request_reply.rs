@@ -27,8 +27,8 @@
 //!
 //! ## Usage Example
 //! ```
-//! let topic = ggcommons::messaging::request_reply::new_reply_topic();
-//! assert!(topic.starts_with("ggcommons/reply-"));
+//! let topic = edgecommons::messaging::request_reply::new_reply_topic();
+//! assert!(topic.starts_with("edgecommons/reply-"));
 //! ```
 //!
 //! ## Related Modules
@@ -41,7 +41,7 @@ use uuid::Uuid;
 /// Prefix for all generated reply topics. Matches the Java/Python
 /// `MessageHeader.REPLY_MESSAGE_TOPIC_PREFIX` exactly (note the trailing `-`, not `/`)
 /// so request/reply interoperates across the three libraries.
-pub const REPLY_TOPIC_PREFIX: &str = "ggcommons/reply-";
+pub const REPLY_TOPIC_PREFIX: &str = "edgecommons/reply-";
 
 /// Generate a globally-unique reply topic for a single request.
 ///
@@ -77,11 +77,11 @@ pub fn new_reply_topic() -> String {
 ///
 /// # Examples
 /// ```
-/// use ggcommons::messaging::request_reply::try_deliver_reply;
+/// use edgecommons::messaging::request_reply::try_deliver_reply;
 /// let (tx, mut rx) = tokio::sync::mpsc::channel::<(String, Vec<u8>)>(1);
-/// assert!(try_deliver_reply(&tx, "ggcommons/reply-1".into(), b"ok".to_vec()));
+/// assert!(try_deliver_reply(&tx, "edgecommons/reply-1".into(), b"ok".to_vec()));
 /// // The single slot is now full; a duplicate/late reply is a logged no-op.
-/// assert!(!try_deliver_reply(&tx, "ggcommons/reply-1".into(), b"dup".to_vec()));
+/// assert!(!try_deliver_reply(&tx, "edgecommons/reply-1".into(), b"dup".to_vec()));
 /// assert_eq!(rx.try_recv().unwrap().1, b"ok");
 /// ```
 pub fn try_deliver_reply(
@@ -160,7 +160,7 @@ mod tests {
         // has no sender. The closest observable case is a closed channel — exercised
         // above. Here we assert the helper is total over arbitrary topic strings.
         let (tx, mut rx) = tokio::sync::mpsc::channel::<(String, Vec<u8>)>(1);
-        assert!(try_deliver_reply(&tx, "ggcommons/reply-unknown-id".into(), vec![]));
+        assert!(try_deliver_reply(&tx, "edgecommons/reply-unknown-id".into(), vec![]));
         assert!(rx.try_recv().is_ok());
     }
 }

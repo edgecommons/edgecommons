@@ -1,7 +1,7 @@
 {
-  "name": "ggcommons-monorepo",
+  "name": "edgecommons-monorepo",
   "private": true,
-  "description": "Workspace root for the JavaScript/TypeScript packages of the GGCommons monorepo. Ties libs/ts, its native streaming binding, and the TS example together so cross-package deps resolve from one install instead of fragile nested file: paths. Non-JS subprojects (Java/Python/Rust) build independently.",
+  "description": "Workspace root for the JavaScript/TypeScript packages of the EdgeCommons monorepo. Ties libs/ts, its native streaming binding, and the TS example together so cross-package deps resolve from one install instead of fragile nested file: paths. Non-JS subprojects (Java/Python/Rust) build independently.",
   "license": "Apache-2.0",
   "workspaces": [
     "libs/rust-streamlog/bindings/node",

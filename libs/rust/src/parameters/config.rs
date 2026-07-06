@@ -21,7 +21,7 @@ use serde::{Deserialize, Deserializer};
 use super::service::{DefaultParameterService, ParameterService};
 use super::source::{EnvSource, MountedDirSource, ParameterSource};
 use crate::credentials::{build_key_provider, KeyProviderConfig, LocalVault};
-use crate::error::GgError;
+use crate::error::EdgeCommonsError;
 use crate::Result;
 
 // Greengrass stores config numbers as doubles (e.g. 300.0). Accept an int or an integer-valued
@@ -173,7 +173,7 @@ fn build_source(source: &ParamSourceConfig) -> Result<Arc<dyn ParameterSource>> 
             let root = source
                 .root
                 .clone()
-                .ok_or_else(|| GgError::Parameters("mountedDir source requires source.root".into()))?;
+                .ok_or_else(|| EdgeCommonsError::Parameters("mountedDir source requires source.root".into()))?;
             Ok(Arc::new(MountedDirSource::new(root, source.secure_paths.clone())))
         }
         #[cfg(feature = "parameters-aws")]
@@ -185,7 +185,7 @@ fn build_source(source: &ParamSourceConfig) -> Result<Arc<dyn ParameterSource>> 
             )?;
             Ok(Arc::new(s))
         }
-        other => Err(GgError::Parameters(format!(
+        other => Err(EdgeCommonsError::Parameters(format!(
             "parameter source '{other}' is not available (supported: 'env', 'mountedDir'; 'awsSsm' needs the parameters-aws feature)"
         ))),
     }
@@ -201,7 +201,7 @@ fn build_source(source: &ParamSourceConfig) -> Result<Arc<dyn ParameterSource>> 
 /// # Errors
 /// | Error Variant | Condition | Recovery |
 /// |---------------|-----------|----------|
-/// | `GgError::Parameters` | Unknown source type, missing required source field, or vault open failure | Fix the `parameters` config section |
+/// | `EdgeCommonsError::Parameters` | Unknown source type, missing required source field, or vault open failure | Fix the `parameters` config section |
 pub fn open(config: &ParametersConfig) -> Result<DefaultParameterService> {
     let source = build_source(&config.source)?;
     let sync_names = config.sync.names.clone();

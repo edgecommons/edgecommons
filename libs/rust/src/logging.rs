@@ -40,8 +40,8 @@
 //!
 //! ## Usage Example
 //! ```
-//! use ggcommons::config::model::Config;
-//! use ggcommons::logging;
+//! use edgecommons::config::model::Config;
+//! use edgecommons::logging;
 //! use serde_json::json;
 //!
 //! let cfg = Config::from_value("c", "t", json!({ "logging": { "level": "DEBUG" } })).unwrap();
@@ -396,7 +396,7 @@ fn file_make_writer(config: &Config) -> Option<RotatingFileMakeWriter> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
             if let Err(e) = std::fs::create_dir_all(parent) {
-                eprintln!("ggcommons: failed to create log directory {parent:?}: {e}");
+                eprintln!("edgecommons: failed to create log directory {parent:?}: {e}");
                 return None;
             }
         }
@@ -405,7 +405,7 @@ fn file_make_writer(config: &Config) -> Option<RotatingFileMakeWriter> {
     match RotatingFileWriter::open(path.clone(), max_bytes, backup_count) {
         Ok(writer) => Some(RotatingFileMakeWriter(Arc::new(Mutex::new(writer)))),
         Err(e) => {
-            eprintln!("ggcommons: failed to open log file {path:?}: {e}");
+            eprintln!("edgecommons: failed to open log file {path:?}: {e}");
             None
         }
     }
@@ -577,7 +577,7 @@ mod tests {
 
     fn test_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "ggcommons_logtest_{}_{}",
+            "edgecommons_logtest_{}_{}",
             std::process::id(),
             name
         ));
@@ -596,10 +596,10 @@ mod tests {
             "{timestamp} {level} {target}: {message}",
             "2026-01-01T00:00:00Z",
             "INFO",
-            "ggcommons::x",
+            "edgecommons::x",
             "hello world",
         );
-        assert_eq!(line, "2026-01-01T00:00:00Z INFO ggcommons::x: hello world");
+        assert_eq!(line, "2026-01-01T00:00:00Z INFO edgecommons::x: hello world");
         // Unknown tokens are left as-is; a different layout is honored.
         assert_eq!(
             render_template("[{level}] {message} {nope}", "t", "WARN", "tgt", "m"),
@@ -841,7 +841,7 @@ mod tests {
         let line = build_json_line(
             "2026-01-01T00:00:00Z",
             "INFO",
-            "ggcommons::x",
+            "edgecommons::x",
             fields,
             &[],
         )
@@ -852,7 +852,7 @@ mod tests {
         let v: Value = serde_json::from_str(&line).expect("each line must be valid JSON");
         assert_eq!("2026-01-01T00:00:00Z", v["timestamp"]);
         assert_eq!("INFO", v["level"]);
-        assert_eq!("ggcommons::x", v["logger"]);
+        assert_eq!("edgecommons::x", v["logger"]);
         assert_eq!("hello world", v["message"]);
     }
 
@@ -984,7 +984,7 @@ mod tests {
 
         // reconfigure re-applies the level (incl. a per-logger override directive). Safe no-op when
         // the subscriber was never installed; here it is, so the reload handle swaps the filter.
-        let cfg_reload = cfg_with(serde_json::json!({ "level": "WARN", "loggers": { "ggcommons": "debug" } }));
+        let cfg_reload = cfg_with(serde_json::json!({ "level": "WARN", "loggers": { "edgecommons": "debug" } }));
         reconfigure(&cfg_reload);
 
         // The hot-reload listener wrapper drives reconfigure on a config change.
@@ -1002,12 +1002,12 @@ mod tests {
     fn level_filter_applies_root_and_per_logger_directives() {
         let cfg = cfg_with(serde_json::json!({
             "level": "warn",
-            "loggers": { "ggcommons::messaging": "debug", "rumqttc": "error" }
+            "loggers": { "edgecommons::messaging": "debug", "rumqttc": "error" }
         }));
         // Rendering the filter is enough to prove the directives parse; the EnvFilter Display lists
         // them. (A malformed per-logger entry would fall back to the bare root level.)
         let rendered = level_filter(&cfg).to_string();
-        assert!(rendered.contains("ggcommons::messaging=debug"), "got {rendered}");
+        assert!(rendered.contains("edgecommons::messaging=debug"), "got {rendered}");
         assert!(rendered.contains("rumqttc=error"), "got {rendered}");
     }
 

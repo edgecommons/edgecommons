@@ -1,21 +1,21 @@
-//! Integration test for the top-level `GgCommons` runtime in STANDALONE mode.
+//! Integration test for the top-level `EdgeCommons` runtime in STANDALONE mode.
 //!
-//! Exercises the full `GgCommonsBuilder::build` path (CLI parse, STANDALONE
+//! Exercises the full `EdgeCommonsBuilder::build` path (CLI parse, STANDALONE
 //! messaging connect, FILE config load/validate, logging, metrics, heartbeat,
 //! config-watch task) and every public accessor, against the local MQTT broker.
 //!
-//! Gated: no-op unless `GGCOMMONS_IT_MQTT=1` is set (a broker must be reachable).
+//! Gated: no-op unless `EDGECOMMONS_IT_MQTT=1` is set (a broker must be reachable).
 
 use std::sync::Arc;
 
-use ggcommons::config::Config;
-use ggcommons::prelude::*;
+use edgecommons::config::Config;
+use edgecommons::prelude::*;
 
 fn skipped() -> bool {
-    if std::env::var("GGCOMMONS_IT_MQTT").is_ok() {
+    if std::env::var("EDGECOMMONS_IT_MQTT").is_ok() {
         return false;
     }
-    eprintln!("skipping STANDALONE runtime test (set GGCOMMONS_IT_MQTT=1 to enable)");
+    eprintln!("skipping STANDALONE runtime test (set EDGECOMMONS_IT_MQTT=1 to enable)");
     true
 }
 
@@ -35,10 +35,10 @@ async fn standalone_runtime_exposes_all_services_and_accessors() {
         return;
     }
 
-    let host = std::env::var("GGCOMMONS_IT_MQTT_HOST").unwrap_or_else(|_| "localhost".to_string());
-    let port = std::env::var("GGCOMMONS_IT_MQTT_PORT").unwrap_or_else(|_| "1883".to_string());
+    let host = std::env::var("EDGECOMMONS_IT_MQTT_HOST").unwrap_or_else(|_| "localhost".to_string());
+    let port = std::env::var("EDGECOMMONS_IT_MQTT_PORT").unwrap_or_else(|_| "1883".to_string());
 
-    let dir = std::env::temp_dir().join(format!("ggcommons-lib-{}", uuid::Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("edgecommons-lib-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     let config_path = dir.join("config.json");
     let messaging_path = dir.join("messaging.json");
@@ -78,7 +78,7 @@ async fn standalone_runtime_exposes_all_services_and_accessors() {
     )
     .unwrap();
 
-    let gg = GgCommonsBuilder::new("com.example.LibIt")
+    let gg = EdgeCommonsBuilder::new("com.example.LibIt")
         .args([
             "prog".to_string(),
             "--platform".to_string(),
@@ -111,7 +111,7 @@ async fn standalone_runtime_exposes_all_services_and_accessors() {
     let _metrics = gg.metrics();
 
     // Exercise a real publish through the wired service.
-    let msg = ggcommons::messaging::message::MessageBuilder::new("Ping", "1.0")
+    let msg = edgecommons::messaging::message::MessageBuilder::new("Ping", "1.0")
         .from_config(&cfg)
         .payload(serde_json::json!({ "ok": true }))
         .build();
@@ -125,7 +125,7 @@ async fn standalone_runtime_exposes_all_services_and_accessors() {
         assert_eq!(streams.stream_names(), vec!["telemetry"]);
         let h = streams.stream("telemetry").expect("configured stream");
         for i in 0..5u64 {
-            h.append(ggcommons::streaming::StreamRecord::new("k", 1000 + i, b"v")).unwrap();
+            h.append(edgecommons::streaming::StreamRecord::new("k", 1000 + i, b"v")).unwrap();
         }
         h.flush().unwrap();
         let s = streams.stats("telemetry").expect("stats");
@@ -141,7 +141,7 @@ async fn standalone_runtime_exposes_all_services_and_accessors() {
     {
         let creds = gg.credentials().expect("credentials configured");
         creds
-            .put("db/password", b"s3cr3t", ggcommons::credentials::PutOptions::default())
+            .put("db/password", b"s3cr3t", edgecommons::credentials::PutOptions::default())
             .unwrap();
         assert_eq!(creds.get_string("db/password").unwrap().unwrap(), "s3cr3t");
         // {ThingName} in the vault path was resolved during build().

@@ -41,7 +41,7 @@ shared **file sink** in the streaming core, and the registry entry.
    stages implement one internal `Processor` trait (§5) so they compose uniformly. The Rhai engine is
    **always compiled in** (no feature gate) — simpler, and the runtime cost is negligible when no
    route uses a script stage.
-2. **File target = shared `ggstreamlog` sink.** A new `SinkConfig::File` variant in the streaming
+2. **File target = shared `edgestreamlog` sink.** A new `SinkConfig::File` variant in the streaming
    core, so a file destination is a normal stream sink alongside Kinesis/Kafka and inherits the
    durable buffer + `ExportEngine` batching/retry/at-least-once. It benefits all four languages (§10),
    and the component implements **no sink of its own** — it reaches the file sink purely through config
@@ -50,7 +50,7 @@ shared **file sink** in the streaming core, and the registry entry.
    partitioned). Fallback = **raw** envelope archival (one row per message, opaque payload). Encoder
    selectable Parquet (default) or Avro (for BigQuery / union-typed value fidelity). See §7.
 4. **Home = own external repo,** `edgecommons/telemetry-processor`, a first-class component. The
-   monorepo carries only: this design doc, the `ggstreamlog`/schema file-sink changes, and the
+   monorepo carries only: this design doc, the `edgestreamlog`/schema file-sink changes, and the
    registry entry.
 5. **Each route is a `component.instances[]` entry** (`{ id, subscribe, pipeline, target, … }`) — the
    framework's existing array of independently-id'd worker units, enumerated via the built-in
@@ -111,7 +111,7 @@ shared **file sink** in the streaming core, and the registry entry.
 ```
 
 **Library vs component split.** The processing engine and target routing are the **component's** own
-code. The **file sink is a library/core** change (`ggstreamlog`), reachable from the component purely
+code. The **file sink is a library/core** change (`edgestreamlog`), reachable from the component purely
 via config. This keeps the throughput-critical durable-buffer/encoder logic in the one shared,
 fuzz/crash-tested Rust core (consistent with `docs/TELEMETRY_STREAMING.md` §5), and keeps the component
 small.
@@ -128,7 +128,7 @@ Each route (instance) entry:
 | Field | Meaning |
 |-------|---------|
 | `id` (required by `instances[]`) | route id — used for logs, the `processor_health` dimension, and hot-reload diffing |
-| `subscribe` | `[string]` topic filters. MQTT `+`/`#` wildcards allowed; each filter is run through `ggcommons::config::template::resolve(&cfg, filter)` so `{ThingName}` / `{ComponentName}` / `{signal}` substitution works |
+| `subscribe` | `[string]` topic filters. MQTT `+`/`#` wildcards allowed; each filter is run through `edgecommons::config::template::resolve(&cfg, filter)` so `{ThingName}` / `{ComponentName}` / `{signal}` substitution works |
 | `pipeline` | `[stage]` ordered stages (§5) |
 | `target` | `"local"` \| `"northbound"` \| `"stream:<name>"` (§6) |
 | `publish` | target topic template (for `local`/`northbound`) and `partitionKey` source (for `stream`; default `body.signal.id`) |
@@ -136,7 +136,7 @@ Each route (instance) entry:
 | `key` | aggregation / dedup key path (default `body.signal.id`) |
 
 Topic filters MUST support MQTT `+`/`#` wildcards and MUST be resolved through the existing
-`ggcommons::config::template::resolve` so an operator can write
+`edgecommons::config::template::resolve` so an operator can write
 `southbound/{site}/{ComponentName}/+/{signal}` and have it expand against the active config. A route MAY
 omit any field present in `component.global`; the resolved route is `global ⊕ instance` with the
 instance winning per key.
@@ -272,7 +272,7 @@ recommends; it is overridable via `publish.partitionKey`.
 
 ## 7. The file sink
 
-A new `SinkConfig::File` variant lives **in the shared `ggstreamlog` core**, so a file destination is a
+A new `SinkConfig::File` variant lives **in the shared `edgestreamlog` core**, so a file destination is a
 normal stream sink alongside Kinesis/Kafka and inherits the durable buffer + `ExportEngine`
 batching/retry/at-least-once (`docs/TELEMETRY_STREAMING.md` §4, §6).
 
@@ -379,7 +379,7 @@ The rows-mode schema is shaped for the cloud lakehouses operators actually land 
 ## 9. Config schema
 
 The **one** canonical schema edit is a `file` branch added to the `streamSink` `oneOf` in
-`schema/ggcommons-config-schema.json`, followed by `schema/sync-schema.sh` to propagate to the four
+`schema/edgecommons-config-schema.json`, followed by `schema/sync-schema.sh` to propagate to the four
 library copies and pass `sync-schema.sh --check` (the CI drift gate). **Routes need no schema change** —
 they live in the permissive `component.instances[]` / `component.global` (`docs/SOUTHBOUND.md` §4).
 
@@ -389,7 +389,7 @@ A full example — `component.instances[]` routes plus a `streaming` section who
 ```jsonc
 {
   "component": {
-    "name": "com.mbreissi.greengrass.TelemetryProcessor",
+    "name": "com.mbreissi.edgecommons.TelemetryProcessor",
     "global": { "maxQueue": 10000, "key": "body.signal.id" },
     "instances": [
       {
@@ -414,7 +414,7 @@ A full example — `component.instances[]` routes plus a `streaming` section who
       {
         "name": "hot",
         "sink": { "type": "kinesis", "streamName": "telemetry-hot", "region": "us-east-1" },
-        "buffer": { "path": "/var/lib/ggcommons/streams/{ComponentName}/hot",
+        "buffer": { "path": "/var/lib/edgecommons/streams/{ComponentName}/hot",
                     "maxDiskBytes": 2147483648, "onFull": "dropOldest", "fsync": "perBatch" },
         "batch":  { "maxRecords": 500, "maxBytes": 4194304, "maxLatencyMs": 1000 }
       },
@@ -424,7 +424,7 @@ A full example — `component.instances[]` routes plus a `streaming` section who
                   "dir": "/data/{ThingName}/archive", "partitionBy": "dt={yyyy-MM-dd}/hr={HH}",
                   "maxFileBytes": 134217728, "maxFiles": 50, "rollEverySecs": 300,
                   "onFull": "dropOldest", "compression": "snappy" },
-        "buffer": { "path": "/var/lib/ggcommons/streams/{ComponentName}/archive",
+        "buffer": { "path": "/var/lib/edgecommons/streams/{ComponentName}/archive",
                     "maxDiskBytes": 2147483648, "onFull": "dropOldest", "fsync": "perBatch" },
         "batch":  { "maxRecords": 5000, "maxBytes": 8388608, "maxLatencyMs": 5000 }
       }
@@ -435,11 +435,11 @@ A full example — `component.instances[]` routes plus a `streaming` section who
 
 ## 10. Cross-language parity
 
-The file sink lives in the **`ggstreamlog` core**, not behind the per-language binding seam — so
+The file sink lives in the **`edgestreamlog` core**, not behind the per-language binding seam — so
 Java / Python / Node gain it automatically **when their `cabi` native lib builds the `file` feature**.
 That build-flag enablement plus a per-language smoke test is a **follow-on parity task** for the
 four-way register, out of scope for this Rust component but tracked: each binding's prebuilt artifact
-must be rebuilt with `ggstreamlog/file` (and `parquet`/`avro`) on, and a round-trip test added.
+must be rebuilt with `edgestreamlog/file` (and `parquet`/`avro`) on, and a round-trip test added.
 
 The **processor component itself** is **Rust-only** by design — it is the **reference Rust component**
 (richer than the `examples/rust` skeleton) and lives in `edgecommons/telemetry-processor`. There is no
@@ -450,7 +450,7 @@ core), not the processor.
 
 - **Phase 0 — design doc + schema.** This doc; add the `file` branch to the canonical `streamSink`
   `oneOf` + `sync-schema`; land the registry `processor` category. (Monorepo PR.)
-- **Phase 1 — file sink in `ggstreamlog`.** `SinkConfig::File`, `ParquetSink` (rows + raw, sparse typed
+- **Phase 1 — file sink in `edgestreamlog`.** `SinkConfig::File`, `ParquetSink` (rows + raw, sparse typed
   columns), rolling / `maxFiles` / atomic-rename, factory arm, features/deps. Unit tests: Parquet
   round-trip, rolling at `maxFileBytes`, `maxFiles` eviction, crash-safety (drop writer mid-file → no
   offset commit). Then `AvroSink` (+ union value). 90% coverage gate. **Unblocks the component.**
@@ -468,7 +468,7 @@ core), not the processor.
 **Settled:**
 - Processing model = declarative pipeline + Rhai (always compiled in); each route = one
   `component.instances[]` entry with `global ⊕ instance` defaults — **no route schema change**.
-- File sink in the shared `ggstreamlog` core (both rows + raw modes; Parquet default, Avro option);
+- File sink in the shared `edgestreamlog` core (both rows + raw modes; Parquet default, Avro option);
   the **only** canonical schema edit is the `file` `streamSink` variant.
 - Durability: clean shutdown loses nothing; hard-crash loss bounded by the open-file window for
   Parquet, none for Avro to its last sync block; at-least-once with `(signalId, sourceTs)` dedup.

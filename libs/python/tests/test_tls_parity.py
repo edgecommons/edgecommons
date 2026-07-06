@@ -5,8 +5,8 @@ Unit tests for TLS / messaging-config parity (no broker required):
 - IoT Core is now optional in the standalone messaging config (parity with Java/Rust)
 
 The TLS-context construction tests need real cert files; they are skipped unless
-certs are available. Certs live in the shared ggcommons-test-infra repo; point at
-them with GGCOMMONS_TLS_CERTS_DIR (falls back to a local tests/tls-certs/).
+certs are available. Certs live in the shared edgecommons-test-infra repo; point at
+them with EDGECOMMONS_TLS_CERTS_DIR (falls back to a local tests/tls-certs/).
 """
 
 import json
@@ -14,14 +14,14 @@ import os
 
 import pytest
 
-from ggcommons.messaging.providers.standalone_provider import StandaloneProvider
-from ggcommons.messaging.messaging_config import MessagingConfiguration
+from edgecommons.messaging.providers.standalone_provider import StandaloneProvider
+from edgecommons.messaging.messaging_config import MessagingConfiguration
 
-CERTS = os.environ.get("GGCOMMONS_TLS_CERTS_DIR") or os.path.join(
+CERTS = os.environ.get("EDGECOMMONS_TLS_CERTS_DIR") or os.path.join(
     os.path.dirname(__file__), "tls-certs"
 )
 HAVE_CERTS = os.path.isdir(CERTS) and os.path.exists(os.path.join(CERTS, "ca.crt"))
-_SKIP_REASON = "set GGCOMMONS_TLS_CERTS_DIR (see the ggcommons-test-infra repo)"
+_SKIP_REASON = "set EDGECOMMONS_TLS_CERTS_DIR (see the edgecommons-test-infra repo)"
 
 
 class _FakeClient:

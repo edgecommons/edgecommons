@@ -30,7 +30,7 @@
  * (no re-serialization) so the reported value byte-matches `desired` and the delta
  * clears — re-serializing would reorder keys and the delta would never clear.
  */
-import { GgError } from "../../errors";
+import { EdgeCommonsError } from "../../errors";
 import { Destination, Qos } from "../../messaging/types";
 import { IpcMessagingProvider } from "../../messaging/ipc-provider";
 import { ConfigSource, ConfigWatch } from "./index";
@@ -143,7 +143,7 @@ export class ShadowConfigSource implements ConfigSource {
       try {
         doc = JSON.parse(bytes.toString("utf8"));
       } catch (e) {
-        throw GgError.json(`failed to parse shadow document: ${(e as Error).message}`);
+        throw EdgeCommonsError.json(`failed to parse shadow document: ${(e as Error).message}`);
       }
       configStr = extractConfigStr(doc) ?? defaultConfigStr();
     } else {

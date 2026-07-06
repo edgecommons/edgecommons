@@ -1,7 +1,7 @@
 # Streaming on Kubernetes — StatefulSet + per-pod PVC (Phase 1d, example, NOT part of the smoke).
 #
 # A component that uses gg.streams() with a DURABLE disk buffer must run as a StatefulSet with a
-# per-pod PersistentVolumeClaim, NOT a Deployment: the ggstreamlog durable log is a SINGLE-WRITER,
+# per-pod PersistentVolumeClaim, NOT a Deployment: the edgestreamlog durable log is a SINGLE-WRITER,
 # crash-safe, on-disk buffer that drains to Kinesis/Kafka on reconnect, so each replica needs its OWN
 # stable volume (a shared RWX volume co-written by multiple pods would corrupt the log). The streaming
 # ENGINE is unchanged from standalone/Greengrass — this is purely the deployment shape. The buffer
@@ -10,16 +10,16 @@
 # CSI-agnostic: any StorageClass that provides ReadWriteOnce block/file volumes works. This example is
 # illustrative (no live smoke — it needs a reachable Kinesis/Kafka sink + AWS creds via IRSA/Roles
 # Anywhere). Apply with `kubectl apply -f streaming-statefulset-example.yaml` against a cluster that has
-# a default StorageClass and the ggcommons-component image.
+# a default StorageClass and the edgecommons-component image.
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: ggcommons-streaming-config
+  name: edgecommons-streaming-config
 data:
   config.json: |-
     {
-      "messaging": { "local": { "type": "mqtt", "host": "ggcommons-emqx", "port": 1883, "clientId": "ggc-streaming" } },
+      "messaging": { "local": { "type": "mqtt", "host": "edgecommons-emqx", "port": 1883, "clientId": "ggc-streaming" } },
       "logging": { "level": "INFO" },
       "streaming": {
         "streams": [
@@ -27,9 +27,9 @@ data:
             "name": "telemetry",
             "buffer": {
               "type": "durable",
-              "path": "/var/lib/ggcommons/streams/{ThingName}/telemetry"
+              "path": "/var/lib/edgecommons/streams/{ThingName}/telemetry"
             },
-            "sink": { "type": "kinesis", "streamName": "ggcommons-{ThingName}-telemetry", "region": "us-east-1" }
+            "sink": { "type": "kinesis", "streamName": "edgecommons-{ThingName}-telemetry", "region": "us-east-1" }
           }
         ]
       },
@@ -39,18 +39,18 @@ data:
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: ggcommons-streaming
+  name: edgecommons-streaming
 spec:
   # Headless Service for stable network identity (required by StatefulSet).
-  serviceName: ggcommons-streaming
+  serviceName: edgecommons-streaming
   replicas: 1
   selector:
     matchLabels:
-      app: ggcommons-streaming
+      app: edgecommons-streaming
   template:
     metadata:
       labels:
-        app: ggcommons-streaming
+        app: edgecommons-streaming
     spec:
       # The projected SA token is the platform=KUBERNETES auto-detect signal AND (via IRSA / Pod
       # Identity / IAM Roles Anywhere) the AWS identity the Kinesis sink uses — no static keys.
@@ -58,26 +58,26 @@ spec:
       terminationGracePeriodSeconds: 60   # let the buffer drain on SIGTERM before kill
       containers:
         - name: component
-          image: "ggcommons-component:ci"
-          args: ["--platform", "KUBERNETES", "-c", "CONFIGMAP", "/etc/ggcommons", "config.json"]
+          image: "edgecommons-component:ci"
+          args: ["--platform", "KUBERNETES", "-c", "CONFIGMAP", "/etc/edgecommons", "config.json"]
           env:
             - name: POD_NAME
               valueFrom: { fieldRef: { fieldPath: metadata.name } }
           volumeMounts:
-            - name: ggcommons-config
-              mountPath: /etc/ggcommons
+            - name: edgecommons-config
+              mountPath: /etc/edgecommons
               readOnly: true
             # The durable streaming buffer — the per-pod PVC below. buffer.path lives under this mount.
             - name: streams
-              mountPath: /var/lib/ggcommons/streams
+              mountPath: /var/lib/edgecommons/streams
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities: { drop: ["ALL"] }
       volumes:
-        - name: ggcommons-config
+        - name: edgecommons-config
           configMap:
-            name: ggcommons-streaming-config
+            name: edgecommons-streaming-config
   # Per-pod durable buffer volume — reattached to the same ordinal pod across restarts/reschedules.
   volumeClaimTemplates:
     - metadata:

@@ -10,7 +10,7 @@ import { Quality, qualityFromWire } from "../src/facades/quality";
 import { Severity, severityFromWire } from "../src/facades/severity";
 import { SignalUpdateBuilder } from "../src/facades/signal_update";
 import { effectiveSignalPath } from "../src/facades/signal_update";
-import { GgError } from "../src/errors";
+import { EdgeCommonsError } from "../src/errors";
 
 describe("Channel", () => {
   it("fromConfig parses every recognized form", () => {
@@ -32,7 +32,7 @@ describe("Channel", () => {
   });
 
   it("stream() rejects an empty name", () => {
-    expect(() => Channel.stream("")).toThrow(GgError);
+    expect(() => Channel.stream("")).toThrow(EdgeCommonsError);
   });
 
   it("structural equality and the config-string round trip", () => {
@@ -95,6 +95,6 @@ describe("SignalUpdateBuilder", () => {
 
   it("a detached builder's publish() throws", async () => {
     const detached = new SignalUpdateBuilder("temp").addSample(1.0);
-    await expect(detached.publish()).rejects.toThrow(GgError);
+    await expect(detached.publish()).rejects.toThrow(EdgeCommonsError);
   });
 });

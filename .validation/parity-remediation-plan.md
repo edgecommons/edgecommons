@@ -1,6 +1,6 @@
-# GGCommons cross-language parity — remediation plan
+# EdgeCommons cross-language parity — remediation plan
 
-Source: the evidence-based audit (memory `ggcommons-parity-gaps-audit`). This is the working
+Source: the evidence-based audit (memory `edgecommons-parity-gaps-audit`). This is the working
 register. Designations:
 
 - ✅ **FULL** — at parity, no action.

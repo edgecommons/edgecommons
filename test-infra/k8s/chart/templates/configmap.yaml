@@ -13,16 +13,16 @@ broker Service DNS. `component` is the only schema-required key.
 {{- if .Values.credentials.enabled -}}
 {{/* Inject a credentials section so the component opens an encrypted vault using the `env` KeyProvider
      (the KUBERNETES default): keyProvider.type is OMITTED, so the platform profile default (env) applies,
-     sourcing the KEK from the GGCOMMONS_VAULT_KEK env var (the mounted Secret). The vault lives under the
+     sourcing the KEK from the EDGECOMMONS_VAULT_KEK env var (the mounted Secret). The vault lives under the
      writable /tmp emptyDir (the root FS is read-only). */}}
 {{- $config = merge $config (dict "credentials" (dict "vault" (dict "path" .Values.credentials.vaultPath))) -}}
 {{- end -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "ggcommons.configMapName" . }}
+  name: {{ include "edgecommons.configMapName" . }}
   labels:
-    {{- include "ggcommons.labels" . | nindent 4 }}
+    {{- include "edgecommons.labels" . | nindent 4 }}
 data:
   # The CONFIGMAP source reads this key (default key: config.json). Edit this value
   # (kubectl patch / kubectl edit) to drive the ..data hot-reload test (see smoke.sh).

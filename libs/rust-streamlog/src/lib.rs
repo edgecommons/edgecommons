@@ -1,6 +1,6 @@
-//! # ggstreamlog
+//! # edgestreamlog
 //!
-//! Durable, store-and-forward telemetry log + export engine for ggcommons (Phase 1 core).
+//! Durable, store-and-forward telemetry log + export engine for edgecommons (Phase 1 core).
 //! See `docs/TELEMETRY_STREAMING_PHASE1.md`.
 //!
 //! Phase 1 layers (built bottom-up):
@@ -12,7 +12,7 @@
 //!   lib, the C-ABI bindings, and tests.
 //!
 //! The C ABI for the Phase-2 language bindings lives in [`ffi`] (feature `cabi`, building a
-//! `cdylib`); its header is `include/ggstreamlog.h`.
+//! `cdylib`); its header is `include/edgestreamlog.h`.
 
 pub mod blockstore;
 pub mod config;
@@ -29,7 +29,7 @@ pub use config::{
     FileFormat, FileMode, FileOnFull, FileSinkConfig, FsyncPolicy, OnFull, RowsConfig, SinkConfig,
     StreamConfig, StreamingConfig,
 };
-pub use error::{GgStreamError, Result};
+pub use error::{EdgeStreamError, Result};
 pub use export::{
     CallbackSink, EngineStats, ExportEngine, ExportRecord, FakeSink, FakeSinkHandle, SendOutcome,
     Sink, SinkCallback,

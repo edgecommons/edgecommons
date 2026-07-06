@@ -23,8 +23,8 @@
 //!
 //! ## Usage Example
 //! ```no_run
-//! # async fn demo() -> ggcommons::Result<()> {
-//! use ggcommons::messaging::config::MessagingConfig;
+//! # async fn demo() -> edgecommons::Result<()> {
+//! use edgecommons::messaging::config::MessagingConfig;
 //! let mc = MessagingConfig::load("standalone-messaging.json").await?;
 //! println!("local broker: {}:{}", mc.messaging.local.resolved_host()?, mc.messaging.local.port);
 //! # Ok(())
@@ -128,13 +128,13 @@ impl BrokerConfig {
     /// # Errors
     /// | Error Variant | Condition | Recovery |
     /// |---------------|-----------|----------|
-    /// | `GgError::Config` | Neither `host` nor `endpoint` is set | Add one to the messaging config |
+    /// | `EdgeCommonsError::Config` | Neither `host` nor `endpoint` is set | Add one to the messaging config |
     pub fn resolved_host(&self) -> Result<&str> {
         self.host
             .as_deref()
             .or(self.endpoint.as_deref())
             .ok_or_else(|| {
-                crate::error::GgError::Config("broker config has no host/endpoint".to_string())
+                crate::error::EdgeCommonsError::Config("broker config has no host/endpoint".to_string())
             })
     }
 }
@@ -165,8 +165,8 @@ impl MessagingConfig {
     /// # Errors
     /// | Error Variant | Condition | Recovery |
     /// |---------------|-----------|----------|
-    /// | `GgError::Io` | File missing or unreadable | Check the `-m STANDALONE <path>` argument |
-    /// | `GgError::Json` | File is not valid messaging JSON | Fix the file shape |
+    /// | `EdgeCommonsError::Io` | File missing or unreadable | Check the `-m STANDALONE <path>` argument |
+    /// | `EdgeCommonsError::Json` | File is not valid messaging JSON | Fix the file shape |
     pub async fn load(path: impl AsRef<Path>) -> Result<MessagingConfig> {
         let bytes = tokio::fs::read(path.as_ref()).await?;
         Ok(serde_json::from_slice(&bytes)?)
@@ -267,7 +267,7 @@ mod tests {
 
     #[tokio::test]
     async fn load_reads_and_parses_a_file() {
-        let dir = std::env::temp_dir().join(format!("ggcommons-mc-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("edgecommons-mc-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("messaging.json");
         std::fs::write(

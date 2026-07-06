@@ -1,5 +1,5 @@
 /**
- * TS credentials: PKCS#11 (HSM/TPM/SoftHSM) key provider round trip (gated by GGCOMMONS_IT_PKCS11).
+ * TS credentials: PKCS#11 (HSM/TPM/SoftHSM) key provider round trip (gated by EDGECOMMONS_IT_PKCS11).
  * Env: PKCS11_MODULE, PKCS11_TOKEN, PKCS11_KEY, PKCS11_PIN (and SOFTHSM2_CONF for SoftHSM).
  */
 import { mkdtempSync } from "fs";
@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 
 import { openFromConfig } from "../src/credentials/config";
 
-describe.skipIf(process.env.GGCOMMONS_IT_PKCS11 !== "1")("pkcs11 key provider (SoftHSM)", () => {
+describe.skipIf(process.env.EDGECOMMONS_IT_PKCS11 !== "1")("pkcs11 key provider (SoftHSM)", () => {
   it("wraps + unwraps the vault DEK on the token (put → reopen round trip)", async () => {
     const dir = mkdtempSync(join(tmpdir(), "ggvault-p11-"));
     const path = join(dir, "vault");

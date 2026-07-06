@@ -2,7 +2,7 @@ import argparse
 import logging
 import sys
 
-from ggcommons import GGCommonsBuilder
+from edgecommons import EdgeCommonsBuilder
 from app.<<COMPONENTNAME>> import <<COMPONENTNAME>>
 
 logger = logging.getLogger("main")
@@ -13,9 +13,9 @@ def main():
     # add any component specific arguments here
 
     # Construct the framework via the fluent builder. (The pre-rearch
-    # ggcommons.init(...) entry point has been replaced by GGCommonsBuilder.)
+    # edgecommons.init(...) entry point has been replaced by EdgeCommonsBuilder.)
     gg = (
-        GGCommonsBuilder.create("<<COMPONENTNAME>>")
+        EdgeCommonsBuilder.create("<<COMPONENTNAME>>")
         .with_args(sys.argv[1:])
         .with_app_options(arg_parser)
         .receive_own_messages(True)

@@ -1,18 +1,18 @@
 ---
 title: Deploy to Greengrass
-description: Package a GGCommons component with the GDK and deploy it to an AWS IoT Greengrass v2 core device over the IPC transport.
+description: Package a EdgeCommons component with the GDK and deploy it to an AWS IoT Greengrass v2 core device over the IPC transport.
 sidebar:
   order: 1
 ---
 
 import { Tabs, TabItem, Aside, LinkCard } from "@astrojs/starlight/components";
 
-This page covers deploying a GGCommons component to **AWS IoT Greengrass v2**, where it runs on the
+This page covers deploying a EdgeCommons component to **AWS IoT Greengrass v2**, where it runs on the
 `GREENGRASS` platform and talks to the Nucleus over **Greengrass IPC** (the `IPC` transport). You
 build and package the component with the **GDK (Greengrass Development Kit)**, then either deploy it
 locally with `greengrass-cli` or push it to a fleet from the cloud.
 
-Every component the `ggcommons` CLI scaffolds already ships the two files the GDK needs —
+Every component the `edgecommons` CLI scaffolds already ships the two files the GDK needs —
 `gdk-config.json` (build + publish settings) and `recipe.yaml` (the component recipe) — so you
 rarely write either by hand.
 
@@ -24,10 +24,10 @@ a local MQTT broker. See the [Quickstart](/start/quickstart/) and
 
 ## Prerequisites
 
-- A **scaffolded component** (`ggcommons create-component` with `GREENGRASS` among its target
+- A **scaffolded component** (`edgecommons create-component` with `GREENGRASS` among its target
   platforms — the default). See the [Quickstart](/start/quickstart/).
 - The **GDK CLI** (`gdk`) installed and on your `PATH`, plus AWS credentials with permission to
-  upload artifacts to S3 and register component versions. Confirm with `ggcommons doctor`, which
+  upload artifacts to S3 and register component versions. Confirm with `edgecommons doctor`, which
   reports whether `gdk` and `aws` are present.
 - An **S3 bucket** for published artifacts. The CLI writes the bucket/region you pass at scaffold
   time into `gdk-config.json` (`--bucket` / `--region`, defaulting to
@@ -178,7 +178,7 @@ What `gdk component build` actually does — and the artifact it produces — is
   <Aside type="caution" title="Bundled wheel">
   The shipped recipe's `install` step also `pip install`s a hard-coded wheel,
   `greengrass_commons-0.0.10038883-py3-none-any.whl`, whose pinned version may not match the
-  `greengrass-commons` line in `requirements.txt`. On-device install fails unless that exact wheel is
+  `edgecommons` line in `requirements.txt`. On-device install fails unless that exact wheel is
   bundled into the ZIP. Prefer resolving the library through `requirements.txt`.
   </Aside>
 
@@ -193,7 +193,7 @@ What `gdk component build` actually does — and the artifact it produces — is
   gdk component build
   # The greengrass feature compiles a C-FFI SDK and only builds on Linux (needs libclang).
   # Build on a Linux host/WSL, or cross-compile:
-  GGCOMMONS_TARGET=x86_64-unknown-linux-gnu gdk component build
+  EDGECOMMONS_TARGET=x86_64-unknown-linux-gnu gdk component build
   ```
 
 </TabItem>
@@ -282,7 +282,7 @@ core. The artifact filename in `--artifactDir` must match the artifact URI in yo
 
 ## Deploy to devices from the cloud
 
-Once a version is published, deploy it to a thing or thing group via the cloud. The `ggcommons` CLI
+Once a version is published, deploy it to a thing or thing group via the cloud. The `edgecommons` CLI
 wraps the whole flow — `gdk component build`, `gdk component publish`, then
 `aws greengrassv2 create-deployment`:
 
@@ -290,14 +290,14 @@ wraps the whole flow — `gdk component build`, `gdk component publish`, then
 <TabItem label="Linux">
 
   ```bash
-  ggcommons deploy -p . -t arn:aws:iot:us-east-1:123456789012:thinggroup/edge-fleet
+  edgecommons deploy -p . -t arn:aws:iot:us-east-1:123456789012:thinggroup/edge-fleet
   ```
 
 </TabItem>
 <TabItem label="Windows">
 
   ```powershell
-  ggcommons deploy -p . -t arn:aws:iot:us-east-1:123456789012:thinggroup/edge-fleet
+  edgecommons deploy -p . -t arn:aws:iot:us-east-1:123456789012:thinggroup/edge-fleet
   ```
 
 </TabItem>
@@ -306,7 +306,7 @@ wraps the whole flow — `gdk component build`, `gdk component publish`, then
 <Aside type="caution" title="Concrete version required">
 The cloud-deploy step needs a real component version — it rejects `NEXT_PATCH` (and empty versions).
 Set a concrete version before deploying to a fleet. See the [CLI reference](/reference/cli/) for the
-full `ggcommons deploy` options.
+full `edgecommons deploy` options.
 </Aside>
 
 ## Verify the deployment
@@ -323,4 +323,4 @@ full `ggcommons deploy` options.
 <LinkCard title="Messaging guide" href="/guides/messaging/" description="Publish, subscribe, and request/reply across IPC and MQTT." />
 <LinkCard title="Configuration guide" href="/guides/configuration/" description="Config sources, template variables, hot reload, and validation." />
 <LinkCard title="Platforms and transports" href="/start/platforms-and-transports/" description="How --platform and --transport resolve, and their defaults." />
-<LinkCard title="CLI reference" href="/reference/cli/" description="ggcommons create-component, validate, deploy, and upgrade." />
+<LinkCard title="CLI reference" href="/reference/cli/" description="edgecommons create-component, validate, deploy, and upgrade." />

@@ -11,9 +11,9 @@ from shutil import rmtree
 from setuptools import find_packages, setup, Command
 
 # Package meta-data.
-NAME = "greengrass-commons"
+NAME = "edgecommons"
 DESCRIPTION = "Rules-based evaluation system using Lookout 4 Vision"
-URL = "https://gitlab.aws.dev/greengrass-commons/python-component-skeleton"
+URL = "https://gitlab.aws.dev/edgecommons/python-component-skeleton"
 EMAIL = "mbreissi@amazon.com"
 AUTHOR = "mbreissi@amazon.com"
 REQUIRES_PYTHON = ">=3.8.0"

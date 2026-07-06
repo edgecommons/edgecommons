@@ -7,7 +7,7 @@ view.
 
 ## Schema
 
-The schema (`resources/ggcommons-config-schema.json`, embedded with `include_str!`)
+The schema (`resources/edgecommons-config-schema.json`, embedded with `include_str!`)
 matches the Java/Python schema. All sections are optional and `additionalProperties`
 is permissive, so component-specific keys pass through untouched.
 
@@ -79,7 +79,7 @@ library validates the new document, builds a fresh `Config`, swaps it atomically
 then notifies registered listeners:
 
 ```rust
-use ggcommons::config::ConfigurationChangeListener;
+use edgecommons::config::ConfigurationChangeListener;
 use std::sync::Arc;
 
 gg.add_config_change_listener(my_listener); // Arc<dyn ConfigurationChangeListener>

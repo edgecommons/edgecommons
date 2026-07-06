@@ -1,30 +1,30 @@
-# In-cluster EMQX MQTT broker for the ggcommons Phase-1a smoke test.
+# In-cluster EMQX MQTT broker for the edgecommons Phase-1a smoke test.
 #
 # The in-cluster realization of test-infra/compose.yaml's EMQX (DESIGN-subsystems §2,
-# DESIGN-packaging §10). Components reach it by the Service DNS name `ggcommons-emqx`
-# (FQDN: ggcommons-emqx.<namespace>.svc.cluster.local) on plaintext port 1883.
+# DESIGN-packaging §10). Components reach it by the Service DNS name `edgecommons-emqx`
+# (FQDN: edgecommons-emqx.<namespace>.svc.cluster.local) on plaintext port 1883.
 #
 # Apply into the same namespace as the component release, e.g.:
-#   kubectl apply -n ggcommons -f test-infra/k8s/emqx.yaml
-#   kubectl -n ggcommons rollout status deploy/ggcommons-emqx
+#   kubectl apply -n edgecommons -f test-infra/k8s/emqx.yaml
+#   kubectl -n edgecommons rollout status deploy/edgecommons-emqx
 #
 # Plaintext 1883 only — sufficient for the local-broker smoke test. Mutual-TLS (8883)
 # is exercised by the existing test-infra/compose.yaml harness, not needed here.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: ggcommons-emqx
+  name: edgecommons-emqx
   labels:
-    app: ggcommons-emqx
+    app: edgecommons-emqx
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: ggcommons-emqx
+      app: edgecommons-emqx
   template:
     metadata:
       labels:
-        app: ggcommons-emqx
+        app: edgecommons-emqx
     spec:
       containers:
         - name: emqx
@@ -50,12 +50,12 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: ggcommons-emqx
+  name: edgecommons-emqx
   labels:
-    app: ggcommons-emqx
+    app: edgecommons-emqx
 spec:
   type: ClusterIP
   selector:
-    app: ggcommons-emqx
+    app: edgecommons-emqx
   ports:
     - { name: mqtt, port: 1883, targetPort: 1883, protocol: TCP }

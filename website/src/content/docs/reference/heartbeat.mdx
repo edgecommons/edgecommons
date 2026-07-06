@@ -21,9 +21,9 @@ metric subsystem. On graceful shutdown it publishes a best-effort `{"status":"ST
 most once.
 
 <Aside type="note" title="The heartbeat is autonomous — no public accessor">
-The GGCommons runtime constructs the heartbeat during initialization and tears it down on close.
+The EdgeCommons runtime constructs the heartbeat during initialization and tears it down on close.
 **No SDK exposes a public accessor** — there is no `getHeartbeat()` / `heartbeat()` /
-`get_heartbeat()` on the GGCommons object in any language. Component code drives the heartbeat
+`get_heartbeat()` on the EdgeCommons object in any language. Component code drives the heartbeat
 through the [`heartbeat` config section](#the-heartbeat-config-shape), not through these APIs — with
 **one** exception. The single runtime lever is `gg.setInstanceConnectivityProvider(...)` /
 `set_instance_connectivity_provider(...)`, a callback that *shapes* the RUNNING `state` body
@@ -86,7 +86,7 @@ empty list, or one that throws or panics, simply omits the `instances[]` section
 <Tabs syncKey="lang">
 <TabItem label="Java">
 
-`com.mbreissi.ggcommons.heartbeat.Heartbeat` implements `ConfigurationChangeListener`. Its
+`com.mbreissi.edgecommons.heartbeat.Heartbeat` implements `ConfigurationChangeListener`. Its
 constructor is package-private; the runtime constructs it via [`HeartbeatBuilder`](#construction-and-wiring).
 
 ```java
@@ -94,7 +94,7 @@ public class Heartbeat implements ConfigurationChangeListener {
 
     // Register (or replace, or clear with null) the per-instance connectivity provider whose
     // result shapes each RUNNING state body's instances[] array — the ONE runtime lever, wired
-    // from GGCommons.setInstanceConnectivityProvider (see "Per-instance connectivity" above).
+    // from EdgeCommons.setInstanceConnectivityProvider (see "Per-instance connectivity" above).
     public void setInstanceConnectivityProvider(InstanceConnectivityProvider provider);
 
     // Re-emit the RUNNING state keepalive immediately, out of band from the periodic schedule
@@ -125,7 +125,7 @@ command verb reports).
 </TabItem>
 <TabItem label="Python">
 
-`ggcommons.heartbeat.enhanced_heartbeat.EnhancedHeartbeat` extends `ConfigurationChangeListener`.
+`edgecommons.heartbeat.enhanced_heartbeat.EnhancedHeartbeat` extends `ConfigurationChangeListener`.
 
 ```python
 class EnhancedHeartbeat(ConfigurationChangeListener):
@@ -146,7 +146,7 @@ class EnhancedHeartbeat(ConfigurationChangeListener):
 </TabItem>
 <TabItem label="Rust">
 
-`ggcommons::heartbeat::Heartbeat` wraps the background tokio task. Its `start` is **crate-private**
+`edgecommons::heartbeat::Heartbeat` wraps the background tokio task. Its `start` is **crate-private**
 (`pub(crate)`) — the `state` class is reserved, so the runtime hands it the crate-private
 `ReservedMessaging` seam; component code cannot construct it. Dropping the value stops the task
 (RAII) and publishes the best-effort `STOPPED` state.
@@ -171,11 +171,11 @@ pub const SYS_METRIC_NAME: &str = "sys";
 </TabItem>
 <TabItem label="TypeScript">
 
-`Heartbeat` is exported from `ggcommons`. Its constructor is private — the runtime uses the static
+`Heartbeat` is exported from `edgecommons`. Its constructor is private — the runtime uses the static
 `start` factory.
 
 ```typescript
-import { Heartbeat } from "@edgecommons/ggcommons";
+import { Heartbeat } from "@edgecommons/edgecommons";
 
 export type ConfigProvider = () => Config;   // live-config getter (mirrors Rust Arc<ArcSwap<Config>>)
 
@@ -222,8 +222,8 @@ what the runtime does (also the path the tests exercise).
 `IllegalStateException` if either is null. `create(null)` throws `IllegalArgumentException`.
 
 ```java
-import com.mbreissi.ggcommons.heartbeat.Heartbeat;
-import com.mbreissi.ggcommons.heartbeat.HeartbeatBuilder;
+import com.mbreissi.edgecommons.heartbeat.Heartbeat;
+import com.mbreissi.edgecommons.heartbeat.HeartbeatBuilder;
 
 Heartbeat heartbeat = HeartbeatBuilder.create(configManager)
         .withMessagingService(messagingClient)   // the state keepalive path
@@ -241,7 +241,7 @@ metric handles are injected via setters. The runtime injects the `MessagingClien
 `MetricEmitter` **classes** (their operations are static methods).
 
 ```python
-from ggcommons.heartbeat.enhanced_heartbeat import EnhancedHeartbeat
+from edgecommons.heartbeat.enhanced_heartbeat import EnhancedHeartbeat
 
 h = EnhancedHeartbeat(config_service)        # registers as a config-change listener
 h.set_messaging_service(MessagingClient)     # inject the static-method class handles
@@ -254,7 +254,7 @@ h.stop()                                     # STOPPED state + join the loop thr
 </TabItem>
 <TabItem label="Rust">
 
-`start` is crate-private — only `GgCommonsBuilder::build()` calls it, handing the heartbeat the
+`start` is crate-private — only `EdgeCommonsBuilder::build()` calls it, handing the heartbeat the
 crate-private `ReservedMessaging` seam of the wired messaging service. With `reserved = None` (no
 messaging transport) the keepalive is skipped; the `sys` metric still flows through the metric
 subsystem. The returned `Heartbeat` must be kept alive — dropping it stops the task.
@@ -273,7 +273,7 @@ drop(hb);   // RAII stop + best-effort STOPPED
 messaging service (absent ⇒ the keepalive is skipped; the `sys` metric still emits).
 
 ```typescript
-import { Heartbeat } from "@edgecommons/ggcommons";
+import { Heartbeat } from "@edgecommons/edgecommons";
 
 const hb = Heartbeat.start(() => currentConfig, metrics, messaging);
 
@@ -295,7 +295,7 @@ one value per inner key. You can also use it directly to read process/system hea
 <TabItem label="Java">
 
 ```java
-import com.mbreissi.ggcommons.heartbeat.HeartbeatMonitor;
+import com.mbreissi.edgecommons.heartbeat.HeartbeatMonitor;
 import com.google.gson.JsonObject;
 
 HeartbeatMonitor monitor = new HeartbeatMonitor(heartbeatConfiguration);
@@ -311,7 +311,7 @@ The Python monitor takes the `ConfigManager` and reads the heartbeat config from
 returns a `dict` of the enabled measures (disabled ones are omitted).
 
 ```python
-from ggcommons.heartbeat.heartbeat_monitor import HeartbeatMonitor
+from edgecommons.heartbeat.heartbeat_monitor import HeartbeatMonitor
 
 monitor = HeartbeatMonitor(config_service)   # reads heartbeat config from the ConfigManager
 stats = monitor.get_stats()                  # dict of enabled measures (psutil-backed)
@@ -324,8 +324,8 @@ The Rust monitor takes a `Measures` struct and is mutable (it holds the `sysinfo
 the CPU baseline). The first `get_stats` call establishes the CPU baseline and reports CPU as `0.0`.
 
 ```rust
-use ggcommons::heartbeat::HeartbeatMonitor;
-use ggcommons::config::model::Measures;
+use edgecommons::heartbeat::HeartbeatMonitor;
+use edgecommons::config::model::Measures;
 
 let mut monitor = HeartbeatMonitor::new(measures);
 monitor.set_measures(new_measures);   // swap toggles on hot-reload
@@ -339,7 +339,7 @@ The TypeScript monitor takes a `Measures` object. CPU is a delta between consecu
 calls, so the first sample reports `0.0`.
 
 ```typescript
-import { HeartbeatMonitor } from "@edgecommons/ggcommons";
+import { HeartbeatMonitor } from "@edgecommons/edgecommons";
 
 const monitor = new HeartbeatMonitor({
   cpu: false, memory: true, disk: false,
@@ -381,7 +381,7 @@ runtime; you rarely touch them directly.
 <Tabs syncKey="lang">
 <TabItem label="Java">
 
-`com.mbreissi.ggcommons.config.HeartbeatConfiguration`:
+`com.mbreissi.edgecommons.config.HeartbeatConfiguration`:
 
 ```java
 public class HeartbeatConfiguration {
@@ -402,7 +402,7 @@ public class HeartbeatConfiguration {
 </TabItem>
 <TabItem label="Python">
 
-`ggcommons.config.heartbeat_config.HeartbeatConfiguration`:
+`edgecommons.config.heartbeat_config.HeartbeatConfiguration`:
 
 ```python
 class HeartbeatConfiguration:
@@ -422,7 +422,7 @@ class HeartbeatConfiguration:
 </TabItem>
 <TabItem label="Rust">
 
-`ggcommons::config::model`:
+`edgecommons::config::model`:
 
 ```rust
 pub struct HeartbeatConfig {
@@ -446,7 +446,7 @@ pub struct Measures {                  // Default: cpu/memory true, rest false
 </TabItem>
 <TabItem label="TypeScript">
 
-`ggcommons` config model:
+`edgecommons` config model:
 
 ```typescript
 export class HeartbeatConfig {
@@ -468,7 +468,7 @@ export interface Measures {
 ### The `heartbeat` config shape
 
 The section is validated against the `heartbeat` schema section of
-`schema/ggcommons-config-schema.json`. The defaults are **identical in all four languages**
+`schema/edgecommons-config-schema.json`. The defaults are **identical in all four languages**
 (on / 5 s / cpu+memory / local):
 
 ```json

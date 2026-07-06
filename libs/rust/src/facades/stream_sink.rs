@@ -3,13 +3,13 @@
 //! **One-liner purpose**: The decoupling seam [`crate::facades::DataFacade`] composes to route a
 //! `stream:<name>` channel into the telemetry streaming service (DESIGN-class-facades §4: "the
 //! facade *composes* `StreamService`, it does not replace it"), mirroring the Java canonical
-//! `com.mbreissi.ggcommons.facades.StreamSink`.
+//! `com.mbreissi.edgecommons.facades.StreamSink`.
 //!
 //! Kept independent of [`crate::streaming`] (and thus buildable without the `streaming` cargo
-//! feature) so `DataFacade` never needs to depend on the native `ggstreamlog` binding directly —
+//! feature) so `DataFacade` never needs to depend on the native `edgestreamlog` binding directly —
 //! production wires it to the real stream service (`streaming::StreamServiceSink`, feature-gated);
 //! tests inject a recording fake. When no sink is wired (`None` on the owning
-//! [`crate::GgInstance`] — either no `streaming` section is configured, or the `streaming` cargo
+//! [`crate::EdgeCommonsInstance`] — either no `streaming` section is configured, or the `streaming` cargo
 //! feature is off), a `stream:` route falls back to a LOCAL publish (readiness / no-streaming →
 //! local, D1a) rather than dropping the record.
 

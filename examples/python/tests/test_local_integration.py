@@ -1,6 +1,6 @@
 """Local HOST-platform (MQTT transport) integration test for the Python component skeleton.
 
-Exercises the ggcommons consumer API the skeleton relies on -- config access +
+Exercises the edgecommons consumer API the skeleton relies on -- config access +
 template substitution, messaging publish/subscribe round-trip, the GreengrassApp
 wiring, metric definition, and heartbeat -- against a local MQTT broker
 (EMQX on localhost:1883). No AWS / IoT Core required.
@@ -41,14 +41,14 @@ pytestmark = pytest.mark.skipif(
 @pytest.fixture(scope="module")
 def gg():
     """Build the framework once (MessagingClient/MetricEmitter are process-global)."""
-    from ggcommons import GGCommonsBuilder
+    from edgecommons import EdgeCommonsBuilder
 
     args = [
         "-c", "FILE", COMPONENT_CONFIG,
         "--platform", "HOST", "--transport", "MQTT", MESSAGING_CONFIG,
         "-t", THING,
     ]
-    instance = GGCommonsBuilder.create(COMPONENT).with_args(args).build()
+    instance = EdgeCommonsBuilder.create(COMPONENT).with_args(args).build()
     yield instance
     instance.shutdown()
 
@@ -78,9 +78,9 @@ def test_uns_identity_resolved_from_config(gg):
 def test_uns_minted_topic_round_trip_carries_identity(gg):
     """A topic minted via gg.uns() round-trips through the broker, and the envelope
     carries the config-stamped identity element."""
-    from ggcommons import MessagingClient
-    from ggcommons.messaging.message_builder import MessageBuilder
-    from ggcommons.uns import UnsClass
+    from edgecommons import MessagingClient
+    from edgecommons.messaging.message_builder import MessageBuilder
+    from edgecommons.uns import UnsClass
 
     topic = gg.uns().topic(UnsClass.APP, "it-uns-roundtrip")
     assert topic == f"ecv1/{THING}/{COMPONENT}/main/app/it-uns-roundtrip"
@@ -111,10 +111,10 @@ def test_uns_minted_topic_round_trip_carries_identity(gg):
 def test_reserved_class_publish_is_guarded(gg):
     """Publishing to a library-owned UNS class (state|metric|cfg|log) raises: those
     topics belong to the library publishers (heartbeat keepalive, metrics, cfg)."""
-    from ggcommons import MessagingClient
-    from ggcommons.messaging.errors import ReservedTopicError
-    from ggcommons.messaging.message_builder import MessageBuilder
-    from ggcommons.uns import UnsClass
+    from edgecommons import MessagingClient
+    from edgecommons.messaging.errors import ReservedTopicError
+    from edgecommons.messaging.message_builder import MessageBuilder
+    from edgecommons.uns import UnsClass
 
     state_topic = gg.uns().topic(UnsClass.STATE)
     msg = (
@@ -130,9 +130,9 @@ def test_reserved_class_publish_is_guarded(gg):
 def test_request_framework_deadline_raises(gg):
     """A request whose framework-owned deadline fires completes exceptionally:
     Iou.get() raises RequestTimeoutError (UNS-CANONICAL-DESIGN §5, D-U23)."""
-    from ggcommons import MessagingClient
-    from ggcommons.messaging.errors import RequestTimeoutError
-    from ggcommons.messaging.message_builder import MessageBuilder
+    from edgecommons import MessagingClient
+    from edgecommons.messaging.errors import RequestTimeoutError
+    from edgecommons.messaging.message_builder import MessageBuilder
 
     req = (
         MessageBuilder.create("Req", "1.0")
@@ -146,8 +146,8 @@ def test_request_framework_deadline_raises(gg):
 
 
 def test_messaging_round_trip(gg):
-    from ggcommons import MessagingClient
-    from ggcommons.messaging.message_builder import MessageBuilder
+    from edgecommons import MessagingClient
+    from edgecommons.messaging.message_builder import MessageBuilder
 
     received = []
     done = threading.Event()
@@ -171,8 +171,8 @@ def test_messaging_round_trip(gg):
 
 
 def test_request_reply_round_trip(gg):
-    from ggcommons import MessagingClient
-    from ggcommons.messaging.message_builder import MessageBuilder
+    from edgecommons import MessagingClient
+    from edgecommons.messaging.message_builder import MessageBuilder
 
     cm = gg.get_config_manager()
 
@@ -202,8 +202,8 @@ def test_request_reply_round_trip(gg):
 def test_cancel_request_carries_reply_topic(gg):
     """Tier B fix: the standalone request Iou carries its reply topic so
     cancel_request can tear down the right subscription (was Iou() -> None)."""
-    from ggcommons import MessagingClient
-    from ggcommons.messaging.message_builder import MessageBuilder
+    from edgecommons import MessagingClient
+    from edgecommons.messaging.message_builder import MessageBuilder
 
     cm = gg.get_config_manager()
     req = (
@@ -216,7 +216,7 @@ def test_cancel_request_carries_reply_topic(gg):
     done, _pending = iou.get(1)  # no responder -> times out
     assert done is False
     user_data = iou.get_user_data()
-    assert isinstance(user_data, str) and user_data.startswith("ggcommons/reply-")
+    assert isinstance(user_data, str) and user_data.startswith("edgecommons/reply-")
     MessagingClient.cancel_request(iou)  # must not raise
 
 
@@ -226,8 +226,8 @@ def test_max_concurrency_cap_limits_callbacks(gg):
     callbacks run at once."""
     import time
 
-    from ggcommons import MessagingClient
-    from ggcommons.messaging.message_builder import MessageBuilder
+    from edgecommons import MessagingClient
+    from edgecommons.messaging.message_builder import MessageBuilder
 
     cm = gg.get_config_manager()
     topic = "skeleton/test/concurrency"
@@ -263,7 +263,7 @@ def test_raw_publish_delivers_non_envelope_payload(gg):
     """publish_raw sends a non-envelope payload; the subscriber receives it as a
     raw message (get_raw() set, get_body() None) -- parity with the Java/Rust raw
     handling, exercised over the local broker."""
-    from ggcommons import MessagingClient
+    from edgecommons import MessagingClient
 
     topic = "skeleton/test/raw"
     received = []
@@ -297,8 +297,8 @@ def test_metric_emits_to_log(gg):
     """A defined metric emitted through the configured 'log' target writes the
     metric log file -- exercises the metric pipeline locally (no AWS)."""
     import time
-    from ggcommons.metrics.metric_emitter import MetricEmitter
-    from ggcommons.metrics.metric_builder import MetricBuilder
+    from edgecommons.metrics.metric_emitter import MetricEmitter
+    from edgecommons.metrics.metric_builder import MetricBuilder
 
     metric = (
         MetricBuilder.create("perf_local")

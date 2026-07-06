@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-The logging system in GGCommons Python library provides comprehensive logging capabilities built on Python's standard logging framework. It supports both component-specific logging and global application logging control, with configurable output formats, levels, and destinations. The system is designed to provide:
+The logging system in EdgeCommons Python library provides comprehensive logging capabilities built on Python's standard logging framework. It supports both component-specific logging and global application logging control, with configurable output formats, levels, and destinations. The system is designed to provide:
 
 - Centralized logging configuration management
 - Dynamic log level adjustment
@@ -109,10 +109,10 @@ This configuration enables both console and file logging with DEBUG level, using
       "filePath": "/greengrass/v2/logs/{ComponentFullName}.log"
     },
     "loggers": {
-      "ggcommons.metrics": "DEBUG",
-      "ggcommons.messaging": "INFO",
-      "ggcommons.heartbeat": "WARN",
-      "ggcommons.config": "INFO"
+      "edgecommons.metrics": "DEBUG",
+      "edgecommons.messaging": "INFO",
+      "edgecommons.heartbeat": "WARN",
+      "edgecommons.config": "INFO"
     }
   }
 }
@@ -132,7 +132,7 @@ This configuration demonstrates different log levels for specific packages while
     },
     "loggers": {
       "root": "DEBUG",
-      "ggcommons": "DEBUG",
+      "edgecommons": "DEBUG",
       "boto3": "WARN",
       "botocore": "WARN",
       "paho": "ERROR"
@@ -140,7 +140,7 @@ This configuration demonstrates different log levels for specific packages while
   }
 }
 ```
-This configuration is optimized for development with detailed logging for ggcommons components while suppressing verbose output from third-party libraries.
+This configuration is optimized for development with detailed logging for edgecommons components while suppressing verbose output from third-party libraries.
 
 ### Sample 5: Production Configuration
 ```json
@@ -155,10 +155,10 @@ This configuration is optimized for development with detailed logging for ggcomm
       "backupCount": 5
     },
     "loggers": {
-      "ggcommons.metrics": "WARN",
-      "ggcommons.messaging": "INFO",
-      "ggcommons.config": "WARN",
-      "ggcommons.heartbeat": "INFO"
+      "edgecommons.metrics": "WARN",
+      "edgecommons.messaging": "INFO",
+      "edgecommons.config": "WARN",
+      "edgecommons.heartbeat": "INFO"
     }
   }
 }
@@ -174,7 +174,7 @@ The logging system integrates with the metric emission system to provide file-ba
 The logging system can respond to configuration changes through the configuration change listener system, allowing dynamic reconfiguration without component restart.
 
 ### Template Resolution
-Log file paths and other configuration strings support the same template variable system used throughout ggcommons, enabling consistent naming patterns across all components.
+Log file paths and other configuration strings support the same template variable system used throughout edgecommons, enabling consistent naming patterns across all components.
 
 ## 6. Usage in Code
 
@@ -219,7 +219,7 @@ except Exception as e:
 import logging
 
 # Change log level at runtime
-logging.getLogger('ggcommons.messaging').setLevel(logging.DEBUG)
+logging.getLogger('edgecommons.messaging').setLevel(logging.DEBUG)
 logging.getLogger('my_component').setLevel(logging.INFO)
 ```
 
@@ -302,7 +302,7 @@ Enable debug logging for the logging system itself:
   "logging": {
     "level": "DEBUG",
     "loggers": {
-      "ggcommons.config": "DEBUG"
+      "edgecommons.config": "DEBUG"
     }
   }
 }
@@ -313,7 +313,7 @@ Enable debug logging for the logging system itself:
 import logging
 
 # Check current log levels
-logger = logging.getLogger('ggcommons.messaging')
+logger = logging.getLogger('edgecommons.messaging')
 print(f"Current level: {logger.level}")
 print(f"Effective level: {logger.getEffectiveLevel()}")
 
@@ -334,7 +334,7 @@ for name in logging.Logger.manager.loggerDict:
 
 ### With Configuration Changes
 ```python
-from ggcommons.config.manager.configuration_change_listener import ConfigurationChangeListener
+from edgecommons.config.manager.configuration_change_listener import ConfigurationChangeListener
 import logging
 
 class LoggingConfigListener(ConfigurationChangeListener):
@@ -357,7 +357,7 @@ class LoggingConfigListener(ConfigurationChangeListener):
 ### With Metrics
 ```python
 import logging
-from ggcommons.metrics.metric_emitter import MetricEmitter
+from edgecommons.metrics.metric_emitter import MetricEmitter
 
 logger = logging.getLogger(__name__)
 

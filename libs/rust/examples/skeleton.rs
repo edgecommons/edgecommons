@@ -1,6 +1,6 @@
 //! Minimal example component.
 //!
-//! Initializes GGCommons from the standard CLI args, then (on the MQTT transport)
+//! Initializes EdgeCommons from the standard CLI args, then (on the MQTT transport)
 //! publishes one demo message through the messaging service.
 //!
 //! Run against the local broker:
@@ -11,13 +11,13 @@
 //!   -t my-thing
 //! ```
 
-use ggcommons::messaging::message::MessageBuilder;
-use ggcommons::prelude::*;
+use edgecommons::messaging::message::MessageBuilder;
+use edgecommons::prelude::*;
 use serde_json::json;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let gg = GgCommonsBuilder::new("com.example.SkeletonComponent")
+    let gg = EdgeCommonsBuilder::new("com.example.SkeletonComponent")
         .args(std::env::args_os())
         .build()
         .await?;
@@ -33,7 +33,7 @@ async fn main() -> anyhow::Result<()> {
     if let Ok(messaging) = gg.messaging() {
         let topic = format!("demo/{}/hello", cfg.thing_name);
         let msg = MessageBuilder::new("Hello", "1.0")
-            .payload(json!({ "greeting": "hello from rust ggcommons" }))
+            .payload(json!({ "greeting": "hello from rust edgecommons" }))
             .from_config(&cfg)
             .build();
         messaging.publish(&topic, &msg).await?;

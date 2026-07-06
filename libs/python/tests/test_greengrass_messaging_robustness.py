@@ -9,11 +9,11 @@ Mirrors a Java fix (commit 6ed774c):
 import threading
 import time
 
-from ggcommons.messaging.providers.greengrass.greengrass_ipc import GreengrassIpcProvider
-from ggcommons.messaging.providers.greengrass.ipc_subscription_handler import (
+from edgecommons.messaging.providers.greengrass.greengrass_ipc import GreengrassIpcProvider
+from edgecommons.messaging.providers.greengrass.ipc_subscription_handler import (
     IpcSubscriptionHandler,
 )
-from ggcommons.messaging.message import Message
+from edgecommons.messaging.message import Message
 
 
 def _provider_without_connect():
@@ -54,6 +54,13 @@ def test_duplicate_reply_completes_once_then_is_ignored():
     class _FakeIou:
         def __init__(self):
             self.results = []
+            self.settled = False
+
+        def try_settle(self):
+            if self.settled:
+                return False
+            self.settled = True
+            return True
 
         def set_result(self, r):
             self.results.append(r)

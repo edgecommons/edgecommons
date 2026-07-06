@@ -7,13 +7,13 @@ ServiceMonitor scrape target (templates/servicemonitor.yaml, opt-in).
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "ggcommons.fullname" . }}
+  name: {{ include "edgecommons.fullname" . }}
   labels:
-    {{- include "ggcommons.labels" . | nindent 4 }}
+    {{- include "edgecommons.labels" . | nindent 4 }}
 spec:
   type: {{ .Values.service.type }}
   selector:
-    {{- include "ggcommons.selectorLabels" . | nindent 4 }}
+    {{- include "edgecommons.selectorLabels" . | nindent 4 }}
   ports:
     - name: health
       port: {{ .Values.service.healthPort }}

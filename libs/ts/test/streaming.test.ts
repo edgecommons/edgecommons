@@ -1,5 +1,5 @@
 /**
- * Native streaming binding tests (napi-rs addon `ggstreamlog-node`). Requires the addon to be
+ * Native streaming binding tests (napi-rs addon `streamlog-node`). Requires the addon to be
  * built (`npm run build` in libs/rust-streamlog/bindings/node); buffer-only — no AWS needed.
  * Mirrors the Java/Python/Rust streaming tests.
  */
@@ -11,13 +11,13 @@ import { describe, expect, it, vi } from "vitest";
 
 import { Config } from "../src/config/model";
 import type { MetricService } from "../src/metrics/types";
-import { GgStreamError, StreamMetricsBridge, StreamService } from "../src/streaming";
+import { EdgeStreamError, StreamMetricsBridge, StreamService } from "../src/streaming";
 
 const ERR_CONFIG = 1;
 const ERR_UNKNOWN_STREAM = 5;
 
 function tmpdir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "ggsl-ts-"));
+  return fs.mkdtempSync(path.join(os.tmpdir(), "esl-ts-"));
 }
 
 function config(dir: string): string {
@@ -58,8 +58,8 @@ describe("streaming native binding", () => {
       svc.stats("does-not-exist");
       expect.unreachable("should have thrown");
     } catch (e) {
-      expect(e).toBeInstanceOf(GgStreamError);
-      expect((e as GgStreamError).code).toBe(ERR_UNKNOWN_STREAM);
+      expect(e).toBeInstanceOf(EdgeStreamError);
+      expect((e as EdgeStreamError).code).toBe(ERR_UNKNOWN_STREAM);
     } finally {
       svc.close();
     }
@@ -70,7 +70,7 @@ describe("streaming native binding", () => {
       StreamService.open("{ not valid json");
       expect.unreachable("should have thrown");
     } catch (e) {
-      expect((e as GgStreamError).code).toBe(ERR_CONFIG);
+      expect((e as EdgeStreamError).code).toBe(ERR_CONFIG);
     }
   });
 

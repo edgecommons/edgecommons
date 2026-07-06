@@ -1,4 +1,4 @@
-# ggcommons on Kubernetes — Phase-1a/1b test harness
+# edgecommons on Kubernetes — Phase-1a/1b test harness
 
 This harness exercises the **KUBERNETES platform** and its native facilities — the
 **`CONFIGMAP` config source** with directory-watch hot-reload (1a), the
@@ -11,13 +11,13 @@ What the harness proves end-to-end:
 1. a pod **auto-detects `platform=KUBERNETES`** from its projected ServiceAccount token
    (`/var/run/secrets/kubernetes.io/serviceaccount/token`) — no `--platform` flag needed;
 2. it loads its component config via the **`CONFIGMAP` source** from a ConfigMap mounted
-   as a **directory** at `/etc/ggcommons` (never `subPath`);
+   as a **directory** at `/etc/edgecommons` (never `subPath`);
 3. it connects to the **in-cluster EMQX broker by Service DNS** — and on KUBERNETES the
    broker config is **sourced from the mounted ConfigMap with no positional `--transport MQTT
    <path>`** (Phase 1b, FR-MSG-1): the single `config.json` carries both the `messaging`
    section and the component config;
 4. with **no `-t/--thing`**, the component's **identity resolves from the Downward API**
-   (Phase 1b, FR-RT-7): `GGCOMMONS_THING_NAME` (set from `values.thingName`) ▸ `POD_NAME`
+   (Phase 1b, FR-RT-7): `EDGECOMMONS_THING_NAME` (set from `values.thingName`) ▸ `POD_NAME`
    (the pod's `metadata.name`, injected via a `fieldRef`);
 5. it logs to a **structured stdout-JSON sink** (one JSON object per line — the KUBERNETES
    default, Phase 1c) carrying Downward-API **correlation fields**; the smoke asserts a JSON
@@ -29,10 +29,10 @@ What the harness proves end-to-end:
 7. it serves a **pull-based `prometheus` metrics endpoint** (Phase 1c, the default metric target on
    KUBERNETES): the component exposes an in-process registry as OpenMetrics text at `:9090/metrics`
    (no `metricEmission.target` in the config — the profile default applies), and the heartbeat is
-   routed to it; the smoke does an in-pod GET of `/metrics` and asserts a `ggcommons_*` gauge appears;
+   routed to it; the smoke does an in-pod GET of `/metrics` and asserts a `edgecommons_*` gauge appears;
 8. it unlocks an **encrypted credentials vault via the `env` KeyProvider** (Phase 1d, the default
    vault custodian on KUBERNETES): `--set credentials.enabled=true` mounts a Secret as
-   `GGCOMMONS_VAULT_KEK` and injects a `credentials` section with `keyProvider` omitted (so the
+   `EDGECOMMONS_VAULT_KEK` and injects a `credentials` section with `keyProvider` omitted (so the
    profile default `env` applies); the skeleton opens the vault from that base64 KEK and round-trips a
    demo secret — the smoke asserts the `credential access OK` log (offline, no cloud/HSM);
 9. a **`kubectl` edit of the ConfigMap is hot-reloaded in-process** — the watcher
@@ -49,7 +49,7 @@ What the harness proves end-to-end:
 >
 > **Durable streaming on k8s:** a component using `gg.streams()` with a durable disk buffer needs a
 > **StatefulSet + per-pod PVC** (single-writer), not a Deployment — see `streaming-statefulset-example.yaml`
-> + DESIGN-packaging. The ggstreamlog engine is unchanged; this is a deployment shape (not smoke-tested
+> + DESIGN-packaging. The edgestreamlog engine is unchanged; this is a deployment shape (not smoke-tested
 > here — it needs a reachable Kinesis/Kafka sink).
 >
 > Deferred metrics enhancements (measure `type`/histograms, a unified durable metrics-streamlog,
@@ -62,20 +62,20 @@ What the harness proves end-to-end:
 |------|------------|
 | `chart/` | Helm chart: Deployment, ConfigMap (the component `config.json`), ServiceAccount + optional namespaced RBAC, a placeholder Service, and placeholder liveness/readiness probes. |
 | `kind-config.yaml` | Single-node kind cluster definition. |
-| `emqx.yaml` | In-cluster EMQX MQTT broker (Deployment + ClusterIP Service `ggcommons-emqx`, plaintext 1883). |
+| `emqx.yaml` | In-cluster EMQX MQTT broker (Deployment + ClusterIP Service `edgecommons-emqx`, plaintext 1883). |
 | `Dockerfile` | Builds the default (Python) component image used by the smoke test. |
 | `smoke.sh` | Assertion script the **orchestrator/CI runs live** (installs everything, asserts the four points above incl. the hot-reload test). |
 | `../../.github/workflows/k8s.yml` | CI job: kind + build/load image + helm install + `smoke.sh`. |
 
 ## The component config (ConfigMap)
 
-`chart/templates/configmap.yaml` renders a **minimal valid ggcommons config** into the
-`config.json` key (the `CONFIGMAP` source's default key), mounted at `/etc/ggcommons`:
+`chart/templates/configmap.yaml` renders a **minimal valid edgecommons config** into the
+`config.json` key (the `CONFIGMAP` source's default key), mounted at `/etc/edgecommons`:
 
 - `metricEmission.target: log` (a log metric target),
 - a `heartbeat` (5s interval, metric target),
 - `messaging.local` MQTT pointing at the in-cluster broker Service DNS
-  (`ggcommons-emqx`, configurable via `messaging.brokerHost`),
+  (`edgecommons-emqx`, configurable via `messaging.brokerHost`),
 - `component` (the only schema-required key).
 
 Mounting the **whole volume** (not a `subPath`) is what lets the kubelet perform the
@@ -87,14 +87,14 @@ Prereqs: `docker`, `kind`, `kubectl`, `helm` (v3+).
 
 ```bash
 # 1. Cluster
-kind create cluster --name ggcommons --config test-infra/k8s/kind-config.yaml
+kind create cluster --name edgecommons --config test-infra/k8s/kind-config.yaml
 
 # 2. Build the component image and load it into the cluster
-docker build -f test-infra/k8s/Dockerfile -t ggcommons-component:ci .
-kind load docker-image ggcommons-component:ci --name ggcommons
+docker build -f test-infra/k8s/Dockerfile -t edgecommons-component:ci .
+kind load docker-image edgecommons-component:ci --name edgecommons
 
 # 3. Run the smoke test (installs broker + chart, asserts everything, incl. hot-reload)
-IMAGE=ggcommons-component:ci NAMESPACE=ggcommons ./test-infra/k8s/smoke.sh
+IMAGE=edgecommons-component:ci NAMESPACE=edgecommons ./test-infra/k8s/smoke.sh
 ```
 
 `smoke.sh` cleans up the namespace on exit; pass `KEEP=1` to leave it for inspection.
@@ -106,11 +106,11 @@ can reach (or `k3s ctr images import` a saved tar), then point the chart at it:
 
 ```bash
 # Build + import the image into k3s's containerd
-docker build -f test-infra/k8s/Dockerfile -t ggcommons-component:ci .
-docker save ggcommons-component:ci | sudo k3s ctr images import -
+docker build -f test-infra/k8s/Dockerfile -t edgecommons-component:ci .
+docker save edgecommons-component:ci | sudo k3s ctr images import -
 
 # Run the smoke test against the current kubecontext
-IMAGE=ggcommons-component:ci NAMESPACE=ggcommons ./test-infra/k8s/smoke.sh
+IMAGE=edgecommons-component:ci NAMESPACE=edgecommons ./test-infra/k8s/smoke.sh
 ```
 
 ## The ConfigMap hot-reload test (the `..data` re-arm)
@@ -119,10 +119,10 @@ IMAGE=ggcommons-component:ci NAMESPACE=ggcommons ./test-infra/k8s/smoke.sh
 
 ```bash
 # Watch the component logs
-kubectl -n ggcommons logs -l app.kubernetes.io/instance=ggc -f
+kubectl -n edgecommons logs -l app.kubernetes.io/instance=ggc -f
 
 # In another shell, edit the ConfigMap (flip logging.level, or change any value)
-kubectl -n ggcommons edit configmap ggc-ggcommons-component-config
+kubectl -n edgecommons edit configmap ggc-edgecommons-component-config
 ```
 
 Within the kubelet's sync window (~60–90s at defaults) the running pod logs an
@@ -149,7 +149,7 @@ helm template ggc test-infra/k8s/chart --set rbac.create=true   # render the opt
   and `replicas`.
 - **Identity** (FR-RT-7): the chart always injects `POD_NAME`/`POD_NAMESPACE`/`NODE_NAME`
   via the Downward API. Set `--set thingName=my-thing` to pin a stable identity (exposed as
-  `GGCOMMONS_THING_NAME`, the highest k8s identity tier); leave it empty to fall through to
+  `EDGECOMMONS_THING_NAME`, the highest k8s identity tier); leave it empty to fall through to
   `POD_NAME`. Append further env (e.g. `AWS_REGION`) via `extraEnv`.
 - **Messaging** (FR-MSG-1): the chart passes no `--transport MQTT <path>` — the KUBERNETES
   profile derives `MQTT` and the messaging-config path defaults to the mounted ConfigMap

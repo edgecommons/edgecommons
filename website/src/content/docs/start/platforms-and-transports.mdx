@@ -1,13 +1,13 @@
 ---
 title: Platforms & transports
-description: How GGCommons chooses where a component runs and how it talks — platform, transport, auto-detection, precedence, and per-platform defaults.
+description: How EdgeCommons chooses where a component runs and how it talks — platform, transport, auto-detection, precedence, and per-platform defaults.
 sidebar:
   order: 5
 ---
 
 import { Tabs, TabItem, Aside } from "@astrojs/starlight/components";
 
-Every GGCommons component picks two things at startup, on **two orthogonal axes**:
+Every EdgeCommons component picks two things at startup, on **two orthogonal axes**:
 
 - **`--platform`** — *where* the component runs: `GREENGRASS`, `HOST`, `KUBERNETES`, or `auto` (the default).
 - **`--transport`** — *how* it talks to the broker/Nucleus: `IPC` or `MQTT`.
@@ -122,7 +122,7 @@ When you name a config source with `-c <SOURCE>` but omit its argument, these de
 - `FILE` → `config.json`
 - `ENV` → reads the `CONFIG` variable
 - `GG_CONFIG` → key `ComponentConfig`
-- `CONFIGMAP` → mount dir `/etc/ggcommons`, key `config.json`
+- `CONFIGMAP` → mount dir `/etc/edgecommons`, key `config.json`
 
 Under `MQTT` + `CONFIGMAP` with no explicit `--transport MQTT <path>`, the messaging-config path
 defaults to that same mounted ConfigMap file — so one mounted file serves as both the component config
@@ -170,7 +170,7 @@ A few flag details that are easy to miss:
 - `-t/--thing` takes the **full** string value.
 - Asking for `IPC` off Greengrass (e.g. `--platform HOST --transport IPC`) fails validation rather
   than silently falling back.
-- The resolved identity is `-t/--thing` ▸ (on `KUBERNETES` only: `GGCOMMONS_THING_NAME` ▸ `POD_NAME`)
+- The resolved identity is `-t/--thing` ▸ (on `KUBERNETES` only: `EDGECOMMONS_THING_NAME` ▸ `POD_NAME`)
   ▸ `AWS_IOT_THING_NAME` ▸ `NOT_GREENGRASS`. The Kubernetes Downward-API tier is ignored on
   `HOST`/`GREENGRASS`. The raw value is interpolated later wherever `{ThingName}` appears.
 

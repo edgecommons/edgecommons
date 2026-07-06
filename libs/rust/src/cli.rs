@@ -19,12 +19,12 @@
 //! - Invariants: `-t` is never truncated (guards a historical bug); the removed
 //!   `-m/--mode` flag is rejected with guidance; the MQTT messaging-config path is
 //!   validated when the provider is actually built, not at parse time.
-//! - Error handling: parse/resolve failures surface as [`crate::error::GgError::Cli`].
+//! - Error handling: parse/resolve failures surface as [`crate::error::EdgeCommonsError::Cli`].
 //!
 //! ## Usage Example
 //! ```
-//! use ggcommons::cli::parse_from;
-//! use ggcommons::platform::{Platform, Transport};
+//! use edgecommons::cli::parse_from;
+//! use edgecommons::platform::{Platform, Transport};
 //!
 //! let args = parse_from([
 //!     "prog", "--platform", "HOST", "--transport", "MQTT", "msg.json", "-t", "thing-1",
@@ -43,7 +43,7 @@ use std::path::PathBuf;
 
 use clap::{Arg, Command};
 
-use crate::error::{GgError, Result};
+use crate::error::{EdgeCommonsError, Result};
 use crate::platform::{self, Platform, ResolverInputs, Transport};
 
 /// Configuration source selected by `-c/--config` (or the platform-profile default).
@@ -52,7 +52,7 @@ pub enum ConfigSourceSpec {
     /// `FILE [path]` — JSON file (default `config.json`).
     File { path: PathBuf },
     /// `CONFIGMAP [mountDir] [key]` — Kubernetes-native: a mounted ConfigMap directory
-    /// (defaults: dir `/etc/ggcommons`, key `config.json`). The default source on KUBERNETES.
+    /// (defaults: dir `/etc/edgecommons`, key `config.json`). The default source on KUBERNETES.
     ConfigMap { mount_dir: Option<PathBuf>, key: Option<String> },
     /// `ENV [var]` — JSON in an environment variable (default `CONFIG`).
     Env { var: String },
@@ -93,7 +93,7 @@ const DEFAULT_GG_CONFIG_KEY: &str = "ComponentConfig";
 /// Build the base `clap` command. Application-specific options can be merged onto
 /// this in a later phase (mirrors the Java `appOptions` merge).
 pub fn command() -> Command {
-    Command::new("ggcommons")
+    Command::new("edgecommons")
         .disable_help_flag(false)
         .arg(
             Arg::new("config")
@@ -151,11 +151,11 @@ pub fn command() -> Command {
 /// # Errors
 /// | Error Variant | Condition | Recovery |
 /// |---------------|-----------|----------|
-/// | `GgError::Cli` | Unknown flag, the removed `-m`/`--mode`, an unknown source/platform/transport, or an illegal platform/transport combo | Fix the arguments |
+/// | `EdgeCommonsError::Cli` | Unknown flag, the removed `-m`/`--mode`, an unknown source/platform/transport, or an illegal platform/transport combo | Fix the arguments |
 ///
 /// # Examples
 /// ```
-/// # use ggcommons::cli::parse_from;
+/// # use edgecommons::cli::parse_from;
 /// let a = parse_from(["prog", "--platform", "HOST", "-c", "FILE", "config.json"]).unwrap();
 /// assert!(a.thing.is_none());
 /// ```
@@ -172,7 +172,7 @@ where
 
     let matches = command()
         .try_get_matches_from(&argv)
-        .map_err(|e| GgError::Cli(e.to_string()))?;
+        .map_err(|e| EdgeCommonsError::Cli(e.to_string()))?;
 
     // Explicit -c/--config args, or None (the resolver fills the platform-profile default).
     let config_args: Option<Vec<String>> = matches
@@ -216,7 +216,7 @@ where
     // FR-MSG-1: under CONFIGMAP + MQTT with no explicit `--transport MQTT <path>`, the single
     // mounted ConfigMap file doubles as the messaging config (it carries a `.messaging` section)
     // and the component config. Default the messaging-config path to the resolved ConfigMap file
-    // (mount dir + key; default `/etc/ggcommons/config.json`) so messaging init gets `Some(path)`
+    // (mount dir + key; default `/etc/edgecommons/config.json`) so messaging init gets `Some(path)`
     // without a positional path. Computed from parse-time inputs only (the resolved transport +
     // config source) — never by reading the ConfigMap via the config source first (that runs after
     // messaging init). The explicit-path behavior is unchanged; HOST is unaffected (it defaults to
@@ -262,11 +262,11 @@ fn default_messaging_config_path(
 /// Rejects the removed `-m`/`--mode` flag with guidance to the new axes (DESIGN-core §6.1).
 ///
 /// Mirrors Java's `rejectLegacyModeFlag`: the thrown error is the Rust analog of Java's
-/// `IllegalArgumentException`, surfaced by `build()` as a [`GgError::Cli`].
+/// `IllegalArgumentException`, surfaced by `build()` as a [`EdgeCommonsError::Cli`].
 fn reject_legacy_mode_flag(argv: &[OsString]) -> Result<()> {
     for arg in argv {
         if arg == "-m" || arg == "--mode" {
-            return Err(GgError::Cli(
+            return Err(EdgeCommonsError::Cli(
                 "The -m/--mode flag has been removed. Use --platform GREENGRASS|HOST|KUBERNETES \
                  and --transport IPC|MQTT instead (e.g. '-m STANDALONE <path>' becomes \
                  '--platform HOST --transport MQTT <path>')."
@@ -284,7 +284,7 @@ fn parse_config_source(args: &[String]) -> Result<ConfigSourceSpec> {
         "FILE" => ConfigSourceSpec::File {
             path: arg(1).map(PathBuf::from).unwrap_or_else(|| PathBuf::from(DEFAULT_CONFIG_FILE)),
         },
-        // -c CONFIGMAP [mountDir] [key]; defaults applied inside the source (/etc/ggcommons,
+        // -c CONFIGMAP [mountDir] [key]; defaults applied inside the source (/etc/edgecommons,
         // config.json). The k8s-native source; the default on the KUBERNETES platform.
         "CONFIGMAP" => ConfigSourceSpec::ConfigMap {
             mount_dir: arg(1).map(PathBuf::from),
@@ -299,7 +299,7 @@ fn parse_config_source(args: &[String]) -> Result<ConfigSourceSpec> {
         },
         "SHADOW" => ConfigSourceSpec::Shadow { name: arg(1) },
         "CONFIG_COMPONENT" => ConfigSourceSpec::ConfigComponent,
-        other => return Err(GgError::Cli(format!("unknown config source '{other}'"))),
+        other => return Err(EdgeCommonsError::Cli(format!("unknown config source '{other}'"))),
     })
 }
 
@@ -364,13 +364,13 @@ mod tests {
     #[test]
     fn configmap_mqtt_defaults_messaging_path_to_configmap_file() {
         // KUBERNETES defaults to CONFIGMAP + MQTT; with no positional `--transport MQTT <path>`
-        // the messaging-config path defaults to the resolved ConfigMap file (/etc/ggcommons/config.json).
+        // the messaging-config path defaults to the resolved ConfigMap file (/etc/edgecommons/config.json).
         let a = parse(&["--platform", "KUBERNETES"]).unwrap();
         assert_eq!(a.transport, Transport::Mqtt);
         assert_eq!(a.config, ConfigSourceSpec::ConfigMap { mount_dir: None, key: None });
         assert_eq!(
             a.messaging_config_path,
-            Some(PathBuf::from("/etc/ggcommons").join("config.json"))
+            Some(PathBuf::from("/etc/edgecommons").join("config.json"))
         );
     }
 

@@ -19,7 +19,7 @@ FILE/ENV/GG_CONFIG/SHADOW/CONFIG_COMPONENT; selection is a string switch in `Con
 MODIFY+CREATE and calls `applyConfig` (`FileConfigProvider.java:74-80`, `FileWatcher.java:86-91`).
 Reload re-validates and **rejects-and-keeps** the previous config on failure (`ConfigManager.java:99-107`).
 
-**Kubernetes addition.** Add `-c CONFIGMAP [mountPath]` (default `/etc/ggcommons/config`, default key
+**Kubernetes addition.** Add `-c CONFIGMAP [mountPath]` (default `/etc/edgecommons/config`, default key
 `config.json`), the canonical analogue of FILE, **reusing the FILE hot-reload seam**. It is the default
 config source on KUBERNETES. Do **not** add an env-var-only k8s source — `ENV` already covers static
 config and cannot hot-reload.
@@ -68,7 +68,7 @@ platform classes library-owned.
 
 **Kubernetes addition (no provider rewrite — only how config is supplied and what brokers point at).**
 1. **Drop the positional path.** Source MQTT config from the active config source: endpoints/ports/clientIDs
-   from a **ConfigMap**, certs/passwords from a mounted **Secret** (paths like `/etc/ggcommons/certs`).
+   from a **ConfigMap**, certs/passwords from a mounted **Secret** (paths like `/etc/edgecommons/certs`).
    The existing `certPath/keyPath/caPath` fields work unchanged against the Secret mount; reuse the
    `-c ENV`-style idea so a messaging config can also come from an env/Secret.
 2. **Service DNS.** `local.host` becomes an in-cluster Service DNS name (e.g.
@@ -136,7 +136,7 @@ batches **in memory** and flushes on a timer via `PutMetricData` (`CloudWatch.ja
 intermittently-connected edge fleet a lengthy disconnect makes that in-memory batch grow unbounded or drop,
 violating NFR-DISCONNECT-1. **Approach (resolved):** give the direct CloudWatch target a **durable,
 disk-backed store-and-forward buffer that drains `PutMetricData` on reconnect** by **reusing the
-`ggstreamlog` durable log + export engine via a host-callback sink** — the core keeps the buffer + the
+`edgestreamlog` durable log + export engine via a host-callback sink** — the core keeps the buffer + the
 at-least-once export loop; the CloudWatch send (datum build + `PutMetricData`) stays in the metrics layer
 (reusing the existing per-language SDK client), so nothing is duplicated in the Rust core. `buffer:
 durable|memory` is a **runtime** config choice (default `durable`); stale datums outside CloudWatch's
@@ -205,14 +205,14 @@ documenting the in-cluster scrape; the smoke validates `/metrics` by a direct in
 The shipped target is the standard **in-memory gauge** registry (latest-value per measure). Three
 follow-ups are recorded for a deliberate later decision:
 
-- **(B) Measure `type` model (gauge / counter / histogram).** ggcommons measures carry name+unit but no
+- **(B) Measure `type` model (gauge / counter / histogram).** edgecommons measures carry name+unit but no
   type, so every measure maps to a latest-value **gauge** — which is lossy *between scrapes* for
   measurement-style values (e.g. latency). The idiomatic Prometheus fix is to model a measure type and map
   measurements to **histograms** (every observation contributes to count/sum/buckets, surviving scrape
   gaps in aggregate) and monotonic values to **counters**. This is a four-language `Metric`/`Measure` API
   addition — do it in lockstep, Java canonical.
 - **(C) Unified durable "metrics streamlog → pluggable exporters".** Have every `emitMetric` append to one
-  durable `ggstreamlog` metrics buffer, with each target a reader/exporter (CloudWatch/Kinesis drain+push;
+  durable `edgestreamlog` metrics buffer, with each target a reader/exporter (CloudWatch/Kinesis drain+push;
   prometheus folds the log into its registry). Wins: one durable buffer for push *and* pull + counter
   **restart-survival**. It should **subsume the FR-MET-5 CloudWatch buffer**; bigger, best as its own phase.
   Note: for the *pull* path this does **not** add lossless-between-scrapes (the scraper still samples — that
@@ -238,7 +238,7 @@ UNS-CANONICAL-DESIGN §4.3): each tick it publishes the **`state` keepalive** to
 best-effort `STOPPED` on graceful shutdown) and emits the enabled CPU/mem/disk/threads/FDs measures as
 the **`sys` metric** through the metric subsystem. The legacy `heartbeat.targets[]` array is removed.
 At the time this design was grounded there was **no HTTP health endpoint** and **no auto-wired
-SIGTERM** — `GGCommons.shutdown()` existed but the app had to call it from its own signal handler.
+SIGTERM** — `EdgeCommons.shutdown()` existed but the app had to call it from its own signal handler.
 
 **Kubernetes addition.**
 1. **HTTP health server** (opt-in `health` config section; on by default on KUBERNETES):
@@ -329,7 +329,7 @@ which resolves TES on Greengrass and the normal chain elsewhere. KeyProviders: `
    Secrets Store CSI Driver) — `Credentials.open` currently hard-rejects any `central.type` other than
    `none`/`awsSecretsManager` (`Credentials.java:49-51`); adding a `mountedDir`/`k8sSecret` arm is localized
    and mirrors how `parameters` already does `mountedDir`. Lets the operator own cloud auth/rotation while
-   ggcommons keeps typed views + `$secret` indirection (FR-CRED-4).
+   edgecommons keeps typed views + `$secret` indirection (FR-CRED-4).
 
 **Keep the vault.** On modern EKS, k8s Secrets are KMS-encrypted at rest and ESO/CSI can subsume central
 sync — but the target is **edge with intermittent connectivity**, so the vault's value is real and primary:
@@ -401,7 +401,7 @@ unconditional `cache.put` each cycle (minor churn). Phase-2 audit/metrics not bu
 
 ## 8. Streaming — durable buffer on a StatefulSet + PVC
 
-**Seam today.** One Rust core (`ggstreamlog`) drives all four languages over a C ABI; hosts only
+**Seam today.** One Rust core (`edgestreamlog`) drives all four languages over a C ABI; hosts only
 `append` + read `stats`. A per-stream **durable on-disk buffer** (`buffer.path`: a directory of append-only
 `.seg` segments + an atomic checkpoint; crash-recovers a torn tail on open) store-and-forwards to
 **Kinesis/Kafka** with at-least-once delivery (commit-after-ack), exponential backoff, and `maxRetries=-1`

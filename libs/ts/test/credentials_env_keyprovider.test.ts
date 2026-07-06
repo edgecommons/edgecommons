@@ -29,16 +29,16 @@ function dir(prefix: string): string {
 const KEK = Buffer.alloc(KEY_LEN, 7);
 const KEK_B64 = KEK.toString("base64");
 
-/** A test-private env var name so we never collide with a real `GGCOMMONS_VAULT_KEK` in the env. */
-const VAR = "GGCOMMONS_TEST_VAULT_KEK";
+/** A test-private env var name so we never collide with a real `EDGECOMMONS_VAULT_KEK` in the env. */
+const VAR = "EDGECOMMONS_TEST_VAULT_KEK";
 
 beforeEach(() => {
   delete process.env[VAR];
-  delete process.env.GGCOMMONS_VAULT_KEK;
+  delete process.env.EDGECOMMONS_VAULT_KEK;
 });
 afterEach(() => {
   delete process.env[VAR];
-  delete process.env.GGCOMMONS_VAULT_KEK;
+  delete process.env.EDGECOMMONS_VAULT_KEK;
 });
 
 describe("EnvKeyProvider.fromEnv", () => {
@@ -145,10 +145,10 @@ describe("openFromConfig via the env key provider", () => {
     expect(c2.getString("api/token")).toBe("tok-1");
   });
 
-  it("defaults the env var name to GGCOMMONS_VAULT_KEK when `envVar` is omitted", async () => {
+  it("defaults the env var name to EDGECOMMONS_VAULT_KEK when `envVar` is omitted", async () => {
     const d = dir("ggenv-defvar-");
     const path = join(d, "vault");
-    process.env.GGCOMMONS_VAULT_KEK = KEK_B64;
+    process.env.EDGECOMMONS_VAULT_KEK = KEK_B64;
 
     const svc = await openFromConfig({ vault: { path, keyProvider: { type: "env" } } });
     svc.put("k", Buffer.from("v"));
@@ -159,7 +159,7 @@ describe("openFromConfig via the env key provider", () => {
     const d = dir("ggenv-err-");
     await expect(
       openFromConfig({ vault: { path: join(d, "vault"), keyProvider: { type: "env", envVar: VAR } } }),
-    ).rejects.toThrow(/GGCOMMONS_TEST_VAULT_KEK.*unset or empty/);
+    ).rejects.toThrow(/EDGECOMMONS_TEST_VAULT_KEK.*unset or empty/);
   });
 });
 

@@ -2,12 +2,12 @@
 
 > **Status: IMPLEMENTED across the core + all four languages** (see "Implementation status" below).
 > Gives the direct `cloudwatch` metric target a durable, disk-backed store-and-forward buffer that drains
-> `PutMetricData` on reconnect, by **reusing the `ggstreamlog` durable log + export engine via a new
+> `PutMetricData` on reconnect, by **reusing the `edgestreamlog` durable log + export engine via a new
 > host-callback sink**. Java canonical; per-language deltas below.
 >
 > **This is a standalone enhancement, independent of the Kubernetes / platform-rearch proposal**
 > (`docs/k8s/`). It depends only on already-shipped pieces — the existing `cloudwatch` metric target and
-> the `ggstreamlog` core + bindings — and is **not** gated by the platform×transport rearch or any
+> the `edgestreamlog` core + bindings — and is **not** gated by the platform×transport rearch or any
 > KUBERNETES profile. Its driver is *intermittent cloud connectivity*, which already describes today's
 > **GREENGRASS edge** and **HOST** deployments, so it improves the current product regardless of
 > k8s. It was surfaced by the k8s metrics review (k8s requirement **FR-MET-5**) and can be sequenced
@@ -15,13 +15,13 @@
 
 ## Implementation status (delivered)
 
-Implemented + tested across the `ggstreamlog` core and all four language libs. New-code coverage exceeds
+Implemented + tested across the `edgestreamlog` core and all four language libs. New-code coverage exceeds
 the 90% target everywhere it was measured, and **every track has a passing disconnect fault-injection
 test** (flat memory / disk-bounded backlog / `dropOldest` / drain-on-reconnect / nonzero stale-drop).
 
 | Track | Build / tests (verified) | New-code coverage | Disconnect test |
 |---|---|---|---|
-| Core C-ABI (`ggsl_set_sink_callback`) | `cargo test --features cabi` → **44 pass, 0 fail** (9 new `ffi_sink_callback`) | `ffi.rs` new code **92.6%** (cargo-llvm-cov) | ✅ |
+| Core C-ABI (`esl_set_sink_callback`) | `cargo test --features cabi` → **44 pass, 0 fail** (9 new `ffi_sink_callback`) | `ffi.rs` new code **92.6%** (cargo-llvm-cov) | ✅ |
 | Rust lib (`CloudWatchSink`, feature `metrics-cloudwatch-durable`) | `cargo test --features metrics-cloudwatch-durable` → **133 pass** (16 new) | `cloudwatch_durable.rs` **95.76%** | ✅ |
 | Java (Panama upcall + `CloudWatchDrain`) | feature suites pass; closes the Java streaming template-resolution gap | feature classes **94–100%** line (JaCoCo) | ✅ |
 | TypeScript (napi threadsafe-fn + `DurableCloudWatchTarget`) | `npm run build` + **246 vitest pass** | `cloudwatch_durable.ts` **98%** | ✅ |
@@ -32,7 +32,7 @@ test** (flat memory / disk-bounded backlog / `dropOldest` / drain-on-reconnect /
 `mvn package` suite has 10 pre-existing errors (stray local logging tests referencing a removed
 `logging.format` key; gitignored TLS test resources per commit `fc993b3`), which prevents reaching the
 JaCoCo *bundle* gate; the Java bundle (80%) and TS global (77%) coverage gates are dragged below threshold
-by pre-existing untested files (`gg_verify.ts`, credentials, …); and `libs/rust` has one stale doctest
+by pre-existing untested files (`edge_verify.ts`, credentials, …); and `libs/rust` has one stale doctest
 (`config/validation.rs`, predates this work; contradicts `required:[component]`). These are tracked
 separately and do not affect this feature's own code, which passes and is ≥94% covered.
 
@@ -61,7 +61,7 @@ separately and do not affect this feature's own code, which passes and is ≥94%
 ## 1. Architecture — two sink kinds
 
 ```
-                          ggstreamlog core (Rust)
+                          edgestreamlog core (Rust)
    append(record) ─► EmbeddedLog (durable segment log) ─► ExportEngine (read_batch → sink.send → commit;
                                                             at-least-once, retry/backoff, single-writer)
                                                                      │ sink: dyn Sink
@@ -86,8 +86,8 @@ component-specific custom destination. The callback never replaces the native si
 - Select it via the existing `open_with(SinkFactory)` seam (`service.rs:131`) + a `SinkConfig::Callback`
   variant. No change to `EmbeddedLog`, retry, backoff, or commit semantics.
 
-**C ABI (`ffi.rs`) — one new primitive, mirroring `ggsl_set_log_callback`:**
-- `ggsl_set_sink_callback(service, ctx, fn_ptr)` where `fn_ptr` is
+**C ABI (`ffi.rs`) — one new primitive, mirroring `esl_set_log_callback`:**
+- `esl_set_sink_callback(service, ctx, fn_ptr)` where `fn_ptr` is
   `extern "C" fn(ctx, *const Record, n, *mut Outcome) -> status`; called on the export thread with a borrowed
   batch; host fills `Outcome` (status + out-array of failed offsets) before returning. `catch_unwind`-wrapped.
 - `Record` view: `{ offset:u64, ts_ms:u64, pk:*const u8, pk_len, payload:*const u8, payload_len }`.
@@ -102,7 +102,7 @@ In the existing `CloudWatch` metric target (`CloudWatch.java` + mirrors):
 
 **On `emit`/`emitNow` (when `buffer: durable`):** build the datum as today (reuse `Metric`/`EmfHelper`/SDK
 `MetricDatum`) → serialize to `{namespace, datum}` (pk = namespace) → `append` to the component's CloudWatch
-ggstreamlog stream (replaces the in-memory `pendingMetrics` queue).
+edgestreamlog stream (replaces the in-memory `pendingMetrics` queue).
 
 **On drain (the sink callback):** deserialize batch → **group by namespace** → **pre-filter stale datums**
 (ts outside the window; `dropped_stale++`; never sent) → chunk to ≤1000/≤1 MB → `PutMetricData` (existing SDK
@@ -112,8 +112,8 @@ loop come from the core.
 
 ## 3a. Public bring-your-own-sink (S3)
 
-`SinkConfig::Callback` / the `ggsl_set_sink_callback` ABI is exposed as a **documented public extension**:
-a component (or a downstream library) can register a host sink to drain a `ggstreamlog` stream to any
+`SinkConfig::Callback` / the `esl_set_sink_callback` ABI is exposed as a **documented public extension**:
+a component (or a downstream library) can register a host sink to drain a `edgestreamlog` stream to any
 destination (a proprietary on-prem system, a local file, a custom protocol) while reusing the durable buffer
 + export orchestration. The documented **host-sink contract**: `send(batch) -> {AllAcked | Partial{failed
 offsets} | Failed{retryable}}`; the callback is invoked on the export thread and must be thread-safe and
@@ -130,17 +130,17 @@ Add a `buffer` object to the `cloudwatch` branch of `metricEmission.targetConfig
   "namespace": "...", "intervalSecs": 60,
   "buffer": {
     "type": "durable",                 // durable | memory   (default: durable)
-    "path": "/var/lib/ggcommons/metrics/{ComponentName}/cw",
+    "path": "/var/lib/edgecommons/metrics/{ComponentName}/cw",
     "maxDiskBytes": 134217728,         // ~128 MiB default; configurable
     "onFull": "dropOldest", "fsync": "perBatch"
   } } } }
 ```
 
-- `durable` → ggstreamlog disk buffer + CallbackSink; `memory` → today's in-memory batching. **Runtime**
+- `durable` → edgestreamlog disk buffer + CallbackSink; `memory` → today's in-memory batching. **Runtime**
   decision; default `durable`.
 - Path templating (`{ComponentName}`/`{ThingName}`) **closes the Java streaming-template-resolution gap**
   (`StreamService.java:46`) for this path.
-- Rust: a cargo feature pulls in `ggstreamlog`; absent it, `type: durable` errors clearly. Java/Python/TS:
+- Rust: a cargo feature pulls in `edgestreamlog`; absent it, `type: durable` errors clearly. Java/Python/TS:
   native lib bundled, loaded on demand.
 
 ## 5. Lifecycle & semantics
@@ -159,7 +159,7 @@ past the CloudWatch window are dropped + counted. This is exactly what the in-me
 
 ## 7. Parity & sequencing (independent of Phase 0)
 
-1. **Rust core**: `CallbackSink` + `SinkConfig::Callback` + `ggsl_set_sink_callback` (with a `FakeSink`-style callback test).
+1. **Rust core**: `CallbackSink` + `SinkConfig::Callback` + `esl_set_sink_callback` (with a `FakeSink`-style callback test).
 2. **Rust lib (canonical for sink logic)**: `CloudWatchSink` implementing `Sink` directly — serialization, namespace grouping, stale-drop, chunking, outcome mapping.
 3. **Java (canonical for the language binding)**: Panama upcall stub; reuse the SDK client + `EmfHelper`/`Metric`; resolve the buffer path.
 4. **TS**: napi-rs threadsafe-function bridge — **pattern validated** (§9): `ThreadsafeFunction` (fire-and-forget) hands the batch to JS; a `resolveOutcome(id, outcome)` napi fn lets the async JS sink signal the result back, unblocking the export thread. (Production refinement: the resolve carries failed-offsets to map onto `Partial`, and is wired internally by the metrics layer, not exposed as public API.)

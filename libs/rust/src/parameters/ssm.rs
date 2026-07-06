@@ -12,7 +12,7 @@ use aws_sdk_ssm::Client;
 use tokio::runtime::Runtime;
 
 use super::source::{ParamValue, ParameterSource};
-use crate::error::GgError;
+use crate::error::EdgeCommonsError;
 use crate::Result;
 
 /// AWS SSM Parameter Store [`ParameterSource`].
@@ -27,9 +27,9 @@ impl AwsSsmSource {
     pub fn new(region: Option<String>, endpoint_url: Option<String>, with_decryption: bool) -> Result<Self> {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
-            .thread_name("ggcommons-ssm")
+            .thread_name("edgecommons-ssm")
             .build()
-            .map_err(|e| GgError::Parameters(format!("tokio runtime: {e}")))?;
+            .map_err(|e| EdgeCommonsError::Parameters(format!("tokio runtime: {e}")))?;
         let client = std::thread::scope(|scope| {
             scope
                 .spawn(|| {
@@ -45,7 +45,7 @@ impl AwsSsmSource {
                     })
                 })
                 .join()
-                .map_err(|_| GgError::Parameters("ssm client init thread panicked".into()))
+                .map_err(|_| EdgeCommonsError::Parameters("ssm client init thread panicked".into()))
         })?;
         Ok(Self { rt, client, with_decryption })
     }
@@ -69,7 +69,7 @@ impl ParameterSource for AwsSsmSource {
                 if svc.is_parameter_not_found() {
                     Ok(None)
                 } else {
-                    Err(GgError::Parameters(format!("ssm get_parameter: {}", DisplayErrorContext(&svc))))
+                    Err(EdgeCommonsError::Parameters(format!("ssm get_parameter: {}", DisplayErrorContext(&svc))))
                 }
             }
         }
@@ -91,7 +91,7 @@ impl ParameterSource for AwsSsmSource {
             let resp = self
                 .rt
                 .block_on(req.send())
-                .map_err(|e| GgError::Parameters(format!("ssm get_parameters_by_path: {}", DisplayErrorContext(&e))))?;
+                .map_err(|e| EdgeCommonsError::Parameters(format!("ssm get_parameters_by_path: {}", DisplayErrorContext(&e))))?;
             for p in resp.parameters() {
                 if let (Some(name), Some(v)) = (p.name(), Self::to_value(p)) {
                     out.push((name.to_string(), v));
@@ -117,14 +117,14 @@ mod floci_it {
     //!
     //! ```sh
     //! curl -s localhost:4566/_floci/health    # confirm "ssm":"running"
-    //! cargo test -p ggcommons --features parameters-aws ssm::floci_it -- --ignored --nocapture
+    //! cargo test -p edgecommons --features parameters-aws ssm::floci_it -- --ignored --nocapture
     //! ```
-    //! Override the endpoint with `GGCOMMONS_SSM_ENDPOINT` (default `http://localhost:4566`).
+    //! Override the endpoint with `EDGECOMMONS_SSM_ENDPOINT` (default `http://localhost:4566`).
     use super::*;
     use std::collections::HashMap;
 
     fn endpoint() -> String {
-        std::env::var("GGCOMMONS_SSM_ENDPOINT").unwrap_or_else(|_| "http://localhost:4566".into())
+        std::env::var("EDGECOMMONS_SSM_ENDPOINT").unwrap_or_else(|_| "http://localhost:4566".into())
     }
 
     #[test]
@@ -137,7 +137,7 @@ mod floci_it {
             std::env::set_var("AWS_SECRET_ACCESS_KEY", "test");
             std::env::set_var("AWS_DEFAULT_REGION", "us-east-1");
         }
-        let prefix = format!("/ggcommons-it-{}", std::process::id());
+        let prefix = format!("/edgecommons-it-{}", std::process::id());
 
         // --- seed floci via the SDK admin client (put String + SecureString + a 2-key tree) ---
         let rt = Runtime::new().unwrap();

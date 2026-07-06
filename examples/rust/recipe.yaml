@@ -1,8 +1,8 @@
 ---
 RecipeFormatVersion: "2020-01-25"
-ComponentName: "com.mbreissi.greengrass.RustComponentSkeleton"
+ComponentName: "com.mbreissi.edgecommons.RustComponentSkeleton"
 ComponentVersion: "1.0.0"
-ComponentDescription: "Skeleton Rust component built on the ggcommons Rust library: standardized configuration, logging, messaging, metrics, and heartbeats."
+ComponentDescription: "Skeleton Rust component built on the edgecommons Rust library: standardized configuration, logging, messaging, metrics, and heartbeats."
 ComponentPublisher: "Marc Breissinger"
 # Declaring the TokenExchangeService dependency is what makes the Nucleus inject
 # AWS_CONTAINER_CREDENTIALS_FULL_URI into the component env, so the AWS SDK default
@@ -39,7 +39,7 @@ ComponentConfiguration:
           disk: false
       metricEmission:
         target: "log"
-        namespace: "ggcommons"
+        namespace: "edgecommons"
         # Component work dir — writable by a non-root (ggc_user) component.
         targetConfig:
           logFileName: "/greengrass/v2/work/{ComponentFullName}/metric.log"
@@ -54,7 +54,7 @@ ComponentConfiguration:
               type: "kinesis"
               # The Kinesis data stream must already exist in this region, and the device's TES
               # IAM role must allow kinesis:PutRecords on it. {ThingName} templates per device.
-              streamName: "ggcommons-skeleton-telemetry"
+              streamName: "edgecommons-skeleton-telemetry"
               region: "us-east-1"
             buffer:
               # type defaults to "disk" — durable, file-backed, survives restarts.
@@ -73,7 +73,7 @@ ComponentConfiguration:
           - name: "debug-trace"
             sink:
               type: "kinesis"
-              streamName: "ggcommons-skeleton-telemetry"
+              streamName: "edgecommons-skeleton-telemetry"
               region: "us-east-1"
             buffer:
               type: "memory"
@@ -121,7 +121,7 @@ ComponentConfiguration:
         instances: []
     accessControl:
       aws.greengrass.ipc.pubsub:
-        "com.mbreissi.greengrass.RustComponentSkeleton:pubsub:1":
+        "com.mbreissi.edgecommons.RustComponentSkeleton:pubsub:1":
           policyDescription: Allows access to publish/subscribe to all topics.
           operations:
             - "aws.greengrass#PublishToTopic"
@@ -129,7 +129,7 @@ ComponentConfiguration:
           resources:
             - "*"
       aws.greengrass.ipc.mqttproxy:
-        "com.mbreissi.greengrass.RustComponentSkeleton:iotcore:1":
+        "com.mbreissi.edgecommons.RustComponentSkeleton:iotcore:1":
           policyDescription: Allows access to publish/subscribe to all topics on IoT Core.
           operations:
             - "aws.greengrass#PublishToIoTCore"
@@ -137,7 +137,7 @@ ComponentConfiguration:
           resources:
             - "*"
       aws.greengrass.ShadowManager:
-        "com.mbreissi.greengrass.RustComponentSkeleton:shadow:1":
+        "com.mbreissi.edgecommons.RustComponentSkeleton:shadow:1":
           policyDescription: Allows access to shadows.
           operations:
             - 'aws.greengrass#GetThingShadow'

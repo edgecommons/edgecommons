@@ -35,7 +35,7 @@ pub use aws::AwsSecretsManagerSource;
 #[cfg(feature = "credentials-aws")]
 mod aws {
     use super::{CentralSecret, CentralVaultSource};
-    use crate::error::GgError;
+    use crate::error::EdgeCommonsError;
     use crate::Result;
     use aws_sdk_secretsmanager::error::DisplayErrorContext;
     use aws_sdk_secretsmanager::Client;
@@ -53,9 +53,9 @@ mod aws {
         pub fn new(region: Option<String>, endpoint_url: Option<String>) -> Result<Self> {
             let rt = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
-                .thread_name("ggcommons-secretsmanager")
+                .thread_name("edgecommons-secretsmanager")
                 .build()
-                .map_err(|e| GgError::Credentials(format!("tokio runtime: {e}")))?;
+                .map_err(|e| EdgeCommonsError::Credentials(format!("tokio runtime: {e}")))?;
 
             // Load the client on a dedicated OS thread: `block_on` on a thread already driving a
             // runtime (the library's async build()) would panic. See KinesisSink for the same fix.
@@ -75,7 +75,7 @@ mod aws {
                         })
                     })
                     .join()
-                    .map_err(|_| GgError::Credentials("secretsmanager client init thread panicked".into()))
+                    .map_err(|_| EdgeCommonsError::Credentials("secretsmanager client init thread panicked".into()))
             })?;
 
             Ok(Self { rt, client })
@@ -103,7 +103,7 @@ mod aws {
                     if e.as_service_error().map(|s| s.is_resource_not_found_exception()).unwrap_or(false) {
                         Ok(None)
                     } else {
-                        Err(GgError::Credentials(format!("get secret '{name}': {}", DisplayErrorContext(&e))))
+                        Err(EdgeCommonsError::Credentials(format!("get secret '{name}': {}", DisplayErrorContext(&e))))
                     }
                 }
             }

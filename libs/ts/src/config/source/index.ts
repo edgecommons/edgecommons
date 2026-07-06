@@ -9,9 +9,9 @@
  * Each source loads (and, where applicable, watches) a raw JSON config document.
  * `FILE`/`ENV` and `CONFIG_COMPONENT` work in any mode; `GG_CONFIG`/`SHADOW` require
  * the Greengrass IPC provider. Selecting a source whose dependency is missing raises
- * a {@link GgError} of kind `Config` rather than silently degrading.
+ * a {@link EdgeCommonsError} of kind `Config` rather than silently degrading.
  */
-import { GgError } from "../../errors";
+import { EdgeCommonsError } from "../../errors";
 import { ConfigSourceSpec } from "../../cli";
 import { IMessagingService } from "../../messaging/types";
 import { IpcMessagingProvider } from "../../messaging/ipc-provider";
@@ -67,21 +67,21 @@ export interface BuildConfigSourceOptions {
  *
  * `FILE`/`ENV` need nothing extra. `GG_CONFIG`/`SHADOW` require `opts.ipcProvider`;
  * `CONFIG_COMPONENT` requires `opts.messaging` — a missing dependency throws a
- * {@link GgError} of kind `Config`.
+ * {@link EdgeCommonsError} of kind `Config`.
  */
 export function buildConfigSource(spec: ConfigSourceSpec, opts: BuildConfigSourceOptions): ConfigSource {
   switch (spec.kind) {
     case "FILE":
       return new FileConfigSource(spec.path);
     case "CONFIGMAP":
-      // The k8s-native source (default on KUBERNETES). Defaults (/etc/ggcommons, config.json) are
+      // The k8s-native source (default on KUBERNETES). Defaults (/etc/edgecommons, config.json) are
       // applied inside the source. Works in any transport, like FILE — needs no extra deps.
       return new ConfigMapConfigSource(spec.mountDir, spec.key);
     case "ENV":
       return new EnvConfigSource(spec.var);
     case "CONFIG_COMPONENT": {
       if (!opts.messaging) {
-        throw GgError.config(
+        throw EdgeCommonsError.config(
           "CONFIG_COMPONENT source requires a messaging service (run in a mode that provides one)",
         );
       }
@@ -89,20 +89,20 @@ export function buildConfigSource(spec: ConfigSourceSpec, opts: BuildConfigSourc
     }
     case "GG_CONFIG": {
       if (!opts.ipcProvider) {
-        throw GgError.config("GG_CONFIG source requires the Greengrass IPC provider");
+        throw EdgeCommonsError.config("GG_CONFIG source requires the Greengrass IPC provider");
       }
       return new GreengrassConfigSource(opts.ipcProvider, spec.component, spec.key);
     }
     case "SHADOW": {
       if (!opts.ipcProvider) {
-        throw GgError.config("SHADOW source requires the Greengrass IPC provider");
+        throw EdgeCommonsError.config("SHADOW source requires the Greengrass IPC provider");
       }
       return new ShadowConfigSource(opts.ipcProvider, spec.name, opts.thingName, opts.componentName);
     }
     default: {
       // Exhaustiveness guard: `spec` is `never` here if all kinds are handled.
       const _exhaustive: never = spec;
-      throw GgError.config(`unknown config source spec: ${JSON.stringify(_exhaustive)}`);
+      throw EdgeCommonsError.config(`unknown config source spec: ${JSON.stringify(_exhaustive)}`);
     }
   }
 }

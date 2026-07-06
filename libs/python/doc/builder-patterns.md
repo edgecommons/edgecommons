@@ -1,10 +1,10 @@
 # Builder Patterns
 
-This document describes the builder pattern implementations in ggcommons Python, which provide fluent APIs for constructing complex objects with improved readability and validation.
+This document describes the builder pattern implementations in edgecommons Python, which provide fluent APIs for constructing complex objects with improved readability and validation.
 
 ## Overview
 
-Builder patterns in ggcommons provide:
+Builder patterns in edgecommons provide:
 
 - **Fluent APIs**: Method chaining for readable object construction
 - **Parameter Validation**: Early validation of required and optional parameters
@@ -14,20 +14,20 @@ Builder patterns in ggcommons provide:
 
 ## Available Builders
 
-### GGCommonsBuilder
+### EdgeCommonsBuilder
 
-Creates GGCommons instances with fluent configuration:
+Creates EdgeCommons instances with fluent configuration:
 
 ```python
-from ggcommons.builders import GGCommonsBuilder
+from edgecommons.builders import EdgeCommonsBuilder
 
 # Basic usage
-ggcommons = GGCommonsBuilder.create("com.example.MyComponent") \
+edgecommons = EdgeCommonsBuilder.create("com.example.MyComponent") \
     .with_args(["--config", "FILE", "config.json"]) \
     .build()
 
 # Full configuration
-ggcommons = GGCommonsBuilder.create("com.example.MyComponent") \
+edgecommons = EdgeCommonsBuilder.create("com.example.MyComponent") \
     .with_args(args) \
     .with_app_options(custom_parser) \
     .receive_own_messages(False) \
@@ -40,7 +40,7 @@ ggcommons = GGCommonsBuilder.create("com.example.MyComponent") \
 - `with_args(args)`: Set command line arguments
 - `with_app_options(parser)`: Set custom ArgumentParser
 - `receive_own_messages(flag)`: Set message reception behavior
-- `build()`: Create the GGCommons instance
+- `build()`: Create the EdgeCommons instance
 
 #### Validation
 
@@ -53,7 +53,7 @@ ggcommons = GGCommonsBuilder.create("com.example.MyComponent") \
 Creates Message instances with comprehensive configuration:
 
 ```python
-from ggcommons.builders import MessageBuilder
+from edgecommons.builders import MessageBuilder
 
 # Basic message
 message = MessageBuilder.create("heartbeat", "1.0") \
@@ -97,7 +97,7 @@ message = MessageBuilder.from_object(json_data) \
 Creates Metric instances with measures and dimensions:
 
 ```python
-from ggcommons.builders import MetricBuilder
+from edgecommons.builders import MetricBuilder
 
 # Simple metric
 metric = MetricBuilder.create("cpu_usage") \
@@ -140,8 +140,8 @@ metric = MetricBuilder.create("system_performance") \
 
 #### Before
 ```python
-# Old GGCommons construction
-ggcommons = GGCommons("com.example.Component", args, options, False)
+# Old EdgeCommons construction
+edgecommons = EdgeCommons("com.example.Component", args, options, False)
 
 # Old Message construction
 message = Message.build_from_config("heartbeat", "1.0", payload, config_manager)
@@ -153,8 +153,8 @@ metric.add_measure(Measure("usage", "Percent", 1))
 
 #### After
 ```python
-# New GGCommons construction
-ggcommons = GGCommonsBuilder.create("com.example.Component") \
+# New EdgeCommons construction
+edgecommons = EdgeCommonsBuilder.create("com.example.Component") \
     .with_args(args) \
     .with_app_options(options) \
     .receive_own_messages(False) \

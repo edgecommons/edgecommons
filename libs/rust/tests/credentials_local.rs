@@ -9,7 +9,7 @@
 
 use std::sync::Arc;
 
-use ggcommons::credentials::{
+use edgecommons::credentials::{
     self, CentralConfig, CredentialService, CredentialsConfig, FileKeyProvider, KeyProvider,
     LocalVault, PutOptions, VaultConfig,
 };

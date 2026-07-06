@@ -1,5 +1,5 @@
 {
-  "description": "ggcommons UNS app() publish-facade vectors (DESIGN-class-facades 2.3). input -> expected {topic, route, body} from the live facade; body STRUCTURAL (D-U22). Pins the verbatim body, header name = caller's name, and topic = app/{channel} (sanitized). instance 'main'",
+  "description": "edgecommons UNS app() publish-facade vectors (DESIGN-class-facades 2.3). input -> expected {topic, route, body} from the live facade; body STRUCTURAL (D-U22). Pins the verbatim body, header name = caller's name, and topic = app/{channel} (sanitized). instance 'main'",
   "cases": [
     {
       "name": "app-verbatim-body",

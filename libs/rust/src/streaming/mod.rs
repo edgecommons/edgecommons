@@ -4,50 +4,50 @@
 //! pluggable export sink, wired into the component runtime as `gg.streams()`.
 //!
 //! ## Overview
-//! A thin libs-side façade over the [`ggstreamlog`] core (the durable segment log + export
-//! engine). Each configured stream gets an [`ggstreamlog::EmbeddedLog`] (append/persist/retain)
-//! and, when a sink is available, a background [`ggstreamlog::ExportEngine`] draining it to AWS.
+//! A thin libs-side façade over the [`edgestreamlog`] core (the durable segment log + export
+//! engine). Each configured stream gets an [`edgestreamlog::EmbeddedLog`] (append/persist/retain)
+//! and, when a sink is available, a background [`edgestreamlog::ExportEngine`] draining it to AWS.
 //! Component authors get a [`StreamHandle`] from [`StreamService::stream`] and call
 //! [`StreamHandle::append`]; everything else (batching, retry, checkpointing, retention) is
 //! handled by the core. See `docs/TELEMETRY_STREAMING.md` and `..._PHASE1.md`.
 //!
 //! ## Semantics & Architecture
 //! - The whole module is behind the off-by-default `streaming` cargo feature; the real AWS
-//!   sink ([`ggstreamlog::KinesisSink`]) additionally needs `streaming-kinesis`.
+//!   sink ([`edgestreamlog::KinesisSink`]) additionally needs `streaming-kinesis`.
 //! - [`StreamService`] is the testable seam (mirrors [`crate::metrics::MetricService`]); the
 //!   default implementation is [`DefaultStreamService`].
 //! - Without a usable sink (e.g. `streaming` without `streaming-kinesis`), a stream is
 //!   **buffer-only**: appends still persist durably and `stats()` works, but nothing exports
 //!   (a warning is logged). This keeps the feature usable in tests without AWS dependencies.
 //! - Configuration is read from the `streaming` section of the raw component config, reusing
-//!   `ggstreamlog`'s `BufferConfig`/`BatchConfig`/`DeliveryConfig`/`SinkConfig` (same camelCase
+//!   `edgestreamlog`'s `BufferConfig`/`BatchConfig`/`DeliveryConfig`/`SinkConfig` (same camelCase
 //!   schema). `buffer.path` and the Kinesis `streamName` are template-substituted.
-//! - Error handling: [`crate::Result`] / [`GgError::Streaming`].
+//! - Error handling: [`crate::Result`] / [`EdgeCommonsError::Streaming`].
 //!
 //! ## Related Modules
-//! - [`crate::metrics`] (the stats bridge target), [`ggstreamlog`] (the core).
+//! - [`crate::metrics`] (the stats bridge target), [`edgestreamlog`] (the core).
 
 use std::sync::Arc;
 
-use ggstreamlog::config::SinkConfig;
-use ggstreamlog::{EmbeddedLog, Record};
+use edgestreamlog::config::SinkConfig;
+use edgestreamlog::{EmbeddedLog, Record};
 
 use crate::config::model::Config;
 use crate::config::template::resolve;
-use crate::error::{GgError, Result};
+use crate::error::{EdgeCommonsError, Result};
 
 mod bridge;
 pub use bridge::StreamMetricsBridge;
 
-// The config schema + the core orchestration live in `ggstreamlog`; this module is a thin
+// The config schema + the core orchestration live in `edgestreamlog`; this module is a thin
 // libs-side wrapper (template resolution against the component `Config` + the metrics bridge).
-pub use ggstreamlog::{
+pub use edgestreamlog::{
     LogStats, Record as StreamRecord, ServiceStats, Sink, SinkFactory, StreamConfig, StreamingConfig,
 };
 
 /// Map a core streaming error into the library error type.
-fn map_err(e: ggstreamlog::GgStreamError) -> GgError {
-    GgError::Streaming(e.to_string())
+fn map_err(e: edgestreamlog::EdgeStreamError) -> EdgeCommonsError {
+    EdgeCommonsError::Streaming(e.to_string())
 }
 
 /// Parse the `streaming` section out of a component [`Config`] (empty if absent), **without**
@@ -55,7 +55,7 @@ fn map_err(e: ggstreamlog::GgStreamError) -> GgError {
 pub fn streaming_config(config: &Config) -> Result<StreamingConfig> {
     match config.raw.get("streaming") {
         None => Ok(StreamingConfig::default()),
-        Some(value) => serde_json::from_value(value.clone()).map_err(GgError::from),
+        Some(value) => serde_json::from_value(value.clone()).map_err(EdgeCommonsError::from),
     }
 }
 
@@ -107,7 +107,7 @@ impl StreamHandle {
 
 /// Open/own telemetry streams. The testable seam for the streaming subsystem.
 pub trait StreamService: Send + Sync {
-    /// A handle to the named stream, or [`GgError::Streaming`] if it is not configured.
+    /// A handle to the named stream, or [`EdgeCommonsError::Streaming`] if it is not configured.
     fn stream(&self, name: &str) -> Result<StreamHandle>;
 
     /// Names of all configured streams.
@@ -119,8 +119,8 @@ pub trait StreamService: Send + Sync {
 
 /// The production [`crate::facades::StreamSink`] adapter: composes a [`StreamService`] so
 /// `data().via(Channel::stream(name))` (DESIGN-class-facades §4) can append the facade's
-/// serialized envelope without depending on the native `ggstreamlog` binding directly. Wired by
-/// [`crate::GgCommonsBuilder::build`] whenever the `streaming` feature is compiled in — the facade
+/// serialized envelope without depending on the native `edgestreamlog` binding directly. Wired by
+/// [`crate::EdgeCommonsBuilder::build`] whenever the `streaming` feature is compiled in — the facade
 /// seam itself lives in [`crate::facades`] so it (and `DataFacade`) build standalone too.
 pub struct StreamServiceSink(Arc<dyn StreamService>);
 
@@ -143,12 +143,12 @@ impl crate::facades::StreamSink for StreamServiceSink {
     }
 }
 
-/// The default [`StreamService`]: a thin wrapper over [`ggstreamlog::StreamService`], adding the
+/// The default [`StreamService`]: a thin wrapper over [`edgestreamlog::StreamService`], adding the
 /// component-facing handle/stats types and config-template resolution. The orchestration (opening
 /// buffers, building sinks, running export engines) lives in the core and is shared with the
 /// other-language bindings.
 pub struct DefaultStreamService {
-    inner: ggstreamlog::StreamService,
+    inner: edgestreamlog::StreamService,
 }
 
 impl DefaultStreamService {
@@ -157,14 +157,14 @@ impl DefaultStreamService {
     ///
     /// `buffer.path` and the sink's stream name / brokers are template-substituted against `config`.
     pub fn open(config: &Config) -> Result<Self> {
-        let inner = ggstreamlog::StreamService::open(resolved_config(config)?).map_err(map_err)?;
+        let inner = edgestreamlog::StreamService::open(resolved_config(config)?).map_err(map_err)?;
         Ok(Self { inner })
     }
 
     /// Like [`open`](Self::open) but with a custom [`SinkFactory`] (used by tests to inject a fake
     /// sink without AWS/Kafka dependencies).
     pub fn open_with(config: &Config, sink_factory: &SinkFactory) -> Result<Self> {
-        let inner = ggstreamlog::StreamService::open_with(resolved_config(config)?, sink_factory)
+        let inner = edgestreamlog::StreamService::open_with(resolved_config(config)?, sink_factory)
             .map_err(map_err)?;
         Ok(Self { inner })
     }
@@ -175,7 +175,7 @@ impl StreamService for DefaultStreamService {
         self.inner
             .stream(name)
             .map(|log| StreamHandle { name: name.to_string(), log })
-            .ok_or_else(|| GgError::Streaming(format!("stream '{name}' is not configured")))
+            .ok_or_else(|| EdgeCommonsError::Streaming(format!("stream '{name}' is not configured")))
     }
 
     fn stream_names(&self) -> Vec<String> {
@@ -239,7 +239,7 @@ fn resolve_sink(config: &Config, sink: SinkConfig) -> SinkConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ggstreamlog::FakeSink;
+    use edgestreamlog::FakeSink;
     use serde_json::json;
     use std::time::{Duration, Instant};
 
@@ -330,8 +330,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cfg = config_with_streams(dir.path());
         // Inject a FakeSink instead of Kinesis so the engine drains without AWS. The factory
-        // returns the core's Result type (ggstreamlog::StreamService::open_with's contract).
-        let factory = |_name: &str, _sink: &SinkConfig| -> ggstreamlog::Result<Option<Box<dyn Sink>>> {
+        // returns the core's Result type (edgestreamlog::StreamService::open_with's contract).
+        let factory = |_name: &str, _sink: &SinkConfig| -> edgestreamlog::Result<Option<Box<dyn Sink>>> {
             Ok(Some(Box::new(FakeSink::new())))
         };
         let svc = DefaultStreamService::open_with(&cfg, &factory).unwrap();

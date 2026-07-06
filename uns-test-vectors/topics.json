@@ -1,5 +1,5 @@
 {
-  "description": "ggcommons UNS cross-language conformance vectors - build/validate/filter/guard (UNS-CANONICAL-DESIGN 2.2/4.1; single-fault cases, D-U26)",
+  "description": "edgecommons UNS cross-language conformance vectors - build/validate/filter/guard (UNS-CANONICAL-DESIGN 2.2/4.1; single-fault cases, D-U26)",
   "build": [
     {
       "name": "build-state-leaf",
@@ -967,7 +967,7 @@
     {
       "name": "validate-bad-root-reply-prefix",
       "input": {
-        "topic": "ggcommons/reply-42/x/main/state",
+        "topic": "edgecommons/reply-42/x/main/state",
         "includeRoot": false
       },
       "expected": {
@@ -1359,7 +1359,7 @@
     {
       "name": "guard-non-uns-reply-passes",
       "input": {
-        "topic": "ggcommons/reply-8400f2",
+        "topic": "edgecommons/reply-8400f2",
         "includeRoot": false
       },
       "expected": {

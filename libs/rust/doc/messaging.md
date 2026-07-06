@@ -39,7 +39,7 @@ Topics follow the Unified Namespace grammar `ecv1/{device}/{component}/{instance
 (see `docs/platform/DESIGN-uns.md`). Build them with the validating builder rather than by hand:
 
 ```rust
-use ggcommons::uns::UnsClass;
+use edgecommons::uns::UnsClass;
 
 let topic = gg.uns().topic_with_channel(UnsClass::App, "order/received")?;
 // -> ecv1/gw-01/my-component/main/app/order/received
@@ -51,9 +51,9 @@ let data = inst.uns().topic_with_channel(UnsClass::Data, "press12/temperature")?
 
 The four **reserved platform classes** — `state`, `metric`, `cfg`, `log` — are library-owned: every
 publish-side method (`publish`, `publish_raw`, `request*`, `reply*`, and their IoT Core variants)
-rejects a client-chosen reserved-class `ecv1/…` topic with `GgError::ReservedTopic`. Use
+rejects a client-chosen reserved-class `ecv1/…` topic with `EdgeCommonsError::ReservedTopic`. Use
 `gg.uns()` / the heartbeat/metric subsystems instead; `subscribe*` is never guarded. Non-`ecv1`
-topics (the `ggcommons/reply-…` prefix, `cloudwatch/metric/put`, external/legacy MQTT) pass
+topics (the `edgecommons/reply-…` prefix, `cloudwatch/metric/put`, external/legacy MQTT) pass
 untouched. The library's own publishers go through the crate-private `ReservedMessaging` seam —
 in Rust the guard is compiler-enforced.
 
@@ -64,7 +64,7 @@ state, so it can't race). Build it with `MessageBuilder`; the wire JSON shape ma
 Java/Python for interoperation:
 
 ```rust
-use ggcommons::messaging::message::MessageBuilder;
+use edgecommons::messaging::message::MessageBuilder;
 use serde_json::json;
 
 let msg = MessageBuilder::new("ProcessData", "1.0")
@@ -83,7 +83,7 @@ element (`{hier, path, component, instance}`, resolved from the `hierarchy`/`ide
 blocks; `instance` defaults to `"main"` — override per message with `.instance("kep1")` or via
 `gg.instance(id).message(...)`). The former `tags.thing` field is **removed** (hard cut); `tags`
 carries business metadata only. Header keys are **snake_case** (`correlation_id`, `reply_to`) and
-request/reply uses the `ggcommons/reply-` topic prefix — matching the Java/Python/TypeScript
+request/reply uses the `edgecommons/reply-` topic prefix — matching the Java/Python/TypeScript
 `MessageHeader` exactly so the four libraries interoperate on the same topics (byte-identical
 topics and structurally identical envelopes are pinned by the shared `uns-test-vectors/`).
 
@@ -94,7 +94,7 @@ message serializes as `{ "raw": <value> }`.
 
 ### `receiveOwnMessages`
 
-`GgCommonsBuilder::receive_own_messages(bool)` exists for parity (default `true`).
+`EdgeCommonsBuilder::receive_own_messages(bool)` exists for parity (default `true`).
 Setting it to `false` is currently a **no-op that logs a warning**: the
 `aws-greengrass-component-sdk` exposes no IPC `ReceiveMode`, so own-message
 suppression cannot be done natively, and no client-side scheme covers all message
@@ -116,7 +116,7 @@ Two independent settings per subscription:
   ordered; `N` = up to N concurrent).
 
 ```rust
-use ggcommons::messaging::message_handler;
+use edgecommons::messaging::message_handler;
 
 svc.subscribe("events/+", message_handler(|topic, msg| async move {
     tracing::info!(%topic, name = %msg.header.name, "received");
@@ -129,7 +129,7 @@ svc.subscribe("events/+", message_handler(|topic, msg| async move {
 Python `Iou`). Every request arms a **framework-owned internal deadline** at send time
 (`messaging.requestTimeoutSeconds`, default **30 s**, `0` disables): when it fires, the
 pending entry is removed, the ephemeral reply topic is unsubscribed, and the future
-resolves `Err(GgError::RequestTimeout { topic, secs })` — **even if the future is
+resolves `Err(EdgeCommonsError::RequestTimeout { topic, secs })` — **even if the future is
 never polled** (a supervisor task owns the reply subscription). Completion, deadline,
 and `cancel_request` all UNSUBSCRIBE the reply topic — no leaks (fixing the Java H2
 class of bug). Use `request_with_timeout(topic, msg, Some(duration))` for a per-call

@@ -5,19 +5,20 @@
  * Greengrass IPC on the UNS Flow-A rendezvous the consumer's `CONFIG_COMPONENT` source uses —
  * `ecv1/{device}/config/main/cmd/get-configuration` (UNS-CANONICAL-DESIGN §4.3, D-U19; the
  * server is the sole subscriber under the reserved-by-convention logical component name
- * `config`) — returning a full ggcommons config document to the requester that self-identifies
- * in the body with `{"component": "<short name>"}` (§1.5). Lets the TS `CONFIG_COMPONENT`
+ * `config`) — returning a full edgecommons config document to the requester that self-identifies
+ * in the body with `{"component": "<bootstrap short name>"}`. Lets the TS `CONFIG_COMPONENT`
  * config source be validated end-to-end on a live nucleus against a TS peer.
  *
  * Run args: the consumer's FULL component name (the served component is matched against its
- * sanitized short name, e.g. "com.ggcommons.TsGgVerify" -> "TsGgVerify").
+ * sanitized short name, e.g. "com.mbreissi.edgecommons.TsEdgeVerify" -> "TsEdgeVerify".
+ * The served config then supplies `component.token` for the consumer's lower-kebab UNS token.
  */
 import { DefaultMessagingService } from "./messaging/service";
 import { IpcMessagingProvider } from "./messaging/ipc-provider";
 import { MessageBuilder } from "./message";
 import { sanitize } from "./config/template";
 
-const CONSUMER_NAME = process.argv[2] ?? "com.ggcommons.TsGgVerify";
+const CONSUMER_NAME = process.argv[2] ?? "com.mbreissi.edgecommons.TsEdgeVerify";
 const THING = process.env.AWS_IOT_THING_NAME ?? "lab-5950x";
 const GET_TOPIC = `ecv1/${sanitize(THING)}/config/main/cmd/get-configuration`;
 const CONSUMER_TOKEN = sanitize(CONSUMER_NAME.split(".").pop() ?? CONSUMER_NAME);
@@ -31,9 +32,9 @@ const CONFIG = {
     measures: { cpu: true, memory: true },
     destination: "local",
   },
-  metricEmission: { target: "log", namespace: "ggcommons", targetConfig: { logFileName: "/tmp/ts_gg_metric.log" } },
+  metricEmission: { target: "log", namespace: "edgecommons", targetConfig: { logFileName: "/tmp/ts_edge_metric.log" } },
   tags: { site: "verify-site", appId: "ts-cc" },
-  component: { global: { publish_interval: 7 }, instances: [] },
+  component: { token: "ts-edge-verify", global: { publish_interval: 7 }, instances: [] },
 };
 
 async function main(): Promise<void> {

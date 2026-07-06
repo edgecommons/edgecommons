@@ -203,7 +203,7 @@ mod tests {
         fn fetch(&self, name: &str) -> crate::Result<Option<CentralSecret>> {
             self.calls.fetch_add(1, Ordering::Relaxed);
             if self.fail.contains(name) {
-                return Err(crate::GgError::Credentials("offline".into()));
+                return Err(crate::EdgeCommonsError::Credentials("offline".into()));
             }
             Ok(self.data.lock().unwrap().get(name).map(|(bytes, ver)| CentralSecret {
                 bytes: bytes.clone(),

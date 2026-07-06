@@ -1,5 +1,5 @@
 {
-  "description": "ggcommons UNS command-inbox vectors - the minimal commands() facade (DESIGN-uns 7.3/9.5, edge-console slice S2). Inbox filter + request topics byte-for-byte; request/reply envelopes structural (D-U22); reply bodies must equal a live inbox dispatch's output; the behavior flags/sets are normative for every language's command inbox",
+  "description": "edgecommons UNS command-inbox vectors - the minimal commands() facade (DESIGN-uns 7.3/9.5, edge-console slice S2). Inbox filter + request topics byte-for-byte; request/reply envelopes structural (D-U22); reply bodies must equal a live inbox dispatch's output; the behavior flags/sets are normative for every language's command inbox",
   "inbox": {
     "filter": "ecv1/gw-01/opcua-adapter/main/cmd/#",
     "input": {
@@ -22,7 +22,7 @@
           "timestamp": "2026-07-01T12:00:00Z",
           "uuid": "00000000-0000-4000-8000-00000000c101",
           "correlation_id": "00000000-0000-4000-8000-00000000c102",
-          "reply_to": "ggcommons/reply-00000000-0000-4000-8000-00000000c103"
+          "reply_to": "edgecommons/reply-00000000-0000-4000-8000-00000000c103"
         },
         "body": {}
       },
@@ -65,7 +65,7 @@
           "timestamp": "2026-07-01T12:00:00Z",
           "uuid": "00000000-0000-4000-8000-00000000c201",
           "correlation_id": "00000000-0000-4000-8000-00000000c202",
-          "reply_to": "ggcommons/reply-00000000-0000-4000-8000-00000000c203"
+          "reply_to": "edgecommons/reply-00000000-0000-4000-8000-00000000c203"
         },
         "body": {}
       },
@@ -107,7 +107,7 @@
           "timestamp": "2026-07-01T12:00:00Z",
           "uuid": "00000000-0000-4000-8000-00000000c301",
           "correlation_id": "00000000-0000-4000-8000-00000000c302",
-          "reply_to": "ggcommons/reply-00000000-0000-4000-8000-00000000c303"
+          "reply_to": "edgecommons/reply-00000000-0000-4000-8000-00000000c303"
         },
         "body": {}
       },
@@ -160,7 +160,7 @@
           "timestamp": "2026-07-01T12:00:00Z",
           "uuid": "00000000-0000-4000-8000-00000000c901",
           "correlation_id": "00000000-0000-4000-8000-00000000c902",
-          "reply_to": "ggcommons/reply-00000000-0000-4000-8000-00000000c903"
+          "reply_to": "edgecommons/reply-00000000-0000-4000-8000-00000000c903"
         },
         "body": {}
       },

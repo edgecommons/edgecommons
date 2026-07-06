@@ -5,13 +5,13 @@
 //!
 //! ## Semantics & Architecture
 //! - No hot-reload (environment is fixed for the process lifetime); `Send + Sync`.
-//! - Error handling: [`crate::error::GgError::Config`] if the variable is unset,
-//!   [`crate::error::GgError::Json`] if it is not valid JSON.
+//! - Error handling: [`crate::error::EdgeCommonsError::Config`] if the variable is unset,
+//!   [`crate::error::EdgeCommonsError::Json`] if it is not valid JSON.
 //!
 //! ## Usage Example
 //! ```no_run
-//! use ggcommons::config::source::{env::EnvConfigSource, ConfigSource};
-//! # async fn demo() -> ggcommons::Result<()> {
+//! use edgecommons::config::source::{env::EnvConfigSource, ConfigSource};
+//! # async fn demo() -> edgecommons::Result<()> {
 //! let _doc = EnvConfigSource::new("CONFIG".to_string()).load().await?;
 //! # Ok(())
 //! # }
@@ -24,7 +24,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use super::ConfigSource;
-use crate::error::{GgError, Result};
+use crate::error::{EdgeCommonsError, Result};
 
 /// Loads configuration from an environment variable (default `CONFIG`).
 pub struct EnvConfigSource {
@@ -41,7 +41,7 @@ impl EnvConfigSource {
 impl ConfigSource for EnvConfigSource {
     async fn load(&self) -> Result<Value> {
         let raw = std::env::var(&self.var)
-            .map_err(|_| GgError::Config(format!("environment variable '{}' is not set", self.var)))?;
+            .map_err(|_| EdgeCommonsError::Config(format!("environment variable '{}' is not set", self.var)))?;
         Ok(serde_json::from_str(&raw)?)
     }
 
@@ -55,7 +55,7 @@ mod tests {
     use super::*;
 
     fn unique_var(prefix: &str) -> String {
-        format!("GGC_{prefix}_{}", uuid::Uuid::new_v4().simple())
+        format!("EDGECOMMONS_{prefix}_{}", uuid::Uuid::new_v4().simple())
     }
 
     #[tokio::test]
@@ -76,7 +76,7 @@ mod tests {
     async fn missing_var_is_config_error() {
         let var = unique_var("MISSING");
         let err = EnvConfigSource::new(var).load().await.unwrap_err();
-        assert!(matches!(err, GgError::Config(_)));
+        assert!(matches!(err, EdgeCommonsError::Config(_)));
     }
 
     #[tokio::test]

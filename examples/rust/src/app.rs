@@ -1,22 +1,22 @@
 //! # Skeleton application logic
 //!
 //! **One-liner purpose**: The component's business logic, demonstrating the
-//! `ggcommons` messaging, metrics, configuration, and lifecycle features.
+//! `edgecommons` messaging, metrics, configuration, and lifecycle features.
 //!
 //! ## Overview
 //! [`SkeletonApp`] wires the concerns that every real component needs:
 //! 1. **Request/reply** — subscribes to its UNS command inbox (`…/cmd/request`) and
 //!    replies to each request; a periodic self-request demonstrates the framework's
-//!    request deadline ([`GgError::RequestTimeout`]).
+//!    request deadline ([`EdgeCommonsError::RequestTimeout`]).
 //! 2. **Periodic publish** — publishes a data message to its UNS `…/data/sample`
 //!    topic on an interval read from configuration
 //!    (`component.global.publish_interval`), emitting a metric each time.
 //! 3. **Dynamic config** — registers a [`ConfigurationChangeListener`] so the publish
 //!    interval updates live on a config hot-reload, without a restart.
 //! 4. **Graceful shutdown** — runs until Ctrl-C / SIGTERM, then unsubscribes and
-//!    returns so the [`ggcommons::GgCommons`] runtime can drop cleanly (RAII).
+//!    returns so the [`edgecommons::EdgeCommons`] runtime can drop cleanly (RAII).
 //!
-//! Every topic is **minted through the unified-namespace builder** ([`GgCommons::uns`]
+//! Every topic is **minted through the unified-namespace builder** ([`EdgeCommons::uns`]
 //! — `ecv1/{device}/{component}/{instance}/{class}/{channel…}`), never hand-written.
 //! The component's identity comes from config: the optional top-level `hierarchy`
 //! (`{"levels": ["site", "device"]}`) + `identity` (`{"site": "factory-1"}`) blocks;
@@ -40,8 +40,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use ggcommons::messaging::message::MessageBuilder;
-use ggcommons::prelude::*;
+use edgecommons::messaging::message::MessageBuilder;
+use edgecommons::prelude::*;
 use serde_json::json;
 
 /// Default publish interval (seconds) when `component.global.publish_interval` is absent.
@@ -77,12 +77,12 @@ pub struct SkeletonApp {
     /// section is present; `None` otherwise. Demonstrates encrypted-vault secret access (and, with
     /// `credentials-aws` + a `central` config, sync from AWS Secrets Manager over TES).
     #[cfg(feature = "credentials")]
-    credentials: Option<Arc<dyn ggcommons::credentials::CredentialService>>,
+    credentials: Option<Arc<dyn edgecommons::credentials::CredentialService>>,
     /// The parameter service when the `parameters` feature is built and a `parameters` config
     /// section is present; `None` otherwise. Demonstrates offline-first externalized-config access
     /// (here from the `env` source, so the example needs no AWS; on-device it can read SSM via TES).
     #[cfg(feature = "parameters")]
-    parameters: Option<Arc<dyn ggcommons::parameters::ParameterService>>,
+    parameters: Option<Arc<dyn edgecommons::parameters::ParameterService>>,
 }
 
 /// Config key (under `component.global`) naming the secret the component reads; the default is a
@@ -124,7 +124,7 @@ impl ConfigurationChangeListener for IntervalListener {
 }
 
 impl SkeletonApp {
-    /// Build the app from an initialized [`ggcommons::GgCommons`] runtime.
+    /// Build the app from an initialized [`edgecommons::EdgeCommons`] runtime.
     ///
     /// # Purpose
     /// Capture the service handles (config snapshot, metrics, messaging) the app
@@ -137,7 +137,7 @@ impl SkeletonApp {
     ///
     /// # Errors
     /// Currently infallible, but returns `Result` so future wiring can fail cleanly.
-    pub fn new(gg: &GgCommons) -> anyhow::Result<Self> {
+    pub fn new(gg: &EdgeCommons) -> anyhow::Result<Self> {
         let metrics = gg.metrics();
         metrics.define_metric(
             MetricBuilder::create(PUBLISH_METRIC)
@@ -218,7 +218,7 @@ impl SkeletonApp {
     /// Non-fatal: any vault error is logged and swallowed so the demo never takes the component down.
     #[cfg(feature = "credentials")]
     fn demonstrate_credentials(&self) {
-        use ggcommons::credentials::PutOptions;
+        use edgecommons::credentials::PutOptions;
 
         let Some(creds) = &self.credentials else {
             tracing::info!("no `credentials` config section; secret access demo disabled");
@@ -328,7 +328,7 @@ impl SkeletonApp {
     ///
     /// # Errors
     /// Propagates failures from subscribing, publishing, or signal handling.
-    pub async fn run(&self, gg: &GgCommons) -> anyhow::Result<()> {
+    pub async fn run(&self, gg: &EdgeCommons) -> anyhow::Result<()> {
         // Demonstrate encrypted-vault secret access once at startup (feature-gated, non-fatal).
         #[cfg(feature = "credentials")]
         self.demonstrate_credentials();
@@ -444,7 +444,7 @@ impl SkeletonApp {
     /// demonstrating request/reply correlation end-to-end over the transport.
     ///
     /// The request deadline is **framework-owned**: awaiting the [`ReplyFuture`]
-    /// yields [`GgError::RequestTimeout`] when no reply arrives within
+    /// yields [`EdgeCommonsError::RequestTimeout`] when no reply arrives within
     /// `messaging.requestTimeoutSeconds` (default 30 s; per-call override via
     /// `request_with_timeout`). No hand-rolled `tokio::time::timeout` needed — the
     /// ephemeral reply subscription is already cleaned up when the error surfaces.
@@ -467,7 +467,7 @@ impl SkeletonApp {
                     Ok(reply) => {
                         tracing::info!(reply = %reply.header.name, body = %reply.body, "request/reply round-trip OK")
                     }
-                    Err(GgError::RequestTimeout { secs, .. }) => {
+                    Err(EdgeCommonsError::RequestTimeout { secs, .. }) => {
                         tracing::warn!(deadline_secs = secs, "request timed out (framework deadline)")
                     }
                     Err(e) => tracing::warn!(error = %e, "reply was an error"),

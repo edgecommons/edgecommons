@@ -3,9 +3,9 @@ seam (UNS-CANONICAL-DESIGN §4.1/§4.2, D-U4/D-U8/D-U24/D-U27), driven against a
 provider on the static MessagingClient (no broker)."""
 import pytest
 
-from ggcommons.messaging.errors import ReservedTopicError
-from ggcommons.messaging.message_builder import MessageBuilder
-from ggcommons.messaging.messaging_client import MessagingClient
+from edgecommons.messaging.errors import ReservedTopicError
+from edgecommons.messaging.message_builder import MessageBuilder
+from edgecommons.messaging.messaging_client import MessagingClient
 
 
 class _FakeProvider:
@@ -88,7 +88,7 @@ class TestGuardPredicate:
         ("ecv1/gw/comp/main/data/temp", False, None),
         ("ecv1/gw/comp/main/cmd/set-config", False, None),
         # non-ecv1 topics are structurally exempt (D-U6/D-U21)
-        ("ggcommons/reply-42", False, None),
+        ("edgecommons/reply-42", False, None),
         ("cloudwatch/metric/put", False, None),
         ("ecv1x/gw/comp/main/state", False, None),  # prefix but different token
         # short topics pass (no class position)
@@ -148,13 +148,13 @@ class TestGuardedMethods:
         assert provider.replies == []
 
     def test_reply_without_header_passes_to_provider(self, provider):
-        from ggcommons.messaging.message import Message
+        from edgecommons.messaging.message import Message
         MessagingClient.reply(Message(), _msg())
         assert len(provider.replies) == 1
 
     def test_allowed_topics_pass(self, provider):
         MessagingClient.publish("ecv1/gw/comp/main/data/temp", _msg())
-        MessagingClient.publish("ggcommons/reply-42", _msg())
+        MessagingClient.publish("edgecommons/reply-42", _msg())
         MessagingClient.publish_raw("cloudwatch/metric/put", {"v": 1})
         assert len(provider.published) == 2
         assert len(provider.published_raw) == 1

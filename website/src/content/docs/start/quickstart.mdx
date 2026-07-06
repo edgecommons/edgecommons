@@ -1,6 +1,6 @@
 ---
 title: Quickstart
-description: Scaffold, build, and run your first GGCommons Greengrass v2 component on the HOST platform against a local MQTT broker, in any of the four languages.
+description: Scaffold, build, and run your first EdgeCommons Greengrass v2 component on the HOST platform against a local MQTT broker, in any of the four languages.
 sidebar:
   order: 2
 ---
@@ -8,7 +8,7 @@ sidebar:
 import { Tabs, TabItem, Aside, LinkCard } from "@astrojs/starlight/components";
 
 This guide takes you from an empty directory to a running Greengrass v2 component talking to a
-local MQTT broker. You will scaffold a component with the `ggcommons` CLI, look at what it
+local MQTT broker. You will scaffold a component with the `edgecommons` CLI, look at what it
 generated, wire up the bootstrap code, build it, and run it on the **HOST** platform.
 
 Pick your language with the tabs in each code block — the tabs stay in sync across the page.
@@ -27,37 +27,37 @@ Pick your language with the tabs in each code block — the tabs stay in sync ac
    - **TypeScript** — Node 18+ and npm.
 
    See the [Installation guide](/start/installation/) for full setup, including how to make the
-   `ggcommons` library resolvable for each language. Once the toolchain is in place, install the CLI
+   `edgecommons` library resolvable for each language. Once the toolchain is in place, install the CLI
    and confirm your environment:
 
 <Tabs syncKey="os">
 <TabItem label="Linux">
 
      ```bash
-     # From the monorepo root — installs the `ggcommons` / `ggcommons-cli` commands.
+     # From the monorepo root — installs the `edgecommons` / `edgecommons-cli` commands.
      pipx install ./cli        # or: python -m pip install ./cli
-     ggcommons doctor          # reports git, gdk, cargo, mvn, python3, node, npm, aws
+     edgecommons doctor          # reports git, gdk, cargo, mvn, python3, node, npm, aws
      ```
 
 </TabItem>
 <TabItem label="Windows">
 
      ```powershell
-     # From the monorepo root — installs the `ggcommons` / `ggcommons-cli` commands.
+     # From the monorepo root — installs the `edgecommons` / `edgecommons-cli` commands.
      pipx install ./cli        # or: python -m pip install ./cli
-     ggcommons doctor          # reports git, gdk, cargo, mvn, python3, node, npm, aws
+     edgecommons doctor          # reports git, gdk, cargo, mvn, python3, node, npm, aws
      ```
 
 </TabItem>
 </Tabs>
 
-   `ggcommons doctor` checks eight tools and prints `[ok] <name> -> <path>` or
+   `edgecommons doctor` checks eight tools and prints `[ok] <name> -> <path>` or
    `[missing] <name>` for each. It only reports status — a missing tool you do not need for your
    language will not stop you.
 
 2. ### Scaffold a component
 
-   `ggcommons create-component` generates a component from a bundled template. Templates ship inside
+   `edgecommons create-component` generates a component from a bundled template. Templates ship inside
    the CLI, so scaffolding works offline. The output directory is `<path>/<ComponentName>`, where
    `ComponentName` is the last dot-segment of the name you pass (`com.example.MyComponent`
    produces a `MyComponent/` directory).
@@ -69,14 +69,14 @@ Pick your language with the tabs in each code block — the tabs stay in sync ac
 <TabItem label="Linux">
 
      ```bash
-     ggcommons create-component -i
+     edgecommons create-component -i
      ```
 
 </TabItem>
 <TabItem label="Windows">
 
      ```powershell
-     ggcommons create-component -i
+     edgecommons create-component -i
      ```
 
 </TabItem>
@@ -90,7 +90,7 @@ Pick your language with the tabs in each code block — the tabs stay in sync ac
 
      ```bash
      # Choose -l to match the language tab you are following.
-     ggcommons create-component -n com.example.MyComponent -l JAVA
+     edgecommons create-component -n com.example.MyComponent -l JAVA
      # -l PYTHON  |  -l RUST  |  -l TYPESCRIPT
      ```
 
@@ -98,7 +98,7 @@ Pick your language with the tabs in each code block — the tabs stay in sync ac
 <TabItem label="Windows">
 
      ```powershell
-     ggcommons create-component -n com.example.MyComponent -l JAVA
+     edgecommons create-component -n com.example.MyComponent -l JAVA
      # -l PYTHON  |  -l RUST  |  -l TYPESCRIPT
      ```
 
@@ -111,10 +111,10 @@ Pick your language with the tabs in each code block — the tabs stay in sync ac
    `KUBERNETES` is among the selected platforms.
 
    <Aside type="note" title="Where the library comes from">
-   `--dep-source` and `--ggcommons-path` only affect **Rust** and **TypeScript**, whose default
+   `--dep-source` and `--edgecommons-path` only affect **Rust** and **TypeScript**, whose default
    `local` dependency points at the in-repo `libs/rust` / `libs/ts` so they build offline inside the
-   monorepo. **Java** always depends on `com.mbreissi:ggcommons` and **Python** on
-   `greengrass-commons`, so those two must be able to resolve the library — either from a registry
+   monorepo. **Java** always depends on `com.mbreissi.edgecommons:edgecommons` and **Python** on
+   `edgecommons`, so those two must be able to resolve the library — either from a registry
    or from a local install. See the [Installation guide](/start/installation/).
    </Aside>
 
@@ -140,9 +140,9 @@ Pick your language with the tabs in each code block — the tabs stay in sync ac
 
      ```text
      MyComponent/
-     ├─ main.py                # entry point — builds GGCommons, starts the app
+     ├─ main.py                # entry point — builds EdgeCommons, starts the app
      ├─ app/MyComponent.py     # your business logic
-     ├─ requirements.txt       # depends on greengrass-commons
+     ├─ requirements.txt       # depends on edgecommons
      ├─ recipe.yaml  gdk-config.json
      └─ test-configs/config_1.json  config_2.json
      ```
@@ -180,7 +180,7 @@ Pick your language with the tabs in each code block — the tabs stay in sync ac
 
 4. ### Understand the bootstrap code
 
-   The entry point builds one `GGCommons` runtime from the standard CLI args, then reads each
+   The entry point builds one `EdgeCommons` runtime from the standard CLI args, then reads each
    subsystem off it via typed accessors. The accessor names follow each language's conventions
    (`getMessaging()` / `get_messaging()` / `messaging()`), but the shape is the same everywhere.
 
@@ -188,13 +188,13 @@ Pick your language with the tabs in each code block — the tabs stay in sync ac
 <TabItem label="Java">
 
      ```java
-     import com.mbreissi.ggcommons.GGCommons;
-     import com.mbreissi.ggcommons.GGCommonsBuilder;
+     import com.mbreissi.edgecommons.EdgeCommons;
+     import com.mbreissi.edgecommons.EdgeCommonsBuilder;
 
      public class MyComponent {
          public static void main(String[] args) {
              // Build the runtime from the standard CLI args (use the FULL component name).
-             GGCommons gg = GGCommonsBuilder.create("com.example.MyComponent")
+             EdgeCommons gg = EdgeCommonsBuilder.create("com.example.MyComponent")
                      .withArgs(args)
                      .build();
 
@@ -210,7 +210,7 @@ Pick your language with the tabs in each code block — the tabs stay in sync ac
      ```
 
      The shipped Java template uses the deprecated direct constructor
-     (`new GGCommons(name, args)`); the builder shown here is the canonical convention and is what
+     (`new EdgeCommons(name, args)`); the builder shown here is the canonical convention and is what
      the worked example uses.
 
 </TabItem>
@@ -218,10 +218,10 @@ Pick your language with the tabs in each code block — the tabs stay in sync ac
 
      ```python
      import sys
-     from ggcommons import GGCommonsBuilder
+     from edgecommons import EdgeCommonsBuilder
 
      def main():
-         gg = (GGCommonsBuilder.create("com.example.MyComponent")
+         gg = (EdgeCommonsBuilder.create("com.example.MyComponent")
                .with_args(sys.argv[1:])
                .build())
 
@@ -231,7 +231,7 @@ Pick your language with the tabs in each code block — the tabs stay in sync ac
          try:
              ...  # your business logic
          finally:
-             gg.shutdown()   # or: with GGCommonsBuilder.create(...).build() as gg:
+             gg.shutdown()   # or: with EdgeCommonsBuilder.create(...).build() as gg:
 
      if __name__ == "__main__":
          main()
@@ -244,13 +244,13 @@ Pick your language with the tabs in each code block — the tabs stay in sync ac
 <TabItem label="Rust">
 
      ```rust
-     use ggcommons::prelude::*;
+     use edgecommons::prelude::*;
 
      const COMPONENT_NAME: &str = "com.example.MyComponent";
 
      #[tokio::main]
      async fn main() -> anyhow::Result<()> {
-         let gg = GgCommonsBuilder::new(COMPONENT_NAME)
+         let gg = EdgeCommonsBuilder::new(COMPONENT_NAME)
              .args(std::env::args_os())   // argv INCLUDES the program name
              .build()
              .await?;
@@ -274,12 +274,12 @@ Pick your language with the tabs in each code block — the tabs stay in sync ac
 <TabItem label="TypeScript">
 
      ```typescript
-     import { GGCommonsBuilder, logger } from "@edgecommons/ggcommons";
+     import { EdgeCommonsBuilder, logger } from "@edgecommons/edgecommons";
 
      const COMPONENT_NAME = "com.example.MyComponent";
 
      async function main(): Promise<void> {
-       const gg = await new GGCommonsBuilder(COMPONENT_NAME)
+       const gg = await new EdgeCommonsBuilder(COMPONENT_NAME)
          .args(process.argv.slice(2))   // argv WITHOUT the node/script prefix
          .build();
 
@@ -295,7 +295,7 @@ Pick your language with the tabs in each code block — the tabs stay in sync ac
      main().catch((err) => { console.error("fatal:", err); process.exit(1); });
      ```
 
-     The npm package is `@edgecommons/ggcommons` (not a bare `ggcommons`). `close()` is idempotent and
+     The npm package is `@edgecommons/edgecommons` (not a bare `edgecommons`). `close()` is idempotent and
      the library calls it on a stop signal.
 
 </TabItem>
@@ -325,7 +325,7 @@ Pick your language with the tabs in each code block — the tabs stay in sync ac
 <TabItem label="Python">
 
      ```bash
-     pip install -r requirements.txt   # pulls in greengrass-commons; no compile step
+     pip install -r requirements.txt   # pulls in edgecommons; no compile step
      ```
 
 </TabItem>
@@ -461,5 +461,5 @@ resolving the published `registry` artifacts.
 
 <LinkCard title="Messaging guide" href="/guides/messaging/" description="Publish, subscribe, and request/reply across IPC and MQTT." />
 <LinkCard title="Configuration guide" href="/guides/configuration/" description="Config sources, template variables, hot reload, and validation." />
-<LinkCard title="Entry point reference" href="/reference/entry-point/" description="The GGCommons builder, accessors, and lifecycle in all four languages." />
+<LinkCard title="Entry point reference" href="/reference/entry-point/" description="The EdgeCommons builder, accessors, and lifecycle in all four languages." />
 <LinkCard title="Deploy to Greengrass" href="/deploy/greengrass/" description="Package with the GDK and deploy to a Nucleus device." />

@@ -14,12 +14,12 @@
  *
  * The AWS SDK is an **optional** dependency, loaded lazily via dynamic import. If
  * `@aws-sdk/client-cloudwatch` is not installed, {@link CloudWatchTarget.create}
- * throws `GgError.metrics(...)` (mirroring Rust's `cloudwatch` feature gate).
+ * throws `EdgeCommonsError.metrics(...)` (mirroring Rust's `cloudwatch` feature gate).
  */
 import type { MetricTarget } from "../types";
 import type { MeasureValues } from "../types";
 import type { Metric } from "../metric";
-import { GgError } from "../../errors";
+import { EdgeCommonsError } from "../../errors";
 
 /** Max datums per `PutMetricData` request. */
 const MAX_DATUMS_PER_REQUEST = 1000;
@@ -81,7 +81,7 @@ export class CloudWatchTarget implements MetricTarget {
 
   /**
    * Build the target, lazily importing the optional AWS SDK and creating the client.
-   * Throws `GgError.metrics(...)` if `@aws-sdk/client-cloudwatch` is not installed,
+   * Throws `EdgeCommonsError.metrics(...)` if `@aws-sdk/client-cloudwatch` is not installed,
    * mirroring Rust's error when the `cloudwatch` feature is disabled.
    */
   static async create(
@@ -91,14 +91,14 @@ export class CloudWatchTarget implements MetricTarget {
   ): Promise<CloudWatchTarget> {
     let module: CloudWatchModule;
     try {
-      // Literal dynamic import: still loaded lazily (so the "absent -> GgError" path
+      // Literal dynamic import: still loaded lazily (so the "absent -> EdgeCommonsError" path
       // is preserved) but the literal specifier lets vitest's `vi.mock` intercept it
       // for the batching/datum coverage.
       // TESTABILITY SEAM: was an indirect `import(pkg)` to keep tsc from resolving the
       // optional dep; a devDependency now provides it and the literal form is mockable.
       module = (await import("@aws-sdk/client-cloudwatch")) as unknown as CloudWatchModule;
     } catch {
-      throw GgError.metrics(
+      throw EdgeCommonsError.metrics(
         "metric target 'cloudwatch' requires the optional '@aws-sdk/client-cloudwatch' dependency",
       );
     }

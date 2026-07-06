@@ -8,7 +8,7 @@
  */
 import Ajv, { ValidateFunction } from "ajv";
 
-import { GgError } from "../errors";
+import { EdgeCommonsError } from "../errors";
 import schema from "./schema.json";
 
 let validator: ValidateFunction | undefined;
@@ -23,7 +23,7 @@ function compiled(): ValidateFunction {
 
 /**
  * Validate a raw config document against the embedded schema. Throws
- * {@link GgError} of kind `Validation` listing every error on failure.
+ * {@link EdgeCommonsError} of kind `Validation` listing every error on failure.
  */
 export function validate(instance: unknown): void {
   const v = compiled();
@@ -31,6 +31,6 @@ export function validate(instance: unknown): void {
     const errors = (v.errors ?? [])
       .map((e) => `${e.instancePath || "(root)"} ${e.message}`)
       .join("; ");
-    throw GgError.validation(`config failed schema validation: ${errors}`);
+    throw EdgeCommonsError.validation(`config failed schema validation: ${errors}`);
   }
 }

@@ -6,7 +6,7 @@
  * routes to the resolved {@link Channel}. It publishes through the **ordinary, guarded**
  * `messaging().publish(...)` — `data` is non-reserved, so it passes the guard; the facade adds
  * body-contract enforcement + defaults, **not** privilege (there is no reserved-publish seam
- * here). Mirrors the Java `com.mbreissi.ggcommons.facades.DataFacade`.
+ * here). Mirrors the Java `com.mbreissi.edgecommons.facades.DataFacade`.
  *
  * Body (`header.name` = {@link DATA_MESSAGE_NAME}, version {@link DATA_MESSAGE_VERSION}):
  * ```jsonc
@@ -23,7 +23,7 @@
  *    **never** synthesized (absent when the source has none).
  * 4. The `samples` wrapper is enforced for the value-shorthand (a caller never emits a bare value).
  * 5. `signal.id` is the **only** hard reject — a publish with no stable id throws
- *    `GgError` (kind `Validation`) at the call site.
+ *    `EdgeCommonsError` (kind `Validation`) at the call site.
  *
  * Channel routing (DESIGN-class-facades §4, D1): per-call {@link SignalUpdate.via} override ▸
  * config `publish.channel` (instance ▸ global) ▸ {@link Channel.LOCAL}. A `stream:<name>` route
@@ -34,11 +34,11 @@
  *
  * **Library-internal:** obtain the bound instance via `gg.instance(id).data()` (or the
  * `main`-instance convenience `gg.data()`); the exported constructor exists only so
- * `GgInstance`/`GGCommons` (`ggcommons.ts`) can wire it.
+ * `EdgeCommonsInstance`/`EdgeCommons` (`edgecommons.ts`) can wire it.
  */
 import type { Config } from "../config/model";
 import { sanitize } from "../config/template";
-import { GgError } from "../errors";
+import { EdgeCommonsError } from "../errors";
 import { logger } from "../logging";
 import type { Message } from "../message";
 import { MessageBuilder } from "../message";
@@ -136,18 +136,18 @@ export class DataFacade {
    * Validates `signal.id`, constructs the body with the defaulting rules, sanitizes the path
    * into the `data` channel, stamps the envelope, and routes to the resolved channel.
    *
-   * @throws GgError (kind `Validation`) when `signal.id`/the path is missing/empty, there are no
+   * @throws EdgeCommonsError (kind `Validation`) when `signal.id`/the path is missing/empty, there are no
    *                 samples, or a sample carries no value
    */
   private async publishUpdate(update: SignalUpdate): Promise<void> {
     if (!update.signalId) {
-      throw GgError.validation(
+      throw EdgeCommonsError.validation(
         "data publish requires a stable signal.id (the consumer key) - it is the only" +
           " non-defaultable field",
       );
     }
     if (update.samples.length === 0) {
-      throw GgError.validation("data publish requires at least one sample");
+      throw EdgeCommonsError.validation("data publish requires at least one sample");
     }
     const body = this.buildBody(update);
     const channel = this.channelToken(update.signalPath ?? update.signalId);
@@ -163,7 +163,7 @@ export class DataFacade {
    * (quality → GOOD + `qualityRaw` marker, `serverTs` → now, samples wrapper). Deterministic
    * given the injected clock — this is the exact body the vectors pin.
    *
-   * @throws GgError (kind `Validation`) when a sample carries no value
+   * @throws EdgeCommonsError (kind `Validation`) when a sample carries no value
    */
   buildBody(update: SignalUpdate): Record<string, unknown> {
     const signal: Record<string, unknown> = { id: update.signalId };
@@ -182,7 +182,7 @@ export class DataFacade {
   /** Builds one sample with the quality/qualityRaw/serverTs defaulting rules. */
   private buildSample(sample: Sample): Record<string, unknown> {
     if (sample.value === undefined) {
-      throw GgError.validation(
+      throw EdgeCommonsError.validation(
         "data sample value is required (a quality-only sample is not a sample) - pass" +
           " BAD/UNCERTAIN for a failed read",
       );
@@ -295,7 +295,7 @@ export class DataFacade {
   /** The sanitized channel token for a signal path (each `/`-token → a UNS token). */
   channelToken(signalPath: string | undefined): string {
     if (!signalPath) {
-      throw GgError.validation("data signal path must be non-empty");
+      throw EdgeCommonsError.validation("data signal path must be non-empty");
     }
     return signalPath
       .split("/")

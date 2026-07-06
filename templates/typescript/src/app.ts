@@ -1,7 +1,7 @@
 /**
  * <<COMPONENTNAME>> — application logic.
  *
- * Minimal starting point: holds the `ggcommons` service handles, registers a
+ * Minimal starting point: holds the `edgecommons` service handles, registers a
  * configuration-change listener (dynamic config pickup), and runs until shutdown.
  *
  * The `state` heartbeat keepalive AND the component command inbox are both **automatic**
@@ -38,7 +38,7 @@ import {
   ConfigurationChangeListener,
   DataFacade,
   EventsFacade,
-  GGCommons,
+  EdgeCommons,
   IMessagingService,
   Message,
   MessageBuilder,
@@ -48,7 +48,7 @@ import {
   Uns,
   UnsClass,
   logger,
-} from "@edgecommons/ggcommons";
+} from "@edgecommons/edgecommons";
 
 /** The demo loop-tick metric name (see the module docs). */
 const METRIC_NAME = "loopTicks";
@@ -61,7 +61,7 @@ const TICK_INTERVAL_MS = 10_000;
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** The component's business logic and the `ggcommons` service handles it operates over. */
+/** The component's business logic and the `edgecommons` service handles it operates over. */
 export class App {
   private readonly config: Config;
   private readonly metrics: MetricService;
@@ -92,7 +92,7 @@ export class App {
   /** Flipped by {@link stop} to end the tick loop in {@link run}. */
   private stopped = false;
 
-  constructor(gg: GGCommons) {
+  constructor(gg: EdgeCommons) {
     this.config = gg.config();
     this.metrics = gg.metrics();
     this.uns = gg.uns();

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Generate throwaway TLS test certificates for the ggcommons secure-connection
+# Generate throwaway TLS test certificates for the edgecommons secure-connection
 # integration tests (shared by the Java, Python, and Rust libraries): a CA, a
 # server cert for localhost (used by the broker), and a client cert (used for
 # mutual TLS). Output goes to ./tls-certs/. Safe to re-run.
@@ -17,7 +17,7 @@ cd "$DIR"
 # Python 3.13+/OpenSSL 3, reject a CA cert that lacks the keyCertSign key usage)
 openssl genrsa -out ca.key 2048
 openssl req -x509 -new -nodes -key ca.key -sha256 -days 3650 \
-  -subj "/CN=ggcommons-test-ca" \
+  -subj "/CN=edgecommons-test-ca" \
   -addext "basicConstraints=critical,CA:TRUE" \
   -addext "keyUsage=critical,keyCertSign,cRLSign" \
   -out ca.crt
@@ -36,7 +36,7 @@ openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
 
 # --- Client cert (mutual TLS) ---
 openssl genrsa -out client.key 2048
-openssl req -new -key client.key -subj "/CN=ggcommons-test-client" -out client.csr
+openssl req -new -key client.key -subj "/CN=edgecommons-test-client" -out client.csr
 cat > client.ext <<'EOF'
 basicConstraints = CA:FALSE
 keyUsage = critical,digitalSignature

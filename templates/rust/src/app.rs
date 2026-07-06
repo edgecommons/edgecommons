@@ -1,6 +1,6 @@
 //! # <<COMPONENTNAME>> — application logic
 //!
-//! Minimal starting point: holds the `ggcommons` service handles, registers a
+//! Minimal starting point: holds the `edgecommons` service handles, registers a
 //! configuration-change listener (dynamic config pickup), and runs until shutdown.
 //!
 //! The `state` heartbeat keepalive AND the component command inbox are both **automatic**
@@ -35,8 +35,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use ggcommons::messaging::MessageBuilder;
-use ggcommons::prelude::*;
+use edgecommons::messaging::MessageBuilder;
+use edgecommons::prelude::*;
 use serde_json::json;
 
 /// The demo loop-tick metric name (see the module docs).
@@ -48,7 +48,7 @@ const SET_GREETING: &str = "set-greeting";
 /// How often the demo loop ticks (publishes the status/metric/data/evt quartet below).
 const TICK_INTERVAL: Duration = Duration::from_secs(10);
 
-/// The component's business logic and the `ggcommons` service handles it operates over.
+/// The component's business logic and the `edgecommons` service handles it operates over.
 pub struct App {
     config: Arc<Config>,
     metrics: Arc<dyn MetricService>,
@@ -82,10 +82,10 @@ impl ConfigurationChangeListener for ConfigListener {
 }
 
 impl App {
-    /// Build the app from an initialized [`ggcommons::GgCommons`] runtime, capturing
+    /// Build the app from an initialized [`edgecommons::EdgeCommons`] runtime, capturing
     /// the service handles it needs, registering for config hot-reload, defining the demo
     /// metric, and registering the demo custom command verb.
-    pub fn new(gg: &GgCommons) -> anyhow::Result<Self> {
+    pub fn new(gg: &EdgeCommons) -> anyhow::Result<Self> {
         // Dynamic config pickup: react to deployment/shadow config changes at runtime.
         gg.add_config_change_listener(Arc::new(ConfigListener));
 
@@ -107,7 +107,7 @@ impl App {
         let greeting = Arc::new(Mutex::new("Hello from <<COMPONENTNAME>>".to_string()));
 
         // --- commands: ping/reload-config/get-configuration are already live (wired by
-        // GgCommonsBuilder::build before this runs). Register ONE custom verb so there is
+        // EdgeCommonsBuilder::build before this runs). Register ONE custom verb so there is
         // something for the console's "Send command" to invoke beyond the built-ins.
         // `gg.commands()` is only `None` when no messaging transport was wired at all.
         if let Some(commands) = gg.commands() {
@@ -154,10 +154,10 @@ impl App {
     /// status/metric/data/evt quartet every [`TICK_INTERVAL`].
     ///
     /// The library owns signal handling (FR-HB-2): `tokio::select!` races the tick timer against
-    /// [`GgCommons::shutdown_signal`] rather than re-implementing `tokio::signal` here, so there
-    /// is a single signal source. Dropping the `GgCommons` runtime after this returns releases
+    /// [`EdgeCommons::shutdown_signal`] rather than re-implementing `tokio::signal` here, so there
+    /// is a single signal source. Dropping the `EdgeCommons` runtime after this returns releases
     /// all resources (RAII).
-    pub async fn run(&self, gg: &GgCommons) -> anyhow::Result<()> {
+    pub async fn run(&self, gg: &EdgeCommons) -> anyhow::Result<()> {
         tracing::info!(identity = %self.config.identity().path(), "<<COMPONENTNAME>> running");
 
         // Publish on unified-namespace (UNS) topics minted via `self.uns` — never hand-write

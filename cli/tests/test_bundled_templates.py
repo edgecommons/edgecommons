@@ -21,9 +21,9 @@ def test_templates_are_bundled_into_the_wheel(tmp_path):
     if result.returncode != 0:
         pytest.skip(f"could not build wheel in this environment:\n{result.stderr[-500:]}")
 
-    wheels = list(out.glob("ggcommons_cli-*.whl"))
+    wheels = list(out.glob("edgecommons_cli-*.whl"))
     assert wheels, "no wheel produced"
     names = set(zipfile.ZipFile(wheels[0]).namelist())
     for lang in ("java", "python", "rust", "typescript"):
-        manifest = f"ggcommons_cli/templates/{lang}/ggcommons-template.json"
+        manifest = f"edgecommons_cli/templates/{lang}/edgecommons-template.json"
         assert manifest in names, f"{lang} template (manifest) not bundled: {manifest}"

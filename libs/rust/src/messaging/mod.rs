@@ -31,7 +31,7 @@
 //!   Java's `CompletableFuture` / Python's `Iou`) carrying a **framework-owned
 //!   deadline** (`messaging.requestTimeoutSeconds`, default 30 s,
 //!   UNS-CANONICAL-DESIGN §5): await it for the reply or
-//!   `Err(GgError::RequestTimeout)`, or cancel via
+//!   `Err(EdgeCommonsError::RequestTimeout)`, or cancel via
 //!   [`MessagingService::cancel_request`]. Completing, cancelling, timing out, or
 //!   dropping the future all clean up the ephemeral reply subscription at the
 //!   broker — even when the future is never polled. Per-call override:
@@ -45,10 +45,10 @@
 //!
 //! ## Usage Example
 //! ```no_run
-//! use ggcommons::messaging::{message_handler, MessagingService};
+//! use edgecommons::messaging::{message_handler, MessagingService};
 //! use std::sync::Arc;
 //!
-//! # async fn demo(svc: Arc<dyn MessagingService>) -> ggcommons::Result<()> {
+//! # async fn demo(svc: Arc<dyn MessagingService>) -> edgecommons::Result<()> {
 //! svc.subscribe(
 //!     "requests/process",
 //!     message_handler(|topic, msg| async move {
@@ -194,7 +194,7 @@ pub trait MessagingProvider: Send + Sync {
 ///
 /// # Examples
 /// ```
-/// use ggcommons::messaging::topic_matches;
+/// use edgecommons::messaging::topic_matches;
 /// assert!(topic_matches("a/+/c", "a/b/c"));
 /// assert!(topic_matches("a/#", "a/b/c"));
 /// assert!(topic_matches("a/#", "a"));

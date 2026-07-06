@@ -1,25 +1,25 @@
 package com.mbreissi.javacomponentskeleton;
 
-import com.mbreissi.ggcommons.GGCommons;
-import com.mbreissi.ggcommons.GGCommonsBuilder;
-import com.mbreissi.ggcommons.config.ConfigManager;
-import com.mbreissi.ggcommons.config.ConfigurationChangeListener;
-import com.mbreissi.ggcommons.credentials.BasicAuth;
-import com.mbreissi.ggcommons.credentials.CredentialService;
-import com.mbreissi.ggcommons.credentials.PutOptions;
-import com.mbreissi.ggcommons.credentials.Secret;
-import com.mbreissi.ggcommons.messaging.MessagingClient;
-import com.mbreissi.ggcommons.metrics.MetricEmitter;
-import com.mbreissi.ggcommons.parameters.ParameterService;
-import com.mbreissi.ggcommons.messaging.Message;
-import com.mbreissi.ggcommons.messaging.MessageBuilder;
-import com.mbreissi.ggcommons.messaging.MessageHandler;
-import com.mbreissi.ggcommons.messaging.ReplyFuture;
-import com.mbreissi.ggcommons.metrics.Metric;
-import com.mbreissi.ggcommons.metrics.MetricBuilder;
-import com.mbreissi.ggcommons.streaming.StreamHandle;
-import com.mbreissi.ggcommons.streaming.StreamService;
-import com.mbreissi.ggcommons.uns.UnsClass;
+import com.mbreissi.edgecommons.EdgeCommons;
+import com.mbreissi.edgecommons.EdgeCommonsBuilder;
+import com.mbreissi.edgecommons.config.ConfigManager;
+import com.mbreissi.edgecommons.config.ConfigurationChangeListener;
+import com.mbreissi.edgecommons.credentials.BasicAuth;
+import com.mbreissi.edgecommons.credentials.CredentialService;
+import com.mbreissi.edgecommons.credentials.PutOptions;
+import com.mbreissi.edgecommons.credentials.Secret;
+import com.mbreissi.edgecommons.messaging.MessagingClient;
+import com.mbreissi.edgecommons.metrics.MetricEmitter;
+import com.mbreissi.edgecommons.parameters.ParameterService;
+import com.mbreissi.edgecommons.messaging.Message;
+import com.mbreissi.edgecommons.messaging.MessageBuilder;
+import com.mbreissi.edgecommons.messaging.MessageHandler;
+import com.mbreissi.edgecommons.messaging.ReplyFuture;
+import com.mbreissi.edgecommons.metrics.Metric;
+import com.mbreissi.edgecommons.metrics.MetricBuilder;
+import com.mbreissi.edgecommons.streaming.StreamHandle;
+import com.mbreissi.edgecommons.streaming.StreamService;
+import com.mbreissi.edgecommons.uns.UnsClass;
 import com.google.gson.JsonObject;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -34,7 +34,7 @@ import java.util.concurrent.TimeUnit;
 
 
 /**
- * Sample Java component demonstrating GGCommons library usage.
+ * Sample Java component demonstrating EdgeCommons library usage.
  * Shows configuration management, UNS (unified-namespace) messaging patterns, metrics emission,
  * and proper resource cleanup using modern service-oriented architecture.
  *
@@ -52,7 +52,7 @@ public class App implements ConfigurationChangeListener
     private final MessagingClient messagingService;
     private final MetricEmitter metricService;
     /** Initialized runtime, used to reach optional subsystems (e.g. credentials) at startup. */
-    private final GGCommons ggCommons;
+    private final EdgeCommons edgeCommons;
     /** Durable {@code telemetry} stream handle, or {@code null} if the config has no streaming section. */
     private final StreamHandle stream;
     /** Whether the IoT Core command subscription was established (so shutdown only unsubscribes it then). */
@@ -79,7 +79,7 @@ public class App implements ConfigurationChangeListener
         App app = new App(args);
 
         // NOTE: no manual SIGTERM/shutdown-hook wiring here. As of the Phase-1c health slice the
-        // GGCommons library itself wires SIGTERM/SIGINT (Runtime shutdown hook) to its graceful,
+        // EdgeCommons library itself wires SIGTERM/SIGINT (Runtime shutdown hook) to its graceful,
         // idempotent shutdown(): on signal it flips /readyz to 503, unsubscribes every tracked
         // subscription and bounded-closes messaging/streams/heartbeat/vault before the JVM exits 0.
         // Registering another hook here would double-run teardown, so the app relies on the library.
@@ -178,29 +178,29 @@ public class App implements ConfigurationChangeListener
     public App(String[] args) {
         LOGGER.info("Initializing Java Component Skeleton...");
         
-        // Initialize GGCommons with component name and arguments using builder
-        ggCommons = GGCommonsBuilder.create("com.mbreissi.greengrass.JavaComponentSkeleton")
+        // Initialize EdgeCommons with component name and arguments using builder
+        edgeCommons = EdgeCommonsBuilder.create("com.mbreissi.edgecommons.JavaComponentSkeleton")
                                               .withArgs(args)
                                               .build();
 
         // Get services through dependency injection
-        configService = ggCommons.getConfigManager();
-        messagingService = ggCommons.getMessaging();
-        metricService = ggCommons.getMetrics();
+        configService = edgeCommons.getConfigManager();
+        messagingService = edgeCommons.getMessaging();
+        metricService = edgeCommons.getMetrics();
 
         // Mint every topic this component publishes/subscribes on through the UNS topic builder
         // (gg.getUns(), bound to the resolved config-driven identity: top-level `hierarchy` +
         // `identity`, last level = the resolved thing name). APP is the free application class;
         // the library-owned classes (state/metric/cfg/log) are reserved — the heartbeat `state`
         // keepalive (on / 5 s / local by default) is published automatically, no code needed here.
-        pubTopic = ggCommons.getUns().topic(UnsClass.APP, "hello-world");
-        reqTopic = ggCommons.getUns().topic(UnsClass.APP, "request");
+        pubTopic = edgeCommons.getUns().topic(UnsClass.APP, "hello-world");
+        reqTopic = edgeCommons.getUns().topic(UnsClass.APP, "request");
 
         // Durable telemetry stream (null unless the config has a `streaming` section with a stream
         // named "telemetry"). The publish loop appends each message; the library's export engine
         // drains it to the configured sink (Kinesis) independently.
         StreamHandle telemetryStream = null;
-        StreamService streamService = ggCommons.getStreams();
+        StreamService streamService = edgeCommons.getStreams();
         if (streamService != null) {
             try {
                 telemetryStream = streamService.stream("telemetry");
@@ -301,19 +301,19 @@ public class App implements ConfigurationChangeListener
         LOGGER.info("Starting component execution...");
 
         // Log the resolved component identity once at startup. The thing name is the LAST hierarchy
-        // level (on KUBERNETES the Downward-API value GGCOMMONS_THING_NAME -> POD_NAME, FR-RT-7;
+        // level (on KUBERNETES the Downward-API value EDGECOMMONS_THING_NAME -> POD_NAME, FR-RT-7;
         // elsewhere -t/--thing or AWS_IOT_THING_NAME); the levels above it come from the config's
         // top-level `hierarchy` + `identity` blocks. The same identity is stamped into every
         // envelope built with .withConfig(...) and into every UNS topic minted via gg.getUns().
         LOGGER.info("Component identity (thing name): {}", configService.getThingName());
         LOGGER.info("UNS identity path: {} (publish topic: {})",
-            ggCommons.getUns().identity().getPath(), pubTopic);
+            edgeCommons.getUns().identity().getPath(), pubTopic);
 
         // Demonstrate encrypted-vault secret access once at startup (non-fatal).
-        demonstrateCredentials(ggCommons);
+        demonstrateCredentials(edgeCommons);
 
         // Demonstrate offline-first parameter access once at startup (non-fatal).
-        demonstrateParameters(ggCommons);
+        demonstrateParameters(edgeCommons);
 
         // Demonstrate request-reply pattern
         demonstrateRequestReply();
@@ -341,7 +341,7 @@ public class App implements ConfigurationChangeListener
     }
     
     /**
-     * Demonstrate encrypted-vault secret access via {@link GGCommons#getCredentials()}.
+     * Demonstrate encrypted-vault secret access via {@link EdgeCommons#getCredentials()}.
      *
      * <p>Shows the credential-service usage every real component needs: read a named secret from the
      * encrypted local vault and use it — without ever logging the value. Runs once at startup.
@@ -352,7 +352,7 @@ public class App implements ConfigurationChangeListener
      *
      * <p>Non-fatal: any vault error is logged and swallowed so the demo never takes the component down.
      */
-    private void demonstrateCredentials(GGCommons gg) {
+    private void demonstrateCredentials(EdgeCommons gg) {
         try {
             CredentialService creds = gg.getCredentials();
             if (creds == null) {
@@ -396,9 +396,9 @@ public class App implements ConfigurationChangeListener
     }
 
     /**
-     * Demonstrate offline-first parameter access via {@link GGCommons#getParameters()}.
+     * Demonstrate offline-first parameter access via {@link EdgeCommons#getParameters()}.
      *
-     * <p>Mirrors {@link #demonstrateCredentials(GGCommons)} for configuration parameters: read a
+     * <p>Mirrors {@link #demonstrateCredentials(EdgeCommons)} for configuration parameters: read a
      * couple of declared parameters from the cache (populated at startup from the configured source)
      * and use them. The example config wires the {@code env} source (no AWS, no provisioning), so the
      * values come from environment variables (e.g. {@code GG_PARAM_SKELETON_REGION=us-east-1},
@@ -408,7 +408,7 @@ public class App implements ConfigurationChangeListener
      * {@code secure}. Non-fatal: any parameter error is logged and swallowed so the demo never takes
      * the component down (offline-first — a missing/unreachable parameter is just empty).
      */
-    private void demonstrateParameters(GGCommons gg) {
+    private void demonstrateParameters(EdgeCommons gg) {
         try {
             ParameterService params = gg.getParameters();
             if (params == null) {
@@ -549,7 +549,7 @@ public class App implements ConfigurationChangeListener
                            brokerType, requestId, throwable.getMessage());
                 // No reply arrived (e.g. IoT Core not connected): the library only auto-unsubscribes
                 // the reply topic on a *received* reply, so a timed-out request must be cancelled
-                // explicitly. Without this the orphaned ggcommons/reply-<uuid> subscription (and its
+                // explicitly. Without this the orphaned edgecommons/reply-<uuid> subscription (and its
                 // pending-future entry) accumulate every cycle and eventually exhaust the IPC
                 // subscription quota. Mirrors the Python skeleton's cancel-on-timeout.
                 if ("LOCAL".equals(brokerType)) {

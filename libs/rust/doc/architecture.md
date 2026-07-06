@@ -1,9 +1,9 @@
-# GGCommons (Rust) — Architecture
+# EdgeCommons (Rust) — Architecture
 
 The Rust library is the third implementation of Greengrass Commons, alongside the
 canonical Java library and the Python port. It tracks the same configuration schema
 and CLI contract so all three stay at cross-language parity. See
-[`../../GGCOMMONS_RUST_PORT.md`](../../GGCOMMONS_RUST_PORT.md) for the full design and
+[`../../EDGECOMMONS_RUST_PORT.md`](../../EDGECOMMONS_RUST_PORT.md) for the full design and
 phased plan.
 
 ## Platform × transport runtime model
@@ -29,15 +29,15 @@ functional.
 
 ## The runtime object
 
-[`GgCommons`] is built by [`GgCommonsBuilder`] and owns the wired services. It is the
+[`EdgeCommons`] is built by [`EdgeCommonsBuilder`] and owns the wired services. It is the
 only supported construction path:
 
 ```rust
-use ggcommons::prelude::*;
+use edgecommons::prelude::*;
 
 #[tokio::main]
-async fn main() -> ggcommons::Result<()> {
-    let gg = GgCommonsBuilder::new("com.example.MyComponent")
+async fn main() -> edgecommons::Result<()> {
+    let gg = EdgeCommonsBuilder::new("com.example.MyComponent")
         .args(std::env::args_os())
         .build()
         .await?;
@@ -68,8 +68,8 @@ fakes in tests rather than driving process-global state.
 
 The Rust port starts from a more correct baseline by construction:
 
-- **No `process::exit` in the library** — everything is `Result<T, GgError>`.
-- **RAII shutdown** — dropping `GgCommons` stops the heartbeat task, cancels the
+- **No `process::exit` in the library** — everything is `Result<T, EdgeCommonsError>`.
+- **RAII shutdown** — dropping `EdgeCommons` stops the heartbeat task, cancels the
   config watcher, and closes MQTT clients. There is no `close()` to forget.
 - **Atomic config snapshots** — config is an immutable `Arc<Config>` published via
   `arc_swap::ArcSwap`; readers never see a torn update.

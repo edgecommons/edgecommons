@@ -11,9 +11,9 @@ from shutil import rmtree
 from setuptools import find_packages, setup, Command
 
 # Package meta-data.
-NAME = "greengrass-commons"
+NAME = "edgecommons"
 DESCRIPTION = "Library for greengrass component development"
-URL = "https://gitlab.aws.dev/greengrass-commons/ggcommons-python-lib"
+URL = "https://gitlab.aws.dev/edgecommons/edgecommons-python-lib"
 EMAIL = "mbreissi@amazon.com"
 AUTHOR = "mbreissi@amazon.com"
 REQUIRES_PYTHON = ">=3.9.0"
@@ -130,7 +130,7 @@ setup(
     extras_require=EXTRAS,
     include_package_data=True,
     # Ship the JSON config schema (loaded at runtime by the config validator).
-    package_data={"ggcommons": ["resources/*.json"]},
+    package_data={"edgecommons": ["resources/*.json"]},
     license="MIT",
     classifiers=[
         # Trove classifiers

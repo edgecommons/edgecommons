@@ -1,0 +1,27 @@
+---
+RecipeFormatVersion: "2020-01-25"
+ComponentName: "com.mbreissi.edgecommons.TsConfigProvider"
+ComponentVersion: "1.0.0"
+ComponentDescription: "Config-manager peer for validating the edgecommons TypeScript CONFIG_COMPONENT source on a live nucleus (answers GetConfiguration over IPC)."
+ComponentPublisher: "edgecommons"
+ComponentConfiguration:
+  DefaultConfiguration:
+    accessControl:
+      aws.greengrass.ipc.pubsub:
+        "com.mbreissi.edgecommons.TsConfigProvider:pubsub:1":
+          policyDescription: "Allow pub/sub on all local IPC topics."
+          operations:
+            - "aws.greengrass#PublishToTopic"
+            - "aws.greengrass#SubscribeToTopic"
+          resources:
+            - "*"
+Manifests:
+  - Platform:
+      os: linux
+    Artifacts:
+      - URI: "s3://BUCKET/com.mbreissi.edgecommons.TsConfigProvider/1.0.0/tsverify.zip"
+        Unarchive: ZIP
+    Lifecycle:
+      Run:
+        RequiresPrivilege: true
+        Script: "node {artifacts:decompressedPath}/tsverify/dist/config_provider.js com.mbreissi.edgecommons.TsEdgeVerify"

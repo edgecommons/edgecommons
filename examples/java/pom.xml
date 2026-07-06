@@ -37,8 +37,8 @@
       <version>2.10.1</version>
     </dependency>
     <dependency>
-      <groupId>com.mbreissi</groupId>
-      <artifactId>ggcommons</artifactId>
+      <groupId>com.mbreissi.edgecommons</groupId>
+      <artifactId>edgecommons</artifactId>
       <!-- The in-repo library version (libs/java/pom.xml). For a local monorepo build run
            `mvn -f ../../libs/java/pom.xml -DskipTests install` first so ~/.m2 satisfies it. -->
       <version>0.1.1</version>

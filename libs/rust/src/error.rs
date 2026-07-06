@@ -1,15 +1,15 @@
 //! # Error
 //!
-//! **One-liner purpose**: The library-wide error type [`GgError`] and [`Result`] alias.
+//! **One-liner purpose**: The library-wide error type [`EdgeCommonsError`] and [`Result`] alias.
 //!
 //! ## Overview
-//! Every fallible path in the library returns `Result<T, GgError>`. The library
+//! Every fallible path in the library returns `Result<T, EdgeCommonsError>`. The library
 //! **never** calls `std::process::exit` (a deliberate departure from the Java
 //! library, which exits the host JVM in 18 places) — the application decides how
 //! to handle failure.
 //!
 //! ## Semantics & Architecture
-//! - `GgError` is a `thiserror` enum with one variant per subsystem plus `From`
+//! - `EdgeCommonsError` is a `thiserror` enum with one variant per subsystem plus `From`
 //!   conversions for `std::io::Error` and `serde_json::Error`.
 //! - Thread-safety: the type is `Send + Sync`.
 //! - Error handling strategy for the whole crate: typed errors via `thiserror`;
@@ -17,10 +17,10 @@
 //!
 //! ## Usage Example
 //! ```
-//! use ggcommons::{GgError, Result};
+//! use edgecommons::{EdgeCommonsError, Result};
 //!
 //! fn fallible() -> Result<()> {
-//!     Err(GgError::Config("bad config".into()))
+//!     Err(EdgeCommonsError::Config("bad config".into()))
 //! }
 //! assert!(fallible().is_err());
 //! ```
@@ -37,12 +37,12 @@
 
 use thiserror::Error;
 
-/// Convenience alias for `Result<T, GgError>`.
-pub type Result<T> = std::result::Result<T, GgError>;
+/// Convenience alias for `Result<T, EdgeCommonsError>`.
+pub type Result<T> = std::result::Result<T, EdgeCommonsError>;
 
 /// All errors surfaced by the library, grouped by subsystem.
 #[derive(Debug, Error)]
-pub enum GgError {
+pub enum EdgeCommonsError {
     /// Command-line parsing / contract violation (e.g. STANDALONE without a path).
     #[error("CLI error: {0}")]
     Cli(String),
@@ -119,8 +119,8 @@ pub enum GgError {
     /// DESIGN-class-facades §5.2): a structural violation the facade cannot default away —
     /// a missing/empty `signal.id`, an empty `samples` list, a sample with no `value`, an
     /// empty `evt` type, an empty `app` name/channel, or an empty stream channel name.
-    /// Distinct from [`GgError::UnsValidation`] (topic/token shape) and
-    /// [`GgError::Messaging`] (transport) — this is the body-contract rejection the three
+    /// Distinct from [`EdgeCommonsError::UnsValidation`] (topic/token shape) and
+    /// [`EdgeCommonsError::Messaging`] (transport) — this is the body-contract rejection the three
     /// facades make structural (DESIGN-class-facades §1.3/§5).
     #[error("facade error: {0}")]
     Facade(String),

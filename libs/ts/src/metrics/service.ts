@@ -23,7 +23,7 @@ import { Config } from "../config/model";
 import { resolve } from "../config/template";
 import type { ConfigurationChangeListener } from "../config";
 import type { IMessagingService } from "../messaging/types";
-import { GgError } from "../errors";
+import { EdgeCommonsError } from "../errors";
 
 /**
  * The `cloudwatchcomponent` target's fixed publish topic — the external AWS Greengrass
@@ -37,7 +37,7 @@ function requireMessaging(
   target: string,
 ): IMessagingService {
   if (messaging === undefined) {
-    throw GgError.metrics(`metric target '${target}' requires a messaging service`);
+    throw EdgeCommonsError.metrics(`metric target '${target}' requires a messaging service`);
   }
   return messaging;
 }
@@ -98,13 +98,13 @@ async function buildTarget(
       }
       const buf = buffer ?? {
         type: "durable" as const,
-        path: "/var/lib/ggcommons/metrics/{ComponentName}/cw",
+        path: "/var/lib/edgecommons/metrics/{ComponentName}/cw",
         maxDiskBytes: 128 * 1024 * 1024,
         onFull: "dropOldest" as const,
         fsync: "perBatch" as const,
       };
       // Lazy-load the durable target so merely importing the metrics service never pulls in the
-      // native ggstreamlog addon (CLAUDE.md: load the native library only when streaming is used).
+      // native edgestreamlog addon (CLAUDE.md: load the native library only when streaming is used).
       const { DurableCloudWatchTarget } = await import("./target/cloudwatch_durable");
       return DurableCloudWatchTarget.create(namespace, largeFleet, mc.intervalSecs(), {
         path: resolve(config, buf.path),

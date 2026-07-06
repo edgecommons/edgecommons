@@ -24,7 +24,7 @@
   },
   "metricEmission": {
     "target": "log",
-    "namespace": "ggcommons",
+    "namespace": "edgecommons",
     "targetConfig": {
       "logFileName": "{ComponentFullName}.metric.log"
     }

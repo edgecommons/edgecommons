@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::error::{GgStreamError, Result};
+use crate::error::{EdgeStreamError, Result};
 
 // Greengrass stores all configuration numbers as doubles, so an integer like `1048576` arrives
 // over GG_CONFIG as `1048576.0`. serde's integer deserializers reject a float, which would fail
@@ -328,10 +328,10 @@ impl FileSinkConfig {
     /// Validate required fields.
     pub fn validate(&self) -> Result<()> {
         if self.dir.trim().is_empty() {
-            return Err(GgStreamError::Config("file sink: `dir` is required".into()));
+            return Err(EdgeStreamError::Config("file sink: `dir` is required".into()));
         }
         if self.max_file_bytes == 0 {
-            return Err(GgStreamError::Config("file sink: `maxFileBytes` must be > 0".into()));
+            return Err(EdgeStreamError::Config("file sink: `maxFileBytes` must be > 0".into()));
         }
         Ok(())
     }
@@ -386,7 +386,7 @@ pub struct StreamConfig {
     pub delivery: DeliveryConfig,
 }
 
-/// The `streaming` config section: a set of named streams. This is what the C-ABI `ggsl_open`
+/// The `streaming` config section: a set of named streams. This is what the C-ABI `esl_open`
 /// receives as JSON, and what the language libs build (after template substitution).
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -400,25 +400,25 @@ impl BufferConfig {
             StoreType::Memory => {
                 // In-memory: no path/segments; maxDiskBytes is the in-memory byte budget.
                 if !self.path.is_empty() {
-                    return Err(GgStreamError::Config(
+                    return Err(EdgeStreamError::Config(
                         "buffer.path must be omitted for an in-memory buffer (type: memory)".into(),
                     ));
                 }
                 if self.max_disk_bytes == 0 {
-                    return Err(GgStreamError::Config(
+                    return Err(EdgeStreamError::Config(
                         "buffer.maxDiskBytes (the in-memory byte budget) must be > 0".into(),
                     ));
                 }
             }
             StoreType::Disk => {
                 if self.path.is_empty() {
-                    return Err(GgStreamError::Config("buffer.path is required".into()));
+                    return Err(EdgeStreamError::Config("buffer.path is required".into()));
                 }
                 if self.segment_bytes == 0 {
-                    return Err(GgStreamError::Config("buffer.segmentBytes must be > 0".into()));
+                    return Err(EdgeStreamError::Config("buffer.segmentBytes must be > 0".into()));
                 }
                 if self.max_disk_bytes < self.segment_bytes {
-                    return Err(GgStreamError::Config(
+                    return Err(EdgeStreamError::Config(
                         "buffer.maxDiskBytes must be >= segmentBytes".into(),
                     ));
                 }

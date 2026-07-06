@@ -4,7 +4,9 @@ import { sanitizeShadowName, ShadowConfigSource } from "../src/config/source/sha
 
 describe("sanitizeShadowName", () => {
   it("replaces characters AWS IoT shadow names disallow with underscore", () => {
-    expect(sanitizeShadowName("com.ggcommons.TsGgVerify")).toBe("com_ggcommons_TsGgVerify");
+    expect(sanitizeShadowName("com.mbreissi.edgecommons.TsEdgeVerify")).toBe(
+      "com_mbreissi_edgecommons_TsEdgeVerify",
+    );
     expect(sanitizeShadowName("a.b/c+d#e f")).toBe("a_b_c_d_e_f");
   });
 

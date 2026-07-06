@@ -4,7 +4,7 @@ import * as fsp from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 
-import { GgError } from "../src/errors";
+import { EdgeCommonsError } from "../src/errors";
 import { FileConfigSource } from "../src/config/source/file";
 import { EnvConfigSource } from "../src/config/source/env";
 import { ConfigComponentSource } from "../src/config/source/config_component";
@@ -51,17 +51,17 @@ describe("FileConfigSource", () => {
     expect(await src.load()).toEqual({ a: 1, b: "x" });
   });
 
-  it("load() throws GgError(Io) when the file is missing", async () => {
+  it("load() throws EdgeCommonsError(Io) when the file is missing", async () => {
     const src = new FileConfigSource(path.join(os.tmpdir(), "does-not-exist-xyz.json"));
-    await expect(src.load()).rejects.toBeInstanceOf(GgError);
-    await src.load().catch((e) => expect((e as GgError).kind).toBe("Io"));
+    await expect(src.load()).rejects.toBeInstanceOf(EdgeCommonsError);
+    await src.load().catch((e) => expect((e as EdgeCommonsError).kind).toBe("Io"));
   });
 
-  it("load() throws GgError(Config) on a parse error", async () => {
+  it("load() throws EdgeCommonsError(Config) on a parse error", async () => {
     const p = tmpFile("{ not json");
     const src = new FileConfigSource(p);
-    await src.load().catch((e) => expect((e as GgError).kind).toBe("Config"));
-    await expect(src.load()).rejects.toBeInstanceOf(GgError);
+    await src.load().catch((e) => expect((e as EdgeCommonsError).kind).toBe("Config"));
+    await expect(src.load()).rejects.toBeInstanceOf(EdgeCommonsError);
   });
 
   it("watch() hot-reloads on a valid write and skips a malformed write", async () => {
@@ -107,25 +107,25 @@ describe("FileConfigSource", () => {
 
 describe("EnvConfigSource", () => {
   it("load() parses the env var", async () => {
-    process.env.GGC_TEST_CFG = JSON.stringify({ x: 9 });
-    const src = new EnvConfigSource("GGC_TEST_CFG");
+    process.env.EDGECOMMONS_TEST_CFG = JSON.stringify({ x: 9 });
+    const src = new EnvConfigSource("EDGECOMMONS_TEST_CFG");
     expect(src.sourceName()).toBe("ENV");
     expect(await src.load()).toEqual({ x: 9 });
-    delete process.env.GGC_TEST_CFG;
+    delete process.env.EDGECOMMONS_TEST_CFG;
   });
 
-  it("load() throws GgError(Config) when unset", async () => {
-    delete process.env.GGC_UNSET_VAR;
-    const src = new EnvConfigSource("GGC_UNSET_VAR");
-    await expect(src.load()).rejects.toBeInstanceOf(GgError);
-    await src.load().catch((e) => expect((e as GgError).kind).toBe("Config"));
+  it("load() throws EdgeCommonsError(Config) when unset", async () => {
+    delete process.env.EDGECOMMONS_UNSET_VAR;
+    const src = new EnvConfigSource("EDGECOMMONS_UNSET_VAR");
+    await expect(src.load()).rejects.toBeInstanceOf(EdgeCommonsError);
+    await src.load().catch((e) => expect((e as EdgeCommonsError).kind).toBe("Config"));
   });
 
-  it("load() throws GgError(Json) on invalid JSON", async () => {
-    process.env.GGC_BAD = "not json";
-    const src = new EnvConfigSource("GGC_BAD");
-    await src.load().catch((e) => expect((e as GgError).kind).toBe("Json"));
-    delete process.env.GGC_BAD;
+  it("load() throws EdgeCommonsError(Json) on invalid JSON", async () => {
+    process.env.EDGECOMMONS_BAD = "not json";
+    const src = new EnvConfigSource("EDGECOMMONS_BAD");
+    await src.load().catch((e) => expect((e as EdgeCommonsError).kind).toBe("Json"));
+    delete process.env.EDGECOMMONS_BAD;
   });
 
   it("watch() returns undefined (no hot reload)", async () => {
@@ -175,7 +175,7 @@ describe("ConfigComponentSource", () => {
     await watch!.close();
   });
 
-  it("load() retries 3 times then throws GgError(Config) on no reply", async () => {
+  it("load() retries 3 times then throws EdgeCommonsError(Config) on no reply", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const svc = new RecordingMessagingService();
     // Force request() to reject quickly (no replyBody set) so all 3 attempts fail.
@@ -186,7 +186,7 @@ describe("ConfigComponentSource", () => {
       return origReq(topic, msg, 5);
     }) as typeof svc.request;
     const src = new ConfigComponentSource(svc, "T", "C");
-    await expect(src.load()).rejects.toBeInstanceOf(GgError);
+    await expect(src.load()).rejects.toBeInstanceOf(EdgeCommonsError);
     expect(attempts).toBe(3);
     expect(warn).toHaveBeenCalled();
   });
@@ -264,12 +264,12 @@ describe("ShadowConfigSource", () => {
     expect(client.shadowUpdates[0].shadowName).toBe("myshadow");
   });
 
-  it("load() throws GgError(Json) on a non-empty, unparseable shadow", async () => {
+  it("load() throws EdgeCommonsError(Json) on a non-empty, unparseable shadow", async () => {
     const client = new FakeIpcClient();
     client.shadowBytes = Buffer.from("{ not json", "utf8");
     const src = new ShadowConfigSource(ipcWith(client), undefined, "T", "C");
-    await expect(src.load()).rejects.toBeInstanceOf(GgError);
-    await src.load().catch((e) => expect((e as GgError).kind).toBe("Json"));
+    await expect(src.load()).rejects.toBeInstanceOf(EdgeCommonsError);
+    await src.load().catch((e) => expect((e as EdgeCommonsError).kind).toBe("Json"));
   });
 
   it("watch() applies a delta: reports it back and forwards the parsed config", async () => {
@@ -371,7 +371,7 @@ describe("buildConfigSource dispatch", () => {
   });
 
   it("CONFIG_COMPONENT requires messaging", () => {
-    expect(() => buildConfigSource({ kind: "CONFIG_COMPONENT" }, opts)).toThrow(GgError);
+    expect(() => buildConfigSource({ kind: "CONFIG_COMPONENT" }, opts)).toThrow(EdgeCommonsError);
     const svc = new RecordingMessagingService();
     expect(buildConfigSource({ kind: "CONFIG_COMPONENT" }, { ...opts, messaging: svc })).toBeInstanceOf(
       ConfigComponentSource,
@@ -379,8 +379,8 @@ describe("buildConfigSource dispatch", () => {
   });
 
   it("GG_CONFIG and SHADOW require the IPC provider", () => {
-    expect(() => buildConfigSource({ kind: "GG_CONFIG", key: "ComponentConfig" }, opts)).toThrow(GgError);
-    expect(() => buildConfigSource({ kind: "SHADOW" }, opts)).toThrow(GgError);
+    expect(() => buildConfigSource({ kind: "GG_CONFIG", key: "ComponentConfig" }, opts)).toThrow(EdgeCommonsError);
+    expect(() => buildConfigSource({ kind: "SHADOW" }, opts)).toThrow(EdgeCommonsError);
     const ipc = ipcWith(new FakeIpcClient());
     expect(buildConfigSource({ kind: "GG_CONFIG", key: "K" }, { ...opts, ipcProvider: ipc })).toBeInstanceOf(
       GreengrassConfigSource,

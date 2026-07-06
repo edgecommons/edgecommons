@@ -29,7 +29,7 @@
 //!
 //! ## Semantics & Architecture
 //! - `Send + Sync`; async via `async_trait`. Errors map to
-//!   [`crate::error::GgError::Ipc`] / [`crate::error::GgError::Json`].
+//!   [`crate::error::EdgeCommonsError::Ipc`] / [`crate::error::EdgeCommonsError::Json`].
 //!
 //! ## Status
 //! Validated end-to-end on a live Greengrass core with the `ShadowManager`

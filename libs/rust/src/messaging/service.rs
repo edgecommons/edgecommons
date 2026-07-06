@@ -19,7 +19,7 @@
 //! Every public path that emits a **client-chosen topic** — `publish*`, `request*`,
 //! and `reply*` (a hostile requester could set `header.reply_to` to a victim's
 //! reserved topic) — rejects topics targeting a library-owned UNS class
-//! (`state | metric | cfg | log`) with [`GgError::ReservedTopic`]. `subscribe*` is
+//! (`state | metric | cfg | log`) with [`EdgeCommonsError::ReservedTopic`]. `subscribe*` is
 //! never guarded (consumers must read reserved classes); non-`ecv1` topics pass
 //! untouched. The guard's `includeRoot` flag is late-bound to the **effective**
 //! root ([`DefaultMessagingService::set_guard_include_root`], D-U27) once the
@@ -37,7 +37,7 @@
 //! subscription and `select!`s over reply / deadline / cancel — the single
 //! idempotent settle site. On ANY settle it unsubscribes the reply topic and sends
 //! the outcome down a oneshot, so the deadline fires cleanup (and the
-//! [`GgError::RequestTimeout`] error) **even if the returned [`ReplyFuture`] is
+//! [`EdgeCommonsError::RequestTimeout`] error) **even if the returned [`ReplyFuture`] is
 //! never polled** — the reply-subscription-leak fix. Dropping the `ReplyFuture`
 //! still cancels the request (today's contract, preserved).
 //!
@@ -59,7 +59,7 @@ use tokio::task::JoinHandle;
 
 use super::message::Message;
 use super::{request_reply, Destination, MessagingProvider, Qos, Subscription};
-use crate::error::{GgError, Result};
+use crate::error::{EdgeCommonsError, Result};
 
 /// Default QoS for local (IPC-style) operations, which have no explicit QoS in the
 /// Java/Python contract.
@@ -99,7 +99,7 @@ where
 ///
 /// # Examples
 /// ```
-/// use ggcommons::messaging::message_handler;
+/// use edgecommons::messaging::message_handler;
 /// let _h = message_handler(|topic, msg| async move {
 ///     let _ = (topic, msg);
 /// });
@@ -118,7 +118,7 @@ where
 /// The request is owned by a spawned **supervisor task** (see the module docs):
 /// this handle wraps the supervisor's result oneshot plus a cancel handle. Await it
 /// for the reply; on the framework deadline it resolves
-/// `Err(`[`GgError::RequestTimeout`]`)`. Dropping it (or passing it to
+/// `Err(`[`EdgeCommonsError::RequestTimeout`]`)`. Dropping it (or passing it to
 /// [`MessagingService::cancel_request`]) cancels the request; every settle path —
 /// reply, deadline, cancel — UNSUBSCRIBEs the ephemeral reply topic at the broker
 /// exactly once, so no reply subscription is orphaned **even if this future is
@@ -139,7 +139,7 @@ impl Future for ReplyFuture {
         match Pin::new(&mut this.rx).poll(cx) {
             Poll::Ready(Ok(outcome)) => Poll::Ready(outcome),
             // The supervisor vanished without settling (runtime shutdown).
-            Poll::Ready(Err(_)) => Poll::Ready(Err(GgError::Messaging(
+            Poll::Ready(Err(_)) => Poll::Ready(Err(EdgeCommonsError::Messaging(
                 "request supervisor ended before a reply arrived".to_string(),
             ))),
             Poll::Pending => Poll::Pending,
@@ -186,7 +186,7 @@ pub trait MessagingService: Send + Sync {
     /// Publish a message to `topic` on the local broker.
     ///
     /// # Errors
-    /// [`GgError::ReservedTopic`] when `topic` targets a reserved UNS class (§4.1).
+    /// [`EdgeCommonsError::ReservedTopic`] when `topic` targets a reserved UNS class (§4.1).
     async fn publish(&self, topic: &str, msg: &Message) -> Result<()>;
     /// Publish a message to `topic` on AWS IoT Core at `qos` (guarded like
     /// [`Self::publish`]).
@@ -229,10 +229,10 @@ pub trait MessagingService: Send + Sync {
     /// Carries the framework-owned default deadline (`messaging.requestTimeoutSeconds`,
     /// default 30 s, UNS-CANONICAL-DESIGN §5): on expiry the ephemeral reply
     /// subscription is cleaned up and the future resolves
-    /// `Err(`[`GgError::RequestTimeout`]`)` — even if it is never polled.
+    /// `Err(`[`EdgeCommonsError::RequestTimeout`]`)` — even if it is never polled.
     ///
     /// # Errors
-    /// [`GgError::ReservedTopic`] when `topic` targets a reserved UNS class.
+    /// [`EdgeCommonsError::ReservedTopic`] when `topic` targets a reserved UNS class.
     async fn request(&self, topic: &str, msg: Message) -> Result<ReplyFuture>;
     /// Send a request on AWS IoT Core; await the returned [`ReplyFuture`]. Same
     /// deadline + guard semantics as [`Self::request`].
@@ -342,7 +342,7 @@ impl DefaultMessagingService {
         let Some(topic) = topic else { return Ok(()) };
         let include_root = self.guard_include_root.load(Ordering::Relaxed);
         if let Some(cls) = crate::uns::reserved_class_of(topic, include_root) {
-            return Err(GgError::ReservedTopic(format!(
+            return Err(EdgeCommonsError::ReservedTopic(format!(
                 "topic '{topic}' targets the reserved UNS class '{}' (state|metric|cfg|log are \
                  library-owned): use the library publishers instead (heartbeat/state keepalive, \
                  the metric subsystem via gg.metrics(), the effective-config publisher)",
@@ -369,7 +369,7 @@ impl DefaultMessagingService {
             let mut map = self
                 .subscriptions
                 .lock()
-                .map_err(|_| GgError::Messaging("subscription map poisoned".to_string()))?;
+                .map_err(|_| EdgeCommonsError::Messaging("subscription map poisoned".to_string()))?;
             map.insert((dest, filter.to_string()), task)
         };
         if let Some(old) = previous {
@@ -384,7 +384,7 @@ impl DefaultMessagingService {
             let mut map = self
                 .subscriptions
                 .lock()
-                .map_err(|_| GgError::Messaging("subscription map poisoned".to_string()))?;
+                .map_err(|_| EdgeCommonsError::Messaging("subscription map poisoned".to_string()))?;
             map.remove(&(dest, filter.to_string()))
         };
         if let Some(task) = task {
@@ -464,20 +464,20 @@ impl DefaultMessagingService {
             let outcome: Result<Message> = tokio::select! {
                 reply = sub.recv() => match reply {
                     Some((_topic, bytes)) => Message::from_slice(&bytes),
-                    None => Err(GgError::Messaging(
+                    None => Err(EdgeCommonsError::Messaging(
                         "reply channel closed before a reply arrived".to_string(),
                     )),
                 },
-                _ = deadline => Err(GgError::RequestTimeout {
+                _ = deadline => Err(EdgeCommonsError::RequestTimeout {
                     topic: request_topic.clone(),
                     secs: effective.map(|d| d.as_secs_f64()).unwrap_or(0.0),
                 }),
                 // Resolves on explicit cancel AND on ReplyFuture drop (sender dropped).
-                _ = &mut cancel_rx => Err(GgError::Messaging(format!(
+                _ = &mut cancel_rx => Err(EdgeCommonsError::Messaging(format!(
                     "request on '{request_topic}' was cancelled before a reply arrived"
                 ))),
             };
-            if matches!(outcome, Err(GgError::RequestTimeout { .. })) {
+            if matches!(outcome, Err(EdgeCommonsError::RequestTimeout { .. })) {
                 tracing::warn!(
                     topic = %request_topic,
                     reply_topic = %reply_topic,
@@ -498,7 +498,7 @@ impl DefaultMessagingService {
     /// Publish a reply correlated with `request` on `dest`.
     async fn send_reply(&self, request: &Message, reply: Message, dest: Destination) -> Result<()> {
         let topic = request.header.reply_to.clone().ok_or_else(|| {
-            GgError::Messaging("cannot reply: request has no reply_to".to_string())
+            EdgeCommonsError::Messaging("cannot reply: request has no reply_to".to_string())
         })?;
         let mut reply = reply;
         reply.header.correlation_id = request.header.correlation_id.clone();
@@ -959,9 +959,9 @@ mod tests {
 
     // ---------- §5 framework-owned request deadline ----------
 
-    fn timeout_code(err: GgError) -> (String, f64) {
+    fn timeout_code(err: EdgeCommonsError) -> (String, f64) {
         match err {
-            GgError::RequestTimeout { topic, secs } => (topic, secs),
+            EdgeCommonsError::RequestTimeout { topic, secs } => (topic, secs),
             other => panic!("expected RequestTimeout, got {other}"),
         }
     }
@@ -994,7 +994,7 @@ mod tests {
 
         let reply_future = svc.request("svc/op", msg(1)).await.unwrap();
         let err = reply_future.await.unwrap_err();
-        assert!(matches!(err, GgError::RequestTimeout { .. }), "got {err}");
+        assert!(matches!(err, EdgeCommonsError::RequestTimeout { .. }), "got {err}");
         wait_for(&provider.unsubscribed, 1).await;
     }
 
@@ -1071,8 +1071,8 @@ mod tests {
 
     // ---------- §4.1 reserved-class publish guard ----------
 
-    fn assert_reserved(err: GgError) {
-        assert!(matches!(err, GgError::ReservedTopic(_)), "expected ReservedTopic, got {err}");
+    fn assert_reserved(err: EdgeCommonsError) {
+        assert!(matches!(err, EdgeCommonsError::ReservedTopic(_)), "expected ReservedTopic, got {err}");
     }
 
     #[tokio::test]
@@ -1116,7 +1116,7 @@ mod tests {
         let svc = DefaultMessagingService::new(provider.clone());
         svc.publish("ecv1/gw-01/comp/main/data/temp", &msg(1)).await.unwrap();
         svc.publish("ecv1/gw-01/comp/main/app/state", &msg(1)).await.unwrap();
-        svc.publish("ggcommons/reply-42", &msg(1)).await.unwrap();
+        svc.publish("edgecommons/reply-42", &msg(1)).await.unwrap();
         svc.publish("cloudwatch/metric/put", &msg(1)).await.unwrap();
         assert_eq!(provider.published.lock().unwrap().len(), 4);
     }

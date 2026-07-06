@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 
 import { Config } from "../src/config/model";
-import { GgError } from "../src/errors";
+import { EdgeCommonsError } from "../src/errors";
 import { AppFacade } from "../src/facades/app_facade";
 import { Channel } from "../src/facades/channel";
 import { Qos } from "../src/messaging/types";
@@ -47,8 +47,8 @@ describe("AppFacade", () => {
 
   it("rejects an empty name or channel", async () => {
     const { facade } = makeFacade();
-    await expect(facade.publish("", "hello", {})).rejects.toThrow(GgError);
-    await expect(facade.publish("Hello", "", {})).rejects.toThrow(GgError);
+    await expect(facade.publish("", "hello", {})).rejects.toThrow(EdgeCommonsError);
+    await expect(facade.publish("Hello", "", {})).rejects.toThrow(EdgeCommonsError);
   });
 
   it("routes northbound on an explicit override", async () => {
@@ -59,7 +59,7 @@ describe("AppFacade", () => {
 
   it("rejects a stream routing override", async () => {
     const { facade } = makeFacade();
-    await expect(facade.publish("Ping", "hello", {}, Channel.stream("hot"))).rejects.toThrow(GgError);
+    await expect(facade.publish("Ping", "hello", {}, Channel.stream("hot"))).rejects.toThrow(EdgeCommonsError);
   });
 
   it("a northbound transport failure is swallowed (readiness stays local)", async () => {

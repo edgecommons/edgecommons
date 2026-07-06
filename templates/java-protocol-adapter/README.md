@@ -1,10 +1,10 @@
 # <<COMPONENTNAME>>
 
 An AWS IoT Greengrass v2 **protocol-adapter** component (`<<COMPONENTFULLNAME>>`) written in Java on
-top of the `ggcommons` Java library. A protocol adapter is a **southbound bridge**: it talks to field
+top of the `edgecommons` Java library. A protocol adapter is a **southbound bridge**: it talks to field
 devices/servers over some protocol (OPC UA, Modbus, EtherNet/IP, …) and republishes their values
-northbound on the GGCommons messaging bus using the standard **southbound contract**
-(see `docs/SOUTHBOUND.md` in the ggcommons monorepo).
+northbound on the EdgeCommons messaging bus using the standard **southbound contract**
+(see `docs/SOUTHBOUND.md` in the edgecommons monorepo).
 
 The library gives you the standard CLI contract, configuration, logging, messaging, metrics,
 heartbeat, and graceful lifecycle — so you write only the **protocol code**, at the `TODO(adapter)`
@@ -12,7 +12,7 @@ markers in `src/main/java/.../<<COMPONENTNAME>>.java`.
 
 ## What the scaffold already does
 
-- Constructs the runtime via `GGCommonsBuilder`, reads config, and starts **one worker per configured
+- Constructs the runtime via `EdgeCommonsBuilder`, reads config, and starts **one worker per configured
   device instance** (`component.instances[].id`).
 - Publishes each signal update with the standard **`SouthboundSignalUpdate`** envelope — `body.device`,
   `body.signal` (canonical `id` + opaque protocol-native `address`), and `body.samples[]` with a

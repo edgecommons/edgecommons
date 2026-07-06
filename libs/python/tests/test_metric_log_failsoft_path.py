@@ -11,11 +11,11 @@ Greengrass logs directory that exists only on-device.
 """
 import logging
 
-from ggcommons.config.metric_config import MetricConfiguration
-from ggcommons.metrics.metric_builder import MetricBuilder
-from ggcommons.metrics.targets.metric_log import MetricLog
-from ggcommons.platform.platform import Platform
-from ggcommons.platform.resolver import (
+from edgecommons.config.metric_config import MetricConfiguration
+from edgecommons.metrics.metric_builder import MetricBuilder
+from edgecommons.metrics.targets.metric_log import MetricLog
+from edgecommons.platform.platform import Platform
+from edgecommons.platform.resolver import (
     METRIC_LOG_PATH_LOCAL,
     profile_metric_log_path,
 )

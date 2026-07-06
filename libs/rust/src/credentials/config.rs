@@ -14,7 +14,7 @@ use serde::{Deserialize, Deserializer};
 use super::keyprovider::{EnvKeyProvider, FileKeyProvider, DEFAULT_KEK_ENV_VAR};
 use super::service::DefaultCredentialService;
 use super::vault::LocalVault;
-use crate::error::GgError;
+use crate::error::EdgeCommonsError;
 use crate::Result;
 
 // Greengrass stores config numbers as doubles (e.g. 300.0). Accept an int or an integer-valued
@@ -94,7 +94,7 @@ pub struct KeyProviderConfig {
     pub key_path: Option<String>,
     /// env: name of the env var holding the base64-encoded 32-byte KEK (default
     /// [`keyprovider::DEFAULT_KEK_ENV_VAR`](super::keyprovider::DEFAULT_KEK_ENV_VAR),
-    /// i.e. `GGCOMMONS_VAULT_KEK`).
+    /// i.e. `EDGECOMMONS_VAULT_KEK`).
     pub env_var: Option<String>,
     pub kms_key_id: Option<String>,
     pub region: Option<String>,
@@ -206,7 +206,7 @@ pub(crate) fn build_key_provider(
         "env" => {
             // Software-KEK from an env var (typically a mounted k8s Secret). Cryptographically
             // identical to `file` given the same raw KEK; the env var NAME defaults to
-            // GGCOMMONS_VAULT_KEK when `keyProvider.envVar` is absent (FR-CRED-3).
+            // EDGECOMMONS_VAULT_KEK when `keyProvider.envVar` is absent (FR-CRED-3).
             let env_var = kp.env_var.as_deref().unwrap_or(DEFAULT_KEK_ENV_VAR);
             let p = EnvKeyProvider::from_env(env_var)?;
             Ok(std::sync::Arc::new(p))
@@ -216,7 +216,7 @@ pub(crate) fn build_key_provider(
             let key_id = kp
                 .kms_key_id
                 .clone()
-                .ok_or_else(|| GgError::Credentials("kms key provider requires keyProvider.kmsKeyId".to_string()))?;
+                .ok_or_else(|| EdgeCommonsError::Credentials("kms key provider requires keyProvider.kmsKeyId".to_string()))?;
             let p = super::keyprovider::KmsKeyProvider::new(key_id, kp.region.clone(), kp.endpoint_url.clone())?;
             Ok(std::sync::Arc::new(p))
         }
@@ -225,21 +225,21 @@ pub(crate) fn build_key_provider(
             let module_path = kp
                 .module_path
                 .clone()
-                .ok_or_else(|| GgError::Credentials("pkcs11 key provider requires keyProvider.modulePath".into()))?;
+                .ok_or_else(|| EdgeCommonsError::Credentials("pkcs11 key provider requires keyProvider.modulePath".into()))?;
             let token_label = kp
                 .token_label
                 .clone()
-                .ok_or_else(|| GgError::Credentials("pkcs11 key provider requires keyProvider.tokenLabel".into()))?;
+                .ok_or_else(|| EdgeCommonsError::Credentials("pkcs11 key provider requires keyProvider.tokenLabel".into()))?;
             let key_label = kp
                 .key_label
                 .clone()
-                .ok_or_else(|| GgError::Credentials("pkcs11 key provider requires keyProvider.keyLabel".into()))?;
+                .ok_or_else(|| EdgeCommonsError::Credentials("pkcs11 key provider requires keyProvider.keyLabel".into()))?;
             let pin = match (&kp.pin_env, &kp.pin) {
                 (Some(env), _) => std::env::var(env)
-                    .map_err(|_| GgError::Credentials(format!("pkcs11 keyProvider.pinEnv '{env}' is not set")))?,
+                    .map_err(|_| EdgeCommonsError::Credentials(format!("pkcs11 keyProvider.pinEnv '{env}' is not set")))?,
                 (None, Some(p)) => p.clone(),
                 (None, None) => {
-                    return Err(GgError::Credentials(
+                    return Err(EdgeCommonsError::Credentials(
                         "pkcs11 key provider requires keyProvider.pinEnv or keyProvider.pin".into(),
                     ))
                 }
@@ -247,7 +247,7 @@ pub(crate) fn build_key_provider(
             let p = super::keyprovider::Pkcs11KeyProvider::new(&module_path, &token_label, key_label, pin)?;
             Ok(std::sync::Arc::new(p))
         }
-        other => Err(GgError::Credentials(format!(
+        other => Err(EdgeCommonsError::Credentials(format!(
             "key provider '{other}' is not available (supported: 'file', 'env'; 'kms'/'greengrass' need the credentials-aws feature; 'pkcs11' needs the credentials-pkcs11 feature)"
         ))),
     }
@@ -290,7 +290,7 @@ pub fn open_namespaced_with_default(
             DefaultCredentialService::with_sync(shared, None, namespace.to_string())
         }
         "awsSecretsManager" => open_central(vault, &config.central, namespace)?,
-        other => return Err(GgError::Credentials(format!("central source '{other}' is not supported"))),
+        other => return Err(EdgeCommonsError::Credentials(format!("central source '{other}' is not supported"))),
     };
 
     // Access auditing on by default (config can disable) — logs op/name/version/source/outcome,
@@ -323,7 +323,7 @@ fn open_central(vault: LocalVault, central: &CentralConfig, namespace: &str) -> 
 
 #[cfg(not(feature = "credentials-aws"))]
 fn open_central(_vault: LocalVault, _central: &CentralConfig, _namespace: &str) -> Result<DefaultCredentialService> {
-    Err(GgError::Credentials(
+    Err(EdgeCommonsError::Credentials(
         "central source 'awsSecretsManager' requires the 'credentials-aws' feature".to_string(),
     ))
 }
@@ -362,7 +362,7 @@ mod tests {
 
     #[test]
     fn build_key_provider_env_reads_the_kek_and_errors_when_missing() {
-        let var = "GGCOMMONS_TEST_KEK_CFG";
+        let var = "EDGECOMMONS_TEST_KEK_CFG";
         // SAFETY: a test-only env var with a unique name; no other test reads/writes it.
         unsafe { std::env::set_var(var, B64.encode([9u8; 32])) };
         let kp = KeyProviderConfig {

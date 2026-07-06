@@ -1,20 +1,20 @@
 ---
 title: Logging
-description: Configure GGCommons logging — levels, per-logger overrides, per-language format tokens, size-rotated file output, and the Kubernetes stdout-JSON sink.
+description: Configure EdgeCommons logging — levels, per-logger overrides, per-language format tokens, size-rotated file output, and the Kubernetes stdout-JSON sink.
 sidebar:
   order: 6
 ---
 
 import { Tabs, TabItem, Aside, LinkCard } from "@astrojs/starlight/components";
 
-GGCommons configures your process's logging framework for you from the `logging` section of your
+EdgeCommons configures your process's logging framework for you from the `logging` section of your
 component config. You get a sensible root level, a console/stdout sink that is always on, an optional
 size-rotated file sink, per-logger level overrides, and a structured one-JSON-object-per-line sink
 that is the default on Kubernetes. Your component then logs through its language's normal facility —
 Log4j2/SLF4J, the stdlib `logging` module, `tracing`, or the exported TypeScript `logger`.
 
 There is **no `gg.logging()` accessor**. Logging is configured by the framework when you build your
-GGCommons instance; component code just obtains a logger and writes to it.
+EdgeCommons instance; component code just obtains a logger and writes to it.
 
 <Aside type="note" title="Config keys differ by language">
 The only logging key that is language-specific is the **format token**:
@@ -247,7 +247,7 @@ fail schema validation.
 
 ## The stdout-JSON sink
 
-For machine-readable logs (log aggregators, Kubernetes), GGCommons can emit **one JSON object per
+For machine-readable logs (log aggregators, Kubernetes), EdgeCommons can emit **one JSON object per
 line** to stdout instead of a text layout. Each line carries a stable field set: `timestamp`
 (ISO-8601, UTC `Z`), `level`, `logger`, `message`, any non-empty correlation fields
 (`thing`, `pod`, `namespace`, `node`), and an exception field when one is present.
@@ -321,8 +321,8 @@ logger by the time your component code runs, so you just get a logger and write 
 <TabItem label="Java">
 
 ```java
-import com.mbreissi.ggcommons.logging.Logger;
-import com.mbreissi.ggcommons.logging.LoggerFactory;
+import com.mbreissi.edgecommons.logging.Logger;
+import com.mbreissi.edgecommons.logging.LoggerFactory;
 
 Logger log = LoggerFactory.getLogger(MyApp.class);   // or LoggerFactory.getLogger("my.logger")
 
@@ -351,7 +351,7 @@ log.warning("retrying after error", exc_info=True)
 log.debug("payload bytes: %d", len(payload))
 ```
 
-There is no GGCommons logger factory in Python — the library configures the **root** logger, so the
+There is no EdgeCommons logger factory in Python — the library configures the **root** logger, so the
 stdlib `logging.getLogger(name)` is all you need. Per-logger levels from `logging.loggers` apply by
 name.
 
@@ -374,7 +374,7 @@ are preserved verbatim in the JSON sink.
 <TabItem label="TypeScript">
 
 ```typescript
-import { logger, getLogger } from "@edgecommons/ggcommons";
+import { logger, getLogger } from "@edgecommons/edgecommons";
 
 logger.info("publish interval set to " + interval + "ms");
 
@@ -383,7 +383,7 @@ dbLog.debug("db detail");                 // honors logging.loggers["app.db"]
 dbLog.error("query failed", err);         // (message, error?) signature
 ```
 
-`logger` is the process-wide root logger (`"ggcommons"`); `getLogger(name)` returns a named,
+`logger` is the process-wide root logger (`"edgecommons"`); `getLogger(name)` returns a named,
 hierarchically-leveled, cached `Logger` with `debug`/`info`/`warn`/`error` methods. There is no
 `trace`/`fatal` method (`TRACE` folds to `DEBUG`, `FATAL` to `INFO`).
 
@@ -394,7 +394,7 @@ hierarchically-leveled, cached `Logger` with `debug`/`info`/`warn`/`error` metho
 
 A few startup facts — "platform resolved …", "messaging connected …" — are determined *before* the
 `logging` config has been applied, so they cannot honor your configured level or format on first
-emission. To avoid losing them, GGCommons **defers and re-emits** those startup lines *after*
+emission. To avoid losing them, EdgeCommons **defers and re-emits** those startup lines *after*
 config-driven logging is initialized, so they appear with your chosen level, format, and sink (text
 or JSON) like everything else. This is automatic in all four SDKs; you do not need to do anything.
 The practical effect is that your very first configured log lines include the platform/transport

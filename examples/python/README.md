@@ -1,13 +1,13 @@
 # Python Component Skeleton
 
 A worked-example AWS IoT Greengrass v2 component written in Python on top of the
-[`ggcommons`](../../libs/python) Python library. It is the Python counterpart of `examples/java`,
+[`edgecommons`](../../libs/python) Python library. It is the Python counterpart of `examples/java`,
 `examples/rust`, and `examples/ts`, demonstrating the library's standard CLI contract,
 configuration, logging, messaging (publish + request/reply), metrics, and heartbeat — so a component
 author writes only business logic (in [`app/greengrass_app.py`](app/greengrass_app.py)).
 
-The component is `com.mbreissi.greengrass.PythonComponentSkeleton` and is bootstrapped via
-`GGCommonsBuilder.create(...)` in [`main.py`](main.py).
+The component is `com.mbreissi.edgecommons.PythonComponentSkeleton` and is bootstrapped via
+`EdgeCommonsBuilder.create(...)` in [`main.py`](main.py).
 
 ## Run locally (HOST platform, MQTT transport)
 
@@ -51,11 +51,11 @@ gdk component publish
 
 | Path | What it is |
 |------|-----------|
-| `main.py` | Entry point — builds `GGCommons` and starts the app. |
+| `main.py` | Entry point — builds `EdgeCommons` and starts the app. |
 | `app/greengrass_app.py` | The business logic (config, messaging, metrics, heartbeat). |
 | `test-configs/` | Sample config files (`config_*.json`) + the MQTT messaging config (`standalone-local.json`). |
 | `recipe.yaml`, `gdk-config.json` | Greengrass component recipe + GDK build/publish config. |
 | `tests/` | Local tests for the example. |
 
 To scaffold a fresh component instead of copying this one, use the CLI:
-`ggcommons create-component -l PYTHON -n com.example.MyComponent`.
+`edgecommons create-component -l PYTHON -n com.example.MyComponent`.

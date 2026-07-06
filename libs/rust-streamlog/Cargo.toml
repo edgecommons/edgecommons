@@ -1,10 +1,10 @@
 [package]
-name = "ggstreamlog"
+name = "edgestreamlog"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.75"
 license = "Apache-2.0"
-description = "Durable, store-and-forward telemetry log + export engine for ggcommons (Phase 1 core)."
+description = "Durable, store-and-forward telemetry log + export engine for edgecommons (Phase 1 core)."
 publish = false
 
 [features]

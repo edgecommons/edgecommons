@@ -23,8 +23,8 @@
 //!
 //! ## Usage Example
 //! ```no_run
-//! # async fn demo(svc: std::sync::Arc<dyn ggcommons::metrics::MetricService>) -> ggcommons::Result<()> {
-//! use ggcommons::metrics::MetricBuilder;
+//! # async fn demo(svc: std::sync::Arc<dyn edgecommons::metrics::MetricService>) -> edgecommons::Result<()> {
+//! use edgecommons::metrics::MetricBuilder;
 //! use std::collections::HashMap;
 //!
 //! svc.define_metric(MetricBuilder::create("requests").add_measure("count", "Count", 60).build());
@@ -57,7 +57,7 @@ use async_trait::async_trait;
 
 use crate::config::model::{Config, MetricConfig};
 use crate::config::template::resolve;
-use crate::error::{GgError, Result};
+use crate::error::{EdgeCommonsError, Result};
 use crate::messaging::{MessagingService, ReservedMessaging};
 use crate::platform::Platform;
 
@@ -115,12 +115,12 @@ impl MetricEmitter {
     ///   so the target can be rebuilt on config change. The `messaging` target
     ///   additionally requires the library runtime's privileged reserved-publish
     ///   seam (its topics are the reserved UNS `metric` class), so it is available
-    ///   only through `GgCommonsBuilder::build()` — not this standalone constructor.
+    ///   only through `EdgeCommonsBuilder::build()` — not this standalone constructor.
     ///
     /// # Errors
     /// | Error Variant | Condition | Recovery |
     /// |---------------|-----------|----------|
-    /// | `GgError::Metrics` | A messaging/cloudwatchcomponent target lacks its messaging dependency, or `cloudwatch` selected without the feature | Build via the runtime / enable the `cloudwatch` feature |
+    /// | `EdgeCommonsError::Metrics` | A messaging/cloudwatchcomponent target lacks its messaging dependency, or `cloudwatch` selected without the feature | Build via the runtime / enable the `cloudwatch` feature |
     ///
     /// The `log` target is fail-soft: an unwritable `logFileName` does not error
     /// here (it warns and drops metrics on emit), matching the Java target.
@@ -142,7 +142,7 @@ impl MetricEmitter {
     ///
     /// # Errors
     /// See [`Self::new`]; additionally, an explicit `target=prometheus` without the
-    /// `metrics-prometheus` cargo feature is a [`GgError::Metrics`] (mirroring `cloudwatch`).
+    /// `metrics-prometheus` cargo feature is a [`EdgeCommonsError::Metrics`] (mirroring `cloudwatch`).
     pub async fn new_for_platform(
         config: &Config,
         messaging: Option<Arc<dyn MessagingService>>,
@@ -180,7 +180,7 @@ impl MetricEmitter {
         Ok(self
             .target
             .lock()
-            .map_err(|_| GgError::Metrics("metric target mutex poisoned".to_string()))?
+            .map_err(|_| EdgeCommonsError::Metrics("metric target mutex poisoned".to_string()))?
             .clone())
     }
 }
@@ -262,10 +262,10 @@ async fn build_target(
             // on ecv1/{device}/{component}/main/metric/{name} — it needs the
             // crate-private reserved-publish seam (§4.2), wired by the runtime.
             let reserved = reserved.ok_or_else(|| {
-                GgError::Metrics(
+                EdgeCommonsError::Metrics(
                     "metric target 'messaging' requires the library runtime's privileged \
                      reserved-publish seam (its topics are the reserved UNS 'metric' class); \
-                     build via GgCommonsBuilder"
+                     build via EdgeCommonsBuilder"
                         .to_string(),
                 )
             })?;
@@ -314,7 +314,7 @@ fn require_messaging(
     target: &str,
 ) -> Result<Arc<dyn MessagingService>> {
     messaging.ok_or_else(|| {
-        GgError::Metrics(format!("metric target '{target}' requires a messaging service"))
+        EdgeCommonsError::Metrics(format!("metric target '{target}' requires a messaging service"))
     })
 }
 
@@ -340,7 +340,7 @@ async fn build_cloudwatch_target(
     #[cfg(all(feature = "metrics-cloudwatch-durable", not(feature = "cloudwatch")))]
     {
         if config.parsed.metric_emission.buffer_type() == "durable" {
-            return Err(GgError::Metrics(
+            return Err(EdgeCommonsError::Metrics(
                 "durable CloudWatch buffer requires the 'cloudwatch' cargo feature (for \
                  PutMetricData); enable both 'metrics-cloudwatch-durable' and 'cloudwatch'"
                     .to_string(),
@@ -356,7 +356,7 @@ async fn build_cloudwatch_target(
     }
     #[cfg(not(feature = "cloudwatch"))]
     {
-        Err(GgError::Metrics(
+        Err(EdgeCommonsError::Metrics(
             "metric target 'cloudwatch' requires the 'cloudwatch' cargo feature".to_string(),
         ))
     }
@@ -379,14 +379,14 @@ fn build_prometheus_target(config: &Config, namespace: &str) -> Result<Arc<dyn M
     }
     #[cfg(not(feature = "metrics-prometheus"))]
     {
-        Err(GgError::Metrics(
+        Err(EdgeCommonsError::Metrics(
             "metric target 'prometheus' requires the 'metrics-prometheus' cargo feature".to_string(),
         ))
     }
 }
 
 /// Build the durable (disk-backed store-and-forward) CloudWatch target: resolve the buffer path
-/// template, map the `onFull`/`fsync` policies, and open the ggstreamlog buffer draining to a real
+/// template, map the `onFull`/`fsync` policies, and open the edgestreamlog buffer draining to a real
 /// AWS `PutMetricData` sender.
 #[cfg(all(feature = "metrics-cloudwatch-durable", feature = "cloudwatch"))]
 fn build_durable_cloudwatch_target(
@@ -394,7 +394,7 @@ fn build_durable_cloudwatch_target(
     namespace: &str,
     large_fleet_workaround: bool,
 ) -> Result<Arc<dyn MetricTarget>> {
-    use ggstreamlog::config::{FsyncPolicy, OnFull};
+    use edgestreamlog::config::{FsyncPolicy, OnFull};
     use target::cloudwatch_durable::{
         AwsPutMetricDataSender, CloudWatchDurableTarget, DurableBufferSettings,
     };
@@ -497,7 +497,7 @@ mod tests {
 
     #[tokio::test]
     async fn log_target_emits_and_defines() {
-        let dir = std::env::temp_dir().join(format!("ggcommons-emit-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("edgecommons-emit-{}", uuid::Uuid::new_v4()));
         let path = dir.join("m.log");
         let raw = json!({
             "metricEmission": {
@@ -534,7 +534,7 @@ mod tests {
         let config = Config::from_value("c", "t", raw).unwrap();
         let recorder = crate::testutil::RecordingMessaging::new();
         let result = MetricEmitter::new(&config, Some(recorder)).await;
-        assert!(matches!(result, Err(GgError::Metrics(_))));
+        assert!(matches!(result, Err(EdgeCommonsError::Metrics(_))));
     }
 
     fn one_value() -> HashMap<String, f64> {
@@ -609,14 +609,14 @@ mod tests {
         // Without the `cloudwatch` cargo feature, selecting it is a clear error.
         let result = MetricEmitter::new(&config, None).await;
         #[cfg(not(feature = "cloudwatch"))]
-        assert!(matches!(result, Err(GgError::Metrics(_))));
+        assert!(matches!(result, Err(EdgeCommonsError::Metrics(_))));
         #[cfg(feature = "cloudwatch")]
         let _ = result; // with the feature it constructs (needs AWS env at emit time)
     }
 
     #[tokio::test]
     async fn unknown_target_defaults_to_log() {
-        let dir = std::env::temp_dir().join(format!("ggcommons-unk-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("edgecommons-unk-{}", uuid::Uuid::new_v4()));
         let path = dir.join("m.log");
         let raw = json!({ "metricEmission": { "target": "bogus", "targetConfig": { "logFileName": path.to_string_lossy() } } });
         let config = Config::from_value("c", "t", raw).unwrap();
@@ -633,7 +633,7 @@ mod tests {
     async fn on_config_change_rebuilds_target() {
         use crate::config::ConfigurationChangeListener;
 
-        let dir = std::env::temp_dir().join(format!("ggcommons-recfg-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("edgecommons-recfg-{}", uuid::Uuid::new_v4()));
         let path = dir.join("m.log");
         let raw_log = json!({ "metricEmission": { "target": "log", "targetConfig": { "logFileName": path.to_string_lossy() } } });
         let config = Config::from_value("c", "t", raw_log).unwrap();
@@ -744,7 +744,7 @@ mod tests {
         let raw = json!({ "metricEmission": { "target": "prometheus" } });
         let config = Config::from_value("c", "t", raw).unwrap();
         let result = MetricEmitter::new_for_platform(&config, None, Platform::Host).await;
-        assert!(matches!(result, Err(GgError::Metrics(_))));
+        assert!(matches!(result, Err(EdgeCommonsError::Metrics(_))));
     }
 
     #[cfg(not(feature = "metrics-prometheus"))]
@@ -752,7 +752,7 @@ mod tests {
     async fn kubernetes_default_builds_without_feature_via_log_fallback() {
         // No explicit target on KUBERNETES, feature off → builds the log target (fallback), not an
         // error. Use a writable temp log path so the (fail-soft) log target has somewhere to go.
-        let dir = std::env::temp_dir().join(format!("ggcommons-k8sfb-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("edgecommons-k8sfb-{}", uuid::Uuid::new_v4()));
         let path = dir.join("m.log");
         let raw = json!({ "metricEmission": { "targetConfig": { "logFileName": path.to_string_lossy() } } });
         let config = Config::from_value("c", "t", raw).unwrap();
@@ -799,7 +799,7 @@ mod tests {
         let mut response = String::new();
         stream.read_to_string(&mut response).unwrap();
         assert!(response.contains("200 OK"), "expected 200, got:\n{response}");
-        assert!(response.contains("ggcommons_count"), "missing gauge in:\n{response}");
+        assert!(response.contains("edgecommons_count"), "missing gauge in:\n{response}");
 
         // close() stops the listener.
         emitter.shutdown().await;
@@ -807,7 +807,7 @@ mod tests {
 
     #[tokio::test]
     async fn emitting_undefined_metric_is_ignored() {
-        let dir = std::env::temp_dir().join(format!("ggcommons-undef-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("edgecommons-undef-{}", uuid::Uuid::new_v4()));
         let path = dir.join("m.log");
         let raw = json!({ "metricEmission": { "target": "log", "targetConfig": { "logFileName": path.to_string_lossy() } } });
         let config = Config::from_value("c", "t", raw).unwrap();

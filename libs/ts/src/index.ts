@@ -1,5 +1,5 @@
 /**
- * GGCommons TypeScript library — public surface.
+ * EdgeCommons TypeScript library — public surface.
  *
  * A 4th implementation of the Greengrass Commons library alongside Java
  * (canonical), Python, and Rust. Bundles the cross-cutting concerns of an AWS IoT
@@ -8,14 +8,14 @@
  *
  * Typical entry point:
  * ```ts
- * import { GGCommonsBuilder } from "@edgecommons/ggcommons";
- * const gg = await new GGCommonsBuilder("com.example.MyComponent").build();
+ * import { EdgeCommonsBuilder } from "@edgecommons/edgecommons";
+ * const gg = await new EdgeCommonsBuilder("com.example.MyComponent").build();
  * const cfg = gg.config();
  * ```
  */
 
 // Lifecycle
-export { GGCommons, GGCommonsBuilder, GgInstance } from "./ggcommons";
+export { EdgeCommons, EdgeCommonsBuilder, EdgeCommonsInstance } from "./edgecommons";
 
 // Unified namespace (UNS): topic builder/validator + reserved-class predicate
 export {
@@ -35,8 +35,8 @@ export {
 export type { UnsValidationCode } from "./uns";
 
 // Errors
-export { GgError } from "./errors";
-export type { GgErrorKind } from "./errors";
+export { EdgeCommonsError } from "./errors";
+export type { EdgeCommonsErrorKind } from "./errors";
 
 // CLI
 export { parseArgs } from "./cli";
@@ -179,7 +179,7 @@ export { logger, getLogger, initLogging, reconfigureLogging, LoggingReconfigurer
 export type { LoggingOptions } from "./logging";
 
 // Telemetry streaming
-export { StreamService, StreamHandle, GgStreamError, StreamMetricsBridge } from "./streaming";
+export { StreamService, StreamHandle, EdgeStreamError, StreamMetricsBridge } from "./streaming";
 export type { StreamStats } from "./streaming";
 
 // Credentials / local vault

@@ -1,7 +1,7 @@
 # <<COMPONENTNAME>>
 
-A **Python protocol-adapter** component (`<<COMPONENTFULLNAME>>`) built on the `ggcommons`
-(`greengrass-commons`) library and the **southbound contract** (`docs/SOUTHBOUND.md`). It bridges a
+A **Python protocol-adapter** component (`<<COMPONENTFULLNAME>>`) built on the `edgecommons`
+(`edgecommons`) library and the **southbound contract** (`docs/SOUTHBOUND.md`). It bridges a
 device protocol onto the unified namespace (UNS): it polls or subscribes a source and republishes
 value changes as `SouthboundSignalUpdate` messages on per-instance UNS `data` topics
 (`ecv1/{device}/{component}/{instance}/data/{signalPath}`, minted via `gg.instance(id).uns()`),
@@ -18,9 +18,9 @@ implementations.
 
 ## Layout
 
-- `main.py` — builds ggcommons, spawns one worker per `component.instances[]` entry.
+- `main.py` — builds edgecommons, spawns one worker per `component.instances[]` entry.
 - `app/<<COMPONENTNAME>>.py` — your adapter: connect, poll/subscribe, publish, command surface.
-- `requirements.txt` — `greengrass-commons` + your protocol client library.
+- `requirements.txt` — `edgecommons` + your protocol client library.
 - `recipe.yaml` / `gdk-config.json` — Greengrass packaging (IPC pubsub access; venv install).
 - `Dockerfile` / `k8s/` — Kubernetes image + manifests (KUBERNETES platform only).
 - `test-configs/<<COMPONENTNAME>>.json` — a sample config following the §4 convention.

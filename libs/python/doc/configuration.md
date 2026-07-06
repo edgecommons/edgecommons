@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-The configuration system in GGCommons Python library provides a flexible, multi-source configuration management framework for Greengrass components. It supports loading configuration from various sources, template variable substitution, and runtime configuration changes. The system is designed to handle both ggcommons framework settings and application-specific configuration through a unified interface.
+The configuration system in EdgeCommons Python library provides a flexible, multi-source configuration management framework for Greengrass components. It supports loading configuration from various sources, template variable substitution, and runtime configuration changes. The system is designed to handle both edgecommons framework settings and application-specific configuration through a unified interface.
 
 Key features include:
 - Multiple configuration sources (file, environment, Greengrass deployment, IoT Shadow)
@@ -29,7 +29,7 @@ The configuration system supports multiple sources, specified via command line a
 -c ENV [env_var_name]
 ```
 - Loads configuration from environment variable
-- Default variable: `GGCOMMONS_CONFIG`
+- Default variable: `EDGECOMMONS_CONFIG`
 - Configuration must be valid JSON string
 - Useful for containerized deployments
 
@@ -94,7 +94,7 @@ changes as `set-config` commands to each component's inbox
 The configuration is organized into distinct sections:
 
 ### Framework Sections
-These sections are managed by ggcommons and configure framework behavior:
+These sections are managed by edgecommons and configure framework behavior:
 
 - **`logging`**: Logging system configuration
 - **`heartbeat`**: Component health monitoring — a UNS `state` keepalive plus system measures as the `sys` metric (see [heartbeat.md](heartbeat.md))
@@ -139,16 +139,16 @@ When processing instance configurations, additional variables are available:
 ### Accessing Configuration in Code
 
 ```python
-from ggcommons.builders import GGCommonsBuilder
-from ggcommons.interfaces import IConfigurationService
+from edgecommons.builders import EdgeCommonsBuilder
+from edgecommons.interfaces import IConfigurationService
 
-# Initialize GGCommons
-ggcommons = GGCommonsBuilder.create("com.example.MyComponent") \
+# Initialize EdgeCommons
+edgecommons = EdgeCommonsBuilder.create("com.example.MyComponent") \
     .with_args(args) \
     .build()
 
 # Get the configuration service
-config_service = ggcommons.get_service(IConfigurationService)
+config_service = edgecommons.get_service(IConfigurationService)
 
 # Access global configuration
 global_config = config_service.get_global_config()
@@ -167,7 +167,7 @@ full_config = config_service.get_full_config()
 ### Configuration Change Notifications
 
 ```python
-from ggcommons.config.manager.configuration_change_listener import ConfigurationChangeListener
+from edgecommons.config.manager.configuration_change_listener import ConfigurationChangeListener
 
 class MyConfigListener(ConfigurationChangeListener):
     def on_configuration_change(self, configuration):
@@ -284,7 +284,7 @@ resolved_path = config_service.resolve_template("/data/{ThingName}/{site}/logs")
     "level": "INFO",
     "globalControl": true,
     "loggers": {
-      "ggcommons.opcua": "DEBUG"
+      "edgecommons.opcua": "DEBUG"
     }
   },
   "heartbeat": {
@@ -428,7 +428,7 @@ resolved_path = config_service.resolve_template("/data/{ThingName}/{site}/logs")
 
 ## 8. Configuration Validation
 
-The GGCommons configuration system includes automatic validation using JSON Schema to ensure configuration correctness and provide better error messages.
+The EdgeCommons configuration system includes automatic validation using JSON Schema to ensure configuration correctness and provide better error messages.
 
 ### Validation Features
 - Required and optional properties validation
@@ -439,7 +439,7 @@ The GGCommons configuration system includes automatic validation using JSON Sche
 
 ### Using Validation
 ```python
-from ggcommons.validation import ConfigurationValidator, ConfigurationValidationException
+from edgecommons.validation import ConfigurationValidator, ConfigurationValidationException
 
 try:
     ConfigurationValidator.validate(config)
@@ -460,7 +460,7 @@ except ConfigurationValidationException as e:
 - **Validation errors**: Check configuration against expected schema
 
 ### Debugging Configuration
-- Enable DEBUG logging for `ggcommons.config` package
+- Enable DEBUG logging for `edgecommons.config` package
 - Use `get_full_config()` to inspect the complete loaded configuration
 - Test template resolution with `resolve_template()` method
 - Verify configuration source loading

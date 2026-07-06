@@ -1,13 +1,13 @@
 /**
- * High-level TypeScript API for the `ggstreamlog` telemetry-streaming core, over the napi addon.
+ * High-level TypeScript API for the `edgestreamlog` telemetry-streaming core, over the napi addon.
  * Gives Node components the same durable store-and-forward streaming + config schema as the Rust,
  * Java, and Python libraries. Mirrors `gg.streams()`.
  */
-import type * as Addon from "@mbreissi/ggstreamlog-node";
+import type * as Addon from "@edgecommons/streamlog-node";
 
-import { getAddon, ensureLogForwarding, GgStreamError, translate } from "./native";
+import { getAddon, ensureLogForwarding, EdgeStreamError, translate } from "./native";
 
-/** A snapshot of one stream's buffer + export progress (mirrors `ggsl_stats_t`). */
+/** A snapshot of one stream's buffer + export progress (mirrors `esl_stats_t`). */
 export interface StreamStats {
   appendedTotal: number;
   exportedTotal: number;
@@ -69,7 +69,7 @@ export class StreamService {
     }
   }
 
-  /** A handle to the named stream (throws `GgStreamError` ERR_UNKNOWN_STREAM if not configured). */
+  /** A handle to the named stream (throws `EdgeStreamError` ERR_UNKNOWN_STREAM if not configured). */
   stream(name: string): StreamHandle {
     try {
       return new StreamHandle(this.require().stream(name), name);
@@ -112,4 +112,4 @@ export class StreamService {
   }
 }
 
-export { GgStreamError };
+export { EdgeStreamError };

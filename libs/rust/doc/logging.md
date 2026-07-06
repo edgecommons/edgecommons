@@ -7,7 +7,7 @@ change at runtime in response to a config hot-reload.
 ## Initialization
 
 `logging::init(&config, profile_format_default)` is called once during
-`GgCommonsBuilder::build`. It is idempotent: if a global subscriber already exists (e.g. a
+`EdgeCommonsBuilder::build`. It is idempotent: if a global subscriber already exists (e.g. a
 test installed one), init is a no-op. The level comes from `logging.level` (default `INFO`);
 an unparseable level falls back to `info` rather than failing.
 
@@ -17,7 +17,7 @@ The builder threads it in because the resolved platform is known *before* the co
 loads.
 
 ```rust
-use ggcommons::{config::model::Config, logging};
+use edgecommons::{config::model::Config, logging};
 use serde_json::json;
 
 let cfg = Config::from_value("c", "t", json!({ "logging": { "level": "DEBUG" } })).unwrap();
@@ -61,7 +61,7 @@ logging.level: "INFO"  ->  (edit config)  ->  logging.level: "DEBUG"  // takes e
 | `globalControl` | Reserved. |
 
 `level` accepts a tracing `EnvFilter` string, so per-module directives work, e.g.
-`"info,ggcommons::messaging=debug"`.
+`"info,edgecommons::messaging=debug"`.
 
 ## Relationship to metric logs
 

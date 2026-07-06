@@ -2,11 +2,11 @@
 
 > Status: **plan + staging** (2026-06-29). The GitHub org does not exist yet; this document is the
 > blueprint and `ecosystem/staging/` holds the content that will seed it. Nothing here changes the
-> `ggcommons` library itself.
+> `edgecommons` library itself.
 
 ## What this is
 
-`ggcommons` is the library/CLI/templates core (this monorepo). On top of it sits a growing family of
+`edgecommons` is the library/CLI/templates core (this monorepo). On top of it sits a growing family of
 **components** — protocol adapters, edge processors, northbound sinks — that are *not* part of this
 repo and live in their own repositories (the OPC UA and Modbus reference adapters already do). This
 document defines how those repositories are organized and associated on GitHub, and the plan to get
@@ -34,17 +34,17 @@ The org is named **`edgecommons`** — platform-neutral (the framework now targe
 HOST/Docker **and** Kubernetes), while keeping the distinctive "commons" identity. Greengrass
 discoverability is preserved via repo **topics** (`aws-iot-greengrass`), not the brand.
 
-**The library keeps the name `ggcommons`.** Renaming it would churn every published coordinate
-(`com.mbreissi:ggcommons`, PyPI `greengrass-commons`, the crate, npm, the CLI, the docs domain) for
+**The library keeps the name `edgecommons`.** Renaming it would churn every published coordinate
+(`com.mbreissi.edgecommons:edgecommons`, PyPI `edgecommons`, the crate, npm, the CLI, the docs domain) for
 no functional gain. The org name is deliberately broader than its flagship — a common, healthy
-pattern. A future convergence rename (`ggcommons` → `edgecommons`) stays *possible* but is explicitly
+pattern. A future convergence rename (`edgecommons` → `edgecommons`) stays *possible* but is explicitly
 out of scope here.
 
 ## Target structure
 
 ```
 edgecommons (GitHub org)
-├─ ggcommons        ← this monorepo, transferred from mbreissi/ggcommons (auto-redirects)
+├─ edgecommons        ← this monorepo, transferred from mbreissi/edgecommons (auto-redirects)
 ├─ .github          ← org profile README (front door) + shared health files
 │                     + reusable CI/publish/deploy workflows
 ├─ registry         ← machine-readable component catalog (private; read via gh auth)
@@ -77,10 +77,10 @@ edgecommons (GitHub org)
    path is the standard quirk of the special `.github` repo; move them to a dedicated
    `edgecommons/ci` repo if it bothers you.)
 4. **Component registry** (`edgecommons/registry`) — a machine-readable catalog consumed by the CLI
-   (`ggcommons list-components`, later `ggcommons add <name>`) and rendered as a "Components" page on
+   (`edgecommons list-components`, later `edgecommons add <name>`) and rendered as a "Components" page on
    the docs site. This is what makes the ecosystem *browsable and installable* rather than a folder
    of repos. Staged in `ecosystem/staging/registry/`.
-5. **Convention** — new components are born via `ggcommons create-component`, pushed to the org under
+5. **Convention** — new components are born via `edgecommons create-component`, pushed to the org under
    the naming rules, and added to the registry via a PR.
 
 ## The registry
@@ -98,7 +98,7 @@ truth for "what components exist." Each entry:
   "description": "…",
   "status": "beta",
   "platforms": ["GREENGRASS", "HOST", "KUBERNETES"],
-  "library": "com.mbreissi:ggcommons",
+  "library": "com.mbreissi.edgecommons:edgecommons",
   "topics": ["edgecommons", "aws-iot-greengrass", "iiot", "opc-ua", "edgecommons-adapter"]
 }
 ```
@@ -108,9 +108,9 @@ authentication via `gh`; the docs site reads it with a token at build time. (Fli
 public later if you want tokenless reads — the CLI's URL/path override already supports that.)
 
 **Consumers:**
-- CLI: `ggcommons list-components [--language …] [--category …] [--json] [--source URL|path]`.
-  Default: fetch the private catalog via `gh api` (authenticated). `--source`/`$GGCOMMONS_REGISTRY_URL`
-  override with a URL or local path. Implemented in `cli/ggcommons_cli/commands/list_components.py`.
+- CLI: `edgecommons list-components [--language …] [--category …] [--json] [--source URL|path]`.
+  Default: fetch the private catalog via `gh api` (authenticated). `--source`/`$EDGECOMMONS_REGISTRY_URL`
+  override with a URL or local path. Implemented in `cli/edgecommons_cli/commands/list_components.py`.
 - Docs site: a build-time fetch of `components.json` → a "Components" reference page.
 
 ## Realization plan
@@ -129,14 +129,14 @@ public later if you want tokenless reads — the CLI's URL/path override already
   and add a self-hosted runner only later if the cap actually bites (§ Phase 0c).
 
 ### Phase 1 — Move the library + stand up shared infra
-1. **Transfer** `mbreissi/ggcommons` → `edgecommons/ggcommons` (repo Settings → Transfer). GitHub
+1. **Transfer** `mbreissi/edgecommons` → `edgecommons/edgecommons` (repo Settings → Transfer). GitHub
    redirects the old path indefinitely; existing remotes/clones/package refs keep working. Then
-   `git remote set-url origin git@github.com:edgecommons/ggcommons.git`.
+   `git remote set-url origin git@github.com:edgecommons/edgecommons.git`.
 2. **Repoint package coordinates** (all internal consumers, so contained):
    - `ghcr.io/mbreissi/*` → `ghcr.io/edgecommons/*` (Dockerfiles, recipes).
    - GH Packages npm scope `@mbreissi` → `@edgecommons`; Maven `distributionManagement` URL → the
-     org; git-dep URLs (Py/Rust) → `edgecommons/ggcommons`.
-   - **Unchanged:** Java groupId `com.mbreissi`, PyPI name `greengrass-commons`, docs domain — all
+     org; git-dep URLs (Py/Rust) → `edgecommons/edgecommons`.
+   - **Unchanged:** Java groupId `com.mbreissi`, PyPI name `edgecommons`, docs domain — all
      independent of the GitHub owner.
    - **Re-authorize the Cloudflare Workers Builds GitHub App** on `edgecommons` so docs keep
      auto-deploying after the transfer.
@@ -146,7 +146,7 @@ public later if you want tokenless reads — the CLI's URL/path override already
 ### Phase 2 — Stand up the registry ✅ (done 2026-06-29)
 - Created `edgecommons/registry` (private) from `ecosystem/staging/registry/` (catalog + schema +
   validation workflow + CONTRIBUTING); `validate-registry` CI green.
-- Shipped the CLI `list-components` command (reads the private catalog via `gh`); add `ggcommons
+- Shipped the CLI `list-components` command (reads the private catalog via `gh`); add `edgecommons
   add <name>` later.
 - Add the docs-site "Components" page that renders the catalog.
 
@@ -155,8 +155,8 @@ For `gg-opcua-adapter` → `opcua-adapter` and `gg-modbus-adapter` → `modbus-a
 - Create the org repo, push existing local history
   (`git remote add origin git@github.com:edgecommons/<name>.git && git push -u origin main`).
 - Apply the standard layer: topics, adopt the reusable CI workflow, point the lib dependency at the
-  published `ggcommons`, add README badges, open a `registry` PR.
-- Re-validate on lab-5950x (GREENGRASS) + the permanent `ggcommons-modbus-sim` container + a KEP VM
+  published `edgecommons`, add README badges, open a `registry` PR.
+- Re-validate on lab-5950x (GREENGRASS) + the permanent `edgecommons-modbus-sim` container + a KEP VM
   (OPC UA), per the monorepo validation matrix.
 
 ### Phase 4 — Make it self-perpetuating
@@ -184,7 +184,7 @@ only the org's plan (or a self-hosted runner / public visibility) does.
 ## Migration checklist / risks
 
 - [ ] Org created; CI-minutes path chosen.
-- [ ] `mbreissi/ggcommons` transferred; local remote updated; old-URL redirect confirmed.
+- [ ] `mbreissi/edgecommons` transferred; local remote updated; old-URL redirect confirmed.
 - [ ] ghcr namespace, GH Packages scope, Maven dist URL, Py/Rust git-deps repointed to `edgecommons`.
 - [ ] Cloudflare Workers Builds GitHub App re-authorized on the org; docs auto-deploy verified.
 - [ ] `edgecommons/.github` + `edgecommons/registry` created from staging; registry validation green.
@@ -195,7 +195,7 @@ only the org's plan (or a self-hosted runner / public visibility) does.
 
 Branch `feat/ecosystem-edgecommons` carries everything that can be prepared before the org exists:
 - `docs/ECOSYSTEM.md` — this plan.
-- `cli/ggcommons_cli/commands/list_components.py` (+ test) — the registry-reading CLI command.
+- `cli/edgecommons_cli/commands/list_components.py` (+ test) — the registry-reading CLI command.
 - `ecosystem/staging/` — content for the future `edgecommons/.github` and `edgecommons/registry`
   repos; see `ecosystem/staging/README.md` for the extraction steps.
 - `ecosystem/RUNBOOK.md` — Phase 0–1 operational runbook (org + self-hosted runner, transfer,

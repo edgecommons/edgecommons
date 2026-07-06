@@ -1,8 +1,8 @@
-# ggstreamlog — GGCommons telemetry-streaming core
+# edgestreamlog — EdgeCommons telemetry-streaming core
 
-`ggstreamlog` is the shared Rust core behind the GGCommons **streaming** subsystem (`gg.streams()`):
+`edgestreamlog` is the shared Rust core behind the EdgeCommons **streaming** subsystem (`gg.streams()`):
 a store-and-forward telemetry log with an embedded buffer and an asynchronous export engine that
-drains to Kinesis or Kafka. It is the streaming engine for **all four** GGCommons languages — Rust
+drains to Kinesis or Kafka. It is the streaming engine for **all four** EdgeCommons languages — Rust
 uses it directly; Java, Python, and Node use it through native bindings (see `bindings/`).
 
 It deliberately replaces AWS IoT Greengrass Stream Manager for high-rate telemetry: the buffer,
@@ -16,7 +16,7 @@ component dependency or IPC hop.
 - **Export engine** drains the buffer to a `Sink` on a background thread with at-least-once delivery
   (contiguous-prefix commit), per-offset retries, and configurable backpressure.
 - **Pluggable sinks**: Kinesis (`kinesis` feature), Kafka (`kafka` feature), plus test/fake sinks.
-- **Per-stream stats** (appended/exported/dropped/retries/backlog/disk-bytes) that the GGCommons
+- **Per-stream stats** (appended/exported/dropped/retries/backlog/disk-bytes) that the EdgeCommons
   libraries bridge into the component's metric target.
 
 ### Buffer backing — `buffer.type`
@@ -37,8 +37,8 @@ src/log.rs           EmbeddedLog: append / read_batch / commit, fsync policy, re
 src/export/          ExportEngine (bg thread) + Sink trait + FakeSink; kinesis.rs, kafka.rs
 src/config.rs        StreamingConfig / StreamConfig (sink, buffer, batch, delivery) — camelCase JSON
 src/service.rs       StreamService: config-driven owner of every stream + its export engine
-src/ffi.rs           C-ABI (feature `cabi`) — ggsl_* functions for the Java/Panama binding
-include/ggstreamlog.h  the C-ABI header
+src/ffi.rs           C-ABI (feature `cabi`) — esl_* functions for the Java/Panama binding
+include/edgestreamlog.h  the C-ABI header
 bindings/python/     PyO3 binding (maturin → abi3 wheel)
 bindings/node/       napi-rs binding (cdylib → .node addon)
 bench/               perf harness (examples/loadgen.rs, Criterion benches) — see bench/README.md
@@ -58,9 +58,9 @@ Edition 2021, MSRV 1.75. Off-by-default features compose: `kinesis`, `kafka`, `c
 
 ## How the languages use it
 
-- **Rust** (`libs/rust`): `gg.streams()` wraps `ggstreamlog::StreamService` directly, gated behind the
+- **Rust** (`libs/rust`): `gg.streams()` wraps `edgestreamlog::StreamService` directly, gated behind the
   `streaming` / `streaming-kinesis` / `streaming-kafka` cargo features.
-- **Java**: FFM/Panama over the `ggsl_*` C-ABI (`cabi` feature → cdylib bundled in the jar).
+- **Java**: FFM/Panama over the `esl_*` C-ABI (`cabi` feature → cdylib bundled in the jar).
 - **Python**: PyO3 binding in `bindings/python` (maturin wheel).
 - **Node/TypeScript**: napi-rs binding in `bindings/node` (`.node` addon).
 

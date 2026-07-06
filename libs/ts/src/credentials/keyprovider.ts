@@ -280,7 +280,7 @@ export class Pkcs11KeyProvider implements KeyProvider {
       throw new CredentialError("pkcs11 key provider requires the graphene-pk11 package");
     }
     const g = mod.default ?? mod;
-    const module = g.Module.load(modulePath, "ggcommons-vault");
+    const module = g.Module.load(modulePath, "edgecommons-vault");
     try {
       module.initialize();
     } catch (e) {

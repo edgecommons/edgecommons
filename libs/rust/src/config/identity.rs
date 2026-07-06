@@ -19,8 +19,9 @@
 //! 4. Every **value** passes through the template sanitizer
 //!    ([`crate::config::template::sanitize`]); a changed value is WARN-logged and the
 //!    sanitized value is used.
-//! 5. `component` = the sanitized SHORT name (the segment after the last `.` — the
-//!    existing `{ComponentName}` semantics, D-U18).
+//! 5. `component` = `component.token` when configured, otherwise the sanitized SHORT
+//!    component name (the segment after the last `.` — the existing `{ComponentName}`
+//!    fallback semantics, D-U18).
 //!
 //! NO shared config: each component reads its own `hierarchy`/`identity` blocks.
 //!
@@ -31,7 +32,7 @@
 use serde_json::Value;
 
 use crate::config::template::sanitize;
-use crate::error::{GgError, Result};
+use crate::error::{EdgeCommonsError, Result};
 use crate::messaging::message::{HierEntry, MessageIdentity};
 
 /// Strict UNS hierarchy level-name rule: `^[A-Za-z0-9_-]+$` (future Parquet columns).
@@ -41,8 +42,8 @@ fn is_valid_level_name(level: &str) -> bool {
 }
 
 /// Builds the uniform fail-fast identity-resolution startup error.
-fn identity_error(detail: impl std::fmt::Display) -> GgError {
-    GgError::Config(format!("Component identity resolution failed: {detail}"))
+fn identity_error(detail: impl std::fmt::Display) -> EdgeCommonsError {
+    EdgeCommonsError::Config(format!("Component identity resolution failed: {detail}"))
 }
 
 /// Sanitizes an identity value via the template sanitizer, WARN-logging when it changed.
@@ -63,13 +64,31 @@ pub(crate) fn short_component_name(component_name: &str) -> &str {
     component_name.rsplit('.').next().unwrap_or(component_name)
 }
 
+fn configured_component_token(raw: &Value) -> Result<Option<&str>> {
+    let Some(component_el) = raw.get("component") else {
+        return Ok(None);
+    };
+    let Some(component) = component_el.as_object() else {
+        return Err(identity_error(
+            "'component' must be an object when configuring 'component.token'",
+        ));
+    };
+    let Some(token_el) = component.get("token") else {
+        return Ok(None);
+    };
+    let Some(token) = token_el.as_str().filter(|v| !v.is_empty()) else {
+        return Err(identity_error("'component.token' must be a non-empty string"));
+    };
+    Ok(Some(token))
+}
+
 /// Resolves the component's UNS identity (instance
 /// [`MessageIdentity::DEFAULT_INSTANCE`]) from the raw config document + the
 /// resolved thing name + the (full or short) component name. See the
 /// [module docs](self) for the algorithm.
 ///
 /// # Errors
-/// [`GgError::Config`] naming the precise inconsistency (fail-fast at construction).
+/// [`EdgeCommonsError::Config`] naming the precise inconsistency (fail-fast at construction).
 pub(crate) fn resolve(
     raw: &Value,
     thing_name: &str,
@@ -163,12 +182,13 @@ pub(crate) fn resolve(
         value: sanitized_identity_value("device", thing_name),
     });
 
-    // 5. component = sanitized short name.
+    // 5. component = explicit token when configured, else sanitized short name.
     if component_name.is_empty() {
-        return Err(identity_error("the component short name is not available"));
+        return Err(identity_error("the component name is not available"));
     }
-    let component_token =
-        sanitized_identity_value("component", short_component_name(component_name));
+    let raw_component_token =
+        configured_component_token(raw)?.unwrap_or_else(|| short_component_name(component_name));
+    let component_token = sanitized_identity_value("component", raw_component_token);
     MessageIdentity::new(hier, component_token, None)
 }
 
@@ -186,6 +206,24 @@ mod tests {
         assert_eq!(id.path(), "gw-01");
         assert_eq!(id.component(), "OpcuaAdapter", "short name (segment after last '.')");
         assert_eq!(id.instance(), "main");
+    }
+
+    #[test]
+    fn configured_component_token_overrides_pascal_component_name() {
+        let raw = json!({ "component": { "token": "opcua-adapter" } });
+        let id = resolve(&raw, "gw-01", "com.mbreissi.edgecommons.OpcUaAdapter").unwrap();
+        assert_eq!(id.component(), "opcua-adapter");
+    }
+
+    #[test]
+    fn malformed_component_token_fails_fast() {
+        for raw in [
+            json!({ "component": "nope" }),
+            json!({ "component": { "token": "" } }),
+            json!({ "component": { "token": 42 } }),
+        ] {
+            assert!(resolve(&raw, "t", "c").is_err(), "should fail: {raw}");
+        }
     }
 
     #[test]

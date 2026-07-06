@@ -27,9 +27,9 @@
 //!
 //! ## Usage Example
 //! ```no_run
-//! # async fn demo(cfg: &ggcommons::config::model::Config) -> ggcommons::Result<()> {
-//! use ggcommons::messaging::config::MessagingConfig;
-//! use ggcommons::messaging::provider::mqtt::MqttProvider;
+//! # async fn demo(cfg: &edgecommons::config::model::Config) -> edgecommons::Result<()> {
+//! use edgecommons::messaging::config::MessagingConfig;
+//! use edgecommons::messaging::provider::mqtt::MqttProvider;
 //! let mc = MessagingConfig::load("standalone-messaging.json").await?;
 //! let provider = MqttProvider::connect(&mc).await?;
 //! # let _ = provider; let _ = cfg;
@@ -56,7 +56,7 @@ use tokio::sync::mpsc::{self, error::TrySendError, Sender};
 use tokio::sync::{oneshot, watch};
 use tokio::task::JoinHandle;
 
-use crate::error::{GgError, Result};
+use crate::error::{EdgeCommonsError, Result};
 use crate::messaging::config::{BrokerConfig, Credentials, LwtConfig, MessagingConfig};
 use crate::messaging::{topic_matches, Destination, MessagingProvider, Qos, Subscription};
 
@@ -143,8 +143,8 @@ impl MqttProvider {
     /// # Errors
     /// | Error Variant | Condition | Recovery |
     /// |---------------|-----------|----------|
-    /// | `GgError::Config` | Missing host, or missing/unreadable TLS credentials (IoT Core requires caPath/certPath/keyPath) | Fix the messaging config / credential paths |
-    /// | `GgError::Messaging` | CONNACK not received within the connect timeout | Verify the broker is up and reachable |
+    /// | `EdgeCommonsError::Config` | Missing host, or missing/unreadable TLS credentials (IoT Core requires caPath/certPath/keyPath) | Fix the messaging config / credential paths |
+    /// | `EdgeCommonsError::Messaging` | CONNACK not received within the connect timeout | Verify the broker is up and reachable |
     ///
     /// The local broker connects over plain TCP unless its credentials include a
     /// `caPath` (then TLS). AWS IoT Core always connects over mutual TLS
@@ -171,7 +171,7 @@ impl MqttProvider {
         match dest {
             Destination::Local => Ok(&self.local),
             Destination::IotCore => self.iot_core.as_ref().ok_or_else(|| {
-                GgError::Messaging("IoT Core destination is not configured".to_string())
+                EdgeCommonsError::Messaging("IoT Core destination is not configured".to_string())
             }),
         }
     }
@@ -190,7 +190,7 @@ impl MessagingProvider for MqttProvider {
         conn.client
             .publish(topic, to_rumqttc_qos(qos), false, payload)
             .await
-            .map_err(|e| GgError::Messaging(format!("publish to '{topic}' failed: {e}")))
+            .map_err(|e| EdgeCommonsError::Messaging(format!("publish to '{topic}' failed: {e}")))
     }
 
     async fn subscribe(
@@ -209,7 +209,7 @@ impl MessagingProvider for MqttProvider {
             let mut map = conn
                 .registry
                 .lock()
-                .map_err(|_| GgError::Messaging("subscription registry poisoned".to_string()))?;
+                .map_err(|_| EdgeCommonsError::Messaging("subscription registry poisoned".to_string()))?;
             map.insert(
                 id,
                 SubEntry {
@@ -226,14 +226,14 @@ impl MessagingProvider for MqttProvider {
             let mut q = conn
                 .pending_subacks
                 .lock()
-                .map_err(|_| GgError::Messaging("suback queue poisoned".to_string()))?;
+                .map_err(|_| EdgeCommonsError::Messaging("suback queue poisoned".to_string()))?;
             q.push_back(ack_tx);
         }
 
         conn.client
             .subscribe(filter, rqos)
             .await
-            .map_err(|e| GgError::Messaging(format!("subscribe to '{filter}' failed: {e}")))?;
+            .map_err(|e| EdgeCommonsError::Messaging(format!("subscribe to '{filter}' failed: {e}")))?;
 
         // Block until the broker confirms the subscription (SUBACK), so a publish issued right
         // after subscribe isn't lost — parity with Java/Python/TS. Fall back to proceeding (the
@@ -258,7 +258,7 @@ impl MessagingProvider for MqttProvider {
         conn.client
             .unsubscribe(filter)
             .await
-            .map_err(|e| GgError::Messaging(format!("unsubscribe from '{filter}' failed: {e}")))
+            .map_err(|e| EdgeCommonsError::Messaging(format!("unsubscribe from '{filter}' failed: {e}")))
     }
 
     fn connected(&self) -> bool {
@@ -381,7 +381,7 @@ async fn connect_broker(
         })
     } else {
         task.abort();
-        Err(GgError::Messaging(format!(
+        Err(EdgeCommonsError::Messaging(format!(
             "timed out waiting {}s for broker CONNACK",
             CONNECT_TIMEOUT.as_secs()
         )))
@@ -394,10 +394,10 @@ async fn connect_broker(
 /// an object payload as compact JSON bytes.
 ///
 /// # Errors
-/// [`GgError::Config`] on a missing/empty topic or a QoS outside `{0, 1}`.
+/// [`EdgeCommonsError::Config`] on a missing/empty topic or a QoS outside `{0, 1}`.
 fn build_last_will(lwt: &LwtConfig) -> Result<LastWill> {
     if lwt.topic.is_empty() {
-        return Err(GgError::Config(
+        return Err(EdgeCommonsError::Config(
             "messaging.lwt.topic is required when an lwt section is present".to_string(),
         ));
     }
@@ -405,7 +405,7 @@ fn build_last_will(lwt: &LwtConfig) -> Result<LastWill> {
         0 => QoS::AtMostOnce,
         1 => QoS::AtLeastOnce,
         other => {
-            return Err(GgError::Config(format!(
+            return Err(EdgeCommonsError::Config(format!(
                 "messaging.lwt.qos must be 0 or 1 (got {other})"
             )));
         }
@@ -430,7 +430,7 @@ fn build_tls(creds: Option<&Credentials>, role: BrokerRole) -> Result<Option<Tls
     match role {
         BrokerRole::IotCore => {
             let creds = creds.ok_or_else(|| {
-                GgError::Config(
+                EdgeCommonsError::Config(
                     "IoT Core requires TLS credentials (caPath, certPath, keyPath)".to_string(),
                 )
             })?;
@@ -469,10 +469,10 @@ fn build_tls(creds: Option<&Credentials>, role: BrokerRole) -> Result<Option<Tls
 /// path is missing or unreadable.
 fn read_credential_file(path: Option<&str>, field: &str) -> Result<Vec<u8>> {
     let path = path.ok_or_else(|| {
-        GgError::Config(format!("TLS requires '{field}' in the messaging credentials"))
+        EdgeCommonsError::Config(format!("TLS requires '{field}' in the messaging credentials"))
     })?;
     std::fs::read(path)
-        .map_err(|e| GgError::Config(format!("failed to read {field} '{path}': {e}")))
+        .map_err(|e| EdgeCommonsError::Config(format!("failed to read {field} '{path}': {e}")))
 }
 
 fn to_rumqttc_qos(qos: Qos) -> QoS {

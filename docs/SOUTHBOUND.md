@@ -23,8 +23,8 @@ subsystem is required for Tier-1.**
 ## 1. Why a contract, not a subsystem
 
 A protocol adapter (OPC UA, Modbus, EtherNet/IP, MQTT-Sparkplug, …) is **business logic a developer
-writes as a component on ggcommons** — the framework already gives it config, messaging, metrics,
-credentials, and streaming, so the author writes only the protocol code. ggcommons does **not** ship
+writes as a component on edgecommons** — the framework already gives it config, messaging, metrics,
+credentials, and streaming, so the author writes only the protocol code. edgecommons does **not** ship
 the protocols.
 
 But if every adapter is built independently on just the generic plumbing, the result is N adapters
@@ -119,7 +119,7 @@ ecv1/{device}/{component}/{instance}/data/{signalPath}
 minted via the instance-scoped topic builder — never a hand-assembled string:
 
 ```java
-GgInstance kep1 = gg.instance("kep1");
+EdgeCommonsInstance kep1 = gg.instance("kep1");
 String topic = kep1.uns().topic(UnsClass.DATA, "press12/temperature");
 // -> ecv1/gw-01/opcua-adapter/kep1/data/press12/temperature
 gg.messaging().publish(topic,
@@ -248,14 +248,14 @@ a Modbus exception code) so operators can diagnose without the device.
 
 ## 4. Adapter config convention
 
-Verified against `schema/ggcommons-config-schema.json`: the **top level is strict**
+Verified against `schema/edgecommons-config-schema.json`: the **top level is strict**
 (`additionalProperties:false`, `required:["component"]`), but **`component.global` and
 `component.instances[]` are permissive** (`additionalProperties:true`). Therefore an adapter places
 its config under `component.*` and needs **no schema change** (no `schema/sync-schema` run, no CI
 drift-gate risk).
 
 > Do **not** add a dedicated top-level block (e.g. `opcua`) — that would force an edit to the
-> canonical `schema/ggcommons-config-schema.json`, a `sync-schema` regeneration of all four library
+> canonical `schema/edgecommons-config-schema.json`, a `sync-schema` regeneration of all four library
 > copies, and a passing `schema-drift` check. Keep adapter config under `component`.
 
 Convention — protocol-agnostic keys at the top, protocol-native detail nested:
@@ -299,7 +299,7 @@ protocol-specific nests under `connection` or a signal spec's matcher. Security 
 the OPC UA adapter's own doc (cert sources: `vault` / `file` / `pkcs11`).
 
 > **Transition note.** `hierarchy` / `identity` / `topic.includeRoot` are top-level **schema**
-> sections (shipped — see DESIGN-uns §5 and the canonical `schema/ggcommons-config-schema.json`).
+> sections (shipped — see DESIGN-uns §5 and the canonical `schema/edgecommons-config-schema.json`).
 > Until the Phase-5 adapter migration lands, the **shipping** reference adapters still accept their
 > legacy `publish.topic` / `write.topic` template keys under `component.*`; those keys disappear
 > with the migration (the data-plane topic is minted by `uns()`, and `write` is replaced by the
@@ -332,7 +332,7 @@ Builder + `CountDownLatch` lifecycle skeleton, an OPC UA-ready `pom.xml`, and a 
 change required):
 
 ```bash
-ggcommons create-component -l JAVA -u ./templates/java-protocol-adapter \
+edgecommons create-component -l JAVA -u ./templates/java-protocol-adapter \
   -n com.example.MyAdapter --platforms GREENGRASS,HOST
 ```
 
@@ -340,7 +340,7 @@ A `templates/python-protocol-adapter/` mirror ships too — a Builder + per-inst
 skeleton with `recipe.yaml`, `Dockerfile`, and `k8s/` — scaffolded the same way:
 
 ```bash
-ggcommons create-component -l PYTHON -u ./templates/python-protocol-adapter \
+edgecommons create-component -l PYTHON -u ./templates/python-protocol-adapter \
   -n com.example.MyAdapter --platforms GREENGRASS,HOST,KUBERNETES
 ```
 

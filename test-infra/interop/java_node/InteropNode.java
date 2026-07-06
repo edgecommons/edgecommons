@@ -1,12 +1,12 @@
-import com.mbreissi.ggcommons.messaging.Message;
-import com.mbreissi.ggcommons.messaging.MessageBuilder;
-import com.mbreissi.ggcommons.messaging.MessageIdentity;
-import com.mbreissi.ggcommons.messaging.MessagingClient;
-import com.mbreissi.ggcommons.messaging.MessagingConfiguration;
-import com.mbreissi.ggcommons.messaging.ReservedTopicException;
-import com.mbreissi.ggcommons.messaging.providers.standalone.StandaloneMessagingProvider;
-import com.mbreissi.ggcommons.uns.Uns;
-import com.mbreissi.ggcommons.uns.UnsClass;
+import com.mbreissi.edgecommons.messaging.Message;
+import com.mbreissi.edgecommons.messaging.MessageBuilder;
+import com.mbreissi.edgecommons.messaging.MessageIdentity;
+import com.mbreissi.edgecommons.messaging.MessagingClient;
+import com.mbreissi.edgecommons.messaging.MessagingConfiguration;
+import com.mbreissi.edgecommons.messaging.ReservedTopicException;
+import com.mbreissi.edgecommons.messaging.providers.standalone.StandaloneMessagingProvider;
+import com.mbreissi.edgecommons.uns.Uns;
+import com.mbreissi.edgecommons.uns.UnsClass;
 import com.google.gson.Gson;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -15,7 +15,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Cross-language interop node (Java) for ggcommons. Shared CLI contract:
+ * Cross-language interop node (Java) for edgecommons. Shared CLI contract:
  *   InteropNode responder &lt;request_topic&gt;
  *   InteropNode request   &lt;request_topic&gt; &lt;token&gt;
  *   InteropNode uns-pub   &lt;identityJson&gt; &lt;class&gt; [channel]
@@ -30,12 +30,12 @@ public class InteropNode {
     static final Gson GSON = new Gson();
 
     static String host() {
-        String h = System.getenv("GGCOMMONS_IT_MQTT_HOST");
+        String h = System.getenv("EDGECOMMONS_IT_MQTT_HOST");
         return h != null ? h : "localhost";
     }
 
     static String port() {
-        String p = System.getenv("GGCOMMONS_IT_MQTT_PORT");
+        String p = System.getenv("EDGECOMMONS_IT_MQTT_PORT");
         return p != null ? p : "1883";
     }
 

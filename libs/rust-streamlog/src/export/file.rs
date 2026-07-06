@@ -24,7 +24,7 @@
 //! # Feature gating
 //!
 //! This module compiles with the `file` umbrella feature alone (no encoder); in that case
-//! [`FileSink::new`] returns a [`GgStreamError::Config`] for any format because no encoder is built
+//! [`FileSink::new`] returns a [`EdgeStreamError::Config`] for any format because no encoder is built
 //! in. All Arrow/Parquet code is behind `feature = "parquet"` and all Avro code behind
 //! `feature = "avro"`.
 //!
@@ -56,7 +56,7 @@ use crate::config::{
     ColumnSpec, ColumnType, FileCompression, FileFormat, FileMode, FileOnFull, FileSinkConfig,
     RowsConfig,
 };
-use crate::error::{GgStreamError, Result};
+use crate::error::{EdgeStreamError, Result};
 
 // ----------------------------------------------------------------------------------------------
 // Public sink
@@ -89,7 +89,7 @@ impl FileSink {
     /// Build a file sink for `cfg`.
     ///
     /// Validates `cfg` and verifies the requested [`FileFormat`]'s encoder feature is compiled in;
-    /// returns [`GgStreamError::Config`] otherwise (e.g. `format = parquet` without the `parquet`
+    /// returns [`EdgeStreamError::Config`] otherwise (e.g. `format = parquet` without the `parquet`
     /// feature). No file is opened here — the first file opens lazily on the first [`send`].
     ///
     /// [`send`]: Sink::send
@@ -100,7 +100,7 @@ impl FileSink {
             FileFormat::Avro => cfg!(feature = "avro"),
         };
         if !have_encoder {
-            return Err(GgStreamError::Config(format!(
+            return Err(EdgeStreamError::Config(format!(
                 "file sink: format {:?} requires the matching encoder feature to be compiled in \
                  (`parquet` and/or `avro`)",
                 cfg.format
@@ -233,7 +233,7 @@ impl FileSink {
             && self.cfg.max_files > 0
             && self.finalized.len() as u64 >= self.cfg.max_files
         {
-            return Err(GgStreamError::Sink(format!(
+            return Err(EdgeStreamError::Sink(format!(
                 "file sink: maxFiles={} reached and onFull=stop; refusing to open a new file",
                 self.cfg.max_files
             )));
@@ -395,7 +395,7 @@ impl OpenFile {
     fn write(&mut self, rows: WriteRows<'_>) -> Result<()> {
         match self {
             OpenFile::Closed => {
-                Err(GgStreamError::Sink("file sink: write to a closed file".into()))
+                Err(EdgeStreamError::Sink("file sink: write to a closed file".into()))
             }
             #[cfg(feature = "parquet")]
             OpenFile::Parquet(p) => p.write(rows),
@@ -446,7 +446,7 @@ fn create_open_file(
             #[cfg(not(feature = "parquet"))]
             {
                 let _ = (schema, compression, path);
-                return Err(GgStreamError::Config(
+                return Err(EdgeStreamError::Config(
                     "file sink: built without the `parquet` feature".into(),
                 ));
             }
@@ -459,7 +459,7 @@ fn create_open_file(
             #[cfg(not(feature = "avro"))]
             {
                 let _ = (schema, compression, path);
-                return Err(GgStreamError::Config(
+                return Err(EdgeStreamError::Config(
                     "file sink: built without the `avro` feature".into(),
                 ));
             }
@@ -764,7 +764,7 @@ mod parquet_impl {
 
     use super::{ColumnSpec, ColumnType, MainRow, ProjCell, ProjRow, RawRow, RowSchema, SampleValue, WriteRows};
     use crate::config::FileCompression;
-    use crate::error::{GgStreamError, Result};
+    use crate::error::{EdgeStreamError, Result};
 
     /// An open Parquet file: the Arrow writer plus a cloned handle for fsync (the writer owns its
     /// own copy of the underlying `File`). For a user projection, the column specs are retained so
@@ -791,7 +791,7 @@ mod parquet_impl {
             let sync_handle = file.try_clone()?;
             let props = WriterProperties::builder().set_compression(map_compression(compression)).build();
             let writer = ArrowWriter::try_new(file, arrow_schema, Some(props))
-                .map_err(|e| GgStreamError::Sink(format!("parquet open: {e}")))?;
+                .map_err(|e| EdgeStreamError::Sink(format!("parquet open: {e}")))?;
             Ok(Self { writer, sync_handle, proj_columns })
         }
 
@@ -803,16 +803,16 @@ mod parquet_impl {
             };
             self.writer
                 .write(&batch)
-                .map_err(|e| GgStreamError::Sink(format!("parquet write: {e}")))?;
+                .map_err(|e| EdgeStreamError::Sink(format!("parquet write: {e}")))?;
             // Force the buffered rows out as a row group so an AllAcked batch is durable.
-            self.writer.flush().map_err(|e| GgStreamError::Sink(format!("parquet flush: {e}")))?;
+            self.writer.flush().map_err(|e| EdgeStreamError::Sink(format!("parquet flush: {e}")))?;
             self.sync_handle.sync_all()?;
             Ok(())
         }
 
         pub(super) fn close(self) -> Result<()> {
             let Self { writer, sync_handle, .. } = self;
-            writer.close().map_err(|e| GgStreamError::Sink(format!("parquet close: {e}")))?;
+            writer.close().map_err(|e| EdgeStreamError::Sink(format!("parquet close: {e}")))?;
             sync_handle.sync_all()?;
             Ok(())
         }
@@ -931,7 +931,7 @@ mod parquet_impl {
                 ts_ms, offset,
             ],
         )
-        .map_err(|e| GgStreamError::Sink(format!("parquet rows batch: {e}")))
+        .map_err(|e| EdgeStreamError::Sink(format!("parquet rows batch: {e}")))
     }
 
     /// Build the user-projection record batch: one Arrow column per configured column, in order.
@@ -939,7 +939,7 @@ mod parquet_impl {
         let arrays: Vec<ArrayRef> =
             columns.iter().enumerate().map(|(j, c)| proj_array(rows, j, c.col_type)).collect();
         RecordBatch::try_new(proj_schema(columns), arrays)
-            .map_err(|e| GgStreamError::Sink(format!("parquet projection batch: {e}")))
+            .map_err(|e| EdgeStreamError::Sink(format!("parquet projection batch: {e}")))
     }
 
     /// Build one Arrow array from cell `j` of each row, typed by the column's target [`ColumnType`]
@@ -989,7 +989,7 @@ mod parquet_impl {
         let payload: ArrayRef =
             Arc::new(StringArray::from_iter_values(rows.iter().map(|r| r.payload.as_str())));
         RecordBatch::try_new(raw_schema(), vec![offset, pk, ts_ms, payload])
-            .map_err(|e| GgStreamError::Sink(format!("parquet raw batch: {e}")))
+            .map_err(|e| EdgeStreamError::Sink(format!("parquet raw batch: {e}")))
     }
 
     /// Map the config codec to the Parquet compression (default levels for zstd/gzip).
@@ -1022,13 +1022,13 @@ mod avro_impl {
         WriteRows,
     };
     use crate::config::FileCompression;
-    use crate::error::{GgStreamError, Result};
+    use crate::error::{EdgeStreamError, Result};
 
     /// Normalized-rows Avro schema. `value` is a true union and `tags` is a nullable string (the
     /// compact-JSON envelope tags); the other metadata fields are plain strings (defaulting to
     /// empty) to keep the schema small.
     const ROWS_SCHEMA: &str = r#"{
-      "type":"record","name":"SignalSample","namespace":"ggstreamlog",
+      "type":"record","name":"SignalSample","namespace":"edgestreamlog",
       "fields":[
         {"name":"tags","type":["null","string"],"default":null},
         {"name":"signalId","type":"string","default":""},
@@ -1048,7 +1048,7 @@ mod avro_impl {
 
     /// Opaque-message Avro schema.
     const RAW_SCHEMA: &str = r#"{
-      "type":"record","name":"RawMessage","namespace":"ggstreamlog",
+      "type":"record","name":"RawMessage","namespace":"edgestreamlog",
       "fields":[
         {"name":"offset","type":"long"},
         {"name":"partitionKey","type":"string"},
@@ -1104,7 +1104,7 @@ mod avro_impl {
             })
             .collect();
         format!(
-            r#"{{"type":"record","name":"Projection","namespace":"ggstreamlog","fields":[{}]}}"#,
+            r#"{{"type":"record","name":"Projection","namespace":"edgestreamlog","fields":[{}]}}"#,
             fields.join(",")
         )
     }
@@ -1141,26 +1141,26 @@ mod avro_impl {
                     for row in r {
                         self.writer
                             .append(rows_value(row))
-                            .map_err(|e| GgStreamError::Sink(format!("avro append: {e}")))?;
+                            .map_err(|e| EdgeStreamError::Sink(format!("avro append: {e}")))?;
                     }
                 }
                 WriteRows::Raw(r) => {
                     for row in r {
                         self.writer
                             .append(raw_value(row))
-                            .map_err(|e| GgStreamError::Sink(format!("avro append: {e}")))?;
+                            .map_err(|e| EdgeStreamError::Sink(format!("avro append: {e}")))?;
                     }
                 }
                 WriteRows::Proj(r) => {
                     for row in r {
                         self.writer
                             .append(proj_value(&self.proj_columns, row))
-                            .map_err(|e| GgStreamError::Sink(format!("avro append: {e}")))?;
+                            .map_err(|e| EdgeStreamError::Sink(format!("avro append: {e}")))?;
                     }
                 }
             }
             // Flush the current block so an AllAcked batch is recoverable to here.
-            self.writer.flush().map_err(|e| GgStreamError::Sink(format!("avro flush: {e}")))?;
+            self.writer.flush().map_err(|e| EdgeStreamError::Sink(format!("avro flush: {e}")))?;
             self.sync_handle.sync_all()?;
             Ok(())
         }
@@ -1168,7 +1168,7 @@ mod avro_impl {
         pub(super) fn close(self) -> Result<()> {
             let Self { writer, sync_handle, .. } = self;
             let file =
-                writer.into_inner().map_err(|e| GgStreamError::Sink(format!("avro close: {e}")))?;
+                writer.into_inner().map_err(|e| EdgeStreamError::Sink(format!("avro close: {e}")))?;
             file.sync_all()?;
             drop(sync_handle);
             Ok(())

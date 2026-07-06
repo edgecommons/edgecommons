@@ -1,4 +1,4 @@
-//! # GGCommons (Rust)
+//! # EdgeCommons (Rust)
 //!
 //! Rust implementation of the Greengrass Commons library — a third implementation
 //! alongside the Java (canonical) and Python libraries. It bundles the
@@ -10,14 +10,14 @@
 //! cross-language parity work, and Greengrass IPC (the `greengrass` feature: IPC
 //! messaging, `GG_CONFIG`, `SHADOW`, and `CONFIG_COMPONENT`) are all implemented and
 //! have been **validated against a live Greengrass core** (non-root), including the
-//! real-time device-shadow round-trip. See `../GGCOMMONS_RUST_PORT.md` for the full
+//! real-time device-shadow round-trip. See `../EDGECOMMONS_RUST_PORT.md` for the full
 //! design and history.
 //!
 //! ```no_run
-//! use ggcommons::prelude::*;
+//! use edgecommons::prelude::*;
 //!
-//! # async fn run() -> ggcommons::Result<()> {
-//! let gg = GgCommonsBuilder::new("com.example.MyComponent")
+//! # async fn run() -> edgecommons::Result<()> {
+//! let gg = EdgeCommonsBuilder::new("com.example.MyComponent")
 //!     .args(std::env::args_os())
 //!     .build()
 //!     .await?;
@@ -53,8 +53,8 @@ pub mod streaming;
 #[cfg(test)]
 mod testutil;
 
-pub use error::{GgError, Result};
-pub use instance::GgInstance;
+pub use error::{EdgeCommonsError, Result};
+pub use instance::EdgeCommonsInstance;
 
 use std::ffi::OsString;
 use std::sync::Arc;
@@ -69,7 +69,7 @@ use crate::platform::Transport;
 /// The initialized component runtime. Holds the wired services and the current
 /// configuration snapshot. Dropping it releases owned resources (RAII) — there is
 /// no separate `close()` to forget.
-pub struct GgCommons {
+pub struct EdgeCommons {
     component_name: String,
     args: ParsedArgs,
     config: Arc<ArcSwap<Config>>,
@@ -79,18 +79,18 @@ pub struct GgCommons {
     /// empty if no `streaming` config section was provided.
     #[cfg(feature = "streaming")]
     streams: Arc<dyn streaming::StreamService>,
-    /// Owns the streaming stats→metrics task; dropping `GgCommons` stops it (RAII).
+    /// Owns the streaming stats→metrics task; dropping `EdgeCommons` stops it (RAII).
     #[cfg(feature = "streaming")]
     _stream_metrics: Option<streaming::StreamMetricsBridge>,
     /// Credential service (the `credentials` feature). `None` when the component config has no
     /// `credentials` section.
     #[cfg(feature = "credentials")]
     credentials: Option<Arc<dyn credentials::CredentialService>>,
-    /// Owns the credential stats→metrics task; dropping `GgCommons` stops it (RAII).
+    /// Owns the credential stats→metrics task; dropping `EdgeCommons` stops it (RAII).
     #[cfg(feature = "credentials")]
     _credential_metrics: Option<credentials::CredentialMetricsBridge>,
     /// Parameter service (the `parameters` feature). `None` when the component config has no
-    /// `parameters` section. Owns its background refresh thread; dropping `GgCommons` stops it.
+    /// `parameters` section. Owns its background refresh thread; dropping `EdgeCommons` stops it.
     #[cfg(feature = "parameters")]
     parameters: Option<Arc<dyn parameters::ParameterService>>,
     /// Config-change listeners notified on hot reload.
@@ -104,25 +104,25 @@ pub struct GgCommons {
     /// instead of hand-rolling `tokio::signal`. Watch semantics mean a clone created after the
     /// signal still observes the latched `true` (no missed-notification race).
     shutdown_rx: tokio::sync::watch::Receiver<bool>,
-    /// Owns the HTTP health server thread; dropping `GgCommons` stops it (RAII). `None` when health
+    /// Owns the HTTP health server thread; dropping `EdgeCommons` stops it (RAII). `None` when health
     /// is disabled (the default off-KUBERNETES) or the listener failed to bind.
     _health_server: Option<health::HealthServer>,
     /// Owns the SIGTERM/Ctrl-C watcher task (FR-HB-2); aborted on drop.
     _signal_task: AbortOnDrop,
     /// Owns the `_bcast` republish listener (§9.3/§9.4, the late-join lever); dropping
-    /// `GgCommons` unsubscribes it (RAII). Declared BEFORE `_heartbeat` so it tears down first
+    /// `EdgeCommons` unsubscribes it (RAII). Declared BEFORE `_heartbeat` so it tears down first
     /// (mirrors the Java canonical's shutdown order: `republishListener.close()` before
     /// `heartbeat.close()` — struct fields drop in declaration order). `None` when no messaging
     /// transport was wired.
     _republish_listener: Option<Arc<uns::RepublishListener>>,
     /// The library-owned command inbox (DESIGN-uns §9.5, slice S2, the minimal `commands()`
-    /// facade); dropping `GgCommons` unsubscribes it (RAII). Declared BEFORE `_heartbeat` so it
+    /// facade); dropping `EdgeCommons` unsubscribes it (RAII). Declared BEFORE `_heartbeat` so it
     /// tears down before the heartbeat (mirrors the Java canonical's shutdown order:
     /// `commandInbox.close()` before `heartbeat.close()`), and AFTER `_republish_listener`
     /// (mirrors `republishListener.close()` before `commandInbox.close()`). `None` when no
     /// messaging transport was wired.
     commands: Option<Arc<commands::CommandInbox>>,
-    /// Owns the heartbeat task; dropping `GgCommons` stops it (RAII). `Arc`-shared with the
+    /// Owns the heartbeat task; dropping `EdgeCommons` stops it (RAII). `Arc`-shared with the
     /// republish listener's `republish-state` action ([`heartbeat::Heartbeat::publish_state_now`])
     /// and the command inbox's `ping` uptime source ([`heartbeat::Heartbeat::uptime_secs`]).
     _heartbeat: Arc<heartbeat::Heartbeat>,
@@ -136,7 +136,7 @@ pub struct GgCommons {
     /// The injected "now" seam the `data()`/`events()` facades use for their `serverTs`/
     /// `timestamp` defaults (DESIGN-class-facades). Production is always
     /// [`facades::system_clock`] — the facades' own unit/conformance tests inject a fixed clock
-    /// directly (they build `GgInstance`/the facades without going through this runtime).
+    /// directly (they build `EdgeCommonsInstance`/the facades without going through this runtime).
     facade_clock: facades::Clock,
     /// Owns the hot-reload task; aborted on drop. `None` if the source can't watch.
     _reload_task: Option<AbortOnDrop>,
@@ -157,7 +157,7 @@ impl Drop for AbortOnDrop {
     }
 }
 
-impl GgCommons {
+impl EdgeCommons {
     /// The component's full name.
     pub fn component_name(&self) -> &str {
         &self.component_name
@@ -175,7 +175,7 @@ impl GgCommons {
     /// has already been observed.
     ///
     /// ```no_run
-    /// # async fn run(gg: &ggcommons::GgCommons) {
+    /// # async fn run(gg: &edgecommons::EdgeCommons) {
     /// gg.shutdown_signal().await; // resolves on SIGTERM / Ctrl-C
     /// # }
     /// ```
@@ -199,14 +199,14 @@ impl GgCommons {
     /// # Errors
     /// | Error Variant | Condition | Recovery |
     /// |---------------|-----------|----------|
-    /// | `GgError::Messaging` | No messaging service was wired | Select a transport (`--transport IPC|MQTT`) and enable the matching cargo feature |
+    /// | `EdgeCommonsError::Messaging` | No messaging service was wired | Select a transport (`--transport IPC|MQTT`) and enable the matching cargo feature |
     ///
     /// Note: since Phase 0, an unsupported transport/feature combination fails fast during
     /// `build()` (e.g. `--platform GREENGRASS` without the `greengrass` feature), so a wired
     /// runtime normally always has a messaging service.
     pub fn messaging(&self) -> Result<Arc<dyn messaging::MessagingService>> {
         self.messaging.clone().ok_or_else(|| {
-            GgError::Messaging(
+            EdgeCommonsError::Messaging(
                 "messaging is not available: select --transport IPC (requires the 'greengrass' \
                  feature) or --transport MQTT (requires the 'standalone' feature)"
                     .to_string(),
@@ -224,7 +224,7 @@ impl GgCommons {
     /// verbs (`ping`, `reload-config`, `get-configuration`) are registered by the library and
     /// cannot be shadowed. `None` only when no messaging transport was wired (which the builder
     /// never leaves unset in practice — every supported transport either wires messaging or fails
-    /// `build()` outright), mirroring `GGCommons.getCommands()`, which is `null` only on a
+    /// `build()` outright), mirroring `EdgeCommons.getCommands()`, which is `null` only on a
     /// mock/subclass bring-up that never ran `init`.
     pub fn commands(&self) -> Option<Arc<commands::CommandInbox>> {
         self.commands.clone()
@@ -241,15 +241,15 @@ impl GgCommons {
     }
 
     /// The instance-scoped handle for an instance token (UNS-CANONICAL-DESIGN §3,
-    /// D-U3): a [`GgInstance`] whose `uns()` mints topics with — and whose
+    /// D-U3): a [`EdgeCommonsInstance`] whose `uns()` mints topics with — and whose
     /// `message(...)` stamps envelopes with — this instance token. The token is
     /// validated against the §2.2 token rule; the id is deliberately NOT verified
     /// against the configured `component.instances[]` (instances may be created
     /// dynamically) — an unknown id is only logged at DEBUG as a diagnostic aid.
     ///
     /// # Errors
-    /// [`GgError::UnsValidation`] when the token violates the §2.2 token rule.
-    pub fn instance(&self, instance_id: &str) -> Result<GgInstance> {
+    /// [`EdgeCommonsError::UnsValidation`] when the token violates the §2.2 token rule.
+    pub fn instance(&self, instance_id: &str) -> Result<EdgeCommonsInstance> {
         uns::check_token(instance_id, "instance id")?;
         let cfg = self.config.load_full();
         let configured = cfg.instance_ids();
@@ -261,7 +261,7 @@ impl GgCommons {
                  creating a dynamic instance handle"
             );
         }
-        GgInstance::new(
+        EdgeCommonsInstance::new(
             instance_id.to_string(),
             cfg,
             self.messaging.clone(),
@@ -376,14 +376,14 @@ impl GgCommons {
     }
 }
 
-/// Fluent builder for [`GgCommons`] (the supported construction path).
-pub struct GgCommonsBuilder {
+/// Fluent builder for [`EdgeCommons`] (the supported construction path).
+pub struct EdgeCommonsBuilder {
     component_name: String,
     argv: Option<Vec<OsString>>,
     receive_own_messages: bool,
 }
 
-impl GgCommonsBuilder {
+impl EdgeCommonsBuilder {
     /// Start building a component runtime with the given full component name.
     pub fn new(component_name: impl Into<String>) -> Self {
         Self {
@@ -424,14 +424,14 @@ impl GgCommonsBuilder {
 
     /// Parse arguments, load and validate configuration, initialize logging,
     /// messaging, metrics, and heartbeat, and return the runtime.
-    pub async fn build(self) -> Result<GgCommons> {
+    pub async fn build(self) -> Result<EdgeCommons> {
         let parsed = match self.argv {
             Some(argv) => cli::parse_from(argv)?,
             None => cli::parse_from(std::env::args_os())?,
         };
 
         // Identity (thing name) was resolved by the platform resolver during arg parse
-        // (explicit -t ▸ [KUBERNETES: GGCOMMONS_THING_NAME ▸ POD_NAME] ▸ AWS_IOT_THING_NAME env
+        // (explicit -t ▸ [KUBERNETES: EDGECOMMONS_THING_NAME ▸ POD_NAME] ▸ AWS_IOT_THING_NAME env
         // probe ▸ library fallback, DESIGN-core §6.2 / FR-RT-7).
         let thing_name = parsed.identity.clone();
 
@@ -522,7 +522,7 @@ impl GgCommonsBuilder {
             component = %self.component_name,
             thing = %cfg.thing_name,
             config_source = source.source_name(),
-            "GGCommons initialized"
+            "EdgeCommons initialized"
         );
 
         let config: Arc<ArcSwap<Config>> = Arc::new(ArcSwap::from_pointee(cfg));
@@ -675,9 +675,9 @@ impl GgCommonsBuilder {
 
         // FR-HB-2: the LIBRARY wires SIGTERM (Unix) / Ctrl-C so a kubelet stop flips `/readyz` to
         // 503 at once. The library does not own the run loop, so it cannot exit the process —
-        // resource teardown stays RAII on `GgCommons` drop when the app leaves its loop. The watcher
+        // resource teardown stays RAII on `EdgeCommons` drop when the app leaves its loop. The watcher
         // only flips the (idempotent) shutting-down flag and logs.
-        // Watch channel the signal watcher flips on shutdown; `GgCommons::shutdown_signal` awaits it
+        // Watch channel the signal watcher flips on shutdown; `EdgeCommons::shutdown_signal` awaits it
         // so apps await one library-owned future instead of hand-rolling `tokio::signal`.
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
         let signal_task =
@@ -737,7 +737,7 @@ impl GgCommonsBuilder {
         // §9.5 (slice S2): the component's own command inbox
         // (ecv1/{device}/{component}/main/cmd/#) — built-ins ping / reload-config /
         // get-configuration answer the console out of the box; apps add custom verbs via
-        // `GgCommons::commands()`. Always on (no config surface); best-effort start (a failure
+        // `EdgeCommons::commands()`. Always on (no config surface); best-effort start (a failure
         // disables the inbox only). Wired right after the republish listener (needs only the
         // messaging service, not the privileged reserved-publish seam).
         let commands = if let Some(messaging_svc) = &messaging {
@@ -796,7 +796,7 @@ impl GgCommonsBuilder {
             )
         });
 
-        Ok(GgCommons {
+        Ok(EdgeCommons {
             component_name: self.component_name,
             args: parsed,
             config,
@@ -850,7 +850,7 @@ fn spawn_config_reload(
 ///
 /// Shared by the watch-driven hot-reload loop ([`spawn_config_reload`]) and the pull-based
 /// `reload-config` command action ([`reload_from_provider`]), so BOTH paths funnel through the
-/// exact same apply site: `config` (the `ArcSwap` read by [`GgCommons::config`],
+/// exact same apply site: `config` (the `ArcSwap` read by [`EdgeCommons::config`],
 /// [`config::effective::redact`], and every subsystem) is always the freshly applied snapshot the
 /// instant either path returns `true` — there is no separate "full config" copy that could go
 /// stale, unlike a design that caches the applied document in a second field.
@@ -917,7 +917,7 @@ async fn reload_from_provider(
 /// On the first termination signal it flips the readiness state to "shutting down" so the health
 /// `/readyz` endpoint returns 503 immediately (the kubelet stops routing traffic before the pod
 /// goes away), then logs and ends. The library cannot exit the process (it does not own the run
-/// loop); resource teardown remains RAII on [`GgCommons`] drop when the app leaves its loop.
+/// loop); resource teardown remains RAII on [`EdgeCommons`] drop when the app leaves its loop.
 ///
 /// # Semantics
 /// Idempotent — [`health::HealthState::begin_shutdown`] is a flag store, safe under repeated
@@ -930,7 +930,7 @@ fn spawn_signal_watcher(
     tokio::spawn(async move {
         wait_for_terminate().await;
         state.begin_shutdown();
-        // Latch the shutdown flag so `GgCommons::shutdown_signal` resolves (and stays resolved for
+        // Latch the shutdown flag so `EdgeCommons::shutdown_signal` resolves (and stays resolved for
         // any later-cloned receiver). Ignore the error when there are no receivers.
         let _ = shutdown_tx.send(true);
         tracing::info!("termination signal received; readiness set to 503 (shutting down)");
@@ -938,7 +938,7 @@ fn spawn_signal_watcher(
 }
 
 /// Resolve once `rx` observes a shutdown (value `true`), returning immediately if it already has.
-/// Backs [`GgCommons::shutdown_signal`]; an `Err` (all senders dropped) is treated as shutdown.
+/// Backs [`EdgeCommons::shutdown_signal`]; an `Err` (all senders dropped) is treated as shutdown.
 async fn wait_for_shutdown(rx: &mut tokio::sync::watch::Receiver<bool>) {
     let _ = rx.wait_for(|flag| *flag).await;
 }
@@ -987,8 +987,8 @@ async fn wait_for_terminate() {
 /// # Errors
 /// | Error Variant | Condition | Recovery |
 /// |---------------|-----------|----------|
-/// | `GgError::Io` / `GgError::Json` | Messaging config file missing or malformed | Check the `--transport MQTT <path>` file |
-/// | `GgError::Messaging` | Broker/IPC connection failed; MQTT path missing; or the required cargo feature is disabled | Verify the broker/Nucleus; supply the path; enable the feature |
+/// | `EdgeCommonsError::Io` / `EdgeCommonsError::Json` | Messaging config file missing or malformed | Check the `--transport MQTT <path>` file |
+/// | `EdgeCommonsError::Messaging` | Broker/IPC connection failed; MQTT path missing; or the required cargo feature is disabled | Verify the broker/Nucleus; supply the path; enable the feature |
 async fn init_messaging(
     transport: Transport,
     messaging_config_path: Option<&std::path::Path>,
@@ -1003,7 +1003,7 @@ async fn init_messaging(
                 use crate::messaging::service::DefaultMessagingService;
 
                 let path = messaging_config_path.ok_or_else(|| {
-                    GgError::Cli(
+                    EdgeCommonsError::Cli(
                         "MQTT transport requires a messaging config path: \
                          --transport MQTT <messaging_config.json>"
                             .to_string(),
@@ -1016,7 +1016,7 @@ async fn init_messaging(
             #[cfg(not(feature = "standalone"))]
             {
                 let _ = messaging_config_path;
-                Err(GgError::Messaging(
+                Err(EdgeCommonsError::Messaging(
                     "MQTT transport requires the 'standalone' cargo feature".to_string(),
                 ))
             }
@@ -1047,7 +1047,7 @@ async fn init_messaging(
                 // Fail fast (DECISION §12 #4): GREENGRASS/IPC was selected (explicitly or by
                 // auto-detection) but this binary lacks the `greengrass` cargo feature.
                 // Replaces the historical silent `Ok(None)`.
-                Err(GgError::Messaging(
+                Err(EdgeCommonsError::Messaging(
                     "IPC transport (platform=GREENGRASS) requires the 'greengrass' cargo \
                      feature, which is absent from this build. Rebuild with \
                      --features greengrass (Linux/WSL only), or run with \
@@ -1077,12 +1077,12 @@ pub mod prelude {
     pub use crate::uns::{Uns, UnsClass, UnsScope};
     #[cfg(feature = "streaming")]
     pub use crate::streaming::{StreamHandle, StreamRecord, StreamService, Stats as StreamStats};
-    pub use crate::{GgCommons, GgCommonsBuilder, GgError, GgInstance, Result};
+    pub use crate::{EdgeCommons, EdgeCommonsBuilder, EdgeCommonsError, EdgeCommonsInstance, Result};
 }
 
 #[cfg(test)]
 mod shutdown_tests {
-    //! Tests for the library-owned shutdown future (#17) backing `GgCommons::shutdown_signal`.
+    //! Tests for the library-owned shutdown future (#17) backing `EdgeCommons::shutdown_signal`.
     use super::wait_for_shutdown;
     use std::time::Duration;
 
@@ -1118,13 +1118,13 @@ mod reload_tests {
     //! Tests for [`apply_reloaded_config`]/[`reload_from_provider`] — the `reload-config`
     //! command action's plumbing (DESIGN-uns §9.5, [`commands::CommandInbox`]). In particular,
     //! these pin that BOTH the watch-driven hot-reload path and the pull-based `reload-config`
-    //! path leave `config` (the single `ArcSwap` read by [`GgCommons::config`], the `cfg`
+    //! path leave `config` (the single `ArcSwap` read by [`EdgeCommons::config`], the `cfg`
     //! publisher, and `get-configuration`) holding the freshly applied snapshot immediately on
     //! success — the historical Java `fullConfig`-staleness bug has no Rust analog because there
     //! is no second cached copy of the applied document to go stale; see the parity report.
     use super::*;
     use crate::config::source::ConfigSource;
-    use crate::error::GgError;
+    use crate::error::EdgeCommonsError;
     use async_trait::async_trait;
     use serde_json::json;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1146,7 +1146,7 @@ mod reload_tests {
         async fn load(&self) -> Result<Value> {
             let mut results = self.results.lock().unwrap();
             if results.is_empty() {
-                Err(GgError::Config("FakeSource exhausted".to_string()))
+                Err(EdgeCommonsError::Config("FakeSource exhausted".to_string()))
             } else {
                 results.remove(0)
             }
@@ -1224,7 +1224,7 @@ mod reload_tests {
     async fn reload_from_provider_keeps_previous_on_fetch_failure() {
         let original = Arc::new(Config::from_value("C", "t", json!({ "component": {} })).unwrap());
         let config = Arc::new(ArcSwap::from(original.clone()));
-        let source = FakeSource::new(vec![Err(GgError::Config("broker down".to_string()))]);
+        let source = FakeSource::new(vec![Err(EdgeCommonsError::Config("broker down".to_string()))]);
 
         let ok = reload_from_provider(&source, &config, &empty_listeners(), "C", "t").await;
 

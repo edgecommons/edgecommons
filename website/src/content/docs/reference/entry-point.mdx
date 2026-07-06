@@ -1,13 +1,13 @@
 ---
 title: Entry point & builder
-description: API reference for the GGCommons runtime and its builder — accessors, the opt-in null contract, readiness, and lifecycle, in all four languages.
+description: API reference for the EdgeCommons runtime and its builder — accessors, the opt-in null contract, readiness, and lifecycle, in all four languages.
 sidebar:
   order: 2
 ---
 
 import { Tabs, TabItem, Aside, LinkCard } from "@astrojs/starlight/components";
 
-The `GGCommons` object is your component's **runtime**. You build it once at startup from the
+The `EdgeCommons` object is your component's **runtime**. You build it once at startup from the
 standard CLI args, and it wires every subsystem — config, messaging, metrics, heartbeat, health, and
 the opt-in credentials/parameters/streaming — behind one handle that you hold for the component's
 lifetime. You reach each subsystem through a **typed accessor**, and you tear the runtime down with a
@@ -19,9 +19,9 @@ constructors for back-compat (see [Deprecated Java constructors](#deprecated-jav
 There is **no `init()` facade in any language.**
 
 <Aside type="note">
-Type and method names follow each language's convention. The runtime type is `GGCommons` in Java,
-Python, and TypeScript, and `GgCommons` in Rust. The builder is `GGCommonsBuilder` in Java, Python,
-and TypeScript, and `GgCommonsBuilder` in Rust.
+Type and method names follow each language's convention. The runtime type is `EdgeCommons` in Java,
+Python, and TypeScript, and `EdgeCommons` in Rust. The builder is `EdgeCommonsBuilder` in Java, Python,
+and TypeScript, and `EdgeCommonsBuilder` in Rust.
 </Aside>
 
 ## The builder
@@ -33,40 +33,40 @@ optional `receiveOwnMessages` flag, then produces the runtime.
 <TabItem label="Java">
 
 ```java
-// com.mbreissi.ggcommons.GGCommonsBuilder
-static GGCommonsBuilder create(String componentName);
-GGCommonsBuilder withArgs(String[] args);                    // already-stripped app args (argv minus program)
-GGCommonsBuilder withAppOptions(org.apache.commons.cli.Options appOptions);
-GGCommonsBuilder receiveOwnMessages(boolean receiveOwnMessages); // default true
-GGCommons build();                                           // throws IllegalStateException if componentName is null
+// com.mbreissi.edgecommons.EdgeCommonsBuilder
+static EdgeCommonsBuilder create(String componentName);
+EdgeCommonsBuilder withArgs(String[] args);                    // already-stripped app args (argv minus program)
+EdgeCommonsBuilder withAppOptions(org.apache.commons.cli.Options appOptions);
+EdgeCommonsBuilder receiveOwnMessages(boolean receiveOwnMessages); // default true
+EdgeCommons build();                                           // throws IllegalStateException if componentName is null
 ```
 
 </TabItem>
 <TabItem label="Python">
 
 ```python
-# ggcommons.ggcommons_builder.GGCommonsBuilder
+# edgecommons.edgecommons_builder.EdgeCommonsBuilder
 def __init__(self, component_name: str)                       # raises ValueError if empty
 @staticmethod
-def create(component_name: str) -> "GGCommonsBuilder"
-def with_args(self, args: list[str]) -> "GGCommonsBuilder"    # raises ValueError if None
-def with_app_options(self, app_options: argparse.ArgumentParser) -> "GGCommonsBuilder"
-def receive_own_messages(self, receive_own_messages: bool) -> "GGCommonsBuilder"  # default True
-def build(self) -> "GGCommons"
+def create(component_name: str) -> "EdgeCommonsBuilder"
+def with_args(self, args: list[str]) -> "EdgeCommonsBuilder"    # raises ValueError if None
+def with_app_options(self, app_options: argparse.ArgumentParser) -> "EdgeCommonsBuilder"
+def receive_own_messages(self, receive_own_messages: bool) -> "EdgeCommonsBuilder"  # default True
+def build(self) -> "EdgeCommons"
 ```
 
 </TabItem>
 <TabItem label="Rust">
 
 ```rust
-// ggcommons::GgCommonsBuilder
+// edgecommons::EdgeCommonsBuilder
 fn new(component_name: impl Into<String>) -> Self;
 fn receive_own_messages(self, receive_own_messages: bool) -> Self;  // default true; false is a no-op (see note)
 fn args<I, T>(self, args: I) -> Self
 where
     I: IntoIterator<Item = T>,
     T: Into<std::ffi::OsString>;                                    // argv INCLUDES the program name
-async fn build(self) -> ggcommons::Result<GgCommons>;
+async fn build(self) -> edgecommons::Result<EdgeCommons>;
 ```
 
 Rust has no `with_app_options` equivalent. `build()` is `async` and returns a `Result`.
@@ -75,11 +75,11 @@ Rust has no `with_app_options` equivalent. `build()` is `async` and returns a `R
 <TabItem label="TypeScript">
 
 ```typescript
-// ggcommons.GGCommonsBuilder
+// edgecommons.EdgeCommonsBuilder
 constructor(componentNameValue: string);
 args(argv: string[]): this;                       // argv WITHOUT the node/script prefix (process.argv.slice(2))
 receiveOwnMessages(value: boolean): this;         // default true; honored on IPC, MQTT uses broker semantics
-build(): Promise<GGCommons>;                       // async
+build(): Promise<EdgeCommons>;                       // async
 ```
 
 TypeScript has no `withAppOptions` equivalent. `build()` returns a `Promise`.
@@ -109,11 +109,11 @@ recipe), the CLI args, and call `build`.
 <TabItem label="Java">
 
 ```java
-import com.mbreissi.ggcommons.GGCommons;
-import com.mbreissi.ggcommons.GGCommonsBuilder;
+import com.mbreissi.edgecommons.EdgeCommons;
+import com.mbreissi.edgecommons.EdgeCommonsBuilder;
 
 public static void main(String[] args) {
-    GGCommons gg = GGCommonsBuilder.create("com.mbreissi.greengrass.JavaComponentSkeleton")
+    EdgeCommons gg = EdgeCommonsBuilder.create("com.mbreissi.edgecommons.JavaComponentSkeleton")
             .withArgs(args)
             .build();
 
@@ -131,10 +131,10 @@ public static void main(String[] args) {
 <TabItem label="Python">
 
 ```python
-from ggcommons.ggcommons_builder import GGCommonsBuilder
+from edgecommons.edgecommons_builder import EdgeCommonsBuilder
 
 gg = (
-    GGCommonsBuilder.create("ggcommons_python")
+    EdgeCommonsBuilder.create("edgecommons_python")
     .with_args([
         "-c", "FILE", "config.json",
         "--platform", "HOST", "--transport", "MQTT", "messaging.json",
@@ -146,18 +146,18 @@ gg = (
 messaging = gg.get_messaging()        # the MessagingClient class (static-method handle)
 config    = gg.get_config_manager()
 # ... business logic ...
-gg.shutdown()                         # or: with GGCommonsBuilder.create(...).build() as gg:
+gg.shutdown()                         # or: with EdgeCommonsBuilder.create(...).build() as gg:
 ```
 
 </TabItem>
 <TabItem label="Rust">
 
 ```rust
-use ggcommons::prelude::*;
+use edgecommons::prelude::*;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let gg = GgCommonsBuilder::new("com.example.SkeletonComponent")
+    let gg = EdgeCommonsBuilder::new("com.example.SkeletonComponent")
         .args(std::env::args_os())   // argv INCLUDES the program name
         .build()
         .await?;
@@ -176,12 +176,12 @@ async fn main() -> anyhow::Result<()> {
 <TabItem label="TypeScript">
 
 ```typescript
-import { GGCommonsBuilder, GGCommons } from "@edgecommons/ggcommons";
+import { EdgeCommonsBuilder, EdgeCommons } from "@edgecommons/edgecommons";
 
-const gg = await new GGCommonsBuilder("com.example.Lc")
+const gg = await new EdgeCommonsBuilder("com.example.Lc")
   .args([
     "--platform", "HOST", "--transport", "MQTT", "messaging.json",
-    "-c", "ENV", "GGC_LIFECYCLE_CFG", "-t", "lc-thing",
+    "-c", "ENV", "EDGECOMMONS_LIFECYCLE_CFG", "-t", "lc-thing",
   ])   // argv WITHOUT the node/script prefix (process.argv.slice(2))
   .build();
 
@@ -205,11 +205,11 @@ follow the [opt-in return contract](#opt-in-return-contract) below.
 <TabItem label="Java">
 
 ```java
-// com.mbreissi.ggcommons.GGCommons — accessors
+// com.mbreissi.edgecommons.EdgeCommons — accessors
 ConfigManager     getConfigManager();   // concrete instance (returns the wired field; no init guard)
 MessagingClient   getMessaging();       // concrete instance
 Uns               getUns();             // the UNS topic builder (component identity, instance "main")
-GgInstance        instance(String id);  // instance-scoped handle (validated token; cached per id)
+EdgeCommonsInstance        instance(String id);  // instance-scoped handle (validated token; cached per id)
 MetricEmitter     getMetrics();         // concrete instance
 StreamService     getStreams();         // null when no `streaming` config section
 CredentialService getCredentials();     // null when no `credentials` section
@@ -222,11 +222,11 @@ There is no `getConfig()` accessor in Java — config is reached via `getConfigM
 <TabItem label="Python">
 
 ```python
-# ggcommons.ggcommons.GGCommons — accessors
+# edgecommons.edgecommons.EdgeCommons — accessors
 def get_config_manager(self) -> ConfigManager     # raises RuntimeError if not initialized
 def get_messaging(self)                            # returns the MessagingClient CLASS (static-method ops)
 def uns(self) -> Uns                               # the UNS topic builder (bare name — no get_ prefix)
-def instance(self, instance_id: str) -> GgInstance # instance-scoped handle (validated; cached per id)
+def instance(self, instance_id: str) -> EdgeCommonsInstance # instance-scoped handle (validated; cached per id)
 def get_metrics(self)                              # returns the MetricEmitter CLASS
 def get_streams(self)                              # None when no `streaming` section
 def get_credentials(self)                          # None when no `credentials` section
@@ -240,13 +240,13 @@ static, so you call them directly on the returned object.
 <TabItem label="Rust">
 
 ```rust
-// ggcommons::GgCommons — accessors
+// edgecommons::EdgeCommons — accessors
 fn component_name(&self) -> &str;
 fn args(&self) -> &ParsedArgs;
 fn config(&self) -> Arc<Config>;                                      // atomic snapshot (ArcSwap)
 fn messaging(&self) -> Result<Arc<dyn messaging::MessagingService>>;  // Err if no transport wired
 fn uns(&self) -> uns::Uns;                                            // the UNS topic builder
-fn instance(&self, instance_id: &str) -> Result<GgInstance>;          // Err on an invalid token
+fn instance(&self, instance_id: &str) -> Result<EdgeCommonsInstance>;          // Err on an invalid token
 fn metrics(&self) -> Arc<dyn metrics::MetricService>;
 
 #[cfg(feature = "streaming")]
@@ -259,20 +259,20 @@ fn credentials(&self) -> Option<Arc<dyn credentials::CredentialService>>;  // No
 fn parameters(&self) -> Option<Arc<dyn parameters::ParameterService>>;     // None when no section
 ```
 
-`messaging()` returns a `Result` (not `Option`): it is `Err(GgError::Messaging)` if no transport was
+`messaging()` returns a `Result` (not `Option`): it is `Err(EdgeCommonsError::Messaging)` if no transport was
 wired. `config()` returns an `Arc<Config>` snapshot.
 
 </TabItem>
 <TabItem label="TypeScript">
 
 ```typescript
-// ggcommons.GGCommons — accessors
+// edgecommons.EdgeCommons — accessors
 componentName(): string;
 args(): ParsedArgs;
 config(): Config;                                  // snapshot
-messaging(): IMessagingService;                    // throws GgError.messaging(...) if no transport wired
+messaging(): IMessagingService;                    // throws EdgeCommonsError.messaging(...) if no transport wired
 uns(): Uns;                                        // the UNS topic builder
-instance(instanceId: string): GgInstance;          // instance-scoped handle (validated; cached per id)
+instance(instanceId: string): EdgeCommonsInstance;          // instance-scoped handle (validated; cached per id)
 metrics(): MetricService;
 streams(): StreamService | undefined;              // undefined when no `streaming` section
 credentials(): CredentialService | undefined;      // undefined when no `credentials` section
@@ -308,8 +308,8 @@ When no messaging transport is wired, the messaging accessor behaves differently
 
 - **Java** / **Python** return the concrete handle regardless (Java a `MessagingClient` instance,
   Python the `MessagingClient` class).
-- **Rust** returns `Err(GgError::Messaging)` — handle it with `?` or a match.
-- **TypeScript** **throws** `GgError.messaging(...)` — guard with try/catch if messaging is optional.
+- **Rust** returns `Err(EdgeCommonsError::Messaging)` — handle it with `?` or a match.
+- **TypeScript** **throws** `EdgeCommonsError.messaging(...)` — guard with try/catch if messaging is optional.
 
 ## Opt-in return contract
 
@@ -455,13 +455,13 @@ Do **not** add your own `Runtime.getRuntime().addShutdownHook(...)` — that dou
 def shutdown(self) -> None        # defensive per-subsystem teardown; safe on partial init
 
 # Context-manager form runs shutdown() on exit:
-with GGCommonsBuilder.create("my-component").with_args(args).build() as gg:
+with EdgeCommonsBuilder.create("my-component").with_args(args).build() as gg:
     ...   # business logic
 ```
 
 The library installs **SIGTERM and SIGINT** signal handlers (main thread only) that call `shutdown()`
 then `sys.exit(0)`; the previous handler for each signal is saved and restored on shutdown.
-`__enter__`/`__exit__` make `GGCommons` a context manager that calls `shutdown()` on exit.
+`__enter__`/`__exit__` make `EdgeCommons` a context manager that calls `shutdown()` on exit.
 
 <Aside type="note">
 Python wires **both SIGTERM and SIGINT** through the graceful-shutdown path, at parity with Java
@@ -474,7 +474,7 @@ Kubernetes stop a process; SIGINT is interactive Ctrl-C on a local/host run.
 
 ```rust
 // There is NO close()/shutdown() method. Teardown is pure RAII:
-// dropping `GgCommons` aborts the heartbeat, hot-reload, signal-watcher, and
+// dropping `EdgeCommons` aborts the heartbeat, hot-reload, signal-watcher, and
 // health-server tasks (AbortOnDrop).
 drop(gg);   // or simply let `gg` go out of scope
 ```
@@ -482,7 +482,7 @@ drop(gg);   // or simply let `gg` go out of scope
 Rust has **no `close()`/`shutdown()`** — teardown is RAII via `Drop`. The library's signal watcher
 reacts to SIGTERM/Ctrl-C by only **flipping readiness to "shutting down" (503) and logging**; it does
 **not** exit the process or tear down, because the library does not own your run loop. Teardown
-happens when your loop ends and `GgCommons` is dropped.
+happens when your loop ends and `EdgeCommons` is dropped.
 
 </TabItem>
 <TabItem label="TypeScript">
@@ -542,15 +542,15 @@ runtime via `gg.args()`, which returns a `ParsedArgs`.
 ## Deprecated Java constructors
 
 Java keeps three deprecated **direct constructors** for backward compatibility. They are still
-functional but **superseded by the builder** — use `GGCommonsBuilder.create(...)` for new code.
+functional but **superseded by the builder** — use `EdgeCommonsBuilder.create(...)` for new code.
 
 <Tabs syncKey="lang">
 <TabItem label="Java">
 
 ```java
-@Deprecated GGCommons(String componentName, String[] args);
-@Deprecated GGCommons(String componentName, String[] args, Options appOptions);
-@Deprecated GGCommons(String componentName, String[] args, Options appOptions, boolean receiveOwnMessages);
+@Deprecated EdgeCommons(String componentName, String[] args);
+@Deprecated EdgeCommons(String componentName, String[] args, Options appOptions);
+@Deprecated EdgeCommons(String componentName, String[] args, Options appOptions, boolean receiveOwnMessages);
 ```
 
 These delegate to a package-private `init(...)`; there is **no public `init()` facade** for callers.
@@ -559,7 +559,7 @@ These delegate to a package-private `init(...)`; there is **no public `init()` f
 <TabItem label="Python">
 
 Python keeps a **public constructor**
-`GGCommons(component_name, args, app_options=None, receive_own_messages=True)` (raises `ValueError`
+`EdgeCommons(component_name, args, app_options=None, receive_own_messages=True)` (raises `ValueError`
 if `component_name` is falsy), but the builder is the recommended construction path.
 
 </TabItem>
@@ -579,9 +579,9 @@ TypeScript is **builder-only** — there is no public direct constructor and no 
 
 | Concept | Java | Python | Rust | TypeScript |
 |---------|------|--------|------|------------|
-| Runtime type | `GGCommons` | `GGCommons` | `GgCommons` | `GGCommons` |
-| Builder type | `GGCommonsBuilder` | `GGCommonsBuilder` | `GgCommonsBuilder` | `GGCommonsBuilder` |
-| Start a builder | `create(name)` | `create(name)` | `new(name)` | `new GGCommonsBuilder(name)` |
+| Runtime type | `EdgeCommons` | `EdgeCommons` | `EdgeCommons` | `EdgeCommons` |
+| Builder type | `EdgeCommonsBuilder` | `EdgeCommonsBuilder` | `EdgeCommonsBuilder` | `EdgeCommonsBuilder` |
+| Start a builder | `create(name)` | `create(name)` | `new(name)` | `new EdgeCommonsBuilder(name)` |
 | Set args | `withArgs(args)` | `with_args(args)` | `args(...)` (incl. program name) | `args(...)` (sliced) |
 | App CLI options | `withAppOptions(...)` | `with_app_options(...)` | — (n/a) | — (n/a) |
 | Build | `build()` | `build()` | `build().await` | `await build()` |
@@ -599,5 +599,5 @@ TypeScript is **builder-only** — there is no public direct constructor and no 
 <LinkCard
   title="Next: Messaging reference"
   href="/reference/messaging/"
-  description="Publish, subscribe, and request/reply over the GGCommons message envelope."
+  description="Publish, subscribe, and request/reply over the EdgeCommons message envelope."
 />

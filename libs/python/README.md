@@ -1,6 +1,6 @@
-# GGCommons Python Library
+# EdgeCommons Python Library
 
-The Python implementation of the **Greengrass Commons** library (PyPI `greengrass-commons`) for
+The Python implementation of the **Greengrass Commons** library (PyPI `edgecommons`) for
 building **AWS IoT Greengrass v2** components. It bundles the cross-cutting concerns every edge
 component needs — configuration, messaging, metrics, heartbeat, logging, credentials, parameters,
 and telemetry streaming — so component authors write only business logic. It is one of four parallel
@@ -42,7 +42,7 @@ The old `-m STANDALONE` is now `--platform HOST` (dual-MQTT); the old `-m GREENG
 - **Parameters** (`get_parameters()`) — offline-first externalized config (env / mountedDir / AWS SSM).
   Opt-in: `None` unless a `parameters` section is present. See `docs/PARAMETERS.md`.
 - **Streaming** (`get_streams()`) — high-rate telemetry streaming to Kinesis/Kafka via an embedded
-  durable buffer (backed by the shared `ggstreamlog` core through a PyO3 native binding). Opt-in:
+  durable buffer (backed by the shared `edgestreamlog` core through a PyO3 native binding). Opt-in:
   `None` unless a `streaming` section is present. See `docs/TELEMETRY_STREAMING.md`.
 
 ## Install
@@ -54,17 +54,17 @@ pip install -e .
 
 ## Quick start
 
-Construct the library via `GGCommonsBuilder` and read the subsystems off the returned `GGCommons`
-instance. There is **no** `ggcommons.init()` facade and **no** service registry / `get_service()` —
+Construct the library via `EdgeCommonsBuilder` and read the subsystems off the returned `EdgeCommons`
+instance. There is **no** `edgecommons.init()` facade and **no** service registry / `get_service()` —
 use the concrete accessors below.
 
 ```python
 import sys
-from ggcommons import GGCommonsBuilder
+from edgecommons import EdgeCommonsBuilder
 
 class MyComponent:
     def main(self, args):
-        gg = GGCommonsBuilder.create("com.example.MyComponent").with_args(args).build()
+        gg = EdgeCommonsBuilder.create("com.example.MyComponent").with_args(args).build()
 
         config = gg.get_config_manager()     # ConfigManager
         messaging = gg.get_messaging()       # MessagingClient
@@ -85,7 +85,7 @@ if __name__ == "__main__":
 ### Messaging (builder)
 
 ```python
-from ggcommons.messaging import MessageBuilder
+from edgecommons.messaging import MessageBuilder
 
 messaging = gg.get_messaging()
 messaging.subscribe("requests/process", self.handle_request, 1)
@@ -101,7 +101,7 @@ messaging.publish("requests/process", message)
 ### Metrics (builder)
 
 ```python
-from ggcommons.metrics import MetricBuilder
+from edgecommons.metrics import MetricBuilder
 
 metric = (MetricBuilder.create("data_processed")
           .with_namespace("MyApp/Metrics")
@@ -113,7 +113,7 @@ metrics.define_metric(metric)
 metrics.emit_metric("data_processed", {"count": 100.0})
 ```
 
-> Construct via builders (`GGCommonsBuilder`, `MessageBuilder`, `MetricBuilder`,
+> Construct via builders (`EdgeCommonsBuilder`, `MessageBuilder`, `MetricBuilder`,
 > `ConfigManagerBuilder`), not raw constructors. `MetricBuilder` replaces the deprecated direct
 > `Metric` constructor — don't instantiate `Metric` directly.
 
@@ -133,8 +133,8 @@ metrics.emit_metric("data_processed", {"count": 100.0})
 }
 ```
 
-The config schema is the single-source `schema/ggcommons-config-schema.json` at the monorepo root
-(synced into `ggcommons/resources/`). The top level is strict; subsystem sections are permissive.
+The config schema is the single-source `schema/edgecommons-config-schema.json` at the monorepo root
+(synced into `edgecommons/resources/`). The top level is strict; subsystem sections are permissive.
 
 ## Run a component
 

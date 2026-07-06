@@ -1,6 +1,6 @@
 # edgecommons cutover runbook (Phase 0–1)
 
-Operational steps to (0) create the org + a self-hosted CI runner and (1) move the `ggcommons`
+Operational steps to (0) create the org + a self-hosted CI runner and (1) move the `edgecommons`
 library into the org and repoint its package coordinates. See `docs/ECOSYSTEM.md` for the overall
 design. **Do these in order; the repointing (Phase 1) only fully "activates" after the transfer +
 republish.**
@@ -143,11 +143,11 @@ sudo ./svc.sh stop && sudo ./svc.sh uninstall
 
 ## Phase 1a — Transfer the library
 
-1. `github.com/mbreissi/ggcommons` → **Settings → Danger Zone → Transfer** → new owner `edgecommons`.
+1. `github.com/mbreissi/edgecommons` → **Settings → Danger Zone → Transfer** → new owner `edgecommons`.
    GitHub **redirects the old path indefinitely**, so existing clones/CI/package refs keep working.
 2. Update your local remote:
    ```bash
-   git remote set-url origin git@github.com:edgecommons/ggcommons.git
+   git remote set-url origin git@github.com:edgecommons/edgecommons.git
    ```
 3. **Re-authorize the Cloudflare Workers Builds GitHub App** on the `edgecommons` org (the docs site
    auto-deploys from this repo) and confirm a push still triggers a docs deploy.
@@ -162,10 +162,10 @@ sudo ./svc.sh stop && sudo ./svc.sh uninstall
 |-----------|--------|-----|
 | `github.com/mbreissi/…` (git URLs, **Maven** `maven.pkg.github.com/mbreissi/…`, npm.pkg URLs) | → `edgecommons` | Repo owner moved. |
 | `ghcr.io/mbreissi/…` (component image namespace) | → `edgecommons` | GHCR namespace = owner. |
-| npm scope **`@mbreissi/ggcommons`** (+ `@mbreissi:registry`, `scope: "@mbreissi"`) | → `@edgecommons` | **GitHub Packages npm forces scope = owner.** This is the biggest surface (all TS imports/templates/docs). |
-| Public-npm addon **`@mbreissi/ggstreamlog-node`** | optional | Published to *public* npm (registry.npmjs.org), so its scope is independent of the GitHub owner. Rename for consistency (needs you to own the `@edgecommons` npm org) or keep on `@mbreissi`. |
+| npm scope **`@mbreissi/edgecommons`** (+ `@mbreissi:registry`, `scope: "@mbreissi"`) | → `@edgecommons` | **GitHub Packages npm forces scope = owner.** This is the biggest surface (all TS imports/templates/docs). |
+| Public-npm addon **`@edgecommons/streamlog-node`** | optional | Published to *public* npm (registry.npmjs.org), so its scope is independent of the GitHub owner. Rename for consistency (needs you to own the `@edgecommons` npm org) or keep on `@mbreissi`. |
 | **`com.mbreissi`** (Java groupId / package, ~hundreds of refs) | **keep** | Maven coordinates are independent of the GH Packages owner — only the `<distributionManagement>`/repository **URL** changes (covered by the `github.com/mbreissi/` rule). |
-| **`docs.edgecommons.mbreissi.com`** (canonical docs domain) | **use internally** | The canonical docs URL — refer to this one in all docs/notes/configs. `docs.ggcommons.mbreissi.com` still resolves as a live legacy alias, but do not reference it in new material. |
+| **`docs.edgecommons.mbreissi.com`** (canonical docs domain) | **use internally** | The canonical docs URL — refer to this one in all docs/notes/configs. `docs.edgecommons.mbreissi.com` still resolves as a live legacy alias, but do not reference it in new material. |
 
 > **Do NOT do a blanket `mbreissi` → `edgecommons` replace** — it would break the Java groupId and the
 > docs domain. Use the targeted rules below (none of them match `com.mbreissi` or `…mbreissi.com`).
@@ -182,7 +182,7 @@ sudo ./svc.sh stop && sudo ./svc.sh uninstall
 # from the repo root (PowerShell, the primary shell here)
 pwsh ecosystem/repoint-to-edgecommons.ps1                 # DRY RUN — lists every file that would change
 pwsh ecosystem/repoint-to-edgecommons.ps1 -Apply         # write the changes
-pwsh ecosystem/repoint-to-edgecommons.ps1 -Apply -KeepAddonScope   # ...but leave @mbreissi/ggstreamlog-node alone
+pwsh ecosystem/repoint-to-edgecommons.ps1 -Apply -KeepAddonScope   # ...but leave @edgecommons/streamlog-node alone
 ```
 (Bash equivalent: `ecosystem/repoint-to-edgecommons.sh` / `--apply`.)
 
@@ -208,7 +208,7 @@ Until packages are republished under `edgecommons`, *registry* installs of the n
 
 ```bash
 git tag java-lib/vX.Y.Z && git push origin java-lib/vX.Y.Z   # → GH Packages Maven (edgecommons)
-git tag ts-lib/vX.Y.Z   && git push origin ts-lib/vX.Y.Z     # → GH Packages npm @edgecommons/ggcommons
+git tag ts-lib/vX.Y.Z   && git push origin ts-lib/vX.Y.Z     # → GH Packages npm @edgecommons/edgecommons
 # python-lib / rust-lib: the tag IS the release (git-dep consumers); push the tags likewise.
 ```
 

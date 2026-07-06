@@ -1,4 +1,4 @@
-//! Cross-language interop node (Rust) for ggcommons. See python_node.py for the
+//! Cross-language interop node (Rust) for edgecommons. See python_node.py for the
 //! shared CLI contract:
 //!   interop-rust-node responder <request_topic>
 //!   interop-rust-node request   <request_topic> <token>
@@ -14,19 +14,19 @@ use std::time::Duration;
 
 use serde_json::json;
 
-use ggcommons::error::GgError;
-use ggcommons::messaging::config::MessagingConfig;
-use ggcommons::messaging::message::{MessageBuilder, MessageIdentity};
-use ggcommons::messaging::message_handler;
-use ggcommons::messaging::provider::mqtt::MqttProvider;
-use ggcommons::messaging::service::{DefaultMessagingService, MessagingService};
-use ggcommons::uns::{Uns, UnsClass};
+use edgecommons::error::EdgeCommonsError;
+use edgecommons::messaging::config::MessagingConfig;
+use edgecommons::messaging::message::{MessageBuilder, MessageIdentity};
+use edgecommons::messaging::message_handler;
+use edgecommons::messaging::provider::mqtt::MqttProvider;
+use edgecommons::messaging::service::{DefaultMessagingService, MessagingService};
+use edgecommons::uns::{Uns, UnsClass};
 
 const LANG: &str = "rust";
 
 async fn provider(suffix: &str) -> Arc<DefaultMessagingService> {
-    let host = std::env::var("GGCOMMONS_IT_MQTT_HOST").unwrap_or_else(|_| "localhost".to_string());
-    let port = std::env::var("GGCOMMONS_IT_MQTT_PORT").unwrap_or_else(|_| "1883".to_string());
+    let host = std::env::var("EDGECOMMONS_IT_MQTT_HOST").unwrap_or_else(|_| "localhost".to_string());
+    let port = std::env::var("EDGECOMMONS_IT_MQTT_PORT").unwrap_or_else(|_| "1883".to_string());
     let pid = std::process::id();
     let cfg = format!(
         r#"{{ "messaging": {{ "local": {{ "host": "{host}", "port": {port}, "clientId": "interop-{LANG}-{suffix}-{pid}" }} }} }}"#
@@ -243,12 +243,12 @@ async fn main() {
             }
         }
         // uns-guard — attempt a raw publish to a reserved-class topic through the
-        // guarded public service; must fail with GgError::ReservedTopic (§4.1).
+        // guarded public service; must fail with EdgeCommonsError::ReservedTopic (§4.1).
         "uns-guard" => {
             let svc = provider("guard").await;
             let topic = "ecv1/dev1/comp1/main/state";
             match svc.publish_raw(topic, &json!({ "from": LANG })).await {
-                Err(GgError::ReservedTopic(detail)) => {
+                Err(EdgeCommonsError::ReservedTopic(detail)) => {
                     println!(
                         "{}",
                         json!({ "error": "ReservedTopic", "detail": detail, "topic": topic })

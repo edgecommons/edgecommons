@@ -1,46 +1,46 @@
 # Builder Pattern Migration Guide
 
-This document outlines the recommended client changes for migrating from deprecated constructors and factory methods to the new builder pattern implementations in GGCommons.
+This document outlines the recommended client changes for migrating from deprecated constructors and factory methods to the new builder pattern implementations in EdgeCommons.
 
 ## Overview
 
 The following classes now provide builder patterns for more flexible and maintainable object construction:
 
-- `GGCommons` → `GGCommonsBuilder`
+- `EdgeCommons` → `EdgeCommonsBuilder`
 - `Message` → `MessageBuilder`
 - `Metric` → `MetricBuilder`
 
 ## Migration Examples
 
-### 1. GGCommons Construction
+### 1. EdgeCommons Construction
 
 **Old (Deprecated):**
 ```java
 // Basic construction
-GGCommons ggCommons = new GGCommons("com.example.MyComponent", args);
+EdgeCommons edgeCommons = new EdgeCommons("com.example.MyComponent", args);
 
 // With app options
-GGCommons ggCommons = new GGCommons("com.example.MyComponent", args, appOptions);
+EdgeCommons edgeCommons = new EdgeCommons("com.example.MyComponent", args, appOptions);
 
 // With all parameters
-GGCommons ggCommons = new GGCommons("com.example.MyComponent", args, appOptions, false);
+EdgeCommons edgeCommons = new EdgeCommons("com.example.MyComponent", args, appOptions, false);
 ```
 
 **New (Recommended):**
 ```java
 // Basic construction
-GGCommons ggCommons = GGCommonsBuilder.create("com.example.MyComponent")
+EdgeCommons edgeCommons = EdgeCommonsBuilder.create("com.example.MyComponent")
     .withArgs(args)
     .build();
 
 // With app options
-GGCommons ggCommons = GGCommonsBuilder.create("com.example.MyComponent")
+EdgeCommons edgeCommons = EdgeCommonsBuilder.create("com.example.MyComponent")
     .withArgs(args)
     .withAppOptions(appOptions)
     .build();
 
 // With all parameters
-GGCommons ggCommons = GGCommonsBuilder.create("com.example.MyComponent")
+EdgeCommons edgeCommons = EdgeCommonsBuilder.create("com.example.MyComponent")
     .withArgs(args)
     .withAppOptions(appOptions)
     .receiveOwnMessages(false)

@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-The logging system in GGCommons Java library provides comprehensive logging capabilities built on Apache Log4j2. It supports both component-specific logging and global application logging control, with configurable output formats, levels, and destinations. The system is designed to provide:
+The logging system in EdgeCommons Java library provides comprehensive logging capabilities built on Apache Log4j2. It supports both component-specific logging and global application logging control, with configurable output formats, levels, and destinations. The system is designed to provide:
 
 - Centralized logging configuration management
 - Dynamic log level adjustment
@@ -90,9 +90,9 @@ This configuration enables both console and file logging with DEBUG level, using
     "fileLogging": true,
     "logFilePath": "/greengrass/v2/logs/{ComponentFullName}.log",
     "loggers": {
-      "com.mbreissi.ggcommons.metrics": "DEBUG",
-      "com.mbreissi.ggcommons.messaging": "INFO",
-      "com.mbreissi.ggcommons.heartbeat": "WARN"
+      "com.mbreissi.edgecommons.metrics": "DEBUG",
+      "com.mbreissi.edgecommons.messaging": "INFO",
+      "com.mbreissi.edgecommons.heartbeat": "WARN"
     }
   }
 }
@@ -110,14 +110,14 @@ This configuration demonstrates global control with different log levels for spe
     "logFilePath": "./logs/debug-{ComponentName}.log",
     "loggers": {
       "root": "DEBUG",
-      "com.mbreissi.ggcommons": "TRACE",
+      "com.mbreissi.edgecommons": "TRACE",
       "software.amazon.awssdk": "WARN",
       "org.eclipse.paho": "ERROR"
     }
   }
 }
 ```
-This configuration is optimized for development with detailed logging for ggcommons components while suppressing verbose output from third-party libraries.
+This configuration is optimized for development with detailed logging for edgecommons components while suppressing verbose output from third-party libraries.
 
 ### Sample 5: Production Configuration
 ```json
@@ -129,9 +129,9 @@ This configuration is optimized for development with detailed logging for ggcomm
     "fileLogging": true,
     "logFilePath": "/greengrass/v2/logs/{ComponentName}.log",
     "loggers": {
-      "com.mbreissi.ggcommons.metrics": "WARN",
-      "com.mbreissi.ggcommons.messaging": "INFO",
-      "com.mbreissi.ggcommons.config": "WARN"
+      "com.mbreissi.edgecommons.metrics": "WARN",
+      "com.mbreissi.edgecommons.messaging": "INFO",
+      "com.mbreissi.edgecommons.config": "WARN"
     }
   }
 }
@@ -147,7 +147,7 @@ The logging system integrates with the metric emission system to provide file-ba
 The logging system responds to configuration changes through the `LoggingConfigChangeListener`, allowing dynamic reconfiguration without component restart.
 
 ### Template Resolution
-Log file paths and other configuration strings support the same template variable system used throughout ggcommons, enabling consistent naming patterns across all components.
+Log file paths and other configuration strings support the same template variable system used throughout edgecommons, enabling consistent naming patterns across all components.
 
 ## 6. Best Practices
 
@@ -186,7 +186,7 @@ Log file paths and other configuration strings support the same template variabl
 - **Configuration not applied**: Ensure globalControl is enabled for full control
 
 ### Debugging Configuration
-- Enable DEBUG level for `com.mbreissi.ggcommons.config` to see configuration loading
+- Enable DEBUG level for `com.mbreissi.edgecommons.config` to see configuration loading
 - Check for configuration validation errors in startup logs
 - Verify template variable resolution in resolved file paths
 

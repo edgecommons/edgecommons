@@ -1,7 +1,7 @@
 //! # Severity — the operator-event severity taxonomy
 //!
 //! **One-liner purpose**: The `evt` severity taxonomy (DESIGN-class-facades §2.2), mirroring the
-//! Java canonical `com.mbreissi.ggcommons.facades.Severity`.
+//! Java canonical `com.mbreissi.edgecommons.facades.Severity`.
 
 use serde::{Deserialize, Serialize};
 

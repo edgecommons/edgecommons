@@ -3,19 +3,19 @@
 //! **One-liner purpose**: Build, validate, and filter unified-namespace (UNS) topics
 //! (`ecv1[/{site}]/{device}/{component}/{instance}/{class}[/{channel…}]`) bound to a
 //! component's resolved [`MessageIdentity`], mirroring the Java canonical
-//! `com.mbreissi.ggcommons.uns` package (UNS-CANONICAL-DESIGN §2).
+//! `com.mbreissi.edgecommons.uns` package (UNS-CANONICAL-DESIGN §2).
 //!
 //! ## Overview
 //! - [`UnsClass`] — the closed class set (`state`/`metric`/`cfg`/`log` are the
 //!   library-owned RESERVED classes; `data`/`evt`/`cmd`/`app` are application classes).
 //! - [`UnsScope`] — the wildcard scope for [`Uns::filter`] (a `None` field renders `+`).
 //! - [`Uns`] — the identity-bound topic builder/validator. Obtain the component-bound
-//!   instance via `GgCommons::uns()` (instance `main`) or an instance-bound one via
-//!   `GgCommons::instance(id)?.uns()`.
+//!   instance via `EdgeCommons::uns()` (instance `main`) or an instance-bound one via
+//!   `EdgeCommons::instance(id)?.uns()`.
 //! - [`reserved_class_of`] — the §4.1 reserved-class publish-guard predicate used by
 //!   the messaging service.
 //!
-//! ## Normative rules (§2.2 — violations are [`GgError::UnsValidation`] with a
+//! ## Normative rules (§2.2 — violations are [`EdgeCommonsError::UnsValidation`] with a
 //! machine-readable [`UnsValidationCode`])
 //! 1. **Token rule** — identical to the config template sanitizer's blacklist
 //!    ([`crate::config::template::sanitize`]), so "sanitized ⇒ valid" is a true
@@ -33,13 +33,13 @@
 //! (≥ 2 `hier` entries — D-U25): with a single-level hierarchy `hier[0]` *is* the
 //! device, so includeRoot is a no-op (prepending would duplicate the device).
 //!
-//! Reply topics (`ggcommons/reply-…`) are non-UNS and never pass through this builder;
+//! Reply topics (`edgecommons/reply-…`) are non-UNS and never pass through this builder;
 //! the guard ignores them because they are not `ecv1/`-rooted (D-U6).
 //!
 //! ## Usage Example
 //! ```
-//! use ggcommons::messaging::message::{HierEntry, MessageIdentity};
-//! use ggcommons::uns::{Uns, UnsClass, UnsScope};
+//! use edgecommons::messaging::message::{HierEntry, MessageIdentity};
+//! use edgecommons::uns::{Uns, UnsClass, UnsScope};
 //!
 //! let identity = MessageIdentity::new(
 //!     vec![HierEntry { level: "device".into(), value: "gw-01".into() }],
@@ -66,7 +66,7 @@ use std::time::{Duration, Instant};
 
 use rand::Rng;
 
-use crate::error::{GgError, Result};
+use crate::error::{EdgeCommonsError, Result};
 use crate::messaging::message::{HierEntry, Message, MessageIdentity};
 use crate::messaging::{message_handler, MessagingService};
 
@@ -123,9 +123,9 @@ impl std::fmt::Display for UnsValidationCode {
     }
 }
 
-/// Builds a [`GgError::UnsValidation`] with the given code and detail.
-fn violation(code: UnsValidationCode, detail: impl Into<String>) -> GgError {
-    GgError::UnsValidation { code, detail: detail.into() }
+/// Builds a [`EdgeCommonsError::UnsValidation`] with the given code and detail.
+fn violation(code: UnsValidationCode, detail: impl Into<String>) -> EdgeCommonsError {
+    EdgeCommonsError::UnsValidation { code, detail: detail.into() }
 }
 
 /// The closed UNS class set (UNS-CANONICAL-DESIGN §2.1) — the class topic level of
@@ -279,7 +279,7 @@ impl Uns {
     pub const MAX_TOPIC_UTF8_BYTES: usize = 256;
 
     /// Creates a topic builder bound to an identity and a root mode. Library-internal
-    /// wiring — components obtain bound instances from the `GgCommons` facade
+    /// wiring — components obtain bound instances from the `EdgeCommons` facade
     /// (`gg.uns()` / `gg.instance(id)?.uns()`).
     ///
     /// `include_root` is whether topics/filters carry the first hierarchy value
@@ -300,7 +300,7 @@ impl Uns {
     /// [`Self::topic_with_channel`]).
     ///
     /// # Errors
-    /// [`GgError::UnsValidation`] on any §2.2 violation.
+    /// [`EdgeCommonsError::UnsValidation`] on any §2.2 violation.
     pub fn topic(&self, cls: UnsClass) -> Result<String> {
         self.topic_for(&self.identity, cls, None)
     }
@@ -312,7 +312,7 @@ impl Uns {
     /// legal for leaf classes).
     ///
     /// # Errors
-    /// [`GgError::UnsValidation`] on any §2.2 violation.
+    /// [`EdgeCommonsError::UnsValidation`] on any §2.2 violation.
     pub fn topic_with_channel(&self, cls: UnsClass, channel: &str) -> Result<String> {
         self.topic_for(&self.identity, cls, Some(channel))
     }
@@ -324,7 +324,7 @@ impl Uns {
     /// unsanitized values fails to build, it never produces an unpublishable topic).
     ///
     /// # Errors
-    /// [`GgError::UnsValidation`] on any §2.2 violation.
+    /// [`EdgeCommonsError::UnsValidation`] on any §2.2 violation.
     pub fn topic_for(
         &self,
         target: &MessageIdentity,
@@ -395,7 +395,7 @@ impl Uns {
     /// [`Self::validate`] (filters legitimately carry wildcards).
     ///
     /// # Errors
-    /// [`GgError::UnsValidation`] when a pinned (`Some`) scope field violates the
+    /// [`EdgeCommonsError::UnsValidation`] when a pinned (`Some`) scope field violates the
     /// token rule.
     pub fn filter(&self, cls: UnsClass, scope: &UnsScope) -> Result<String> {
         let mut segments: Vec<&str> = Vec::with_capacity(Self::MAX_TOPIC_SLASHES + 1);
@@ -421,7 +421,7 @@ impl Uns {
     /// at the class token and channeled classes must carry at least one channel token.
     ///
     /// # Errors
-    /// [`GgError::UnsValidation`] with the precise [`UnsValidationCode`] on the
+    /// [`EdgeCommonsError::UnsValidation`] with the precise [`UnsValidationCode`] on the
     /// first violation found.
     pub fn validate(&self, topic: &str) -> Result<()> {
         if topic.is_empty() {
@@ -518,12 +518,12 @@ impl Uns {
 /// template sanitizer ([`crate::config::template::sanitize`]), so "sanitized ⇒ valid"
 /// is a true equivalence (D-U26): non-empty, no `/ + # \`, no control characters
 /// (Unicode `Cc` — C0 U+0000–U+001F, U+007F, and C1 U+0080–U+009F), no `..`
-/// substring. Also the validation gate for `GgCommons::instance(id)` instance tokens.
+/// substring. Also the validation gate for `EdgeCommons::instance(id)` instance tokens.
 /// If anyone later tightens the sanitizer, this rule must tighten with it (and vice
 /// versa).
 ///
 /// # Errors
-/// [`GgError::UnsValidation`] with `EMPTY_TOKEN` / `BAD_CHAR` / `TRAVERSAL`.
+/// [`EdgeCommonsError::UnsValidation`] with `EMPTY_TOKEN` / `BAD_CHAR` / `TRAVERSAL`.
 pub fn check_token(token: &str, what: &str) -> Result<()> {
     if token.is_empty() {
         return Err(violation(
@@ -588,7 +588,7 @@ fn check_length(topic: &str) -> Result<()> {
 /// true** (D-U27: `includeRoot && hier.len() >= 2`; checking position 5
 /// unconditionally would false-positive on legitimate app channels like
 /// `ecv1/d/c/i/app/state`) — is one of `state | metric | cfg | log`. Non-`ecv1`
-/// topics pass untouched (`ggcommons/reply-…`, `cloudwatch/metric/put`, foreign MQTT
+/// topics pass untouched (`edgecommons/reply-…`, `cloudwatch/metric/put`, foreign MQTT
 /// bridging). `subscribe*` is never guarded (consumers must read reserved classes).
 pub fn reserved_class_of(topic: &str, include_root: bool) -> Option<UnsClass> {
     if !topic.starts_with(Uns::ROOT) {
@@ -697,7 +697,7 @@ mod vector_tests {
     fn assert_expected(name: &str, expected: &Value, result: Result<Option<String>>) {
         if let Some(error_code) = expected.get("error").and_then(Value::as_str) {
             match result {
-                Err(GgError::UnsValidation { code, .. }) => {
+                Err(EdgeCommonsError::UnsValidation { code, .. }) => {
                     assert_eq!(code.as_str(), error_code, "case '{name}': wrong error code");
                 }
                 Err(other) => panic!("case '{name}': expected UnsValidation[{error_code}], got {other}"),
@@ -928,9 +928,9 @@ mod tests {
         )
     }
 
-    fn code(err: GgError) -> UnsValidationCode {
+    fn code(err: EdgeCommonsError) -> UnsValidationCode {
         match err {
-            GgError::UnsValidation { code, .. } => code,
+            EdgeCommonsError::UnsValidation { code, .. } => code,
             other => panic!("expected UnsValidation, got {other}"),
         }
     }
@@ -1154,7 +1154,7 @@ mod tests {
         assert_eq!(reserved_class_of("ecv1/d/c/i/app/state", false), None);
         assert_eq!(reserved_class_of("ecv1/s/d/c/i/app/state", true), None);
         // Non-ecv1 topics always pass.
-        assert_eq!(reserved_class_of("ggcommons/reply-42", false), None);
+        assert_eq!(reserved_class_of("edgecommons/reply-42", false), None);
         assert_eq!(reserved_class_of("cloudwatch/metric/put", false), None);
         // A root-PREFIXED but different first token passes.
         assert_eq!(reserved_class_of("ecv1x/d/c/i/state", false), None);
@@ -1326,7 +1326,7 @@ impl RepublishGate {
 /// - **Coalescing / cooldown (per verb, independent)** — see [`RepublishGate`].
 /// - **No config surface** — always on; core plumbing, not a feature toggle.
 ///
-/// Lifecycle: constructed and [`start`](Self::start) by the `GgCommons` runtime after
+/// Lifecycle: constructed and [`start`](Self::start) by the `EdgeCommons` runtime after
 /// initialization completes. Teardown is RAII (`Drop`) — mirrors [`crate::heartbeat::Heartbeat`]
 /// — unsubscribing both topics before the messaging transport is torn down.
 pub(crate) struct RepublishListener {

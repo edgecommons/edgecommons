@@ -12,9 +12,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from ggcommons.config.manager.config_manager import ConfigManager, _sanitize
-from ggcommons.config.manager.configuration_change_listener import ConfigurationChangeListener
-from ggcommons.validation.configuration_validator import (
+from edgecommons.config.manager.config_manager import ConfigManager, _sanitize
+from edgecommons.config.manager.configuration_change_listener import ConfigurationChangeListener
+from edgecommons.validation.configuration_validator import (
     ConfigurationValidator,
     ConfigurationValidationException,
 )
@@ -321,7 +321,7 @@ class TestConfigurationValidator:
 
 class TestEnvironmentConfigManager:
     def test_loads_from_env(self, monkeypatch):
-        from ggcommons.config.manager.environment_config_manager import EnvironmentConfigManager
+        from edgecommons.config.manager.environment_config_manager import EnvironmentConfigManager
 
         monkeypatch.setenv("MY_CFG", json.dumps({"component": {"global": {"x": 1}}}))
         cm = EnvironmentConfigManager("thing-1", "com.example.C", "MY_CFG")
@@ -329,7 +329,7 @@ class TestEnvironmentConfigManager:
         assert "MY_CFG" in cm.get_config_source()
 
     def test_missing_env_raises(self, monkeypatch):
-        from ggcommons.config.manager.environment_config_manager import EnvironmentConfigManager
+        from edgecommons.config.manager.environment_config_manager import EnvironmentConfigManager
 
         monkeypatch.delenv("ABSENT_CFG", raising=False)
         with pytest.raises(RuntimeError, match="ABSENT_CFG"):
@@ -341,7 +341,7 @@ class TestEnvironmentConfigManager:
 
 class TestFileConfigManager:
     def test_loads_and_watches_then_closes(self, tmp_path):
-        from ggcommons.config.manager.file_config_manager import FileConfigManager
+        from edgecommons.config.manager.file_config_manager import FileConfigManager
 
         cfg = tmp_path / "config.json"
         cfg.write_text(json.dumps({"component": {"global": {"k": "v"}}}))
@@ -355,13 +355,13 @@ class TestFileConfigManager:
             cm.close()
 
     def test_missing_file_raises_runtime_error(self, tmp_path):
-        from ggcommons.config.manager.file_config_manager import FileConfigManager
+        from edgecommons.config.manager.file_config_manager import FileConfigManager
 
         with pytest.raises(RuntimeError, match="Unable to open config file"):
             FileConfigManager("thing-1", "com.example.C", str(tmp_path / "nope.json"))
 
     def test_change_event_handler_dispatch(self, tmp_path):
-        from ggcommons.config.manager.file_config_manager import (
+        from edgecommons.config.manager.file_config_manager import (
             FileConfigManager,
             ConfigFileChangeEventHandler,
         )
@@ -388,7 +388,7 @@ class TestFileConfigManager:
             cm.close()
 
     def test_reload_swallows_parse_error(self, tmp_path):
-        from ggcommons.config.manager.file_config_manager import (
+        from edgecommons.config.manager.file_config_manager import (
             FileConfigManager,
             ConfigFileChangeEventHandler,
         )
@@ -410,7 +410,7 @@ class TestFileConfigManager:
 
 class TestConfigManagerBuilderDispatch:
     def _patch_all(self, monkeypatch):
-        import ggcommons.config.manager.config_manager_builder as cmb
+        import edgecommons.config.manager.config_manager_builder as cmb
 
         calls = {}
 
@@ -484,8 +484,8 @@ class TestConfigManagerBuilderDispatch:
 
 class TestConfigComponentManager:
     def test_init_requests_and_subscribes(self, monkeypatch):
-        import ggcommons.config.manager.config_component_manager as ccm
-        from ggcommons.messaging.message import Message
+        import edgecommons.config.manager.config_component_manager as ccm
+        from edgecommons.messaging.message import Message
 
         subscribed = {}
         monkeypatch.setattr(
@@ -515,8 +515,8 @@ class TestConfigComponentManager:
         assert requested["msg"].get_identity() is None
 
     def test_load_with_str_body(self, monkeypatch):
-        import ggcommons.config.manager.config_component_manager as ccm
-        from ggcommons.messaging.message import Message
+        import edgecommons.config.manager.config_component_manager as ccm
+        from edgecommons.messaging.message import Message
 
         monkeypatch.setattr(ccm.MessagingClient, "subscribe", staticmethod(lambda t, cb: None))
         reply = Message()
@@ -529,8 +529,8 @@ class TestConfigComponentManager:
         assert mgr.get_global_config() == {"k": "str-body"}
 
     def test_load_and_apply_config_triggers_change(self, monkeypatch):
-        import ggcommons.config.manager.config_component_manager as ccm
-        from ggcommons.messaging.message import Message
+        import edgecommons.config.manager.config_component_manager as ccm
+        from edgecommons.messaging.message import Message
 
         monkeypatch.setattr(ccm.MessagingClient, "subscribe", staticmethod(lambda t, cb: None))
         reply = Message()

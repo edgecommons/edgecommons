@@ -1,4 +1,4 @@
-//! Integration test for the top-level [`ggcommons::GgCommonsBuilder::build`] runtime that runs
+//! Integration test for the top-level [`edgecommons::EdgeCommonsBuilder::build`] runtime that runs
 //! **entirely in-process** — no external broker required, so it executes on a stock CI machine.
 //!
 //! A tiny embedded MQTT server ([`spawn_fake_broker`]) accepts the provider's TCP connection and
@@ -9,7 +9,7 @@
 //! accessor — and then assert real, observable behavior (connected state, resolved config, template
 //! resolution, working secret/stream/parameter services).
 //!
-//! This complements `lib_standalone.rs` (which targets a real broker behind `GGCOMMONS_IT_MQTT`).
+//! This complements `lib_standalone.rs` (which targets a real broker behind `EDGECOMMONS_IT_MQTT`).
 //!
 //! Feature-gated: it exercises `gg.streams()`/`gg.credentials()`/`gg.parameters()`, so it only compiles
 //! when those features are enabled (mirrors `tests/credentials_local.rs`). `standalone` is a default
@@ -19,8 +19,8 @@
 
 use std::sync::Arc;
 
-use ggcommons::config::Config;
-use ggcommons::prelude::*;
+use edgecommons::config::Config;
+use edgecommons::prelude::*;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -119,7 +119,7 @@ async fn handle_conn(mut sock: TcpStream) {
 async fn builds_full_runtime_against_inprocess_broker() {
     let port = spawn_fake_broker().await;
 
-    let dir = std::env::temp_dir().join(format!("ggcommons-inproc-{}", uuid::Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("edgecommons-inproc-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     let config_path = dir.join("config.json");
     let messaging_path = dir.join("messaging.json");
@@ -157,7 +157,7 @@ async fn builds_full_runtime_against_inprocess_broker() {
     )
     .unwrap();
 
-    let gg = GgCommonsBuilder::new("com.example.InProc")
+    let gg = EdgeCommonsBuilder::new("com.example.InProc")
         // false is a documented no-op on the MQTT transport; here it just exercises the setter.
         .receive_own_messages(false)
         .args([
@@ -193,7 +193,7 @@ async fn builds_full_runtime_against_inprocess_broker() {
     let _metrics = gg.metrics();
 
     // A real publish flows through the wired provider to the in-process broker (QoS0, no ack).
-    let msg = ggcommons::messaging::message::MessageBuilder::new("Ping", "1.0")
+    let msg = edgecommons::messaging::message::MessageBuilder::new("Ping", "1.0")
         .from_config(&cfg)
         .payload(serde_json::json!({ "ok": true }))
         .build();
@@ -204,7 +204,7 @@ async fn builds_full_runtime_against_inprocess_broker() {
     assert_eq!(streams.stream_names(), vec!["telemetry"]);
     let h = streams.stream("telemetry").expect("configured stream");
     for i in 0..3u64 {
-        h.append(ggcommons::streaming::StreamRecord::new("k", 1000 + i, b"v")).unwrap();
+        h.append(edgecommons::streaming::StreamRecord::new("k", 1000 + i, b"v")).unwrap();
     }
     h.flush().unwrap();
     assert_eq!(streams.stats("telemetry").expect("stats").appended_total, 3);
@@ -213,7 +213,7 @@ async fn builds_full_runtime_against_inprocess_broker() {
     // Credentials wired from config with the {ThingName} vault-path template resolved.
     let creds = gg.credentials().expect("credentials configured");
     creds
-        .put("db/password", b"s3cr3t", ggcommons::credentials::PutOptions::default())
+        .put("db/password", b"s3cr3t", edgecommons::credentials::PutOptions::default())
         .unwrap();
     assert_eq!(creds.get_string("db/password").unwrap().unwrap(), "s3cr3t");
     assert!(dir.join("vault-inproc-thing").exists(), "vault path template resolved");

@@ -1,7 +1,7 @@
 /**
- * Cross-language interop node (TypeScript) for ggcommons. See python_node.py for
+ * Cross-language interop node (TypeScript) for edgecommons. See python_node.py for
  * the shared CLI contract. Local-only MQTT transport against localhost:1883, using the
- * public ggcommons API (StandaloneMqttProvider + DefaultMessagingService), exactly
+ * public edgecommons API (StandaloneMqttProvider + DefaultMessagingService), exactly
  * like the rust_node/java_node/python_node consume their libraries.
  *
  *   interop_node responder <request_topic>
@@ -24,12 +24,12 @@ import {
   ReservedTopicError,
   Uns,
   unsClassFromToken,
-} from "@edgecommons/ggcommons";
-import type { MessagingConfig } from "@edgecommons/ggcommons";
+} from "@edgecommons/edgecommons";
+import type { MessagingConfig } from "@edgecommons/edgecommons";
 
 const LANG = "ts";
-const HOST = process.env.GGCOMMONS_IT_MQTT_HOST ?? "localhost";
-const PORT = Number(process.env.GGCOMMONS_IT_MQTT_PORT ?? "1883");
+const HOST = process.env.EDGECOMMONS_IT_MQTT_HOST ?? "localhost";
+const PORT = Number(process.env.EDGECOMMONS_IT_MQTT_PORT ?? "1883");
 
 // Canonical cross-language payload permutations (echoed by the responder; test_interop asserts a
 // deep round-trip both ways). null is tested inside an array.

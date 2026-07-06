@@ -34,7 +34,7 @@ import { RecordingMessagingService } from "./_fakes";
 
 /** The default test identity: device `test-thing`, component `TestComponent` (single level). */
 const INBOX_FILTER = "ecv1/test-thing/TestComponent/main/cmd/#";
-const REPLY_TO = "ggcommons/reply-test-1";
+const REPLY_TO = "edgecommons/reply-test-1";
 
 const config = (): Config => Config.fromValue("com.example.TestComponent", "test-thing", {});
 

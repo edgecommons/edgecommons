@@ -11,12 +11,12 @@
  * The legacy single-axis `-m/--mode` flag is removed (FR-RT-1): passing it errors with guidance to
  * `--platform`/`--transport`. After parsing the raw flags, {@link parseArgs} runs the precedence
  * resolver ({@link resolveProfile}) so the returned {@link ParsedArgs} already carries the two
- * resolved axes plus the resolved config source and identity. Parse failures surface as {@link GgError}
+ * resolved axes plus the resolved config source and identity. Parse failures surface as {@link EdgeCommonsError}
  * of kind `Cli`.
  */
 import { join } from "path";
 
-import { GgError } from "./errors";
+import { EdgeCommonsError } from "./errors";
 import {
   Env,
   Platform,
@@ -85,14 +85,14 @@ export function parseArgs(argv: string[], env: Env = process.env): ParsedArgs {
     } else if (arg === "-t" || arg === "--thing") {
       const next = argv[i + 1];
       if (next === undefined || isFlag(next)) {
-        throw GgError.cli("-t/--thing requires a value");
+        throw EdgeCommonsError.cli("-t/--thing requires a value");
       }
       thing = next; // full string value, never truncated
       i += 2;
     } else if (arg === "-h" || arg === "--help") {
       i += 1;
     } else {
-      throw GgError.cli(`unexpected argument '${arg}'`);
+      throw EdgeCommonsError.cli(`unexpected argument '${arg}'`);
     }
   }
 
@@ -109,7 +109,7 @@ export function parseArgs(argv: string[], env: Env = process.env): ParsedArgs {
 
   // FR-MSG-1: under CONFIGMAP + MQTT with no explicit `--transport MQTT <path>`, default the
   // messaging-config path to the resolved ConfigMap file (mount dir + key; default
-  // /etc/ggcommons/config.json — the SAME dir/key the CONFIGMAP config source resolves from
+  // /etc/edgecommons/config.json — the SAME dir/key the CONFIGMAP config source resolves from
   // `-c CONFIGMAP [dir] [key]` or its profile default). A single mounted ConfigMap file then carries
   // BOTH the `messaging` section (read by the messaging loader at init) AND the component config
   // (loaded + validated afterwards by the CONFIGMAP source). Resolved here from parse-time inputs
@@ -140,7 +140,7 @@ export function parseArgs(argv: string[], env: Env = process.env): ParsedArgs {
 function rejectLegacyModeFlag(argv: string[]): void {
   for (const arg of argv) {
     if (arg === "-m" || arg === "--mode") {
-      throw GgError.cli(
+      throw EdgeCommonsError.cli(
         "The -m/--mode flag has been removed. Use --platform GREENGRASS|HOST|KUBERNETES and " +
           "--transport IPC|MQTT instead (e.g. '-m STANDALONE <path>' becomes " +
           "'--platform HOST --transport MQTT <path>').",
@@ -159,7 +159,7 @@ function parsePlatform(raw: string): Platform | undefined {
   if (upper in Platform) {
     return Platform[upper as keyof typeof Platform];
   }
-  throw GgError.cli(`unknown platform '${raw}'. Valid: GREENGRASS, HOST, KUBERNETES, auto.`);
+  throw EdgeCommonsError.cli(`unknown platform '${raw}'. Valid: GREENGRASS, HOST, KUBERNETES, auto.`);
 }
 
 /** Parses `--transport` (`IPC`|`MQTT`). */
@@ -168,7 +168,7 @@ function parseTransport(raw: string): Transport {
   if (upper in Transport) {
     return Transport[upper as keyof typeof Transport];
   }
-  throw GgError.cli(`unknown transport '${raw}'. Valid: IPC, MQTT.`);
+  throw EdgeCommonsError.cli(`unknown transport '${raw}'. Valid: IPC, MQTT.`);
 }
 
 /** Collect up to `max` non-flag tokens starting at `start` (the variadic value list). */
@@ -179,7 +179,7 @@ function takeVariadic(argv: string[], start: number, max: number): string[] {
     out.push(argv[j]);
   }
   if (out.length === 0) {
-    throw GgError.cli(`option at position ${start - 1} requires a value`);
+    throw EdgeCommonsError.cli(`option at position ${start - 1} requires a value`);
   }
   return out;
 }
@@ -194,7 +194,7 @@ function parseConfigSource(args: string[]): ConfigSourceSpec {
     case "FILE":
       return { kind: "FILE", path: args[1] ?? DEFAULT_CONFIG_FILE };
     case "CONFIGMAP":
-      // -c CONFIGMAP [mountDir] [key]; defaults (/etc/ggcommons, config.json) applied in the source.
+      // -c CONFIGMAP [mountDir] [key]; defaults (/etc/edgecommons, config.json) applied in the source.
       return { kind: "CONFIGMAP", mountDir: args[1], key: args[2] };
     case "ENV":
       return { kind: "ENV", var: args[1] ?? DEFAULT_ENV_VAR };
@@ -205,6 +205,6 @@ function parseConfigSource(args: string[]): ConfigSourceSpec {
     case "CONFIG_COMPONENT":
       return { kind: "CONFIG_COMPONENT" };
     default:
-      throw GgError.cli(`unknown config source '${source}'`);
+      throw EdgeCommonsError.cli(`unknown config source '${source}'`);
   }
 }

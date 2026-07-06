@@ -87,4 +87,4 @@ deploy:jdk11:
       - $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
   artifacts:
     paths:
-      - target/ggcommons*.jar
+      - target/edgecommons*.jar

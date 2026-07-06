@@ -17,7 +17,7 @@
 //!
 //! ## Usage Example
 //! ```
-//! use ggcommons::metrics::metric::MetricBuilder;
+//! use edgecommons::metrics::metric::MetricBuilder;
 //!
 //! let m = MetricBuilder::create("requests")
 //!     .with_namespace("MyApp")

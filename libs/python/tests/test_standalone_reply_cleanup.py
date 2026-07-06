@@ -1,6 +1,6 @@
 """Regression test for the STANDALONE reply-subscription leak (parity gap #7).
 
-A served request/reply must tear down its one-shot ``ggcommons/reply-<uuid>`` subscription, the
+A served request/reply must tear down its one-shot ``edgecommons/reply-<uuid>`` subscription, the
 same way the IPC path and ``_cancel_request`` do. Before the fix, the standalone reply path popped
 the pending future but never unsubscribed, orphaning a broker subscription on every request.
 Drives ``_process_message`` directly so no broker is required.
@@ -10,11 +10,11 @@ import threading
 import types
 from unittest.mock import MagicMock
 
-from ggcommons.messaging.providers.standalone_provider import (
+from edgecommons.messaging.providers.standalone_provider import (
     StandaloneProvider,
     _BrokerChannel,
 )
-from ggcommons.utils.iou import Iou
+from edgecommons.utils.iou import Iou
 
 
 def _fake_mqtt_message(topic: str, body: dict):
@@ -33,7 +33,7 @@ def test_standalone_reply_unsubscribes_reply_topic():
 
     channel = _BrokerChannel("local")
     channel.client = MagicMock()
-    reply_topic = "ggcommons/reply-abc123"
+    reply_topic = "edgecommons/reply-abc123"
 
     # Reproduce the state _request leaves behind: a pending iou + a live reply subscription.
     iou = Iou(reply_topic)

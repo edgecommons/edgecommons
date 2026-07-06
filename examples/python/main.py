@@ -2,7 +2,7 @@ import argparse
 import logging
 import sys
 
-from ggcommons import GGCommonsBuilder
+from edgecommons import EdgeCommonsBuilder
 from app.greengrass_app import GreengrassApp
 
 logger = logging.getLogger("main")
@@ -15,13 +15,13 @@ def main():
     # add any component specific arguments here
 
     # Construct the framework via the fluent builder. (The pre-rearch
-    # ggcommons.init(...) entry point has been replaced by GGCommonsBuilder.)
+    # edgecommons.init(...) entry point has been replaced by EdgeCommonsBuilder.)
     # Use the FULL component name (matches the recipe ComponentName + the Rust/Java/TS skeletons),
     # so {ComponentFullName} in config templates resolves to the Greengrass-managed, ggc_user-owned
     # work dir (/greengrass/v2/work/<full-name>). A short name resolves to a path under the
     # root-owned /greengrass/v2/work that the component can't create (vault/stream dirs then fail).
     gg = (
-        GGCommonsBuilder.create("com.mbreissi.greengrass.PythonComponentSkeleton")
+        EdgeCommonsBuilder.create("com.mbreissi.edgecommons.PythonComponentSkeleton")
         .with_args(sys.argv[1:])
         .with_app_options(arg_parser)
         .receive_own_messages(True)

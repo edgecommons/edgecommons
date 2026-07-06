@@ -20,11 +20,11 @@
  *    a successful send acks the batch and advances the checkpoint.
  *
  * The AWS SDK (`@aws-sdk/client-cloudwatch`) is an optional dependency, loaded lazily; absence is a
- * `GgError.metrics(...)` at {@link DurableCloudWatchTarget.create} (mirrors the in-memory target).
+ * `EdgeCommonsError.metrics(...)` at {@link DurableCloudWatchTarget.create} (mirrors the in-memory target).
  */
 import type { MetricTarget, MeasureValues } from "../types";
 import type { Metric } from "../metric";
-import { GgError } from "../../errors";
+import { EdgeCommonsError } from "../../errors";
 import {
   registerSinkCallback,
   resolveSinkOutcome,
@@ -146,7 +146,7 @@ export class DurableCloudWatchTarget implements MetricTarget {
     try {
       module = (await import("@aws-sdk/client-cloudwatch")) as unknown as CloudWatchModule;
     } catch {
-      throw GgError.metrics(
+      throw EdgeCommonsError.metrics(
         "metric target 'cloudwatch' (durable) requires the optional '@aws-sdk/client-cloudwatch' dependency",
       );
     }

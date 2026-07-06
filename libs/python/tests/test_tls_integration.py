@@ -1,9 +1,9 @@
 """
 Integration test: verify a real *secure* (TLS) connection to the local broker.
 
-Requires the shared ggcommons-test-infra repo:
+Requires the shared edgecommons-test-infra repo:
 - generate the TLS test certs there (bash gen-tls-certs.sh) and point at them with
-  GGCOMMONS_TLS_CERTS_DIR, and
+  EDGECOMMONS_TLS_CERTS_DIR, and
 - start the broker (docker compose up -d) — EMQX TLS listener on :8883 trusting
   tls-certs/ca.crt and presenting tls-certs/server.crt.
 
@@ -16,18 +16,18 @@ import threading
 
 import pytest
 
-from ggcommons.messaging.messaging_config import MessagingConfiguration
-from ggcommons.messaging.providers.standalone_provider import StandaloneProvider
-from ggcommons.messaging.message import Message
-from ggcommons.messaging.message_builder import MessageBuilder
+from edgecommons.messaging.messaging_config import MessagingConfiguration
+from edgecommons.messaging.providers.standalone_provider import StandaloneProvider
+from edgecommons.messaging.message import Message
+from edgecommons.messaging.message_builder import MessageBuilder
 
 pytestmark = pytest.mark.integration
 
-CERTS = os.environ.get("GGCOMMONS_TLS_CERTS_DIR") or os.path.join(
+CERTS = os.environ.get("EDGECOMMONS_TLS_CERTS_DIR") or os.path.join(
     os.path.dirname(__file__), "tls-certs"
 )
 HAVE_CERTS = os.path.isdir(CERTS) and os.path.exists(os.path.join(CERTS, "ca.crt"))
-TLS_PORT = int(os.environ.get("GGCOMMONS_TLS_PORT", "8883"))
+TLS_PORT = int(os.environ.get("EDGECOMMONS_TLS_PORT", "8883"))
 
 
 def _ca():
@@ -41,7 +41,7 @@ def _write_config(tmp_path, credentials):
                 "type": "mqtt",
                 "host": "localhost",
                 "port": TLS_PORT,
-                "clientId": "ggcommons-tls-test",
+                "clientId": "edgecommons-tls-test",
                 "credentials": credentials,
             }
         }
@@ -52,7 +52,7 @@ def _write_config(tmp_path, credentials):
 
 
 def _roundtrip(provider):
-    topic = "ggcommons/test/tls/roundtrip"
+    topic = "edgecommons/test/tls/roundtrip"
     received = []
     got = threading.Event()
 
@@ -87,7 +87,7 @@ def test_local_broker_mutual_tls_roundtrip(tmp_path):
         },
     )
     try:
-        provider = StandaloneProvider(config, "ggcommons-tls-test")
+        provider = StandaloneProvider(config, "edgecommons-tls-test")
     except Exception as e:
         pytest.skip(f"TLS broker not available on :{TLS_PORT} ({e})")
     try:
@@ -102,7 +102,7 @@ def test_local_broker_server_only_tls_roundtrip(tmp_path):
     that does not mandate client certs; skipped if the broker rejects it."""
     config = _write_config(tmp_path, {"caPath": _ca()})
     try:
-        provider = StandaloneProvider(config, "ggcommons-tls-test-srv")
+        provider = StandaloneProvider(config, "edgecommons-tls-test-srv")
     except Exception as e:
         pytest.skip(f"server-only TLS not accepted on :{TLS_PORT} ({e})")
     try:

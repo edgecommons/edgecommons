@@ -31,7 +31,7 @@ export interface CredentialsConfig {
     keyProvider?: {
       type?: string;
       keyPath?: string;
-      /** `env`: name of the env var holding the base64-encoded 32-byte KEK (default `GGCOMMONS_VAULT_KEK`). */
+      /** `env`: name of the env var holding the base64-encoded 32-byte KEK (default `EDGECOMMONS_VAULT_KEK`). */
       envVar?: string;
       kmsKeyId?: string;
       region?: string;
@@ -115,7 +115,7 @@ export async function buildKeyProvider(
 
   if (kind === "env") {
     // Raw 32-byte KEK, base64, from an env var (typically a mounted k8s Secret) — the software-KEK.
-    const envVar = kp.envVar ?? "GGCOMMONS_VAULT_KEK";
+    const envVar = kp.envVar ?? "EDGECOMMONS_VAULT_KEK";
     return { provider: EnvKeyProvider.fromEnv(envVar) };
   }
 

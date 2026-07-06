@@ -23,7 +23,7 @@
 //! one [`prometheus::Gauge`] (latest-value semantics — a scrape reads the current value):
 //! - **gauge name** = `sanitize(lowercase("{namespace}_{measureName}"))`, where the metric-name
 //!   sanitizer replaces every char not matching `[a-z0-9_]` with `_` and prefixes `_` if the result
-//!   starts with a digit (Prometheus metric-name rules). `namespace` defaults to `ggcommons`.
+//!   starts with a digit (Prometheus metric-name rules). `namespace` defaults to `edgecommons`.
 //! - **labels** = the metric's dimensions ([`Metric::get_dimensions`], which already include
 //!   `category` (= metric name), `coreName`, `component`, plus any custom dimensions). Each label
 //!   *name* is sanitized to `[a-zA-Z_][a-zA-Z0-9_]*` (invalid chars → `_`, `_`-prefixed if it starts
@@ -57,7 +57,7 @@ use async_trait::async_trait;
 use prometheus::{Encoder, GaugeVec, Opts, Registry, TextEncoder};
 
 use super::MetricTarget;
-use crate::error::{GgError, Result};
+use crate::error::{EdgeCommonsError, Result};
 use crate::metrics::metric::Metric;
 
 /// How long the accept loop sleeps between non-blocking `accept()` polls (bounds shutdown latency).
@@ -76,7 +76,7 @@ struct CachedGauge {
 /// The pull-based Prometheus metric target: an in-process registry served at an HTTP `/metrics`
 /// endpoint. See the module docs for the inverted lifecycle and the dimension→label mapping.
 pub struct PrometheusTarget {
-    /// Metric namespace (prefix of every gauge name); defaults to `ggcommons`.
+    /// Metric namespace (prefix of every gauge name); defaults to `edgecommons`.
     namespace: String,
     /// The Prometheus registry (cloned into the server thread; gathered on each scrape).
     registry: Registry,
@@ -98,29 +98,29 @@ impl PrometheusTarget {
     /// ephemeral port.
     ///
     /// # Errors
-    /// Returns [`GgError::Metrics`] if the port cannot be bound (e.g. already in use) or the server
+    /// Returns [`EdgeCommonsError::Metrics`] if the port cannot be bound (e.g. already in use) or the server
     /// thread cannot be spawned — propagated so a hot-reload rebuild keeps the previous target.
     pub fn start(namespace: impl Into<String>, port: u16, path: &str) -> Result<Self> {
         let registry = Registry::new();
         let listener = TcpListener::bind(("0.0.0.0", port))
-            .map_err(|e| GgError::Metrics(format!("prometheus target cannot bind port {port}: {e}")))?;
+            .map_err(|e| EdgeCommonsError::Metrics(format!("prometheus target cannot bind port {port}: {e}")))?;
         let addr = listener
             .local_addr()
-            .map_err(|e| GgError::Metrics(format!("prometheus target local_addr failed: {e}")))?;
+            .map_err(|e| EdgeCommonsError::Metrics(format!("prometheus target local_addr failed: {e}")))?;
         // Non-blocking accept + a short poll lets the thread observe the stop flag on shutdown
         // without an extra dependency (same pattern as the health server).
         listener
             .set_nonblocking(true)
-            .map_err(|e| GgError::Metrics(format!("prometheus target set_nonblocking failed: {e}")))?;
+            .map_err(|e| EdgeCommonsError::Metrics(format!("prometheus target set_nonblocking failed: {e}")))?;
 
         let stop = Arc::new(AtomicBool::new(false));
         let stop_thread = stop.clone();
         let registry_thread = registry.clone();
         let path = path.to_string();
         let handle = std::thread::Builder::new()
-            .name("ggcommons-prometheus".to_string())
+            .name("edgecommons-prometheus".to_string())
             .spawn(move || serve(listener, path, registry_thread, stop_thread))
-            .map_err(|e| GgError::Metrics(format!("prometheus target thread spawn failed: {e}")))?;
+            .map_err(|e| EdgeCommonsError::Metrics(format!("prometheus target thread spawn failed: {e}")))?;
 
         tracing::info!(addr = %addr, "prometheus metric target listening");
         Ok(Self {
@@ -170,7 +170,7 @@ impl PrometheusTarget {
         let mut gauges = self
             .gauges
             .lock()
-            .map_err(|_| GgError::Metrics("prometheus gauge registry mutex poisoned".to_string()))?;
+            .map_err(|_| EdgeCommonsError::Metrics("prometheus gauge registry mutex poisoned".to_string()))?;
 
         for (measure_name, value) in values {
             let gauge_name =
@@ -178,12 +178,12 @@ impl PrometheusTarget {
 
             if !gauges.contains_key(&gauge_name) {
                 let name_refs: Vec<&str> = label_names.iter().map(String::as_str).collect();
-                let help = format!("ggcommons metric {gauge_name}");
+                let help = format!("edgecommons metric {gauge_name}");
                 let vec = GaugeVec::new(Opts::new(gauge_name.clone(), help), &name_refs).map_err(|e| {
-                    GgError::Metrics(format!("prometheus gauge '{gauge_name}' construction failed: {e}"))
+                    EdgeCommonsError::Metrics(format!("prometheus gauge '{gauge_name}' construction failed: {e}"))
                 })?;
                 self.registry.register(Box::new(vec.clone())).map_err(|e| {
-                    GgError::Metrics(format!("prometheus gauge '{gauge_name}' registration failed: {e}"))
+                    EdgeCommonsError::Metrics(format!("prometheus gauge '{gauge_name}' registration failed: {e}"))
                 })?;
                 gauges.insert(
                     gauge_name.clone(),
@@ -395,7 +395,7 @@ mod tests {
 
     #[test]
     fn sanitize_metric_name_replaces_invalid_and_prefixes_digit() {
-        assert_eq!(sanitize_metric_name("ggcommons_count"), "ggcommons_count");
+        assert_eq!(sanitize_metric_name("edgecommons_count"), "edgecommons_count");
         // hostile chars (already lowercased) → '_'
         assert_eq!(sanitize_metric_name("my-ns_cpu.usage%"), "my_ns_cpu_usage_");
         // leading digit → '_' prefix
@@ -414,7 +414,7 @@ mod tests {
 
     #[tokio::test]
     async fn emit_updates_registry_and_metrics_serves_openmetrics() {
-        let target = PrometheusTarget::start("ggcommons", 0, "/metrics").expect("start");
+        let target = PrometheusTarget::start("edgecommons", 0, "/metrics").expect("start");
         let addr = target.local_addr();
 
         let metric = MetricBuilder::create("requests")
@@ -428,8 +428,8 @@ mod tests {
         assert_eq!(status, 200);
         // Prometheus 3.x rejects a blank type; the client lib sets a valid one.
         assert!(content_type.starts_with("text/plain"), "content-type was '{content_type}'");
-        // gauge name = sanitize(lowercase("ggcommons_count"))
-        assert!(body.contains("ggcommons_count"), "body missing gauge name:\n{body}");
+        // gauge name = sanitize(lowercase("edgecommons_count"))
+        assert!(body.contains("edgecommons_count"), "body missing gauge name:\n{body}");
         // dimensions became labels (category = metric name, coreName, component)
         assert!(body.contains("category=\"requests\""), "missing category label:\n{body}");
         assert!(body.contains("coreName=\"thing-1\""), "missing coreName label:\n{body}");

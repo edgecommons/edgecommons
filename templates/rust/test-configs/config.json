@@ -8,7 +8,7 @@
     "measures": { "cpu": true, "memory": true },
     "destination": "local"
   },
-  "metricEmission": { "target": "log", "namespace": "ggcommons" },
+  "metricEmission": { "target": "log", "namespace": "edgecommons" },
   "tags": { "site": "factory-1" },
   "component": {
     "global": { "publish_interval": 3 },

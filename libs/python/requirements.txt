@@ -6,10 +6,10 @@ watchdog>=6.0.0
 setuptools>=78.1.1
 boto3>=1.43.0
 jsonschema>=4.0.0
-# Credentials / local vault (ggcommons.credentials): AES-256-GCM + HKDF/HMAC and a
+# Credentials / local vault (edgecommons.credentials): AES-256-GCM + HKDF/HMAC and a
 # cross-process advisory lock for the shared device vault.
 cryptography>=43.0.0
 filelock>=3.12.0
-# Pull-based `prometheus` metric target (ggcommons.metrics.targets.prometheus): in-process registry
+# Pull-based `prometheus` metric target (edgecommons.metrics.targets.prometheus): in-process registry
 # served as OpenMetrics text over HTTP; the default metric target on the KUBERNETES platform.
 prometheus-client>=0.20

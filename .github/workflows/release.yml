@@ -47,7 +47,7 @@ jobs:
         id: which
         run: echo "artifact=${GITHUB_REF_NAME%%/*}" >> "$GITHUB_OUTPUT"
 
-      # java-lib -> GitHub Packages Maven (com.mbreissi:ggcommons; <distributionManagement> id=github)
+      # java-lib -> GitHub Packages Maven (com.mbreissi.edgecommons:edgecommons; <distributionManagement> id=github)
       - name: Set up JDK (java-lib)
         if: ${{ steps.which.outputs.artifact == 'java-lib' }}
         uses: actions/setup-java@v4
@@ -66,10 +66,10 @@ jobs:
           MAVEN_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
         run: mvn -B -ntp -DskipTests deploy
 
-      # ts-lib -> GitHub Packages npm (@edgecommons/ggcommons). Built via the npm WORKSPACE at the
+      # ts-lib -> GitHub Packages npm (@edgecommons/edgecommons). Built via the npm WORKSPACE at the
       # repo root (mirrors ts.yml): the native streaming binding is a workspace member, so it must
       # be built + linked locally — `npm ci` in libs/ts alone would 404 trying to fetch it. Publish
-      # only the @edgecommons/ggcommons package; the binding is an optional dep consumers may skip.
+      # only the @edgecommons/edgecommons package; the binding is an optional dep consumers may skip.
       - name: Set up Node (ts-lib)
         if: ${{ steps.which.outputs.artifact == 'ts-lib' }}
         uses: actions/setup-node@v4
@@ -90,8 +90,8 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           npm ci || npm install
-          npm run build --workspace=@edgecommons/ggcommons
-          npm publish --workspace=@edgecommons/ggcommons
+          npm run build --workspace=@edgecommons/edgecommons
+          npm publish --workspace=@edgecommons/edgecommons
 
       # python-lib / cli -> build the dist (consumed via pip git+https@<tag>; add twine upload when a
       # PyPI/CodeArtifact token is configured — DESIGN-packaging §13).
@@ -307,7 +307,7 @@ jobs:
           else
             cargo build --release --features ${{ matrix.features }}
           fi
-      - name: Stage the platform native under <os>-<arch>/ (matching GgStreamNative.osArch)
+      - name: Stage the platform native under <os>-<arch>/ (matching EdgeStreamNative.osArch)
         shell: bash
         run: |
           set -euo pipefail
@@ -318,9 +318,9 @@ jobs:
             src="libs/rust-streamlog/target/release"
           fi
           case "${{ matrix.target }}" in
-            *windows*) os=windows; lib=ggstreamlog.dll ;;
-            *apple*)   os=darwin;  lib=libggstreamlog.dylib ;;
-            *)         os=linux;   lib=libggstreamlog.so ;;
+            *windows*) os=windows; lib=edgestreamlog.dll ;;
+            *apple*)   os=darwin;  lib=libedgestreamlog.dylib ;;
+            *)         os=linux;   lib=libedgestreamlog.so ;;
           esac
           case "${{ matrix.target }}" in
             x86_64*)  arch=x86_64 ;;

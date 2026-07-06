@@ -162,9 +162,9 @@ export class MetricConfig {
     return this.target_ ?? "log";
   }
 
-  /** CloudWatch namespace; default `ggcommons`. */
+  /** CloudWatch namespace; default `edgecommons`. */
   namespace(): string {
-    return this.namespace_ ?? "ggcommons";
+    return this.namespace_ ?? "edgecommons";
   }
 
   /** `targetConfig.logFileName` template (log target); default Greengrass path. */
@@ -212,7 +212,7 @@ export class MetricConfig {
   /**
    * The `cloudwatch` target's optional durable-buffer settings (`targetConfig.buffer`, per the
    * canonical schema). When `type` is `durable` (the default), the cloudwatch target
-   * stores-and-forwards metrics through a disk-backed ggstreamlog buffer; `memory` selects the
+   * stores-and-forwards metrics through a disk-backed edgestreamlog buffer; `memory` selects the
    * legacy in-memory batching target. Returns `undefined` only if no `buffer` object is present
    * (caller then defaults to durable).
    */
@@ -225,7 +225,7 @@ export class MetricConfig {
       path:
         typeof buf.path === "string"
           ? buf.path
-          : "/var/lib/ggcommons/metrics/{ComponentName}/cw",
+          : "/var/lib/edgecommons/metrics/{ComponentName}/cw",
       maxDiskBytes: asInt(buf.maxDiskBytes) ?? 128 * 1024 * 1024,
       onFull:
         buf.onFull === "block" || buf.onFull === "rejectNew" ? buf.onFull : "dropOldest",
@@ -439,7 +439,8 @@ function sanitizedIdentityValue(what: string, rawValue: string): string {
  *    resolved thing name (the existing identity chain — D-U1).
  * 4. An `identity` key equal to the last level name, or not among the declared non-device
  *    levels, is a startup error (typo protection the schema cannot express).
- * 5. Every value and the component short name pass through the template sanitizer.
+ * 5. Every value and the component token pass through the template sanitizer. The component
+ *    token comes from `component.token` when configured, else the short component name fallback.
  */
 function resolveComponentIdentity(
   raw: Record<string, unknown>,
@@ -530,14 +531,28 @@ function resolveComponentIdentity(
   }
   hier.push({ level: deviceLevel, value: sanitizedIdentityValue(deviceLevel, thingName) });
 
-  // 5. component = sanitized short name (the existing {ComponentName} semantics — D-U18).
+  // 5. component = explicit token when configured, else sanitized short name.
   if (typeof componentName !== "string" || componentName === "") {
-    throw identityError("the component short name is not available");
+    throw identityError("the component name is not available");
+  }
+  let configuredComponentToken: string | undefined;
+  if ("component" in raw) {
+    const componentRaw = raw.component;
+    if (componentRaw === null || typeof componentRaw !== "object" || Array.isArray(componentRaw)) {
+      throw identityError("'component' must be an object when configuring 'component.token'");
+    }
+    const token = (componentRaw as Record<string, unknown>).token;
+    if (token !== undefined) {
+      if (typeof token !== "string" || token === "") {
+        throw identityError("'component.token' must be a non-empty string");
+      }
+      configuredComponentToken = token;
+    }
   }
   const shortName = componentName.includes(".")
     ? componentName.slice(componentName.lastIndexOf(".") + 1)
     : componentName;
-  const componentToken = sanitizedIdentityValue("component", shortName);
+  const componentToken = sanitizedIdentityValue("component", configuredComponentToken ?? shortName);
   return new MessageIdentity(hier, componentToken, MessageIdentity.DEFAULT_INSTANCE);
 }
 

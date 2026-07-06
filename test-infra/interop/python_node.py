@@ -1,4 +1,4 @@
-"""Cross-language interop node (Python) for ggcommons.
+"""Cross-language interop node (Python) for edgecommons.
 
 Two roles, talking to the shared local MQTT broker (localhost:1883) over a
 local-only MQTT transport:
@@ -38,15 +38,15 @@ import tempfile
 import threading
 import time
 
-from ggcommons.messaging.messaging_config import MessagingConfiguration
-from ggcommons.messaging.providers.standalone_provider import StandaloneProvider
-from ggcommons.messaging.message_builder import MessageBuilder
-from ggcommons.messaging.identity import MessageIdentity
-from ggcommons.uns import Uns, UnsClass
+from edgecommons.messaging.messaging_config import MessagingConfiguration
+from edgecommons.messaging.providers.standalone_provider import StandaloneProvider
+from edgecommons.messaging.message_builder import MessageBuilder
+from edgecommons.messaging.identity import MessageIdentity
+from edgecommons.uns import Uns, UnsClass
 
 LANG = "python"
-HOST = os.environ.get("GGCOMMONS_IT_MQTT_HOST", "localhost")
-PORT = int(os.environ.get("GGCOMMONS_IT_MQTT_PORT", "1883"))
+HOST = os.environ.get("EDGECOMMONS_IT_MQTT_HOST", "localhost")
+PORT = int(os.environ.get("EDGECOMMONS_IT_MQTT_PORT", "1883"))
 
 # Canonical cross-language payload permutations: every language sends this as its request body's
 # `types` field; the responder echoes it; test_interop asserts a deep, number-lenient round-trip in
@@ -229,8 +229,8 @@ def run_uns_sub(topic):
 
 def run_uns_guard():
     """Attempt a reserved-class publish through the guarded public surface (must fail)."""
-    from ggcommons.messaging.errors import ReservedTopicError
-    from ggcommons.messaging.messaging_client import MessagingClient
+    from edgecommons.messaging.errors import ReservedTopicError
+    from edgecommons.messaging.messaging_client import MessagingClient
 
     topic = "ecv1/dev1/comp1/main/state"
     try:

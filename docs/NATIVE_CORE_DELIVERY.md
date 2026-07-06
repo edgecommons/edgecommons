@@ -1,15 +1,15 @@
-# Delivering & building the ggcommons native core (`ggstreamlog`)
+# Delivering & building the edgecommons native core (`edgestreamlog`)
 
-The telemetry-streaming engine (`ggstreamlog`) and everything built on it — `gg.streams()` and the
+The telemetry-streaming engine (`edgestreamlog`) and everything built on it — `gg.streams()` and the
 **durable CloudWatch metrics buffer** (the default for the `cloudwatch` target) — are backed by a
 compiled Rust core. That core is **not** part of the pure-language package source; it's a
 platform-specific native artifact that each language loads at runtime:
 
 | Language | How it loads the core | Failure if absent |
 |----------|-----------------------|-------------------|
-| **Java** | A cdylib bundled in the jar at `/native/<os>-<arch>/`, located via `-Dggstreamlog.library.path`, `java.library.path`, or extracted from the jar. Needs FFM (`--enable-native-access=ALL-UNNAMED`, Java 22+). | `IllegalStateException` from `GgStreamNative` |
-| **Python** | `import ggstreamlog_native` — a maturin-built wheel (PyPI `ggstreamlog-native`). | `ImportError` → `GgStreamError` |
-| **Node** | `require("@mbreissi/ggstreamlog-node")` — a napi-rs addon (lazy; importing the JS module does **not** load it). | `Error` from `require` |
+| **Java** | A cdylib bundled in the jar at `/native/<os>-<arch>/`, located via `-Dedgestreamlog.library.path`, `java.library.path`, or extracted from the jar. Needs FFM (`--enable-native-access=ALL-UNNAMED`, Java 22+). | `IllegalStateException` from `EdgeStreamNative` |
+| **Python** | `import edgestreamlog_native` — a maturin-built wheel (PyPI `edgestreamlog-native`). | `ImportError` → `EdgeStreamError` |
+| **Node** | `require("@edgecommons/streamlog-node")` — a napi-rs addon (lazy; importing the JS module does **not** load it). | `Error` from `require` |
 | **Rust** | Compiled in, gated by cargo features (`streaming`, `metrics-cloudwatch-durable`, …). | feature simply not present |
 
 This doc describes **what we prebuild** (the batteries-included happy path) and **how to build the
@@ -33,7 +33,7 @@ developer-machine targets. (Apple-Silicon only for macOS; Intel macs are out of 
 How each language consumes the set:
 
 - **Java** — *one* multi-arch fat jar carries all four `/native/<os>-<arch>/` dirs; the FFM loader
-  picks the right one at runtime. (The platform tags above are exactly what `GgStreamNative.osArch()`
+  picks the right one at runtime. (The platform tags above are exactly what `EdgeStreamNative.osArch()`
   computes: `os ∈ {linux,windows,darwin}`, `arch ∈ {x86_64,aarch64}`.)
 - **Python** — four wheels on PyPI; `pip` auto-selects by platform tag. Built `abi3-py39`, so **one
   wheel per platform** covers Python 3.9+.
@@ -89,7 +89,7 @@ rustup target add aarch64-unknown-linux-musl
 # Java cdylib
 cd libs/rust-streamlog
 cargo build --release --features cabi,kinesis --target aarch64-unknown-linux-musl
-#   -> target/aarch64-unknown-linux-musl/release/libggstreamlog.so
+#   -> target/aarch64-unknown-linux-musl/release/libedgestreamlog.so
 
 # Python wheel (musllinux tag so pip on Alpine selects it)
 pip install maturin

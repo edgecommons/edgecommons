@@ -3,7 +3,7 @@
 This is the coverage gap that let the deploy-path bugs through: the per-language unit/integration
 suites run on the HOST platform (MQTT) with the `log` metric target and never exercise GREENGRASS IPC, the
 deployed-config flow, the CloudWatch target, or the vault under the GG work dir. This test verifies
-a *deployed* ggcommons component on a real nucleus actually:
+a *deployed* edgecommons component on a real nucleus actually:
 
   1. reached State: RUNNING (the deploy resolved: artifact staged, recipe valid, config
      schema-accepted, IPC connected as ggc_user, and it did not crash-loop), and
@@ -13,31 +13,31 @@ Any of the bugs this session would fail it: a BROKEN component (metric crash / m
 vault PermissionError / IPC connect timeout / RequiresPrivilege-only), or a missing
 "credential access OK" / IPC marker.
 
-Gated: no-op unless GGCOMMONS_IT_GG=1. Run on the core device (uses the local greengrass-cli +
+Gated: no-op unless EDGECOMMONS_IT_GG=1. Run on the core device (uses the local greengrass-cli +
 /greengrass/v2/logs; needs sudo). Either:
-    GGCOMMONS_IT_GG=1 python3 test_deployed_component.py            # standalone
-    GGCOMMONS_IT_GG=1 python3 -m pytest test_deployed_component.py  # pytest
-Override the component set with GGCOMMONS_IT_COMPONENTS="comp.a,comp.b".
+    EDGECOMMONS_IT_GG=1 python3 test_deployed_component.py            # standalone
+    EDGECOMMONS_IT_GG=1 python3 -m pytest test_deployed_component.py  # pytest
+Override the component set with EDGECOMMONS_IT_COMPONENTS="comp.a,comp.b".
 """
 import os
 import subprocess
 import sys
 
-GG = os.environ.get("GGCOMMONS_GG_ROOT", "/greengrass/v2")
+GG = os.environ.get("EDGECOMMONS_GG_ROOT", "/greengrass/v2")
 CLI = f"{GG}/bin/greengrass-cli"
 LOGS = f"{GG}/logs"
 SUDO = [] if os.geteuid() == 0 else ["sudo"]
 
 DEFAULT_COMPONENTS = [
-    "com.mbreissi.greengrass.RustComponentSkeleton",
-    "com.mbreissi.greengrass.JavaSkeletonCred",
-    "com.mbreissi.greengrass.TsComponentSkeleton",
-    "com.mbreissi.greengrass.PythonComponentSkeleton",
+    "com.mbreissi.edgecommons.RustComponentSkeleton",
+    "com.mbreissi.edgecommons.JavaSkeletonCred",
+    "com.mbreissi.edgecommons.TsComponentSkeleton",
+    "com.mbreissi.edgecommons.PythonComponentSkeleton",
 ]
 
 
 def _components():
-    override = os.environ.get("GGCOMMONS_IT_COMPONENTS")
+    override = os.environ.get("EDGECOMMONS_IT_COMPONENTS")
     return [c.strip() for c in override.split(",") if c.strip()] if override else DEFAULT_COMPONENTS
 
 
@@ -92,8 +92,8 @@ def check_component(component):
 try:
     import pytest
 
-    _gated = pytest.mark.skipif(os.environ.get("GGCOMMONS_IT_GG") != "1",
-                                reason="needs a live Greengrass core (GGCOMMONS_IT_GG=1)")
+    _gated = pytest.mark.skipif(os.environ.get("EDGECOMMONS_IT_GG") != "1",
+                                reason="needs a live Greengrass core (EDGECOMMONS_IT_GG=1)")
 
     @_gated
     @pytest.mark.parametrize("component", _components())
@@ -107,8 +107,8 @@ except ImportError:
 
 
 def main():
-    if os.environ.get("GGCOMMONS_IT_GG") != "1":
-        print("skipped (set GGCOMMONS_IT_GG=1 on a Greengrass core device)")
+    if os.environ.get("EDGECOMMONS_IT_GG") != "1":
+        print("skipped (set EDGECOMMONS_IT_GG=1 on a Greengrass core device)")
         return 0
     failures = 0
     for c in _components():

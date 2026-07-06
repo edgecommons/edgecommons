@@ -1,7 +1,7 @@
 """Credential access-audit tests: events emitted on get/put/delete; value never leaked."""
 from dataclasses import asdict
 
-from ggcommons.credentials import (
+from edgecommons.credentials import (
     AuditEvent,
     AuditSink,
     DefaultCredentialService,

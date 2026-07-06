@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Reproducibly assemble the ggcommons monorepo from the individual source repos,
+# Reproducibly assemble the edgecommons monorepo from the individual source repos,
 # preserving each repo's full history under its target prefix (git subtree).
 #
-# Usage:  SRC=/path/to/workspace DEST=/path/to/ggcommons-monorepo ./build-monorepo.sh
+# Usage:  SRC=/path/to/workspace DEST=/path/to/edgecommons-monorepo ./build-monorepo.sh
 # SRC must contain the 11 source repos (siblings); DEST must NOT exist.
 set -euo pipefail
 
@@ -12,7 +12,7 @@ DEST="${DEST:?set DEST to the (non-existent) monorepo directory}"
 
 mkdir -p "$DEST"; cd "$DEST"
 git init -q -b main
-git commit -q --allow-empty -m "chore: initialize ggcommons monorepo"
+git commit -q --allow-empty -m "chore: initialize edgecommons monorepo"
 
 imp() { # repo-dir  target-prefix  branch
   git remote add "$1" "$SRC/$1"
@@ -22,11 +22,11 @@ imp() { # repo-dir  target-prefix  branch
   echo "imported $1 -> $2 ($3)"
 }
 
-imp ggcommons-java-lib        libs/java        main
-imp ggcommons-python-lib      libs/python      major-rearch
-imp ggcommons-rust-lib        libs/rust        main
-imp ggcommons-cli             cli              master
-imp ggcommons-test-infra      test-infra       master
+imp edgecommons-java-lib        libs/java        main
+imp edgecommons-python-lib      libs/python      major-rearch
+imp edgecommons-rust-lib        libs/rust        main
+imp edgecommons-cli             cli              master
+imp edgecommons-test-infra      test-infra       master
 imp java-componen-template    templates/java   main
 imp python-component-template templates/python main
 imp rust-component-template   templates/rust   master

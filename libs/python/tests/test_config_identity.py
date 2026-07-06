@@ -3,7 +3,7 @@ D-U2/D-U10/D-U25): once-at-init component-identity resolution from the component
 OWN config, the topic.includeRoot flag, and messaging.requestTimeoutSeconds."""
 import pytest
 
-from ggcommons.config.manager.config_manager import ConfigManager
+from edgecommons.config.manager.config_manager import ConfigManager
 
 
 class _Manager(ConfigManager):
@@ -63,6 +63,13 @@ class TestMultiLevelResolution:
         m = _Manager({"component": {}}, component="com.example.opcua+adapter")
         assert m.get_component_identity().component == "opcua_adapter"
 
+    def test_component_token_overrides_pascal_component_name(self):
+        m = _Manager(
+            {"component": {"token": "opcua-adapter"}},
+            component="com.mbreissi.edgecommons.OpcUaAdapter",
+        )
+        assert m.get_component_identity().component == "opcua-adapter"
+
 
 class TestFailFast:
     def test_missing_identity_value_names_the_level(self):
@@ -113,6 +120,10 @@ class TestFailFast:
         with pytest.raises(ValueError, match="identity"):
             _Manager({"component": {}, "hierarchy": {"levels": ["a", "device"]},
                       "identity": "nope"})
+
+    def test_malformed_component_token_rejected(self):
+        with pytest.raises(ValueError, match="component.token"):
+            _Manager({"component": {"token": ""}})
 
     def test_missing_thing_name_rejected(self):
         with pytest.raises(ValueError, match="thing name"):

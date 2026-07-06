@@ -5,7 +5,7 @@
  * channel from the body's own `severity` + `type`**, so the topic and body can never disagree
  * (today each adapter sets them independently). `evt` is non-reserved — this publishes through
  * the ordinary guarded `messaging().publish(...)`. Mirrors the Java
- * `com.mbreissi.ggcommons.facades.EventsFacade`.
+ * `com.mbreissi.edgecommons.facades.EventsFacade`.
  *
  * Body (`header.name` = {@link EVT_MESSAGE_NAME}, version {@link EVT_MESSAGE_VERSION}):
  * ```jsonc
@@ -33,7 +33,7 @@
  */
 import type { Config } from "../config/model";
 import { sanitize } from "../config/template";
-import { GgError } from "../errors";
+import { EdgeCommonsError } from "../errors";
 import { logger } from "../logging";
 import type { Message } from "../message";
 import { MessageBuilder } from "../message";
@@ -70,7 +70,7 @@ export class EventsFacade {
   /**
    * Returns a channel-bound view for a per-call routing override (LOCAL or NORTHBOUND).
    *
-   * @throws GgError (kind `Validation`) when `channel` is a `stream` channel
+   * @throws EdgeCommonsError (kind `Validation`) when `channel` is a `stream` channel
    */
   via(channel: Channel): EventsFacade {
     rejectStream(channel, "events()");
@@ -136,7 +136,7 @@ export class EventsFacade {
    * Constructs the `evt` wire body — the exact body the vectors pin. Deterministic given the
    * injected clock. Member order: severity, type, message?, timestamp, context?, alarm?, active?.
    *
-   * @throws GgError (kind `Validation`) when `type` is empty
+   * @throws EdgeCommonsError (kind `Validation`) when `type` is empty
    */
   buildBody(
     severity: Severity,
@@ -147,7 +147,7 @@ export class EventsFacade {
     active: boolean | undefined,
   ): Record<string, unknown> {
     if (!type) {
-      throw GgError.validation("evt requires a non-empty type (it is a channel token and the event's kind)");
+      throw EdgeCommonsError.validation("evt requires a non-empty type (it is a channel token and the event's kind)");
     }
     const body: Record<string, unknown> = { severity, type };
     if (message !== undefined) body.message = message;
@@ -163,7 +163,7 @@ export class EventsFacade {
   /** The `evt/{severity}/{type}` channel derived from the body's own severity + type. */
   channelFor(severity: Severity, type: string): string {
     if (!type) {
-      throw GgError.validation("evt requires a non-empty type");
+      throw EdgeCommonsError.validation("evt requires a non-empty type");
     }
     return `${severity}/${sanitize(type)}`;
   }
@@ -204,7 +204,7 @@ export class EventsFacade {
 
 function rejectStream(channel: Channel | undefined, facadeName: string): void {
   if (channel !== undefined && channel.kind === "stream") {
-    throw GgError.validation(
+    throw EdgeCommonsError.validation(
       `${facadeName} does not support the stream channel - events are low-rate control-plane,` +
         " not bulk telemetry (use data() for streamed telemetry)",
     );

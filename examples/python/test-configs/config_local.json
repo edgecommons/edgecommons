@@ -23,7 +23,7 @@
   },
   "metricEmission": {
     "target": "log",
-    "namespace": "ggcommons",
+    "namespace": "edgecommons",
     "targetConfig": {
       "logFileName": "skeleton_test.metric.log"
     }

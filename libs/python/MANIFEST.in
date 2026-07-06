@@ -1,2 +1,2 @@
 include README.md
-recursive-include ggcommons/resources *.json
+recursive-include edgecommons/resources *.json

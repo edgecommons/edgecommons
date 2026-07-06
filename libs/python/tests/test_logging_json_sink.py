@@ -19,13 +19,13 @@ from logging.handlers import RotatingFileHandler
 
 import pytest
 
-from ggcommons.config.enhanced_logging_config import (
+from edgecommons.config.enhanced_logging_config import (
     JSON_FORMAT_TOKEN,
     EnhancedLoggingConfiguration,
     JsonLogFormatter,
 )
-from ggcommons.config.manager.config_manager import ConfigManager
-from ggcommons.platform import LOGGING_FORMAT_JSON, Platform
+from edgecommons.config.manager.config_manager import ConfigManager
+from edgecommons.platform import LOGGING_FORMAT_JSON, Platform
 
 
 # ---------- helpers (root-logger handler save/restore, like test_logging_parity) ----------

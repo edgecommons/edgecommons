@@ -1,7 +1,7 @@
 # Rust Component Skeleton
 
 A worked-example AWS IoT Greengrass v2 component written in Rust on top of the
-[`ggcommons`](../../libs/rust) Rust library. It is the Rust counterpart of
+[`edgecommons`](../../libs/rust) Rust library. It is the Rust counterpart of
 `examples/java` and `examples/python`, demonstrating the
 library's standard CLI contract, configuration, logging, messaging
 (publish + request/reply), metrics, and heartbeat — so a component author writes
@@ -18,7 +18,7 @@ hand-written.
 - **Request/reply** — subscribes to its command inbox
   `ecv1/<thing>/RustComponentSkeleton/main/cmd/request` and replies to each request;
   a periodic self-request demonstrates the framework request deadline
-  (`GgError::RequestTimeout`, `messaging.requestTimeoutSeconds`).
+  (`EdgeCommonsError::RequestTimeout`, `messaging.requestTimeoutSeconds`).
 - **Periodic publish** — publishes `ecv1/<thing>/RustComponentSkeleton/main/data/sample`
   every `component.global.publish_interval` seconds, emitting a `messages_published`
   metric per send (and mirrors it to IoT Core on `…/data/telemetry`).
@@ -75,7 +75,7 @@ gdk component publish
 or set a Linux target you have a toolchain for:
 
 ```bash
-GGCOMMONS_TARGET=x86_64-unknown-linux-gnu gdk component build
+EDGECOMMONS_TARGET=x86_64-unknown-linux-gnu gdk component build
 ```
 
 The recipe declares a `linux` platform and runs the binary on the GREENGRASS platform,

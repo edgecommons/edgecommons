@@ -1,7 +1,7 @@
-# GGCommons Messaging Documentation
+# EdgeCommons Messaging Documentation
 
 ## Overview
-The GGCommons library provides a unified messaging abstraction layer whose behavior is driven by the
+The EdgeCommons library provides a unified messaging abstraction layer whose behavior is driven by the
 `--transport` axis (derived from `--platform`):
 - **`IPC` transport** (the `GREENGRASS` platform): Native AWS Greengrass IPC communication
 - **`MQTT` transport** (the `HOST` platform, dual-MQTT): Dual MQTT clients for non-Greengrass
@@ -19,7 +19,7 @@ The primary interface for applications to interact with the messaging system thr
 - Managing subscriptions
 
 ### Message Structure
-Messages in GGCommons follow a header-payload model consisting of:
+Messages in EdgeCommons follow a header-payload model consisting of:
 1. **Header** - Contains metadata like:
    - Message name
    - Version
@@ -39,11 +39,11 @@ Messages in GGCommons follow a header-payload model consisting of:
 #### 1. Publish-Subscribe
 Basic pub-sub messaging using either MQTT or Greengrass IPC:
 ```python
-from ggcommons.interfaces import IMessagingService
+from edgecommons.interfaces import IMessagingService
 from awsiot.greengrasscoreipc.model import QOS
 
 # Get messaging service through dependency injection
-messaging_service = ggcommons.get_service(IMessagingService)
+messaging_service = edgecommons.get_service(IMessagingService)
 
 # Publishing to local broker
 messaging_service.publish(topic, message)
@@ -78,13 +78,13 @@ Every `request()` carries a **framework-owned deadline** (default **30 s**, conf
 `messaging.requestTimeoutSeconds` in the component config; `0` disables). When it expires the
 library unsubscribes the ephemeral reply topic, removes the pending entry and completes the `Iou`
 **exceptionally** — a waiting (or later) `iou.get()` **raises** `RequestTimeoutError`
-(`ggcommons.messaging.errors`) instead of blocking forever, even if the caller never calls
+(`edgecommons.messaging.errors`) instead of blocking forever, even if the caller never calls
 `get()`, so an unanswered request can no longer leak its reply subscription. Reply-arrival, the
 deadline and `cancel_request` settle a request exactly once (idempotent); a straggler reply after
 settle is dropped with a DEBUG log.
 
 ```python
-from ggcommons import RequestTimeoutError
+from edgecommons import RequestTimeoutError
 
 # Per-call deadline: an explicit value always wins over the configured default.
 iou = MessagingClient.request(topic, msg, timeout_secs=5)
@@ -118,7 +118,7 @@ ecv1/{site}/{device}/{component}/{instance}/{class}   # position 5 - only when t
 Position 5 is checked only when *this component's* effective root mode is on
 (`topic.includeRoot` AND a multi-level hierarchy; late-bound from the config, like the
 request-deadline default) — checking it unconditionally would false-positive on legitimate `app`
-channels such as `ecv1/d/c/i/app/state`. Non-`ecv1` topics pass untouched (`ggcommons/reply-…`
+channels such as `ecv1/d/c/i/app/state`. Non-`ecv1` topics pass untouched (`edgecommons/reply-…`
 reply topics, `cloudwatch/metric/put`, foreign-broker bridging), and `subscribe*` is never
 guarded — consumers must read the reserved classes.
 
@@ -154,7 +154,7 @@ The library includes three messaging providers:
 Messages can be created using the MessageBuilder pattern:
 
 ```python
-from ggcommons.builders import MessageBuilder
+from edgecommons.builders import MessageBuilder
 
 # Create message with builder pattern
 message = MessageBuilder.create("DataUpdate", "1.0") \
@@ -451,12 +451,12 @@ messaging_service.subscribe("sensors/#", all_sensor_handler)
 ### From Legacy MessagingClient
 ```python
 # Old way (still supported)
-from ggcommons import MessagingClient
+from edgecommons import MessagingClient
 MessagingClient.publish(topic, message)
 
 # New way (recommended)
-from ggcommons.interfaces import IMessagingService
-messaging_service = ggcommons.get_service(IMessagingService)
+from edgecommons.interfaces import IMessagingService
+messaging_service = edgecommons.get_service(IMessagingService)
 messaging_service.publish(topic, message)
 ```
 
@@ -485,7 +485,7 @@ Enable debug logging for messaging components:
   "logging": {
     "level": "DEBUG",
     "loggers": {
-      "ggcommons.messaging": "DEBUG"
+      "edgecommons.messaging": "DEBUG"
     }
   }
 }

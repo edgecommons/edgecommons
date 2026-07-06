@@ -1,13 +1,13 @@
-# Single-node kind cluster for the ggcommons Phase-1a Kubernetes smoke test.
+# Single-node kind cluster for the edgecommons Phase-1a Kubernetes smoke test.
 #
-#   kind create cluster --name ggcommons --config test-infra/k8s/kind-config.yaml
-#   kind load docker-image ggcommons-component:ci --name ggcommons
+#   kind create cluster --name edgecommons --config test-infra/k8s/kind-config.yaml
+#   kind load docker-image edgecommons-component:ci --name edgecommons
 #
 # A single node is enough for the CONFIGMAP source + ..data hot-reload test; no
 # durable streaming PVC (StatefulSet) is exercised in 1a.
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
-name: ggcommons
+name: edgecommons
 nodes:
   - role: control-plane
     # Make ConfigMap→volume propagation fast and deterministic for the ..data hot-reload

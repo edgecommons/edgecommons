@@ -4,7 +4,7 @@
  * The pure precedence resolver and platform auto-detector. Maps parse-time inputs
  * (explicit flags, then environment, then the platform-profile defaults) to a single
  * {@link ResolvedProfile} consumed by the lifecycle builder. Mirrors the canonical Java
- * `com.mbreissi.ggcommons.platform` package.
+ * `com.mbreissi.edgecommons.platform` package.
  *
  * One rule governs every defaultable setting:
  * ```
@@ -20,7 +20,7 @@
  * IPC×KUBERNETES rejection still holds (the IPC lock).
  *
  * **Phase 1b:** {@link resolveIdentity} now reads the Kubernetes Downward-API env vars
- * (`GGCOMMONS_THING_NAME`, then `POD_NAME`) ahead of the generic `AWS_IOT_THING_NAME` probe **when
+ * (`EDGECOMMONS_THING_NAME`, then `POD_NAME`) ahead of the generic `AWS_IOT_THING_NAME` probe **when
  * the resolved platform is KUBERNETES** (FR-RT-7).
  *
  * **Phase 1c:** the KUBERNETES profile now defaults its logging format to {@link JSON_LOG_FORMAT} (the
@@ -32,7 +32,7 @@
  */
 import { existsSync } from "fs";
 
-import { GgError } from "./errors";
+import { EdgeCommonsError } from "./errors";
 
 /**
  * The deployment platform — the primary runtime axis (DESIGN-core §2/§3). A platform is a named
@@ -158,11 +158,11 @@ export const ENV_GG_SVCUID = "SVCUID";
 export const ENV_THING_NAME = "AWS_IOT_THING_NAME";
 /**
  * Kubernetes Downward-API thing-name env var (FR-RT-7). The chart maps the
- * `ggcommons.io/thing-name` pod annotation (or an explicit value) into this var. Honored only when
+ * `edgecommons.io/thing-name` pod annotation (or an explicit value) into this var. Honored only when
  * the resolved platform is {@link Platform.KUBERNETES}; it then takes precedence over
  * {@link ENV_THING_NAME}.
  */
-export const ENV_K8S_THING_NAME = "GGCOMMONS_THING_NAME";
+export const ENV_K8S_THING_NAME = "EDGECOMMONS_THING_NAME";
 /**
  * Kubernetes Downward-API pod-name env var (`metadata.name` via `fieldRef`). The KUBERNETES identity
  * fallback after {@link ENV_K8S_THING_NAME}. Honored only when the resolved platform is
@@ -312,7 +312,7 @@ export function profileCredentialsKeyProvider(platform: Platform): string | unde
 /**
  * Resolves the runtime profile from parse-time inputs and the environment (DESIGN-core §4).
  *
- * @throws {@link GgError} of kind `Cli` if the resolved platform has no profile in this build, or the
+ * @throws {@link EdgeCommonsError} of kind `Cli` if the resolved platform has no profile in this build, or the
  *         platform/transport combination is illegal (the IPC lock).
  */
 export function resolveProfile(inputs: ResolverInputs, env: Env): ResolvedProfile {
@@ -321,7 +321,7 @@ export function resolveProfile(inputs: ResolverInputs, env: Env): ResolvedProfil
 
   const profile = PROFILES.get(platform);
   if (!profile) {
-    throw GgError.cli(
+    throw EdgeCommonsError.cli(
       `Platform ${platform} is not supported in this build (no profile). ` +
         `Valid platforms: ${[...PROFILES.keys()].join(", ")}.`,
     );
@@ -359,11 +359,11 @@ export function detectPlatform(env: Env, fileExists: (p: string) => boolean = ex
  * Validates the platform/transport combination — the IPC lock (DESIGN-core §4.1). IPC is valid only
  * on a Greengrass Nucleus, which provides the IPC domain socket.
  *
- * @throws {@link GgError} of kind `Cli` if `transport === IPC && platform !== GREENGRASS`.
+ * @throws {@link EdgeCommonsError} of kind `Cli` if `transport === IPC && platform !== GREENGRASS`.
  */
 export function validate(platform: Platform, transport: Transport): void {
   if (transport === Transport.IPC && platform !== Platform.GREENGRASS) {
-    throw GgError.cli(
+    throw EdgeCommonsError.cli(
       `IPC transport requires --platform GREENGRASS (the Nucleus provides the IPC socket); ` +
         `got platform=${platform}`,
     );
@@ -375,7 +375,7 @@ export function validate(platform: Platform, transport: Transport): void {
  *
  *   1. explicit `-t/--thing` (highest, every platform);
  *   2. **KUBERNETES only** — the Downward-API env vars in order: {@link ENV_K8S_THING_NAME}
- *      (`GGCOMMONS_THING_NAME`, the chart-mapped `ggcommons.io/thing-name` annotation or an explicit
+ *      (`EDGECOMMONS_THING_NAME`, the chart-mapped `edgecommons.io/thing-name` annotation or an explicit
  *      value), then {@link ENV_K8S_POD_NAME} (`POD_NAME`, `metadata.name` via `fieldRef`);
  *   3. {@link ENV_THING_NAME} (`AWS_IOT_THING_NAME`, GREENGRASS / generic platform-supplied);
  *   4. the library fallback ({@link DEFAULT_IDENTITY}).

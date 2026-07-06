@@ -1,7 +1,7 @@
 //! C-ABI host-sink-callback integration tests (feature `cabi`).
 //!
 //! Drives a `callback`-type stream end-to-end through the real C entry points
-//! (`ggsl_set_sink_callback` → `ggsl_open` → `ggsl_append` → host callback → `ggsl_stats`),
+//! (`esl_set_sink_callback` → `esl_open` → `esl_append` → host callback → `esl_stats`),
 //! exactly as the Java/Panama binding will. Exercises:
 //!   * AllAcked: the callback receives the batch and `exported_total` advances.
 //!   * Partial: only the failed offsets are re-delivered (at-least-once retry).
@@ -9,7 +9,7 @@
 //!     fault-injection case — nothing is lost while the "cloud" is down).
 //!   * No callback registered: a callback stream is buffer-only (records persist, do not export).
 //!
-//! `ggsl_set_sink_callback` registers a PROCESS-GLOBAL callback, so these tests must not run
+//! `esl_set_sink_callback` registers a PROCESS-GLOBAL callback, so these tests must not run
 //! concurrently; they serialize on a shared mutex.
 
 #![cfg(feature = "cabi")]
@@ -19,10 +19,10 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use ggstreamlog::ffi::{
-    ggsl_append, ggsl_open, ggsl_set_sink_callback, ggsl_shutdown, ggsl_stats, ggsl_stream_free,
-    ggsl_stream_get, ggsl_str_free, GgslService, GgslSinkOutcome, GgslSinkRecord, GgslStats,
-    GgslStream,
+use edgestreamlog::ffi::{
+    esl_append, esl_open, esl_set_sink_callback, esl_shutdown, esl_stats, esl_stream_free,
+    esl_stream_get, esl_str_free, EslService, EslSinkOutcome, EslSinkRecord, EslStats,
+    EslStream,
 };
 
 // Mirror of the C status codes the host writes into the outcome (kept local to the test).
@@ -30,7 +30,7 @@ const SINK_ALL_ACKED: c_int = 0;
 const SINK_PARTIAL: c_int = 1;
 const SINK_FAILED_RETRYABLE: c_int = 2;
 const SINK_FAILED_PERMANENT: c_int = 3;
-const GGSL_OK: c_int = 0;
+const ESL_OK: c_int = 0;
 
 /// Serializes all tests in this file (the sink callback + tracing subscriber are process-global).
 fn test_lock() -> &'static Mutex<()> {
@@ -69,21 +69,21 @@ fn callback_cfg(dir: &std::path::Path) -> CString {
 }
 
 /// Open the service (assert OK), get the `cw` stream handle.
-unsafe fn open_cw(cfg: &CString) -> (*mut GgslService, *mut GgslStream) {
-    let mut svc: *mut GgslService = std::ptr::null_mut();
+unsafe fn open_cw(cfg: &CString) -> (*mut EslService, *mut EslStream) {
+    let mut svc: *mut EslService = std::ptr::null_mut();
     let mut err: *mut c_char = std::ptr::null_mut();
-    let rc = ggsl_open(cfg.as_ptr(), &mut svc, &mut err);
-    assert_eq!(rc, GGSL_OK, "ggsl_open failed: {}", err_str(err));
+    let rc = esl_open(cfg.as_ptr(), &mut svc, &mut err);
+    assert_eq!(rc, ESL_OK, "esl_open failed: {}", err_str(err));
     if !err.is_null() {
-        ggsl_str_free(err);
+        esl_str_free(err);
     }
     let name = CString::new("cw").unwrap();
-    let mut stream: *mut GgslStream = std::ptr::null_mut();
+    let mut stream: *mut EslStream = std::ptr::null_mut();
     let mut err2: *mut c_char = std::ptr::null_mut();
-    let rc = ggsl_stream_get(svc, name.as_ptr(), &mut stream, &mut err2);
-    assert_eq!(rc, GGSL_OK, "ggsl_stream_get failed: {}", err_str(err2));
+    let rc = esl_stream_get(svc, name.as_ptr(), &mut stream, &mut err2);
+    assert_eq!(rc, ESL_OK, "esl_stream_get failed: {}", err_str(err2));
     if !err2.is_null() {
-        ggsl_str_free(err2);
+        esl_str_free(err2);
     }
     (svc, stream)
 }
@@ -95,11 +95,11 @@ unsafe fn err_str(err: *mut c_char) -> String {
     std::ffi::CStr::from_ptr(err).to_string_lossy().into_owned()
 }
 
-unsafe fn append(stream: *mut GgslStream, ts_ms: u64, payload: &[u8]) {
+unsafe fn append(stream: *mut EslStream, ts_ms: u64, payload: &[u8]) {
     let pk = b"NamespaceX";
     let mut off: u64 = 0;
     let mut err: *mut c_char = std::ptr::null_mut();
-    let rc = ggsl_append(
+    let rc = esl_append(
         stream,
         pk.as_ptr(),
         pk.len() as u16,
@@ -109,22 +109,22 @@ unsafe fn append(stream: *mut GgslStream, ts_ms: u64, payload: &[u8]) {
         &mut off,
         &mut err,
     );
-    assert_eq!(rc, GGSL_OK, "ggsl_append failed: {}", err_str(err));
+    assert_eq!(rc, ESL_OK, "esl_append failed: {}", err_str(err));
     if !err.is_null() {
-        ggsl_str_free(err);
+        esl_str_free(err);
     }
 }
 
-unsafe fn stats(svc: *mut GgslService) -> GgslStats {
+unsafe fn stats(svc: *mut EslService) -> EslStats {
     let name = CString::new("cw").unwrap();
-    let mut s: GgslStats = std::mem::zeroed();
-    let rc = ggsl_stats(svc, name.as_ptr(), &mut s);
-    assert_eq!(rc, GGSL_OK);
+    let mut s: EslStats = std::mem::zeroed();
+    let rc = esl_stats(svc, name.as_ptr(), &mut s);
+    assert_eq!(rc, ESL_OK);
     s
 }
 
 /// Poll until `exported_total >= want` or `timeout`.
-unsafe fn wait_exported(svc: *mut GgslService, want: u64, timeout: Duration) -> u64 {
+unsafe fn wait_exported(svc: *mut EslService, want: u64, timeout: Duration) -> u64 {
     let start = Instant::now();
     loop {
         let e = stats(svc).exported_total;
@@ -139,9 +139,9 @@ unsafe fn wait_exported(svc: *mut GgslService, want: u64, timeout: Duration) -> 
 
 extern "C" fn cb_all_acked(
     ud: *mut c_void,
-    records: *const GgslSinkRecord,
+    records: *const EslSinkRecord,
     n: usize,
-    outcome: *mut GgslSinkOutcome,
+    outcome: *mut EslSinkOutcome,
 ) -> c_int {
     let st = unsafe { &*(ud as *const HostState) };
     st.calls.fetch_add(1, Ordering::SeqCst);
@@ -155,14 +155,14 @@ extern "C" fn cb_all_acked(
         d.push((r.offset, payload.to_vec()));
     }
     unsafe { (*outcome).status = SINK_ALL_ACKED };
-    GGSL_OK
+    ESL_OK
 }
 
 extern "C" fn cb_partial(
     ud: *mut c_void,
-    records: *const GgslSinkRecord,
+    records: *const EslSinkRecord,
     n: usize,
-    outcome: *mut GgslSinkOutcome,
+    outcome: *mut EslSinkOutcome,
 ) -> c_int {
     let st = unsafe { &*(ud as *const HostState) };
     st.calls.fetch_add(1, Ordering::SeqCst);
@@ -198,14 +198,14 @@ extern "C" fn cb_partial(
         oc.failed_count = failed.len();
         oc.status = SINK_PARTIAL;
     }
-    GGSL_OK
+    ESL_OK
 }
 
 extern "C" fn cb_disconnect(
     ud: *mut c_void,
-    records: *const GgslSinkRecord,
+    records: *const EslSinkRecord,
     n: usize,
-    outcome: *mut GgslSinkOutcome,
+    outcome: *mut EslSinkOutcome,
 ) -> c_int {
     let st = unsafe { &*(ud as *const HostState) };
     st.calls.fetch_add(1, Ordering::SeqCst);
@@ -215,7 +215,7 @@ extern "C" fn cb_disconnect(
     if st.disconnected.load(Ordering::SeqCst) > 0 {
         st.rejected_attempts.fetch_add(1, Ordering::SeqCst);
         oc.status = SINK_FAILED_RETRYABLE;
-        return GGSL_OK;
+        return ESL_OK;
     }
     // "Reconnected": store the batch.
     let recs = unsafe { std::slice::from_raw_parts(records, n) };
@@ -225,16 +225,16 @@ extern "C" fn cb_disconnect(
         d.push((r.offset, payload.to_vec()));
     }
     oc.status = SINK_ALL_ACKED;
-    GGSL_OK
+    ESL_OK
 }
 
 /// Trips the chosen failure mode while "disconnected", then recovers to AllAcked.
 /// `mode`: 1 = non-zero rc, 2 = permanent failure, 3 = partial with failed_count=0.
 extern "C" fn cb_modes(
     ud: *mut c_void,
-    records: *const GgslSinkRecord,
+    records: *const EslSinkRecord,
     n: usize,
-    outcome: *mut GgslSinkOutcome,
+    outcome: *mut EslSinkOutcome,
 ) -> c_int {
     let st = unsafe { &*(ud as *const HostState) };
     st.calls.fetch_add(1, Ordering::SeqCst);
@@ -248,7 +248,7 @@ extern "C" fn cb_modes(
             1 => return 7,                                // non-zero rc -> retryable Failed
             2 => {
                 oc.status = SINK_FAILED_PERMANENT;
-                return GGSL_OK;
+                return ESL_OK;
             }
             3 => {
                 // Partial but with zero failed offsets -> the core treats it as AllAcked, so the
@@ -261,7 +261,7 @@ extern "C" fn cb_modes(
                 }
                 oc.status = SINK_PARTIAL;
                 oc.failed_count = 0;
-                return GGSL_OK;
+                return ESL_OK;
             }
             _ => {}
         }
@@ -274,7 +274,7 @@ extern "C" fn cb_modes(
         d.push((r.offset, payload.to_vec()));
     }
     oc.status = SINK_ALL_ACKED;
-    GGSL_OK
+    ESL_OK
 }
 
 // ----- tests -----
@@ -285,8 +285,8 @@ fn all_acked_drains_batch_and_advances_exported() {
     let st = Box::new(HostState::default());
     let st_ptr: *const HostState = &*st;
     unsafe {
-        let rc = ggsl_set_sink_callback(Some(cb_all_acked), st_ptr as *mut c_void);
-        assert_eq!(rc, GGSL_OK);
+        let rc = esl_set_sink_callback(Some(cb_all_acked), st_ptr as *mut c_void);
+        assert_eq!(rc, ESL_OK);
 
         let dir = tempfile::tempdir().unwrap();
         let cfg = callback_cfg(dir.path());
@@ -305,9 +305,9 @@ fn all_acked_drains_batch_and_advances_exported() {
         assert_eq!(st.delivered.lock().unwrap().len(), 50);
         assert!(st.calls.load(Ordering::SeqCst) >= 1);
 
-        ggsl_stream_free(stream);
-        ggsl_shutdown(svc);
-        ggsl_set_sink_callback(None, std::ptr::null_mut());
+        esl_stream_free(stream);
+        esl_shutdown(svc);
+        esl_set_sink_callback(None, std::ptr::null_mut());
     }
     drop(st);
 }
@@ -320,7 +320,7 @@ fn partial_redelivers_only_failed_offsets() {
     *st.fail_offsets_once.lock().unwrap() = vec![1, 3];
     let st_ptr: *const HostState = &*st;
     unsafe {
-        assert_eq!(ggsl_set_sink_callback(Some(cb_partial), st_ptr as *mut c_void), GGSL_OK);
+        assert_eq!(esl_set_sink_callback(Some(cb_partial), st_ptr as *mut c_void), ESL_OK);
 
         let dir = tempfile::tempdir().unwrap();
         let cfg = callback_cfg(dir.path());
@@ -344,9 +344,9 @@ fn partial_redelivers_only_failed_offsets() {
         offs.dedup();
         assert_eq!(offs, vec![0, 1, 2, 3, 4]);
 
-        ggsl_stream_free(stream);
-        ggsl_shutdown(svc);
-        ggsl_set_sink_callback(None, std::ptr::null_mut());
+        esl_stream_free(stream);
+        esl_shutdown(svc);
+        esl_set_sink_callback(None, std::ptr::null_mut());
     }
     drop(st);
 }
@@ -359,7 +359,7 @@ fn failed_retryable_holds_batch_until_reconnect_disconnect_fault_injection() {
     st.disconnected.store(1, Ordering::SeqCst);
     let st_ptr: *const HostState = &*st;
     unsafe {
-        assert_eq!(ggsl_set_sink_callback(Some(cb_disconnect), st_ptr as *mut c_void), GGSL_OK);
+        assert_eq!(esl_set_sink_callback(Some(cb_disconnect), st_ptr as *mut c_void), ESL_OK);
 
         let dir = tempfile::tempdir().unwrap();
         let cfg = callback_cfg(dir.path());
@@ -392,9 +392,9 @@ fn failed_retryable_holds_batch_until_reconnect_disconnect_fault_injection() {
         assert!(st.rejected_attempts.load(Ordering::SeqCst) >= 2, "the disconnect window had retries");
         assert_eq!(st.delivered.lock().unwrap().len(), 10);
 
-        ggsl_stream_free(stream);
-        ggsl_shutdown(svc);
-        ggsl_set_sink_callback(None, std::ptr::null_mut());
+        esl_stream_free(stream);
+        esl_shutdown(svc);
+        esl_set_sink_callback(None, std::ptr::null_mut());
     }
     drop(st);
 }
@@ -404,7 +404,7 @@ fn no_callback_registered_is_buffer_only() {
     let _g = test_lock().lock().unwrap_or_else(|p| p.into_inner());
     unsafe {
         // Ensure no callback is bound.
-        ggsl_set_sink_callback(None, std::ptr::null_mut());
+        esl_set_sink_callback(None, std::ptr::null_mut());
 
         let dir = tempfile::tempdir().unwrap();
         let cfg = callback_cfg(dir.path());
@@ -420,8 +420,8 @@ fn no_callback_registered_is_buffer_only() {
         assert_eq!(s.exported_total, 0, "no host callback => stream is buffer-only");
         assert_eq!(s.backlog, 5);
 
-        ggsl_stream_free(stream);
-        ggsl_shutdown(svc);
+        esl_stream_free(stream);
+        esl_shutdown(svc);
     }
 }
 
@@ -432,7 +432,7 @@ fn kinesis_sink_delegates_to_in_core_factory_buffer_only_without_feature() {
     // do not export) — proving the C-ABI factory leaves the native sinks unchanged.
     let _g = test_lock().lock().unwrap_or_else(|p| p.into_inner());
     unsafe {
-        ggsl_set_sink_callback(None, std::ptr::null_mut());
+        esl_set_sink_callback(None, std::ptr::null_mut());
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("k").to_string_lossy().replace('\\', "/");
         let json = format!(
@@ -448,8 +448,8 @@ fn kinesis_sink_delegates_to_in_core_factory_buffer_only_without_feature() {
         assert_eq!(s.appended_total, 1);
         assert_eq!(s.exported_total, 0, "kinesis stream is buffer-only without the kinesis feature");
         assert_eq!(s.backlog, 1);
-        ggsl_stream_free(stream);
-        ggsl_shutdown(svc);
+        esl_stream_free(stream);
+        esl_shutdown(svc);
     }
 }
 
@@ -467,7 +467,7 @@ fn run_mode(mode: u64) {
     st.disconnected.store(2, Ordering::SeqCst);
     let st_ptr: *const HostState = &*st;
     unsafe {
-        assert_eq!(ggsl_set_sink_callback(Some(cb_modes), st_ptr as *mut c_void), GGSL_OK);
+        assert_eq!(esl_set_sink_callback(Some(cb_modes), st_ptr as *mut c_void), ESL_OK);
 
         let dir = tempfile::tempdir().unwrap();
         let cfg = callback_cfg(dir.path());
@@ -485,9 +485,9 @@ fn run_mode(mode: u64) {
             "mode {mode}: the injected failure must have been exercised"
         );
 
-        ggsl_stream_free(stream);
-        ggsl_shutdown(svc);
-        ggsl_set_sink_callback(None, std::ptr::null_mut());
+        esl_stream_free(stream);
+        esl_shutdown(svc);
+        esl_set_sink_callback(None, std::ptr::null_mut());
     }
     drop(st);
 }
@@ -500,7 +500,7 @@ fn host_callback_nonzero_rc_is_retried() {
 #[test]
 fn callback_cleared_after_open_holds_batch_as_retryable() {
     // A stream opened WITH a callback binds an export closure that re-reads the global registration
-    // on each drain. If the host clears the callback (ggsl_set_sink_callback(None)) after open, the
+    // on each drain. If the host clears the callback (esl_set_sink_callback(None)) after open, the
     // in-flight drain finds no callback and must HOLD the batch (retryable Failed) — never lose it.
     let _g = test_lock().lock().unwrap_or_else(|p| p.into_inner());
     let st = Box::new(HostState::default());
@@ -508,7 +508,7 @@ fn callback_cleared_after_open_holds_batch_as_retryable() {
     st.disconnected.store(1, Ordering::SeqCst);
     let st_ptr: *const HostState = &*st;
     unsafe {
-        assert_eq!(ggsl_set_sink_callback(Some(cb_disconnect), st_ptr as *mut c_void), GGSL_OK);
+        assert_eq!(esl_set_sink_callback(Some(cb_disconnect), st_ptr as *mut c_void), ESL_OK);
 
         let dir = tempfile::tempdir().unwrap();
         let cfg = callback_cfg(dir.path());
@@ -524,15 +524,15 @@ fn callback_cleared_after_open_holds_batch_as_retryable() {
             std::thread::sleep(Duration::from_millis(5));
         }
         // Now clear the callback: the bound closure's next drain takes the "no callback" path.
-        ggsl_set_sink_callback(None, std::ptr::null_mut());
+        esl_set_sink_callback(None, std::ptr::null_mut());
         std::thread::sleep(Duration::from_millis(80));
 
         let s = stats(svc);
         assert_eq!(s.exported_total, 0, "no record should be lost while the callback is gone");
         assert!(s.backlog >= 1, "the batch is held (at-least-once), not dropped");
 
-        ggsl_stream_free(stream);
-        ggsl_shutdown(svc);
+        esl_stream_free(stream);
+        esl_shutdown(svc);
     }
     drop(st);
 }

@@ -122,7 +122,7 @@ mod tests {
     use crate::config::model::Config;
     use crate::metrics::MetricEmitter;
     use crate::streaming::DefaultStreamService;
-    use ggstreamlog::{FakeSink, Record, Sink};
+    use edgestreamlog::{FakeSink, Record, Sink};
     use serde_json::json;
     use std::path::Path;
 
@@ -146,7 +146,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let config = cfg(dir.path());
 
-        let factory = |_n: &str, _s: &super::super::SinkConfig| -> ggstreamlog::Result<Option<Box<dyn Sink>>> {
+        let factory = |_n: &str, _s: &super::super::SinkConfig| -> edgestreamlog::Result<Option<Box<dyn Sink>>> {
             Ok(Some(Box::new(FakeSink::new())))
         };
         let svc: Arc<dyn StreamService> =
@@ -195,7 +195,7 @@ mod tests {
     struct EmptyStreams;
     impl StreamService for EmptyStreams {
         fn stream(&self, _: &str) -> crate::Result<crate::streaming::StreamHandle> {
-            Err(crate::GgError::Streaming("none".into()))
+            Err(crate::EdgeCommonsError::Streaming("none".into()))
         }
         fn stream_names(&self) -> Vec<String> {
             Vec::new()

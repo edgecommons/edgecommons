@@ -2,10 +2,10 @@
 //!
 //! **One-liner purpose**: The library-owned component **command inbox** — the minimal
 //! `commands()` facade (DESIGN-uns §7.3 / §9.5, edge-console slice S2), mirroring the Java
-//! canonical `com.mbreissi.ggcommons.commands.CommandInbox`.
+//! canonical `com.mbreissi.edgecommons.commands.CommandInbox`.
 //!
 //! ## Overview
-//! Every ggcommons component subscribes, on its PRIMARY (local/IPC) connection, its own
+//! Every edgecommons component subscribes, on its PRIMARY (local/IPC) connection, its own
 //! `main`-instance command-inbox wildcard
 //!
 //! ```text
@@ -18,7 +18,7 @@
 //! that topic with the request's `correlation_id` (the `uns-bridge` rewrites `reply_to` across
 //! brokers, so console→component request/reply works transparently over the site bus); a `cmd`
 //! without `reply_to` is fire-and-forget (the handler runs, no reply). Obtain the facade via
-//! [`crate::GgCommons::commands`] and register custom verbs with [`CommandInbox::register`].
+//! [`crate::EdgeCommons::commands`] and register custom verbs with [`CommandInbox::register`].
 //!
 //! ## Normative behavior (mirrored by the Java/Python/TS inboxes; pinned by
 //! `uns-test-vectors/commands.json`)
@@ -52,7 +52,7 @@
 //!   [`ERR_HANDLER_ERROR`] code when a handler doesn't need a specific one.
 //! - **No config surface** — always on; core plumbing, not a feature toggle.
 //!
-//! Lifecycle: constructed and [`CommandInbox::start`] by the `GgCommonsBuilder::build` runtime
+//! Lifecycle: constructed and [`CommandInbox::start`] by the `EdgeCommonsBuilder::build` runtime
 //! right after the §9.4 [`crate::uns::RepublishListener`], whose wiring this module mirrors:
 //! [`Weak`](std::sync::Weak) references in the subscribe callback so `Drop` still runs, and RAII
 //! teardown (unsubscribe before the transport drops).
@@ -73,7 +73,7 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use crate::config::model::Config;
-use crate::error::{GgError, Result};
+use crate::error::{EdgeCommonsError, Result};
 use crate::messaging::message::{Message, MessageBuilder};
 use crate::messaging::{message_handler, MessagingService};
 use crate::uns::{Uns, UnsClass, UnsScope};
@@ -186,7 +186,7 @@ where
 ///
 /// # Examples
 /// ```
-/// use ggcommons::commands::command_handler;
+/// use edgecommons::commands::command_handler;
 /// use serde_json::json;
 /// let _h = command_handler(|_request| async move { Ok(Some(json!({ "restarted": true }))) });
 /// ```
@@ -230,7 +230,7 @@ pub struct CommandInbox {
 
 impl CommandInbox {
     /// Creates the inbox and registers the three built-in verbs. The verb *actions* are injected
-    /// seams so the built-ins unit-test deterministically; `GgCommonsBuilder::build` wires the
+    /// seams so the built-ins unit-test deterministically; `EdgeCommonsBuilder::build` wires the
     /// real ones.
     ///
     /// - `uptime_secs` — the [`PING`] uptime source (production: the heartbeat's monotonic
@@ -316,25 +316,25 @@ impl CommandInbox {
     /// [`Self::unregister`] first.
     ///
     /// # Errors
-    /// [`GgError::UnsValidation`] when a verb token violates the §2.2 token rule;
-    /// [`GgError::Command`] when the verb is built-in/delegated/already registered.
+    /// [`EdgeCommonsError::UnsValidation`] when a verb token violates the §2.2 token rule;
+    /// [`EdgeCommonsError::Command`] when the verb is built-in/delegated/already registered.
     pub fn register(&self, verb: &str, handler: Arc<dyn CommandHandler>) -> Result<()> {
         for token in verb.split('/') {
             crate::uns::check_token(token, "verb token")?;
         }
         if BUILT_IN_VERBS.contains(&verb) {
-            return Err(GgError::Command(format!(
+            return Err(EdgeCommonsError::Command(format!(
                 "verb '{verb}' is a built-in verb and cannot be shadowed"
             )));
         }
         if DELEGATED_VERBS.contains(&verb) {
-            return Err(GgError::Command(format!(
+            return Err(EdgeCommonsError::Command(format!(
                 "verb '{verb}' is owned by another library subsystem and cannot be registered"
             )));
         }
         let mut handlers = self.handlers.lock().unwrap();
         if handlers.contains_key(verb) {
-            return Err(GgError::Command(format!(
+            return Err(EdgeCommonsError::Command(format!(
                 "verb '{verb}' is already registered - unregister it first to replace the handler"
             )));
         }
@@ -347,10 +347,10 @@ impl CommandInbox {
     /// verbs cannot be unregistered.
     ///
     /// # Errors
-    /// [`GgError::Command`] when `verb` is a built-in.
+    /// [`EdgeCommonsError::Command`] when `verb` is a built-in.
     pub fn unregister(&self, verb: &str) -> Result<()> {
         if BUILT_IN_VERBS.contains(&verb) {
-            return Err(GgError::Command(format!(
+            return Err(EdgeCommonsError::Command(format!(
                 "verb '{verb}' is a built-in verb and cannot be unregistered"
             )));
         }
@@ -603,7 +603,7 @@ mod tests {
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
     const INBOX_FILTER: &str = "ecv1/test-thing/TestComponent/main/cmd/#";
-    const REPLY_TO: &str = "ggcommons/reply-test-1";
+    const REPLY_TO: &str = "edgecommons/reply-test-1";
 
     fn test_config() -> Arc<ArcSwap<Config>> {
         Arc::new(ArcSwap::from_pointee(
@@ -868,24 +868,24 @@ mod tests {
         let f = fixture();
         assert!(matches!(
             f.inbox.register(PING, command_handler(|_r| async move { Ok(None) })),
-            Err(GgError::Command(_))
+            Err(EdgeCommonsError::Command(_))
         ));
         assert!(matches!(
             f.inbox.register(SET_CONFIG_VERB, command_handler(|_r| async move { Ok(None) })),
-            Err(GgError::Command(_))
+            Err(EdgeCommonsError::Command(_))
         ));
         f.inbox.register("mine", command_handler(|_r| async move { Ok(None) })).unwrap();
         assert!(matches!(
             f.inbox.register("mine", command_handler(|_r| async move { Ok(None) })),
-            Err(GgError::Command(_))
+            Err(EdgeCommonsError::Command(_))
         ));
         assert!(matches!(
             f.inbox.register("bad+verb", command_handler(|_r| async move { Ok(None) })),
-            Err(GgError::UnsValidation { .. })
+            Err(EdgeCommonsError::UnsValidation { .. })
         ));
         assert!(matches!(
             f.inbox.register("sb//x", command_handler(|_r| async move { Ok(None) })),
-            Err(GgError::UnsValidation { .. })
+            Err(EdgeCommonsError::UnsValidation { .. })
         ));
     }
 
@@ -897,7 +897,7 @@ mod tests {
         f.inbox.unregister("mine").unwrap();
         assert!(!f.inbox.verbs().contains("mine"));
         f.inbox.unregister("mine").unwrap(); // unknown -> no-op
-        assert!(matches!(f.inbox.unregister(RELOAD_CONFIG), Err(GgError::Command(_))));
+        assert!(matches!(f.inbox.unregister(RELOAD_CONFIG), Err(EdgeCommonsError::Command(_))));
 
         // The unregistered verb now gets the unknown-verb error.
         f.inbox.clone().start().await;

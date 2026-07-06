@@ -1,8 +1,8 @@
 /**
- * Bridges the `ggstreamlog-node` napi addon (the shared Rust core, built as a native Node addon)
+ * Bridges the `streamlog-node` napi addon (the shared Rust core, built as a native Node addon)
  * into the library: error translation + forwarding core log events into the library logger.
  */
-import type * as Addon from "@mbreissi/ggstreamlog-node";
+import type * as Addon from "@edgecommons/streamlog-node";
 
 import { logger } from "../logging";
 
@@ -12,13 +12,13 @@ export type { Addon };
 let cachedAddon: typeof Addon | undefined;
 
 /**
- * Lazily load the native `ggstreamlog-node` addon. Importing this module does **not** load the native
- * library — it is required only on first actual use, so a component that imports ggcommons but never
+ * Lazily load the native `streamlog-node` addon. Importing this module does **not** load the native
+ * library — it is required only on first actual use, so a component that imports edgecommons but never
  * uses streaming (e.g. a messaging-only component, or the interop node) never needs the addon present
  * (CLAUDE.md: "components that don't use it never load the native library").
  */
 export function getAddon(): typeof Addon {
-  return (cachedAddon ??= require("@mbreissi/ggstreamlog-node") as typeof Addon);
+  return (cachedAddon ??= require("@edgecommons/streamlog-node") as typeof Addon);
 }
 
 /**
@@ -76,23 +76,23 @@ export function resolveSinkOutcome(batchId: number, code: number, failedOffsets?
   (getAddon() as unknown as SinkBridge).resolveOutcome(batchId, code, failedOffsets ?? null);
 }
 
-/** Error thrown when a native streaming call fails. `code` mirrors `ggsl_status`. */
-export class GgStreamError extends Error {
+/** Error thrown when a native streaming call fails. `code` mirrors `esl_status`. */
+export class EdgeStreamError extends Error {
   constructor(
     readonly code: number,
     message?: string,
   ) {
-    super(`ggstreamlog error ${code}${message ? `: ${message}` : ""}`);
-    this.name = "GgStreamError";
+    super(`edgestreamlog error ${code}${message ? `: ${message}` : ""}`);
+    this.name = "EdgeStreamError";
   }
 }
 
-/** Native errors carry the message `ggsl:<code>:<message>`; parse it into a {@link GgStreamError}. */
-export function translate(e: unknown): GgStreamError {
+/** Native errors carry the message `esl:<code>:<message>`; parse it into a {@link EdgeStreamError}. */
+export function translate(e: unknown): EdgeStreamError {
   const msg = e instanceof Error ? e.message : String(e);
-  const m = /^ggsl:(\d+):([\s\S]*)$/.exec(msg);
-  if (m) return new GgStreamError(parseInt(m[1], 10), m[2]);
-  return new GgStreamError(-1, msg);
+  const m = /^esl:(\d+):([\s\S]*)$/.exec(msg);
+  if (m) return new EdgeStreamError(parseInt(m[1], 10), m[2]);
+  return new EdgeStreamError(-1, msg);
 }
 
 const LEVELS: Record<number, "error" | "warn" | "info" | "debug"> = {

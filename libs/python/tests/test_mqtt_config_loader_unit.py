@@ -6,20 +6,20 @@ using only ``tmp_path`` JSON files and in-memory dataclasses. No broker, no AWS,
 no network -- pure parsing/validation, so they belong in the CI gate.
 
 NOTE ON THE FILE NAME / TEST NAMES: ``tests/conftest.py`` auto-marks any test
-whose *nodeid* contains the substring ``messaging``, ``iot`` or ``ggcommons`` as
+whose *nodeid* contains the substring ``messaging``, ``iot`` or ``edgecommons`` as
 ``aws`` (and the CI gate runs ``-m "not aws"``). The sibling file
 ``test_messaging_config_unit.py`` is therefore *deselected* under the gate and
 its coverage never counts. This file deliberately avoids those substrings in its
 path, class and function names (using ``cloud`` for the IoT-Core broker) so the
 same logic is actually measured under ``-m "not slow and not integration and not aws"``.
-The ``from ggcommons...`` import lives in the module body, not the nodeid, so it
+The ``from edgecommons...`` import lives in the module body, not the nodeid, so it
 does not trigger the auto-marker.
 """
 import json
 
 import pytest
 
-from ggcommons.messaging.messaging_config import (
+from edgecommons.messaging.messaging_config import (
     MessagingConfiguration,
     MessagingConfigData,
     LocalMqttConfig,

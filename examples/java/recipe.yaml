@@ -2,7 +2,7 @@
 RecipeFormatVersion: "2020-01-25"
 ComponentName: "{COMPONENT_NAME}"
 ComponentVersion: "{COMPONENT_VERSION}"
-ComponentDescription: "This is simple Hello World component written in Java using GGCommons."
+ComponentDescription: "This is simple Hello World component written in Java using EdgeCommons."
 ComponentPublisher: "{COMPONENT_AUTHOR}"
 ComponentDependencies:
   aws.greengrass.TokenExchangeService:
@@ -79,7 +79,7 @@ ComponentConfiguration:
             instance_specific_tag: "dummy2"
     accessControl:
       aws.greengrass.ipc.pubsub:
-        "com.mbreissi.greengrass.JavaComponentSkeleton:ipc:1":
+        "com.mbreissi.edgecommons.JavaComponentSkeleton:ipc:1":
           policyDescription: Allows access to publish/subscribe to all topics on IPC
           operations:
             - "aws.greengrass#PublishToTopic"
@@ -87,7 +87,7 @@ ComponentConfiguration:
           resources:
             - "*"
       aws.greengrass.ipc.mqttproxy:
-        "com.mbreissi.greengrass.JavaComponentSkeleton:iotcore:1":
+        "com.mbreissi.edgecommons.JavaComponentSkeleton:iotcore:1":
           policyDescription: Allows access to publish/subscribe to all topics on IoT Core.
           operations:
             - "aws.greengrass#PublishToIoTCore"
@@ -95,7 +95,7 @@ ComponentConfiguration:
           resources:
             - "*"
       aws.greengrass.ShadowManager:
-        "com.mbreissi.greengrass.JavaComponentSkeleton:shadow:1":
+        "com.mbreissi.edgecommons.JavaComponentSkeleton:shadow:1":
           policyDescription: Allows access to shadows.
           operations:
             - 'aws.greengrass#GetThingShadow'

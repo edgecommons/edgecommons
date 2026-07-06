@@ -7,7 +7,7 @@
 import { describe, expect, it } from "vitest";
 
 import { Config } from "../src/config/model";
-import { GgError } from "../src/errors";
+import { EdgeCommonsError } from "../src/errors";
 import { Channel } from "../src/facades/channel";
 import { EventsFacade } from "../src/facades/events_facade";
 import { Severity } from "../src/facades/severity";
@@ -102,7 +102,7 @@ describe("EventsFacade", () => {
 
   it("a non-empty type is required", async () => {
     const { facade } = makeFacade();
-    await expect(facade.emit(Severity.Info, "")).rejects.toThrow(GgError);
+    await expect(facade.emit(Severity.Info, "")).rejects.toThrow(EdgeCommonsError);
   });
 
   describe("routing", () => {
@@ -115,7 +115,7 @@ describe("EventsFacade", () => {
 
     it("via(stream) is rejected - events are not bulk telemetry", () => {
       const { facade } = makeFacade();
-      expect(() => facade.via(Channel.stream("hot"))).toThrow(GgError);
+      expect(() => facade.via(Channel.stream("hot"))).toThrow(EdgeCommonsError);
     });
 
     it("a northbound transport failure is swallowed (readiness stays local)", async () => {

@@ -12,7 +12,7 @@ import * as fs from "fs";
 import * as fsp from "fs/promises";
 import * as path from "path";
 
-import { GgError } from "../../errors";
+import { EdgeCommonsError } from "../../errors";
 import { ConfigSource, ConfigWatch } from "./index";
 
 /** Loads configuration from a JSON file on disk, with file-watch hot reload. */
@@ -24,12 +24,12 @@ export class FileConfigSource implements ConfigSource {
     try {
       text = await fsp.readFile(this.filePath, "utf8");
     } catch (e) {
-      throw GgError.io(`failed to read config file '${this.filePath}': ${(e as Error).message}`);
+      throw EdgeCommonsError.io(`failed to read config file '${this.filePath}': ${(e as Error).message}`);
     }
     try {
       return JSON.parse(text);
     } catch (e) {
-      throw GgError.config(`failed to parse config file '${this.filePath}': ${(e as Error).message}`);
+      throw EdgeCommonsError.config(`failed to parse config file '${this.filePath}': ${(e as Error).message}`);
     }
   }
 

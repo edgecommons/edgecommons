@@ -10,7 +10,7 @@ import types
 import json
 from concurrent.futures import ThreadPoolExecutor
 
-from ggcommons.messaging.providers.standalone_provider import StandaloneProvider, _BrokerChannel
+from edgecommons.messaging.providers.standalone_provider import StandaloneProvider, _BrokerChannel
 
 
 def _fake_mqtt_message(topic: str, body: dict):

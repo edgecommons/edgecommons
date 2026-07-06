@@ -24,5 +24,5 @@ labels: new-component
 
 <!-- Existing prototype? Dependencies? Anything the maintainers should know. -->
 
-> On acceptance: scaffold with `ggcommons create-component`, push to `edgecommons/<name>`, wire the
+> On acceptance: scaffold with `edgecommons create-component`, push to `edgecommons/<name>`, wire the
 > reusable CI, set topics, and open a PR adding it to `edgecommons/registry`.

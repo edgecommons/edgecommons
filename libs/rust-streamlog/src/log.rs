@@ -37,7 +37,7 @@ use crate::blockstore::checkpoint;
 use crate::blockstore::segment_log::{ReadChunk, SegmentLog};
 use crate::blockstore::{BackingStore, BlockStore, Checkpoint, MemoryBlockStore, OwnedRecord};
 use crate::config::{BufferConfig, FsyncPolicy, OnFull, StoreType};
-use crate::error::{GgStreamError, Result};
+use crate::error::{EdgeStreamError, Result};
 use crate::record::{self, Record};
 
 /// A point-in-time view of a stream's buffer.
@@ -88,7 +88,7 @@ struct Ingest {
     /// All sequences `<= resolved_seq` have been written (or rejected) by some leader.
     resolved_seq: u64,
     /// Per-sequence rejection errors (e.g. `RejectNew` → `BufferFull`); each consumed once.
-    errors: HashMap<u64, GgStreamError>,
+    errors: HashMap<u64, EdgeStreamError>,
     /// A producer is currently the leader (writing a group); others wait.
     leader_active: bool,
 }
@@ -230,7 +230,7 @@ impl EmbeddedLog {
             for (i, rec) in recs.iter().enumerate() {
                 while q.queued_records >= self.max_buffered_records {
                     if self.on_full == OnFull::RejectNew {
-                        return Err(GgStreamError::BufferFull);
+                        return Err(EdgeStreamError::BufferFull);
                     }
                     q = self.ingest.space.wait(q).unwrap();
                 }
@@ -272,7 +272,7 @@ impl EmbeddedLog {
         let mut q = self.ingest.mu.lock().unwrap();
         while q.queued_records >= self.max_buffered_records {
             if self.on_full == OnFull::RejectNew {
-                return Err(GgStreamError::BufferFull);
+                return Err(EdgeStreamError::BufferFull);
             }
             q = self.ingest.space.wait(q).unwrap();
         }
@@ -329,10 +329,10 @@ impl EmbeddedLog {
     /// Write one drained group to the segment store under the inner lock: per-record `ensure_room`,
     /// then **one** `flush_os` + **one** fsync (iff any member needs durability). Returns the max
     /// sequence written and any per-record rejection errors.
-    fn write_group(&self, group: &[Pending]) -> (u64, Vec<(u64, GgStreamError)>) {
+    fn write_group(&self, group: &[Pending]) -> (u64, Vec<(u64, EdgeStreamError)>) {
         let do_fsync = group.iter().any(|p| p.needs_fsync);
         let mut max_seq = 0u64;
-        let mut errors_local: Vec<(u64, GgStreamError)> = Vec::new();
+        let mut errors_local: Vec<(u64, EdgeStreamError)> = Vec::new();
         let mut g = self.inner.0.lock().unwrap();
         let mut wrote = false;
         for p in group {
@@ -478,7 +478,7 @@ fn ensure_room<'a>(
     cv: &Condvar,
     mut g: MutexGuard<'a, Inner>,
     size: u64,
-) -> (MutexGuard<'a, Inner>, Option<GgStreamError>) {
+) -> (MutexGuard<'a, Inner>, Option<EdgeStreamError>) {
     loop {
         // Reclaim fully-delivered segments (not counted as drops).
         let acked = g.acked;
@@ -505,7 +505,7 @@ fn ensure_room<'a>(
                 }
                 return (g, None); // proceed even if a single oversized active segment remains
             }
-            OnFull::RejectNew => return (g, Some(GgStreamError::BufferFull)),
+            OnFull::RejectNew => return (g, Some(EdgeStreamError::BufferFull)),
             OnFull::Block => {
                 // Wait for the exporter's commit to reclaim space, then re-check.
                 g = cv.wait(g).unwrap();

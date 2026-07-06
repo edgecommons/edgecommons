@@ -11,7 +11,7 @@ import warnings
 
 import pytest
 
-from ggcommons.utils.file_watcher import (
+from edgecommons.utils.file_watcher import (
     FileWatcher,
     ConfigFileWatcher,
     FileChangeHandler,

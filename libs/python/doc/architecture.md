@@ -1,12 +1,12 @@
-# GGCommons Python Architecture
+# EdgeCommons Python Architecture
 
-This document describes the architecture of the GGCommons Python library: how `GGCommons` is
+This document describes the architecture of the EdgeCommons Python library: how `EdgeCommons` is
 constructed, how the subsystems fit together, and the conventions to follow when extending it. It is
 one of four parallel implementations (Java is canonical); see the monorepo root `README.md` and this
 library's `CLAUDE.md`.
 
 > **No dependency injection / service interfaces.** Earlier revisions of these docs described a
-> `ggcommons/di/` `ServiceRegistry`, `ggcommons/interfaces/` (`IConfigurationService`,
+> `edgecommons/di/` `ServiceRegistry`, `edgecommons/interfaces/` (`IConfigurationService`,
 > `IMessagingService`, `IMetricService`), a `ServiceFactory`, and `get_service()` / `register_service()`.
 > **None of that exists in the Python source.** Depend on the concrete services via the accessors
 > below. (The substitutable service-interface seam exists only in the Rust and TS libraries.)
@@ -16,12 +16,12 @@ library's `CLAUDE.md`.
 Always construct via the builder, never the raw constructor:
 
 ```python
-from ggcommons import GGCommonsBuilder
+from edgecommons import EdgeCommonsBuilder
 
-gg = GGCommonsBuilder.create("com.example.MyComponent").with_args(args).build()
+gg = EdgeCommonsBuilder.create("com.example.MyComponent").with_args(args).build()
 ```
 
-`GGCommons.__init__` (`ggcommons/ggcommons.py`) is the orchestrator and runs a fixed sequence:
+`EdgeCommons.__init__` (`edgecommons/edgecommons.py`) is the orchestrator and runs a fixed sequence:
 
 1. **Argument processing** — parse the standard `-c` / `--platform` / `--transport` / `-t` contract
    (plus any app parser).
@@ -36,7 +36,7 @@ gg = GGCommonsBuilder.create("com.example.MyComponent").with_args(args).build()
 
 ## Accessing subsystems
 
-Read the concrete services off the `GGCommons` instance:
+Read the concrete services off the `EdgeCommons` instance:
 
 ```python
 config     = gg.get_config_manager()   # ConfigManager
@@ -51,7 +51,7 @@ The three newest accessors return `None` unless their config section exists.
 
 ## Subsystems
 
-### Configuration (`ggcommons/config/`)
+### Configuration (`edgecommons/config/`)
 `ConfigManagerBuilder.build()` dispatches on the `-c/--config` source to one of five managers, all
 subclassing `ConfigManager`:
 
@@ -68,11 +68,11 @@ HOST → FILE, KUBERNETES → CONFIGMAP).
 
 Config supports template-variable substitution (component / thing / custom tags), hot reload via
 `ConfigurationChangeListener`, multi-instance components (global + per-instance config), and
-JSON-schema validation. The schema is the single-source `schema/ggcommons-config-schema.json` at the
-monorepo root (synced into `ggcommons/resources/`).
+JSON-schema validation. The schema is the single-source `schema/edgecommons-config-schema.json` at the
+monorepo root (synced into `edgecommons/resources/`).
 
 ```python
-from ggcommons.validation import ConfigurationValidator, ConfigurationValidationException
+from edgecommons.validation import ConfigurationValidator, ConfigurationValidationException
 
 try:
     ConfigurationValidator.validate(config)
@@ -80,7 +80,7 @@ except ConfigurationValidationException as e:
     print(f"Validation failed: {e}")
 ```
 
-### Messaging (`ggcommons/messaging/`)
+### Messaging (`edgecommons/messaging/`)
 `MessagingClient.init()` picks the provider based on the resolved transport: `GreengrassIpcProvider`
 (`IPC` transport) or `StandaloneProvider` (`MQTT` transport — dual local-MQTT + IoT Core). Both
 implement `MessagingProvider`. Connections
@@ -90,12 +90,12 @@ avoid IoT Core connection races. Supports request/reply with correlation (framew
 (`header`/`identity`/`tags`/`body`) is identical across all four languages, and topics follow the
 UNS grammar `ecv1/{device}/{component}/{instance}/{class}` (see [messaging.md](messaging.md)).
 
-### Metrics (`ggcommons/metrics/`)
+### Metrics (`edgecommons/metrics/`)
 `MetricEmitter` (static `init`) emits to pluggable `MetricTarget`s under `targets/`: `cloudwatch`
 (EMF), `cloudwatch_component`, `messaging`, and `metric_log`. Targets and component/thing dimensions
 are configured, not hardcoded.
 
-### Heartbeat (`ggcommons/heartbeat/`)
+### Heartbeat (`edgecommons/heartbeat/`)
 `EnhancedHeartbeat` is the library-owned liveness signal (UNS model — on by default, every 5 s): each
 tick it publishes the **`state` keepalive** to `ecv1/{device}/{component}/main/state` (via the
 reserved-publish seam) and emits the enabled system measures (CPU/memory/disk/threads/FDs via
@@ -103,19 +103,19 @@ reserved-publish seam) and emits the enabled system measures (CPU/memory/disk/th
 passed in (not reached for via globals). The legacy `heartbeat.targets[]` routing is removed; see
 [heartbeat.md](heartbeat.md).
 
-### Logging (`ggcommons/logging/`)
+### Logging (`edgecommons/logging/`)
 Built on Python's standard `logging`, with file rotation, per-logger levels, and a `python_format`
 token; reconfigures on config reload.
 
 ### Credentials / Parameters / Streaming
 Opt-in subsystems (see `docs/CREDENTIALS.md`, `docs/PARAMETERS.md`, `docs/TELEMETRY_STREAMING.md`):
 an encrypted local vault (`get_credentials()`), offline-first externalized config
-(`get_parameters()`), and high-rate telemetry streaming to Kinesis/Kafka via the shared `ggstreamlog`
+(`get_parameters()`), and high-rate telemetry streaming to Kinesis/Kafka via the shared `edgestreamlog`
 core through a PyO3 binding (`get_streams()`).
 
 ## Builders
 
-Object construction goes through fluent builders, not raw constructors: `GGCommonsBuilder`,
+Object construction goes through fluent builders, not raw constructors: `EdgeCommonsBuilder`,
 `ConfigManagerBuilder`, `MessageBuilder`, `MetricBuilder`. `MetricBuilder` exists specifically to
 avoid the deprecated direct `Metric` constructor — do not instantiate `Metric` directly.
 

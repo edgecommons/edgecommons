@@ -4,9 +4,9 @@
 //!
 //! ```sh
 //! docker run -d -p 4566:4566 floci/floci:latest          # or localstack/localstack
-//! cargo test -p ggstreamlog --features kinesis --test kinesis_floci -- --ignored --nocapture
+//! cargo test -p edgestreamlog --features kinesis --test kinesis_floci -- --ignored --nocapture
 //! ```
-//! Override the endpoint with `GGSTREAMLOG_KINESIS_ENDPOINT` (default `http://localhost:4566`).
+//! Override the endpoint with `EDGESTREAMLOG_KINESIS_ENDPOINT` (default `http://localhost:4566`).
 //!
 //! Exercises the real path: AWS credential chain → `PutRecords` → per-batch ack → log commit,
 //! then reads every shard back and asserts no records were lost.
@@ -19,15 +19,15 @@ use aws_sdk_kinesis::config::{BehaviorVersion, Credentials, Region};
 use aws_sdk_kinesis::types::ShardIteratorType;
 use aws_sdk_kinesis::Client;
 
-use ggstreamlog::config::{BatchConfig, BufferConfig, DeliveryConfig, FsyncPolicy, OnFull};
-use ggstreamlog::{EmbeddedLog, ExportEngine, KinesisSink, Record};
+use edgestreamlog::config::{BatchConfig, BufferConfig, DeliveryConfig, FsyncPolicy, OnFull};
+use edgestreamlog::{EmbeddedLog, ExportEngine, KinesisSink, Record};
 
 const REGION: &str = "us-east-1";
 const N: usize = 200;
 const SHARDS: i32 = 2;
 
 fn endpoint() -> String {
-    std::env::var("GGSTREAMLOG_KINESIS_ENDPOINT").unwrap_or_else(|_| "http://localhost:4566".into())
+    std::env::var("EDGESTREAMLOG_KINESIS_ENDPOINT").unwrap_or_else(|_| "http://localhost:4566".into())
 }
 
 fn admin(rt: &tokio::runtime::Runtime) -> Client {
@@ -53,7 +53,7 @@ fn kinesis_sink_delivers_to_emulator() {
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     let client = admin(&rt);
-    let stream = format!("ggstreamlog-it-{}", std::process::id());
+    let stream = format!("edgestreamlog-it-{}", std::process::id());
 
     // Fresh stream.
     rt.block_on(async {

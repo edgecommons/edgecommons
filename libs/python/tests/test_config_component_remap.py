@@ -7,9 +7,9 @@ from types import SimpleNamespace
 
 import pytest
 
-import ggcommons.config.manager.config_component_manager as ccm
-from ggcommons.messaging.errors import RequestTimeoutError
-from ggcommons.messaging.message import Message
+import edgecommons.config.manager.config_component_manager as ccm
+from edgecommons.messaging.errors import RequestTimeoutError
+from edgecommons.messaging.message import Message
 
 
 @pytest.fixture

@@ -21,7 +21,7 @@ use zeroize::Zeroizing;
 
 use super::crypto::{self, KEY_LEN, NONCE_LEN};
 use super::format::{dek_wrap_aad, KekInfo};
-use crate::error::GgError;
+use crate::error::EdgeCommonsError;
 use crate::Result;
 
 use base64::engine::general_purpose::STANDARD as B64;
@@ -57,14 +57,14 @@ impl FileKeyProvider {
     /// Load the KEK from a key file (exactly 32 raw bytes).
     ///
     /// # Errors
-    /// `GgError::Credentials` if the file is missing or not 32 bytes.
+    /// `EdgeCommonsError::Credentials` if the file is missing or not 32 bytes.
     pub fn from_keyfile(path: impl AsRef<Path>) -> Result<Self> {
         let bytes = std::fs::read(path.as_ref())
-            .map_err(|e| GgError::Credentials(format!("read key file: {e}")))?;
+            .map_err(|e| EdgeCommonsError::Credentials(format!("read key file: {e}")))?;
         let kek: [u8; KEY_LEN] = bytes
             .as_slice()
             .try_into()
-            .map_err(|_| GgError::Credentials(format!("key file must be {KEY_LEN} bytes")))?;
+            .map_err(|_| EdgeCommonsError::Credentials(format!("key file must be {KEY_LEN} bytes")))?;
         Ok(Self::from_bytes(kek))
     }
 
@@ -73,7 +73,7 @@ impl FileKeyProvider {
     pub fn generate_keyfile(path: impl AsRef<Path>) -> Result<Self> {
         let kek: [u8; KEY_LEN] = crypto::random();
         std::fs::write(path.as_ref(), kek)
-            .map_err(|e| GgError::Credentials(format!("write key file: {e}")))?;
+            .map_err(|e| EdgeCommonsError::Credentials(format!("write key file: {e}")))?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -104,27 +104,27 @@ impl KeyProvider for FileKeyProvider {
         let nonce_b = kek
             .wrap_nonce
             .as_ref()
-            .ok_or_else(|| GgError::Credentials("file KEK: missing wrapNonce".into()))?;
+            .ok_or_else(|| EdgeCommonsError::Credentials("file KEK: missing wrapNonce".into()))?;
         let nonce: [u8; NONCE_LEN] = B64
             .decode(nonce_b)
             .ok()
             .and_then(|v| v.try_into().ok())
-            .ok_or_else(|| GgError::Credentials("file KEK: bad wrapNonce".into()))?;
+            .ok_or_else(|| EdgeCommonsError::Credentials("file KEK: bad wrapNonce".into()))?;
         let wrapped = B64
             .decode(&kek.wrapped_dek)
-            .map_err(|_| GgError::Credentials("file KEK: bad wrappedDek".into()))?;
+            .map_err(|_| EdgeCommonsError::Credentials("file KEK: bad wrappedDek".into()))?;
         let dek = crypto::open(&self.kek, &nonce, &dek_wrap_aad(vault_id), &wrapped)?;
         let arr: [u8; KEY_LEN] = dek
             .as_slice()
             .try_into()
-            .map_err(|_| GgError::Credentials("unwrapped DEK wrong length".into()))?;
+            .map_err(|_| EdgeCommonsError::Credentials("unwrapped DEK wrong length".into()))?;
         Ok(Zeroizing::new(arr))
     }
 }
 
 /// Default env var holding the base64-encoded 32-byte vault KEK when `keyProvider.envVar` is
 /// absent (FR-CRED-3). Typically projected from a mounted Kubernetes Secret.
-pub const DEFAULT_KEK_ENV_VAR: &str = "GGCOMMONS_VAULT_KEK";
+pub const DEFAULT_KEK_ENV_VAR: &str = "EDGECOMMONS_VAULT_KEK";
 
 /// KEK sourced from a base64-encoded 32-byte key in an **environment variable** (typically a
 /// mounted Kubernetes Secret) — the offline-capable software-KEK and the default vault custodian on
@@ -150,21 +150,21 @@ impl EnvKeyProvider {
     /// is exactly [`KEY_LEN`] (32) bytes.
     ///
     /// # Errors
-    /// [`GgError::Credentials`] if the env var is unset/empty, the value is not valid base64, or
+    /// [`EdgeCommonsError::Credentials`] if the env var is unset/empty, the value is not valid base64, or
     /// the decoded key is not exactly 32 bytes. Messages never include the key material.
     pub fn from_env(env_var: &str) -> Result<Self> {
         let raw = std::env::var(env_var)
-            .map_err(|_| GgError::Credentials(format!("env key provider: env var '{env_var}' is not set")))?;
+            .map_err(|_| EdgeCommonsError::Credentials(format!("env key provider: env var '{env_var}' is not set")))?;
         let trimmed = raw.trim();
         if trimmed.is_empty() {
-            return Err(GgError::Credentials(format!("env key provider: env var '{env_var}' is empty")));
+            return Err(EdgeCommonsError::Credentials(format!("env key provider: env var '{env_var}' is empty")));
         }
         let bytes = B64
             .decode(trimmed)
-            .map_err(|_| GgError::Credentials(format!("env key provider: env var '{env_var}' is not valid base64")))?;
+            .map_err(|_| EdgeCommonsError::Credentials(format!("env key provider: env var '{env_var}' is not valid base64")))?;
         let len = bytes.len();
         let kek: [u8; KEY_LEN] = bytes.as_slice().try_into().map_err(|_| {
-            GgError::Credentials(format!(
+            EdgeCommonsError::Credentials(format!(
                 "env key provider: decoded KEK from '{env_var}' must be {KEY_LEN} bytes, got {len}"
             ))
         })?;
@@ -223,7 +223,7 @@ mod pkcs11 {
     use super::super::crypto::{self, KEY_LEN, NONCE_LEN};
     use super::super::format::{dek_wrap_aad, KekInfo};
     use super::KeyProvider;
-    use crate::error::GgError;
+    use crate::error::EdgeCommonsError;
     use crate::Result;
 
     const TAG_BITS: u64 = 128;
@@ -241,19 +241,19 @@ mod pkcs11 {
         /// AES key labelled `key_label`. `pin` is the User PIN.
         pub fn new(module_path: &str, token_label: &str, key_label: String, pin: String) -> Result<Self> {
             let ctx = Pkcs11::new(module_path)
-                .map_err(|e| GgError::Credentials(format!("pkcs11 load module '{module_path}': {e}")))?;
+                .map_err(|e| EdgeCommonsError::Credentials(format!("pkcs11 load module '{module_path}': {e}")))?;
             ctx.initialize(CInitializeArgs::OsThreads)
-                .map_err(|e| GgError::Credentials(format!("pkcs11 initialize: {e}")))?;
+                .map_err(|e| EdgeCommonsError::Credentials(format!("pkcs11 initialize: {e}")))?;
             let slot = ctx
                 .get_slots_with_token()
-                .map_err(|e| GgError::Credentials(format!("pkcs11 get slots: {e}")))?
+                .map_err(|e| EdgeCommonsError::Credentials(format!("pkcs11 get slots: {e}")))?
                 .into_iter()
                 .find(|s| {
                     ctx.get_token_info(*s)
                         .map(|t| t.label().trim_end() == token_label)
                         .unwrap_or(false)
                 })
-                .ok_or_else(|| GgError::Credentials(format!("pkcs11: no token labelled '{token_label}'")))?;
+                .ok_or_else(|| EdgeCommonsError::Credentials(format!("pkcs11: no token labelled '{token_label}'")))?;
             Ok(Self { ctx: Arc::new(ctx), slot, key_label, pin: AuthPin::new(pin) })
         }
 
@@ -262,19 +262,19 @@ mod pkcs11 {
             let session = self
                 .ctx
                 .open_ro_session(self.slot)
-                .map_err(|e| GgError::Credentials(format!("pkcs11 open session: {e}")))?;
+                .map_err(|e| EdgeCommonsError::Credentials(format!("pkcs11 open session: {e}")))?;
             session
                 .login(UserType::User, Some(&self.pin))
-                .map_err(|e| GgError::Credentials(format!("pkcs11 login: {e}")))?;
+                .map_err(|e| EdgeCommonsError::Credentials(format!("pkcs11 login: {e}")))?;
             let key = session
                 .find_objects(&[
                     Attribute::Class(ObjectClass::SECRET_KEY),
                     Attribute::Label(self.key_label.as_bytes().to_vec()),
                 ])
-                .map_err(|e| GgError::Credentials(format!("pkcs11 find key: {e}")))?
+                .map_err(|e| EdgeCommonsError::Credentials(format!("pkcs11 find key: {e}")))?
                 .into_iter()
                 .next()
-                .ok_or_else(|| GgError::Credentials(format!("pkcs11: no key labelled '{}'", self.key_label)))?;
+                .ok_or_else(|| EdgeCommonsError::Credentials(format!("pkcs11: no key labelled '{}'", self.key_label)))?;
             Ok((session, key))
         }
     }
@@ -291,7 +291,7 @@ mod pkcs11 {
             let params = GcmParams::new(&iv, &aad, TAG_BITS.into());
             let ct = session
                 .encrypt(&Mechanism::AesGcm(params), key, dek)
-                .map_err(|e| GgError::Credentials(format!("pkcs11 wrap (encrypt): {e}")))?;
+                .map_err(|e| EdgeCommonsError::Credentials(format!("pkcs11 wrap (encrypt): {e}")))?;
             Ok(KekInfo {
                 provider: "pkcs11".to_string(),
                 alg: "AES-256-GCM".to_string(),
@@ -307,20 +307,20 @@ mod pkcs11 {
                 .as_ref()
                 .and_then(|s| B64.decode(s).ok())
                 .and_then(|v| v.try_into().ok())
-                .ok_or_else(|| GgError::Credentials("pkcs11 KEK: bad/missing wrapNonce".into()))?;
+                .ok_or_else(|| EdgeCommonsError::Credentials("pkcs11 KEK: bad/missing wrapNonce".into()))?;
             let ct = B64
                 .decode(&kek.wrapped_dek)
-                .map_err(|_| GgError::Credentials("pkcs11 KEK: bad wrappedDek".into()))?;
+                .map_err(|_| EdgeCommonsError::Credentials("pkcs11 KEK: bad wrappedDek".into()))?;
             let aad = dek_wrap_aad(vault_id);
             let (session, key) = self.session_with_key()?;
             let params = GcmParams::new(&iv, &aad, TAG_BITS.into());
             let pt = session
                 .decrypt(&Mechanism::AesGcm(params), key, &ct)
-                .map_err(|e| GgError::Credentials(format!("pkcs11 unwrap (decrypt): {e}")))?;
+                .map_err(|e| EdgeCommonsError::Credentials(format!("pkcs11 unwrap (decrypt): {e}")))?;
             let arr: [u8; KEY_LEN] = pt
                 .as_slice()
                 .try_into()
-                .map_err(|_| GgError::Credentials("pkcs11: unwrapped DEK wrong length".into()))?;
+                .map_err(|_| EdgeCommonsError::Credentials("pkcs11: unwrapped DEK wrong length".into()))?;
             Ok(Zeroizing::new(arr))
         }
     }
@@ -343,7 +343,7 @@ mod kms {
     use super::super::crypto::KEY_LEN;
     use super::super::format::KekInfo;
     use super::KeyProvider;
-    use crate::error::GgError;
+    use crate::error::EdgeCommonsError;
     use crate::Result;
 
     pub struct KmsKeyProvider {
@@ -356,9 +356,9 @@ mod kms {
         pub fn new(key_id: String, region: Option<String>, endpoint_url: Option<String>) -> Result<Self> {
             let rt = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
-                .thread_name("ggcommons-kms")
+                .thread_name("edgecommons-kms")
                 .build()
-                .map_err(|e| GgError::Credentials(format!("tokio runtime: {e}")))?;
+                .map_err(|e| EdgeCommonsError::Credentials(format!("tokio runtime: {e}")))?;
             let client = std::thread::scope(|scope| {
                 scope
                     .spawn(|| {
@@ -374,7 +374,7 @@ mod kms {
                         })
                     })
                     .join()
-                    .map_err(|_| GgError::Credentials("kms client init thread panicked".into()))
+                    .map_err(|_| EdgeCommonsError::Credentials("kms client init thread panicked".into()))
             })?;
             Ok(Self { rt, client, key_id })
         }
@@ -396,10 +396,10 @@ mod kms {
                         .encryption_context("vaultId", vault_id)
                         .send(),
                 )
-                .map_err(|e| GgError::Credentials(format!("kms encrypt: {}", DisplayErrorContext(&e))))?;
+                .map_err(|e| EdgeCommonsError::Credentials(format!("kms encrypt: {}", DisplayErrorContext(&e))))?;
             let ct = resp
                 .ciphertext_blob()
-                .ok_or_else(|| GgError::Credentials("kms encrypt: no ciphertext".into()))?
+                .ok_or_else(|| EdgeCommonsError::Credentials("kms encrypt: no ciphertext".into()))?
                 .as_ref()
                 .to_vec();
             Ok(KekInfo {
@@ -414,7 +414,7 @@ mod kms {
         fn unwrap_dek(&self, vault_id: &str, kek: &KekInfo) -> Result<Zeroizing<[u8; KEY_LEN]>> {
             let ct = B64
                 .decode(&kek.wrapped_dek)
-                .map_err(|_| GgError::Credentials("kms: bad wrappedDek".into()))?;
+                .map_err(|_| EdgeCommonsError::Credentials("kms: bad wrappedDek".into()))?;
             let resp = self
                 .rt
                 .block_on(
@@ -425,14 +425,14 @@ mod kms {
                         .encryption_context("vaultId", vault_id)
                         .send(),
                 )
-                .map_err(|e| GgError::Credentials(format!("kms decrypt: {}", DisplayErrorContext(&e))))?;
+                .map_err(|e| EdgeCommonsError::Credentials(format!("kms decrypt: {}", DisplayErrorContext(&e))))?;
             let pt = resp
                 .plaintext()
-                .ok_or_else(|| GgError::Credentials("kms decrypt: no plaintext".into()))?;
+                .ok_or_else(|| EdgeCommonsError::Credentials("kms decrypt: no plaintext".into()))?;
             let arr: [u8; KEY_LEN] = pt
                 .as_ref()
                 .try_into()
-                .map_err(|_| GgError::Credentials("kms: unwrapped DEK wrong length".into()))?;
+                .map_err(|_| EdgeCommonsError::Credentials("kms: unwrapped DEK wrong length".into()))?;
             Ok(Zeroizing::new(arr))
         }
     }

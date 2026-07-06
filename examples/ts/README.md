@@ -1,7 +1,7 @@
 # TypeScript Component Skeleton
 
 A worked-example AWS IoT Greengrass v2 component written in TypeScript on top of the
-[`ggcommons`](../../libs/ts) TypeScript library. It is the TypeScript counterpart of
+[`edgecommons`](../../libs/ts) TypeScript library. It is the TypeScript counterpart of
 the Java, Python, and Rust skeletons, demonstrating the library's standard CLI
 contract, configuration, logging, messaging (publish + request/reply), metrics, and
 heartbeat — so a component author writes only business logic.
@@ -33,9 +33,9 @@ the topics below render as `ecv1/my-thing/TsComponentSkeleton/main/…`.
 
 | Path | Purpose |
 |------|---------|
-| `src/main.ts` | Entry point: builds the `ggcommons` runtime from CLI args, runs the app, shuts down. |
+| `src/main.ts` | Entry point: builds the `edgecommons` runtime from CLI args, runs the app, shuts down. |
 | `src/app.ts` | The component logic (request/reply, periodic publish, config listener, metrics). |
-| `package.json` | Node manifest. Depends on the `ggcommons` library via a `file:` path dependency. |
+| `package.json` | Node manifest. Depends on the `edgecommons` library via a `file:` path dependency. |
 | `tsconfig.json` | TypeScript compiler config (emits `dist/`). |
 | `recipe.yaml` | Greengrass component recipe (default config + IPC access control). |
 | `gdk-config.json` | Greengrass Development Kit config (`build_system: custom` → `build.sh`). |
@@ -86,8 +86,8 @@ The recipe declares a `linux` platform and runs the prebuilt JS on the GREENGRAS
 (`node {artifacts:decompressedPath}/ts-component-skeleton/dist/main.js --platform GREENGRASS -c GG_CONFIG`),
 reading its configuration from the deployment (`GG_CONFIG`).
 
-## The ggcommons dependency
+## The edgecommons dependency
 
-`package.json` depends on the `ggcommons` library via a `file:` path dependency
+`package.json` depends on the `edgecommons` library via a `file:` path dependency
 (`file:../../libs/ts`). When the library is published to an npm registry, replace
 that path dependency with the corresponding registry version.

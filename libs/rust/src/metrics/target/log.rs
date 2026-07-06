@@ -24,7 +24,7 @@
 //!   are kept (oldest pruned), matching Java's `DefaultRolloverStrategy(max=5)`.
 //! - `large_fleet_workaround` writes a second line with `coreName="ALL"`.
 //! - `emit` and `emit_now` behave identically (no batching for a log file).
-//! - Error handling: [`crate::error::GgError::Io`] / `Metrics`.
+//! - Error handling: [`crate::error::EdgeCommonsError::Io`] / `Metrics`.
 //!
 //! ## Related Modules
 //! - [`crate::metrics::emf`], [`super`].
@@ -39,7 +39,7 @@ use std::time::SystemTime;
 use async_trait::async_trait;
 
 use super::MetricTarget;
-use crate::error::{GgError, Result};
+use crate::error::{EdgeCommonsError, Result};
 use crate::metrics::emf::build_emf_variants;
 use crate::metrics::metric::Metric;
 
@@ -134,7 +134,7 @@ impl LogTarget {
         let mut state = self
             .state
             .lock()
-            .map_err(|_| GgError::Metrics("metric log mutex poisoned".to_string()))?;
+            .map_err(|_| EdgeCommonsError::Metrics("metric log mutex poisoned".to_string()))?;
         // Lazy, fail-soft open: if the file is unavailable, drop the metric.
         if !self.ensure_open(&mut state) {
             return Ok(());
@@ -148,7 +148,7 @@ impl LogTarget {
             let file = state
                 .file
                 .as_mut()
-                .ok_or_else(|| GgError::Metrics("metric log file is closed".to_string()))?;
+                .ok_or_else(|| EdgeCommonsError::Metrics("metric log file is closed".to_string()))?;
             writeln!(file, "{line}")?;
             state.size += needed;
         }
@@ -323,7 +323,7 @@ mod tests {
 
     #[tokio::test]
     async fn writes_emf_line_to_file() {
-        let dir = std::env::temp_dir().join(format!("ggcommons-log-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("edgecommons-log-{}", uuid::Uuid::new_v4()));
         let path = dir.join("metric.log");
         let target = LogTarget::new(&path, "ns", false, "10MB").unwrap();
 
@@ -342,7 +342,7 @@ mod tests {
 
     #[tokio::test]
     async fn large_fleet_writes_two_lines() {
-        let dir = std::env::temp_dir().join(format!("ggcommons-log-lf-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("edgecommons-log-lf-{}", uuid::Uuid::new_v4()));
         let path = dir.join("metric.log");
         let target = LogTarget::new(&path, "ns", true, "10MB").unwrap();
 
@@ -366,7 +366,7 @@ mod tests {
     #[tokio::test]
     async fn unwritable_path_is_fail_soft_not_a_crash() {
         // Use a regular file as a directory component so create_dir_all/open fails.
-        let dir = std::env::temp_dir().join(format!("ggcommons-fs-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("edgecommons-fs-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let blocker = dir.join("not-a-dir");
         std::fs::write(&blocker, b"x").unwrap(); // a file where we'll pretend a dir is
@@ -386,7 +386,7 @@ mod tests {
 
     #[tokio::test]
     async fn rotates_when_max_size_exceeded_and_prunes_backups() {
-        let dir = std::env::temp_dir().join(format!("ggcommons-rot-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("edgecommons-rot-{}", uuid::Uuid::new_v4()));
         let path = dir.join("metric.log");
         // Tiny max so each write rotates; keeps at most MAX_BACKUPS rolled files.
         let target = LogTarget::new(&path, "ns", false, "200B").unwrap();

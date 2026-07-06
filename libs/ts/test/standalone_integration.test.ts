@@ -3,7 +3,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 
-import { GgError } from "../src/errors";
+import { EdgeCommonsError } from "../src/errors";
 import { loadMessagingConfig, lwtPayloadBytes, parseLwt, resolvedHost } from "../src/messaging/config";
 import { StandaloneMqttProvider, topicMatches } from "../src/messaging/standalone-provider";
 import { Destination, Qos } from "../src/messaging/types";
@@ -67,17 +67,17 @@ describe("loadMessagingConfig", () => {
 
   it("throws when messaging.local is missing", async () => {
     const p = tmpFile(JSON.stringify({ messaging: {} }));
-    await expect(loadMessagingConfig(p)).rejects.toBeInstanceOf(GgError);
-    await loadMessagingConfig(p).catch((e) => expect((e as GgError).kind).toBe("Messaging"));
+    await expect(loadMessagingConfig(p)).rejects.toBeInstanceOf(EdgeCommonsError);
+    await loadMessagingConfig(p).catch((e) => expect((e as EdgeCommonsError).kind).toBe("Messaging"));
   });
 
-  it("throws GgError(Io) when the file is missing", async () => {
-    await expect(loadMessagingConfig("/no/such/file.json")).rejects.toBeInstanceOf(GgError);
+  it("throws EdgeCommonsError(Io) when the file is missing", async () => {
+    await expect(loadMessagingConfig("/no/such/file.json")).rejects.toBeInstanceOf(EdgeCommonsError);
   });
 
   it("resolvedHost prefers host, then endpoint, else throws", () => {
     expect(resolvedHost({ endpoint: "e.example", port: 8883, clientId: "x" })).toBe("e.example");
-    expect(() => resolvedHost({ port: 1, clientId: "x" })).toThrow(GgError);
+    expect(() => resolvedHost({ port: 1, clientId: "x" })).toThrow(EdgeCommonsError);
   });
 
   it("parses a messaging.lwt section (UNS-CANONICAL-DESIGN §6)", async () => {
@@ -100,7 +100,7 @@ describe("loadMessagingConfig", () => {
 
 describe("parseLwt / lwtPayloadBytes (§6)", () => {
   it("requires a topic; defaults qos to 1; coerces a lossless numeric qos", () => {
-    expect(() => parseLwt({})).toThrow(GgError);
+    expect(() => parseLwt({})).toThrow(EdgeCommonsError);
     expect(() => parseLwt({ payload: "x" })).toThrow(/lwt.topic is required/);
     expect(parseLwt({ topic: "t" }).qos).toBe(1);
     expect(parseLwt({ topic: "t", qos: 0 }).qos).toBe(0);
@@ -176,7 +176,7 @@ describe("StandaloneMqttProvider against the live broker", () => {
     const cfg = await loadMessagingConfig(
       tmpFile(JSON.stringify({ messaging: { local: { host: "127.0.0.1", port: 1, clientId: "ggc-bad" } } })),
     );
-    await expect(StandaloneMqttProvider.connect(cfg)).rejects.toBeInstanceOf(GgError);
+    await expect(StandaloneMqttProvider.connect(cfg)).rejects.toBeInstanceOf(EdgeCommonsError);
   });
 
   it("publishing to IoT Core without an iotCore broker throws", async (ctx) => {
@@ -186,7 +186,7 @@ describe("StandaloneMqttProvider against the live broker", () => {
     );
     const provider = await StandaloneMqttProvider.connect(cfg);
     // channel() throws synchronously (before the Promise is created).
-    expect(() => provider.publishBytes("t", Buffer.from("x"), Destination.IoTCore, Qos.AtLeastOnce)).toThrow(GgError);
+    expect(() => provider.publishBytes("t", Buffer.from("x"), Destination.IoTCore, Qos.AtLeastOnce)).toThrow(EdgeCommonsError);
     await provider.disconnect();
   });
 

@@ -10,8 +10,8 @@
 #
 # The on-device artifact is built with the `greengrass` feature (Greengrass IPC),
 # which is Linux-only (the SDK is a C-FFI crate needing libclang). Build on a Linux
-# host, or set GGCOMMONS_TARGET to a Linux triple you have a toolchain for, e.g.:
-#   GGCOMMONS_TARGET=x86_64-unknown-linux-gnu ./build.sh
+# host, or set EDGECOMMONS_TARGET to a Linux triple you have a toolchain for, e.g.:
+#   EDGECOMMONS_TARGET=x86_64-unknown-linux-gnu ./build.sh
 set -euo pipefail
 
 COMPONENT_NAME="<<COMPONENTFULLNAME>>"
@@ -21,10 +21,10 @@ COMPONENT_NAME="<<COMPONENTFULLNAME>>"
 COMPONENT_VERSION="$(python3 -c 'import json; c = json.load(open("gdk-config.json"))["component"]; print(next(iter(c.values()))["version"])')"
 BIN_NAME="<<BINNAME>>"
 
-# Greengrass-mode features for the device build. Add ggcommons features here as
+# Greengrass-mode features for the device build. Add edgecommons features here as
 # needed, e.g. "greengrass,cloudwatch" for the direct CloudWatch metric target.
-FEATURES="${GGCOMMONS_FEATURES:-greengrass}"
-TARGET="${GGCOMMONS_TARGET:-}"
+FEATURES="${EDGECOMMONS_FEATURES:-greengrass}"
+TARGET="${EDGECOMMONS_TARGET:-}"
 
 # Honor CARGO_TARGET_DIR if the caller set one (else cargo's default ./target).
 TARGET_DIR="${CARGO_TARGET_DIR:-target}"

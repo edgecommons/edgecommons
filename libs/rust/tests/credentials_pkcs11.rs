@@ -1,6 +1,6 @@
 //! PKCS#11 KEK custodian integration test, exercised against SoftHSM2 (or any PKCS#11 token).
 //!
-//! Gated: no-op unless `GGCOMMONS_IT_PKCS11=1` is set. Requires a token with an AES-256 key and
+//! Gated: no-op unless `EDGECOMMONS_IT_PKCS11=1` is set. Requires a token with an AES-256 key and
 //! these env vars:
 //!   PKCS11_MODULE  e.g. /usr/lib/softhsm/libsofthsm2.so
 //!   PKCS11_TOKEN   token label   (e.g. ggvault)
@@ -10,12 +10,12 @@
 
 #![cfg(feature = "credentials-pkcs11")]
 
-use ggcommons::credentials::{self, CredentialService, CredentialsConfig, PutOptions};
+use edgecommons::credentials::{self, CredentialService, CredentialsConfig, PutOptions};
 
 #[test]
 fn pkcs11_wrapped_vault_round_trip_and_persists() {
-    if std::env::var("GGCOMMONS_IT_PKCS11").is_err() {
-        eprintln!("skipping PKCS#11 test (set GGCOMMONS_IT_PKCS11=1 + provide a token)");
+    if std::env::var("EDGECOMMONS_IT_PKCS11").is_err() {
+        eprintln!("skipping PKCS#11 test (set EDGECOMMONS_IT_PKCS11=1 + provide a token)");
         return;
     }
     let module = std::env::var("PKCS11_MODULE").expect("PKCS11_MODULE");

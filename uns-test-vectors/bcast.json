@@ -1,5 +1,5 @@
 {
-  "description": "ggcommons UNS _bcast republish (reconnect-rehydration) vectors - the late-join lever (DESIGN-uns 9.3 layer 2 / 9.4, DESIGN-uns-bridge 2.5). Topics byte-for-byte; envelopes structural (D-U22); the behavior constants are normative for every language's republish listener",
+  "description": "edgecommons UNS _bcast republish (reconnect-rehydration) vectors - the late-join lever (DESIGN-uns 9.3 layer 2 / 9.4, DESIGN-uns-bridge 2.5). Topics byte-for-byte; envelopes structural (D-U22); the behavior constants are normative for every language's republish listener",
   "device": "gw-01",
   "commands": [
     {

@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-The configuration system in GGCommons Java library provides a flexible, multi-source configuration management framework for Greengrass components. It supports loading configuration from various sources, template variable substitution, and runtime configuration changes. The system is designed to handle both ggcommons framework settings and application-specific configuration through a unified interface.
+The configuration system in EdgeCommons Java library provides a flexible, multi-source configuration management framework for Greengrass components. It supports loading configuration from various sources, template variable substitution, and runtime configuration changes. The system is designed to handle both edgecommons framework settings and application-specific configuration through a unified interface.
 
 Key features include:
 - Multiple configuration sources (file, environment, Greengrass deployment, IoT Shadow)
@@ -29,7 +29,7 @@ The configuration system supports multiple sources, specified via command line a
 -c ENV [env_var_name]
 ```
 - Loads configuration from environment variable
-- Default variable: `GGCOMMONS_CONFIG`
+- Default variable: `EDGECOMMONS_CONFIG`
 - Configuration must be valid JSON string
 - Useful for containerized deployments
 
@@ -94,7 +94,7 @@ changes as `set-config` commands to each component's inbox
 The configuration is organized into distinct sections:
 
 ### Framework Sections
-These sections are managed by ggcommons and configure framework behavior:
+These sections are managed by edgecommons and configure framework behavior:
 
 - **`logging`**: Logging system configuration
 - **`heartbeat`**: Component health monitoring — a UNS `state` keepalive plus system measures as the `sys` metric (see [heartbeat.md](heartbeat.md))
@@ -138,7 +138,7 @@ When processing instance configurations, additional variables are available:
 
 ```java
 // Get the ConfigManager instance
-ConfigManager configManager = ggCommons.getConfigManager();
+ConfigManager configManager = edgeCommons.getConfigManager();
 
 // Access global configuration
 JsonObject globalConfig = configManager.getGlobalConfig();
@@ -418,10 +418,10 @@ String resolvedPath = configManager.resolveTemplate("/data/{ThingName}/{site}/lo
 
 ## 8. Configuration Schema
 
-The GGCommons configuration system includes automatic validation against a JSON Schema to ensure configuration correctness and provide better error messages.
+The EdgeCommons configuration system includes automatic validation against a JSON Schema to ensure configuration correctness and provide better error messages.
 
 ### Schema Reference
-The complete JSON Schema definition is available at: [ggcommons-config-schema.json](ggcommons-config-schema.json)
+The complete JSON Schema definition is available at: [edgecommons-config-schema.json](edgecommons-config-schema.json)
 
 This schema defines:
 - Required and optional properties for each configuration section
@@ -452,7 +452,7 @@ Developers can use the schema file with JSON editors and IDEs that support JSON 
 - **Schema validation errors**: Check configuration against the JSON schema
 
 ### Debugging Configuration
-- Enable DEBUG logging for `com.mbreissi.ggcommons.config` package
+- Enable DEBUG logging for `com.mbreissi.edgecommons.config` package
 - Use `getFullConfig()` to inspect the complete loaded configuration
 - Test template resolution with `resolveTemplate()` method
 - Verify configuration source with `configProvider.getConfigSource()`

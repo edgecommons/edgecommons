@@ -1,7 +1,7 @@
 """The SHADOW config source's default shadow name (the component name) must be
 sanitized to AWS IoT's allowed set ([A-Za-z0-9:_-]) — component names contain dots,
 which AWS shadow names reject. Mirrors the Java/Rust/TS libraries."""
-from ggcommons.config.manager.shadow_config_manager import _sanitize_shadow_name
+from edgecommons.config.manager.shadow_config_manager import _sanitize_shadow_name
 
 
 def test_sanitizes_disallowed_characters():

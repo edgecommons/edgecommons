@@ -1,7 +1,7 @@
 //! BlockStore (SegmentLog) behavior + recovery tests.
 
-use ggstreamlog::blockstore::segment_log::SegmentLog;
-use ggstreamlog::blockstore::{BlockStore, Checkpoint};
+use edgestreamlog::blockstore::segment_log::SegmentLog;
+use edgestreamlog::blockstore::{BlockStore, Checkpoint};
 
 fn append(store: &mut SegmentLog, off: u64, pk: &str, payload: &[u8]) {
     store.append(off, off * 10, pk.as_bytes(), payload).unwrap();

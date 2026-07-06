@@ -7,8 +7,8 @@
  * reuses the same load + watch + reject-and-keep seam, but watches the mount *directory* (not the
  * file inode) and re-arms after the swap so hot-reload survives ConfigMap edits.
  *
- * Selected via `-c CONFIGMAP [mountDir] [key]`; defaults are mount dir `/etc/ggcommons` and key
- * `config.json` (so a pod with a ConfigMap mounted at `/etc/ggcommons` loads `config.json` with no
+ * Selected via `-c CONFIGMAP [mountDir] [key]`; defaults are mount dir `/etc/edgecommons` and key
+ * `config.json` (so a pod with a ConfigMap mounted at `/etc/edgecommons` loads `config.json` with no
  * `-c` flag). Mirrors the canonical Java `ConfigMapConfigProvider` + `DirectoryWatcher`.
  *
  * **Why not {@link FileConfigSource}?** A mounted ConfigMap is a directory of symlinks the kubelet
@@ -38,7 +38,7 @@ import * as fs from "fs";
 import * as fsp from "fs/promises";
 import * as path from "path";
 
-import { GgError } from "../../errors";
+import { EdgeCommonsError } from "../../errors";
 import { logger } from "../../logging";
 import { isProjectionArtifact } from "../../parameters/source";
 import { ConfigSource, ConfigWatch } from "./index";
@@ -46,7 +46,7 @@ import { ConfigSource, ConfigWatch } from "./index";
 /** Loads configuration from a mounted ConfigMap directory, with directory-watch hot reload. */
 export class ConfigMapConfigSource implements ConfigSource {
   /** Default ConfigMap mount directory when `-c CONFIGMAP` is given no path argument. */
-  static readonly DEFAULT_MOUNT_DIR = "/etc/ggcommons";
+  static readonly DEFAULT_MOUNT_DIR = "/etc/edgecommons";
   /** Default config key (file name within the mount) when none is given. */
   static readonly DEFAULT_KEY = "config.json";
   /** The kubelet's atomic-swap symlink; its presence indicates a whole-volume (reloadable) mount. */
@@ -59,15 +59,15 @@ export class ConfigMapConfigSource implements ConfigSource {
   private readonly configFile: string;
 
   /**
-   * @param mountDir the ConfigMap mount directory, or `undefined` for `/etc/ggcommons`
+   * @param mountDir the ConfigMap mount directory, or `undefined` for `/etc/edgecommons`
    * @param key      the config file name within the mount, or `undefined` for `config.json`
-   * @throws {@link GgError} of kind `Config` if `key` is a kubelet projection artifact (a `..`/`.` entry)
+   * @throws {@link EdgeCommonsError} of kind `Config` if `key` is a kubelet projection artifact (a `..`/`.` entry)
    */
   constructor(mountDir?: string, key?: string) {
     this.mountDir = mountDir ?? ConfigMapConfigSource.DEFAULT_MOUNT_DIR;
     this.key = key ?? ConfigMapConfigSource.DEFAULT_KEY;
     if (isProjectionArtifact(this.key)) {
-      throw GgError.config(
+      throw EdgeCommonsError.config(
         `ConfigMap key must not be a kubelet projection artifact (a '..'/'.' entry): ${this.key}`,
       );
     }
@@ -95,14 +95,14 @@ export class ConfigMapConfigSource implements ConfigSource {
     try {
       text = await fsp.readFile(this.configFile, "utf8");
     } catch (e) {
-      throw GgError.io(
+      throw EdgeCommonsError.io(
         `failed to read ConfigMap config '${this.configFile}': ${(e as Error).message}`,
       );
     }
     try {
       return JSON.parse(text);
     } catch (e) {
-      throw GgError.config(
+      throw EdgeCommonsError.config(
         `failed to parse ConfigMap config '${this.configFile}': ${(e as Error).message}`,
       );
     }

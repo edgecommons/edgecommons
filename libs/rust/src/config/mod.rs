@@ -18,7 +18,7 @@
 //!
 //! ## Usage Example
 //! ```
-//! use ggcommons::config::model::Config;
+//! use edgecommons::config::model::Config;
 //! use serde_json::json;
 //!
 //! let cfg = Config::from_value("com.example.C", "thing-1", json!({ "tags": { "site": "f1" } })).unwrap();
@@ -51,7 +51,7 @@ use async_trait::async_trait;
 /// A listener notified after the configuration is hot-reloaded.
 ///
 /// Mirrors the Java/Python `ConfigurationChangeListener`. Register one with
-/// [`crate::GgCommons::add_config_change_listener`]. Implementations should be quick
+/// [`crate::EdgeCommons::add_config_change_listener`]. Implementations should be quick
 /// or spawn their own work; the return value indicates whether the change was
 /// handled (kept for parity with the Java/Python contract).
 #[async_trait]

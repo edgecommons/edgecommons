@@ -1,13 +1,13 @@
 ---
 title: Unified Namespace (UNS)
-description: The one topic namespace every GGCommons component publishes and subscribes on — the ecv1 topic grammar, the eight message classes, the identity element, and the six-wildcard consumer pattern.
+description: The one topic namespace every EdgeCommons component publishes and subscribes on — the ecv1 topic grammar, the eight message classes, the identity element, and the six-wildcard consumer pattern.
 sidebar:
   order: 2.5
 ---
 
 import { Tabs, TabItem, Aside, CardGrid, LinkCard } from "@astrojs/starlight/components";
 
-Every GGCommons component addresses the bus through one **Unified Namespace (UNS)**: a single topic
+Every EdgeCommons component addresses the bus through one **Unified Namespace (UNS)**: a single topic
 grammar, a closed set of message **classes**, and a config-driven **identity** stamped on every
 envelope. A consumer — a monitoring console, a site historian, an MES bridge — subscribes a small,
 uniform set of wildcards and needs **zero per-component knowledge**; every message it receives is
@@ -60,7 +60,7 @@ value; the setting is a no-op with a single-level hierarchy).
 
 The first four are **reserved platform classes**: they are library-owned, and a raw
 `messaging().publish(...)` to a reserved-class topic is **rejected** (`ReservedTopicException` /
-`ReservedTopicError` / `GgError::ReservedTopic`), so no component can forge another's health or
+`ReservedTopicError` / `EdgeCommonsError::ReservedTopic`), so no component can forge another's health or
 config. `state` and `cfg` are **leaf** classes (no channel); every other class requires at least one
 channel token. `cmd` is the only class whose identity path names the **recipient**; everything else
 names the **publisher**.
@@ -195,7 +195,7 @@ String f = gg.getUns().filter(UnsClass.STATE, UnsScope.all());   // ecv1/+/+/+/s
 <TabItem label="Python">
 
 ```python
-from ggcommons.uns import UnsClass, UnsScope
+from edgecommons.uns import UnsClass, UnsScope
 
 t = gg.uns().topic(UnsClass.APP, "order/received")
 gg.get_messaging().publish(t, msg)
@@ -208,7 +208,7 @@ f = gg.uns().filter(UnsClass.STATE, UnsScope.all())   # ecv1/+/+/+/state
 <TabItem label="Rust">
 
 ```rust
-use ggcommons::uns::{UnsClass, UnsScope};
+use edgecommons::uns::{UnsClass, UnsScope};
 
 let t = gg.uns().topic_with_channel(UnsClass::App, "order/received")?;
 gg.messaging()?.publish(&t, &msg).await?;
@@ -221,7 +221,7 @@ let f = gg.uns().filter(UnsClass::State, &UnsScope::all())?;   // ecv1/+/+/+/sta
 <TabItem label="TypeScript">
 
 ```typescript
-import { UnsClass, UnsScope } from "@edgecommons/ggcommons";
+import { UnsClass, UnsScope } from "@edgecommons/edgecommons";
 
 const t = gg.uns().topic(UnsClass.App, "order/received");
 await gg.messaging().publish(t, msg);
@@ -367,7 +367,7 @@ escape hatch for exactly that — topic + identity handled, body untouched).
 - **Reserved tokens**: the root `ecv1`; the logical component `config`; the pseudo-component
   `_bcast` (device-wide command broadcast, `ecv1/{device}/_bcast/main/cmd/{verb}`); and the whole
   `_`-prefix for system pseudo-components. Don't name components or instances with these.
-- **Reply topics are non-UNS** by design: the ephemeral `ggcommons/reply-...` request/reply topics
+- **Reply topics are non-UNS** by design: the ephemeral `edgecommons/reply-...` request/reply topics
   are not `ecv1/`-rooted and pass the guard untouched.
 
 ## What the library provides

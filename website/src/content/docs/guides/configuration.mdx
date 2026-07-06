@@ -1,13 +1,13 @@
 ---
 title: Configuration
-description: Configure a GGCommons component — config sources, document structure, template variables, typed accessors, change listeners, hot reload, and validation.
+description: Configure a EdgeCommons component — config sources, document structure, template variables, typed accessors, change listeners, hot reload, and validation.
 sidebar:
   order: 2
 ---
 
 import { Tabs, TabItem, Aside, LinkCard, CardGrid } from "@astrojs/starlight/components";
 
-Every GGCommons component is driven by a single JSON **config document**. The configuration
+Every EdgeCommons component is driven by a single JSON **config document**. The configuration
 subsystem loads that document from one of several pluggable sources, validates it against the
 canonical cross-language JSON schema, exposes its sections through typed accessors, substitutes
 template variables into paths and topics, and hot-reloads when the underlying source changes.
@@ -28,7 +28,7 @@ resolved **platform profile**: `GREENGRASS` defaults to `GG_CONFIG`, `HOST` to `
 |--------|-------------|-------------|
 | `FILE` | `-c FILE [path]` (default `config.json`) | Local development, `HOST`/Docker, bare hosts. Watches the file and hot-reloads on change. Default on `HOST`. |
 | `ENV` | `-c ENV [var]` (default `CONFIG`) | Pass the entire config JSON through an environment variable — handy in containers and CI. |
-| `CONFIGMAP` | `-c CONFIGMAP [mountDir] [key]` (defaults `/etc/ggcommons`, `config.json`) | Kubernetes. Reads a mounted ConfigMap directory and hot-reloads via the kubelet `..data` swap. Default on `KUBERNETES`. |
+| `CONFIGMAP` | `-c CONFIGMAP [mountDir] [key]` (defaults `/etc/edgecommons`, `config.json`) | Kubernetes. Reads a mounted ConfigMap directory and hot-reloads via the kubelet `..data` swap. Default on `KUBERNETES`. |
 | `GG_CONFIG` | `-c GG_CONFIG [component] [key]` (default key `ComponentConfig`) | On-device: read the config delivered by the Greengrass deployment (Nucleus). Default on `GREENGRASS`. Loads over IPC, so it needs a messaging client. |
 | `SHADOW` | `-c SHADOW [name]` (default: the component name sanitized to `[A-Za-z0-9:_-]`) | Read config from an AWS IoT device shadow. Loads over IPC. |
 | `CONFIG_COMPONENT` | `-c CONFIG_COMPONENT` | Read config served by a shared config component over IPC. |
@@ -78,7 +78,7 @@ multi-instance components.
 {
   "logging": { "level": "DEBUG", "rust_format": "{timestamp} [{level}] {target} - {message}" },
   "heartbeat": { "enabled": true, "intervalSecs": 5, "measures": { "cpu": true, "memory": true }, "destination": "local" },
-  "metricEmission": { "target": "log", "namespace": "ggcommons" },
+  "metricEmission": { "target": "log", "namespace": "edgecommons" },
   "hierarchy": { "levels": ["site", "device"] },
   "identity": { "site": "factory-1" },
   "credentials": { "vault": { "path": "./.vault/vault", "keyProvider": { "type": "file", "keyPath": "./.vault/vault.key" } } },
@@ -200,7 +200,7 @@ snapshot.
 <TabItem label="Rust">
 
   ```rust
-  use ggcommons::config::template;
+  use edgecommons::config::template;
 
   // free function taking the Config snapshot
   let path = template::resolve(&cfg, "heartbeat/{ThingName}/{ComponentName}");
@@ -210,7 +210,7 @@ snapshot.
 <TabItem label="TypeScript">
 
   ```typescript
-  import { resolve } from "@edgecommons/ggcommons";
+  import { resolve } from "@edgecommons/edgecommons";
 
   // free function taking the Config snapshot
   const path = resolve(cfg, "/data/{ThingName}/{ComponentName}.log");
@@ -348,7 +348,7 @@ top-level runtime (`gg`). The callback shape also differs — Java's callback ta
 <TabItem label="Python">
 
   ```python
-  from ggcommons.config.manager.configuration_change_listener import (
+  from edgecommons.config.manager.configuration_change_listener import (
       ConfigurationChangeListener,
   )
 
@@ -366,7 +366,7 @@ top-level runtime (`gg`). The callback shape also differs — Java's callback ta
   ```rust
   use std::sync::Arc;
   use async_trait::async_trait;
-  use ggcommons::config::{Config, ConfigurationChangeListener};
+  use edgecommons::config::{Config, ConfigurationChangeListener};
 
   struct MyListener;
 
@@ -432,7 +432,7 @@ against the schema before it is applied.
 ### Schema validation
 
 Configuration is validated against the single canonical schema
-(`schema/ggcommons-config-schema.json`), which each SDK embeds or loads. Validation is
+(`schema/edgecommons-config-schema.json`), which each SDK embeds or loads. Validation is
 **fail-closed** in all four languages — a missing schema or a validation error at startup is a hard
 error, not a silent skip. Each SDK uses its native validator (networknt / JSON Schema draft V7 in
 Java, `jsonschema` in Python, the `jsonschema` crate in Rust, Ajv in TypeScript).

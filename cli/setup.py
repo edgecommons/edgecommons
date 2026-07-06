@@ -15,7 +15,7 @@ _IGNORE = shutil.ignore_patterns(".git", ".idea", "__pycache__", "target", "out"
 
 
 class BuildPyWithTemplates(build_py):
-    """Copy templates/<lang> into the built package as ggcommons_cli/templates/<lang>."""
+    """Copy templates/<lang> into the built package as edgecommons_cli/templates/<lang>."""
 
     def run(self):
         super().run()
@@ -24,7 +24,7 @@ class BuildPyWithTemplates(build_py):
         for lang in _LANGS:
             src = os.path.join(_TEMPLATES_SRC, lang)
             if os.path.isdir(src):
-                dst = os.path.join(self.build_lib, "ggcommons_cli", "templates", lang)
+                dst = os.path.join(self.build_lib, "edgecommons_cli", "templates", lang)
                 shutil.copytree(src, dst, dirs_exist_ok=True, ignore=_IGNORE)
 
 

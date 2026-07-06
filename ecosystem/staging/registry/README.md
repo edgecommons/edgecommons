@@ -1,7 +1,7 @@
 # edgecommons component registry
 
 The machine-readable catalog of components in the **edgecommons** ecosystem — protocol adapters,
-edge processors, and northbound sinks built on the [`ggcommons`](https://github.com/edgecommons/ggcommons)
+edge processors, and northbound sinks built on the [`edgecommons`](https://github.com/edgecommons/edgecommons)
 library.
 
 - **`components.json`** — the catalog (source of truth for "what components exist").
@@ -9,9 +9,9 @@ library.
 
 ## Consumers
 
-- **CLI:** `ggcommons list-components` reads this catalog. This repo is **private**, so by default the
+- **CLI:** `edgecommons list-components` reads this catalog. This repo is **private**, so by default the
   CLI fetches it with authentication via the GitHub CLI (`gh api .../contents/components.json`).
-  Override with `--source <url|path>` or `$GGCOMMONS_REGISTRY_URL` (e.g. a local clone, or a raw URL
+  Override with `--source <url|path>` or `$EDGECOMMONS_REGISTRY_URL` (e.g. a local clone, or a raw URL
   if this repo is later made public).
 - **Docs site:** renders a "Components" page from `components.json`.
 

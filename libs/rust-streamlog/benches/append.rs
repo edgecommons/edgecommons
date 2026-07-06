@@ -8,8 +8,8 @@ use std::time::Instant;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
-use ggstreamlog::config::{BufferConfig, FsyncPolicy};
-use ggstreamlog::{EmbeddedLog, Record};
+use edgestreamlog::config::{BufferConfig, FsyncPolicy};
+use edgestreamlog::{EmbeddedLog, Record};
 
 /// Records appended per measured iteration.
 const BATCH: usize = 1000;

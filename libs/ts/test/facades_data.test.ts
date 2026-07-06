@@ -8,7 +8,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { Config } from "../src/config/model";
-import { GgError } from "../src/errors";
+import { EdgeCommonsError } from "../src/errors";
 import { Channel } from "../src/facades/channel";
 import { DataFacade } from "../src/facades/data_facade";
 import { Quality } from "../src/facades/quality";
@@ -118,20 +118,20 @@ describe("DataFacade", () => {
     it("a missing signal.id is rejected", async () => {
       const { facade, messaging } = makeFacade();
       const update = new SignalUpdateBuilder(undefined).addSample(1.0).build();
-      await expect(facade.publish(update)).rejects.toThrow(GgError);
+      await expect(facade.publish(update)).rejects.toThrow(EdgeCommonsError);
       expect(messaging.published, "nothing reaches the wire").toHaveLength(0);
     });
 
     it("empty samples is rejected", async () => {
       const { facade } = makeFacade();
       const update = new SignalUpdateBuilder("temp").build();
-      await expect(facade.publish(update)).rejects.toThrow(GgError);
+      await expect(facade.publish(update)).rejects.toThrow(EdgeCommonsError);
     });
 
     it("a quality-only sample with no value is rejected", async () => {
       const { facade } = makeFacade();
       const update = new SignalUpdateBuilder("temp").addSample(undefined, { quality: Quality.Bad }).build();
-      await expect(facade.publish(update)).rejects.toThrow(GgError);
+      await expect(facade.publish(update)).rejects.toThrow(EdgeCommonsError);
     });
   });
 

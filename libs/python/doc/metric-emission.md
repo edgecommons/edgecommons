@@ -1,6 +1,6 @@
 # Metric Emission Configuration Guide
 
-This document provides detailed information about the metric emission targets and their configuration options in the GGCommons Python library.
+This document provides detailed information about the metric emission targets and their configuration options in the EdgeCommons Python library.
 
 The metric emission system supports multiple targets for sending metrics, each with specific behaviors and configuration options. Metrics are formatted using the Embedded Metric Format (EMF) for CloudWatch compatibility.
 
@@ -10,7 +10,7 @@ The metric emission system supports multiple targets for sending metrics, each w
 
 Metrics in the system consist of:
 - **Name**: Unique identifier for the metric
-- **Namespace**: Logical grouping for metrics (defaults to "ggcommons")
+- **Namespace**: Logical grouping for metrics (defaults to "edgecommons")
 - **Measures**: Named measurements with values, units, and storage resolution
 - **Dimensions**: Key-value pairs for metric categorization (automatically includes component and thing names)
 
@@ -25,7 +25,7 @@ Metrics in the system consist of:
   - `"cloudwatchcomponent"` - Hand off to a CloudWatch publisher component over messaging
   - `"prometheus"` - **Pull-based** in-process registry served as OpenMetrics/Prometheus text over
     HTTP (the default on the KUBERNETES platform). See the dedicated section below.
-- **`namespace`**: The namespace for your metrics (Default: "ggcommons")
+- **`namespace`**: The namespace for your metrics (Default: "edgecommons")
 
 ### Template Variables
 
@@ -161,7 +161,7 @@ push EMF on emit. Only the `prometheus` target inverts the lifecycle.
 
 **Dimension → label mapping (FR-MET-3, identical across all four languages):**
 - gauge **name** = `sanitize(lowercase("{namespace}_{measureName}"))`, where `namespace` defaults to
-  `ggcommons` and `sanitize` replaces every char not matching `[a-z0-9_]` with `_` and prefixes a
+  `edgecommons` and `sanitize` replaces every char not matching `[a-z0-9_]` with `_` and prefixes a
   leading digit with `_` (Prometheus metric-name rules).
 - **labels** = the metric's dimensions (`coreName`, `category` = the metric name, `component`, plus
   any custom dimensions). Each label *name* is sanitized to `[a-zA-Z_][a-zA-Z0-9_]*` (invalid chars →
@@ -253,11 +253,11 @@ Metrics publish to `ecv1/{device}/{component}/main/metric/{metricName}` on IoT C
 
 ### Enhanced Builder Pattern
 ```python
-from ggcommons.builders import MetricBuilder
-from ggcommons.interfaces import IMetricService
+from edgecommons.builders import MetricBuilder
+from edgecommons.interfaces import IMetricService
 
 # Get metric service through dependency injection
-metric_service = ggcommons.get_service(IMetricService)
+metric_service = edgecommons.get_service(IMetricService)
 
 # Define a custom metric with builder pattern
 metric = MetricBuilder.create("data_processed") \
@@ -280,9 +280,9 @@ metric_service.emit_metric("data_processed", values)
 
 ### Legacy MetricEmitter (Still Supported)
 ```python
-from ggcommons.metrics.metric_emitter import MetricEmitter
-from ggcommons.metrics.metric import Metric
-from ggcommons.metrics.measure import Measure
+from edgecommons.metrics.metric_emitter import MetricEmitter
+from edgecommons.metrics.metric import Metric
+from edgecommons.metrics.measure import Measure
 
 # Define a metric
 metric = Metric("performance_metric")
@@ -384,7 +384,7 @@ Example EMF output:
   "logging": {
     "level": "DEBUG",
     "loggers": {
-      "ggcommons.metrics": "DEBUG"
+      "edgecommons.metrics": "DEBUG"
     }
   },
   "metricEmission": {

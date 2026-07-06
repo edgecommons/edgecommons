@@ -1,5 +1,5 @@
 {
-  "description": "ggcommons UNS data() publish-facade vectors (DESIGN-class-facades 2.1). input -> expected {topic, route, body[, partitionKey]} or {throws:true}; body compared STRUCTURALLY (D-U22). Pins the GOOD quality default (+qualityRaw:'unspecified'), serverTs=now, the samples wrapper, channel sanitization, the missing-signal.id reject, and channel routing. instance 'kep1'; clock fixed at 2026-07-01T12:00:00Z",
+  "description": "edgecommons UNS data() publish-facade vectors (DESIGN-class-facades 2.1). input -> expected {topic, route, body[, partitionKey]} or {throws:true}; body compared STRUCTURALLY (D-U22). Pins the GOOD quality default (+qualityRaw:'unspecified'), serverTs=now, the samples wrapper, channel sanitization, the missing-signal.id reject, and channel routing. instance 'kep1'; clock fixed at 2026-07-01T12:00:00Z",
   "cases": [
     {
       "name": "data-value-shorthand-quality-default",

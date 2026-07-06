@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run the secure-connection (TLS) integration tests for all three GGCommons
+# Run the secure-connection (TLS) integration tests for all three EdgeCommons
 # libraries against the shared local EMQX broker.
 #
 # Steps it performs:
@@ -8,20 +8,20 @@
 #   3. runs each library's gated TLS integration test with the right env vars
 #
 # Toolchains (python, cargo, mvn) must be on PATH. Override repo locations with
-# GGCOMMONS_LIBS_DIR (defaults to this repo's parent directory). Each library's
+# EDGECOMMONS_LIBS_DIR (defaults to this repo's parent directory). Each library's
 # test self-skips if its toolchain or the broker is unavailable, so partial setups
 # still report cleanly.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LIBS="${GGCOMMONS_LIBS_DIR:-$(cd "$HERE/.." && pwd)}"
+LIBS="${EDGECOMMONS_LIBS_DIR:-$(cd "$HERE/.." && pwd)}"
 CERTS="$HERE/tls-certs"
 
 # Shared cert location (Python + Java) and the Rust test's individual-file vars.
-export GGCOMMONS_TLS_CERTS_DIR="$CERTS"
-export GGCOMMONS_IT_MQTT=1
-export GGCOMMONS_IT_MQTT_CA="$CERTS/ca.crt"
-export GGCOMMONS_IT_MQTT_CERT="$CERTS/client.crt"
-export GGCOMMONS_IT_MQTT_KEY="$CERTS/client.key"
+export EDGECOMMONS_TLS_CERTS_DIR="$CERTS"
+export EDGECOMMONS_IT_MQTT=1
+export EDGECOMMONS_IT_MQTT_CA="$CERTS/ca.crt"
+export EDGECOMMONS_IT_MQTT_CERT="$CERTS/client.crt"
+export EDGECOMMONS_IT_MQTT_KEY="$CERTS/client.key"
 
 [ -f "$CERTS/ca.crt" ] || bash "$HERE/gen-tls-certs.sh"
 

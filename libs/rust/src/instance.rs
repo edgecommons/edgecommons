@@ -1,4 +1,4 @@
-//! # GgInstance — the per-instance seam
+//! # EdgeCommonsInstance — the per-instance seam
 //!
 //! **One-liner purpose**: The instance-scoped handle (UNS-CANONICAL-DESIGN §3,
 //! D-U3) whose only job is to pre-bind the instance token into (a) the [`Uns`]
@@ -10,15 +10,15 @@
 //! envelope (stamped by its instance-bound builder). Component-level messages
 //! (everything not built through a handle) default to instance `"main"`.
 //!
-//! Obtain handles from [`crate::GgCommons::instance`] (token validated against the
+//! Obtain handles from [`crate::EdgeCommons::instance`] (token validated against the
 //! §2.2 rule). The id is deliberately NOT verified against the configured
 //! `component.instances[]` — instances may be created dynamically; an unknown id is
 //! only logged at DEBUG as a diagnostic aid.
 //!
 //! ## Usage Example
 //! ```no_run
-//! # async fn demo(gg: &ggcommons::GgCommons) -> ggcommons::Result<()> {
-//! use ggcommons::uns::UnsClass;
+//! # async fn demo(gg: &edgecommons::EdgeCommons) -> edgecommons::Result<()> {
+//! use edgecommons::uns::UnsClass;
 //! let kep1 = gg.instance("kep1")?;
 //! let topic = kep1.uns().topic_with_channel(UnsClass::Data, "temp")?;
 //! let msg = kep1.message("data", "1.0").payload(serde_json::json!({ "v": 1 })).build();
@@ -41,13 +41,13 @@ use crate::uns::Uns;
 
 /// The per-instance seam (UNS-CANONICAL-DESIGN §3, D-U3): an instance-scoped
 /// handle over a configuration snapshot. See the [module docs](self).
-pub struct GgInstance {
+pub struct EdgeCommonsInstance {
     id: String,
     config: Arc<Config>,
     uns: Uns,
     /// `None` only when no messaging transport was wired; the `data()`/`events()`/`app()`
-    /// facades then fail their publish calls with [`crate::GgError::Messaging`] instead of
-    /// silently dropping (mirrors [`crate::GgCommons::messaging`]'s own `Result`-returning
+    /// facades then fail their publish calls with [`crate::EdgeCommonsError::Messaging`] instead of
+    /// silently dropping (mirrors [`crate::EdgeCommons::messaging`]'s own `Result`-returning
     /// accessor).
     messaging: Option<Arc<dyn MessagingService>>,
     /// The `data()` facade's stream-route seam (DESIGN-class-facades §4); `None` when
@@ -59,8 +59,8 @@ pub struct GgInstance {
     clock: Clock,
 }
 
-impl GgInstance {
-    /// Crate-private: created by [`crate::GgCommons::instance`], which validates
+impl EdgeCommonsInstance {
+    /// Crate-private: created by [`crate::EdgeCommons::instance`], which validates
     /// the token (§2.2 token rule) first.
     pub(crate) fn new(
         id: String,
@@ -68,12 +68,12 @@ impl GgInstance {
         messaging: Option<Arc<dyn MessagingService>>,
         stream_sink: Option<Arc<dyn StreamSink>>,
         clock: Clock,
-    ) -> Result<GgInstance> {
+    ) -> Result<EdgeCommonsInstance> {
         let identity = config.identity().with_instance(id.clone())?;
         // The RAW includeRoot flag, like gg.uns(): Uns applies it per-target only
         // for multi-level hierarchies (D-U25).
         let uns = Uns::new(identity, config.topic_include_root());
-        Ok(GgInstance { id, config, uns, messaging, stream_sink, clock })
+        Ok(EdgeCommonsInstance { id, config, uns, messaging, stream_sink, clock })
     }
 
     /// Returns this handle's instance token.
@@ -146,8 +146,8 @@ mod tests {
         Arc::new(|| "2026-07-01T12:00:00Z".to_string())
     }
 
-    fn handle(id: &str, messaging: Option<Arc<dyn MessagingService>>) -> GgInstance {
-        GgInstance::new(id.to_string(), config(), messaging, None, test_clock()).unwrap()
+    fn handle(id: &str, messaging: Option<Arc<dyn MessagingService>>) -> EdgeCommonsInstance {
+        EdgeCommonsInstance::new(id.to_string(), config(), messaging, None, test_clock()).unwrap()
     }
 
     #[test]
@@ -184,7 +184,7 @@ mod tests {
         let handle = handle("kep1", None);
         assert!(matches!(
             handle.data().publish_value("temp", 1).await,
-            Err(crate::GgError::Messaging(_))
+            Err(crate::EdgeCommonsError::Messaging(_))
         ));
     }
 }

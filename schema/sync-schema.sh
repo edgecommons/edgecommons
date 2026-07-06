@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Propagate the canonical GGCommons config schema into each language library.
+# Propagate the canonical EdgeCommons config schema into each language library.
 #
-# The canonical schema lives at schema/ggcommons-config-schema.json and is the SINGLE
+# The canonical schema lives at schema/edgecommons-config-schema.json and is the SINGLE
 # SOURCE OF TRUTH. Each lib embeds/loads its own copy (cargo include_str!, tsc import,
 # Python package-data, Java classpath resource), so the canonical file must be copied in.
 #
@@ -12,15 +12,15 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CANON="$ROOT/schema/ggcommons-config-schema.json"
+CANON="$ROOT/schema/edgecommons-config-schema.json"
 
 # canonical -> destination copies (TS uses a different filename)
 TARGETS=(
-  "$ROOT/libs/rust/resources/ggcommons-config-schema.json"
+  "$ROOT/libs/rust/resources/edgecommons-config-schema.json"
   "$ROOT/libs/ts/src/config/schema.json"
-  "$ROOT/libs/python/ggcommons/resources/ggcommons-config-schema.json"
-  "$ROOT/libs/java/src/main/resources/ggcommons-config-schema.json"
-  "$ROOT/libs/java/doc/ggcommons-config-schema.json"
+  "$ROOT/libs/python/edgecommons/resources/edgecommons-config-schema.json"
+  "$ROOT/libs/java/src/main/resources/edgecommons-config-schema.json"
+  "$ROOT/libs/java/doc/edgecommons-config-schema.json"
 )
 
 if [[ ! -f "$CANON" ]]; then
@@ -50,7 +50,7 @@ done
 
 if [[ $CHECK -eq 1 && $drift -eq 1 ]]; then
   echo "" >&2
-  echo "Config schema copies are out of sync with schema/ggcommons-config-schema.json." >&2
+  echo "Config schema copies are out of sync with schema/edgecommons-config-schema.json." >&2
   echo "Run ./schema/sync-schema.sh and commit the result." >&2
   exit 1
 fi

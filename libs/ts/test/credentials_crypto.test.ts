@@ -113,12 +113,12 @@ describe("crypto primitives", () => {
 describe("on-disk byte format (AADs)", () => {
   it("recordAad binds vaultId, name, and version", () => {
     expect(recordAad("vid", "alpha", "00000001").toString("utf8")).toBe(
-      "ggcommons-vault/v1|vid|alpha|00000001",
+      "edgecommons-vault/v1|vid|alpha|00000001",
     );
   });
 
   it("dekWrapAad binds the wrapped DEK to its vault", () => {
-    expect(dekWrapAad("vid").toString("utf8")).toBe("ggcommons-vault/v1/dek-wrap|vid");
+    expect(dekWrapAad("vid").toString("utf8")).toBe("edgecommons-vault/v1/dek-wrap|vid");
   });
 
   it("macInput orders secrets by UTF-8 name bytes and applies version-field defaults", () => {
@@ -153,8 +153,8 @@ describe("on-disk byte format (AADs)", () => {
     const betaIdx = mi.indexOf(Buffer.from("beta"));
     expect(alphaIdx).toBeGreaterThan(-1);
     expect(betaIdx).toBeGreaterThan(alphaIdx); // alpha sorts before beta
-    expect(mi.subarray(0, "ggcommons-vault/v1/mac".length).toString("utf8")).toBe(
-      "ggcommons-vault/v1/mac",
+    expect(mi.subarray(0, "edgecommons-vault/v1/mac".length).toString("utf8")).toBe(
+      "edgecommons-vault/v1/mac",
     );
     // Stable for identical input (key order independent).
     expect(macInput("vid", { alpha: secrets.alpha, beta: secrets.beta }, unb64).equals(mi)).toBe(true);

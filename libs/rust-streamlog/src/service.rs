@@ -21,7 +21,7 @@ use crate::log::{EmbeddedLog, LogStats};
 pub type SinkFactory = dyn Fn(&str, &SinkConfig) -> Result<Option<Box<dyn Sink>>> + Send + Sync;
 
 /// A combined stats snapshot for one stream (buffer + export progress). Numeric-only so it maps
-/// cleanly to the C-ABI `ggsl_stats_t`.
+/// cleanly to the C-ABI `esl_stats_t`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ServiceStats {
     pub appended_total: u64,
@@ -166,7 +166,7 @@ fn default_sink_factory(name: &str, sink: &SinkConfig) -> Result<Option<Box<dyn 
                     region.clone(),
                     endpoint_url.clone(),
                 )
-                .map_err(|e| crate::error::GgStreamError::Sink(e.to_string()))?;
+                .map_err(|e| crate::error::EdgeStreamError::Sink(e.to_string()))?;
                 Ok(Some(Box::new(s)))
             }
             #[cfg(not(feature = "kinesis"))]

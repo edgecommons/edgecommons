@@ -14,13 +14,13 @@
 //! - The watcher is retained inside the source, so the source must outlive the
 //!   receiver returned by `watch` (the runtime keeps it alive).
 //! - Malformed reloads are logged and skipped (the previous config stays in effect).
-//! - Error handling: [`crate::error::GgError::Io`] / [`crate::error::GgError::Json`].
+//! - Error handling: [`crate::error::EdgeCommonsError::Io`] / [`crate::error::EdgeCommonsError::Json`].
 //!
 //! ## Usage Example
 //! ```no_run
-//! use ggcommons::config::source::{file::FileConfigSource, ConfigSource};
+//! use edgecommons::config::source::{file::FileConfigSource, ConfigSource};
 //! use std::path::PathBuf;
-//! # async fn demo() -> ggcommons::Result<()> {
+//! # async fn demo() -> edgecommons::Result<()> {
 //! let source = FileConfigSource::new(PathBuf::from("config.json"));
 //! let _doc = source.load().await?;
 //! let mut updates = source.watch().expect("file source supports watching");

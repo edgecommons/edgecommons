@@ -8,8 +8,8 @@ exercised end-to-end. (Because both point at one broker, this validates that bot
 connections are live and both method sets work; true cross-broker isolation would
 require two separate brokers, so distinct topics are used per transport.)
 
-Requires the shared ggcommons-test-infra:
-- GGCOMMONS_TLS_CERTS_DIR pointing at tls-certs/ (ca.crt, client.crt, client.key)
+Requires the shared edgecommons-test-infra:
+- EDGECOMMONS_TLS_CERTS_DIR pointing at tls-certs/ (ca.crt, client.crt, client.key)
 - EMQX up with :1883 (plaintext) and :8883 (mutual TLS).
 Skips cleanly if certs/broker are unavailable.
 """
@@ -19,21 +19,21 @@ import threading
 
 import pytest
 
-from ggcommons.messaging.messaging_config import MessagingConfiguration
-from ggcommons.messaging.providers.standalone_provider import StandaloneProvider
-from ggcommons.messaging.message import Message
-from ggcommons.messaging.message_builder import MessageBuilder
+from edgecommons.messaging.messaging_config import MessagingConfiguration
+from edgecommons.messaging.providers.standalone_provider import StandaloneProvider
+from edgecommons.messaging.message import Message
+from edgecommons.messaging.message_builder import MessageBuilder
 
 from awsiot.greengrasscoreipc.model import QOS
 
 pytestmark = pytest.mark.integration
 
-CERTS = os.environ.get("GGCOMMONS_TLS_CERTS_DIR") or os.path.join(
+CERTS = os.environ.get("EDGECOMMONS_TLS_CERTS_DIR") or os.path.join(
     os.path.dirname(__file__), "tls-certs"
 )
 HAVE_CERTS = os.path.isdir(CERTS) and os.path.exists(os.path.join(CERTS, "ca.crt"))
-LOCAL_PORT = int(os.environ.get("GGCOMMONS_LOCAL_PORT", "1883"))
-TLS_PORT = int(os.environ.get("GGCOMMONS_TLS_PORT", "8883"))
+LOCAL_PORT = int(os.environ.get("EDGECOMMONS_LOCAL_PORT", "1883"))
+TLS_PORT = int(os.environ.get("EDGECOMMONS_TLS_PORT", "8883"))
 
 
 def _dual_config(tmp_path):
@@ -65,7 +65,7 @@ def _dual_config(tmp_path):
 @pytest.fixture
 def provider(tmp_path):
     if not HAVE_CERTS:
-        pytest.skip("run ggcommons-test-infra/gen-tls-certs.sh + set GGCOMMONS_TLS_CERTS_DIR")
+        pytest.skip("run edgecommons-test-infra/gen-tls-certs.sh + set EDGECOMMONS_TLS_CERTS_DIR")
     config = _dual_config(tmp_path)
     # Sanity: the config really has both brokers.
     assert config.messaging.local is not None

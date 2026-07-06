@@ -1,47 +1,47 @@
 //! C ABI (feature `cabi`) — the FFI boundary for the Phase-2 language bindings (Java/Panama,
-//! Python, Node). Mirrors `include/ggstreamlog.h`. Built into a `cdylib`.
+//! Python, Node). Mirrors `include/edgestreamlog.h`. Built into a `cdylib`.
 //!
 //! Contract: every entry point wraps the core in `catch_unwind` so a Rust panic never crosses the
-//! boundary (it becomes `GGSL_ERR_PANIC`). Inputs are borrowed for the call; error strings are
-//! heap-allocated and freed with [`ggsl_str_free`]; `ggsl_service`/`ggsl_stream` are heap handles
-//! freed with [`ggsl_shutdown`]/[`ggsl_stream_free`]. `ggsl_append`/`ggsl_flush` are thread-safe.
+//! boundary (it becomes `ESL_ERR_PANIC`). Inputs are borrowed for the call; error strings are
+//! heap-allocated and freed with [`esl_str_free`]; `esl_service`/`esl_stream` are heap handles
+//! freed with [`esl_shutdown`]/[`esl_stream_free`]. `esl_append`/`esl_flush` are thread-safe.
 
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Arc, Mutex, Once};
 
 use crate::config::{SinkConfig, StreamingConfig};
-use crate::error::{GgStreamError, Result};
+use crate::error::{EdgeStreamError, Result};
 use crate::export::{CallbackSink, ExportRecord, SendOutcome, Sink};
 use crate::log::EmbeddedLog;
 use crate::record::Record;
 use crate::service::StreamService;
 
-// ----- status codes (must match ggstreamlog.h `ggsl_status`) -----
-const GGSL_OK: c_int = 0;
-const GGSL_ERR_CONFIG: c_int = 1;
-const GGSL_ERR_IO: c_int = 2;
-const GGSL_ERR_CORRUPT: c_int = 3;
-const GGSL_ERR_FULL: c_int = 4;
-const GGSL_ERR_UNKNOWN_STREAM: c_int = 5;
-const GGSL_ERR_SINK: c_int = 6;
-const GGSL_ERR_PANIC: c_int = 7;
-const GGSL_ERR_INVALID_ARG: c_int = 8;
+// ----- status codes (must match edgestreamlog.h `esl_status`) -----
+const ESL_OK: c_int = 0;
+const ESL_ERR_CONFIG: c_int = 1;
+const ESL_ERR_IO: c_int = 2;
+const ESL_ERR_CORRUPT: c_int = 3;
+const ESL_ERR_FULL: c_int = 4;
+const ESL_ERR_UNKNOWN_STREAM: c_int = 5;
+const ESL_ERR_SINK: c_int = 6;
+const ESL_ERR_PANIC: c_int = 7;
+const ESL_ERR_INVALID_ARG: c_int = 8;
 
 /// Opaque to C: the owned [`StreamService`].
-pub struct GgslService {
+pub struct EslService {
     svc: StreamService,
 }
 
 /// Opaque to C: a caller-owned handle to one stream's durable log (a ref-count, so it outlives the
 /// service for append/flush).
-pub struct GgslStream {
+pub struct EslStream {
     log: Arc<EmbeddedLog>,
 }
 
-/// Numeric stats struct — must match `ggsl_stats_t` field order/types in ggstreamlog.h.
+/// Numeric stats struct — must match `esl_stats_t` field order/types in edgestreamlog.h.
 #[repr(C)]
-pub struct GgslStats {
+pub struct EslStats {
     pub appended_total: u64,
     pub exported_total: u64,
     pub dropped_total: u64,
@@ -54,18 +54,18 @@ pub struct GgslStats {
     pub oldest_unacked_age_ms: u64,
 }
 
-fn status_of(e: &GgStreamError) -> c_int {
+fn status_of(e: &EdgeStreamError) -> c_int {
     match e {
-        GgStreamError::Io(_) => GGSL_ERR_IO,
-        GgStreamError::Corrupt(_) => GGSL_ERR_CORRUPT,
-        GgStreamError::Config(_) => GGSL_ERR_CONFIG,
-        GgStreamError::BufferFull => GGSL_ERR_FULL,
-        GgStreamError::UnknownStream(_) => GGSL_ERR_UNKNOWN_STREAM,
-        GgStreamError::Sink(_) => GGSL_ERR_SINK,
+        EdgeStreamError::Io(_) => ESL_ERR_IO,
+        EdgeStreamError::Corrupt(_) => ESL_ERR_CORRUPT,
+        EdgeStreamError::Config(_) => ESL_ERR_CONFIG,
+        EdgeStreamError::BufferFull => ESL_ERR_FULL,
+        EdgeStreamError::UnknownStream(_) => ESL_ERR_UNKNOWN_STREAM,
+        EdgeStreamError::Sink(_) => ESL_ERR_SINK,
     }
 }
 
-/// Set `*err` to a heap C string (no-op if `err` is null). Caller frees with [`ggsl_str_free`].
+/// Set `*err` to a heap C string (no-op if `err` is null). Caller frees with [`esl_str_free`].
 unsafe fn set_err(err: *mut *mut c_char, msg: &str) {
     if err.is_null() {
         return;
@@ -74,51 +74,51 @@ unsafe fn set_err(err: *mut *mut c_char, msg: &str) {
     unsafe { *err = c.into_raw() };
 }
 
-/// Run `f`, converting a panic into `GGSL_ERR_PANIC` (panics must not cross the FFI boundary).
+/// Run `f`, converting a panic into `ESL_ERR_PANIC` (panics must not cross the FFI boundary).
 fn guard(err: *mut *mut c_char, f: impl FnOnce() -> c_int) -> c_int {
     match catch_unwind(AssertUnwindSafe(f)) {
         Ok(code) => code,
         Err(_) => {
-            unsafe { set_err(err, "panic in ggstreamlog") };
-            GGSL_ERR_PANIC
+            unsafe { set_err(err, "panic in edgestreamlog") };
+            ESL_ERR_PANIC
         }
     }
 }
 
 /// Open + recover every stream in `config_json` (the `streaming` section). On success `*out` gets a
-/// service handle; free it with [`ggsl_shutdown`].
+/// service handle; free it with [`esl_shutdown`].
 ///
 /// # Safety
-/// `config_json` must be a valid NUL-terminated C string; `out` a valid `*mut *mut GgslService`.
+/// `config_json` must be a valid NUL-terminated C string; `out` a valid `*mut *mut EslService`.
 #[no_mangle]
-pub unsafe extern "C" fn ggsl_open(
+pub unsafe extern "C" fn esl_open(
     config_json: *const c_char,
-    out: *mut *mut GgslService,
+    out: *mut *mut EslService,
     err: *mut *mut c_char,
 ) -> c_int {
     guard(err, || {
         if config_json.is_null() || out.is_null() {
             unsafe { set_err(err, "null argument") };
-            return GGSL_ERR_INVALID_ARG;
+            return ESL_ERR_INVALID_ARG;
         }
         let json = match unsafe { CStr::from_ptr(config_json) }.to_str() {
             Ok(s) => s,
             Err(_) => {
                 unsafe { set_err(err, "config_json is not valid UTF-8") };
-                return GGSL_ERR_CONFIG;
+                return ESL_ERR_CONFIG;
             }
         };
         let cfg: StreamingConfig = match serde_json::from_str(json) {
             Ok(c) => c,
             Err(e) => {
                 unsafe { set_err(err, &format!("config: {e}")) };
-                return GGSL_ERR_CONFIG;
+                return ESL_ERR_CONFIG;
             }
         };
         match StreamService::open_with(cfg, &cabi_sink_factory) {
             Ok(svc) => {
-                unsafe { *out = Box::into_raw(Box::new(GgslService { svc })) };
-                GGSL_OK
+                unsafe { *out = Box::into_raw(Box::new(EslService { svc })) };
+                ESL_OK
             }
             Err(e) => {
                 unsafe { set_err(err, &e.to_string()) };
@@ -143,8 +143,8 @@ fn cabi_sink_factory(name: &str, sink: &SinkConfig) -> Result<Option<Box<dyn Sin
             if !bound {
                 tracing::warn!(
                     stream = %name,
-                    "no host sink callback registered (call ggsl_set_sink_callback before \
-                     ggsl_open); callback stream is buffer-only — records persist but will not \
+                    "no host sink callback registered (call esl_set_sink_callback before \
+                     esl_open); callback stream is buffer-only — records persist but will not \
                      be exported"
                 );
                 return Ok(None);
@@ -161,38 +161,38 @@ fn cabi_sink_factory(name: &str, sink: &SinkConfig) -> Result<Option<Box<dyn Sin
     }
 }
 
-/// Get a handle to the named stream. `*out` is caller-owned; free with [`ggsl_stream_free`].
+/// Get a handle to the named stream. `*out` is caller-owned; free with [`esl_stream_free`].
 ///
 /// # Safety
-/// `service` must be a live handle from [`ggsl_open`]; `name` a valid C string; `out` non-null.
+/// `service` must be a live handle from [`esl_open`]; `name` a valid C string; `out` non-null.
 #[no_mangle]
-pub unsafe extern "C" fn ggsl_stream_get(
-    service: *mut GgslService,
+pub unsafe extern "C" fn esl_stream_get(
+    service: *mut EslService,
     name: *const c_char,
-    out: *mut *mut GgslStream,
+    out: *mut *mut EslStream,
     err: *mut *mut c_char,
 ) -> c_int {
     guard(err, || {
         if service.is_null() || name.is_null() || out.is_null() {
             unsafe { set_err(err, "null argument") };
-            return GGSL_ERR_INVALID_ARG;
+            return ESL_ERR_INVALID_ARG;
         }
         let svc = unsafe { &*service };
         let name = match unsafe { CStr::from_ptr(name) }.to_str() {
             Ok(s) => s,
             Err(_) => {
                 unsafe { set_err(err, "name is not valid UTF-8") };
-                return GGSL_ERR_INVALID_ARG;
+                return ESL_ERR_INVALID_ARG;
             }
         };
         match svc.svc.stream(name) {
             Some(log) => {
-                unsafe { *out = Box::into_raw(Box::new(GgslStream { log })) };
-                GGSL_OK
+                unsafe { *out = Box::into_raw(Box::new(EslStream { log })) };
+                ESL_OK
             }
             None => {
                 unsafe { set_err(err, &format!("unknown stream: {name}")) };
-                GGSL_ERR_UNKNOWN_STREAM
+                ESL_ERR_UNKNOWN_STREAM
             }
         }
     })
@@ -204,8 +204,8 @@ pub unsafe extern "C" fn ggsl_stream_get(
 /// # Safety
 /// `stream` must be a live handle; `pk`/`payload` valid for their lengths (may be null iff len 0).
 #[no_mangle]
-pub unsafe extern "C" fn ggsl_append(
-    stream: *mut GgslStream,
+pub unsafe extern "C" fn esl_append(
+    stream: *mut EslStream,
     pk: *const u8,
     pk_len: u16,
     ts_ms: u64,
@@ -217,7 +217,7 @@ pub unsafe extern "C" fn ggsl_append(
     guard(err, || {
         if stream.is_null() {
             unsafe { set_err(err, "null stream") };
-            return GGSL_ERR_INVALID_ARG;
+            return ESL_ERR_INVALID_ARG;
         }
         let s = unsafe { &*stream };
         let pk_bytes: &[u8] = if pk_len == 0 || pk.is_null() {
@@ -241,7 +241,7 @@ pub unsafe extern "C" fn ggsl_append(
                 if !out_offset.is_null() {
                     unsafe { *out_offset = s.log.stats().next_offset.saturating_sub(1) };
                 }
-                GGSL_OK
+                ESL_OK
             }
             Err(e) => {
                 unsafe { set_err(err, &e.to_string()) };
@@ -254,17 +254,17 @@ pub unsafe extern "C" fn ggsl_append(
 /// Force this stream's buffer durably to disk (does not wait for export).
 ///
 /// # Safety
-/// `stream` must be a live handle from [`ggsl_stream_get`].
+/// `stream` must be a live handle from [`esl_stream_get`].
 #[no_mangle]
-pub unsafe extern "C" fn ggsl_flush(stream: *mut GgslStream, err: *mut *mut c_char) -> c_int {
+pub unsafe extern "C" fn esl_flush(stream: *mut EslStream, err: *mut *mut c_char) -> c_int {
     guard(err, || {
         if stream.is_null() {
             unsafe { set_err(err, "null stream") };
-            return GGSL_ERR_INVALID_ARG;
+            return ESL_ERR_INVALID_ARG;
         }
         let s = unsafe { &*stream };
         match s.log.flush() {
-            Ok(()) => GGSL_OK,
+            Ok(()) => ESL_OK,
             Err(e) => {
                 unsafe { set_err(err, &e.to_string()) };
                 status_of(&e)
@@ -276,26 +276,26 @@ pub unsafe extern "C" fn ggsl_flush(stream: *mut GgslStream, err: *mut *mut c_ch
 /// Write a stats snapshot for the named stream into `out`.
 ///
 /// # Safety
-/// `service` must be live; `name` a valid C string; `out` a valid `*mut GgslStats`.
+/// `service` must be live; `name` a valid C string; `out` a valid `*mut EslStats`.
 #[no_mangle]
-pub unsafe extern "C" fn ggsl_stats(
-    service: *mut GgslService,
+pub unsafe extern "C" fn esl_stats(
+    service: *mut EslService,
     name: *const c_char,
-    out: *mut GgslStats,
+    out: *mut EslStats,
 ) -> c_int {
     guard(std::ptr::null_mut(), || {
         if service.is_null() || name.is_null() || out.is_null() {
-            return GGSL_ERR_INVALID_ARG;
+            return ESL_ERR_INVALID_ARG;
         }
         let svc = unsafe { &*service };
         let name = match unsafe { CStr::from_ptr(name) }.to_str() {
             Ok(s) => s,
-            Err(_) => return GGSL_ERR_INVALID_ARG,
+            Err(_) => return ESL_ERR_INVALID_ARG,
         };
         match svc.svc.stats(name) {
             Some(s) => {
                 unsafe {
-                    *out = GgslStats {
+                    *out = EslStats {
                         appended_total: s.appended_total,
                         exported_total: s.exported_total,
                         dropped_total: s.dropped_total,
@@ -308,19 +308,19 @@ pub unsafe extern "C" fn ggsl_stats(
                         oldest_unacked_age_ms: s.oldest_unacked_age_ms,
                     }
                 };
-                GGSL_OK
+                ESL_OK
             }
-            None => GGSL_ERR_UNKNOWN_STREAM,
+            None => ESL_ERR_UNKNOWN_STREAM,
         }
     })
 }
 
-/// Release a stream handle from [`ggsl_stream_get`]. NULL is a no-op.
+/// Release a stream handle from [`esl_stream_get`]. NULL is a no-op.
 ///
 /// # Safety
-/// `stream` must be a handle from [`ggsl_stream_get`] not already freed.
+/// `stream` must be a handle from [`esl_stream_get`] not already freed.
 #[no_mangle]
-pub unsafe extern "C" fn ggsl_stream_free(stream: *mut GgslStream) {
+pub unsafe extern "C" fn esl_stream_free(stream: *mut EslStream) {
     if !stream.is_null() {
         drop(unsafe { Box::from_raw(stream) });
     }
@@ -329,9 +329,9 @@ pub unsafe extern "C" fn ggsl_stream_free(stream: *mut GgslStream) {
 /// Flush + stop + free the service. NULL is a no-op.
 ///
 /// # Safety
-/// `service` must be a handle from [`ggsl_open`] not already freed.
+/// `service` must be a handle from [`esl_open`] not already freed.
 #[no_mangle]
-pub unsafe extern "C" fn ggsl_shutdown(service: *mut GgslService) {
+pub unsafe extern "C" fn esl_shutdown(service: *mut EslService) {
     if !service.is_null() {
         // StreamService::drop stops engines and flushes each buffer.
         drop(unsafe { Box::from_raw(service) });
@@ -343,7 +343,7 @@ pub unsafe extern "C" fn ggsl_shutdown(service: *mut GgslService) {
 /// # Safety
 /// `s` must be a string from a `*err` out-parameter not already freed.
 #[no_mangle]
-pub unsafe extern "C" fn ggsl_str_free(s: *mut c_char) {
+pub unsafe extern "C" fn esl_str_free(s: *mut c_char) {
     if !s.is_null() {
         drop(unsafe { CString::from_raw(s) });
     }
@@ -353,10 +353,10 @@ pub unsafe extern "C" fn ggsl_str_free(s: *mut c_char) {
 
 /// Host log callback: `(user_data, level, target, message)`. Level: 1=ERROR..5=TRACE. The string
 /// pointers are valid only for the duration of the call.
-type GgslLogCb = extern "C" fn(*mut c_void, c_int, *const c_char, *const c_char);
+type EslLogCb = extern "C" fn(*mut c_void, c_int, *const c_char, *const c_char);
 
 struct LogSink {
-    cb: GgslLogCb,
+    cb: EslLogCb,
     /// Host pointer, stored as `usize` so the global is `Send`/`Sync`; cast back when invoking.
     user_data: usize,
 }
@@ -425,7 +425,7 @@ impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for CallbackLayer {
 /// `cb` must be a valid function pointer (or null); `user_data` is passed back verbatim and must
 /// remain valid for as long as a callback is registered.
 #[no_mangle]
-pub unsafe extern "C" fn ggsl_set_log_callback(cb: Option<GgslLogCb>, user_data: *mut c_void) -> c_int {
+pub unsafe extern "C" fn esl_set_log_callback(cb: Option<EslLogCb>, user_data: *mut c_void) -> c_int {
     guard(std::ptr::null_mut(), || {
         match cb {
             Some(cb) => {
@@ -446,30 +446,30 @@ pub unsafe extern "C" fn ggsl_set_log_callback(cb: Option<GgslLogCb>, user_data:
                 }
             }
         }
-        GGSL_OK
+        ESL_OK
     })
 }
 
 // ----- host sink callback: the export engine drains a Callback stream through the host -----
 
-// Outcome status codes the host writes into `GgslSinkOutcome.status` (distinct from `ggsl_status`).
+// Outcome status codes the host writes into `EslSinkOutcome.status` (distinct from `esl_status`).
 /// Every record in the batch was stored.
-const GGSL_SINK_ALL_ACKED: c_int = 0;
+const ESL_SINK_ALL_ACKED: c_int = 0;
 /// Some records (listed in `failed_offsets`) were not stored; retry just those.
-const GGSL_SINK_PARTIAL: c_int = 1;
+const ESL_SINK_PARTIAL: c_int = 1;
 /// The whole batch failed but may succeed later (disconnected / throttled / 5xx). Retried.
-const GGSL_SINK_FAILED_RETRYABLE: c_int = 2;
+const ESL_SINK_FAILED_RETRYABLE: c_int = 2;
 /// The whole batch failed and will not succeed on retry; the engine still re-delivers it on the
 /// next loop (it cannot know it is permanent), but the host should have dropped/logged it.
-const GGSL_SINK_FAILED_PERMANENT: c_int = 3;
+const ESL_SINK_FAILED_PERMANENT: c_int = 3;
 
 /// One record passed to the host sink callback. All pointers borrow the export batch and are valid
-/// ONLY for the duration of the call. Mirrors `ggsl_sink_record_t` in ggstreamlog.h.
+/// ONLY for the duration of the call. Mirrors `esl_sink_record_t` in edgestreamlog.h.
 #[repr(C)]
-pub struct GgslSinkRecord {
+pub struct EslSinkRecord {
     /// Log offset of this record (use it to populate `failed_offsets` for a partial outcome).
     pub offset: u64,
-    /// Record timestamp (epoch millis) as supplied to `ggsl_append`.
+    /// Record timestamp (epoch millis) as supplied to `esl_append`.
     pub ts_ms: u64,
     /// Partition key bytes (UTF-8; the metrics layer uses the namespace). May be null iff `pk_len`==0.
     pub pk: *const u8,
@@ -479,32 +479,32 @@ pub struct GgslSinkRecord {
     pub payload_len: usize,
 }
 
-/// The host fills this to report a batch's [`SendOutcome`]. Mirrors `ggsl_sink_outcome_t`.
+/// The host fills this to report a batch's [`SendOutcome`]. Mirrors `esl_sink_outcome_t`.
 ///
 /// The core supplies `failed_offsets` pre-allocated with room for `failed_cap` entries (== the batch
-/// length). For a `GGSL_SINK_PARTIAL` outcome the host writes the offsets that were NOT stored into
+/// length). For a `ESL_SINK_PARTIAL` outcome the host writes the offsets that were NOT stored into
 /// that buffer and sets `failed_count`; for any other status `failed_count` is ignored.
 #[repr(C)]
-pub struct GgslSinkOutcome {
-    /// One of the `GGSL_SINK_*` constants. Defaults to `GGSL_SINK_FAILED_RETRYABLE` if the host
+pub struct EslSinkOutcome {
+    /// One of the `ESL_SINK_*` constants. Defaults to `ESL_SINK_FAILED_RETRYABLE` if the host
     /// leaves it untouched (so an unwritten outcome is retried, never silently acked).
     pub status: c_int,
     /// Core-owned, host-written-into array for partial failures (capacity == batch length).
     pub failed_offsets: *mut u64,
     /// Capacity of `failed_offsets` (number of u64 slots).
     pub failed_cap: usize,
-    /// Host writes the number of failed offsets here (only read for `GGSL_SINK_PARTIAL`).
+    /// Host writes the number of failed offsets here (only read for `ESL_SINK_PARTIAL`).
     pub failed_count: usize,
 }
 
 /// Host sink callback: `(user_data, records, n, *mut outcome) -> int`. Invoked on the export thread
-/// with a borrowed batch; the host writes the outcome and returns `GGSL_OK` (non-zero is treated as
+/// with a borrowed batch; the host writes the outcome and returns `ESL_OK` (non-zero is treated as
 /// a retryable failure). Must be thread-safe and return promptly (it blocks that stream's drain).
-type GgslSinkCb =
-    extern "C" fn(*mut c_void, *const GgslSinkRecord, usize, *mut GgslSinkOutcome) -> c_int;
+type EslSinkCb =
+    extern "C" fn(*mut c_void, *const EslSinkRecord, usize, *mut EslSinkOutcome) -> c_int;
 
 struct SinkCbReg {
-    cb: GgslSinkCb,
+    cb: EslSinkCb,
     /// Host pointer as `usize` so the global is `Send`/`Sync`; cast back when invoking.
     user_data: usize,
 }
@@ -512,9 +512,9 @@ struct SinkCbReg {
 static SINK_CB: Mutex<Option<SinkCbReg>> = Mutex::new(None);
 
 /// Marshal one export batch across the boundary into the registered host sink and map the host's
-/// `GgslSinkOutcome` back onto a [`SendOutcome`]. Runs on the export engine thread.
+/// `EslSinkOutcome` back onto a [`SendOutcome`]. Runs on the export engine thread.
 ///
-/// If no callback is registered (cleared after `ggsl_open`), the batch is reported as a retryable
+/// If no callback is registered (cleared after `esl_open`), the batch is reported as a retryable
 /// failure so the engine holds it (at-least-once) rather than dropping it.
 fn invoke_host_sink(stream: &str, _id: Option<&str>, batch: &[ExportRecord<'_>]) -> SendOutcome {
     let reg = match SINK_CB.lock() {
@@ -529,9 +529,9 @@ fn invoke_host_sink(stream: &str, _id: Option<&str>, batch: &[ExportRecord<'_>])
     };
 
     // Build the borrowed C view of the batch (pointers valid only for this call).
-    let recs: Vec<GgslSinkRecord> = batch
+    let recs: Vec<EslSinkRecord> = batch
         .iter()
-        .map(|r| GgslSinkRecord {
+        .map(|r| EslSinkRecord {
             offset: r.offset,
             ts_ms: r.ts_ms,
             pk: r.partition_key.as_ptr(),
@@ -543,8 +543,8 @@ fn invoke_host_sink(stream: &str, _id: Option<&str>, batch: &[ExportRecord<'_>])
 
     // Core-owned scratch for partial failed offsets (capacity == batch length).
     let mut failed: Vec<u64> = vec![0; batch.len()];
-    let mut outcome = GgslSinkOutcome {
-        status: GGSL_SINK_FAILED_RETRYABLE, // default: retried if the host leaves it untouched
+    let mut outcome = EslSinkOutcome {
+        status: ESL_SINK_FAILED_RETRYABLE, // default: retried if the host leaves it untouched
         failed_offsets: failed.as_mut_ptr(),
         failed_cap: failed.len(),
         failed_count: 0,
@@ -552,7 +552,7 @@ fn invoke_host_sink(stream: &str, _id: Option<&str>, batch: &[ExportRecord<'_>])
 
     // The host callback may itself panic across the boundary; contain it.
     let rc = catch_unwind(AssertUnwindSafe(|| {
-        cb(ud as *mut c_void, recs.as_ptr(), recs.len(), &mut outcome as *mut GgslSinkOutcome)
+        cb(ud as *mut c_void, recs.as_ptr(), recs.len(), &mut outcome as *mut EslSinkOutcome)
     }));
     let rc = match rc {
         Ok(rc) => rc,
@@ -563,7 +563,7 @@ fn invoke_host_sink(stream: &str, _id: Option<&str>, batch: &[ExportRecord<'_>])
             };
         }
     };
-    if rc != GGSL_OK {
+    if rc != ESL_OK {
         return SendOutcome::Failed {
             retryable: true,
             error: format!("host sink callback returned status {rc} for stream '{stream}'"),
@@ -571,8 +571,8 @@ fn invoke_host_sink(stream: &str, _id: Option<&str>, batch: &[ExportRecord<'_>])
     }
 
     match outcome.status {
-        GGSL_SINK_ALL_ACKED => SendOutcome::AllAcked,
-        GGSL_SINK_PARTIAL => {
+        ESL_SINK_ALL_ACKED => SendOutcome::AllAcked,
+        ESL_SINK_PARTIAL => {
             let n = outcome.failed_count.min(failed.len());
             let failed_offsets = failed[..n].to_vec();
             if failed_offsets.is_empty() {
@@ -582,16 +582,16 @@ fn invoke_host_sink(stream: &str, _id: Option<&str>, batch: &[ExportRecord<'_>])
                 SendOutcome::Partial { failed_offsets }
             }
         }
-        GGSL_SINK_FAILED_PERMANENT => {
+        ESL_SINK_FAILED_PERMANENT => {
             SendOutcome::Failed { retryable: false, error: "host sink: permanent failure".into() }
         }
-        // GGSL_SINK_FAILED_RETRYABLE and any unrecognized status -> retryable failure.
+        // ESL_SINK_FAILED_RETRYABLE and any unrecognized status -> retryable failure.
         _ => SendOutcome::Failed { retryable: true, error: "host sink: retryable failure".into() },
     }
 }
 
 /// Register (or clear, with `cb = NULL`) the host sink callback that drains `callback`-type streams.
-/// Call this BEFORE [`ggsl_open`]: the binding is captured per stream at open time, so a stream
+/// Call this BEFORE [`esl_open`]: the binding is captured per stream at open time, so a stream
 /// opened with no callback registered is buffer-only until reopened. `user_data` is passed back
 /// verbatim and must outlive the service.
 ///
@@ -600,8 +600,8 @@ fn invoke_host_sink(stream: &str, _id: Option<&str>, batch: &[ExportRecord<'_>])
 /// remain valid for as long as a callback is registered (i.e. until the service is shut down or the
 /// callback is cleared).
 #[no_mangle]
-pub unsafe extern "C" fn ggsl_set_sink_callback(
-    cb: Option<GgslSinkCb>,
+pub unsafe extern "C" fn esl_set_sink_callback(
+    cb: Option<EslSinkCb>,
     user_data: *mut c_void,
 ) -> c_int {
     guard(std::ptr::null_mut(), || {
@@ -617,6 +617,6 @@ pub unsafe extern "C" fn ggsl_set_sink_callback(
                 }
             }
         }
-        GGSL_OK
+        ESL_OK
     })
 }

@@ -1,4 +1,4 @@
-/** TS credentials: KMS-via-TES key provider round trip vs floci KMS (gated by GGCOMMONS_IT_KMS). */
+/** TS credentials: KMS-via-TES key provider round trip vs floci KMS (gated by EDGECOMMONS_IT_KMS). */
 import { mkdtempSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import { openFromConfig } from "../src/credentials/config";
 
-describe.skipIf(process.env.GGCOMMONS_IT_KMS !== "1")("kms key provider (floci)", () => {
+describe.skipIf(process.env.EDGECOMMONS_IT_KMS !== "1")("kms key provider (floci)", () => {
   it("wraps + unwraps the vault DEK via KMS (put → reopen round trip)", async () => {
     process.env.AWS_ACCESS_KEY_ID ??= "test";
     process.env.AWS_SECRET_ACCESS_KEY ??= "test";
@@ -16,7 +16,7 @@ describe.skipIf(process.env.GGCOMMONS_IT_KMS !== "1")("kms key provider (floci)"
     const endpoint = "http://localhost:4566";
     const kms = await import("@aws-sdk/client-kms");
     const client = new kms.KMSClient({ region: "us-east-1", endpoint });
-    const created = await client.send(new kms.CreateKeyCommand({ Description: "ggcommons-ts-kms-it" }));
+    const created = await client.send(new kms.CreateKeyCommand({ Description: "edgecommons-ts-kms-it" }));
     const keyId = created.KeyMetadata!.KeyId!;
 
     const dir = mkdtempSync(join(tmpdir(), "ggvault-kms-"));

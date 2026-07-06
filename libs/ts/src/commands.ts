@@ -13,8 +13,8 @@
  * the request's `correlation_id` (the `uns-bridge` rewrites `reply_to` across brokers, so
  * console→component request/reply works transparently over the site bus); a `cmd` without
  * `reply_to` is fire-and-forget (the handler runs, no reply). Obtain the facade via
- * `GGCommons.commands()` and register custom verbs with {@link CommandInbox.register}. Mirrors
- * the Java `com.mbreissi.ggcommons.commands.CommandInbox`.
+ * `EdgeCommons.commands()` and register custom verbs with {@link CommandInbox.register}. Mirrors
+ * the Java `com.mbreissi.edgecommons.commands.CommandInbox`.
  *
  * **Normative behavior (mirrored by the Java/Python/Rust inboxes; pinned by
  * `uns-test-vectors/commands.json`):**
@@ -47,7 +47,7 @@
  *   {@link CommandInbox.ERR_HANDLER_ERROR}. Fire-and-forget failures are logged only.
  * - **No config surface** — always on; core plumbing, not a feature toggle.
  *
- * Lifecycle: constructed and {@link CommandInbox.start started} by the `GGCommonsBuilder` after
+ * Lifecycle: constructed and {@link CommandInbox.start started} by the `EdgeCommonsBuilder` after
  * initialization completes; {@link CommandInbox.close} unsubscribes the inbox (before messaging
  * closes — the unsubscribe-before-exit rule). Only the `main`-instance inbox is subscribed in
  * this slice; per-instance inboxes ride the full `commands()` facade (Phase 5).
@@ -173,7 +173,7 @@ export class CommandInbox {
 
   /**
    * Creates the inbox and registers the three built-in verbs. The verb **actions** are injected
-   * seams so the built-ins unit-test deterministically; `GGCommonsBuilder` wires the real ones.
+   * seams so the built-ins unit-test deterministically; `EdgeCommonsBuilder` wires the real ones.
    *
    * @param configProvider  a getter for the current config snapshot (own identity resolution;
    *                        reply envelopes are config-stamped with the responder's

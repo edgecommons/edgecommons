@@ -1,8 +1,8 @@
-# Requires the ggcommons Java artifact resolvable from GitHub Packages Maven (com.mbreissi:ggcommons);
+# Requires the edgecommons Java artifact resolvable from GitHub Packages Maven (com.mbreissi.edgecommons:edgecommons);
 # see docs/platform/DESIGN-packaging.md §13. --enable-native-access is for the streaming FFM binding.
 #
 # Multi-stage build: stage 1 compiles the shaded, self-contained component jar with Maven against the
-# PUBLISHED ggcommons artifact; stage 2 is a slim JRE that runs it as a non-root user. With
+# PUBLISHED edgecommons artifact; stage 2 is a slim JRE that runs it as a non-root user. With
 # --platform auto the library detects KUBERNETES, defaults config to CONFIGMAP and transport to MQTT,
 # and resolves identity from the Downward API — so the container needs NO default args.
 

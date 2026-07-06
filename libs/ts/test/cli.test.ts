@@ -3,7 +3,7 @@ import { join } from "path";
 
 import { parseArgs } from "../src/cli";
 import { Platform, Transport } from "../src/platform";
-import { GgError } from "../src/errors";
+import { EdgeCommonsError } from "../src/errors";
 
 // Empty env so auto-detection is deterministic (no Greengrass/Kubernetes signals -> HOST).
 const NO_ENV = {} as Record<string, string | undefined>;
@@ -117,7 +117,7 @@ describe("parseArgs", () => {
   });
 
   it("-t without a value throws", () => {
-    expect(() => parseArgs(["--platform", "GREENGRASS", "-t"], NO_ENV)).toThrow(GgError);
+    expect(() => parseArgs(["--platform", "GREENGRASS", "-t"], NO_ENV)).toThrow(EdgeCommonsError);
   });
 
   it("identity falls back to AWS_IOT_THING_NAME env when -t absent", () => {
@@ -130,8 +130,8 @@ describe("parseArgs", () => {
       parseArgs(["--platform", "GREENGRASS", "-c", "NOPE"], NO_ENV);
       throw new Error("expected throw");
     } catch (e) {
-      expect(e).toBeInstanceOf(GgError);
-      expect((e as GgError).kind).toBe("Cli");
+      expect(e).toBeInstanceOf(EdgeCommonsError);
+      expect((e as EdgeCommonsError).kind).toBe("Cli");
     }
   });
 
@@ -140,8 +140,8 @@ describe("parseArgs", () => {
       parseArgs(["--platform", "BOGUS"], NO_ENV);
       throw new Error("expected throw");
     } catch (e) {
-      expect(e).toBeInstanceOf(GgError);
-      expect((e as GgError).kind).toBe("Cli");
+      expect(e).toBeInstanceOf(EdgeCommonsError);
+      expect((e as EdgeCommonsError).kind).toBe("Cli");
     }
   });
 
@@ -150,8 +150,8 @@ describe("parseArgs", () => {
       parseArgs(["--platform", "HOST", "--transport", "BOGUS"], NO_ENV);
       throw new Error("expected throw");
     } catch (e) {
-      expect(e).toBeInstanceOf(GgError);
-      expect((e as GgError).kind).toBe("Cli");
+      expect(e).toBeInstanceOf(EdgeCommonsError);
+      expect((e as EdgeCommonsError).kind).toBe("Cli");
     }
   });
 
@@ -160,9 +160,9 @@ describe("parseArgs", () => {
       parseArgs(["--platform", "HOST", "--transport", "IPC"], NO_ENV);
       throw new Error("expected throw");
     } catch (e) {
-      expect(e).toBeInstanceOf(GgError);
-      expect((e as GgError).kind).toBe("Cli");
-      expect((e as GgError).message).toContain("IPC transport requires --platform GREENGRASS");
+      expect(e).toBeInstanceOf(EdgeCommonsError);
+      expect((e as EdgeCommonsError).kind).toBe("Cli");
+      expect((e as EdgeCommonsError).message).toContain("IPC transport requires --platform GREENGRASS");
     }
   });
 
@@ -178,9 +178,9 @@ describe("parseArgs", () => {
       parseArgs(["--platform", "KUBERNETES", "--transport", "IPC"], NO_ENV);
       throw new Error("expected throw");
     } catch (e) {
-      expect(e).toBeInstanceOf(GgError);
-      expect((e as GgError).kind).toBe("Cli");
-      expect((e as GgError).message).toContain("IPC transport requires --platform GREENGRASS");
+      expect(e).toBeInstanceOf(EdgeCommonsError);
+      expect((e as EdgeCommonsError).kind).toBe("Cli");
+      expect((e as EdgeCommonsError).message).toContain("IPC transport requires --platform GREENGRASS");
     }
   });
 
@@ -202,30 +202,30 @@ describe("parseArgs", () => {
       parseArgs(["-m", "STANDALONE", "m.json"], NO_ENV);
       throw new Error("expected throw");
     } catch (e) {
-      expect(e).toBeInstanceOf(GgError);
-      expect((e as GgError).kind).toBe("Cli");
-      expect((e as GgError).message).toContain("--platform");
-      expect((e as GgError).message).toContain("--transport");
+      expect(e).toBeInstanceOf(EdgeCommonsError);
+      expect((e as EdgeCommonsError).kind).toBe("Cli");
+      expect((e as EdgeCommonsError).message).toContain("--platform");
+      expect((e as EdgeCommonsError).message).toContain("--transport");
     }
   });
 
   it("legacy --mode flag is rejected with guidance", () => {
-    expect(() => parseArgs(["--mode", "GREENGRASS"], NO_ENV)).toThrow(GgError);
+    expect(() => parseArgs(["--mode", "GREENGRASS"], NO_ENV)).toThrow(EdgeCommonsError);
   });
 
   it("unexpected argument throws Cli", () => {
-    expect(() => parseArgs(["--frobnicate"], NO_ENV)).toThrow(GgError);
+    expect(() => parseArgs(["--frobnicate"], NO_ENV)).toThrow(EdgeCommonsError);
   });
 
   // ---------- FR-MSG-1: default messaging-config path from CONFIGMAP ----------
 
-  it("KUBERNETES (CONFIGMAP + MQTT) defaults messagingConfigPath to /etc/ggcommons/config.json", () => {
+  it("KUBERNETES (CONFIGMAP + MQTT) defaults messagingConfigPath to /etc/edgecommons/config.json", () => {
     // No explicit `--transport MQTT <path>` is needed: the single mounted ConfigMap file doubles as
     // both the messaging-config and the component config.
     const parsed = parseArgs(["--platform", "KUBERNETES"], NO_ENV);
     expect(parsed.transport).toBe(Transport.MQTT);
     expect(parsed.config).toEqual({ kind: "CONFIGMAP", mountDir: undefined, key: undefined });
-    expect(parsed.messagingConfigPath).toBe(join("/etc/ggcommons", "config.json"));
+    expect(parsed.messagingConfigPath).toBe(join("/etc/edgecommons", "config.json"));
   });
 
   it("CONFIGMAP + MQTT default uses the explicit -c CONFIGMAP mount dir + key", () => {
@@ -262,7 +262,7 @@ describe("parseArgs", () => {
   it("HOST + MQTT + explicit -c CONFIGMAP also gets the default path (CONFIGMAP+MQTT is the trigger, not the platform)", () => {
     const parsed = parseArgs(["--platform", "HOST", "-c", "CONFIGMAP"], NO_ENV);
     expect(parsed.config.kind).toBe("CONFIGMAP");
-    expect(parsed.messagingConfigPath).toBe(join("/etc/ggcommons", "config.json"));
+    expect(parsed.messagingConfigPath).toBe(join("/etc/edgecommons", "config.json"));
   });
 
   it("CONFIGMAP with a non-MQTT path does not apply the messaging default (no MQTT, no messaging)", () => {

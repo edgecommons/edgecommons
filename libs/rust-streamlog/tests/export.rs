@@ -4,8 +4,8 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use ggstreamlog::config::{BatchConfig, BufferConfig, DeliveryConfig, FsyncPolicy, OnFull};
-use ggstreamlog::{EmbeddedLog, ExportEngine, FakeSink, Record};
+use edgestreamlog::config::{BatchConfig, BufferConfig, DeliveryConfig, FsyncPolicy, OnFull};
+use edgestreamlog::{EmbeddedLog, ExportEngine, FakeSink, Record};
 
 fn buf_cfg(path: &std::path::Path) -> BufferConfig {
     BufferConfig {

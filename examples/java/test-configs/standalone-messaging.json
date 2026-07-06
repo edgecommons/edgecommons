@@ -9,10 +9,10 @@
     "iotCore": {
       "endpoint": "a2djc899idbttw-ats.iot.us-east-1.amazonaws.com",
       "port": 8883,
-      "clientId": "ggcommons-test-2",
+      "clientId": "edgecommons-test-2",
       "credentials": {
-        "certPath": "creds/ggcommons-test-2.cert.pem",
-        "keyPath": "creds/ggcommons-test-2.private.key",
+        "certPath": "creds/edgecommons-test-2.cert.pem",
+        "keyPath": "creds/edgecommons-test-2.private.key",
         "caPath": "creds/root-CA.crt"
       }
     }

@@ -1,7 +1,7 @@
 # Design — Operator / CRD (sketch + recommendation)
 
 > Companion to [DESIGN-packaging.md](DESIGN-packaging.md). **Status: PROPOSED — sketch only.**
-> Requirement FR-OP-1: provide a `GgcommonsComponent` CRD *sketch* and an explicit recommendation, but
+> Requirement FR-OP-1: provide an `EdgeCommonsComponent` CRD *sketch* and an explicit recommendation, but
 > **do not build a production operator** in this effort.
 
 ---
@@ -15,10 +15,10 @@ continuous drift correction, dynamic regeneration. **Helm**, by contrast, render
 no runtime-state awareness — the industry default is "Helm for declaratively-complete apps, an operator
 only when lifecycle intelligence is genuinely required."
 
-**Nothing in ggcommons is a stateful Day-2 problem today.** Everything a `GgcommonsComponent` CRD would
+**Nothing in edgecommons is a stateful Day-2 problem today.** Everything an `EdgeCommonsComponent` CRD would
 "manage" already maps onto mature, off-the-shelf pieces:
 
-| ggcommons concern | Already owned by |
+| edgecommons concern | Already owned by |
 |---|---|
 | Render component config (+ `{ComponentName}`/`{ThingName}` substitution) into a ConfigMap | **Helm** templating |
 | Central secret sync (Secrets Manager / SSM) + at-rest encryption | **External Secrets Operator** / **Secrets Store CSI Driver** |
@@ -37,31 +37,31 @@ IRSA/IAM-Roles-Anywhere for identity. Defer the operator.**
 Build a thin operator **only if** a concrete stateful need emerges that Helm + existing operators cannot
 express. Watch for:
 
-- **Dynamic stream lifecycle** — programmatically create/remove ggstreamlog streams not in static config
+- **Dynamic stream lifecycle** — programmatically create/remove edgestreamlog streams not in static config
   (the deferred "dynamic streams" design) needs reconcile-style management of PVCs/StatefulSets.
 - **Automated vault re-keying / rotation** — rotating the credentials vault KEK or re-wrapping DEKs
   across a fleet is a stateful, ordered, knowledge-bearing operation.
 - **Config drift correction at admission** — validating/auto-correcting component config against
-  `schema/ggcommons-config-schema.json` as an admission/reconcile step.
+  `schema/edgecommons-config-schema.json` as an admission/reconcile step.
 - **Orchestrated platform transitions** — e.g. coordinating GREENGRASS↔KUBERNETES migration of a fleet.
 
 Absent one of these, the operator is gold-plating.
 
-## 3. `GgcommonsComponent` CRD — sketch (for the day it's justified)
+## 3. `EdgeCommonsComponent` CRD — sketch (for the day it's justified)
 
 If built, the operator should **own exactly one CR** that aggregates the correlated objects and
 **delegate** to ESO and the Prometheus Operator rather than duplicate them. Illustrative shape:
 
 ```yaml
-apiVersion: ggcommons.io/v1alpha1
-kind: GgcommonsComponent
+apiVersion: edgecommons.io/v1alpha1
+kind: EdgeCommonsComponent
 metadata: { name: com.example.MyComponent }
 spec:
   image: ghcr.io/example/mycomponent:1.2.3
   platform: kubernetes                 # resolver platform (DESIGN-core)
   transport: dualMqtt                  # ipc is invalid here; webhook validates the pair
   identity: { provider: irsa, roleArn: arn:aws:iam::...:role/... }
-  config:                              # the ggcommons config-schema document (validated against the canonical schema)
+  config:                              # the edgecommons config-schema document (validated against the canonical schema)
     component: { name: com.example.MyComponent }
     logging: { ... }
     metricEmission: { target: prometheus }
@@ -84,7 +84,7 @@ Controller contract (kubebuilder/operator-sdk, Go): idempotent `Reconcile(ctx, r
 (deletion) gracefully; set `ownerReferences` on children for GC + watch-triggering; return
 `ctrl.Result{RequeueAfter}`; **status reconstructed from the world, not read back as truth**. A validating
 webhook enforces the (platform, transport) invariant (DESIGN-core §4.1) and validates `spec.config`
-against `schema/ggcommons-config-schema.json`. The controller **fans out to and reconciles** a ConfigMap
+against `schema/edgecommons-config-schema.json`. The controller **fans out to and reconciles** a ConfigMap
 (rendered + substituted config), the Deployment/StatefulSet (image, probes, PVC), an `ExternalSecret`
 (delegated to ESO), and a `ServiceMonitor` (delegated to the Prometheus Operator) — it does **not**
 reimplement secret sync or scrape config.

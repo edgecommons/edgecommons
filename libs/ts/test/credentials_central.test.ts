@@ -119,14 +119,14 @@ describe("AwsSecretsManagerSource (mocked SDK)", () => {
   });
 });
 
-describe.skipIf(process.env.GGCOMMONS_IT_SM !== "1")("central sync (floci)", () => {
+describe.skipIf(process.env.EDGECOMMONS_IT_SM !== "1")("central sync (floci)", () => {
   it("bootstrap + rotation + no-churn from Secrets Manager", async () => {
     process.env.AWS_ACCESS_KEY_ID ??= "test";
     process.env.AWS_SECRET_ACCESS_KEY ??= "test";
     process.env.AWS_REGION ??= "us-east-1";
     const sm = await import("@aws-sdk/client-secrets-manager");
     const client = new sm.SecretsManagerClient({ region: "us-east-1", endpoint: "http://localhost:4566" });
-    const name = `ggcommons-ts-cred-${randomUUID()}`;
+    const name = `edgecommons-ts-cred-${randomUUID()}`;
     await client.send(new sm.CreateSecretCommand({ Name: name, SecretString: "v1" }));
     try {
       const dir = mkdtempSync(join(tmpdir(), "ggvault-sm-"));

@@ -1,31 +1,31 @@
 """Deterministic unit tests for the ``data()``/``events()``/``app()`` publish facades
 (DESIGN-class-facades, ``docs/platform/DESIGN-class-facades.md``) and their value types
 (:class:`Channel`, :class:`Quality`, :class:`Severity`,
-:class:`~ggcommons.facades.signal_update.SignalUpdate`/``Sample``) -- the Python mirror
+:class:`~edgecommons.facades.signal_update.SignalUpdate`/``Sample``) -- the Python mirror
 of the Java canonical's ``DataFacadeTest``/``EventsFacadeTest``/``AppFacadeTest``/
-``FacadeValueTypesTest``, plus the ``GgInstance``/``GGCommons`` accessor wiring
+``FacadeValueTypesTest``, plus the ``EdgeCommonsInstance``/``EdgeCommons`` accessor wiring
 (DESIGN-class-facades §3, D6).
 
 Cross-language conformance (topic/body shapes pinned by ``uns-test-vectors/``) lives in
 ``test_facades_vectors.py``; this file covers the behavior the vectors don't reach:
 constructor validation, the raw escape hatch, config-driven channel resolution (both
 tiers), northbound/stream transport-failure isolation, the value-type helpers, and the
-``GgInstance``/``GGCommons`` wiring.
+``EdgeCommonsInstance``/``EdgeCommons`` wiring.
 """
 from datetime import datetime, timezone
 
 import pytest
 
-from ggcommons.facades.app_facade import AppFacade
-from ggcommons.facades.channel import Channel
-from ggcommons.facades.data_facade import DataFacade
-from ggcommons.facades.events_facade import EventsFacade
-from ggcommons.facades.quality import Quality
-from ggcommons.facades.severity import Severity
-from ggcommons.facades.signal_update import Sample, SignalUpdate, SignalUpdateBuilder
-from ggcommons.facades.util import format_instant, parse_iso_to_epoch_millis
-from ggcommons.gg_instance import GgInstance
-from ggcommons.messaging.identity import HierEntry, MessageIdentity
+from edgecommons.facades.app_facade import AppFacade
+from edgecommons.facades.channel import Channel
+from edgecommons.facades.data_facade import DataFacade
+from edgecommons.facades.events_facade import EventsFacade
+from edgecommons.facades.quality import Quality
+from edgecommons.facades.severity import Severity
+from edgecommons.facades.signal_update import Sample, SignalUpdate, SignalUpdateBuilder
+from edgecommons.facades.util import format_instant, parse_iso_to_epoch_millis
+from edgecommons.edgecommons_instance import EdgeCommonsInstance
+from edgecommons.messaging.identity import HierEntry, MessageIdentity
 
 NOW = "2026-07-01T12:00:00Z"
 FIXED_INSTANT = datetime(2026, 7, 1, 12, 0, 0, tzinfo=timezone.utc)
@@ -77,7 +77,7 @@ class _ThrowingIotCoreMessaging(_RecordingMessaging):
 
 
 def _uns(instance="kep1"):
-    from ggcommons.uns import Uns
+    from edgecommons.uns import Uns
 
     return Uns(IDENTITY.with_instance(instance), False)
 
@@ -422,7 +422,7 @@ class TestEventsFacade:
     def _facade(self, messaging=None):
         messaging = messaging if messaging is not None else _RecordingMessaging()
         config = _FakeConfigManager()
-        from ggcommons.uns import Uns
+        from edgecommons.uns import Uns
 
         uns = Uns(IDENTITY, False)
         return EventsFacade(config, "main", uns, messaging, FIXED_CLOCK), messaging
@@ -524,7 +524,7 @@ class TestEventsFacade:
 class TestAppFacade:
     def _facade(self, messaging=None):
         messaging = messaging if messaging is not None else _RecordingMessaging()
-        from ggcommons.uns import Uns
+        from edgecommons.uns import Uns
 
         uns = Uns(IDENTITY, False)
         return AppFacade(_FakeConfigManager(), "main", uns, messaging), messaging
@@ -578,10 +578,10 @@ class TestAppFacade:
         facade.publish("X", "c", {}, Channel.NORTHBOUND)  # must not raise
 
 
-# ===================== GgInstance wiring =====================
+# ===================== EdgeCommonsInstance wiring =====================
 
 
-class TestGgInstanceFacades:
+class TestEdgeCommonsInstanceFacades:
     def _cm(self):
         class Cm:
             def get_component_identity(self):
@@ -599,13 +599,13 @@ class TestGgInstanceFacades:
         return Cm()
 
     def test_data_events_app_are_lazily_cached(self):
-        handle = GgInstance("kep1", self._cm(), False, messaging_client=_RecordingMessaging())
+        handle = EdgeCommonsInstance("kep1", self._cm(), False, messaging_client=_RecordingMessaging())
         assert handle.data() is handle.data()
         assert handle.events() is handle.events()
         assert handle.app() is handle.app()
 
     def test_facades_require_a_messaging_client(self):
-        handle = GgInstance("kep1", self._cm(), False)
+        handle = EdgeCommonsInstance("kep1", self._cm(), False)
         with pytest.raises(RuntimeError):
             handle.data()
         with pytest.raises(RuntimeError):
@@ -615,19 +615,19 @@ class TestGgInstanceFacades:
 
     def test_data_facade_publishes_through_the_bound_instance(self):
         messaging = _RecordingMessaging()
-        handle = GgInstance("kep1", self._cm(), False, messaging_client=messaging, clock=FIXED_CLOCK)
+        handle = EdgeCommonsInstance("kep1", self._cm(), False, messaging_client=messaging, clock=FIXED_CLOCK)
         handle.data().publish("temp", 1.0)
         assert messaging.local[0][0] == "ecv1/gw-01/opcua-adapter/kep1/data/temp"
 
 
-# ===================== GGCommons convenience accessors =====================
+# ===================== EdgeCommons convenience accessors =====================
 
 
-class TestGGCommonsFacadeAccessors:
+class TestEdgeCommonsFacadeAccessors:
     def _gg(self):
-        from ggcommons.ggcommons import GGCommons
+        from edgecommons.edgecommons import EdgeCommons
 
-        gg = object.__new__(GGCommons)
+        gg = object.__new__(EdgeCommons)
         gg._uns = None
         gg._instance_handles = {}
         gg._streams = None
@@ -719,7 +719,7 @@ class TestRemainingEdgeBranches:
         assert before <= calls[0][2] <= after
 
     def test_channel_for_rejects_empty_type_directly(self):
-        from ggcommons.uns import Uns
+        from edgecommons.uns import Uns
 
         facade = EventsFacade(_FakeConfigManager(), "main", Uns(IDENTITY, False),
                               _RecordingMessaging(), FIXED_CLOCK)

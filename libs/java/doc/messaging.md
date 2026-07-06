@@ -1,9 +1,9 @@
 TODO: This file was GenAI generated and needs enriching/corrections
 
-# GGCommons Messaging Documentation
+# EdgeCommons Messaging Documentation
 
 ## Overview
-The GGCommons library provides a unified messaging abstraction layer that supports multiple runtime environments:
+The EdgeCommons library provides a unified messaging abstraction layer that supports multiple runtime environments:
 - **GREENGRASS platform (IPC transport)**: Native AWS Greengrass IPC communication
 - **HOST / KUBERNETES platform (MQTT transport)**: Dual MQTT clients for non-Greengrass environments (Kubernetes, Docker, etc.)
 
@@ -19,7 +19,7 @@ The primary interface for applications to interact with the messaging system. It
 - Managing subscriptions
 
 ### Message Structure
-Messages in GGCommons follow a header-payload model consisting of:
+Messages in EdgeCommons follow a header-payload model consisting of:
 1. **Header** - Contains metadata like:
    - Message name
    - Version
@@ -97,7 +97,7 @@ ecv1/{site}/{device}/{component}/{instance}/{class}   // position 5 — only whe
 Position 5 is checked only when *this component's* `topic.includeRoot` is `true` (late-bound from
 the config, like the request-deadline default) — checking it unconditionally would false-positive
 on legitimate `app` channels such as `ecv1/d/c/i/app/state`. Non-`ecv1` topics pass untouched
-(`ggcommons/reply-…` reply topics, `cloudwatch/metric/put`, foreign-broker bridging), and
+(`edgecommons/reply-…` reply topics, `cloudwatch/metric/put`, foreign-broker bridging), and
 `subscribe*` is never guarded — consumers must read the reserved classes.
 
 The guard is **misuse prevention, not a security boundary** (per-device broker ACLs are). The

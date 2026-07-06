@@ -1,5 +1,5 @@
 name: streaming
-# Builds + tests the ggstreamlog core and the three native bindings (Java/Panama, Python/PyO3,
+# Builds + tests the edgestreamlog core and the three native bindings (Java/Panama, Python/PyO3,
 # Node/napi-rs) across platforms. Buffer-only tests need no cloud; Kinesis/Kafka integration tests
 # are #[ignore] and run only in the dedicated steps with a broker/emulator.
 on:
@@ -8,16 +8,16 @@ on:
     branches: ["main"]
     paths:
       - "libs/rust-streamlog/**"
-      - "libs/python/ggcommons/streaming/**"
+      - "libs/python/edgecommons/streaming/**"
       - "libs/ts/src/streaming/**"
-      - "libs/java/src/main/java/com/mbreissi/ggcommons/streaming/**"
+      - "libs/java/src/main/java/com/mbreissi/edgecommons/streaming/**"
       - ".github/workflows/streaming.yml"
   pull_request:
     paths:
       - "libs/rust-streamlog/**"
-      - "libs/python/ggcommons/streaming/**"
+      - "libs/python/edgecommons/streaming/**"
       - "libs/ts/src/streaming/**"
-      - "libs/java/src/main/java/com/mbreissi/ggcommons/streaming/**"
+      - "libs/java/src/main/java/com/mbreissi/edgecommons/streaming/**"
       - ".github/workflows/streaming.yml"
 
 concurrency:
@@ -26,7 +26,7 @@ concurrency:
 
 jobs:
   core:
-    name: core (ggstreamlog)
+    name: core (edgestreamlog)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -73,7 +73,7 @@ jobs:
       - name: Build + install the native wheel
         run: |
           maturin build --release --manifest-path libs/rust-streamlog/bindings/python/Cargo.toml --out dist
-          pip install --find-links dist ggstreamlog-native
+          pip install --find-links dist edgestreamlog-native
       - name: Install the Python lib + run streaming tests
         run: |
           pip install -e libs/python

@@ -1,7 +1,7 @@
 //! # DataFacade — the `data()` publish facade
 //!
 //! **One-liner purpose**: The telemetry/signal data-plane publish facade (DESIGN-class-facades
-//! §2.1, D2/D5), mirroring the Java canonical `com.mbreissi.ggcommons.facades.DataFacade`.
+//! §2.1, D2/D5), mirroring the Java canonical `com.mbreissi.edgecommons.facades.DataFacade`.
 //!
 //! Constructs and validates the `SouthboundSignalUpdate` body (`device`/`signal`/`samples`) so an
 //! adapter never hand-builds it, applies the body defaults, sanitizes the signal path into the
@@ -19,7 +19,7 @@
 //! 4. The `samples` wrapper is enforced for the value-shorthand ([`DataFacade::publish_value`]) —
 //!    a caller never emits a bare value.
 //! 5. `signal.id` is the **only** hard reject — a publish with no stable id fails with
-//!    [`crate::GgError::Facade`] at the call site.
+//!    [`crate::EdgeCommonsError::Facade`] at the call site.
 //!
 //! ## Channel routing (DESIGN-class-facades §4, D1)
 //! Per-call [`SignalUpdate::via`] override ▸ config `publish.channel` (instance ▸ global) ▸
@@ -35,7 +35,7 @@ use serde_json::{Map, Value};
 
 use crate::config::model::Config;
 use crate::config::template::sanitize;
-use crate::error::{GgError, Result};
+use crate::error::{EdgeCommonsError, Result};
 use crate::messaging::message::{Message, MessageBuilder};
 use crate::messaging::{MessagingService, Qos};
 use crate::uns::{Uns, UnsClass};
@@ -50,7 +50,7 @@ pub const DATA_MESSAGE_VERSION: &str = "1.0";
 pub const QUALITY_UNSPECIFIED: &str = "unspecified";
 
 /// The `data()` publish facade bound to one instance — see the [module docs](self). Obtain via
-/// [`crate::GgInstance::data`] (or the `main`-instance convenience [`crate::GgCommons::data`]).
+/// [`crate::EdgeCommonsInstance::data`] (or the `main`-instance convenience [`crate::EdgeCommons::data`]).
 pub struct DataFacade {
     config: Arc<Config>,
     instance_id: String,
@@ -61,7 +61,7 @@ pub struct DataFacade {
 }
 
 impl DataFacade {
-    /// Library-internal constructor (see the [`crate::GgInstance::data`] wiring).
+    /// Library-internal constructor (see the [`crate::EdgeCommonsInstance::data`] wiring).
     pub(crate) fn new(
         config: Arc<Config>,
         instance_id: String,
@@ -149,23 +149,23 @@ impl DataFacade {
     /// routes to the resolved channel.
     ///
     /// # Errors
-    /// [`GgError::Facade`] when `signal.id` is missing/empty, `samples` is empty, or a sample
-    /// carries no value; [`GgError::UnsValidation`] on a bad channel token;
-    /// [`GgError::Messaging`] when no messaging transport is wired.
+    /// [`EdgeCommonsError::Facade`] when `signal.id` is missing/empty, `samples` is empty, or a sample
+    /// carries no value; [`EdgeCommonsError::UnsValidation`] on a bad channel token;
+    /// [`EdgeCommonsError::Messaging`] when no messaging transport is wired.
     pub async fn publish(&self, update: SignalUpdate) -> Result<()> {
         let signal_id = update
             .signal_id
             .clone()
             .filter(|s| !s.is_empty())
             .ok_or_else(|| {
-                GgError::Facade(
+                EdgeCommonsError::Facade(
                     "data publish requires a stable signal.id (the consumer key) - it is the \
                      only non-defaultable field"
                         .to_string(),
                 )
             })?;
         if update.samples.is_empty() {
-            return Err(GgError::Facade("data publish requires at least one sample".to_string()));
+            return Err(EdgeCommonsError::Facade("data publish requires at least one sample".to_string()));
         }
         let body = self.build_body(&update)?;
         let path = update.effective_signal_path().unwrap_or(&signal_id).to_string();
@@ -183,7 +183,7 @@ impl DataFacade {
     /// given the injected clock — this is the exact body the vectors pin.
     ///
     /// # Errors
-    /// [`GgError::Facade`] when a sample carries no value.
+    /// [`EdgeCommonsError::Facade`] when a sample carries no value.
     pub fn build_body(&self, update: &SignalUpdate) -> Result<Value> {
         let mut signal = Map::new();
         signal.insert(
@@ -214,7 +214,7 @@ impl DataFacade {
     /// Builds one sample with the quality/qualityRaw/serverTs defaulting rules.
     fn build_sample(&self, sample: &Sample) -> Result<Value> {
         let value = sample.value.clone().ok_or_else(|| {
-            GgError::Facade(
+            EdgeCommonsError::Facade(
                 "data sample value is required (a quality-only sample is not a sample) - pass \
                  BAD/UNCERTAIN for a failed read"
                     .to_string(),
@@ -329,10 +329,10 @@ impl DataFacade {
     /// The sanitized channel token for a signal path (each `/`-token → a UNS token).
     ///
     /// # Errors
-    /// [`GgError::Facade`] when `signal_path` is empty.
+    /// [`EdgeCommonsError::Facade`] when `signal_path` is empty.
     pub fn channel_token(&self, signal_path: &str) -> Result<String> {
         if signal_path.is_empty() {
-            return Err(GgError::Facade("data signal path must be non-empty".to_string()));
+            return Err(EdgeCommonsError::Facade("data signal path must be non-empty".to_string()));
         }
         Ok(signal_path.split('/').map(sanitize).collect::<Vec<_>>().join("/"))
     }
@@ -348,7 +348,7 @@ impl DataFacade {
 
     fn messaging(&self) -> Result<&Arc<dyn MessagingService>> {
         self.messaging.as_ref().ok_or_else(|| {
-            GgError::Messaging(
+            EdgeCommonsError::Messaging(
                 "messaging is not available: data() requires a wired messaging transport"
                     .to_string(),
             )
@@ -451,7 +451,7 @@ mod tests {
         let messaging = RecordingMessaging::new();
         let f = facade(messaging);
         let update = SignalUpdate::builder().sample(Sample::new(1)).build();
-        assert!(matches!(f.publish(update).await, Err(GgError::Facade(_))));
+        assert!(matches!(f.publish(update).await, Err(EdgeCommonsError::Facade(_))));
     }
 
     #[tokio::test]
@@ -459,7 +459,7 @@ mod tests {
         let messaging = RecordingMessaging::new();
         let f = facade(messaging);
         let update = SignalUpdate::builder().signal_id("temp").build();
-        assert!(matches!(f.publish(update).await, Err(GgError::Facade(_))));
+        assert!(matches!(f.publish(update).await, Err(EdgeCommonsError::Facade(_))));
     }
 
     #[tokio::test]
@@ -470,7 +470,7 @@ mod tests {
             .signal_id("temp")
             .sample(Sample { quality: Some(Quality::Bad), ..Default::default() })
             .build();
-        assert!(matches!(f.publish(update).await, Err(GgError::Facade(_))));
+        assert!(matches!(f.publish(update).await, Err(EdgeCommonsError::Facade(_))));
     }
 
     #[tokio::test]

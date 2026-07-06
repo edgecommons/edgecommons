@@ -1,6 +1,6 @@
 # Java Component Skeleton
 
-A sample Java component demonstrating best practices for using the GGCommons library. This component showcases configuration management, messaging patterns, metrics emission, and proper resource cleanup using modern service-oriented architecture.
+A sample Java component demonstrating best practices for using the EdgeCommons library. This component showcases configuration management, messaging patterns, metrics emission, and proper resource cleanup using modern service-oriented architecture.
 
 ## Features
 
@@ -93,10 +93,10 @@ For non-Greengrass deployments, create a messaging configuration file:
 ### Kubernetes
 
 On the `KUBERNETES` platform the transport defaults to `MQTT` and the config source to `CONFIGMAP`
-(mount dir `/etc/ggcommons`, key `config.json`). A single mounted ConfigMap file then doubles as
+(mount dir `/etc/edgecommons`, key `config.json`). A single mounted ConfigMap file then doubles as
 **both** the messaging config (its `messaging` section) **and** the component config — so you pass
 **no** positional `--transport MQTT <path>` and **no** `-c` flag. Identity comes from the Downward
-API: set `GGCOMMONS_THING_NAME` (from the `ggcommons.io/thing-name` pod annotation or an explicit
+API: set `EDGECOMMONS_THING_NAME` (from the `edgecommons.io/thing-name` pod annotation or an explicit
 value) or fall back to `POD_NAME` (`metadata.name`).
 
 ```yaml
@@ -118,20 +118,20 @@ spec:
       - name: component
         image: java-component-skeleton:latest
         # KUBERNETES => MQTT + CONFIGMAP by default; the messaging-config path defaults to the
-        # mounted ConfigMap file (/etc/ggcommons/config.json), so no positional path is needed.
+        # mounted ConfigMap file (/etc/edgecommons/config.json), so no positional path is needed.
         args: ["--platform", "KUBERNETES"]
         env:
-        - name: GGCOMMONS_THING_NAME           # identity from the Downward API (FR-RT-7)
+        - name: EDGECOMMONS_THING_NAME           # identity from the Downward API (FR-RT-7)
           valueFrom:
             fieldRef:
-              fieldPath: metadata.annotations['ggcommons.io/thing-name']
+              fieldPath: metadata.annotations['edgecommons.io/thing-name']
         - name: POD_NAME                        # fallback identity
           valueFrom:
             fieldRef:
               fieldPath: metadata.name
         volumeMounts:
         - name: config
-          mountPath: /etc/ggcommons             # ConfigMap mounted as a whole volume (NOT subPath)
+          mountPath: /etc/edgecommons             # ConfigMap mounted as a whole volume (NOT subPath)
         - name: certs
           mountPath: /certs
       volumes:

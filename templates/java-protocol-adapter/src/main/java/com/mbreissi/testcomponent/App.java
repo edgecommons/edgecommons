@@ -1,16 +1,16 @@
 package <<PACKAGE>>;
 
-import com.mbreissi.ggcommons.GGCommons;
-import com.mbreissi.ggcommons.GGCommonsBuilder;
-import com.mbreissi.ggcommons.GgInstance;
-import com.mbreissi.ggcommons.config.ConfigManager;
-import com.mbreissi.ggcommons.config.ConfigurationChangeListener;
-import com.mbreissi.ggcommons.messaging.Message;
-import com.mbreissi.ggcommons.messaging.MessagingClient;
-import com.mbreissi.ggcommons.metrics.Metric;
-import com.mbreissi.ggcommons.metrics.MetricBuilder;
-import com.mbreissi.ggcommons.metrics.MetricEmitter;
-import com.mbreissi.ggcommons.uns.UnsClass;
+import com.mbreissi.edgecommons.EdgeCommons;
+import com.mbreissi.edgecommons.EdgeCommonsBuilder;
+import com.mbreissi.edgecommons.EdgeCommonsInstance;
+import com.mbreissi.edgecommons.config.ConfigManager;
+import com.mbreissi.edgecommons.config.ConfigurationChangeListener;
+import com.mbreissi.edgecommons.messaging.Message;
+import com.mbreissi.edgecommons.messaging.MessagingClient;
+import com.mbreissi.edgecommons.metrics.Metric;
+import com.mbreissi.edgecommons.metrics.MetricBuilder;
+import com.mbreissi.edgecommons.metrics.MetricEmitter;
+import com.mbreissi.edgecommons.uns.UnsClass;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import org.apache.logging.log4j.LogManager;
@@ -22,10 +22,10 @@ import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 
 /**
- * Protocol-adapter scaffold built on the GGCommons Java library.
+ * Protocol-adapter scaffold built on the EdgeCommons Java library.
  *
  * <p>This is a <b>southbound adapter</b>: it talks to field devices/servers over some protocol
- * (OPC UA, Modbus, EtherNet/IP, …) and republishes their values northbound on the GGCommons
+ * (OPC UA, Modbus, EtherNet/IP, …) and republishes their values northbound on the EdgeCommons
  * messaging bus using the standard <b>southbound contract</b> (see {@code docs/SOUTHBOUND.md}):
  * the {@code SouthboundSignalUpdate} envelope and the {@code southbound_health} metric.
  *
@@ -61,7 +61,7 @@ public class <<COMPONENTNAME>> implements ConfigurationChangeListener {
     /** Protocol identifier emitted in body.device.adapter — set to your protocol. */
     private static final String ADAPTER_KIND = "example";
 
-    private final GGCommons ggCommons;
+    private final EdgeCommons edgeCommons;
     private final ConfigManager config;
     private final MessagingClient messaging;
     private final MetricEmitter metrics;
@@ -70,16 +70,16 @@ public class <<COMPONENTNAME>> implements ConfigurationChangeListener {
     private final CountDownLatch shutdownLatch = new CountDownLatch(1);
 
     public static void main(String[] args) {
-        // No manual shutdown hook: the GGCommons library wires SIGTERM/SIGINT to its graceful,
+        // No manual shutdown hook: the EdgeCommons library wires SIGTERM/SIGINT to its graceful,
         // idempotent shutdown() (flips /readyz to 503, unsubscribes, closes messaging/metrics/…).
         new <<COMPONENTNAME>>(args).run();
     }
 
     public <<COMPONENTNAME>>(String[] args) {
-        ggCommons = GGCommonsBuilder.create("<<COMPONENTFULLNAME>>").withArgs(args).build();
-        config = ggCommons.getConfigManager();
-        messaging = ggCommons.getMessaging();
-        metrics = ggCommons.getMetrics();
+        edgeCommons = EdgeCommonsBuilder.create("<<COMPONENTFULLNAME>>").withArgs(args).build();
+        config = edgeCommons.getConfigManager();
+        messaging = edgeCommons.getMessaging();
+        metrics = edgeCommons.getMetrics();
         config.addConfigChangeListener(this);
         defineHealthMetric();
     }
@@ -87,7 +87,7 @@ public class <<COMPONENTNAME>> implements ConfigurationChangeListener {
     public void run() {
         LOGGER.info("Starting adapter '{}' (thing={}, UNS identity path={})",
                 "<<COMPONENTFULLNAME>>", config.getThingName(),
-                ggCommons.getUns().identity().getPath());
+                edgeCommons.getUns().identity().getPath());
 
         // One worker per configured instance (component.instances[].id). Each instance is one
         // device/endpoint with its own connection + subscriptions (see the southbound config convention).
@@ -167,7 +167,7 @@ public class <<COMPONENTNAME>> implements ConfigurationChangeListener {
 
         // The instance handle pre-binds the component.instances[].id token into both the topic
         // builder and the message builder, so topic and envelope carry the same identity.
-        GgInstance instance = ggCommons.instance(instanceId);
+        EdgeCommonsInstance instance = edgeCommons.instance(instanceId);
 
         // newMessage(...) stamps the envelope's `identity` block (hierarchy + device + component
         // + this instance) automatically from config — no manual thing/tag wiring.

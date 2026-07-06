@@ -26,15 +26,15 @@ from typing import Any, Dict, List, Optional
 
 import pytest
 
-from ggcommons.facades.app_facade import AppFacade
-from ggcommons.facades.channel import Channel
-from ggcommons.facades.data_facade import DataFacade
-from ggcommons.facades.events_facade import EventsFacade
-from ggcommons.facades.quality import Quality
-from ggcommons.facades.severity import Severity
-from ggcommons.facades.signal_update import Sample
-from ggcommons.messaging.identity import HierEntry, MessageIdentity
-from ggcommons.uns import Uns
+from edgecommons.facades.app_facade import AppFacade
+from edgecommons.facades.channel import Channel
+from edgecommons.facades.data_facade import DataFacade
+from edgecommons.facades.events_facade import EventsFacade
+from edgecommons.facades.quality import Quality
+from edgecommons.facades.severity import Severity
+from edgecommons.facades.signal_update import Sample
+from edgecommons.messaging.identity import HierEntry, MessageIdentity
+from edgecommons.uns import Uns
 
 VECTORS_DIR = Path(__file__).resolve().parents[3] / "uns-test-vectors"
 
@@ -315,7 +315,7 @@ def _envelope_cases_for(cls_token: str):
 def test_envelope_topic_matches_facade_bound_uns(case):
     identity = MessageIdentity.from_dict(case["envelope"]["identity"])
     uns = Uns(identity, False)
-    from ggcommons.uns import UnsClass
+    from edgecommons.uns import UnsClass
 
     cls = UnsClass.from_token(case["class"])
     assert uns.topic(cls, case.get("channel")) == case["topic"], (

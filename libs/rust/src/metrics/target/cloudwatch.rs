@@ -14,7 +14,7 @@
 //! - Buffer is a `Mutex<Vec<MetricDatum>>`; flush sends in chunks of ≤1000 datums
 //!   (the `PutMetricData` limit); per-chunk failures are logged, others still sent.
 //! - The background flush task is aborted on `shutdown`/drop.
-//! - Error handling: [`crate::error::GgError::Metrics`].
+//! - Error handling: [`crate::error::EdgeCommonsError::Metrics`].
 //!
 //! ## Status
 //! Validated on a live Greengrass core (non-root): heartbeat measures landed in

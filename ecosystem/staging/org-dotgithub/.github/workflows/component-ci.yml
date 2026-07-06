@@ -54,8 +54,8 @@ jobs:
 
       # ----- JAVA -----
       # setup-java writes ~/.m2/settings.xml with a <server id="github"> so Maven can resolve the
-      # private com.mbreissi:ggcommons from GitHub Packages. The consuming repo's GITHUB_TOKEN must
-      # be granted read access to the edgecommons/ggcommons package (Package settings -> Manage
+      # private com.mbreissi.edgecommons:edgecommons from GitHub Packages. The consuming repo's GITHUB_TOKEN must
+      # be granted read access to the edgecommons/edgecommons package (Package settings -> Manage
       # Actions access) for cross-repo resolution to succeed.
       - if: inputs.language == 'JAVA'
         uses: actions/setup-java@v4
@@ -67,7 +67,7 @@ jobs:
           server-username: MAVEN_USERNAME
           server-password: MAVEN_PASSWORD
       # MAVEN_PASSWORD prefers a read-only PAT (org/repo secret EDGECOMMONS_READ_TOKEN) so the
-      # private com.mbreissi:ggcommons resolves cross-repo without a per-package UI grant. Falls
+      # private com.mbreissi.edgecommons:edgecommons resolves cross-repo without a per-package UI grant. Falls
       # back to the repo GITHUB_TOKEN, which works only if you instead add this repo to the
       # package's "Manage Actions access" list in the UI (no REST API exists for that).
       - if: inputs.language == 'JAVA'
@@ -81,13 +81,13 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ inputs.python-version }}
-      # Components that depend on the private ggcommons via a git URL
-      # (greengrass-commons @ git+https://github.com/edgecommons/ggcommons.git@<tag>...)
+      # Components that depend on the private edgecommons via a git URL
+      # (edgecommons @ git+https://github.com/edgecommons/edgecommons.git@<tag>...)
       # need a token to clone it. The org GITHUB_TOKEN is repo-scoped and cannot read
       # another private repo, so provide a read-only PAT as the org/repo Actions secret
       # EDGECOMMONS_READ_TOKEN. No token -> step is a no-op (fine for public-dep components).
       - if: inputs.language == 'PYTHON'
-        name: Configure private git auth for ggcommons (if a token is provided)
+        name: Configure private git auth for edgecommons (if a token is provided)
         env:
           EDGECOMMONS_READ_TOKEN: ${{ secrets.EDGECOMMONS_READ_TOKEN }}
         run: |

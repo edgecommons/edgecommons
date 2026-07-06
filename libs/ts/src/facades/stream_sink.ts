@@ -2,8 +2,8 @@
  * The seam {@link DataFacade} composes to route a `stream:<name>` channel into the telemetry
  * streaming service (DESIGN-class-facades §4: "the facade *composes* `StreamService`, it does
  * not replace it"). Production wires it to `streams().stream(name).append(partitionKey,
- * timestampMs, payload)` (see `GGCommons`'s `streamSink()` in `ggcommons.ts`); tests inject a
- * recording function so the facade never depends on the native `ggstreamlog` addon.
+ * timestampMs, payload)` (see `EdgeCommons`'s `streamSink()` in `edgecommons.ts`); tests inject a
+ * recording function so the facade never depends on the native `edgestreamlog` addon.
  *
  * When streaming is not configured (`streams() === undefined`), the instance handle passes
  * `undefined` and {@link DataFacade} falls the stream route back to a LOCAL publish

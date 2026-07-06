@@ -1,7 +1,7 @@
 //! # Platform — the two-axis runtime model (platform × transport)
 //!
 //! **One-liner purpose**: The pure precedence resolver and platform auto-detector
-//! (DESIGN-core §4 / §5), mirroring the canonical Java `com.mbreissi.ggcommons.platform`.
+//! (DESIGN-core §4 / §5), mirroring the canonical Java `com.mbreissi.edgecommons.platform`.
 //!
 //! ## Overview
 //! Two orthogonal runtime axes replace the legacy single `-m/--mode` token:
@@ -31,7 +31,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::error::{GgError, Result};
+use crate::error::{EdgeCommonsError, Result};
 
 /// The deployment *platform* — the primary runtime axis (DESIGN-core §2/§3). A platform is
 /// a named profile: a table of per-subsystem default providers/targets/sinks selected by
@@ -56,14 +56,14 @@ impl Platform {
     /// auto-detects. Unknown values are an error.
     ///
     /// # Errors
-    /// Returns [`GgError::Cli`] for an unrecognized platform token.
+    /// Returns [`EdgeCommonsError::Cli`] for an unrecognized platform token.
     pub fn parse(raw: &str) -> Result<Option<Platform>> {
         match raw.trim().to_ascii_uppercase().as_str() {
             "AUTO" => Ok(None),
             "GREENGRASS" => Ok(Some(Platform::Greengrass)),
             "HOST" => Ok(Some(Platform::Host)),
             "KUBERNETES" => Ok(Some(Platform::Kubernetes)),
-            other => Err(GgError::Cli(format!(
+            other => Err(EdgeCommonsError::Cli(format!(
                 "unknown platform '{other}'. Valid: GREENGRASS, HOST, KUBERNETES, auto."
             ))),
         }
@@ -86,12 +86,12 @@ impl Transport {
     /// Parse a `--transport` token (case-insensitive). Unknown values are an error.
     ///
     /// # Errors
-    /// Returns [`GgError::Cli`] for an unrecognized transport token.
+    /// Returns [`EdgeCommonsError::Cli`] for an unrecognized transport token.
     pub fn parse(raw: &str) -> Result<Transport> {
         match raw.trim().to_ascii_uppercase().as_str() {
             "IPC" => Ok(Transport::Ipc),
             "MQTT" => Ok(Transport::Mqtt),
-            other => Err(GgError::Cli(format!(
+            other => Err(EdgeCommonsError::Cli(format!(
                 "unknown transport '{other}'. Valid: IPC, MQTT."
             ))),
         }
@@ -197,8 +197,8 @@ pub const ENV_GG_SVCUID: &str = "SVCUID";
 /// Greengrass-injected IoT Thing name (identity probe).
 pub const ENV_THING_NAME: &str = "AWS_IOT_THING_NAME";
 /// KUBERNETES Downward-API identity (primary k8s tier): the chart maps the
-/// `ggcommons.io/thing-name` pod annotation (or an explicit value) into this env var.
-pub const ENV_K8S_THING_NAME: &str = "GGCOMMONS_THING_NAME";
+/// `edgecommons.io/thing-name` pod annotation (or an explicit value) into this env var.
+pub const ENV_K8S_THING_NAME: &str = "EDGECOMMONS_THING_NAME";
 /// KUBERNETES Downward-API identity (secondary k8s tier): the pod name, projected via a
 /// Downward-API `fieldRef` on `metadata.name`.
 pub const ENV_K8S_POD_NAME: &str = "POD_NAME";
@@ -273,7 +273,7 @@ pub fn profile(platform: Platform) -> Option<PlatformProfile> {
 /// platform-profile default consulted when the component config omits `health.enabled`. `true` on
 /// KUBERNETES, `false` elsewhere (and for any platform without a profile). Mirrors the threading of
 /// the logging-format default; the final decision (explicit config ▸ this default ▸ false) is made
-/// in [`crate::GgCommonsBuilder::build`].
+/// in [`crate::EdgeCommonsBuilder::build`].
 pub fn profile_health_enabled(platform: Platform) -> bool {
     profile(platform).map(|p| p.health_enabled).unwrap_or(false)
 }
@@ -303,7 +303,7 @@ pub fn profile_metric_log_path(platform: Platform) -> Option<&'static str> {
 /// unspecified (FR-CRED-6, precedence FR-RT-3). `Some("env")` on KUBERNETES, `None` elsewhere
 /// (and for any platform without a profile). Mirrors the threading of [`profile_metric_target`] /
 /// [`profile_health_enabled`]; the final decision (explicit `keyProvider.type` ▸ this default ▸
-/// `file`) is made at the credentials init site in [`crate::GgCommonsBuilder::build`] and applied
+/// `file`) is made at the credentials init site in [`crate::EdgeCommonsBuilder::build`] and applied
 /// by [`crate::credentials::build_key_provider`].
 ///
 /// CRITICAL: returning `Some("env")` here does **not** enable credentials — it only changes the
@@ -324,7 +324,7 @@ pub fn profiled_platforms() -> [Platform; 3] {
 /// `resolve(setting) = explicit flag ▸ platform-profile default ▸ library default`.
 ///
 /// # Errors
-/// Returns [`GgError::Cli`] if the resolved platform has no profile, or the platform/transport
+/// Returns [`EdgeCommonsError::Cli`] if the resolved platform has no profile, or the platform/transport
 /// combination is illegal (the IPC lock, §4.1).
 pub fn resolve_profile(inputs: ResolverInputs, env: &HashMap<String, String>) -> Result<ResolvedProfile> {
     let platform = match inputs.platform {
@@ -333,7 +333,7 @@ pub fn resolve_profile(inputs: ResolverInputs, env: &HashMap<String, String>) ->
     };
 
     let profile = profile(platform).ok_or_else(|| {
-        GgError::Cli(format!(
+        EdgeCommonsError::Cli(format!(
             "Platform {platform:?} is not supported in this build (no profile). Valid \
              platforms: GREENGRASS, HOST, KUBERNETES."
         ))
@@ -386,10 +386,10 @@ where
 /// valid only on a Greengrass Nucleus, which provides the IPC domain socket.
 ///
 /// # Errors
-/// Returns [`GgError::Cli`] if `transport == IPC && platform != GREENGRASS`.
+/// Returns [`EdgeCommonsError::Cli`] if `transport == IPC && platform != GREENGRASS`.
 pub fn validate(platform: Platform, transport: Transport) -> Result<()> {
     if transport == Transport::Ipc && platform != Platform::Greengrass {
-        return Err(GgError::Cli(format!(
+        return Err(EdgeCommonsError::Cli(format!(
             "IPC transport requires --platform GREENGRASS (the Nucleus provides the IPC \
              socket); got platform={platform:?}"
         )));
@@ -400,7 +400,7 @@ pub fn validate(platform: Platform, transport: Transport) -> Result<()> {
 /// Resolves the IoT Thing name / identity (DESIGN-core §6.2, FR-RT-7 / FR-CFG-6). Order:
 /// 1. explicit `-t/--thing` (highest);
 /// 2. **only when `platform == KUBERNETES`** the Downward-API env tier, in order:
-///    [`ENV_K8S_THING_NAME`] (`GGCOMMONS_THING_NAME`) then [`ENV_K8S_POD_NAME`] (`POD_NAME`);
+///    [`ENV_K8S_THING_NAME`] (`EDGECOMMONS_THING_NAME`) then [`ENV_K8S_POD_NAME`] (`POD_NAME`);
 /// 3. the generic `AWS_IOT_THING_NAME` probe (GREENGRASS / platform-supplied);
 /// 4. the library fallback [`DEFAULT_IDENTITY`].
 ///
@@ -683,7 +683,7 @@ mod tests {
     // ---------- resolve_identity: KUBERNETES Downward-API tier (FR-RT-7 / FR-CFG-6) ----------
 
     #[test]
-    fn k8s_identity_from_ggcommons_thing_name() {
+    fn k8s_identity_from_edgecommons_thing_name() {
         let r = resolve_identity(
             None,
             Platform::Kubernetes,
@@ -703,8 +703,8 @@ mod tests {
     }
 
     #[test]
-    fn k8s_ggcommons_thing_name_wins_over_pod_name() {
-        // The annotation/explicit value (GGCOMMONS_THING_NAME) precedes POD_NAME.
+    fn k8s_edgecommons_thing_name_wins_over_pod_name() {
+        // The annotation/explicit value (EDGECOMMONS_THING_NAME) precedes POD_NAME.
         let r = resolve_identity(
             None,
             Platform::Kubernetes,
@@ -726,7 +726,7 @@ mod tests {
 
     #[test]
     fn k8s_falls_through_to_aws_iot_thing_name_when_no_downward_api() {
-        // No GGCOMMONS_THING_NAME / POD_NAME → fall through to the generic probe even on k8s.
+        // No EDGECOMMONS_THING_NAME / POD_NAME → fall through to the generic probe even on k8s.
         let r = resolve_identity(
             None,
             Platform::Kubernetes,

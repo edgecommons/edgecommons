@@ -21,10 +21,10 @@ import signal
 
 import pytest
 
-from ggcommons.config.health_config import HealthConfiguration
-from ggcommons.health import HealthServer, ReadinessState
-from ggcommons.messaging.messaging_client import MessagingClient
-from ggcommons.platform import Platform, profile_health_enabled
+from edgecommons.config.health_config import HealthConfiguration
+from edgecommons.health import HealthServer, ReadinessState
+from edgecommons.messaging.messaging_client import MessagingClient
+from edgecommons.platform import Platform, profile_health_enabled
 
 
 # ---------------------------------------------------------------------------
@@ -260,9 +260,9 @@ def test_profile_health_enabled_helper():
     assert profile_health_enabled(None) is False
 
 
-# ---- GGCommons._init_health enablement (without a full broker-backed build) ----
+# ---- EdgeCommons._init_health enablement (without a full broker-backed build) ----
 
-from ggcommons.ggcommons import GGCommons  # noqa: E402
+from edgecommons.edgecommons import EdgeCommons  # noqa: E402
 
 
 class _FakeConfigManager:
@@ -274,8 +274,8 @@ class _FakeConfigManager:
 
 
 def _init_health_for(health_json, platform):
-    """Drive GGCommons._init_health on a bare instance (bypassing the broker-backed __init__)."""
-    gg = GGCommons.__new__(GGCommons)
+    """Drive EdgeCommons._init_health on a bare instance (bypassing the broker-backed __init__)."""
+    gg = EdgeCommons.__new__(EdgeCommons)
     gg._readiness = None
     gg._health_server = None
     gg._config_manager = _FakeConfigManager(health_json)
@@ -371,7 +371,7 @@ def test_messaging_connected_accessor():
 
 
 def _bare_gg_for_shutdown(readiness, health_server=None):
-    gg = GGCommons.__new__(GGCommons)
+    gg = EdgeCommons.__new__(EdgeCommons)
     # All subsystems shutdown() touches, set to None except the ones under test.
     gg._stream_metrics = None
     gg._streams = None

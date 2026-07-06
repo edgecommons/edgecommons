@@ -5,7 +5,7 @@
  * three-line ritual and guaranteeing topic + identity correctness: a **named** header, the
  * developer body **verbatim**, minted onto `app/{channel}` with the envelope identity stamped.
  * `app` is non-reserved — this publishes through the ordinary guarded
- * `messaging().publish(...)`. Mirrors the Java `com.mbreissi.ggcommons.facades.AppFacade`.
+ * `messaging().publish(...)`. Mirrors the Java `com.mbreissi.edgecommons.facades.AppFacade`.
  *
  * Routing: {@link Channel.LOCAL} (default) or {@link Channel.NORTHBOUND}; a `stream` route is
  * **rejected** (same reasoning as `events()`).
@@ -14,7 +14,7 @@
  */
 import type { Config } from "../config/model";
 import { sanitize } from "../config/template";
-import { GgError } from "../errors";
+import { EdgeCommonsError } from "../errors";
 import { logger } from "../logging";
 import { MessageBuilder } from "../message";
 import type { IMessagingService } from "../messaging/types";
@@ -46,17 +46,17 @@ export class AppFacade {
    * @param channel the `app/{channel}` tail (each `/`-token is sanitized; REQUIRED)
    * @param body    the developer body, published verbatim
    * @param routing the routing channel, or `undefined` for LOCAL
-   * @throws GgError (kind `Validation`) when `name`/`channel` is empty or `routing` is a `stream` channel
+   * @throws EdgeCommonsError (kind `Validation`) when `name`/`channel` is empty or `routing` is a `stream` channel
    */
   async publish(name: string, channel: string, body: Record<string, unknown>, routing?: Channel): Promise<void> {
     if (!name) {
-      throw GgError.validation("app publish requires a non-empty header name");
+      throw EdgeCommonsError.validation("app publish requires a non-empty header name");
     }
     if (!channel) {
-      throw GgError.validation("app publish requires a non-empty channel");
+      throw EdgeCommonsError.validation("app publish requires a non-empty channel");
     }
     if (routing !== undefined && routing.kind === "stream") {
-      throw GgError.validation("app() does not support the stream channel - use data() for streamed telemetry");
+      throw EdgeCommonsError.validation("app() does not support the stream channel - use data() for streamed telemetry");
     }
     const topic = this.uns.topic(UnsClass.App, channelToken(channel));
     const msg = MessageBuilder.create(name, APP_MESSAGE_VERSION)

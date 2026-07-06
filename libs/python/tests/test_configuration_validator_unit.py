@@ -1,4 +1,4 @@
-"""Unit tests for ggcommons.validation.configuration_validator.
+"""Unit tests for edgecommons.validation.configuration_validator.
 
 Targets the previously-uncovered branches of ConfigurationValidator:
   * the module-level jsonschema-import guard (lines 17-18),
@@ -18,8 +18,8 @@ import sys
 
 import pytest
 
-from ggcommons.validation import configuration_validator as cv
-from ggcommons.validation.configuration_validator import (
+from edgecommons.validation import configuration_validator as cv
+from edgecommons.validation.configuration_validator import (
     ConfigurationValidator,
     ConfigurationValidationException,
 )
@@ -230,7 +230,7 @@ class TestModuleImportGuard:
         """
         monkeypatch.setitem(sys.modules, "jsonschema", None)
         spec = importlib.util.spec_from_file_location(
-            "ggcommons_cfgvalidator_nojsonschema_probe", cv.__file__
+            "edgecommons_cfgvalidator_nojsonschema_probe", cv.__file__
         )
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)

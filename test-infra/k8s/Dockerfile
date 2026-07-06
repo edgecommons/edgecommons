@@ -1,14 +1,14 @@
 # Component image for the Phase-1a Kubernetes smoke test.
 #
-# Builds a minimal PYTHON ggcommons component (the examples/python skeleton) on top of
+# Builds a minimal PYTHON edgecommons component (the examples/python skeleton) on top of
 # the local libs/python library, so the smoke test exercises the CONFIGMAP source on a
 # real pod. The other languages have their own images; this is the default the k8s CI
 # job builds + `kind load`s. Build from the REPO ROOT:
 #
-#   docker build -f test-infra/k8s/Dockerfile -t ggcommons-component:ci .
+#   docker build -f test-infra/k8s/Dockerfile -t edgecommons-component:ci .
 #
 # The component auto-detects platform=KUBERNETES from the SA token and is launched with
-#   -c CONFIGMAP /etc/ggcommons config.json
+#   -c CONFIGMAP /etc/edgecommons config.json
 # (supplied by the Helm chart's `args`).
 FROM python:3.12-slim
 
@@ -32,4 +32,4 @@ RUN pip install --no-cache-dir -r /app/requirements.txt || true
 USER 65532:65532
 
 ENTRYPOINT ["python3", "/app/main.py"]
-# Default args are supplied by the Helm chart (-c CONFIGMAP /etc/ggcommons config.json).
+# Default args are supplied by the Helm chart (-c CONFIGMAP /etc/edgecommons config.json).

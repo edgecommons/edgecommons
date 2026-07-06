@@ -14,7 +14,7 @@
  * used in this library (`uns.ts`) rather than the Java value class's `equals`/`hashCode`
  * boilerplate (TS/vitest compares structurally with `toEqual` out of the box).
  */
-import { GgError } from "../errors";
+import { EdgeCommonsError } from "../errors";
 
 /** The routing kind — the discriminant of the {@link Channel} union. */
 export type ChannelKind = "local" | "northbound" | "stream";
@@ -52,11 +52,11 @@ export const Channel = {
   /**
    * The named-durable-stream channel.
    *
-   * @throws GgError (kind `Validation`) when `name` is empty
+   * @throws EdgeCommonsError (kind `Validation`) when `name` is empty
    */
   stream(name: string): StreamChannel {
     if (!name) {
-      throw GgError.validation("stream channel name must be non-empty");
+      throw EdgeCommonsError.validation("stream channel name must be non-empty");
     }
     return { kind: "stream", streamName: name };
   },

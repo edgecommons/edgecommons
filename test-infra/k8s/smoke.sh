@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# smoke.sh — Phase-1a Kubernetes smoke test for the ggcommons CONFIGMAP source.
+# smoke.sh — Phase-1a Kubernetes smoke test for the edgecommons CONFIGMAP source.
 #
 # SCAFFOLD for the ORCHESTRATOR to run LIVE against a real cluster (kind or lab k3s).
 # It installs the in-cluster EMQX broker + the component chart, waits for Ready, then
@@ -15,10 +15,10 @@
 # tests; the CI workflow (.github/workflows/k8s.yml) builds+loads the image first.
 #
 # Usage:
-#   IMAGE=ggcommons-component:ci NAMESPACE=ggcommons ./smoke.sh
+#   IMAGE=edgecommons-component:ci NAMESPACE=edgecommons ./smoke.sh
 # Env knobs (all optional; defaults shown):
 #   IMAGE        component image ref (repo:tag) already loaded into the cluster
-#   NAMESPACE    namespace to deploy into                       (ggcommons)
+#   NAMESPACE    namespace to deploy into                       (edgecommons)
 #   RELEASE      helm release name                              (ggc)
 #   TIMEOUT      per-wait timeout, seconds                      (180)
 #   KEEP         if "1", do not delete the namespace on exit    (unset)
@@ -27,8 +27,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CHART_DIR="${SCRIPT_DIR}/chart"
 
-IMAGE="${IMAGE:-ggcommons-component:ci}"
-NAMESPACE="${NAMESPACE:-ggcommons}"
+IMAGE="${IMAGE:-edgecommons-component:ci}"
+NAMESPACE="${NAMESPACE:-edgecommons}"
 RELEASE="${RELEASE:-ggc}"
 TIMEOUT="${TIMEOUT:-180}"
 HELM="${HELM:-helm}"
@@ -86,7 +86,7 @@ log "Namespace ${NAMESPACE}"
 
 log "Deploying in-cluster EMQX broker"
 "${KUBECTL}" apply -n "${NAMESPACE}" -f "${SCRIPT_DIR}/emqx.yaml"
-"${KUBECTL}" -n "${NAMESPACE}" rollout status deploy/ggcommons-emqx --timeout="${TIMEOUT}s"
+"${KUBECTL}" -n "${NAMESPACE}" rollout status deploy/edgecommons-emqx --timeout="${TIMEOUT}s"
 
 log "Installing the component chart (image ${IMAGE})"
 "${HELM}" upgrade --install "${RELEASE}" "${CHART_DIR}" \
@@ -98,7 +98,7 @@ log "Installing the component chart (image ${IMAGE})"
   --wait --timeout "${TIMEOUT}s"
 
 log "Waiting for the component rollout"
-"${KUBECTL}" -n "${NAMESPACE}" rollout status deploy/"${RELEASE}"-ggcommons-component --timeout="${TIMEOUT}s"
+"${KUBECTL}" -n "${NAMESPACE}" rollout status deploy/"${RELEASE}"-edgecommons-component --timeout="${TIMEOUT}s"
 
 # --- Core assertions: CONFIGMAP source + broker connect (FR-MSG-1) + identity (FR-RT-7) -------
 # NOTE: the platform-resolver summary and the messaging connection were historically emitted BEFORE
@@ -111,11 +111,11 @@ log "Waiting for the component rollout"
 # the KUBERNETES profile derives transport=MQTT and the messaging-config path DEFAULTS to the mounted
 # ConfigMap file. So a successful in-cluster broker round-trip proves the broker config was sourced
 # from the ConfigMap with no positional path.
-assert_log "Starting ConfigMap directory watcher on /etc/ggcommons" "config loaded via the CONFIGMAP source (KUBERNETES profile)"
-assert_log "Received an .* message on topic ggcommons" "MQTT round-trip via in-cluster broker — broker config from ConfigMap, no positional path (FR-MSG-1)"
+assert_log "Starting ConfigMap directory watcher on /etc/edgecommons" "config loaded via the CONFIGMAP source (KUBERNETES profile)"
+assert_log "Received an .* message on topic edgecommons" "MQTT round-trip via in-cluster broker — broker config from ConfigMap, no positional path (FR-MSG-1)"
 
 # FR-RT-7: no -t/--thing is passed, so the resolved identity must come from the Downward-API env. With
-# `thingName` unset, GGCOMMONS_THING_NAME is absent and identity falls through to POD_NAME (the pod's
+# `thingName` unset, EDGECOMMONS_THING_NAME is absent and identity falls through to POD_NAME (the pod's
 # metadata.name, injected via a Downward-API fieldRef). The skeleton logs its resolved identity once at
 # startup; assert it equals this pod's actual name.
 POD="$("${KUBECTL}" -n "${NAMESPACE}" get pods -l "${SELECTOR}" -o jsonpath='{.items[0].metadata.name}')"
@@ -154,7 +154,7 @@ fi
 # On KUBERNETES the metric target DEFAULTS to `prometheus` (no metricEmission.target in the config),
 # so the component serves an in-process registry as OpenMetrics text at :9090/metrics. The heartbeat
 # (routed to the metric target) populates it within an interval. Poll an in-pod GET of /metrics until a
-# ggcommons-namespaced gauge appears (proves: pull endpoint up + valid exposition + heartbeat scraped).
+# edgecommons-namespaced gauge appears (proves: pull endpoint up + valid exposition + heartbeat scraped).
 log "Asserting prometheus /metrics endpoint (FR-MET-1)"
 metrics_ok=""
 for _ in $(seq 1 20); do
@@ -162,18 +162,18 @@ for _ in $(seq 1 20); do
 import urllib.request,sys
 r=urllib.request.urlopen('http://127.0.0.1:9090/metrics',timeout=5)
 b=r.read().decode()
-sys.exit(0 if r.getcode()==200 and '# TYPE' in b and 'ggcommons_' in b else 1)
+sys.exit(0 if r.getcode()==200 and '# TYPE' in b and 'edgecommons_' in b else 1)
 " >/dev/null 2>&1; then
     metrics_ok=1
     break
   fi
   sleep 3
 done
-[[ -n "${metrics_ok}" ]] || fail "/metrics did not serve a ggcommons_* gauge (prometheus target / heartbeat)"
-ok "prometheus /metrics serves OpenMetrics text with a ggcommons_* gauge (FR-MET-1)"
+[[ -n "${metrics_ok}" ]] || fail "/metrics did not serve a edgecommons_* gauge (prometheus target / heartbeat)"
+ok "prometheus /metrics serves OpenMetrics text with a edgecommons_* gauge (FR-MET-1)"
 
 # --- FR-CRED-3/6: env KeyProvider (encrypted vault unlocked by a base64 KEK from a mounted Secret) ----
-# credentials.enabled=true mounted a Secret as GGCOMMONS_VAULT_KEK and injected a `credentials` section
+# credentials.enabled=true mounted a Secret as EDGECOMMONS_VAULT_KEK and injected a `credentials` section
 # with keyProvider OMITTED — so the KUBERNETES profile default (env) is exercised. The skeleton opens the
 # vault and round-trips a demo secret, logging "credential access OK" (value redacted) on success. That
 # proves the env KeyProvider unlocked an encrypted vault on a real pod from a mounted Secret, offline.
@@ -186,7 +186,7 @@ log "Patching the ConfigMap to trigger the ..data hot-reload"
 # Portable interpreter: python3 on Linux/CI, python on Windows Git Bash.
 PY="$(command -v python3 || command -v python || true)"
 [[ -n "${PY}" ]] || fail "need python3/python to JSON-encode the ConfigMap patch payload"
-CM_NAME="${RELEASE}-ggcommons-component-config"
+CM_NAME="${RELEASE}-edgecommons-component-config"
 CURRENT_JSON="$("${KUBECTL}" -n "${NAMESPACE}" get configmap "${CM_NAME}" -o jsonpath='{.data.config\.json}')"
 NEW_JSON="$(printf '%s' "${CURRENT_JSON}" | sed 's/"level": *"INFO"/"level": "DEBUG"/')"
 if [[ "${NEW_JSON}" == "${CURRENT_JSON}" ]]; then

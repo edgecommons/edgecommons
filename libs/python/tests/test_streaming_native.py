@@ -1,5 +1,5 @@
 """
-Native streaming binding tests (PyO3 module ``ggstreamlog_native``). Skipped if the wheel isn't
+Native streaming binding tests (PyO3 module ``edgestreamlog_native``). Skipped if the wheel isn't
 installed (build it: ``maturin build --release`` in libs/rust-streamlog/bindings/python, then
 ``pip install`` the wheel). Buffer-only — no AWS needed. Mirrors the Java/Rust streaming tests.
 """
@@ -8,9 +8,9 @@ import time
 
 import pytest
 
-pytest.importorskip("ggstreamlog_native", reason="ggstreamlog_native wheel not installed")
+pytest.importorskip("edgestreamlog_native", reason="edgestreamlog_native wheel not installed")
 
-# ggsl_status codes.
+# esl_status codes.
 ERR_CONFIG = 1
 ERR_UNKNOWN_STREAM = 5
 
@@ -28,7 +28,7 @@ def _config(tmp_path):
 
 
 def test_open_append_flush_stats(tmp_path):
-    from ggcommons.streaming import StreamService
+    from edgecommons.streaming import StreamService
 
     with StreamService.open(_config(tmp_path)) as svc, svc.stream("telemetry") as h:
         for i in range(1000):
@@ -43,31 +43,31 @@ def test_open_append_flush_stats(tmp_path):
 
 
 def test_unknown_stream(tmp_path):
-    from ggcommons.streaming import GgStreamError, StreamService
+    from edgecommons.streaming import EdgeStreamError, StreamService
 
     with StreamService.open(_config(tmp_path)) as svc:
-        with pytest.raises(GgStreamError) as ei:
+        with pytest.raises(EdgeStreamError) as ei:
             svc.stats("does-not-exist")
         assert ei.value.code == ERR_UNKNOWN_STREAM
 
 
 def test_bad_config():
-    from ggcommons.streaming import GgStreamError, StreamService
+    from edgecommons.streaming import EdgeStreamError, StreamService
 
-    with pytest.raises(GgStreamError) as ei:
+    with pytest.raises(EdgeStreamError) as ei:
         StreamService.open("{ not valid json")
     assert ei.value.code == ERR_CONFIG
 
 
 def test_stream_names(tmp_path):
-    from ggcommons.streaming import StreamService
+    from edgecommons.streaming import StreamService
 
     assert StreamService.stream_names(_config(tmp_path)) == ["telemetry"]
 
 
 def test_metrics_bridge_defines_and_emits(tmp_path, monkeypatch):
-    from ggcommons.metrics.metric_emitter import MetricEmitter
-    from ggcommons.streaming import StreamMetricsBridge, StreamService
+    from edgecommons.metrics.metric_emitter import MetricEmitter
+    from edgecommons.streaming import StreamMetricsBridge, StreamService
 
     defined = []
     emitted = []

@@ -31,7 +31,7 @@ import {
   Config,
   ConfigurationChangeListener,
   CredentialService,
-  GGCommons,
+  EdgeCommons,
   IMessagingService,
   MessageBuilder,
   MetricBuilder,
@@ -42,7 +42,7 @@ import {
   Uns,
   UnsClass,
   logger,
-} from "@edgecommons/ggcommons";
+} from "@edgecommons/edgecommons";
 
 /** Default publish interval (seconds) when `component.global.publish_interval` is absent. */
 const DEFAULT_PUBLISH_INTERVAL_SECS = 3;
@@ -109,7 +109,7 @@ export class SkeletonApp {
   private seq = 0;
   private running = false;
 
-  constructor(gg: GGCommons) {
+  constructor(gg: EdgeCommons) {
     this.config = gg.config();
     this.metrics = gg.metrics();
     this.uns = gg.uns();

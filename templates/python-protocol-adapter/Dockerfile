@@ -1,6 +1,6 @@
-# Container image for the <<COMPONENTNAME>> ggcommons protocol adapter on Kubernetes.
+# Container image for the <<COMPONENTNAME>> edgecommons protocol adapter on Kubernetes.
 #
-# The ggcommons Python library is resolved from requirements.txt (`greengrass-commons`). Build from
+# The edgecommons Python library is resolved from requirements.txt (`edgecommons`). Build from
 # this directory, push or `kind load`, then set `image:` in k8s/deployment.yaml:
 #   docker build -t ghcr.io/<owner>/<<COMPONENTNAME>>:latest .
 FROM python:3.12-slim
@@ -19,5 +19,5 @@ COPY app     /app/app
 USER 65532:65532
 
 ENTRYPOINT ["python3", "/app/main.py"]
-# No default args: --platform auto detects KUBERNETES (CONFIGMAP source at /etc/ggcommons, MQTT
+# No default args: --platform auto detects KUBERNETES (CONFIGMAP source at /etc/edgecommons, MQTT
 # transport, Downward-API identity).

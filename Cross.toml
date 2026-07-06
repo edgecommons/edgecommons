@@ -1,5 +1,5 @@
 # cross-rs config for true-cross-compiling the aarch64-linux native artifacts on x86_64 runners,
-# so the ggstreamlog prebuilds work on a free private plan with no arm64 hosted runners. The
+# so the edgestreamlog prebuilds work on a free private plan with no arm64 hosted runners. The
 # aarch64-linux build ships `kinesis` (the durable buffer + Kinesis sink) — NOT `kafka`:
 # librdkafka is a large C library and cross-compiling it to arm64 is impractical (slow under QEMU,
 # fragile to true-cross), so Kafka on arm64 is a documented source build (docs/NATIVE_CORE_DELIVERY.md).

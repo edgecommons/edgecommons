@@ -9,10 +9,10 @@ import os
 
 import pytest
 
-from ggcommons.credentials.config import build_key_provider, open_from_config, _sync_entries
-from ggcommons.credentials.keyprovider import FileKeyProvider, EnvKeyProvider
-from ggcommons.credentials.errors import CredentialError
-from ggcommons.credentials import crypto
+from edgecommons.credentials.config import build_key_provider, open_from_config, _sync_entries
+from edgecommons.credentials.keyprovider import FileKeyProvider, EnvKeyProvider
+from edgecommons.credentials.errors import CredentialError
+from edgecommons.credentials import crypto
 
 
 def _b64_key():
@@ -43,7 +43,7 @@ class TestBuildKeyProviderFile:
 
 class TestBuildKeyProviderEnv:
     def test_env_provider(self, monkeypatch):
-        monkeypatch.setenv("GGCOMMONS_VAULT_KEK", _b64_key())
+        monkeypatch.setenv("EDGECOMMONS_VAULT_KEK", _b64_key())
         kp = build_key_provider({"type": "env"}, "unused.key")
         assert isinstance(kp, EnvKeyProvider)
         assert kp.provider_id == "env"
@@ -54,7 +54,7 @@ class TestBuildKeyProviderEnv:
         assert isinstance(kp, EnvKeyProvider)
 
     def test_default_type_env_via_profile(self, monkeypatch):
-        monkeypatch.setenv("GGCOMMONS_VAULT_KEK", _b64_key())
+        monkeypatch.setenv("EDGECOMMONS_VAULT_KEK", _b64_key())
         kp = build_key_provider({}, "unused.key", default_type="env")
         assert isinstance(kp, EnvKeyProvider)
 

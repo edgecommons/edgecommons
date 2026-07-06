@@ -1,7 +1,7 @@
 /**
  * <<COMPONENTNAME>> — entry point.
  *
- * An AWS IoT Greengrass v2 component built on the `ggcommons` TypeScript library.
+ * An AWS IoT Greengrass v2 component built on the `edgecommons` TypeScript library.
  * Initializes the runtime from the standard CLI contract (`-c`/`--platform`/`--transport`/`-t`),
  * then hands control to {@link App}. The component runs until a shutdown signal
  * (SIGINT / SIGTERM); it then awaits `gg.close()` to release all resources
@@ -15,7 +15,7 @@
  *   -t my-thing
  * ```
  */
-import { GGCommonsBuilder, logger } from "@edgecommons/ggcommons";
+import { EdgeCommonsBuilder, logger } from "@edgecommons/edgecommons";
 
 import { App } from "./app";
 
@@ -24,13 +24,13 @@ const COMPONENT_NAME = "<<COMPONENTFULLNAME>>";
 
 async function main(): Promise<void> {
   // `process.argv.slice(2)` drops the `node` and script-path prefix.
-  const gg = await new GGCommonsBuilder(COMPONENT_NAME).args(process.argv.slice(2)).build();
+  const gg = await new EdgeCommonsBuilder(COMPONENT_NAME).args(process.argv.slice(2)).build();
 
   logger.info(`<<COMPONENTNAME>> starting: component=${gg.componentName()} thing=${gg.config().thingName}`);
 
   const app = new App(gg);
 
-  // The ggcommons runtime owns SIGTERM/SIGINT (FR-HB-2): on a termination signal it flips
+  // The edgecommons runtime owns SIGTERM/SIGINT (FR-HB-2): on a termination signal it flips
   // `/readyz` to 503, runs the idempotent graceful close, removes its handlers, and exits the
   // process. Do NOT register your own `process.on("SIGTERM"/"SIGINT")` handler or call
   // `process.exit()` — that double-runs teardown and can cut off the library's async close. The

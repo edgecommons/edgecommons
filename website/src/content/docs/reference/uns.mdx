@@ -40,7 +40,7 @@ Eight classes; `state`/`metric`/`cfg`/`log` are **reserved** (library-owned publ
 <TabItem label="Java">
 
 ```java
-// com.mbreissi.ggcommons.uns.UnsClass
+// com.mbreissi.edgecommons.uns.UnsClass
 public enum UnsClass {
     STATE, METRIC, CFG, LOG, DATA, EVT, CMD, APP;
     public final String token;    // the wire token ("state", "metric", ...)
@@ -53,7 +53,7 @@ public enum UnsClass {
 <TabItem label="Python">
 
 ```python
-# ggcommons.uns
+# edgecommons.uns
 class UnsClass(str, Enum):
     STATE, METRIC, CFG, LOG, DATA, EVT, CMD, APP = ...
 
@@ -69,7 +69,7 @@ class UnsClass(str, Enum):
 <TabItem label="Rust">
 
 ```rust
-// ggcommons::uns
+// edgecommons::uns
 pub enum UnsClass { State, Metric, Cfg, Log, Data, Evt, Cmd, App }
 
 impl UnsClass {
@@ -84,7 +84,7 @@ impl UnsClass {
 <TabItem label="TypeScript">
 
 ```typescript
-// ggcommons (src/uns.ts)
+// edgecommons (src/uns.ts)
 export enum UnsClass { State = "state", Metric = "metric", Cfg = "cfg", Log = "log",
                        Data = "data", Evt = "evt", Cmd = "cmd", App = "app" }
 
@@ -105,7 +105,7 @@ to the component's effective `topic.includeRoot` setting.
 <TabItem label="Java">
 
 ```java
-// com.mbreissi.ggcommons.uns.Uns
+// com.mbreissi.edgecommons.uns.Uns
 public final class Uns {
     public static final String ROOT = "ecv1";
     public static final int MAX_TOPIC_SLASHES = 7;       // AWS IoT Core depth budget
@@ -127,7 +127,7 @@ public final class Uns {
 <TabItem label="Python">
 
 ```python
-# ggcommons.uns
+# edgecommons.uns
 class Uns:
     def __init__(self, identity: MessageIdentity, include_root: bool): ...
 
@@ -146,7 +146,7 @@ class Uns:
 <TabItem label="Rust">
 
 ```rust
-// ggcommons::uns
+// edgecommons::uns
 pub struct Uns { /* identity + include_root */ }
 
 impl Uns {
@@ -166,13 +166,13 @@ pub fn reserved_class_of(topic: &str, include_root: bool) -> Option<UnsClass>;
 ```
 
 Rust splits the leaf/channeled builders (`topic` vs `topic_with_channel`) instead of overloading,
-and every builder returns `Result` (errors are `GgError::UnsValidation { code, detail }`).
+and every builder returns `Result` (errors are `EdgeCommonsError::UnsValidation { code, detail }`).
 
 </TabItem>
 <TabItem label="TypeScript">
 
 ```typescript
-// ggcommons (src/uns.ts)
+// edgecommons (src/uns.ts)
 export const UNS_ROOT = "ecv1";
 export const MAX_TOPIC_SLASHES = 7;
 export const MAX_TOPIC_UTF8_BYTES = 256;
@@ -226,7 +226,7 @@ CHANNEL_ON_LEAF | CHANNEL_REQUIRED | BAD_ROOT | BAD_CLASS | WILDCARD_IN_TOPIC
 |----------|------------|
 | Java | `UnsValidationException extends IllegalArgumentException` (`getCode()`) |
 | Python | `UnsValidationError(ValueError)` (`.code`) |
-| Rust | `GgError::UnsValidation { code: UnsValidationCode, detail }` |
+| Rust | `EdgeCommonsError::UnsValidation { code: UnsValidationCode, detail }` |
 | TypeScript | `UnsValidationError extends Error` (`.code`) |
 
 ## `UnsScope` — wildcard scopes for `filter()`
@@ -322,15 +322,15 @@ messaging client itself stays instance-agnostic.
 <TabItem label="Java">
 
 ```java
-// com.mbreissi.ggcommons.GgInstance
-public final class GgInstance {
+// com.mbreissi.edgecommons.EdgeCommonsInstance
+public final class EdgeCommonsInstance {
     public String id();
     public Uns uns();                                     // topics minted with this instance token
     public MessageBuilder newMessage(String name, String version);
         // == MessageBuilder.create(name, version).withConfig(config).withInstance(id())
 }
 
-GgInstance kep1 = gg.instance("kep1");
+EdgeCommonsInstance kep1 = gg.instance("kep1");
 String t = kep1.uns().topic(UnsClass.DATA, "press12/temperature");
 gg.getMessaging().publish(t, kep1.newMessage("SignalUpdate", "1.0").withPayload(p).build());
 ```
@@ -339,7 +339,7 @@ gg.getMessaging().publish(t, kep1.newMessage("SignalUpdate", "1.0").withPayload(
 <TabItem label="Python">
 
 ```python
-inst = gg.instance("kep1")            # GgInstance
+inst = gg.instance("kep1")            # EdgeCommonsInstance
 t = inst.uns().topic(UnsClass.DATA, "press12/temperature")
 msg = inst.new_message("SignalUpdate", "1.0").with_payload(p).build()
 gg.get_messaging().publish(t, msg)
@@ -349,7 +349,7 @@ gg.get_messaging().publish(t, msg)
 <TabItem label="Rust">
 
 ```rust
-let inst = gg.instance("kep1")?;      // Result<GgInstance> — validates the token
+let inst = gg.instance("kep1")?;      // Result<EdgeCommonsInstance> — validates the token
 let t = inst.uns().topic_with_channel(UnsClass::Data, "press12/temperature")?;
 let msg = inst.message("SignalUpdate", "1.0").payload(p).build();
 gg.messaging()?.publish(&t, &msg).await?;
@@ -359,7 +359,7 @@ gg.messaging()?.publish(&t, &msg).await?;
 <TabItem label="TypeScript">
 
 ```typescript
-const inst = gg.instance("kep1");     // GgInstance
+const inst = gg.instance("kep1");     // EdgeCommonsInstance
 const t = inst.uns().topic(UnsClass.Data, "press12/temperature");
 const msg = inst.newMessage("SignalUpdate", "1.0").withPayload(p).build();
 await gg.messaging().publish(t, msg);
@@ -379,7 +379,7 @@ and resolution rules.
 <TabItem label="Java">
 
 ```java
-// com.mbreissi.ggcommons.messaging.MessageIdentity
+// com.mbreissi.edgecommons.messaging.MessageIdentity
 public final class MessageIdentity {
     public static final String DEFAULT_INSTANCE = "main";
     public record HierEntry(String level, String value) { }
@@ -404,7 +404,7 @@ The component's resolved identity is `configManager.getComponentIdentity()` (ins
 <TabItem label="Python">
 
 ```python
-# ggcommons.messaging.identity
+# edgecommons.messaging.identity
 class HierEntry:
     def __init__(self, level: str, value: str): ...
 
@@ -433,7 +433,7 @@ The component's resolved identity is `config.get_component_identity()`.
 <TabItem label="Rust">
 
 ```rust
-// ggcommons::messaging::message
+// edgecommons::messaging::message
 pub struct HierEntry { pub level: String, pub value: String }
 
 pub struct MessageIdentity { /* hier, path, component, instance */ }
@@ -458,7 +458,7 @@ The component's resolved identity is `gg.config().identity()`.
 <TabItem label="TypeScript">
 
 ```typescript
-// ggcommons (src/message.ts)
+// edgecommons (src/message.ts)
 export interface HierLevel { level: string; value: string }
 
 export class MessageIdentity {
@@ -526,7 +526,7 @@ synthesized (left absent when the source has none). The only hard reject is a mi
 <TabItem label="Java">
 
 ```java
-// com.mbreissi.ggcommons.facades.DataFacade — via gg.getData() / gg.instance(id).data()
+// com.mbreissi.edgecommons.facades.DataFacade — via gg.getData() / gg.instance(id).data()
 public final class DataFacade {
     public SignalUpdate.Builder signal(String id);                    // fluent body builder
     public void publish(SignalUpdate update);                         // full form
@@ -550,7 +550,7 @@ gg.instance("kep1").data().signal("press12/temperature")
 <TabItem label="Python">
 
 ```python
-# ggcommons.facades.data_facade.DataFacade — via gg.data() / gg.instance(id).data()
+# edgecommons.facades.data_facade.DataFacade — via gg.data() / gg.instance(id).data()
 class DataFacade:
     def signal(self, signal_id: str) -> SignalUpdateBuilder: ...
     def publish_update(self, update: SignalUpdate) -> None: ...
@@ -628,7 +628,7 @@ defaults to now; `type` is the only required field (it is a channel token).
 <TabItem label="Java">
 
 ```java
-// com.mbreissi.ggcommons.facades.EventsFacade — via gg.getEvents() / gg.instance(id).events()
+// com.mbreissi.edgecommons.facades.EventsFacade — via gg.getEvents() / gg.instance(id).events()
 public final class EventsFacade {
     public EventsFacade via(Channel channel);                          // LOCAL (default) or NORTHBOUND only
     public void emit(Severity severity, String type, String message, JsonObject context);
@@ -651,7 +651,7 @@ gg.getEvents().clearAlarm("connection-lost", ctx);                      // -> th
 <TabItem label="Python">
 
 ```python
-# ggcommons.facades.events_facade.EventsFacade — via gg.events() / gg.instance(id).events()
+# edgecommons.facades.events_facade.EventsFacade — via gg.events() / gg.instance(id).events()
 class EventsFacade:
     def via(self, channel: Channel) -> "EventsFacade": ...
     def emit(self, event_type: str, message: Optional[str] = None,
@@ -728,7 +728,7 @@ contract to enforce (that is the point of `app`), so the facade's only job is mi
 <TabItem label="Java">
 
 ```java
-// com.mbreissi.ggcommons.facades.AppFacade — via gg.getApp() / gg.instance(id).app()
+// com.mbreissi.edgecommons.facades.AppFacade — via gg.getApp() / gg.instance(id).app()
 public final class AppFacade {
     public void publish(String name, String channel, JsonObject body);
     public void publish(String name, String channel, JsonObject body, Channel routing);
@@ -741,7 +741,7 @@ gg.getApp().publish("OrderReceived", "order/received", body);   // -> app/order/
 <TabItem label="Python">
 
 ```python
-# ggcommons.facades.app_facade.AppFacade — via gg.app() / gg.instance(id).app()
+# edgecommons.facades.app_facade.AppFacade — via gg.app() / gg.instance(id).app()
 class AppFacade:
     def publish(self, name: str, channel: str, body: dict,
                routing: Optional[Channel] = None) -> None: ...
@@ -956,7 +956,7 @@ guarded (consumers must read reserved classes), and non-`ecv1` topics (reply top
 |----------|------------|
 | Java | `ReservedTopicException extends IllegalArgumentException` |
 | Python | `ReservedTopicError(ValueError)` |
-| Rust | `GgError::ReservedTopic(String)` |
+| Rust | `EdgeCommonsError::ReservedTopic(String)` |
 | TypeScript | `ReservedTopicError extends Error` |
 
 <Aside type="note" title="The guard is misuse prevention, not a security boundary">

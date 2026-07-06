@@ -5,8 +5,8 @@ import json
 
 import pytest
 
-from ggcommons.messaging.messaging_config import LwtConfig, MessagingConfiguration
-from ggcommons.messaging.providers.standalone_provider import StandaloneProvider
+from edgecommons.messaging.messaging_config import LwtConfig, MessagingConfiguration
+from edgecommons.messaging.providers.standalone_provider import StandaloneProvider
 
 
 class _FakeClient:
@@ -101,7 +101,7 @@ class TestLwtConfigParse:
 class TestLwtWiring:
     def test_local_client_gets_the_will(self, monkeypatch):
         """_create_mqtt_client registers the will on the LOCAL channel only."""
-        import ggcommons.messaging.providers.standalone_provider as sp
+        import edgecommons.messaging.providers.standalone_provider as sp
 
         class _RecordingMqtt(_FakeClient):
             def __init__(self, *args, **kwargs):

@@ -1,6 +1,6 @@
 # Vault cross-language conformance vectors
 
-These files pin the **normative ggcommons vault v1 on-disk format** (see `docs/CREDENTIALS.md`
+These files pin the **normative edgecommons vault v1 on-disk format** (see `docs/CREDENTIALS.md`
 §4). The Rust reference implementation generates and verifies them; the Java, Python, and
 TypeScript ports **must** pass the same conformance check so a vault written by any language is
 readable by every other on the same device.
@@ -17,11 +17,11 @@ readable by every other on the same device.
 
 - **KEK** = bytes `0x00..0x1f`; **DEK** = bytes `0x40..0x5f`.
 - **vaultId** = `00000000-0000-4000-8000-000000000001`.
-- **DEK wrap**: AES-256-GCM(key=KEK, nonce=`0xA0..0xAB`, aad=`ggcommons-vault/v1/dek-wrap|<vaultId>`).
+- **DEK wrap**: AES-256-GCM(key=KEK, nonce=`0xA0..0xAB`, aad=`edgecommons-vault/v1/dek-wrap|<vaultId>`).
 - **Records**: `alpha`/`00000001` = `"hello"` (nonce `0xB0..0xBB`); `beta`/`00000001` = `{"x":1}`
-  (nonce `0xC0..0xCB`). Record AEAD aad = `ggcommons-vault/v1|<vaultId>|<name>|<version>`.
+  (nonce `0xC0..0xCB`). Record AEAD aad = `edgecommons-vault/v1|<vaultId>|<name>|<version>`.
 - **MAC**: HMAC-SHA256 over the length-prefixed canonical byte string (§4), key =
-  `HKDF-SHA256(ikm=DEK, salt=vaultId, info="ggcommons-vault/v1/mac")`.
+  `HKDF-SHA256(ikm=DEK, salt=vaultId, info="edgecommons-vault/v1/mac")`.
 
 ## Conformance contract (every language must)
 

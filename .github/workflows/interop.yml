@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   # Guarantee every language library embeds the SAME config schema: each lib carries a
-  # copy of schema/ggcommons-config-schema.json (cargo include_str!, tsc import, Python
+  # copy of schema/edgecommons-config-schema.json (cargo include_str!, tsc import, Python
   # package-data, Java classpath resource). This fails if any copy drifts from the
   # canonical source — run ./schema/sync-schema.sh and commit to fix.
   schema-drift:

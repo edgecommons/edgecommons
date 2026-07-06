@@ -5,7 +5,7 @@ Thanks for contributing! This applies to every repo in the org unless a repo ove
 ## Building a new component
 
 1. **Scaffold** with the CLI:
-   `ggcommons create-component -n com.example.MyAdapter -l <JAVA|PYTHON|RUST|TYPESCRIPT>`.
+   `edgecommons create-component -n com.example.MyAdapter -l <JAVA|PYTHON|RUST|TYPESCRIPT>`.
 2. **Name** the repo flat and lowercase by what it does — `opcua-adapter`, `s7-adapter`,
    `rollup-processor`, `kafka-sink`. No `edgecommons-` prefix (the org namespaces it).
 3. **Wire CI** by calling the reusable workflow:
@@ -24,7 +24,7 @@ Thanks for contributing! This applies to every repo in the org unless a repo ove
 
 ## Standards
 
-- Components build on `ggcommons` and follow its conventions (builders, the standard CLI contract,
+- Components build on `edgecommons` and follow its conventions (builders, the standard CLI contract,
   the message envelope). Adapters follow the southbound contract (`docs/SOUTHBOUND.md`).
 - Tests required; keep CI green before requesting review.
 - Match the surrounding code style of the language/library.

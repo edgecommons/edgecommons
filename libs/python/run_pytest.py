@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Simple pytest runner for GGCommons tests.
+Simple pytest runner for EdgeCommons tests.
 """
 
 import sys
@@ -10,7 +10,7 @@ import argparse
 
 def main():
     """Run pytest with appropriate options."""
-    parser = argparse.ArgumentParser(description='GGCommons Pytest Runner')
+    parser = argparse.ArgumentParser(description='EdgeCommons Pytest Runner')
     parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
     parser.add_argument('--quiet', '-q', action='store_true', help='Quiet output')
     parser.add_argument('--coverage', '-c', action='store_true', help='Run with coverage')
@@ -33,7 +33,7 @@ def main():
     
     # Add coverage
     if args.coverage:
-        cmd.extend(['--cov=ggcommons', '--cov-report=html', '--cov-report=term'])
+        cmd.extend(['--cov=edgecommons', '--cov-report=html', '--cov-report=term'])
     
     # Add markers
     if args.markers:

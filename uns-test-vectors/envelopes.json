@@ -1,5 +1,5 @@
 {
-  "description": "ggcommons UNS golden canonical envelopes - one full canonical JSON envelope per UNS class, pinned uuid/correlation_id/timestamp (D-U13); compare STRUCTURALLY, member order is not normative (D-U22)",
+  "description": "edgecommons UNS golden canonical envelopes - one full canonical JSON envelope per UNS class, pinned uuid/correlation_id/timestamp (D-U13); compare STRUCTURALLY, member order is not normative (D-U22)",
   "envelopes": [
     {
       "name": "state-running",

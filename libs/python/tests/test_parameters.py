@@ -9,7 +9,7 @@ import time
 
 import pytest
 
-from ggcommons.parameters import (
+from edgecommons.parameters import (
     DefaultParameterService,
     EnvSource,
     MountedDirSource,
@@ -161,7 +161,7 @@ def test_lenient_numeric_refresh_interval(monkeypatch):
     assert s.get("/x") == "v"
     # An integer-valued float is accepted (300.0 -> 300) without raising.
     cfg["refreshIntervalSecs"] = 300.0
-    from ggcommons.parameters.config import _lenient_int
+    from edgecommons.parameters.config import _lenient_int
     assert _lenient_int(300.0, 0) == 300
 
 
@@ -251,7 +251,7 @@ def test_mounted_dir_walk_read_oserror_is_wrapped(tmp_path, monkeypatch):
     # An OSError while reading a file during a walk is wrapped as ParameterError.
     (tmp_path / "f").write_bytes(b"x")
     source = MountedDirSource(str(tmp_path), [])
-    import ggcommons.parameters.source as srcmod
+    import edgecommons.parameters.source as srcmod
     real_open = srcmod.open if hasattr(srcmod, "open") else open
 
     def boom_open(path, *a, **k):
@@ -396,8 +396,8 @@ def test_stats_reflects_refresh_age(monkeypatch):
 
 
 def _file_key_provider():
-    from ggcommons.credentials.keyprovider import FileKeyProvider
-    from ggcommons.credentials import crypto
+    from edgecommons.credentials.keyprovider import FileKeyProvider
+    from edgecommons.credentials import crypto
     return FileKeyProvider(crypto.random(crypto.KEY_LEN))
 
 
@@ -423,8 +423,8 @@ class _SeededSource(ParameterSource):
 
 
 def test_persistent_vault_cache_survives_reopen(tmp_path):
-    from ggcommons.parameters.service import DefaultParameterService as DPS
-    from ggcommons.credentials import LocalVault
+    from edgecommons.parameters.service import DefaultParameterService as DPS
+    from edgecommons.credentials import LocalVault
 
     path = str(tmp_path / "param-cache")
     provider = _file_key_provider()
@@ -458,8 +458,8 @@ def test_persistent_vault_cache_survives_reopen(tmp_path):
 
 
 def test_persistent_vault_cache_missing_name_returns_none(tmp_path):
-    from ggcommons.parameters.service import DefaultParameterService as DPS
-    from ggcommons.credentials import LocalVault
+    from edgecommons.parameters.service import DefaultParameterService as DPS
+    from edgecommons.credentials import LocalVault
 
     path = str(tmp_path / "vc")
     vault = LocalVault.open(path, _file_key_provider(), 1)
@@ -473,7 +473,7 @@ def test_persistent_vault_cache_missing_name_returns_none(tmp_path):
 
 def test_refresher_loop_swallows_refresh_errors():
     # The background thread keeps running when a refresh raises (already counted in Inner.refresh).
-    from ggcommons.parameters.service import _Inner, _Refresher, _MemoryCache
+    from edgecommons.parameters.service import _Inner, _Refresher, _MemoryCache
 
     inner = _Inner(_FailingSource(), _MemoryCache(), ["/x"], [])
     r = _Refresher(inner, 1)
@@ -532,13 +532,13 @@ def test_config_unknown_source_raises():
 
 def test_config_build_awssm_source_branch(monkeypatch):
     # Exercise the awsSsm branch in _build_source without constructing a real boto3 client.
-    from ggcommons.parameters import ssm
+    from edgecommons.parameters import ssm
     fake = _FakeSsmClient()
     monkeypatch.setattr(ssm.AwsSsmSource, "__init__",
                         lambda self, region=None, endpoint_url=None, with_decryption=True: (
                             setattr(self, "_with_decryption", with_decryption),
                             setattr(self, "_client", fake), None)[-1])
-    from ggcommons.parameters.config import _build_source
+    from edgecommons.parameters.config import _build_source
     src = _build_source({"type": "awsSsm", "region": "us-east-1", "withDecryption": True})
     assert src.source_id() == "awsSsm"
     # A remote (awsSsm) source defaults to the persistent cache; with the fake client it resolves.
@@ -554,7 +554,7 @@ def test_config_build_awssm_source_branch(monkeypatch):
 
 
 def test_lenient_int_rejects_bool_and_string():
-    from ggcommons.parameters.config import _lenient_int
+    from edgecommons.parameters.config import _lenient_int
     assert _lenient_int(None, 42) == 42
     with pytest.raises(ParameterError):
         _lenient_int(True, 0)
@@ -563,7 +563,7 @@ def test_lenient_int_rejects_bool_and_string():
 
 
 def test_path_entries_rejects_invalid_entry():
-    from ggcommons.parameters.config import _path_entries
+    from edgecommons.parameters.config import _path_entries
     assert _path_entries(None) == []
     assert _path_entries(["/a"]) == [("/a", True)]
     assert _path_entries([{"path": "/b", "recursive": False}]) == [("/b", False)]
@@ -579,7 +579,7 @@ def test_config_bootstrap_failure_is_swallowed():
     # awsSsm needs boto3; instead use a path source that fails via mountedDir on a missing root is
     # caught at build. Use env with a sync that simply has no values: bootstrap succeeds trivially.
     # To exercise the swallow path, monkeypatch refresh to raise.
-    import ggcommons.parameters.config as cfgmod
+    import edgecommons.parameters.config as cfgmod
 
     cfg = {
         "source": {"type": "env", "prefix": "GGTEST_BOOTFAIL_"},
@@ -649,7 +649,7 @@ class _FakeSsmClient:
 
 
 def _patched_ssm_source(monkeypatch, **kw):
-    from ggcommons.parameters import ssm
+    from edgecommons.parameters import ssm
     fake = _FakeSsmClient()
     monkeypatch.setattr(ssm.AwsSsmSource, "__init__",
                         lambda self, region=None, endpoint_url=None, with_decryption=True: (
@@ -697,14 +697,14 @@ def test_ssm_fetch_by_path_error_wrapped(monkeypatch):
 
 
 def test_ssm_to_value_none_when_no_value():
-    from ggcommons.parameters.ssm import AwsSsmSource
+    from edgecommons.parameters.ssm import AwsSsmSource
     assert AwsSsmSource._to_value({"Type": "String"}) is None
 
 
 def test_ssm_missing_boto3_raises(monkeypatch):
     # Simulate boto3 not installed: AwsSsmSource construction must raise a clear ParameterError.
     import builtins
-    from ggcommons.parameters.ssm import AwsSsmSource
+    from edgecommons.parameters.ssm import AwsSsmSource
     real_import = builtins.__import__
 
     def fake_import(name, *args, **kwargs):
@@ -724,7 +724,7 @@ def test_ssm_missing_boto3_raises(monkeypatch):
 
 
 def test_parameters_section_passes_config_validation():
-    from ggcommons.validation.configuration_validator import ConfigurationValidator
+    from edgecommons.validation.configuration_validator import ConfigurationValidator
 
     if not ConfigurationValidator.is_validation_available():
         pytest.skip("jsonschema/schema not available")
@@ -748,14 +748,14 @@ def test_awssm_source_against_floci_emulator():
     Exercises the real boto3 client path (excluded from unit coverage): seed a String, a
     SecureString and a 2-key tree, then read them back via the source under test and assert
     values, the secure flag, version, missing->None, and get-by-path. Skips if no emulator.
-    Override the endpoint with GGCOMMONS_SSM_ENDPOINT (default http://localhost:4566).
+    Override the endpoint with EDGECOMMONS_SSM_ENDPOINT (default http://localhost:4566).
     """
     boto3 = pytest.importorskip("boto3")
     import socket
     from botocore.config import Config
-    from ggcommons.parameters.ssm import AwsSsmSource
+    from edgecommons.parameters.ssm import AwsSsmSource
 
-    endpoint = os.environ.get("GGCOMMONS_SSM_ENDPOINT", "http://localhost:4566")
+    endpoint = os.environ.get("EDGECOMMONS_SSM_ENDPOINT", "http://localhost:4566")
     host, _, port = endpoint.split("//", 1)[-1].partition(":")
     try:
         with socket.create_connection((host, int(port or "4566")), timeout=2):
@@ -767,7 +767,7 @@ def test_awssm_source_against_floci_emulator():
     os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "test")
     os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
 
-    prefix = f"/ggcommons-it-py-{os.getpid()}"
+    prefix = f"/edgecommons-it-py-{os.getpid()}"
     admin = boto3.client(
         "ssm", endpoint_url=endpoint, region_name="us-east-1",
         config=Config(connect_timeout=4, read_timeout=8, retries={"max_attempts": 1}),

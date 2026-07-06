@@ -1,12 +1,12 @@
 """Unit tests for the UNS topic builder/validator surface not pinned by the shared
 vectors (test_uns_vectors.py): constructor/argument guards, the scope factories, the
-instance handle, and the GGCommons facade accessors."""
+instance handle, and the EdgeCommons facade accessors."""
 import pytest
 
-from ggcommons.gg_instance import GgInstance
-from ggcommons.ggcommons import GGCommons
-from ggcommons.messaging.identity import HierEntry, MessageIdentity
-from ggcommons.uns import (
+from edgecommons.edgecommons_instance import EdgeCommonsInstance
+from edgecommons.edgecommons import EdgeCommons
+from edgecommons.messaging.identity import HierEntry, MessageIdentity
+from edgecommons.uns import (
     RESERVED_CLASSES,
     Uns,
     UnsClass,
@@ -105,7 +105,7 @@ class TestCheckToken:
         assert "[EMPTY_TOKEN]" in str(e.value)
 
 
-class TestGgInstance:
+class TestEdgeCommonsInstance:
     def _cm(self):
         class Cm:
             def get_component_identity(self):
@@ -119,7 +119,7 @@ class TestGgInstance:
         return Cm()
 
     def test_handle_binds_instance_into_uns_and_builder(self):
-        handle = GgInstance("kep1", self._cm(), False)
+        handle = EdgeCommonsInstance("kep1", self._cm(), False)
         assert handle.id() == "kep1"
         assert handle.uns().topic(UnsClass.DATA, "temp") == \
             "ecv1/gw-01/opcua-adapter/kep1/data/temp"
@@ -128,20 +128,20 @@ class TestGgInstance:
         assert msg.get_identity().component == "opcua-adapter"
 
     def test_include_root_flows_into_handle_uns(self):
-        handle = GgInstance("kep1", self._cm(), True)
+        handle = EdgeCommonsInstance("kep1", self._cm(), True)
         assert handle.uns().topic(UnsClass.STATE) == \
             "ecv1/dallas/gw-01/opcua-adapter/kep1/state"
 
 
 class TestFacadeAccessors:
     def _gg(self, identity=True, include_root=False):
-        gg = object.__new__(GGCommons)
+        gg = object.__new__(EdgeCommons)
         gg._uns = None
         gg._instance_handles = {}
-        # instance() also threads the streaming sink + clock into GgInstance for the
+        # instance() also threads the streaming sink + clock into EdgeCommonsInstance for the
         # data()/events()/app() publish facades (DESIGN-class-facades §3/§4); a bare
         # object.__new__ bring-up (no __init__) needs these set so _stream_sink() and
-        # the GgInstance constructor don't AttributeError. None is a valid value for
+        # the EdgeCommonsInstance constructor don't AttributeError. None is a valid value for
         # both (no streaming configured; the facades default their own clock).
         gg._streams = None
         gg._clock = None
@@ -170,7 +170,7 @@ class TestFacadeAccessors:
             "ecv1/dallas/gw-01/opcua-adapter/main/state"
 
     def test_uns_before_init_raises(self):
-        gg = object.__new__(GGCommons)
+        gg = object.__new__(EdgeCommons)
         gg._uns = None
         gg._instance_handles = {}
         gg._config_manager = None

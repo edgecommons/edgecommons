@@ -26,7 +26,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      # The durable-CloudWatch + streaming tests load the native ggstreamlog node addon,
+      # The durable-CloudWatch + streaming tests load the native edgestreamlog node addon,
       # so build it before the suite (mirrors the streaming workflow's node job).
       - uses: dtolnay/rust-toolchain@stable
       - name: Build the native node addon
@@ -35,7 +35,7 @@ jobs:
       # Install the whole npm workspace from the repo root (libs/ts, its native
       # streaming binding, and the TS example) so cross-package deps link cleanly.
       - run: npm ci || npm install
-      - run: npm run build --workspace=@edgecommons/ggcommons
+      - run: npm run build --workspace=@edgecommons/edgecommons
       # `coverage` runs the full suite AND enforces the >=90% statements/lines gate
       # (thresholds in vitest.config.ts).
-      - run: npm run coverage --workspace=@edgecommons/ggcommons
+      - run: npm run coverage --workspace=@edgecommons/edgecommons

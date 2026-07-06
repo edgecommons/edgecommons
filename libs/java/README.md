@@ -1,7 +1,7 @@
-# GGCommons Java Library
+# EdgeCommons Java Library
 
 The **canonical** implementation of the Greengrass Commons library (Maven artifact
-`com.mbreissi:ggcommons`) for building AWS IoT Greengrass v2 components with built-in
+`com.mbreissi.edgecommons:edgecommons`) for building AWS IoT Greengrass v2 components with built-in
 configuration management, messaging, metrics, heartbeat, logging, credentials (encrypted vault),
 parameters (externalized config), and telemetry streaming. It is one of four parallel
 implementations (Java, Python, Rust, TypeScript); Java is the reference the others mirror. See the
@@ -9,7 +9,7 @@ monorepo root `README.md` for the ecosystem overview.
 
 ## Purpose
 
-GGCommons simplifies the development of AWS IoT Greengrass components by providing a unified framework that handles common operational concerns, allowing developers to focus on their core business logic. The library abstracts away the complexity of Greengrass integration while providing enterprise-grade features for monitoring, configuration management, and inter-component communication.
+EdgeCommons simplifies the development of AWS IoT Greengrass components by providing a unified framework that handles common operational concerns, allowing developers to focus on their core business logic. The library abstracts away the complexity of Greengrass integration while providing enterprise-grade features for monitoring, configuration management, and inter-component communication.
 
 **🚀 Run outside Greengrass** - With `--platform HOST` (or `KUBERNETES`) and `--transport MQTT`, run components outside of Greengrass with nearly full functionality! Perfect for Kubernetes, Docker, or any container runtime environment. Maintains dual connectivity to both local MQTT brokers and AWS IoT Core.
 
@@ -60,12 +60,12 @@ GGCommons simplifies the development of AWS IoT Greengrass components by providi
 
 ### 1. Add Dependency
 
-Add the GGCommons library to your Maven project:
+Add the EdgeCommons library to your Maven project:
 
 ```xml
 <dependency>
-    <groupId>com.mbreissi</groupId>
-    <artifactId>ggcommons</artifactId>
+    <groupId>com.mbreissi.edgecommons</groupId>
+    <artifactId>edgecommons</artifactId>
     <version>1.3.2-SNAPSHOT</version>
 </dependency>
 ```
@@ -74,7 +74,7 @@ Add the GGCommons library to your Maven project:
 
 ```java
 public class MyComponent {
-    private GGCommons ggCommons;
+    private EdgeCommons edgeCommons;
     private ConfigManager configManager;
     
     public static void main(String[] args) {
@@ -83,15 +83,15 @@ public class MyComponent {
     
     public void run(String[] args) {
         // Construct via the builder (direct constructors are deprecated).
-        ggCommons = GGCommonsBuilder.create("com.example.MyComponent").withArgs(args).build();
-        configManager = ggCommons.getConfigManager();
+        edgeCommons = EdgeCommonsBuilder.create("com.example.MyComponent").withArgs(args).build();
+        configManager = edgeCommons.getConfigManager();
 
         // Subsystem accessors (the newer ones return null unless their config section is present):
-        var messaging   = ggCommons.getMessaging();      // MessagingClient
-        var metrics     = ggCommons.getMetrics();        // MetricEmitter
-        var credentials = ggCommons.getCredentials();    // CredentialService or null
-        var parameters  = ggCommons.getParameters();     // ParameterService or null
-        var streams     = ggCommons.getStreams();        // StreamService or null
+        var messaging   = edgeCommons.getMessaging();      // MessagingClient
+        var metrics     = edgeCommons.getMetrics();        // MetricEmitter
+        var credentials = edgeCommons.getCredentials();    // CredentialService or null
+        var parameters  = edgeCommons.getParameters();     // ParameterService or null
+        var streams     = edgeCommons.getStreams();        // StreamService or null
 
         // Your component logic here
         startApplication();
@@ -193,11 +193,11 @@ Create a `standalone-messaging.json` file (the `--transport MQTT` payload) for n
 
 ## Command Line Options
 
-GGCommons supports several command line options for configuration and messaging:
+EdgeCommons supports several command line options for configuration and messaging:
 
 ### Configuration Source (`-c, --config`)
 - `FILE [path]` - Load from JSON file (default: current directory)
-- `ENV [var_name]` - Load from environment variable (default: GGCOMMONS_CONFIG)
+- `ENV [var_name]` - Load from environment variable (default: EDGECOMMONS_CONFIG)
 - `GG_CONFIG [component] [key]` - Load from Greengrass deployment (the default on the GREENGRASS platform)
 - `SHADOW [name]` - Load from IoT Device Shadow
 - `CONFIG_COMPONENT` - Load from configuration management component
@@ -278,7 +278,7 @@ A worked, runnable example component built on this library lives at
 [`examples/java/`](../../examples/java) in this monorepo (the Java counterpart of the Python, Rust,
 and TypeScript skeletons). It demonstrates configuration management, messaging (publish +
 request/reply), metric emission, heartbeat, and the standard component lifecycle. Use the
-`ggcommons` CLI (`ggcommons create-component -l JAVA …`) to scaffold a new component from the Java
+`edgecommons` CLI (`edgecommons create-component -l JAVA …`) to scaffold a new component from the Java
 template.
 
 ## Building and Packaging

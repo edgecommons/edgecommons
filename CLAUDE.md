@@ -5,7 +5,7 @@ working in this repository.
 
 ## What this is
 
-`ggcommons` is the **Greengrass Commons** ecosystem: libraries, a scaffolding CLI, and component
+`edgecommons` is the **Greengrass Commons** ecosystem: libraries, a scaffolding CLI, and component
 templates for building **AWS IoT Greengrass v2** components. The libraries bundle the cross-cutting
 concerns every edge component needs — configuration, messaging, metrics, heartbeat, logging,
 credentials, parameters, and telemetry streaming — behind clean interfaces so component authors
@@ -18,19 +18,19 @@ envelope. **Java is the canonical reference.**
 
 | Path | What it is | Stack |
 |------|-----------|-------|
-| `libs/java/` | The canonical, most complete library. Maven artifact `com.mbreissi:ggcommons`. | Java 25 (LTS), Maven |
-| `libs/python/` | The Python port (PyPI `greengrass-commons`). **Has its own `CLAUDE.md` — read it before working here.** | Python 3.9+, setuptools |
-| `libs/rust/` | The Rust port (crate `ggcommons`). | Rust (edition 2024, MSRV 1.85), Cargo |
-| `libs/ts/` | The TypeScript port (npm `ggcommons`). | TypeScript 5 / Node 18+ |
-| `libs/rust-streamlog/` | Shared `ggstreamlog` core: the embedded telemetry-streaming engine. All four languages use it via native bindings (Java/Panama, Python/PyO3, Node/napi-rs); Rust uses it directly. | Rust (edition 2021), Cargo |
-| `cli/` | Scaffolding CLI (`ggcommons` / `ggcommons-cli`): generate, validate, build, publish, deploy, upgrade components. | Python |
+| `libs/java/` | The canonical, most complete library. Maven artifact `com.mbreissi.edgecommons:edgecommons`. | Java 25 (LTS), Maven |
+| `libs/python/` | The Python port (PyPI `edgecommons`). **Has its own `CLAUDE.md` — read it before working here.** | Python 3.9+, setuptools |
+| `libs/rust/` | The Rust port (crate `edgecommons`). | Rust (edition 2024, MSRV 1.85), Cargo |
+| `libs/ts/` | The TypeScript port (npm `edgecommons`). | TypeScript 5 / Node 18+ |
+| `libs/rust-streamlog/` | Shared `edgestreamlog` core: the embedded telemetry-streaming engine. All four languages use it via native bindings (Java/Panama, Python/PyO3, Node/napi-rs); Rust uses it directly. | Rust (edition 2021), Cargo |
+| `cli/` | Scaffolding CLI (`edgecommons` / `edgecommons-cli`): generate, validate, build, publish, deploy, upgrade components. | Python |
 | `examples/{java,python,rust,ts}/` | Worked "best-practice" example components (skeletons) that demonstrate each library. | per language |
 | `templates/{java,python,rust,typescript}/` | Minimal manifest-driven starting templates the CLI copies. | per language |
-| `schema/` | **Single source of truth** for the config JSON schema (`ggcommons-config-schema.json`) + sync scripts. | JSON |
+| `schema/` | **Single source of truth** for the config JSON schema (`edgecommons-config-schema.json`) + sync scripts. | JSON |
 | `test-infra/` | Shared integration-test infra: EMQX broker (`compose.yaml`), TLS cert generation, and the cross-language **interop** harness (`interop/`). | Docker + Python |
 | `vault-test-vectors/` | Shared credentials/vault encryption conformance vectors used by all four languages. | JSON |
 | `uns-test-vectors/` | Shared **UNS** conformance vectors (topic-building/validation cases + golden envelopes with the top-level `identity`), generated from the Java canonical and consumed by all four suites + the interop UNS suite. | JSON |
-| `docs/` | Cross-language design docs (`CREDENTIALS.md`, `PARAMETERS.md`, `TELEMETRY_STREAMING*.md`, `GGCOMMONS_RUST_PORT.md`, `SOUTHBOUND.md`) + the platform/UNS set under `docs/platform/` (`DESIGN-uns.md` + `UNS-CANONICAL-DESIGN.md` are the UNS source of truth). | Markdown |
+| `docs/` | Cross-language design docs (`CREDENTIALS.md`, `PARAMETERS.md`, `TELEMETRY_STREAMING*.md`, `EDGECOMMONS_RUST_PORT.md`, `SOUTHBOUND.md`) + the platform/UNS set under `docs/platform/` (`DESIGN-uns.md` + `UNS-CANONICAL-DESIGN.md` are the UNS source of truth). | Markdown |
 | `.github/workflows/` | Per-language CI + `interop`, `streaming`, `parameters-ssm`, `release`. | GitHub Actions |
 
 **Maintain four-way parity.** The libraries mirror each other intentionally. When changing public
@@ -52,7 +52,7 @@ exists to abstract these differences away so the same business logic runs everyw
 - **KUBERNETES** (`--platform KUBERNETES`): defaults to `--transport MQTT` and the `CONFIGMAP` config
   source (reads the component config from a mounted ConfigMap directory, with `..data`-swap hot-reload).
   The MQTT broker config is sourced from that same ConfigMap (no positional `--transport MQTT <path>`
-  needed), and identity resolves from the Downward API (`GGCOMMONS_THING_NAME` ▸ `POD_NAME`) when
+  needed), and identity resolves from the Downward API (`EDGECOMMONS_THING_NAME` ▸ `POD_NAME`) when
   `-t/--thing` is absent. Phase 1a–1d shipped (on `main`, v0.2.0): the KUBERNETES-native facilities —
   Prometheus metrics, stdout-JSON logging, HTTP health endpoint, and the `env` KeyProvider — are live
   in all four languages. (PVC-aware streaming on a StatefulSet is still a later addition; the k8s
@@ -104,7 +104,7 @@ exists to abstract these differences away so the same business logic runs everyw
 - **parameters** — `gg.parameters()`: offline-first externalized config (env / mountedDir / AWS SSM),
   reusing the credentials vault as an encrypted cache. Design in `docs/PARAMETERS.md`.
 - **streaming** — `gg.streams()`: high-rate telemetry streaming with an embedded durable (or in-memory)
-  buffer that drains to Kinesis/Kafka. Backed by the shared `ggstreamlog` core. Design in `docs/TELEMETRY_STREAMING.md`.
+  buffer that drains to Kinesis/Kafka. Backed by the shared `edgestreamlog` core. Design in `docs/TELEMETRY_STREAMING.md`.
 
 The newer subsystems (credentials, parameters, streaming) are **opt-in**: the accessor returns
 null/None/an empty service unless the matching config section is present (and, in Rust, the matching
@@ -120,8 +120,8 @@ mvn test -Dtest=ClassName#methodName   # single test
 mvn clean install            # install to local ~/.m2
 ```
 Compiles to Java 25; the Shade plugin produces a self-contained JAR for Greengrass deployment. The
-streaming subsystem uses the Java FFM (Panama) binding to `ggstreamlog` — run with
-`--enable-native-access=ALL-UNNAMED`. Live-infra tests (`GGCommonsTest`, `MessagingClientTest`) are
+streaming subsystem uses the Java FFM (Panama) binding to `edgestreamlog` — run with
+`--enable-native-access=ALL-UNNAMED`. Live-infra tests (`EdgeCommonsTest`, `MessagingClientTest`) are
 manual, not in the CI gate.
 
 ### Python library (`libs/python/`) — also see `libs/python/CLAUDE.md`
@@ -143,7 +143,7 @@ cargo clippy --all-targets
 Off-by-default cargo features (compose as needed): `greengrass`, `cloudwatch`, `streaming` /
 `streaming-kinesis` / `streaming-kafka`, `credentials` / `credentials-aws` / `credentials-pkcs11`,
 `parameters` / `parameters-aws`. Building the `greengrass` feature requires Linux/WSL — see
-`docs/GGCOMMONS_RUST_PORT.md` and the [[rust-greengrass-build-wsl]] note. `libs/rust-streamlog`
+`docs/EDGECOMMONS_RUST_PORT.md` and the [[rust-greengrass-build-wsl]] note. `libs/rust-streamlog`
 features: `kinesis`, `kafka`, `cabi` (C-ABI cdylib for the Java/Panama binding). Its `bench/` holds
 the perf harness (`examples/loadgen.rs`, Criterion benches) — see `libs/rust-streamlog/bench/README.md`.
 
@@ -157,13 +157,13 @@ npm run coverage     # vitest run --coverage
 
 ### Scaffolding CLI (`cli/`)
 ```bash
-pipx install ./cli           # or: python -m pip install ./cli  → gives `ggcommons` / `ggcommons-cli`
-ggcommons doctor             # check prerequisites (git, gdk, cargo, mvn, python3, aws)
-ggcommons create-component -n com.example.MyComponent -l PYTHON   # JAVA|PYTHON|RUST|TYPESCRIPT
-ggcommons create-component -i                                     # interactive wizard (prompts for inputs)
-ggcommons list-templates | validate | deploy | upgrade
+pipx install ./cli           # or: python -m pip install ./cli  → gives `edgecommons` / `edgecommons-cli`
+edgecommons doctor             # check prerequisites (git, gdk, cargo, mvn, python3, aws)
+edgecommons create-component -n com.example.MyComponent -l PYTHON   # JAVA|PYTHON|RUST|TYPESCRIPT
+edgecommons create-component -i                                     # interactive wizard (prompts for inputs)
+edgecommons list-templates | validate | deploy | upgrade
 ```
-Templates are **manifest-driven**: each ships a `ggcommons-template.json` declaring placeholder
+Templates are **manifest-driven**: each ships a `edgecommons-template.json` declaring placeholder
 `substitutions`, file `renames`, and optional **`conditional`** (platform-gated) artifacts, so adding
 a language needs a template, not CLI code. `create-component` supports an **interactive wizard**
 (`-i`, auto when `-n` is omitted on a TTY) and gates optional artifacts by `--platforms`
@@ -171,7 +171,7 @@ a language needs a template, not CLI code. `create-component` supports an **inte
 `--dep-source` (`local` path dep vs `registry`).
 
 ### Config schema (single source — `schema/`)
-The canonical config schema lives **only** in `schema/ggcommons-config-schema.json`. After editing
+The canonical config schema lives **only** in `schema/edgecommons-config-schema.json`. After editing
 it, run the sync script to copy it into each library; CI fails on drift.
 ```bash
 ./schema/sync-schema.sh           # (or schema/sync-schema.ps1) → copies into libs/{java,python,rust,ts}
@@ -209,7 +209,7 @@ All of these run from the dev machine — none is "manual / can't automate":
 | Path | Where | Infra |
 |------|-------|-------|
 | Per-language unit/integration suites | this machine | Java (`mvn verify`, JaCoCo 90%), Python (`pytest`), Rust (`cargo test`, standalone — **no `greengrass` feature on Windows**), TS (`vitest` + coverage). Java toolchain is at `C:\Users\breis\tools\{jdk,maven}` (not on PATH). |
-| **`--platform HOST`** (dual-MQTT) end-to-end | this machine | EMQX `localhost:1883` (plaintext) / `8883` (mTLS) + floci `localhost:4566`, both in Docker (`ggcommons-emqx`, `ggstreamlog-floci`). Restart them before a HOST smoke — they crash under heavy parallel-build load. |
+| **`--platform HOST`** (dual-MQTT) end-to-end | this machine | EMQX `localhost:1883` (plaintext) / `8883` (mTLS) + floci `localhost:4566`, both in Docker (`edgecommons-emqx`, `edgestreamlog-floci`). Restart them before a HOST smoke — they crash under heavy parallel-build load. |
 | Rust **`greengrass` feature** build/tests (Linux-only) | **WSL** (Ubuntu, `cargo`+`cmake`+`cc`) | `wsl.exe bash -lc`, `CARGO_TARGET_DIR=/tmp`; the native GG SDK can't compile on Windows. |
 | **`--platform GREENGRASS`** (IPC) on-device | **lab-5950x** (`ssh marc@192.168.1.229`, passwordless sudo; thing `lab-5950x`, us-east-1) | real Greengrass nucleus + `greengrass-cli` 2.17.0, Java 25. `gdk` is **not** installed → build the jar here, copy over, deploy with `greengrass-cli deployment create --recipeDir … --artifactDir … --merge "<Comp>=<ver>"` (`--remove` to tear down). Cloud deployments via `aws greengrassv2` (account 162499689067). |
 
@@ -220,7 +220,7 @@ Always unsubscribe + handle SIGTERM before exit, or a run leaks subscriptions/th
 - **Maintain four-way parity.** The same config schema, CLI flags, subsystem boundaries, and message
   wire format apply to all four libraries. Java is canonical. Don't diverge an API in one language
   without the matching change (or an explicit decision) in the others.
-- **Construct via builders**, not raw constructors (`GGCommonsBuilder` / `GgCommonsBuilder`,
+- **Construct via builders**, not raw constructors (`EdgeCommonsBuilder` / `EdgeCommonsBuilder`,
   `MessageBuilder`, `MetricBuilder`, …). `MetricBuilder` replaces the deprecated direct `Metric` constructor.
 - **Backward compatibility.** Builders are the construction path in all four libs. Legacy direct
   constructors coexist **only in Java** (deprecated, still functional); **there is no `init()`
@@ -231,8 +231,8 @@ Always unsubscribe + handle SIGTERM before exit, or a run leaks subscriptions/th
   injection) provide a substitutable seam. **Java and Python do not** have service interfaces or a
   `ServiceRegistry` — test against the concrete services / process-global statics
   (`MessagingClient`, `MetricEmitter`), whose state can leak across tests unless reset. (Older
-  Python docs describing `ggcommons/di/` + `ggcommons/interfaces/` are wrong — those never shipped.)
-- **Edit the schema in one place.** Change `schema/ggcommons-config-schema.json`, then run
+  Python docs describing `edgecommons/di/` + `edgecommons/interfaces/` are wrong — those never shipped.)
+- **Edit the schema in one place.** Change `schema/edgecommons-config-schema.json`, then run
   `schema/sync-schema.sh`. Never hand-edit the per-library copies.
 - **Python tests are pytest-style** (`Test*` classes, `test_*` functions) — the suite was migrated
   off `unittest`; don't add new `unittest.TestCase` subclasses.
@@ -280,7 +280,7 @@ Follow this for **every** code change, in the language(s) you touched:
    Run the gate locally before pushing:
    - **Java**: `mvn verify` (JaCoCo 90% BUNDLE gate).
    - **TS**: `npm run coverage` (vitest thresholds: stmts/lines 90, funcs 85, branches 80).
-   - **Python**: `python -m pytest -m "not slow and not integration and not aws" --cov=ggcommons --cov-fail-under=90`
+   - **Python**: `python -m pytest -m "not slow and not integration and not aws" --cov=edgecommons --cov-fail-under=90`
      (omit/exclude list in `libs/python/.coveragerc`).
    - **Rust**: `cargo llvm-cov --features credentials,streaming,metrics-prometheus,parameters --ignore-filename-regex 'testutil\.rs' --fail-under-lines 90`
      (needs `cargo-llvm-cov` + `llvm-tools`; excludes test-support + the AWS/HSM-gated infra not built here).

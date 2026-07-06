@@ -1,14 +1,14 @@
 ---
 title: Components & lifecycle
-description: Build the GGCommons runtime with the builder, reach subsystems through typed accessors, and let the library own graceful shutdown.
+description: Build the EdgeCommons runtime with the builder, reach subsystems through typed accessors, and let the library own graceful shutdown.
 sidebar:
   order: 1
 ---
 
 import { Tabs, TabItem, Aside } from "@astrojs/starlight/components";
 
-Every GGCommons component is built around one runtime object: `GGCommons` (Rust spells it
-`GgCommons`). You construct it once at startup from the standard CLI args, hold it for the lifetime
+Every EdgeCommons component is built around one runtime object: `EdgeCommons` (Rust spells it
+`EdgeCommons`). You construct it once at startup from the standard CLI args, hold it for the lifetime
 of the process, and reach every subsystem through it — messaging, config, metrics, heartbeat,
 health, and the opt-in credentials, parameters, and streaming services. Teardown is owned by the
 library, not by your code.
@@ -19,20 +19,20 @@ This guide covers the three things you do with that object: **build it**, **use 
 
 ## Build the runtime
 
-Always construct the runtime through the fluent **builder** — `GGCommonsBuilder`
-(`GgCommonsBuilder` in Rust). The pattern is the same everywhere: name the component, hand it the
+Always construct the runtime through the fluent **builder** — `EdgeCommonsBuilder`
+(`EdgeCommonsBuilder` in Rust). The pattern is the same everywhere: name the component, hand it the
 CLI args, then `build()`.
 
 <Tabs syncKey="lang">
 <TabItem label="Java">
 
 ```java
-import com.mbreissi.ggcommons.GGCommons;
-import com.mbreissi.ggcommons.GGCommonsBuilder;
+import com.mbreissi.edgecommons.EdgeCommons;
+import com.mbreissi.edgecommons.EdgeCommonsBuilder;
 
 public static void main(String[] args) {
     // Use the FULL component name; pass argv straight through (already app-stripped).
-    GGCommons gg = GGCommonsBuilder.create("com.mbreissi.greengrass.JavaComponentSkeleton")
+    EdgeCommons gg = EdgeCommonsBuilder.create("com.mbreissi.edgecommons.JavaComponentSkeleton")
             .withArgs(args)
             .build();
 
@@ -44,10 +44,10 @@ public static void main(String[] args) {
 <TabItem label="Python">
 
 ```python
-from ggcommons.ggcommons_builder import GGCommonsBuilder
+from edgecommons.edgecommons_builder import EdgeCommonsBuilder
 
 gg = (
-    GGCommonsBuilder.create("ggcommons_python")
+    EdgeCommonsBuilder.create("edgecommons_python")
     .with_args([
         "-c", "FILE", "config.json",
         "--platform", "HOST", "--transport", "MQTT", "messaging.json",
@@ -61,11 +61,11 @@ gg = (
 <TabItem label="Rust">
 
 ```rust
-use ggcommons::prelude::*;
+use edgecommons::prelude::*;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let gg = GgCommonsBuilder::new("com.example.SkeletonComponent")
+    let gg = EdgeCommonsBuilder::new("com.example.SkeletonComponent")
         .args(std::env::args_os()) // argv INCLUDES the program name
         .build()
         .await?;
@@ -79,12 +79,12 @@ async fn main() -> anyhow::Result<()> {
 <TabItem label="TypeScript">
 
 ```typescript
-import { GGCommonsBuilder } from "@edgecommons/ggcommons";
+import { EdgeCommonsBuilder } from "@edgecommons/edgecommons";
 
-const gg = await new GGCommonsBuilder("com.example.Lc")
+const gg = await new EdgeCommonsBuilder("com.example.Lc")
   .args([
     "--platform", "HOST", "--transport", "MQTT", "messaging.json",
-    "-c", "ENV", "GGC_LIFECYCLE_CFG", "-t", "lc-thing",
+    "-c", "ENV", "EDGECOMMONS_LIFECYCLE_CFG", "-t", "lc-thing",
   ]) // argv WITHOUT the node/script prefix (process.argv.slice(2))
   .build();
 ```
@@ -108,7 +108,7 @@ A few builder details worth knowing:
 - **`build()` is async only in Rust and TypeScript** (it connects messaging before returning).
   Java and Python `build()` are synchronous.
 - **Construction is builder-first in every language.** Java additionally keeps three deprecated
-  public `GGCommons(...)` constructors for back-compat, and Python keeps a public `GGCommons(...)`
+  public `EdgeCommons(...)` constructors for back-compat, and Python keeps a public `EdgeCommons(...)`
   constructor — but the builder is the recommended path and Rust/TS are builder-only. There is **no**
   `init()` facade in any language.
 - **A null component name is rejected** — Java `build()` throws `IllegalStateException`; Python
@@ -191,7 +191,7 @@ const metrics   = gg.metrics();       // MetricService
 - **Python `get_messaging()` returns the `MessagingClient` _class_, not an instance** — its
   operations are static, so you call them on the returned handle directly.
 - **`messaging()` behaves differently when no transport is wired.** Java and Python return the
-  concrete handle; **Rust returns `Result` (`Err` if none)** and **TypeScript throws** `GgError`.
+  concrete handle; **Rust returns `Result` (`Err` if none)** and **TypeScript throws** `EdgeCommonsError`.
   There is no Java `getConfig()` — config is reached via `getConfigManager()`; Rust/TS `config()`
   returns an atomic snapshot.
 </Aside>
@@ -355,7 +355,7 @@ traffic away from the instance immediately.
 ## Lifecycle & graceful shutdown
 
 The most important rule on this page: **the library owns the termination signal.** When the
-Greengrass Nucleus or the kubelet stops your component, GGCommons catches the signal, flips
+Greengrass Nucleus or the kubelet stops your component, EdgeCommons catches the signal, flips
 `/readyz` to 503, unsubscribes every tracked subscription, and bounded-closes
 messaging/streams/heartbeat/vault before the process exits.
 
@@ -383,7 +383,7 @@ gg.shutdown();   // idempotent (guarded by an atomic CAS)
 ```python
 # The library installs SIGTERM and SIGINT handlers (main thread only) that run shutdown()
 # then sys.exit(0). Prefer the context manager so teardown is automatic:
-with GGCommonsBuilder.create("ggcommons_python").with_args(args).build() as gg:
+with EdgeCommonsBuilder.create("edgecommons_python").with_args(args).build() as gg:
     ...  # business logic; gg.shutdown() runs on exit
 
 # Or call it explicitly (also idempotent):
@@ -401,7 +401,7 @@ gg.shutdown()
 // so YOUR app awaits that future (instead of hand-rolling `tokio::signal`) and
 // then returns/drops.
 
-let gg = GgCommonsBuilder::new("com.example.SkeletonComponent")
+let gg = EdgeCommonsBuilder::new("com.example.SkeletonComponent")
     .args(std::env::args_os())
     .build()
     .await?;
@@ -445,7 +445,7 @@ on the builder.
 <TabItem label="Java">
 
 ```java
-GGCommons gg = GGCommonsBuilder.create("com.example.MyComponent")
+EdgeCommons gg = EdgeCommonsBuilder.create("com.example.MyComponent")
         .withArgs(args)
         .receiveOwnMessages(false)   // honored on the IPC transport
         .build();
@@ -456,7 +456,7 @@ GGCommons gg = GGCommonsBuilder.create("com.example.MyComponent")
 
 ```python
 gg = (
-    GGCommonsBuilder.create("com.example.MyComponent")
+    EdgeCommonsBuilder.create("com.example.MyComponent")
     .with_args(args)
     .receive_own_messages(False)   # honored on the IPC transport
     .build()
@@ -467,7 +467,7 @@ gg = (
 <TabItem label="Rust">
 
 ```rust
-let gg = GgCommonsBuilder::new("com.example.MyComponent")
+let gg = EdgeCommonsBuilder::new("com.example.MyComponent")
     .args(std::env::args_os())
     .receive_own_messages(false)   // NO-OP in Rust: the GG Rust SDK has no IPC
     .build()                       // ReceiveMode, so build() logs a warning and
@@ -478,7 +478,7 @@ let gg = GgCommonsBuilder::new("com.example.MyComponent")
 <TabItem label="TypeScript">
 
 ```typescript
-const gg = await new GGCommonsBuilder("com.example.MyComponent")
+const gg = await new EdgeCommonsBuilder("com.example.MyComponent")
   .args(process.argv.slice(2))
   .receiveOwnMessages(false)   // honored on IPC; MQTT uses local-broker semantics
   .build();

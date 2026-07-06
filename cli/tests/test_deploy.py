@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from ggcommons_cli.commands.deploy import Deploy
+from edgecommons_cli.commands.deploy import Deploy
 
 
 def test_read_name_version(tmp_path):

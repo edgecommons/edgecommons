@@ -2,7 +2,7 @@
 
 This directory holds content **destined for other repositories** in the `edgecommons` GitHub org,
 staged here so it can be reviewed in one place and pushed the moment the org exists. None of it is
-part of the `ggcommons` library or its build. See `docs/ECOSYSTEM.md` for the full plan.
+part of the `edgecommons` library or its build. See `docs/ECOSYSTEM.md` for the full plan.
 
 | Staging path | Target repo | Purpose |
 |--------------|-------------|---------|

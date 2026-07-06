@@ -17,17 +17,17 @@ from types import SimpleNamespace
 import paho.mqtt.client as mqtt
 import pytest
 
-import ggcommons.messaging.providers.standalone_provider as sp
-from ggcommons.messaging.providers.standalone_provider import StandaloneProvider, _BrokerChannel
-from ggcommons.messaging.messaging_config import (
+import edgecommons.messaging.providers.standalone_provider as sp
+from edgecommons.messaging.providers.standalone_provider import StandaloneProvider, _BrokerChannel
+from edgecommons.messaging.messaging_config import (
     MessagingConfiguration,
     MessagingConfigData,
     LocalMqttConfig,
     IoTCoreConfig,
     CredentialsConfig,
 )
-from ggcommons.messaging.message import Message, MessageHeader
-from ggcommons.messaging.message_builder import MessageBuilder
+from edgecommons.messaging.message import Message, MessageHeader
+from edgecommons.messaging.message_builder import MessageBuilder
 from awsiot.greengrasscoreipc.model import QOS
 
 
@@ -204,7 +204,7 @@ class TestInitAndConnect:
         cfg = _local_only_config()
         cfg.messaging.local.client_id = None
         prov = StandaloneProvider(cfg, None)
-        assert prov.get_native_client()["local"].client_id == "ggcommons"
+        assert prov.get_native_client()["local"].client_id == "edgecommons"
         prov.disconnect()
 
     def test_local_username_password_set(self):
@@ -371,7 +371,7 @@ class TestRequestReply:
         prov = StandaloneProvider(_local_only_config(), "t")
         iou = prov.request("svc/req", _msg("Q", {"q": 1}))
         reply_topic = iou.get_user_data()
-        assert reply_topic.startswith("ggcommons/reply-")
+        assert reply_topic.startswith("edgecommons/reply-")
         # the request was published
         client = prov.get_native_client()["local"]
         assert any(t == "svc/req" for (t, _p, _q) in client.published)
@@ -388,13 +388,13 @@ class TestRequestReply:
     def test_reply_uses_reply_to_and_correlation(self):
         prov = StandaloneProvider(_local_only_config(), "t")
         request = _msg("Req", {"q": 1})
-        request.get_header().reply_to = "ggcommons/reply-xyz"
+        request.get_header().reply_to = "edgecommons/reply-xyz"
         request.set_correlation_id("corr-123")
         reply = _msg("Resp", {"a": 2})
         prov.reply(request, reply)
         client = prov.get_native_client()["local"]
         topic, payload, _qos = client.published[-1]
-        assert topic == "ggcommons/reply-xyz"
+        assert topic == "edgecommons/reply-xyz"
         assert json.loads(payload)["header"]["correlation_id"] == "corr-123"
         prov.disconnect()
 
@@ -444,9 +444,9 @@ class TestIotCoreWrappers:
         assert any(t == "iot/req" and q == 1 for (t, _p, q) in iot.published)
 
         request = _msg("Req", {})
-        request.get_header().reply_to = "ggcommons/reply-iot"
+        request.get_header().reply_to = "edgecommons/reply-iot"
         prov.reply_to_iot_core(request, _msg("Resp", {"a": 1}))
-        assert any(t == "ggcommons/reply-iot" for (t, _p, _q) in iot.published)
+        assert any(t == "edgecommons/reply-iot" for (t, _p, _q) in iot.published)
 
         prov.cancel_request_from_iot_core(iou)
         assert reply_topic not in prov._response_ious

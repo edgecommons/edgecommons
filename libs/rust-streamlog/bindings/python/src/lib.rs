@@ -1,13 +1,13 @@
-//! PyO3 native module (`ggstreamlog_native`) — binds the `ggstreamlog` telemetry-streaming core
-//! into Python as real native classes. Wrapped by the friendly `ggcommons.streaming` package.
+//! PyO3 native module (`edgestreamlog_native`) — binds the `edgestreamlog` telemetry-streaming core
+//! into Python as real native classes. Wrapped by the friendly `edgecommons.streaming` package.
 //!
-//! Exposes `StreamService`/`StreamHandle`/`StreamStats` + the `GgStreamError` exception (first arg
+//! Exposes `StreamService`/`StreamHandle`/`StreamStats` + the `EdgeStreamError` exception (first arg
 //! is the status code), and forwards the core's `tracing` events into Python's `logging`.
 
 use std::sync::{Arc, Once};
 
-use ggstreamlog::export::{CallbackSink, ExportRecord, SendOutcome};
-use ggstreamlog::{
+use edgestreamlog::export::{CallbackSink, ExportRecord, SendOutcome};
+use edgestreamlog::{
     EmbeddedLog, Record, ServiceStats, Sink, SinkConfig, StreamService as CoreService,
     StreamingConfig,
 };
@@ -16,10 +16,10 @@ use pyo3::exceptions::PyException;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyList, PyTuple};
 
-create_exception!(ggstreamlog_native, GgStreamError, PyException);
+create_exception!(edgestreamlog_native, EdgeStreamError, PyException);
 
-fn error_code(e: &ggstreamlog::GgStreamError) -> i32 {
-    use ggstreamlog::GgStreamError as E;
+fn error_code(e: &edgestreamlog::EdgeStreamError) -> i32 {
+    use edgestreamlog::EdgeStreamError as E;
     match e {
         E::Config(_) => 1,
         E::Io(_) => 2,
@@ -30,15 +30,15 @@ fn error_code(e: &ggstreamlog::GgStreamError) -> i32 {
     }
 }
 
-fn to_pyerr(e: ggstreamlog::GgStreamError) -> PyErr {
-    GgStreamError::new_err((error_code(&e), e.to_string()))
+fn to_pyerr(e: edgestreamlog::EdgeStreamError) -> PyErr {
+    EdgeStreamError::new_err((error_code(&e), e.to_string()))
 }
 
 fn err(code: i32, message: impl Into<String>) -> PyErr {
-    GgStreamError::new_err((code, message.into()))
+    EdgeStreamError::new_err((code, message.into()))
 }
 
-/// A snapshot of one stream's buffer + export progress (mirrors `ggsl_stats_t`).
+/// A snapshot of one stream's buffer + export progress (mirrors `esl_stats_t`).
 #[pyclass(get_all)]
 struct StreamStats {
     appended_total: u64,
@@ -118,7 +118,7 @@ impl StreamService {
         // needing a GIL token (the factory runs under `py.detach`, GIL released).
         let cb = Arc::new(callback);
         let factory =
-            move |_name: &str, sc: &SinkConfig| -> ggstreamlog::Result<Option<Box<dyn Sink>>> {
+            move |_name: &str, sc: &SinkConfig| -> edgestreamlog::Result<Option<Box<dyn Sink>>> {
                 match sc {
                     SinkConfig::Callback { .. } => {
                         let cb = Arc::clone(&cb);
@@ -128,7 +128,7 @@ impl StreamService {
                             }));
                         Ok(Some(Box::new(sink)))
                     }
-                    _ => ggstreamlog::service::default_sink_factory_pub_py(sc),
+                    _ => edgestreamlog::service::default_sink_factory_pub_py(sc),
                 }
             };
         let svc = py
@@ -305,11 +305,11 @@ fn install_log_forwarding() {
 }
 
 #[pymodule]
-fn ggstreamlog_native(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn edgestreamlog_native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<StreamService>()?;
     m.add_class::<StreamHandle>()?;
     m.add_class::<StreamStats>()?;
-    m.add("GgStreamError", m.py().get_type::<GgStreamError>())?;
+    m.add("EdgeStreamError", m.py().get_type::<EdgeStreamError>())?;
     m.add_function(wrap_pyfunction!(install_log_forwarding, m)?)?;
     install_log_forwarding();
     Ok(())

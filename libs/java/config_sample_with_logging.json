@@ -8,14 +8,14 @@
       "filePath": "/var/log/{ComponentName}-{ThingName}.log"
     },
     "loggers": {
-      "com.mbreissi.ggcommons": "DEBUG",
-      "com.mbreissi.ggcommons.messaging": "TRACE",
+      "com.mbreissi.edgecommons": "DEBUG",
+      "com.mbreissi.edgecommons.messaging": "TRACE",
       "org.apache.http": "WARN"
     }
   },
   "tags": {
     "Environment": "Development",
-    "Application": "GGCommons",
+    "Application": "EdgeCommons",
     "Region": "us-west-2"
   },
   "heartbeat": {
@@ -24,7 +24,7 @@
   },
   "metricEmission": {
     "target": "cloudwatch",
-    "namespace": "GGCommons/{Environment}",
+    "namespace": "EdgeCommons/{Environment}",
     "dimensions": {
       "ThingName": "{ThingName}",
       "ComponentName": "{ComponentName}",

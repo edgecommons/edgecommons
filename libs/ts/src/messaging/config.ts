@@ -3,7 +3,7 @@
  *
  * Loaded from the `--transport MQTT <path>` JSON file. On the `KUBERNETES` platform the path is
  * optional: under `CONFIGMAP` + MQTT it defaults to the resolved ConfigMap file
- * (`/etc/ggcommons/config.json` by default), so a single mounted ConfigMap file doubles as both this
+ * (`/etc/edgecommons/config.json` by default), so a single mounted ConfigMap file doubles as both this
  * messaging-config (read via the `messaging` wrapper key below) and the component config (FR-MSG-1).
  *
  * `messaging.local` is required; `messaging.iotCore` is optional — its presence selects single-broker
@@ -22,7 +22,7 @@
  */
 import { readFile } from "fs/promises";
 
-import { GgError } from "../errors";
+import { EdgeCommonsError } from "../errors";
 
 /** Local-broker or IoT Core credentials. */
 export interface Credentials {
@@ -72,7 +72,7 @@ export interface MessagingConfig {
 /** Resolve a broker's host (prefers `host`, then `endpoint`). */
 export function resolvedHost(broker: BrokerConfig): string {
   const h = broker.host ?? broker.endpoint;
-  if (!h) throw GgError.messaging("broker config has neither 'host' nor 'endpoint'");
+  if (!h) throw EdgeCommonsError.messaging("broker config has neither 'host' nor 'endpoint'");
   return h;
 }
 
@@ -82,7 +82,7 @@ function parseBroker(raw: unknown, defaultPort: number): BrokerConfig {
     host: typeof o.host === "string" ? o.host : undefined,
     endpoint: typeof o.endpoint === "string" ? o.endpoint : undefined,
     port: typeof o.port === "number" ? o.port : defaultPort,
-    clientId: typeof o.clientId === "string" ? o.clientId : `ggcommons-ts-${defaultPort}`,
+    clientId: typeof o.clientId === "string" ? o.clientId : `edgecommons-ts-${defaultPort}`,
     credentials: o.credentials as Credentials | undefined,
   };
 }
@@ -93,17 +93,17 @@ export async function loadMessagingConfig(path: string): Promise<MessagingConfig
   try {
     text = await readFile(path, "utf8");
   } catch (e) {
-    throw GgError.io(`could not read messaging config '${path}': ${String(e)}`);
+    throw EdgeCommonsError.io(`could not read messaging config '${path}': ${String(e)}`);
   }
   let doc: Record<string, unknown>;
   try {
     doc = JSON.parse(text) as Record<string, unknown>;
   } catch (e) {
-    throw GgError.json(`messaging config '${path}' is not valid JSON: ${String(e)}`);
+    throw EdgeCommonsError.json(`messaging config '${path}' is not valid JSON: ${String(e)}`);
   }
   const messaging = (doc.messaging ?? {}) as Record<string, unknown>;
   if (!messaging.local) {
-    throw GgError.messaging("messaging config must define 'messaging.local'");
+    throw EdgeCommonsError.messaging("messaging config must define 'messaging.local'");
   }
   return {
     local: parseBroker(messaging.local, 1883),
@@ -121,13 +121,13 @@ export function parseLwt(raw: unknown): LwtConfig {
   const o = (raw ?? {}) as Record<string, unknown>;
   const topic = typeof o.topic === "string" ? o.topic : "";
   if (topic === "") {
-    throw GgError.messaging("messaging.lwt.topic is required when an lwt section is present");
+    throw EdgeCommonsError.messaging("messaging.lwt.topic is required when an lwt section is present");
   }
   let qos: 0 | 1 = 1;
   if (o.qos !== undefined) {
     const n = typeof o.qos === "number" && Number.isInteger(o.qos) ? o.qos : NaN;
     if (n !== 0 && n !== 1) {
-      throw GgError.messaging(`messaging.lwt.qos must be 0 or 1 (got ${String(o.qos)})`);
+      throw EdgeCommonsError.messaging(`messaging.lwt.qos must be 0 or 1 (got ${String(o.qos)})`);
     }
     qos = n as 0 | 1;
   }

@@ -1,7 +1,7 @@
 //! # EventsFacade — the `events()` publish facade
 //!
 //! **One-liner purpose**: Operator events & alarms on the `evt` class (DESIGN-class-facades §2.2,
-//! D8), mirroring the Java canonical `com.mbreissi.ggcommons.facades.EventsFacade`.
+//! D8), mirroring the Java canonical `com.mbreissi.edgecommons.facades.EventsFacade`.
 //!
 //! This is the facade that stops the historical `evt` drift (DESIGN-class-facades §1.2): it makes
 //! the `evt/{severity}/{type}` channel and the body shape non-negotiable by **deriving the channel
@@ -18,7 +18,7 @@ use serde_json::{Map, Value};
 
 use crate::config::model::Config;
 use crate::config::template::sanitize;
-use crate::error::{GgError, Result};
+use crate::error::{EdgeCommonsError, Result};
 use crate::messaging::message::MessageBuilder;
 use crate::messaging::{MessagingService, Qos};
 use crate::uns::{Uns, UnsClass};
@@ -31,8 +31,8 @@ pub const EVT_MESSAGE_NAME: &str = "evt";
 pub const EVT_MESSAGE_VERSION: &str = "1.0";
 
 /// The `events()` publish facade bound to one instance — see the [module docs](self). Obtain via
-/// [`crate::GgInstance::events`] (or the `main`-instance convenience
-/// [`crate::GgCommons::events`]).
+/// [`crate::EdgeCommonsInstance::events`] (or the `main`-instance convenience
+/// [`crate::EdgeCommons::events`]).
 #[derive(Clone)]
 pub struct EventsFacade {
     config: Arc<Config>,
@@ -45,7 +45,7 @@ pub struct EventsFacade {
 }
 
 impl EventsFacade {
-    /// Library-internal constructor (see the [`crate::GgInstance::events`] wiring).
+    /// Library-internal constructor (see the [`crate::EdgeCommonsInstance::events`] wiring).
     pub(crate) fn new(
         config: Arc<Config>,
         instance_id: String,
@@ -59,10 +59,10 @@ impl EventsFacade {
     /// Returns a channel-bound view for a per-call routing override (LOCAL or NORTHBOUND).
     ///
     /// # Errors
-    /// [`GgError::Facade`] when `channel` is a stream channel.
+    /// [`EdgeCommonsError::Facade`] when `channel` is a stream channel.
     pub fn via(&self, channel: Channel) -> Result<EventsFacade> {
         if channel.is_stream() {
-            return Err(GgError::Facade(
+            return Err(EdgeCommonsError::Facade(
                 "events() does not support the stream channel - events are low-rate \
                  control-plane, not bulk telemetry (use data() for streamed telemetry)"
                     .to_string(),
@@ -152,7 +152,7 @@ impl EventsFacade {
     ///   active=<active>`); `None` for a plain [`Self::emit`] (no `alarm`/`active` fields).
     ///
     /// # Errors
-    /// [`GgError::Facade`] when `event_type` is empty.
+    /// [`EdgeCommonsError::Facade`] when `event_type` is empty.
     pub fn build_body(
         &self,
         severity: Severity,
@@ -162,7 +162,7 @@ impl EventsFacade {
         active: Option<bool>,
     ) -> Result<Value> {
         if event_type.is_empty() {
-            return Err(GgError::Facade(
+            return Err(EdgeCommonsError::Facade(
                 "evt requires a non-empty type (it is a channel token and the event's kind)"
                     .to_string(),
             ));
@@ -187,10 +187,10 @@ impl EventsFacade {
     /// The `evt/{severity}/{type}` channel derived from the body's own severity + type.
     ///
     /// # Errors
-    /// [`GgError::Facade`] when `event_type` is empty.
+    /// [`EdgeCommonsError::Facade`] when `event_type` is empty.
     pub fn channel_for(severity: Severity, event_type: &str) -> Result<String> {
         if event_type.is_empty() {
-            return Err(GgError::Facade("evt requires a non-empty type".to_string()));
+            return Err(EdgeCommonsError::Facade("evt requires a non-empty type".to_string()));
         }
         Ok(format!("{}/{}", severity.wire(), sanitize(event_type)))
     }
@@ -234,7 +234,7 @@ impl EventsFacade {
 
     fn messaging(&self) -> Result<&Arc<dyn MessagingService>> {
         self.messaging.as_ref().ok_or_else(|| {
-            GgError::Messaging(
+            EdgeCommonsError::Messaging(
                 "messaging is not available: events() requires a wired messaging transport"
                     .to_string(),
             )
@@ -314,7 +314,7 @@ mod tests {
         let f = facade(messaging);
         assert!(matches!(
             f.emit(Severity::Info, "", None, None).await,
-            Err(GgError::Facade(_))
+            Err(EdgeCommonsError::Facade(_))
         ));
     }
 

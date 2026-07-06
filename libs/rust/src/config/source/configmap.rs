@@ -5,8 +5,8 @@
 //! FR-CFG-1..5). The default config source on the `KUBERNETES` platform.
 //!
 //! ## Overview
-//! Selected via `-c CONFIGMAP [mountDir] [key]`; defaults are mount dir `/etc/ggcommons` and key
-//! `config.json` (so a pod with a ConfigMap mounted at `/etc/ggcommons` loads `config.json` with no
+//! Selected via `-c CONFIGMAP [mountDir] [key]`; defaults are mount dir `/etc/edgecommons` and key
+//! `config.json` (so a pod with a ConfigMap mounted at `/etc/edgecommons` loads `config.json` with no
 //! `-c` flag). It is the canonical analogue of [`super::file::FileConfigSource`] — same
 //! load/validate/reload seam — but it watches the mount *directory* instead of the file inode.
 //!
@@ -56,10 +56,10 @@ use serde_json::Value;
 use tokio::sync::mpsc::{self, UnboundedReceiver};
 
 use super::ConfigSource;
-use crate::error::{GgError, Result};
+use crate::error::{EdgeCommonsError, Result};
 
 /// Default ConfigMap mount directory when `-c CONFIGMAP` is given no path argument.
-pub const DEFAULT_MOUNT_DIR: &str = "/etc/ggcommons";
+pub const DEFAULT_MOUNT_DIR: &str = "/etc/edgecommons";
 /// Default config key (file name within the mount) when none is given.
 pub const DEFAULT_KEY: &str = "config.json";
 /// The kubelet's atomic-swap symlink; its presence indicates a whole-volume (reloadable) mount.
@@ -80,7 +80,7 @@ const POLL_INTERVAL: Duration = Duration::from_millis(500);
 ///
 /// # Examples
 /// ```
-/// use ggcommons::config::source::configmap::is_projection_artifact;
+/// use edgecommons::config::source::configmap::is_projection_artifact;
 /// assert!(is_projection_artifact("..data"));
 /// assert!(is_projection_artifact("..2026_06_25_12_00_00.123456789"));
 /// assert!(is_projection_artifact("..data_tmp"));
@@ -111,13 +111,13 @@ impl ConfigMapConfigSource {
     /// - `key`: the config file name within the mount, or `None` for [`DEFAULT_KEY`].
     ///
     /// # Errors
-    /// Returns [`GgError::Config`] if `key` is a kubelet projection artifact (a `..`/`.` entry),
+    /// Returns [`EdgeCommonsError::Config`] if `key` is a kubelet projection artifact (a `..`/`.` entry),
     /// which must never be read as config (FR-CFG-4).
     pub fn new(mount_dir: Option<PathBuf>, key: Option<String>) -> Result<Self> {
         let mount_dir = mount_dir.unwrap_or_else(|| PathBuf::from(DEFAULT_MOUNT_DIR));
         let key = key.unwrap_or_else(|| DEFAULT_KEY.to_string());
         if is_projection_artifact(&key) {
-            return Err(GgError::Config(format!(
+            return Err(EdgeCommonsError::Config(format!(
                 "ConfigMap key must not be a kubelet projection artifact (a '..'/'.' entry): {key}"
             )));
         }
@@ -173,13 +173,13 @@ impl ConfigSource for ConfigMapConfigSource {
     async fn load(&self) -> Result<Value> {
         // Initial load fails loudly (parity with FILE), unlike a reload (reject-and-keep).
         let bytes = tokio::fs::read(&self.config_file).await.map_err(|e| {
-            GgError::Config(format!(
+            EdgeCommonsError::Config(format!(
                 "Error reading ConfigMap configuration '{}': {e}",
                 self.config_file.display()
             ))
         })?;
         serde_json::from_slice(&bytes).map_err(|e| {
-            GgError::Config(format!(
+            EdgeCommonsError::Config(format!(
                 "Error parsing ConfigMap configuration '{}': {e}",
                 self.config_file.display()
             ))
@@ -197,7 +197,7 @@ impl ConfigSource for ConfigMapConfigSource {
         let stop = self.stop.clone();
 
         let handle = std::thread::Builder::new()
-            .name("ggcommons-configmap-watch".into())
+            .name("edgecommons-configmap-watch".into())
             .spawn(move || watch_loop(dir, config_file, out_tx, stop))
             .ok()?;
 
@@ -258,7 +258,7 @@ fn watch_loop(
 
         match inner_loop(&ev_rx, &config_file, &out_tx, &stop) {
             LoopExit::Stopped => return,
-            LoopExit::ReceiverGone => return, // GgCommons dropped — stop quietly.
+            LoopExit::ReceiverGone => return, // EdgeCommons dropped — stop quietly.
             LoopExit::Rearm => {
                 tracing::warn!(dir = %dir.display(), "ConfigMap directory watch lost; re-arming");
                 backoff(&stop);
@@ -379,7 +379,7 @@ mod tests {
 
     #[test]
     fn applies_default_mount_dir_and_key_when_none() {
-        // Defaults: /etc/ggcommons + config.json. The dir need not exist to construct.
+        // Defaults: /etc/edgecommons + config.json. The dir need not exist to construct.
         let source = ConfigMapConfigSource::new(None, None).unwrap();
         assert_eq!(source.config_file, Path::new(DEFAULT_MOUNT_DIR).join(DEFAULT_KEY));
         assert_eq!(source.key, DEFAULT_KEY);

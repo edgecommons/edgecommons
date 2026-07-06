@@ -4,7 +4,7 @@
  *
  * Aggregates each registered component's `docs/` into the Starlight site at
  * `src/content/docs/components/<name>/`, so the one EdgeCommons docs site carries both the
- * `ggcommons` library docs and every component's user/deployer guide.
+ * `edgecommons` library docs and every component's user/deployer guide.
  *
  * - Component list comes from the registry (`ecosystem/staging/registry/components.json`,
  *   committed in this repo; override with REGISTRY_JSON).
@@ -189,9 +189,9 @@ sidebar:
   order: 0
 ---
 
-The EdgeCommons ecosystem ships ready-to-deploy components built on the \`ggcommons\` library —
+The EdgeCommons ecosystem ships ready-to-deploy components built on the \`edgecommons\` library —
 protocol **adapters**, edge **processors**, and northbound **sinks**. Each component's operator /
-integrator guide lives below; scaffold your own with \`ggcommons create-component\`.
+integrator guide lives below; scaffold your own with \`edgecommons create-component\`.
 
 | Component | Language | Protocol / Category | Platforms |
 |-----------|----------|---------------------|-----------|

@@ -11,10 +11,10 @@ import tempfile
 import os
 
 from awsiot.greengrasscoreipc.model import QOS
-from ggcommons.messaging.message import Message
-from ggcommons.ggcommons_builder import GGCommonsBuilder
-from ggcommons import MessagingClient
-from ggcommons.metrics.metric_emitter import MetricEmitter
+from edgecommons.messaging.message import Message
+from edgecommons.edgecommons_builder import EdgeCommonsBuilder
+from edgecommons import MessagingClient
+from edgecommons.metrics.metric_emitter import MetricEmitter
 
 logger = logging.getLogger(__name__)
 
@@ -36,18 +36,11 @@ def heartbeat_messaging_config():
                 "threads": True,
                 "fds": False
             },
-            "targets": [{
-                "type": "messaging",
-                "config": {
-                    "destination": "local",
-                    "topic": "heartbeat/{ComponentName}/{ThingName}"
-                }
-            }]
+            "destination": "local"
         },
         "metricEmission": {
             "target": "messaging",
             "targetConfig": {
-                "topic": "heartbeat/{ComponentName}/{ThingName}",
                 "destination": "local"
             }
         },
@@ -78,7 +71,7 @@ def heartbeat_metric_config():
                 "memory": True,
                 "disk": True
             },
-            "targets": [{"type": "metric"}]
+            "destination": "local"
         },
         "metricEmission": {
             "target": "cloudwatch",
@@ -110,18 +103,13 @@ def heartbeat_iotcore_config():
                 "cpu": True,
                 "memory": True
             },
-            "targets": [{
-                "type": "messaging",
-                "config": {
-                    "destination": "iotcore",
-                    "topic": "heartbeat/{ComponentName}/{ThingName}"
-                }
-            }]
+            "destination": "iotcore"
         },
         "metricEmission": {
             "target": "messaging",
-            "topic": "heartbeat/{ComponentName}/{ThingName}",
-            "destination": "iotcore"
+            "targetConfig": {
+                "destination": "iotcore"
+            }
         },
         "component": {
             "global": {"test": "value"},
@@ -141,7 +129,7 @@ def heartbeat_iotcore_config():
 
 @pytest.fixture
 def heartbeat_dual_config():
-    """Create temporary heartbeat configuration with both local and IoT Core messaging targets."""
+    """Create temporary heartbeat configuration with state and metric messaging enabled."""
     config = {
         "heartbeat": {
             "intervalSecs": 2,
@@ -149,27 +137,13 @@ def heartbeat_dual_config():
                 "cpu": True,
                 "memory": True
             },
-            "targets": [
-                {
-                    "type": "messaging",
-                    "config": {
-                        "destination": "local",
-                        "topic": "heartbeat/{ComponentName}/{ThingName}"
-                    }
-                },
-                {
-                    "type": "messaging",
-                    "config": {
-                        "destination": "iotcore",
-                        "topic": "heartbeat/{ComponentName}/{ThingName}"
-                    }
-                }
-            ]
+            "destination": "local"
         },
         "metricEmission": {
             "target": "messaging",
-            "topic": "metric/{ComponentName}/{ThingName}",
-            "destination": "local"
+            "targetConfig": {
+                "destination": "local"
+            }
         },
         "component": {
             "global": {"test": "value"},
@@ -188,10 +162,10 @@ def heartbeat_dual_config():
 
 
 @pytest.fixture
-def ggcommons_heartbeat_messaging(heartbeat_messaging_config):
-    """Create GGCommons instance with heartbeat messaging configuration."""
+def edgecommons_heartbeat_messaging(heartbeat_messaging_config):
+    """Create EdgeCommons instance with heartbeat messaging configuration."""
     try:
-        ggcommons = GGCommonsBuilder.create("heartbeat_test") \
+        edgecommons = EdgeCommonsBuilder.create("heartbeat_test") \
             .with_args([
                 '-c', 'FILE', heartbeat_messaging_config,
                 '--platform', 'HOST', '--transport', 'MQTT', MESSAGING_CONFIG_PATH,
@@ -199,13 +173,13 @@ def ggcommons_heartbeat_messaging(heartbeat_messaging_config):
             ]) \
             .build()
         
-        yield ggcommons
+        yield edgecommons
         
     except Exception as e:
-        pytest.skip(f"Failed to initialize GGCommons for heartbeat messaging test: {e}")
+        pytest.skip(f"Failed to initialize EdgeCommons for heartbeat messaging test: {e}")
     finally:
-        if 'ggcommons' in locals():
-            ggcommons.shutdown()
+        if 'edgecommons' in locals():
+            edgecommons.shutdown()
         try:
             MessagingClient.shutdown()
         except:
@@ -213,10 +187,10 @@ def ggcommons_heartbeat_messaging(heartbeat_messaging_config):
 
 
 @pytest.fixture
-def ggcommons_heartbeat_metric(heartbeat_metric_config):
-    """Create GGCommons instance with heartbeat metric configuration."""
+def edgecommons_heartbeat_metric(heartbeat_metric_config):
+    """Create EdgeCommons instance with heartbeat metric configuration."""
     try:
-        ggcommons = GGCommonsBuilder.create("heartbeat_test") \
+        edgecommons = EdgeCommonsBuilder.create("heartbeat_test") \
             .with_args([
                 '-c', 'FILE', heartbeat_metric_config,
                 '--platform', 'HOST', '--transport', 'MQTT', MESSAGING_CONFIG_PATH,
@@ -224,13 +198,13 @@ def ggcommons_heartbeat_metric(heartbeat_metric_config):
             ]) \
             .build()
         
-        yield ggcommons
+        yield edgecommons
         
     except Exception as e:
-        pytest.skip(f"Failed to initialize GGCommons for heartbeat metric test: {e}")
+        pytest.skip(f"Failed to initialize EdgeCommons for heartbeat metric test: {e}")
     finally:
-        if 'ggcommons' in locals():
-            ggcommons.shutdown()
+        if 'edgecommons' in locals():
+            edgecommons.shutdown()
         try:
             MessagingClient.shutdown()
         except:
@@ -238,10 +212,10 @@ def ggcommons_heartbeat_metric(heartbeat_metric_config):
 
 
 @pytest.fixture
-def ggcommons_heartbeat_iotcore(heartbeat_iotcore_config):
-    """Create GGCommons instance with IoT Core heartbeat configuration."""
+def edgecommons_heartbeat_iotcore(heartbeat_iotcore_config):
+    """Create EdgeCommons instance with IoT Core heartbeat configuration."""
     try:
-        ggcommons = GGCommonsBuilder.create("heartbeat_test") \
+        edgecommons = EdgeCommonsBuilder.create("heartbeat_test") \
             .with_args([
                 '-c', 'FILE', heartbeat_iotcore_config,
                 '--platform', 'HOST', '--transport', 'MQTT', MESSAGING_CONFIG_PATH,
@@ -249,13 +223,13 @@ def ggcommons_heartbeat_iotcore(heartbeat_iotcore_config):
             ]) \
             .build()
         
-        yield ggcommons
+        yield edgecommons
         
     except Exception as e:
-        pytest.skip(f"Failed to initialize GGCommons for heartbeat IoT Core test: {e}")
+        pytest.skip(f"Failed to initialize EdgeCommons for heartbeat IoT Core test: {e}")
     finally:
-        if 'ggcommons' in locals():
-            ggcommons.shutdown()
+        if 'edgecommons' in locals():
+            edgecommons.shutdown()
         try:
             MessagingClient.shutdown()
         except:
@@ -263,10 +237,10 @@ def ggcommons_heartbeat_iotcore(heartbeat_iotcore_config):
 
 
 @pytest.fixture
-def ggcommons_heartbeat_dual(heartbeat_dual_config):
-    """Create GGCommons instance with dual heartbeat configuration."""
+def edgecommons_heartbeat_dual(heartbeat_dual_config):
+    """Create EdgeCommons instance with dual heartbeat configuration."""
     try:
-        ggcommons = GGCommonsBuilder.create("heartbeat_test") \
+        edgecommons = EdgeCommonsBuilder.create("heartbeat_test") \
             .with_args([
                 '-c', 'FILE', heartbeat_dual_config,
                 '--platform', 'HOST', '--transport', 'MQTT', MESSAGING_CONFIG_PATH,
@@ -274,13 +248,13 @@ def ggcommons_heartbeat_dual(heartbeat_dual_config):
             ]) \
             .build()
         
-        yield ggcommons
+        yield edgecommons
         
     except Exception as e:
-        pytest.skip(f"Failed to initialize GGCommons for heartbeat dual test: {e}")
+        pytest.skip(f"Failed to initialize EdgeCommons for heartbeat dual test: {e}")
     finally:
-        if 'ggcommons' in locals():
-            ggcommons.shutdown()
+        if 'edgecommons' in locals():
+            edgecommons.shutdown()
         try:
             MessagingClient.shutdown()
         except:
@@ -289,10 +263,10 @@ def ggcommons_heartbeat_dual(heartbeat_dual_config):
 
 @pytest.mark.integration
 @pytest.mark.slow
-def test_heartbeat_messaging_target_local(ggcommons_heartbeat_messaging):
+def test_heartbeat_messaging_target_local(edgecommons_heartbeat_messaging):
     """Test heartbeat with messaging target to local broker."""
     logger.info(f"Starting test_heartbeat_messaging_target_local test...")
-    messaging_service = ggcommons_heartbeat_messaging.get_messaging()
+    messaging_service = edgecommons_heartbeat_messaging.get_messaging()
     received_messages = []
     
     def heartbeat_handler(topic: str, message: Message):
@@ -337,9 +311,9 @@ def test_heartbeat_messaging_target_local(ggcommons_heartbeat_messaging):
 @pytest.mark.integration
 @pytest.mark.slow
 @pytest.mark.aws
-def test_heartbeat_messaging_target_iot_core(ggcommons_heartbeat_iotcore):
+def test_heartbeat_messaging_target_iot_core(edgecommons_heartbeat_iotcore):
     """Test heartbeat with messaging target to IoT Core."""
-    messaging_service = ggcommons_heartbeat_iotcore.get_messaging()
+    messaging_service = edgecommons_heartbeat_iotcore.get_messaging()
     received_messages = []
     
     def heartbeat_handler(topic: str, message: Message):
@@ -375,9 +349,9 @@ def test_heartbeat_messaging_target_iot_core(ggcommons_heartbeat_iotcore):
     
 
 @pytest.mark.integration
-def test_heartbeat_metric_target(ggcommons_heartbeat_metric):
+def test_heartbeat_metric_target(edgecommons_heartbeat_metric):
     """Test heartbeat with metric target."""
-    metric_service = ggcommons_heartbeat_metric.get_metrics()
+    metric_service = edgecommons_heartbeat_metric.get_metrics()
     
     # Get initial metric count
     initial_metrics = len(metric_service._metrics) if hasattr(metric_service, '_metrics') else 0
@@ -394,9 +368,9 @@ def test_heartbeat_metric_target(ggcommons_heartbeat_metric):
 @pytest.mark.integration
 @pytest.mark.slow
 @pytest.mark.aws
-def test_heartbeat_dual_targets(ggcommons_heartbeat_dual):
+def test_heartbeat_dual_targets(edgecommons_heartbeat_dual):
     """Test heartbeat with both messaging and metric targets."""
-    messaging_service = ggcommons_heartbeat_dual.get_messaging()
+    messaging_service = edgecommons_heartbeat_dual.get_messaging()
     received_messages = []
     
     def local_handler(topic: str, message: Message):
@@ -438,20 +412,31 @@ def test_heartbeat_dual_targets(ggcommons_heartbeat_dual):
 
 
 @pytest.mark.integration
-def test_heartbeat_configuration_validation(heartbeat_messaging_config):
+def test_heartbeat_configuration_validation(heartbeat_messaging_config, tmp_path):
     """Test heartbeat configuration validation."""
     config_service = None
+    messaging_config_path = tmp_path / "standalone-messaging.json"
+    messaging_config_path.write_text(json.dumps({
+        "messaging": {
+            "local": {
+                "type": "mqtt",
+                "host": "localhost",
+                "port": 1883,
+                "clientId": "heartbeat-config-test-local"
+            }
+        }
+    }))
     
     try:
-        ggcommons = GGCommonsBuilder.create("heartbeat_config_test") \
+        edgecommons = EdgeCommonsBuilder.create("heartbeat_config_test") \
             .with_args([
                 '-c', 'FILE', heartbeat_messaging_config,
-                '--platform', 'HOST', '--transport', 'MQTT', MESSAGING_CONFIG_PATH,
+                '--platform', 'HOST', '--transport', 'MQTT', str(messaging_config_path),
                 '-t', 'config-test-thing'
             ]) \
             .build()
         
-        config_service = ggcommons.get_config_manager()
+        config_service = edgecommons.get_config_manager()
         
         # Verify heartbeat configuration is loaded correctly
         heartbeat_config = config_service.get_heartbeat_config()
@@ -464,13 +449,11 @@ def test_heartbeat_configuration_validation(heartbeat_messaging_config):
         assert heartbeat_config.include_threads() is True
         assert heartbeat_config.include_fds() is False
         
-        targets = heartbeat_config.get_targets()
-        assert len(targets) == 1
-        assert targets[0]['type'] == "messaging"
+        assert heartbeat_config.get_destination() == "local"
         
     finally:
-        if 'ggcommons' in locals():
-            ggcommons.shutdown()
+        if 'edgecommons' in locals():
+            edgecommons.shutdown()
         try:
             MessagingClient.shutdown()
         except:
@@ -478,9 +461,9 @@ def test_heartbeat_configuration_validation(heartbeat_messaging_config):
 
 
 @pytest.mark.integration
-def test_heartbeat_measure_values(ggcommons_heartbeat_messaging):
+def test_heartbeat_measure_values(edgecommons_heartbeat_messaging):
     """Test that heartbeat measures contain valid values."""
-    messaging_service = ggcommons_heartbeat_messaging.get_messaging()
+    messaging_service = edgecommons_heartbeat_messaging.get_messaging()
     received_messages = []
     
     def heartbeat_handler(topic: str, message: Message):
@@ -520,9 +503,9 @@ def test_heartbeat_measure_values(ggcommons_heartbeat_messaging):
 
 @pytest.mark.integration
 @pytest.mark.slow
-def test_heartbeat_interval_timing(ggcommons_heartbeat_messaging):
+def test_heartbeat_interval_timing(edgecommons_heartbeat_messaging):
     """Test that heartbeat messages are sent at the configured interval."""
-    messaging_service = ggcommons_heartbeat_messaging.get_messaging()
+    messaging_service = edgecommons_heartbeat_messaging.get_messaging()
     received_times = []
     
     def heartbeat_handler(topic: str, message: Message):

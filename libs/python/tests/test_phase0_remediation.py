@@ -13,9 +13,9 @@ from argparse import Namespace
 
 import pytest
 
-import ggcommons.config.manager.config_manager_builder as builder_mod
-from ggcommons.messaging.messaging_client import MessagingClient
-from ggcommons.platform import Transport
+import edgecommons.config.manager.config_manager_builder as builder_mod
+from edgecommons.messaging.messaging_client import MessagingClient
+from edgecommons.platform import Transport
 
 
 def test_mqtt_transport_without_path_raises():
@@ -29,7 +29,7 @@ def test_configmap_is_a_recognized_config_source():
     """Phase-1a regression: the up-front config-source gate must accept CONFIGMAP, or
     --platform KUBERNETES (which resolves to CONFIGMAP) dies with 'Unrecognized config
     source' before the builder runs. (The ConfigSource enum must include CONFIGMAP.)"""
-    from ggcommons.ggcommons import ConfigSource
+    from edgecommons.edgecommons import ConfigSource
     assert "CONFIGMAP" in {s.value for s in ConfigSource}
 
 

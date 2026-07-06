@@ -22,7 +22,7 @@ export default defineConfig({
 				{
 					icon: 'github',
 					label: 'GitHub',
-					href: 'https://github.com/edgecommons/ggcommons',
+					href: 'https://github.com/edgecommons/edgecommons',
 				},
 			],
 			// Position within each group is controlled by every page's

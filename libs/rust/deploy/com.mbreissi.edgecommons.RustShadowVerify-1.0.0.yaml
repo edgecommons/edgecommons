@@ -1,0 +1,44 @@
+---
+RecipeFormatVersion: "2020-01-25"
+ComponentName: "com.mbreissi.edgecommons.RustShadowVerify"
+ComponentVersion: "1.0.0"
+ComponentDescription: "On-device verification (Rust) of the sanitized default SHADOW name: -c SHADOW with no name -> shadow 'com_mbreissi_edgecommons_RustShadowVerify'."
+ComponentPublisher: "edgecommons"
+ComponentDependencies:
+  aws.greengrass.TokenExchangeService:
+    VersionRequirement: ">=2.0.0"
+    DependencyType: "HARD"
+  aws.greengrass.ShadowManager:
+    VersionRequirement: ">=2.0.0"
+    DependencyType: "HARD"
+ComponentConfiguration:
+  DefaultConfiguration:
+    accessControl:
+      aws.greengrass.ipc.pubsub:
+        "com.mbreissi.edgecommons.RustShadowVerify:pubsub:1":
+          policyDescription: "Allow pub/sub on all local IPC topics (incl. shadow event topics)."
+          operations:
+            - "aws.greengrass#PublishToTopic"
+            - "aws.greengrass#SubscribeToTopic"
+          resources:
+            - "*"
+      aws.greengrass.ShadowManager:
+        "com.mbreissi.edgecommons.RustShadowVerify:shadow:1":
+          policyDescription: "Allow get/update of thing shadows."
+          operations:
+            - "aws.greengrass#GetThingShadow"
+            - "aws.greengrass#UpdateThingShadow"
+            - "aws.greengrass#DeleteThingShadow"
+          resources:
+            - "*"
+Manifests:
+  - Platform:
+      os: linux
+    Artifacts:
+      - URI: "s3://BUCKET/com.mbreissi.edgecommons.RustShadowVerify/1.0.0/shadow_verify"
+    Lifecycle:
+      Install:
+        Script: "chmod +x {artifacts:path}/shadow_verify"
+      Run:
+        RequiresPrivilege: true
+        Script: "{artifacts:path}/shadow_verify -c SHADOW"

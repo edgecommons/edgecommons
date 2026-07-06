@@ -2,7 +2,7 @@
  * The unified-namespace (UNS) topic builder + validator (UNS-CANONICAL-DESIGN §2), bound to a
  * {@link MessageIdentity} and the component's `topic.includeRoot` setting. Obtain the
  * component-bound instance via `gg.uns()` (instance `main`) or an instance-bound one via
- * `gg.instance(id).uns()`. Mirrors the Java `com.mbreissi.ggcommons.uns` package.
+ * `gg.instance(id).uns()`. Mirrors the Java `com.mbreissi.edgecommons.uns` package.
  *
  * Grammar (§2.2): `ecv1 [/ {site}]? / {device} / {component} / {instance} / {class}
  * [/ {channel…}]` — the optional `site` position (the first hierarchy value) is emitted only
@@ -23,7 +23,7 @@
  * 4. **Class rules** — leaf classes (`state`, `cfg`) forbid a channel; every other class
  *    requires at least one channel token.
  *
- * Reply topics (`ggcommons/reply-…`) are non-UNS and never pass through this builder.
+ * Reply topics (`edgecommons/reply-…`) are non-UNS and never pass through this builder.
  */
 import { MessageIdentity } from "./message";
 import { isIsoControl } from "./config/template";
@@ -210,7 +210,7 @@ function checkLength(topic: string): void {
 
 /**
  * The UNS topic builder + validator bound to an identity and a root mode (§2). Library wiring —
- * components obtain bound instances from the `GGCommons` facade (`gg.uns()` /
+ * components obtain bound instances from the `EdgeCommons` facade (`gg.uns()` /
  * `gg.instance(id).uns()`).
  */
 export class Uns {
@@ -411,7 +411,7 @@ export class Uns {
  * (0-based) always — the rootless grammar `ecv1/{device}/{component}/{instance}/{class}` — and
  * level 5 **only when this component's effective `topic.includeRoot` is true** (D-U27: bind
  * `includeRoot && hier.length >= 2`, the same effective-root rule topic-building uses).
- * Non-`ecv1` topics pass untouched (`ggcommons/reply-…`, `cloudwatch/metric/put`, foreign MQTT
+ * Non-`ecv1` topics pass untouched (`edgecommons/reply-…`, `cloudwatch/metric/put`, foreign MQTT
  * bridging).
  */
 export function reservedClassOf(topic: string | undefined, includeRoot: boolean): UnsClass | undefined {

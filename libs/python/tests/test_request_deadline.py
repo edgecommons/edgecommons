@@ -7,11 +7,11 @@ import time
 
 import pytest
 
-from ggcommons.messaging.errors import RequestTimeoutError
-from ggcommons.messaging.messaging_provider import MessagingProvider
-from ggcommons.messaging.providers.standalone_provider import StandaloneProvider, _BrokerChannel
-from ggcommons.messaging.message import Message, MessageHeader
-from ggcommons.utils.iou import Iou
+from edgecommons.messaging.errors import RequestTimeoutError
+from edgecommons.messaging.messaging_provider import MessagingProvider
+from edgecommons.messaging.providers.standalone_provider import StandaloneProvider, _BrokerChannel
+from edgecommons.messaging.message import Message, MessageHeader
+from edgecommons.utils.iou import Iou
 
 
 class TestIouSettle:
@@ -186,7 +186,7 @@ class TestStandaloneRequestDeadline:
 
     def test_deadline_unsubscribes_and_raises(self):
         prov, channel = self._provider_with_channel()
-        reply_topic = "ggcommons/reply-deadline"
+        reply_topic = "edgecommons/reply-deadline"
         iou = self._pending_request(prov, channel, reply_topic)
 
         def cleanup():
@@ -206,7 +206,7 @@ class TestStandaloneRequestDeadline:
         import types
 
         prov, channel = self._provider_with_channel()
-        reply_topic = "ggcommons/reply-served"
+        reply_topic = "edgecommons/reply-served"
         iou = self._pending_request(prov, channel, reply_topic)
         prov._arm_request_deadline(iou, 5.0, lambda: pytest.fail("deadline must not fire"))
 
@@ -227,7 +227,7 @@ class TestStandaloneRequestDeadline:
         import types
 
         prov, channel = self._provider_with_channel()
-        reply_topic = "ggcommons/reply-straggler"
+        reply_topic = "edgecommons/reply-straggler"
         iou = self._pending_request(prov, channel, reply_topic)
         assert iou.try_settle() is True  # e.g. the deadline already settled it
         iou.set_error(RequestTimeoutError("expired"))
@@ -243,7 +243,7 @@ class TestStandaloneRequestDeadline:
 
     def test_cancel_request_is_idempotent_after_settle(self):
         prov, channel = self._provider_with_channel()
-        reply_topic = "ggcommons/reply-cancel"
+        reply_topic = "edgecommons/reply-cancel"
         iou = self._pending_request(prov, channel, reply_topic)
         prov._cancel_request(channel, iou)
         assert reply_topic not in prov._response_ious

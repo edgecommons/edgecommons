@@ -1,6 +1,6 @@
 ---
 title: Installation
-description: Install the GGCommons toolchain and scaffolding CLI, then add the library to a Java, Python, Rust, or TypeScript project.
+description: Install the EdgeCommons toolchain and scaffolding CLI, then add the library to a Java, Python, Rust, or TypeScript project.
 sidebar:
   order: 3
 ---
@@ -8,13 +8,13 @@ sidebar:
 import { Tabs, TabItem, Aside, LinkCard } from "@astrojs/starlight/components";
 
 This page covers the three things you need before building a component: a per-language
-**toolchain**, the **`ggcommons` scaffolding CLI**, and the **library dependency** wired into your
+**toolchain**, the **`edgecommons` scaffolding CLI**, and the **library dependency** wired into your
 project. The CLI normally wires the dependency for you when it scaffolds a component — the manual
-declarations below are for adding GGCommons to a project by hand.
+declarations below are for adding EdgeCommons to a project by hand.
 
 ## Toolchain prerequisites
 
-GGCommons is one SDK in four languages. You only need the toolchain for the language you build in.
+EdgeCommons is one SDK in four languages. You only need the toolchain for the language you build in.
 
 <Tabs syncKey="lang">
 <TabItem label="Java">
@@ -29,7 +29,7 @@ GGCommons is one SDK in four languages. You only need the toolchain for the lang
 
   <Aside type="note">
   Run a component that uses the streaming subsystem with `--enable-native-access=ALL-UNNAMED` (the
-  Java FFM / Panama binding to the native `ggstreamlog` core).
+  Java FFM / Panama binding to the native `edgestreamlog` core).
   </Aside>
 
 </TabItem>
@@ -42,7 +42,7 @@ GGCommons is one SDK in four languages. You only need the toolchain for the lang
   ```
 
   <Aside type="note">
-  The `ggcommons` CLI itself runs on Python 3.8+, but scaffolded Python **components** target 3.9+.
+  The `edgecommons` CLI itself runs on Python 3.8+, but scaffolded Python **components** target 3.9+.
   </Aside>
 
 </TabItem>
@@ -79,15 +79,15 @@ testing, and — for packaging/deploying to Greengrass — the **GDK** (Greengra
 
 ## Install the scaffolding CLI
 
-The CLI is the Python package `ggcommons-cli`. It installs two identical console entry points,
-`ggcommons` and `ggcommons-cli`. Templates are bundled into the wheel, so an installed CLI
+The CLI is the Python package `edgecommons-cli`. It installs two identical console entry points,
+`edgecommons` and `edgecommons-cli`. Templates are bundled into the wheel, so an installed CLI
 scaffolds **offline**.
 
 <Tabs syncKey="os">
 <TabItem label="Linux">
 
   ```bash
-  pipx install ./cli              # recommended: isolated global `ggcommons`
+  pipx install ./cli              # recommended: isolated global `edgecommons`
   # or:  python3 -m pip install ./cli
   # or:  python3 -m pip install -e ./cli   # editable, for developing the CLI itself
   ```
@@ -96,7 +96,7 @@ scaffolds **offline**.
 <TabItem label="Windows">
 
   ```powershell
-  pipx install ./cli              # recommended: isolated global ggcommons
+  pipx install ./cli              # recommended: isolated global edgecommons
   # or:  python -m pip install ./cli
   # or:  python -m pip install -e ./cli    # editable, for developing the CLI itself
   ```
@@ -106,7 +106,7 @@ scaffolds **offline**.
 
 ### Verify your environment
 
-`ggcommons doctor` checks for the eight tools the CLI can use — `git`, `gdk`, `cargo`, `mvn`,
+`edgecommons doctor` checks for the eight tools the CLI can use — `git`, `gdk`, `cargo`, `mvn`,
 `python3` (or `python`), `node`, `npm`, and `aws` — and prints `[ok] <name> -> <path>` or
 `[missing] <name>` for each. It reports status only and does **not** fail when a tool is missing, so
 a missing entry is only a problem if you need that tool for your language or workflow.
@@ -115,14 +115,14 @@ a missing entry is only a problem if you need that tool for your language or wor
 <TabItem label="Linux">
 
   ```bash
-  ggcommons doctor
+  edgecommons doctor
   ```
 
 </TabItem>
 <TabItem label="Windows">
 
   ```powershell
-  ggcommons doctor
+  edgecommons doctor
   ```
 
 </TabItem>
@@ -130,7 +130,7 @@ a missing entry is only a problem if you need that tool for your language or wor
 
 ## Add the library to a project
 
-When you scaffold with `ggcommons create-component`, the dependency is written for you. The
+When you scaffold with `edgecommons create-component`, the dependency is written for you. The
 `--dep-source` flag chooses between two forms:
 
 - **`local`** (the default) — a path dependency on a monorepo checkout of the library. Best for
@@ -138,26 +138,26 @@ When you scaffold with `ggcommons create-component`, the dependency is written f
 - **`registry`** — the published artifact, resolved from a registry.
 
 <Aside type="note">
-`--dep-source` and `--ggcommons-path` only affect the **Rust** and **TypeScript** templates (the
-ones with a parameterized dependency). The **Java** template always declares `com.mbreissi:ggcommons`
-and the **Python** template always lists `greengrass-commons`, so for those two languages you pick
+`--dep-source` and `--edgecommons-path` only affect the **Rust** and **TypeScript** templates (the
+ones with a parameterized dependency). The **Java** template always declares `com.mbreissi.edgecommons:edgecommons`
+and the **Python** template always lists `edgecommons`, so for those two languages you pick
 local-vs-registry by where the artifact actually resolves from (a local install vs a registry), not
 by a flag.
 </Aside>
 
-The declarations below show what each form looks like if you are adding GGCommons to an existing
+The declarations below show what each form looks like if you are adding EdgeCommons to an existing
 project by hand. The current published version is `0.1.0` (the value the CLI substitutes for the
-`<<GGCOMMONS_VERSION>>` token).
+`<<EDGECOMMONS_VERSION>>` token).
 
 <Tabs syncKey="lang">
 <TabItem label="Java">
 
-  Coordinate `com.mbreissi:ggcommons`. Add the dependency to your `pom.xml`:
+  Coordinate `com.mbreissi.edgecommons:edgecommons`. Add the dependency to your `pom.xml`:
 
   ```xml
   <dependency>
-    <groupId>com.mbreissi</groupId>
-    <artifactId>ggcommons</artifactId>
+    <groupId>com.mbreissi.edgecommons</groupId>
+    <artifactId>edgecommons</artifactId>
     <version>0.1.0</version>
   </dependency>
   ```
@@ -170,7 +170,7 @@ project by hand. The current published version is `0.1.0` (the value the CLI sub
   <repositories>
     <repository>
       <id>github</id>
-      <url>https://maven.pkg.github.com/edgecommons/ggcommons</url>
+      <url>https://maven.pkg.github.com/edgecommons/edgecommons</url>
     </repository>
   </repositories>
   ```
@@ -185,10 +185,10 @@ project by hand. The current published version is `0.1.0` (the value the CLI sub
 </TabItem>
 <TabItem label="Python">
 
-  Package `greengrass-commons`. A scaffolded component lists it (unpinned) in `requirements.txt`:
+  Package `edgecommons`. A scaffolded component lists it (unpinned) in `requirements.txt`:
 
   ```text
-  greengrass-commons
+  edgecommons
   ```
 
   Install with:
@@ -200,36 +200,36 @@ project by hand. The current published version is `0.1.0` (the value the CLI sub
 </TabItem>
 <TabItem label="Rust">
 
-  Crate `ggcommons`. The dependency form is chosen by `--dep-source`; in `Cargo.toml`:
+  Crate `edgecommons`. The dependency form is chosen by `--dep-source`; in `Cargo.toml`:
 
   ```toml
   [dependencies]
   # local (dev default): a path dependency on the monorepo checkout
-  ggcommons = { path = "/abs/path/to/libs/rust", default-features = false }
+  edgecommons = { path = "/abs/path/to/libs/rust", default-features = false }
 
   # registry: the published artifact via a git tag
-  # ggcommons = { git = "https://github.com/edgecommons/ggcommons", tag = "rust-lib/v0.1.0", default-features = false }
+  # edgecommons = { git = "https://github.com/edgecommons/edgecommons", tag = "rust-lib/v0.1.0", default-features = false }
   ```
 
-  For the `local` form, the CLI fills the path from `--ggcommons-path` (defaulting to the in-repo
+  For the `local` form, the CLI fills the path from `--edgecommons-path` (defaulting to the in-repo
   `libs/rust`). Off-by-default cargo features (`greengrass`, `cloudwatch`, `streaming`,
   `credentials`, `parameters`, …) are composed on top as your component needs them.
 
 </TabItem>
 <TabItem label="TypeScript">
 
-  Package `@edgecommons/ggcommons` (note the scope — it is **not** a bare `ggcommons`). The dependency
+  Package `@edgecommons/edgecommons` (note the scope — it is **not** a bare `edgecommons`). The dependency
   form is chosen by `--dep-source`; in `package.json`:
 
   ```json
   {
     "dependencies": {
-      "@edgecommons/ggcommons": "file:/abs/path/to/libs/ts"
+      "@edgecommons/edgecommons": "file:/abs/path/to/libs/ts"
     }
   }
   ```
 
-  For the `local` form above, the value is `file:<path>` (the CLI fills it from `--ggcommons-path`,
+  For the `local` form above, the value is `file:<path>` (the CLI fills it from `--edgecommons-path`,
   defaulting to the in-repo `libs/ts`). Install local path deps with `npm install --install-links` so
   the package is copied rather than symlinked.
 
@@ -240,7 +240,7 @@ project by hand. The current published version is `0.1.0` (the value the CLI sub
   ```json
   {
     "dependencies": {
-      "@edgecommons/ggcommons": "^0.1.0"
+      "@edgecommons/edgecommons": "^0.1.0"
     }
   }
   ```

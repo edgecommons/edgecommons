@@ -3,8 +3,8 @@ import warnings
 
 import pytest
 
-from ggcommons.utils.utils import Utils, ThreadSafeCounter
-from ggcommons.utils.file_watcher import FileWatcher, ConfigFileWatcher
+from edgecommons.utils.utils import Utils, ThreadSafeCounter
+from edgecommons.utils.file_watcher import FileWatcher, ConfigFileWatcher
 
 
 def test_unused_utils_methods_warn():

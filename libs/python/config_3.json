@@ -18,7 +18,7 @@
   },
   "metricEmission": {
     "target": "log",
-    "namespace": "ggcommons",
+    "namespace": "edgecommons",
     "largeFleetWorkaround": true,
     "targetConfig": {
       "logFileName": "../{ComponentFullName}.metric.log"

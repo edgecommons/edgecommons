@@ -8,10 +8,10 @@ is reserved).
 """
 import pytest
 
-from ggcommons.config.heartbeat_config import HeartbeatConfiguration
-from ggcommons.heartbeat.enhanced_heartbeat import EnhancedHeartbeat
-from ggcommons.messaging.identity import HierEntry, MessageIdentity
-from ggcommons.metrics.targets.messaging import _is_local_destination
+from edgecommons.config.heartbeat_config import HeartbeatConfiguration
+from edgecommons.heartbeat.enhanced_heartbeat import EnhancedHeartbeat
+from edgecommons.messaging.identity import HierEntry, MessageIdentity
+from edgecommons.metrics.targets.messaging import _is_local_destination
 
 
 class _FakeMessaging:

@@ -10,10 +10,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import ggcommons.messaging.messaging_client as mc_mod
-from ggcommons.messaging.messaging_client import MessagingClient
-from ggcommons.messaging.message import Message
-from ggcommons.platform import Transport
+import edgecommons.messaging.messaging_client as mc_mod
+from edgecommons.messaging.messaging_client import MessagingClient
+from edgecommons.messaging.message import Message
+from edgecommons.platform import Transport
 from awsiot.greengrasscoreipc.model import QOS
 
 
@@ -163,12 +163,12 @@ class TestDelegation:
     def test_request(self):
         m = Message()
         MessagingClient.request("t", m)
-        self.prov.request.assert_called_once_with("t", m)
+        self.prov.request.assert_called_once_with("t", m, None)
 
     def test_request_from_iot_core(self):
         m = Message()
         MessagingClient.request_from_iot_core("t", m)
-        self.prov.request_from_iot_core.assert_called_once_with("t", m)
+        self.prov.request_from_iot_core.assert_called_once_with("t", m, None)
 
     def test_cancel_request(self):
         iou = object()

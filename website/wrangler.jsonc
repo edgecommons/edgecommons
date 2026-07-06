@@ -1,5 +1,5 @@
 {
-	// Static-assets-only Worker for the GGCommons docs site (Astro/Starlight).
+	// Static-assets-only Worker for the EdgeCommons docs site (Astro/Starlight).
 	// Deployed via Cloudflare Workers Builds git integration: `npx wrangler deploy`
 	// uploads ./dist (relative to this file). No Worker script (`main`) is needed —
 	// this Worker only serves the prebuilt static site.

@@ -1,4 +1,4 @@
-"""Unit tests for ggcommons.utils.Utils and ThreadSafeCounter.
+"""Unit tests for edgecommons.utils.Utils and ThreadSafeCounter.
 
 The non-``get_utc_z`` helpers are deprecated but still genuinely testable in-process,
 so they are exercised here for real behavior. DeprecationWarnings are silenced.
@@ -7,7 +7,7 @@ import warnings
 
 import pytest
 
-from ggcommons.utils.utils import Utils, ThreadSafeCounter
+from edgecommons.utils.utils import Utils, ThreadSafeCounter
 
 
 @pytest.fixture(autouse=True)

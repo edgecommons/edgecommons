@@ -50,7 +50,7 @@ spec:
             readOnlyRootFilesystem: true
             capabilities: { drop: ["ALL"] }
           volumeMounts:
-            - { name: config, mountPath: /etc/ggcommons, readOnly: true }
+            - { name: config, mountPath: /etc/edgecommons, readOnly: true }
             - { name: tmp, mountPath: /tmp }
       volumes:
         - name: config

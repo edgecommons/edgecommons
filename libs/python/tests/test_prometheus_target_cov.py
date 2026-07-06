@@ -2,7 +2,7 @@
 Supplementary coverage tests for the pull-based ``prometheus`` metric target.
 
 These exercise the defensive / less-common branches of
-``ggcommons/metrics/targets/prometheus.py`` that the main suite
+``edgecommons/metrics/targets/prometheus.py`` that the main suite
 (``tests/test_prometheus_target.py``) does not reach, so the module hits the 90%
 line gate under ``-m "not slow and not integration and not aws"``:
 
@@ -27,9 +27,9 @@ import sys
 
 import pytest
 
-from ggcommons.config.metric_config import MetricConfiguration
-from ggcommons.metrics.metric_builder import MetricBuilder
-from ggcommons.metrics.targets.prometheus import Prometheus, _MetricsRequestHandler
+from edgecommons.config.metric_config import MetricConfiguration
+from edgecommons.metrics.metric_builder import MetricBuilder
+from edgecommons.metrics.targets.prometheus import Prometheus, _MetricsRequestHandler
 
 
 class _FakeConfigManager:

@@ -10,12 +10,12 @@
 //!
 //! ## Semantics & Architecture
 //! - Synchronous; compiles the schema per call (config loading is infrequent).
-//! - Fail-closed: any schema violation returns [`crate::error::GgError::Validation`]
+//! - Fail-closed: any schema violation returns [`crate::error::EdgeCommonsError::Validation`]
 //!   listing every error.
 //!
 //! ## Usage Example
 //! ```
-//! use ggcommons::config::validation::validate;
+//! use edgecommons::config::validation::validate;
 //! use serde_json::json;
 //!
 //! // A valid document must include the required top-level `component` object.
@@ -35,17 +35,17 @@
 
 use serde_json::Value;
 
-use crate::error::{GgError, Result};
+use crate::error::{EdgeCommonsError, Result};
 
-const SCHEMA: &str = include_str!("../../resources/ggcommons-config-schema.json");
+const SCHEMA: &str = include_str!("../../resources/edgecommons-config-schema.json");
 
 /// Validate `instance` against the embedded config schema.
 pub fn validate(instance: &Value) -> Result<()> {
     let schema: Value = serde_json::from_str(SCHEMA)
-        .map_err(|e| GgError::Validation(format!("embedded schema is not valid JSON: {e}")))?;
+        .map_err(|e| EdgeCommonsError::Validation(format!("embedded schema is not valid JSON: {e}")))?;
 
     let validator = jsonschema::validator_for(&schema)
-        .map_err(|e| GgError::Validation(format!("embedded schema is invalid: {e}")))?;
+        .map_err(|e| EdgeCommonsError::Validation(format!("embedded schema is invalid: {e}")))?;
 
     let errors: Vec<String> = validator
         .iter_errors(instance)
@@ -55,7 +55,7 @@ pub fn validate(instance: &Value) -> Result<()> {
     if errors.is_empty() {
         Ok(())
     } else {
-        Err(GgError::Validation(errors.join("; ")))
+        Err(EdgeCommonsError::Validation(errors.join("; ")))
     }
 }
 

@@ -14,7 +14,7 @@
  */
 import { greengrasscoreipc, eventstream_rpc } from "aws-iot-device-sdk-v2";
 
-import { GgError } from "../errors";
+import { EdgeCommonsError } from "../errors";
 import { logger } from "../logging";
 import { Destination, MessagingProvider, Qos, RawSubscription } from "./types";
 
@@ -35,10 +35,10 @@ function safeDispatch(topic: string, fn: () => unknown): void {
   try {
     const result = fn();
     if (result instanceof Promise) {
-      result.catch((e) => logger.warn(`ggcommons: IPC message handler rejected for ${topic}: ${String(e)}`));
+      result.catch((e) => logger.warn(`edgecommons: IPC message handler rejected for ${topic}: ${String(e)}`));
     }
   } catch (e) {
-    logger.warn(`ggcommons: IPC message handler threw for ${topic}: ${String(e)}`);
+    logger.warn(`edgecommons: IPC message handler threw for ${topic}: ${String(e)}`);
   }
 }
 

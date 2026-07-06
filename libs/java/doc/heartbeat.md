@@ -9,7 +9,7 @@ Each tick it does two independent things:
    `ecv1/{device}/{component}/main/state` (rooted form `ecv1/{site}/{device}/…` when
    `topic.includeRoot` is true). Header `name` is `"state"`; the body is
    `{"status": "RUNNING", "uptimeSecs": <seconds since start>}`. On graceful shutdown
-   (`GGCommons.shutdown()` / SIGTERM, or `Heartbeat.close()`) a best-effort
+   (`EdgeCommons.shutdown()` / SIGTERM, or `Heartbeat.close()`) a best-effort
    `{"status": "STOPPED"}` state is published once.
 2. **System measures** — the enabled measures (CPU, memory, disk, threads, files, fds) are emitted
    as a metric named **`sys`** through the normal metric subsystem, so they route to whatever

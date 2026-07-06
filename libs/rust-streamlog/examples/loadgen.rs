@@ -1,6 +1,6 @@
 //! `loadgen` — the telemetry-streaming load generator (perf harness, spec §15.5).
 //!
-//! Drives the `ggstreamlog` ingest + drain paths end-to-end and emits **one JSON results record**
+//! Drives the `edgestreamlog` ingest + drain paths end-to-end and emits **one JSON results record**
 //! per run (→ the baseline matrix + regression comparator, §15.8). There is **no fixed throughput
 //! target**: the goal is per-(target × config) baselines, the throughput↔durability curve, and the
 //! bottleneck (CPU vs disk vs fsync vs network).
@@ -14,7 +14,7 @@
 //! cargo run --release --example loadgen -- \
 //!   --scenario S1 --payload 1024 --threads 4 --duration 10 \
 //!   --fsync PerBatch --segment-bytes 67108864 --on-full dropOldest --sink instant \
-//!   --path /mnt/data/ggsl-bench --target-name lab-5950x --git-sha $(git rev-parse --short HEAD)
+//!   --path /mnt/data/esl-bench --target-name lab-5950x --git-sha $(git rev-parse --short HEAD)
 //! ```
 //!
 //! Flags: `--rate <r|unbounded>` `--payload <bytes>` `--threads <n>` `--duration <s>`
@@ -38,9 +38,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 
-use ggstreamlog::config::{BatchConfig, BufferConfig, DeliveryConfig, FsyncPolicy, OnFull, StoreType};
-use ggstreamlog::export::{ExportRecord, SendOutcome, Sink};
-use ggstreamlog::{EmbeddedLog, ExportEngine, Record};
+use edgestreamlog::config::{BatchConfig, BufferConfig, DeliveryConfig, FsyncPolicy, OnFull, StoreType};
+use edgestreamlog::export::{ExportRecord, SendOutcome, Sink};
+use edgestreamlog::{EmbeddedLog, ExportEngine, Record};
 
 // ============================ argument parsing ============================
 
@@ -200,7 +200,7 @@ fn build_sink(spec: &SinkSpec, delivered: Arc<AtomicU64>) -> Option<Box<dyn Sink
 fn build_kinesis(stream: &str, endpoint: Option<String>, _delivered: Arc<AtomicU64>) -> Option<Box<dyn Sink>> {
     // The real sink reports its own delivery; the harness reads exported_total from EngineStats.
     let region = std::env::var("AWS_DEFAULT_REGION").ok().or(Some("us-east-1".to_string()));
-    match ggstreamlog::KinesisSink::new(stream.to_string(), region, endpoint) {
+    match edgestreamlog::KinesisSink::new(stream.to_string(), region, endpoint) {
         Ok(s) => Some(Box::new(s)),
         Err(e) => {
             eprintln!("loadgen: failed to build KinesisSink: {e}");
@@ -508,7 +508,7 @@ fn run_producers(
                             lat.push(t0.elapsed().as_nanos() as u64);
                             appended.fetch_add(1, Ordering::Relaxed);
                         }
-                        Err(ggstreamlog::GgStreamError::BufferFull) if on_full == OnFull::RejectNew => {
+                        Err(edgestreamlog::EdgeStreamError::BufferFull) if on_full == OnFull::RejectNew => {
                             rejected.fetch_add(1, Ordering::Relaxed);
                         }
                         Err(e) => {
@@ -546,7 +546,7 @@ fn main() {
     let sink_spec = parse_sink(&sink_str);
     let batch_records = args.usize("batch-records", 500);
     let drop_caches = args.flag("drop-caches");
-    let path = PathBuf::from(args.str("path", "./ggsl-loadgen"));
+    let path = PathBuf::from(args.str("path", "./esl-loadgen"));
     // `--store memory` exercises the non-durable RAM backing (MemoryBlockStore); `disk` (default)
     // is the durable segment log. For memory there is no path/segment files, and max-disk-bytes is
     // reinterpreted as the in-memory byte budget.
@@ -598,7 +598,7 @@ fn main() {
     metrics.rss_peak_bytes = max_opt(metrics.rss_peak_bytes, rss_bytes());
 
     let results = Results {
-        schema: "ggsl-loadgen/1",
+        schema: "esl-loadgen/1",
         scenario: scenario.clone(),
         target_name: args.str("target-name", "local"),
         git_sha: args.opt("git-sha").or_else(|| std::env::var("GIT_SHA").ok()).unwrap_or_else(|| "dev".into()),
@@ -792,7 +792,7 @@ fn finalize_common(
         m.throughput_rps = appended as f64 / ingest_elapsed;
         let bytes = appended as f64 * payload as f64;
         m.throughput_mb_s = bytes / 1e6 / ingest_elapsed;
-        let on_disk = appended as f64 * (payload + ggstreamlog::record::FRAME_OVERHEAD) as f64;
+        let on_disk = appended as f64 * (payload + edgestreamlog::record::FRAME_OVERHEAD) as f64;
         m.logical_write_mb_s = on_disk / 1e6 / ingest_elapsed;
     }
     lat.v.sort_unstable();

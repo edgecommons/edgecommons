@@ -9,20 +9,21 @@
  * the same target) against the real service.
  *
  * Run with working AWS creds + a region:
- *   AWS_REGION=us-east-1 CW_NS=ggcommons-ts-verify CW_TOKEN=<unique> node dist/cw_verify.js
+ *   AWS_REGION=us-east-1 CW_NS=edgecommons-ts-verify CW_TOKEN=<unique> node dist/cw_verify.js
  */
 import { Config } from "./config/model";
 import { MetricBuilder } from "./metrics/metric";
 import { MetricEmitter } from "./metrics/service";
 
-const NS = process.env.CW_NS ?? "ggcommons-ts-verify";
+const NS = process.env.CW_NS ?? "edgecommons-ts-verify";
 const TOKEN = process.env.CW_TOKEN ?? String(Date.now());
 
 async function main(): Promise<void> {
   const raw = {
+    component: { token: "cw-verify" },
     metricEmission: { target: "cloudwatch", namespace: NS, targetConfig: { intervalSecs: 1 } },
   };
-  const cfg = Config.fromValue("com.ggcommons.CwVerify", "lab-5950x", raw);
+  const cfg = Config.fromValue("com.mbreissi.edgecommons.CwVerify", "lab-5950x", raw);
 
   const out: Record<string, unknown> = { namespace: NS, token: TOKEN };
   try {

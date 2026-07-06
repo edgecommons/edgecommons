@@ -4,7 +4,7 @@
 crate version `1.0.4` as used here; lib name `gg_sdk`).
 
 **Status:** draft, ready to file upstream. Tracks the `receiveOwnMessages` parity gap
-in the GGCommons Rust port (see `B2` in the parity audit / `GGCOMMONS_RUST_PORT.md`).
+in the EdgeCommons Rust port (see `B2` in the parity audit / `EDGECOMMONS_RUST_PORT.md`).
 
 ## Summary
 
@@ -30,7 +30,7 @@ The AWS Greengrass **Java** and **Python** component libraries both expose a
   `receiveMode = receiveOwnMessages ? RECEIVE_ALL_MESSAGES : RECEIVE_MESSAGES_FROM_OTHERS`.
 - Python: equivalent, via the `awsiot` IPC SDK.
 
-The GGCommons **Rust** port aims for behavioral parity with those libraries. Without
+The EdgeCommons **Rust** port aims for behavioral parity with those libraries. Without
 `ReceiveMode` in the SDK, `receiveOwnMessages = false` cannot be honored:
 
 - It is **broker-side and identity-based** — the only correct way to suppress a
@@ -84,7 +84,7 @@ This requires threading a `receiveMode` argument through the C binding
 
 ## Workaround until available
 
-GGCommons Rust keeps the `receive_own_messages(bool)` builder flag for API parity and
+EdgeCommons Rust keeps the `receive_own_messages(bool)` builder flag for API parity and
 forward-compatibility; `false` logs a warning and is a no-op. When the SDK adds
 `ReceiveMode`, wire the flag through `subscribe_to_topic_with_mode` for the local
 (pub/sub) destination and remove the warning.

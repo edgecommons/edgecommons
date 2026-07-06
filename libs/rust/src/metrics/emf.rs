@@ -20,8 +20,8 @@
 //!
 //! ## Usage Example
 //! ```
-//! use ggcommons::metrics::metric::MetricBuilder;
-//! use ggcommons::metrics::emf::build_emf;
+//! use edgecommons::metrics::metric::MetricBuilder;
+//! use edgecommons::metrics::emf::build_emf;
 //! use std::collections::HashMap;
 //!
 //! let metric = MetricBuilder::create("requests").add_measure("count", "Count", 60).build();

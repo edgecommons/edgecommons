@@ -11,8 +11,8 @@
 
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <!-- Language level: Java 25 (LTS) — MATCHES the ggcommons library (libs/java/pom.xml sets
-         maven.compiler.release=25). This is not optional styling: the com.mbreissi:ggcommons
+    <!-- Language level: Java 25 (LTS) — MATCHES the edgecommons library (libs/java/pom.xml sets
+         maven.compiler.release=25). This is not optional styling: the com.mbreissi.edgecommons:edgecommons
          artifact is compiled to Java 25 bytecode, so a component depending on it both compiles
          against and runs on a Java 25 JDK/JRE anyway (the lab + Greengrass core run JDK 25).
          Bump this in lockstep whenever the library's language level moves. -->
@@ -22,15 +22,15 @@
     <!-- LOCAL DEV OVERRIDE SEAM (the Maven analog of the bridge's gitignored .cargo/config.toml
          `[patch]` and the edge-console's `link-sibling-lib.mjs` stub): Maven always resolves a
          dependency by coordinate, so there is no "path dependency" like Cargo/npm have — the
-         local-dev equivalent is `mvn install` on the SIBLING checkout (../ggcommons/libs/java)
+         local-dev equivalent is `mvn install` on the SIBLING checkout (../core/libs/java)
          into your local ~/.m2, then pointing this property at whatever version that installs as
-         (`mvn -Dggcommons.version=<sibling-version> compile`), so it resolves from ~/.m2 without
-         touching GitHub Packages. The default below is the CLI-substituted <<GGCOMMONS_VERSION>>
+         (`mvn -Dedgecommons.version=<sibling-version> compile`), so it resolves from ~/.m2 without
+         touching GitHub Packages. The default below is the CLI-substituted <<EDGECOMMONS_VERSION>>
          (the intended PUBLISHED pin) so a plain `mvn compile` keeps working once that version is
-         actually released. TODO(release): cli/ggcommons_cli/commands/create_component.py's
-         _GGCOMMONS_VERSION is currently behind the sibling library's own pom.xml <version> while
+         actually released. TODO(release): cli/edgecommons_cli/commands/create_component.py's
+         _EDGECOMMONS_VERSION is currently behind the sibling library's own pom.xml <version> while
          feat/unified-namespace is unpublished - bump it (and re-scaffold) once this lands + tags. -->
-    <ggcommons.version><<GGCOMMONS_VERSION>></ggcommons.version>
+    <edgecommons.version><<EDGECOMMONS_VERSION>></edgecommons.version>
   </properties>
 
   <dependencies>
@@ -60,9 +60,9 @@
       <scope>test</scope>
     </dependency>
     <dependency>
-      <groupId>com.mbreissi</groupId>
-      <artifactId>ggcommons</artifactId>
-      <version>${ggcommons.version}</version>
+      <groupId>com.mbreissi.edgecommons</groupId>
+      <artifactId>edgecommons</artifactId>
+      <version>${edgecommons.version}</version>
     </dependency>
     <dependency>
       <groupId>com.google.code.gson</groupId>
@@ -119,15 +119,15 @@
 
 
   <repositories>
-    <!-- Resolve com.mbreissi:ggcommons from GitHub Packages. Auth via ~/.m2/settings.xml:
+    <!-- Resolve com.mbreissi.edgecommons:edgecommons from GitHub Packages. Auth via ~/.m2/settings.xml:
          a <server> with <id>github</id> and a GitHub token (read:packages). For a local
          monorepo build use `mvn install` on libs/java instead (then ~/.m2 satisfies it, and
          Maven's local-repo-first resolution order means GitHub Packages is never even
-         contacted) - see the `ggcommons.version` property above for pointing this pom at
+         contacted) - see the `edgecommons.version` property above for pointing this pom at
          whatever version that local install produces. -->
     <repository>
       <id>github</id>
-      <url>https://maven.pkg.github.com/edgecommons/ggcommons</url>
+      <url>https://maven.pkg.github.com/edgecommons/edgecommons</url>
     </repository>
   </repositories>
 

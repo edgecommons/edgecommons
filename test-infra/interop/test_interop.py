@@ -1,4 +1,4 @@
-"""Cross-language interoperability test for the ggcommons libraries.
+"""Cross-language interoperability test for the edgecommons libraries.
 
 Runs a request/reply round-trip over the shared local MQTT broker for every
 ordered pair of languages (python, java, rust, ts) using the per-language "interop
@@ -8,9 +8,9 @@ in BOTH directions between those two libraries (request serialized by one,
 deserialized + replied by the other, reply deserialized back by the first).
 
 Prereqs (each self-skips if missing):
-- a local MQTT broker on localhost:1883 (docker start ggcommons-emqx)
-- python: the ggcommons package importable
-- java:  a built shaded jar in ggcommons-java-lib/target + a JDK (JAVA_HOME or
+- a local MQTT broker on localhost:1883 (docker start edgecommons-emqx)
+- python: the edgecommons package importable
+- java:  a built shaded jar in edgecommons-java-lib/target + a JDK (JAVA_HOME or
          C:/Users/breis/tools/jdk), compiled by this module's fixture
 - rust:  cargo available; the rust_node is built by this module's fixture
 - ts:    node + npm available; libs/ts is npm-installed + tsc-built by this fixture
@@ -34,9 +34,9 @@ HERE = Path(__file__).resolve().parent
 # Run the node subprocesses here so the Java Paho client's file-persistence
 # directories land in a temp dir, not in the repo.
 RUN_DIR = Path(tempfile.mkdtemp(prefix="ggc-interop-"))
-WORKSPACE = HERE.parent.parent  # .../source/ggcommons
-HOST = os.environ.get("GGCOMMONS_IT_MQTT_HOST", "localhost")
-PORT = int(os.environ.get("GGCOMMONS_IT_MQTT_PORT", "1883"))
+WORKSPACE = HERE.parent.parent  # .../source/edgecommons
+HOST = os.environ.get("EDGECOMMONS_IT_MQTT_HOST", "localhost")
+PORT = int(os.environ.get("EDGECOMMONS_IT_MQTT_PORT", "1883"))
 LANGS = ["python", "java", "rust", "ts"]
 
 # Canonical payload permutations every requester sends as the request body's `types` field; the
@@ -99,7 +99,7 @@ def _shaded_jar():
     # pre-shade thin jar). Select the dependency-bearing jar, preferring an explicit
     # `-shaded` classifier if a build ever attaches one.
     target = WORKSPACE / "libs" / "java" / "target"
-    jars = [j for j in target.glob("ggcommons-*.jar")
+    jars = [j for j in target.glob("edgecommons-*.jar")
             if not j.name.startswith("original-")
             and not j.name.endswith(("-sources.jar", "-javadoc.jar", "-shaded.jar"))]
     # Pick the most-recently-built jar (by mtime), NOT the name-sorted last: a stale higher-version
@@ -120,7 +120,7 @@ def commands():
 
     # Python: needs the package importable.
     try:
-        subprocess.run([sys.executable, "-c", "import ggcommons"], check=True,
+        subprocess.run([sys.executable, "-c", "import edgecommons"], check=True,
                        capture_output=True, timeout=60)
         py_node = str(HERE / "python_node.py")
         cmd["python"] = lambda *a: [sys.executable, py_node, *a]
@@ -138,8 +138,8 @@ def commands():
         if exe.exists():
             cmd["rust"] = lambda *a, _e=str(exe): [_e, *a]
 
-    # TypeScript: install the npm workspace from the repo root (so the ggcommons
-    # lib and the ts_node interop package link cleanly), then build the ggcommons
+    # TypeScript: install the npm workspace from the repo root (so the edgecommons
+    # lib and the ts_node interop package link cleanly), then build the edgecommons
     # lib (ts_node imports its public API) and the ts_node package itself. (Absent
     # node/npm -> skip; a build *failure* raises so a broken node surfaces loudly
     # instead of skipping.)
@@ -159,7 +159,7 @@ def commands():
             for info in ts_dir.glob("*.tsbuildinfo"):
                 info.unlink(missing_ok=True)
         r = subprocess.run(
-            f'"{npm}" run build --workspace=@edgecommons/ggcommons --workspace=ggcommons-interop-ts-node',
+            f'"{npm}" run build --workspace=@edgecommons/edgecommons --workspace=edgecommons-interop-ts-node',
             cwd=WORKSPACE, capture_output=True, text=True, timeout=300, shell=True)
         assert r.returncode == 0, f"ts build failed:\n{r.stderr}\n{r.stdout}"
         node_js = HERE / "ts_node" / "dist" / "interop_node.js"
@@ -392,7 +392,7 @@ def test_uns_guard(commands, lang):
     """Each language's `uns-guard` attempts a raw publish to the reserved-class topic
     ecv1/dev1/comp1/main/state through its guarded public surface and must exit
     NON-ZERO printing the reserved-topic error name (Java ReservedTopicException /
-    Python+TS ReservedTopicError / Rust GgError::ReservedTopic — all carry the
+    Python+TS ReservedTopicError / Rust EdgeCommonsError::ReservedTopic — all carry the
     common 'ReservedTopic' stem)."""
     if lang not in commands:
         pytest.skip(f"{lang} toolchain/artifact unavailable")

@@ -2,7 +2,7 @@
 
 Deploys the TS `IpcProvider` (via `src/ipc_verify.ts`) as a one-shot Greengrass
 component to prove it interoperates over **Greengrass IPC** with a live nucleus and
-with the other ggcommons libraries.
+with the other edgecommons libraries.
 
 `ipc_verify.ts` runs three checks against the nucleus and writes the result as JSON
 to `/tmp/ts_ipc_verify_result.json` (and stdout / the component log):
@@ -10,14 +10,14 @@ to `/tmp/ts_ipc_verify_result.json` (and stdout / the component log):
 1. **request/reply** over IPC (correlation id round-trips, body echoed),
 2. **raw** publish/ingest over IPC,
 3. **cross-language** — ingests the UNS `state` keepalive envelope published over
-   IPC by a peer ggcommons component (e.g. the deployed Java skeleton on
+   IPC by a peer edgecommons component (e.g. the deployed Java skeleton on
    `ecv1/<device>/<component>/main/state`).
 
 ## Prerequisites
 
 - A device running an AWS IoT Greengrass v2 nucleus with `greengrass-cli`.
 - Node.js (≥18) on the device (`apt-get install -y nodejs npm`).
-- A peer ggcommons component publishing heartbeats over IPC (for check 3).
+- A peer edgecommons component publishing heartbeats over IPC (for check 3).
 
 ## Reproduce
 
@@ -31,22 +31,22 @@ mkdir -p stage/tsverify && cp -r dist node_modules package.json stage/tsverify/
 ( cd stage/tsverify && zip -rq ../../tsverify.zip dist node_modules package.json )
 
 # 3. Lay out recipe + artifact for a local deployment
-mkdir -p ggc/recipes ggc/artifacts/com.ggcommons.TsIpcVerify/1.0.2
-cp com.ggcommons.TsIpcVerify-1.0.2.yaml ggc/recipes/
-cp tsverify.zip ggc/artifacts/com.ggcommons.TsIpcVerify/1.0.2/
+mkdir -p ggc/recipes ggc/artifacts/com.mbreissi.edgecommons.TsIpcVerify/1.0.2
+cp com.mbreissi.edgecommons.TsIpcVerify-1.0.2.yaml ggc/recipes/
+cp tsverify.zip ggc/artifacts/com.mbreissi.edgecommons.TsIpcVerify/1.0.2/
 
 # 4. Deploy
 sudo /greengrass/v2/bin/greengrass-cli deployment create \
   --recipeDir   ggc/recipes \
   --artifactDir ggc/artifacts \
-  --merge "com.ggcommons.TsIpcVerify=1.0.2"
+  --merge "com.mbreissi.edgecommons.TsIpcVerify=1.0.2"
 
 # 5. Read the result (component runs as root → /tmp file is world-readable)
 cat /tmp/ts_ipc_verify_result.json    # expect "all_ok": true
 
 # 6. Clean up
 sudo /greengrass/v2/bin/greengrass-cli deployment create \
-  --remove "com.ggcommons.TsIpcVerify"
+  --remove "com.mbreissi.edgecommons.TsIpcVerify"
 ```
 
 ## Notes

@@ -9,9 +9,9 @@ Unit tests for lifecycle / robustness parity fixes (no broker required):
 import json
 import logging
 
-from ggcommons.messaging.message import MessageTags
-from ggcommons.metrics.metric_emitter import MetricEmitter
-from ggcommons.config.manager.file_config_manager import (
+from edgecommons.messaging.message import MessageTags
+from edgecommons.metrics.metric_emitter import MetricEmitter
+from edgecommons.config.manager.file_config_manager import (
     FileConfigManager,
     ConfigFileChangeEventHandler,
 )

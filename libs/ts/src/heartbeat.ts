@@ -244,7 +244,7 @@ export class Heartbeat {
    * Registers (or clears with `undefined`) the per-instance connectivity provider whose result is
    * emitted in each RUNNING `state` keepalive's `instances` array — the overridable surface a
    * multi-connection component uses to report connectivity at the instance level without a separate
-   * UNS instance per connection. Wired from `GGCommons.setInstanceConnectivityProvider`.
+   * UNS instance per connection. Wired from `EdgeCommons.setInstanceConnectivityProvider`.
    */
   setInstanceConnectivityProvider(provider: InstanceConnectivityProvider | undefined): void {
     this.connectivityProvider = provider;

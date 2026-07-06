@@ -1,18 +1,18 @@
 {
   "dekB64": "QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8=",
-  "description": "ggcommons vault v1 cross-language conformance vectors",
+  "description": "edgecommons vault v1 cross-language conformance vectors",
   "kekB64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
-  "macB64": "OcQBCWbZpaiO/oh5eBQFyVpMGZfMHOBVsc/1Kebr7DY=",
+  "macB64": "IWxbNG9omKekPmaIjt1Cj9nsCTETmtuTqg59YvsbHOM=",
   "records": [
     {
-      "ciphertextB64": "a2Xs6a5pHlBhj2eIvZgP58yVHUvX",
+      "ciphertextB64": "a2Xs6a5vuP+HAdNhY3I/8uJb+p65",
       "name": "alpha",
       "nonceB64": "sLGys7S1tre4ubq7",
       "plaintextB64": "aGVsbG8=",
       "version": "00000001"
     },
     {
-      "ciphertextB64": "JGZI7ECrQD/4R7LG1A3kwcVk2BdvEU8=",
+      "ciphertextB64": "JGZI7ECrQLcrm2QyiH6bpt0W11RN5Qc=",
       "name": "beta",
       "nonceB64": "wMHCw8TFxsfIycrL",
       "plaintextB64": "eyJ4IjoxfQ==",
@@ -21,5 +21,5 @@
   ],
   "vaultId": "00000000-0000-4000-8000-000000000001",
   "wrapNonceB64": "oKGio6Slpqeoqaqr",
-  "wrappedDekB64": "plk+bgGORPgqLM2YSzeOkSD9C0PG4hQ7xFd83SP2K14LigoLIHz/qr0Q+el+YrQf"
+  "wrappedDekB64": "plk+bgGORPgqLM2YSzeOkSD9C0PG4hQ7xFd83SP2K16/L/CgOF5Y9MMQNbXCtnNY"
 }

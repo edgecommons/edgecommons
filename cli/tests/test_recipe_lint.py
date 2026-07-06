@@ -1,4 +1,4 @@
-from ggcommons_cli.recipe_lint import lint_recipe_text
+from edgecommons_cli.recipe_lint import lint_recipe_text
 
 
 def test_clean_recipe_has_no_problems():
@@ -20,6 +20,6 @@ def test_flags_leftover_placeholder():
 
 
 def test_runtime_component_name_var_is_not_flagged():
-    # The ggcommons runtime var {ComponentName} (camelCase) is fine; only GDK's
+    # The edgecommons runtime var {ComponentName} (camelCase) is fine; only GDK's
     # all-caps {COMPONENT_NAME} is a problem.
     assert lint_recipe_text('topic: "heartbeat/{ThingName}/{ComponentName}"\n') == []

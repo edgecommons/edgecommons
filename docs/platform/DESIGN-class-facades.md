@@ -5,7 +5,7 @@
 > **RESOLVED** — see the decision register in §8. The implementation has shipped (Java canonical, then
 > Python/Rust/TS mirrors): the `Quality`/`Severity`/`Channel` enums + the `SignalUpdate` body
 > builder + the `DataFacade`/`EventsFacade`/`AppFacade` facades under
-> `libs/{java,python,rust,ts}/.../facades/`, wired onto `GgInstance.data()/events()/app()` and the `GGCommons`
+> `libs/{java,python,rust,ts}/.../facades/`, wired onto `EdgeCommonsInstance.data()/events()/app()` and the `EdgeCommons`
 > convenience `getData()/getEvents()/getApp()` (== instance `main`); the body contracts are pinned
 > by new `uns-test-vectors/{data,evt,app}.json` and the refreshed `envelopes.json` goldens
 > (Java canonical `2283189`; Python/Rust/TS mirrors `8d3e3c9`). This closes the last gap in
@@ -234,11 +234,11 @@ as thin publish-sugar.
 The facades hang off **two** places, exactly like `uns()` does today (`gg.getUns()` component-bound;
 `gg.instance(id).uns()` instance-bound):
 
-- **`GgInstance`** (primary) — `data()` / `events()` / `app()`, bound to that instance token. This is the
+- **`EdgeCommonsInstance`** (primary) — `data()` / `events()` / `app()`, bound to that instance token. This is the
   natural home for `data`/`evt` because the data plane is inherently per-instance (an adapter serves
   `kep1`, `plc-2`). DESIGN-uns §3 already earmarked this: *"Components phase adds: telemetry(), events(),
   commands() here — same handle, no rework."*
-- **`GGCommons`** (convenience) — `getData()` / `getEvents()` / `getApp()` == `instance("main").data()`
+- **`EdgeCommons`** (convenience) — `getData()` / `getEvents()` / `getApp()` == `instance("main").data()`
   etc., for single-instance components.
 
 **Accessor names (D4, RESOLVED — §8):** match each language's existing style —
@@ -281,8 +281,8 @@ public final class AppFacade {
     public void publish(String name, String channel, JsonObject body, Channel routing);
 }
 
-// GgInstance additions:  DataFacade data();  EventsFacade events();  AppFacade app();
-// GGCommons additions:   DataFacade getData(); EventsFacade getEvents(); AppFacade getApp();
+// EdgeCommonsInstance additions:  DataFacade data();  EventsFacade events();  AppFacade app();
+// EdgeCommons additions:   DataFacade getData(); EventsFacade getEvents(); AppFacade getApp();
 ```
 
 `SignalUpdate` is the constructed body object (`device?`, `signal{id,name?,address?}`,
@@ -290,13 +290,13 @@ public final class AppFacade {
 hand-assembled `JsonObject`. The facade calls the **public** `messaging().publish(topic, msg)` (guarded,
 but `data`/`evt`/`app` pass) — **not** `ReservedPublisher`.
 
-**Mirror notes:** Python — `ggcommons/facades/{data,events,app}.py`, snake methods (`raise_alarm`,
+**Mirror notes:** Python — `edgecommons/facades/{data,events,app}.py`, snake methods (`raise_alarm`,
 `clear_alarm`), `Quality`/`Severity` as `str, Enum`; works over the process-global `MessagingClient`
 exactly as the raw path does today (the facade holds the bound `Uns` + a `MessageBuilder` factory, no
-per-instance client state — same reasoning as `GgInstance` in UNS-CANONICAL §3). Rust —
-`ggcommons::facades` with `struct DataFacade`/`EventsFacade`/`AppFacade`, builder methods returning
+per-instance client state — same reasoning as `EdgeCommonsInstance` in UNS-CANONICAL §3). Rust —
+`edgecommons::facades` with `struct DataFacade`/`EventsFacade`/`AppFacade`, builder methods returning
 `Result<()>` (the `uns()` topic build is fallible), `Quality`/`Severity` enums with
-`#[serde(rename_all="UPPERCASE"/"lowercase")]`; obtained from `GgInstance` (Rust's is `Result`-returning).
+`#[serde(rename_all="UPPERCASE"/"lowercase")]`; obtained from `EdgeCommonsInstance` (Rust's is `Result`-returning).
 TS — `src/facades/*.ts`, `class DataFacade` etc., `enum Quality`/`Severity`, methods return `void`/throw.
 
 ### 3.3 Call sites (adapter before → after)
@@ -491,7 +491,7 @@ Recommend **(1)**: library first, `main`-merged and rev-tagged, then one migrati
 Java canonical → mirrors → vectors → interop, under the 90% gate in each language:
 
 1. **Java canonical:** `Quality`/`Severity`/`Channel` enums; `SignalUpdate` body builder; `DataFacade`/
-   `EventsFacade`/`AppFacade`; `GgInstance.data()/events()/app()` + `GGCommons.getData()/getEvents()/
+   `EventsFacade`/`AppFacade`; `EdgeCommonsInstance.data()/events()/app()` + `EdgeCommons.getData()/getEvents()/
    getApp()`; channel routing (B; C behind the schema add); the `data.json`/`evt.json`/`app.json`
    generator test. JaCoCo 90%.
 2. **`uns-test-vectors/`**: add the three files (regenerate; refresh the `envelopes.json` data/evt/app
@@ -529,7 +529,7 @@ Python/Rust/TS ports have an unambiguous target.
    a stream/northbound transport failure is caught + logged and never flips local readiness. *Built
    as:* `Channel {LOCAL, NORTHBOUND, stream(name)}`, `DataFacade.resolveChannel(via)`,
    `Channel.fromConfig("local"|"northbound"|"stream:<name>")`, the `StreamSink` seam
-   (`getStreams()` bound in `GGCommons.streamSink()`).
+   (`getStreams()` bound in `EdgeCommons.streamSink()`).
 2. **`data` quality default policy — RESOLVED: `GOOD`.** An omitted sample quality defaults to `GOOD`
    and the synthesis is marked `qualityRaw:"unspecified"` (a caller-supplied `GOOD` with its own
    `qualityRaw` is distinguishable). A source that knows a read is stale/failed passes
@@ -550,10 +550,10 @@ Python/Rust/TS ports have an unambiguous target.
    `SouthboundSignalUpdate` shape — a future contract change is a library change (the coordination cost
    is accepted; it is exactly what kills the per-adapter drift). *Built as:* `SignalUpdate` +
    `DataFacade.signal(...)` / `publishBody(...)`.
-6. **Where the facade lives — RESOLVED: both.** Instance-bound on `GgInstance` (primary — the data plane
-   is per-instance: `instance("kep1").data()`) + component-bound convenience on `GGCommons` (==
-   `instance("main")`). *Built as:* `GgInstance.data()/events()/app()` (lazily cached) +
-   `GGCommons.getData()/getEvents()/getApp()`.
+6. **Where the facade lives — RESOLVED: both.** Instance-bound on `EdgeCommonsInstance` (primary — the data plane
+   is per-instance: `instance("kep1").data()`) + component-bound convenience on `EdgeCommons` (==
+   `instance("main")`). *Built as:* `EdgeCommonsInstance.data()/events()/app()` (lazily cached) +
+   `EdgeCommons.getData()/getEvents()/getApp()`.
 7. **Sequencing — RESOLVED: library-facades-first slice.** Land the four-language library facades
    (Java-canonical first, this build) `main`-merged and rev-tagged before the component-adoption PRs
    (Phase 5). Raw publishing is **not** deprecated. The four-language library facades have shipped and

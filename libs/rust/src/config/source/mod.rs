@@ -16,11 +16,11 @@
 //!
 //! ## Usage Example
 //! ```no_run
-//! use ggcommons::cli::ConfigSourceSpec;
-//! use ggcommons::config::source::build;
+//! use edgecommons::cli::ConfigSourceSpec;
+//! use edgecommons::config::source::build;
 //! use std::path::PathBuf;
 //!
-//! # async fn demo() -> ggcommons::Result<()> {
+//! # async fn demo() -> edgecommons::Result<()> {
 //! // CONFIG_COMPONENT needs a messaging service + identity; other sources ignore them.
 //! let source = build(
 //!     &ConfigSourceSpec::File { path: PathBuf::from("config.json") },
@@ -93,7 +93,7 @@ pub fn build(
         ConfigSourceSpec::Env { var } => Box::new(env::EnvConfigSource::new(var.clone())),
         ConfigSourceSpec::ConfigComponent => {
             let messaging = messaging.ok_or_else(|| {
-                crate::error::GgError::Config(
+                crate::error::EdgeCommonsError::Config(
                     "CONFIG_COMPONENT source requires a messaging service (run in a mode that provides one)".to_string(),
                 )
             })?;
@@ -115,7 +115,7 @@ pub fn build(
         )),
         #[cfg(not(feature = "greengrass"))]
         ConfigSourceSpec::Greengrass { .. } | ConfigSourceSpec::Shadow { .. } => {
-            return Err(crate::error::GgError::Config(
+            return Err(crate::error::EdgeCommonsError::Config(
                 "GG_CONFIG/SHADOW sources require the 'greengrass' cargo feature".to_string(),
             ));
         }

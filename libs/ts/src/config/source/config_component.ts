@@ -26,10 +26,10 @@
  *
  * `load` sends a `GetConfiguration` v1.0 request and awaits the reply (30 s per attempt — the
  * pre-config built-in deadline, §5 — up to 3 attempts), returning the reply body; it throws a
- * {@link GgError} of kind `Config` after 3 failures. `watch` subscribes to the set-config inbox
+ * {@link EdgeCommonsError} of kind `Config` after 3 failures. `watch` subscribes to the set-config inbox
  * and forwards each message body.
  */
-import { GgError } from "../../errors";
+import { EdgeCommonsError } from "../../errors";
 import { IMessagingService } from "../../messaging/types";
 import { MessageBuilder, Message } from "../../message";
 import { sanitize } from "../template";
@@ -105,7 +105,7 @@ export class ConfigComponentSource implements ConfigSource {
         );
       }
     }
-    throw GgError.config(
+    throw EdgeCommonsError.config(
       `failed to load configuration from the config component after ${MAX_ATTEMPTS} attempts: ${lastErr}`,
     );
   }

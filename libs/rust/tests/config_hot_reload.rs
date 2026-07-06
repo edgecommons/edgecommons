@@ -1,6 +1,6 @@
 //! Integration test for FILE config hot reload through the full runtime.
 //!
-//! Builds GgCommons against a FILE config source, registers a config-change
+//! Builds EdgeCommons against a FILE config source, registers a config-change
 //! listener, modifies the file, and asserts the snapshot updates and the listener
 //! fires.
 //!
@@ -10,7 +10,7 @@
 //! GREENGRASS mode without the `greengrass` feature yielding `messaging = None` — was
 //! the silent `Ok(None)` no-op that the §12 #4 fail-fast decision deliberately
 //! removes.) These tests therefore connect HOST/MQTT and are gated: no-op unless
-//! `GGCOMMONS_IT_MQTT=1` is set (a broker must be reachable). The config-reload
+//! `EDGECOMMONS_IT_MQTT=1` is set (a broker must be reachable). The config-reload
 //! pipeline itself is also covered, broker-free, by the source-level unit tests.
 //!
 //! Skipped under the `greengrass` feature: there, IPC transport performs a real
@@ -22,21 +22,21 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use ggcommons::config::Config;
-use ggcommons::prelude::*;
+use edgecommons::config::Config;
+use edgecommons::prelude::*;
 
 fn skipped() -> bool {
-    if std::env::var("GGCOMMONS_IT_MQTT").is_ok() {
+    if std::env::var("EDGECOMMONS_IT_MQTT").is_ok() {
         return false;
     }
-    eprintln!("skipping config-hot-reload runtime test (set GGCOMMONS_IT_MQTT=1 to enable)");
+    eprintln!("skipping config-hot-reload runtime test (set EDGECOMMONS_IT_MQTT=1 to enable)");
     true
 }
 
 /// Write a messaging-config file for the local broker and return its path.
 fn write_messaging_config(dir: &std::path::Path) -> std::path::PathBuf {
-    let host = std::env::var("GGCOMMONS_IT_MQTT_HOST").unwrap_or_else(|_| "localhost".to_string());
-    let port = std::env::var("GGCOMMONS_IT_MQTT_PORT").unwrap_or_else(|_| "1883".to_string());
+    let host = std::env::var("EDGECOMMONS_IT_MQTT_HOST").unwrap_or_else(|_| "localhost".to_string());
+    let port = std::env::var("EDGECOMMONS_IT_MQTT_PORT").unwrap_or_else(|_| "1883".to_string());
     let path = dir.join("messaging.json");
     std::fs::write(
         &path,
@@ -50,9 +50,9 @@ fn write_messaging_config(dir: &std::path::Path) -> std::path::PathBuf {
 }
 
 /// Build a HOST/MQTT runtime with a FILE config source (broker required).
-async fn build_runtime(component: &str, dir: &std::path::Path, config_path: &std::path::Path) -> GgCommons {
+async fn build_runtime(component: &str, dir: &std::path::Path, config_path: &std::path::Path) -> EdgeCommons {
     let messaging_path = write_messaging_config(dir);
-    GgCommonsBuilder::new(component.to_string())
+    EdgeCommonsBuilder::new(component.to_string())
         .args([
             "prog".to_string(),
             "--platform".to_string(),
@@ -100,7 +100,7 @@ async fn file_config_hot_reloads_and_notifies_listeners() {
     if skipped() {
         return;
     }
-    let dir = std::env::temp_dir().join(format!("ggcommons-reload-{}", uuid::Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("edgecommons-reload-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     let config_path = dir.join("config.json");
     let log_path = dir.join("metric.log");
@@ -141,7 +141,7 @@ async fn multi_instance_config_is_exposed_through_the_runtime() {
     if skipped() {
         return;
     }
-    let dir = std::env::temp_dir().join(format!("ggcommons-multi-{}", uuid::Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("edgecommons-multi-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     let config_path = dir.join("config.json");
     let log_path = dir.join("metric.log");
@@ -176,7 +176,7 @@ async fn metric_target_reconfigures_on_reload() {
     if skipped() {
         return;
     }
-    let dir = std::env::temp_dir().join(format!("ggcommons-mreload-{}", uuid::Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("edgecommons-mreload-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     let config_path = dir.join("config.json");
     let log_a = dir.join("a.log");

@@ -7,7 +7,7 @@
 
 ## 0. Scope & non-goals
 
-**In scope.** Adding a first-class **Kubernetes** deployment target to all four ggcommons libraries
+**In scope.** Adding a first-class **Kubernetes** deployment target to all four edgecommons libraries
 (Java canonical; Python/Rust/TS mirrors) and the supporting packaging, by re-architecting the runtime
 model into two orthogonal axes (platform × transport) and adding Kubernetes-native facilities to each
 subsystem. Library + Helm packaging + an operator/CRD *sketch*.
@@ -63,14 +63,14 @@ the vault on-disk format/conformance vectors.
   pod/namespace/annotation) ▸ library fallback. The resolved value **MUST** pass the existing
   template-variable sanitization. *Acceptance:* on k8s without `-t`, identity derives from Downward-API
   fields and `{ThingName}` substitution still works; sanitization test passes.
-- **FR-RT-8 (builder parity).** The programmatic builders (`GGCommonsBuilder` / `GgCommonsBuilder` /
+- **FR-RT-8 (builder parity).** The programmatic builders (`EdgeCommonsBuilder` / `EdgeCommonsBuilder` /
   TS/Rust equivalents) **MUST** expose platform/transport selection equivalent to the CLI. *Acceptance:*
   a component can select platform/transport without touching `argv`.
 
 ### 1.2 Config (FR-CFG)
 
 - **FR-CFG-1 (CONFIGMAP source).** A new `-c CONFIGMAP [path]` source **MUST** read the component
-  config from a mounted ConfigMap directory (default mount e.g. `/etc/ggcommons/config`, default key
+  config from a mounted ConfigMap directory (default mount e.g. `/etc/edgecommons/config`, default key
   `config.json`) and **MUST** be the default config source on the KUBERNETES platform. *Acceptance:* a
   pod with a mounted ConfigMap loads config with no `-c` flag.
 - **FR-CFG-2 (reuse FILE hot-reload seam).** The CONFIGMAP source **MUST** reuse the existing
@@ -88,7 +88,7 @@ the vault on-disk format/conformance vectors.
   valid config (existing `applyConfig` behavior). *Acceptance:* a malformed ConfigMap edit does not
   crash a running pod.
 - **FR-CFG-6 (Downward-API identity).** The libraries **SHOULD** support reading pod identity
-  (`metadata.name`, `metadata.namespace`, node, and a `ggcommons.io/thing-name` annotation) from a
+  (`metadata.name`, `metadata.namespace`, node, and a `edgecommons.io/thing-name` annotation) from a
   Downward-API volume/env for FR-RT-7. *Acceptance:* identity derivation works from Downward-API inputs.
 
 ### 1.3 Messaging (FR-MSG)
@@ -122,7 +122,7 @@ the vault on-disk format/conformance vectors.
   `close()` stops the HTTP listener. This inversion **MUST** be documented and **MUST NOT** break the
   `MetricTarget` contract for other targets. *Acceptance:* docs state the no-op semantics; other
   targets unaffected; a test asserts `/metrics` reflects emitted values post-`flush`.
-- **FR-MET-3 (dimension→label mapping).** A documented policy **MUST** map ggcommons dimensions
+- **FR-MET-3 (dimension→label mapping).** A documented policy **MUST** map edgecommons dimensions
   (10-dimension cap, `coreName`/`largeFleetWorkaround`) onto Prometheus labels (the CloudWatch-isms
   have no Prometheus analog). *Acceptance:* the mapping is documented and implemented consistently.
 - **FR-MET-4 (CloudWatch optional).** CloudWatch/EMF and the messaging targets **MUST** remain available
@@ -132,7 +132,7 @@ the vault on-disk format/conformance vectors.
   profile default (retained for completeness only; it is unusable off-device); **direct `cloudwatch` is the
   preferred AWS push target**. Because the direct target buffers only in memory (`CloudWatch.java:30,108-204`),
   it **MUST** gain a **durable, disk-backed store-and-forward buffer that drains on reconnect**
-  (NFR-DISCONNECT-1), implemented by **reusing the `ggstreamlog` durable log + export engine via a new
+  (NFR-DISCONNECT-1), implemented by **reusing the `edgestreamlog` durable log + export engine via a new
   host-callback sink** — design **resolved** in [../CLOUDWATCH_DURABLE_METRICS.md](../CLOUDWATCH_DURABLE_METRICS.md)
   (a **standalone enhancement, independent of this rearch** — it benefits today's GREENGRASS/STANDALONE
   edge equally; `buffer: durable|memory` runtime config, default `durable`; drop-stale-on-drain + counter;
@@ -178,7 +178,7 @@ the vault on-disk format/conformance vectors.
 
 - **FR-CRED-1 (SDK-chain auth, no code branches).** AWS authentication for the KeyProvider and central
   sync **MUST** continue to use the AWS SDK default credential provider chain with **no explicit
-  credentials in ggcommons code**, so IRSA / IAM Roles Anywhere / static keys all work unchanged.
+  credentials in edgecommons code**, so IRSA / IAM Roles Anywhere / static keys all work unchanged.
   *Acceptance:* a pod with an IRSA-bound ServiceAccount unlocks a KMS-backed vault with no code change.
 - **FR-CRED-2 (local vault stays primary).** The encrypted local vault and its central-sync engine
   **MUST** remain available on all platforms; on air-gapped k8s the vault **MUST** function with no AWS
@@ -189,7 +189,7 @@ the vault on-disk format/conformance vectors.
   *Acceptance:* a vault unlocks from a KEK supplied via env/Secret.
 - **FR-CRED-4 (optional CSI/ESO source).** An optional `CentralVaultSource` over a mounted-secret
   directory (the materialization shape of External Secrets Operator / Secrets Store CSI Driver) **MAY**
-  be added so the operator owns cloud auth/rotation while ggcommons keeps typed views + `$secret`
+  be added so the operator owns cloud auth/rotation while edgecommons keeps typed views + `$secret`
   indirection. *Acceptance:* a component reads secrets the operator projected, via `gg.credentials()`,
   with no Secrets-Manager call from the pod.
 - **FR-CRED-5 (shared-volume safety).** The libraries **MUST** document that the vault's advisory file
@@ -241,7 +241,7 @@ the vault on-disk format/conformance vectors.
   (re-delivers on restart, at-least-once). *Acceptance:* graceful stop flushes; forced kill loses no
   committed data (only duplicates possible).
 - **FR-STREAM-7 (native artifact matrix).** Each language **MUST** ship the correct
-  `linux-x86_64`/`linux-aarch64` `ggstreamlog` artifact for the pod architecture (multi-arch images /
+  `linux-x86_64`/`linux-aarch64` `edgestreamlog` artifact for the pod architecture (multi-arch images /
   per-arch wheels/prebuilds). *Acceptance:* `gg.streams()` works on both arches.
 - **FR-STREAM-8 (back-pressure liveness safety).** Docs **MUST** state the `onFull: block` vs
   `dropOldest` durability/availability tradeoff: `block` guarantees no loss but **stalls the producing
@@ -254,7 +254,7 @@ the vault on-disk format/conformance vectors.
 ### 1.10 Schema (FR-SCHEMA)
 
 - **FR-SCHEMA-1 (additive sections).** New top-level sections **MUST** be added to the canonical
-  `schema/ggcommons-config-schema.json` `properties{}` (top level is strict
+  `schema/edgecommons-config-schema.json` `properties{}` (top level is strict
   `additionalProperties:false`): `transport`, `platform`, `health` (probes), a `prometheus` branch in
   `metricEmission.targetConfig` + `"prometheus"` in the target enum, and an `identity` section.
   Existing semantics **MUST** be preserved (add, don't rename). *Acceptance:* existing valid configs
@@ -286,7 +286,7 @@ the vault on-disk format/conformance vectors.
 ### 1.12 Operator (FR-OP)
 
 - **FR-OP-1 (no operator now).** The deliverable **MUST NOT** build a production operator; it **MUST**
-  provide a `GgcommonsComponent` CRD *sketch* and document the explicit triggers that would justify one.
+  provide an `EdgeCommonsComponent` CRD *sketch* and document the explicit triggers that would justify one.
   *Acceptance:* DESIGN-operator.md contains the sketch + decision; no Go controller is shipped.
 
 ---
@@ -323,7 +323,7 @@ the vault on-disk format/conformance vectors.
   of NFR-DISCONNECT-1: in-cluster broker only, offline KeyProvider, `mountedDir` parameters, local
   durable buffer — no cloud reachability required at all. *Acceptance:* documented air-gapped profile;
   zero outbound cloud calls when so configured.
-- **NFR-SEC-1 (no creds in code).** No ggcommons code path **MUST** embed or require explicit AWS
+- **NFR-SEC-1 (no creds in code).** No edgecommons code path **MUST** embed or require explicit AWS
   credentials. *Acceptance:* code review + grep; all SDK clients use the default chain.
 - **NFR-SEC-2 (least privilege).** RBAC and IAM artifacts the chart ships **MUST** be least-privilege
   (no cluster-admin; scoped Service/ConfigMap/Secret access only where required). *Acceptance:* rendered

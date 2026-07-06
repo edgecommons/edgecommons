@@ -10,8 +10,8 @@ import logging
 import threading
 import pytest
 
-from ggcommons.metrics.metric import Metric
-from ggcommons.metrics.metric_emitter import MetricEmitter
+from edgecommons.metrics.metric import Metric
+from edgecommons.metrics.metric_emitter import MetricEmitter
 
 
 def _metric(name="m", dims=None):
@@ -60,7 +60,7 @@ def test_is_metric_defined_pure_lookup():
 
 def test_cloudwatch_flush_chunks_and_isolates():
     pytest.importorskip("boto3")
-    from ggcommons.metrics.targets.cloudwatch import CloudWatch
+    from edgecommons.metrics.targets.cloudwatch import CloudWatch
 
     class FakeClient:
         def __init__(self, fail_namespaces=()):

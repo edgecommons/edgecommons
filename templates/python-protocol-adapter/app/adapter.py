@@ -11,10 +11,10 @@ import logging
 import threading
 from datetime import datetime, timezone
 
-from ggcommons.config.manager.config_manager import ConfigManager
-from ggcommons.metrics.metric_builder import MetricBuilder
-from ggcommons.metrics.metric_emitter import MetricEmitter
-from ggcommons.uns import UnsClass
+from edgecommons.config.manager.config_manager import ConfigManager
+from edgecommons.metrics.metric_builder import MetricBuilder
+from edgecommons.metrics.metric_emitter import MetricEmitter
+from edgecommons.uns import UnsClass
 
 logger = logging.getLogger("<<COMPONENTNAME>>")
 

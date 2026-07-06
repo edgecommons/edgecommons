@@ -3,14 +3,14 @@ awsiotsdk>=1.19.0
 awsiot>=0.1.3
 paho-mqtt>=2.0.0
 watchdog>=3.0.0
-# The published ggcommons Python library (PyPI name: greengrass-commons). This bare, unpinned
+# The published edgecommons Python library (PyPI name: edgecommons). This bare, unpinned
 # form is a release-time placeholder (see modbus-adapter/requirements.txt for the pinned
-# `greengrass-commons @ git+https://...@python-lib/vX.Y.Z#subdirectory=libs/python` form a real
-# component uses) — TODO(release): pin it once ggcommons tags a python-lib release.
+# `edgecommons @ git+https://...@python-lib/vX.Y.Z#subdirectory=libs/python` form a real
+# component uses) — TODO(release): pin it once edgecommons tags a python-lib release.
 #
 # LOCAL DEV ONLY, while the library is unreleased (e.g. building against a monorepo branch that
 # hasn't published yet): run `./scripts/link-sibling-lib.sh` AFTER `pip install -r
-# requirements.txt` to editable-install the sibling checkout (../ggcommons/libs/python) over
+# requirements.txt` to editable-install the sibling checkout (../core/libs/python) over
 # this line — the same local-dev-override philosophy as the Rust `.cargo/config.toml [patch]`
 # and the TS `link-sibling-lib.mjs` stub, adapted to pip's editable-install mechanism.
-greengrass-commons
+edgecommons

@@ -2,7 +2,7 @@
 //!
 //! **One-liner purpose**: Free-form inter-component pub/sub on the `app` class
 //! (DESIGN-class-facades §2.3, D3), mirroring the Java canonical
-//! `com.mbreissi.ggcommons.facades.AppFacade`.
+//! `com.mbreissi.edgecommons.facades.AppFacade`.
 //!
 //! `app` is the intentionally-open class — the facade's value is **not** body enforcement (there
 //! is no contract to enforce), it is removing the raw three-line ritual and guaranteeing topic +
@@ -19,7 +19,7 @@ use serde_json::Value;
 
 use crate::config::model::Config;
 use crate::config::template::sanitize;
-use crate::error::{GgError, Result};
+use crate::error::{EdgeCommonsError, Result};
 use crate::messaging::message::MessageBuilder;
 use crate::messaging::{MessagingService, Qos};
 use crate::uns::{Uns, UnsClass};
@@ -30,7 +30,7 @@ use super::Channel;
 pub const APP_MESSAGE_VERSION: &str = "1.0";
 
 /// The `app()` publish facade bound to one instance — see the [module docs](self). Obtain via
-/// [`crate::GgInstance::app`] (or the `main`-instance convenience [`crate::GgCommons::app`]).
+/// [`crate::EdgeCommonsInstance::app`] (or the `main`-instance convenience [`crate::EdgeCommons::app`]).
 pub struct AppFacade {
     config: Arc<Config>,
     instance_id: String,
@@ -39,7 +39,7 @@ pub struct AppFacade {
 }
 
 impl AppFacade {
-    /// Library-internal constructor (see the [`crate::GgInstance::app`] wiring).
+    /// Library-internal constructor (see the [`crate::EdgeCommonsInstance::app`] wiring).
     pub(crate) fn new(
         config: Arc<Config>,
         instance_id: String,
@@ -66,7 +66,7 @@ impl AppFacade {
     /// [`Self::publish`] with an explicit LOCAL/NORTHBOUND routing.
     ///
     /// # Errors
-    /// [`GgError::Facade`] when `name`/`channel` is empty, or `routing` is a stream channel.
+    /// [`EdgeCommonsError::Facade`] when `name`/`channel` is empty, or `routing` is a stream channel.
     pub async fn publish_via(
         &self,
         name: impl Into<String>,
@@ -77,13 +77,13 @@ impl AppFacade {
         let name = name.into();
         let channel = channel.into();
         if name.is_empty() {
-            return Err(GgError::Facade("app publish requires a non-empty header name".to_string()));
+            return Err(EdgeCommonsError::Facade("app publish requires a non-empty header name".to_string()));
         }
         if channel.is_empty() {
-            return Err(GgError::Facade("app publish requires a non-empty channel".to_string()));
+            return Err(EdgeCommonsError::Facade("app publish requires a non-empty channel".to_string()));
         }
         if routing.as_ref().is_some_and(Channel::is_stream) {
-            return Err(GgError::Facade(
+            return Err(EdgeCommonsError::Facade(
                 "app() does not support the stream channel - use data() for streamed telemetry"
                     .to_string(),
             ));
@@ -112,7 +112,7 @@ impl AppFacade {
 
     fn messaging(&self) -> Result<&Arc<dyn MessagingService>> {
         self.messaging.as_ref().ok_or_else(|| {
-            GgError::Messaging(
+            EdgeCommonsError::Messaging(
                 "messaging is not available: app() requires a wired messaging transport"
                     .to_string(),
             )
@@ -162,8 +162,8 @@ mod tests {
     async fn empty_name_or_channel_is_rejected() {
         let messaging = RecordingMessaging::new();
         let f = facade(messaging);
-        assert!(matches!(f.publish("", "c", json!({})).await, Err(GgError::Facade(_))));
-        assert!(matches!(f.publish("N", "", json!({})).await, Err(GgError::Facade(_))));
+        assert!(matches!(f.publish("", "c", json!({})).await, Err(EdgeCommonsError::Facade(_))));
+        assert!(matches!(f.publish("N", "", json!({})).await, Err(EdgeCommonsError::Facade(_))));
     }
 
     #[tokio::test]
@@ -172,7 +172,7 @@ mod tests {
         let f = facade(messaging);
         assert!(matches!(
             f.publish_via("N", "c", json!({}), Some(Channel::stream("hot").unwrap())).await,
-            Err(GgError::Facade(_))
+            Err(EdgeCommonsError::Facade(_))
         ));
     }
 

@@ -1,8 +1,8 @@
 # <<COMPONENTNAME>>
 
 An AWS IoT Greengrass v2 component (`<<COMPONENTFULLNAME>>`) written in Rust on top
-of the `ggcommons` Rust library, generated from the GGCommons Rust component template
-by the `ggcommons` CLI. It gives you the library's
+of the `edgecommons` Rust library, generated from the EdgeCommons Rust component template
+by the `edgecommons` CLI. It gives you the library's
 standard CLI contract, configuration, logging, messaging, metrics, and heartbeat —
 so you write only business logic in [`src/app.rs`](src/app.rs).
 
@@ -10,9 +10,9 @@ so you write only business logic in [`src/app.rs`](src/app.rs).
 
 | Path | Purpose |
 |------|---------|
-| `src/main.rs` | Entry point: builds the `ggcommons` runtime from CLI args, runs the app. |
+| `src/main.rs` | Entry point: builds the `edgecommons` runtime from CLI args, runs the app. |
 | `src/app.rs` | Your component logic (starts as a minimal app + config-change listener). |
-| `Cargo.toml` | Crate manifest. Depends on the `ggcommons` library (path dependency). |
+| `Cargo.toml` | Crate manifest. Depends on the `edgecommons` library (path dependency). |
 | `recipe.yaml` | Greengrass component recipe (default config + IPC access control). |
 | `gdk-config.json` | Greengrass Development Kit config (`build_system: custom` → `build.sh`). |
 | `build.sh` | Builds the release binary (with the `greengrass` feature) and stages it for the GDK. |
@@ -91,7 +91,7 @@ gdk component publish
 
 > **Linux-only device build:** the `greengrass` feature compiles a C-FFI SDK and
 > only builds on Linux (with `libclang`). Build on a Linux host, or cross-compile:
-> `GGCOMMONS_TARGET=x86_64-unknown-linux-gnu gdk component build`.
+> `EDGECOMMONS_TARGET=x86_64-unknown-linux-gnu gdk component build`.
 
 ## Deploy to Kubernetes
 
@@ -113,12 +113,12 @@ docker push ghcr.io/<owner>/<<COMPONENTNAME>>:latest
 kubectl apply -f k8s/
 ```
 
-The ConfigMap is mounted as a **directory** at `/etc/ggcommons`; edit `k8s/configmap.yaml`
+The ConfigMap is mounted as a **directory** at `/etc/edgecommons`; edit `k8s/configmap.yaml`
 and `kubectl apply -f k8s/` again to hot-reload the component config in-process (no restart).
 
-## The ggcommons dependency
+## The edgecommons dependency
 
-`Cargo.toml` depends on the `ggcommons` crate via an **absolute path** (filled in at
+`Cargo.toml` depends on the `edgecommons` crate via an **absolute path** (filled in at
 generation time, `--dep-source local`, the default). This IS the local-dev override already:
 Cargo resolves straight from the sibling checkout's current source, so it works against an
 unpublished branch (e.g. `feat/unified-namespace`) with no extra step — unlike an

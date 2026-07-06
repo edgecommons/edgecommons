@@ -200,7 +200,7 @@ describe("stdout-JSON sink (FR-LOG-1/4)", () => {
     const lines = jsonLines(cap.out);
     expect(lines.length).toBe(2);
     expect(lines[0].level).toBe("INFO");
-    expect(lines[0].logger).toBe("ggcommons");
+    expect(lines[0].logger).toBe("edgecommons");
     expect(lines[0].message).toBe("first");
     expect(typeof lines[0].timestamp).toBe("string");
     expect(lines[1].message).toBe("second");

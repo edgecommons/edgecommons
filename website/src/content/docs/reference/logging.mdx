@@ -7,13 +7,13 @@ sidebar:
 
 import { Tabs, TabItem, Aside, LinkCard } from "@astrojs/starlight/components";
 
-This page is the API reference for GGCommons logging: the logger type in each SDK, how you obtain
+This page is the API reference for EdgeCommons logging: the logger type in each SDK, how you obtain
 one, the log methods and level predicates, the configuration type, the configurator entry points,
 and the per-language format tokens. For the concepts behind these — how levels are honored, the
 stdout-JSON sink, file rotation, and hot reload — see the [Logging guide](/guides/logging/).
 
 There is **no `gg.logging()` accessor** in any SDK. The framework configures your language's logging
-framework when you build your GGCommons instance; component code obtains a logger from the native
+framework when you build your EdgeCommons instance; component code obtains a logger from the native
 facility and writes to it. The configuration types and configurator functions below are wired by the
 framework — component authors normally only touch the *get a logger and log* surface.
 
@@ -21,7 +21,7 @@ framework — component authors normally only touch the *get a logger and log* s
 
 | SDK | Obtain a logger | Logger type | Log methods | Predicates | Format key |
 | --- | --- | --- | --- | --- | --- |
-| Java | `LoggerFactory.getLogger(...)` | `com.mbreissi.ggcommons.logging.Logger` (interface) | `trace` `debug` `info` `warn` `error` | `isTraceEnabled()` … `isErrorEnabled()` | `java_format` |
+| Java | `LoggerFactory.getLogger(...)` | `com.mbreissi.edgecommons.logging.Logger` (interface) | `trace` `debug` `info` `warn` `error` | `isTraceEnabled()` … `isErrorEnabled()` | `java_format` |
 | Python | stdlib `logging.getLogger(name)` | stdlib `logging.Logger` | `debug` `info` `warning` `error` `critical` | `isEnabledFor(level)` | `python_format` |
 | Rust | `tracing` macros (no factory) | n/a (macros) | `trace!` `debug!` `info!` `warn!` `error!` | `tracing` level checks | `rust_format` |
 | TypeScript | `logger` / `getLogger(name)` | `Logger` (class) | `debug` `info` `warn` `error` | none exported | `ts_format` |
@@ -38,8 +38,8 @@ in the [Logging guide](/guides/logging/#levels) for how each SDK folds `TRACE`/`
 <TabItem label="Java">
 
 ```java
-import com.mbreissi.ggcommons.logging.Logger;
-import com.mbreissi.ggcommons.logging.LoggerFactory;
+import com.mbreissi.edgecommons.logging.Logger;
+import com.mbreissi.edgecommons.logging.LoggerFactory;
 
 Logger byClass = LoggerFactory.getLogger(MyApp.class);
 Logger byName  = LoggerFactory.getLogger("com.example.MyApp");
@@ -67,7 +67,7 @@ import logging
 log = logging.getLogger(__name__)
 ```
 
-There is no GGCommons logger factory in Python. The library configures the **root** logger, so the
+There is no EdgeCommons logger factory in Python. The library configures the **root** logger, so the
 stdlib `logging.getLogger(name)` is all you need. Per-logger levels from `logging.loggers` apply by
 the name you pass here.
 
@@ -86,14 +86,14 @@ module path, which is what per-logger `loggers` directives match against.
 <TabItem label="TypeScript">
 
 ```typescript
-import { logger, getLogger } from "@edgecommons/ggcommons";
+import { logger, getLogger } from "@edgecommons/edgecommons";
 
-logger.info("using the process-wide root logger");   // name "ggcommons"
+logger.info("using the process-wide root logger");   // name "edgecommons"
 
 const dbLog = getLogger("app.db");                    // named, cached, hierarchically leveled
 ```
 
-`logger` is the process-wide root `Logger` (named `"ggcommons"`). `getLogger(name)` returns a named,
+`logger` is the process-wide root `Logger` (named `"edgecommons"`). `getLogger(name)` returns a named,
 cached `Logger` whose level is resolved by longest dotted-prefix match against `logging.loggers`.
 
 </TabItem>
@@ -104,7 +104,7 @@ cached `Logger` whose level is resolved by longest dotted-prefix match against `
 <Tabs syncKey="lang">
 <TabItem label="Java">
 
-`com.mbreissi.ggcommons.logging.Logger` is an interface. Each of `trace`/`debug`/`info`/`warn`/`error`
+`com.mbreissi.edgecommons.logging.Logger` is an interface. Each of `trace`/`debug`/`info`/`warn`/`error`
 has three overloads, plus a level predicate per level:
 
 ```java
@@ -128,7 +128,7 @@ overload attaches an exception. There is **no `fatal()` method** on this interfa
 </TabItem>
 <TabItem label="Python">
 
-Python uses the standard-library `logging.Logger` returned by `logging.getLogger(name)` — GGCommons
+Python uses the standard-library `logging.Logger` returned by `logging.getLogger(name)` — EdgeCommons
 does not define its own logger type. The standard methods are:
 
 ```python
@@ -142,12 +142,12 @@ if log.isEnabledFor(logging.DEBUG):               # the stdlib level predicate
     log.debug(expensive())
 ```
 
-These are stdlib semantics; GGCommons only configures the root logger, level, format, and sinks.
+These are stdlib semantics; EdgeCommons only configures the root logger, level, format, and sinks.
 
 </TabItem>
 <TabItem label="Rust">
 
-Rust has no logger object — components use the `tracing` macros, and GGCommons installs the
+Rust has no logger object — components use the `tracing` macros, and EdgeCommons installs the
 subscriber that decides what is emitted:
 
 ```rust
@@ -159,7 +159,7 @@ tracing::error!("query failed");
 ```
 
 Structured key/value fields are preserved verbatim in the JSON sink. Level "predicates" are handled
-by `tracing` itself (the subscriber and `EnvFilter`); there is no GGCommons-provided `isEnabled`
+by `tracing` itself (the subscriber and `EnvFilter`); there is no EdgeCommons-provided `isEnabled`
 helper.
 
 </TabItem>
@@ -171,7 +171,7 @@ singleton rather than `new`:
 ```typescript
 export class Logger {
   readonly loggerName: string;
-  constructor(name?: string);                       // defaults to "ggcommons"
+  constructor(name?: string);                       // defaults to "edgecommons"
 
   debug(message: string, error?: unknown): void;
   info(message: string, error?: unknown): void;
@@ -200,7 +200,7 @@ you rarely construct them yourself — but they expose the resolved values via g
 <Tabs syncKey="lang">
 <TabItem label="Java">
 
-`com.mbreissi.ggcommons.config.LoggingConfiguration` parses the `logging` JSON object and exposes
+`com.mbreissi.edgecommons.config.LoggingConfiguration` parses the `logging` JSON object and exposes
 typed getters:
 
 ```java
@@ -224,7 +224,7 @@ Obtain the live instance via `ConfigManager.getLoggingConfig()`.
 </TabItem>
 <TabItem label="Python">
 
-`ggcommons.config.enhanced_logging_config.EnhancedLoggingConfiguration` parses the section, applies
+`edgecommons.config.enhanced_logging_config.EnhancedLoggingConfiguration` parses the section, applies
 it, and exposes getters:
 
 ```python
@@ -329,7 +329,7 @@ this on hot reload. Note: Python parses `globalControl` (`is_global_control_enab
 <TabItem label="Rust">
 
 ```rust
-use ggcommons::{config::model::Config, logging};
+use edgecommons::{config::model::Config, logging};
 
 logging::init(&config, profile_format_default);   // install the global subscriber once (idempotent)
 logging::reconfigure(&config);                     // swap the level EnvFilter live
@@ -345,7 +345,7 @@ to call `reconfigure` on reload.
 <TabItem label="TypeScript">
 
 ```typescript
-import { initLogging, reconfigureLogging, LoggingReconfigurer } from "@edgecommons/ggcommons";
+import { initLogging, reconfigureLogging, LoggingReconfigurer } from "@edgecommons/edgecommons";
 
 initLogging(config, options?);        // (config: Config, options?: LoggingOptions)
 reconfigureLogging(config);           // re-run the full configurator
@@ -384,8 +384,8 @@ the SDK's built-in text default.
 <TabItem label="Java">
 
 ```java
-import com.mbreissi.ggcommons.logging.Logger;
-import com.mbreissi.ggcommons.logging.LoggerFactory;
+import com.mbreissi.edgecommons.logging.Logger;
+import com.mbreissi.edgecommons.logging.LoggerFactory;
 
 Logger log = LoggerFactory.getLogger(MyApp.class);   // or getLogger("my.logger")
 
@@ -424,7 +424,7 @@ debug!(payload_bytes = payload.len(), "received payload");
 <TabItem label="TypeScript">
 
 ```typescript
-import { logger, getLogger } from "@edgecommons/ggcommons";
+import { logger, getLogger } from "@edgecommons/edgecommons";
 
 logger.info("publish interval set to " + interval + "ms");
 

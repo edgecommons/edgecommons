@@ -1,6 +1,6 @@
 # Credentials & Local Vault — design
 
-A generic, cross-cutting **secrets** subsystem for ggcommons: a secure, encrypted-at-rest
+A generic, cross-cutting **secrets** subsystem for edgecommons: a secure, encrypted-at-rest
 **local vault** on the device that can run **standalone** or be **initialized and kept
 up to date from a central cloud vault** (AWS Secrets Manager first; pluggable). It is a
 peer subsystem to `config`, `messaging`, `metrics`, and `heartbeat` — usable by any
@@ -199,7 +199,7 @@ is identical across all of them (only the `kek.provider` field differs).
 | **env** | base64 32-byte KEK from an env var (typically a **mounted k8s Secret**) | local AES-Key-Wrap | ✅ | **Kubernetes** (default) / dev / secret-as-env |
 
 The **`env`** provider (the offline-capable software-KEK) reads a base64-encoded 32-byte KEK from the env
-var named by `keyProvider.envVar` (default `GGCOMMONS_VAULT_KEK`); the value is **trimmed** before decoding,
+var named by `keyProvider.envVar` (default `EDGECOMMONS_VAULT_KEK`); the value is **trimmed** before decoding,
 so a Secret with a trailing newline works. It is cryptographically identical to `file` given the same raw
 KEK (the on-disk `kek.provider` is just labelled `env`), so an env-wrapped vault and a file-wrapped vault
 are interchangeable. It is the **default vault KeyProvider on `--platform KUBERNETES`** (FR-CRED-6): the KEK
@@ -297,18 +297,18 @@ credentials:
   vault:
     # Shared device vault (default): a fixed device path, NOT the component work dir, so every
     # component on the device opens the same store. Must be readable by the run-as user(s).
-    path: "/var/lib/ggcommons/vault"                          # shared device store
+    path: "/var/lib/edgecommons/vault"                          # shared device store
     keyProvider:
       type: "greengrass"        # pkcs11 | greengrass | kms | file | env
       # pkcs11 (HSM/TPM/secure element):
       pkcs11:
         module: "/usr/lib/softhsm/libsofthsm2.so"             # PKCS#11 .so
         slot: 0
-        keyLabel: "ggcommons-vault-kek"
-        pinEnv: "GGCOMMONS_PKCS11_PIN"                         # PIN from env, never inline
+        keyLabel: "edgecommons-vault-kek"
+        pinEnv: "EDGECOMMONS_PKCS11_PIN"                         # PIN from env, never inline
       kmsKeyId: "arn:aws:kms:us-east-1:…:key/…"               # kms/greengrass
       region: "us-east-1"
-      keyPath: "/etc/ggcommons/vault.key"                      # file (offline fallback)
+      keyPath: "/etc/edgecommons/vault.key"                      # file (offline fallback)
     keepVersions: 2
     cacheTtlSecs: 300
   central:

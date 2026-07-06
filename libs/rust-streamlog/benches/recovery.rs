@@ -10,8 +10,8 @@
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 
-use ggstreamlog::config::{BufferConfig, FsyncPolicy};
-use ggstreamlog::{EmbeddedLog, Record};
+use edgestreamlog::config::{BufferConfig, FsyncPolicy};
+use edgestreamlog::{EmbeddedLog, Record};
 
 fn buffer(path: &std::path::Path) -> BufferConfig {
     BufferConfig {

@@ -3,7 +3,7 @@
 //! `ecv1/{device}/{component}/main/state` each tick through the privileged
 //! reserved-publish seam.
 //!
-//! Gated: no-op unless `GGCOMMONS_IT_MQTT=1` is set. Logs go to console
+//! Gated: no-op unless `EDGECOMMONS_IT_MQTT=1` is set. Logs go to console
 //! (`--nocapture`) and to `target/test-logs/heartbeat_mqtt.log`.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -15,18 +15,18 @@ use tracing::info;
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 use uuid::Uuid;
 
-use ggcommons::messaging::config::MessagingConfig;
-use ggcommons::messaging::message::Message;
-use ggcommons::messaging::message_handler;
-use ggcommons::messaging::provider::mqtt::MqttProvider;
-use ggcommons::messaging::service::{DefaultMessagingService, MessagingService};
-use ggcommons::prelude::*;
+use edgecommons::messaging::config::MessagingConfig;
+use edgecommons::messaging::message::Message;
+use edgecommons::messaging::message_handler;
+use edgecommons::messaging::provider::mqtt::MqttProvider;
+use edgecommons::messaging::service::{DefaultMessagingService, MessagingService};
+use edgecommons::prelude::*;
 
 fn skipped() -> bool {
-    if std::env::var("GGCOMMONS_IT_MQTT").is_ok() {
+    if std::env::var("EDGECOMMONS_IT_MQTT").is_ok() {
         return false;
     }
-    eprintln!("skipping MQTT integration test (set GGCOMMONS_IT_MQTT=1 to enable)");
+    eprintln!("skipping MQTT integration test (set EDGECOMMONS_IT_MQTT=1 to enable)");
     true
 }
 
@@ -36,7 +36,7 @@ fn init_logs() {
         let _ = std::fs::create_dir_all("target/test-logs");
         let _ = std::fs::remove_file("target/test-logs/heartbeat_mqtt.log");
         let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,ggcommons=debug"));
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,edgecommons=debug"));
         let file = tracing_appender::rolling::never("target/test-logs", "heartbeat_mqtt.log");
         let writer = tracing_subscriber::fmt::TestWriter::default().and(file);
         let _ = tracing_subscriber::fmt()
@@ -48,8 +48,8 @@ fn init_logs() {
 }
 
 fn broker() -> (String, String) {
-    let host = std::env::var("GGCOMMONS_IT_MQTT_HOST").unwrap_or_else(|_| "localhost".to_string());
-    let port = std::env::var("GGCOMMONS_IT_MQTT_PORT").unwrap_or_else(|_| "1883".to_string());
+    let host = std::env::var("EDGECOMMONS_IT_MQTT_HOST").unwrap_or_else(|_| "localhost".to_string());
+    let port = std::env::var("EDGECOMMONS_IT_MQTT_PORT").unwrap_or_else(|_| "1883".to_string());
     (host, port)
 }
 
@@ -100,7 +100,7 @@ async fn heartbeat_publishes_uns_state_keepalive() {
     tokio::time::sleep(Duration::from_millis(300)).await;
 
     // Full runtime: 1s heartbeat; metrics to a temp log file.
-    let dir = std::env::temp_dir().join(format!("ggcommons-hb-{}", Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("edgecommons-hb-{}", Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     let config_path = dir.join("config.json");
     let messaging_path = dir.join("messaging.json");
@@ -126,7 +126,7 @@ async fn heartbeat_publishes_uns_state_keepalive() {
     .unwrap();
 
     info!("building the runtime (starts the heartbeat)");
-    let gg = GgCommonsBuilder::new("com.example.HbIt")
+    let gg = EdgeCommonsBuilder::new("com.example.HbIt")
         .args([
             "prog".to_string(),
             "--platform".to_string(),

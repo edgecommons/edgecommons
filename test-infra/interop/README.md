@@ -1,6 +1,6 @@
 # Cross-language interoperability tests
 
-Proves the four ggcommons libraries (Python, Java, Rust, TypeScript) interoperate over
+Proves the four edgecommons libraries (Python, Java, Rust, TypeScript) interoperate over
 MQTT: the message envelope and the request/reply convention (`reply_to` topic +
 `correlation_id`) are mutually intelligible across languages.
 
@@ -35,7 +35,7 @@ Each node additionally implements three UNS roles over its library's real UNS su
 - `uns-guard` — attempt a raw publish to the reserved-class topic
   `ecv1/dev1/comp1/main/state` through the guarded public surface; exits NON-ZERO
   printing the reserved-topic error name (Java `ReservedTopicException`, Python/TS
-  `ReservedTopicError`, Rust `GgError::ReservedTopic`).
+  `ReservedTopicError`, Rust `EdgeCommonsError::ReservedTopic`).
 
 `test_uns_topic_parity` (4×4 publisher×subscriber pairs) asserts every language mints
 the **byte-identical** topic from a fixed identity and that the receiver parses a
@@ -43,23 +43,23 @@ the **byte-identical** topic from a fixed identity and that the receiver parses 
 reserved-class guard rejects in all four languages (D-U24).
 
 Nodes (each consumes its library's public API, like a real component):
-- `python_node.py` — uses the installed `ggcommons` package.
+- `python_node.py` — uses the installed `edgecommons` package.
 - `rust_node/` — a small cargo binary depending on `libs/rust` by path.
 - `java_node/InteropNode.java` — compiled against the java lib's shaded jar.
-- `ts_node/` — a small TypeScript package depending on `ggcommons` (the `libs/ts`
+- `ts_node/` — a small TypeScript package depending on `edgecommons` (the `libs/ts`
   npm package); resolved through the repo npm workspace and compiled to
   `ts_node/dist/interop_node.js` by the test fixture.
 
 ## Running
 
 ```bash
-docker start ggcommons-emqx           # local broker on :1883
+docker start edgecommons-emqx           # local broker on :1883
 # build the java shaded jar once: (in libs/java) mvn -DskipTests package
 python -m pytest interop/test_interop.py -v
 ```
 
 The test self-skips any language whose toolchain/artifact is missing (no cargo,
-no JDK/shaded jar, no node/npm, or `ggcommons` not importable), and skips entirely
+no JDK/shaded jar, no node/npm, or `edgecommons` not importable), and skips entirely
 if no broker is reachable. The Java jar, Rust binary, and TypeScript node are built
 by the test's fixtures; `java -cp`, `cargo`, and `node`/`npm` toolchains are
 auto-discovered (JAVA_HOME or `C:/Users/breis/tools/jdk`).

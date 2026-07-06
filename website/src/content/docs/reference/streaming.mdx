@@ -13,12 +13,12 @@ the [Streaming guide](/guides/streaming/).
 
 Streaming is **opt-in**: it is active only when the component config has a `streaming` section, and in
 Rust only when the `streaming` cargo feature is enabled. All four languages bind the same shared Rust
-core (`ggstreamlog`): Rust links it directly, while Java (FFM / Panama), Python (PyO3), and
+core (`edgestreamlog`): Rust links it directly, while Java (FFM / Panama), Python (PyO3), and
 TypeScript (napi-rs) reach it through a native binding.
 
 ## Accessor
 
-How you get the service from the `GGCommons` runtime handle. The return shape encodes the opt-in
+How you get the service from the `EdgeCommons` runtime handle. The return shape encodes the opt-in
 contract.
 
 | Language | Accessor | Returns |
@@ -38,12 +38,12 @@ dropped via RAII.
 <Tabs syncKey="lang">
 <TabItem label="Java">
 
-`com.mbreissi.ggcommons.streaming.StreamService implements AutoCloseable`
+`com.mbreissi.edgecommons.streaming.StreamService implements AutoCloseable`
 
 ```java
 static StreamService open(String configJson)        // opens every stream; loads the native lib on first use
-StreamHandle      stream(String name)               // throws GgStreamException (ERR_UNKNOWN_STREAM) if absent
-StreamStats       stats(String name)                // throws GgStreamException (ERR_UNKNOWN_STREAM) if absent
+StreamHandle      stream(String name)               // throws EdgeStreamException (ERR_UNKNOWN_STREAM) if absent
+StreamStats       stats(String name)                // throws EdgeStreamException (ERR_UNKNOWN_STREAM) if absent
 String            configJson()                      // the resolved config this service was opened with
 static List<String> streamNames(String configJson)  // stream names declared in a config, without opening
 static void       registerSink(SinkFunction sink)   // BYO-sink for `callback` streams; call BEFORE open()
@@ -55,7 +55,7 @@ synchronized void close()                           // flush all + stop engines;
 </TabItem>
 <TabItem label="Python">
 
-`ggcommons.streaming.StreamService` (context-manager)
+`edgecommons.streaming.StreamService` (context-manager)
 
 ```python
 @staticmethod
@@ -65,8 +65,8 @@ def open(config_json: str) -> "StreamService": ...
 def open_with_callback(config_json: str, callback: SinkCallback) -> "StreamService":
     """Bind `callback` as the sink for every {"type": "callback"} stream."""
 
-def stream(self, name: str) -> StreamHandle: ...        # raises GgStreamError (ERR_UNKNOWN_STREAM) if absent
-def stats(self, name: str) -> StreamStats: ...          # raises GgStreamError (ERR_UNKNOWN_STREAM) if absent
+def stream(self, name: str) -> StreamHandle: ...        # raises EdgeStreamError (ERR_UNKNOWN_STREAM) if absent
+def stats(self, name: str) -> StreamStats: ...          # raises EdgeStreamError (ERR_UNKNOWN_STREAM) if absent
 
 @staticmethod
 def stream_names(config_json: str) -> List[str]: ...
@@ -79,12 +79,12 @@ def __exit__(self, *exc) -> None: ...
 </TabItem>
 <TabItem label="Rust">
 
-`ggcommons::streaming` — feature-gated behind the off-by-default `streaming` cargo feature.
+`edgecommons::streaming` — feature-gated behind the off-by-default `streaming` cargo feature.
 
 ```rust
 // The substitutable seam:
 pub trait StreamService: Send + Sync {
-    fn stream(&self, name: &str) -> Result<StreamHandle>;   // Err(GgError::Streaming) if not configured
+    fn stream(&self, name: &str) -> Result<StreamHandle>;   // Err(EdgeCommonsError::Streaming) if not configured
     fn stream_names(&self) -> Vec<String>;
     fn stats(&self, name: &str) -> Option<Stats>;           // None (not an error) if not configured
 }
@@ -103,12 +103,12 @@ There is no `nativeAvailable()` — availability is compile-time (see [Native co
 </TabItem>
 <TabItem label="TypeScript">
 
-`ggcommons.StreamService`
+`edgecommons.StreamService`
 
 ```typescript
 static open(configJson: string): StreamService;
-stream(name: string): StreamHandle;          // throws GgStreamError (ERR_UNKNOWN_STREAM) if absent
-stats(name: string): StreamStats;            // throws GgStreamError (ERR_UNKNOWN_STREAM) if absent
+stream(name: string): StreamHandle;          // throws EdgeStreamError (ERR_UNKNOWN_STREAM) if absent
+stats(name: string): StreamStats;            // throws EdgeStreamError (ERR_UNKNOWN_STREAM) if absent
 static streamNames(configJson: string): string[];
 close(): void;                               // flush all + stop engines
 ```
@@ -131,13 +131,13 @@ the handle name. Java, Python, and TypeScript handles are closeable; the Rust ha
 <Tabs syncKey="lang">
 <TabItem label="Java">
 
-`com.mbreissi.ggcommons.streaming.StreamHandle implements AutoCloseable`
+`com.mbreissi.edgecommons.streaming.StreamHandle implements AutoCloseable`
 
 ```java
 String name();
 void append(String partitionKey, long timestampMs, byte[] payload);
         // partitionKey <= 65535 bytes (IllegalArgumentException otherwise);
-        // throws GgStreamException on buffer / IO / sink error
+        // throws EdgeStreamException on buffer / IO / sink error
 void flush();              // force the buffer durably to disk; does NOT wait for export
 synchronized void close(); // idempotent; the handle stays usable for append/flush even after service.close()
 ```
@@ -145,7 +145,7 @@ synchronized void close(); // idempotent; the handle stays usable for append/flu
 </TabItem>
 <TabItem label="Python">
 
-`ggcommons.streaming.StreamHandle` (context-manager)
+`edgecommons.streaming.StreamHandle` (context-manager)
 
 ```python
 def append(self, partition_key: str, timestamp_ms: int, payload: bytes) -> None: ...
@@ -158,7 +158,7 @@ def __exit__(self, *exc) -> None: ...
 </TabItem>
 <TabItem label="Rust">
 
-`ggcommons::streaming::StreamHandle` — `#[derive(Clone)]`, `Arc`-backed.
+`edgecommons::streaming::StreamHandle` — `#[derive(Clone)]`, `Arc`-backed.
 
 ```rust
 pub fn append(&self, rec: Record) -> Result<()>;          // takes one Record value, not 3 args
@@ -181,7 +181,7 @@ impl Record {
 </TabItem>
 <TabItem label="TypeScript">
 
-`ggcommons.StreamHandle`
+`edgecommons.StreamHandle`
 
 ```typescript
 readonly name: string;
@@ -240,10 +240,10 @@ if streams is not None:
 ```rust
 #[cfg(feature = "streaming")]
 {
-    use ggcommons::streaming::StreamRecord;
+    use edgecommons::streaming::StreamRecord;
 
     let streams = gg.streams();             // Arc<dyn StreamService> — always present
-    let h = streams.stream("telemetry")?;   // Err(GgError::Streaming) if not configured
+    let h = streams.stream("telemetry")?;   // Err(EdgeCommonsError::Streaming) if not configured
     h.append(StreamRecord::new("pump-7", now_ms, b"reading-0".to_vec()))?;
     h.flush()?;
 
@@ -373,7 +373,7 @@ Rolling **Parquet/AVRO** files for later bulk upload to a cloud data lake (S3/Gl
 
 `rows` columns are **declared by config**, so you map *any* message shape to a typed table — `SouthboundSignalUpdate` is just the default, not a requirement.
 
-- **Default projection** (when `rows` is omitted): one row per `body.samples[]` element, with columns `tags` (the entire ggcommons envelope `tags` object as a JSON string), `signalId`, `signalName`, `adapter`, `instance`, the value in sparse typed columns (`valueDouble`/`valueLong`/`valueBool`/`valueString` + `valueType`), `quality`, `qualityRaw`, `sourceTs`, `serverTs`, `tsMs`, `offset`. A payload that isn't a `SouthboundSignalUpdate` (not JSON, or no `body.samples`) goes to a sibling `_unmapped` raw file rather than being dropped.
+- **Default projection** (when `rows` is omitted): one row per `body.samples[]` element, with columns `tags` (the entire edgecommons envelope `tags` object as a JSON string), `signalId`, `signalName`, `adapter`, `instance`, the value in sparse typed columns (`valueDouble`/`valueLong`/`valueBool`/`valueString` + `valueType`), `quality`, `qualityRaw`, `sourceTs`, `serverTs`, `tsMs`, `offset`. A payload that isn't a `SouthboundSignalUpdate` (not JSON, or no `body.samples`) goes to a sibling `_unmapped` raw file rather than being dropped.
 - **Config-driven projection** (`rows.columns` [+ `rows.explode`]): you declare the columns and types.
 
 ```json
@@ -417,15 +417,15 @@ For the full `buffer`, `batch`, and `delivery` config (with defaults and validat
 ## Error type and codes
 
 The error type mirrors the core's status codes across languages. Java exposes the codes as named
-constants on `GgStreamException`; Python and TypeScript carry a numeric `code`; Rust wraps a message
+constants on `EdgeStreamException`; Python and TypeScript carry a numeric `code`; Rust wraps a message
 string with no numeric code.
 
 | Language | Type | Code accessor |
 |----------|------|---------------|
-| Java | `GgStreamException extends RuntimeException` | `int code()` + constants (`ERR_CONFIG`, ...) |
-| Python | `GgStreamError(Exception)` | `e.code` (int) |
-| Rust | `GgError::Streaming(String)` (wraps core `ggstreamlog::GgStreamError`) | none — message string only |
-| TypeScript | `GgStreamError extends Error` | `readonly code: number` |
+| Java | `EdgeStreamException extends RuntimeException` | `int code()` + constants (`ERR_CONFIG`, ...) |
+| Python | `EdgeStreamError(Exception)` | `e.code` (int) |
+| Rust | `EdgeCommonsError::Streaming(String)` (wraps core `edgestreamlog::EdgeStreamError`) | none — message string only |
+| TypeScript | `EdgeStreamError extends Error` | `readonly code: number` |
 
 | Code | Name | When |
 |------|------|------|
@@ -439,7 +439,7 @@ string with no numeric code.
 | 7 | `ERR_PANIC` | a Rust panic crossed the native (FFI) boundary |
 | 8 | `ERR_INVALID_ARG` | null / invalid native-ABI argument |
 
-Java exposes constants `0`–`8` on `GgStreamException`. Python and TypeScript derive the code from the
+Java exposes constants `0`–`8` on `EdgeStreamException`. Python and TypeScript derive the code from the
 native message and use a synthetic `-1` when the native lib is missing or the message is unparseable.
 `ERR_PANIC` (7) and `ERR_INVALID_ARG` (8) originate in the native layer.
 
@@ -450,10 +450,10 @@ native message and use a synthetic `-1` when the native lib is missing or the me
 try {
     StreamHandle h = streams.stream("telemetry");
     h.append("pump-7", System.currentTimeMillis(), payload);
-} catch (GgStreamException e) {
-    if (e.code() == GgStreamException.ERR_UNKNOWN_STREAM) {
+} catch (EdgeStreamException e) {
+    if (e.code() == EdgeStreamException.ERR_UNKNOWN_STREAM) {
         log.error("no such stream", e);
-    } else if (e.code() == GgStreamException.ERR_FULL) {
+    } else if (e.code() == EdgeStreamException.ERR_FULL) {
         log.warn("buffer rejected the record (onFull: rejectNew)");
     }
 }
@@ -463,24 +463,24 @@ try {
 <TabItem label="Python">
 
 ```python
-from ggcommons.streaming import GgStreamError
+from edgecommons.streaming import EdgeStreamError
 
 try:
     h = streams.stream("telemetry")
     h.append("pump-7", int(time.time() * 1000), payload)
-except GgStreamError as e:
+except EdgeStreamError as e:
     if e.code == 5:        # ERR_UNKNOWN_STREAM
         log.error("no such stream: %s", e)
     elif e.code == 4:      # ERR_FULL
         log.warning("buffer rejected the record (onFull: rejectNew)")
-    # code == -1 means the ggstreamlog_native wheel is missing / unparseable
+    # code == -1 means the edgestreamlog_native wheel is missing / unparseable
 ```
 
 </TabItem>
 <TabItem label="Rust">
 
 ```rust
-// Errors are GgError::Streaming(String) — a message wrapper with no numeric code.
+// Errors are EdgeCommonsError::Streaming(String) — a message wrapper with no numeric code.
 match streams.stream("telemetry") {
     Ok(h) => {
         if let Err(e) = h.append(StreamRecord::new("pump-7", now_ms, payload)) {
@@ -495,13 +495,13 @@ match streams.stream("telemetry") {
 <TabItem label="TypeScript">
 
 ```typescript
-import { GgStreamError } from "@edgecommons/ggcommons";
+import { EdgeStreamError } from "@edgecommons/edgecommons";
 
 try {
   const h = streams.stream("telemetry");
   h.append("pump-7", Date.now(), payload);
 } catch (e) {
-  if (e instanceof GgStreamError) {
+  if (e instanceof EdgeStreamError) {
     if (e.code === 5) console.error("no such stream");        // ERR_UNKNOWN_STREAM
     else if (e.code === 4) console.warn("buffer rejected");   // ERR_FULL
     // code === -1 means the native addon is missing / message unparseable
@@ -514,15 +514,15 @@ try {
 
 ## Native core
 
-The streaming engine lives in the shared `ggstreamlog` native core. How it is provided, and how you
+The streaming engine lives in the shared `edgestreamlog` native core. How it is provided, and how you
 probe its availability, differs per language.
 
 | Language | How the core is provided | Probe |
 |----------|--------------------------|-------|
-| Java | cdylib `ggstreamlog` loaded once per process (`-Dggstreamlog.library.path`, then `java.library.path`, then a bundled classpath resource). Run with `--enable-native-access=ALL-UNNAMED`. | `StreamService.nativeAvailable()` (static; returns `false` instead of throwing) |
-| Python | PyO3 wheel `ggstreamlog_native`, imported lazily; failure surfaces on first use as `GgStreamError(-1, ...)`. | `ggcommons.streaming.service.native_available()` (not re-exported from `streaming/__init__.py`) |
+| Java | cdylib `edgestreamlog` loaded once per process (`-Dedgestreamlog.library.path`, then `java.library.path`, then a bundled classpath resource). Run with `--enable-native-access=ALL-UNNAMED`. | `StreamService.nativeAvailable()` (static; returns `false` instead of throwing) |
+| Python | PyO3 wheel `edgestreamlog_native`, imported lazily; failure surfaces on first use as `EdgeStreamError(-1, ...)`. | `edgecommons.streaming.service.native_available()` (not re-exported from `streaming/__init__.py`) |
 | Rust | Linked directly — availability is **compile-time** via cargo features. | `#[cfg(feature = "streaming")]` |
-| TypeScript | napi addon `@mbreissi/ggstreamlog-node`, `require`-d lazily on the first `StreamService.open`. | none — loading is lazy and reported on first use |
+| TypeScript | napi addon `@edgecommons/streamlog-node`, `require`-d lazily on the first `StreamService.open`. | none — loading is lazy and reported on first use |
 
 For Rust, the `streaming` feature enables the module and accessor; **real export also needs a sink
 feature** — `streaming-kinesis` and/or `streaming-kafka`. Without a sink feature, a stream still
@@ -531,7 +531,7 @@ buffers durably but never exports.
 ```toml
 # Cargo.toml
 [dependencies]
-ggcommons = { version = "*", features = ["streaming", "streaming-kinesis"] }
+edgecommons = { version = "*", features = ["streaming", "streaming-kinesis"] }
 ```
 
 The probe call in each language:
@@ -549,10 +549,10 @@ if (StreamService.nativeAvailable()) {
 <TabItem label="Python">
 
 ```python
-from ggcommons.streaming.service import native_available
+from edgecommons.streaming.service import native_available
 
 if native_available():
-    ...  # the ggstreamlog_native wheel imported cleanly
+    ...  # the edgestreamlog_native wheel imported cleanly
 ```
 
 </TabItem>
@@ -570,8 +570,8 @@ if native_available():
 <TabItem label="TypeScript">
 
 ```typescript
-// No nativeAvailable() helper. The @mbreissi/ggstreamlog-node addon is require-d
-// lazily on the first StreamService.open(); a GgStreamError is thrown if it is missing.
+// No nativeAvailable() helper. The @edgecommons/streamlog-node addon is require-d
+// lazily on the first StreamService.open(); a EdgeStreamError is thrown if it is missing.
 ```
 
 </TabItem>

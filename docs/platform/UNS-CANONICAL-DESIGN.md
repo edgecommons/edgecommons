@@ -1,4 +1,4 @@
-# ggcommons UNS — Canonical API Design & Decisions Register (implementation companion)
+# edgecommons UNS — Canonical API Design & Decisions Register (implementation companion)
 
 > **Status (updated 2026-07-05): Phases 1–3 SHIPPED, all four languages, merged to `main`** and
 > released as **v0.2.0** (release commit `b1d8d85`) — every API shape below (`MessageIdentity`, `gg.uns()`/`UnsClass`/`UnsScope`,
@@ -85,7 +85,7 @@ Rules:
 One class serves as both the wire object and the component's resolved identity:
 
 ```java
-package com.mbreissi.ggcommons.messaging;
+package com.mbreissi.edgecommons.messaging;
 
 public final class MessageIdentity {
     public static final String DEFAULT_INSTANCE = "main";
@@ -124,7 +124,7 @@ message still delivers (mirrors the existing lenient envelope handling in all fo
   `header | identity | tags | body` (today `header|tags|body` at `MessageBuilder.java:43`,
   `Message.java:303`).
 - **Python** — `Message` dataclass gains `identity: Optional[MessageIdentity] = None` (new
-  `ggcommons/messaging/identity.py` dataclass with a `device` property); `to_dict`/`dumps`/`from_object`
+  `edgecommons/messaging/identity.py` dataclass with a `device` property); `to_dict`/`dumps`/`from_object`
   updated the same way (`message.py:131–141,197–217`).
 - **Rust** — `Message` gains `#[serde(skip_serializing_if = "Option::is_none")] pub identity:
   Option<MessageIdentity>` declared between `header` and `tags` (field order = emit order);
@@ -171,14 +171,14 @@ capturing the config identity (`message.ts:232–238`).
 3. For every level **except the last**, the value comes from the top-level `identity` config object —
    missing ⇒ startup error naming the missing level(s). The **last level's value = the resolved thing
    name** from the existing identity chain (`PlatformResolver.resolveIdentity`, `PlatformResolver.java:460`
-   — `-t` ▸ K8s `GGCOMMONS_THING_NAME` ▸ `POD_NAME` ▸ `AWS_IOT_THING_NAME` ▸ default) — D‑U1. A key in
+   — `-t` ▸ K8s `EDGECOMMONS_THING_NAME` ▸ `POD_NAME` ▸ `AWS_IOT_THING_NAME` ▸ default) — D‑U1. A key in
    `identity` config equal to the last level name, or not in `levels[0..n-2]`, is a startup error (typo
    protection the schema cannot express).
 4. Every **value** passes through the existing template **sanitizer** (`/ \ + #`, control chars → `_`;
    `..` → `_`). If sanitization changed a value, log WARN and use the sanitized value.
 5. `component` = sanitized short name; `path` = join.
 
-**Java init-order note:** `MessagingClient` is constructed *before* `ConfigManager` (`GGCommons.java:145–150`,
+**Java init-order note:** `MessagingClient` is constructed *before* `ConfigManager` (`EdgeCommons.java:145–150`,
 because GG_CONFIG/CONFIG_COMPONENT load config over IPC). Consequences, by design: (a) the
 CONFIG_COMPONENT bootstrap `get-configuration` request carries **no identity** and instead carries
 `{"component": "<short name>"}` in its body; (b) `Uns`, the guard's `includeRoot` flag, and the
@@ -192,7 +192,7 @@ construction (§5). Rust/TS/Python build config before or independent of messagi
 #### 2.1 Java surface
 
 ```java
-package com.mbreissi.ggcommons.uns;
+package com.mbreissi.edgecommons.uns;
 
 /** The closed class set. RESERVED = library-owned publish classes. */
 public enum UnsClass {
@@ -223,7 +223,7 @@ public final class Uns {
     public void   validate(String topic);                                // throws UnsValidationException
     public MessageIdentity identity();                                   // the bound identity
 }
-// GGCommons: public Uns getUns();   (Python gg.uns(), Rust gg.uns(), TS gg.uns())
+// EdgeCommons: public Uns getUns();   (Python gg.uns(), Rust gg.uns(), TS gg.uns())
 ```
 
 `gg.getUns()` is bound to the component identity (instance `main`); `gg.instance("kep1").uns()` is bound
@@ -256,7 +256,7 @@ to that instance (§3). `topicFor` takes a `MessageIdentity` — typically from 
    inserts `hier[0].value` after `ecv1` in `topic()`/`topicFor()` and a `site` position in `filter()` —
    **only when `hierarchy.levels` has ≥2 entries (D‑U25)**; with a single-level hierarchy it is a no-op +
    config WARN (hier[0] is the device; prepending would duplicate it).
-7. Reply topics (`ggcommons/reply-…`, `MessageHeader.REPLY_MESSAGE_TOPIC_PREFIX`) are **non-UNS** and
+7. Reply topics (`edgecommons/reply-…`, `MessageHeader.REPLY_MESSAGE_TOPIC_PREFIX`) are **non-UNS** and
    never pass through `uns()`; the guard ignores them because they are not `ecv1/`-rooted (D‑U6).
 
 Error type: Java `UnsValidationException extends IllegalArgumentException` carrying a machine-readable
@@ -264,10 +264,10 @@ code — `EMPTY_TOKEN | BAD_CHAR | TRAVERSAL | DEPTH_EXCEEDED | LENGTH_EXCEEDED 
 CHANNEL_REQUIRED | BAD_ROOT | BAD_CLASS | WILDCARD_IN_TOPIC`. Codes are pinned in
 `uns-test-vectors/topics.json` so all four languages fail identically.
 
-**Mirror notes** — Python: `ggcommons/uns.py` — `class UnsClass(str, Enum)`, `@dataclass(frozen=True)
+**Mirror notes** — Python: `edgecommons/uns.py` — `class UnsClass(str, Enum)`, `@dataclass(frozen=True)
 UnsScope`, `class Uns` with `topic/topic_for/filter/validate/identity`, `UnsValidationError(ValueError)`
-with `.code`. Rust: `ggcommons::uns` — `enum UnsClass`, `struct UnsScope` (builder ctors), `struct Uns`,
-errors as `GgError::UnsValidation { code, detail }` (new variant); `topic()` returns `Result<String>`.
+with `.code`. Rust: `edgecommons::uns` — `enum UnsClass`, `struct UnsScope` (builder ctors), `struct Uns`,
+errors as `EdgeCommonsError::UnsValidation { code, detail }` (new variant); `topic()` returns `Result<String>`.
 TS: `src/uns.ts` — `enum UnsClass`, `interface UnsScope` + factory object, `class Uns`, `class
 UnsValidationError extends Error { code }`.
 
@@ -299,7 +299,7 @@ envelope (stamped by an instance-bound builder). This is precisely why the seam 
 ever touches the global client; the instance travels entirely in the two artifacts passed to it.
 
 ```java
-public final class GgInstance {
+public final class EdgeCommonsInstance {
     public String id();
     public Uns uns();                                          // topics minted with this instance token
     public MessageBuilder newMessage(String name, String version);
@@ -312,8 +312,8 @@ public final class GgInstance {
     public AppFacade app();
 }
 
-// GGCommons
-public GgInstance instance(String instanceId);   // token validated (§2.2); cached per id (ConcurrentHashMap)
+// EdgeCommons
+public EdgeCommonsInstance instance(String instanceId);   // token validated (§2.2); cached per id (ConcurrentHashMap)
 ```
 
 Rules:
@@ -326,10 +326,10 @@ Rules:
   boundary, DESIGN-uns §7.5), and Python/TS have no enforceable privacy anyway. The handle is the
   *convenient* path, not the *privileged* one.
 
-**Mirror notes** — Python: `gg.instance("kep1") -> GgInstance` with `.uns()`, `.new_message(name,
-version)`; `MessageBuilder.with_instance()`. Rust: `gg.instance("kep1") -> Result<GgInstance>` (validates
+**Mirror notes** — Python: `gg.instance("kep1") -> EdgeCommonsInstance` with `.uns()`, `.new_message(name,
+version)`; `MessageBuilder.with_instance()`. Rust: `gg.instance("kep1") -> Result<EdgeCommonsInstance>` (validates
 token) holding the config snapshot + id; `.uns()`, `.message(name, version) -> MessageBuilder`;
-`MessageBuilder::instance(impl Into<String>)`. TS: `gg.instance(id): GgInstance` with `.uns()`,
+`MessageBuilder::instance(impl Into<String>)`. TS: `gg.instance(id): EdgeCommonsInstance` with `.uns()`,
 `.newMessage(name, version)`; `MessageBuilder.withInstance()`.
 
 ---
@@ -357,10 +357,10 @@ reject if tokens[0] == "ecv1"
   victim's reserved topic and turn an innocent responder into a forger
   (`GreengrassMessagingProvider.reply:235` publishes straight to `getReplyTo()`).
 - `subscribe*` is never guarded (consumers must read reserved classes).
-- Non-`ecv1` topics pass untouched: `ggcommons/reply-…` (D‑U6), `cloudwatch/metric/put` (external AWS
+- Non-`ecv1` topics pass untouched: `edgecommons/reply-…` (D‑U6), `cloudwatch/metric/put` (external AWS
   contract, D‑U21), legacy/foreign MQTT bridging.
 - Error: Java `ReservedTopicException extends IllegalArgumentException`; Python
-  `ReservedTopicError(ValueError)`; Rust `GgError::ReservedTopic(String)`; TS `class ReservedTopicError
+  `ReservedTopicError(ValueError)`; Rust `EdgeCommonsError::ReservedTopic(String)`; TS `class ReservedTopicError
   extends Error`. Message names the topic, the class token, and points at `gg.status()/gg.metrics()`
   (or, this phase, the library-owned publishers).
 
@@ -372,7 +372,7 @@ internal path the guard does not apply to:
 
 - **Java** — `ReservedPublisher` (messaging package), via `MessagingClient.reservedPublisher()`. Must be
   public-reachable (Heartbeat/metrics live in other packages), so public but named + documented
-  library-internal; wired by `GGCommons.init`. In-process bypass is possible and out of scope.
+  library-internal; wired by `EdgeCommons.init`. In-process bypass is possible and out of scope.
   ```java
   public final class ReservedPublisher {
       public void publish(String topic, Message msg);                    // no guard
@@ -402,12 +402,12 @@ Hard-cut topic map, replacing the four legacy sites in this same phase:
 
 | Publisher | Old | New (via internal `uns()` + `ReservedPublisher`) |
 |---|---|---|
-| heartbeat → **state keepalive** | `ggcommons/{ThingName}/{ComponentName}/heartbeat` (`HeartbeatConfiguration.DEFAULT_TOPIC:53`) | `ecv1/{device}/{component}/main/state`, header `name:"state"`, body `{"status":"RUNNING","uptimeSecs":n}`; best-effort `{"status":"STOPPED"}` on graceful shutdown |
+| heartbeat → **state keepalive** | `edgecommons/{ThingName}/{ComponentName}/heartbeat` (`HeartbeatConfiguration.DEFAULT_TOPIC:53`) | `ecv1/{device}/{component}/main/state`, header `name:"state"`, body `{"status":"RUNNING","uptimeSecs":n}`; best-effort `{"status":"STOPPED"}` on graceful shutdown |
 | heartbeat measures | same message | a metric named **`sys`** through the normal metric subsystem each tick (D6) |
 | metric `messaging` target | `{ThingName}/{ComponentName}/metric` (`MetricConfiguration:18`) | `ecv1/{device}/{component}/main/metric/{metricName}` (name sanitized as a channel token) |
 | **cfg publisher (new)** | — | `ecv1/{device}/{component}/main/cfg` on startup + on config change; body `{"config": <effective, redacted>}`. Redaction v1: `$secret` refs never resolved; `messaging.*.credentials` + any `password`/`pin` key → `"***"` |
-| config-get (CONFIG_COMPONENT) | `ggcommons/{ThingName}/config/get/{ComponentName}` (`ConfigComponentProvider.java:22`) | request to `ecv1/{device}/config/main/cmd/get-configuration` — `config` is a **reserved-by-convention logical component name**; requester identified by the envelope (or body `{"component"}` in the pre-config bootstrap §1.5). `cmd` is not reserved — no seam needed |
-| config push | `ggcommons/{ThingName}/config/{ComponentName}/updated` (`:23`) | fire-and-forget `cmd`: `ecv1/{device}/{component}/main/cmd/set-config`, body = new config (a `cmd` without `reply_to` is a notification-style command — normative) |
+| config-get (CONFIG_COMPONENT) | `edgecommons/{ThingName}/config/get/{ComponentName}` (`ConfigComponentProvider.java:22`) | request to `ecv1/{device}/config/main/cmd/get-configuration` — `config` is a **reserved-by-convention logical component name**; requester identified by the envelope (or body `{"component"}` in the pre-config bootstrap §1.5). `cmd` is not reserved — no seam needed |
+| config push | `edgecommons/{ThingName}/config/{ComponentName}/updated` (`:23`) | fire-and-forget `cmd`: `ecv1/{device}/{component}/main/cmd/set-config`, body = new config (a `cmd` without `reply_to` is a notification-style command — normative) |
 | cloudwatch-component target | `cloudwatch/metric/put` | **unchanged** — external AWS Greengrass component contract (D‑U21) |
 
 **Command addressing — the two config flows + broadcast (D‑U19, resolved 2026-07-02 → component-inbox +
@@ -468,7 +468,7 @@ Rust/TS from effectively-off (empty default targets) and Java (`metric` default)
 |---|---|---|---|
 | **Java** | `request(String, Message)` + `request(String, Message, Duration)` (same for `requestFromIoTCore`) on `MessagingClient` + both providers | one shared lazy 1-thread daemon `ScheduledExecutorService` per provider; `ScheduledFuture` canceled on settle | `future.completeExceptionally(new java.util.concurrent.TimeoutException(...))` (`ReplyFuture extends CompletableFuture<Message>` already carries `replyTopic`) |
 | **Python** | `request(topic, msg, timeout_secs: float \| None = None)` (None = default, 0 = off) | `threading.Timer(deadline, _on_deadline)` per request, `.cancel()`ed on settle; settle guarded by a per-entry lock/flag | `Iou` gains `set_error(exc)`; `Iou.get()` **raises** `RequestTimeoutError` (contract change to `iou.py:25–31` — pre-1.0 accepted, flagged) |
-| **Rust** | `request(...)` (default) + `request_with_timeout(topic, msg, Option<Duration>)` (no overloading) | restructure `start_request` into a **spawned supervisor task** owning the reply subscription: `tokio::select! { reply = rx => …, _ = sleep(d) => … }`, then unsubscribe + send `Result<Message>` down a `oneshot`; `ReplyFuture` wraps the `oneshot::Receiver` + a cancel handle (Drop still cancels — preserving today's contract, `service.rs:129–137`). Closes Rust's real gap (stored-but-never-polled future) | future resolves `Err(GgError::RequestTimeout { topic, secs })` (new variant) |
+| **Rust** | `request(...)` (default) + `request_with_timeout(topic, msg, Option<Duration>)` (no overloading) | restructure `start_request` into a **spawned supervisor task** owning the reply subscription: `tokio::select! { reply = rx => …, _ = sleep(d) => … }`, then unsubscribe + send `Result<Message>` down a `oneshot`; `ReplyFuture` wraps the `oneshot::Receiver` + a cancel handle (Drop still cancels — preserving today's contract, `service.rs:129–137`). Closes Rust's real gap (stored-but-never-polled future) | future resolves `Err(EdgeCommonsError::RequestTimeout { topic, secs })` (new variant) |
 | **TS** | already present (`timeoutMs?`, `service.ts:154–160`) — change only the default: `undefined` now resolves to `requestTimeoutSeconds * 1000` (was 0 = off); explicit `0` still disables | existing `setTimeout` + `finish()` | narrow existing `Error` to `class RequestTimeoutError extends Error` for parity |
 
 ---
@@ -535,7 +535,7 @@ southbound command family (M9); D‑U15/16 (Phase 5).
 > `opcua-adapter` has separately landed the M9 *capabilities* (browse/write-ack/regex-read) on
 > its own legacy topics; see `SOUTHBOUND.md` §2.2.
 
-**Schema deltas** (edit `schema/ggcommons-config-schema.json`, then `schema/sync-schema.sh`): ADD
+**Schema deltas** (edit `schema/edgecommons-config-schema.json`, then `schema/sync-schema.sh`): ADD
 top-level `hierarchy {levels: string[]}`, `identity` (patternProperties `^[A-Za-z0-9_-]+$` → string),
 `topic {includeRoot: bool=false}`; `messaging` += `requestTimeoutSeconds`, `lwt`; `heartbeat` −=
 `targets` (+`enabled`, +`destination`); `metricEmission.targetConfig` −= `topic` (keep `destination`,
@@ -571,10 +571,10 @@ internal `IotCoreSubscriptionHandler → IoTCoreSubscriptionHandler` (cosmetic).
 |---|---|---|---|---|---|
 | D‑U1 | `device` source | resolved thing name (`PlatformResolver.resolveIdentity` chain), stamped as last `hier` entry; a `device`-level key in `identity` config is a startup error | High | Easy | no |
 | D‑U2 | Identity from each component's OWN config | top-level `hierarchy`+`identity` read directly; resolved once at `ConfigManager` ctor, fail-fast; shared-config is a later optimization, nothing here depends on it | High | Easy | no |
-| D‑U3 | Instance seam | `gg.instance(id) → GgInstance{ uns(), newMessage() }`; stamping via public `MessageBuilder.withInstance` (default `main`); works over Python's static client | High | Moderate | no |
+| D‑U3 | Instance seam | `gg.instance(id) → EdgeCommonsInstance{ uns(), newMessage() }`; stamping via public `MessageBuilder.withInstance` (default `main`); works over Python's static client | High | Moderate | no |
 | D‑U4 | Privileged internal publish | per-language seams (§4.2): Java `ReservedPublisher`, Python `_publish_reserved`, Rust `pub(crate) trait ReservedMessaging` (real enforcement), TS `@internal`+`stripInternal`. Guard = misuse prevention; broker ACL = boundary | High | Easy | no |
 | D‑U5 | Request deadline config | `messaging.requestTimeoutSeconds`, default 30, 0=off; per-call override; late-bound in Java/Python | High | Easy | no |
-| D‑U6 | Keep `ggcommons/reply-` prefix | non-UNS, ephemeral; guard keys on `ecv1` root so reply topics are structurally exempt | High | Easy | no |
+| D‑U6 | Keep `edgecommons/reply-` prefix | non-UNS, ephemeral; guard keys on `ecv1` root so reply topics are structurally exempt | High | Easy | no |
 | D‑U7 | Normalize IoTCore casing now | per-language idiom: Java+TS → `IoTCore`; Rust keeps `IotCore`; Python snake untouched; **all string/config tokens (`"iotcore"`) unchanged** | High | Easy | no |
 | D‑U8 | Guard `publishRaw` too | confirmed + extended: `request*` and **`reply*`** also guarded (hostile `reply_to` forgery) | High | Easy | no |
 | D‑U9 | Keep `destination`, drop topic overrides | confirmed for `metricEmission.targetConfig`; for heartbeat, subsumed by D‑U20 (`targets[]` removed wholesale, `destination` survives as scalar) | High | Easy | no |
@@ -591,7 +591,7 @@ internal `IotCoreSubscriptionHandler → IoTCoreSubscriptionHandler` (cosmetic).
 | **D‑U20** | Heartbeat `targets[]` REMOVED → `enabled/intervalSecs/measures/destination`; measures emit metric **`sys`** via normal metric subsystem | ✅ **confirmed 2026-07-02** (user). The measures **keep full sink flexibility** — they now flow through the metric subsystem's own targets (messaging/cloudwatch-component/EMF/local-log), which `heartbeat.targets[]` did not provide for measures; `heartbeat.destination` (local\|iotcore) governs only the lightweight `state` keepalive. Supersedes the letter of D‑U9 for heartbeat | High | Moderate (schema break, intended) | resolved |
 | D‑U21 | `cloudwatch/metric/put` unchanged | external AWS Greengrass component contract; non-`ecv1` so guard-exempt | High | Easy | no |
 | D‑U22 | Topics byte-identical; envelopes structurally identical (member order not normative) | the four serializers already differ in order + the interop harness compares structurally; byte order would churn all four for zero consumer value | High | Easy | no |
-| D‑U23 | Error identities: `UnsValidationException`(+code)/`ReservedTopicException`/`TimeoutException`(Java std)/`RequestTimeoutError`(Py/TS)/`GgError::{UnsValidation,ReservedTopic,RequestTimeout}`(Rust); Python `Iou.get()` now raises on deadline | confirmed; the Python `Iou` contract change is the sharpest edge (pre-1.0 accepted) | High | Easy | no |
+| D‑U23 | Error identities: `UnsValidationException`(+code)/`ReservedTopicException`/`TimeoutException`(Java std)/`RequestTimeoutError`(Py/TS)/`EdgeCommonsError::{UnsValidation,ReservedTopic,RequestTimeout}`(Rust); Python `Iou.get()` now raises on deadline | confirmed; the Python `Iou` contract change is the sharpest edge (pre-1.0 accepted) | High | Easy | no |
 | D‑U24 | Guard checks class position 4 always, position 5 only when own `includeRoot=true`; residual rooted-forgery gap accepted (broker ACL closes it) | the alternative (both positions unconditionally) false-positives on legit `app/...` channels | High | Easy | no |
 | D‑U25 | `topic.includeRoot` requires a **multi-level hierarchy** | ✅ **resolved 2026-07-03** (slice-1b finding): `includeRoot` prepends `hier[0].value` (the top/site level) **only when `hierarchy.levels` has ≥2 entries**; with a single-level hierarchy (`["device"]`) it is a **no-op + config WARN** (hier[0] *is* the device — prepending would duplicate it: `ecv1/gw-01/gw-01/…`). includeRoot exists to disambiguate multi-site brokers by the top level; meaningless without a level above the device. Fix Java in 1e; pin in vectors | High | Easy | no |
 | D‑U26 | `uns()` char-rule ≡ the sanitizer's blacklist **exactly** | ✅ **resolved 2026-07-03** (slice-1b finding): the validator's bad-char check uses the SAME predicate as `ConfigManager.sanitize()` — `Character.isISOControl` (incl. C1 U+0080–U+009F) + `/ + # \` + `..` — so "sanitized ⇒ valid" is a true equivalence, not one-directional. Slice 1b used the spec-literal U+0000–U+001F/U+007F range (accepts C1); align Java to the sanitizer (reject C1) in 1e. **Vector guidance:** single-fault cases (or pin the `validate()` code-precedence order slice 1b documented); `validate` cases carry the `includeRoot` input; empty channel = absent; too-short topic → `BAD_CLASS` | High | Easy | no |
@@ -604,7 +604,7 @@ internal `IotCoreSubscriptionHandler → IoTCoreSubscriptionHandler` (cosmetic).
 1. **M11 (heartbeat parity) moves from Phase 5 into Phase 1** — deliberate change to DESIGN-uns §13. The
    hard cut retires the legacy heartbeat topic in Phase 1, and `heartbeat.targets[]` is the drift-knob
    carrier the schema drops; deferring M11 would break the heartbeat config twice.
-2. **Java init order is the Phase-1 landmine** (`GGCommons.java:143–150`: messaging before config).
+2. **Java init order is the Phase-1 landmine** (`EdgeCommons.java:143–150`: messaging before config).
    Everything identity-dependent on the messaging client is late-bound (guard `includeRoot`, deadline
    default, `Uns` binding); the CONFIG_COMPONENT bootstrap request is *specified* to carry no identity
    (body `{"component"}`). Don't "fix" the init order — GG_CONFIG/CONFIG_COMPONENT need messaging first.
@@ -648,7 +648,7 @@ internal `IotCoreSubscriptionHandler → IoTCoreSubscriptionHandler` (cosmetic).
 **Phase 1 — grammar / identity / `uns()` / vectors + library publishers + config remap + schema + M11**
 (this is the bulk of the "core" work; guard/deadline/LWT/casing from the doc's Phase 2 are folded in
 where coupled) — **DONE, all four languages:**
-- [x] **Schema** (`schema/ggcommons-config-schema.json` + `sync-schema.sh` → 5 copies): +`hierarchy`,
+- [x] **Schema** (`schema/edgecommons-config-schema.json` + `sync-schema.sh` → 5 copies): +`hierarchy`,
   +`identity`, +`topic.includeRoot`, `messaging` += `requestTimeoutSeconds`/`lwt`, `heartbeat` reshape,
   drop drift knobs. Drift gate green.
 - [x] **Java canonical**: `MessageIdentity` + envelope; `MessageBuilder` stamping; `ConfigManager.getComponentIdentity`;

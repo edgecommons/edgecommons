@@ -14,7 +14,7 @@
 
 ---
 
-EdgeCommons is an ecosystem built on **`ggcommons`** — one library, four languages implemented as
+EdgeCommons is an ecosystem built on **`edgecommons`** — one library, four languages implemented as
 deliberate mirrors. It bundles the cross-cutting concerns every edge component needs — configuration,
 messaging, metrics, heartbeat, logging, credentials, parameters, and telemetry streaming — so you
 write only business logic and deploy the same component anywhere.
@@ -23,7 +23,7 @@ write only business logic and deploy the same component anywhere.
 
 | Repo | What it is |
 |------|------------|
-| [**ggcommons**](https://github.com/edgecommons/ggcommons) | The library (Java · Python · Rust · TypeScript), the `ggcommons` CLI, templates, and config schema |
+| [**edgecommons**](https://github.com/edgecommons/edgecommons) | The library (Java · Python · Rust · TypeScript), the `edgecommons` CLI, templates, and config schema |
 | [**registry**](https://github.com/edgecommons/registry) | Machine-readable catalog of every component |
 
 ### 🔌 Components
@@ -40,9 +40,9 @@ write only business logic and deploy the same component anywhere.
 ### 🚀 Get started
 
 ```bash
-pipx install ggcommons          # the scaffolding CLI
-ggcommons list-components       # browse the ecosystem
-ggcommons create-component -n com.example.MyAdapter -l PYTHON
+pipx install edgecommons          # the scaffolding CLI
+edgecommons list-components       # browse the ecosystem
+edgecommons create-component -n com.example.MyAdapter -l PYTHON
 ```
 
 📖 Full documentation: **[docs.edgecommons.mbreissi.com](https://docs.edgecommons.mbreissi.com)**

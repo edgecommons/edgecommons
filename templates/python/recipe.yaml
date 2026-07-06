@@ -27,7 +27,7 @@ ComponentConfiguration:
       tags: {}
       metricEmission:
         target: "cloudwatch"
-        namespace: "ggcommons"
+        namespace: "edgecommons"
         targetConfig:
           intervalSecs: 10
       component:

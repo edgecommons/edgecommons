@@ -1,8 +1,8 @@
 # <<COMPONENTNAME>>
 
 An AWS IoT Greengrass v2 component (`<<COMPONENTFULLNAME>>`) written in Python on top of the
-`ggcommons` (`greengrass-commons`) Python library, generated from the GGCommons Python component
-template by the `ggcommons` CLI. It gives you the library's standard CLI contract, configuration,
+`edgecommons` (`edgecommons`) Python library, generated from the EdgeCommons Python component
+template by the `edgecommons` CLI. It gives you the library's standard CLI contract, configuration,
 logging, messaging, metrics, and heartbeat — so you write only business logic in
 [`app/<<COMPONENTNAME>>.py`](app/<<COMPONENTNAME>>.py).
 
@@ -48,13 +48,13 @@ status publish reflects the new greeting. Replace all four with your own metrics
 
 ### Building against the unreleased library (local-dev only)
 
-`requirements.txt` names the published `greengrass-commons` package (a release-time placeholder —
+`requirements.txt` names the published `edgecommons` package (a release-time placeholder —
 see the comment above it). Until a version is actually released, build against the sibling
 monorepo checkout instead:
 
 ```bash
 pip install -r requirements.txt
-bash scripts/link-sibling-lib.sh   # editable-installs ../ggcommons/libs/python over the line above
+bash scripts/link-sibling-lib.sh   # editable-installs ../core/libs/python over the line above
 ```
 
 See `requirements.txt` and `scripts/link-sibling-lib.sh` for details.
@@ -83,7 +83,7 @@ with **KUBERNETES** as a target platform. Build the image from `./Dockerfile`, m
 to the cluster, point `image:` at it, then apply the manifests:
 
 ```bash
-# 1. Build the image (requirements.txt resolves the published ggcommons library).
+# 1. Build the image (requirements.txt resolves the published edgecommons library).
 docker build -t ghcr.io/<owner>/<<COMPONENTNAME>>:latest .
 
 # 2. Make it available to the cluster — push to a registry...
@@ -111,7 +111,7 @@ Deployment needs no command-line args.
 
 | Path | What it is |
 |------|-----------|
-| `main.py` | Entry point — builds `GGCommons` and starts the app. |
+| `main.py` | Entry point — builds `EdgeCommons` and starts the app. |
 | `app/<<COMPONENTNAME>>.py` | Your business logic. |
 | `test-configs/` | Sample component-config files (`config_*.json`). |
 | `recipe.yaml`, `gdk-config.json` | Greengrass recipe + GDK build/publish config. |

@@ -15,13 +15,13 @@ import time
 
 import pytest
 
-from ggcommons.config.manager.configmap_config_manager import (
+from edgecommons.config.manager.configmap_config_manager import (
     DEFAULT_KEY,
     DEFAULT_MOUNT_DIR,
     ConfigMapConfigManager,
 )
-from ggcommons.parameters.source import is_projection_artifact
-from ggcommons.utils.directory_watcher import DirectoryWatcher
+from edgecommons.parameters.source import is_projection_artifact
+from edgecommons.utils.directory_watcher import DirectoryWatcher
 
 COMPONENT = "com.test.MyComponent"
 THING = "test-thing"
@@ -72,8 +72,8 @@ def test_initial_load_fails_loudly_for_missing_key(tmp_path):
 
 def test_applies_default_key_when_none_given(tmp_path):
     # key=None -> DEFAULT_KEY (config.json). (mount_dir default is the module constant; we cannot
-    # construct against /etc/ggcommons in a unit test, so assert the constant directly.)
-    assert DEFAULT_MOUNT_DIR == "/etc/ggcommons"
+    # construct against /etc/edgecommons in a unit test, so assert the constant directly.)
+    assert DEFAULT_MOUNT_DIR == "/etc/edgecommons"
     assert DEFAULT_KEY == "config.json"
     _write(tmp_path / "config.json", _config_json(1))
     m = ConfigMapConfigManager(THING, COMPONENT, str(tmp_path), None)

@@ -52,7 +52,7 @@ class Dispatcher {
     if (this.closed) return;
     if (this.queue.length >= this.maxMessages) {
       // eslint-disable-next-line no-console
-      console.warn(`ggcommons: subscription queue full (${this.maxMessages}); dropping message on ${topic}`);
+      console.warn(`edgecommons: subscription queue full (${this.maxMessages}); dropping message on ${topic}`);
       return;
     }
     this.queue.push([topic, payload]);
@@ -72,7 +72,7 @@ class Dispatcher {
       await this.handler(topic, Message.fromWire(payload));
     } catch (e) {
       // eslint-disable-next-line no-console
-      console.warn(`ggcommons: message handler threw for ${topic}: ${String(e)}`);
+      console.warn(`edgecommons: message handler threw for ${topic}: ${String(e)}`);
     } finally {
       this.active--;
       this.pump();
@@ -119,7 +119,7 @@ export class DefaultMessagingService implements IMessagingService {
    */
   setDefaultRequestTimeout(timeoutMs: number): void {
     this.defaultRequestTimeoutMs = Math.max(0, timeoutMs);
-    logger.debug(`ggcommons: default request timeout bound to ${this.defaultRequestTimeoutMs} ms`);
+    logger.debug(`edgecommons: default request timeout bound to ${this.defaultRequestTimeoutMs} ms`);
   }
 
   /** The default `request()` deadline currently in effect (ms; `0` = disabled). */
@@ -135,7 +135,7 @@ export class DefaultMessagingService implements IMessagingService {
    */
   setGuardIncludeRoot(includeRoot: boolean): void {
     this.guardIncludeRoot = includeRoot;
-    logger.debug(`ggcommons: reserved-topic guard includeRoot bound to ${includeRoot}`);
+    logger.debug(`edgecommons: reserved-topic guard includeRoot bound to ${includeRoot}`);
   }
 
   /**
@@ -291,7 +291,7 @@ export class DefaultMessagingService implements IMessagingService {
         // pending resolver to complete, so log + drop it instead of letting it
         // fall through (mirrors the Java null-future guard in 6ed774c).
         if (settled) {
-          logger.debug(`ggcommons: dropping stray reply on ${t} (request already settled)`);
+          logger.debug(`edgecommons: dropping stray reply on ${t} (request already settled)`);
           return;
         }
         finish(() => resolve(reply));

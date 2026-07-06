@@ -25,7 +25,7 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.integration)
         
         # Mark AWS-dependent tests
-        if any(keyword in item.nodeid for keyword in ["ggcommons", "messaging", "iot"]):
+        if any(keyword in item.nodeid for keyword in ["edgecommons", "messaging", "iot"]):
             item.add_marker(pytest.mark.aws)
 
 @pytest.fixture(scope="session")

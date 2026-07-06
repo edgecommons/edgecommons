@@ -54,7 +54,7 @@
         },
         "library": {
           "type": "string",
-          "description": "The ggcommons coordinate this component builds on, e.g. com.mbreissi:ggcommons or greengrass-commons"
+          "description": "The edgecommons coordinate this component builds on, e.g. com.mbreissi.edgecommons:edgecommons or edgecommons"
         },
         "topics": {
           "type": "array",

@@ -17,7 +17,7 @@ use rdkafka::util::Timeout;
 use tokio::runtime::Runtime;
 
 use super::{ExportRecord, SendOutcome, Sink};
-use crate::error::{GgStreamError, Result};
+use crate::error::{EdgeStreamError, Result};
 
 /// A [`Sink`] that produces records to a Kafka topic.
 pub struct KafkaSink {
@@ -36,9 +36,9 @@ impl KafkaSink {
     ) -> Result<Self> {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
-            .thread_name("ggstreamlog-kafka")
+            .thread_name("edgestreamlog-kafka")
             .build()
-            .map_err(|e| GgStreamError::Sink(format!("tokio runtime: {e}")))?;
+            .map_err(|e| EdgeStreamError::Sink(format!("tokio runtime: {e}")))?;
 
         let mut cfg = ClientConfig::new();
         cfg.set("bootstrap.servers", bootstrap_servers);
@@ -47,7 +47,7 @@ impl KafkaSink {
             cfg.set(k, v);
         }
         let producer: FutureProducer =
-            cfg.create().map_err(|e| GgStreamError::Sink(format!("kafka producer: {e}")))?;
+            cfg.create().map_err(|e| EdgeStreamError::Sink(format!("kafka producer: {e}")))?;
 
         Ok(Self { rt, producer, topic: topic.to_string() })
     }

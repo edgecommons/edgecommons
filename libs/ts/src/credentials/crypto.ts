@@ -49,13 +49,13 @@ export function open(key: Buffer, nonce: Buffer, aad: Buffer, ctAndTag: Buffer):
   }
 }
 
-/** `HKDF-SHA256(ikm=dek, salt=vaultId, info="ggcommons-vault/v1/mac")` → 32 bytes. */
+/** `HKDF-SHA256(ikm=dek, salt=vaultId, info="edgecommons-vault/v1/mac")` → 32 bytes. */
 export function deriveMacKey(dek: Buffer, vaultId: string): Buffer {
   const okm = hkdfSync(
     "sha256",
     dek,
     Buffer.from(vaultId, "utf8"),
-    Buffer.from("ggcommons-vault/v1/mac", "utf8"),
+    Buffer.from("edgecommons-vault/v1/mac", "utf8"),
     KEY_LEN,
   );
   return Buffer.from(okm);

@@ -39,12 +39,12 @@ export interface VaultFile {
 
 /** AEAD AAD binding a record to its vault, name, and version. */
 export function recordAad(vaultId: string, name: string, version: string): Buffer {
-  return Buffer.from(`ggcommons-vault/v1|${vaultId}|${name}|${version}`, "utf8");
+  return Buffer.from(`edgecommons-vault/v1|${vaultId}|${name}|${version}`, "utf8");
 }
 
 /** AEAD AAD binding the wrapped DEK to its vault. */
 export function dekWrapAad(vaultId: string): Buffer {
-  return Buffer.from(`ggcommons-vault/v1/dek-wrap|${vaultId}`, "utf8");
+  return Buffer.from(`edgecommons-vault/v1/dek-wrap|${vaultId}`, "utf8");
 }
 
 function lp(b: Buffer): Buffer {
@@ -76,7 +76,7 @@ export function macInput(
   decodeB64: (s: string) => Buffer,
 ): Buffer {
   const parts: Buffer[] = [
-    Buffer.from("ggcommons-vault/v1/mac", "utf8"),
+    Buffer.from("edgecommons-vault/v1/mac", "utf8"),
     lp(Buffer.from(vaultId, "utf8")),
   ];
   const names = Object.keys(secrets).sort((a, b) =>

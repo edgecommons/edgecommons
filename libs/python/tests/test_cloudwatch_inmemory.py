@@ -1,17 +1,17 @@
 """Unit tests for the in-memory (legacy batching) path of the CloudWatch metric target.
 
 boto3's CloudWatch client is mocked, so no AWS access is needed. The durable path
-(ggstreamlog) is covered separately (test_cloudwatch_durable.py); here buffer.type=memory
+(edgestreamlog) is covered separately (test_cloudwatch_durable.py); here buffer.type=memory
 selects the in-memory batching path so the flush/queue/reconfigure logic runs in-process.
 """
 from unittest.mock import MagicMock
 
 import pytest
 
-import ggcommons.metrics.targets.cloudwatch as cw_mod
-from ggcommons.metrics.targets.cloudwatch import CloudWatch
-from ggcommons.config.metric_config import MetricConfiguration
-from ggcommons.metrics.metric_builder import MetricBuilder
+import edgecommons.metrics.targets.cloudwatch as cw_mod
+from edgecommons.metrics.targets.cloudwatch import CloudWatch
+from edgecommons.config.metric_config import MetricConfiguration
+from edgecommons.metrics.metric_builder import MetricBuilder
 
 
 class FakeConfigManager:

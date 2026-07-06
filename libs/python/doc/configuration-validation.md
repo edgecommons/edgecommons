@@ -1,6 +1,6 @@
 # Configuration Validation
 
-This document describes the configuration validation system in ggcommons Python, which uses JSON Schema to ensure configuration correctness and provide helpful error messages.
+This document describes the configuration validation system in edgecommons Python, which uses JSON Schema to ensure configuration correctness and provide helpful error messages.
 
 ## Overview
 
@@ -17,7 +17,7 @@ Configuration validation provides:
 ### Basic Usage
 
 ```python
-from ggcommons.validation import ConfigurationValidator, ConfigurationValidationException
+from edgecommons.validation import ConfigurationValidator, ConfigurationValidationException
 
 # Validate complete configuration
 config = {
@@ -64,7 +64,7 @@ else:
 
 ## Configuration Schema
 
-The validation schema covers all ggcommons configuration sections:
+The validation schema covers all edgecommons configuration sections:
 
 ### Logging Configuration
 
@@ -81,7 +81,7 @@ The validation schema covers all ggcommons configuration sections:
     },
     "loggers": {
       "com.example.component": "DEBUG",
-      "ggcommons": {"level": "INFO"}
+      "edgecommons": {"level": "INFO"}
     },
     "globalControl": false
   }
@@ -197,7 +197,7 @@ The validation schema covers all ggcommons configuration sections:
 The `EnhancedConfigManager` automatically validates configuration:
 
 ```python
-from ggcommons.config.manager.enhanced_config_manager import EnhancedConfigManager
+from edgecommons.config.manager.enhanced_config_manager import EnhancedConfigManager
 
 # Validation enabled by default
 config_manager = EnhancedConfigManager("com.example.Component", validate_config=True)
@@ -386,7 +386,7 @@ If not available, validation is automatically disabled with a warning message.
 
 ```python
 import pytest
-from ggcommons.validation import ConfigurationValidator, ConfigurationValidationException
+from edgecommons.validation import ConfigurationValidator, ConfigurationValidationException
 
 def test_valid_configuration():
     config = {
@@ -434,4 +434,4 @@ def test_config_manager_validation():
         config_manager._validate_configuration(invalid_config)
 ```
 
-This validation system ensures that configuration errors are caught early and provide clear guidance for fixing issues, improving the overall reliability of ggcommons-based applications.
+This validation system ensures that configuration errors are caught early and provide clear guidance for fixing issues, improving the overall reliability of edgecommons-based applications.

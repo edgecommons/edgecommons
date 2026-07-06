@@ -183,7 +183,7 @@ describe("MetricEmitter lifecycle", () => {
 });
 
 describe("MetricEmitter cloudwatch absent", () => {
-  it("create('cloudwatch') throws GgError(Metrics) when the SDK import fails", async () => {
+  it("create('cloudwatch') throws EdgeCommonsError(Metrics) when the SDK import fails", async () => {
     // Re-import cloudwatch with a mock that throws, isolating the module registry.
     await vi.resetModules();
     vi.doMock("@aws-sdk/client-cloudwatch", () => {
@@ -191,10 +191,10 @@ describe("MetricEmitter cloudwatch absent", () => {
     });
     const { MetricEmitter: FreshEmitter } = await import("../src/metrics/service");
     const { Config: FreshConfig } = await import("../src/config/model");
-    const { GgError } = await import("../src/errors");
+    const { EdgeCommonsError } = await import("../src/errors");
     const c = FreshConfig.fromValue("c", "t", { metricEmission: { target: "cloudwatch" } });
-    await expect(FreshEmitter.create(c)).rejects.toBeInstanceOf(GgError);
-    await FreshEmitter.create(c).catch((e) => expect((e as InstanceType<typeof GgError>).kind).toBe("Metrics"));
+    await expect(FreshEmitter.create(c)).rejects.toBeInstanceOf(EdgeCommonsError);
+    await FreshEmitter.create(c).catch((e) => expect((e as InstanceType<typeof EdgeCommonsError>).kind).toBe("Metrics"));
     vi.doUnmock("@aws-sdk/client-cloudwatch");
     await vi.resetModules();
   });

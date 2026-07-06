@@ -1,7 +1,7 @@
 # Command-Line Options
 
 The Rust library parses the **same** standard CLI contract as the Java and Python
-libraries (parity is a hard requirement). Parsing is handled by `ggcommons::cli`
+libraries (parity is a hard requirement). Parsing is handled by `edgecommons::cli`
 and surfaced as [`ParsedArgs`].
 
 ## Options
@@ -69,7 +69,7 @@ The removed `-m/--mode` flag is rejected with guidance: `-m STANDALONE <path>` b
 ## Parsing behavior
 
 - Unknown source/platform/transport tokens — and the removed `-m`/`--mode` flag — are
-  rejected with `GgError::Cli`.
+  rejected with `EdgeCommonsError::Cli`.
 - The variadic `-c`/`--transport` shape mirrors the Java `configArgs[]` array rather
   than using subcommands.
 - Application-specific options can be merged onto `cli::command()` before parsing.

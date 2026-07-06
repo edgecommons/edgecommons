@@ -1,4 +1,4 @@
-"""<<COMPONENTNAME>> entry point — a southbound protocol-adapter on ggcommons.
+"""<<COMPONENTNAME>> entry point — a southbound protocol-adapter on edgecommons.
 
 Builds the framework, then spawns one worker thread per ``component.instances[]`` entry (each device
 connects/retries independently). The library owns SIGTERM/SIGINT -> graceful shutdown.
@@ -8,7 +8,7 @@ import logging
 import sys
 import threading
 
-from ggcommons import GGCommonsBuilder
+from edgecommons import EdgeCommonsBuilder
 
 from app.<<COMPONENTNAME>> import <<COMPONENTNAME>>
 
@@ -18,7 +18,7 @@ logger = logging.getLogger("main")
 def main():
     arg_parser = argparse.ArgumentParser(description="<<COMPONENTNAME>> southbound adapter")
     gg = (
-        GGCommonsBuilder.create("<<COMPONENTFULLNAME>>")
+        EdgeCommonsBuilder.create("<<COMPONENTFULLNAME>>")
         .with_args(sys.argv[1:])
         .with_app_options(arg_parser)
         .build()

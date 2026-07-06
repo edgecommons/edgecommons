@@ -1,5 +1,5 @@
 """
-Coverage tests for ``ggcommons.config.enhanced_logging_config`` targeting the branches that
+Coverage tests for ``edgecommons.config.enhanced_logging_config`` targeting the branches that
 ``test_logging_json_sink.py`` and ``test_logging_parity.py`` do not exercise.
 
 Specifically:
@@ -23,7 +23,7 @@ from logging.handlers import RotatingFileHandler
 
 import pytest
 
-from ggcommons.config.enhanced_logging_config import (
+from edgecommons.config.enhanced_logging_config import (
     EnhancedLoggingConfiguration,
     JsonLogFormatter,
 )
