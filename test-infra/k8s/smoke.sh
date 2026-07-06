@@ -112,7 +112,7 @@ log "Waiting for the component rollout"
 # ConfigMap file. So a successful in-cluster broker round-trip proves the broker config was sourced
 # from the ConfigMap with no positional path.
 assert_log "Starting ConfigMap directory watcher on /etc/edgecommons" "config loaded via the CONFIGMAP source (KUBERNETES profile)"
-assert_log "Received an .* message on topic edgecommons" "MQTT round-trip via in-cluster broker — broker config from ConfigMap, no positional path (FR-MSG-1)"
+assert_log "Received an (ipc|local) hello world message on topic ecv1/.*/app/hello-world" "MQTT round-trip via in-cluster broker — broker config from ConfigMap, no positional path (FR-MSG-1)"
 
 # FR-RT-7: no -t/--thing is passed, so the resolved identity must come from the Downward-API env. With
 # `thingName` unset, EDGECOMMONS_THING_NAME is absent and identity falls through to POD_NAME (the pod's
