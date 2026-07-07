@@ -87,7 +87,7 @@ fn kinesis_sink_delivers_to_emulator() {
         log.append(&Record::new(
             format!("pk-{}", i % 4),
             1000 + i as u64,
-            payload(i).as_bytes(),
+            record_payload(i),
         ))
         .unwrap();
     }
@@ -133,7 +133,7 @@ fn kinesis_sink_delivers_to_emulator() {
 
     // Read every shard back and confirm no payload was lost.
     let got = read_all_payloads(&rt, &client, &stream);
-    let expected: HashSet<String> = (0..N).map(payload).collect();
+    let expected: HashSet<String> = (0..N).map(logical_payload).collect();
     let missing: Vec<&String> = expected.iter().filter(|p| !got.contains(*p)).collect();
     assert!(
         missing.is_empty(),
@@ -157,8 +157,49 @@ fn kinesis_sink_delivers_to_emulator() {
     );
 }
 
-fn payload(i: usize) -> String {
+fn logical_payload(i: usize) -> String {
     format!("rec-{i:06}")
+}
+
+fn record_payload(i: usize) -> Vec<u8> {
+    edgecommons_opaque_payload(&logical_payload(i))
+}
+
+fn edgecommons_opaque_payload(body: &str) -> Vec<u8> {
+    let mut header = Vec::new();
+    put_string(&mut header, 1, "FramePreview");
+    put_string(&mut header, 2, "1.0");
+    put_varint_field(&mut header, 3, 1_704_067_200_123);
+    put_string(&mut header, 4, "kinesis-floci-it");
+
+    let mut msg = Vec::new();
+    put_bytes(&mut msg, 1, &header);
+    put_string(&mut msg, 4, "text/plain");
+    put_bytes(&mut msg, 31, body.as_bytes());
+    msg
+}
+
+fn put_string(out: &mut Vec<u8>, field: u64, value: &str) {
+    put_bytes(out, field, value.as_bytes());
+}
+
+fn put_bytes(out: &mut Vec<u8>, field: u64, value: &[u8]) {
+    put_varint(out, (field << 3) | 2);
+    put_varint(out, value.len() as u64);
+    out.extend_from_slice(value);
+}
+
+fn put_varint_field(out: &mut Vec<u8>, field: u64, value: u64) {
+    put_varint(out, field << 3);
+    put_varint(out, value);
+}
+
+fn put_varint(out: &mut Vec<u8>, mut value: u64) {
+    while value >= 0x80 {
+        out.push(((value as u8) & 0x7f) | 0x80);
+        value >>= 7;
+    }
+    out.push(value as u8);
 }
 
 fn wait_active(rt: &tokio::runtime::Runtime, client: &Client, stream: &str) {
@@ -231,7 +272,9 @@ fn read_all_payloads(
                 } else {
                     empty_polls = 0;
                     for r in recs {
-                        out.insert(String::from_utf8_lossy(r.data().as_ref()).into_owned());
+                        let payload = opaque_payload(r.data().as_ref())
+                            .expect("Kinesis record should be an EdgeCommons opaque envelope");
+                        out.insert(payload);
                     }
                 }
                 iter = resp.next_shard_iterator().map(str::to_string);
@@ -240,6 +283,45 @@ fn read_all_payloads(
         }
         out
     })
+}
+
+fn opaque_payload(mut input: &[u8]) -> Option<String> {
+    while !input.is_empty() {
+        let key = read_varint(&mut input)?;
+        let field = key >> 3;
+        let wire_type = key & 0x07;
+        match wire_type {
+            0 => {
+                read_varint(&mut input)?;
+            }
+            2 => {
+                let len = read_varint(&mut input)? as usize;
+                if input.len() < len {
+                    return None;
+                }
+                let value = &input[..len];
+                input = &input[len..];
+                if field == 31 {
+                    return String::from_utf8(value.to_vec()).ok();
+                }
+            }
+            _ => return None,
+        }
+    }
+    None
+}
+
+fn read_varint(input: &mut &[u8]) -> Option<u64> {
+    let mut value = 0u64;
+    for shift in (0..64).step_by(7) {
+        let (&byte, rest) = input.split_first()?;
+        *input = rest;
+        value |= u64::from(byte & 0x7f) << shift;
+        if byte & 0x80 == 0 {
+            return Some(value);
+        }
+    }
+    None
 }
 
 fn wait_until(timeout: Duration, mut f: impl FnMut() -> bool) -> bool {

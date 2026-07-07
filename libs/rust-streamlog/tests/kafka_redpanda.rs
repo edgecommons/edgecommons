@@ -44,7 +44,7 @@ fn kafka_sink_delivers_to_broker() {
         .unwrap(),
     );
     for i in 0..N {
-        log.append(&Record::new("pk", 1000 + i as u64, payload(i).as_bytes()))
+        log.append(&Record::new("pk", 1000 + i as u64, payload(i)))
             .unwrap();
     }
 
@@ -90,8 +90,45 @@ fn kafka_sink_delivers_to_broker() {
     println!("OK: produced {N} records to topic {topic}; consumed {got} back");
 }
 
-fn payload(i: usize) -> String {
-    format!("rec-{i:06}")
+fn payload(i: usize) -> Vec<u8> {
+    edgecommons_opaque_payload(&format!("rec-{i:06}"))
+}
+
+fn edgecommons_opaque_payload(body: &str) -> Vec<u8> {
+    let mut header = Vec::new();
+    put_string(&mut header, 1, "FramePreview");
+    put_string(&mut header, 2, "1.0");
+    put_varint_field(&mut header, 3, 1_704_067_200_123);
+    put_string(&mut header, 4, "kafka-redpanda-it");
+
+    let mut msg = Vec::new();
+    put_bytes(&mut msg, 1, &header);
+    put_string(&mut msg, 4, "text/plain");
+    put_bytes(&mut msg, 31, body.as_bytes());
+    msg
+}
+
+fn put_string(out: &mut Vec<u8>, field: u64, value: &str) {
+    put_bytes(out, field, value.as_bytes());
+}
+
+fn put_bytes(out: &mut Vec<u8>, field: u64, value: &[u8]) {
+    put_varint(out, (field << 3) | 2);
+    put_varint(out, value.len() as u64);
+    out.extend_from_slice(value);
+}
+
+fn put_varint_field(out: &mut Vec<u8>, field: u64, value: u64) {
+    put_varint(out, field << 3);
+    put_varint(out, value);
+}
+
+fn put_varint(out: &mut Vec<u8>, mut value: u64) {
+    while value >= 0x80 {
+        out.push(((value as u8) & 0x7f) | 0x80);
+        value >>= 7;
+    }
+    out.push(value as u8);
 }
 
 fn consume_all(topic: &str) -> usize {
