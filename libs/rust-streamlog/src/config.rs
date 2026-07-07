@@ -369,6 +369,7 @@ pub enum SinkPayloadFormat {
 }
 
 impl SinkPayloadFormat {
+    #[cfg(any(feature = "file", feature = "kinesis", feature = "kafka"))]
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Json => "json",

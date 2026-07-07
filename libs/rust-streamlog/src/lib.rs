@@ -21,7 +21,9 @@ pub mod export;
 #[cfg(feature = "cabi")]
 pub mod ffi;
 pub mod log;
+#[cfg(any(feature = "file", feature = "kinesis", feature = "kafka"))]
 mod payload;
+#[cfg(any(feature = "file", feature = "kinesis", feature = "kafka"))]
 mod proto;
 pub mod record;
 pub mod service;
