@@ -6,17 +6,12 @@ package com.mbreissi.edgecommons.messaging.providers.greengrass;
 
 
 import com.mbreissi.edgecommons.messaging.Message;
-import com.mbreissi.edgecommons.messaging.MessageBuilder;
-import com.google.gson.Gson;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonSyntaxException;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import oshi.util.tuples.Pair;
 import software.amazon.awssdk.aws.greengrass.model.IoTCoreMessage;
 import software.amazon.awssdk.aws.greengrass.model.MQTTMessage;
 
-import java.nio.charset.StandardCharsets;
 import java.util.function.BiConsumer;
 
 public class IotCoreSubscriptionHandler extends SubscriptionHandler<IoTCoreMessage>
@@ -37,19 +32,10 @@ public class IotCoreSubscriptionHandler extends SubscriptionHandler<IoTCoreMessa
         {
             String topic = iotCoreMessage.getMessage().getTopicName();
             MQTTMessage mqttMessage = iotCoreMessage.getMessage();
-            String msgChars = new String(mqttMessage.getPayload(), StandardCharsets.UTF_8);
-            Message msg;
-            try
-            {
-                msg = MessageBuilder.fromObject(new Gson().fromJson(msgChars, JsonObject.class));
-            }
-            catch (JsonSyntaxException e)
-            {
-                msg = MessageBuilder.fromObject(msgChars);
-            }
+            Message msg = Message.fromBytes(mqttMessage.getPayload());
             retVal = new Pair<>(topic, msg);
-        } catch (JsonSyntaxException | IllegalArgumentException e) {
-            LOGGER.warn("Problem decoding IoT Core payload into Message on topic {}: {}.  Ignoring message.",
+        } catch (IllegalArgumentException e) {
+            LOGGER.warn("Problem decoding IoT Core payload into EdgeCommons protobuf Message on topic {}: {}.  Ignoring message.",
                     topicFilter, e.toString());
         } catch (Exception e) {
             LOGGER.error("Unexpected error while parsing IoT Core payload: {}. Ignoring message", e.toString());

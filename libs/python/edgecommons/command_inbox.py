@@ -432,7 +432,7 @@ class CommandInbox:
 
             reply = (
                 MessageBuilder.create(verb, CMD_MESSAGE_VERSION)
-                .with_payload(body)
+                .with_command(body)
                 .with_config(self._config_manager)
                 .build()
             )

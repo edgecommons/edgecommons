@@ -57,7 +57,33 @@ function New-ZipArtifact {
   $artifactComponentDir = Join-Path $artifactsDir (Join-Path $ComponentName $Version)
   New-Item -ItemType Directory -Force -Path $artifactComponentDir | Out-Null
   $zipPath = Join-Path $artifactComponentDir $ZipName
-  Compress-Archive -Path $SourcePath -DestinationPath $zipPath -CompressionLevel Optimal
+  if (Test-Path -LiteralPath $zipPath) {
+    Remove-Item -LiteralPath $zipPath -Force
+  }
+  Add-Type -AssemblyName System.IO.Compression
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  $sourceFull = (Resolve-Path -LiteralPath $SourcePath).Path
+  $sourceParent = Split-Path -Parent $sourceFull
+  $sourceParentPrefix = $sourceParent.TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
+  $archive = [System.IO.Compression.ZipFile]::Open(
+    $zipPath,
+    [System.IO.Compression.ZipArchiveMode]::Create)
+  try {
+    foreach ($file in Get-ChildItem -LiteralPath $sourceFull -Recurse -File) {
+      if (-not $file.FullName.StartsWith($sourceParentPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to archive unexpected path outside source parent: $($file.FullName)"
+      }
+      $relative = $file.FullName.Substring($sourceParentPrefix.Length)
+      $entryName = $relative.Replace('\', '/')
+      [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+        $archive,
+        $file.FullName,
+        $entryName,
+        [System.IO.Compression.CompressionLevel]::Optimal) | Out-Null
+    }
+  } finally {
+    $archive.Dispose()
+  }
   return $zipPath
 }
 

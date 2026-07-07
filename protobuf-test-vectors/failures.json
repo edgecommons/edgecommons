@@ -1,0 +1,30 @@
+{
+  "cases": [
+    {
+      "bytes_hex": "7b226e6f74223a2270726f746f227d",
+      "error": "Malformed EdgeCommons protobuf message",
+      "id": "not_protobuf"
+    },
+    {
+      "bytes_hex": "",
+      "error": "EdgeCommons protobuf message requires header name and version",
+      "id": "missing_header"
+    },
+    {
+      "description": "EdgeCommonsMessage with header.version only",
+      "error": "EdgeCommons protobuf message requires header name and version",
+      "id": "missing_header_name"
+    },
+    {
+      "description": "_edgecommonsBinary.length does not match decoded bytes",
+      "error": "Binary body length mismatch",
+      "id": "invalid_binary_marker_length"
+    },
+    {
+      "description": "structured double NaN is rejected before protobuf serialization",
+      "error": "EdgeCommons protobuf structured values reject NaN and infinity",
+      "id": "nan_double"
+    }
+  ],
+  "schema": "edgecommons.protobuf-test-failures.v1"
+}

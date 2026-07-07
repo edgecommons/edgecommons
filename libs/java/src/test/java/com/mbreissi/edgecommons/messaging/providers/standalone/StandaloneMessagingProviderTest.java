@@ -8,6 +8,7 @@ import com.mbreissi.edgecommons.messaging.Message;
 import com.mbreissi.edgecommons.messaging.MessageBuilder;
 import com.mbreissi.edgecommons.messaging.MessagingConfiguration;
 import com.mbreissi.edgecommons.messaging.ReplyFuture;
+import com.mbreissi.edgecommons.proto.v1.EdgeCommonsMessage;
 import com.mbreissi.edgecommons.test.MockConfigurationService;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
@@ -33,6 +34,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -41,7 +43,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * Direct unit tests for {@link StandaloneMessagingProvider} driven against an in-process Moquette
  * broker (plaintext, anonymous). These cover the local-broker code paths the integration test does
- * not: bounded-queue drop-on-overflow, wildcard subscription routing, JSON-vs-raw payload parsing in
+ * not: bounded-queue drop-on-overflow, wildcard subscription routing, protobuf payload parsing in
  * {@code messageArrived}, request/reply correlation completion, unsubscribe of an unknown topic, and
  * the {@code requireIotCore} guards on every IoT-Core delegate when no {@code northbound} section is
  * configured.
@@ -111,9 +113,9 @@ class StandaloneMessagingProviderTest {
     }
 
     @Test
-    void publishAndSubscribeDeliversParsedJsonMessage() throws Exception {
+    void publishAndSubscribeDeliversParsedProtobufMessage() throws Exception {
         provider = localProvider("pubsub");
-        String topic = "prov/test/json";
+        String topic = "prov/test/protobuf";
         var latch = new CountDownLatch(1);
         var got = new AtomicReference<Message>();
         var gotTopic = new AtomicReference<String>();
@@ -124,6 +126,38 @@ class StandaloneMessagingProviderTest {
         assertTrue(latch.await(5, TimeUnit.SECONDS), "message not delivered");
         assertEquals("Hello", got.get().getHeader().getName());
         assertEquals(topic, gotTopic.get());
+    }
+
+    @Test
+    void publishWritesProtobufBytesToMqttPayload() throws Exception {
+        provider = localProvider("wire-bytes");
+        String topic = "prov/wire/protobuf";
+        var latch = new CountDownLatch(1);
+        var payloadRef = new AtomicReference<byte[]>();
+
+        MqttClient observer = new MqttClient("tcp://127.0.0.1:" + port, "wire-observer");
+        MqttConnectOptions opts = new MqttConnectOptions();
+        opts.setCleanSession(true);
+        observer.connect(opts);
+        observer.subscribe(topic, 1, (t, message) -> {
+            payloadRef.set(message.getPayload());
+            latch.countDown();
+        });
+        try {
+            provider.publish(topic, msg("Wire"));
+
+            assertTrue(latch.await(5, TimeUnit.SECONDS), "observer did not receive published payload");
+            byte[] payload = payloadRef.get();
+            assertNotNull(payload);
+            assertFalse(new String(payload, StandardCharsets.UTF_8).trim().startsWith("{"),
+                    "wire payload must not be JSON text");
+            EdgeCommonsMessage proto = EdgeCommonsMessage.parseFrom(payload);
+            assertEquals("Wire", proto.getHeader().getName());
+            assertEquals(EdgeCommonsMessage.BodyCase.STRUCTURED, proto.getBodyCase());
+        } finally {
+            observer.disconnect();
+            observer.close();
+        }
     }
 
     @Test
@@ -141,26 +175,26 @@ class StandaloneMessagingProviderTest {
     }
 
     @Test
-    void rawNonJsonPayloadFallsBackToRawMessage() throws Exception {
+    void rawNonJsonPayloadIsNotDeliveredAsEdgeCommonsMessage() throws Exception {
         provider = localProvider("rawfallback");
         String topic = "prov/test/raw";
         var latch = new CountDownLatch(1);
         var got = new AtomicReference<Message>();
         provider.subscribe(topic, (t, m) -> { got.set(m); latch.countDown(); }, 1, -1);
 
-        // Publish a non-JSON payload directly via a raw Paho client so messageArrived must use the
-        // raw-string fallback branch.
+        // Publish a non-protobuf payload directly via a raw Paho client. Normal Message
+        // subscriptions only deliver EdgeCommons protobuf envelopes.
         MqttClient raw = new MqttClient("tcp://127.0.0.1:" + port, "raw-pub");
         MqttConnectOptions opts = new MqttConnectOptions();
         opts.setCleanSession(true);
         raw.connect(opts);
         raw.publish(topic, new MqttMessage("not-json-at-all".getBytes(StandardCharsets.UTF_8)));
-
-        assertTrue(latch.await(5, TimeUnit.SECONDS), "raw message not delivered");
-        // Gson parses a bare token leniently, so we only assert a Message was produced.
-        assertNotNull(got.get());
         raw.disconnect();
         raw.close();
+
+        assertFalse(latch.await(500, TimeUnit.MILLISECONDS),
+                "raw payload must not be delivered as an EdgeCommons Message");
+        assertNull(got.get());
     }
 
     @Test
@@ -229,7 +263,7 @@ class StandaloneMessagingProviderTest {
     }
 
     @Test
-    void publishRawDeliversArbitraryJson() throws Exception {
+    void publishRawDoesNotDeliverJsonToMessageSubscription() throws Exception {
         provider = localProvider("rawpub");
         String topic = "prov/rawpub";
         var latch = new CountDownLatch(1);
@@ -240,8 +274,9 @@ class StandaloneMessagingProviderTest {
         raw.addProperty("answer", 42);
         provider.publishRaw(topic, raw);
 
-        assertTrue(latch.await(5, TimeUnit.SECONDS), "raw publish not delivered");
-        assertNotNull(got.get());
+        assertFalse(latch.await(500, TimeUnit.MILLISECONDS),
+                "raw JSON payload must not be delivered as an EdgeCommons Message");
+        assertNull(got.get());
     }
 
     // --- IoT Core API guard branches (no northbound section configured) -----------------------------

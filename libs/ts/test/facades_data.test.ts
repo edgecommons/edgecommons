@@ -14,6 +14,7 @@ import { DataFacade } from "../src/facades/data_facade";
 import { Quality } from "../src/facades/quality";
 import type { StreamSink } from "../src/facades/stream_sink";
 import { SignalUpdateBuilder } from "../src/facades/signal_update";
+import { Message, MessageBodyCase } from "../src/message";
 import { Qos } from "../src/messaging/types";
 import { Uns } from "../src/uns";
 import { RecordingMessagingService } from "./_fakes";
@@ -185,8 +186,10 @@ describe("DataFacade", () => {
       expect(recorded.streamName).toBe("hot");
       expect(recorded.partitionKey, "partition key is the stable signal.id").toBe("ns=2;s=Line1.Temp");
       expect(recorded.timestampMs).toBe(CLOCK_MS);
-      const env = JSON.parse(recorded.payload!.toString("utf8")) as Record<string, unknown>;
-      const envBody = env.body as Record<string, unknown>;
+      expect(recorded.payload![0], "stream payload is protobuf, not a JSON diagnostic object").not.toBe("{".charCodeAt(0));
+      const env = Message.fromBytes(recorded.payload!);
+      expect(env.getBodyCase()).toBe(MessageBodyCase.SouthboundSignalUpdate);
+      const envBody = env.getBody() as Record<string, unknown>;
       expect((envBody.signal as Record<string, unknown>).id, "the streamed payload is the same enriched envelope").toBe(
         "ns=2;s=Line1.Temp",
       );

@@ -15,8 +15,16 @@ pub struct Record {
 }
 
 impl Record {
-    pub fn new(partition_key: impl Into<String>, timestamp_ms: u64, payload: impl Into<Vec<u8>>) -> Self {
-        Self { partition_key: partition_key.into(), timestamp_ms, payload: payload.into() }
+    pub fn new(
+        partition_key: impl Into<String>,
+        timestamp_ms: u64,
+        payload: impl Into<Vec<u8>>,
+    ) -> Self {
+        Self {
+            partition_key: partition_key.into(),
+            timestamp_ms,
+            payload: payload.into(),
+        }
     }
 }
 
@@ -98,7 +106,13 @@ pub fn decode_frame(buf: &[u8]) -> Decoded<'_> {
     let pk_start = OFF + TS + PKLEN;
     let partition_key = &body[pk_start..pk_start + pk_len];
     let payload = &body[pk_start + pk_len..];
-    Decoded::Complete(FrameView { offset, ts_ms, partition_key, payload, consumed: total })
+    Decoded::Complete(FrameView {
+        offset,
+        ts_ms,
+        partition_key,
+        payload,
+        consumed: total,
+    })
 }
 
 #[cfg(test)]
@@ -140,7 +154,10 @@ mod tests {
         let mut buf = Vec::new();
         encode_frame(1, 1, b"k", b"vvvv", &mut buf);
         for cut in 0..buf.len() {
-            assert!(matches!(decode_frame(&buf[..cut]), Decoded::Incomplete), "cut={cut}");
+            assert!(
+                matches!(decode_frame(&buf[..cut]), Decoded::Incomplete),
+                "cut={cut}"
+            );
         }
     }
 

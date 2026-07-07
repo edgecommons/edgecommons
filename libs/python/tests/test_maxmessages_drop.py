@@ -7,16 +7,16 @@ callback that blocks (holding its queue permit) until released.
 """
 import threading
 import types
-import json
 from concurrent.futures import ThreadPoolExecutor
 
+from edgecommons.messaging.message_builder import MessageBuilder
 from edgecommons.messaging.providers.standalone_provider import StandaloneProvider, _BrokerChannel
 
 
 def _fake_mqtt_message(topic: str, body: dict):
     m = types.SimpleNamespace()
     m.topic = topic
-    m.payload = json.dumps(body).encode("utf-8")
+    m.payload = MessageBuilder.create("Delivered", "1.0").with_payload(body).build().to_bytes()
     m.qos = 0
     return m
 

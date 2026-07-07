@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package edgecommons.v1;
+
+option java_multiple_files = true;
+option java_package = "com.mbreissi.edgecommons.proto.v1";
+
+import "edgecommons/v1/value.proto";
+
+message StateUpdate {
+  string status = 1;
+  optional uint64 uptime_secs = 2;
+  repeated InstanceConnectivity instances = 3;
+  map<string, EcValue> extra = 100;
+}
+
+message InstanceConnectivity {
+  string instance = 1;
+  bool connected = 2;
+  optional string detail = 3;
+  map<string, EcValue> extra = 100;
+}

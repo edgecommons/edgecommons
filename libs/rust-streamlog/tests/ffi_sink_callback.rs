@@ -20,8 +20,8 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use edgestreamlog::ffi::{
-    esl_append, esl_open, esl_set_sink_callback, esl_shutdown, esl_stats, esl_stream_free,
-    esl_stream_get, esl_str_free, EslService, EslSinkOutcome, EslSinkRecord, EslStats,
+    esl_append, esl_open, esl_set_sink_callback, esl_shutdown, esl_stats, esl_str_free,
+    esl_stream_free, esl_stream_get, EslService, EslSinkOutcome, EslSinkRecord, EslStats,
     EslStream,
 };
 
@@ -190,7 +190,10 @@ extern "C" fn cb_partial(
         oc.status = SINK_ALL_ACKED;
     } else {
         // Write failed offsets into the core-supplied buffer.
-        assert!(failed.len() <= oc.failed_cap, "failed_cap must be >= batch len");
+        assert!(
+            failed.len() <= oc.failed_cap,
+            "failed_cap must be >= batch len"
+        );
         let out = unsafe { std::slice::from_raw_parts_mut(oc.failed_offsets, oc.failed_cap) };
         for (i, off) in failed.iter().enumerate() {
             out[i] = *off;
@@ -245,7 +248,7 @@ extern "C" fn cb_modes(
         st.rejected_attempts.fetch_add(1, Ordering::SeqCst);
         st.disconnected.fetch_sub(1, Ordering::SeqCst);
         match st.mode.load(Ordering::SeqCst) {
-            1 => return 7,                                // non-zero rc -> retryable Failed
+            1 => return 7, // non-zero rc -> retryable Failed
             2 => {
                 oc.status = SINK_FAILED_PERMANENT;
                 return ESL_OK;
@@ -293,10 +296,17 @@ fn all_acked_drains_batch_and_advances_exported() {
         let (svc, stream) = open_cw(&cfg);
 
         for i in 0..50u64 {
-            append(stream, 1_700_000_000_000 + i, format!("datum-{i}").as_bytes());
+            append(
+                stream,
+                1_700_000_000_000 + i,
+                format!("datum-{i}").as_bytes(),
+            );
         }
         let exported = wait_exported(svc, 50, Duration::from_secs(5));
-        assert_eq!(exported, 50, "all 50 records should be exported via the host callback");
+        assert_eq!(
+            exported, 50,
+            "all 50 records should be exported via the host callback"
+        );
 
         let s = stats(svc);
         assert_eq!(s.appended_total, 50);
@@ -320,7 +330,10 @@ fn partial_redelivers_only_failed_offsets() {
     *st.fail_offsets_once.lock().unwrap() = vec![1, 3];
     let st_ptr: *const HostState = &*st;
     unsafe {
-        assert_eq!(esl_set_sink_callback(Some(cb_partial), st_ptr as *mut c_void), ESL_OK);
+        assert_eq!(
+            esl_set_sink_callback(Some(cb_partial), st_ptr as *mut c_void),
+            ESL_OK
+        );
 
         let dir = tempfile::tempdir().unwrap();
         let cfg = callback_cfg(dir.path());
@@ -330,11 +343,17 @@ fn partial_redelivers_only_failed_offsets() {
             append(stream, 1_700_000_000_000 + i, format!("d{i}").as_bytes());
         }
         let exported = wait_exported(svc, 5, Duration::from_secs(5));
-        assert_eq!(exported, 5, "all 5 records eventually exported (the 2 partial-failed retried)");
+        assert_eq!(
+            exported, 5,
+            "all 5 records eventually exported (the 2 partial-failed retried)"
+        );
 
         let s = stats(svc);
         assert_eq!(s.exported_total, 5);
-        assert!(s.retries_total >= 1, "a partial failure must record a retry");
+        assert!(
+            s.retries_total >= 1,
+            "a partial failure must record a retry"
+        );
 
         // Offsets 1 and 3 were delivered twice? No — on retry the host acks them, so they land once
         // each in `delivered` (the first attempt did NOT store them). Total stored == 5.
@@ -359,7 +378,10 @@ fn failed_retryable_holds_batch_until_reconnect_disconnect_fault_injection() {
     st.disconnected.store(1, Ordering::SeqCst);
     let st_ptr: *const HostState = &*st;
     unsafe {
-        assert_eq!(esl_set_sink_callback(Some(cb_disconnect), st_ptr as *mut c_void), ESL_OK);
+        assert_eq!(
+            esl_set_sink_callback(Some(cb_disconnect), st_ptr as *mut c_void),
+            ESL_OK
+        );
 
         let dir = tempfile::tempdir().unwrap();
         let cfg = callback_cfg(dir.path());
@@ -373,23 +395,42 @@ fn failed_retryable_holds_batch_until_reconnect_disconnect_fault_injection() {
         // (no loss), the host keeps getting retried. Wait until we observe real reject attempts.
         let start = Instant::now();
         while st.rejected_attempts.load(Ordering::SeqCst) < 2 {
-            assert!(start.elapsed() < Duration::from_secs(5), "expected the engine to retry the held batch");
+            assert!(
+                start.elapsed() < Duration::from_secs(5),
+                "expected the engine to retry the held batch"
+            );
             std::thread::sleep(Duration::from_millis(10));
         }
         let mid = stats(svc);
         assert_eq!(mid.exported_total, 0, "nothing exports while disconnected");
-        assert!(mid.backlog >= 1, "records are held on disk during the disconnect, not dropped");
-        assert_eq!(st.delivered.lock().unwrap().len(), 0, "nothing stored host-side while down");
+        assert!(
+            mid.backlog >= 1,
+            "records are held on disk during the disconnect, not dropped"
+        );
+        assert_eq!(
+            st.delivered.lock().unwrap().len(),
+            0,
+            "nothing stored host-side while down"
+        );
 
         // "Reconnect": the engine drains the held batch on the next attempt.
         st.disconnected.store(0, Ordering::SeqCst);
         let exported = wait_exported(svc, 10, Duration::from_secs(5));
-        assert_eq!(exported, 10, "the buffered batch drains after reconnect (no data lost)");
+        assert_eq!(
+            exported, 10,
+            "the buffered batch drains after reconnect (no data lost)"
+        );
 
         let s = stats(svc);
         assert_eq!(s.exported_total, 10);
-        assert!(s.retries_total >= 1, "the disconnect must have driven retries");
-        assert!(st.rejected_attempts.load(Ordering::SeqCst) >= 2, "the disconnect window had retries");
+        assert!(
+            s.retries_total >= 1,
+            "the disconnect must have driven retries"
+        );
+        assert!(
+            st.rejected_attempts.load(Ordering::SeqCst) >= 2,
+            "the disconnect window had retries"
+        );
         assert_eq!(st.delivered.lock().unwrap().len(), 10);
 
         esl_stream_free(stream);
@@ -417,7 +458,10 @@ fn no_callback_registered_is_buffer_only() {
         std::thread::sleep(Duration::from_millis(100));
         let s = stats(svc);
         assert_eq!(s.appended_total, 5);
-        assert_eq!(s.exported_total, 0, "no host callback => stream is buffer-only");
+        assert_eq!(
+            s.exported_total, 0,
+            "no host callback => stream is buffer-only"
+        );
         assert_eq!(s.backlog, 5);
 
         esl_stream_free(stream);
@@ -446,7 +490,10 @@ fn kinesis_sink_delegates_to_in_core_factory_buffer_only_without_feature() {
         std::thread::sleep(Duration::from_millis(60));
         let s = stats(svc);
         assert_eq!(s.appended_total, 1);
-        assert_eq!(s.exported_total, 0, "kinesis stream is buffer-only without the kinesis feature");
+        assert_eq!(
+            s.exported_total, 0,
+            "kinesis stream is buffer-only without the kinesis feature"
+        );
         assert_eq!(s.backlog, 1);
         esl_stream_free(stream);
         esl_shutdown(svc);
@@ -467,7 +514,10 @@ fn run_mode(mode: u64) {
     st.disconnected.store(2, Ordering::SeqCst);
     let st_ptr: *const HostState = &*st;
     unsafe {
-        assert_eq!(esl_set_sink_callback(Some(cb_modes), st_ptr as *mut c_void), ESL_OK);
+        assert_eq!(
+            esl_set_sink_callback(Some(cb_modes), st_ptr as *mut c_void),
+            ESL_OK
+        );
 
         let dir = tempfile::tempdir().unwrap();
         let cfg = callback_cfg(dir.path());
@@ -479,7 +529,10 @@ fn run_mode(mode: u64) {
         // All records must eventually export: the failure modes hold the batch (at-least-once), the
         // partial-zero / permanent map cleanly, and the host recovers to AllAcked.
         let exported = wait_exported(svc, 4, Duration::from_secs(5));
-        assert_eq!(exported, 4, "mode {mode}: all records export after the host recovers (no loss)");
+        assert_eq!(
+            exported, 4,
+            "mode {mode}: all records export after the host recovers (no loss)"
+        );
         assert!(
             st.rejected_attempts.load(Ordering::SeqCst) >= 1,
             "mode {mode}: the injected failure must have been exercised"
@@ -508,7 +561,10 @@ fn callback_cleared_after_open_holds_batch_as_retryable() {
     st.disconnected.store(1, Ordering::SeqCst);
     let st_ptr: *const HostState = &*st;
     unsafe {
-        assert_eq!(esl_set_sink_callback(Some(cb_disconnect), st_ptr as *mut c_void), ESL_OK);
+        assert_eq!(
+            esl_set_sink_callback(Some(cb_disconnect), st_ptr as *mut c_void),
+            ESL_OK
+        );
 
         let dir = tempfile::tempdir().unwrap();
         let cfg = callback_cfg(dir.path());
@@ -528,8 +584,14 @@ fn callback_cleared_after_open_holds_batch_as_retryable() {
         std::thread::sleep(Duration::from_millis(80));
 
         let s = stats(svc);
-        assert_eq!(s.exported_total, 0, "no record should be lost while the callback is gone");
-        assert!(s.backlog >= 1, "the batch is held (at-least-once), not dropped");
+        assert_eq!(
+            s.exported_total, 0,
+            "no record should be lost while the callback is gone"
+        );
+        assert!(
+            s.backlog >= 1,
+            "the batch is held (at-least-once), not dropped"
+        );
 
         esl_stream_free(stream);
         esl_shutdown(svc);

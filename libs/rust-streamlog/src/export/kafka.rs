@@ -12,18 +12,22 @@
 use std::collections::BTreeMap;
 
 use rdkafka::config::ClientConfig;
+use rdkafka::message::{Header, OwnedHeaders};
 use rdkafka::producer::{FutureProducer, FutureRecord};
 use rdkafka::util::Timeout;
 use tokio::runtime::Runtime;
 
 use super::{ExportRecord, SendOutcome, Sink};
+use crate::config::SinkPayloadFormat;
 use crate::error::{EdgeStreamError, Result};
+use crate::payload::{project_payload, PayloadMetadata};
 
 /// A [`Sink`] that produces records to a Kafka topic.
 pub struct KafkaSink {
     rt: Runtime,
     producer: FutureProducer,
     topic: String,
+    payload_format: SinkPayloadFormat,
 }
 
 impl KafkaSink {
@@ -33,6 +37,21 @@ impl KafkaSink {
         bootstrap_servers: &str,
         topic: &str,
         properties: &BTreeMap<String, String>,
+    ) -> Result<Self> {
+        Self::new_with_payload_format(
+            bootstrap_servers,
+            topic,
+            properties,
+            SinkPayloadFormat::Json,
+        )
+    }
+
+    /// Build a sink with an explicit target payload format.
+    pub fn new_with_payload_format(
+        bootstrap_servers: &str,
+        topic: &str,
+        properties: &BTreeMap<String, String>,
+        payload_format: SinkPayloadFormat,
     ) -> Result<Self> {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -46,49 +65,67 @@ impl KafkaSink {
         for (k, v) in properties {
             cfg.set(k, v);
         }
-        let producer: FutureProducer =
-            cfg.create().map_err(|e| EdgeStreamError::Sink(format!("kafka producer: {e}")))?;
+        let producer: FutureProducer = cfg
+            .create()
+            .map_err(|e| EdgeStreamError::Sink(format!("kafka producer: {e}")))?;
 
-        Ok(Self { rt, producer, topic: topic.to_string() })
+        Ok(Self {
+            rt,
+            producer,
+            topic: topic.to_string(),
+            payload_format,
+        })
     }
 }
 
 impl Sink for KafkaSink {
     fn send(&mut self, batch: &[ExportRecord<'_>]) -> SendOutcome {
-        let topic = &self.topic;
-        let producer = &self.producer;
+        let topic = self.topic.clone();
+        let producer = self.producer.clone();
+        let payload_format = self.payload_format;
 
         self.rt.block_on(async move {
-            // Queue all sends first (concurrent in-flight), then await each delivery.
-            let mut pending = Vec::with_capacity(batch.len());
+            // Send each projected record and await its delivery while the projected payload buffer
+            // is still in scope. This keeps the sink's ownership model simple and exact.
             for r in batch {
-                let record = FutureRecord::to(topic).payload(r.payload).key(r.partition_key);
-                pending.push((r.offset, producer.send(record, Timeout::Never)));
-            }
-
-            let mut failed_offsets = Vec::new();
-            let mut last_err = None;
-            for (offset, fut) in pending {
+                let projected = match project_payload(payload_format, r.payload) {
+                    Ok(projected) => projected,
+                    Err(e) => {
+                        return SendOutcome::Failed {
+                            retryable: false,
+                            error: e.to_string(),
+                        };
+                    }
+                };
+                let record = FutureRecord::to(&topic)
+                    .payload(projected.payload.as_slice())
+                    .key(r.partition_key)
+                    .headers(metadata_headers(&projected.metadata));
                 // DeliveryFuture resolves to Result<(partition, offset), (KafkaError, OwnedMessage)>.
-                match fut.await {
+                match producer.send(record, Timeout::Never).await {
                     Ok(_) => {} // delivered
                     Err((kafka_err, _msg)) => {
-                        failed_offsets.push(offset);
-                        last_err = Some(kafka_err.to_string());
+                        return SendOutcome::Failed {
+                            retryable: true,
+                            error: kafka_err.to_string(),
+                        };
                     }
                 }
             }
 
-            if failed_offsets.is_empty() {
-                SendOutcome::AllAcked
-            } else if failed_offsets.len() == batch.len() {
-                SendOutcome::Failed {
-                    retryable: true,
-                    error: last_err.unwrap_or_else(|| "all records failed to deliver".into()),
-                }
-            } else {
-                SendOutcome::Partial { failed_offsets }
-            }
+            SendOutcome::AllAcked
         })
     }
+}
+
+fn metadata_headers(metadata: &PayloadMetadata) -> OwnedHeaders {
+    metadata
+        .entries()
+        .into_iter()
+        .fold(OwnedHeaders::new(), |headers, (key, value)| {
+            headers.insert(Header {
+                key,
+                value: Some(value.as_bytes()),
+            })
+        })
 }

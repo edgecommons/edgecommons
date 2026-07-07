@@ -303,23 +303,23 @@ async fn request_times_out_with_no_responder() {
 }
 
 #[tokio::test]
-async fn publish_raw_is_received_as_raw() {
+async fn publish_raw_is_not_delivered_to_message_subscription() {
     if skipped() {
         return;
     }
     init_logs();
-    info!("=== TEST publish_raw_is_received_as_raw ===");
+    info!("=== TEST publish_raw_is_not_delivered_to_message_subscription ===");
     let svc = connect_service(&format!("it-raw-{}", Uuid::new_v4())).await;
     let topic = format!("itest/raw/{}", Uuid::new_v4());
 
-    let received = Arc::new(Mutex::new(None));
-    let rh = received.clone();
+    let count = Arc::new(AtomicUsize::new(0));
+    let count_h = count.clone();
     svc.subscribe(
         &topic,
-        message_handler(move |_t, msg| {
-            let rh = rh.clone();
+        message_handler(move |_t, _msg| {
+            let count_h = count_h.clone();
             async move {
-                *rh.lock().unwrap() = Some((msg.is_raw(), msg.get_raw().cloned()));
+                count_h.fetch_add(1, Ordering::SeqCst);
             }
         }),
         MAX_MESSAGES,
@@ -334,22 +334,11 @@ async fn publish_raw_is_received_as_raw() {
         .await
         .expect("publish_raw");
 
-    for _ in 0..50 {
-        if received.lock().unwrap().is_some() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-
-    let (is_raw, raw) = received
-        .lock()
-        .unwrap()
-        .clone()
-        .expect("received a message");
-    assert!(
-        is_raw,
-        "a non-envelope payload must be delivered as a raw message"
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    assert_eq!(
+        count.load(Ordering::SeqCst),
+        0,
+        "raw payloads are not delivered as EdgeCommons Message objects"
     );
-    assert_eq!(raw.expect("raw value"), payload);
-    info!("=== PASS publish_raw_is_received_as_raw ===");
+    info!("=== PASS publish_raw_is_not_delivered_to_message_subscription ===");
 }

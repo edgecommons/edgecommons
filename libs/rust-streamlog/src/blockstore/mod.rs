@@ -54,7 +54,12 @@ pub trait BlockStore: Send {
     ///
     /// Takes `&mut self` so the implementation may build/cache a byte-offset index on demand
     /// (the export read path must seek, not rescan, to keep ingest+drain concurrent).
-    fn read_from(&mut self, from: u64, max_records: usize, max_bytes: usize) -> Result<Vec<OwnedRecord>>;
+    fn read_from(
+        &mut self,
+        from: u64,
+        max_records: usize,
+        max_bytes: usize,
+    ) -> Result<Vec<OwnedRecord>>;
 
     /// Delete segments entirely below `offset`; returns bytes reclaimed.
     fn truncate_below(&mut self, offset: u64) -> Result<u64>;
@@ -110,7 +115,12 @@ impl BlockStore for BackingStore {
         }
     }
 
-    fn read_from(&mut self, from: u64, max_records: usize, max_bytes: usize) -> Result<Vec<OwnedRecord>> {
+    fn read_from(
+        &mut self,
+        from: u64,
+        max_records: usize,
+        max_bytes: usize,
+    ) -> Result<Vec<OwnedRecord>> {
         match self {
             Self::Disk(s) => s.read_from(from, max_records, max_bytes),
             Self::Memory(s) => s.read_from(from, max_records, max_bytes),

@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package edgecommons.v1;
+
+option java_multiple_files = true;
+option java_package = "com.mbreissi.edgecommons.proto.v1";
+
+message EcValue {
+  oneof kind {
+    NullValue null_value = 1;
+    bool bool_value = 2;
+    int64 int_value = 3;
+    uint64 uint_value = 4;
+    double double_value = 5;
+    string string_value = 6;
+    bytes bytes_value = 7;
+    EcList list_value = 8;
+    EcMap map_value = 9;
+  }
+}
+
+message EcList {
+  repeated EcValue values = 1;
+}
+
+message EcMap {
+  map<string, EcValue> fields = 1;
+}
+
+enum NullValue {
+  NULL_VALUE_UNSPECIFIED = 0;
+}

@@ -873,12 +873,14 @@ mod vector_tests {
                 "vector '{name}': envelope mismatch"
             );
 
-            // Both directions: the golden JSON parses back into the same message.
-            let parsed = crate::messaging::message::Message::from_slice(
-                &serde_json::to_vec(envelope).unwrap(),
-            )
-            .expect("golden envelope parses");
-            assert_eq!(parsed, rebuilt, "vector '{name}': parse-back mismatch");
+            // Diagnostic JSON vectors parse back into the same logical envelope.
+            let parsed: crate::messaging::message::Message =
+                serde_json::from_value(envelope.clone()).expect("golden envelope parses");
+            assert_eq!(
+                serde_json::to_value(&parsed).expect("serialize parsed envelope"),
+                rebuilt_value,
+                "vector '{name}': parse-back mismatch"
+            );
 
             // 2. Reproduce the topic byte-for-byte from the vector identity +
             //    class + channel with includeRoot=false (all vectors are rootless).

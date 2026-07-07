@@ -134,7 +134,7 @@ class StandaloneMessagingIntegrationTest {
     }
 
     @Test
-    void rawPublishDeliversNonEnvelopePayload() throws Exception {
+    void rawPublishDoesNotDeliverNonEnvelopePayloadToMessageSubscription() throws Exception {
         String topic = "itest/raw";
         var latch = new CountDownLatch(1);
         var received = new AtomicReference<Message>();
@@ -144,8 +144,8 @@ class StandaloneMessagingIntegrationTest {
         raw.addProperty("just", "data");
         provider.publishRaw(topic, raw);
 
-        assertTrue(latch.await(5, TimeUnit.SECONDS));
-        assertNotNull(received.get().getRaw());
+        assertFalse(latch.await(500, TimeUnit.MILLISECONDS));
+        assertNull(received.get());
         provider.unsubscribe(topic);
     }
 

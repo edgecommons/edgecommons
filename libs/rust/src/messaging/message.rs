@@ -1,7 +1,7 @@
 //! # Messaging — Message model
 //!
 //! **One-liner purpose**: The `Message` value type (header + identity + tags + body)
-//! and its fluent [`MessageBuilder`], plus JSON (de)serialization for the wire.
+//! and its fluent [`MessageBuilder`], plus protobuf serialization for the wire.
 //!
 //! ## Overview
 //! A [`Message`] is the unit exchanged over any transport. Its JSON shape is kept
@@ -68,6 +68,7 @@ use std::collections::BTreeMap;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use prost::Message as ProstMessage;
 use serde::de::{self, Deserializer};
 use serde::ser::{SerializeMap, Serializer};
 use serde::{Deserialize, Serialize};
@@ -78,11 +79,15 @@ use uuid::Uuid;
 
 use crate::config::model::Config;
 use crate::error::{EdgeCommonsError, Result};
+use crate::proto::edgecommons::v1 as pb;
 
 /// Maximum decoded size for the first-class binary message body marker.
 pub const MAX_BINARY_BODY_BYTES: usize = 64 * 1024;
 const BINARY_BODY_KEY: &str = "_edgecommonsBinary";
 const BINARY_ENCODING: &str = "base64";
+const DATA_MESSAGE_NAME: &str = "SouthboundSignalUpdate";
+const TELEMETRY_MESSAGE_NAME: &str = "Telemetry";
+const DEFAULT_OPAQUE_CONTENT_TYPE: &str = "application/octet-stream";
 
 fn binary_body_value(bytes: &[u8]) -> Result<Value> {
     if bytes.len() > MAX_BINARY_BODY_BYTES {
@@ -103,6 +108,14 @@ fn binary_body_value(bytes: &[u8]) -> Result<Value> {
     let mut marker = Map::new();
     marker.insert(BINARY_BODY_KEY.to_string(), Value::Object(descriptor));
     Ok(Value::Object(marker))
+}
+
+/// Build the first-class binary marker used for byte-valued structured data.
+///
+/// This is useful for sample values and nested structured fields that must encode
+/// as `EcValue.bytes_value` while still living inside the JSON-shaped public body.
+pub fn binary_value(bytes: impl AsRef<[u8]>) -> Result<Value> {
+    binary_body_value(bytes.as_ref())
 }
 
 fn has_binary_marker(value: &Value) -> bool {
@@ -180,6 +193,9 @@ pub struct MessageHeader {
     pub version: String,
     /// RFC3339 UTC creation timestamp.
     pub timestamp: String,
+    /// UTC creation timestamp as epoch milliseconds, the canonical protobuf wire value.
+    #[serde(default)]
+    pub timestamp_ms: u64,
     /// Correlation id used to match a reply to its request.
     pub correlation_id: String,
     /// Unique id for this specific message.
@@ -434,6 +450,91 @@ pub struct MessageTags {
     pub extra: BTreeMap<String, Value>,
 }
 
+/// The selected protobuf body lane for an EdgeCommons message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MessageBodyCase {
+    SouthboundSignalUpdate,
+    StateUpdate,
+    ConfigUpdate,
+    MetricUpdate,
+    Event,
+    Command,
+    Structured,
+    Opaque,
+    #[default]
+    BodyNotSet,
+}
+
+impl MessageBodyCase {
+    /// Java-compatible diagnostic spelling.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::SouthboundSignalUpdate => "SOUTHBOUND_SIGNAL_UPDATE",
+            Self::StateUpdate => "STATE_UPDATE",
+            Self::ConfigUpdate => "CONFIG_UPDATE",
+            Self::MetricUpdate => "METRIC_UPDATE",
+            Self::Event => "EVENT",
+            Self::Command => "COMMAND",
+            Self::Structured => "STRUCTURED",
+            Self::Opaque => "OPAQUE",
+            Self::BodyNotSet => "BODY_NOT_SET",
+        }
+    }
+}
+
+/// Optional schema metadata for an opaque or structured body.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MessageBodySchema {
+    pub name: Option<String>,
+    pub version: Option<String>,
+    pub content_type: Option<String>,
+    pub descriptor_ref: Option<String>,
+    pub hash: Option<String>,
+}
+
+impl MessageBodySchema {
+    fn to_value(&self) -> Value {
+        let mut obj = Map::new();
+        if let Some(name) = &self.name {
+            obj.insert("name".to_string(), Value::String(name.clone()));
+        }
+        if let Some(version) = &self.version {
+            obj.insert("version".to_string(), Value::String(version.clone()));
+        }
+        if let Some(content_type) = &self.content_type {
+            obj.insert(
+                "content_type".to_string(),
+                Value::String(content_type.clone()),
+            );
+        }
+        if let Some(descriptor_ref) = &self.descriptor_ref {
+            obj.insert(
+                "descriptor_ref".to_string(),
+                Value::String(descriptor_ref.clone()),
+            );
+        }
+        if let Some(hash) = &self.hash {
+            obj.insert("hash".to_string(), Value::String(hash.clone()));
+        }
+        Value::Object(obj)
+    }
+
+    fn from_value(value: &Value) -> Option<Self> {
+        let obj = value.as_object()?;
+        Some(Self {
+            name: optional_string(obj.get("name")),
+            version: optional_string(obj.get("version")),
+            content_type: optional_string(obj.get("content_type")),
+            descriptor_ref: optional_string(obj.get("descriptor_ref")),
+            hash: optional_string(obj.get("hash")),
+        })
+    }
+}
+
+fn optional_string(element: Option<&Value>) -> Option<String> {
+    element.and_then(Value::as_str).map(ToString::to_string)
+}
+
 /// A message: either an **envelope** (header + optional identity + optional tags +
 /// body) or a **raw** (non-envelope) payload.
 ///
@@ -457,6 +558,16 @@ pub struct Message {
     /// The business-context tags, or `None` when the envelope carries no `tags`
     /// member (a message built without a config-bound builder and no explicit tags).
     pub tags: Option<MessageTags>,
+    /// Optional body content type. Opaque protobuf bodies default to
+    /// `application/octet-stream` when absent.
+    pub content_type: Option<String>,
+    /// Optional body content encoding.
+    pub content_encoding: Option<String>,
+    /// Optional body schema metadata.
+    pub schema: Option<MessageBodySchema>,
+    /// Explicit body lane. [`MessageBodyCase::BodyNotSet`] lets the codec infer the
+    /// Java-compatible default from header/body.
+    pub body_case: MessageBodyCase,
     pub body: Value,
     /// When `Some`, this is a raw (non-envelope) message; the other fields are
     /// defaults and should be ignored.
@@ -472,8 +583,12 @@ impl Serialize for Message {
             map.serialize_entry("raw", raw)?;
             map.end()
         } else {
-            let entries =
-                2 + usize::from(self.identity.is_some()) + usize::from(self.tags.is_some());
+            let entries = 2
+                + usize::from(self.identity.is_some())
+                + usize::from(self.tags.is_some())
+                + usize::from(self.content_type.is_some())
+                + usize::from(self.content_encoding.is_some())
+                + usize::from(self.schema.is_some());
             let mut map = serializer.serialize_map(Some(entries))?;
             map.serialize_entry("header", &self.header)?;
             // Canonical envelope member order: header, identity, tags, body.
@@ -482,6 +597,15 @@ impl Serialize for Message {
             }
             if let Some(tags) = &self.tags {
                 map.serialize_entry("tags", tags)?;
+            }
+            if let Some(content_type) = &self.content_type {
+                map.serialize_entry("content_type", content_type)?;
+            }
+            if let Some(content_encoding) = &self.content_encoding {
+                map.serialize_entry("content_encoding", content_encoding)?;
+            }
+            if let Some(schema) = &self.schema {
+                map.serialize_entry("schema", &schema.to_value())?;
             }
             map.serialize_entry("body", &self.body)?;
             map.end()
@@ -507,6 +631,10 @@ impl Message {
             header: MessageHeader::default(),
             identity: None,
             tags: None,
+            content_type: None,
+            content_encoding: None,
+            schema: None,
+            body_case: MessageBodyCase::BodyNotSet,
             body: Value::Null,
             raw: Some(value),
         }
@@ -538,6 +666,45 @@ impl Message {
         decode_binary_descriptor(descriptor).map(Some)
     }
 
+    /// The effective body case, inferred the same way as Java when not pinned.
+    pub fn body_case(&self) -> MessageBodyCase {
+        if self.body_case != MessageBodyCase::BodyNotSet {
+            return self.body_case;
+        }
+        if self.body.is_null() {
+            return MessageBodyCase::BodyNotSet;
+        }
+        if self.is_binary_body() {
+            return MessageBodyCase::Opaque;
+        }
+        if (self.header.name == DATA_MESSAGE_NAME || self.header.name == TELEMETRY_MESSAGE_NAME)
+            && self.body.is_object()
+        {
+            return MessageBodyCase::SouthboundSignalUpdate;
+        }
+        if self.body.is_object() {
+            match self.header.name.as_str() {
+                name if name.eq_ignore_ascii_case("state") => return MessageBodyCase::StateUpdate,
+                name if name.eq_ignore_ascii_case("cfg") => return MessageBodyCase::ConfigUpdate,
+                "Config" | "Configuration" => return MessageBodyCase::ConfigUpdate,
+                "Metric" | "metric" => return MessageBodyCase::MetricUpdate,
+                name if name.eq_ignore_ascii_case("evt") => return MessageBodyCase::Event,
+                "Event" => return MessageBodyCase::Event,
+                _ => {}
+            }
+        }
+        MessageBodyCase::Structured
+    }
+
+    /// Decodes the opaque body bytes when this message uses the opaque body lane.
+    pub fn opaque_body(&self) -> Result<Option<Vec<u8>>> {
+        if self.body_case() == MessageBodyCase::Opaque {
+            self.binary_body()
+        } else {
+            Ok(None)
+        }
+    }
+
     /// Classify a parsed JSON value into an envelope or a raw message.
     ///
     /// An object carrying any of `header`/`identity`/`tags`/`body` is treated as an
@@ -561,11 +728,18 @@ impl Message {
                     Some(t) => Some(serde_json::from_value(t.clone())?),
                     None => None,
                 };
+                let content_type = optional_string(map.get("content_type"));
+                let content_encoding = optional_string(map.get("content_encoding"));
+                let schema = map.get("schema").and_then(MessageBodySchema::from_value);
                 let body = map.get("body").cloned().unwrap_or(Value::Null);
                 return Ok(Message {
                     header,
                     identity,
                     tags,
+                    content_type,
+                    content_encoding,
+                    schema,
+                    body_case: MessageBodyCase::BodyNotSet,
                     body,
                     raw: None,
                 });
@@ -575,40 +749,860 @@ impl Message {
         Ok(Message::raw(value))
     }
 
-    /// Serialize this message to JSON bytes for the wire.
+    /// Serialize this message to protobuf bytes for the wire.
     ///
     /// # Errors
     /// | Error Variant | Condition | Recovery |
     /// |---------------|-----------|----------|
-    /// | `EdgeCommonsError::Json` | The body contains a value serde cannot serialize | Ensure the body is valid JSON |
+    /// | `EdgeCommonsError::Messaging` | The message is raw or missing required protobuf envelope fields | Publish foreign payloads through `publish_raw` |
     pub fn to_vec(&self) -> Result<Vec<u8>> {
-        Ok(serde_json::to_vec(self)?)
+        let proto = self.to_proto()?;
+        Ok(proto.encode_to_vec())
     }
 
-    /// Deserialize a message from bytes received off the wire.
+    /// Deserialize an EdgeCommons protobuf message from bytes received off the wire.
     ///
-    /// Valid JSON is classified into an envelope or a raw message (see
-    /// [`Message::from_json_value`]). Bytes that are **not valid JSON** are delivered
-    /// as a raw message carrying the payload as a UTF-8 (lossy) string, so a message
-    /// is never silently dropped — matching the Java/Python behavior.
+    /// Raw, foreign, JSON, and malformed payloads are rejected so normal Message
+    /// subscriptions can log/drop them instead of delivering synthetic raw messages.
     ///
     /// # Errors
     /// | Error Variant | Condition | Recovery |
     /// |---------------|-----------|----------|
-    /// | `EdgeCommonsError::Json` | Bytes are valid JSON but a present `header`/`tags` is malformed | Validate the producer's envelope shape |
+    /// | `EdgeCommonsError::Messaging` | Bytes are not a valid EdgeCommons protobuf envelope | Use raw transport handling for non-EdgeCommons payloads |
     pub fn from_slice(bytes: &[u8]) -> Result<Message> {
-        match serde_json::from_slice::<Value>(bytes) {
-            Ok(value) => Message::from_json_value(value),
-            // Not valid JSON: deliver as a raw string rather than dropping it.
-            Err(_) => Ok(Message::raw(Value::String(
-                String::from_utf8_lossy(bytes).into_owned(),
-            ))),
+        let proto = pb::EdgeCommonsMessage::decode(bytes).map_err(|e| {
+            EdgeCommonsError::Messaging(format!("Malformed EdgeCommons protobuf message: {e}"))
+        })?;
+        Message::from_proto(proto)
+    }
+
+    fn to_proto(&self) -> Result<pb::EdgeCommonsMessage> {
+        if self.raw.is_some() {
+            return Err(EdgeCommonsError::Messaging(
+                "EdgeCommons protobuf message requires an envelope; use publish_raw for raw payloads"
+                    .to_string(),
+            ));
         }
+        if self.header.name.is_empty() || self.header.version.is_empty() {
+            return Err(EdgeCommonsError::Messaging(
+                "EdgeCommons protobuf message requires header name and version".to_string(),
+            ));
+        }
+
+        let mut msg = pb::EdgeCommonsMessage {
+            header: Some(pb::Header {
+                name: self.header.name.clone(),
+                version: self.header.version.clone(),
+                timestamp_ms: self.header.timestamp_ms,
+                uuid: self.header.uuid.clone(),
+                correlation_id: Some(self.header.correlation_id.clone()),
+                reply_to: self.header.reply_to.clone(),
+            }),
+            identity: self.identity.as_ref().map(to_proto_identity),
+            tags: self
+                .tags
+                .as_ref()
+                .map(|tags| {
+                    tags.extra
+                        .iter()
+                        .map(|(key, value)| Ok((key.clone(), to_ec_value(value)?)))
+                        .collect::<Result<_>>()
+                })
+                .transpose()?
+                .unwrap_or_default(),
+            content_type: self.content_type.clone().unwrap_or_default(),
+            content_encoding: self.content_encoding.clone().unwrap_or_default(),
+            schema: self.schema.as_ref().map(to_proto_schema),
+            body: None,
+        };
+
+        msg.body = match self.body_case() {
+            MessageBodyCase::Opaque => {
+                let body = self.binary_body()?.unwrap_or_default();
+                if msg.content_type.is_empty() {
+                    msg.content_type = DEFAULT_OPAQUE_CONTENT_TYPE.to_string();
+                }
+                Some(pb::edge_commons_message::Body::Opaque(body))
+            }
+            MessageBodyCase::SouthboundSignalUpdate => Some(
+                pb::edge_commons_message::Body::SouthboundSignalUpdate(to_telemetry(&self.body)?),
+            ),
+            MessageBodyCase::StateUpdate => Some(pb::edge_commons_message::Body::StateUpdate(
+                to_state_update(&self.body)?,
+            )),
+            MessageBodyCase::ConfigUpdate => Some(pb::edge_commons_message::Body::ConfigUpdate(
+                to_config_update(&self.body)?,
+            )),
+            MessageBodyCase::MetricUpdate => Some(pb::edge_commons_message::Body::MetricUpdate(
+                to_metric_update(&self.body)?,
+            )),
+            MessageBodyCase::Event => {
+                Some(pb::edge_commons_message::Body::Event(to_event(&self.body)?))
+            }
+            MessageBodyCase::Command => Some(pb::edge_commons_message::Body::Command(to_command(
+                &self.header.name,
+                &self.body,
+            )?)),
+            MessageBodyCase::Structured => Some(pb::edge_commons_message::Body::Structured(
+                to_ec_value(&self.body)?,
+            )),
+            MessageBodyCase::BodyNotSet => None,
+        };
+
+        Ok(msg)
+    }
+
+    fn from_proto(proto: pb::EdgeCommonsMessage) -> Result<Message> {
+        let header = proto.header.ok_or_else(|| {
+            EdgeCommonsError::Messaging(
+                "EdgeCommons protobuf message requires header name and version".to_string(),
+            )
+        })?;
+        if header.name.is_empty() || header.version.is_empty() {
+            return Err(EdgeCommonsError::Messaging(
+                "EdgeCommons protobuf message requires header name and version".to_string(),
+            ));
+        }
+
+        let mut builder = MessageBuilder::new(header.name, header.version)
+            .timestamp_ms(header.timestamp_ms)
+            .uuid(header.uuid);
+        if let Some(correlation_id) = header.correlation_id {
+            builder = builder.correlation_id(correlation_id);
+        }
+        if let Some(reply_to) = header.reply_to {
+            builder = builder.reply_to(reply_to);
+        }
+        if let Some(identity) = proto.identity {
+            builder = builder.identity(from_proto_identity(identity)?);
+        }
+        if !proto.tags.is_empty() {
+            builder = builder.tags(MessageTags {
+                extra: proto
+                    .tags
+                    .into_iter()
+                    .map(|(key, value)| (key, from_ec_value(value)))
+                    .collect(),
+            });
+        }
+        if !proto.content_type.is_empty() {
+            builder = builder.content_type(proto.content_type);
+        }
+        if !proto.content_encoding.is_empty() {
+            builder = builder.content_encoding(proto.content_encoding);
+        }
+        if let Some(schema) = proto.schema {
+            builder = builder.schema(from_proto_schema(schema));
+        }
+
+        builder = match proto.body {
+            Some(pb::edge_commons_message::Body::SouthboundSignalUpdate(body)) => {
+                builder.southbound_signal_update(from_telemetry(body))
+            }
+            Some(pb::edge_commons_message::Body::StateUpdate(body)) => builder
+                .payload(from_state_update(body))
+                .body_case(MessageBodyCase::StateUpdate),
+            Some(pb::edge_commons_message::Body::ConfigUpdate(body)) => builder
+                .payload(from_config_update(body))
+                .body_case(MessageBodyCase::ConfigUpdate),
+            Some(pb::edge_commons_message::Body::MetricUpdate(body)) => builder
+                .payload(from_metric_update(body))
+                .body_case(MessageBodyCase::MetricUpdate),
+            Some(pb::edge_commons_message::Body::Event(body)) => builder
+                .payload(from_event(body))
+                .body_case(MessageBodyCase::Event),
+            Some(pb::edge_commons_message::Body::Command(body)) => builder
+                .payload(from_command(body))
+                .body_case(MessageBodyCase::Command),
+            Some(pb::edge_commons_message::Body::Structured(value)) => {
+                builder.structured_payload(from_ec_value(value))
+            }
+            Some(pb::edge_commons_message::Body::Opaque(bytes)) => {
+                let content_type = builder
+                    .content_type
+                    .clone()
+                    .unwrap_or_else(|| DEFAULT_OPAQUE_CONTENT_TYPE.to_string());
+                builder.opaque_payload(bytes, content_type)?
+            }
+            None => builder.body_case(MessageBodyCase::BodyNotSet),
+        };
+        Ok(builder.build())
     }
 
     /// The correlation id of this message.
     pub fn correlation_id(&self) -> &str {
         &self.header.correlation_id
+    }
+}
+
+fn to_proto_identity(identity: &MessageIdentity) -> pb::Identity {
+    pb::Identity {
+        hier: identity
+            .hier()
+            .iter()
+            .map(|entry| pb::HierEntry {
+                level: entry.level.clone(),
+                value: entry.value.clone(),
+            })
+            .collect(),
+        path: identity.path().to_string(),
+        component: identity.component().to_string(),
+        instance: identity.instance().to_string(),
+    }
+}
+
+fn from_proto_identity(identity: pb::Identity) -> Result<MessageIdentity> {
+    let hier: Vec<HierEntry> = identity
+        .hier
+        .into_iter()
+        .map(|entry| HierEntry {
+            level: entry.level,
+            value: entry.value,
+        })
+        .collect();
+    let mut value = Map::new();
+    value.insert("hier".to_string(), serde_json::to_value(hier)?);
+    value.insert("path".to_string(), Value::String(identity.path));
+    value.insert("component".to_string(), Value::String(identity.component));
+    value.insert("instance".to_string(), Value::String(identity.instance));
+    MessageIdentity::from_wire(&Value::Object(value))
+        .ok_or_else(|| EdgeCommonsError::Messaging("Malformed protobuf identity".to_string()))
+}
+
+fn to_proto_schema(schema: &MessageBodySchema) -> pb::BodySchema {
+    pb::BodySchema {
+        name: schema.name.clone().unwrap_or_default(),
+        version: schema.version.clone().unwrap_or_default(),
+        content_type: schema.content_type.clone().unwrap_or_default(),
+        descriptor_ref: schema.descriptor_ref.clone().unwrap_or_default(),
+        hash: schema.hash.clone().unwrap_or_default(),
+    }
+}
+
+fn from_proto_schema(schema: pb::BodySchema) -> MessageBodySchema {
+    MessageBodySchema {
+        name: none_if_empty(schema.name),
+        version: none_if_empty(schema.version),
+        content_type: none_if_empty(schema.content_type),
+        descriptor_ref: none_if_empty(schema.descriptor_ref),
+        hash: none_if_empty(schema.hash),
+    }
+}
+
+fn none_if_empty(value: String) -> Option<String> {
+    if value.is_empty() { None } else { Some(value) }
+}
+
+fn to_ec_value(value: &Value) -> Result<pb::EcValue> {
+    let kind = match value {
+        Value::Null => pb::ec_value::Kind::NullValue(0),
+        Value::Bool(v) => pb::ec_value::Kind::BoolValue(*v),
+        Value::Number(n) => {
+            if let Some(v) = n.as_i64() {
+                pb::ec_value::Kind::IntValue(v)
+            } else if let Some(v) = n.as_u64() {
+                pb::ec_value::Kind::UintValue(v)
+            } else {
+                let v = n.as_f64().ok_or_else(|| {
+                    EdgeCommonsError::Messaging(
+                        "EdgeCommons protobuf structured values reject NaN and infinity"
+                            .to_string(),
+                    )
+                })?;
+                if !v.is_finite() {
+                    return Err(EdgeCommonsError::Messaging(
+                        "EdgeCommons protobuf structured values reject NaN and infinity"
+                            .to_string(),
+                    ));
+                }
+                pb::ec_value::Kind::DoubleValue(v)
+            }
+        }
+        Value::String(v) => pb::ec_value::Kind::StringValue(v.clone()),
+        Value::Array(values) => pb::ec_value::Kind::ListValue(pb::EcList {
+            values: values.iter().map(to_ec_value).collect::<Result<_>>()?,
+        }),
+        Value::Object(obj) => {
+            if let Some(descriptor) = binary_descriptor(value)? {
+                pb::ec_value::Kind::BytesValue(decode_binary_descriptor(descriptor)?)
+            } else {
+                pb::ec_value::Kind::MapValue(pb::EcMap {
+                    fields: obj
+                        .iter()
+                        .map(|(key, value)| Ok((key.clone(), to_ec_value(value)?)))
+                        .collect::<Result<_>>()?,
+                })
+            }
+        }
+    };
+    Ok(pb::EcValue { kind: Some(kind) })
+}
+
+fn from_ec_value(value: pb::EcValue) -> Value {
+    match value.kind {
+        Some(pb::ec_value::Kind::NullValue(_)) | None => Value::Null,
+        Some(pb::ec_value::Kind::BoolValue(v)) => Value::Bool(v),
+        Some(pb::ec_value::Kind::IntValue(v)) => Value::Number(v.into()),
+        Some(pb::ec_value::Kind::UintValue(v)) => Value::Number(serde_json::Number::from(v)),
+        Some(pb::ec_value::Kind::DoubleValue(v)) => serde_json::Number::from_f64(v)
+            .map(Value::Number)
+            .unwrap_or(Value::Null),
+        Some(pb::ec_value::Kind::StringValue(v)) => Value::String(v),
+        Some(pb::ec_value::Kind::BytesValue(v)) => binary_body_value(&v).unwrap_or(Value::Null),
+        Some(pb::ec_value::Kind::ListValue(list)) => {
+            Value::Array(list.values.into_iter().map(from_ec_value).collect())
+        }
+        Some(pb::ec_value::Kind::MapValue(map)) => Value::Object(
+            map.fields
+                .into_iter()
+                .map(|(key, value)| (key, from_ec_value(value)))
+                .collect(),
+        ),
+    }
+}
+
+fn to_telemetry(body: &Value) -> Result<pb::SouthboundSignalUpdate> {
+    let obj = body.as_object().ok_or_else(|| {
+        EdgeCommonsError::Messaging("SouthboundSignalUpdate body must be an object".to_string())
+    })?;
+    let signal = obj
+        .get("signal")
+        .and_then(Value::as_object)
+        .map(to_signal)
+        .transpose()?;
+    let samples = obj
+        .get("samples")
+        .and_then(Value::as_array)
+        .map(|samples| {
+            samples
+                .iter()
+                .filter_map(Value::as_object)
+                .map(to_sample)
+                .collect::<Result<Vec<_>>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    Ok(pb::SouthboundSignalUpdate {
+        signal,
+        samples,
+        extra: copy_extra(obj, &["signal", "samples"])?,
+    })
+}
+
+fn to_signal(obj: &Map<String, Value>) -> Result<pb::Signal> {
+    Ok(pb::Signal {
+        id: str_value(obj, "id").unwrap_or_default(),
+        name: str_value(obj, "name").unwrap_or_default(),
+        address: obj.get("address").map(to_ec_value).transpose()?,
+        extra: copy_extra(obj, &["id", "name", "address"])?,
+    })
+}
+
+fn to_sample(obj: &Map<String, Value>) -> Result<pb::Sample> {
+    let source_ts = str_value(obj, "sourceTs").or_else(|| str_value(obj, "source_ts"));
+    let server_ts = str_value(obj, "serverTs").or_else(|| str_value(obj, "server_ts"));
+    let source_ts_ms = u64_value(obj, "sourceTsMs")
+        .or_else(|| u64_value(obj, "source_ts_ms"))
+        .or_else(|| {
+            source_ts
+                .as_deref()
+                .map(timestamp_ms_from_rfc3339)
+                .filter(|v| *v != 0)
+        });
+    let server_ts_ms = u64_value(obj, "serverTsMs")
+        .or_else(|| u64_value(obj, "server_ts_ms"))
+        .or_else(|| {
+            server_ts
+                .as_deref()
+                .map(timestamp_ms_from_rfc3339)
+                .filter(|v| *v != 0)
+        });
+    Ok(pb::Sample {
+        value: obj.get("value").map(to_ec_value).transpose()?,
+        quality: str_value(obj, "quality").unwrap_or_default(),
+        quality_raw: obj
+            .get("qualityRaw")
+            .or_else(|| obj.get("quality_raw"))
+            .map(to_ec_value)
+            .transpose()?,
+        source_ts,
+        source_ts_ms,
+        server_ts,
+        server_ts_ms,
+        extra: copy_extra(
+            obj,
+            &[
+                "value",
+                "quality",
+                "qualityRaw",
+                "quality_raw",
+                "sourceTs",
+                "source_ts",
+                "sourceTsMs",
+                "source_ts_ms",
+                "serverTs",
+                "server_ts",
+                "serverTsMs",
+                "server_ts_ms",
+            ],
+        )?,
+    })
+}
+
+fn from_telemetry(telemetry: pb::SouthboundSignalUpdate) -> Value {
+    let mut obj = Map::new();
+    if let Some(signal) = telemetry.signal {
+        let mut signal_obj = Map::new();
+        signal_obj.insert("id".to_string(), Value::String(signal.id));
+        if !signal.name.is_empty() {
+            signal_obj.insert("name".to_string(), Value::String(signal.name));
+        }
+        if let Some(address) = signal.address {
+            signal_obj.insert("address".to_string(), from_ec_value(address));
+        }
+        extend_extra(&mut signal_obj, signal.extra);
+        obj.insert("signal".to_string(), Value::Object(signal_obj));
+    }
+    obj.insert(
+        "samples".to_string(),
+        Value::Array(telemetry.samples.into_iter().map(from_sample).collect()),
+    );
+    extend_extra(&mut obj, telemetry.extra);
+    Value::Object(obj)
+}
+
+fn from_sample(sample: pb::Sample) -> Value {
+    let mut obj = Map::new();
+    if let Some(value) = sample.value {
+        obj.insert("value".to_string(), from_ec_value(value));
+    }
+    if !sample.quality.is_empty() {
+        obj.insert("quality".to_string(), Value::String(sample.quality));
+    }
+    if let Some(quality_raw) = sample.quality_raw {
+        obj.insert("qualityRaw".to_string(), from_ec_value(quality_raw));
+    }
+    if let Some(source_ts) = sample.source_ts {
+        obj.insert("sourceTs".to_string(), Value::String(source_ts));
+    }
+    if let Some(source_ts_ms) = sample.source_ts_ms {
+        obj.insert("sourceTsMs".to_string(), Value::Number(source_ts_ms.into()));
+    }
+    if let Some(server_ts) = sample.server_ts {
+        obj.insert("serverTs".to_string(), Value::String(server_ts));
+    }
+    if let Some(server_ts_ms) = sample.server_ts_ms {
+        obj.insert("serverTsMs".to_string(), Value::Number(server_ts_ms.into()));
+    }
+    extend_extra(&mut obj, sample.extra);
+    Value::Object(obj)
+}
+
+fn to_state_update(body: &Value) -> Result<pb::StateUpdate> {
+    let obj = as_object(body, "StateUpdate")?;
+    Ok(pb::StateUpdate {
+        status: str_value(obj, "status").unwrap_or_default(),
+        uptime_secs: u64_value(obj, "uptimeSecs").or_else(|| u64_value(obj, "uptime_secs")),
+        instances: obj
+            .get("instances")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Value::as_object)
+                    .map(to_instance_connectivity)
+                    .collect::<Result<Vec<_>>>()
+            })
+            .transpose()?
+            .unwrap_or_default(),
+        extra: copy_extra(obj, &["status", "uptimeSecs", "uptime_secs", "instances"])?,
+    })
+}
+
+fn to_instance_connectivity(obj: &Map<String, Value>) -> Result<pb::InstanceConnectivity> {
+    Ok(pb::InstanceConnectivity {
+        instance: str_value(obj, "instance").unwrap_or_default(),
+        connected: obj
+            .get("connected")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        detail: str_value(obj, "detail"),
+        extra: copy_extra(obj, &["instance", "connected", "detail"])?,
+    })
+}
+
+fn from_state_update(state: pb::StateUpdate) -> Value {
+    let mut obj = Map::new();
+    if !state.status.is_empty() {
+        obj.insert("status".to_string(), Value::String(state.status));
+    }
+    if let Some(uptime_secs) = state.uptime_secs {
+        obj.insert("uptimeSecs".to_string(), Value::Number(uptime_secs.into()));
+    }
+    if !state.instances.is_empty() {
+        obj.insert(
+            "instances".to_string(),
+            Value::Array(
+                state
+                    .instances
+                    .into_iter()
+                    .map(|item| {
+                        let mut obj = Map::new();
+                        obj.insert("instance".to_string(), Value::String(item.instance));
+                        obj.insert("connected".to_string(), Value::Bool(item.connected));
+                        if let Some(detail) = item.detail {
+                            obj.insert("detail".to_string(), Value::String(detail));
+                        }
+                        extend_extra(&mut obj, item.extra);
+                        Value::Object(obj)
+                    })
+                    .collect(),
+            ),
+        );
+    }
+    extend_extra(&mut obj, state.extra);
+    Value::Object(obj)
+}
+
+fn to_config_update(body: &Value) -> Result<pb::ConfigUpdate> {
+    let obj = as_object(body, "ConfigUpdate")?;
+    Ok(pb::ConfigUpdate {
+        config: obj.get("config").map(to_ec_value).transpose()?,
+        extra: copy_extra(obj, &["config"])?,
+    })
+}
+
+fn from_config_update(config: pb::ConfigUpdate) -> Value {
+    let mut obj = Map::new();
+    if let Some(config) = config.config {
+        obj.insert("config".to_string(), from_ec_value(config));
+    }
+    extend_extra(&mut obj, config.extra);
+    Value::Object(obj)
+}
+
+fn to_metric_update(body: &Value) -> Result<pb::MetricUpdate> {
+    let obj = as_object(body, "MetricUpdate")?;
+    let dimensions = obj
+        .get("dimensions")
+        .and_then(Value::as_object)
+        .map(|dims| {
+            dims.iter()
+                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                .collect()
+        })
+        .unwrap_or_default();
+    let values = obj
+        .get("values")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_object)
+                .map(|item| pb::MetricValue {
+                    name: str_value(item, "name").unwrap_or_default(),
+                    value: f64_value(item, "value").unwrap_or_default(),
+                    unit: str_value(item, "unit").unwrap_or_default(),
+                    storage_resolution: u64_value(item, "storageResolution")
+                        .or_else(|| u64_value(item, "storage_resolution"))
+                        .unwrap_or_default() as u32,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(pb::MetricUpdate {
+        namespace: str_value(obj, "namespace").unwrap_or_default(),
+        metric_name: str_value(obj, "metricName")
+            .or_else(|| str_value(obj, "metric_name"))
+            .unwrap_or_default(),
+        timestamp_ms: u64_value(obj, "timestampMs")
+            .or_else(|| u64_value(obj, "timestamp_ms"))
+            .unwrap_or_default(),
+        dimensions,
+        values,
+        large_fleet_workaround: obj
+            .get("largeFleetWorkaround")
+            .or_else(|| obj.get("large_fleet_workaround"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        emf_projection: obj
+            .get("emfProjection")
+            .or_else(|| obj.get("emf_projection"))
+            .map(to_ec_value)
+            .transpose()?,
+        extra: copy_extra(
+            obj,
+            &[
+                "namespace",
+                "metricName",
+                "metric_name",
+                "timestampMs",
+                "timestamp_ms",
+                "dimensions",
+                "values",
+                "largeFleetWorkaround",
+                "large_fleet_workaround",
+                "emfProjection",
+                "emf_projection",
+            ],
+        )?,
+    })
+}
+
+fn from_metric_update(metric: pb::MetricUpdate) -> Value {
+    let mut obj = Map::new();
+    if !metric.namespace.is_empty() {
+        obj.insert("namespace".to_string(), Value::String(metric.namespace));
+    }
+    if !metric.metric_name.is_empty() {
+        obj.insert("metricName".to_string(), Value::String(metric.metric_name));
+    }
+    if metric.timestamp_ms != 0 {
+        obj.insert(
+            "timestampMs".to_string(),
+            Value::Number(metric.timestamp_ms.into()),
+        );
+    }
+    if !metric.dimensions.is_empty() {
+        obj.insert(
+            "dimensions".to_string(),
+            Value::Object(
+                metric
+                    .dimensions
+                    .into_iter()
+                    .map(|(k, v)| (k, Value::String(v)))
+                    .collect(),
+            ),
+        );
+    }
+    if !metric.values.is_empty() {
+        obj.insert(
+            "values".to_string(),
+            Value::Array(
+                metric
+                    .values
+                    .into_iter()
+                    .map(|value| {
+                        let mut obj = Map::new();
+                        if !value.name.is_empty() {
+                            obj.insert("name".to_string(), Value::String(value.name));
+                        }
+                        if let Some(n) = serde_json::Number::from_f64(value.value) {
+                            obj.insert("value".to_string(), Value::Number(n));
+                        }
+                        if !value.unit.is_empty() {
+                            obj.insert("unit".to_string(), Value::String(value.unit));
+                        }
+                        if value.storage_resolution != 0 {
+                            obj.insert(
+                                "storageResolution".to_string(),
+                                Value::Number(value.storage_resolution.into()),
+                            );
+                        }
+                        Value::Object(obj)
+                    })
+                    .collect(),
+            ),
+        );
+    }
+    if metric.large_fleet_workaround {
+        obj.insert("largeFleetWorkaround".to_string(), Value::Bool(true));
+    }
+    if let Some(emf) = metric.emf_projection {
+        obj.insert("emfProjection".to_string(), from_ec_value(emf));
+    }
+    extend_extra(&mut obj, metric.extra);
+    Value::Object(obj)
+}
+
+fn to_event(body: &Value) -> Result<pb::EventMessage> {
+    let obj = as_object(body, "EventMessage")?;
+    Ok(pb::EventMessage {
+        severity: str_value(obj, "severity").unwrap_or_default(),
+        r#type: str_value(obj, "type").unwrap_or_default(),
+        message: str_value(obj, "message"),
+        timestamp: str_value(obj, "timestamp").unwrap_or_default(),
+        timestamp_ms: u64_value(obj, "timestampMs").or_else(|| u64_value(obj, "timestamp_ms")),
+        context: obj.get("context").map(to_ec_value).transpose()?,
+        alarm: obj.get("alarm").and_then(Value::as_bool),
+        active: obj.get("active").and_then(Value::as_bool),
+        extra: copy_extra(
+            obj,
+            &[
+                "severity",
+                "type",
+                "message",
+                "timestamp",
+                "timestampMs",
+                "timestamp_ms",
+                "context",
+                "alarm",
+                "active",
+            ],
+        )?,
+    })
+}
+
+fn from_event(event: pb::EventMessage) -> Value {
+    let mut obj = Map::new();
+    if !event.severity.is_empty() {
+        obj.insert("severity".to_string(), Value::String(event.severity));
+    }
+    if !event.r#type.is_empty() {
+        obj.insert("type".to_string(), Value::String(event.r#type));
+    }
+    if let Some(message) = event.message {
+        obj.insert("message".to_string(), Value::String(message));
+    }
+    if !event.timestamp.is_empty() {
+        obj.insert("timestamp".to_string(), Value::String(event.timestamp));
+    }
+    if let Some(timestamp_ms) = event.timestamp_ms {
+        obj.insert(
+            "timestampMs".to_string(),
+            Value::Number(timestamp_ms.into()),
+        );
+    }
+    if let Some(context) = event.context {
+        obj.insert("context".to_string(), from_ec_value(context));
+    }
+    if let Some(alarm) = event.alarm {
+        obj.insert("alarm".to_string(), Value::Bool(alarm));
+    }
+    if let Some(active) = event.active {
+        obj.insert("active".to_string(), Value::Bool(active));
+    }
+    extend_extra(&mut obj, event.extra);
+    Value::Object(obj)
+}
+
+fn to_command(header_name: &str, body: &Value) -> Result<pb::CommandMessage> {
+    let obj = as_object(body, "CommandMessage")?;
+    let wrapped_payload =
+        !obj.contains_key("payload") && !obj.contains_key("ok") && !obj.contains_key("result")
+            && !obj.contains_key("error");
+    Ok(pb::CommandMessage {
+        verb: str_value(obj, "verb").unwrap_or_else(|| header_name.to_string()),
+        payload: if wrapped_payload {
+            Some(to_ec_value(body)?)
+        } else {
+            obj.get("payload").map(to_ec_value).transpose()?
+        },
+        ok: obj.get("ok").and_then(Value::as_bool),
+        result: obj.get("result").map(to_ec_value).transpose()?,
+        error: obj
+            .get("error")
+            .and_then(Value::as_object)
+            .map(to_command_error)
+            .transpose()?,
+        extra: if wrapped_payload {
+            Default::default()
+        } else {
+            copy_extra(obj, &["verb", "payload", "ok", "result", "error"])?
+        },
+    })
+}
+
+fn to_command_error(obj: &Map<String, Value>) -> Result<pb::CommandError> {
+    Ok(pb::CommandError {
+        code: str_value(obj, "code").unwrap_or_default(),
+        message: str_value(obj, "message").unwrap_or_default(),
+        details: obj
+            .get("details")
+            .and_then(Value::as_object)
+            .map(|details| {
+                details
+                    .iter()
+                    .map(|(key, value)| Ok((key.clone(), to_ec_value(value)?)))
+                    .collect::<Result<_>>()
+            })
+            .transpose()?
+            .unwrap_or_default(),
+    })
+}
+
+fn from_command(command: pb::CommandMessage) -> Value {
+    let pure_payload =
+        command.payload.is_some() && command.ok.is_none() && command.result.is_none()
+            && command.error.is_none() && command.extra.is_empty();
+    if pure_payload {
+        return command.payload.map(from_ec_value).unwrap_or(Value::Null);
+    }
+    let mut obj = Map::new();
+    if !command.verb.is_empty() {
+        obj.insert("verb".to_string(), Value::String(command.verb));
+    }
+    if let Some(payload) = command.payload {
+        obj.insert("payload".to_string(), from_ec_value(payload));
+    }
+    if let Some(ok) = command.ok {
+        obj.insert("ok".to_string(), Value::Bool(ok));
+    }
+    if let Some(result) = command.result {
+        obj.insert("result".to_string(), from_ec_value(result));
+    }
+    if let Some(error) = command.error {
+        let mut err = Map::new();
+        if !error.code.is_empty() {
+            err.insert("code".to_string(), Value::String(error.code));
+        }
+        if !error.message.is_empty() {
+            err.insert("message".to_string(), Value::String(error.message));
+        }
+        if !error.details.is_empty() {
+            err.insert(
+                "details".to_string(),
+                Value::Object(
+                    error
+                        .details
+                        .into_iter()
+                        .map(|(key, value)| (key, from_ec_value(value)))
+                        .collect(),
+                ),
+            );
+        }
+        obj.insert("error".to_string(), Value::Object(err));
+    }
+    extend_extra(&mut obj, command.extra);
+    Value::Object(obj)
+}
+
+fn as_object<'a>(value: &'a Value, name: &str) -> Result<&'a Map<String, Value>> {
+    value
+        .as_object()
+        .ok_or_else(|| EdgeCommonsError::Messaging(format!("{name} body must be a JSON object")))
+}
+
+fn str_value(obj: &Map<String, Value>, key: &str) -> Option<String> {
+    obj.get(key)
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+}
+
+fn u64_value(obj: &Map<String, Value>, key: &str) -> Option<u64> {
+    obj.get(key).and_then(Value::as_u64)
+}
+
+fn f64_value(obj: &Map<String, Value>, key: &str) -> Option<f64> {
+    obj.get(key).and_then(Value::as_f64)
+}
+
+fn copy_extra(
+    obj: &Map<String, Value>,
+    known: &[&str],
+) -> Result<BTreeMap<String, pb::EcValue>> {
+    obj.iter()
+        .filter(|(key, _)| !known.contains(&key.as_str()))
+        .map(|(key, value)| Ok((key.clone(), to_ec_value(value)?)))
+        .collect()
+}
+
+fn extend_extra(
+    obj: &mut Map<String, Value>,
+    extra: BTreeMap<String, pb::EcValue>,
+) {
+    for (key, value) in extra {
+        obj.insert(key, from_ec_value(value));
     }
 }
 
@@ -629,6 +1623,10 @@ pub struct MessageBuilder {
     header: MessageHeader,
     tags: Option<BTreeMap<String, Value>>,
     body: Value,
+    content_type: Option<String>,
+    content_encoding: Option<String>,
+    schema: Option<MessageBodySchema>,
+    body_case: MessageBodyCase,
     config_identity: Option<MessageIdentity>,
     identity_override: Option<MessageIdentity>,
     instance: Option<String>,
@@ -641,17 +1639,24 @@ impl MessageBuilder {
     /// `uuid` and `correlation_id` are populated with fresh v4 UUIDs and
     /// `timestamp` with the current UTC time in RFC3339.
     pub fn new(name: impl Into<String>, version: impl Into<String>) -> Self {
+        let timestamp = now_rfc3339();
+        let timestamp_ms = timestamp_ms_from_rfc3339(&timestamp);
         Self {
             header: MessageHeader {
                 name: name.into(),
                 version: version.into(),
-                timestamp: now_rfc3339(),
+                timestamp,
+                timestamp_ms,
                 correlation_id: Uuid::new_v4().to_string(),
                 uuid: Uuid::new_v4().to_string(),
                 reply_to: None,
             },
             tags: None,
             body: Value::Null,
+            content_type: None,
+            content_encoding: None,
+            schema: None,
+            body_case: MessageBodyCase::BodyNotSet,
             config_identity: None,
             identity_override: None,
             instance: None,
@@ -664,6 +1669,60 @@ impl MessageBuilder {
         self
     }
 
+    /// Set a structured body explicitly.
+    pub fn structured_payload(mut self, body: Value) -> Self {
+        self.body = body;
+        self.body_case = MessageBodyCase::Structured;
+        self
+    }
+
+    /// Set a structured body explicitly.
+    pub fn structured_body(self, body: Value) -> Self {
+        self.structured_payload(body)
+    }
+
+    /// Set a `SouthboundSignalUpdate` typed body explicitly.
+    pub fn southbound_signal_update(mut self, body: Value) -> Self {
+        self.body = body;
+        self.body_case = MessageBodyCase::SouthboundSignalUpdate;
+        self
+    }
+
+    /// Set a `StateUpdate` typed body explicitly.
+    pub fn state_update(mut self, body: Value) -> Self {
+        self.body = body;
+        self.body_case = MessageBodyCase::StateUpdate;
+        self
+    }
+
+    /// Set a `ConfigUpdate` typed body explicitly.
+    pub fn config_update(mut self, body: Value) -> Self {
+        self.body = body;
+        self.body_case = MessageBodyCase::ConfigUpdate;
+        self
+    }
+
+    /// Set a `MetricUpdate` typed body explicitly.
+    pub fn metric_update(mut self, body: Value) -> Self {
+        self.body = body;
+        self.body_case = MessageBodyCase::MetricUpdate;
+        self
+    }
+
+    /// Set an `EventMessage` typed body explicitly.
+    pub fn event(mut self, body: Value) -> Self {
+        self.body = body;
+        self.body_case = MessageBodyCase::Event;
+        self
+    }
+
+    /// Set a `CommandMessage` typed body explicitly.
+    pub fn command(mut self, body: Value) -> Self {
+        self.body = body;
+        self.body_case = MessageBodyCase::Command;
+        self
+    }
+
     /// Set the message body from bytes using the first-class bounded binary marker.
     ///
     /// # Errors
@@ -671,7 +1730,32 @@ impl MessageBuilder {
     /// [`MAX_BINARY_BODY_BYTES`].
     pub fn binary_payload(mut self, bytes: impl AsRef<[u8]>) -> Result<Self> {
         self.body = binary_body_value(bytes.as_ref())?;
+        self.body_case = MessageBodyCase::Opaque;
+        if self.content_type.is_none() {
+            self.content_type = Some(DEFAULT_OPAQUE_CONTENT_TYPE.to_string());
+        }
         Ok(self)
+    }
+
+    /// Set an opaque byte body and content type.
+    pub fn opaque_payload(
+        mut self,
+        bytes: impl AsRef<[u8]>,
+        content_type: impl Into<String>,
+    ) -> Result<Self> {
+        self.body = binary_body_value(bytes.as_ref())?;
+        self.body_case = MessageBodyCase::Opaque;
+        self.content_type = Some(content_type.into());
+        Ok(self)
+    }
+
+    /// Set an opaque byte body and content type.
+    pub fn opaque_body(
+        self,
+        bytes: impl AsRef<[u8]>,
+        content_type: impl Into<String>,
+    ) -> Result<Self> {
+        self.opaque_payload(bytes, content_type)
     }
 
     /// Override the correlation id (e.g. to correlate a reply with its request).
@@ -693,6 +1777,14 @@ impl MessageBuilder {
     /// envelopes (D-U13). RFC3339/ISO-8601 instant by convention.
     pub fn timestamp(mut self, timestamp: impl Into<String>) -> Self {
         self.header.timestamp = timestamp.into();
+        self.header.timestamp_ms = timestamp_ms_from_rfc3339(&self.header.timestamp);
+        self
+    }
+
+    /// Pin the canonical protobuf timestamp in epoch milliseconds.
+    pub fn timestamp_ms(mut self, timestamp_ms: u64) -> Self {
+        self.header.timestamp_ms = timestamp_ms;
+        self.header.timestamp = rfc3339_from_timestamp_ms(timestamp_ms);
         self
     }
 
@@ -707,6 +1799,36 @@ impl MessageBuilder {
         self.tags
             .get_or_insert_with(BTreeMap::new)
             .insert(key.into(), value);
+        self
+    }
+
+    /// Replace all envelope tags.
+    pub fn tags(mut self, tags: MessageTags) -> Self {
+        self.tags = Some(tags.extra);
+        self
+    }
+
+    /// Set body content type metadata.
+    pub fn content_type(mut self, content_type: impl Into<String>) -> Self {
+        self.content_type = Some(content_type.into());
+        self
+    }
+
+    /// Set body content encoding metadata.
+    pub fn content_encoding(mut self, content_encoding: impl Into<String>) -> Self {
+        self.content_encoding = Some(content_encoding.into());
+        self
+    }
+
+    /// Set body schema metadata.
+    pub fn schema(mut self, schema: MessageBodySchema) -> Self {
+        self.schema = Some(schema);
+        self
+    }
+
+    /// Set the body case explicitly.
+    pub fn body_case(mut self, body_case: MessageBodyCase) -> Self {
+        self.body_case = body_case;
         self
     }
 
@@ -761,6 +1883,10 @@ impl MessageBuilder {
             header: self.header,
             identity,
             tags: self.tags.map(|extra| MessageTags { extra }),
+            content_type: self.content_type,
+            content_encoding: self.content_encoding,
+            schema: self.schema,
+            body_case: self.body_case,
             body: self.body,
             raw: None,
         }
@@ -776,6 +1902,27 @@ impl MessageBuilder {
 pub(crate) fn now_rfc3339() -> String {
     OffsetDateTime::now_utc()
         .format(&Rfc3339)
+        .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
+}
+
+fn timestamp_ms_from_rfc3339(timestamp: &str) -> u64 {
+    let Ok(parsed) = OffsetDateTime::parse(timestamp, &Rfc3339) else {
+        return 0;
+    };
+    let millis = parsed.unix_timestamp_nanos() / 1_000_000;
+    u64::try_from(millis).unwrap_or(0)
+}
+
+fn rfc3339_from_timestamp_ms(timestamp_ms: u64) -> String {
+    let secs = (timestamp_ms / 1000).min(i64::MAX as u64) as i64;
+    let nanos = ((timestamp_ms % 1000) * 1_000_000) as u32;
+    let Ok(dt) = OffsetDateTime::from_unix_timestamp(secs) else {
+        return "1970-01-01T00:00:00Z".to_string();
+    };
+    let Ok(dt) = dt.replace_nanosecond(nanos) else {
+        return "1970-01-01T00:00:00Z".to_string();
+    };
+    dt.format(&Rfc3339)
         .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
 }
 
@@ -808,6 +1955,7 @@ mod tests {
         assert!(!m.header.uuid.is_empty());
         assert!(!m.header.correlation_id.is_empty());
         assert!(m.header.timestamp.contains('T'));
+        assert!(m.header.timestamp_ms > 0);
         assert!(m.header.reply_to.is_none());
         assert!(
             m.identity.is_none(),
@@ -832,7 +1980,7 @@ mod tests {
     }
 
     #[test]
-    fn round_trips_through_json_with_expected_shape() {
+    fn protobuf_round_trips_with_expected_shape() {
         let m = MessageBuilder::new("ProcessData", "1.0")
             .payload(json!({ "v": 42 }))
             .tag("site", json!("factory-1"))
@@ -841,7 +1989,12 @@ mod tests {
             .build();
 
         let bytes = m.to_vec().unwrap();
-        let value: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_ne!(
+            bytes.first(),
+            Some(&b'{'),
+            "wire payload is protobuf, not JSON"
+        );
+        let value: Value = serde_json::to_value(&m).unwrap();
         assert_eq!(value["header"]["name"], "ProcessData");
         // Wire keys are snake_case, matching Java/Python.
         assert_eq!(value["header"]["correlation_id"], "corr-123");
@@ -854,7 +2007,14 @@ mod tests {
         assert_eq!(value["body"]["v"], 42);
 
         let back = Message::from_slice(&bytes).unwrap();
-        assert_eq!(back, m);
+        assert_eq!(back.header.name, m.header.name);
+        assert_eq!(back.header.version, m.header.version);
+        assert_eq!(back.header.timestamp_ms, m.header.timestamp_ms);
+        assert_eq!(back.header.correlation_id, m.header.correlation_id);
+        assert_eq!(back.header.reply_to, m.header.reply_to);
+        assert_eq!(back.tags, m.tags);
+        assert_eq!(back.body, m.body);
+        assert_eq!(back.body_case(), MessageBodyCase::Structured);
     }
 
     #[test]
@@ -865,17 +2025,222 @@ mod tests {
             .unwrap()
             .build();
 
-        let value: Value = serde_json::from_slice(&m.to_vec().unwrap()).unwrap();
+        let value: Value = serde_json::to_value(&m).unwrap();
 
         assert_eq!(value["body"]["_edgecommonsBinary"]["encoding"], "base64");
         assert_eq!(value["body"]["_edgecommonsBinary"]["length"], 5);
         assert_eq!(value["body"]["_edgecommonsBinary"]["data"], "AAEC/v8=");
         assert!(m.is_binary_body());
+        assert_eq!(m.body_case(), MessageBodyCase::Opaque);
+        assert_eq!(m.content_type.as_deref(), Some(DEFAULT_OPAQUE_CONTENT_TYPE));
         assert_eq!(m.binary_body().unwrap().unwrap(), bytes);
 
         let back = Message::from_slice(&m.to_vec().unwrap()).unwrap();
         assert!(back.is_binary_body());
         assert_eq!(back.binary_body().unwrap().unwrap(), bytes);
+    }
+
+    #[test]
+    fn protobuf_preserves_identity_tags_and_content_metadata() {
+        let m = MessageBuilder::new("FramePreview", "1.0")
+            .uuid("00000000-0000-4000-8000-000000000001")
+            .timestamp_ms(1_783_360_800_000)
+            .correlation_id("corr-1")
+            .identity(test_identity())
+            .tag("priority", json!(5_u64))
+            .content_type("application/json")
+            .content_encoding("gzip")
+            .schema(MessageBodySchema {
+                name: Some("demo.Frame".to_string()),
+                version: Some("1".to_string()),
+                content_type: Some("application/x-protobuf".to_string()),
+                descriptor_ref: Some("s3://bucket/edgecommons-v1.desc".to_string()),
+                hash: Some("sha256:abc".to_string()),
+            })
+            .structured_payload(json!({ "ok": true }))
+            .build();
+
+        let back = Message::from_slice(&m.to_vec().unwrap()).unwrap();
+        assert_eq!(back.header.timestamp_ms, 1_783_360_800_000);
+        assert_eq!(back.identity, m.identity);
+        assert_eq!(
+            back.tags.as_ref().unwrap().extra.get("priority"),
+            Some(&json!(5_u64))
+        );
+        assert_eq!(back.content_type.as_deref(), Some("application/json"));
+        assert_eq!(back.content_encoding.as_deref(), Some("gzip"));
+        let schema = back.schema.as_ref().expect("schema round-trips");
+        assert_eq!(schema.name.as_deref(), Some("demo.Frame"));
+        assert_eq!(
+            schema.descriptor_ref.as_deref(),
+            Some("s3://bucket/edgecommons-v1.desc")
+        );
+        assert_eq!(back.body_case(), MessageBodyCase::Structured);
+    }
+
+    #[test]
+    fn opaque_body_round_trips_with_content_type() {
+        let m = MessageBuilder::new("FramePreview", "1.0")
+            .opaque_payload([0xff, 0xd8, 0xff, 0xe0], "image/jpeg")
+            .unwrap()
+            .build();
+
+        let back = Message::from_slice(&m.to_vec().unwrap()).unwrap();
+        assert_eq!(back.body_case(), MessageBodyCase::Opaque);
+        assert_eq!(back.content_type.as_deref(), Some("image/jpeg"));
+        assert_eq!(
+            back.opaque_body().unwrap().unwrap(),
+            vec![0xff, 0xd8, 0xff, 0xe0]
+        );
+    }
+
+    #[test]
+    fn reserved_names_infer_typed_bodies() {
+        let cases = [
+            (
+                "Telemetry",
+                json!({
+                    "signal": { "id": "temp" },
+                    "samples": [ { "value": 21.5, "quality": "GOOD" } ]
+                }),
+                MessageBodyCase::SouthboundSignalUpdate,
+            ),
+            (
+                "state",
+                json!({
+                    "status": "RUNNING",
+                    "instances": [ { "instance": "main", "connected": true } ]
+                }),
+                MessageBodyCase::StateUpdate,
+            ),
+            (
+                "cfg",
+                json!({ "config": { "pollMs": 1000 } }),
+                MessageBodyCase::ConfigUpdate,
+            ),
+            (
+                "Metric",
+                json!({
+                    "namespace": "EdgeCommons",
+                    "metricName": "Messages",
+                    "timestampMs": 1_783_360_800_000_u64,
+                    "values": [ { "name": "Count", "value": 2.0, "unit": "Count" } ]
+                }),
+                MessageBodyCase::MetricUpdate,
+            ),
+            (
+                "evt",
+                json!({
+                    "severity": "INFO",
+                    "type": "Lifecycle",
+                    "message": "started",
+                    "timestamp": "2026-07-06T18:00:00Z"
+                }),
+                MessageBodyCase::Event,
+            ),
+        ];
+
+        for (name, body, expected) in cases {
+            let message = MessageBuilder::new(name, "1.0").payload(body).build();
+            let bytes = message.to_vec().unwrap();
+            let decoded = pb::EdgeCommonsMessage::decode(bytes.as_slice()).unwrap();
+            let actual = match decoded.body {
+                Some(pb::edge_commons_message::Body::SouthboundSignalUpdate(_)) => {
+                    MessageBodyCase::SouthboundSignalUpdate
+                }
+                Some(pb::edge_commons_message::Body::StateUpdate(_)) => {
+                    MessageBodyCase::StateUpdate
+                }
+                Some(pb::edge_commons_message::Body::ConfigUpdate(_)) => {
+                    MessageBodyCase::ConfigUpdate
+                }
+                Some(pb::edge_commons_message::Body::MetricUpdate(_)) => {
+                    MessageBodyCase::MetricUpdate
+                }
+                Some(pb::edge_commons_message::Body::Event(_)) => MessageBodyCase::Event,
+                other => panic!("unexpected protobuf body case for {name}: {other:?}"),
+            };
+            assert_eq!(actual, expected, "wrong protobuf body case for {name}");
+
+            let back = Message::from_slice(&bytes).unwrap();
+            assert_eq!(back.body_case(), expected, "wrong decoded body case for {name}");
+        }
+    }
+
+    #[test]
+    fn explicit_command_body_preserves_component_facing_payload() {
+        let m = MessageBuilder::new("setState", "1.0")
+            .command(json!({ "status": "RUNNING" }))
+            .build();
+        let bytes = m.to_vec().unwrap();
+        let decoded = pb::EdgeCommonsMessage::decode(bytes.as_slice()).unwrap();
+        let command = match decoded.body {
+            Some(pb::edge_commons_message::Body::Command(command)) => command,
+            other => panic!("expected command body, got {other:?}"),
+        };
+        assert_eq!(command.verb, "setState");
+        assert!(command.extra.is_empty());
+        assert_eq!(
+            from_ec_value(command.payload.expect("command payload")),
+            json!({ "status": "RUNNING" })
+        );
+
+        let back = Message::from_slice(&bytes).unwrap();
+        assert_eq!(back.body_case(), MessageBodyCase::Command);
+        assert_eq!(back.body, json!({ "status": "RUNNING" }));
+    }
+
+    #[test]
+    fn canonical_protobuf_vectors_round_trip_exact_bytes() {
+        let text = std::fs::read_to_string("../../protobuf-test-vectors/messages.pb.hex").unwrap();
+        for line in text.lines().filter(|line| !line.is_empty() && !line.starts_with('#')) {
+            let (id, hex) = line.split_once(' ').unwrap();
+            let bytes = decode_hex_for_test(hex);
+            let message = Message::from_slice(&bytes).unwrap();
+            assert_eq!(encode_hex_for_test(&message.to_vec().unwrap()), hex, "{id}");
+        }
+    }
+
+    #[test]
+    fn southbound_byte_sample_round_trips_as_protobuf_bytes_value() {
+        let m = MessageBuilder::new(DATA_MESSAGE_NAME, "1.0")
+            .southbound_signal_update(json!({
+                "signal": { "id": "camera-1/thumbnail" },
+                "samples": [ {
+                    "value": {
+                        "_edgecommonsBinary": {
+                            "encoding": "base64",
+                            "length": 5,
+                            "data": "AAEC/v8="
+                        }
+                    },
+                    "quality": "GOOD",
+                    "sourceTs": "2026-07-06T17:59:59.900Z",
+                    "serverTs": "2026-07-06T18:00:00Z"
+                } ]
+            }))
+            .build();
+
+        let bytes = m.to_vec().unwrap();
+        let decoded = pb::EdgeCommonsMessage::decode(bytes.as_slice()).unwrap();
+        assert!(matches!(
+            decoded.body,
+            Some(pb::edge_commons_message::Body::SouthboundSignalUpdate(_))
+        ));
+        let back = Message::from_slice(&bytes).unwrap();
+        assert_eq!(back.body_case(), MessageBodyCase::SouthboundSignalUpdate);
+        assert_eq!(
+            back.body["samples"][0]["value"]["_edgecommonsBinary"]["data"],
+            "AAEC/v8="
+        );
+        assert_eq!(
+            back.body["samples"][0]["sourceTsMs"],
+            json!(1_783_360_799_900_u64)
+        );
+        assert_eq!(
+            back.body["samples"][0]["serverTsMs"],
+            json!(1_783_360_800_000_u64)
+        );
     }
 
     #[test]
@@ -890,7 +2255,7 @@ mod tests {
             }
         }))
         .unwrap();
-        let m = Message::from_slice(&bytes).unwrap();
+        let m: Message = serde_json::from_slice(&bytes).unwrap();
         assert!(m.is_binary_body());
         assert!(m.binary_body().is_err());
 
@@ -909,14 +2274,14 @@ mod tests {
             .payload(json!({ "status": "RUNNING" }))
             .build();
         let bytes = m.to_vec().unwrap();
-        let text = String::from_utf8(bytes.clone()).unwrap();
+        let text = serde_json::to_string(&m).unwrap();
         // Canonical member order: header, identity, (tags,) body.
         let header_pos = text.find("\"header\"").unwrap();
         let identity_pos = text.find("\"identity\"").unwrap();
         let body_pos = text.find("\"body\"").unwrap();
         assert!(header_pos < identity_pos && identity_pos < body_pos);
 
-        let value: Value = serde_json::from_slice(&bytes).unwrap();
+        let value: Value = serde_json::to_value(&m).unwrap();
         assert_eq!(value["identity"]["path"], "dallas/gw-01");
         assert_eq!(value["identity"]["component"], "opcua-adapter");
         assert_eq!(value["identity"]["instance"], "main");
@@ -1033,7 +2398,7 @@ mod tests {
             "body": { "v": 1 }
         }))
         .unwrap();
-        let m = Message::from_slice(&bytes).unwrap();
+        let m: Message = serde_json::from_slice(&bytes).unwrap();
         assert!(!m.is_raw());
         assert!(m.identity.is_none(), "malformed identity dropped leniently");
         assert_eq!(m.body["v"], 1);
@@ -1049,7 +2414,7 @@ mod tests {
             }
         }))
         .unwrap();
-        let m = Message::from_slice(&bytes).unwrap();
+        let m: Message = serde_json::from_slice(&bytes).unwrap();
         assert!(
             !m.is_raw(),
             "an object with an identity member is an envelope"
@@ -1067,7 +2432,7 @@ mod tests {
             "body": null
         }))
         .unwrap();
-        let m = Message::from_slice(&bytes).unwrap();
+        let m: Message = serde_json::from_slice(&bytes).unwrap();
         let tags = m.tags.unwrap();
         assert_eq!(tags.extra.get("thing"), Some(&json!("legacy-thing")));
         assert_eq!(tags.extra.get("site"), Some(&json!("f1")));
@@ -1076,43 +2441,61 @@ mod tests {
     #[test]
     fn reply_to_is_omitted_when_absent() {
         let m = MessageBuilder::new("N", "1.0").build();
-        let value: Value = serde_json::from_slice(&m.to_vec().unwrap()).unwrap();
+        let value: Value = serde_json::to_value(&m).unwrap();
         assert!(value["header"].get("reply_to").is_none());
     }
 
     #[test]
-    fn non_envelope_object_is_received_as_raw() {
+    fn diagnostic_json_deserialize_keeps_non_envelope_object_as_raw() {
         // A payload with none of header/identity/tags/body is delivered raw.
         let bytes = serde_json::to_vec(&json!({ "temperature": 21.5, "ok": true })).unwrap();
-        let m = Message::from_slice(&bytes).unwrap();
+        let m: Message = serde_json::from_slice(&bytes).unwrap();
         assert!(m.is_raw());
         assert_eq!(m.get_raw().unwrap()["temperature"], 21.5);
     }
 
     #[test]
-    fn non_json_payload_is_received_as_raw_string() {
-        let m = Message::from_slice(b"not json at all").unwrap();
-        assert!(m.is_raw());
-        assert_eq!(m.get_raw().unwrap(), &json!("not json at all"));
+    fn normal_wire_rejects_non_protobuf_payload() {
+        assert!(Message::from_slice(b"not json at all").is_err());
+        assert!(
+            Message::from_slice(br#"{"temperature":21.5}"#).is_err(),
+            "JSON/raw payloads are not EdgeCommons protobuf messages"
+        );
     }
 
     #[test]
     fn raw_message_serializes_under_raw_key() {
         let m = Message::raw(json!({ "x": 1 }));
-        let value: Value = serde_json::from_slice(&m.to_vec().unwrap()).unwrap();
+        let value: Value = serde_json::to_value(&m).unwrap();
         assert_eq!(value, json!({ "raw": { "x": 1 } }));
+        assert!(
+            m.to_vec().is_err(),
+            "raw messages are not EdgeCommons envelopes"
+        );
     }
 
     #[test]
     fn envelope_with_missing_parts_defaults_them() {
         // Body-only object is still an envelope (it has the `body` key).
         let bytes = serde_json::to_vec(&json!({ "body": { "v": 1 } })).unwrap();
-        let m = Message::from_slice(&bytes).unwrap();
+        let m: Message = serde_json::from_slice(&bytes).unwrap();
         assert!(!m.is_raw());
         assert_eq!(m.body, json!({ "v": 1 }));
         assert_eq!(m.header, MessageHeader::default());
         assert!(m.identity.is_none());
         assert!(m.tags.is_none());
+    }
+
+    fn decode_hex_for_test(hex: &str) -> Vec<u8> {
+        assert_eq!(hex.len() % 2, 0);
+        (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+            .collect()
+    }
+
+    fn encode_hex_for_test(bytes: &[u8]) -> String {
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
     }
 
     #[test]

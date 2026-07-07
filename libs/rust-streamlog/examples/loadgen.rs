@@ -38,7 +38,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 
-use edgestreamlog::config::{BatchConfig, BufferConfig, DeliveryConfig, FsyncPolicy, OnFull, StoreType};
+use edgestreamlog::config::{
+    BatchConfig, BufferConfig, DeliveryConfig, FsyncPolicy, OnFull, StoreType,
+};
 use edgestreamlog::export::{ExportRecord, SendOutcome, Sink};
 use edgestreamlog::{EmbeddedLog, ExportEngine, Record};
 
@@ -65,19 +67,31 @@ impl Args {
         Self { raw }
     }
     fn str(&self, k: &str, default: &str) -> String {
-        self.raw.get(k).cloned().unwrap_or_else(|| default.to_string())
+        self.raw
+            .get(k)
+            .cloned()
+            .unwrap_or_else(|| default.to_string())
     }
     fn opt(&self, k: &str) -> Option<String> {
         self.raw.get(k).cloned()
     }
     fn u64(&self, k: &str, default: u64) -> u64 {
-        self.raw.get(k).and_then(|v| v.parse().ok()).unwrap_or(default)
+        self.raw
+            .get(k)
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(default)
     }
     fn usize(&self, k: &str, default: usize) -> usize {
-        self.raw.get(k).and_then(|v| v.parse().ok()).unwrap_or(default)
+        self.raw
+            .get(k)
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(default)
     }
     fn f64(&self, k: &str, default: f64) -> f64 {
-        self.raw.get(k).and_then(|v| v.parse().ok()).unwrap_or(default)
+        self.raw
+            .get(k)
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(default)
     }
     fn flag(&self, k: &str) -> bool {
         self.raw.contains_key(k)
@@ -109,7 +123,10 @@ enum SinkSpec {
     FakeRate(f64),
     Disconnect(Duration),
     #[allow(dead_code)]
-    Kinesis { stream: String, endpoint: Option<String> },
+    Kinesis {
+        stream: String,
+        endpoint: Option<String>,
+    },
 }
 
 fn parse_sink(s: &str) -> SinkSpec {
@@ -118,7 +135,10 @@ fn parse_sink(s: &str) -> SinkSpec {
         "ingest-only" => SinkSpec::IngestOnly,
         "fake-rate" => SinkSpec::FakeRate(arg.parse().unwrap_or(10_000.0)),
         "disconnect" => SinkSpec::Disconnect(Duration::from_secs_f64(arg.parse().unwrap_or(5.0))),
-        "kinesis" => SinkSpec::Kinesis { stream: arg.to_string(), endpoint: None },
+        "kinesis" => SinkSpec::Kinesis {
+            stream: arg.to_string(),
+            endpoint: None,
+        },
         "localstack" | "floci" => SinkSpec::Kinesis {
             stream: arg.to_string(),
             endpoint: Some("http://localhost:4566".to_string()),
@@ -139,7 +159,8 @@ struct InstantSink {
 }
 impl Sink for InstantSink {
     fn send(&mut self, batch: &[ExportRecord<'_>]) -> SendOutcome {
-        self.delivered.fetch_add(batch.len() as u64, Ordering::Relaxed);
+        self.delivered
+            .fetch_add(batch.len() as u64, Ordering::Relaxed);
         SendOutcome::AllAcked
     }
 }
@@ -160,7 +181,8 @@ impl Sink for RateLimitedSink {
         if allowed_at > now {
             std::thread::sleep(allowed_at - now);
         }
-        self.delivered.fetch_add(batch.len() as u64, Ordering::Relaxed);
+        self.delivered
+            .fetch_add(batch.len() as u64, Ordering::Relaxed);
         SendOutcome::AllAcked
     }
 }
@@ -173,9 +195,13 @@ struct DisconnectSink {
 impl Sink for DisconnectSink {
     fn send(&mut self, batch: &[ExportRecord<'_>]) -> SendOutcome {
         if Instant::now() < self.until {
-            return SendOutcome::Failed { retryable: true, error: "simulated outage".into() };
+            return SendOutcome::Failed {
+                retryable: true,
+                error: "simulated outage".into(),
+            };
         }
-        self.delivered.fetch_add(batch.len() as u64, Ordering::Relaxed);
+        self.delivered
+            .fetch_add(batch.len() as u64, Ordering::Relaxed);
         SendOutcome::AllAcked
     }
 }
@@ -186,21 +212,38 @@ fn build_sink(spec: &SinkSpec, delivered: Arc<AtomicU64>) -> Option<Box<dyn Sink
         SinkSpec::Instant => Some(Box::new(InstantSink { delivered })),
         // No engine: pure-ingest ceiling (isolated, explicitly opt-in via --sink ingest-only).
         SinkSpec::IngestOnly => None,
-        SinkSpec::FakeRate(r) => {
-            Some(Box::new(RateLimitedSink { rate: *r, delivered, start: Instant::now(), sent: 0 }))
+        SinkSpec::FakeRate(r) => Some(Box::new(RateLimitedSink {
+            rate: *r,
+            delivered,
+            start: Instant::now(),
+            sent: 0,
+        })),
+        SinkSpec::Disconnect(d) => Some(Box::new(DisconnectSink {
+            until: Instant::now() + *d,
+            delivered,
+        })),
+        SinkSpec::Kinesis { stream, endpoint } => {
+            build_kinesis(stream, endpoint.clone(), delivered)
         }
-        SinkSpec::Disconnect(d) => {
-            Some(Box::new(DisconnectSink { until: Instant::now() + *d, delivered }))
-        }
-        SinkSpec::Kinesis { stream, endpoint } => build_kinesis(stream, endpoint.clone(), delivered),
     }
 }
 
 #[cfg(feature = "kinesis")]
-fn build_kinesis(stream: &str, endpoint: Option<String>, _delivered: Arc<AtomicU64>) -> Option<Box<dyn Sink>> {
+fn build_kinesis(
+    stream: &str,
+    endpoint: Option<String>,
+    _delivered: Arc<AtomicU64>,
+) -> Option<Box<dyn Sink>> {
     // The real sink reports its own delivery; the harness reads exported_total from EngineStats.
-    let region = std::env::var("AWS_DEFAULT_REGION").ok().or(Some("us-east-1".to_string()));
-    match edgestreamlog::KinesisSink::new(stream.to_string(), region, endpoint) {
+    let region = std::env::var("AWS_DEFAULT_REGION")
+        .ok()
+        .or(Some("us-east-1".to_string()));
+    match edgestreamlog::KinesisSink::new_with_payload_format(
+        stream.to_string(),
+        region,
+        endpoint,
+        edgestreamlog::SinkPayloadFormat::Protobuf,
+    ) {
         Ok(s) => Some(Box::new(s)),
         Err(e) => {
             eprintln!("loadgen: failed to build KinesisSink: {e}");
@@ -225,7 +268,11 @@ struct Latencies {
 }
 impl Latencies {
     fn new() -> Self {
-        Self { v: Vec::new(), stride: 1, seen: 0 }
+        Self {
+            v: Vec::new(),
+            stride: 1,
+            seen: 0,
+        }
     }
     fn push(&mut self, ns: u64) {
         self.seen += 1;
@@ -279,8 +326,16 @@ fn capture_env(path: &Path, drop_caches: bool) -> EnvBlock {
         total_mem_bytes: linux_total_mem(),
         kernel: linux_kernel(),
         fs_mount: linux_fs_for_path(path),
-        build_profile: if cfg!(debug_assertions) { "debug".into() } else { "release".into() },
-        page_cache_dropped: if drop_caches { try_drop_caches() } else { false },
+        build_profile: if cfg!(debug_assertions) {
+            "debug".into()
+        } else {
+            "release".into()
+        },
+        page_cache_dropped: if drop_caches {
+            try_drop_caches()
+        } else {
+            false
+        },
     }
 }
 
@@ -345,7 +400,9 @@ fn linux_total_mem() -> Option<u64> {
 
 #[cfg(target_os = "linux")]
 fn linux_kernel() -> Option<String> {
-    fs::read_to_string("/proc/sys/kernel/osrelease").ok().map(|s| s.trim().to_string())
+    fs::read_to_string("/proc/sys/kernel/osrelease")
+        .ok()
+        .map(|s| s.trim().to_string())
 }
 #[cfg(not(target_os = "linux"))]
 fn linux_kernel() -> Option<String> {
@@ -508,7 +565,9 @@ fn run_producers(
                             lat.push(t0.elapsed().as_nanos() as u64);
                             appended.fetch_add(1, Ordering::Relaxed);
                         }
-                        Err(edgestreamlog::EdgeStreamError::BufferFull) if on_full == OnFull::RejectNew => {
+                        Err(edgestreamlog::EdgeStreamError::BufferFull)
+                            if on_full == OnFull::RejectNew =>
+                        {
                             rejected.fetch_add(1, Ordering::Relaxed);
                         }
                         Err(e) => {
@@ -524,7 +583,11 @@ fn run_producers(
     });
 
     let lat = Arc::try_unwrap(merged).ok().unwrap().into_inner().unwrap();
-    (appended.load(Ordering::Relaxed), rejected.load(Ordering::Relaxed), lat)
+    (
+        appended.load(Ordering::Relaxed),
+        rejected.load(Ordering::Relaxed),
+        lat,
+    )
 }
 
 // ============================ main ============================
@@ -535,7 +598,13 @@ fn main() {
     let scenario = args.str("scenario", "S1").to_ascii_uppercase();
     let payload = args.usize("payload", 1024);
     let threads = args.usize("threads", 1).max(1);
-    let rate = args.opt("rate").and_then(|s| if s == "unbounded" { None } else { s.parse().ok() });
+    let rate = args.opt("rate").and_then(|s| {
+        if s == "unbounded" {
+            None
+        } else {
+            s.parse().ok()
+        }
+    });
     let duration_s = args.f64("duration", 10.0);
     let count = args.opt("count").and_then(|s| s.parse().ok());
     let fsync = parse_fsync(&args.str("fsync", "PerBatch"));
@@ -557,15 +626,25 @@ fn main() {
 
     let buffer = BufferConfig {
         store_type,
-        path: if store_type == StoreType::Memory { String::new() } else { path.to_string_lossy().into_owned() },
+        path: if store_type == StoreType::Memory {
+            String::new()
+        } else {
+            path.to_string_lossy().into_owned()
+        },
         segment_bytes,
         max_disk_bytes,
         on_full,
         fsync,
         ..Default::default()
     };
-    let batch = BatchConfig { max_records: batch_records, ..Default::default() };
-    let delivery = DeliveryConfig { poll_interval_ms: 5, ..Default::default() };
+    let batch = BatchConfig {
+        max_records: batch_records,
+        ..Default::default()
+    };
+    let delivery = DeliveryConfig {
+        poll_interval_ms: 5,
+        ..Default::default()
+    };
 
     // Fresh run dir.
     let _ = fs::remove_dir_all(&path);
@@ -576,13 +655,26 @@ fn main() {
     let cpu_start = cpu_secs();
     let wall_start = Instant::now();
 
-    let mut metrics = Metrics { rss_start_bytes: rss_start, ..Default::default() };
+    let mut metrics = Metrics {
+        rss_start_bytes: rss_start,
+        ..Default::default()
+    };
 
     match scenario.as_str() {
         "S3" => run_recovery(&buffer, count.unwrap_or(1_000_000), payload, &mut metrics),
         _ => run_streaming(
-            &scenario, &buffer, &batch, &delivery, threads, payload, rate, duration_s, count,
-            on_full, &sink_spec, &mut metrics,
+            &scenario,
+            &buffer,
+            &batch,
+            &delivery,
+            threads,
+            payload,
+            rate,
+            duration_s,
+            count,
+            on_full,
+            &sink_spec,
+            &mut metrics,
         ),
     }
 
@@ -601,8 +693,14 @@ fn main() {
         schema: "esl-loadgen/1",
         scenario: scenario.clone(),
         target_name: args.str("target-name", "local"),
-        git_sha: args.opt("git-sha").or_else(|| std::env::var("GIT_SHA").ok()).unwrap_or_else(|| "dev".into()),
-        timestamp_unix_ms: SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0),
+        git_sha: args
+            .opt("git-sha")
+            .or_else(|| std::env::var("GIT_SHA").ok())
+            .unwrap_or_else(|| "dev".into()),
+        timestamp_unix_ms: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0),
         config: ConfigBlock {
             payload_bytes: payload,
             threads,
@@ -644,7 +742,10 @@ fn main() {
 }
 
 fn now_ms() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 fn max_opt(a: Option<u64>, b: Option<u64>) -> Option<u64> {
@@ -700,11 +801,21 @@ fn run_streaming(
     };
 
     let per_thread_count = count.map(|c| c / threads as u64);
-    let deadline = if count.is_some() { None } else { Some(Instant::now() + Duration::from_secs_f64(duration_s)) };
+    let deadline = if count.is_some() {
+        None
+    } else {
+        Some(Instant::now() + Duration::from_secs_f64(duration_s))
+    };
 
     let ingest_start = Instant::now();
     let (appended, rejected, mut lat) = run_producers(
-        &log, threads, payload, rate, per_thread_count, deadline, on_full,
+        &log,
+        threads,
+        payload,
+        rate,
+        per_thread_count,
+        deadline,
+        on_full,
     );
     let ingest_elapsed = ingest_start.elapsed().as_secs_f64();
 
@@ -746,22 +857,51 @@ fn run_streaming(
         let reopened = EmbeddedLog::open(buffer.clone()).expect("reopen after crash");
         metrics.recovery_ms = Some(t0.elapsed().as_secs_f64() * 1000.0);
         // At-least-once: everything from the checkpoint forward is still readable (no loss).
-        let resumable = reopened.read_batch(usize::MAX, usize::MAX).map(|b| b.len()).unwrap_or(0);
+        let resumable = reopened
+            .read_batch(usize::MAX, usize::MAX)
+            .map(|b| b.len())
+            .unwrap_or(0);
         metrics.potential_duplicates = Some(backlog_at_crash.min(resumable as u64));
         metrics.backlog_peak = Some(peak_backlog);
-        finalize_common(metrics, appended, delivered.load(Ordering::Relaxed), rejected,
-            &reopened, ingest_elapsed, payload, &mut lat, peak_rss, &lag, true);
+        finalize_common(
+            metrics,
+            appended,
+            delivered.load(Ordering::Relaxed),
+            rejected,
+            &reopened,
+            ingest_elapsed,
+            payload,
+            &mut lat,
+            peak_rss,
+            &lag,
+            true,
+        );
         return;
     }
 
     let exported = match &engine {
-        Some(e) => e.stats().exported_total.max(delivered.load(Ordering::Relaxed)),
+        Some(e) => e
+            .stats()
+            .exported_total
+            .max(delivered.load(Ordering::Relaxed)),
         None => delivered.load(Ordering::Relaxed),
     };
     metrics.drain_rate_rps = drain_rate;
     metrics.time_to_catchup_ms = catchup;
     metrics.backlog_peak = Some(peak_backlog);
-    finalize_common(metrics, appended, exported, rejected, &log, ingest_elapsed, payload, &mut lat, peak_rss, &lag, engine.is_some());
+    finalize_common(
+        metrics,
+        appended,
+        exported,
+        rejected,
+        &log,
+        ingest_elapsed,
+        payload,
+        &mut lat,
+        peak_rss,
+        &lag,
+        engine.is_some(),
+    );
 
     // engine drops here (RAII stop).
     drop(engine);
@@ -820,8 +960,9 @@ fn run_recovery(buffer: &BufferConfig, n: u64, payload: usize, metrics: &mut Met
         let mut written = 0u64;
         while written < n {
             let this = chunk.min((n - written) as usize);
-            let recs: Vec<Record> =
-                (0..this).map(|i| Record::new(pk, 1000 + written + i as u64, body.clone())).collect();
+            let recs: Vec<Record> = (0..this)
+                .map(|i| Record::new(pk, 1000 + written + i as u64, body.clone()))
+                .collect();
             log.append_batch(&recs).expect("append_batch");
             written += this as u64;
         }
@@ -832,7 +973,10 @@ fn run_recovery(buffer: &BufferConfig, n: u64, payload: usize, metrics: &mut Met
     let log = EmbeddedLog::open(buffer.clone()).expect("reopen");
     let recovery_ms = t0.elapsed().as_secs_f64() * 1000.0;
     let s = log.stats();
-    assert_eq!(s.next_offset, n, "recovery must restore the full log (next_offset)");
+    assert_eq!(
+        s.next_offset, n,
+        "recovery must restore the full log (next_offset)"
+    );
 
     metrics.recovery_ms = Some(recovery_ms);
     metrics.appended_total = n;

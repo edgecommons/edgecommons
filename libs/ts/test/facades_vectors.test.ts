@@ -28,6 +28,7 @@ import { qualityFromWire } from "../src/facades/quality";
 import { severityFromWire } from "../src/facades/severity";
 import { SignalUpdateBuilder } from "../src/facades/signal_update";
 import type { StreamSink } from "../src/facades/stream_sink";
+import { Message } from "../src/message";
 import { Uns, UnsClass } from "../src/uns";
 import { RecordingMessagingService } from "./_fakes";
 
@@ -120,12 +121,12 @@ async function runDataCase(input: Record<string, unknown>): Promise<Record<strin
     };
   }
   const path = has(input, "signalPath") ? (input.signalPath as string) : (input.signalId as string);
-  const envelope = JSON.parse(sink.payload!.toString("utf8")) as Record<string, unknown>;
+  const envelope = Message.fromBytes(sink.payload!);
   return {
     topic: uns.topic(UnsClass.Data, facade.channelToken(path)),
     route: `stream:${sink.streamName}`,
     partitionKey: sink.partitionKey,
-    body: envelope.body,
+    body: envelope.getBody(),
   };
 }
 

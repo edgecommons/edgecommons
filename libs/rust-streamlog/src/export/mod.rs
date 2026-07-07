@@ -75,7 +75,13 @@ impl FakeSinkHandle {
         self.state.lock().unwrap().delivered.clone()
     }
     pub fn delivered_offsets(&self) -> Vec<u64> {
-        self.state.lock().unwrap().delivered.iter().map(|(o, _)| *o).collect()
+        self.state
+            .lock()
+            .unwrap()
+            .delivered
+            .iter()
+            .map(|(o, _)| *o)
+            .collect()
     }
 }
 
@@ -107,7 +113,9 @@ impl FakeSink {
         }
     }
     pub fn handle(&self) -> FakeSinkHandle {
-        FakeSinkHandle { state: Arc::clone(&self.state) }
+        FakeSinkHandle {
+            state: Arc::clone(&self.state),
+        }
     }
 }
 
@@ -122,18 +130,26 @@ impl Sink for FakeSink {
         let mut s = self.state.lock().unwrap();
         if s.fail_remaining > 0 {
             s.fail_remaining -= 1;
-            return SendOutcome::Failed { retryable: true, error: "injected transient failure".into() };
+            return SendOutcome::Failed {
+                retryable: true,
+                error: "injected transient failure".into(),
+            };
         }
         if !s.partial_done && !s.partial_once.is_empty() {
             s.partial_done = true;
-            let failed: Vec<u64> =
-                batch.iter().map(|r| r.offset).filter(|o| s.partial_once.contains(o)).collect();
+            let failed: Vec<u64> = batch
+                .iter()
+                .map(|r| r.offset)
+                .filter(|o| s.partial_once.contains(o))
+                .collect();
             if !failed.is_empty() {
                 let failset: HashSet<u64> = failed.iter().copied().collect();
                 for r in batch.iter().filter(|r| !failset.contains(&r.offset)) {
                     s.delivered.push((r.offset, r.payload.to_vec()));
                 }
-                return SendOutcome::Partial { failed_offsets: failed };
+                return SendOutcome::Partial {
+                    failed_offsets: failed,
+                };
             }
         }
         for r in batch {
@@ -219,7 +235,11 @@ impl ExportEngine {
                 run(&log, sink.as_mut(), &batch_cfg, &delivery, &stop, &shared);
             })
         };
-        Self { stop, shared, handle: Some(handle) }
+        Self {
+            stop,
+            shared,
+            handle: Some(handle),
+        }
     }
 
     pub fn stats(&self) -> EngineStats {
@@ -262,12 +282,18 @@ fn run(
         let batch = match log.read_batch(batch_cfg.max_records, batch_cfg.max_bytes) {
             Ok(b) => b,
             Err(_) => {
-                sleep_chunked(Duration::from_millis(delivery.poll_interval_ms.max(1)), stop);
+                sleep_chunked(
+                    Duration::from_millis(delivery.poll_interval_ms.max(1)),
+                    stop,
+                );
                 continue;
             }
         };
         if batch.is_empty() {
-            sleep_chunked(Duration::from_millis(delivery.poll_interval_ms.max(1)), stop);
+            sleep_chunked(
+                Duration::from_millis(delivery.poll_interval_ms.max(1)),
+                stop,
+            );
             continue;
         }
         deliver(log, sink, &batch, delivery, stop, shared);
@@ -303,12 +329,17 @@ fn deliver(
 
         match sink.send(&recs) {
             SendOutcome::AllAcked => {
-                shared.exported.fetch_add(pending.len() as u64, Ordering::Relaxed);
+                shared
+                    .exported
+                    .fetch_add(pending.len() as u64, Ordering::Relaxed);
                 break;
             }
             SendOutcome::Partial { failed_offsets } => {
                 let failset: HashSet<u64> = failed_offsets.into_iter().collect();
-                let acked = pending.iter().filter(|r| !failset.contains(&r.offset)).count();
+                let acked = pending
+                    .iter()
+                    .filter(|r| !failset.contains(&r.offset))
+                    .count();
                 shared.exported.fetch_add(acked as u64, Ordering::Relaxed);
                 pending.retain(|r| failset.contains(&r.offset));
                 if pending.is_empty() {
@@ -318,13 +349,18 @@ fn deliver(
                 shared.retries.fetch_add(1, Ordering::Relaxed);
                 backoff(attempt, delivery, stop);
             }
-            SendOutcome::Failed { retryable: _, error } => {
+            SendOutcome::Failed {
+                retryable: _,
+                error,
+            } => {
                 *shared.last_error.lock().unwrap() = Some(error);
                 attempt += 1;
                 if delivery.max_retries >= 0 && attempt > delivery.max_retries {
                     // Poison-pill escape: give up this batch (data loss) so the stream isn't
                     // wedged forever. Default max_retries = -1 never reaches here.
-                    shared.failed.fetch_add(pending.len() as u64, Ordering::Relaxed);
+                    shared
+                        .failed
+                        .fetch_add(pending.len() as u64, Ordering::Relaxed);
                     break;
                 }
                 shared.retries.fetch_add(1, Ordering::Relaxed);
@@ -359,7 +395,10 @@ fn sleep_chunked(dur: Duration, stop: &AtomicBool) {
 }
 
 fn now_nanos() -> u128 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -367,7 +406,12 @@ mod tests {
     use super::*;
 
     fn rec(offset: u64, payload: &[u8]) -> ExportRecord<'_> {
-        ExportRecord { offset, partition_key: b"ns", ts_ms: 1, payload }
+        ExportRecord {
+            offset,
+            partition_key: b"ns",
+            ts_ms: 1,
+            payload,
+        }
     }
 
     #[test]
@@ -381,15 +425,22 @@ mod tests {
             }
             SendOutcome::AllAcked
         }));
-        assert!(matches!(sink.send(&[rec(0, b"a"), rec(1, b"b")]), SendOutcome::AllAcked));
-        assert_eq!(*seen.lock().unwrap(), vec![(0, b"a".to_vec()), (1, b"b".to_vec())]);
+        assert!(matches!(
+            sink.send(&[rec(0, b"a"), rec(1, b"b")]),
+            SendOutcome::AllAcked
+        ));
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![(0, b"a".to_vec()), (1, b"b".to_vec())]
+        );
     }
 
     #[test]
     fn callback_sink_propagates_partial() {
-        let mut sink = CallbackSink::new(Box::new(|_b: &[ExportRecord<'_>]| {
-            SendOutcome::Partial { failed_offsets: vec![2, 3] }
-        }));
+        let mut sink =
+            CallbackSink::new(Box::new(|_b: &[ExportRecord<'_>]| SendOutcome::Partial {
+                failed_offsets: vec![2, 3],
+            }));
         match sink.send(&[rec(2, b"x")]) {
             SendOutcome::Partial { failed_offsets } => assert_eq!(failed_offsets, vec![2, 3]),
             _ => panic!("expected Partial"),
@@ -398,8 +449,9 @@ mod tests {
 
     #[test]
     fn callback_sink_propagates_failed() {
-        let mut sink = CallbackSink::new(Box::new(|_b: &[ExportRecord<'_>]| {
-            SendOutcome::Failed { retryable: true, error: "boom".into() }
+        let mut sink = CallbackSink::new(Box::new(|_b: &[ExportRecord<'_>]| SendOutcome::Failed {
+            retryable: true,
+            error: "boom".into(),
         }));
         match sink.send(&[]) {
             SendOutcome::Failed { retryable, error } => {

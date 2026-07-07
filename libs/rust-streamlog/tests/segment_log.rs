@@ -30,7 +30,10 @@ fn indexed_batched_read_is_contiguous_across_reopen() {
             break;
         }
         for r in &batch {
-            assert_eq!(r.offset, cursor, "offsets must be contiguous with no gaps/dupes");
+            assert_eq!(
+                r.offset, cursor,
+                "offsets must be contiguous with no gaps/dupes"
+            );
             assert_eq!(r.payload, format!("payload-{}", r.offset).into_bytes());
             cursor += 1;
             seen.push(r.offset);
@@ -46,7 +49,12 @@ fn append_read_roundtrip_across_segment_rolls() {
     // Tiny segments so we roll frequently.
     let mut store = SegmentLog::open(dir.path(), 256).unwrap();
     for i in 0..200u64 {
-        append(&mut store, i, &format!("k{}", i % 4), format!("payload-{i}").as_bytes());
+        append(
+            &mut store,
+            i,
+            &format!("k{}", i % 4),
+            format!("payload-{i}").as_bytes(),
+        );
     }
     store.sync().unwrap();
     assert_eq!(store.next_offset(), 200);
@@ -78,7 +86,10 @@ fn reopen_recovers_next_offset() {
     let mut store = SegmentLog::open(dir.path(), 1024).unwrap();
     assert_eq!(store.next_offset(), 50);
     assert!(!store.recovery().torn_truncated);
-    assert_eq!(store.read_from(0, usize::MAX, usize::MAX).unwrap().len(), 50);
+    assert_eq!(
+        store.read_from(0, usize::MAX, usize::MAX).unwrap().len(),
+        50
+    );
 }
 
 #[test]
@@ -103,9 +114,15 @@ fn torn_tail_is_truncated_on_recovery() {
         f.write_all(&[0xAB; 37]).unwrap(); // partial/garbage frame
     }
     let mut store = SegmentLog::open(dir.path(), 1 << 20).unwrap();
-    assert!(store.recovery().torn_truncated, "garbage tail should be detected + truncated");
+    assert!(
+        store.recovery().torn_truncated,
+        "garbage tail should be detected + truncated"
+    );
     assert_eq!(store.next_offset(), 10, "only the 10 valid records survive");
-    assert_eq!(store.read_from(0, usize::MAX, usize::MAX).unwrap().len(), 10);
+    assert_eq!(
+        store.read_from(0, usize::MAX, usize::MAX).unwrap().len(),
+        10
+    );
     // The store is appendable again from offset 10.
     append(&mut store, 10, "k", b"more");
     store.sync().unwrap();
@@ -135,7 +152,21 @@ fn checkpoint_roundtrip() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = SegmentLog::open(dir.path(), 1024).unwrap();
     assert_eq!(store.load_checkpoint().unwrap(), Checkpoint::default());
-    store.store_checkpoint(Checkpoint { acked: 42, drop_floor: 10 }).unwrap();
-    let cp = SegmentLog::open(dir.path(), 1024).unwrap().load_checkpoint().unwrap();
-    assert_eq!(cp, Checkpoint { acked: 42, drop_floor: 10 });
+    store
+        .store_checkpoint(Checkpoint {
+            acked: 42,
+            drop_floor: 10,
+        })
+        .unwrap();
+    let cp = SegmentLog::open(dir.path(), 1024)
+        .unwrap()
+        .load_checkpoint()
+        .unwrap();
+    assert_eq!(
+        cp,
+        Checkpoint {
+            acked: 42,
+            drop_floor: 10
+        }
+    );
 }

@@ -20,14 +20,15 @@ use aws_sdk_kinesis::types::ShardIteratorType;
 use aws_sdk_kinesis::Client;
 
 use edgestreamlog::config::{BatchConfig, BufferConfig, DeliveryConfig, FsyncPolicy, OnFull};
-use edgestreamlog::{EmbeddedLog, ExportEngine, KinesisSink, Record};
+use edgestreamlog::{EmbeddedLog, ExportEngine, KinesisSink, Record, SinkPayloadFormat};
 
 const REGION: &str = "us-east-1";
 const N: usize = 200;
 const SHARDS: i32 = 2;
 
 fn endpoint() -> String {
-    std::env::var("EDGESTREAMLOG_KINESIS_ENDPOINT").unwrap_or_else(|_| "http://localhost:4566".into())
+    std::env::var("EDGESTREAMLOG_KINESIS_ENDPOINT")
+        .unwrap_or_else(|_| "http://localhost:4566".into())
 }
 
 fn admin(rt: &tokio::runtime::Runtime) -> Client {
@@ -83,18 +84,36 @@ fn kinesis_sink_delivers_to_emulator() {
     );
     for i in 0..N {
         // Spread across partition keys so both shards receive data.
-        log.append(&Record::new(format!("pk-{}", i % 4), 1000 + i as u64, payload(i).as_bytes()))
-            .unwrap();
+        log.append(&Record::new(
+            format!("pk-{}", i % 4),
+            1000 + i as u64,
+            payload(i).as_bytes(),
+        ))
+        .unwrap();
     }
 
-    let sink = KinesisSink::new(stream.clone(), Some(REGION.to_string()), Some(endpoint()))
-        .expect("build KinesisSink");
+    let sink = KinesisSink::new_with_payload_format(
+        stream.clone(),
+        Some(REGION.to_string()),
+        Some(endpoint()),
+        SinkPayloadFormat::Protobuf,
+    )
+    .expect("build KinesisSink");
     let engine = ExportEngine::start(
         Arc::clone(&log),
         Box::new(sink),
         // PutRecords caps: stay well under 500 records / 5 MiB.
-        BatchConfig { max_records: 100, max_bytes: 1 << 20, ..Default::default() },
-        DeliveryConfig { max_retries: 8, backoff_base_ms: 20, backoff_max_ms: 500, poll_interval_ms: 20 },
+        BatchConfig {
+            max_records: 100,
+            max_bytes: 1 << 20,
+            ..Default::default()
+        },
+        DeliveryConfig {
+            max_retries: 8,
+            backoff_base_ms: 20,
+            backoff_max_ms: 500,
+            poll_interval_ms: 20,
+        },
     );
 
     // Wait until the engine has committed everything (acked cursor reached N).
@@ -116,14 +135,26 @@ fn kinesis_sink_delivers_to_emulator() {
     let got = read_all_payloads(&rt, &client, &stream);
     let expected: HashSet<String> = (0..N).map(payload).collect();
     let missing: Vec<&String> = expected.iter().filter(|p| !got.contains(*p)).collect();
-    assert!(missing.is_empty(), "{} payloads missing from Kinesis, e.g. {:?}", missing.len(), missing.first());
-    assert!(got.len() >= N, "expected >= {N} records in Kinesis, got {}", got.len());
+    assert!(
+        missing.is_empty(),
+        "{} payloads missing from Kinesis, e.g. {:?}",
+        missing.len(),
+        missing.first()
+    );
+    assert!(
+        got.len() >= N,
+        "expected >= {N} records in Kinesis, got {}",
+        got.len()
+    );
 
     // Cleanup.
     rt.block_on(async {
         let _ = client.delete_stream().stream_name(&stream).send().await;
     });
-    println!("OK: delivered {N} records across {SHARDS} shards; read back {} unique payloads", got.len());
+    println!(
+        "OK: delivered {N} records across {SHARDS} shards; read back {} unique payloads",
+        got.len()
+    );
 }
 
 fn payload(i: usize) -> String {
@@ -140,7 +171,10 @@ fn wait_active(rt: &tokio::runtime::Runtime, client: &Client, stream: &str) {
                 .send()
                 .await
                 .ok()
-                .and_then(|o| o.stream_description_summary().map(|s| s.stream_status().clone()))
+                .and_then(|o| {
+                    o.stream_description_summary()
+                        .map(|s| s.stream_status().clone())
+                })
         });
         if matches!(active, Some(aws_sdk_kinesis::types::StreamStatus::Active)) {
             return;
@@ -151,7 +185,11 @@ fn wait_active(rt: &tokio::runtime::Runtime, client: &Client, stream: &str) {
 }
 
 /// Read all records from every shard (TRIM_HORIZON), returning the set of payload strings.
-fn read_all_payloads(rt: &tokio::runtime::Runtime, client: &Client, stream: &str) -> HashSet<String> {
+fn read_all_payloads(
+    rt: &tokio::runtime::Runtime,
+    client: &Client,
+    stream: &str,
+) -> HashSet<String> {
     rt.block_on(async {
         let mut out = HashSet::new();
         let shards = client
@@ -176,7 +214,12 @@ fn read_all_payloads(rt: &tokio::runtime::Runtime, client: &Client, stream: &str
 
             let mut empty_polls = 0;
             while let Some(it) = iter.clone() {
-                let resp = client.get_records().shard_iterator(it).limit(1000).send().await
+                let resp = client
+                    .get_records()
+                    .shard_iterator(it)
+                    .limit(1000)
+                    .send()
+                    .await
                     .expect("get_records");
                 let recs = resp.records();
                 if recs.is_empty() {

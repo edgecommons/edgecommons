@@ -5,11 +5,11 @@ same way the IPC path and ``_cancel_request`` do. Before the fix, the standalone
 the pending future but never unsubscribed, orphaning a broker subscription on every request.
 Drives ``_process_message`` directly so no broker is required.
 """
-import json
 import threading
 import types
 from unittest.mock import MagicMock
 
+from edgecommons.messaging.message_builder import MessageBuilder
 from edgecommons.messaging.providers.standalone_provider import (
     StandaloneProvider,
     _BrokerChannel,
@@ -20,7 +20,7 @@ from edgecommons.utils.iou import Iou
 def _fake_mqtt_message(topic: str, body: dict):
     m = types.SimpleNamespace()
     m.topic = topic
-    m.payload = json.dumps(body).encode("utf-8")
+    m.payload = MessageBuilder.create("Delivered", "1.0").with_payload(body).build().to_bytes()
     m.qos = 0
     return m
 

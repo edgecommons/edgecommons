@@ -5,6 +5,9 @@
 package com.mbreissi.edgecommons.messaging;
 
 import com.mbreissi.edgecommons.config.ConfigManager;
+import com.mbreissi.edgecommons.messaging.proto.MessageBodyCase;
+import com.mbreissi.edgecommons.messaging.proto.MessageBodySchema;
+import com.mbreissi.edgecommons.messaging.proto.MessageProtoCodec;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonElement;
@@ -47,6 +50,10 @@ public class Message
     MessageTags tags;
     Object body;
     Object raw;
+    String contentType;
+    String contentEncoding;
+    MessageBodySchema schema;
+    MessageBodyCase bodyCase;
 
     /**
      * Private constructor for creating empty messages.
@@ -78,6 +85,12 @@ public class Message
                 retVal.add("identity", identity.toDict());
             if (tags != null)
                 retVal.add("tags", new Gson().toJsonTree(tags.toDict()).getAsJsonObject());
+            if (contentType != null)
+                retVal.addProperty("content_type", contentType);
+            if (contentEncoding != null)
+                retVal.addProperty("content_encoding", contentEncoding);
+            if (schema != null)
+                retVal.add("schema", schema.toDict());
             retVal.add("body", toJsonElement(body));
         }
         else
@@ -118,7 +131,7 @@ public class Message
         return DEFAULT_GSON.toJsonTree(value);
     }
 
-    private static JsonObject binaryBodyJson(byte[] bytes)
+    public static JsonObject binaryBodyMarker(byte[] bytes)
     {
         if (bytes.length > MAX_BINARY_BODY_BYTES)
             throw new IllegalArgumentException(
@@ -130,6 +143,11 @@ public class Message
         JsonObject marker = new JsonObject();
         marker.add(BINARY_BODY_KEY, descriptor);
         return marker;
+    }
+
+    private static JsonObject binaryBodyJson(byte[] bytes)
+    {
+        return binaryBodyMarker(bytes);
     }
 
     private static JsonObject binaryDescriptor(Object value)
@@ -234,6 +252,26 @@ public class Message
         return body;
     }
 
+    public String getContentType()
+    {
+        return contentType;
+    }
+
+    public String getContentEncoding()
+    {
+        return contentEncoding;
+    }
+
+    public MessageBodySchema getSchema()
+    {
+        return schema;
+    }
+
+    public MessageBodyCase getBodyCase()
+    {
+        return bodyCase != null ? bodyCase : MessageProtoCodec.bodyCase(this);
+    }
+
     /**
      * Returns true when the payload is a first-class binary body.
      *
@@ -261,6 +299,26 @@ public class Message
         }
         JsonObject descriptor = binaryDescriptor(body);
         return descriptor == null ? null : decodeBinaryDescriptor(descriptor);
+    }
+
+    public byte[] getOpaqueBody()
+    {
+        return getBodyCase() == MessageBodyCase.OPAQUE ? getBinaryBody() : null;
+    }
+
+    public byte[] toBytes()
+    {
+        return MessageProtoCodec.toBytes(this);
+    }
+
+    public JsonObject toDiagnosticJson()
+    {
+        return MessageProtoCodec.toDiagnosticJson(this);
+    }
+
+    public static Message fromBytes(byte[] bytes)
+    {
+        return MessageProtoCodec.fromBytes(bytes);
     }
 
     /**

@@ -17,6 +17,7 @@ import {
 class FakeProvider implements MessagingProvider {
   private readonly subs = new Map<string, Set<(t: string, p: Buffer) => void>>();
   public publishedTopics: string[] = [];
+  public publishedPayloads: Buffer[] = [];
 
   async publishBytes(
     topic: string,
@@ -25,6 +26,7 @@ class FakeProvider implements MessagingProvider {
     _qos: Qos,
   ): Promise<void> {
     this.publishedTopics.push(topic);
+    this.publishedPayloads.push(payload);
     const handlers = this.subs.get(topic);
     if (handlers) {
       // Copy to avoid mutation-during-iteration when handlers (un)subscribe.
@@ -84,7 +86,7 @@ describe("DefaultMessagingService over a fake provider", () => {
     expect(received[0].getBody()).toEqual({ n: 1 });
   });
 
-  it("publishRaw delivers a raw message", async () => {
+  it("publishRaw is not delivered to normal Message subscriptions", async () => {
     const svc = new DefaultMessagingService(new FakeProvider());
     const received: Message[] = [];
     await svc.subscribe("raw/topic", (_t, m) => {
@@ -94,9 +96,21 @@ describe("DefaultMessagingService over a fake provider", () => {
     await svc.publishRaw("raw/topic", { hello: "world" });
     await nextTick();
 
-    expect(received).toHaveLength(1);
-    expect(received[0].isRaw()).toBe(true);
-    expect(received[0].getRaw()).toEqual({ hello: "world" });
+    expect(received).toHaveLength(0);
+  });
+
+  it("publish writes protobuf bytes parseable as an EdgeCommons Message", async () => {
+    const provider = new FakeProvider();
+    const svc = new DefaultMessagingService(provider);
+    const msg = MessageBuilder.create("evt", "1.0.0").withPayload({ n: 1 }).build();
+
+    await svc.publish("evt/topic", msg);
+
+    const payload = provider.publishedPayloads[0];
+    expect(payload[0]).not.toBe("{".charCodeAt(0));
+    const parsed = Message.fromBytes(payload);
+    expect(parsed.header.name).toBe("evt");
+    expect(parsed.getBody()).toEqual({ n: 1 });
   });
 
   it("request/reply correlation round-trips", async () => {

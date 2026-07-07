@@ -115,7 +115,17 @@ class FakeMqttClient:
 
     # ---- test helpers
     def deliver(self, topic, body, qos=0):
-        payload = body if isinstance(body, (bytes, bytearray)) else json.dumps(body).encode("utf-8")
+        if isinstance(body, Message):
+            payload = body.to_bytes()
+        elif isinstance(body, (bytes, bytearray)):
+            payload = bytes(body)
+        else:
+            if isinstance(body, dict) and "header" in body:
+                payload = Message.from_object(body).to_bytes()
+            elif isinstance(body, dict) and set(body.keys()) == {"body"}:
+                payload = MessageBuilder.create("Delivered", "1.0").with_payload(body["body"]).build().to_bytes()
+            else:
+                payload = MessageBuilder.create("Delivered", "1.0").with_payload(body).build().to_bytes()
         msg = SimpleNamespace(topic=topic, payload=payload, qos=qos)
         self.on_message(self, None, msg)
 
@@ -284,7 +294,7 @@ class TestSubscribeDispatch:
         assert len(pubs) == 1
         topic, payload, qos_value = pubs[0]
         assert topic == "out/topic"
-        assert json.loads(payload)["body"] == {"a": 1}
+        assert Message.from_bytes(payload).get_body() == {"a": 1}
         assert qos_value == 1
         prov.disconnect()
 
@@ -296,14 +306,14 @@ class TestSubscribeDispatch:
         assert qos_value == 1  # local raw uses QoS 1
         prov.disconnect()
 
-    def test_non_json_payload_becomes_raw(self):
+    def test_foreign_payload_is_dropped(self):
         prov = StandaloneProvider(_local_only_config(), "t")
         got = threading.Event()
         box = {}
         prov.subscribe("t/raw", lambda topic, m: (box.__setitem__("m", m), got.set()))
         prov.get_native_client()["local"].deliver("t/raw", b"not-json-here")
-        assert got.wait(2)
-        assert box["m"].get_raw() == "not-json-here"
+        assert not got.wait(0.2)
+        assert box == {}
         prov.disconnect()
 
     def test_no_subscription_match_is_noop(self):
@@ -396,7 +406,7 @@ class TestRequestReply:
         client = prov.get_native_client()["local"]
         topic, payload, _qos = client.published[-1]
         assert topic == "edgecommons/reply-xyz"
-        assert json.loads(payload)["header"]["correlation_id"] == "corr-123"
+        assert Message.from_bytes(payload).get_header().correlation_id == "corr-123"
         prov.disconnect()
 
     def test_reply_without_reply_to_raises(self):

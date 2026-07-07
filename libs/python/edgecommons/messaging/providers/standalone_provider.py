@@ -295,15 +295,17 @@ class StandaloneProvider(MessagingProvider):
                      f"size: {len(message.payload)} bytes, QoS: {message.qos}")
 
         try:
-            payload = message.payload.decode('utf-8')
             try:
-                # Use Message.from_object (same as the IPC path): a non-envelope
-                # JSON payload becomes a raw message (.raw), matching Java/Rust.
-                msg = Message.from_object(json.loads(payload))
-            except json.JSONDecodeError:
-                logger.debug(f"Message from {channel.name} broker is not JSON, treating as raw payload")
-                msg = Message()
-                msg.raw = payload
+                msg = Message.from_bytes(message.payload)
+            except ValueError as error:
+                logger.warning(
+                    "Problem decoding MQTT payload into EdgeCommons protobuf Message on topic "
+                    "%s from %s broker: %s. Ignoring message.",
+                    topic,
+                    channel.name,
+                    error,
+                )
+                return
 
             # Resolve a pending request/reply first. Reply arrival races the single
             # idempotent settle path (UNS-CANONICAL-DESIGN §5.1) against the framework
@@ -394,7 +396,7 @@ class StandaloneProvider(MessagingProvider):
     def _publish(self, channel: _BrokerChannel, topic: str, msg: Message, mqtt_qos: int):
         client = self._require_client(channel)
         try:
-            payload = msg.dumps()
+            payload = msg.to_bytes()
             logger.debug(f"Publishing to {channel.name} broker - topic: {topic}, "
                          f"size: {len(payload)} bytes, QoS: {mqtt_qos}")
             result = client.publish(topic, payload, qos=mqtt_qos)

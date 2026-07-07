@@ -9,6 +9,7 @@ import com.google.gson.JsonObject;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
@@ -29,6 +30,7 @@ public class MessageHeader
     String name;
     String version;
     String timestamp;
+    long timestampMs;
     String correlationId;
     String uuid;
     String replyTo;
@@ -68,6 +70,7 @@ public class MessageHeader
         if (timestamp == null)
             timestamp = ZonedDateTime.now(ZoneOffset.UTC).format(DateTimeFormatter.ISO_INSTANT);
         this.timestamp = timestamp;
+        this.timestampMs = toEpochMillis(timestamp);
         if (correlationId == null)
             correlationId = UUID.randomUUID().toString();
         this.correlationId = correlationId;
@@ -88,6 +91,7 @@ public class MessageHeader
         String name = src.has("name") ? src.get("name").getAsString() : null;
         String version = src.has("version") ? src.get("version").getAsString() : null;
         String timestamp = src.has("timestamp") ? src.get("timestamp").getAsString() : null;
+        Long timestampMs = src.has("timestamp_ms") ? src.get("timestamp_ms").getAsLong() : null;
         String uuid = src.has("uuid") ? src.get("uuid").getAsString() : null;
         String correlationId = src.has("correlation_id") ? src.get("correlation_id").getAsString() : null;
         String replyTo = src.has("reply_to") ? src.get("reply_to").getAsString() : null;
@@ -98,6 +102,7 @@ public class MessageHeader
         MessageHeaderBuilder builder = MessageHeaderBuilder.create(name, version);
         if (correlationId != null) builder.withCorrelationId(correlationId);
         if (timestamp != null) builder.withTimestamp(timestamp);
+        if (timestampMs != null) builder.withTimestampMs(timestampMs);
         if (uuid != null) builder.withUuid(uuid);
         if (replyTo != null) builder.withReplyTo(replyTo);
         return builder.build();
@@ -115,6 +120,7 @@ public class MessageHeader
         retVal.addProperty("name", name);
         retVal.addProperty("version", version);
         retVal.addProperty("timestamp", timestamp);
+        retVal.addProperty("timestamp_ms", timestampMs);
         retVal.addProperty("uuid", uuid);
         retVal.addProperty("correlation_id", correlationId);
         if (replyTo != null)
@@ -157,6 +163,10 @@ public class MessageHeader
 
     public String getTimestamp() { return timestamp; }
 
+    public long getTimestampMs() { return timestampMs; }
+
+    public String getUuid() { return uuid; }
+
     public String getCorrelationId() {
         if (correlationId == null)
             correlationId = UUID.randomUUID().toString();
@@ -171,5 +181,17 @@ public class MessageHeader
     public void setCorrelationId(String correlationId)
     {
         this.correlationId = correlationId;
+    }
+
+    private static long toEpochMillis(String timestamp)
+    {
+        try
+        {
+            return Instant.parse(timestamp).toEpochMilli();
+        }
+        catch (RuntimeException e)
+        {
+            return 0L;
+        }
     }
 }

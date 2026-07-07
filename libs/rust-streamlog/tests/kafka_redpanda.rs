@@ -19,7 +19,7 @@ use rdkafka::config::ClientConfig;
 use rdkafka::consumer::{BaseConsumer, Consumer};
 
 use edgestreamlog::config::{BatchConfig, BufferConfig, DeliveryConfig, FsyncPolicy, OnFull};
-use edgestreamlog::{EmbeddedLog, ExportEngine, KafkaSink, Record};
+use edgestreamlog::{EmbeddedLog, ExportEngine, KafkaSink, Record, SinkPayloadFormat};
 
 const N: usize = 500;
 
@@ -44,15 +44,30 @@ fn kafka_sink_delivers_to_broker() {
         .unwrap(),
     );
     for i in 0..N {
-        log.append(&Record::new("pk", 1000 + i as u64, payload(i).as_bytes())).unwrap();
+        log.append(&Record::new("pk", 1000 + i as u64, payload(i).as_bytes()))
+            .unwrap();
     }
 
-    let sink = KafkaSink::new(&bootstrap(), &topic, &Default::default()).expect("build KafkaSink");
+    let sink = KafkaSink::new_with_payload_format(
+        &bootstrap(),
+        &topic,
+        &Default::default(),
+        SinkPayloadFormat::Protobuf,
+    )
+    .expect("build KafkaSink");
     let engine = ExportEngine::start(
         Arc::clone(&log),
         Box::new(sink),
-        BatchConfig { max_records: 100, ..Default::default() },
-        DeliveryConfig { max_retries: 10, backoff_base_ms: 50, backoff_max_ms: 1000, poll_interval_ms: 20 },
+        BatchConfig {
+            max_records: 100,
+            ..Default::default()
+        },
+        DeliveryConfig {
+            max_retries: 10,
+            backoff_base_ms: 50,
+            backoff_max_ms: 1000,
+            poll_interval_ms: 20,
+        },
     );
 
     let drained = wait_until(Duration::from_secs(30), || log.acked() == N as u64);

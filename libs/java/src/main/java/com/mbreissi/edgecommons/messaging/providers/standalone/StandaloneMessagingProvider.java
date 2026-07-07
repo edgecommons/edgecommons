@@ -5,7 +5,6 @@
 package com.mbreissi.edgecommons.messaging.providers.standalone;
 
 import com.mbreissi.edgecommons.messaging.Message;
-import com.mbreissi.edgecommons.messaging.MessageBuilder;
 import com.mbreissi.edgecommons.messaging.MessagingConfiguration;
 import com.mbreissi.edgecommons.messaging.MessagingProvider;
 import com.mbreissi.edgecommons.messaging.Qos;
@@ -20,7 +19,6 @@ import org.eclipse.paho.client.mqttv3.MqttCallbackExtended;
 import org.eclipse.paho.client.mqttv3.*;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLSocketFactory;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.security.KeyStore;
 import java.security.PrivateKey;
@@ -214,13 +212,14 @@ public final class StandaloneMessagingProvider extends MessagingProvider
         @Override
         public void messageArrived(String topic, MqttMessage message)
         {
-            Message msg;
             LOGGER.trace("Message received on topic '{}'", topic);
-            String msgChars = new String(message.getPayload(), StandardCharsets.UTF_8);
+            Message msg;
             try {
-                msg = MessageBuilder.fromObject(new Gson().fromJson(msgChars, JsonObject.class));
-            } catch (Exception e) {
-                msg = MessageBuilder.fromObject(msgChars);
+                msg = Message.fromBytes(message.getPayload());
+            } catch (IllegalArgumentException e) {
+                LOGGER.warn("Problem decoding MQTT payload into EdgeCommons protobuf Message on topic '{}': {}. Ignoring message.",
+                        topic, e.toString());
+                return;
             }
             
             SubscriptionProcessor subscriptionProcessor = subscriptionMap.get(topic);
@@ -496,7 +495,7 @@ public final class StandaloneMessagingProvider extends MessagingProvider
     private void internalPublish(MqttClient client, String topic, Message message, int qos) {
         try
         {
-            MqttMessage msg = new MqttMessage(message.toString().getBytes());
+            MqttMessage msg = new MqttMessage(message.toBytes());
             msg.setQos(qos);
             client.publish(topic, msg);
         }

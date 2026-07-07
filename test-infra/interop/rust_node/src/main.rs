@@ -12,17 +12,25 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use serde_json::json;
+#[cfg(feature = "greengrass")]
+use serde_json::Value;
 
 use edgecommons::error::EdgeCommonsError;
 use edgecommons::messaging::config::MessagingConfig;
-use edgecommons::messaging::message::{MessageBuilder, MessageIdentity};
+#[cfg(feature = "greengrass")]
+use edgecommons::messaging::message::Message;
+use edgecommons::messaging::message::{
+    binary_value, MessageBodyCase, MessageBuilder, MessageIdentity,
+};
 use edgecommons::messaging::message_handler;
+#[cfg(feature = "greengrass")]
+use edgecommons::messaging::provider::ipc::IpcProvider;
 use edgecommons::messaging::provider::mqtt::MqttProvider;
 use edgecommons::messaging::service::{DefaultMessagingService, MessagingService};
 use edgecommons::uns::{Uns, UnsClass};
-#[cfg(feature = "greengrass")]
-use edgecommons::messaging::provider::ipc::IpcProvider;
 
 const LANG: &str = "rust";
 
@@ -41,32 +49,97 @@ fn encode_hex(bytes: &[u8]) -> String {
 }
 
 async fn provider(suffix: &str) -> Arc<DefaultMessagingService> {
-    let host = std::env::var("EDGECOMMONS_IT_MQTT_HOST").unwrap_or_else(|_| "localhost".to_string());
+    let host =
+        std::env::var("EDGECOMMONS_IT_MQTT_HOST").unwrap_or_else(|_| "localhost".to_string());
     let port = std::env::var("EDGECOMMONS_IT_MQTT_PORT").unwrap_or_else(|_| "1883".to_string());
     let pid = std::process::id();
     let cfg = format!(
         r#"{{ "messaging": {{ "local": {{ "host": "{host}", "port": {port}, "clientId": "interop-{LANG}-{suffix}-{pid}" }} }} }}"#
     );
     let mc: MessagingConfig = serde_json::from_str(&cfg).expect("valid config");
-    let provider = MqttProvider::connect(&mc).await.expect("connect to local broker");
+    let provider = MqttProvider::connect(&mc)
+        .await
+        .expect("connect to local broker");
     Arc::new(DefaultMessagingService::new(Arc::new(provider)))
 }
 
+#[cfg(feature = "greengrass")]
 fn gg_topic(run_id: &str, publisher: &str, subscriber: &str) -> String {
     format!("edgecommons/interop/binary/{run_id}/{publisher}/{subscriber}")
 }
 
+#[cfg(feature = "greengrass")]
+fn gg_typed_topic(run_id: &str, publisher: &str, subscriber: &str) -> String {
+    format!("edgecommons/interop/typed/{run_id}/{publisher}/{subscriber}")
+}
+
+fn typed_body(bytes: &[u8]) -> serde_json::Value {
+    json!({
+        "signal": { "id": "camera-1/roi-17/thumbnail", "name": "Thumbnail" },
+        "samples": [{
+            "value": binary_value(bytes).expect("binary sample marker"),
+            "quality": "GOOD",
+            "sourceTsMs": 1_783_360_799_900_u64,
+            "serverTsMs": 1_783_360_800_000_u64
+        }]
+    })
+}
+
+#[cfg(feature = "greengrass")]
 fn publisher_from_gg_topic(topic: &str) -> Option<String> {
     topic.split('/').rev().nth(1).map(ToString::to_string)
 }
 
+#[cfg(feature = "greengrass")]
+fn typed_result(m: &Message, expected_bytes: &[u8], publisher: &str) -> Result<Value, String> {
+    let sample = m
+        .body
+        .get("samples")
+        .and_then(Value::as_array)
+        .and_then(|samples| samples.first())
+        .ok_or_else(|| "missing samples[0]".to_string())?;
+    let marker = sample
+        .get("value")
+        .and_then(|value| value.get("_edgecommonsBinary"))
+        .ok_or_else(|| "missing binary sample marker".to_string())?;
+    let data = marker
+        .get("data")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "missing binary sample data".to_string())?;
+    let sample_bytes = BASE64_STANDARD.decode(data).map_err(|e| e.to_string())?;
+    let source_ts_ms = sample.get("sourceTsMs").and_then(Value::as_u64);
+    let server_ts_ms = sample.get("serverTsMs").and_then(Value::as_u64);
+    let tag_from = m
+        .tags
+        .as_ref()
+        .and_then(|tags| tags.extra.get("from"))
+        .and_then(Value::as_str);
+    let body_case = m.body_case().as_str();
+    let ok = body_case == MessageBodyCase::SouthboundSignalUpdate.as_str()
+        && sample_bytes == expected_bytes
+        && source_ts_ms == Some(1_783_360_799_900)
+        && server_ts_ms == Some(1_783_360_800_000)
+        && tag_from == Some(publisher);
+    Ok(json!({
+        "body_case": body_case,
+        "hex": encode_hex(&sample_bytes),
+        "source_ts_ms": source_ts_ms,
+        "server_ts_ms": server_ts_ms,
+        "tag_from": tag_from,
+        "ok": ok,
+    }))
+}
+
+#[cfg(feature = "greengrass")]
 fn gg_ready_path(run_id: &str, lang: &str) -> String {
     format!("/tmp/edgecommons_gg_ipc_binary_ready_{lang}_{run_id}")
 }
 
 #[cfg(feature = "greengrass")]
 async fn ipc_provider() -> Arc<DefaultMessagingService> {
-    let provider = IpcProvider::connect().await.expect("connect to Greengrass IPC");
+    let provider = IpcProvider::connect()
+        .await
+        .expect("connect to Greengrass IPC");
     Arc::new(DefaultMessagingService::new(Arc::new(provider)))
 }
 
@@ -112,7 +185,8 @@ async fn run_gg_binary_matrix(args: &[String]) -> ! {
         .filter(|s| !s.is_empty())
         .map(ToString::to_string)
         .collect();
-    let ready_lang = std::env::var("EDGECOMMONS_GG_READY_LANG").unwrap_or_else(|_| LANG.to_string());
+    let ready_lang =
+        std::env::var("EDGECOMMONS_GG_READY_LANG").unwrap_or_else(|_| LANG.to_string());
     let expected_hex = args[4].to_lowercase();
     let expected_bytes = decode_hex(&expected_hex).expect("expected hex");
     let subscribe_delay_secs: f64 = std::env::var("EDGECOMMONS_GG_SUBSCRIBE_DELAY_SECS")
@@ -125,7 +199,12 @@ async fn run_gg_binary_matrix(args: &[String]) -> ! {
         .unwrap_or(35.0);
 
     let svc = ipc_provider().await;
-    let received = Arc::new(std::sync::Mutex::new(BTreeMap::<String, serde_json::Value>::new()));
+    let received = Arc::new(std::sync::Mutex::new(
+        BTreeMap::<String, serde_json::Value>::new(),
+    ));
+    let received_typed = Arc::new(std::sync::Mutex::new(
+        BTreeMap::<String, serde_json::Value>::new(),
+    ));
     let errors = Arc::new(std::sync::Mutex::new(BTreeMap::<String, String>::new()));
     let rh = received.clone();
     let eh = errors.clone();
@@ -137,24 +216,27 @@ async fn run_gg_binary_matrix(args: &[String]) -> ! {
             let eh = eh.clone();
             let expected_for_handler = expected_for_handler.clone();
             async move {
-                let publisher = publisher_from_gg_topic(&topic).unwrap_or_else(|| "unknown".to_string());
+                let publisher =
+                    publisher_from_gg_topic(&topic).unwrap_or_else(|| "unknown".to_string());
                 match (m.is_binary_body(), m.binary_body()) {
                     (is_binary, Ok(Some(bytes))) => {
                         let ok = is_binary && bytes == expected_for_handler;
-                        rh.lock().unwrap().entry(publisher).or_insert_with(|| {
-                            json!({"is_binary": is_binary, "hex": encode_hex(&bytes), "ok": ok})
-                        });
+                        rh.lock().unwrap().entry(publisher).or_insert_with(
+                            || json!({"is_binary": is_binary, "hex": encode_hex(&bytes), "ok": ok}),
+                        );
                     }
                     (is_binary, Ok(None)) => {
-                        rh.lock().unwrap().entry(publisher).or_insert_with(|| {
-                            json!({"is_binary": is_binary, "hex": null, "ok": false})
-                        });
+                        rh.lock().unwrap().entry(publisher).or_insert_with(
+                            || json!({"is_binary": is_binary, "hex": null, "ok": false}),
+                        );
                     }
                     (is_binary, Err(e)) => {
-                        eh.lock().unwrap().insert(publisher.clone(), e.to_string());
-                        rh.lock().unwrap().entry(publisher).or_insert_with(|| {
-                            json!({"is_binary": is_binary, "hex": null, "ok": false})
-                        });
+                        eh.lock()
+                            .unwrap()
+                            .insert(format!("{publisher}:binary"), e.to_string());
+                        rh.lock().unwrap().entry(publisher).or_insert_with(
+                            || json!({"is_binary": is_binary, "hex": null, "ok": false}),
+                        );
                     }
                 }
             }
@@ -163,12 +245,48 @@ async fn run_gg_binary_matrix(args: &[String]) -> ! {
         1,
     )
     .await
-    .expect("subscribe");
+    .expect("subscribe binary");
+    let rth = received_typed.clone();
+    let eth = errors.clone();
+    let expected_for_typed_handler = expected_bytes.clone();
+    svc.subscribe(
+        &gg_typed_topic(&run_id, "+", LANG),
+        message_handler(move |topic, m| {
+            let rth = rth.clone();
+            let eth = eth.clone();
+            let expected_for_typed_handler = expected_for_typed_handler.clone();
+            async move {
+                let publisher =
+                    publisher_from_gg_topic(&topic).unwrap_or_else(|| "unknown".to_string());
+                match typed_result(&m, &expected_for_typed_handler, &publisher) {
+                    Ok(item) => {
+                        rth.lock().unwrap().entry(publisher).or_insert(item);
+                    }
+                    Err(e) => {
+                        eth.lock()
+                            .unwrap()
+                            .insert(format!("{publisher}:typed"), e);
+                        rth.lock()
+                            .unwrap()
+                            .entry(publisher)
+                            .or_insert_with(|| json!({"body_case": null, "hex": null, "ok": false}));
+                    }
+                }
+            }
+        }),
+        64,
+        1,
+    )
+    .await
+    .expect("subscribe typed");
     println!("READY");
     use std::io::Write;
     let _ = std::io::stdout().flush();
-    std::fs::write(gg_ready_path(&run_id, &ready_lang), format!("{:?}", std::time::SystemTime::now()))
-        .expect("write ready");
+    std::fs::write(
+        gg_ready_path(&run_id, &ready_lang),
+        format!("{:?}", std::time::SystemTime::now()),
+    )
+    .expect("write ready");
     let ready_missing = wait_for_gg_ready(&run_id, &ready_langs).await;
     tokio::time::sleep(Duration::from_secs_f64(subscribe_delay_secs)).await;
 
@@ -178,30 +296,46 @@ async fn run_gg_binary_matrix(args: &[String]) -> ! {
             .expect("binary payload")
             .tag("from", json!(LANG))
             .build();
+        let typed_msg = MessageBuilder::new("SouthboundSignalUpdate", "1.0")
+            .southbound_signal_update(typed_body(&expected_bytes))
+            .tag("from", json!(LANG))
+            .build();
         for target in &expected_langs {
             svc.publish(&gg_topic(&run_id, LANG, target), &msg)
                 .await
-                .expect("publish");
+                .expect("publish binary");
+            svc.publish(&gg_typed_topic(&run_id, LANG, target), &typed_msg)
+                .await
+                .expect("publish typed");
         }
     }
 
     let deadline = std::time::Instant::now() + Duration::from_secs_f64(wait_secs);
     while std::time::Instant::now() < deadline {
         let got: BTreeSet<String> = received.lock().unwrap().keys().cloned().collect();
-        if expected.is_subset(&got) {
+        let got_typed: BTreeSet<String> =
+            received_typed.lock().unwrap().keys().cloned().collect();
+        if expected.is_subset(&got) && expected.is_subset(&got_typed) {
             break;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     let received_snapshot = received.lock().unwrap().clone();
+    let received_typed_snapshot = received_typed.lock().unwrap().clone();
     let errors_snapshot = errors.lock().unwrap().clone();
     let missing: Vec<String> = expected_langs
         .iter()
         .filter(|lang| !received_snapshot.contains_key(*lang))
         .cloned()
         .collect();
+    let missing_typed: Vec<String> = expected_langs
+        .iter()
+        .filter(|lang| !received_typed_snapshot.contains_key(*lang))
+        .cloned()
+        .collect();
     let ok = ready_missing.is_empty()
         && missing.is_empty()
+        && missing_typed.is_empty()
         && errors_snapshot.is_empty()
         && expected_langs.iter().all(|lang| {
             received_snapshot
@@ -209,6 +343,11 @@ async fn run_gg_binary_matrix(args: &[String]) -> ! {
                 .and_then(|v| v.get("ok"))
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false)
+                && received_typed_snapshot
+                    .get(lang)
+                    .and_then(|v| v.get("ok"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
         });
     let result = json!({
         "ok": ok,
@@ -217,7 +356,9 @@ async fn run_gg_binary_matrix(args: &[String]) -> ! {
         "expected_hex": expected_hex,
         "ready_missing": ready_missing,
         "received": received_snapshot,
+        "received_typed": received_typed_snapshot,
         "missing": missing,
+        "missing_typed": missing_typed,
         "errors": errors_snapshot,
     });
     let path = format!("/tmp/edgecommons_gg_ipc_binary_{LANG}_{}.json", args[2]);
@@ -341,17 +482,24 @@ async fn main() {
             let result = recv.lock().unwrap().clone();
             match result {
                 Some((is_raw, raw)) => {
-                    let raw_token = raw
-                        .as_ref()
-                        .and_then(|v| v.get("token"))
-                        .and_then(|t| t.as_str());
-                    let ok = is_raw && raw_token == Some(token.as_str());
-                    println!("{}", json!({"ok": ok, "is_raw": is_raw, "raw_token": raw_token}));
-                    std::process::exit(if ok { 0 } else { 1 });
+                    println!(
+                        "{}",
+                        json!({
+                            "ok": false,
+                            "delivered": true,
+                            "is_raw": is_raw,
+                            "raw": raw,
+                            "expected_token": token,
+                        })
+                    );
+                    std::process::exit(1);
                 }
                 None => {
-                    println!("{}", json!({"ok": false, "error": "timeout"}));
-                    std::process::exit(1);
+                    println!(
+                        "{}",
+                        json!({"ok": true, "delivered": false, "error": "timeout"})
+                    );
+                    std::process::exit(0);
                 }
             }
         }
@@ -408,7 +556,8 @@ async fn main() {
                         .get("is_binary")
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false)
-                        && payload.get("hex").and_then(|v| v.as_str()) == Some(expected_hex.as_str());
+                        && payload.get("hex").and_then(|v| v.as_str())
+                            == Some(expected_hex.as_str());
                     payload["ok"] = json!(ok);
                     println!("{}", payload);
                     std::process::exit(if ok { 0 } else { 1 });
@@ -426,6 +575,77 @@ async fn main() {
             let msg = MessageBuilder::new("InteropBinary", "1.0")
                 .binary_payload(&bytes)
                 .expect("binary payload")
+                .tag("from", json!(LANG))
+                .build();
+            svc.publish(&topic, &msg).await.expect("publish");
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+        "typed-sub" => {
+            let topic = args[2].clone();
+            let expected_hex = args[3].to_lowercase();
+            let svc = provider("typedsub").await;
+            let recv = Arc::new(std::sync::Mutex::new(None));
+            let rh = recv.clone();
+            svc.subscribe(
+                &topic,
+                message_handler(move |_t, m| {
+                    let rh = rh.clone();
+                    async move {
+                        let sample = &m.body["samples"][0];
+                        let data = sample["value"]["_edgecommonsBinary"]["data"]
+                            .as_str()
+                            .and_then(|s| BASE64_STANDARD.decode(s).ok());
+                        let result = json!({
+                            "body_case": m.body_case().as_str(),
+                            "hex": data.as_ref().map(|bytes| encode_hex(bytes)),
+                            "source_ts_ms": sample["sourceTsMs"].as_u64(),
+                            "server_ts_ms": sample["serverTsMs"].as_u64(),
+                            "tag_from": m.tags.as_ref().and_then(|tags| tags.extra.get("from")).cloned()
+                        });
+                        *rh.lock().unwrap() = Some(result);
+                    }
+                }),
+                16,
+                1,
+            )
+            .await
+            .expect("subscribe");
+            println!("READY");
+            use std::io::Write;
+            let _ = std::io::stdout().flush();
+            for _ in 0..100 {
+                if recv.lock().unwrap().is_some() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            let result = recv.lock().unwrap().take();
+            match result {
+                Some(mut payload) => {
+                    let ok = payload.get("body_case").and_then(|v| v.as_str())
+                        == Some(MessageBodyCase::SouthboundSignalUpdate.as_str())
+                        && payload.get("hex").and_then(|v| v.as_str())
+                            == Some(expected_hex.as_str())
+                        && payload.get("source_ts_ms").and_then(|v| v.as_u64())
+                            == Some(1_783_360_799_900_u64)
+                        && payload.get("server_ts_ms").and_then(|v| v.as_u64())
+                            == Some(1_783_360_800_000_u64);
+                    payload["ok"] = json!(ok);
+                    println!("{}", payload);
+                    std::process::exit(if ok { 0 } else { 1 });
+                }
+                None => {
+                    println!("{}", json!({"ok": false, "error": "timeout"}));
+                    std::process::exit(1);
+                }
+            }
+        }
+        "typed-pub" => {
+            let topic = args[2].clone();
+            let bytes = decode_hex(&args[3]).expect("body hex");
+            let svc = provider("typedpub").await;
+            let msg = MessageBuilder::new("SouthboundSignalUpdate", "1.0")
+                .southbound_signal_update(typed_body(&bytes))
                 .tag("from", json!(LANG))
                 .build();
             svc.publish(&topic, &msg).await.expect("publish");

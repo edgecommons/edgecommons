@@ -8,6 +8,7 @@
 use serde_json::Value;
 
 use super::{Channel, Quality};
+use crate::messaging::message::binary_value;
 
 /// One sample: a measured `value` plus the optional quality/timestamp parts.
 ///
@@ -62,6 +63,14 @@ impl Sample {
             source_ts: Some(source_ts.into()),
             ..Default::default()
         }
+    }
+
+    /// A byte-valued sample that encodes as protobuf `EcValue.bytes_value`.
+    pub fn bytes(bytes: impl AsRef<[u8]>) -> crate::Result<Sample> {
+        Ok(Sample {
+            value: Some(binary_value(bytes)?),
+            ..Default::default()
+        })
     }
 
     /// Sets the native status code (fluent).
@@ -232,5 +241,14 @@ mod tests {
         assert_eq!(s.source_ts.as_deref(), Some("2026-07-01T11:59:59Z"));
         assert_eq!(s.quality_raw.as_deref(), Some("Good"));
         assert_eq!(s.server_ts.as_deref(), Some("2026-07-01T11:59:59.5Z"));
+    }
+
+    #[test]
+    fn byte_sample_uses_binary_marker() {
+        let s = Sample::bytes([0, 1, 2, 254, 255]).unwrap();
+        let value = s.value.expect("byte sample value");
+        assert_eq!(value["_edgecommonsBinary"]["encoding"], "base64");
+        assert_eq!(value["_edgecommonsBinary"]["length"], 5);
+        assert_eq!(value["_edgecommonsBinary"]["data"], "AAEC/v8=");
     }
 }

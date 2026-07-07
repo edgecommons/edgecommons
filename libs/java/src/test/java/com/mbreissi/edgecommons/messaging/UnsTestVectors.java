@@ -28,7 +28,6 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
@@ -594,8 +593,7 @@ final class UnsTestVectors {
             out.addProperty("topic", uns.topic(UnsClass.DATA, facade.channelToken(path)));
             out.addProperty("route", "stream:" + sink.streamName);
             out.addProperty("partitionKey", sink.partitionKey);
-            out.add("body", JsonParser.parseString(new String(sink.payload, StandardCharsets.UTF_8))
-                    .getAsJsonObject().getAsJsonObject("body"));
+            out.add("body", Message.fromBytes(sink.payload).toDict().getAsJsonObject("body"));
         }
         return out;
     }

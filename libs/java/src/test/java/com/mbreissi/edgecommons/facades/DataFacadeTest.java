@@ -4,6 +4,7 @@
  */
 package com.mbreissi.edgecommons.facades;
 
+import com.mbreissi.edgecommons.messaging.Message;
 import com.mbreissi.edgecommons.messaging.MessageIdentity;
 import com.mbreissi.edgecommons.test.MockConfigurationService;
 import com.mbreissi.edgecommons.test.MockMessagingService;
@@ -237,8 +238,7 @@ class DataFacadeTest {
         assertEquals("hot", sink.streamName);
         assertEquals("ns=2;s=Line1.Temp", sink.partitionKey, "partition key is the stable signal.id");
         assertEquals(Instant.parse(NOW).toEpochMilli(), sink.timestampMs);
-        JsonObject env = JsonParser.parseString(new String(sink.payload,
-                java.nio.charset.StandardCharsets.UTF_8)).getAsJsonObject();
+        JsonObject env = Message.fromBytes(sink.payload).toDict();
         assertEquals("ns=2;s=Line1.Temp",
                 env.getAsJsonObject("body").getAsJsonObject("signal").get("id").getAsString(),
                 "the streamed payload is the same enriched envelope the bus would carry");

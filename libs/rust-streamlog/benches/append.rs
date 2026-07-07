@@ -68,8 +68,9 @@ fn bench_append_batch(c: &mut Criterion) {
             b.iter_custom(|iters| {
                 let dir = tempfile::tempdir().unwrap();
                 let log = EmbeddedLog::open(buffer(dir.path(), FsyncPolicy::PerBatch)).unwrap();
-                let recs: Vec<Record> =
-                    (0..BATCH).map(|i| Record::new("pk", 1000 + i as u64, vec![b'x'; payload])).collect();
+                let recs: Vec<Record> = (0..BATCH)
+                    .map(|i| Record::new("pk", 1000 + i as u64, vec![b'x'; payload]))
+                    .collect();
                 let start = Instant::now();
                 for _ in 0..iters {
                     log.append_batch(&recs).unwrap();

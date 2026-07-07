@@ -6,6 +6,7 @@ watchdog>=6.0.0
 setuptools>=78.1.1
 boto3>=1.43.0
 jsonschema>=4.0.0
+protobuf>=5.29.0
 # Credentials / local vault (edgecommons.credentials): AES-256-GCM + HKDF/HMAC and a
 # cross-process advisory lock for the shared device vault.
 cryptography>=43.0.0

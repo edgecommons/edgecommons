@@ -34,6 +34,7 @@ from edgecommons.facades.quality import Quality
 from edgecommons.facades.severity import Severity
 from edgecommons.facades.signal_update import Sample
 from edgecommons.messaging.identity import HierEntry, MessageIdentity
+from edgecommons.messaging.message import Message
 from edgecommons.uns import Uns
 
 VECTORS_DIR = Path(__file__).resolve().parents[3] / "uns-test-vectors"
@@ -191,7 +192,7 @@ def test_data_vector(case):
         stream_name, partition_key, timestamp_ms, payload = stream_sink.calls[0]
         assert f"stream:{stream_name}" == route, "'" + case["name"] + "' stream name"
         assert partition_key == expected["partitionKey"], "'" + case["name"] + "' partition key"
-        env = json.loads(payload.decode("utf-8"))
+        env = Message.from_bytes(payload).to_dict()
         assert env["body"] == expected["body"], "'" + case["name"] + "' streamed body"
 
 

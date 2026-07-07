@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package edgecommons.v1;
+
+option java_multiple_files = true;
+option java_package = "com.mbreissi.edgecommons.proto.v1";
+
+import "edgecommons/v1/value.proto";
+
+message MetricUpdate {
+  string namespace = 1;
+  string metric_name = 2;
+  uint64 timestamp_ms = 3;
+  map<string, string> dimensions = 4;
+  repeated MetricValue values = 5;
+  bool large_fleet_workaround = 6;
+  EcValue emf_projection = 20;
+  map<string, EcValue> extra = 100;
+}
+
+message MetricValue {
+  string name = 1;
+  double value = 2;
+  string unit = 3;
+  uint32 storage_resolution = 4;
+}

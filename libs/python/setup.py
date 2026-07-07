@@ -29,6 +29,7 @@ REQUIRED = [
     "watchdog>=6.0.0",
     "boto3>=1.43.0",
     "jsonschema>=4.0.0",
+    "protobuf>=5.29.0",
     # Credentials / encrypted local vault subsystem (always importable, like the other subsystems).
     "cryptography>=43.0.0",
     "filelock>=3.12.0",
@@ -130,7 +131,7 @@ setup(
     extras_require=EXTRAS,
     include_package_data=True,
     # Ship the JSON config schema (loaded at runtime by the config validator).
-    package_data={"edgecommons": ["resources/*.json"]},
+    package_data={"edgecommons": ["resources/*.json", "resources/protobuf/*.desc"]},
     license="MIT",
     classifiers=[
         # Trove classifiers

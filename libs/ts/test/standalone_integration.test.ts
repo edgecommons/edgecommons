@@ -4,7 +4,9 @@ import * as os from "os";
 import * as path from "path";
 
 import { EdgeCommonsError } from "../src/errors";
+import { Message, MessageBuilder } from "../src/message";
 import { loadMessagingConfig, resolvedHost } from "../src/messaging/config";
+import { DefaultMessagingService } from "../src/messaging/service";
 import { StandaloneMqttProvider, topicMatches } from "../src/messaging/standalone-provider";
 import { Destination, Qos } from "../src/messaging/types";
 import { brokerReachable, tick } from "./_fakes";
@@ -182,6 +184,36 @@ describe("StandaloneMqttProvider against the live broker", () => {
     await tick(300);
     expect(received).toEqual(["payload-1"]);
 
+    await provider.disconnect();
+  });
+
+  it("DefaultMessagingService publishes protobuf bytes over standalone MQTT", async (ctx) => {
+    if (!up) ctx.skip();
+    const cfg = await loadMessagingConfig(
+      tmpFile(
+        JSON.stringify({
+          messaging: { local: { host: "127.0.0.1", port: 1883, clientId: `ggc-proto-${Date.now()}` } },
+        }),
+      ),
+    );
+    const provider = await StandaloneMqttProvider.connect(cfg);
+    const svc = new DefaultMessagingService(provider);
+    const topic = `ggc/protobuf/${Math.random().toString(36).slice(2)}`;
+    const received: Buffer[] = [];
+    const sub = await provider.subscribeRaw(topic, Destination.Local, Qos.AtLeastOnce, (_t, payload) => {
+      received.push(payload);
+    });
+
+    await svc.publish(topic, MessageBuilder.create("evt", "1.0").withPayload({ n: 7 }).build());
+    for (let i = 0; i < 40 && received.length === 0; i++) await tick(50);
+
+    expect(received).toHaveLength(1);
+    expect(received[0][0]).not.toBe("{".charCodeAt(0));
+    const parsed = Message.fromBytes(received[0]);
+    expect(parsed.header.name).toBe("evt");
+    expect(parsed.getBody()).toEqual({ n: 7 });
+
+    await sub.unsubscribe();
     await provider.disconnect();
   });
 

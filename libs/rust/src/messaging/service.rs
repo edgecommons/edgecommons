@@ -168,12 +168,8 @@ pub(crate) trait ReservedMessaging: Send + Sync {
     async fn publish_reserved(&self, topic: &str, msg: &Message) -> Result<()>;
 
     /// Publish a message to a reserved topic on the northbound transport, without the guard.
-    async fn publish_reserved_northbound(
-        &self,
-        topic: &str,
-        msg: &Message,
-        qos: Qos,
-    ) -> Result<()>;
+    async fn publish_reserved_northbound(&self, topic: &str, msg: &Message, qos: Qos)
+    -> Result<()>;
 }
 
 /// Transport-agnostic messaging operations over [`Message`]s, with explicit local /
@@ -692,7 +688,8 @@ impl MessagingService for DefaultMessagingService {
     }
 
     async fn unsubscribe_northbound(&self, filter: &str) -> Result<()> {
-        self.stop_subscription(filter, Destination::Northbound).await
+        self.stop_subscription(filter, Destination::Northbound)
+            .await
     }
 
     async fn request(&self, topic: &str, msg: Message) -> Result<ReplyFuture> {
@@ -700,8 +697,7 @@ impl MessagingService for DefaultMessagingService {
     }
 
     async fn request_northbound(&self, topic: &str, msg: Message) -> Result<ReplyFuture> {
-        self.request_northbound_with_timeout(topic, msg, None)
-            .await
+        self.request_northbound_with_timeout(topic, msg, None).await
     }
 
     async fn request_with_timeout(
@@ -747,7 +743,8 @@ impl MessagingService for DefaultMessagingService {
 
     async fn reply_northbound(&self, request: &Message, reply: Message) -> Result<()> {
         self.check_reserved(request.header.reply_to.as_deref())?;
-        self.send_reply(request, reply, Destination::Northbound).await
+        self.send_reply(request, reply, Destination::Northbound)
+            .await
     }
 
     fn cancel_request(&self, reply_future: ReplyFuture) {
@@ -840,6 +837,11 @@ mod tests {
             let tx = guard.as_ref().expect("subscribe was called first");
             let _ = tx.try_send((topic.to_string(), msg.to_vec().unwrap()));
         }
+        fn push_bytes(&self, topic: &str, bytes: Vec<u8>) {
+            let guard = self.sender.lock().unwrap();
+            let tx = guard.as_ref().expect("subscribe was called first");
+            let _ = tx.try_send((topic.to_string(), bytes));
+        }
     }
 
     #[async_trait]
@@ -913,6 +915,56 @@ mod tests {
         provider.push("t", &msg(2));
         wait_for(&count, 2).await;
         assert_eq!(count.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn publish_payload_is_edgecommons_protobuf() {
+        let provider = Arc::new(FakeProvider::new());
+        let svc = DefaultMessagingService::new(provider.clone());
+        let msg = msg(7);
+
+        svc.publish("t", &msg).await.unwrap();
+
+        let published = provider.published.lock().unwrap();
+        let payload = &published[0].1;
+        assert_ne!(payload.first(), Some(&b'{'), "wire payload is not JSON");
+        let decoded = Message::from_slice(payload).expect("payload is EdgeCommons protobuf");
+        assert_eq!(decoded.header.name, "T");
+        assert_eq!(decoded.body, json!(7));
+    }
+
+    #[tokio::test]
+    async fn raw_or_foreign_payload_is_not_delivered_to_message_handler() {
+        let provider = Arc::new(FakeProvider::new());
+        let svc = DefaultMessagingService::new(provider.clone());
+
+        let count = Arc::new(AtomicUsize::new(0));
+        let count_h = count.clone();
+        svc.subscribe(
+            "t",
+            message_handler(move |_t, _m| {
+                let count_h = count_h.clone();
+                async move {
+                    count_h.fetch_add(1, Ordering::SeqCst);
+                }
+            }),
+            16,
+            1,
+        )
+        .await
+        .unwrap();
+
+        provider.push_bytes("t", serde_json::to_vec(&json!({ "raw": true })).unwrap());
+        provider.push_bytes("t", b"not protobuf".to_vec());
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(
+            count.load(Ordering::SeqCst),
+            0,
+            "raw/foreign payloads are logged and dropped"
+        );
+
+        provider.push("t", &msg(1));
+        wait_for(&count, 1).await;
     }
 
     #[tokio::test]

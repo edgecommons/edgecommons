@@ -1,5 +1,4 @@
-"""Tests for the Message/MessageHeader/MessageTags dataclasses: serialization is
-byte-for-byte unchanged and the computed-default behavior is preserved."""
+"""Tests for the Message/MessageHeader/MessageTags dataclasses."""
 import json
 
 from edgecommons.messaging.message import Message, MessageHeader, MessageTags
@@ -16,7 +15,7 @@ def test_header_computed_defaults_and_explicit_values():
 def test_header_to_dict_and_roundtrip():
     h = MessageHeader("N", "1.0", correlation_id="cid", timestamp="ts", uuid="u", reply_to="r")
     assert h.to_dict() == {
-        "name": "N", "version": "1.0", "timestamp": "ts", "uuid": "u",
+        "name": "N", "version": "1.0", "timestamp": "ts", "timestamp_ms": 0, "uuid": "u",
         "correlation_id": "cid", "reply_to": "r",
     }
     assert MessageHeader.from_dict(h.to_dict()) == h  # dataclass __eq__

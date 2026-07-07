@@ -18,7 +18,6 @@ import com.google.gson.JsonObject;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Objects;
@@ -349,7 +348,7 @@ public final class DataFacade {
             return;
         }
         try {
-            byte[] payload = msg.toDict().toString().getBytes(StandardCharsets.UTF_8);
+            byte[] payload = msg.toBytes();
             streamSink.append(streamName, partitionKey, tsMillis, payload);
         } catch (Exception e) {
             LOGGER.warn("Stream append to 'stream:{}' failed (local readiness unaffected): {}",
@@ -409,6 +408,9 @@ public final class DataFacade {
     private static JsonElement toJsonElement(Object value) {
         if (value instanceof JsonElement element) {
             return element;
+        }
+        if (value instanceof byte[] bytes) {
+            return Message.binaryBodyMarker(bytes);
         }
         return GSON.toJsonTree(value);
     }

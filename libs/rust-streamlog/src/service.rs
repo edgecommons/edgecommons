@@ -158,32 +158,48 @@ pub fn default_sink_factory_pub_py(sink: &SinkConfig) -> Result<Option<Box<dyn S
 #[allow(unused_variables)]
 fn default_sink_factory(name: &str, sink: &SinkConfig) -> Result<Option<Box<dyn Sink>>> {
     match sink {
-        SinkConfig::Kinesis { stream_name, region, endpoint_url } => {
+        SinkConfig::Kinesis {
+            stream_name,
+            region,
+            endpoint_url,
+            payload_format,
+        } => {
             #[cfg(feature = "kinesis")]
             {
-                let s = crate::KinesisSink::new(
+                let s = crate::KinesisSink::new_with_payload_format(
                     stream_name.clone(),
                     region.clone(),
                     endpoint_url.clone(),
+                    *payload_format,
                 )
                 .map_err(|e| crate::error::EdgeStreamError::Sink(e.to_string()))?;
                 Ok(Some(Box::new(s)))
             }
             #[cfg(not(feature = "kinesis"))]
             {
-                let _ = (stream_name, region, endpoint_url);
+                let _ = (stream_name, region, endpoint_url, payload_format);
                 Ok(None)
             }
         }
-        SinkConfig::Kafka { bootstrap_servers, topic, properties } => {
+        SinkConfig::Kafka {
+            bootstrap_servers,
+            topic,
+            properties,
+            payload_format,
+        } => {
             #[cfg(feature = "kafka")]
             {
-                let s = crate::KafkaSink::new(bootstrap_servers, topic, properties)?;
+                let s = crate::KafkaSink::new_with_payload_format(
+                    bootstrap_servers,
+                    topic,
+                    properties,
+                    *payload_format,
+                )?;
                 Ok(Some(Box::new(s)))
             }
             #[cfg(not(feature = "kafka"))]
             {
-                let _ = (bootstrap_servers, topic, properties);
+                let _ = (bootstrap_servers, topic, properties, payload_format);
                 Ok(None)
             }
         }
@@ -225,6 +241,7 @@ mod tests {
                     stream_name: "s".into(),
                     region: None,
                     endpoint_url: None,
+                    payload_format: Default::default(),
                 },
                 buffer: BufferConfig {
                     path: dir.join("telemetry").to_string_lossy().into_owned(),
@@ -234,7 +251,10 @@ mod tests {
                     ..Default::default()
                 },
                 batch: Default::default(),
-                delivery: crate::config::DeliveryConfig { poll_interval_ms: 5, ..Default::default() },
+                delivery: crate::config::DeliveryConfig {
+                    poll_interval_ms: 5,
+                    ..Default::default()
+                },
             }],
         }
     }
@@ -249,7 +269,8 @@ mod tests {
         assert_eq!(svc.stream_names(), vec!["telemetry"]);
         let log = svc.stream("telemetry").unwrap();
         for i in 0..100u64 {
-            log.append(&Record::new("pk", 1000 + i, format!("v{i}").as_bytes())).unwrap();
+            log.append(&Record::new("pk", 1000 + i, format!("v{i}").as_bytes()))
+                .unwrap();
         }
         // Wait for the engine to drain.
         let start = std::time::Instant::now();
@@ -295,7 +316,8 @@ mod tests {
         let svc = StreamService::open_with(c, &factory).unwrap();
         let log = svc.stream("telemetry").unwrap();
         for i in 0..50u64 {
-            log.append(&Record::new("ns", 1000 + i, format!("v{i}").as_bytes())).unwrap();
+            log.append(&Record::new("ns", 1000 + i, format!("v{i}").as_bytes()))
+                .unwrap();
         }
         let start = std::time::Instant::now();
         while svc.stats("telemetry").unwrap().exported_total < 50 {
@@ -327,8 +349,7 @@ mod tests {
     #[test]
     fn buffer_only_without_sink() {
         let dir = tempfile::tempdir().unwrap();
-        let factory =
-            |_n: &str, _s: &SinkConfig| -> Result<Option<Box<dyn Sink>>> { Ok(None) };
+        let factory = |_n: &str, _s: &SinkConfig| -> Result<Option<Box<dyn Sink>>> { Ok(None) };
         let svc = StreamService::open_with(cfg(dir.path()), &factory).unwrap();
         let log = svc.stream("telemetry").unwrap();
         log.append(&Record::new("k", 1, b"x")).unwrap();
@@ -344,7 +365,12 @@ mod tests {
         StreamingConfig {
             streams: vec![crate::config::StreamConfig {
                 name: "mem".into(),
-                sink: SinkConfig::Kinesis { stream_name: "s".into(), region: None, endpoint_url: None },
+                sink: SinkConfig::Kinesis {
+                    stream_name: "s".into(),
+                    region: None,
+                    endpoint_url: None,
+                    payload_format: Default::default(),
+                },
                 buffer: BufferConfig {
                     store_type: crate::config::StoreType::Memory,
                     path: String::new(), // no disk
@@ -353,7 +379,10 @@ mod tests {
                     ..Default::default()
                 },
                 batch: Default::default(),
-                delivery: crate::config::DeliveryConfig { poll_interval_ms: poll_ms, ..Default::default() },
+                delivery: crate::config::DeliveryConfig {
+                    poll_interval_ms: poll_ms,
+                    ..Default::default()
+                },
             }],
         }
     }
@@ -363,7 +392,8 @@ mod tests {
         let factory = |_n: &str, _s: &SinkConfig| -> Result<Option<Box<dyn Sink>>> {
             Ok(Some(Box::new(FakeSink::new())))
         };
-        let svc = StreamService::open_with(mem_cfg(1 << 20, OnFull::DropOldest, 5), &factory).unwrap();
+        let svc =
+            StreamService::open_with(mem_cfg(1 << 20, OnFull::DropOldest, 5), &factory).unwrap();
         for i in 0..50u64 {
             svc.stream("mem")
                 .unwrap()
@@ -386,14 +416,22 @@ mod tests {
     fn memory_buffer_drops_oldest_over_budget() {
         // No sink => nothing drains; a tiny in-memory budget forces DropOldest, bounding RAM.
         let factory = |_n: &str, _s: &SinkConfig| -> Result<Option<Box<dyn Sink>>> { Ok(None) };
-        let svc = StreamService::open_with(mem_cfg(512, OnFull::DropOldest, 1000), &factory).unwrap();
+        let svc =
+            StreamService::open_with(mem_cfg(512, OnFull::DropOldest, 1000), &factory).unwrap();
         let log = svc.stream("mem").unwrap();
         for i in 0..1000u64 {
             log.append(&Record::new("pk", i, [b'x'; 64])).unwrap();
         }
         let s = svc.stats("mem").unwrap();
         assert_eq!(s.appended_total, 1000);
-        assert!(s.dropped_total > 0, "a tiny budget must drop the oldest records");
-        assert!(s.disk_bytes <= 512, "in-memory bytes must stay within the budget, got {}", s.disk_bytes);
+        assert!(
+            s.dropped_total > 0,
+            "a tiny budget must drop the oldest records"
+        );
+        assert!(
+            s.disk_bytes <= 512,
+            "in-memory bytes must stay within the budget, got {}",
+            s.disk_bytes
+        );
     }
 }

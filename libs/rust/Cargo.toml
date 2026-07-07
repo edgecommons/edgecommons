@@ -6,6 +6,7 @@ rust-version = "1.85"
 license = "Apache-2.0"
 description = "Greengrass Commons — Rust library for building AWS IoT Greengrass v2 components"
 readme = "README.md"
+exclude = [".pytest_cache/**"]
 
 # Coexists with the Java (canonical) and Python implementations; tracks the same
 # config schema and CLI contract. See ../EDGECOMMONS_RUST_PORT.md for the full plan.
@@ -84,6 +85,7 @@ time = { version = "0.3", features = ["formatting", "parsing"] }
 # §9.3/§9.4). Already a transitive dependency (rumqttc et al.); pinned direct here since the
 # listener is core plumbing, not feature-gated.
 rand = "0.8"
+prost = "0.13"
 
 # STANDALONE-only. Pure-Rust async MQTT — no C toolchain, clean ARM/musl cross-compile.
 rumqttc = { version = "0.25", optional = true }
@@ -150,3 +152,7 @@ anyhow = "1"
 tracing-appender = "0.2"
 # Temp dirs for streaming tests (RAII cleanup).
 tempfile = "3"
+
+[build-dependencies]
+prost-build = "0.13"
+protoc-bin-vendored = "3"

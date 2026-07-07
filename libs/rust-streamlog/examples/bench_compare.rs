@@ -93,14 +93,23 @@ fn main() {
         eprintln!("bench_compare: --current <file> is required");
         std::process::exit(2);
     });
-    let threshold: f64 = a.get("threshold").and_then(|s| s.parse().ok()).unwrap_or(0.10);
+    let threshold: f64 = a
+        .get("threshold")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0.10);
 
     let base = load(&baseline_path);
     let cur = load(&current_path);
 
     // Sanity: same target + scenario (a different config makes the comparison meaningless).
-    let bt = base.get("target_name").and_then(Value::as_str).unwrap_or("?");
-    let ct = cur.get("target_name").and_then(Value::as_str).unwrap_or("?");
+    let bt = base
+        .get("target_name")
+        .and_then(Value::as_str)
+        .unwrap_or("?");
+    let ct = cur
+        .get("target_name")
+        .and_then(Value::as_str)
+        .unwrap_or("?");
     let bs = base.get("scenario").and_then(Value::as_str).unwrap_or("?");
     let cs = cur.get("scenario").and_then(Value::as_str).unwrap_or("?");
     if bt != ct || bs != cs {
@@ -116,7 +125,10 @@ fn main() {
         cur.get("git_sha").and_then(Value::as_str).unwrap_or("?"),
         threshold * 100.0
     );
-    println!("{:<22} {:>14} {:>14} {:>9}  status", "metric", "baseline", "current", "delta");
+    println!(
+        "{:<22} {:>14} {:>14} {:>9}  status",
+        "metric", "baseline", "current", "delta"
+    );
 
     let mut regressions = 0;
     for &metric in COMPARED {
@@ -138,12 +150,21 @@ fn main() {
         } else {
             "ok"
         };
-        println!("{metric:<22} {b:>14.2} {c:>14.2} {:>8.1}%  {status}", pct * 100.0);
+        println!(
+            "{metric:<22} {b:>14.2} {c:>14.2} {:>8.1}%  {status}",
+            pct * 100.0
+        );
     }
 
     if regressions > 0 {
-        eprintln!("\nbench_compare: {regressions} metric(s) regressed > {:.0}%", threshold * 100.0);
+        eprintln!(
+            "\nbench_compare: {regressions} metric(s) regressed > {:.0}%",
+            threshold * 100.0
+        );
         std::process::exit(1);
     }
-    println!("\nbench_compare: no regressions > {:.0}%", threshold * 100.0);
+    println!(
+        "\nbench_compare: no regressions > {:.0}%",
+        threshold * 100.0
+    );
 }

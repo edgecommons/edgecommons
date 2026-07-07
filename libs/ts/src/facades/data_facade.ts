@@ -283,7 +283,7 @@ export class DataFacade {
       return;
     }
     try {
-      const payload = Buffer.from(JSON.stringify(msg.toObject()), "utf8");
+      const payload = msg.toBytes();
       this.streamSink(streamName, partitionKey, tsMillis, payload);
     } catch (e) {
       logger.warn(`Stream append to 'stream:${streamName}' failed (local readiness unaffected): ${errMsg(e)}`);
@@ -308,7 +308,7 @@ export class DataFacade {
     return MessageBuilder.create(DATA_MESSAGE_NAME, DATA_MESSAGE_VERSION)
       .withConfig(this.configProvider())
       .withInstance(this.instanceId)
-      .withPayload(body)
+      .withSouthboundSignalUpdate(body)
       .build();
   }
 }

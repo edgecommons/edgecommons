@@ -33,6 +33,7 @@ UNS roles (M14 — UNS-CANONICAL-DESIGN §7):
 """
 import json
 import os
+import base64
 import sys
 import tempfile
 import threading
@@ -40,6 +41,7 @@ import time
 
 from edgecommons.messaging.messaging_config import MessagingConfiguration
 from edgecommons.messaging.providers.standalone_provider import StandaloneProvider
+from edgecommons.messaging.message import _binary_marker
 from edgecommons.messaging.message_builder import MessageBuilder
 from edgecommons.messaging.identity import MessageIdentity
 from edgecommons.uns import Uns, UnsClass
@@ -140,6 +142,7 @@ def run_raw_sub(topic, token):
     got = __import__("threading").Event()
 
     def handler(_t, m):
+        state["body"] = m.get_body()
         state["raw"] = m.get_raw()
         got.set()
 
@@ -147,14 +150,16 @@ def run_raw_sub(topic, token):
     print("READY", flush=True)
     try:
         if not got.wait(10):
-            print(json.dumps({"ok": False, "error": "timeout"}), flush=True)
-            return 1
-        raw = state["raw"]
-        is_raw = raw is not None
-        raw_token = raw.get("token") if isinstance(raw, dict) else None
-        ok = is_raw and raw_token == token
-        print(json.dumps({"ok": bool(ok), "is_raw": is_raw, "raw_token": raw_token}), flush=True)
-        return 0 if ok else 1
+            print(json.dumps({"ok": True, "delivered": False, "error": "timeout"}), flush=True)
+            return 0
+        print(json.dumps({
+            "ok": False,
+            "delivered": True,
+            "raw": state.get("raw"),
+            "body": state.get("body"),
+            "expected_token": token,
+        }), flush=True)
+        return 1
     finally:
         prov.disconnect()
 
@@ -216,8 +221,81 @@ def run_binary_pub(topic, body_hex):
         prov.disconnect()
 
 
+def _typed_body(body_hex):
+    return {
+        "signal": {"id": "camera-1/roi-17/thumbnail", "name": "Thumbnail"},
+        "samples": [{
+            "value": _binary_marker(bytes.fromhex(body_hex)),
+            "quality": "GOOD",
+            "sourceTsMs": 1783360799900,
+            "serverTsMs": 1783360800000,
+        }],
+    }
+
+
+def run_typed_sub(topic, expected_hex):
+    prov = _provider("typedsub")
+    state = {}
+    got = threading.Event()
+
+    def handler(_t, m):
+        try:
+            body = m.get_body()
+            marker = body["samples"][0]["value"]["_edgecommonsBinary"]
+            data = base64.b64decode(marker["data"])
+            state["result"] = {
+                "body_case": m.get_body_case().name,
+                "hex": data.hex(),
+                "source_ts_ms": body["samples"][0].get("sourceTsMs"),
+                "server_ts_ms": body["samples"][0].get("serverTsMs"),
+                "tag_from": m.get_tags().to_dict().get("from") if m.get_tags() else None,
+            }
+        except Exception as exc:  # pragma: no cover - exercised by subprocess harness
+            state["result"] = {"body_case": None, "hex": None, "error": str(exc)}
+        got.set()
+
+    prov.subscribe(topic, handler)
+    print("READY", flush=True)
+    try:
+        if not got.wait(10):
+            print(json.dumps({"ok": False, "error": "timeout"}), flush=True)
+            return 1
+        result = state["result"]
+        ok = (
+            result["body_case"] == "SOUTHBOUND_SIGNAL_UPDATE"
+            and result["hex"] == expected_hex.lower()
+            and result["source_ts_ms"] == 1783360799900
+            and result["server_ts_ms"] == 1783360800000
+        )
+        result["ok"] = bool(ok)
+        print(json.dumps(result), flush=True)
+        return 0 if ok else 1
+    finally:
+        prov.disconnect()
+
+
+def run_typed_pub(topic, body_hex):
+    prov = _provider("typedpub")
+    try:
+        msg = (
+            MessageBuilder.create("SouthboundSignalUpdate", "1.0")
+            .with_southbound_signal_update(_typed_body(body_hex))
+            .with_tags({"from": LANG})
+            .build()
+        )
+        prov.publish(topic, msg)
+        time.sleep(0.5)
+        return 0
+    finally:
+        prov.disconnect()
+
+
 def _gg_topic(run_id, publisher, subscriber):
     return f"edgecommons/interop/binary/{run_id}/{publisher}/{subscriber}"
+
+
+def _gg_typed_topic(run_id, publisher, subscriber):
+    return f"edgecommons/interop/typed/{run_id}/{publisher}/{subscriber}"
 
 
 def _publisher_from_gg_topic(topic):
@@ -259,12 +337,20 @@ def run_gg_binary_matrix(run_id, langs_csv, expected_hex):
     wait_secs = float(os.environ.get("EDGECOMMONS_GG_WAIT_SECS", "35"))
     prov = GreengrassIpcProvider(receive_own_messages=True)
     received = {}
+    received_typed = {}
     errors = {}
     lock = threading.Lock()
     done = threading.Event()
 
-    def handler(topic, m):
-        publisher = _publisher_from_gg_topic(topic)
+    def maybe_done():
+        if (
+            set(received) >= set(expected_langs)
+            and set(received_typed) >= set(expected_langs)
+        ):
+            done.set()
+
+    def binary_handler(topic, m):
+        publisher = _publisher_from_gg_topic(topic) or "unknown"
         try:
             is_binary = m.is_binary_body()
             data = m.get_binary_body() if is_binary else None
@@ -276,15 +362,51 @@ def run_gg_binary_matrix(run_id, langs_csv, expected_hex):
                     "hex": hex_value,
                     "ok": ok,
                 }
-                if set(received) >= set(expected_langs):
-                    done.set()
+                maybe_done()
         except Exception as exc:  # pragma: no cover - exercised on device
             with lock:
-                errors[publisher or "unknown"] = str(exc)
+                errors[f"{publisher}:binary"] = str(exc)
                 received[publisher] = {"is_binary": False, "hex": None, "ok": False}
+                maybe_done()
+
+    def typed_handler(topic, m):
+        publisher = _publisher_from_gg_topic(topic) or "unknown"
+        try:
+            body = m.get_body()
+            sample = body["samples"][0]
+            marker = sample["value"]["_edgecommonsBinary"]
+            data = base64.b64decode(marker["data"])
+            tag_from = m.get_tags().to_dict().get("from") if m.get_tags() else None
+            body_case = m.get_body_case().name
+            item = {
+                "body_case": body_case,
+                "hex": data.hex(),
+                "source_ts_ms": sample.get("sourceTsMs"),
+                "server_ts_ms": sample.get("serverTsMs"),
+                "tag_from": tag_from,
+            }
+            item["ok"] = (
+                body_case == "SOUTHBOUND_SIGNAL_UPDATE"
+                and data == expected_bytes
+                and item["source_ts_ms"] == 1783360799900
+                and item["server_ts_ms"] == 1783360800000
+                and tag_from == publisher
+            )
+            with lock:
+                received_typed[publisher] = item
+                maybe_done()
+        except Exception as exc:  # pragma: no cover - exercised on device
+            with lock:
+                errors[f"{publisher}:typed"] = str(exc)
+                received_typed[publisher] = {
+                    "body_case": None, "hex": None, "ok": False,
+                }
+                maybe_done()
 
     topic_filter = _gg_topic(run_id, "+", LANG)
-    prov.subscribe(topic_filter, handler, max_concurrency=1, max_messages=64)
+    typed_topic_filter = _gg_typed_topic(run_id, "+", LANG)
+    prov.subscribe(topic_filter, binary_handler, max_concurrency=1, max_messages=64)
+    prov.subscribe(typed_topic_filter, typed_handler, max_concurrency=1, max_messages=64)
     print("READY", flush=True)
     with open(_gg_ready_path(run_id, ready_lang), "w", encoding="utf-8") as f:
         f.write(str(time.time()))
@@ -292,19 +414,31 @@ def run_gg_binary_matrix(run_id, langs_csv, expected_hex):
         ready_missing = _gg_wait_for_ready(run_id, ready_langs)
         time.sleep(subscribe_delay)
         if not ready_missing:
-            msg = (
+            binary_msg = (
                 MessageBuilder.create("InteropBinary", "1.0")
                 .with_payload(expected_bytes)
                 .with_tags({"from": LANG})
                 .build()
             )
+            typed_msg = (
+                MessageBuilder.create("SouthboundSignalUpdate", "1.0")
+                .with_southbound_signal_update(_typed_body(expected_hex))
+                .with_tags({"from": LANG})
+                .build()
+            )
             for target in expected_langs:
-                prov.publish(_gg_topic(run_id, LANG, target), msg)
+                prov.publish(_gg_topic(run_id, LANG, target), binary_msg)
+                prov.publish(_gg_typed_topic(run_id, LANG, target), typed_msg)
         done.wait(wait_secs)
         with lock:
             missing = [lang for lang in expected_langs if lang not in received]
+            missing_typed = [
+                lang for lang in expected_langs if lang not in received_typed
+            ]
             ok = not ready_missing and not missing and not errors and all(
                 received.get(lang, {}).get("ok") for lang in expected_langs
+            ) and not missing_typed and all(
+                received_typed.get(lang, {}).get("ok") for lang in expected_langs
             )
             result = {
                 "ok": bool(ok),
@@ -313,7 +447,9 @@ def run_gg_binary_matrix(run_id, langs_csv, expected_hex):
                 "expected_hex": expected_hex.lower(),
                 "ready_missing": ready_missing,
                 "received": received,
+                "received_typed": received_typed,
                 "missing": missing,
+                "missing_typed": missing_typed,
                 "errors": errors,
             }
         result_path = f"/tmp/edgecommons_gg_ipc_binary_{LANG}_{run_id}.json"
@@ -322,7 +458,7 @@ def run_gg_binary_matrix(run_id, langs_csv, expected_hex):
         print(json.dumps(result, sort_keys=True), flush=True)
         return 0 if ok else 1
     finally:
-        pass
+        prov.disconnect()
 
 
 def run_uns_pub(identity_json, cls_token, channel=None):
@@ -418,6 +554,10 @@ if __name__ == "__main__":
         sys.exit(run_binary_sub(sys.argv[2], sys.argv[3]))
     elif role == "binary-pub":
         sys.exit(run_binary_pub(sys.argv[2], sys.argv[3]))
+    elif role == "typed-sub":
+        sys.exit(run_typed_sub(sys.argv[2], sys.argv[3]))
+    elif role == "typed-pub":
+        sys.exit(run_typed_pub(sys.argv[2], sys.argv[3]))
     elif role == "gg-binary-matrix":
         sys.exit(run_gg_binary_matrix(sys.argv[2], sys.argv[3], sys.argv[4]))
     elif role == "uns-pub":

@@ -4,7 +4,9 @@ import com.mbreissi.edgecommons.messaging.MessageIdentity;
 import com.mbreissi.edgecommons.messaging.MessagingClient;
 import com.mbreissi.edgecommons.messaging.MessagingConfiguration;
 import com.mbreissi.edgecommons.messaging.MessagingProvider;
+import com.mbreissi.edgecommons.messaging.MessageTags;
 import com.mbreissi.edgecommons.messaging.ReservedTopicException;
+import com.mbreissi.edgecommons.messaging.proto.MessageBodyCase;
 import com.mbreissi.edgecommons.messaging.providers.greengrass.GreengrassMessagingProvider;
 import com.mbreissi.edgecommons.messaging.providers.standalone.StandaloneMessagingProvider;
 import com.mbreissi.edgecommons.uns.Uns;
@@ -15,6 +17,7 @@ import com.google.gson.JsonObject;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.Base64;
 import java.util.HexFormat;
 import java.util.Map;
 import java.nio.file.Files;
@@ -63,6 +66,27 @@ public class InteropNode {
 
     static String ggTopic(String runId, String publisher, String subscriber) {
         return "edgecommons/interop/binary/" + runId + "/" + publisher + "/" + subscriber;
+    }
+
+    static String ggTypedTopic(String runId, String publisher, String subscriber) {
+        return "edgecommons/interop/typed/" + runId + "/" + publisher + "/" + subscriber;
+    }
+
+    static JsonObject typedBody(byte[] bytes) {
+        JsonObject body = new JsonObject();
+        JsonObject signal = new JsonObject();
+        signal.addProperty("id", "camera-1/roi-17/thumbnail");
+        signal.addProperty("name", "Thumbnail");
+        body.add("signal", signal);
+        com.google.gson.JsonArray samples = new com.google.gson.JsonArray();
+        JsonObject sample = new JsonObject();
+        sample.add("value", Message.binaryBodyMarker(bytes));
+        sample.addProperty("quality", "GOOD");
+        sample.addProperty("sourceTsMs", 1783360799900L);
+        sample.addProperty("serverTsMs", 1783360800000L);
+        samples.add(sample);
+        body.add("samples", samples);
+        return body;
     }
 
     static String publisherFromGgTopic(String topic) {
@@ -190,27 +214,20 @@ public class InteropNode {
             System.out.flush();
             JsonObject out = new JsonObject();
             if (!latch.await(10, TimeUnit.SECONDS)) {
-                out.addProperty("ok", false);
+                out.addProperty("ok", true);
+                out.addProperty("delivered", false);
                 out.addProperty("error", "timeout");
                 System.out.println(out);
-                System.exit(1);
+                System.exit(0);
             }
-            Object raw = box[0].getRaw();
-            boolean isRaw = raw != null;
-            String rawToken = null;
-            JsonElement rawEl = isRaw ? asElement(raw) : null;
-            if (rawEl != null && rawEl.isJsonObject() && rawEl.getAsJsonObject().has("token")) {
-                rawToken = rawEl.getAsJsonObject().get("token").getAsString();
-            }
-            boolean ok = isRaw && token.equals(rawToken);
-            out.addProperty("ok", ok);
-            out.addProperty("is_raw", isRaw);
-            if (rawToken != null) {
-                out.addProperty("raw_token", rawToken);
-            }
+            out.addProperty("ok", false);
+            out.addProperty("delivered", true);
+            out.add("raw", asElement(box[0].getRaw()));
+            out.add("body", asElement(box[0].getBody()));
+            out.addProperty("expected_token", token);
             System.out.println(out);
             prov.close();
-            System.exit(ok ? 0 : 1);
+            System.exit(1);
         } else if (role.equals("raw-pub")) {
             String topic = args[1];
             String token = args[2];
@@ -275,6 +292,65 @@ public class InteropNode {
             prov.publish(topic, msg);
             Thread.sleep(500);
             prov.close();
+        } else if (role.equals("typed-sub")) {
+            String topic = args[1];
+            String expectedHex = args[2].toLowerCase(java.util.Locale.ROOT);
+            StandaloneMessagingProvider prov = provider("typedsub");
+            final CountDownLatch latch = new CountDownLatch(1);
+            final JsonObject[] result = new JsonObject[1];
+            prov.subscribe(topic, (t, m) -> {
+                JsonObject out = new JsonObject();
+                try {
+                    JsonObject body = (JsonObject) m.getBody();
+                    JsonObject sample = body.getAsJsonArray("samples").get(0).getAsJsonObject();
+                    String data = sample.getAsJsonObject("value")
+                            .getAsJsonObject("_edgecommonsBinary")
+                            .get("data").getAsString();
+                    byte[] sampleBytes = Base64.getDecoder().decode(data);
+                    out.addProperty("body_case", m.getBodyCase().name());
+                    out.addProperty("hex", HexFormat.of().formatHex(sampleBytes));
+                    out.addProperty("source_ts_ms", sample.get("sourceTsMs").getAsLong());
+                    out.addProperty("server_ts_ms", sample.get("serverTsMs").getAsLong());
+                    if (m.getTags() != null && m.getTags().toDict().containsKey("from")) {
+                        out.addProperty("tag_from", m.getTags().toDict().get("from").getAsString());
+                    }
+                } catch (Exception e) {
+                    out.addProperty("error", e.toString());
+                }
+                result[0] = out;
+                latch.countDown();
+            }, 1);
+            System.out.println("READY");
+            System.out.flush();
+            if (!latch.await(10, TimeUnit.SECONDS)) {
+                JsonObject out = new JsonObject();
+                out.addProperty("ok", false);
+                out.addProperty("error", "timeout");
+                System.out.println(out);
+                System.exit(1);
+            }
+            JsonObject out = result[0];
+            boolean ok = MessageBodyCase.SOUTHBOUND_SIGNAL_UPDATE.name().equals(out.get("body_case").getAsString())
+                    && expectedHex.equals(out.get("hex").getAsString())
+                    && out.get("source_ts_ms").getAsLong() == 1783360799900L
+                    && out.get("server_ts_ms").getAsLong() == 1783360800000L;
+            out.addProperty("ok", ok);
+            System.out.println(out);
+            prov.close();
+            System.exit(ok ? 0 : 1);
+        } else if (role.equals("typed-pub")) {
+            String topic = args[1];
+            byte[] bytes = HexFormat.of().parseHex(args[2]);
+            StandaloneMessagingProvider prov = provider("typedpub");
+            JsonObject tags = new JsonObject();
+            tags.addProperty("from", LANG);
+            Message msg = MessageBuilder.create("SouthboundSignalUpdate", "1.0")
+                    .withSouthboundSignalUpdate(typedBody(bytes))
+                    .withTags(MessageTags.fromDict(tags))
+                    .build();
+            prov.publish(topic, msg);
+            Thread.sleep(500);
+            prov.close();
         } else if (role.equals("gg-binary-matrix")) {
             String runId = args[1];
             String[] expectedLangs = args[2].split(",");
@@ -288,8 +364,9 @@ public class InteropNode {
                     System.getenv().getOrDefault("EDGECOMMONS_GG_WAIT_SECS", "35")) * 1000);
             MessagingProvider prov = new GreengrassMessagingProvider(true);
             java.util.concurrent.ConcurrentHashMap<String, JsonObject> received = new java.util.concurrent.ConcurrentHashMap<>();
+            java.util.concurrent.ConcurrentHashMap<String, JsonObject> receivedTyped = new java.util.concurrent.ConcurrentHashMap<>();
             java.util.concurrent.ConcurrentHashMap<String, String> errors = new java.util.concurrent.ConcurrentHashMap<>();
-            CountDownLatch latch = new CountDownLatch(expectedLangs.length);
+            CountDownLatch latch = new CountDownLatch(expectedLangs.length * 2);
             prov.subscribe(ggTopic(runId, "+", LANG), (topic, m) -> {
                 String publisher = publisherFromGgTopic(topic);
                 if (publisher == null) publisher = "unknown";
@@ -306,12 +383,53 @@ public class InteropNode {
                         latch.countDown();
                     }
                 } catch (Exception e) {
-                    errors.put(publisher == null ? "unknown" : publisher, e.toString());
+                    errors.put(publisher + ":binary", e.toString());
                     JsonObject item = new JsonObject();
                     item.addProperty("is_binary", false);
                     item.addProperty("ok", false);
-                    received.put(publisher, item);
-                    latch.countDown();
+                    if (received.putIfAbsent(publisher, item) == null) {
+                        latch.countDown();
+                    }
+                }
+            }, 1, 64);
+            prov.subscribe(ggTypedTopic(runId, "+", LANG), (topic, m) -> {
+                String publisher = publisherFromGgTopic(topic);
+                if (publisher == null) publisher = "unknown";
+                try {
+                    JsonObject body = (JsonObject) m.getBody();
+                    JsonObject sample = body.getAsJsonArray("samples").get(0).getAsJsonObject();
+                    String data = sample.getAsJsonObject("value")
+                            .getAsJsonObject("_edgecommonsBinary")
+                            .get("data").getAsString();
+                    byte[] sampleBytes = Base64.getDecoder().decode(data);
+                    String tagFrom = null;
+                    if (m.getTags() != null && m.getTags().toDict().containsKey("from")) {
+                        tagFrom = m.getTags().toDict().get("from").getAsString();
+                    }
+                    JsonObject item = new JsonObject();
+                    item.addProperty("body_case", m.getBodyCase().name());
+                    item.addProperty("hex", HexFormat.of().formatHex(sampleBytes));
+                    item.addProperty("source_ts_ms", sample.get("sourceTsMs").getAsLong());
+                    item.addProperty("server_ts_ms", sample.get("serverTsMs").getAsLong());
+                    if (tagFrom != null) {
+                        item.addProperty("tag_from", tagFrom);
+                    }
+                    boolean ok = MessageBodyCase.SOUTHBOUND_SIGNAL_UPDATE.equals(m.getBodyCase())
+                            && java.util.Arrays.equals(sampleBytes, expectedBytes)
+                            && sample.get("sourceTsMs").getAsLong() == 1783360799900L
+                            && sample.get("serverTsMs").getAsLong() == 1783360800000L
+                            && publisher.equals(tagFrom);
+                    item.addProperty("ok", ok);
+                    if (receivedTyped.putIfAbsent(publisher, item) == null) {
+                        latch.countDown();
+                    }
+                } catch (Exception e) {
+                    errors.put(publisher + ":typed", e.toString());
+                    JsonObject item = new JsonObject();
+                    item.addProperty("ok", false);
+                    if (receivedTyped.putIfAbsent(publisher, item) == null) {
+                        latch.countDown();
+                    }
                 }
             }, 1, 64);
             System.out.println("READY");
@@ -320,16 +438,27 @@ public class InteropNode {
             java.util.List<String> readyMissing = waitForGgReady(runId, readyLangs);
             Thread.sleep(subscribeDelayMs);
             if (readyMissing.isEmpty()) {
-                Message msg = MessageBuilder.create("InteropBinary", "1.0")
+                Message binaryMsg = MessageBuilder.create("InteropBinary", "1.0")
                         .withPayload(expectedBytes).build();
+                JsonObject tags = new JsonObject();
+                tags.addProperty("from", LANG);
+                Message typedMsg = MessageBuilder.create("SouthboundSignalUpdate", "1.0")
+                        .withSouthboundSignalUpdate(typedBody(expectedBytes))
+                        .withTags(MessageTags.fromDict(tags))
+                        .build();
                 for (String target : expectedLangs) {
-                    prov.publish(ggTopic(runId, LANG, target), msg);
+                    prov.publish(ggTopic(runId, LANG, target), binaryMsg);
+                    prov.publish(ggTypedTopic(runId, LANG, target), typedMsg);
                 }
             }
             latch.await(waitMs, TimeUnit.MILLISECONDS);
             JsonObject receivedJson = new JsonObject();
             for (Map.Entry<String, JsonObject> entry : received.entrySet()) {
                 receivedJson.add(entry.getKey(), entry.getValue());
+            }
+            JsonObject receivedTypedJson = new JsonObject();
+            for (Map.Entry<String, JsonObject> entry : receivedTyped.entrySet()) {
+                receivedTypedJson.add(entry.getKey(), entry.getValue());
             }
             JsonObject errorsJson = new JsonObject();
             for (Map.Entry<String, String> entry : errors.entrySet()) {
@@ -340,12 +469,19 @@ public class InteropNode {
                 readyMissingJson.add(lang);
             }
             com.google.gson.JsonArray missing = new com.google.gson.JsonArray();
+            com.google.gson.JsonArray missingTyped = new com.google.gson.JsonArray();
             boolean ok = errors.isEmpty() && readyMissing.isEmpty();
             for (String lang : expectedLangs) {
                 if (!received.containsKey(lang)) {
                     missing.add(lang);
                     ok = false;
                 } else if (!received.get(lang).get("ok").getAsBoolean()) {
+                    ok = false;
+                }
+                if (!receivedTyped.containsKey(lang)) {
+                    missingTyped.add(lang);
+                    ok = false;
+                } else if (!receivedTyped.get(lang).get("ok").getAsBoolean()) {
                     ok = false;
                 }
             }
@@ -356,7 +492,9 @@ public class InteropNode {
             out.addProperty("expected_hex", expectedHex);
             out.add("ready_missing", readyMissingJson);
             out.add("received", receivedJson);
+            out.add("received_typed", receivedTypedJson);
             out.add("missing", missing);
+            out.add("missing_typed", missingTyped);
             out.add("errors", errorsJson);
             Files.writeString(
                     Path.of("/tmp", "edgecommons_gg_ipc_binary_" + LANG + "_" + runId + ".json"),

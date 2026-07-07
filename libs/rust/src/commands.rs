@@ -564,7 +564,7 @@ impl CommandInbox {
     async fn send_reply(&self, request: &Message, verb: &str, body: Value) {
         let snapshot = self.config.load_full();
         let reply = MessageBuilder::new(verb, CMD_MESSAGE_VERSION)
-            .payload(body)
+            .command(body)
             .from_config(&snapshot)
             .build();
         if let Err(e) = self.messaging.reply(request, reply).await {

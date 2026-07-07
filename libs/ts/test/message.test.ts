@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "fs";
+import { resolve } from "path";
 
-import { MAX_BINARY_BODY_BYTES, Message, MessageBuilder, MessageIdentity } from "../src/message";
+import { MAX_BINARY_BODY_BYTES, Message, MessageBodyCase, MessageBuilder, MessageIdentity } from "../src/message";
 
 const IDENTITY = new MessageIdentity(
   [
@@ -86,6 +88,146 @@ describe("Message / MessageBuilder", () => {
     // Parity with the Java fix: an explicit null object value round-trips as JSON null.
     const msg = MessageBuilder.create("evt", "1.0.0").withPayload({ present: 1, nullv: null }).build();
     expect(JSON.parse(msg.toJSON()).body).toEqual({ present: 1, nullv: null });
+  });
+
+  it("protobuf round-trips header, identity, tags, content metadata, schema, and structured body", () => {
+    const msg = MessageBuilder.create("evt", "1.0")
+      .withTimestampMs(1783360800000)
+      .withUuid("00000000-0000-4000-8000-000000000010")
+      .withCorrelationId("corr-10")
+      .withReplyTo("reply/topic")
+      .withIdentity(IDENTITY.withInstance("i1"))
+      .withTags({ priority: 5, retention: "short", flag: true })
+      .withContentEncoding("gzip")
+      .withSchema({
+        name: "AppPayload",
+        version: "2",
+        content_type: "application/json",
+        descriptor_ref: "s3://bucket/app.desc",
+        hash: "sha256:abc",
+      })
+      .withStructuredPayload({ present: 1, nullv: null, nested: { ok: true } })
+      .build();
+
+    const back = Message.fromBytes(msg.toBytes());
+
+    expect(back.header.name).toBe("evt");
+    expect(back.header.version).toBe("1.0");
+    expect(back.header.timestamp_ms).toBe(1783360800000);
+    expect(back.header.timestamp).toBe("2026-07-06T18:00:00.000Z");
+    expect(back.header.uuid).toBe("00000000-0000-4000-8000-000000000010");
+    expect(back.header.correlation_id).toBe("corr-10");
+    expect(back.header.reply_to).toBe("reply/topic");
+    expect(back.getIdentity()?.toObject()).toEqual(IDENTITY.withInstance("i1").toObject());
+    expect(back.tags).toEqual({ flag: true, priority: 5, retention: "short" });
+    expect(back.getContentEncoding()).toBe("gzip");
+    expect(back.getSchema()).toEqual({
+      name: "AppPayload",
+      version: "2",
+      content_type: "application/json",
+      descriptor_ref: "s3://bucket/app.desc",
+      hash: "sha256:abc",
+    });
+    expect(back.getBodyCase()).toBe(MessageBodyCase.Structured);
+    expect(back.getBody()).toEqual({ nested: { ok: true }, nullv: null, present: 1 });
+  });
+
+  it("protobuf round-trips opaque bytes with explicit content_type", () => {
+    const body = Buffer.from([0xff, 0xd8, 0xff, 0xe0]);
+    const msg = MessageBuilder.create("FramePreview", "1.0")
+      .withOpaquePayload(body, "image/jpeg")
+      .build();
+
+    const back = Message.fromBytes(msg.toBytes());
+
+    expect(back.getBodyCase()).toBe(MessageBodyCase.Opaque);
+    expect(back.getContentType()).toBe("image/jpeg");
+    expect(back.getOpaqueBody()).toEqual(body);
+    expect(back.toDiagnosticJson().body).toMatchObject({ content_type: "image/jpeg", length: 4 });
+  });
+
+  it("protobuf round-trips southbound signal bytes as EcValue bytes_value", () => {
+    const msg = MessageBuilder.create("SouthboundSignalUpdate", "1.0")
+      .withTimestampMs(1783360800000)
+      .withSouthboundSignalUpdate({
+        signal: { id: "camera-1/thumbnail", name: "thumbnail" },
+        samples: [
+          {
+            value: Buffer.from([0, 1, 2, 254, 255]),
+            quality: "GOOD",
+            sourceTs: "2026-07-06T17:59:59.900Z",
+            serverTs: "2026-07-06T18:00:00.000Z",
+          },
+        ],
+      })
+      .build();
+
+    const back = Message.fromBytes(msg.toBytes());
+    const body = back.getBody() as { signal: { id: string }; samples: Array<Record<string, unknown>> };
+
+    expect(back.getBodyCase()).toBe(MessageBodyCase.SouthboundSignalUpdate);
+    expect(body.signal.id).toBe("camera-1/thumbnail");
+    expect(body.samples[0].value).toEqual({
+      _edgecommonsBinary: { encoding: "base64", length: 5, data: "AAEC/v8=" },
+    });
+    expect(body.samples[0].sourceTsMs).toBe(1783360799900);
+    expect(body.samples[0].serverTsMs).toBe(1783360800000);
+  });
+
+  it("reserved names infer typed protobuf body cases", () => {
+    const state = Message.fromBytes(
+      MessageBuilder.create("state", "1.0").withPayload({ status: "RUNNING", uptimeSecs: 42 }).build().toBytes(),
+    );
+    expect(state.getBodyCase()).toBe(MessageBodyCase.StateUpdate);
+    expect(state.getBody()).toMatchObject({ status: "RUNNING", uptimeSecs: 42 });
+
+    const cfg = Message.fromBytes(
+      MessageBuilder.create("cfg", "1.0").withPayload({ config: { mode: "auto" } }).build().toBytes(),
+    );
+    expect(cfg.getBodyCase()).toBe(MessageBodyCase.ConfigUpdate);
+    expect(cfg.getBody()).toEqual({ config: { mode: "auto" } });
+
+    const metric = Message.fromBytes(
+      MessageBuilder.create("Metric", "1.0")
+        .withPayload({
+          namespace: "EdgeCommons",
+          metricName: "MessagesPublished",
+          values: [{ name: "Count", value: 3, unit: "Count" }],
+        })
+        .build()
+        .toBytes(),
+    );
+    expect(metric.getBodyCase()).toBe(MessageBodyCase.MetricUpdate);
+    expect(metric.getBody()).toMatchObject({ metricName: "MessagesPublished" });
+
+    const event = Message.fromBytes(
+      MessageBuilder.create("evt", "1.0")
+        .withPayload({ severity: "info", type: "door-open", message: "door opened" })
+        .build()
+        .toBytes(),
+    );
+    expect(event.getBodyCase()).toBe(MessageBodyCase.Event);
+    expect(event.getBody()).toMatchObject({ type: "door-open" });
+  });
+
+  it("explicit command body preserves the component-facing payload", () => {
+    const msg = MessageBuilder.create("ping", "1.0").withCommand({ status: "RUNNING" }).build();
+    const back = Message.fromBytes(msg.toBytes());
+
+    expect(back.getBodyCase()).toBe(MessageBodyCase.Command);
+    expect(back.getBody()).toEqual({ status: "RUNNING" });
+  });
+
+  it("canonical protobuf vectors round-trip exact bytes", () => {
+    const vectors = readFileSync(resolve("../../protobuf-test-vectors/messages.pb.hex"), "utf8")
+      .trim()
+      .split(/\r?\n/);
+    for (const line of vectors) {
+      if (!line || line.startsWith("#")) continue;
+      const [id, hex] = line.split(" ", 2);
+      const message = Message.fromBytes(Buffer.from(hex, "hex"));
+      expect(message.toBytes().toString("hex"), id).toBe(hex);
+    }
   });
 
   it("includes reply_to only when set", () => {

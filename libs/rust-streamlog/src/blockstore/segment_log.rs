@@ -80,13 +80,25 @@ impl SegmentLog {
                 let (end, byte_len, was_torn, index) = scan_tail(&path, base)?;
                 next_offset = end;
                 torn = was_torn;
-                segs.push(SegMeta { path, base, byte_len, end, index });
+                segs.push(SegMeta {
+                    path,
+                    base,
+                    byte_len,
+                    end,
+                    index,
+                });
             } else {
                 // Trust non-tail segments; their range ends where the next segment begins. Their
                 // index is built lazily on first read (avoids scanning every segment at open).
                 let byte_len = fs::metadata(&path)?.len();
                 let end = bases[i + 1];
-                segs.push(SegMeta { path, base, byte_len, end, index: Vec::new() });
+                segs.push(SegMeta {
+                    path,
+                    base,
+                    byte_len,
+                    end,
+                    index: Vec::new(),
+                });
             }
         }
 
@@ -99,8 +111,19 @@ impl SegmentLog {
             None => None,
         };
 
-        let recovery = RecoveryReport { next_offset, torn_truncated: torn, segments: segs.len() };
-        Ok(Self { dir, segment_bytes, segs, writer, next_offset, recovery })
+        let recovery = RecoveryReport {
+            next_offset,
+            torn_truncated: torn,
+            segments: segs.len(),
+        };
+        Ok(Self {
+            dir,
+            segment_bytes,
+            segs,
+            writer,
+            next_offset,
+            recovery,
+        })
     }
 
     /// The recovery report from [`open`].
@@ -123,9 +146,19 @@ impl SegmentLog {
             w.flush()?;
         }
         let path = self.dir.join(seg_name(base));
-        let f = OpenOptions::new().create(true).write(true).truncate(true).open(&path)?;
+        let f = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&path)?;
         self.writer = Some(BufWriter::new(f));
-        self.segs.push(SegMeta { path, base, byte_len: 0, end: base, index: Vec::new() });
+        self.segs.push(SegMeta {
+            path,
+            base,
+            byte_len: 0,
+            end: base,
+            index: Vec::new(),
+        });
         Ok(())
     }
 
@@ -161,7 +194,11 @@ impl SegmentLog {
         if from >= self.next_offset || max_records == 0 {
             return Ok(chunks);
         }
-        let start = self.segs.iter().position(|s| from < s.end).unwrap_or(self.segs.len());
+        let start = self
+            .segs
+            .iter()
+            .position(|s| from < s.end)
+            .unwrap_or(self.segs.len());
         let mut total_records = 0usize;
         let mut total_bytes = 0usize;
         let mut want = from;
@@ -188,8 +225,11 @@ impl SegmentLog {
                 && total_bytes + take_bytes < max_bytes
             {
                 let rec_start = seg.index[local_start + take];
-                let rec_end =
-                    seg.index.get(local_start + take + 1).copied().unwrap_or(seg.byte_len);
+                let rec_end = seg
+                    .index
+                    .get(local_start + take + 1)
+                    .copied()
+                    .unwrap_or(seg.byte_len);
                 take_bytes += (rec_end - rec_start) as usize;
                 take += 1;
             }
@@ -198,7 +238,11 @@ impl SegmentLog {
             }
 
             let byte_start = seg.index[local_start];
-            let byte_end = seg.index.get(local_start + take).copied().unwrap_or(seg.byte_len);
+            let byte_end = seg
+                .index
+                .get(local_start + take)
+                .copied()
+                .unwrap_or(seg.byte_len);
             chunks.push(ReadChunk {
                 path: seg.path.clone(),
                 byte_start,
@@ -299,7 +343,9 @@ impl BlockStore for SegmentLog {
             )));
         }
         if pk.len() > u16::MAX as usize {
-            return Err(EdgeStreamError::Config("partition key exceeds 65535 bytes".into()));
+            return Err(EdgeStreamError::Config(
+                "partition key exceeds 65535 bytes".into(),
+            ));
         }
         let size = record::frame_size(pk.len(), payload.len()) as u64;
 
@@ -313,7 +359,10 @@ impl BlockStore for SegmentLog {
 
         let mut buf = Vec::with_capacity(size as usize);
         record::encode_frame(offset, ts_ms, pk, payload, &mut buf);
-        self.writer.as_mut().expect("active writer").write_all(&buf)?;
+        self.writer
+            .as_mut()
+            .expect("active writer")
+            .write_all(&buf)?;
 
         let active = self.segs.last_mut().expect("active segment");
         active.index.push(active.byte_len); // byte offset of this record within the file
@@ -338,7 +387,12 @@ impl BlockStore for SegmentLog {
         Ok(())
     }
 
-    fn read_from(&mut self, from: u64, max_records: usize, max_bytes: usize) -> Result<Vec<OwnedRecord>> {
+    fn read_from(
+        &mut self,
+        from: u64,
+        max_records: usize,
+        max_bytes: usize,
+    ) -> Result<Vec<OwnedRecord>> {
         // Plan (uses the in-memory index) then read the files. The plan/read split lets the upper
         // layer hold the buffer lock only for planning and do the file I/O off-lock; this trait
         // entry point does both for direct callers/tests.

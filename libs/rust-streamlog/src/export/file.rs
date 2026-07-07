@@ -54,9 +54,10 @@ use serde_json::Value;
 use super::{ExportRecord, SendOutcome, Sink};
 use crate::config::{
     ColumnSpec, ColumnType, FileCompression, FileFormat, FileMode, FileOnFull, FileSinkConfig,
-    RowsConfig,
+    RowsConfig, SinkPayloadFormat,
 };
 use crate::error::{EdgeStreamError, Result};
+use crate::payload::project_payload;
 
 // ----------------------------------------------------------------------------------------------
 // Public sink
@@ -179,7 +180,12 @@ impl FileSink {
 
     /// Append `rows` to the given slot's open file (opening it lazily), then roll it if it now
     /// exceeds `maxFileBytes`.
-    fn write_to_slot(&mut self, slot: Slot, schema: RowSchema<'_>, rows: WriteRows<'_>) -> Result<()> {
+    fn write_to_slot(
+        &mut self,
+        slot: Slot,
+        schema: RowSchema<'_>,
+        rows: WriteRows<'_>,
+    ) -> Result<()> {
         if self.slot_ref(slot).is_none() {
             let af = self.open_file(schema, matches!(slot, Slot::Unmapped))?;
             *self.slot_mut(slot) = Some(af);
@@ -239,7 +245,10 @@ impl FileSink {
             )));
         }
         let now = SystemTime::now();
-        let unix_ms = now.duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+        let unix_ms = now
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
         let dir = self.partition_dir((unix_ms / 1000) as i64);
         fs::create_dir_all(&dir)?;
 
@@ -251,14 +260,25 @@ impl FileSink {
         let inprogress = dir.join(format!("{filename}.inprogress"));
 
         let open = create_open_file(self.cfg.format, schema, self.cfg.compression, &inprogress)?;
-        Ok(ActiveFile { open, final_path, inprogress, bytes: 0, opened_at: now })
+        Ok(ActiveFile {
+            open,
+            final_path,
+            inprogress,
+            bytes: 0,
+            opened_at: now,
+        })
     }
 
     /// Finalize `af`: close the encoder (write footer/final block + fsync), atomically rename the
     /// `*.inprogress` file to its final path, record it in the ring, and enforce `maxFiles`
     /// (`DropOldest` deletes the oldest finalized files to stay within the cap).
     fn finalize(&mut self, af: ActiveFile) -> Result<()> {
-        let ActiveFile { open, final_path, inprogress, .. } = af;
+        let ActiveFile {
+            open,
+            final_path,
+            inprogress,
+            ..
+        } = af;
         open.close()?;
         fs::rename(&inprogress, &final_path)?;
         tracing::debug!(sink = %self.name, file = %final_path.display(), "file sink: finalized file");
@@ -310,7 +330,10 @@ impl Sink for FileSink {
             Ok(()) => SendOutcome::AllAcked,
             // An encode/IO/retention error is non-retryable: re-sending the same batch can't fix a
             // bad payload or a full ring. The engine surfaces it and (for `Stop`) stops advancing.
-            Err(e) => SendOutcome::Failed { retryable: false, error: e.to_string() },
+            Err(e) => SendOutcome::Failed {
+                retryable: false,
+                error: e.to_string(),
+            },
         }
     }
 }
@@ -394,9 +417,9 @@ impl OpenFile {
     #[allow(unused_variables)]
     fn write(&mut self, rows: WriteRows<'_>) -> Result<()> {
         match self {
-            OpenFile::Closed => {
-                Err(EdgeStreamError::Sink("file sink: write to a closed file".into()))
-            }
+            OpenFile::Closed => Err(EdgeStreamError::Sink(
+                "file sink: write to a closed file".into(),
+            )),
             #[cfg(feature = "parquet")]
             OpenFile::Parquet(p) => p.write(rows),
             #[cfg(feature = "avro")]
@@ -552,11 +575,14 @@ fn raw_row(r: &ExportRecord<'_>) -> RawRow {
 /// payload is not JSON or has no `body.samples` array (→ caller routes it to the `_unmapped` raw
 /// file). The whole envelope `tags` object is captured once as a compact-JSON string.
 fn extract_rows(payload: &[u8], ts_ms: i64, offset: i64) -> Option<Vec<MainRow>> {
-    let v: Value = serde_json::from_slice(payload).ok()?;
+    let v = payload_json_value(payload)?;
     let body = v.get("body")?;
     let samples = body.get("samples")?.as_array()?;
     // The entire `tags` object as compact JSON (`None` when there is no tags object).
-    let tags = v.get("tags").filter(|t| t.is_object()).map(|t| t.to_string());
+    let tags = v
+        .get("tags")
+        .filter(|t| t.is_object())
+        .map(|t| t.to_string());
     let device = body.get("device");
     let signal = body.get("signal");
 
@@ -568,11 +594,14 @@ fn extract_rows(payload: &[u8], ts_ms: i64, offset: i64) -> Option<Vec<MainRow>>
             signal_name: signal.and_then(|t| json_str(t, "name")),
             adapter: device.and_then(|d| json_str(d, "adapter")),
             instance: device.and_then(|d| json_str(d, "instance")),
-            value: s.get("value").map(sample_value).unwrap_or(SampleValue::Null),
+            value: s
+                .get("value")
+                .map(sample_value)
+                .unwrap_or(SampleValue::Null),
             quality: json_str(s, "quality"),
-            quality_raw: json_str(s, "qualityRaw"),
-            source_ts: json_str(s, "sourceTs"),
-            server_ts: json_str(s, "serverTs"),
+            quality_raw: json_str_any(s, &["qualityRaw", "quality_raw"]),
+            source_ts: json_str_any(s, &["sourceTs", "source_ts"]),
+            server_ts: json_str_any(s, &["serverTs", "server_ts"]),
             ts_ms,
             offset,
         });
@@ -585,6 +614,18 @@ fn json_str(obj: &Value, key: &str) -> Option<String> {
     obj.get(key).and_then(|x| x.as_str()).map(|s| s.to_string())
 }
 
+fn json_str_any(obj: &Value, keys: &[&str]) -> Option<String> {
+    keys.iter().find_map(|key| json_str(obj, key))
+}
+
+fn payload_json_value(payload: &[u8]) -> Option<Value> {
+    serde_json::from_slice(payload).ok().or_else(|| {
+        project_payload(SinkPayloadFormat::Json, payload)
+            .ok()
+            .and_then(|projected| serde_json::from_slice(&projected.payload).ok())
+    })
+}
+
 // ----------------------------------------------------------------------------------------------
 // User projection (rows mode with a `rows` config block)
 // ----------------------------------------------------------------------------------------------
@@ -594,12 +635,16 @@ fn json_str(obj: &Value, key: &str) -> Option<String> {
 /// `explode` resolves to an array, emits one row per element (columns whose path starts with
 /// `<explode>[]` see the current element); otherwise emits a single row per message.
 fn project_rows(payload: &[u8], cfg: &RowsConfig) -> Vec<ProjRow> {
-    let msg: Value = serde_json::from_slice(payload).unwrap_or(Value::Null);
+    let msg = payload_json_value(payload).unwrap_or(Value::Null);
     let explode = cfg.explode.as_deref();
-    match explode.and_then(|p| resolve_path(&msg, p)).and_then(Value::as_array) {
-        Some(elems) => {
-            elems.iter().map(|e| project_one(&msg, Some(e), explode, &cfg.columns)).collect()
-        }
+    match explode
+        .and_then(|p| resolve_path(&msg, p))
+        .and_then(Value::as_array)
+    {
+        Some(elems) => elems
+            .iter()
+            .map(|e| project_one(&msg, Some(e), explode, &cfg.columns))
+            .collect(),
         None => vec![project_one(&msg, None, explode, &cfg.columns)],
     }
 }
@@ -762,7 +807,10 @@ mod parquet_impl {
     use parquet::basic::{Compression, GzipLevel, ZstdLevel};
     use parquet::file::properties::WriterProperties;
 
-    use super::{ColumnSpec, ColumnType, MainRow, ProjCell, ProjRow, RawRow, RowSchema, SampleValue, WriteRows};
+    use super::{
+        ColumnSpec, ColumnType, MainRow, ProjCell, ProjRow, RawRow, RowSchema, SampleValue,
+        WriteRows,
+    };
     use crate::config::FileCompression;
     use crate::error::{EdgeStreamError, Result};
 
@@ -789,10 +837,16 @@ mod parquet_impl {
             };
             let file = std::fs::File::create(path)?;
             let sync_handle = file.try_clone()?;
-            let props = WriterProperties::builder().set_compression(map_compression(compression)).build();
+            let props = WriterProperties::builder()
+                .set_compression(map_compression(compression))
+                .build();
             let writer = ArrowWriter::try_new(file, arrow_schema, Some(props))
                 .map_err(|e| EdgeStreamError::Sink(format!("parquet open: {e}")))?;
-            Ok(Self { writer, sync_handle, proj_columns })
+            Ok(Self {
+                writer,
+                sync_handle,
+                proj_columns,
+            })
         }
 
         pub(super) fn write(&mut self, rows: WriteRows<'_>) -> Result<()> {
@@ -805,14 +859,22 @@ mod parquet_impl {
                 .write(&batch)
                 .map_err(|e| EdgeStreamError::Sink(format!("parquet write: {e}")))?;
             // Force the buffered rows out as a row group so an AllAcked batch is durable.
-            self.writer.flush().map_err(|e| EdgeStreamError::Sink(format!("parquet flush: {e}")))?;
+            self.writer
+                .flush()
+                .map_err(|e| EdgeStreamError::Sink(format!("parquet flush: {e}")))?;
             self.sync_handle.sync_all()?;
             Ok(())
         }
 
         pub(super) fn close(self) -> Result<()> {
-            let Self { writer, sync_handle, .. } = self;
-            writer.close().map_err(|e| EdgeStreamError::Sink(format!("parquet close: {e}")))?;
+            let Self {
+                writer,
+                sync_handle,
+                ..
+            } = self;
+            writer
+                .close()
+                .map_err(|e| EdgeStreamError::Sink(format!("parquet close: {e}")))?;
             sync_handle.sync_all()?;
             Ok(())
         }
@@ -820,7 +882,11 @@ mod parquet_impl {
         /// Compressed bytes of all flushed row groups. The Arrow writer buffers through an internal
         /// `BufWriter`, so the OS file length lags; this is the durable size after each flush.
         pub(super) fn bytes_written(&self) -> u64 {
-            self.writer.flushed_row_groups().iter().map(|rg| rg.compressed_size().max(0) as u64).sum()
+            self.writer
+                .flushed_row_groups()
+                .iter()
+                .map(|rg| rg.compressed_size().max(0) as u64)
+                .sum()
         }
     }
 
@@ -887,48 +953,116 @@ mod parquet_impl {
 
     fn rows_batch(rows: &[MainRow]) -> Result<RecordBatch> {
         let tags: ArrayRef = Arc::new(rows.iter().map(|r| r.tags.clone()).collect::<StringArray>());
-        let signal_id: ArrayRef =
-            Arc::new(rows.iter().map(|r| r.signal_id.clone()).collect::<StringArray>());
-        let signal_name: ArrayRef =
-            Arc::new(rows.iter().map(|r| r.signal_name.clone()).collect::<StringArray>());
-        let adapter: ArrayRef = Arc::new(rows.iter().map(|r| r.adapter.clone()).collect::<StringArray>());
-        let instance: ArrayRef = Arc::new(rows.iter().map(|r| r.instance.clone()).collect::<StringArray>());
+        let signal_id: ArrayRef = Arc::new(
+            rows.iter()
+                .map(|r| r.signal_id.clone())
+                .collect::<StringArray>(),
+        );
+        let signal_name: ArrayRef = Arc::new(
+            rows.iter()
+                .map(|r| r.signal_name.clone())
+                .collect::<StringArray>(),
+        );
+        let adapter: ArrayRef = Arc::new(
+            rows.iter()
+                .map(|r| r.adapter.clone())
+                .collect::<StringArray>(),
+        );
+        let instance: ArrayRef = Arc::new(
+            rows.iter()
+                .map(|r| r.instance.clone())
+                .collect::<StringArray>(),
+        );
         let value_double: ArrayRef = Arc::new(
             rows.iter()
-                .map(|r| if let SampleValue::Double(d) = &r.value { Some(*d) } else { None })
+                .map(|r| {
+                    if let SampleValue::Double(d) = &r.value {
+                        Some(*d)
+                    } else {
+                        None
+                    }
+                })
                 .collect::<Float64Array>(),
         );
         let value_long: ArrayRef = Arc::new(
             rows.iter()
-                .map(|r| if let SampleValue::Long(l) = &r.value { Some(*l) } else { None })
+                .map(|r| {
+                    if let SampleValue::Long(l) = &r.value {
+                        Some(*l)
+                    } else {
+                        None
+                    }
+                })
                 .collect::<Int64Array>(),
         );
         let value_bool: ArrayRef = Arc::new(
             rows.iter()
-                .map(|r| if let SampleValue::Bool(b) = &r.value { Some(*b) } else { None })
+                .map(|r| {
+                    if let SampleValue::Bool(b) = &r.value {
+                        Some(*b)
+                    } else {
+                        None
+                    }
+                })
                 .collect::<BooleanArray>(),
         );
         let value_string: ArrayRef = Arc::new(
             rows.iter()
-                .map(|r| if let SampleValue::Str(s) = &r.value { Some(s.clone()) } else { None })
+                .map(|r| {
+                    if let SampleValue::Str(s) = &r.value {
+                        Some(s.clone())
+                    } else {
+                        None
+                    }
+                })
                 .collect::<StringArray>(),
         );
-        let value_type: ArrayRef =
-            Arc::new(StringArray::from_iter_values(rows.iter().map(|r| r.value.type_str())));
-        let quality: ArrayRef = Arc::new(rows.iter().map(|r| r.quality.clone()).collect::<StringArray>());
-        let quality_raw: ArrayRef =
-            Arc::new(rows.iter().map(|r| r.quality_raw.clone()).collect::<StringArray>());
-        let source_ts: ArrayRef = Arc::new(rows.iter().map(|r| r.source_ts.clone()).collect::<StringArray>());
-        let server_ts: ArrayRef = Arc::new(rows.iter().map(|r| r.server_ts.clone()).collect::<StringArray>());
+        let value_type: ArrayRef = Arc::new(StringArray::from_iter_values(
+            rows.iter().map(|r| r.value.type_str()),
+        ));
+        let quality: ArrayRef = Arc::new(
+            rows.iter()
+                .map(|r| r.quality.clone())
+                .collect::<StringArray>(),
+        );
+        let quality_raw: ArrayRef = Arc::new(
+            rows.iter()
+                .map(|r| r.quality_raw.clone())
+                .collect::<StringArray>(),
+        );
+        let source_ts: ArrayRef = Arc::new(
+            rows.iter()
+                .map(|r| r.source_ts.clone())
+                .collect::<StringArray>(),
+        );
+        let server_ts: ArrayRef = Arc::new(
+            rows.iter()
+                .map(|r| r.server_ts.clone())
+                .collect::<StringArray>(),
+        );
         let ts_ms: ArrayRef = Arc::new(Int64Array::from_iter_values(rows.iter().map(|r| r.ts_ms)));
-        let offset: ArrayRef = Arc::new(Int64Array::from_iter_values(rows.iter().map(|r| r.offset)));
+        let offset: ArrayRef =
+            Arc::new(Int64Array::from_iter_values(rows.iter().map(|r| r.offset)));
 
         RecordBatch::try_new(
             rows_schema(),
             vec![
-                tags, signal_id, signal_name, adapter, instance, value_double, value_long,
-                value_bool, value_string, value_type, quality, quality_raw, source_ts, server_ts,
-                ts_ms, offset,
+                tags,
+                signal_id,
+                signal_name,
+                adapter,
+                instance,
+                value_double,
+                value_long,
+                value_bool,
+                value_string,
+                value_type,
+                quality,
+                quality_raw,
+                source_ts,
+                server_ts,
+                ts_ms,
+                offset,
             ],
         )
         .map_err(|e| EdgeStreamError::Sink(format!("parquet rows batch: {e}")))
@@ -936,8 +1070,11 @@ mod parquet_impl {
 
     /// Build the user-projection record batch: one Arrow column per configured column, in order.
     fn proj_batch(columns: &[ColumnSpec], rows: &[ProjRow]) -> Result<RecordBatch> {
-        let arrays: Vec<ArrayRef> =
-            columns.iter().enumerate().map(|(j, c)| proj_array(rows, j, c.col_type)).collect();
+        let arrays: Vec<ArrayRef> = columns
+            .iter()
+            .enumerate()
+            .map(|(j, c)| proj_array(rows, j, c.col_type))
+            .collect();
         RecordBatch::try_new(proj_schema(columns), arrays)
             .map_err(|e| EdgeStreamError::Sink(format!("parquet projection batch: {e}")))
     }
@@ -982,12 +1119,15 @@ mod parquet_impl {
     }
 
     fn raw_batch(rows: &[RawRow]) -> Result<RecordBatch> {
-        let offset: ArrayRef = Arc::new(Int64Array::from_iter_values(rows.iter().map(|r| r.offset)));
-        let pk: ArrayRef =
-            Arc::new(StringArray::from_iter_values(rows.iter().map(|r| r.partition_key.as_str())));
+        let offset: ArrayRef =
+            Arc::new(Int64Array::from_iter_values(rows.iter().map(|r| r.offset)));
+        let pk: ArrayRef = Arc::new(StringArray::from_iter_values(
+            rows.iter().map(|r| r.partition_key.as_str()),
+        ));
         let ts_ms: ArrayRef = Arc::new(Int64Array::from_iter_values(rows.iter().map(|r| r.ts_ms)));
-        let payload: ArrayRef =
-            Arc::new(StringArray::from_iter_values(rows.iter().map(|r| r.payload.as_str())));
+        let payload: ArrayRef = Arc::new(StringArray::from_iter_values(
+            rows.iter().map(|r| r.payload.as_str()),
+        ));
         RecordBatch::try_new(raw_schema(), vec![offset, pk, ts_ms, payload])
             .map_err(|e| EdgeStreamError::Sink(format!("parquet raw batch: {e}")))
     }
@@ -1071,8 +1211,9 @@ mod avro_impl {
     /// projection is parsed once and leaked (cached by its schema text); a component has one fixed
     /// projection, so the leak is bounded and constant — mirroring the `OnceLock` built-in schemas.
     fn proj_schema(columns: &[ColumnSpec]) -> &'static Schema {
-        static CACHE: OnceLock<std::sync::Mutex<std::collections::HashMap<String, &'static Schema>>> =
-            OnceLock::new();
+        static CACHE: OnceLock<
+            std::sync::Mutex<std::collections::HashMap<String, &'static Schema>>,
+        > = OnceLock::new();
         let json = proj_schema_json(columns);
         let mut map = CACHE
             .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
@@ -1081,8 +1222,9 @@ mod avro_impl {
         if let Some(&s) = map.get(&json) {
             return s;
         }
-        let schema: &'static Schema =
-            Box::leak(Box::new(Schema::parse_str(&json).expect("valid avro projection schema")));
+        let schema: &'static Schema = Box::leak(Box::new(
+            Schema::parse_str(&json).expect("valid avro projection schema"),
+        ));
         map.insert(json, schema);
         schema
     }
@@ -1132,7 +1274,11 @@ mod avro_impl {
             let file = std::fs::File::create(path)?;
             let sync_handle = file.try_clone()?;
             let writer = Writer::with_codec(avro_schema, file, map_codec(compression));
-            Ok(Self { writer, sync_handle, proj_columns })
+            Ok(Self {
+                writer,
+                sync_handle,
+                proj_columns,
+            })
         }
 
         pub(super) fn write(&mut self, rows: WriteRows<'_>) -> Result<()> {
@@ -1160,15 +1306,22 @@ mod avro_impl {
                 }
             }
             // Flush the current block so an AllAcked batch is recoverable to here.
-            self.writer.flush().map_err(|e| EdgeStreamError::Sink(format!("avro flush: {e}")))?;
+            self.writer
+                .flush()
+                .map_err(|e| EdgeStreamError::Sink(format!("avro flush: {e}")))?;
             self.sync_handle.sync_all()?;
             Ok(())
         }
 
         pub(super) fn close(self) -> Result<()> {
-            let Self { writer, sync_handle, .. } = self;
-            let file =
-                writer.into_inner().map_err(|e| EdgeStreamError::Sink(format!("avro close: {e}")))?;
+            let Self {
+                writer,
+                sync_handle,
+                ..
+            } = self;
+            let file = writer
+                .into_inner()
+                .map_err(|e| EdgeStreamError::Sink(format!("avro close: {e}")))?;
             file.sync_all()?;
             drop(sync_handle);
             Ok(())
@@ -1198,7 +1351,10 @@ mod avro_impl {
             ("adapter".into(), s(&r.adapter)),
             ("instance".into(), s(&r.instance)),
             ("value".into(), value),
-            ("valueType".into(), AvroValue::String(r.value.type_str().to_string())),
+            (
+                "valueType".into(),
+                AvroValue::String(r.value.type_str().to_string()),
+            ),
             ("quality".into(), s(&r.quality)),
             ("qualityRaw".into(), s(&r.quality_raw)),
             ("sourceTs".into(), s(&r.source_ts)),
@@ -1217,7 +1373,9 @@ mod avro_impl {
             .map(|(j, c)| {
                 let v = match &row.cells[j] {
                     ProjCell::Null => AvroValue::Union(0, Box::new(AvroValue::Null)),
-                    ProjCell::Str(st) => AvroValue::Union(1, Box::new(AvroValue::String(st.clone()))),
+                    ProjCell::Str(st) => {
+                        AvroValue::Union(1, Box::new(AvroValue::String(st.clone())))
+                    }
                     ProjCell::Long(l) => AvroValue::Union(1, Box::new(AvroValue::Long(*l))),
                     ProjCell::Double(d) => AvroValue::Union(1, Box::new(AvroValue::Double(*d))),
                     ProjCell::Bool(b) => AvroValue::Union(1, Box::new(AvroValue::Boolean(*b))),
@@ -1231,7 +1389,10 @@ mod avro_impl {
     fn raw_value(r: &RawRow) -> AvroValue {
         AvroValue::Record(vec![
             ("offset".into(), AvroValue::Long(r.offset)),
-            ("partitionKey".into(), AvroValue::String(r.partition_key.clone())),
+            (
+                "partitionKey".into(),
+                AvroValue::String(r.partition_key.clone()),
+            ),
             ("tsMs".into(), AvroValue::Long(r.ts_ms)),
             ("payload".into(), AvroValue::String(r.payload.clone())),
         ])
@@ -1257,7 +1418,10 @@ use avro_impl::AvroFile;
 
 #[cfg(all(test, any(feature = "parquet", feature = "avro")))]
 mod tests {
+    use prost::Message as ProstMessage;
+
     use super::*;
+    use crate::proto::edgecommons::v1 as pb;
 
     fn cfg(dir: &Path, format: FileFormat, mode: FileMode) -> FileSinkConfig {
         FileSinkConfig {
@@ -1275,7 +1439,12 @@ mod tests {
     }
 
     fn rec(offset: u64, payload: &[u8]) -> ExportRecord<'_> {
-        ExportRecord { offset, partition_key: b"pk", ts_ms: 111, payload }
+        ExportRecord {
+            offset,
+            partition_key: b"pk",
+            ts_ms: 111,
+            payload,
+        }
     }
 
     /// A `SouthboundSignalUpdate` payload carrying a single sample with `value`.
@@ -1292,6 +1461,64 @@ mod tests {
             }
         }))
         .unwrap()
+    }
+
+    fn ec_string(value: &str) -> pb::EcValue {
+        pb::EcValue {
+            kind: Some(pb::ec_value::Kind::StringValue(value.to_string())),
+        }
+    }
+
+    fn ec_double(value: f64) -> pb::EcValue {
+        pb::EcValue {
+            kind: Some(pb::ec_value::Kind::DoubleValue(value)),
+        }
+    }
+
+    fn sample(value: f64, quality: &str, source_ts: &str) -> pb::Sample {
+        pb::Sample {
+            value: Some(ec_double(value)),
+            quality: quality.to_string(),
+            quality_raw: Some(ec_string("0")),
+            source_ts: Some(source_ts.to_string()),
+            source_ts_ms: None,
+            server_ts: Some("sv".to_string()),
+            server_ts_ms: None,
+            extra: Default::default(),
+        }
+    }
+
+    fn southbound_protobuf(signal_id: &str, samples: Vec<pb::Sample>) -> Vec<u8> {
+        pb::EdgeCommonsMessage {
+            header: Some(pb::Header {
+                name: "SouthboundSignalUpdate".to_string(),
+                version: "1.0".to_string(),
+                timestamp_ms: 111,
+                uuid: "uuid-1".to_string(),
+                correlation_id: None,
+                reply_to: None,
+            }),
+            tags: [
+                ("thing".to_string(), ec_string("th")),
+                ("site".to_string(), ec_string("s1")),
+            ]
+            .into_iter()
+            .collect(),
+            body: Some(pb::edge_commons_message::Body::SouthboundSignalUpdate(
+                pb::SouthboundSignalUpdate {
+                    signal: Some(pb::Signal {
+                        id: signal_id.to_string(),
+                        name: "Temp".to_string(),
+                        address: None,
+                        extra: Default::default(),
+                    }),
+                    samples,
+                    extra: Default::default(),
+                },
+            )),
+            ..Default::default()
+        }
+        .encode_to_vec()
     }
 
     /// A `SouthboundSignalUpdate` payload with two samples (for explode / user-projection tests).
@@ -1332,7 +1559,10 @@ mod tests {
     fn rejects_format_without_encoder() {
         // `civil_from_days` sanity: the Unix epoch is 1970-01-01.
         assert_eq!(civil_from_days(0), (1970, 1, 1));
-        assert_eq!(resolve_tokens("dt={yyyy-MM-dd}/hr={HH}", 0), "dt=1970-01-01/hr=00");
+        assert_eq!(
+            resolve_tokens("dt={yyyy-MM-dd}/hr={HH}", 0),
+            "dt=1970-01-01/hr=00"
+        );
         // An unknown token is left as-is.
         assert_eq!(resolve_tokens("a={foo}", 0), "a={foo}");
     }
@@ -1359,8 +1589,12 @@ mod tests {
         let p_long = southbound("ns=2", serde_json::json!(42));
         let p_bool = southbound("ns=3", serde_json::json!(true));
         let p_str = southbound("ns=4", serde_json::json!("hello"));
-        let batch =
-            vec![rec(0, &p_double), rec(1, &p_long), rec(2, &p_bool), rec(3, &p_str)];
+        let batch = vec![
+            rec(0, &p_double),
+            rec(1, &p_long),
+            rec(2, &p_bool),
+            rec(3, &p_str),
+        ];
         assert!(matches!(sink.send(&batch), SendOutcome::AllAcked));
         drop(sink); // finalize → footer + rename
 
@@ -1371,12 +1605,30 @@ mod tests {
         assert_eq!(b.num_rows(), 4);
 
         let col = |name: &str| b.column_by_name(name).unwrap();
-        let vt = col("valueType").as_any().downcast_ref::<StringArray>().unwrap();
-        let vd = col("valueDouble").as_any().downcast_ref::<Float64Array>().unwrap();
-        let vl = col("valueLong").as_any().downcast_ref::<Int64Array>().unwrap();
-        let vb = col("valueBool").as_any().downcast_ref::<BooleanArray>().unwrap();
-        let vs = col("valueString").as_any().downcast_ref::<StringArray>().unwrap();
-        let sig = col("signalId").as_any().downcast_ref::<StringArray>().unwrap();
+        let vt = col("valueType")
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        let vd = col("valueDouble")
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+        let vl = col("valueLong")
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap();
+        let vb = col("valueBool")
+            .as_any()
+            .downcast_ref::<BooleanArray>()
+            .unwrap();
+        let vs = col("valueString")
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        let sig = col("signalId")
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
         let tags = col("tags").as_any().downcast_ref::<StringArray>().unwrap();
 
         // The envelope `tags` object is captured as one compact-JSON column; the dropped per-tag
@@ -1411,13 +1663,63 @@ mod tests {
 
     #[cfg(feature = "parquet")]
     #[test]
+    fn parquet_rows_decode_protobuf_payloads() {
+        use arrow::array::{Array, Float64Array, StringArray};
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut sink =
+            FileSink::new("t", cfg(dir.path(), FileFormat::Parquet, FileMode::Rows)).unwrap();
+        let payload = southbound_protobuf("ns=pb", vec![sample(12.5, "GOOD", "st-pb")]);
+        assert!(matches!(
+            sink.send(&[rec(0, &payload)]),
+            SendOutcome::AllAcked
+        ));
+        drop(sink);
+
+        let files = list_files(dir.path(), ".parquet");
+        assert_eq!(files.len(), 1);
+        let b = &read_parquet(&files[0])[0];
+        assert_eq!(b.num_rows(), 1);
+
+        let col = |name: &str| b.column_by_name(name).unwrap();
+        let sig = col("signalId")
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        let vt = col("valueType")
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        let vd = col("valueDouble")
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+        let source_ts = col("sourceTs")
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        let tags = col("tags").as_any().downcast_ref::<StringArray>().unwrap();
+
+        assert_eq!(sig.value(0), "ns=pb");
+        assert_eq!(vt.value(0), "double");
+        assert!(!vd.is_null(0));
+        assert_eq!(vd.value(0), 12.5);
+        assert_eq!(source_ts.value(0), "st-pb");
+        assert!(tags.value(0).contains("\"site\":\"s1\""));
+    }
+
+    #[cfg(feature = "parquet")]
+    #[test]
     fn parquet_raw_roundtrip() {
         use arrow::array::{Int64Array, StringArray};
 
         let dir = tempfile::tempdir().unwrap();
         let mut sink =
             FileSink::new("t", cfg(dir.path(), FileFormat::Parquet, FileMode::Raw)).unwrap();
-        assert!(matches!(sink.send(&[rec(7, b"hello"), rec(8, b"world")]), SendOutcome::AllAcked));
+        assert!(matches!(
+            sink.send(&[rec(7, b"hello"), rec(8, b"world")]),
+            SendOutcome::AllAcked
+        ));
         drop(sink);
 
         let files = list_files(dir.path(), ".parquet");
@@ -1425,9 +1727,18 @@ mod tests {
         let batches = read_parquet(&files[0]);
         let b = &batches[0];
         assert_eq!(b.num_rows(), 2);
-        let off = b.column_by_name("offset").unwrap().as_any().downcast_ref::<Int64Array>().unwrap();
-        let pay =
-            b.column_by_name("payload").unwrap().as_any().downcast_ref::<StringArray>().unwrap();
+        let off = b
+            .column_by_name("offset")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap();
+        let pay = b
+            .column_by_name("payload")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
         assert_eq!(off.value(0), 7);
         assert_eq!(pay.value(0), "hello");
         assert_eq!(pay.value(1), "world");
@@ -1441,11 +1752,18 @@ mod tests {
         c.max_file_bytes = 1; // any written row group exceeds this → roll every send
         let mut sink = FileSink::new("t", c).unwrap();
         for i in 0..3u64 {
-            assert!(matches!(sink.send(&[rec(i, b"payload-bytes")]), SendOutcome::AllAcked));
+            assert!(matches!(
+                sink.send(&[rec(i, b"payload-bytes")]),
+                SendOutcome::AllAcked
+            ));
         }
         drop(sink);
         let files = list_files(dir.path(), ".parquet");
-        assert!(files.len() >= 2, "expected >=2 rolled files, got {}", files.len());
+        assert!(
+            files.len() >= 2,
+            "expected >=2 rolled files, got {}",
+            files.len()
+        );
     }
 
     #[cfg(feature = "parquet")]
@@ -1458,7 +1776,10 @@ mod tests {
         c.on_full = FileOnFull::DropOldest;
         let mut sink = FileSink::new("t", c).unwrap();
         for i in 0..5u64 {
-            assert!(matches!(sink.send(&[rec(i, b"data")]), SendOutcome::AllAcked));
+            assert!(matches!(
+                sink.send(&[rec(i, b"data")]),
+                SendOutcome::AllAcked
+            ));
         }
         drop(sink);
 
@@ -1467,9 +1788,17 @@ mod tests {
         // seqs 0..4 were finalized; only the two most recent (3,4) survive.
         for f in &files {
             let name = f.file_name().unwrap().to_string_lossy().into_owned();
-            let seq: u64 =
-                name.trim_end_matches(".parquet").rsplit('-').next().unwrap().parse().unwrap();
-            assert!(seq >= 3, "oldest files should have been dropped, found seq {seq}");
+            let seq: u64 = name
+                .trim_end_matches(".parquet")
+                .rsplit('-')
+                .next()
+                .unwrap()
+                .parse()
+                .unwrap();
+            assert!(
+                seq >= 3,
+                "oldest files should have been dropped, found seq {seq}"
+            );
         }
     }
 
@@ -1479,14 +1808,20 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut sink =
             FileSink::new("t", cfg(dir.path(), FileFormat::Parquet, FileMode::Raw)).unwrap();
-        assert!(matches!(sink.send(&[rec(1, b"x"), rec(2, b"y")]), SendOutcome::AllAcked));
+        assert!(matches!(
+            sink.send(&[rec(1, b"x"), rec(2, b"y")]),
+            SendOutcome::AllAcked
+        ));
         // No roll (large maxFileBytes) → only an *.inprogress file exists until drop.
         assert!(list_files(dir.path(), ".parquet").is_empty());
         drop(sink);
 
         let files = list_files(dir.path(), ".parquet");
         assert_eq!(files.len(), 1);
-        assert!(list_files(dir.path(), ".inprogress").is_empty(), "no leftover temp file");
+        assert!(
+            list_files(dir.path(), ".inprogress").is_empty(),
+            "no leftover temp file"
+        );
         assert_eq!(read_parquet(&files[0])[0].num_rows(), 2);
     }
 
@@ -1497,17 +1832,31 @@ mod tests {
         let mut sink =
             FileSink::new("t", cfg(dir.path(), FileFormat::Parquet, FileMode::Rows)).unwrap();
         // Not JSON, then JSON without body.samples → both go to the _unmapped file.
-        assert!(matches!(sink.send(&[rec(1, b"not json at all")]), SendOutcome::AllAcked));
-        assert!(matches!(sink.send(&[rec(2, br#"{"foo":"bar"}"#)]), SendOutcome::AllAcked));
+        assert!(matches!(
+            sink.send(&[rec(1, b"not json at all")]),
+            SendOutcome::AllAcked
+        ));
+        assert!(matches!(
+            sink.send(&[rec(2, br#"{"foo":"bar"}"#)]),
+            SendOutcome::AllAcked
+        ));
         drop(sink);
 
         let unmapped = list_files(dir.path(), "_unmapped.parquet");
-        assert!(!unmapped.is_empty(), "an _unmapped file must be created for non-southbound payloads");
+        assert!(
+            !unmapped.is_empty(),
+            "an _unmapped file must be created for non-southbound payloads"
+        );
         assert!(read_parquet(&unmapped[0])[0].num_rows() >= 1);
         // No main (rows) file was opened — every payload was unmapped.
         let mains: Vec<_> = list_files(dir.path(), ".parquet")
             .into_iter()
-            .filter(|p| !p.file_name().unwrap().to_string_lossy().contains("_unmapped"))
+            .filter(|p| {
+                !p.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .contains("_unmapped")
+            })
             .collect();
         assert!(mains.is_empty());
     }
@@ -1520,10 +1869,26 @@ mod tests {
         RowsConfig {
             explode: Some("body.samples".into()),
             columns: vec![
-                ColumnSpec { name: "sig".into(), path: "body.signal.id".into(), col_type: ColumnType::String },
-                ColumnSpec { name: "v".into(), path: "body.samples[].value".into(), col_type: ColumnType::Double },
-                ColumnSpec { name: "q".into(), path: "body.samples[].quality".into(), col_type: ColumnType::String },
-                ColumnSpec { name: "tags".into(), path: "tags".into(), col_type: ColumnType::Json },
+                ColumnSpec {
+                    name: "sig".into(),
+                    path: "body.signal.id".into(),
+                    col_type: ColumnType::String,
+                },
+                ColumnSpec {
+                    name: "v".into(),
+                    path: "body.samples[].value".into(),
+                    col_type: ColumnType::Double,
+                },
+                ColumnSpec {
+                    name: "q".into(),
+                    path: "body.samples[].quality".into(),
+                    col_type: ColumnType::String,
+                },
+                ColumnSpec {
+                    name: "tags".into(),
+                    path: "tags".into(),
+                    col_type: ColumnType::Json,
+                },
             ],
         }
     }
@@ -1570,6 +1935,46 @@ mod tests {
 
     #[cfg(feature = "parquet")]
     #[test]
+    fn parquet_user_projection_decodes_protobuf_payloads() {
+        use arrow::array::{Array, Float64Array, StringArray};
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut c = cfg(dir.path(), FileFormat::Parquet, FileMode::Rows);
+        c.rows = Some(explode_projection());
+        let mut sink = FileSink::new("t", c).unwrap();
+        let payload = southbound_protobuf(
+            "sig-pb",
+            vec![sample(31.5, "GOOD", "st-1"), sample(32.5, "BAD", "st-2")],
+        );
+        assert!(matches!(
+            sink.send(&[rec(0, &payload)]),
+            SendOutcome::AllAcked
+        ));
+        drop(sink);
+
+        let files = list_files(dir.path(), ".parquet");
+        assert_eq!(files.len(), 1);
+        let b = &read_parquet(&files[0])[0];
+        assert_eq!(b.num_rows(), 2);
+
+        let col = |n: &str| b.column_by_name(n).unwrap();
+        let sig = col("sig").as_any().downcast_ref::<StringArray>().unwrap();
+        let v = col("v").as_any().downcast_ref::<Float64Array>().unwrap();
+        let q = col("q").as_any().downcast_ref::<StringArray>().unwrap();
+        let tags = col("tags").as_any().downcast_ref::<StringArray>().unwrap();
+
+        assert_eq!(sig.value(0), "sig-pb");
+        assert_eq!(sig.value(1), "sig-pb");
+        assert_eq!(v.value(0), 31.5);
+        assert_eq!(v.value(1), 32.5);
+        assert_eq!(q.value(0), "GOOD");
+        assert_eq!(q.value(1), "BAD");
+        assert!(tags.value(0).contains("\"thing\":\"th\""));
+        assert!(!v.is_null(0) && !v.is_null(1));
+    }
+
+    #[cfg(feature = "parquet")]
+    #[test]
     fn parquet_user_projection_no_explode() {
         use arrow::array::{Array, Int64Array, StringArray};
 
@@ -1578,9 +1983,21 @@ mod tests {
         c.rows = Some(RowsConfig {
             explode: None,
             columns: vec![
-                ColumnSpec { name: "sig".into(), path: "body.signal.id".into(), col_type: ColumnType::String },
-                ColumnSpec { name: "adapter".into(), path: "body.device.adapter".into(), col_type: ColumnType::String },
-                ColumnSpec { name: "n".into(), path: "body.signal.count".into(), col_type: ColumnType::Long },
+                ColumnSpec {
+                    name: "sig".into(),
+                    path: "body.signal.id".into(),
+                    col_type: ColumnType::String,
+                },
+                ColumnSpec {
+                    name: "adapter".into(),
+                    path: "body.device.adapter".into(),
+                    col_type: ColumnType::String,
+                },
+                ColumnSpec {
+                    name: "n".into(),
+                    path: "body.signal.count".into(),
+                    col_type: ColumnType::Long,
+                },
             ],
         });
         let mut sink = FileSink::new("t", c).unwrap();
@@ -1593,7 +2010,10 @@ mod tests {
             "body": {"device": {"adapter":"modbus"}, "signal": {"id":"b"}}
         }))
         .unwrap();
-        assert!(matches!(sink.send(&[rec(0, &m1), rec(1, &m2)]), SendOutcome::AllAcked));
+        assert!(matches!(
+            sink.send(&[rec(0, &m1), rec(1, &m2)]),
+            SendOutcome::AllAcked
+        ));
         drop(sink);
 
         let files = list_files(dir.path(), ".parquet");
@@ -1601,7 +2021,10 @@ mod tests {
         assert_eq!(b.num_rows(), 2);
         let col = |n: &str| b.column_by_name(n).unwrap();
         let sig = col("sig").as_any().downcast_ref::<StringArray>().unwrap();
-        let adapter = col("adapter").as_any().downcast_ref::<StringArray>().unwrap();
+        let adapter = col("adapter")
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
         let n = col("n").as_any().downcast_ref::<Int64Array>().unwrap();
         assert_eq!(sig.value(0), "a");
         assert_eq!(sig.value(1), "b");
@@ -1635,7 +2058,8 @@ mod tests {
         use apache_avro::types::Value as V;
 
         let dir = tempfile::tempdir().unwrap();
-        let mut sink = FileSink::new("t", cfg(dir.path(), FileFormat::Avro, FileMode::Rows)).unwrap();
+        let mut sink =
+            FileSink::new("t", cfg(dir.path(), FileFormat::Avro, FileMode::Rows)).unwrap();
         let p_double = southbound("ns=1", serde_json::json!(2.5));
         let p_long = southbound("ns=2", serde_json::json!(7));
         let p_str = southbound("ns=3", serde_json::json!("hi"));
@@ -1692,8 +2116,12 @@ mod tests {
         use apache_avro::types::Value as V;
 
         let dir = tempfile::tempdir().unwrap();
-        let mut sink = FileSink::new("t", cfg(dir.path(), FileFormat::Avro, FileMode::Raw)).unwrap();
-        assert!(matches!(sink.send(&[rec(5, b"alpha"), rec(6, b"beta")]), SendOutcome::AllAcked));
+        let mut sink =
+            FileSink::new("t", cfg(dir.path(), FileFormat::Avro, FileMode::Raw)).unwrap();
+        assert!(matches!(
+            sink.send(&[rec(5, b"alpha"), rec(6, b"beta")]),
+            SendOutcome::AllAcked
+        ));
         drop(sink);
 
         let files = list_files(dir.path(), ".avro");
@@ -1733,7 +2161,9 @@ mod tests {
             other => panic!("expected union, got {other:?}"),
         }
         match field(&values[1], "v") {
-            V::Union(_, inner) => assert!(matches!(**inner, V::Double(d) if (d - 22.5).abs() < 1e-9)),
+            V::Union(_, inner) => {
+                assert!(matches!(**inner, V::Double(d) if (d - 22.5).abs() < 1e-9))
+            }
             other => panic!("expected union, got {other:?}"),
         }
         // Message-level `sig` repeats; `tags` (a Json column) lands as the string branch.

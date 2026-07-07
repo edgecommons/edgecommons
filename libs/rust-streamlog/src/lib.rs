@@ -21,25 +21,27 @@ pub mod export;
 #[cfg(feature = "cabi")]
 pub mod ffi;
 pub mod log;
+mod payload;
+mod proto;
 pub mod record;
 pub mod service;
 
 pub use config::{
-    BatchConfig, BufferConfig, ColumnSpec, ColumnType, Compression, DeliveryConfig, FileCompression,
-    FileFormat, FileMode, FileOnFull, FileSinkConfig, FsyncPolicy, OnFull, RowsConfig, SinkConfig,
-    StreamConfig, StreamingConfig,
+    BatchConfig, BufferConfig, ColumnSpec, ColumnType, Compression, DeliveryConfig,
+    FileCompression, FileFormat, FileMode, FileOnFull, FileSinkConfig, FsyncPolicy, OnFull,
+    RowsConfig, SinkConfig, SinkPayloadFormat, StreamConfig, StreamingConfig,
 };
 pub use error::{EdgeStreamError, Result};
+#[cfg(feature = "file")]
+pub use export::FileSink;
+#[cfg(feature = "kafka")]
+pub use export::KafkaSink;
+#[cfg(feature = "kinesis")]
+pub use export::KinesisSink;
 pub use export::{
     CallbackSink, EngineStats, ExportEngine, ExportRecord, FakeSink, FakeSinkHandle, SendOutcome,
     Sink, SinkCallback,
 };
-#[cfg(feature = "kinesis")]
-pub use export::KinesisSink;
-#[cfg(feature = "kafka")]
-pub use export::KafkaSink;
-#[cfg(feature = "file")]
-pub use export::FileSink;
 pub use log::{EmbeddedLog, LogStats};
 pub use record::Record;
 pub use service::{ServiceStats, SinkFactory, StreamService};

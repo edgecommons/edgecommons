@@ -8,10 +8,12 @@ import binascii
 import json
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from uuid import uuid4
 from typing import Any, Optional, TYPE_CHECKING
 
 from edgecommons.messaging.identity import MessageIdentity
+from edgecommons.messaging.proto import MessageBodyCase, MessageBodySchema
 from edgecommons.utils import Utils
 
 
@@ -70,6 +72,19 @@ def _decode_binary_descriptor(descriptor: dict) -> bytes:
     return decoded
 
 
+def _timestamp_to_epoch_millis(timestamp: Optional[str]) -> int:
+    if not timestamp:
+        return 0
+    try:
+        return int(datetime.fromisoformat(timestamp.replace("Z", "+00:00")).timestamp() * 1000)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _epoch_millis_to_timestamp(timestamp_ms: int) -> str:
+    return datetime.fromtimestamp(timestamp_ms / 1000, timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 if TYPE_CHECKING:
     from edgecommons.config.manager.config_manager import ConfigManager
 
@@ -87,11 +102,16 @@ class MessageHeader:
     timestamp: Optional[str] = None
     uuid: Optional[str] = None
     reply_to: Optional[str] = None
+    timestamp_ms: Optional[int] = None
 
     def __post_init__(self):
         # Fill computed defaults (matches the previous hand-written constructor).
-        if self.timestamp is None:
+        if self.timestamp is None and self.timestamp_ms is not None:
+            self.timestamp = _epoch_millis_to_timestamp(self.timestamp_ms)
+        elif self.timestamp is None:
             self.timestamp = Utils.get_utc_z()
+        if self.timestamp_ms is None:
+            self.timestamp_ms = _timestamp_to_epoch_millis(self.timestamp)
         if self.correlation_id is None:
             self.correlation_id = str(uuid4())
         if self.uuid is None:
@@ -102,16 +122,18 @@ class MessageHeader:
         name = src.get("name")
         version = src.get("version")
         timestamp = src.get("timestamp")
+        timestamp_ms = src.get("timestamp_ms")
         uuid = src.get("uuid")
         correlation_id = src.get("correlation_id")
         reply_to = src.get("reply_to")
-        return MessageHeader(name, version, correlation_id, timestamp, uuid, reply_to)
+        return MessageHeader(name, version, correlation_id, timestamp, uuid, reply_to, timestamp_ms)
 
     def to_dict(self) -> dict:
         header = {
             "name": self.name,
             "version": self.version,
             "timestamp": self.timestamp,
+            "timestamp_ms": self.timestamp_ms,
             "uuid": self.uuid,
             "correlation_id": self.correlation_id,
         }
@@ -131,6 +153,9 @@ class MessageHeader:
 
     def set_correlation_id(self, correlation_id: str):
         self.correlation_id = correlation_id
+
+    def get_timestamp_ms(self) -> int:
+        return self.timestamp_ms
 
 
 @dataclass
@@ -174,6 +199,10 @@ class Message:
     tags: Optional[MessageTags] = None
     body: Any = None
     raw: Any = None
+    content_type: Optional[str] = None
+    content_encoding: Optional[str] = None
+    schema: Optional[MessageBodySchema] = None
+    body_case: Optional[MessageBodyCase] = None
 
     def to_dict(self) -> dict:
         if self.raw is None:
@@ -185,6 +214,12 @@ class Message:
                 msg["identity"] = self.identity.to_dict()
             if self.tags is not None:
                 msg["tags"] = self.tags.to_dict()
+            if self.content_type is not None:
+                msg["content_type"] = self.content_type
+            if self.content_encoding is not None:
+                msg["content_encoding"] = self.content_encoding
+            if self.schema is not None:
+                msg["schema"] = self.schema.to_dict()
             msg["body"] = _encode_body(self.body)
             return msg
         else:
@@ -201,6 +236,12 @@ class Message:
             msg["identity"] = self.identity.to_dict()
         if self.tags is not None:
             msg["tags"] = self.tags.to_dict()
+        if self.content_type is not None:
+            msg["content_type"] = self.content_type
+        if self.content_encoding is not None:
+            msg["content_encoding"] = self.content_encoding
+        if self.schema is not None:
+            msg["schema"] = self.schema.to_dict()
         msg["body"] = _encode_body(self.body)
         return json.dumps(msg, indent=indent)
 
@@ -238,6 +279,20 @@ class Message:
         """Backward compatibility alias for get_body()"""
         return self.get_body()
 
+    def get_content_type(self) -> Optional[str]:
+        return self.content_type
+
+    def get_content_encoding(self) -> Optional[str]:
+        return self.content_encoding
+
+    def get_schema(self) -> Optional[MessageBodySchema]:
+        return self.schema
+
+    def get_body_case(self) -> MessageBodyCase:
+        from edgecommons.messaging import proto as message_proto
+
+        return message_proto.body_case(self)
+
     def is_binary_body(self) -> bool:
         return isinstance(self.body, (bytes, bytearray)) or (
             isinstance(self.body, dict) and BINARY_BODY_KEY in self.body
@@ -251,6 +306,19 @@ class Message:
             return data
         descriptor = _binary_descriptor(self.body)
         return None if descriptor is None else _decode_binary_descriptor(descriptor)
+
+    def get_opaque_body(self) -> Optional[bytes]:
+        return self.get_binary_body() if self.get_body_case() is MessageBodyCase.OPAQUE else None
+
+    def to_bytes(self) -> bytes:
+        from edgecommons.messaging import proto as message_proto
+
+        return message_proto.to_bytes(self)
+
+    def to_diagnostic_json(self) -> dict:
+        from edgecommons.messaging import proto as message_proto
+
+        return message_proto.to_diagnostic_json(self)
 
     def get_raw(self):
         return self.raw
@@ -282,6 +350,14 @@ class Message:
                 message.identity = MessageIdentity.from_dict(msg_contents["identity"])
             if "tags" in msg_contents:
                 message.tags = MessageTags.from_dict(msg_contents["tags"])
+            if "content_type" in msg_contents:
+                message.content_type = msg_contents["content_type"]
+            if "content_encoding" in msg_contents:
+                message.content_encoding = msg_contents["content_encoding"]
+            if "schema" in msg_contents:
+                message.schema = MessageBodySchema.from_dict(msg_contents["schema"])
+            if "body_case" in msg_contents:
+                message.body_case = MessageBodyCase[msg_contents["body_case"]]
             if "body" in msg_contents:
                 message.body = msg_contents["body"]
             if not any(key in msg_contents for key in ["header", "identity", "tags", "body"]):
@@ -292,3 +368,9 @@ class Message:
             message.raw = msg_contents
 
         return message
+
+    @staticmethod
+    def from_bytes(payload: bytes) -> "Message":
+        from edgecommons.messaging import proto as message_proto
+
+        return message_proto.from_bytes(payload)

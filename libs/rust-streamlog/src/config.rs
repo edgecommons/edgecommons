@@ -15,7 +15,9 @@ fn lenient_u64<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<u64, D::E
             .as_u64()
             .or_else(|| n.as_f64().map(|f| f as u64))
             .ok_or_else(|| serde::de::Error::custom("expected a non-negative integer")),
-        other => Err(serde::de::Error::custom(format!("expected a number, got {other}"))),
+        other => Err(serde::de::Error::custom(format!(
+            "expected a number, got {other}"
+        ))),
     }
 }
 
@@ -29,7 +31,9 @@ fn lenient_i64<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<i64, D::E
             .as_i64()
             .or_else(|| n.as_f64().map(|f| f as i64))
             .ok_or_else(|| serde::de::Error::custom("expected an integer")),
-        other => Err(serde::de::Error::custom(format!("expected a number, got {other}"))),
+        other => Err(serde::de::Error::custom(format!(
+            "expected a number, got {other}"
+        ))),
     }
 }
 
@@ -41,7 +45,9 @@ fn lenient_opt_u64<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<Optio
             .or_else(|| n.as_f64().map(|f| f as u64))
             .map(Some)
             .ok_or_else(|| serde::de::Error::custom("expected a non-negative integer")),
-        Some(other) => Err(serde::de::Error::custom(format!("expected a number, got {other}"))),
+        Some(other) => Err(serde::de::Error::custom(format!(
+            "expected a number, got {other}"
+        ))),
     }
 }
 
@@ -155,7 +161,12 @@ pub struct BatchConfig {
 }
 impl Default for BatchConfig {
     fn default() -> Self {
-        Self { max_records: 500, max_bytes: 4 * 1024 * 1024, max_latency_ms: 1000, compression: Compression::None }
+        Self {
+            max_records: 500,
+            max_bytes: 4 * 1024 * 1024,
+            max_latency_ms: 1000,
+            compression: Compression::None,
+        }
     }
 }
 
@@ -176,7 +187,12 @@ pub struct DeliveryConfig {
 }
 impl Default for DeliveryConfig {
     fn default() -> Self {
-        Self { max_retries: -1, backoff_base_ms: 50, backoff_max_ms: 30_000, poll_interval_ms: 100 }
+        Self {
+            max_retries: -1,
+            backoff_base_ms: 50,
+            backoff_max_ms: 30_000,
+            poll_interval_ms: 100,
+        }
     }
 }
 
@@ -328,19 +344,47 @@ impl FileSinkConfig {
     /// Validate required fields.
     pub fn validate(&self) -> Result<()> {
         if self.dir.trim().is_empty() {
-            return Err(EdgeStreamError::Config("file sink: `dir` is required".into()));
+            return Err(EdgeStreamError::Config(
+                "file sink: `dir` is required".into(),
+            ));
         }
         if self.max_file_bytes == 0 {
-            return Err(EdgeStreamError::Config("file sink: `maxFileBytes` must be > 0".into()));
+            return Err(EdgeStreamError::Config(
+                "file sink: `maxFileBytes` must be > 0".into(),
+            ));
         }
         Ok(())
+    }
+}
+
+/// Target record payload format for Kinesis/Kafka sinks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SinkPayloadFormat {
+    /// Decode EdgeCommons protobuf envelopes to the canonical JSON projection before export.
+    #[default]
+    Json,
+    /// Export the original EdgeCommons protobuf envelope bytes unchanged.
+    Protobuf,
+}
+
+impl SinkPayloadFormat {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Json => "json",
+            Self::Protobuf => "protobuf",
+        }
     }
 }
 
 /// Where a stream's export engine delivers (`{"type": "kinesis", ...}` / `{"type": "kafka", ...}` /
 /// `{"type": "file", ...}`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum SinkConfig {
     Kinesis {
         stream_name: String,
@@ -349,6 +393,9 @@ pub enum SinkConfig {
         /// Override the Kinesis endpoint (LocalStack / VPC endpoint / testing). Default chain otherwise.
         #[serde(default)]
         endpoint_url: Option<String>,
+        /// Target record payload format. Defaults to JSON for analytics compatibility.
+        #[serde(default)]
+        payload_format: SinkPayloadFormat,
     },
     Kafka {
         /// `host:port[,host:port...]` broker list (`bootstrap.servers`).
@@ -357,6 +404,9 @@ pub enum SinkConfig {
         /// Extra librdkafka producer properties (e.g. security/SASL). Applied verbatim.
         #[serde(default)]
         properties: std::collections::BTreeMap<String, String>,
+        /// Target record payload format. Defaults to JSON for analytics compatibility.
+        #[serde(default)]
+        payload_format: SinkPayloadFormat,
     },
     /// Local rolling Parquet/AVRO files (bounded by max size + max file count) for later bulk
     /// upload to a cloud data lake. Built only with the `file` feature (+ `parquet`/`avro`).
@@ -415,7 +465,9 @@ impl BufferConfig {
                     return Err(EdgeStreamError::Config("buffer.path is required".into()));
                 }
                 if self.segment_bytes == 0 {
-                    return Err(EdgeStreamError::Config("buffer.segmentBytes must be > 0".into()));
+                    return Err(EdgeStreamError::Config(
+                        "buffer.segmentBytes must be > 0".into(),
+                    ));
                 }
                 if self.max_disk_bytes < self.segment_bytes {
                     return Err(EdgeStreamError::Config(
@@ -464,13 +516,53 @@ mod tests {
     }
 
     #[test]
+    fn kinesis_and_kafka_payload_format_defaults_to_json() {
+        let json = r#"{"streams":[
+            {"name":"kinesis-json","sink":{"type":"kinesis","streamName":"x"},
+             "buffer":{"path":"/tmp/x","segmentBytes":65536,"maxDiskBytes":1048576}},
+            {"name":"kafka-json","sink":{"type":"kafka","bootstrapServers":"b:9092","topic":"t"},
+             "buffer":{"path":"/tmp/y","segmentBytes":65536,"maxDiskBytes":1048576}}
+        ]}"#;
+        let cfg: StreamingConfig = serde_json::from_str(json).expect("payloadFormat default");
+        match &cfg.streams[0].sink {
+            SinkConfig::Kinesis { payload_format, .. } => {
+                assert_eq!(*payload_format, SinkPayloadFormat::Json)
+            }
+            other => panic!("expected Kinesis sink, got {other:?}"),
+        }
+        match &cfg.streams[1].sink {
+            SinkConfig::Kafka { payload_format, .. } => {
+                assert_eq!(*payload_format, SinkPayloadFormat::Json)
+            }
+            other => panic!("expected Kafka sink, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_explicit_protobuf_payload_format() {
+        let json = r#"{"streams":[{"name":"t",
+            "sink":{"type":"kafka","bootstrapServers":"b:9092","topic":"t","payloadFormat":"protobuf"},
+            "buffer":{"path":"/tmp/x","segmentBytes":65536,"maxDiskBytes":1048576}}]}"#;
+        let cfg: StreamingConfig = serde_json::from_str(json).expect("explicit protobuf format");
+        match &cfg.streams[0].sink {
+            SinkConfig::Kafka { payload_format, .. } => {
+                assert_eq!(*payload_format, SinkPayloadFormat::Protobuf);
+            }
+            other => panic!("expected Kafka sink, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn memory_buffer_parses_and_validates() {
         // type: memory, no path, maxDiskBytes = in-memory budget.
         let json = r#"{"streams":[{"name":"m","sink":{"type":"kinesis","streamName":"x"},
             "buffer":{"type":"memory","maxDiskBytes":65536}}]}"#;
         let cfg: StreamingConfig = serde_json::from_str(json).unwrap();
         assert_eq!(cfg.streams[0].buffer.store_type, StoreType::Memory);
-        cfg.streams[0].buffer.validate().expect("valid memory buffer");
+        cfg.streams[0]
+            .buffer
+            .validate()
+            .expect("valid memory buffer");
 
         // A path on a memory buffer is rejected.
         let mut bad = cfg.streams[0].buffer.clone();
@@ -478,14 +570,25 @@ mod tests {
         assert!(bad.validate().is_err(), "memory buffer must reject a path");
 
         // maxDiskBytes (the memory budget) must be > 0.
-        let mut zero = BufferConfig { store_type: StoreType::Memory, path: String::new(), max_disk_bytes: 0, ..Default::default() };
+        let mut zero = BufferConfig {
+            store_type: StoreType::Memory,
+            path: String::new(),
+            max_disk_bytes: 0,
+            ..Default::default()
+        };
         zero.max_disk_bytes = 0;
-        assert!(zero.validate().is_err(), "memory buffer must require a budget");
+        assert!(
+            zero.validate().is_err(),
+            "memory buffer must require a budget"
+        );
 
         // Default (disk) still requires a path.
         let disk = BufferConfig::default();
         assert_eq!(disk.store_type, StoreType::Disk);
-        assert!(disk.validate().is_err(), "disk buffer still requires a path");
+        assert!(
+            disk.validate().is_err(),
+            "disk buffer still requires a path"
+        );
     }
 
     #[test]
@@ -500,6 +603,11 @@ mod tests {
         let json = r#"{"streams":[{"name":"cw","sink":{"type":"callback","id":"metrics-cw"},
             "buffer":{"path":"/tmp/x","segmentBytes":65536,"maxDiskBytes":1048576}}]}"#;
         let cfg: StreamingConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(cfg.streams[0].sink, SinkConfig::Callback { id: Some("metrics-cw".into()) });
+        assert_eq!(
+            cfg.streams[0].sink,
+            SinkConfig::Callback {
+                id: Some("metrics-cw".into())
+            }
+        );
     }
 }

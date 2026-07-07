@@ -7,7 +7,6 @@ Mirrors a Java fix (commit 6ed774c):
           registered callback so a bad message can never kill the worker thread.
 """
 import threading
-import time
 
 from edgecommons.messaging.providers.greengrass.greengrass_ipc import GreengrassIpcProvider
 from edgecommons.messaging.providers.greengrass.ipc_subscription_handler import (
@@ -97,7 +96,7 @@ def test_subscription_callback_exception_is_suppressed():
     try:
         # Feed a parsed (topic, payload) tuple directly onto the worker queue,
         # the same shape on_stream_event produces.
-        handler._queue.put(("some/topic", {"body": "hello"}))
+        handler._queue.put(("some/topic", Message.from_object({"body": "hello"})))
         assert invoked.wait(timeout=5.0), "callback was never invoked"
 
         # The worker thread must still be alive and processing after the throw.
@@ -107,11 +106,42 @@ def test_subscription_callback_exception_is_suppressed():
             followup.set()
 
         handler._callback_func = good_callback
-        handler._queue.put(("some/topic", {"body": "again"}))
+        handler._queue.put(("some/topic", Message.from_object({"body": "again"})))
         assert followup.wait(
             timeout=5.0
         ), "worker thread died after a throwing callback"
     finally:
         # Stop the worker thread cleanly.
-        handler.on_stream_closed()
-        time.sleep(0.1)
+        handler.close()
+        assert not handler._thread.is_alive()
+
+
+def test_stream_error_requests_close():
+    handler = IpcSubscriptionHandler("some/topic", lambda _topic, _msg: None)
+    try:
+        assert handler.on_stream_error(RuntimeError("ipc closed")) is True
+    finally:
+        handler.close()
+
+
+def test_unsubscribe_stops_worker_when_operation_does_not_emit_stream_closed():
+    p = _provider_without_connect()
+    handler = IpcSubscriptionHandler("some/topic", lambda _topic, _msg: None)
+
+    class _FakeOperation:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    operation = _FakeOperation()
+    p._ipc_subscription_operations["some/topic"] = operation
+    p._ipc_subscription_handlers["some/topic"] = handler
+
+    p.unsubscribe("some/topic")
+
+    assert operation.closed
+    assert "some/topic" not in p._ipc_subscription_operations
+    assert "some/topic" not in p._ipc_subscription_handlers
+    assert not handler._thread.is_alive()

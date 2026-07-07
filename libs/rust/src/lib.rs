@@ -46,6 +46,7 @@ pub mod metrics;
 #[cfg(feature = "parameters")]
 pub mod parameters;
 pub mod platform;
+pub mod proto;
 #[cfg(feature = "streaming")]
 pub mod streaming;
 pub mod uns;

@@ -11,6 +11,7 @@ from edgecommons.messaging.errors import RequestTimeoutError
 from edgecommons.messaging.messaging_provider import MessagingProvider
 from edgecommons.messaging.providers.standalone_provider import StandaloneProvider, _BrokerChannel
 from edgecommons.messaging.message import Message, MessageHeader
+from edgecommons.messaging.message_builder import MessageBuilder
 from edgecommons.utils.iou import Iou
 
 
@@ -202,7 +203,6 @@ class TestStandaloneRequestDeadline:
         assert channel.client.unsubscribed == [reply_topic]
 
     def test_reply_settles_and_deadline_noops(self):
-        import json as _json
         import types
 
         prov, channel = self._provider_with_channel()
@@ -212,7 +212,7 @@ class TestStandaloneRequestDeadline:
 
         mqtt_msg = types.SimpleNamespace(
             topic=reply_topic,
-            payload=_json.dumps({"body": {"ok": True}}).encode("utf-8"),
+            payload=MessageBuilder.create("Reply", "1.0").with_payload({"ok": True}).build().to_bytes(),
             qos=0,
         )
         prov._process_message(mqtt_msg, channel)
@@ -223,7 +223,6 @@ class TestStandaloneRequestDeadline:
         assert reply_topic not in channel.subscriptions
 
     def test_straggler_reply_after_settle_is_dropped(self):
-        import json as _json
         import types
 
         prov, channel = self._provider_with_channel()
@@ -234,7 +233,7 @@ class TestStandaloneRequestDeadline:
 
         mqtt_msg = types.SimpleNamespace(
             topic=reply_topic,
-            payload=_json.dumps({"body": {"late": True}}).encode("utf-8"),
+            payload=MessageBuilder.create("Reply", "1.0").with_payload({"late": True}).build().to_bytes(),
             qos=0,
         )
         prov._process_message(mqtt_msg, channel)  # no exception, dropped at DEBUG

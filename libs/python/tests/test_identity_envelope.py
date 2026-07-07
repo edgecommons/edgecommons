@@ -205,7 +205,7 @@ class TestBuilderStamping:
     def test_from_object_carries_identity(self):
         src = {
             "header": {"name": "N", "version": "1", "uuid": "u", "timestamp": "t",
-                       "correlation_id": "c"},
+                       "timestamp_ms": 0, "correlation_id": "c"},
             "identity": _identity("kep1").to_dict(),
             "body": {"v": 1},
         }

@@ -6,16 +6,10 @@ package com.mbreissi.edgecommons.messaging.providers.greengrass;
 
 
 import com.mbreissi.edgecommons.messaging.Message;
-import com.mbreissi.edgecommons.messaging.MessageBuilder;
-import com.google.gson.Gson;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonSyntaxException;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import oshi.util.tuples.Pair;
 import software.amazon.awssdk.aws.greengrass.model.SubscriptionResponseMessage;
-
-import java.nio.charset.StandardCharsets;
 
 import java.util.function.BiConsumer;
 
@@ -36,27 +30,23 @@ public class IpcSubscriptionHandler extends SubscriptionHandler<SubscriptionResp
         try
         {
             String topic;
-            JsonObject receivedPayload;
             if (subscriptionResponseMessage.getJsonMessage() != null)
             {
-                final Gson gson = new Gson();
-                receivedPayload = gson.toJsonTree(subscriptionResponseMessage.getJsonMessage().getMessage()).getAsJsonObject();
                 topic = subscriptionResponseMessage.getJsonMessage().getContext().getTopic();
-                LOGGER.trace("Received json message: {} on topic {}", receivedPayload.toString(), topic);
+                LOGGER.warn("Received Greengrass JsonMessage on EdgeCommons subscription topic {}; ignoring non-protobuf payload",
+                        topic);
+                return null;
             }
             else
             {
-                String decodedBinaryPayload = new String(subscriptionResponseMessage.getBinaryMessage().getMessage(),
-                        StandardCharsets.UTF_8);
-                receivedPayload = new Gson().fromJson(decodedBinaryPayload, JsonObject.class);
                 topic = subscriptionResponseMessage.getBinaryMessage().getContext().getTopic();
-                LOGGER.trace("Received binary message: {} on topic {}", decodedBinaryPayload, topic);
+                LOGGER.trace("Received binary EdgeCommons message on topic {}", topic);
+                retVal = new Pair<>(topic, Message.fromBytes(subscriptionResponseMessage.getBinaryMessage().getMessage()));
             }
-            retVal = new Pair<>(topic, MessageBuilder.fromObject(receivedPayload));
         }
-        catch (JsonSyntaxException e) // import com.google.gson.JsonSyntaxException
+        catch (IllegalArgumentException e)
         {
-            LOGGER.error("Problem decoding IPC payload into Message on topic {}: {}. Ignoring message",
+            LOGGER.warn("Problem decoding IPC payload into EdgeCommons protobuf Message on topic {}: {}. Ignoring message",
                     topicFilter, e.toString());
         }
         catch (NullPointerException e)

@@ -67,7 +67,14 @@ class Dispatcher {
 
   private async run(topic: string, payload: Buffer): Promise<void> {
     try {
-      await this.handler(topic, Message.fromWire(payload));
+      let message: Message;
+      try {
+        message = Message.fromBytes(payload);
+      } catch (e) {
+        logger.warn(`edgecommons: dropping non-EdgeCommons protobuf payload on ${topic}: ${String(e)}`);
+        return;
+      }
+      await this.handler(topic, message);
     } catch (e) {
       // eslint-disable-next-line no-console
       console.warn(`edgecommons: message handler threw for ${topic}: ${String(e)}`);
@@ -167,12 +174,12 @@ export class DefaultMessagingService implements IMessagingService {
 
   async publish(topic: string, msg: Message): Promise<void> {
     this.checkReservedTopic(topic);
-    await this.provider.publishBytes(topic, Buffer.from(msg.toJSON(), "utf8"), Destination.Local, this.publishQos(Destination.Local));
+    await this.provider.publishBytes(topic, msg.toBytes(), Destination.Local, this.publishQos(Destination.Local));
   }
 
   async publishNorthbound(topic: string, msg: Message, qos: Qos = Qos.AtLeastOnce): Promise<void> {
     this.checkReservedTopic(topic);
-    await this.provider.publishBytes(topic, Buffer.from(msg.toJSON(), "utf8"), Destination.Northbound, qos);
+    await this.provider.publishBytes(topic, msg.toBytes(), Destination.Northbound, qos);
   }
 
   async publishRaw(topic: string, payload: unknown): Promise<void> {
@@ -194,7 +201,7 @@ export class DefaultMessagingService implements IMessagingService {
    * (`stripInternal`).
    */
   async publishReserved(topic: string, msg: Message): Promise<void> {
-    await this.provider.publishBytes(topic, Buffer.from(msg.toJSON(), "utf8"), Destination.Local, this.publishQos(Destination.Local));
+    await this.provider.publishBytes(topic, msg.toBytes(), Destination.Local, this.publishQos(Destination.Local));
   }
 
   /** @internal Unguarded raw local publish — the privileged seam (§4.2). */
@@ -204,7 +211,7 @@ export class DefaultMessagingService implements IMessagingService {
 
   /** @internal Unguarded northbound publish — the privileged seam (§4.2). */
   async publishReservedNorthbound(topic: string, msg: Message, qos: Qos = Qos.AtLeastOnce): Promise<void> {
-    await this.provider.publishBytes(topic, Buffer.from(msg.toJSON(), "utf8"), Destination.Northbound, qos);
+    await this.provider.publishBytes(topic, msg.toBytes(), Destination.Northbound, qos);
   }
 
   async subscribe(filter: string, handler: MessageHandler, maxMessages = 32, maxConcurrency = 1): Promise<void> {
@@ -332,7 +339,7 @@ export class DefaultMessagingService implements IMessagingService {
       };
       this.startSubscription(replyTopic, dest, subscribeQos, handler, 1, 1)
         .then(() =>
-          this.provider.publishBytes(topic, Buffer.from(msg.toJSON(), "utf8"), dest, publishQos),
+          this.provider.publishBytes(topic, msg.toBytes(), dest, publishQos),
         )
         .catch((err) => finish(() => reject(err)));
     });
@@ -365,7 +372,7 @@ export class DefaultMessagingService implements IMessagingService {
       throw new Error("cannot reply: request has no reply_to");
     }
     reply.header.correlation_id = request.getCorrelationId();
-    await this.provider.publishBytes(replyTo, Buffer.from(reply.toJSON(), "utf8"), dest, qos);
+    await this.provider.publishBytes(replyTo, reply.toBytes(), dest, qos);
   }
 
   cancelRequest(reply: ReplyFuture): void {

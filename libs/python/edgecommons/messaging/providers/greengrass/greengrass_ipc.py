@@ -86,15 +86,16 @@ class GreengrassIpcProvider(MessagingProvider):
             self.unsubscribe(topic_filter)
         for topic_filter in list(self._northbound_subscription_handlers):
             self.unsubscribe_northbound(topic_filter)
-        self._ipc_client.client.close()
-        self._ipc_client = None
+        if self._ipc_client is not None:
+            self._ipc_client.client.close()
+            self._ipc_client = None
 
     def publish(self, topic: str, msg: Message):
-        msg_str = msg.dumps()
+        payload = msg.to_bytes()
         self._ipc_client.publish_to_topic(
             topic=topic,
             publish_message=PublishMessage(
-                binary_message=BinaryMessage(message=msg_str)
+                binary_message=BinaryMessage(message=payload)
             ),
         )
 
@@ -105,7 +106,7 @@ class GreengrassIpcProvider(MessagingProvider):
         )
 
     def publish_northbound(self, topic: str, msg: Message, qos: Qos):
-        payload = msg.dumps()
+        payload = msg.to_bytes()
         self._ipc_client.publish_to_iot_core(
             topic_name=topic, payload=payload, qos=self._greengrass_qos(qos)
         )
@@ -185,7 +186,10 @@ class GreengrassIpcProvider(MessagingProvider):
 
     def unsubscribe(self, topic_filter: str):
         if topic_filter in self._ipc_subscription_operations:
-            self._ipc_subscription_operations[topic_filter].close()
+            operation = self._ipc_subscription_operations[topic_filter]
+            handler = self._ipc_subscription_handlers[topic_filter]
+            operation.close()
+            handler.close()
             del self._ipc_subscription_operations[topic_filter]
             del self._ipc_subscription_handlers[topic_filter]
         else:
@@ -195,7 +199,10 @@ class GreengrassIpcProvider(MessagingProvider):
 
     def unsubscribe_northbound(self, topic_filter: str):
         if topic_filter in self._northbound_subscription_operations:
-            self._northbound_subscription_operations[topic_filter].close()
+            operation = self._northbound_subscription_operations[topic_filter]
+            handler = self._northbound_subscription_handlers[topic_filter]
+            operation.close()
+            handler.close()
             del self._northbound_subscription_operations[topic_filter]
             del self._northbound_subscription_handlers[topic_filter]
         else:

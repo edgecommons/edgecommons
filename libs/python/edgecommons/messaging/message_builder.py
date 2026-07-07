@@ -12,6 +12,7 @@ import json
 from typing import TYPE_CHECKING, Optional
 
 from edgecommons.messaging.identity import MessageIdentity
+from edgecommons.messaging.proto import DEFAULT_OPAQUE_CONTENT_TYPE, MessageBodyCase, MessageBodySchema
 
 if TYPE_CHECKING:
     from edgecommons.config.manager.config_manager import ConfigManager
@@ -24,8 +25,13 @@ class MessageBuilder:
         self.correlation_id = None
         self.uuid = None
         self.timestamp = None
+        self.timestamp_ms = None
         self.reply_to = None
         self.payload = None
+        self.content_type = None
+        self.content_encoding = None
+        self.schema = None
+        self.body_case = None
         self.config_service = None
         self.tags = None
         self.instance = None
@@ -50,6 +56,8 @@ class MessageBuilder:
                 builder.with_uuid(header["uuid"])
             if "timestamp" in header:
                 builder.with_timestamp(header["timestamp"])
+            if "timestamp_ms" in header:
+                builder.with_timestamp_ms(header["timestamp_ms"])
             if "reply_to" in header:
                 builder.with_reply_to(header["reply_to"])
             if "identity" in msg_contents:
@@ -59,6 +67,14 @@ class MessageBuilder:
                 builder.with_payload(msg_contents["body"])
             if "tags" in msg_contents:
                 builder.with_tags(msg_contents["tags"])
+            if "content_type" in msg_contents:
+                builder.with_content_type(msg_contents["content_type"])
+            if "content_encoding" in msg_contents:
+                builder.with_content_encoding(msg_contents["content_encoding"])
+            if "schema" in msg_contents:
+                builder.with_schema(MessageBodySchema.from_dict(msg_contents["schema"]))
+            if "body_case" in msg_contents:
+                builder.with_body_case(MessageBodyCase[msg_contents["body_case"]])
 
             return builder
         else:
@@ -73,6 +89,73 @@ class MessageBuilder:
 
     def with_payload(self, payload) -> 'MessageBuilder':
         self.payload = payload
+        if isinstance(payload, (bytes, bytearray)) and self.body_case is None:
+            self.body_case = MessageBodyCase.OPAQUE
+            if self.content_type is None:
+                self.content_type = DEFAULT_OPAQUE_CONTENT_TYPE
+        return self
+
+    def with_structured_payload(self, payload) -> 'MessageBuilder':
+        self.payload = payload
+        self.body_case = MessageBodyCase.STRUCTURED
+        return self
+
+    def with_structured_body(self, body) -> 'MessageBuilder':
+        return self.with_structured_payload(body)
+
+    def with_southbound_signal_update(self, payload: dict) -> 'MessageBuilder':
+        self.payload = payload
+        self.body_case = MessageBodyCase.SOUTHBOUND_SIGNAL_UPDATE
+        return self
+
+    def with_state_update(self, payload: dict) -> 'MessageBuilder':
+        self.payload = payload
+        self.body_case = MessageBodyCase.STATE_UPDATE
+        return self
+
+    def with_config_update(self, payload: dict) -> 'MessageBuilder':
+        self.payload = payload
+        self.body_case = MessageBodyCase.CONFIG_UPDATE
+        return self
+
+    def with_metric_update(self, payload: dict) -> 'MessageBuilder':
+        self.payload = payload
+        self.body_case = MessageBodyCase.METRIC_UPDATE
+        return self
+
+    def with_event(self, payload: dict) -> 'MessageBuilder':
+        self.payload = payload
+        self.body_case = MessageBodyCase.EVENT
+        return self
+
+    def with_command(self, payload: dict) -> 'MessageBuilder':
+        self.payload = payload
+        self.body_case = MessageBodyCase.COMMAND
+        return self
+
+    def with_opaque_payload(self, payload: bytes, content_type: str = DEFAULT_OPAQUE_CONTENT_TYPE) -> 'MessageBuilder':
+        self.payload = None if payload is None else bytes(payload)
+        self.body_case = MessageBodyCase.OPAQUE
+        self.content_type = content_type if content_type is not None else DEFAULT_OPAQUE_CONTENT_TYPE
+        return self
+
+    def with_opaque_body(self, payload: bytes, content_type: str = DEFAULT_OPAQUE_CONTENT_TYPE) -> 'MessageBuilder':
+        return self.with_opaque_payload(payload, content_type)
+
+    def with_content_type(self, content_type: str) -> 'MessageBuilder':
+        self.content_type = content_type
+        return self
+
+    def with_content_encoding(self, content_encoding: str) -> 'MessageBuilder':
+        self.content_encoding = content_encoding
+        return self
+
+    def with_schema(self, schema: Optional[MessageBodySchema]) -> 'MessageBuilder':
+        self.schema = schema
+        return self
+
+    def with_body_case(self, body_case) -> 'MessageBuilder':
+        self.body_case = body_case if isinstance(body_case, MessageBodyCase) else MessageBodyCase[body_case]
         return self
 
     def with_config(self, config_service: 'ConfigManager') -> 'MessageBuilder':
@@ -95,6 +178,10 @@ class MessageBuilder:
         envelopes for tests and the cross-language ``uns-test-vectors`` golden
         envelopes (D-U13)."""
         self.timestamp = timestamp
+        return self
+
+    def with_timestamp_ms(self, timestamp_ms: int) -> 'MessageBuilder':
+        self.timestamp_ms = int(timestamp_ms)
         return self
 
     def with_reply_to(self, reply_to: str) -> 'MessageBuilder':
@@ -125,7 +212,8 @@ class MessageBuilder:
 
         message = Message()
         message.header = MessageHeader(self.name, self.version, self.correlation_id,
-                                       self.timestamp, self.uuid, self.reply_to)
+                                       self.timestamp, self.uuid, self.reply_to,
+                                       self.timestamp_ms)
 
         if self.tags is not None:
             message.tags = MessageTags.from_dict(self.tags)
@@ -151,5 +239,9 @@ class MessageBuilder:
                 message.body = self.payload
         else:
             message.body = self.payload
+        message.content_type = self.content_type
+        message.content_encoding = self.content_encoding
+        message.schema = self.schema
+        message.body_case = self.body_case
 
         return message

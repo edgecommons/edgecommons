@@ -411,10 +411,19 @@ impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for CallbackLayer {
         let meta = event.metadata();
         let mut v = MsgVisitor::default();
         event.record(&mut v);
-        let full = if v.fields.is_empty() { v.message } else { format!("{}{}", v.message, v.fields) };
+        let full = if v.fields.is_empty() {
+            v.message
+        } else {
+            format!("{}{}", v.message, v.fields)
+        };
         let target = CString::new(meta.target().replace('\0', " ")).unwrap_or_default();
         let msg = CString::new(full.replace('\0', " ")).unwrap_or_default();
-        cb(ud as *mut c_void, level_to_int(meta.level()), target.as_ptr(), msg.as_ptr());
+        cb(
+            ud as *mut c_void,
+            level_to_int(meta.level()),
+            target.as_ptr(),
+            msg.as_ptr(),
+        );
     }
 }
 
@@ -425,19 +434,27 @@ impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for CallbackLayer {
 /// `cb` must be a valid function pointer (or null); `user_data` is passed back verbatim and must
 /// remain valid for as long as a callback is registered.
 #[no_mangle]
-pub unsafe extern "C" fn esl_set_log_callback(cb: Option<EslLogCb>, user_data: *mut c_void) -> c_int {
+pub unsafe extern "C" fn esl_set_log_callback(
+    cb: Option<EslLogCb>,
+    user_data: *mut c_void,
+) -> c_int {
     guard(std::ptr::null_mut(), || {
         match cb {
             Some(cb) => {
                 if let Ok(mut g) = LOG_SINK.lock() {
-                    *g = Some(LogSink { cb, user_data: user_data as usize });
+                    *g = Some(LogSink {
+                        cb,
+                        user_data: user_data as usize,
+                    });
                 }
                 LOG_INIT.call_once(|| {
                     use tracing_subscriber::layer::SubscriberExt;
                     use tracing_subscriber::util::SubscriberInitExt;
                     // Forward everything; the host logger applies its own level filter. Ignore the
                     // error if a global subscriber is already installed (e.g. in-process Rust host).
-                    let _ = tracing_subscriber::registry().with(CallbackLayer).try_init();
+                    let _ = tracing_subscriber::registry()
+                        .with(CallbackLayer)
+                        .try_init();
                 });
             }
             None => {
@@ -552,7 +569,12 @@ fn invoke_host_sink(stream: &str, _id: Option<&str>, batch: &[ExportRecord<'_>])
 
     // The host callback may itself panic across the boundary; contain it.
     let rc = catch_unwind(AssertUnwindSafe(|| {
-        cb(ud as *mut c_void, recs.as_ptr(), recs.len(), &mut outcome as *mut EslSinkOutcome)
+        cb(
+            ud as *mut c_void,
+            recs.as_ptr(),
+            recs.len(),
+            &mut outcome as *mut EslSinkOutcome,
+        )
     }));
     let rc = match rc {
         Ok(rc) => rc,
@@ -582,11 +604,15 @@ fn invoke_host_sink(stream: &str, _id: Option<&str>, batch: &[ExportRecord<'_>])
                 SendOutcome::Partial { failed_offsets }
             }
         }
-        ESL_SINK_FAILED_PERMANENT => {
-            SendOutcome::Failed { retryable: false, error: "host sink: permanent failure".into() }
-        }
+        ESL_SINK_FAILED_PERMANENT => SendOutcome::Failed {
+            retryable: false,
+            error: "host sink: permanent failure".into(),
+        },
         // ESL_SINK_FAILED_RETRYABLE and any unrecognized status -> retryable failure.
-        _ => SendOutcome::Failed { retryable: true, error: "host sink: retryable failure".into() },
+        _ => SendOutcome::Failed {
+            retryable: true,
+            error: "host sink: retryable failure".into(),
+        },
     }
 }
 
@@ -608,7 +634,10 @@ pub unsafe extern "C" fn esl_set_sink_callback(
         match cb {
             Some(cb) => {
                 if let Ok(mut g) = SINK_CB.lock() {
-                    *g = Some(SinkCbReg { cb, user_data: user_data as usize });
+                    *g = Some(SinkCbReg {
+                        cb,
+                        user_data: user_data as usize,
+                    });
                 }
             }
             None => {

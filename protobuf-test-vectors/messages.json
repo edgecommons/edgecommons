@@ -1,0 +1,418 @@
+{
+  "descriptor": "edgecommons-v1.desc",
+  "messages": [
+    {
+      "body_case": "SOUTHBOUND_SIGNAL_UPDATE",
+      "diagnostic": {
+        "body": {
+          "samples": [
+            {
+              "quality": "GOOD",
+              "serverTs": "2026-07-06T18:00:00Z",
+              "serverTsMs": 1783360800000,
+              "sourceTs": "2026-07-06T17:59:59.900Z",
+              "sourceTsMs": 1783360799900,
+              "value": 21.5
+            }
+          ],
+          "signal": {
+            "address": {
+              "nodeId": "Line1.Temp",
+              "ns": 2
+            },
+            "id": "temp",
+            "name": "Temperature"
+          }
+        },
+        "header": {
+          "correlation_id": "corr-vector-telemetry_numeric",
+          "name": "Telemetry",
+          "timestamp": "2026-07-06T18:00:00Z",
+          "timestamp_ms": 1783360800000,
+          "uuid": "018fe1dd-7dc7-7b0f-a80f-5d5d6d0f1001",
+          "version": "1.0"
+        },
+        "identity": {
+          "component": "interop",
+          "hier": [
+            {
+              "level": "site",
+              "value": "plant-a"
+            },
+            {
+              "level": "line",
+              "value": "line-2"
+            },
+            {
+              "level": "device",
+              "value": "gw-01"
+            }
+          ],
+          "instance": "main",
+          "path": "plant-a/line-2/gw-01"
+        },
+        "tags": {
+          "siteRole": "line-edge"
+        }
+      },
+      "id": "telemetry_numeric"
+    },
+    {
+      "assertions": {
+        "sample_bytes_base64": "AAEC/v8=",
+        "server_ts_ms": 1783360800000,
+        "source_ts_ms": 1783360799900
+      },
+      "body_case": "SOUTHBOUND_SIGNAL_UPDATE",
+      "diagnostic": {
+        "body": {
+          "samples": [
+            {
+              "quality": "GOOD",
+              "serverTsMs": 1783360800000,
+              "sourceTsMs": 1783360799900,
+              "value": {
+                "_edgecommonsBinary": {
+                  "data": "AAEC/v8=",
+                  "encoding": "base64",
+                  "length": 5
+                }
+              }
+            }
+          ],
+          "signal": {
+            "id": "camera-1/roi-17/thumbnail",
+            "name": "Thumbnail"
+          }
+        },
+        "header": {
+          "correlation_id": "corr-vector-telemetry_byte_timestamps",
+          "name": "SouthboundSignalUpdate",
+          "timestamp": "2026-07-06T18:00:00Z",
+          "timestamp_ms": 1783360800000,
+          "uuid": "018fe1dd-7dc7-7b0f-a80f-5d5d6d0f1002",
+          "version": "1.0"
+        },
+        "identity": {
+          "component": "interop",
+          "hier": [
+            {
+              "level": "site",
+              "value": "plant-a"
+            },
+            {
+              "level": "line",
+              "value": "line-2"
+            },
+            {
+              "level": "device",
+              "value": "gw-01"
+            }
+          ],
+          "instance": "main",
+          "path": "plant-a/line-2/gw-01"
+        }
+      },
+      "id": "telemetry_byte_timestamps"
+    },
+    {
+      "assertions": {
+        "content_type": "image/jpeg",
+        "opaque_hex": "ffd8ffe00102"
+      },
+      "body_case": "OPAQUE",
+      "diagnostic": {
+        "body": {
+          "_edgecommonsBinary": {
+            "data": "/9j/4AEC",
+            "encoding": "base64",
+            "length": 6
+          }
+        },
+        "content_type": "image/jpeg",
+        "header": {
+          "correlation_id": "corr-vector-opaque_jpeg",
+          "name": "FramePreview",
+          "timestamp": "2026-07-06T18:00:00Z",
+          "timestamp_ms": 1783360800000,
+          "uuid": "018fe1dd-7dc7-7b0f-a80f-5d5d6d0f1003",
+          "version": "1.0"
+        },
+        "schema": {
+          "content_type": "image/jpeg",
+          "descriptor_ref": "s3://edgecommons-descriptors/edgecommons-v1.desc",
+          "hash": "sha256:test",
+          "name": "FramePreview",
+          "version": "1.0"
+        },
+        "tags": {
+          "capture_mode": "preview"
+        }
+      },
+      "id": "opaque_jpeg"
+    },
+    {
+      "assertions": {
+        "tags": {
+          "_relay": "uns-bridge:a:1",
+          "priority": 5
+        }
+      },
+      "body_case": "SOUTHBOUND_SIGNAL_UPDATE",
+      "diagnostic": {
+        "body": {
+          "samples": [
+            {
+              "quality": "GOOD",
+              "serverTs": "2026-07-06T18:00:00Z",
+              "serverTsMs": 1783360800000,
+              "sourceTs": "2026-07-06T17:59:59.900Z",
+              "sourceTsMs": 1783360799900,
+              "value": 21.5
+            }
+          ],
+          "signal": {
+            "address": {
+              "nodeId": "Line1.Temp",
+              "ns": 2
+            },
+            "id": "temp",
+            "name": "Temperature"
+          }
+        },
+        "header": {
+          "correlation_id": "corr-vector-tagged_relay_envelope",
+          "name": "Telemetry",
+          "timestamp": "2026-07-06T18:00:00Z",
+          "timestamp_ms": 1783360800000,
+          "uuid": "018fe1dd-7dc7-7b0f-a80f-5d5d6d0f1004",
+          "version": "1.0"
+        },
+        "identity": {
+          "component": "interop",
+          "hier": [
+            {
+              "level": "site",
+              "value": "plant-a"
+            },
+            {
+              "level": "line",
+              "value": "line-2"
+            },
+            {
+              "level": "device",
+              "value": "gw-01"
+            }
+          ],
+          "instance": "main",
+          "path": "plant-a/line-2/gw-01"
+        },
+        "tags": {
+          "_relay": "uns-bridge:a:1",
+          "priority": 5
+        }
+      },
+      "id": "tagged_relay_envelope"
+    },
+    {
+      "assertions": {
+        "correlation_id": "corr-command-1",
+        "reply_to": "reply/interop/setState"
+      },
+      "body_case": "COMMAND",
+      "diagnostic": {
+        "body": {
+          "status": "RUNNING"
+        },
+        "header": {
+          "correlation_id": "corr-command-1",
+          "name": "setState",
+          "reply_to": "reply/interop/setState",
+          "timestamp": "2026-07-06T18:00:00Z",
+          "timestamp_ms": 1783360800000,
+          "uuid": "018fe1dd-7dc7-7b0f-a80f-5d5d6d0f1005",
+          "version": "1.0"
+        }
+      },
+      "id": "command_request"
+    },
+    {
+      "assertions": {
+        "correlation_id": "corr-command-1"
+      },
+      "body_case": "COMMAND",
+      "diagnostic": {
+        "body": {
+          "ok": true,
+          "result": {
+            "accepted": true
+          },
+          "verb": "setState.reply"
+        },
+        "header": {
+          "correlation_id": "corr-command-1",
+          "name": "setState.reply",
+          "timestamp": "2026-07-06T18:00:00Z",
+          "timestamp_ms": 1783360800000,
+          "uuid": "018fe1dd-7dc7-7b0f-a80f-5d5d6d0f1006",
+          "version": "1.0"
+        }
+      },
+      "id": "command_reply"
+    },
+    {
+      "assertions": {
+        "body_case": "STATE_UPDATE"
+      },
+      "body_case": "STATE_UPDATE",
+      "diagnostic": {
+        "body": {
+          "instances": [
+            {
+              "connected": true,
+              "instance": "main"
+            }
+          ],
+          "status": "RUNNING",
+          "uptimeSecs": 42
+        },
+        "header": {
+          "correlation_id": "corr-vector-state_reserved",
+          "name": "state",
+          "timestamp": "2026-07-06T18:00:00Z",
+          "timestamp_ms": 1783360800000,
+          "uuid": "018fe1dd-7dc7-7b0f-a80f-5d5d6d0f1007",
+          "version": "1.0"
+        }
+      },
+      "id": "state_reserved"
+    },
+    {
+      "assertions": {
+        "body_case": "CONFIG_UPDATE"
+      },
+      "body_case": "CONFIG_UPDATE",
+      "diagnostic": {
+        "body": {
+          "config": {
+            "mode": "auto",
+            "sampleRateMs": 1000
+          }
+        },
+        "header": {
+          "correlation_id": "corr-vector-config_update",
+          "name": "ConfigUpdate",
+          "timestamp": "2026-07-06T18:00:00Z",
+          "timestamp_ms": 1783360800000,
+          "uuid": "018fe1dd-7dc7-7b0f-a80f-5d5d6d0f1008",
+          "version": "1.0"
+        }
+      },
+      "id": "config_update"
+    },
+    {
+      "assertions": {
+        "body_case": "METRIC_UPDATE"
+      },
+      "body_case": "METRIC_UPDATE",
+      "diagnostic": {
+        "body": {
+          "dimensions": {
+            "component": "interop",
+            "instance": "main"
+          },
+          "metricName": "MessagesPublished",
+          "namespace": "EdgeCommons",
+          "timestampMs": 1783360800000,
+          "values": [
+            {
+              "name": "Count",
+              "storageResolution": 60,
+              "unit": "Count",
+              "value": 3.0
+            }
+          ]
+        },
+        "header": {
+          "correlation_id": "corr-vector-metric_update",
+          "name": "MetricUpdate",
+          "timestamp": "2026-07-06T18:00:00Z",
+          "timestamp_ms": 1783360800000,
+          "uuid": "018fe1dd-7dc7-7b0f-a80f-5d5d6d0f1009",
+          "version": "1.0"
+        }
+      },
+      "id": "metric_update"
+    },
+    {
+      "assertions": {
+        "body_case": "EVENT"
+      },
+      "body_case": "EVENT",
+      "diagnostic": {
+        "body": {
+          "context": {
+            "door": "dock-7",
+            "open": true
+          },
+          "message": "door opened",
+          "severity": "info",
+          "timestamp": "2026-07-06T18:00:00Z",
+          "timestampMs": 1783360800000,
+          "type": "door-open"
+        },
+        "header": {
+          "correlation_id": "corr-vector-event_message",
+          "name": "Event",
+          "timestamp": "2026-07-06T18:00:00Z",
+          "timestamp_ms": 1783360800000,
+          "uuid": "018fe1dd-7dc7-7b0f-a80f-5d5d6d0f1010",
+          "version": "1.0"
+        }
+      },
+      "id": "event_message"
+    },
+    {
+      "assertions": {
+        "body_case": "STRUCTURED"
+      },
+      "body_case": "STRUCTURED",
+      "diagnostic": {
+        "body": {
+          "nested": {
+            "line": "A"
+          },
+          "ok": true,
+          "temperature": 21.5
+        },
+        "header": {
+          "correlation_id": "corr-vector-structured_generic",
+          "name": "StructuredSample",
+          "timestamp": "2026-07-06T18:00:00Z",
+          "timestamp_ms": 1783360800000,
+          "uuid": "018fe1dd-7dc7-7b0f-a80f-5d5d6d0f1011",
+          "version": "1.0"
+        },
+        "tags": {
+          "siteRole": "line-edge"
+        }
+      },
+      "id": "structured_generic"
+    }
+  ],
+  "protobuf_package": "edgecommons.v1",
+  "schema": "edgecommons.protobuf-test-vectors.v1",
+  "sink_projection": {
+    "default_format": "json",
+    "json_projection": {
+      "body_case": "southbound_signal_update",
+      "from_message": "telemetry_byte_timestamps",
+      "nested_bytes_base64": "AAEC/v8="
+    },
+    "protobuf_projection": {
+      "from_message": "opaque_jpeg",
+      "payload_hex_sha256": "a04f45c85beaf1beba12bbc42c3bffa04714effa1fd61d1a98eeda5b2e1a9f62",
+      "preserves_original_bytes": true
+    }
+  }
+}

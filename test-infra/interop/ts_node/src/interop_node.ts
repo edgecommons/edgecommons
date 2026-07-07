@@ -18,6 +18,7 @@
 import {
   Message,
   MessageBuilder,
+  MessageBodyCase,
   MessageIdentity,
   DefaultMessagingService,
   IpcMessagingProvider,
@@ -115,15 +116,17 @@ async function runRawSub(topic: string, token: string): Promise<number> {
     const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 10_000));
     const m = await Promise.race([got, timeout]);
     if (m === null) {
-      emit({ ok: false, error: "timeout" });
-      return 1;
+      emit({ ok: true, delivered: false, error: "timeout" });
+      return 0;
     }
-    const raw = m.getRaw() as Record<string, unknown> | undefined;
-    const isRaw = m.isRaw();
-    const rawToken = raw && typeof raw === "object" ? (raw.token as unknown) : null;
-    const ok = isRaw && rawToken === token;
-    emit({ ok: !!ok, is_raw: isRaw, raw_token: rawToken ?? null });
-    return ok ? 0 : 1;
+    emit({
+      ok: false,
+      delivered: true,
+      raw: m.getRaw(),
+      body: m.getBody(),
+      expected_token: token,
+    });
+    return 1;
   } finally {
     await svc.disconnect();
   }
@@ -184,8 +187,80 @@ async function runBinaryPub(topic: string, bodyHex: string): Promise<number> {
   }
 }
 
+function typedBody(bodyHex: string): Record<string, unknown> {
+  const bytes = Buffer.from(bodyHex, "hex");
+  return {
+    signal: { id: "camera-1/roi-17/thumbnail", name: "Thumbnail" },
+    samples: [{
+      value: {
+        _edgecommonsBinary: {
+          encoding: "base64",
+          length: bytes.length,
+          data: bytes.toString("base64"),
+        },
+      },
+      quality: "GOOD",
+      sourceTsMs: 1783360799900,
+      serverTsMs: 1783360800000,
+    }],
+  };
+}
+
+async function runTypedSub(topic: string, expectedHex: string): Promise<number> {
+  const svc = await service("typedsub");
+  try {
+    const got = new Promise<Message>((resolve) => {
+      void svc.subscribe(topic, (_t, m) => resolve(m)).then(() => process.stdout.write("READY\n"));
+    });
+    const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 10_000));
+    const m = await Promise.race([got, timeout]);
+    if (m === null) {
+      emit({ ok: false, error: "timeout" });
+      return 1;
+    }
+    const body = m.getBody() as { samples?: Array<Record<string, any>> };
+    const sample = body.samples?.[0] ?? {};
+    const marker = sample.value?._edgecommonsBinary;
+    const hex = marker?.data ? Buffer.from(marker.data, "base64").toString("hex") : null;
+    const result = {
+      body_case: m.getBodyCase(),
+      hex,
+      source_ts_ms: sample.sourceTsMs,
+      server_ts_ms: sample.serverTsMs,
+      tag_from: (m.tags as Record<string, unknown> | undefined)?.from,
+    };
+    const ok = result.body_case === MessageBodyCase.SouthboundSignalUpdate
+      && result.hex === expectedHex.toLowerCase()
+      && result.source_ts_ms === 1783360799900
+      && result.server_ts_ms === 1783360800000;
+    emit({ ...result, ok });
+    return ok ? 0 : 1;
+  } finally {
+    await svc.disconnect();
+  }
+}
+
+async function runTypedPub(topic: string, bodyHex: string): Promise<number> {
+  const svc = await service("typedpub");
+  try {
+    const msg = MessageBuilder.create("SouthboundSignalUpdate", "1.0")
+      .withSouthboundSignalUpdate(typedBody(bodyHex))
+      .withTags({ from: LANG })
+      .build();
+    await svc.publish(topic, msg);
+    await new Promise((r) => setTimeout(r, 500));
+    return 0;
+  } finally {
+    await svc.disconnect();
+  }
+}
+
 function ggTopic(runId: string, publisher: string, subscriber: string): string {
   return `edgecommons/interop/binary/${runId}/${publisher}/${subscriber}`;
+}
+
+function ggTypedTopic(runId: string, publisher: string, subscriber: string): string {
+  return `edgecommons/interop/typed/${runId}/${publisher}/${subscriber}`;
 }
 
 function publisherFromGgTopic(topic: string): string {
@@ -217,6 +292,14 @@ async function runGgBinaryMatrix(runId: string, langsCsv: string, expectedHex: s
   const waitSecs = Number(process.env.EDGECOMMONS_GG_WAIT_SECS ?? "35");
   const svc = await ipcService();
   const received = new Map<string, { is_binary: boolean; hex: string | null; ok: boolean }>();
+  const receivedTyped = new Map<string, {
+    body_case: MessageBodyCase | null;
+    hex: string | null;
+    source_ts_ms?: unknown;
+    server_ts_ms?: unknown;
+    tag_from?: unknown;
+    ok: boolean;
+  }>();
   const errors = new Map<string, string>();
   try {
     await svc.subscribe(
@@ -230,8 +313,42 @@ async function runGgBinaryMatrix(runId: string, langsCsv: string, expectedHex: s
           const ok = isBinary && bytes !== undefined && Buffer.compare(bytes, expectedBytes) === 0;
           if (!received.has(publisher)) received.set(publisher, { is_binary: isBinary, hex, ok });
         } catch (e) {
-          errors.set(publisher, String(e));
+          errors.set(`${publisher}:binary`, String(e));
           if (!received.has(publisher)) received.set(publisher, { is_binary: false, hex: null, ok: false });
+        }
+      },
+      64,
+      1,
+    );
+    await svc.subscribe(
+      ggTypedTopic(runId, "+", LANG),
+      (_topic, m) => {
+        const publisher = publisherFromGgTopic(_topic);
+        try {
+          const body = m.getBody() as { samples?: Array<Record<string, any>> };
+          const sample = body.samples?.[0] ?? {};
+          const marker = sample.value?._edgecommonsBinary;
+          const bytes = marker?.data ? Buffer.from(marker.data, "base64") : undefined;
+          const hex = bytes?.toString("hex") ?? null;
+          const tagFrom = (m.tags as Record<string, unknown> | undefined)?.from;
+          const item = {
+            body_case: m.getBodyCase(),
+            hex,
+            source_ts_ms: sample.sourceTsMs,
+            server_ts_ms: sample.serverTsMs,
+            tag_from: tagFrom,
+            ok: m.getBodyCase() === MessageBodyCase.SouthboundSignalUpdate
+              && hex === expectedHex.toLowerCase()
+              && sample.sourceTsMs === 1783360799900
+              && sample.serverTsMs === 1783360800000
+              && tagFrom === publisher,
+          };
+          if (!receivedTyped.has(publisher)) receivedTyped.set(publisher, item);
+        } catch (e) {
+          errors.set(`${publisher}:typed`, String(e));
+          if (!receivedTyped.has(publisher)) {
+            receivedTyped.set(publisher, { body_case: null, hex: null, ok: false });
+          }
         }
       },
       64,
@@ -246,22 +363,33 @@ async function runGgBinaryMatrix(runId: string, langsCsv: string, expectedHex: s
         .withPayload(expectedBytes)
         .withTags({ from: LANG })
         .build();
+      const typedMsg = MessageBuilder.create("SouthboundSignalUpdate", "1.0")
+        .withSouthboundSignalUpdate(typedBody(expectedHex))
+        .withTags({ from: LANG })
+        .build();
       for (const target of expectedLangs) {
         await svc.publish(ggTopic(runId, LANG, target), msg);
+        await svc.publish(ggTypedTopic(runId, LANG, target), typedMsg);
       }
     }
     const deadline = Date.now() + waitSecs * 1000;
-    while (Date.now() < deadline && !expectedLangs.every((lang) => received.has(lang))) {
+    while (
+      Date.now() < deadline
+      && !expectedLangs.every((lang) => received.has(lang) && receivedTyped.has(lang))
+    ) {
       await new Promise((r) => setTimeout(r, 100));
     }
     const missing = expectedLangs.filter((lang) => !received.has(lang));
+    const missingTyped = expectedLangs.filter((lang) => !receivedTyped.has(lang));
     const receivedObj = Object.fromEntries(received.entries());
+    const receivedTypedObj = Object.fromEntries(receivedTyped.entries());
     const errorsObj = Object.fromEntries(errors.entries());
     const ok =
       readyMissing.length === 0 &&
       missing.length === 0 &&
+      missingTyped.length === 0 &&
       errors.size === 0 &&
-      expectedLangs.every((lang) => received.get(lang)?.ok === true);
+      expectedLangs.every((lang) => received.get(lang)?.ok === true && receivedTyped.get(lang)?.ok === true);
     const result = {
       ok,
       lang: LANG,
@@ -269,7 +397,9 @@ async function runGgBinaryMatrix(runId: string, langsCsv: string, expectedHex: s
       expected_hex: expectedHex.toLowerCase(),
       ready_missing: readyMissing,
       received: receivedObj,
+      received_typed: receivedTypedObj,
       missing,
+      missing_typed: missingTyped,
       errors: errorsObj,
     };
     writeFileSync(`/tmp/edgecommons_gg_ipc_binary_${LANG}_${runId}.json`, JSON.stringify(result), "utf8");
@@ -375,6 +505,10 @@ async function main(): Promise<void> {
       process.exit(await runBinarySub(a, b));
     case "binary-pub":
       process.exit(await runBinaryPub(a, b));
+    case "typed-sub":
+      process.exit(await runTypedSub(a, b));
+    case "typed-pub":
+      process.exit(await runTypedPub(a, b));
     case "gg-binary-matrix":
       process.exit(await runGgBinaryMatrix(a, b, c));
     case "uns-pub":

@@ -28,7 +28,11 @@ pub struct MemoryBlockStore {
 
 impl MemoryBlockStore {
     pub fn new() -> Self {
-        Self { records: VecDeque::new(), next_offset: 0, bytes: 0 }
+        Self {
+            records: VecDeque::new(),
+            next_offset: 0,
+            bytes: 0,
+        }
     }
 }
 
@@ -44,7 +48,10 @@ impl BlockStore for MemoryBlockStore {
     }
 
     fn append(&mut self, offset: u64, ts_ms: u64, pk: &[u8], payload: &[u8]) -> Result<()> {
-        debug_assert_eq!(offset, self.next_offset, "append offset must equal next_offset");
+        debug_assert_eq!(
+            offset, self.next_offset,
+            "append offset must equal next_offset"
+        );
         self.bytes += record_bytes(pk, payload);
         self.records.push_back(OwnedRecord {
             offset,
@@ -66,12 +73,21 @@ impl BlockStore for MemoryBlockStore {
         Ok(())
     }
 
-    fn read_from(&mut self, from: u64, max_records: usize, max_bytes: usize) -> Result<Vec<OwnedRecord>> {
+    fn read_from(
+        &mut self,
+        from: u64,
+        max_records: usize,
+        max_bytes: usize,
+    ) -> Result<Vec<OwnedRecord>> {
         let mut out = Vec::new();
         if max_records == 0 || from >= self.next_offset {
             return Ok(out);
         }
-        let base = self.records.front().map(|r| r.offset).unwrap_or(self.next_offset);
+        let base = self
+            .records
+            .front()
+            .map(|r| r.offset)
+            .unwrap_or(self.next_offset);
         // Older records may have been truncated after delivery; never read below what's retained.
         let start = from.max(base);
         let skip = (start - base) as usize;
@@ -154,7 +170,10 @@ mod tests {
 
         // Read from 0: all three, in order.
         let all = s.read_from(0, 100, usize::MAX).unwrap();
-        assert_eq!(all.iter().map(|r| r.offset).collect::<Vec<_>>(), vec![0, 1, 2]);
+        assert_eq!(
+            all.iter().map(|r| r.offset).collect::<Vec<_>>(),
+            vec![0, 1, 2]
+        );
         assert_eq!(all[1].payload, b"bb");
 
         // max_records bound.

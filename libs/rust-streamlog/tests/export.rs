@@ -20,7 +20,12 @@ fn buf_cfg(path: &std::path::Path) -> BufferConfig {
 
 fn fast_delivery() -> DeliveryConfig {
     // Tiny backoff/poll so tests drain quickly.
-    DeliveryConfig { backoff_base_ms: 1, backoff_max_ms: 5, poll_interval_ms: 5, ..Default::default() }
+    DeliveryConfig {
+        backoff_base_ms: 1,
+        backoff_max_ms: 5,
+        poll_interval_ms: 5,
+        ..Default::default()
+    }
 }
 
 fn rec(pk: &str, payload: &[u8]) -> Record {
@@ -56,7 +61,10 @@ fn concurrent_append_and_export_no_loss() {
     let engine = ExportEngine::start(
         Arc::clone(&log),
         Box::new(sink),
-        BatchConfig { max_records: 256, ..Default::default() },
+        BatchConfig {
+            max_records: 256,
+            ..Default::default()
+        },
         fast_delivery(),
     );
 
@@ -80,7 +88,11 @@ fn concurrent_append_and_export_no_loss() {
     offsets.sort_unstable();
     // No concurrent crash → exactly-once: every offset 0..total delivered once, in contiguous order.
     assert_eq!(offsets.len() as u64, total, "no duplicates or loss");
-    assert_eq!(offsets, (0..total).collect::<Vec<_>>(), "every offset delivered exactly once");
+    assert_eq!(
+        offsets,
+        (0..total).collect::<Vec<_>>(),
+        "every offset delivered exactly once"
+    );
     assert_eq!(engine.stats().exported_total, total);
     engine.stop();
 }
@@ -97,7 +109,10 @@ fn engine_delivers_all_in_order() {
     let engine = ExportEngine::start(
         Arc::clone(&log),
         Box::new(sink),
-        BatchConfig { max_records: 10, ..Default::default() },
+        BatchConfig {
+            max_records: 10,
+            ..Default::default()
+        },
         fast_delivery(),
     );
 
@@ -135,7 +150,11 @@ fn engine_retries_transient_failures() {
     let engine = ExportEngine::start(
         Arc::clone(&log),
         Box::new(sink),
-        BatchConfig { max_records: usize::MAX, max_bytes: usize::MAX, ..Default::default() },
+        BatchConfig {
+            max_records: usize::MAX,
+            max_bytes: usize::MAX,
+            ..Default::default()
+        },
         fast_delivery(),
     );
 
@@ -146,9 +165,16 @@ fn engine_retries_transient_failures() {
     );
     assert_eq!(handle.delivered_offsets(), (0..10).collect::<Vec<_>>());
     let stats = engine.stats();
-    assert!(stats.retries_total >= 3, "should record >=3 retries, got {}", stats.retries_total);
+    assert!(
+        stats.retries_total >= 3,
+        "should record >=3 retries, got {}",
+        stats.retries_total
+    );
     assert_eq!(stats.exported_total, 10);
-    assert!(stats.last_error.is_some(), "last_error captured from the transient failures");
+    assert!(
+        stats.last_error.is_some(),
+        "last_error captured from the transient failures"
+    );
     engine.stop();
 }
 
@@ -166,7 +192,11 @@ fn engine_handles_partial_failures() {
     let engine = ExportEngine::start(
         Arc::clone(&log),
         Box::new(sink),
-        BatchConfig { max_records: usize::MAX, max_bytes: usize::MAX, ..Default::default() },
+        BatchConfig {
+            max_records: usize::MAX,
+            max_bytes: usize::MAX,
+            ..Default::default()
+        },
         fast_delivery(),
     );
 
@@ -178,9 +208,16 @@ fn engine_handles_partial_failures() {
     // Every offset 0..10 present exactly once (the partial trio is retried, not re-acked).
     let mut offsets = handle.delivered_offsets();
     offsets.sort_unstable();
-    assert_eq!(offsets, (0..10).collect::<Vec<_>>(), "all offsets delivered exactly once");
+    assert_eq!(
+        offsets,
+        (0..10).collect::<Vec<_>>(),
+        "all offsets delivered exactly once"
+    );
     let stats = engine.stats();
-    assert!(stats.retries_total >= 1, "partial failure should drive a retry");
+    assert!(
+        stats.retries_total >= 1,
+        "partial failure should drive a retry"
+    );
     assert_eq!(stats.exported_total, 10);
     engine.stop();
 }

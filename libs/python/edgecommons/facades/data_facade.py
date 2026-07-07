@@ -40,7 +40,6 @@ Library-internal: obtain the bound instance via ``gg.instance(id).data()`` (or t
 
 Mirrors Java's ``DataFacade`` (``com.mbreissi.edgecommons.facades.DataFacade``).
 """
-import json
 import logging
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Optional
@@ -297,7 +296,7 @@ class DataFacade:
             self._messaging.publish(topic, msg)
             return
         try:
-            payload = json.dumps(msg.to_dict()).encode("utf-8")
+            payload = msg.to_bytes()
             self._stream_sink(stream_name, partition_key, ts_millis, payload)
         except Exception as e:  # noqa: BLE001 - a stream-append outage must not propagate
             logger.warning("Stream append to 'stream:%s' failed (local readiness"

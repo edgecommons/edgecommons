@@ -395,7 +395,7 @@ public final class CommandInbox implements AutoCloseable {
     private void sendReply(Message request, String verb, JsonObject body) {
         try {
             Message reply = MessageBuilder.create(verb, CMD_MESSAGE_VERSION)
-                    .withPayload(body)
+                    .withCommand(body)
                     .withConfig(configManager)
                     .build();
             messagingClient.reply(request, reply);

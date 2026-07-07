@@ -2,7 +2,7 @@ import abc
 import concurrent.futures.thread
 import logging
 import queue
-from threading import Thread
+from threading import Lock, Thread, current_thread
 from typing import Callable
 from edgecommons.messaging.message import Message
 from edgecommons.messaging.messaging_provider import DEFAULT_MAX_MESSAGES
@@ -12,6 +12,8 @@ logger = logging.getLogger("SubscriptionHandler")
 
 
 class SubscriptionHandler(metaclass=abc.ABCMeta):
+    _STOP = object()
+
     def __init__(
         self,
         topic_filter,
@@ -30,7 +32,10 @@ class SubscriptionHandler(metaclass=abc.ABCMeta):
             else queue.Queue()
         )
         self._max_concurrency = max_concurrency
-        Thread(target=self._process_queue).start()
+        self._closed = False
+        self._close_lock = Lock()
+        self._thread = Thread(target=self._process_queue, daemon=True)
+        self._thread.start()
 
     def _invoke_callback(self, topic: str, msg: Message) -> None:
         # Wrap the user/lib callback so an exception it throws can never escape the
@@ -52,25 +57,50 @@ class SubscriptionHandler(metaclass=abc.ABCMeta):
         return self._max_concurrency
 
     @abc.abstractmethod
-    def parse_raw_payload(self, event) -> (str, dict):
+    def parse_raw_payload(self, event):
         pass
 
     def on_stream_error(self, error: Exception) -> bool:
         logger.error(
-            f"Stream error: {error} for topic filter {self._topic_filter}. Keeping stream open."
+            f"Stream error: {error} for topic filter {self._topic_filter}. Closing stream."
         )
         return True  # Return True to close stream, False to keep stream open.
 
     def on_stream_closed(self) -> None:
-        # Puts a marker at the end of the queue processing thread to stop and join.
-        # Note that existing messages in the queue will still process first.
-        self._queue.put(-1)
+        self.close()
         logger.debug(f"Subscription stream on topic {self._topic_filter} closed")
 
+    def close(self, timeout: float = 2.0) -> None:
+        with self._close_lock:
+            if self._closed:
+                return
+            self._closed = True
+        try:
+            self._queue.put_nowait(self._STOP)
+        except queue.Full:
+            try:
+                self._queue.get_nowait()
+            except queue.Empty:
+                pass
+            try:
+                self._queue.put_nowait(self._STOP)
+            except queue.Full:
+                logger.warning(
+                    f"Could not enqueue close marker for subscription worker on "
+                    f"'{self._topic_filter}'"
+                )
+        if current_thread() is not self._thread:
+            self._thread.join(timeout=timeout)
+
     def on_stream_event(self, event) -> None:
+        if self._closed:
+            return
         logger.debug(f"Received stream message on topic filter: {self._topic_filter}")
         try:
-            topic, received_payload = self.parse_raw_payload(event)
+            parsed = self.parse_raw_payload(event)
+            if parsed is None:
+                return
+            topic, received_payload = parsed
             topic_payload_tuple = (topic, received_payload)
             # Non-blocking enqueue: a full bounded queue drops the message with a warning rather
             # than blocking the IPC stream thread (parity with Rust/TS).
@@ -86,10 +116,10 @@ class SubscriptionHandler(metaclass=abc.ABCMeta):
             )
         except Exception as error:
             logger.error(
-                f"Exception {error} decoding payload: {event.binary_message.message}"
+                f"Exception {error} decoding payload for topic filter {self._topic_filter}"
             )
             logger.error(
-                "Probable cause: common messaging library supports only json data"
+                "Probable cause: payload is not an EdgeCommons protobuf message"
             )
 
     def _process_queue(self):
@@ -102,12 +132,15 @@ class SubscriptionHandler(metaclass=abc.ABCMeta):
             while True:
                 try:
                     queue_obj = self._queue.get()
-                    if type(queue_obj) == int and queue_obj == -1:
+                    if queue_obj is self._STOP:
                         break
                     topic = queue_obj[0]
-                    msg = Message.from_object(queue_obj[1])
+                    msg = queue_obj[1]
                     executor.submit(self._invoke_callback, topic, msg)
                 except Exception as e:
                     logger.warning(
                         f"Exception while processing message from subscription to '{self._topic_filter}': {e}"
                     )
+        logger.info(
+            f"Queue monitoring stopped for subscription on topic {self._topic_filter}"
+        )

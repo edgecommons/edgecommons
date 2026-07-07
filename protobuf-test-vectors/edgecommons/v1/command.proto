@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package edgecommons.v1;
+
+option java_multiple_files = true;
+option java_package = "com.mbreissi.edgecommons.proto.v1";
+
+import "edgecommons/v1/value.proto";
+
+message CommandMessage {
+  string verb = 1;
+  EcValue payload = 2;
+  optional bool ok = 3;
+  EcValue result = 4;
+  CommandError error = 5;
+  map<string, EcValue> extra = 100;
+}
+
+message CommandError {
+  string code = 1;
+  string message = 2;
+  map<string, EcValue> details = 100;
+}

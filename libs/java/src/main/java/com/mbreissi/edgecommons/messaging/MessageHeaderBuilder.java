@@ -1,5 +1,6 @@
 package com.mbreissi.edgecommons.messaging;
 
+import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
@@ -35,6 +36,11 @@ public class MessageHeaderBuilder {
     
     public MessageHeaderBuilder withTimestamp(String timestamp) {
         this.timestamp = timestamp;
+        return this;
+    }
+
+    public MessageHeaderBuilder withTimestampMs(long timestampMs) {
+        this.timestamp = Instant.ofEpochMilli(timestampMs).toString();
         return this;
     }
     

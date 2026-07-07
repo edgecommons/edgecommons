@@ -331,7 +331,8 @@
               "value": 21.5,
               "quality": "GOOD",
               "qualityRaw": "unspecified",
-              "serverTs": "2026-07-01T12:00:00Z"
+              "serverTs": "2026-07-01T12:00:00Z",
+              "serverTsMs": 1782907200000
             }
           ]
         }

@@ -84,7 +84,7 @@ public final class GreengrassMessagingProvider extends MessagingProvider
     {
         try
         {
-            BinaryMessage ipcMessage = new BinaryMessage().withMessage(message.toString().getBytes(StandardCharsets.UTF_8));
+            BinaryMessage ipcMessage = new BinaryMessage().withMessage(message.toBytes());
             PublishMessage pubMessage = new PublishMessage().withBinaryMessage(ipcMessage);
             PublishToTopicRequest pubRequest = new PublishToTopicRequest().withTopic(topic).withPublishMessage(pubMessage);
             ipcClient.publishToTopic(pubRequest);
@@ -102,7 +102,7 @@ public final class GreengrassMessagingProvider extends MessagingProvider
         {
             PublishToIoTCoreRequest pubRequest = new PublishToIoTCoreRequest()
                     .withTopicName(topic)
-                    .withPayload(message.toString().getBytes(StandardCharsets.UTF_8))
+                    .withPayload(message.toBytes())
                     .withQos(toGreengrassQos(qos));
             ipcClient.publishToIoTCore(pubRequest);
         }

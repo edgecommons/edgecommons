@@ -1,4 +1,3 @@
-import json
 import logging
 from typing import Callable
 from edgecommons.messaging.message import Message
@@ -19,9 +18,19 @@ class IoTCoreSubscriptionHandler(SubscriptionHandler):
     ):
         super().__init__(topic_filter, callback, max_concurrency, max_messages)
 
-    def parse_raw_payload(self, event) -> (str, dict):
-        received_payload = json.loads(str(event.message.payload, "utf-8"))
-        logger.debug(
-            f"IoT Core: common: PubSubDataHandler: on_stream_event: subscribed message: {received_payload}"
-        )
-        return event.message.topic_name, received_payload
+    def parse_raw_payload(self, event):
+        try:
+            message = Message.from_bytes(event.message.payload)
+            logger.debug(
+                "IoT Core: decoded EdgeCommons protobuf message on topic %s",
+                event.message.topic_name,
+            )
+            return event.message.topic_name, message
+        except ValueError as error:
+            logger.warning(
+                "Problem decoding IoT Core payload into EdgeCommons protobuf Message on topic %s: "
+                "%s. Ignoring message.",
+                event.message.topic_name,
+                error,
+            )
+            return None

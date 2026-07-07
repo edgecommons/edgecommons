@@ -399,7 +399,7 @@ export class CommandInbox {
   private async sendReply(request: Message, verb: string, body: Record<string, unknown>): Promise<void> {
     try {
       const reply = MessageBuilder.create(verb, CommandInbox.CMD_MESSAGE_VERSION)
-        .withPayload(body)
+        .withCommand(body)
         .withConfig(this.configProvider())
         .build();
       await this.messaging.reply(request, reply);

@@ -20,6 +20,7 @@
              JEP 454) is stable as of Java 22, so the native edgestreamlog binding needs
              no preview flag. Built and deployed on JDK 25 (lab-5950x runs 25). -->
         <maven.compiler.release>25</maven.compiler.release>
+        <protobuf.version>3.25.5</protobuf.version>
         <!-- Directory holding the built edgestreamlog cdylib (from a release cargo build with the
              cabi feature, plus kinesis for export). Packaged into the jar under /native/os-arch/
              so the streaming binding loads with no edgestreamlog.library.path system property.
@@ -134,6 +135,16 @@
             <version>2.10.1</version>
         </dependency>
         <dependency>
+            <groupId>com.google.protobuf</groupId>
+            <artifactId>protobuf-java</artifactId>
+            <version>${protobuf.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.google.protobuf</groupId>
+            <artifactId>protobuf-java-util</artifactId>
+            <version>${protobuf.version}</version>
+        </dependency>
+        <dependency>
             <groupId>com.networknt</groupId>
             <artifactId>json-schema-validator</artifactId>
             <version>1.0.87</version>
@@ -180,7 +191,37 @@
         </dependency>
     </dependencies>
     <build>
+        <extensions>
+            <extension>
+                <groupId>kr.motd.maven</groupId>
+                <artifactId>os-maven-plugin</artifactId>
+                <version>1.7.1</version>
+            </extension>
+        </extensions>
         <plugins>
+            <plugin>
+                <groupId>org.xolstice.maven.plugins</groupId>
+                <artifactId>protobuf-maven-plugin</artifactId>
+                <version>0.6.1</version>
+                <configuration>
+                    <protocArtifact>com.google.protobuf:protoc:${protobuf.version}:exe:${os.detected.classifier}</protocArtifact>
+                    <protoSourceRoot>${project.basedir}/../../proto</protoSourceRoot>
+                    <outputDirectory>${project.build.directory}/generated-sources/protobuf/java</outputDirectory>
+                    <writeDescriptorSet>true</writeDescriptorSet>
+                    <descriptorSetOutputDirectory>${project.basedir}/../../protobuf-test-vectors</descriptorSetOutputDirectory>
+                    <descriptorSetFileName>edgecommons-v1.desc</descriptorSetFileName>
+                    <includeSourceInfoInDescriptorSet>true</includeSourceInfoInDescriptorSet>
+                    <includeDependenciesInDescriptorSet>true</includeDependenciesInDescriptorSet>
+                    <clearOutputDirectory>false</clearOutputDirectory>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>compile</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
@@ -287,6 +328,9 @@
                         <exclude>com/mbreissi/edgecommons/config/provider/GreengrassConfigProvider*</exclude>
                         <exclude>com/mbreissi/edgecommons/config/provider/ShadowConfigProvider*</exclude>
                         <exclude>com/mbreissi/edgecommons/config/provider/ConfigComponentProvider*</exclude>
+                        <!-- protoc-generated message classes are validated through the hand-written
+                             codec tests and cross-language protobuf interop, not direct builder coverage. -->
+                        <exclude>com/mbreissi/edgecommons/proto/v1/**</exclude>
                         <!-- Native FFI glue (Panama): only executes with the edgestreamlog cdylib
                              present; validated by the gated native test + the Rust C smoke test. -->
                         <exclude>com/mbreissi/edgecommons/streaming/**</exclude>

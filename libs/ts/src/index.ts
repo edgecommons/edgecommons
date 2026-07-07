@@ -84,6 +84,7 @@ export { EffectiveConfigPublisher, redact } from "./config/effective_config";
 export {
   Message,
   MessageBuilder,
+  MessageBodyCase,
   MessageIdentity,
   Destination,
   Qos,

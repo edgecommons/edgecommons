@@ -122,7 +122,10 @@ pub struct EmbeddedLog {
 }
 
 fn now_ms() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 impl EmbeddedLog {
@@ -386,8 +389,12 @@ impl EmbeddedLog {
             let mut g = self.inner.0.lock().unwrap();
             let from = g.acked;
             match &mut g.store {
-                BackingStore::Disk(s) => Planned::DiskChunks(s.plan_read(from, max_records, max_bytes)?),
-                BackingStore::Memory(s) => Planned::Records(s.read_from(from, max_records, max_bytes)?),
+                BackingStore::Disk(s) => {
+                    Planned::DiskChunks(s.plan_read(from, max_records, max_bytes)?)
+                }
+                BackingStore::Memory(s) => {
+                    Planned::Records(s.read_from(from, max_records, max_bytes)?)
+                }
             }
         };
         match planned {
@@ -434,7 +441,10 @@ impl EmbeddedLog {
         let _cp = self.checkpoint_lock.lock().unwrap();
         let cp = {
             let g = self.inner.0.lock().unwrap();
-            Checkpoint { acked: g.acked, drop_floor: g.drop_floor }
+            Checkpoint {
+                acked: g.acked,
+                drop_floor: g.drop_floor,
+            }
         };
         checkpoint::store(&self.dir, cp)
     }
@@ -444,8 +454,11 @@ impl EmbeddedLog {
         let queued = self.ingest.mu.lock().unwrap().queued_records as u64;
         let g = self.inner.0.lock().unwrap();
         let next_offset = g.store.next_offset();
-        let oldest_unacked_age_ms =
-            g.store.oldest_ts_ms().map(|ts| now_ms().saturating_sub(ts)).unwrap_or(0);
+        let oldest_unacked_age_ms = g
+            .store
+            .oldest_ts_ms()
+            .map(|ts| now_ms().saturating_sub(ts))
+            .unwrap_or(0);
         LogStats {
             appended_total: g.appended,
             dropped_total: g.dropped,
@@ -492,7 +505,9 @@ fn ensure_room<'a>(
                 while g.store.disk_bytes() + size > g.cfg.max_disk_bytes {
                     // Reclaim the oldest unit (a segment for disk, one record for memory). `None`
                     // means nothing more is droppable (disk: only the active segment remains).
-                    let Some(end) = g.store.next_drop_boundary() else { break };
+                    let Some(end) = g.store.next_drop_boundary() else {
+                        break;
+                    };
                     let _ = g.store.truncate_below(end);
                     let acked = g.acked;
                     if end > acked {
@@ -530,7 +545,10 @@ fn maintenance_tick(
         }
         let acked = g.acked;
         let _ = g.store.truncate_below(acked);
-        Checkpoint { acked: g.acked, drop_floor: g.drop_floor }
+        Checkpoint {
+            acked: g.acked,
+            drop_floor: g.drop_floor,
+        }
     };
     // In-memory streams have nothing to persist (and no dir).
     if persistent {

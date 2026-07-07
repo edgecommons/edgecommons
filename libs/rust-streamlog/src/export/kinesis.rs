@@ -20,13 +20,16 @@ use aws_sdk_kinesis::Client;
 use tokio::runtime::Runtime;
 
 use super::{ExportRecord, SendOutcome, Sink};
+use crate::config::SinkPayloadFormat;
 use crate::error::{EdgeStreamError, Result};
+use crate::payload::project_payload;
 
 /// A [`Sink`] that writes records to an Amazon Kinesis Data Stream.
 pub struct KinesisSink {
     rt: Runtime,
     client: Client,
     stream_name: String,
+    payload_format: SinkPayloadFormat,
 }
 
 impl KinesisSink {
@@ -39,6 +42,16 @@ impl KinesisSink {
         stream_name: impl Into<String>,
         region: Option<String>,
         endpoint_url: Option<String>,
+    ) -> Result<Self> {
+        Self::new_with_payload_format(stream_name, region, endpoint_url, SinkPayloadFormat::Json)
+    }
+
+    /// Build a sink with an explicit target payload format.
+    pub fn new_with_payload_format(
+        stream_name: impl Into<String>,
+        region: Option<String>,
+        endpoint_url: Option<String>,
+        payload_format: SinkPayloadFormat,
     ) -> Result<Self> {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -56,7 +69,8 @@ impl KinesisSink {
             scope
                 .spawn(|| {
                     rt.block_on(async {
-                        let mut loader = aws_config::defaults(aws_config::BehaviorVersion::latest());
+                        let mut loader =
+                            aws_config::defaults(aws_config::BehaviorVersion::latest());
                         if let Some(r) = region {
                             loader = loader.region(aws_sdk_kinesis::config::Region::new(r));
                         }
@@ -71,29 +85,44 @@ impl KinesisSink {
                 .map_err(|_| EdgeStreamError::Sink("kinesis client init thread panicked".into()))
         })?;
 
-        Ok(Self { rt, client, stream_name: stream_name.into() })
+        Ok(Self {
+            rt,
+            client,
+            stream_name: stream_name.into(),
+            payload_format,
+        })
     }
 }
 
 impl Sink for KinesisSink {
     fn send(&mut self, batch: &[ExportRecord<'_>]) -> SendOutcome {
-        let entries: std::result::Result<Vec<PutRecordsRequestEntry>, _> = batch
-            .iter()
-            .map(|r| {
-                PutRecordsRequestEntry::builder()
-                    .data(Blob::new(r.payload.to_vec()))
-                    // Kinesis partition keys are UTF-8 strings; recover lossily from the raw bytes.
-                    .partition_key(String::from_utf8_lossy(r.partition_key).into_owned())
-                    .build()
-            })
-            .collect();
-        let entries = match entries {
-            Ok(e) => e,
-            Err(e) => {
-                // A malformed entry can never succeed → non-retryable.
-                return SendOutcome::Failed { retryable: false, error: format!("build entry: {e}") };
+        let mut entries = Vec::with_capacity(batch.len());
+        for r in batch {
+            let projected = match project_payload(self.payload_format, r.payload) {
+                Ok(projected) => projected,
+                Err(e) => {
+                    return SendOutcome::Failed {
+                        retryable: false,
+                        error: e.to_string(),
+                    }
+                }
+            };
+            match PutRecordsRequestEntry::builder()
+                .data(Blob::new(projected.payload))
+                // Kinesis partition keys are UTF-8 strings; recover lossily from the raw bytes.
+                .partition_key(String::from_utf8_lossy(r.partition_key).into_owned())
+                .build()
+            {
+                Ok(entry) => entries.push(entry),
+                Err(e) => {
+                    // A malformed entry can never succeed -> non-retryable.
+                    return SendOutcome::Failed {
+                        retryable: false,
+                        error: format!("build entry: {e}"),
+                    };
+                }
             }
-        };
+        }
 
         let resp = self.rt.block_on(
             self.client

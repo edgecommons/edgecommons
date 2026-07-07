@@ -1,2 +1,3 @@
 include README.md
 recursive-include edgecommons/resources *.json
+recursive-include edgecommons/resources/protobuf *.desc

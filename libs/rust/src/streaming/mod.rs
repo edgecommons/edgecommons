@@ -226,19 +226,23 @@ fn resolve_sink(config: &Config, sink: SinkConfig) -> SinkConfig {
             stream_name,
             region,
             endpoint_url,
+            payload_format,
         } => SinkConfig::Kinesis {
             stream_name: resolve(config, &stream_name),
             region,
             endpoint_url,
+            payload_format,
         },
         SinkConfig::Kafka {
             bootstrap_servers,
             topic,
             properties,
+            payload_format,
         } => SinkConfig::Kafka {
             bootstrap_servers: resolve(config, &bootstrap_servers),
             topic: resolve(config, &topic),
             properties,
+            payload_format,
         },
         SinkConfig::File(mut f) => {
             // Resolve config templates ({ThingName} etc.) in the output dir + partition path; any

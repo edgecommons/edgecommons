@@ -72,12 +72,20 @@ fn drop_oldest_bounds_disk() {
     // Tiny segments + budget so we must drop undelivered data; never commit.
     let log = EmbeddedLog::open(cfg(dir.path(), 256, 1024, OnFull::DropOldest)).unwrap();
     for i in 0..5000u64 {
-        log.append(&rec("k", format!("payload-number-{i}").as_bytes())).unwrap();
+        log.append(&rec("k", format!("payload-number-{i}").as_bytes()))
+            .unwrap();
     }
     let s = log.stats();
     // Disk stays within budget + at most one (active) segment of overshoot.
-    assert!(s.disk_bytes <= 1024 + 256, "disk_bytes={} over budget", s.disk_bytes);
-    assert!(s.dropped_total > 0, "should have dropped undelivered records");
+    assert!(
+        s.disk_bytes <= 1024 + 256,
+        "disk_bytes={} over budget",
+        s.disk_bytes
+    );
+    assert!(
+        s.dropped_total > 0,
+        "should have dropped undelivered records"
+    );
     assert_eq!(s.appended_total, 5000);
     // The cursor advanced past dropped data; survivors are the newest records.
     assert!(s.acked > 0 && s.acked == s.dropped_total);
@@ -102,8 +110,15 @@ fn reject_new_when_full() {
             Err(e) => panic!("unexpected error: {e}"),
         }
     }
-    assert!(rejected, "RejectNew must eventually reject when the disk budget is hit");
-    assert_eq!(log.stats().dropped_total, 0, "RejectNew never drops persisted data");
+    assert!(
+        rejected,
+        "RejectNew must eventually reject when the disk budget is hit"
+    );
+    assert_eq!(
+        log.stats().dropped_total,
+        0,
+        "RejectNew never drops persisted data"
+    );
 }
 
 #[test]
@@ -134,7 +149,10 @@ fn block_unblocks_on_commit() {
     });
 
     std::thread::sleep(std::time::Duration::from_millis(200));
-    assert!(!done.load(Ordering::Acquire), "appender should be blocked while full");
+    assert!(
+        !done.load(Ordering::Acquire),
+        "appender should be blocked while full"
+    );
 
     // Deliver everything → frees space → the blocked appender proceeds.
     log.commit(filled - 1).unwrap();
@@ -144,6 +162,9 @@ fn block_unblocks_on_commit() {
         }
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
-    assert!(done.load(Ordering::Acquire), "commit should unblock the appender");
+    assert!(
+        done.load(Ordering::Acquire),
+        "commit should unblock the appender"
+    );
     handle.join().unwrap();
 }

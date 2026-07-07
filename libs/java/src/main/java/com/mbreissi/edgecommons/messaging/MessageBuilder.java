@@ -1,6 +1,8 @@
 package com.mbreissi.edgecommons.messaging;
 
 import com.mbreissi.edgecommons.config.ConfigManager;
+import com.mbreissi.edgecommons.messaging.proto.MessageBodyCase;
+import com.mbreissi.edgecommons.messaging.proto.MessageBodySchema;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonSyntaxException;
@@ -21,7 +23,14 @@ public class MessageBuilder {
     private String correlationId;
     private String uuid;
     private String timestamp;
+    private Long timestampMs;
+    private String replyTo;
     private Object payload;
+    private String contentType;
+    private String contentEncoding;
+    private MessageBodySchema schema;
+    private MessageBodyCase bodyCase;
+    private MessageTags tagsOverride;
     private ConfigManager configService;
     private String instance;
     private MessageIdentity identityOverride;
@@ -50,6 +59,18 @@ public class MessageBuilder {
             if (msgJsonObj.has("tags"))
             {
                 retVal.tags = MessageTags.fromDict(msgJsonObj.getAsJsonObject("tags"));
+            }
+            if (msgJsonObj.has("content_type"))
+            {
+                retVal.contentType = msgJsonObj.get("content_type").getAsString();
+            }
+            if (msgJsonObj.has("content_encoding"))
+            {
+                retVal.contentEncoding = msgJsonObj.get("content_encoding").getAsString();
+            }
+            if (msgJsonObj.has("schema"))
+            {
+                retVal.schema = MessageBodySchema.fromDict(msgJsonObj.getAsJsonObject("schema"));
             }
             if (msgJsonObj.has("body"))
             {
@@ -97,8 +118,114 @@ public class MessageBuilder {
         return this;
     }
 
+    public MessageBuilder withTimestampMs(long timestampMs) {
+        this.timestampMs = timestampMs;
+        return this;
+    }
+
+    public MessageBuilder withReplyTo(String replyTo) {
+        this.replyTo = replyTo;
+        return this;
+    }
+
     public MessageBuilder withPayload(Object payload) {
         this.payload = payload;
+        if (payload instanceof byte[] && this.bodyCase == null) {
+            this.bodyCase = MessageBodyCase.OPAQUE;
+            if (this.contentType == null) {
+                this.contentType = "application/octet-stream";
+            }
+        }
+        return this;
+    }
+
+    public MessageBuilder withStructuredPayload(Object payload) {
+        this.payload = payload;
+        this.bodyCase = MessageBodyCase.STRUCTURED;
+        return this;
+    }
+
+    public MessageBuilder withStructuredBody(Object body) {
+        return withStructuredPayload(body);
+    }
+
+    public MessageBuilder withSouthboundSignalUpdate(JsonObject payload) {
+        this.payload = payload;
+        this.bodyCase = MessageBodyCase.SOUTHBOUND_SIGNAL_UPDATE;
+        return this;
+    }
+
+    public MessageBuilder withStateUpdate(JsonObject payload) {
+        this.payload = payload;
+        this.bodyCase = MessageBodyCase.STATE_UPDATE;
+        return this;
+    }
+
+    public MessageBuilder withConfigUpdate(JsonObject payload) {
+        this.payload = payload;
+        this.bodyCase = MessageBodyCase.CONFIG_UPDATE;
+        return this;
+    }
+
+    public MessageBuilder withMetricUpdate(JsonObject payload) {
+        this.payload = payload;
+        this.bodyCase = MessageBodyCase.METRIC_UPDATE;
+        return this;
+    }
+
+    public MessageBuilder withEvent(JsonObject payload) {
+        this.payload = payload;
+        this.bodyCase = MessageBodyCase.EVENT;
+        return this;
+    }
+
+    public MessageBuilder withCommand(JsonObject payload) {
+        this.payload = payload;
+        this.bodyCase = MessageBodyCase.COMMAND;
+        return this;
+    }
+
+    public MessageBuilder withOpaquePayload(byte[] payload) {
+        return withOpaquePayload(payload, "application/octet-stream");
+    }
+
+    public MessageBuilder withOpaquePayload(byte[] payload, String contentType) {
+        this.payload = payload == null ? null : payload.clone();
+        this.bodyCase = MessageBodyCase.OPAQUE;
+        this.contentType = contentType != null ? contentType : "application/octet-stream";
+        return this;
+    }
+
+    public MessageBuilder withOpaqueBody(byte[] payload) {
+        return withOpaquePayload(payload);
+    }
+
+    public MessageBuilder withOpaqueBody(byte[] payload, String contentType) {
+        return withOpaquePayload(payload, contentType);
+    }
+
+    public MessageBuilder withContentType(String contentType) {
+        this.contentType = contentType;
+        return this;
+    }
+
+    public MessageBuilder withContentEncoding(String contentEncoding) {
+        this.contentEncoding = contentEncoding;
+        return this;
+    }
+
+    public MessageBuilder withSchema(MessageBodySchema schema) {
+        this.schema = schema;
+        return this;
+    }
+
+    public MessageBuilder withBodyCase(MessageBodyCase bodyCase) {
+        this.bodyCase = bodyCase;
+        return this;
+    }
+
+    public MessageBuilder withTags(MessageTags tags) {
+        this.tagsOverride = tags;
         return this;
     }
 
@@ -147,8 +274,16 @@ public class MessageBuilder {
         if (timestamp != null) {
             headerBuilder.withTimestamp(timestamp);
         }
+        if (timestampMs != null) {
+            headerBuilder.withTimestampMs(timestampMs);
+        }
+        if (replyTo != null) {
+            headerBuilder.withReplyTo(replyTo);
+        }
         message.header = headerBuilder.build();
-        if (configService != null) {
+        if (tagsOverride != null) {
+            message.tags = tagsOverride;
+        } else if (configService != null) {
             message.tags = MessageTags.fromConfig(configService);
         }
 
@@ -174,6 +309,10 @@ public class MessageBuilder {
         } else {
             message.body = payload;
         }
+        message.contentType = contentType;
+        message.contentEncoding = contentEncoding;
+        message.schema = schema;
+        message.bodyCase = bodyCase;
 
         return message;
     }

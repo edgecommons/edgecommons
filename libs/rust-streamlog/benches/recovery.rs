@@ -31,8 +31,9 @@ fn populate(dir: &std::path::Path, n: u64) {
     let mut written = 0u64;
     while written < n {
         let this = chunk.min((n - written) as usize);
-        let recs: Vec<Record> =
-            (0..this).map(|i| Record::new("pk", 1000 + written + i as u64, body.clone())).collect();
+        let recs: Vec<Record> = (0..this)
+            .map(|i| Record::new("pk", 1000 + written + i as u64, body.clone()))
+            .collect();
         log.append_batch(&recs).unwrap();
         written += this as u64;
     }

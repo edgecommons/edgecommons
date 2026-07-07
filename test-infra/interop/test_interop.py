@@ -1,11 +1,11 @@
 """Cross-language interoperability test for the edgecommons libraries.
 
-Runs a request/reply round-trip over the shared local MQTT broker for every
-ordered pair of languages (python, java, rust, ts) using the per-language "interop
-node" programs (the ts node is compiled inside libs/ts to dist/interop_node.js). A passing pair proves the message envelope and
-the request/reply (reply_to + correlation_id) convention are mutually intelligible
-in BOTH directions between those two libraries (request serialized by one,
-deserialized + replied by the other, reply deserialized back by the first).
+Runs request/reply, raw-publish drop policy, opaque binary body, and UNS
+round-trips over the shared local MQTT broker for every ordered pair of
+languages (python, java, rust, ts) using the per-language "interop node"
+programs. A passing pair proves normal protobuf messages are mutually
+intelligible in both directions and that raw/foreign payloads do not leak
+through normal Message subscriptions.
 
 Prereqs (each self-skips if missing):
 - a local MQTT broker on localhost:1883 (docker start edgecommons-emqx)
@@ -291,8 +291,9 @@ def test_interop_request_reply(commands, requester, responder):
 @pytest.mark.parametrize("subscriber", LANGS)
 @pytest.mark.parametrize("publisher", LANGS)
 def test_interop_raw_publish(commands, publisher, subscriber):
-    """One language publishes a raw (non-envelope) payload; another ingests it as a
-    raw message. Proves the {"raw": <value>} wire convention interoperates."""
+    """One language publishes a raw/foreign payload; another subscribes through the
+    normal Message path and must not receive it. Raw publish remains an explicit
+    escape hatch, but normal subscriptions are protobuf-only."""
     for lang in (publisher, subscriber):
         if lang not in commands:
             pytest.skip(f"{lang} toolchain/artifact unavailable")
@@ -309,17 +310,12 @@ def test_interop_raw_publish(commands, publisher, subscriber):
                              timeout=30, cwd=str(RUN_DIR))
         assert pub.returncode == 0, f"{publisher} raw-pub failed: {pub.stdout}\n{pub.stderr}"
 
-        # The subscriber exits after receiving (or its own 10s timeout).
-        try:
-            sub_proc.wait(timeout=15)
-        except subprocess.TimeoutExpired:
-            pass
+        sub_proc.wait(timeout=15)
 
         payload = _last_json(lines)
         assert payload is not None, f"no JSON from {subscriber} raw-sub; lines={lines}"
         assert payload["ok"] is True, f"{publisher}->{subscriber} raw failed: {payload}"
-        assert payload["is_raw"] is True, "non-envelope payload must arrive as a raw message"
-        assert payload["raw_token"] == token, "raw payload must round-trip intact"
+        assert payload["delivered"] is False, "raw payload must not arrive as a normal Message"
     finally:
         if sub_proc.poll() is None:
             sub_proc.terminate()
@@ -360,6 +356,48 @@ def test_interop_binary_body_publish(commands, publisher, subscriber):
         assert payload["ok"] is True, f"{publisher}->{subscriber} binary failed: {payload}"
         assert payload["is_binary"] is True, "envelope body must be recognized as binary"
         assert payload["hex"] == BINARY_BODY_HEX, "binary body bytes must survive exactly"
+    finally:
+        if sub_proc.poll() is None:
+            sub_proc.terminate()
+            try:
+                sub_proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                sub_proc.kill()
+
+
+@pytest.mark.parametrize("subscriber", LANGS)
+@pytest.mark.parametrize("publisher", LANGS)
+def test_interop_typed_telemetry_byte_sample(commands, publisher, subscriber):
+    """One language publishes a standard SouthboundSignalUpdate protobuf body with
+    a byte-valued sample; another language decodes the typed body and verifies the
+    nested sample bytes plus source/server timestamps."""
+    for lang in (publisher, subscriber):
+        if lang not in commands:
+            pytest.skip(f"{lang} toolchain/artifact unavailable")
+
+    topic = f"interop/typed/{subscriber}/{uuid.uuid4()}"
+
+    sub_proc, lines, ready = _launch(commands[subscriber]("typed-sub", topic, BINARY_BODY_HEX))
+    try:
+        assert ready.wait(20), f"{subscriber} typed-sub never signalled READY"
+
+        pub = subprocess.run(commands[publisher]("typed-pub", topic, BINARY_BODY_HEX),
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                             timeout=30, cwd=str(RUN_DIR))
+        assert pub.returncode == 0, f"{publisher} typed-pub failed: {pub.stdout}\n{pub.stderr}"
+
+        try:
+            sub_proc.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            pass
+
+        payload = _last_json(lines)
+        assert payload is not None, f"no JSON from {subscriber} typed-sub; lines={lines}"
+        assert payload["ok"] is True, f"{publisher}->{subscriber} typed telemetry failed: {payload}"
+        assert payload["body_case"] == "SOUTHBOUND_SIGNAL_UPDATE"
+        assert payload["hex"] == BINARY_BODY_HEX
+        assert payload["source_ts_ms"] == 1783360799900
+        assert payload["server_ts_ms"] == 1783360800000
     finally:
         if sub_proc.poll() is None:
             sub_proc.terminate()

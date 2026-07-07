@@ -25,10 +25,12 @@ local MQTT broker over a local-only MQTT transport:
 - `request <topic> <token>` — send `{"token": <token>, "from": "<lang>"}`, wait
   for the reply, print one JSON line, exit 0 on a correlated, well-formed reply.
 
-`test_interop.py` runs both a request/reply round-trip and a raw publish/ingest
-round-trip for **every ordered pair** of the four languages (4×4×2 = 32 combos). A
-passing pair exercises serialization in *both* directions (request serialized by the
-requester + parsed/replied by the responder; reply parsed back by the requester).
+`test_interop.py` runs request/reply, raw-publish drop policy, opaque binary body,
+and UNS round-trips for **every ordered pair** of the four languages. A passing pair
+exercises serialization in *both* directions for normal protobuf messages
+(request serialized by the requester + parsed/replied by the responder; reply
+parsed back by the requester), proves raw/foreign payloads do not leak through
+normal `Message` subscriptions, and proves opaque body bytes survive exactly.
 
 ## UNS roles (M14 — UNS-CANONICAL-DESIGN §7)
 

@@ -278,7 +278,7 @@ mod vector_tests {
                         .unwrap()
                         .clone()
                         .expect("a stream append was recorded");
-                    let envelope: Message = serde_json::from_slice(&payload).unwrap();
+                    let envelope = Message::from_slice(&payload).unwrap();
                     serde_json::json!({
                         "topic": topic,
                         "route": format!("stream:{stream_name}"),
