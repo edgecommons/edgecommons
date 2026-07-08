@@ -399,10 +399,10 @@ config** — listeners are not notified and the reload reports failure. First-lo
 closed in all four.
 </Aside>
 
-## Split-config contract
+## Hierarchical config contract
 
 All four SDKs expose only the merged effective config through the normal config APIs. When a shared
-base layer is present, the SDK deep-merges `base` under `component`, strips split-config control
+base layer is present, the SDK deep-merges `base` under `component`, strips composition control
 fields such as `extends` and `sharedConfig`, validates the result, and then publishes or exposes the
 same effective shape as a single-document config.
 
@@ -445,11 +445,11 @@ not construct it directly. The underlying factory/builder is listed here for com
 | TypeScript | `buildConfigSource(spec, opts)` builds the source; `Config.fromValue(componentName, thingName, raw)` builds a snapshot |
 
 <Aside type="note" title="Sources that need a messaging client">
-`GG_CONFIG` and `SHADOW` load over Greengrass IPC; `CONFIG_COMPONENT` loads over the active
-messaging transport, including HOST/Kubernetes MQTT. The construction entry point therefore
-requires a messaging client/provider for these messaging-backed sources, and selecting one without
-messaging is a hard error. In Rust, `GG_CONFIG` and `SHADOW` additionally require the `greengrass`
-cargo feature. See the
+`GG_CONFIG` loads over Greengrass IPC. The current `SHADOW` implementation loads through the
+Greengrass ShadowManager / IPC path. `CONFIG_COMPONENT` loads over the active messaging transport,
+including HOST/Kubernetes MQTT. The construction entry point therefore requires a messaging
+client/provider for these messaging-backed sources, and selecting one without messaging is a hard
+error. In Rust, `GG_CONFIG` and `SHADOW` additionally require the `greengrass` cargo feature. See the
 [Configuration guide](/guides/configuration/#config-sources) for the full source list.
 </Aside>
 

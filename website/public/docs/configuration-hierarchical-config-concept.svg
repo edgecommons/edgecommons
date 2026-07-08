@@ -1,0 +1,164 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="840" viewBox="0 0 1280 840" role="img" aria-labelledby="title desc">
+  <title id="title">Hierarchical configuration inheritance and component override concept</title>
+  <desc id="desc">A conceptual diagram showing two factories with two lines each, one edge device per line, and the selected edge north-1 device. The shared layer explicitly defines logging level INFO for all components. The OPC UA adapter component layer overrides logging level to DEBUG, while the Modbus adapter and telemetry processor inherit INFO.</desc>
+  <defs>
+    <style>
+      .bg { fill: #f7faf8; }
+      .panel { fill: #ffffff; stroke: #b9c9c0; stroke-width: 2; }
+      .factory { fill: #edf6f1; stroke: #7fa894; stroke-width: 2; }
+      .line { fill: #ffffff; stroke: #9ab4a7; stroke-width: 1.8; }
+      .selectedLine { fill: #ffffff; stroke: #2f7b5d; stroke-width: 3; }
+      .shared { fill: #e6f0ff; stroke: #4674b8; stroke-width: 2.2; }
+      .sharedKey { fill: #cfe0ff; stroke: #4674b8; stroke-width: 1.2; }
+      .component { fill: #fff6e4; stroke: #c58b28; stroke-width: 2; }
+      .componentNeutral { fill: #f8fbf9; stroke: #8ea79b; stroke-width: 2; }
+      .override { fill: #fff0e9; stroke: #cb5b38; stroke-width: 2.2; }
+      .effective { fill: #e9f8ee; stroke: #3f925b; stroke-width: 2; }
+      .machine { fill: none; stroke: #46615a; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+      .device { fill: #263b35; }
+      .deviceSelected { fill: #173f31; stroke: #2f7b5d; stroke-width: 2; }
+      .pillBlue { fill: #2f66ad; }
+      .pillGreen { fill: #2f7b5d; }
+      .pillOrange { fill: #b8592e; }
+      .deviceText { fill: #ffffff; font-family: Arial, Helvetica, sans-serif; font-size: 13px; font-weight: 700; }
+      .title { fill: #14231f; font-family: Arial, Helvetica, sans-serif; font-size: 30px; font-weight: 700; }
+      .subtitle { fill: #44534f; font-family: Arial, Helvetica, sans-serif; font-size: 17px; }
+      .label { fill: #1d302a; font-family: Arial, Helvetica, sans-serif; font-size: 16px; font-weight: 700; }
+      .small { fill: #344943; font-family: Arial, Helvetica, sans-serif; font-size: 13px; }
+      .tiny { fill: #40524d; font-family: Arial, Helvetica, sans-serif; font-size: 12px; }
+      .code { fill: #21342f; font-family: Consolas, "Courier New", monospace; font-size: 12.5px; }
+      .codeSmall { fill: #21342f; font-family: Consolas, "Courier New", monospace; font-size: 11.5px; }
+      .whiteText { fill: #ffffff; font-family: Arial, Helvetica, sans-serif; font-size: 11px; font-weight: 700; }
+      .arrow { fill: none; stroke: #5e716b; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrowHead); }
+      .arrowBlue { fill: none; stroke: #4674b8; stroke-width: 2.3; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrowHeadBlue); }
+      .arrowGreen { fill: none; stroke: #3f925b; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrowHeadGreen); }
+      .arrowOrange { fill: none; stroke: #cb5b38; stroke-width: 2.8; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrowHeadOrange); }
+    </style>
+    <marker id="arrowHead" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#5e716b" />
+    </marker>
+    <marker id="arrowHeadBlue" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#4674b8" />
+    </marker>
+    <marker id="arrowHeadGreen" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#3f925b" />
+    </marker>
+    <marker id="arrowHeadOrange" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#cb5b38" />
+    </marker>
+  </defs>
+
+  <rect class="bg" width="1280" height="840" />
+  <text class="title" x="46" y="52">Hierarchical config: shared device context, component-specific overlays</text>
+  <text class="subtitle" x="46" y="82">Each line device has one shared layer. Every component inherits it, then only its own component layer may override values.</text>
+
+  <rect class="panel" x="38" y="116" width="560" height="660" rx="14" />
+  <text class="label" x="64" y="149">Enterprise hierarchy</text>
+  <text class="small" x="64" y="172">Two factories, two lines per factory, one device per line</text>
+
+  <rect class="factory" x="64" y="198" width="242" height="520" rx="12" />
+  <text class="label" x="86" y="228">Factory North</text>
+  <text class="code" x="86" y="250">identity.factory = "north"</text>
+
+  <rect class="factory" x="330" y="198" width="242" height="520" rx="12" />
+  <text class="label" x="352" y="228">Factory South</text>
+  <text class="code" x="352" y="250">identity.factory = "south"</text>
+
+  <g transform="translate(86,282)">
+    <rect class="selectedLine" x="0" y="0" width="198" height="153" rx="10" />
+    <text class="label" x="18" y="30">Line 1</text>
+    <text class="code" x="18" y="51">identity.line = "line-1"</text>
+    <path class="machine" d="M24 98 h38 m-19 0 v-25 m-26 25 h72 m-12 0 l15 20 h28 m-62-20 l-15 20 h-26" />
+    <path class="machine" d="M103 75 h45 v42 h-45 z m11-14 h23 m-12 14 v42" />
+    <rect class="deviceSelected" x="122" y="63" width="68" height="52" rx="8" />
+    <text class="deviceText" x="137" y="84">edge</text>
+    <text class="deviceText" x="133" y="102">north-1</text>
+  </g>
+
+  <g transform="translate(86,496)">
+    <rect class="line" x="0" y="0" width="198" height="153" rx="10" />
+    <text class="label" x="18" y="30">Line 2</text>
+    <text class="code" x="18" y="51">identity.line = "line-2"</text>
+    <path class="machine" d="M24 108 c24-36 52-36 76 0 m-50-22 v-25 h30 v25 m48-24 h54 v52 h-54 z m13 14 h28 m-28 16 h28" />
+    <rect class="device" x="122" y="63" width="68" height="52" rx="8" />
+    <text class="deviceText" x="137" y="84">edge</text>
+    <text class="deviceText" x="133" y="102">north-2</text>
+  </g>
+
+  <g transform="translate(352,282)">
+    <rect class="line" x="0" y="0" width="198" height="153" rx="10" />
+    <text class="label" x="18" y="30">Line 1</text>
+    <text class="code" x="18" y="51">identity.line = "line-1"</text>
+    <path class="machine" d="M25 105 h58 m-48 0 v-39 h38 v39 m52-53 h54 v63 h-54 z m12 14 h30 m-30 18 h30 m-92 20 h110" />
+    <rect class="device" x="122" y="63" width="68" height="52" rx="8" />
+    <text class="deviceText" x="137" y="84">edge</text>
+    <text class="deviceText" x="133" y="102">south-1</text>
+  </g>
+
+  <g transform="translate(352,496)">
+    <rect class="line" x="0" y="0" width="198" height="153" rx="10" />
+    <text class="label" x="18" y="30">Line 2</text>
+    <text class="code" x="18" y="51">identity.line = "line-2"</text>
+    <path class="machine" d="M24 108 h58 m-43 0 l17-41 l17 41 m40-42 c24 0 42 19 42 43 h-84 c0-24 18-43 42-43 z" />
+    <rect class="device" x="122" y="63" width="68" height="52" rx="8" />
+    <text class="deviceText" x="137" y="84">edge</text>
+    <text class="deviceText" x="133" y="102">south-2</text>
+  </g>
+
+  <path class="arrow" d="M284 358 C350 358 545 205 648 205" />
+
+  <rect class="panel" x="630" y="116" width="600" height="660" rx="14" />
+  <text class="label" x="660" y="149">Selected device: edge-north-1</text>
+  <text class="small" x="660" y="172">All components on Factory North / Line 1 start with this same shared layer.</text>
+
+  <rect class="shared" x="660" y="196" width="520" height="166" rx="12" />
+  <text class="label" x="684" y="226">Shared layer for edge-north-1</text>
+  <text class="small" x="684" y="249">Inherited by OPC UA adapter, Modbus adapter, and telemetry processor</text>
+  <text class="code" x="684" y="277">hierarchy.levels = ["factory","line","device"]</text>
+  <text class="code" x="684" y="300">identity = { factory:"north", line:"line-1" }</text>
+  <text class="code" x="684" y="323">messaging, tags, heartbeat, credentials, streams</text>
+  <rect class="sharedKey" x="678" y="334" width="274" height="22" rx="6" />
+  <text class="code" x="690" y="350">logging.level = "INFO"</text>
+  <rect class="pillBlue" x="970" y="333" width="162" height="24" rx="12" />
+  <text class="whiteText" x="986" y="349">DEFAULT FOR ALL</text>
+
+  <path class="arrowBlue" d="M770 362 C770 390 745 390 745 413" />
+  <path class="arrowBlue" d="M920 362 V413" />
+  <path class="arrowBlue" d="M1068 362 C1068 390 1096 390 1096 413" />
+
+  <rect class="component override" x="660" y="414" width="170" height="150" rx="12" />
+  <text class="label" x="681" y="441">OPC UA adapter</text>
+  <text class="small" x="681" y="462">Component layer</text>
+  <text class="codeSmall" x="681" y="489">endpoint, node ids</text>
+  <text class="codeSmall" x="681" y="512">logging.level =</text>
+  <text class="codeSmall" x="681" y="531">"DEBUG"</text>
+  <rect class="pillOrange" x="680" y="539" width="126" height="21" rx="10" />
+  <text class="whiteText" x="692" y="554">OVERRIDES INFO</text>
+
+  <rect class="componentNeutral" x="844" y="414" width="170" height="150" rx="12" />
+  <text class="label" x="865" y="441">Modbus adapter</text>
+  <text class="small" x="865" y="462">Component layer</text>
+  <text class="codeSmall" x="865" y="489">unit id, registers</text>
+  <text class="codeSmall" x="865" y="512">no logging key</text>
+  <rect class="pillGreen" x="864" y="539" width="116" height="21" rx="10" />
+  <text class="whiteText" x="877" y="554">INHERITS INFO</text>
+
+  <rect class="componentNeutral" x="1028" y="414" width="170" height="150" rx="12" />
+  <text class="label" x="1049" y="441">Telemetry</text>
+  <text class="small" x="1049" y="462">Component layer</text>
+  <text class="codeSmall" x="1049" y="489">routes, filters</text>
+  <text class="codeSmall" x="1049" y="512">no logging key</text>
+  <rect class="pillGreen" x="1048" y="539" width="116" height="21" rx="10" />
+  <text class="whiteText" x="1061" y="554">INHERITS INFO</text>
+
+  <path class="arrowOrange" d="M745 564 V600" />
+  <path class="arrowGreen" d="M929 564 V600" />
+  <path class="arrowGreen" d="M1113 564 V600" />
+
+  <rect class="effective" x="660" y="600" width="520" height="136" rx="12" />
+  <text class="label" x="684" y="630">Effective config after merge</text>
+  <text class="small" x="684" y="653">Every component keeps the same identity and device context.</text>
+  <text class="code" x="684" y="679">OPC UA adapter      -> logging.level = "DEBUG"</text>
+  <text class="code" x="684" y="704">Modbus adapter      -> logging.level = "INFO"</text>
+  <text class="code" x="684" y="729">Telemetry processor -> logging.level = "INFO"</text>
+</svg>

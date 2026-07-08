@@ -7,16 +7,181 @@ sidebar:
 
 import { Tabs, TabItem, Aside, LinkCard, CardGrid } from "@astrojs/starlight/components";
 
-Every EdgeCommons component is driven by one effective JSON **config document**. The configuration
-subsystem loads that document from one of several pluggable sources, optionally composes it from a
-shared base layer plus a component layer, validates the effective document against the canonical
-cross-language JSON schema, exposes its sections through typed accessors, substitutes template
-variables into paths and topics, and hot-reloads when the underlying source changes.
+Configuration gives an EdgeCommons component its operating context. It tells the component where it
+is running, how it should connect, what defaults it should inherit, and what application-specific
+work it should perform.
 
-This guide covers how to choose a source, how the document is structured, how to read it from your
-component code in all four languages, and how to react to live changes. For the exhaustive field
-list see the [configuration schema reference](/reference/configuration-schema/); for the full
-accessor surface see the [config API reference](/reference/config/).
+At runtime, component code reads one effective JSON **config document**. That document can be a
+single file or value. It can also be hierarchical: a shared layer defines the device or line
+context, and a component-specific layer adds or overrides only what that component owns.
+
+Hierarchical config lets a fleet define common behavior once and inherit it consistently, while
+still allowing individual components to override details such as logging level during diagnostics.
+This guide starts with that inheritance model, then covers config sources, document structure,
+typed accessors, and live reload. For the exhaustive field list see the
+[configuration schema reference](/reference/configuration-schema/); for the full accessor surface
+see the [config API reference](/reference/config/).
+
+## Why hierarchical config exists
+
+Industrial edge devices usually run more than one component. A single line device might run an OPC
+UA adapter, a Modbus adapter, a telemetry processor, a file replicator, and a bridge to a site
+broker. Those components are different applications, but they live in the same physical context:
+the same factory, the same production line, the same edge device, the same local broker, the same
+default heartbeat and logging posture.
+
+Hierarchical config separates that **line/device context** from each component's **application-specific
+behavior**.
+
+![Hierarchical config concept showing two factories, four lines, and per-line edge devices](/docs/configuration-hierarchical-config-concept.svg)
+
+The right side of the diagram follows `edge-north-1`. Its shared layer explicitly sets
+`logging.level = "INFO"`. The Modbus adapter and telemetry processor inherit that value because
+their component layers do not mention logging. The OPC UA adapter's component layer sets
+`logging.level = "DEBUG"`, so only that component's effective config changes to DEBUG.
+
+Think of the shared layer as the configuration that answers: **where is this device, and how should
+all components on it behave by default?** Think of the component layer as the configuration that
+answers: **what does this particular component need to do?**
+
+For the `edge north-1` device in the diagram, every component on that device should agree on the
+same identity:
+
+```json
+{
+  "hierarchy": { "levels": ["factory", "line", "device"] },
+  "identity": { "factory": "north", "line": "line-1" }
+}
+```
+
+The last hierarchy level, `device`, is the resolved thing name, such as `edge-north-1`. With that
+shared context, the OPC UA adapter, Modbus adapter, and telemetry processor all publish under the
+same device identity even though each component has different work to do.
+
+## Shared layer and component layer
+
+The **shared layer** is where you put device-wide defaults for all components deployed on that line
+device:
+
+- `hierarchy` and `identity`, so every component stamps the same factory/line/device context.
+- `messaging`, so every component connects to the same local and northbound brokers.
+- `tags`, so every component carries the same site, line, or cell metadata.
+- `heartbeat`, `metricEmission`, and `health`, so operational behavior is consistent.
+- default `logging`, so production components normally run at `INFO`.
+- common `credentials`, `parameters`, and `streaming.streams` definitions.
+
+The **component layer** is where you put the component's own behavior:
+
+- an OPC UA adapter's endpoint, subscriptions, and node ids.
+- a Modbus adapter's unit id, register map, and polling interval.
+- a telemetry processor's routes, filters, and projection rules.
+- a one-off override, such as setting only one component to `DEBUG` logging during investigation.
+
+The SDK merges the shared layer first and the component layer second. Component values win. If the
+shared layer says `logging.level = "INFO"` and one component says `logging.level = "DEBUG"`, only
+that component gets DEBUG logging. The other components on the same device continue to use INFO.
+
+<Aside type="note" title="The component still sees one config">
+Hierarchical config changes how the effective document is assembled, not how application code reads it.
+After merge and validation, `gg.config()` / `getConfigManager()` expose one effective config
+document. Component code does not need separate branches for hierarchical vs. single-document
+deployments.
+</Aside>
+
+## A line-device example
+
+For a line device named `edge-north-1`, the shared layer might contain only the context and defaults
+that all components need:
+
+```json
+{
+  "hierarchy": { "levels": ["factory", "line", "device"] },
+  "identity": { "factory": "north", "line": "line-1" },
+  "logging": { "level": "INFO" },
+  "heartbeat": { "enabled": true, "intervalSecs": 10 },
+  "tags": { "factory": "north", "line": "line-1" },
+  "component": { "global": { "maintenanceWindow": "02:00Z" } }
+}
+```
+
+An OPC UA adapter on that same device then keeps only its own settings in its component layer:
+
+```json
+{
+  "component": {
+    "global": {
+      "endpoint": "opc.tcp://10.10.7.20:4840",
+      "pollSecs": 3
+    },
+    "instances": [
+      { "id": "press-1", "node": "ns=2;s=Press1.Speed" },
+      { "id": "press-2", "node": "ns=2;s=Press2.Speed" }
+    ]
+  }
+}
+```
+
+If that adapter needs extra diagnostics, its component layer can override the shared logging level:
+
+```json
+{
+  "logging": { "level": "DEBUG" },
+  "component": {
+    "global": {
+      "endpoint": "opc.tcp://10.10.7.20:4840",
+      "pollSecs": 3
+    }
+  }
+}
+```
+
+That override affects only the OPC UA adapter. The Modbus adapter and telemetry processor on the
+same line device keep the shared `INFO` logging default.
+
+## What the merge means
+
+The merge is intentionally simple:
+
+| Value shape | Merge behavior |
+|-------------|----------------|
+| Object | Merge key-by-key. Keys present only in the shared layer are inherited. |
+| Array | Replace the shared array with the component array. Arrays are not concatenated. |
+| Scalar | Replace the shared value. |
+| `null` | Replace the shared value with `null`, then validate the effective document. |
+
+After merge, composition control fields such as `extends` and `sharedConfig` are removed. The SDK
+then validates the effective document against the same schema used for single-document config.
+Startup fails if the effective document is invalid. On hot reload, an invalid update is rejected and
+the previous valid config remains active.
+
+<Aside type="note" title="Streams are inherited config, not shared runtime state">
+When `streaming.streams` is inherited from the shared layer, each component still creates and owns
+its own stream service, buffer files, drain tasks, metrics, and shutdown lifecycle. Use template
+variables such as `{ComponentName}` in disk paths so each component gets separate storage.
+</Aside>
+
+## How the shared layer is delivered
+
+Hierarchical config is independent of the deployment target. The shared layer can come from the same family
+of source as the component layer:
+
+| Source | Shared layer lookup |
+|--------|---------------------|
+| `FILE` | `extends`, `$EDGECOMMONS_SHARED_CONFIG`, or `/etc/edgecommons/shared.json`. |
+| `ENV` | `$EDGECOMMONS_SHARED_CONFIG` as inline JSON or `@/path/to/shared.json`. |
+| `CONFIGMAP` | A shared key/file in the mounted ConfigMap directory, commonly `shared.json`. |
+| `GG_CONFIG` | `SharedComponentConfig` on the shared config component. |
+| `SHADOW` | The `edgecommons-shared` named shadow on the same Thing. |
+| `CONFIG_COMPONENT` | A response bundle containing raw `base` and `component` layers. |
+
+Set `sharedConfig: false` at the top of a component layer to opt that component out. Operators can
+also pass `--no-shared-config`, which wins over any component file setting.
+
+For `CONFIG_COMPONENT`, the built-in server role is the dedicated Rust component
+`com.mbreissi.edgecommons.ConfigComponent`. Ordinary SDK components are clients only: they do not
+automatically subscribe to the config rendezvous or serve configuration. The server bootstraps from
+its own non-`CONFIG_COMPONENT` source, loads a pluggable catalog, and serves raw layer bundles to
+consumer components.
 
 ## Config sources
 
@@ -28,94 +193,23 @@ resolved **platform profile**: `GREENGRASS` defaults to `GG_CONFIG`, `HOST` to `
 | Source | Select with | When to use |
 |--------|-------------|-------------|
 | `FILE` | `-c FILE [path]` (default `config.json`) | Local development, `HOST`/Docker, bare hosts. Watches the file and hot-reloads on change. Default on `HOST`. |
-| `ENV` | `-c ENV [var]` (default `CONFIG`) | Pass the entire config JSON through an environment variable — handy in containers and CI. |
+| `ENV` | `-c ENV [var]` (default `CONFIG`) | Pass the entire config JSON through an environment variable. |
 | `CONFIGMAP` | `-c CONFIGMAP [mountDir] [key]` (defaults `/etc/edgecommons`, `config.json`) | Kubernetes. Reads a mounted ConfigMap directory and hot-reloads via the kubelet `..data` swap. Default on `KUBERNETES`. |
-| `GG_CONFIG` | `-c GG_CONFIG [component] [key]` (default key `ComponentConfig`) | On-device: read the config delivered by the Greengrass deployment (Nucleus). Default on `GREENGRASS`. Loads over IPC, so it needs a messaging client. |
-| `SHADOW` | `-c SHADOW [name]` (default: the component name sanitized to `[A-Za-z0-9:_-]`) | Read config from an AWS IoT device shadow. Loads over IPC. |
+| `GG_CONFIG` | `-c GG_CONFIG [component] [key]` (default key `ComponentConfig`) | On-device: read the config delivered by the Greengrass deployment. Default on `GREENGRASS`. |
+| `SHADOW` | `-c SHADOW [name]` (default: the component name sanitized to `[A-Za-z0-9:_-]`) | Read config from an AWS IoT named device shadow. The current implementation reaches shadows through the Greengrass ShadowManager / IPC path. |
 | `CONFIG_COMPONENT` | `-c CONFIG_COMPONENT` | Read config served by a shared config component over the configured messaging transport. |
 
-`GG_CONFIG` and `SHADOW` load over Greengrass IPC. `CONFIG_COMPONENT` uses the active messaging
-transport, so it works over Greengrass IPC or HOST/Kubernetes MQTT as long as a messaging
-client/provider is available. Selecting any messaging-backed config source without messaging is a
-hard error. `FILE`, `ENV`, and `CONFIGMAP` need nothing extra.
+`GG_CONFIG` loads over Greengrass IPC. The current `SHADOW` implementation also uses the
+Greengrass ShadowManager / IPC path. `CONFIG_COMPONENT` uses the active messaging transport, so it
+works over Greengrass IPC or HOST/Kubernetes MQTT as long as a messaging client/provider is
+available. `FILE`, `ENV`, and `CONFIGMAP` need nothing extra.
 
-<Aside type="note" title="Rust feature gate">
-In the Rust SDK, the `GG_CONFIG` and `SHADOW` sources are compiled in only with the `greengrass`
-cargo feature. Selecting either without the feature returns a config error. The other four sources
-are always available.
+<Aside type="note" title="Current SHADOW availability">
+The shipped `SHADOW` source is currently ShadowManager / Greengrass-IPC-backed. In the Rust SDK,
+`GG_CONFIG` and `SHADOW` are compiled only with the `greengrass` cargo feature; selecting either
+without that feature returns a config error. `FILE`, `ENV`, `CONFIGMAP`, and `CONFIG_COMPONENT` are
+available without that feature.
 </Aside>
-
-A run command places the `-c` flag alongside `--platform`/`--transport`. The exact launcher differs
-by language (see the [Quickstart](/start/quickstart/)); here is a representative `HOST`/`FILE` run:
-
-<Tabs syncKey="os">
-<TabItem label="Linux">
-
-  ```bash
-  python3 main.py --platform HOST --transport MQTT standalone-messaging.json \
-    -c FILE config.json -t my-thing
-  ```
-
-</TabItem>
-<TabItem label="Windows">
-
-  ```powershell
-  python3 main.py --platform HOST --transport MQTT standalone-messaging.json `
-    -c FILE config.json -t my-thing
-  ```
-
-</TabItem>
-</Tabs>
-
-## Shared base + component config
-
-Split config lets a device define common framework settings once, then keep each component's own
-settings small. The SDK loads a raw **base** layer and a raw **component** layer, deep-merges them
-locally, strips split-config control fields, and validates only the merged effective document.
-
-Later layers win. Objects merge key-by-key; arrays, scalars, and `null` replace the earlier value.
-This means a shared base can provide `logging`, `heartbeat`, `tags`, `credentials`, `parameters`, or
-`streaming.streams`, while a component overrides only the keys it owns.
-
-```json
-{
-  "logging": { "level": "INFO" },
-  "streaming": {
-    "streams": [
-      {
-        "name": "telemetry",
-        "sink": { "type": "kinesis", "streamName": "edge-telemetry" },
-        "buffer": { "type": "disk", "path": "/var/lib/edgecommons/{ComponentName}/streams/telemetry" }
-      }
-    ]
-  }
-}
-```
-
-Inherited stream definitions are still per-component runtime resources. Each component opens its
-own stream handles, buffer files, drains, metrics, and shutdown path; there is no shared stream
-service or shared stream buffer in split-config deployments.
-
-The shared layer is found by the same provider family as the component layer:
-
-| Source | Shared layer lookup |
-|--------|---------------------|
-| `FILE` | `extends` in the component file, else `$EDGECOMMONS_SHARED_CONFIG`, else `/etc/edgecommons/shared.json` when present. A missing default file means no base; an explicit unreadable file is fatal. |
-| `ENV` | `$EDGECOMMONS_SHARED_CONFIG` as inline JSON or `@/path/to/shared.json`. If unset, there is no base. |
-| `CONFIGMAP` | `extends`, else a shared config entry in the same mount, else `shared.json` under the configured mount directory when present. |
-| `GG_CONFIG` | `GetConfiguration()` on `$EDGECOMMONS_SHARED_COMPONENT`, default `com.mbreissi.edgecommons.EdgeCommonsSharedConfig`, key `SharedComponentConfig`. The default component/key may be absent; an explicitly named shared component must be readable. |
-| `SHADOW` | Named shadow `edgecommons-shared` on the same Thing; the shared object is read from `ComponentConfig`, including stringified JSON values. |
-| `CONFIG_COMPONENT` | A config server reply shaped as a layer bundle with `base` and `component` fields; a reply with only `component` is treated as component-only. |
-
-Set `sharedConfig: false` at the top of a component layer to opt that component out. Operators can
-also pass `--no-shared-config`, which wins over any component file setting.
-
-For `CONFIG_COMPONENT`, the built-in server role is the dedicated Rust component
-`com.mbreissi.edgecommons.ConfigComponent`. Ordinary SDK components are clients only: they do not
-automatically subscribe to the reserved config rendezvous or serve configuration. The server
-bootstraps from its own non-`CONFIG_COMPONENT` source, loads a pluggable catalog, serves raw layer
-bundles, and accepts privileged complete-catalog replacements on
-`ecv1/{device}/config/main/cmd/update-catalog`.
 
 ## The config document
 
@@ -466,8 +560,8 @@ Four of the six sources hot-reload; two are read once at startup:
 - **`FILE`** watches the config file (and its parent directory, to handle atomic-rename saves) and
   reloads on change in every language.
 - **`CONFIGMAP`** reloads in place via the kubelet `..data` directory swap.
-- **`SHADOW`** subscribes to the device shadow's update topics over IPC and reapplies the config when
-  the shadow's `desired` state changes (`update/accepted`).
+- **`SHADOW`** subscribes to the device shadow's update topics through the current
+  ShadowManager / IPC path and reapplies the config when the shadow's `desired` state changes.
 - **`CONFIG_COMPONENT`** fetches its config by sending a request to the config server's UNS command
   inbox `ecv1/{device}/config/main/cmd/get-configuration` (`config` is a reserved logical component
   name) over the active messaging transport, then subscribes to its **own** command inbox
