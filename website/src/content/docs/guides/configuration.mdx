@@ -6,6 +6,7 @@ sidebar:
 ---
 
 import { Tabs, TabItem, Aside, LinkCard, CardGrid } from "@astrojs/starlight/components";
+import ZoomableImage from "../../../components/ZoomableImage.astro";
 
 Configuration gives an EdgeCommons component its operating context. It tells the component where it
 is running, how it should connect, what defaults it should inherit, and what application-specific
@@ -33,7 +34,10 @@ default heartbeat and logging posture.
 Hierarchical config separates that **line/device context** from each component's **application-specific
 behavior**.
 
-![Hierarchical config concept showing two factories, four lines, and per-line edge devices](/docs/configuration-hierarchical-config-concept.svg)
+<ZoomableImage
+  src="/docs/configuration-hierarchical-config-concept.svg"
+  alt="Hierarchical config concept showing two factories, four lines, a selected line device, inherited shared logging defaults, and one OPC UA adapter logging override"
+/>
 
 The right side of the diagram follows `edge-north-1`. Its shared layer explicitly sets
 `logging.level = "INFO"`. The Modbus adapter and telemetry processor inherit that value because

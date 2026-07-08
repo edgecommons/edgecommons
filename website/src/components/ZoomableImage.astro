@@ -1,0 +1,208 @@
+---
+interface Props {
+  src: string;
+  alt: string;
+  zoomedWidth?: string;
+}
+
+const { src, alt, zoomedWidth = "1280px" } = Astro.props;
+const id = `zoomable-${src.replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^-|-$/g, "")}`;
+---
+
+<figure class="zoomable-image" style={`--zoomed-width: ${zoomedWidth}`}>
+  <button
+    type="button"
+    class="zoomable-image__trigger"
+    aria-haspopup="dialog"
+    aria-controls={id}
+    aria-label={`Open larger view: ${alt}`}
+    title="Open larger view"
+    data-zoomable-trigger
+  >
+    <img src={src} alt={alt} loading="lazy" decoding="async" />
+    <span class="zoomable-image__overlay" aria-hidden="true">
+      <svg viewBox="0 0 24 24" focusable="false">
+        <path d="M10.75 4a6.75 6.75 0 1 0 0 13.5 6.75 6.75 0 0 0 0-13.5Zm-4.75 6.75a4.75 4.75 0 1 1 9.5 0 4.75 4.75 0 0 1-9.5 0Z" />
+        <path d="M15.78 14.36 20.71 19.29a1 1 0 0 1-1.42 1.42l-4.93-4.93a1 1 0 0 1 1.42-1.42Z" />
+        <path d="M10.75 7.5a1 1 0 0 1 1 1v1.25H13a1 1 0 1 1 0 2h-1.25V13a1 1 0 1 1-2 0v-1.25H8.5a1 1 0 1 1 0-2h1.25V8.5a1 1 0 0 1 1-1Z" />
+      </svg>
+    </span>
+  </button>
+</figure>
+
+<dialog
+  id={id}
+  class="zoomable-image__dialog"
+  style={`--zoomed-width: ${zoomedWidth}`}
+  aria-label={`Larger view: ${alt}`}
+  data-zoomable-dialog
+>
+  <form method="dialog">
+    <button class="zoomable-image__close" type="submit" aria-label="Close larger image view">
+      <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+        <path d="M6.71 5.29a1 1 0 0 0-1.42 1.42L10.59 12l-5.3 5.29a1 1 0 1 0 1.42 1.42L12 13.41l5.29 5.3a1 1 0 0 0 1.42-1.42L13.41 12l5.3-5.29a1 1 0 1 0-1.42-1.42L12 10.59 6.71 5.29Z" />
+      </svg>
+    </button>
+  </form>
+  <div class="zoomable-image__stage">
+    <img src={src} alt="" />
+  </div>
+</dialog>
+
+<script>
+  const triggers = document.querySelectorAll("[data-zoomable-trigger]");
+
+  for (const trigger of triggers) {
+    if (!(trigger instanceof HTMLButtonElement) || trigger.dataset.zoomableReady === "true") {
+      continue;
+    }
+    trigger.dataset.zoomableReady = "true";
+    trigger.addEventListener("click", () => {
+      const id = trigger.getAttribute("aria-controls");
+      const dialog = id ? document.getElementById(id) : null;
+      if (!(dialog instanceof HTMLDialogElement)) {
+        return;
+      }
+      if (typeof dialog.showModal === "function") {
+        dialog.showModal();
+      } else {
+        dialog.setAttribute("open", "");
+      }
+    });
+  }
+
+  const dialogs = document.querySelectorAll("[data-zoomable-dialog]");
+
+  for (const dialog of dialogs) {
+    if (!(dialog instanceof HTMLDialogElement) || dialog.dataset.zoomableReady === "true") {
+      continue;
+    }
+    dialog.dataset.zoomableReady = "true";
+    dialog.addEventListener("click", (event) => {
+      if (event.target === dialog) {
+        dialog.close();
+      }
+    });
+  }
+</script>
+
+<style>
+  .zoomable-image {
+    margin: 1.5rem 0;
+  }
+
+  .zoomable-image__trigger {
+    position: relative;
+    display: block;
+    width: 100%;
+    padding: 0;
+    overflow: hidden;
+    cursor: zoom-in;
+    background: var(--sl-color-bg);
+    border: 1px solid var(--sl-color-gray-5);
+    border-radius: 0.5rem;
+  }
+
+  .zoomable-image__trigger:focus-visible {
+    outline: 2px solid var(--sl-color-accent-high);
+    outline-offset: 4px;
+  }
+
+  .zoomable-image__trigger img {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+
+  .zoomable-image__overlay {
+    position: absolute;
+    top: 0.75rem;
+    right: 0.75rem;
+    display: grid;
+    width: 2.5rem;
+    height: 2.5rem;
+    color: #ffffff;
+    place-items: center;
+    background: rgba(18, 35, 31, 0.84);
+    border: 1px solid rgba(255, 255, 255, 0.36);
+    border-radius: 999px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+    opacity: 0;
+    transform: translateY(-4px);
+    transition:
+      opacity 140ms ease,
+      transform 140ms ease;
+  }
+
+  .zoomable-image__overlay svg,
+  .zoomable-image__close svg {
+    width: 1.25rem;
+    height: 1.25rem;
+    fill: currentColor;
+  }
+
+  .zoomable-image__trigger:hover .zoomable-image__overlay,
+  .zoomable-image__trigger:focus-visible .zoomable-image__overlay {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  .zoomable-image__dialog {
+    width: min(calc(var(--zoomed-width) + 2rem), 96vw);
+    max-width: 96vw;
+    max-height: 94vh;
+    padding: 0;
+    overflow: hidden;
+    background: var(--sl-color-bg);
+    border: 1px solid var(--sl-color-gray-5);
+    border-radius: 0.75rem;
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+  }
+
+  .zoomable-image__dialog::backdrop {
+    background: rgba(0, 0, 0, 0.72);
+  }
+
+  .zoomable-image__close {
+    position: absolute;
+    top: 0.75rem;
+    right: 0.75rem;
+    z-index: 1;
+    display: grid;
+    width: 2.5rem;
+    height: 2.5rem;
+    padding: 0;
+    color: #ffffff;
+    cursor: pointer;
+    background: rgba(18, 35, 31, 0.88);
+    border: 1px solid rgba(255, 255, 255, 0.36);
+    border-radius: 999px;
+    place-items: center;
+  }
+
+  .zoomable-image__close:focus-visible {
+    outline: 2px solid var(--sl-color-accent-high);
+    outline-offset: 3px;
+  }
+
+  .zoomable-image__stage {
+    max-height: 94vh;
+    padding: 1rem;
+    overflow: auto;
+  }
+
+  .zoomable-image__stage img {
+    display: block;
+    width: min(var(--zoomed-width), calc(96vw - 2rem));
+    max-width: none;
+    height: auto;
+    margin: 0 auto;
+  }
+
+  @media (hover: none) {
+    .zoomable-image__overlay {
+      opacity: 1;
+      transform: none;
+    }
+  }
+</style>
