@@ -5,6 +5,8 @@
 //!   interop-rust-node uns-pub   <identityJson> <class> [channel]
 //!   interop-rust-node uns-sub   <topic>
 //!   interop-rust-node uns-guard
+//!   interop-rust-node gg-config-request <topic> <component> <output-json>
+//!   interop-rust-node gg-config-update <topic> <output-json>
 //! Local-only MQTT transport against localhost:1883. Messages are built without a
 //! config — the envelope legally omits `identity` unless one is stamped explicitly
 //! (the UNS roles); `tags.thing` no longer exists (UNS hard cut).
@@ -12,8 +14,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::Engine as _;
 use serde_json::json;
 #[cfg(feature = "greengrass")]
 use serde_json::Value;
@@ -263,13 +265,10 @@ async fn run_gg_binary_matrix(args: &[String]) -> ! {
                         rth.lock().unwrap().entry(publisher).or_insert(item);
                     }
                     Err(e) => {
-                        eth.lock()
-                            .unwrap()
-                            .insert(format!("{publisher}:typed"), e);
-                        rth.lock()
-                            .unwrap()
-                            .entry(publisher)
-                            .or_insert_with(|| json!({"body_case": null, "hex": null, "ok": false}));
+                        eth.lock().unwrap().insert(format!("{publisher}:typed"), e);
+                        rth.lock().unwrap().entry(publisher).or_insert_with(
+                            || json!({"body_case": null, "hex": null, "ok": false}),
+                        );
                     }
                 }
             }
@@ -313,8 +312,7 @@ async fn run_gg_binary_matrix(args: &[String]) -> ! {
     let deadline = std::time::Instant::now() + Duration::from_secs_f64(wait_secs);
     while std::time::Instant::now() < deadline {
         let got: BTreeSet<String> = received.lock().unwrap().keys().cloned().collect();
-        let got_typed: BTreeSet<String> =
-            received_typed.lock().unwrap().keys().cloned().collect();
+        let got_typed: BTreeSet<String> = received_typed.lock().unwrap().keys().cloned().collect();
         if expected.is_subset(&got) && expected.is_subset(&got_typed) {
             break;
         }
@@ -370,6 +368,364 @@ async fn run_gg_binary_matrix(args: &[String]) -> ! {
 #[cfg(not(feature = "greengrass"))]
 async fn run_gg_binary_matrix(_args: &[String]) -> ! {
     eprintln!("gg-binary-matrix requires the greengrass cargo feature");
+    std::process::exit(2);
+}
+
+#[cfg(feature = "greengrass")]
+async fn run_gg_config_request(args: &[String]) -> ! {
+    if args.len() < 5 {
+        eprintln!("gg-config-request requires <topic> <component> <output-json>");
+        std::process::exit(2);
+    }
+    let topic = args[2].clone();
+    let component = args[3].clone();
+    let output = args[4].clone();
+    let svc = ipc_provider().await;
+    let req = MessageBuilder::new("GetConfiguration", "1.0")
+        .payload(json!({ "component": component }))
+        .build();
+    let corr = req.header.correlation_id.clone();
+    let fut = match svc.request(&topic, req).await {
+        Ok(fut) => fut,
+        Err(error) => {
+            let result = json!({"ok": false, "error": format!("request failed: {error}")});
+            let _ = std::fs::write(&output, serde_json::to_string_pretty(&result).unwrap());
+            println!("{result}");
+            std::process::exit(1);
+        }
+    };
+    let result = match tokio::time::timeout(Duration::from_secs(20), fut).await {
+        Ok(Ok(reply)) => {
+            let matched = reply.header.correlation_id == corr;
+            let has_component_layer = reply.body.get("component").is_some();
+            let has_base_layer = reply.body.get("base").is_some();
+            json!({
+                "ok": matched && has_component_layer && has_base_layer,
+                "correlation_match": matched,
+                "has_base_layer": has_base_layer,
+                "has_component_layer": has_component_layer,
+                "reply_body": reply.body,
+            })
+        }
+        Ok(Err(error)) => json!({"ok": false, "error": format!("reply failed: {error}")}),
+        Err(_) => json!({"ok": false, "error": "timeout"}),
+    };
+    let _ = std::fs::write(&output, serde_json::to_string_pretty(&result).unwrap());
+    println!("{result}");
+    std::process::exit(if result.get("ok").and_then(Value::as_bool) == Some(true) {
+        0
+    } else {
+        1
+    });
+}
+
+#[cfg(not(feature = "greengrass"))]
+async fn run_gg_config_request(_args: &[String]) -> ! {
+    eprintln!("gg-config-request requires the greengrass cargo feature");
+    std::process::exit(2);
+}
+
+#[cfg(feature = "greengrass")]
+async fn run_gg_config_update(args: &[String]) -> ! {
+    if args.len() < 4 {
+        eprintln!("gg-config-update requires <topic> <output-json>");
+        std::process::exit(2);
+    }
+    let topic = args[2].clone();
+    let output = args[3].clone();
+    let svc = ipc_provider().await;
+    let received = Arc::new(std::sync::Mutex::new(serde_json::Map::new()));
+
+    for token in ["opcua-adapter", "modbus-adapter"] {
+        let push_topic = format!("ecv1/lab-5950x/{token}/main/cmd/set-config");
+        let received_for_handler = received.clone();
+        let token_for_handler = token.to_string();
+        svc.subscribe(
+            &push_topic,
+            message_handler(move |_topic, message| {
+                let received_for_handler = received_for_handler.clone();
+                let token_for_handler = token_for_handler.clone();
+                async move {
+                    if let Ok(mut guard) = received_for_handler.lock() {
+                        guard.insert(token_for_handler, message.body);
+                    }
+                }
+            }),
+            16,
+            1,
+        )
+        .await
+        .expect("subscribe to pushed set-config");
+    }
+
+    let version = format!("smoke-{}", std::process::id());
+    let catalog = json!({
+        "schemaVersion": 1,
+        "version": version,
+        "provenance": {
+            "source": "message",
+            "uri": "greengrass-smoke"
+        },
+        "base": {
+            "logging": {
+                "level": "INFO"
+            },
+            "tags": {
+                "site": "dallas"
+            }
+        },
+        "components": {
+            "opcua-adapter": {
+                "component": {
+                    "token": "opcua-adapter",
+                    "global": {
+                        "endpoint": "opc.tcp://plc-1:4840"
+                    }
+                }
+            },
+            "modbus-adapter": {
+                "component": {
+                    "token": "modbus-adapter",
+                    "global": {
+                        "unitId": 1
+                    }
+                }
+            }
+        }
+    });
+    let req = MessageBuilder::new("UpdateCatalog", "1.0")
+        .payload(json!({ "version": version, "catalog": catalog }))
+        .build();
+    let corr = req.header.correlation_id.clone();
+    let fut = match svc.request(&topic, req).await {
+        Ok(fut) => fut,
+        Err(error) => {
+            let result = json!({"ok": false, "error": format!("request failed: {error}")});
+            let _ = std::fs::write(&output, serde_json::to_string_pretty(&result).unwrap());
+            println!("{result}");
+            std::process::exit(1);
+        }
+    };
+    let reply_result = tokio::time::timeout(Duration::from_secs(20), fut).await;
+    let (ack_ok, correlation_match, ack_body) = match reply_result {
+        Ok(Ok(reply)) => (
+            reply.body.get("ok").and_then(Value::as_bool) == Some(true),
+            reply.header.correlation_id == corr,
+            reply.body,
+        ),
+        Ok(Err(error)) => (
+            false,
+            false,
+            json!({"error": format!("reply failed: {error}")}),
+        ),
+        Err(_) => (false, false, json!({"error": "timeout"})),
+    };
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let pushed_count = received.lock().map(|guard| guard.len()).unwrap_or_default();
+        if pushed_count >= 2 || std::time::Instant::now() >= deadline {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+
+    let pushes = received
+        .lock()
+        .map(|guard| Value::Object(guard.clone()))
+        .unwrap_or_else(|_| json!({"error": "received push map poisoned"}));
+    let pushed_count = pushes.as_object().map(|map| map.len()).unwrap_or_default();
+    let result = json!({
+        "ok": ack_ok && correlation_match && pushed_count >= 2,
+        "ack_ok": ack_ok,
+        "correlation_match": correlation_match,
+        "pushed_count": pushed_count,
+        "ack_body": ack_body,
+        "pushes": pushes,
+    });
+    let _ = std::fs::write(&output, serde_json::to_string_pretty(&result).unwrap());
+    println!("{result}");
+    std::process::exit(if result.get("ok").and_then(Value::as_bool) == Some(true) {
+        0
+    } else {
+        1
+    });
+}
+
+#[cfg(not(feature = "greengrass"))]
+async fn run_gg_config_update(_args: &[String]) -> ! {
+    eprintln!("gg-config-update requires the greengrass cargo feature");
+    std::process::exit(2);
+}
+
+#[cfg(feature = "greengrass")]
+async fn run_gg_config_update_file(args: &[String]) -> ! {
+    if args.len() < 6 {
+        eprintln!("gg-config-update-file requires <topic> <catalog-json> <tokens-csv> <output-json>");
+        std::process::exit(2);
+    }
+    let topic = args[2].clone();
+    let catalog_path = args[3].clone();
+    let tokens: Vec<String> = args[4]
+        .split(',')
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .map(ToOwned::to_owned)
+        .collect();
+    let output = args[5].clone();
+    let catalog_text = match std::fs::read_to_string(&catalog_path) {
+        Ok(text) => text,
+        Err(error) => {
+            eprintln!("failed to read catalog file {catalog_path}: {error}");
+            std::process::exit(2);
+        }
+    };
+    let catalog: Value = match serde_json::from_str(&catalog_text) {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("catalog file {catalog_path} is not JSON: {error}");
+            std::process::exit(2);
+        }
+    };
+    let version = catalog
+        .get("version")
+        .and_then(Value::as_str)
+        .unwrap_or("gg-config-update-file")
+        .to_string();
+    let svc = ipc_provider().await;
+    let received = Arc::new(std::sync::Mutex::new(serde_json::Map::new()));
+
+    for token in &tokens {
+        let push_topic = format!("ecv1/lab-5950x/{token}/main/cmd/set-config");
+        let received_for_handler = received.clone();
+        let token_for_handler = token.clone();
+        svc.subscribe(
+            &push_topic,
+            message_handler(move |_topic, message| {
+                let received_for_handler = received_for_handler.clone();
+                let token_for_handler = token_for_handler.clone();
+                async move {
+                    if let Ok(mut guard) = received_for_handler.lock() {
+                        guard.insert(token_for_handler, message.body);
+                    }
+                }
+            }),
+            16,
+            1,
+        )
+        .await
+        .expect("subscribe to pushed set-config");
+    }
+
+    let req = MessageBuilder::new("UpdateCatalog", "1.0")
+        .payload(json!({ "version": version, "catalog": catalog }))
+        .build();
+    let corr = req.header.correlation_id.clone();
+    let fut = match svc.request(&topic, req).await {
+        Ok(fut) => fut,
+        Err(error) => {
+            let result = json!({"ok": false, "error": format!("request failed: {error}")});
+            let _ = std::fs::write(&output, serde_json::to_string_pretty(&result).unwrap());
+            println!("{result}");
+            std::process::exit(1);
+        }
+    };
+    let reply_result = tokio::time::timeout(Duration::from_secs(20), fut).await;
+    let (ack_ok, correlation_match, ack_body) = match reply_result {
+        Ok(Ok(reply)) => (
+            reply.body.get("ok").and_then(Value::as_bool) == Some(true),
+            reply.header.correlation_id == corr,
+            reply.body,
+        ),
+        Ok(Err(error)) => (
+            false,
+            false,
+            json!({"error": format!("reply failed: {error}")}),
+        ),
+        Err(_) => (false, false, json!({"error": "timeout"})),
+    };
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let pushed_count = received.lock().map(|guard| guard.len()).unwrap_or_default();
+        if pushed_count >= tokens.len() || std::time::Instant::now() >= deadline {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+
+    let pushes = received
+        .lock()
+        .map(|guard| Value::Object(guard.clone()))
+        .unwrap_or_else(|_| json!({"error": "received push map poisoned"}));
+    let pushed_count = pushes.as_object().map(|map| map.len()).unwrap_or_default();
+    let result = json!({
+        "ok": ack_ok && correlation_match && pushed_count >= tokens.len(),
+        "ack_ok": ack_ok,
+        "correlation_match": correlation_match,
+        "expected_pushes": tokens.len(),
+        "pushed_count": pushed_count,
+        "ack_body": ack_body,
+        "pushes": pushes,
+    });
+    let _ = std::fs::write(&output, serde_json::to_string_pretty(&result).unwrap());
+    println!("{result}");
+    std::process::exit(if result.get("ok").and_then(Value::as_bool) == Some(true) {
+        0
+    } else {
+        1
+    });
+}
+
+#[cfg(not(feature = "greengrass"))]
+async fn run_gg_config_update_file(_args: &[String]) -> ! {
+    eprintln!("gg-config-update-file requires the greengrass cargo feature");
+    std::process::exit(2);
+}
+
+#[cfg(feature = "greengrass")]
+async fn run_gg_command_request(args: &[String]) -> ! {
+    if args.len() < 5 {
+        eprintln!("gg-command-request requires <topic> <name> <output-json>");
+        std::process::exit(2);
+    }
+    let topic = args[2].clone();
+    let name = args[3].clone();
+    let output = args[4].clone();
+    let svc = ipc_provider().await;
+    let req = MessageBuilder::new(name, "1.0").payload(json!({})).build();
+    let corr = req.header.correlation_id.clone();
+    let fut = match svc.request(&topic, req).await {
+        Ok(fut) => fut,
+        Err(error) => {
+            let result = json!({"ok": false, "error": format!("request failed: {error}")});
+            let _ = std::fs::write(&output, serde_json::to_string_pretty(&result).unwrap());
+            println!("{result}");
+            std::process::exit(1);
+        }
+    };
+    let result = match tokio::time::timeout(Duration::from_secs(10), fut).await {
+        Ok(Ok(reply)) => json!({
+            "ok": true,
+            "correlation_match": reply.header.correlation_id == corr,
+            "reply_body": reply.body,
+        }),
+        Ok(Err(error)) => json!({"ok": false, "error": format!("reply failed: {error}")}),
+        Err(_) => json!({"ok": false, "error": "timeout"}),
+    };
+    let ok = result.get("ok").and_then(Value::as_bool) == Some(true)
+        && result
+            .get("correlation_match")
+            .and_then(Value::as_bool)
+            == Some(true);
+    let _ = std::fs::write(&output, serde_json::to_string_pretty(&result).unwrap());
+    println!("{result}");
+    std::process::exit(if ok { 0 } else { 1 });
+}
+
+#[cfg(not(feature = "greengrass"))]
+async fn run_gg_command_request(_args: &[String]) -> ! {
+    eprintln!("gg-command-request requires the greengrass cargo feature");
     std::process::exit(2);
 }
 
@@ -652,6 +1008,10 @@ async fn main() {
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
         "gg-binary-matrix" => run_gg_binary_matrix(&args).await,
+        "gg-config-request" => run_gg_config_request(&args).await,
+        "gg-config-update" => run_gg_config_update(&args).await,
+        "gg-config-update-file" => run_gg_config_update_file(&args).await,
+        "gg-command-request" => run_gg_command_request(&args).await,
         // uns-pub <identityJson> <class> [channel] — mint the topic with the real Uns
         // builder (includeRoot=false), stamp the identity via the real MessageBuilder,
         // publish, and print {"ok":true,"topic":...,"envelope":...}.

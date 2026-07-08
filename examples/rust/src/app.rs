@@ -118,7 +118,10 @@ impl ConfigurationChangeListener for IntervalListener {
     async fn on_configuration_change(&self, config: Arc<Config>) -> bool {
         let secs = interval_from(&config);
         self.publish_interval.store(secs, Ordering::Relaxed);
-        tracing::info!(publish_interval = secs, "configuration changed; updated publish interval");
+        tracing::info!(
+            publish_interval = secs,
+            "configuration changed; updated publish interval to {secs}s"
+        );
         true
     }
 }
@@ -271,7 +274,9 @@ impl SkeletonApp {
                     Err(e) => tracing::debug!(error = %e, "secret is not a basic-auth JSON shape"),
                 }
             }
-            Ok(None) => tracing::warn!(secret = %name, "secret not found after seeding (unexpected)"),
+            Ok(None) => {
+                tracing::warn!(secret = %name, "secret not found after seeding (unexpected)")
+            }
             Err(e) => tracing::warn!(error = %e, secret = %name, "failed to read secret"),
         }
     }
@@ -301,13 +306,18 @@ impl SkeletonApp {
         match params.get("/skeleton/region") {
             Ok(Some(region)) => tracing::info!(parameter = "/skeleton/region", value = %region,
                 "parameter access OK (offline-first, from local cache)"),
-            Ok(None) => tracing::info!(parameter = "/skeleton/region",
-                "parameter not set (set GG_PARAM_SKELETON_REGION to see it resolve)"),
+            Ok(None) => tracing::info!(
+                parameter = "/skeleton/region",
+                "parameter not set (set GG_PARAM_SKELETON_REGION to see it resolve)"
+            ),
             Err(e) => tracing::warn!(error = %e, "failed to read parameter"),
         }
         match params.get_int("/skeleton/poolSize") {
-            Ok(Some(n)) => tracing::info!(parameter = "/skeleton/poolSize", value = n,
-                "typed parameter read OK"),
+            Ok(Some(n)) => tracing::info!(
+                parameter = "/skeleton/poolSize",
+                value = n,
+                "typed parameter read OK"
+            ),
             Ok(None) => {}
             Err(e) => tracing::debug!(error = %e, "parameter is not an integer"),
         }
@@ -468,7 +478,10 @@ impl SkeletonApp {
                         tracing::info!(reply = %reply.header.name, body = %reply.body, "request/reply round-trip OK")
                     }
                     Err(EdgeCommonsError::RequestTimeout { secs, .. }) => {
-                        tracing::warn!(deadline_secs = secs, "request timed out (framework deadline)")
+                        tracing::warn!(
+                            deadline_secs = secs,
+                            "request timed out (framework deadline)"
+                        )
                     }
                     Err(e) => tracing::warn!(error = %e, "reply was an error"),
                 },
@@ -535,8 +548,11 @@ impl SkeletonApp {
             if let Some(stream) = &self.mem_stream {
                 let payload = serde_json::to_vec(&json!({ "seq": seq, "trace": "publish-loop" }))
                     .unwrap_or_default();
-                let record =
-                    StreamRecord::new(self.config.identity().device().to_string(), now_ms(), payload);
+                let record = StreamRecord::new(
+                    self.config.identity().device().to_string(),
+                    now_ms(),
+                    payload,
+                );
                 if let Err(e) = stream.append(record) {
                     tracing::warn!(error = %e, "failed to append to in-memory debug-trace stream");
                 }
@@ -566,4 +582,3 @@ fn now_ms() -> u64 {
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
 }
-

@@ -1,0 +1,19 @@
+FROM rust:1.96-bookworm AS build
+
+WORKDIR /src
+COPY libs/rust /src/libs/rust
+COPY libs/rust-streamlog /src/libs/rust-streamlog
+COPY proto /src/proto
+COPY examples/rust/Cargo.toml /src/examples/rust/Cargo.toml
+COPY examples/rust/Cargo.lock /src/examples/rust/Cargo.lock
+COPY examples/rust/src /src/examples/rust/src
+
+RUN cargo build --manifest-path /src/examples/rust/Cargo.toml --release
+
+FROM debian:bookworm-slim
+
+COPY --from=build /src/examples/rust/target/release/rust-component-skeleton /usr/local/bin/rust-component-skeleton
+
+USER 65532:65532
+
+ENTRYPOINT ["/usr/local/bin/rust-component-skeleton"]

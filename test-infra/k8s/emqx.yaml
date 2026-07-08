@@ -44,8 +44,11 @@ spec:
             initialDelaySeconds: 15
             periodSeconds: 20
           resources:
-            requests: { cpu: 100m, memory: 256Mi }
-            limits:   { cpu: "1",  memory: 512Mi }
+            # EMQX runs on the Erlang VM (`beam.smp`). Recent images can cross
+            # 512Mi during startup/steady state and trip a cgroup OOM even on a
+            # VM with plenty of free host memory.
+            requests: { cpu: 100m, memory: 512Mi }
+            limits:   { cpu: "1",  memory: 1Gi }
 ---
 apiVersion: v1
 kind: Service

@@ -110,7 +110,7 @@ public final class ConfigComponentProvider extends ConfigProvider {
                         + "bootstrap completed.", topic);
                 return;
             }
-            manager.applyConfig((JsonObject) msg.getBody());
+            manager.applyConfigFromProvider((JsonObject) msg.getBody());
         });
     }
 

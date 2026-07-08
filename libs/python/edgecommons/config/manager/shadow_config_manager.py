@@ -4,6 +4,11 @@ import re
 
 from awsiot.greengrasscoreipc.model import ReceiveMode, SubscriptionResponseMessage
 from edgecommons.config.manager.config_manager import ConfigManager
+from edgecommons.config.manager.split_config import (
+    BaseLayer,
+    SHARED_SHADOW_NAME,
+    resolve_shadow_base,
+)
 
 logger = logging.getLogger("ShadowConfigManager")
 
@@ -27,12 +32,22 @@ class ShadowConfigManager(ConfigManager):
         "component": {"global": {}, "instances": []},
     }
 
-    def __init__(self, thing_name: str, component_name: str, shadow_name: str, platform=None):
-        super().__init__(component_name, thing_name, platform=platform)
+    def __init__(
+        self,
+        thing_name: str,
+        component_name: str,
+        shadow_name: str,
+        platform=None,
+        no_shared_config: bool = False,
+    ):
+        super().__init__(
+            component_name, thing_name, platform=platform, no_shared_config=no_shared_config
+        )
         self._shadow_name = (
             shadow_name if shadow_name is not None else _sanitize_shadow_name(component_name)
         )
         self._config_source = f"Named Shadow (shadow name: {self._shadow_name})"
+        self._config_provider_family = "SHADOW"
         from edgecommons import MessagingClient
 
         self._ipc_client = (
@@ -42,6 +57,7 @@ class ShadowConfigManager(ConfigManager):
             self.get_thing_name(), self._shadow_name
         )
         self._subscribe_to_shadow_topics()
+        self._subscribe_to_shared_shadow_topics()
         self.init()
 
     def _subscribe_to_shadow_topics(self):
@@ -61,6 +77,34 @@ class ShadowConfigManager(ConfigManager):
             )
         except Exception as e:
             logger.error(f"Failed to subscribe to shadow topics: {e}")
+
+    def _subscribe_to_shared_shadow_topics(self):
+        logger.debug("Subscribing to shared shadow topics")
+        try:
+            shadow_update_topic = (
+                ShadowConfigManager._ALL_SHADOW_TOPIC_TEMPLATE.format(
+                    self.get_thing_name(), SHARED_SHADOW_NAME
+                )
+            )
+            self._ipc_client.subscribe_to_topic(
+                topic=shadow_update_topic,
+                receive_mode=ReceiveMode.RECEIVE_MESSAGES_FROM_OTHERS,
+                on_stream_closed=None,
+                on_stream_error=None,
+                on_stream_event=self._on_shared_shadow_event,
+            )
+        except Exception as e:
+            logger.error(f"Failed to subscribe to shared shadow topics: {e}")
+
+    def _on_shared_shadow_event(self, event: SubscriptionResponseMessage) -> None:
+        topic_parts = event.binary_message.context.topic.split("/")
+        action = topic_parts[len(topic_parts) - 2]
+        result = topic_parts[len(topic_parts) - 1]
+        if action == "get" and result == "rejected":
+            logger.info("Shared named shadow '%s' is absent", SHARED_SHADOW_NAME)
+            return
+        if action == "update" and result == "delta":
+            self.reload_from_provider()
 
     def _on_shadow_event(self, event: SubscriptionResponseMessage) -> None:
         payload_str = str(event.binary_message.message, "utf-8")
@@ -95,6 +139,9 @@ class ShadowConfigManager(ConfigManager):
         if config is not None:
             self._report_updated_configuration(config)
         return config
+
+    def _resolve_base_layer(self, component_layer: dict) -> BaseLayer:
+        return resolve_shadow_base(self._ipc_client, self.get_thing_name())
 
     def _report_updated_configuration(self, config: dict) -> None:
         shadow_doc = {

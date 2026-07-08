@@ -15,6 +15,9 @@ The subsystem is opt-in: the `gg` accessor returns nothing unless a `parameters`
 in the active config (Rust additionally requires the `parameters` cargo feature). Reads are always
 served from a local cache — the network is touched only on `refresh()`.
 
+In split-config deployments, the shared base layer may define common `parameters.source` and cache
+defaults. Each component still owns its own `ParameterService`, cache lifecycle, and sync set.
+
 <Aside type="note" title="Names used here">
 Each SDK uses its own idiomatic names. This page shows the real per-language identifiers (for
 example Java `getParameters()`, Python `get_parameters()`, Rust `parameters()`, TypeScript

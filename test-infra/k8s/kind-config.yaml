@@ -10,6 +10,7 @@ apiVersion: kind.x-k8s.io/v1alpha4
 name: edgecommons
 nodes:
   - role: control-plane
+    image: kindest/node:v1.36.1
     # Make ConfigMap→volume propagation fast and deterministic for the ..data hot-reload
     # test. The kubelet refreshes a mounted ConfigMap on its sync loop; at the 1m default
     # `syncFrequency` (+ cache TTL) a patched ConfigMap can take minutes to reach the pod —

@@ -53,9 +53,12 @@ public class ConfigManagerFactory {
             // Determine thing name
             String thingName = resolveThingName(cmdLine);
 
-            // Load configuration
+            // Load raw component configuration, resolve any shared layer, merge, then validate only
+            // the stripped effective config. Raw layers may be partial documents.
             ConfigProvider configProvider = ConfigProviderBuilder.build(null, componentName, thingName, cmdLine.configArgs, messagingClient);
-            JsonObject fullConfig = configProvider.loadConfiguration();
+            LayeredConfigCoordinator layeredConfigCoordinator =
+                    new LayeredConfigCoordinator(configProvider, cmdLine, messagingClient, thingName);
+            JsonObject fullConfig = layeredConfigCoordinator.loadEffective();
             
             if (fullConfig == null) {
                 throw new ConfigurationException("No configuration found");
@@ -69,7 +72,8 @@ public class ConfigManagerFactory {
             // default logging format — `json` (stdout-JSON sink) on KUBERNETES — when the component
             // config omits `logging.java_format` (FR-LOG-1/4, precedence FR-RT-3).
             ConfigManager configManager = new ConfigManager(componentFullName, componentShortName, thingName,
-                                                           configProvider, fullConfig, cmdLine.platform);
+                                                           configProvider, fullConfig, cmdLine.platform,
+                                                           layeredConfigCoordinator);
             
             LOGGER.info("Configuration loaded from {}", configProvider.getConfigSource());
             return configManager;

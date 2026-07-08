@@ -23,7 +23,7 @@ defaults, and migration notes, see the [CLI contract](/start/cli-contract/) page
 
 ## Accepted flags
 
-The parser recognizes the five standard flags (identical across all four SDKs). Any
+The parser recognizes the six standard flags (identical across all four SDKs). Any
 application-specific options are merged in alongside them (Java `Options`, Python an
 `argparse.ArgumentParser`, Rust/TS by composing onto the base command).
 
@@ -32,6 +32,7 @@ application-specific options are merged in alongside them (Java `Options`, Pytho
 | `-c` / `--config <SOURCE> [args...]` | `FILE` \| `CONFIGMAP` \| `ENV` \| `GG_CONFIG` \| `SHADOW` \| `CONFIG_COMPONENT` | from the resolved platform profile |
 | `--platform <PLATFORM>` | `GREENGRASS` \| `HOST` \| `KUBERNETES` \| `auto` | `auto` (auto-detected) |
 | `--transport <TRANSPORT> [path]` | `IPC` \| `MQTT [messaging_config.json]` | derived from the platform |
+| `--no-shared-config` | *(takes no value)* | shared layer resolution enabled |
 | `-t` / `--thing <name>` | IoT Thing name (full string) | resolved from the environment |
 | `-h` / `--help` | *(takes no value)* | prints the usage banner and exits 0 |
 
@@ -166,6 +167,7 @@ public class ParsedCommandLine {
     public Transport transport;           // resolved transport
     public String standaloneConfigPath;   // MQTT messaging-config path, or null
     public String thingName;              // resolved IoT Thing name (identity)
+    public boolean noSharedConfig;        // true when --no-shared-config was passed
 }
 ```
 
@@ -184,6 +186,7 @@ ns.config                 # list[str]: [SOURCE, *args] (resolved, e.g. ["FILE", 
 ns.identity               # str: resolved IoT Thing name
 ns.thing                  # str | None: the raw -t/--thing value
 ns.standalone_config_path # str: MQTT messaging-config path, when present
+ns.no_shared_config       # bool: true when --no-shared-config was passed
 ```
 
 `standalone_config_path` is set by the `--transport MQTT <path>` payload, or defaulted under
@@ -204,6 +207,7 @@ pub struct ParsedArgs {
     pub identity: String,                         // resolved IoT Thing name
     pub messaging_config_path: Option<PathBuf>,   // MQTT messaging-config path (explicit or
                                                   // CONFIGMAP+MQTT default), else None
+    pub no_shared_config: bool,                   // true when --no-shared-config was passed
 }
 ```
 
@@ -220,6 +224,7 @@ export interface ParsedArgs {
   config: ConfigSourceSpec;      // typed union; see below
   messagingConfigPath?: string;  // MQTT messaging-config path (explicit or CONFIGMAP+MQTT default)
   thing: string;                 // RESOLVED IoT Thing name (identity), never undefined
+  noSharedConfig: boolean;       // true when --no-shared-config was passed
 }
 ```
 

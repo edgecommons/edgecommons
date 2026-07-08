@@ -1,16 +1,17 @@
 ---
 title: Configuration
-description: Configure a EdgeCommons component — config sources, document structure, template variables, typed accessors, change listeners, hot reload, and validation.
+description: Configure an EdgeCommons component — config sources, document structure, template variables, typed accessors, change listeners, hot reload, and validation.
 sidebar:
   order: 2
 ---
 
 import { Tabs, TabItem, Aside, LinkCard, CardGrid } from "@astrojs/starlight/components";
 
-Every EdgeCommons component is driven by a single JSON **config document**. The configuration
-subsystem loads that document from one of several pluggable sources, validates it against the
-canonical cross-language JSON schema, exposes its sections through typed accessors, substitutes
-template variables into paths and topics, and hot-reloads when the underlying source changes.
+Every EdgeCommons component is driven by one effective JSON **config document**. The configuration
+subsystem loads that document from one of several pluggable sources, optionally composes it from a
+shared base layer plus a component layer, validates the effective document against the canonical
+cross-language JSON schema, exposes its sections through typed accessors, substitutes template
+variables into paths and topics, and hot-reloads when the underlying source changes.
 
 This guide covers how to choose a source, how the document is structured, how to read it from your
 component code in all four languages, and how to react to live changes. For the exhaustive field
@@ -31,11 +32,12 @@ resolved **platform profile**: `GREENGRASS` defaults to `GG_CONFIG`, `HOST` to `
 | `CONFIGMAP` | `-c CONFIGMAP [mountDir] [key]` (defaults `/etc/edgecommons`, `config.json`) | Kubernetes. Reads a mounted ConfigMap directory and hot-reloads via the kubelet `..data` swap. Default on `KUBERNETES`. |
 | `GG_CONFIG` | `-c GG_CONFIG [component] [key]` (default key `ComponentConfig`) | On-device: read the config delivered by the Greengrass deployment (Nucleus). Default on `GREENGRASS`. Loads over IPC, so it needs a messaging client. |
 | `SHADOW` | `-c SHADOW [name]` (default: the component name sanitized to `[A-Za-z0-9:_-]`) | Read config from an AWS IoT device shadow. Loads over IPC. |
-| `CONFIG_COMPONENT` | `-c CONFIG_COMPONENT` | Read config served by a shared config component over IPC. |
+| `CONFIG_COMPONENT` | `-c CONFIG_COMPONENT` | Read config served by a shared config component over the configured messaging transport. |
 
-`GG_CONFIG`, `SHADOW`, and `CONFIG_COMPONENT` load the document over Greengrass IPC, so a messaging
-client/provider must be available — selecting one without it is a hard error. `FILE`, `ENV`, and
-`CONFIGMAP` need nothing extra.
+`GG_CONFIG` and `SHADOW` load over Greengrass IPC. `CONFIG_COMPONENT` uses the active messaging
+transport, so it works over Greengrass IPC or HOST/Kubernetes MQTT as long as a messaging
+client/provider is available. Selecting any messaging-backed config source without messaging is a
+hard error. `FILE`, `ENV`, and `CONFIGMAP` need nothing extra.
 
 <Aside type="note" title="Rust feature gate">
 In the Rust SDK, the `GG_CONFIG` and `SHADOW` sources are compiled in only with the `greengrass`
@@ -65,10 +67,60 @@ by language (see the [Quickstart](/start/quickstart/)); here is a representative
 </TabItem>
 </Tabs>
 
+## Shared base + component config
+
+Split config lets a device define common framework settings once, then keep each component's own
+settings small. The SDK loads a raw **base** layer and a raw **component** layer, deep-merges them
+locally, strips split-config control fields, and validates only the merged effective document.
+
+Later layers win. Objects merge key-by-key; arrays, scalars, and `null` replace the earlier value.
+This means a shared base can provide `logging`, `heartbeat`, `tags`, `credentials`, `parameters`, or
+`streaming.streams`, while a component overrides only the keys it owns.
+
+```json
+{
+  "logging": { "level": "INFO" },
+  "streaming": {
+    "streams": [
+      {
+        "name": "telemetry",
+        "sink": { "type": "kinesis", "streamName": "edge-telemetry" },
+        "buffer": { "type": "disk", "path": "/var/lib/edgecommons/{ComponentName}/streams/telemetry" }
+      }
+    ]
+  }
+}
+```
+
+Inherited stream definitions are still per-component runtime resources. Each component opens its
+own stream handles, buffer files, drains, metrics, and shutdown path; there is no shared stream
+service or shared stream buffer in split-config v1.
+
+The shared layer is found by the same provider family as the component layer:
+
+| Source | Shared layer lookup |
+|--------|---------------------|
+| `FILE` | `extends` in the component file, else `$EDGECOMMONS_SHARED_CONFIG`, else `/etc/edgecommons/shared.json` when present. A missing default file means no base; an explicit unreadable file is fatal. |
+| `ENV` | `$EDGECOMMONS_SHARED_CONFIG` as inline JSON or `@/path/to/shared.json`. If unset, there is no base. |
+| `CONFIGMAP` | `extends`, else a shared config entry in the same mount, else `shared.json` under the configured mount directory when present. |
+| `GG_CONFIG` | `GetConfiguration()` on `$EDGECOMMONS_SHARED_COMPONENT`, default `com.mbreissi.edgecommons.EdgeCommonsSharedConfig`, key `SharedComponentConfig`. The default component/key may be absent; an explicitly named shared component must be readable. |
+| `SHADOW` | Named shadow `edgecommons-shared` on the same Thing; the shared object is read from `ComponentConfig`, including stringified JSON values. |
+| `CONFIG_COMPONENT` | A config server reply shaped as a layer bundle with `base` and `component` fields; legacy replies without `base` are component-only. |
+
+Set `sharedConfig: false` at the top of a component layer to opt that component out. Operators can
+also pass `--no-shared-config`, which wins over any component file setting.
+
+For `CONFIG_COMPONENT`, the built-in server role is the dedicated Rust component
+`com.mbreissi.edgecommons.ConfigComponent`. Ordinary SDK components are clients only: they do not
+automatically subscribe to the reserved config rendezvous or serve configuration. The server
+bootstraps from its own non-`CONFIG_COMPONENT` source, loads a pluggable catalog, serves raw layer
+bundles, and accepts privileged complete-catalog replacements on
+`ecv1/{device}/config/main/cmd/update-catalog`.
+
 ## The config document
 
-The top level of the document is **strict**: only the known sections are allowed and `component` is
-the only required one. The framework sections (`logging`, `metricEmission`, `heartbeat`, `tags`,
+The top level of the effective document is **strict**: only the known sections are allowed and
+`component` is the only required one. The framework sections (`logging`, `metricEmission`, `heartbeat`, `tags`,
 `hierarchy`, `identity`, `topic`, `messaging`, `streaming`, `credentials`, `parameters`, `health`)
 configure the SDK subsystems; the `component` section carries **your** application config, split
 into a shared `component.global` object and an optional `component.instances` array for
@@ -418,7 +470,7 @@ Four of the six sources hot-reload; two are read once at startup:
   the shadow's `desired` state changes (`update/accepted`).
 - **`CONFIG_COMPONENT`** fetches its config by sending a request to the config server's UNS command
   inbox `ecv1/{device}/config/main/cmd/get-configuration` (`config` is a reserved logical component
-  name), then subscribes to its **own** command inbox
+  name) over the active messaging transport, then subscribes to its **own** command inbox
   `ecv1/{device}/{component}/main/cmd/set-config` and reapplies each config the shared config
   component pushes.
 - **`GG_CONFIG`** and **`ENV`** do **not** hot-reload — the document is read once at startup. (A

@@ -20,6 +20,10 @@ All four languages build **byte-identical topics** and **structurally identical*
 elements; the shared `uns-test-vectors/` conformance suite (topic vectors + golden envelopes) pins
 this, and the cross-language interop harness asserts it over a real broker.
 
+`hierarchy`, `identity`, and `topic` are read from the merged effective config. In split-config
+deployments, a shared base layer can define the device/site identity once and every component then
+publishes with the same resolved identity contract.
+
 ## Accessors
 
 | Handle | Java | Python | Rust | TypeScript |

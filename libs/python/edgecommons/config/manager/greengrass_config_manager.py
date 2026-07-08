@@ -3,6 +3,7 @@ import logging
 from awsiot.greengrasscoreipc.clientv2 import GreengrassCoreIPCClientV2
 
 from edgecommons.config.manager.config_manager import ConfigManager
+from edgecommons.config.manager.split_config import BaseLayer, resolve_greengrass_base
 
 logger = logging.getLogger("GreengrassConfigManager")
 
@@ -15,11 +16,15 @@ class GreengrassConfigManager(ConfigManager):
         config_component_name: str,
         config_key: str,
         platform=None,
+        no_shared_config: bool = False,
     ):
-        super().__init__(component_name, thing_name, platform=platform)
+        super().__init__(
+            component_name, thing_name, platform=platform, no_shared_config=no_shared_config
+        )
         self._config_component_name = config_component_name
         self._config_key = config_key if config_key is not None else "ComponentConfig"
         self._config_source = f"Greengrass config (component: {config_component_name}; key: {self._config_key})"
+        self._config_provider_family = "GG_CONFIG"
         self.init()
 
     def _load_configuration(self) -> dict:
@@ -46,3 +51,6 @@ class GreengrassConfigManager(ConfigManager):
                 )
         ipc_client.close()
         return ret_val
+
+    def _resolve_base_layer(self, component_layer: dict) -> BaseLayer:
+        return resolve_greengrass_base()

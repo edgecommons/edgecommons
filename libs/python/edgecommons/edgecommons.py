@@ -297,6 +297,12 @@ class EdgeCommons:
             type=str,
             help='Thing name to use (optional)'
         )
+        parser.add_argument(
+            '--no-shared-config',
+            action='store_true',
+            default=False,
+            help='Disable shared split-config base-layer resolution for this process'
+        )
 
         parsed = parser.parse_args(args)
 

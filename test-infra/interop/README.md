@@ -74,3 +74,10 @@ no JDK/shaded jar, no node/npm, or `edgecommons` not importable), and skips enti
 if no broker is reachable. The Java jar, Rust binary, and TypeScript node are built
 by the test's fixtures; `java -cp`, `cargo`, and `node`/`npm` toolchains are
 auto-discovered (JAVA_HOME or `C:/Users/breis/tools/jdk`).
+
+## Deployed full interop
+
+Use [FULL_INTEROP_GREENGRASS_K8S.md](FULL_INTEROP_GREENGRASS_K8S.md) when a change must be proven
+through deployed skeleton components on Greengrass and Kubernetes, especially for Greengrass IPC,
+request/reply behavior, binary payloads, or split-config behavior through
+`com.mbreissi.edgecommons.ConfigComponent`.

@@ -1478,9 +1478,10 @@ fn from_event(event: pb::EventMessage) -> Value {
 
 fn to_command(header_name: &str, body: &Value) -> Result<pb::CommandMessage> {
     let obj = as_object(body, "CommandMessage")?;
-    let wrapped_payload =
-        !obj.contains_key("payload") && !obj.contains_key("ok") && !obj.contains_key("result")
-            && !obj.contains_key("error");
+    let wrapped_payload = !obj.contains_key("payload")
+        && !obj.contains_key("ok")
+        && !obj.contains_key("result")
+        && !obj.contains_key("error");
     Ok(pb::CommandMessage {
         verb: str_value(obj, "verb").unwrap_or_else(|| header_name.to_string()),
         payload: if wrapped_payload {
@@ -1522,9 +1523,11 @@ fn to_command_error(obj: &Map<String, Value>) -> Result<pb::CommandError> {
 }
 
 fn from_command(command: pb::CommandMessage) -> Value {
-    let pure_payload =
-        command.payload.is_some() && command.ok.is_none() && command.result.is_none()
-            && command.error.is_none() && command.extra.is_empty();
+    let pure_payload = command.payload.is_some()
+        && command.ok.is_none()
+        && command.result.is_none()
+        && command.error.is_none()
+        && command.extra.is_empty();
     if pure_payload {
         return command.payload.map(from_ec_value).unwrap_or(Value::Null);
     }
@@ -1587,20 +1590,14 @@ fn f64_value(obj: &Map<String, Value>, key: &str) -> Option<f64> {
     obj.get(key).and_then(Value::as_f64)
 }
 
-fn copy_extra(
-    obj: &Map<String, Value>,
-    known: &[&str],
-) -> Result<BTreeMap<String, pb::EcValue>> {
+fn copy_extra(obj: &Map<String, Value>, known: &[&str]) -> Result<BTreeMap<String, pb::EcValue>> {
     obj.iter()
         .filter(|(key, _)| !known.contains(&key.as_str()))
         .map(|(key, value)| Ok((key.clone(), to_ec_value(value)?)))
         .collect()
 }
 
-fn extend_extra(
-    obj: &mut Map<String, Value>,
-    extra: BTreeMap<String, pb::EcValue>,
-) {
+fn extend_extra(obj: &mut Map<String, Value>, extra: BTreeMap<String, pb::EcValue>) {
     for (key, value) in extra {
         obj.insert(key, from_ec_value(value));
     }
@@ -2163,7 +2160,11 @@ mod tests {
             assert_eq!(actual, expected, "wrong protobuf body case for {name}");
 
             let back = Message::from_slice(&bytes).unwrap();
-            assert_eq!(back.body_case(), expected, "wrong decoded body case for {name}");
+            assert_eq!(
+                back.body_case(),
+                expected,
+                "wrong decoded body case for {name}"
+            );
         }
     }
 
@@ -2193,7 +2194,10 @@ mod tests {
     #[test]
     fn canonical_protobuf_vectors_round_trip_exact_bytes() {
         let text = std::fs::read_to_string("../../protobuf-test-vectors/messages.pb.hex").unwrap();
-        for line in text.lines().filter(|line| !line.is_empty() && !line.starts_with('#')) {
+        for line in text
+            .lines()
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        {
             let (id, hex) = line.split_once(' ').unwrap();
             let bytes = decode_hex_for_test(hex);
             let message = Message::from_slice(&bytes).unwrap();

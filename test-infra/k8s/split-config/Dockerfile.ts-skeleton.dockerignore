@@ -1,0 +1,13 @@
+**
+!libs/
+!libs/ts/
+!libs/ts/package.json
+!libs/ts/tsconfig.json
+!libs/ts/src/
+!libs/ts/src/**
+!examples/
+!examples/ts/
+!examples/ts/package.json
+!examples/ts/tsconfig.json
+!examples/ts/src/
+!examples/ts/src/**

@@ -139,19 +139,7 @@ final class ConfigMapConfigProvider extends ConfigProvider implements FileWatche
      */
     @Override
     public void onChange() {
-        JsonObject newConfig;
-        try {
-            newConfig = loadConfiguration();
-        } catch (RuntimeException e) {
-            LOGGER.warn("ConfigMap reload read failed (keeping previous config): {}", e.getMessage());
-            return;
-        }
-        if (newConfig == null) {
-            LOGGER.warn("ConfigMap reload yielded empty configuration (keeping previous config).");
-            return;
-        }
         LOGGER.info("ConfigMap changed: applying new config from {}", configFile);
-        // applyConfig re-validates against the schema and rejects-and-keeps on a schema-invalid document.
-        parentConfigManager.applyConfig(newConfig);
+        parentConfigManager.reloadFromProvider();
     }
 }

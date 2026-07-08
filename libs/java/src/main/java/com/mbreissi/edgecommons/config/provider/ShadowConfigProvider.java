@@ -235,7 +235,7 @@ final class ShadowConfigProvider extends ConfigProvider implements  StreamRespon
     protected void configurationChanged(JsonObject newConfig)
     {
         LOGGER.info("configurationChanged: Applying new com.mbreissi.edgecommons.config: {}", newConfig);
-        parentConfigManager.applyConfig(newConfig);
+        parentConfigManager.applyConfigFromProvider(newConfig);
     }
 
 }

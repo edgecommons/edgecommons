@@ -7,7 +7,6 @@ package com.mbreissi.edgecommons.config.provider;
 import com.mbreissi.edgecommons.config.ConfigManager;
 import com.google.gson.JsonObject;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -25,7 +24,7 @@ import static org.mockito.Mockito.*;
  *
  * <p>The provider starts a {@link com.mbreissi.edgecommons.utils.FileWatcher} daemon
  * thread in its constructor; every test {@code close()}s the provider so no thread leaks.
- * The {@link ConfigManager} is a Mockito mock so {@code applyConfig(...)} can be verified
+ * The {@link ConfigManager} is a Mockito mock so {@code reloadFromProvider()} can be verified
  * without exercising the real schema validator or logging reconfiguration.
  */
 class FileConfigProviderTest {
@@ -91,11 +90,7 @@ class FileConfigProviderTest {
             // Directly invoke the FileWatcher callback rather than racing the OS watcher.
             provider.onChange();
 
-            ArgumentCaptor<JsonObject> captor = ArgumentCaptor.forClass(JsonObject.class);
-            verify(cm).applyConfig(captor.capture());
-            JsonObject applied = captor.getValue();
-            assertNotNull(applied);
-            assertEquals(2, applied.get("version").getAsInt());
+            verify(cm).reloadFromProvider();
         } finally {
             provider.close();
         }

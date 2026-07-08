@@ -2,6 +2,7 @@ import logging
 import os
 import re
 import time
+import copy
 from typing import Dict, Any, Optional
 
 from edgecommons.messaging.identity import HierEntry, MessageIdentity
@@ -17,6 +18,15 @@ from edgecommons.config.metric_config import MetricConfiguration
 from edgecommons.config.tag_config import TagConfiguration
 from edgecommons.config.enhanced_logging_config import EnhancedLoggingConfiguration
 from edgecommons.config.manager.configuration_change_listener import ConfigurationChangeListener
+from edgecommons.config.manager.split_config import (
+    BaseLayer,
+    CONTROL_FIELDS,
+    deep_merge_layers,
+    parse_config_component_payload,
+    shared_config_enabled,
+    validate_base_layer,
+    validate_component_layer,
+)
 
 logger = logging.getLogger("ConfigManager")
 
@@ -61,6 +71,7 @@ class ConfigManager:
         thing_name: str = None,
         validate_config: bool = True,
         platform=None,
+        no_shared_config: bool = False,
     ):
         if not component_name:
             raise ValueError("Component name cannot be None or empty")
@@ -84,8 +95,13 @@ class ConfigManager:
         self._thing_name = thing_name
         self._component_full_name = component_name
         self._validate_config = validate_config
+        self._no_shared_config = bool(no_shared_config)
         self._initializing = True
         self._config_source = "unknown"
+        self._config_provider_family = "UNKNOWN"
+        self._latest_component_layer: Optional[Dict[str, Any]] = None
+        self._latest_base_layer: Optional[Dict[str, Any]] = None
+        self._latest_base_source: Optional[str] = None
         # The component's resolved UNS identity (hierarchy + identity values + device +
         # component token, instance "main"), resolved ONCE by init() from the
         # component's OWN config (no shared config) — see get_component_identity().
@@ -114,9 +130,9 @@ class ConfigManager:
 
     def init(self):
         try:
-            config = self._load_configuration()
-            if config is None:
-                config = {"component": {}}
+            component_layer, base_layer, base_source, config = (
+                self._load_effective_configuration()
+            )
 
             # Validate configuration if enabled
             if self._validate_config:
@@ -125,9 +141,10 @@ class ConfigManager:
             self._apply_config(config)
 
             # Resolve the component's UNS identity ONCE, from this component's own
-            # config (top-level `hierarchy` + `identity`), fail-fast on any
+            # effective config (top-level `hierarchy` + `identity`), fail-fast on any
             # inconsistency (UNS-CANONICAL-DESIGN §1.5).
             self._component_identity = self._resolve_component_identity(config)
+            self._commit_layers(component_layer, base_layer, base_source)
 
             logger.info("Configuration manager initialized successfully")
 
@@ -240,20 +257,35 @@ class ConfigManager:
                 correlation[field] = value
         return correlation
 
-    def configuration_changed(self, new_config: dict) -> bool:
+    def configuration_changed(
+        self,
+        new_config: dict,
+        *,
+        preserve_config_component_legacy_base: bool = True,
+    ) -> bool:
         try:
             logger.debug("Processing configuration change")
+            component_layer, base_layer, base_source, effective_config = (
+                self._effective_from_source_payload(
+                    new_config,
+                    preserve_config_component_legacy_base=preserve_config_component_legacy_base,
+                )
+            )
             
             # Validate new configuration if enabled
             if self._validate_config:
-                self._validate_configuration(new_config)
+                self._validate_configuration(effective_config)
+
+            component_identity = self._resolve_component_identity(effective_config)
                 
             # Apply the new configuration
-            self._apply_config(new_config)
+            self._apply_config(effective_config)
+            self._component_identity = component_identity
+            self._commit_layers(component_layer, base_layer, base_source)
             
             # Notify listeners only if not initializing
             if not self._initializing:
-                self._notify_configuration_changed(new_config)
+                self._notify_configuration_changed(effective_config)
                 
             logger.info("Configuration change processed successfully")
             return True
@@ -279,20 +311,45 @@ class ConfigManager:
             schema-invalid (the previous configuration is kept)
         """
         try:
-            new_config = self._load_configuration()
+            source_payload = self._load_configuration()
         except Exception as e:
             logger.warning(
                 f"reload-config: re-fetch from the '{self._config_source}' source"
                 f" failed: {e}"
             )
             return False
-        if new_config is None:
+        if source_payload is None:
             logger.warning(
                 f"reload-config: the '{self._config_source}' source returned no"
                 " configuration - keeping the previous configuration"
             )
             return False
-        return self.configuration_changed(new_config)
+        try:
+            component_layer, base_layer, base_source, new_config = (
+                self._effective_from_source_payload(
+                    source_payload,
+                    preserve_config_component_legacy_base=False,
+                )
+            )
+        except Exception as e:
+            logger.warning(
+                f"reload-config: split-config merge from the '{self._config_source}'"
+                f" source failed: {e}"
+            )
+            return False
+        try:
+            if self._validate_config:
+                self._validate_configuration(new_config)
+            component_identity = self._resolve_component_identity(new_config)
+            self._apply_config(new_config)
+            self._component_identity = component_identity
+            self._commit_layers(component_layer, base_layer, base_source)
+            if not self._initializing:
+                self._notify_configuration_changed(new_config)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to process configuration reload: {e}")
+            return False
 
     @staticmethod
     def _parse_topic_include_root(config: dict) -> bool:
@@ -535,6 +592,85 @@ class ConfigManager:
         """Default implementation returns empty config. Subclasses should override."""
         return {"component": {}}
 
+    def _load_effective_configuration(self):
+        source_payload = self._load_configuration()
+        if source_payload is None:
+            source_payload = {"component": {}}
+        return self._effective_from_source_payload(
+            source_payload,
+            preserve_config_component_legacy_base=False,
+        )
+
+    def _effective_from_source_payload(
+        self,
+        source_payload,
+        *,
+        preserve_config_component_legacy_base: bool = False,
+    ):
+        if self._config_provider_family == "CONFIG_COMPONENT":
+            parsed = parse_config_component_payload(source_payload)
+            component_layer = parsed.component
+            if parsed.base_present:
+                base_layer = parsed.base
+                base_source = "config-component:bundle"
+            elif preserve_config_component_legacy_base:
+                base_layer = self._latest_base_layer
+                base_source = self._latest_base_source
+            else:
+                base_layer = None
+                base_source = None
+        else:
+            component_layer = source_payload
+            base_layer = None
+            base_source = None
+
+        validate_component_layer(component_layer)
+        if shared_config_enabled(component_layer, self._no_shared_config):
+            if self._config_provider_family == "CONFIG_COMPONENT":
+                validate_base_layer(base_layer)
+            else:
+                resolved_base = self._resolve_base_layer(component_layer)
+                base_layer = resolved_base.value
+                base_source = resolved_base.source
+                validate_base_layer(base_layer)
+        else:
+            logger.info("Shared config disabled")
+            base_layer = None
+            base_source = None
+
+        layers = [base_layer, component_layer] if base_layer is not None else [component_layer]
+        if base_layer is None and not any(key in component_layer for key in CONTROL_FIELDS):
+            effective = component_layer
+        else:
+            effective = deep_merge_layers(layers, self._warn_type_conflict)
+        if base_layer is None:
+            logger.info("Shared config absent or not applied")
+        else:
+            logger.info("Shared config applied from %s", base_source or "unknown")
+        return component_layer, base_layer, base_source, effective
+
+    def _resolve_base_layer(self, component_layer: Dict[str, Any]) -> BaseLayer:
+        return BaseLayer(None, None)
+
+    def _commit_layers(
+        self,
+        component_layer: Dict[str, Any],
+        base_layer: Optional[Dict[str, Any]],
+        base_source: Optional[str],
+    ) -> None:
+        self._latest_component_layer = component_layer
+        self._latest_base_layer = base_layer
+        self._latest_base_source = base_source
+
+    @staticmethod
+    def _warn_type_conflict(path: str, left_type: str, right_type: str) -> None:
+        logger.warning(
+            "Split config type conflict at %s: %s replaced by %s from later layer",
+            path,
+            left_type,
+            right_type,
+        )
+
     def get_global_config(self) -> dict:
         return self._global_config
 
@@ -654,22 +790,8 @@ class ConfigManager:
             logger.warning(f"Attempted to remove non-existent listener: {listener}")
             
     def get_full_config(self) -> Dict[str, Any]:
-        """Returns the complete configuration object."""
-        full = {
-            'component': self._component_config,
-            'tags': self._tag_config.to_dict() if self._tag_config else {},
-            'heartbeat': self._heartbeat_config.to_dict() if self._heartbeat_config else {},
-            'metricEmission': self._metric_config.to_dict() if self._metric_config else {},
-            'logging': self._logging_config.to_dict() if self._logging_config else {}
-        }
-        # Surface the raw streaming section (if any) so EdgeCommons._init_streaming() can find it.
-        if self._streaming_config is not None:
-            full['streaming'] = self._streaming_config
-        if self._credentials_config is not None:
-            full['credentials'] = self._credentials_config
-        if self._parameters_config is not None:
-            full['parameters'] = self._parameters_config
-        return full
+        """Returns the accepted effective configuration snapshot."""
+        return copy.deepcopy(self._raw_config) if self._raw_config is not None else {}
         
     def is_validation_enabled(self) -> bool:
         """Returns whether configuration validation is enabled."""

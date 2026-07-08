@@ -863,11 +863,16 @@ public class EdgeCommons
                                     .hasArg()
                                     .desc("Thing name to use (optional)")
                                     .build();
+        Option noSharedConfigOption = Option.builder()
+                                       .longOpt("no-shared-config")
+                                       .desc("Disable split-config shared-layer resolution")
+                                       .build();
         options.addOption(helpOption);
         options.addOption(configOption);
         options.addOption(platformOption);
         options.addOption(transportOption);
         options.addOption(thingOption);
+        options.addOption(noSharedConfigOption);
 
         PlatformResolver.ResolverInputs inputs;
         try {
@@ -888,6 +893,7 @@ public class EdgeCommons
             // to the resolver so it can apply the FR-MSG-1 CONFIGMAP default when it is absent.
             Transport transportFlag = parseTransport(line, retVal);
             String thingFlag = line.hasOption("t") ? line.getOptionValue("thing") : null;
+            retVal.noSharedConfig = line.hasOption("no-shared-config");
 
             inputs = new PlatformResolver.ResolverInputs(
                     platformFlag, transportFlag, configArgs, thingFlag, retVal.standaloneConfigPath);

@@ -73,6 +73,11 @@ server-to-device path. For command-and-control or low-rate messaging, use the
    `{"$secret": ...}` reference anywhere in the `streaming` section is resolved from the
    [credentials vault](/guides/credentials/) first.
 
+   In split-config deployments, `streaming.streams` may live in the shared base layer. Those entries
+   are still configuration only: every component opens its own `StreamService`, handles, buffers,
+   drains, metrics, and shutdown path. Disk buffer paths must resolve to component-unique locations;
+   include `{ComponentName}` or another per-component segment when streams are inherited.
+
 2. **Make the native core available** for your language (see the table below).
 
 3. **Get the stream service from the runtime** and append records (next section).

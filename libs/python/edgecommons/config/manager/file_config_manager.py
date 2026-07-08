@@ -6,24 +6,33 @@ from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
 from edgecommons.config.manager.config_manager import ConfigManager
+from edgecommons.config.manager.split_config import BaseLayer, resolve_file_base
 
 logger = logging.getLogger("FileConfigManager")
 
 
 class FileConfigManager(ConfigManager):
-    def __init__(self, thing_name: str, component_name: str, config_file_path: str, platform=None):
-        super().__init__(component_name, thing_name, platform=platform)
+    def __init__(
+        self,
+        thing_name: str,
+        component_name: str,
+        config_file_path: str,
+        platform=None,
+        no_shared_config: bool = False,
+    ):
+        super().__init__(
+            component_name, thing_name, platform=platform, no_shared_config=no_shared_config
+        )
         self._config_file_path = config_file_path
         self._config_source = f"Config File (file name: {config_file_path})"
+        self._config_provider_family = "FILE"
         self.init()
-        path_to_watch = os.path.dirname(os.path.abspath(self._config_file_path))
         self._file_change_event_handler = ConfigFileChangeEventHandler(
             self, config_file_path
         )
         self._observer = Observer()
-        self._observer.schedule(
-            self._file_change_event_handler, path=path_to_watch, recursive=False
-        )
+        self._watched_dirs = set()
+        self._sync_watch_directories()
         logger.info("Starting file change observer")
         self._observer.start()
 
@@ -36,6 +45,39 @@ class FileConfigManager(ConfigManager):
             raise RuntimeError(
                 f"Unable to open config file at {self._config_file_path}"
             ) from e
+
+    def _resolve_base_layer(self, component_layer: dict) -> BaseLayer:
+        return resolve_file_base(self._config_file_path, component_layer)
+
+    def _watch_directories(self) -> list:
+        dirs = {os.path.dirname(os.path.abspath(self._config_file_path))}
+        if self._latest_base_source and os.path.isabs(self._latest_base_source):
+            dirs.add(os.path.dirname(os.path.abspath(self._latest_base_source)))
+        return list(dirs)
+
+    def _sync_watch_directories(self) -> None:
+        observer = getattr(self, "_observer", None)
+        handler = getattr(self, "_file_change_event_handler", None)
+        if observer is None or handler is None:
+            return
+        for path_to_watch in self._watch_directories():
+            resolved = os.path.abspath(path_to_watch)
+            if resolved in self._watched_dirs:
+                continue
+            observer.schedule(handler, path=resolved, recursive=False)
+            self._watched_dirs.add(resolved)
+
+    def _commit_layers(self, component_layer, base_layer, base_source) -> None:
+        super()._commit_layers(component_layer, base_layer, base_source)
+        self._sync_watch_directories()
+
+    def _is_relevant_config_path(self, path: str) -> bool:
+        if not path:
+            return False
+        candidates = {os.path.abspath(self._config_file_path)}
+        if self._latest_base_source and os.path.isabs(self._latest_base_source):
+            candidates.add(os.path.abspath(self._latest_base_source))
+        return os.path.abspath(path) in candidates
 
     def close(self) -> None:
         """Stop the file-change observer thread so it does not leak on shutdown."""
@@ -56,6 +98,8 @@ class ConfigFileChangeEventHandler(FileSystemEventHandler):
         super().__init__()
 
     def _matches(self, path) -> bool:
+        if hasattr(self._file_config_manager, "_is_relevant_config_path"):
+            return self._file_config_manager._is_relevant_config_path(path)
         return bool(path) and path.endswith(os.path.basename(self._file_path))
 
     def _reload(self) -> None:
@@ -63,8 +107,11 @@ class ConfigFileChangeEventHandler(FileSystemEventHandler):
         # atomic save-and-rename never kills the observer thread (H9).
         try:
             logger.debug(f"Config file {self._file_path} changed; reloading")
-            new_config = self._file_config_manager._load_configuration()
-            self._file_config_manager.configuration_changed(new_config)
+            if hasattr(self._file_config_manager, "reload_from_provider"):
+                self._file_config_manager.reload_from_provider()
+            else:
+                new_config = self._file_config_manager._load_configuration()
+                self._file_config_manager.configuration_changed(new_config)
         except Exception as e:
             logger.error(
                 f"Failed to reload configuration after change to {self._file_path}: {e}",

@@ -45,6 +45,10 @@ A multi-site broker deployment can opt in to a site segment after the root with 
 `topic.includeRoot: true` config: `ecv1/{site}/{device}/...` (the site is the first hierarchy
 value; the setting is a no-op with a single-level hierarchy).
 
+`hierarchy` and `identity` are read from the merged effective config. In split-config deployments,
+the shared base layer can define the device/site identity once while component layers supply only
+component-specific settings.
+
 ## The eight message classes
 
 | Class | Carries | Publisher | Example tail |

@@ -74,8 +74,7 @@ final class FileConfigProvider extends ConfigProvider implements FileWatcher.Fil
     @Override
     public void onChange()
     {
-        JsonObject newConfig = loadConfiguration();
-        LOGGER.info("configurationChanged: Applying new config: {}", newConfig);
-        parentConfigManager.applyConfig(newConfig);
+        LOGGER.info("configurationChanged: reloading effective config from file '{}'", configFilePath);
+        parentConfigManager.reloadFromProvider();
     }
 }

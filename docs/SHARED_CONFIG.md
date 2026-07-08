@@ -1,10 +1,9 @@
-# Shared / Layered Configuration & Shared Vault — Detailed Design (PROPOSED)
+# Shared / Layered Configuration & Shared Vault — Design Notes
 
-> **Status: design only — nothing here is implemented.** This is a review document: where a
-> decision is open, the **Recommended** option is marked ✅ and the alternatives are listed so you
-> can choose. Java is the canonical reference; any build lands in all four libraries
-> (Java / Python / Rust / TS) with identical semantics. Companion docs: `CREDENTIALS.md`,
-> `PARAMETERS.md`. Supersedes the earlier high-level sketch of this file.
+> **Status:** split config is implemented from
+> [`SPLIT_CONFIG_IMPLEMENTATION_SPEC.md`](SPLIT_CONFIG_IMPLEMENTATION_SPEC.md). This earlier design
+> note explains the background decisions around shared config, credentials, and parameters. When it
+> differs from the implementation spec, the implementation spec is authoritative.
 
 ---
 
@@ -114,8 +113,9 @@ flowchart TB
 ```
 
 Key points: the **base config layer** is a document each component merges in-process. With the
-**IPC/injected** providers (`GG_CONFIG`/`SHADOW` over IPC, `ENV`, `CONFIG_COMPONENT`) there is no
-filesystem sharing at all. With a **`FILE` base** it *is* a shared file subject to OS permissions —
+**IPC/messaging/injected** providers (`GG_CONFIG`/`SHADOW` over IPC, `CONFIG_COMPONENT` over the
+configured messaging transport, and `ENV`) there is no filesystem sharing at all. With a **`FILE`
+base** it *is* a shared file subject to OS permissions —
 but config is **not secret**, so it's simply made world-readable (`0644`, in a `0755`-traversable
 dir) and is written at deploy time, which sidesteps the confidentiality + runtime-writer tensions
 that make the *vault* hard (§6, §9). The **shared vault/cache** shown here is *conceptual*: a single
@@ -203,9 +203,9 @@ mechanism per provider:
 |---------------|-----------------------------------|----------------------|
 | `FILE` | `extends` key in component file → path; else `$EDGECOMMONS_SHARED_CONFIG`; else `/etc/edgecommons/shared.json` (D7) | All three supported; first hit wins. `extends` may be relative to the component file. |
 | `ENV` | `$EDGECOMMONS_SHARED_CONFIG` = JSON (or `@/path`) | Containers/K8s project a shared ConfigMap into this var. |
-| `GG_CONFIG` | `GetConfiguration` on a **shared-config component** (D8), name from `$EDGECOMMONS_SHARED_COMPONENT` (default `com.mbreissi.edgecommons.EdgeCommonsSharedConfig`) | Reuses the cross-component IPC read that `CONFIG_COMPONENT` already does. Alt: nucleus-level config (rejected — fights the per-component deploy model). |
+| `GG_CONFIG` | `GetConfiguration` on a **shared-config component** (D8), name from `$EDGECOMMONS_SHARED_COMPONENT` (default `com.mbreissi.edgecommons.EdgeCommonsSharedConfig`), key `SharedComponentConfig` | Reuses the cross-component IPC read that `CONFIG_COMPONENT` already does. Alt: nucleus-level config (rejected — fights the per-component deploy model). |
 | `SHADOW` | A shared **named shadow** `edgecommons-shared` on the same Thing (D9) | Read with `GetThingShadow(thing, "edgecommons-shared")`, watch its delta. |
-| `CONFIG_COMPONENT` | The config component serves a base + per-component overlay (it is already the "shared" model) | The client requests the reserved base id, then its own; or the component returns `{base, overlay}`. |
+| `CONFIG_COMPONENT` | The dedicated Rust `com.mbreissi.edgecommons.ConfigComponent` serves a raw layer bundle | The client requests `ecv1/{device}/config/main/cmd/get-configuration`; the server returns a JSON object with `base` set to an object or `null` and `component` set to an object, or it returns a legacy component-only document. |
 
 **Per platform**, the provider in play follows the deployment: GREENGRASS→`GG_CONFIG`/`SHADOW`;
 HOST→`FILE`/`ENV`; KUBERNETES→`ENV`/`FILE` via ConfigMaps.

@@ -36,7 +36,11 @@ import json
 import logging
 import os
 
+from watchdog.events import FileSystemEventHandler
+from watchdog.observers import Observer
+
 from edgecommons.config.manager.config_manager import ConfigManager
+from edgecommons.config.manager.split_config import BaseLayer, resolve_configmap_base
 from edgecommons.parameters.source import is_projection_artifact
 from edgecommons.utils.directory_watcher import DirectoryWatcher
 
@@ -70,8 +74,11 @@ class ConfigMapConfigManager(ConfigManager):
         mount_dir: str = None,
         key: str = None,
         platform=None,
+        no_shared_config: bool = False,
     ):
-        super().__init__(component_name, thing_name, platform=platform)
+        super().__init__(
+            component_name, thing_name, platform=platform, no_shared_config=no_shared_config
+        )
         self._mount_dir = mount_dir if mount_dir is not None else DEFAULT_MOUNT_DIR
         self._key = key if key is not None else DEFAULT_KEY
         if is_projection_artifact(self._key):
@@ -81,12 +88,18 @@ class ConfigMapConfigManager(ConfigManager):
             )
         self._config_file_path = os.path.join(self._mount_dir, self._key)
         self._config_source = f"ConfigMap (mountDir: {self._mount_dir}, key: {self._key})"
+        self._config_provider_family = "CONFIGMAP"
         self._warn_if_subpath_mount()
         # Initial load — fails loudly (parity with FILE) if the key is missing/unreadable.
         self.init()
         self._watcher = DirectoryWatcher(self._mount_dir, self._reload)
         logger.info("Starting ConfigMap directory watcher on %s", self._mount_dir)
         self._watcher.start()
+        self._base_file_change_event_handler = ConfigMapBaseFileChangeEventHandler(self)
+        self._base_observer = Observer()
+        self._base_watched_dirs = set()
+        self._sync_base_watch_directories()
+        self._base_observer.start()
 
     def _warn_if_subpath_mount(self) -> None:
         """Warn when the mount appears to be a ``subPath`` (or otherwise non-projected) mount that will
@@ -112,22 +125,42 @@ class ConfigMapConfigManager(ConfigManager):
                 f"Error reading ConfigMap configuration '{self._config_file_path}': {e}"
             ) from e
 
+    def _resolve_base_layer(self, component_layer: dict) -> BaseLayer:
+        return resolve_configmap_base(self._mount_dir, self._config_file_path, component_layer)
+
+    def _base_watch_directories(self) -> list:
+        if self._latest_base_source and os.path.isabs(self._latest_base_source):
+            return [os.path.dirname(os.path.abspath(self._latest_base_source))]
+        return []
+
+    def _sync_base_watch_directories(self) -> None:
+        observer = getattr(self, "_base_observer", None)
+        handler = getattr(self, "_base_file_change_event_handler", None)
+        if observer is None or handler is None:
+            return
+        for path_to_watch in self._base_watch_directories():
+            resolved = os.path.abspath(path_to_watch)
+            if resolved in self._base_watched_dirs:
+                continue
+            observer.schedule(handler, path=resolved, recursive=False)
+            self._base_watched_dirs.add(resolved)
+
+    def _is_relevant_base_path(self, path: str) -> bool:
+        if not path or not self._latest_base_source or not os.path.isabs(self._latest_base_source):
+            return False
+        return os.path.abspath(path) == os.path.abspath(self._latest_base_source)
+
+    def _commit_layers(self, component_layer, base_layer, base_source) -> None:
+        super()._commit_layers(component_layer, base_layer, base_source)
+        self._sync_base_watch_directories()
+
     def _reload(self) -> None:
         """Reload callback: re-read the ConfigMap key and apply it. Reject-and-keep on a
         transient/malformed read (a mid-swap window or a bad edit) so a running pod never crashes on
         reload (FR-CFG-5)."""
-        try:
-            new_config = self._load_configuration()
-        except RuntimeError as e:
-            logger.warning("ConfigMap reload read failed (keeping previous config): %s", e)
-            return
-        if new_config is None:
-            logger.warning("ConfigMap reload yielded empty configuration (keeping previous config).")
-            return
         logger.info("ConfigMap changed: applying new config from %s", self._config_file_path)
-        # configuration_changed re-validates against the schema and reject-and-keeps on a
-        # schema-invalid document, mirroring the FILE source's reload seam.
-        self.configuration_changed(new_config)
+        if not self.reload_from_provider():
+            logger.warning("ConfigMap reload failed (keeping previous config).")
 
     def close(self) -> None:
         """Stop the directory-watcher thread so it does not leak on shutdown."""
@@ -139,3 +172,49 @@ class ConfigMapConfigManager(ConfigManager):
             except Exception as e:
                 logger.warning("Error stopping ConfigMap directory watcher: %s", e)
             self._watcher = None
+        observer = getattr(self, "_base_observer", None)
+        if observer is not None:
+            try:
+                observer.stop()
+                observer.join(timeout=5)
+            except Exception as e:
+                logger.warning("Error stopping ConfigMap shared-base observer: %s", e)
+            self._base_observer = None
+
+
+class ConfigMapBaseFileChangeEventHandler(FileSystemEventHandler):
+    def __init__(self, configmap_manager: ConfigMapConfigManager):
+        self._configmap_manager = configmap_manager
+        super().__init__()
+
+    def _matches(self, path) -> bool:
+        return self._configmap_manager._is_relevant_base_path(path)
+
+    def _reload(self) -> None:
+        try:
+            logger.info("ConfigMap shared base changed: applying new config")
+            self._configmap_manager.reload_from_provider()
+        except Exception as e:
+            logger.error(
+                "Failed to reload configuration after shared base change: %s",
+                e,
+                exc_info=True,
+            )
+
+    def on_modified(self, event):
+        if event.is_directory:
+            return
+        if self._matches(event.src_path):
+            self._reload()
+
+    def on_created(self, event):
+        if event.is_directory:
+            return
+        if self._matches(event.src_path):
+            self._reload()
+
+    def on_moved(self, event):
+        if event.is_directory:
+            return
+        if self._matches(getattr(event, "dest_path", None)):
+            self._reload()

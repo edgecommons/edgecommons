@@ -101,6 +101,17 @@ class EdgeCommonsProcessArgsTest {
     }
 
     @Test
+    void noSharedConfigFlagIsParsed() {
+        ParsedCommandLine pcl = EdgeCommons.processArgs(
+                COMPONENT,
+                new String[]{"--platform", "HOST", "--transport", "MQTT", "./msg.json",
+                        "--no-shared-config"},
+                null);
+
+        assertTrue(pcl.noSharedConfig);
+    }
+
+    @Test
     void mqttTransportWithoutPathParsesButLeavesPathNull() {
         // Parsing must not require the messaging-config path; the requirement is enforced later when
         // the MQTT provider is actually built (MessagingClient), so mock-messaging collaborators can

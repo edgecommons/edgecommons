@@ -471,6 +471,13 @@ impl EdgeCommonsBuilder {
             &thing_name,
             &self.component_name,
         )?);
+        let source: Arc<dyn config::source::ConfigSource> =
+            Arc::new(config::layered::LayeredConfigSource::new(
+                source,
+                parsed.config.clone(),
+                parsed.no_shared_config,
+                thing_name.clone(),
+            ));
         let raw = source.load().await?;
         config::validation::validate(&raw)?;
         let cfg = Config::from_value(self.component_name.clone(), thing_name.clone(), raw)?;

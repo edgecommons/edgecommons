@@ -35,11 +35,13 @@ class ConfigManagerBuilder:
         platform = getattr(args, "platform", None)
         if not isinstance(platform, Platform):
             platform = None
+        no_shared_config = bool(getattr(args, "no_shared_config", False))
         if config_args[0].upper() == "FILE":
             logger.info("Config file specified. Using FileConfigManager")
             config_file = config_args[1] if len(config_args) > 1 else "config.json"
             config_manager = FileConfigManager(
-                thing_name, component_name, config_file, platform=platform
+                thing_name, component_name, config_file, platform=platform,
+                no_shared_config=no_shared_config,
             )
         elif config_args[0].upper() == "CONFIGMAP":
             logger.info("CONFIGMAP specified. Using ConfigMapConfigManager")
@@ -48,13 +50,15 @@ class ConfigManagerBuilder:
             mount_dir = config_args[1] if len(config_args) > 1 else None
             config_key = config_args[2] if len(config_args) > 2 else None
             config_manager = ConfigMapConfigManager(
-                thing_name, component_name, mount_dir, config_key, platform=platform
+                thing_name, component_name, mount_dir, config_key, platform=platform,
+                no_shared_config=no_shared_config,
             )
         elif config_args[0].upper() == "ENV":
             logger.info("Environment config specified. Using EnvironmentConfigManager")
             env_var = config_args[1] if len(config_args) > 1 else "CONFIG"
             config_manager = EnvironmentConfigManager(
-                thing_name, component_name, env_var, platform=platform
+                thing_name, component_name, env_var, platform=platform,
+                no_shared_config=no_shared_config,
             )
         elif config_args[0].upper() == "GG_CONFIG":
             logger.info("GG_CONFIG specified. Using GreengrassConfigManager")
@@ -63,6 +67,7 @@ class ConfigManagerBuilder:
             config_manager = GreengrassConfigManager(
                 thing_name, component_name, config_component_name, config_component_key,
                 platform=platform,
+                no_shared_config=no_shared_config,
             )
         elif config_args[0].upper() == "SHADOW":
             logger.info("SHADOW specified. Using ShadowConfigManager")
@@ -73,12 +78,14 @@ class ConfigManagerBuilder:
                 config_args[1] if len(config_args) > 1 else _sanitize_shadow_name(component_name)
             )
             config_manager = ShadowConfigManager(
-                thing_name, component_name, shadow_name, platform=platform
+                thing_name, component_name, shadow_name, platform=platform,
+                no_shared_config=no_shared_config,
             )
         elif config_args[0].upper() == "CONFIG_COMPONENT":
             logger.info("CONFIG_COMPONENT specified. Using ConfigComponentManager")
             config_manager = ConfigComponentManager(
-                thing_name, component_name, platform=platform
+                thing_name, component_name, platform=platform,
+                no_shared_config=no_shared_config,
             )
         else:
             logger.fatal(

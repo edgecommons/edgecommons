@@ -1,0 +1,12 @@
+**
+!libs/
+!libs/java/
+!libs/java/**
+!proto/
+!proto/**
+!examples/
+!examples/java/
+!examples/java/pom.xml
+!examples/java/src/
+!examples/java/src/**
+libs/java/target

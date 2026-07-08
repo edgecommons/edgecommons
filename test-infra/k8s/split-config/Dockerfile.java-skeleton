@@ -1,0 +1,22 @@
+FROM maven:3.9-eclipse-temurin-25 AS build
+
+WORKDIR /src
+COPY libs/java /src/libs/java
+COPY proto /src/proto
+COPY examples/java/pom.xml /src/examples/java/pom.xml
+COPY examples/java/src /src/examples/java/src
+
+RUN mvn -f /src/libs/java/pom.xml -DskipTests install
+RUN mvn -f /src/examples/java/pom.xml -DskipTests package
+
+FROM eclipse-temurin:25-jre
+
+WORKDIR /app
+COPY --from=build /src/examples/java/target/java-component-skeleton-1.0.0.jar /app/app.jar
+
+ENV JAVA_TOOL_OPTIONS="-Duser.home=/tmp -Djava.io.tmpdir=/tmp"
+WORKDIR /tmp
+
+USER 65532:65532
+
+ENTRYPOINT ["java", "-jar", "/app/app.jar"]

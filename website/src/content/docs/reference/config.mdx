@@ -399,6 +399,39 @@ config** — listeners are not notified and the reload reports failure. First-lo
 closed in all four.
 </Aside>
 
+## Split-config contract
+
+All four SDKs expose only the merged effective config through the normal config APIs. When a shared
+base layer is present, the SDK deep-merges `base` under `component`, strips split-config control
+fields such as `extends` and `sharedConfig`, validates the result, and then publishes or exposes the
+same effective shape as a single-document config.
+
+Provider-specific shared-layer defaults are identical across languages:
+
+| Source | Base-layer source |
+|--------|-------------------|
+| `FILE` | `extends`, then `$EDGECOMMONS_SHARED_CONFIG`, then `/etc/edgecommons/shared.json` if present; missing defaults are ignored, explicit unreadable files fail startup. |
+| `ENV` | `$EDGECOMMONS_SHARED_CONFIG` inline JSON or `@file`; unset means no base. |
+| `CONFIGMAP` | `extends`, then a shared key/file in the mounted ConfigMap directory, then `shared.json` under that mount directory if present. |
+| `GG_CONFIG` | `$EDGECOMMONS_SHARED_COMPONENT` or `com.mbreissi.edgecommons.EdgeCommonsSharedConfig`, key `SharedComponentConfig`; explicit shared-component failures are fatal, default absence means no base. |
+| `SHADOW` | Named shadow `edgecommons-shared`, reading `ComponentConfig` including stringified JSON values. |
+| `CONFIG_COMPONENT` | A response bundle containing raw `base` and `component` layers, or a legacy component-only document. |
+
+`CONFIG_COMPONENT` accepts both legacy component-only documents and layer bundles:
+
+```json
+{
+  "base": { "logging": { "level": "INFO" } },
+  "component": { "component": { "global": { "pollSecs": 5 } } }
+}
+```
+
+For startup and explicit re-fetches, a legacy response without top-level `base` is component-only.
+For pushed `set-config` messages, a full bundle replaces both raw layers, while a legacy document
+replaces only the component layer and preserves the last accepted base. A bundle with `"base": null`
+clears the base. Structured server errors fail startup or reject the reload with the returned code
+and message.
+
 ## Construction
 
 Component authors normally receive a ready config object from the EdgeCommons builder/runtime and do
@@ -412,9 +445,11 @@ not construct it directly. The underlying factory/builder is listed here for com
 | TypeScript | `buildConfigSource(spec, opts)` builds the source; `Config.fromValue(componentName, thingName, raw)` builds a snapshot |
 
 <Aside type="note" title="Sources that need a messaging client">
-`GG_CONFIG`, `SHADOW`, and `CONFIG_COMPONENT` load over Greengrass IPC, so the construction entry
-point requires a messaging client/provider — selecting one without it is a hard error. In Rust,
-`GG_CONFIG` and `SHADOW` additionally require the `greengrass` cargo feature. See the
+`GG_CONFIG` and `SHADOW` load over Greengrass IPC; `CONFIG_COMPONENT` loads over the active
+messaging transport, including HOST/Kubernetes MQTT. The construction entry point therefore
+requires a messaging client/provider for these messaging-backed sources, and selecting one without
+messaging is a hard error. In Rust, `GG_CONFIG` and `SHADOW` additionally require the `greengrass`
+cargo feature. See the
 [Configuration guide](/guides/configuration/#config-sources) for the full source list.
 </Aside>
 

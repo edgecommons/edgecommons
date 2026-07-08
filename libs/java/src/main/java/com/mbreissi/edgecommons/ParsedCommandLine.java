@@ -27,4 +27,6 @@ public class ParsedCommandLine
     public String standaloneConfigPath;
     /** AWS IoT thing name associated with this component */
     public String thingName;
+    /** Parse-time opt-out: disables shared-layer resolution for this process. */
+    public boolean noSharedConfig;
 }

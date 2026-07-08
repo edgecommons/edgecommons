@@ -66,8 +66,8 @@ class TestConfigManagerBase:
         assert cm.is_initializing() is False
 
     def test_get_full_config_includes_optional_sections(self):
-        # validation disabled: this test only checks get_full_config surfaces the raw
-        # optional sections, not that they match the (stricter) schema.
+        # validation disabled: this test only checks get_full_config surfaces the
+        # accepted effective snapshot exactly.
         cm = DictConfigManager({
             "component": {"global": {}, "instances": []},
             "streaming": {"streams": []},
@@ -78,7 +78,8 @@ class TestConfigManagerBase:
         assert full["streaming"] == {"streams": []}
         assert full["credentials"] == {"vault": {}}
         assert full["parameters"] == {"sources": []}
-        assert "component" in full and "metricEmission" in full
+        assert full["component"] == {"global": {}, "instances": []}
+        assert "metricEmission" not in full
 
     def test_logging_correlation_reads_k8s_env(self, monkeypatch):
         monkeypatch.setenv("POD_NAME", "pod-1")

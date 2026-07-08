@@ -9,7 +9,6 @@ import com.mbreissi.edgecommons.parameters.MountedDirSource;
 import com.google.gson.JsonObject;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import org.mockito.ArgumentCaptor;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -28,8 +27,9 @@ import static org.mockito.Mockito.*;
  * directory-watch RE-ARM verified by simulating the kubelet atomic {@code ..data} swap (FR-CFG-2).
  *
  * <p>Every test {@code close()}s the provider so its {@link com.mbreissi.edgecommons.utils.DirectoryWatcher}
- * daemon thread does not leak. The {@link ConfigManager} is a Mockito mock so {@code applyConfig(...)}
- * can be observed without exercising the real schema validator or logging reconfiguration.
+ * daemon thread does not leak. The {@link ConfigManager} is a Mockito mock so
+ * {@code reloadFromProvider()} can be observed without exercising the real schema validator or
+ * logging reconfiguration.
  */
 class ConfigMapConfigProviderTest {
 
@@ -136,9 +136,7 @@ class ConfigMapConfigProviderTest {
                 new ConfigMapConfigProvider(cm, mount.toString(), "config.json");
         try {
             provider.onChange();
-            ArgumentCaptor<JsonObject> captor = ArgumentCaptor.forClass(JsonObject.class);
-            verify(cm).applyConfig(captor.capture());
-            assertEquals(3, captor.getValue().get("version").getAsInt());
+            verify(cm).reloadFromProvider();
         } finally {
             provider.close();
         }
@@ -155,7 +153,7 @@ class ConfigMapConfigProviderTest {
                 new ConfigMapConfigProvider(cm, mount.toString(), "config.json");
         try {
             assertDoesNotThrow(provider::onChange);
-            verify(cm, never()).applyConfig(any());
+            verify(cm).reloadFromProvider();
         } finally {
             provider.close();
         }
@@ -169,7 +167,7 @@ class ConfigMapConfigProviderTest {
                 new ConfigMapConfigProvider(cm, mount.toString(), "config.json");
         try {
             assertDoesNotThrow(provider::onChange);
-            verify(cm, never()).applyConfig(any());
+            verify(cm).reloadFromProvider();
         } finally {
             provider.close();
         }
@@ -184,7 +182,7 @@ class ConfigMapConfigProviderTest {
                 new ConfigMapConfigProvider(cm, mount.toString(), "config.json");
         try {
             assertDoesNotThrow(provider::onChange);
-            verify(cm, never()).applyConfig(any());
+            verify(cm).reloadFromProvider();
         } finally {
             provider.close();
         }
@@ -214,8 +212,7 @@ class ConfigMapConfigProviderTest {
             // Deterministic: wait until the reload carrying version 3 is applied — proving the watch
             // re-armed across BOTH edits (not a one-shot). Avoids the race where "at least 2 calls"
             // returns after the v1+v2 applies, before v3's reload lands.
-            verify(cm, timeout(20_000).atLeastOnce()).applyConfig(argThat(c ->
-                    c.has("version") && c.get("version").getAsInt() == 3));
+            verify(cm, timeout(20_000).atLeast(2)).reloadFromProvider();
         } finally {
             provider.close();
         }
@@ -254,13 +251,9 @@ class ConfigMapConfigProviderTest {
             Files.move(mount.resolve("..data_tmp"), mount.resolve("..data"),
                     StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
 
-            // Wait until applyConfig is called WITH the post-swap version (2), rather than capturing
-            // "the last call within timeout": the watcher may legitimately fire an earlier reconcile
-            // read of the pre-swap version (1) before the kubelet swap propagates, and consecutive
-            // edits can coalesce — so asserting an exact call count / last-captured value is racy.
-            // Converging to version 2 is the behavior that matters (and what the kubelet guarantees).
-            verify(cm, timeout(15_000).atLeastOnce())
-                    .applyConfig(argThat(c -> c != null && c.has("version") && c.get("version").getAsInt() == 2));
+            // The provider delegates the actual read/merge/validate to ConfigManager, so the watch
+            // assertion is that the kubelet swap invokes the reload path.
+            verify(cm, timeout(15_000).atLeastOnce()).reloadFromProvider();
         } finally {
             provider.close();
         }

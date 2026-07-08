@@ -53,8 +53,16 @@ class ConfigComponentManager(ConfigManager):
         config = message.get_body()
         self.configuration_changed(config)
 
-    def __init__(self, thing_name: str, component_name: str, platform=None):
-        super().__init__(component_name, thing_name, platform=platform)
+    def __init__(
+        self,
+        thing_name: str,
+        component_name: str,
+        platform=None,
+        no_shared_config: bool = False,
+    ):
+        super().__init__(
+            component_name, thing_name, platform=platform, no_shared_config=no_shared_config
+        )
         # Mint the UNS tokens locally (identity is not resolved yet): device =
         # sanitized resolved thing name, component = sanitized short name, mirroring
         # the {ThingName}/{ComponentName} template semantics and §1.5 steps 4-5.
@@ -72,6 +80,7 @@ class ConfigComponentManager(ConfigManager):
             f"Config Manager Component (get: {self._get_topic},"
             f" set-config inbox: {self._set_config_topic})"
         )
+        self._config_provider_family = "CONFIG_COMPONENT"
         self.init()
         MessagingClient.subscribe(self._set_config_topic, self.load_and_apply_config)
 

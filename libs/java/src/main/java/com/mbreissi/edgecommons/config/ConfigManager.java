@@ -48,6 +48,7 @@ public class ConfigManager
     private static final Logger LOGGER = LogManager.getLogger(ConfigManager.class);
 
     ConfigProvider configProvider;
+    private LayeredConfigCoordinator layeredConfigCoordinator;
     protected final String componentName;
     protected final String componentFullName;
     protected final String thingName;
@@ -123,6 +124,7 @@ public class ConfigManager
         this.fullConfig = null;
         this.platform = null;
         this.componentIdentity = null;
+        this.layeredConfigCoordinator = null;
     }
 
     ConfigManager(String componentFullName, String componentName, String thingName,
@@ -132,12 +134,19 @@ public class ConfigManager
 
     ConfigManager(String componentFullName, String componentName, String thingName,
                  ConfigProvider configProvider, JsonObject fullConfig, Platform platform) {
+        this(componentFullName, componentName, thingName, configProvider, fullConfig, platform, null);
+    }
+
+    ConfigManager(String componentFullName, String componentName, String thingName,
+                 ConfigProvider configProvider, JsonObject fullConfig, Platform platform,
+                 LayeredConfigCoordinator layeredConfigCoordinator) {
         this.componentFullName = componentFullName;
         this.componentName = componentName;
         this.thingName = thingName;
         this.configProvider = configProvider;
         this.fullConfig = fullConfig;
         this.platform = platform;
+        this.layeredConfigCoordinator = layeredConfigCoordinator;
 
         applyConfig(fullConfig);
 
@@ -155,6 +164,9 @@ public class ConfigManager
         // ConfigMap watcher reload) dereferencing a forever-null parentConfigManager.
         if (configProvider != null) {
             configProvider.attachConfigManager(this);
+        }
+        if (layeredConfigCoordinator != null) {
+            layeredConfigCoordinator.attachConfigManager(this);
         }
 
         // Note: initializing flag will be set to false by EdgeCommons after all initialization is complete
@@ -239,7 +251,9 @@ public class ConfigManager
         JsonObject newConfig;
         try
         {
-            newConfig = configProvider.loadConfiguration();
+            newConfig = layeredConfigCoordinator != null
+                    ? layeredConfigCoordinator.reloadEffectiveFromProvider()
+                    : configProvider.loadConfiguration();
         }
         catch (Exception e)
         {
@@ -269,6 +283,32 @@ public class ConfigManager
         LOGGER.info("reload-config: configuration re-fetched and re-applied from the '{}' source",
                 configProvider.getConfigSource());
         return true;
+    }
+
+    /**
+     * Applies a raw provider payload (component document or CONFIG_COMPONENT bundle) by resolving
+     * split-config layers first. Used by provider push/watch callbacks; returns false and keeps the
+     * current effective config on any merge/validation failure.
+     */
+    public boolean applyConfigFromProvider(JsonObject rawConfig)
+    {
+        if (layeredConfigCoordinator == null)
+        {
+            applyConfig(rawConfig);
+            return true;
+        }
+        try
+        {
+            JsonObject effective = layeredConfigCoordinator.applyProviderPayload(rawConfig);
+            applyConfig(effective);
+            return true;
+        }
+        catch (Exception e)
+        {
+            LOGGER.warn("Rejected provider configuration update (keeping previous): {}",
+                    e.getMessage(), e);
+            return false;
+        }
     }
 
 
@@ -756,6 +796,9 @@ public class ConfigManager
      */
     public void close()
     {
+        if (layeredConfigCoordinator != null) {
+            layeredConfigCoordinator.close();
+        }
         if (configProvider != null) {
             configProvider.close();
         }

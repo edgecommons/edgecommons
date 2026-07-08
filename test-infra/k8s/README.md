@@ -65,6 +65,8 @@ What the harness proves end-to-end:
 | `emqx.yaml` | In-cluster EMQX MQTT broker (Deployment + ClusterIP Service `edgecommons-emqx`, plaintext 1883). |
 | `Dockerfile` | Builds the default (Python) component image used by the smoke test. |
 | `smoke.sh` | Assertion script the **orchestrator/CI runs live** (installs everything, asserts the four points above incl. the hot-reload test). |
+| `split-config/` | Full split-config E2E harness: EMQX + Rust ConfigComponent + Java/Python/Rust/TypeScript skeletons + verifier Job. |
+| `setup-runner-vm.sh` | Bootstrap script for a dedicated Ubuntu VM used as the repeatable local Kubernetes E2E runner. |
 | `../../.github/workflows/k8s.yml` | CI job: kind + build/load image + helm install + `smoke.sh`. |
 
 ## The component config (ConfigMap)
@@ -81,6 +83,44 @@ What the harness proves end-to-end:
 Mounting the **whole volume** (not a `subPath`) is what lets the kubelet perform the
 atomic `..data` swap that the `CONFIGMAP` source watches for hot-reload (FR-CFG-2/3).
 
+## Set up a dedicated Kubernetes runner VM
+
+For repeatable local E2E runs, use a dedicated Ubuntu VM rather than the Greengrass device or a
+kind control-plane container as the build/deploy workstation. The bootstrap script installs Docker,
+kind, kubectl, Helm, jq/yq, Java 25 LTS, Maven, Node.js 24 LTS, Python, Rust, and native build tools
+with pinned tool defaults. It also configures the `prometheus-community` Helm repository so E2E runs
+can install Prometheus into the disposable kind cluster.
+
+```bash
+bash test-infra/k8s/setup-runner-vm.sh
+```
+
+The script runs a short kind probe by default and deletes the probe cluster afterward. Set
+`RUN_PROBE=0` to skip that check. If Docker's Ubuntu repository does not publish the pinned Docker
+package for the VM's Ubuntu codename, the script prints the available package versions and stops so
+the pin can be chosen explicitly.
+
+Prometheus should be installed as a cluster add-on for the test run, not as a host-level daemon on
+the VM. That keeps each run isolated and exercises the real Kubernetes `ServiceMonitor` scrape path:
+
+```bash
+helm upgrade --install kps prometheus-community/kube-prometheus-stack \
+  --version 87.10.1 \
+  --namespace monitoring \
+  --create-namespace \
+  --wait
+```
+
+When installing the EdgeCommons chart for a Prometheus-backed E2E run, enable the `ServiceMonitor`
+and label it for the stack release:
+
+```bash
+helm upgrade --install ggc test-infra/k8s/chart \
+  --namespace edgecommons \
+  --set serviceMonitor.enabled=true \
+  --set serviceMonitor.labels.release=kps
+```
+
 ## Run it on kind
 
 Prereqs: `docker`, `kind`, `kubectl`, `helm` (v3+).
@@ -91,13 +131,45 @@ kind create cluster --name edgecommons --config test-infra/k8s/kind-config.yaml
 
 # 2. Build the component image and load it into the cluster
 docker build -f test-infra/k8s/Dockerfile -t edgecommons-component:ci .
-kind load docker-image edgecommons-component:ci --name edgecommons
+docker save edgecommons-component:ci | docker exec -i edgecommons-control-plane ctr -n k8s.io images import -
+docker exec edgecommons-control-plane crictl images | grep edgecommons-component
 
 # 3. Run the smoke test (installs broker + chart, asserts everything, incl. hot-reload)
 IMAGE=edgecommons-component:ci NAMESPACE=edgecommons ./test-infra/k8s/smoke.sh
 ```
 
-`smoke.sh` cleans up the namespace on exit; pass `KEEP=1` to leave it for inspection.
+The direct `ctr` import is intentional for the pinned `kindest/node:v1.36.1` node image. With kind
+v0.30.0, `kind load docker-image` can fail against this node image with
+`unknown containerd config version: 4`.
+
+`smoke.sh` cleans up the namespace on exit. Use `KEEP=1` only while collecting diagnostics, then
+delete the namespace when evidence has been captured.
+
+## Run full split-config E2E
+
+The smoke test above is not the full split-config acceptance gate. For split-config changes, run the
+checked-in harness:
+
+```bash
+cd ~/source/edgecommons/core
+bash test-infra/k8s/split-config/run.sh
+```
+
+For evidence collection:
+
+```bash
+cd ~/source/edgecommons/core
+KEEP=1 bash test-infra/k8s/split-config/run.sh | tee /tmp/edgecommons-split-e2e.log
+kubectl -n edgecommons-split get pods
+kubectl -n edgecommons-split logs job/edgecommons-split-verifier
+kubectl delete namespace edgecommons-split --wait=false
+```
+
+The harness builds local images from the current VM checkout and does not require a GitHub push. If
+the code under test is local to the Windows workstation, copy or `rsync` the relevant source trees to
+the runner VM first. The full run proves that ConfigComponent bootstraps from ConfigMap/file config,
+all four skeletons bootstrap with `CONFIG_COMPONENT`, a volatile `update-catalog` message fans out
+new split bundles, each skeleton dynamically reloads, and no split-config pod restarts.
 
 ## Run it on lab k3s
 
@@ -157,5 +229,5 @@ helm template ggc test-infra/k8s/chart --set rbac.create=true   # render the opt
 - RBAC is **off by default** — the component needs no Kubernetes API access (config and
   secrets arrive as mounted volumes). Enable least-privilege, ConfigMap-scoped read RBAC
   with `--set rbac.create=true`.
-- The `health`/`metrics` ports and the Service are wired now but have **no live
-  listeners until sub-phase 1c** adds the HTTP health endpoint and the prometheus target.
+- The `health` and `metrics` ports expose the live HTTP health endpoint and Prometheus metrics
+  target used by the smoke and E2E tests.

@@ -1,0 +1,16 @@
+**
+!libs/
+!libs/rust/
+!libs/rust/**
+!libs/rust-streamlog/
+!libs/rust-streamlog/**
+!proto/
+!proto/**
+!examples/
+!examples/rust/
+!examples/rust/Cargo.toml
+!examples/rust/Cargo.lock
+!examples/rust/src/
+!examples/rust/src/**
+libs/rust/target
+libs/rust-streamlog/target

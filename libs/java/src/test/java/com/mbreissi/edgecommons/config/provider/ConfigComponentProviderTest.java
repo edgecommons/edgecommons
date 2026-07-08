@@ -4,6 +4,10 @@
  */
 package com.mbreissi.edgecommons.config.provider;
 
+import com.mbreissi.edgecommons.ParsedCommandLine;
+import com.mbreissi.edgecommons.config.ConfigManager;
+import com.mbreissi.edgecommons.config.ConfigManagerFactory;
+import com.mbreissi.edgecommons.config.ConfigurationException;
 import com.mbreissi.edgecommons.messaging.Message;
 import com.mbreissi.edgecommons.messaging.MessageBuilder;
 import com.mbreissi.edgecommons.messaging.ReplyFuture;
@@ -115,6 +119,17 @@ class ConfigComponentProviderTest {
         return MessageBuilder.create("SetConfig", "1.0").withPayload(newConfig).build();
     }
 
+    private static ParsedCommandLine configComponentCmdLine() {
+        ParsedCommandLine cmdLine = new ParsedCommandLine();
+        cmdLine.configArgs = new String[]{"CONFIG_COMPONENT"};
+        cmdLine.thingName = "test-thing";
+        return cmdLine;
+    }
+
+    private static JsonObject json(String json) {
+        return com.google.gson.JsonParser.parseString(json).getAsJsonObject();
+    }
+
     // ----- Flow A: the GET rendezvous (D-U19) -----
 
     @Test
@@ -144,6 +159,78 @@ class ConfigComponentProviderTest {
 
         assertEquals("x", loaded.get("component").getAsString());
         assertEquals(1, messaging.requests.get(), "one request suffices on the happy path");
+    }
+
+    @Test
+    void bundleReplyMergesBaseAndComponentIntoEffectiveConfig() throws Exception {
+        ScriptedMessaging messaging = new ScriptedMessaging();
+        JsonObject bundle = new JsonObject();
+        bundle.add("base", json("""
+                {"logging":{"level":"INFO"},
+                 "identity":{"site":"dallas"},
+                 "hierarchy":{"levels":["site","device"]}}"""));
+        bundle.add("component", json("{\"component\":{\"global\":{\"v\":1}}}"));
+        messaging.scripted.add(replied(bundle));
+
+        ConfigManager cm = ConfigManagerFactory.create("com.test.Comp",
+                configComponentCmdLine(), messaging);
+        try {
+            assertEquals("INFO", cm.getFullConfig().getAsJsonObject("logging")
+                    .get("level").getAsString());
+            assertEquals(1, cm.getGlobalConfig().get("v").getAsInt());
+            assertFalse(cm.getFullConfig().has("base"));
+        } finally {
+            cm.close();
+        }
+    }
+
+    @Test
+    void structuredErrorReplyFailsStartupWithServerCode() {
+        ScriptedMessaging messaging = new ScriptedMessaging();
+        messaging.scripted.add(replied(json("""
+                {"ok":false,
+                 "error":{"code":"CONFIG_NOT_FOUND",
+                          "message":"No configuration catalog entry for component 'missing'"}}""")));
+
+        ConfigurationException ex = assertThrows(ConfigurationException.class,
+                () -> ConfigManagerFactory.create("com.test.Comp",
+                        configComponentCmdLine(), messaging));
+        assertTrue(ex.getMessage().contains("CONFIG_NOT_FOUND")
+                || (ex.getCause() != null && ex.getCause().getMessage().contains("CONFIG_NOT_FOUND")));
+    }
+
+    @Test
+    void malformedBundleMissingComponentFailsStartup() {
+        ScriptedMessaging messaging = new ScriptedMessaging();
+        messaging.scripted.add(replied(json("{\"base\":{\"logging\":{\"level\":\"INFO\"}}}")));
+
+        ConfigurationException ex = assertThrows(ConfigurationException.class,
+                () -> ConfigManagerFactory.create("com.test.Comp",
+                        configComponentCmdLine(), messaging));
+        assertTrue(ex.getMessage().contains("CONFIG_COMPONENT_BUNDLE_INVALID")
+                || (ex.getCause() != null && ex.getCause().getMessage().contains("CONFIG_COMPONENT_BUNDLE_INVALID")));
+    }
+
+    @Test
+    void pushedBundleReloadMergesAndAppliesEffectiveConfig() throws Exception {
+        ScriptedMessaging messaging = new ScriptedMessaging();
+        messaging.scripted.add(replied(json("{\"component\":{\"global\":{\"v\":1}}}")));
+
+        ConfigManager cm = ConfigManagerFactory.create("com.test.Comp",
+                configComponentCmdLine(), messaging);
+        cm.completeInitialization();
+        try {
+            JsonObject push = new JsonObject();
+            push.add("base", json("{\"logging\":{\"level\":\"WARN\"}}"));
+            push.add("component", json("{\"component\":{\"global\":{\"v\":2}}}"));
+            messaging.simulateMessage(EXPECTED_SET_CONFIG_TOPIC, setConfigPush(push));
+
+            assertEquals("WARN", cm.getFullConfig().getAsJsonObject("logging")
+                    .get("level").getAsString());
+            assertEquals(2, cm.getGlobalConfig().get("v").getAsInt());
+        } finally {
+            cm.close();
+        }
     }
 
     @Test

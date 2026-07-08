@@ -1,0 +1,10 @@
+**
+!libs/
+!libs/python/
+!libs/python/**
+!examples/
+!examples/python/
+!examples/python/main.py
+!examples/python/app/
+!examples/python/app/**
+!examples/python/requirements.txt

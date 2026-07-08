@@ -1,0 +1,30 @@
+FROM node:24-bookworm-slim AS build
+
+WORKDIR /src
+
+COPY libs/ts/package.json /src/libs/ts/package.json
+COPY libs/ts/tsconfig.json /src/libs/ts/tsconfig.json
+COPY libs/ts/src /src/libs/ts/src
+RUN cd /src/libs/ts && npm install && npm run build && npm pack --pack-destination /tmp
+
+COPY examples/ts/package.json /src/examples/ts/package.json
+COPY examples/ts/tsconfig.json /src/examples/ts/tsconfig.json
+COPY examples/ts/src /src/examples/ts/src
+RUN cd /src/examples/ts \
+    && npm pkg set "dependencies.@edgecommons/edgecommons=file:/tmp/edgecommons-edgecommons-0.2.0.tgz" \
+    && npm install \
+    && npm run build \
+    && npm prune --omit=dev
+
+FROM node:24-bookworm-slim
+
+ENV NODE_ENV=production
+
+WORKDIR /app
+COPY --from=build /src/examples/ts/package.json /app/package.json
+COPY --from=build /src/examples/ts/dist /app/dist
+COPY --from=build /src/examples/ts/node_modules /app/node_modules
+
+USER 65532:65532
+
+ENTRYPOINT ["node", "/app/dist/main.js"]

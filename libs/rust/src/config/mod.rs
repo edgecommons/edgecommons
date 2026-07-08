@@ -37,6 +37,7 @@
 
 pub(crate) mod effective;
 pub(crate) mod identity;
+pub(crate) mod layered;
 pub mod model;
 pub mod source;
 pub mod template;

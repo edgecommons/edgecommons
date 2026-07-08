@@ -23,6 +23,8 @@ import { HealthServer, ReadinessState } from "./health";
 import { resolve } from "./config/template";
 import { validate } from "./config/validation";
 import { buildConfigSource, ConfigSource, ConfigWatch } from "./config/source";
+import { buildBaseLayerResolver, LayeredConfigCoordinator } from "./config/layered";
+import type { JsonObject } from "./config/merge";
 import { ConfigurationChangeListener } from "./config";
 import { EffectiveConfigPublisher } from "./config/effective_config";
 import { CommandInbox } from "./commands";
@@ -512,6 +514,8 @@ export class EdgeCommons {
   /** @internal Apply a reloaded snapshot and notify listeners. */
   _applyReload(snapshot: Config): void {
     this.current = snapshot;
+    this.unsValue = undefined;
+    this.instanceHandles.clear();
   }
 }
 
@@ -563,10 +567,21 @@ export class EdgeCommonsBuilder {
       thingName,
       componentName: this.componentNameValue,
     });
+    const baseResolver = buildBaseLayerResolver(parsed.config, {
+      ipcProvider,
+      thingName,
+      componentName: this.componentNameValue,
+    });
+    const layeredConfig = new LayeredConfigCoordinator({
+      source,
+      sourceSpec: parsed.config,
+      baseResolver,
+      noSharedConfig: parsed.noSharedConfig,
+    });
 
-    const raw = await source.load();
-    validate(raw);
-    let current = Config.fromValue(this.componentNameValue, thingName, raw);
+    const effectiveRaw = await layeredConfig.loadEffective();
+    validate(effectiveRaw);
+    let current = Config.fromValue(this.componentNameValue, thingName, effectiveRaw);
 
     if (messaging instanceof DefaultMessagingService) {
       // UNS-CANONICAL-DESIGN §5 / D-U5: late-bind the request() default deadline from
@@ -625,15 +640,11 @@ export class EdgeCommonsBuilder {
 
     // Build the runtime first so the reload closure can update its snapshot.
     let runtime: EdgeCommons;
-    // The single validate/parse/apply/notify path for a reloaded raw config document, shared by
-    // the config source's push-based hot reload (`onUpdate`, below) AND the `reload-config`
-    // command verb's pull-based reload (DESIGN-uns §9.5) — one code path means both can never
-    // drift out of sync on which snapshot `current`/`runtime.current` reflects (the Java
-    // `fullConfig`-staleness fix's TS equivalent: `current`/`runtime._applyReload` are updated
-    // HERE, before any config-change listener — including the effective-config publisher and
-    // the `get-configuration` verb's redacted-config supplier — runs). Returns whether the
-    // document was applied.
-    const applyRawConfig = (rawUpdate: unknown): boolean => {
+    // The single validate/parse/apply/notify path for a reloaded EFFECTIVE config document, shared
+    // by source hot reloads, base-layer hot reloads, and the `reload-config` command. The layered
+    // coordinator performs raw-layer parsing/merge first; this path only accepts a fully merged
+    // candidate and commits it before notifying listeners.
+    const applyEffectiveConfig = (rawUpdate: JsonObject): boolean => {
       try {
         validate(rawUpdate);
       } catch (e) {
@@ -663,9 +674,6 @@ export class EdgeCommonsBuilder {
         }
       }
       return true;
-    };
-    const onUpdate = (rawUpdate: unknown): void => {
-      applyRawConfig(rawUpdate);
     };
 
     runtime = new EdgeCommons(
@@ -768,16 +776,7 @@ export class EdgeCommonsBuilder {
         () => current,
         messaging,
         () => heartbeat.getUptimeSecs(),
-        async () => {
-          let raw: unknown;
-          try {
-            raw = await source.load();
-          } catch (e) {
-            logger.warn(`reload-config: re-fetch from the '${source.sourceName()}' source failed: ${String(e)}`);
-            return false;
-          }
-          return applyRawConfig(raw);
-        },
+        async () => layeredConfig.reloadFromProvider(applyEffectiveConfig),
         () => effectiveConfigPublisher.redactedEffectiveConfig(),
       );
       await commandInbox.start();
@@ -816,7 +815,7 @@ export class EdgeCommonsBuilder {
 
     // Attach the watch only after the runtime exists, so a reload that fires during
     // subscription setup has a valid runtime to update.
-    runtime._setWatch(await source.watch(onUpdate));
+    runtime._setWatch(await layeredConfig.watch(applyEffectiveConfig));
     return runtime;
   }
 }

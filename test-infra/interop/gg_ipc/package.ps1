@@ -191,59 +191,52 @@ $envPrefix = "export EDGECOMMONS_GG_READY_LANGS=python,java,rust,rustpeer,ts`n  
 
 $pythonLifecycle = @"
       Install:
-        RequiresPrivilege: true
         Script: |
           python3 -m venv /tmp/edgecommons-gg-ipc-python-venv
           /tmp/edgecommons-gg-ipc-python-venv/bin/python -m pip install --upgrade pip
           /tmp/edgecommons-gg-ipc-python-venv/bin/python -m pip install "{artifacts:decompressedPath}/python/ggpython/libs/python"
       Run:
-        RequiresPrivilege: true
         Script: |
           $envPrefix
-          PYTHONPATH="{artifacts:decompressedPath}/python/ggpython/libs/python" /tmp/edgecommons-gg-ipc-python-venv/bin/python -u "{artifacts:decompressedPath}/python/ggpython/python_node.py" gg-binary-matrix "$RunId" "$Langs" "$BinaryHex"
+          exec env PYTHONPATH="{artifacts:decompressedPath}/python/ggpython/libs/python" /tmp/edgecommons-gg-ipc-python-venv/bin/python -u "{artifacts:decompressedPath}/python/ggpython/python_node.py" gg-binary-matrix "$RunId" "$Langs" "$BinaryHex"
 "@
 
 $javaLifecycle = @"
       Run:
-        RequiresPrivilege: true
         Script: |
           $envPrefix
-          java -cp "{artifacts:decompressedPath}/java/ggjava/edgecommons.jar:{artifacts:decompressedPath}/java/ggjava" InteropNode gg-binary-matrix "$RunId" "$Langs" "$BinaryHex"
+          exec java -cp "{artifacts:decompressedPath}/java/ggjava/edgecommons.jar:{artifacts:decompressedPath}/java/ggjava" InteropNode gg-binary-matrix "$RunId" "$Langs" "$BinaryHex"
 "@
 
 $rustLifecycle = @"
       Install:
         Script: "chmod +x {artifacts:decompressedPath}/rust/ggrust/interop-rust-node"
       Run:
-        RequiresPrivilege: true
         Script: |
           $envPrefix
-          "{artifacts:decompressedPath}/rust/ggrust/interop-rust-node" gg-binary-matrix "$RunId" "$Langs" "$BinaryHex"
+          exec "{artifacts:decompressedPath}/rust/ggrust/interop-rust-node" gg-binary-matrix "$RunId" "$Langs" "$BinaryHex"
 "@
 
 $rustPeerLifecycle = @"
       Install:
         Script: "chmod +x {artifacts:decompressedPath}/rust/ggrust/interop-rust-node"
       Run:
-        RequiresPrivilege: true
         Script: |
           export EDGECOMMONS_GG_READY_LANG=rustpeer
           $envPrefix
-          "{artifacts:decompressedPath}/rust/ggrust/interop-rust-node" gg-binary-matrix "$RunId" "$Langs" "$BinaryHex"
+          exec "{artifacts:decompressedPath}/rust/ggrust/interop-rust-node" gg-binary-matrix "$RunId" "$Langs" "$BinaryHex"
 "@
 
 $tsLifecycle = @"
       Install:
-        RequiresPrivilege: true
         Script: |
           cd "{artifacts:decompressedPath}/ts/ggts"
           npm install --omit=dev --no-audit --no-fund
       Run:
-        RequiresPrivilege: true
         Script: |
           $envPrefix
           cd "{artifacts:decompressedPath}/ts/ggts"
-          node test-infra/interop/ts_node/dist/interop_node.js gg-binary-matrix "$RunId" "$Langs" "$BinaryHex"
+          exec node test-infra/interop/ts_node/dist/interop_node.js gg-binary-matrix "$RunId" "$Langs" "$BinaryHex"
 "@
 
 New-Recipe -ComponentName $components.python -ZipName "python.zip" -Description "Python Greengrass IPC binary message interop verifier." -Lifecycle $pythonLifecycle
