@@ -94,7 +94,7 @@ This means a shared base can provide `logging`, `heartbeat`, `tags`, `credential
 
 Inherited stream definitions are still per-component runtime resources. Each component opens its
 own stream handles, buffer files, drains, metrics, and shutdown path; there is no shared stream
-service or shared stream buffer in split-config v1.
+service or shared stream buffer in split-config deployments.
 
 The shared layer is found by the same provider family as the component layer:
 
@@ -105,7 +105,7 @@ The shared layer is found by the same provider family as the component layer:
 | `CONFIGMAP` | `extends`, else a shared config entry in the same mount, else `shared.json` under the configured mount directory when present. |
 | `GG_CONFIG` | `GetConfiguration()` on `$EDGECOMMONS_SHARED_COMPONENT`, default `com.mbreissi.edgecommons.EdgeCommonsSharedConfig`, key `SharedComponentConfig`. The default component/key may be absent; an explicitly named shared component must be readable. |
 | `SHADOW` | Named shadow `edgecommons-shared` on the same Thing; the shared object is read from `ComponentConfig`, including stringified JSON values. |
-| `CONFIG_COMPONENT` | A config server reply shaped as a layer bundle with `base` and `component` fields; legacy replies without `base` are component-only. |
+| `CONFIG_COMPONENT` | A config server reply shaped as a layer bundle with `base` and `component` fields; a reply with only `component` is treated as component-only. |
 
 Set `sharedConfig: false` at the top of a component layer to opt that component out. Operators can
 also pass `--no-shared-config`, which wins over any component file setting.

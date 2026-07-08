@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updated": "2026-07-03",
+  "updated": "2026-07-08",
   "components": [
     {
       "name": "opcua-adapter",
@@ -60,11 +60,22 @@
       "topics": ["edgecommons", "aws-iot-greengrass", "iiot", "unified-namespace", "console", "edgecommons-console"]
     },
     {
+      "name": "config-component",
+      "repo": "edgecommons/config-component",
+      "language": "RUST",
+      "category": "service",
+      "description": "Rust dedicated configuration service for split-config deployments. Boots from its own non-CONFIG_COMPONENT source, loads a pluggable catalog, serves raw shared and component layer bundles over the CONFIG_COMPONENT rendezvous, accepts privileged catalog replacement messages, and pushes accepted versions to consumers.",
+      "status": "experimental",
+      "platforms": ["GREENGRASS", "HOST", "KUBERNETES"],
+      "library": "edgecommons",
+      "topics": ["edgecommons", "aws-iot-greengrass", "iiot", "configuration", "split-config", "edgecommons-service"]
+    },
+    {
       "name": "file-replicator",
       "repo": "edgecommons/file-replicator",
       "language": "RUST",
       "category": "sink",
-      "description": "Rust reference sink component (northbound file delivery): watches local directories and replicates files to a destination (local, S3; SFTP/FTPS, HTTP, Azure Blob, GCS phased) on arrival or on cron schedules/windows. Resumable uploads with integrity verification, bandwidth caps, per-instance activation, on-complete delete/archive/quarantine, and a full control + event surface on a unified namespace.",
+      "description": "Rust reference sink component (northbound file delivery): watches local directories and replicates files to local, S3, or optional SFTP/FTPS, HTTP(S), Azure Blob, and GCS destinations on arrival or on cron schedules/windows. Resumable uploads with integrity verification, bandwidth caps, per-instance activation, on-complete delete/archive/quarantine, and a full control + event surface on a unified namespace.",
       "status": "experimental",
       "platforms": ["GREENGRASS", "HOST", "KUBERNETES"],
       "library": "edgecommons",
