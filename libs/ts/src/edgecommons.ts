@@ -23,7 +23,7 @@ import { HealthServer, ReadinessState } from "./health";
 import { resolve } from "./config/template";
 import { validate } from "./config/validation";
 import { buildConfigSource, ConfigSource, ConfigWatch } from "./config/source";
-import { buildBaseLayerResolver, LayeredConfigCoordinator } from "./config/layered";
+import { LayeredConfigCoordinator } from "./config/layered";
 import type { JsonObject } from "./config/merge";
 import { ConfigurationChangeListener } from "./config";
 import { EffectiveConfigPublisher } from "./config/effective_config";
@@ -567,16 +567,10 @@ export class EdgeCommonsBuilder {
       thingName,
       componentName: this.componentNameValue,
     });
-    const baseResolver = buildBaseLayerResolver(parsed.config, {
-      ipcProvider,
-      thingName,
-      componentName: this.componentNameValue,
-    });
     const layeredConfig = new LayeredConfigCoordinator({
       source,
       sourceSpec: parsed.config,
-      baseResolver,
-      noSharedConfig: parsed.noSharedConfig,
+      componentName: this.componentNameValue,
     });
 
     const effectiveRaw = await layeredConfig.loadEffective();

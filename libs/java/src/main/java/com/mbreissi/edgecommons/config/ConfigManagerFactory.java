@@ -53,8 +53,9 @@ public class ConfigManagerFactory {
             // Determine thing name
             String thingName = resolveThingName(cmdLine);
 
-            // Load raw component configuration, resolve any shared layer, merge, then validate only
-            // the stripped effective config. Raw layers may be partial documents.
+            // Load the provider configuration. Direct providers are already single effective
+            // documents; CONFIG_COMPONENT replies are lineage bundles merged into one effective
+            // document before validation.
             ConfigProvider configProvider = ConfigProviderBuilder.build(null, componentName, thingName, cmdLine.configArgs, messagingClient);
             LayeredConfigCoordinator layeredConfigCoordinator =
                     new LayeredConfigCoordinator(configProvider, cmdLine, messagingClient, thingName);

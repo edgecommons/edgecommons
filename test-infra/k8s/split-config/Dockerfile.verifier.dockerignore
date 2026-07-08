@@ -1,8 +1,0 @@
-**
-!libs/
-!libs/python/
-!libs/python/**
-!test-infra/
-!test-infra/k8s/
-!test-infra/k8s/split-config/
-!test-infra/k8s/split-config/verifier.py

@@ -81,11 +81,12 @@ one consumer of it (this is what fixes `TELEMETRY_STREAMING.md` §7).
   > vault path is the relative `vault` and **every example recipe points at
   > `/greengrass/v2/work/{ComponentFullName}/vault`** — i.e. each component gets its own vault in
   > its own work dir. A true shared vault needs a single **device-wide location writable by
-  > `ggc_user`** and addressable identically across all config providers and platforms
-  > (GREENGRASS / HOST / KUBERNETES). That is the **same unsolved problem** as a shared parameter
-  > cache and shared config, so the three are being designed together — see
-  > [`SHARED_CONFIG.md`](SHARED_CONFIG.md). The collision-avoidance **key namespacing** below is
-  > already shipped, so moving to a shared path is a configuration change, not a rewrite.
+  > `ggc_user`** and addressable identically across all deployment platforms
+  > (GREENGRASS / HOST / KUBERNETES). Hierarchical config can now deliver the shared credential
+  > policy through the ConfigComponent, but the shared on-disk cache/vault location remains a
+  > deployment decision — see [`HIERARCHICAL_CONFIG.md`](HIERARCHICAL_CONFIG.md). The
+  > collision-avoidance **key namespacing** below is already shipped, so moving to a shared path is a
+  > configuration change, not a rewrite.
 - **Reads** are served entirely from the local vault (decrypt in memory; never block on cloud),
   opened **read-only** by consumer components.
 - **One writer/sync owner.** To avoid N components all syncing the same secrets (races,

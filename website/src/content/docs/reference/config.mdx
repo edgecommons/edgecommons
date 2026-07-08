@@ -401,36 +401,47 @@ closed in all four.
 
 ## Hierarchical config contract
 
-All four SDKs expose only the merged effective config through the normal config APIs. When a shared
-base layer is present, the SDK deep-merges `base` under `component`, strips composition control
-fields such as `extends` and `sharedConfig`, validates the result, and then publishes or exposes the
-same effective shape as a single-document config.
+All four SDKs expose only the merged effective config through the normal config APIs. Direct
+providers (`FILE`, `ENV`, `CONFIGMAP`, `GG_CONFIG`, and `SHADOW`) provide one effective document.
+`CONFIG_COMPONENT` receives a lineage bundle, deep-merges only `layers[].config` in order, validates
+the result, and then publishes or exposes the same effective shape as a single-document config.
 
-Provider-specific shared-layer defaults are identical across languages:
+Lineage bundles have this shape:
 
-| Source | Base-layer source |
-|--------|-------------------|
-| `FILE` | `extends`, then `$EDGECOMMONS_SHARED_CONFIG`, then `/etc/edgecommons/shared.json` if present; missing defaults are ignored, explicit unreadable files fail startup. |
-| `ENV` | `$EDGECOMMONS_SHARED_CONFIG` inline JSON or `@file`; unset means no base. |
-| `CONFIGMAP` | `extends`, then a shared key/file in the mounted ConfigMap directory, then `shared.json` under that mount directory if present. |
-| `GG_CONFIG` | `$EDGECOMMONS_SHARED_COMPONENT` or `com.mbreissi.edgecommons.EdgeCommonsSharedConfig`, key `SharedComponentConfig`; explicit shared-component failures are fatal, default absence means no base. |
-| `SHADOW` | Named shadow `edgecommons-shared`, reading `ComponentConfig` including stringified JSON values. |
-| `CONFIG_COMPONENT` | A response bundle containing raw `base` and `component` layers, or a legacy component-only document. |
-
-`CONFIG_COMPONENT` accepts both legacy component-only documents and layer bundles:
-
-```json
+```json title="CONFIG_COMPONENT response body"
 {
-  "base": { "logging": { "level": "INFO" } },
-  "component": { "component": { "global": { "pollSecs": 5 } } }
+  "lineageVersion": 1,
+  "catalogVersion": "enterprise-site-zone-line-v1",
+  "component": "opcua-adapter",
+  "layers": [
+    {
+      "id": "enterprise/acme",
+      "kind": "scope",
+      "scope": { "enterprise": "acme" },
+      "config": {
+        "hierarchy": { "levels": ["enterprise", "site", "zone", "line", "device"] },
+        "identity": { "enterprise": "acme" },
+        "logging": { "level": "INFO" }
+      }
+    },
+    {
+      "id": "component/opcua-adapter",
+      "kind": "component",
+      "component": "opcua-adapter",
+      "config": {
+        "component": { "token": "opcua-adapter", "global": { "pollSecs": 5 } }
+      }
+    }
+  ]
 }
 ```
 
-For startup and explicit re-fetches, a legacy response without top-level `base` is component-only.
-For pushed `set-config` messages, a full bundle replaces both raw layers, while a legacy document
-replaces only the component layer and preserves the last accepted base. A bundle with `"base": null`
-clears the base. Structured server errors fail startup or reject the reload with the returned code
-and message.
+`layers` is ordered from the highest shared scope to the requested component. Each layer must declare
+`id`, `kind`, and object `config`; scope layers must declare object `scope`; the final and only
+component layer must name the requested component token. Legacy component-only documents and old
+`{base, component}` bundles are rejected. Structured server errors fail startup or reject the reload
+with the returned code and message. On reload, an invalid lineage bundle keeps the previous effective
+config.
 
 ## Construction
 

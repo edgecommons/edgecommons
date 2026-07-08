@@ -826,10 +826,9 @@ public class EdgeCommons
      * @return A ParsedCommandLine object containing the processed arguments
      */
     public static ParsedCommandLine processArgs(String componentName, String[] args, Options appOptions) {
-        // The legacy single-axis -m/--mode token is removed (DESIGN-core §6.1 / FR-RT-1). Reject it
-        // explicitly with guidance to the new flags rather than letting it fall through as an
-        // unrecognized option (which would be silently swallowed below).
-        rejectLegacyModeFlag(args);
+        // Removed flags are rejected explicitly rather than falling through as unrecognized
+        // positional tokens that the parser may otherwise tolerate.
+        rejectRemovedFlags(args);
 
         ParsedCommandLine retVal = new ParsedCommandLine();
         CommandLineParser parser = new DefaultParser();
@@ -863,16 +862,11 @@ public class EdgeCommons
                                     .hasArg()
                                     .desc("Thing name to use (optional)")
                                     .build();
-        Option noSharedConfigOption = Option.builder()
-                                       .longOpt("no-shared-config")
-                                       .desc("Disable split-config shared-layer resolution")
-                                       .build();
         options.addOption(helpOption);
         options.addOption(configOption);
         options.addOption(platformOption);
         options.addOption(transportOption);
         options.addOption(thingOption);
-        options.addOption(noSharedConfigOption);
 
         PlatformResolver.ResolverInputs inputs;
         try {
@@ -893,7 +887,6 @@ public class EdgeCommons
             // to the resolver so it can apply the FR-MSG-1 CONFIGMAP default when it is absent.
             Transport transportFlag = parseTransport(line, retVal);
             String thingFlag = line.hasOption("t") ? line.getOptionValue("thing") : null;
-            retVal.noSharedConfig = line.hasOption("no-shared-config");
 
             inputs = new PlatformResolver.ResolverInputs(
                     platformFlag, transportFlag, configArgs, thingFlag, retVal.standaloneConfigPath);
@@ -924,9 +917,9 @@ public class EdgeCommons
     }
 
     /**
-     * Rejects the removed {@code -m}/{@code --mode} flag with guidance to the new axes.
+     * Rejects removed CLI flags with guidance to the current model.
      */
-    private static void rejectLegacyModeFlag(String[] args) {
+    private static void rejectRemovedFlags(String[] args) {
         if (args == null) {
             return;
         }
@@ -937,6 +930,11 @@ public class EdgeCommons
                 throw new IllegalArgumentException("The -m/--mode flag has been removed. Use "
                         + "--platform GREENGRASS|HOST|KUBERNETES and --transport IPC|MQTT instead "
                         + "(e.g. '-m STANDALONE <path>' becomes '--platform HOST --transport MQTT <path>').");
+            }
+            if ("--no-shared-config".equals(arg)) {
+                throw new IllegalArgumentException("The --no-shared-config flag has been removed. "
+                        + "Hierarchical configuration is resolved by ConfigComponent lineage bundles; "
+                        + "direct providers load a single effective document.");
             }
         }
     }

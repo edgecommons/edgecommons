@@ -27,7 +27,6 @@ class ParsedCommandLineTest {
         assertNull(pcl.transport);
         assertNull(pcl.standaloneConfigPath);
         assertNull(pcl.thingName);
-        assertEquals(false, pcl.noSharedConfig);
     }
 
     @Test
@@ -40,14 +39,12 @@ class ParsedCommandLineTest {
         pcl.transport = Transport.MQTT;
         pcl.standaloneConfigPath = "./standalone-messaging.json";
         pcl.thingName = "my-thing";
-        pcl.noSharedConfig = true;
 
         assertArrayEquals(configArgs, pcl.configArgs);
         assertEquals(Platform.HOST, pcl.platform);
         assertEquals(Transport.MQTT, pcl.transport);
         assertEquals("./standalone-messaging.json", pcl.standaloneConfigPath);
         assertEquals("my-thing", pcl.thingName);
-        assertEquals(true, pcl.noSharedConfig);
     }
 
     @Test

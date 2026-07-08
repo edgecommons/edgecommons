@@ -7,8 +7,6 @@
  * - `-c/--config <SOURCE> [args...]` — `FILE | CONFIGMAP | ENV | GG_CONFIG | SHADOW | CONFIG_COMPONENT`
  *   (default: from the resolved platform profile — GREENGRASS -> GG_CONFIG, HOST -> FILE, KUBERNETES -> CONFIGMAP).
  * - `-t/--thing <name>` — IoT Thing name (takes the **full** string value; default: platform identity).
- * - `--no-shared-config` — disables split-config shared-layer resolution for this process.
- *
  * The legacy single-axis `-m/--mode` flag is removed (FR-RT-1): passing it errors with guidance to
  * `--platform`/`--transport`. After parsing the raw flags, {@link parseArgs} runs the precedence
  * resolver ({@link resolveProfile}) so the returned {@link ParsedArgs} already carries the two
@@ -48,8 +46,6 @@ export interface ParsedArgs {
   messagingConfigPath?: string;
   /** Resolved IoT Thing name (identity), never undefined. */
   thing: string;
-  /** Whether shared-layer resolution is disabled for this process. */
-  noSharedConfig: boolean;
 }
 
 const DEFAULT_CONFIG_FILE = "config.json";
@@ -69,7 +65,6 @@ export function parseArgs(argv: string[], env: Env = process.env): ParsedArgs {
   let transportFlag: Transport | undefined;
   let messagingConfigPath: string | undefined;
   let thing: string | undefined;
-  let noSharedConfig = false;
 
   let i = 0;
   while (i < argv.length) {
@@ -93,9 +88,6 @@ export function parseArgs(argv: string[], env: Env = process.env): ParsedArgs {
       }
       thing = next; // full string value, never truncated
       i += 2;
-    } else if (arg === "--no-shared-config") {
-      noSharedConfig = true;
-      i += 1;
     } else if (arg === "-h" || arg === "--help") {
       i += 1;
     } else {
@@ -140,7 +132,6 @@ export function parseArgs(argv: string[], env: Env = process.env): ParsedArgs {
     config,
     messagingConfigPath,
     thing: resolved.identity,
-    noSharedConfig,
   };
 }
 

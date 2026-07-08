@@ -287,7 +287,7 @@ public class ConfigManager
 
     /**
      * Applies a raw provider payload (component document or CONFIG_COMPONENT bundle) by resolving
-     * split-config layers first. Used by provider push/watch callbacks; returns false and keeps the
+     * hierarchical config lineage first. Used by provider push/watch callbacks; returns false and keeps the
      * current effective config on any merge/validation failure.
      */
     public boolean applyConfigFromProvider(JsonObject rawConfig)
@@ -813,7 +813,8 @@ public class ConfigManager
 
     /**
      * Resolves a template string by replacing placeholders with actual values.
-     * Supports component name, thing name, and other configuration-based substitutions.
+     * Supports component name, thing name, hierarchy identity, and other configuration-based
+     * substitutions.
      *
      * @param template The template string containing placeholders
      * @return The resolved string with substituted values
@@ -831,6 +832,18 @@ public class ConfigManager
         if (template.contains("{ComponentFullName}"))
         {
             retVal = retVal.replace("{ComponentFullName}", sanitize(getComponentFullName()));
+        }
+
+        if (componentIdentity != null)
+        {
+            for (MessageIdentity.HierEntry entry : componentIdentity.getHier())
+            {
+                String identityTemplate = "{" + entry.level() + "}";
+                if (retVal.contains(identityTemplate))
+                {
+                    retVal = retVal.replace(identityTemplate, sanitize(entry.value()));
+                }
+            }
         }
 
         if (null != tagConfig && tagConfig.getKeys() != null)

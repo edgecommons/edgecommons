@@ -2,8 +2,9 @@
  * Configuration — template substitution.
  *
  * Resolves `{ThingName}`, `{ComponentName}` (short name — the segment after the
- * last `.`), `{ComponentFullName}`, and any `tags` key inside config strings (log
- * file paths, MQTT topics). Mirrors the Java/Python/Rust substitution exactly.
+ * last `.`), `{ComponentFullName}`, hierarchy identity level names, and any
+ * `tags` key inside config strings (log file paths, MQTT topics). Mirrors the
+ * Java/Python/Rust substitution exactly.
  *
  * Substituted *values* are sanitized (path separators `/`,`\`, MQTT wildcards
  * `+`,`#`, control chars, and `..` traversal → `_`) so a hostile value cannot break
@@ -24,9 +25,17 @@ export function resolve(config: Config, template: string): string {
     .split("{ComponentFullName}").join(sanitize(config.componentName))
     .split("{ComponentName}").join(sanitize(shortName));
 
+  for (const entry of config.componentIdentity.hier) {
+    const placeholder = `{${entry.level}}`;
+    if (out.includes(placeholder)) {
+      out = out.split(placeholder).join(sanitize(entry.value));
+    }
+  }
+
   for (const [key, value] of Object.entries(config.parsed.tags)) {
-    if (typeof value === "string") {
-      out = out.split(`{${key}}`).join(sanitize(value));
+    const placeholder = `{${key}}`;
+    if (typeof value === "string" && out.includes(placeholder)) {
+      out = out.split(placeholder).join(sanitize(value));
     }
   }
   return out;

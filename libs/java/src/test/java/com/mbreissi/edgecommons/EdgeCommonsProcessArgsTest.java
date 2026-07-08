@@ -101,14 +101,12 @@ class EdgeCommonsProcessArgsTest {
     }
 
     @Test
-    void noSharedConfigFlagIsParsed() {
-        ParsedCommandLine pcl = EdgeCommons.processArgs(
+    void removedNoSharedConfigFlagIsRejected() {
+        assertThrows(IllegalArgumentException.class, () -> EdgeCommons.processArgs(
                 COMPONENT,
                 new String[]{"--platform", "HOST", "--transport", "MQTT", "./msg.json",
                         "--no-shared-config"},
-                null);
-
-        assertTrue(pcl.noSharedConfig);
+                null));
     }
 
     @Test

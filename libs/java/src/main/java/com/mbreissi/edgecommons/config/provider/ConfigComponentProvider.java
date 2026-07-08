@@ -176,6 +176,11 @@ public final class ConfigComponentProvider extends ConfigProvider {
                 source, setConfigTopic);
     }
 
+    /** Returns the sanitized short component token sent in GetConfiguration requests. */
+    public String getComponentToken() {
+        return componentToken;
+    }
+
     /**
      * Reduces a component name to its short form (the segment after the last {@code .}), the
      * existing {@code {ComponentName}} semantics — mirroring {@code ConfigManagerFactory}'s

@@ -3,7 +3,6 @@ import logging
 import os
 
 from edgecommons.config.manager.config_manager import ConfigManager
-from edgecommons.config.manager.split_config import BaseLayer, resolve_env_base
 
 logger = logging.getLogger("EnvironmentConfigManager")
 
@@ -15,12 +14,9 @@ class EnvironmentConfigManager(ConfigManager):
         component_name: str,
         environment_variable_name: str,
         platform=None,
-        no_shared_config: bool = False,
     ):
         self._environment_variable_name = environment_variable_name
-        super().__init__(
-            component_name, thing_name, platform=platform, no_shared_config=no_shared_config
-        )
+        super().__init__(component_name, thing_name, platform=platform)
         self._config_source = f"Environment (var name: {environment_variable_name})"
         self._config_provider_family = "ENV"
         self.init()
@@ -37,5 +33,3 @@ class EnvironmentConfigManager(ConfigManager):
             )
         return json.loads(os.environ.get(self._environment_variable_name))
 
-    def _resolve_base_layer(self, component_layer: dict) -> BaseLayer:
-        return resolve_env_base()

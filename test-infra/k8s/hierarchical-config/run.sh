@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Full split-config Kubernetes E2E:
+# Full hierarchical-config Kubernetes E2E:
 #   EMQX + Rust ConfigComponent + Java/Python/Rust/TypeScript skeletons + verifier.
 #
 # Build and image-load are local to the current kind cluster; no registry push is required.
@@ -11,7 +11,7 @@ K8S_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 UMBRELLA_ROOT="$(cd "${REPO_ROOT}/.." && pwd)"
 
-NAMESPACE="${NAMESPACE:-edgecommons-split}"
+NAMESPACE="${NAMESPACE:-edgecommons-hierarchical}"
 CLUSTER_NAME="${CLUSTER_NAME:-edgecommons}"
 TIMEOUT="${TIMEOUT:-300}"
 KEEP="${KEEP:-}"
@@ -31,7 +31,7 @@ cleanup() {
     "${KUBECTL}" -n "${NAMESPACE}" get pods,deploy,job,cm,svc 2>/dev/null || true
     "${KUBECTL}" -n "${NAMESPACE}" describe pods 2>/dev/null || true
     "${KUBECTL}" -n "${NAMESPACE}" logs deploy/edgecommons-config-component --tail=200 2>/dev/null || true
-    "${KUBECTL}" -n "${NAMESPACE}" logs -l app.kubernetes.io/part-of=edgecommons-split-config --all-containers --tail=200 2>/dev/null || true
+    "${KUBECTL}" -n "${NAMESPACE}" logs -l app.kubernetes.io/part-of=edgecommons-hierarchical-config --all-containers --tail=200 2>/dev/null || true
   fi
   if [[ "${KEEP}" != "1" ]]; then
     log "Cleaning namespace ${NAMESPACE}"
@@ -84,12 +84,12 @@ build_image() {
 
 ensure_cluster
 
-build_image "edgecommons-config-component:split-ci" "${UMBRELLA_ROOT}/config-component/Dockerfile" "${UMBRELLA_ROOT}"
-build_image "edgecommons-java-skeleton:split-ci" "${SCRIPT_DIR}/Dockerfile.java-skeleton" "${REPO_ROOT}"
-build_image "edgecommons-python-skeleton:split-ci" "${SCRIPT_DIR}/Dockerfile.python-skeleton" "${REPO_ROOT}"
-build_image "edgecommons-rust-skeleton:split-ci" "${SCRIPT_DIR}/Dockerfile.rust-skeleton" "${REPO_ROOT}"
-build_image "edgecommons-ts-skeleton:split-ci" "${SCRIPT_DIR}/Dockerfile.ts-skeleton" "${REPO_ROOT}"
-build_image "edgecommons-split-verifier:split-ci" "${SCRIPT_DIR}/Dockerfile.verifier" "${REPO_ROOT}"
+build_image "edgecommons-config-component:hierarchical-ci" "${UMBRELLA_ROOT}/config-component/Dockerfile" "${UMBRELLA_ROOT}"
+build_image "edgecommons-java-skeleton:hierarchical-ci" "${SCRIPT_DIR}/Dockerfile.java-skeleton" "${REPO_ROOT}"
+build_image "edgecommons-python-skeleton:hierarchical-ci" "${SCRIPT_DIR}/Dockerfile.python-skeleton" "${REPO_ROOT}"
+build_image "edgecommons-rust-skeleton:hierarchical-ci" "${SCRIPT_DIR}/Dockerfile.rust-skeleton" "${REPO_ROOT}"
+build_image "edgecommons-ts-skeleton:hierarchical-ci" "${SCRIPT_DIR}/Dockerfile.ts-skeleton" "${REPO_ROOT}"
+build_image "edgecommons-hierarchical-verifier:hierarchical-ci" "${SCRIPT_DIR}/Dockerfile.verifier" "${REPO_ROOT}"
 
 log "Preparing namespace ${NAMESPACE}"
 if "${KUBECTL}" get namespace "${NAMESPACE}" >/dev/null 2>&1; then
@@ -118,30 +118,30 @@ wait_for_log "app.kubernetes.io/name=edgecommons-config-component" \
   "ConfigComponent subscribed to get-configuration and update-catalog"
 wait_for_log "app.kubernetes.io/name=edgecommons-java-skeleton" \
   "Component initialization completed" \
-  "Java skeleton completed initial split-config bootstrap"
+  "Java skeleton completed initial hierarchical-config bootstrap"
 wait_for_log "app.kubernetes.io/name=edgecommons-python-skeleton" \
   "EdgeCommons initialized successfully" \
-  "Python skeleton completed initial split-config bootstrap"
+  "Python skeleton completed initial hierarchical-config bootstrap"
 wait_for_log "app.kubernetes.io/name=edgecommons-rust-skeleton" \
   "Rust Component Skeleton starting" \
-  "Rust skeleton completed initial split-config bootstrap"
+  "Rust skeleton completed initial hierarchical-config bootstrap"
 wait_for_log "app.kubernetes.io/name=edgecommons-ts-skeleton" \
   "TypeScript Component Skeleton starting" \
-  "TypeScript skeleton completed initial split-config bootstrap"
+  "TypeScript skeleton completed initial hierarchical-config bootstrap"
 
-log "Running split-config verifier job"
-"${KUBECTL}" -n "${NAMESPACE}" delete job edgecommons-split-verifier --ignore-not-found
+log "Running hierarchical-config verifier job"
+"${KUBECTL}" -n "${NAMESPACE}" delete job edgecommons-hierarchical-verifier --ignore-not-found
 "${KUBECTL}" -n "${NAMESPACE}" apply -f "${SCRIPT_DIR}/verifier-job.yaml"
-"${KUBECTL}" -n "${NAMESPACE}" wait --for=condition=complete job/edgecommons-split-verifier --timeout="${TIMEOUT}s"
+"${KUBECTL}" -n "${NAMESPACE}" wait --for=condition=complete job/edgecommons-hierarchical-verifier --timeout="${TIMEOUT}s"
 
-VERIFIER_LOG="$("${KUBECTL}" -n "${NAMESPACE}" logs job/edgecommons-split-verifier)"
+VERIFIER_LOG="$("${KUBECTL}" -n "${NAMESPACE}" logs job/edgecommons-hierarchical-verifier)"
 printf '%s\n' "${VERIFIER_LOG}"
 grep -Fq '"ok": true' <<<"${VERIFIER_LOG}" || fail "verifier did not report ok=true"
 ok "verifier proved initial get-configuration and update-catalog fanout"
 
 wait_for_log "app.kubernetes.io/name=edgecommons-config-component" \
-  "pushed catalog bundle.*k8s-split-updated|k8s-split-updated.*pushed catalog bundle" \
-  "ConfigComponent pushed updated catalog bundles"
+  "pushed catalog.*k8s-hierarchical-updated|k8s-hierarchical-updated.*pushed catalog|lineage" \
+  "ConfigComponent pushed updated hierarchical lineage bundles"
 wait_for_log "app.kubernetes.io/name=edgecommons-java-skeleton" \
   "Configuration reload completed successfully|Publish interval changed from .* to 1000ms" \
   "Java skeleton dynamically reloaded updated component config"
@@ -156,12 +156,12 @@ wait_for_log "app.kubernetes.io/name=edgecommons-ts-skeleton" \
   "TypeScript skeleton dynamically reloaded updated component config"
 
 log "Checking pod restart counts"
-restarts="$("${KUBECTL}" -n "${NAMESPACE}" get pods -l app.kubernetes.io/part-of=edgecommons-split-config -o jsonpath='{range .items[*]}{.metadata.name}{" "}{range .status.containerStatuses[*]}{.restartCount}{" "}{end}{"\n"}{end}')"
+restarts="$("${KUBECTL}" -n "${NAMESPACE}" get pods -l app.kubernetes.io/part-of=edgecommons-hierarchical-config -o jsonpath='{range .items[*]}{.metadata.name}{" "}{range .status.containerStatuses[*]}{.restartCount}{" "}{end}{"\n"}{end}')"
 printf '%s\n' "${restarts}"
 if awk '{ for (i=2; i<=NF; i++) if ($i != 0) exit 1 }' <<<"${restarts}"; then
-  ok "no split-config pod restarted during the update"
+  ok "no hierarchical-config pod restarted during the update"
 else
-  fail "one or more split-config pods restarted"
+  fail "one or more hierarchical-config pods restarted"
 fi
 
-log "FULL SPLIT-CONFIG K8S E2E PASSED"
+log "FULL HIERARCHICAL-CONFIG K8S E2E PASSED"

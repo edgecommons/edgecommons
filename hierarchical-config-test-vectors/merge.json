@@ -1,0 +1,184 @@
+{
+  "description": "edgecommons hierarchical config merge conformance vectors",
+  "cases": [
+    {
+      "name": "object-deep-merge",
+      "input": {
+        "layers": [
+          {
+            "id": "enterprise/acme",
+            "config": {
+              "metricEmission": {
+                "target": "log",
+                "namespace": "edgecommons",
+                "targetConfig": {
+                  "logFileName": "/var/log/enterprise-metrics.log",
+                  "maxBytes": 1048576
+                }
+              }
+            }
+          },
+          {
+            "id": "line/line-7",
+            "config": {
+              "metricEmission": {
+                "targetConfig": {
+                  "logFileName": "/tmp/line-metrics.log"
+                }
+              }
+            }
+          },
+          {
+            "id": "component/opcua-adapter",
+            "config": { "component": { "token": "opcua-adapter" } }
+          }
+        ]
+      },
+      "expected": {
+        "effective": {
+          "metricEmission": {
+            "target": "log",
+            "namespace": "edgecommons",
+            "targetConfig": {
+              "logFileName": "/tmp/line-metrics.log",
+              "maxBytes": 1048576
+            }
+          },
+          "component": { "token": "opcua-adapter" }
+        }
+      }
+    },
+    {
+      "name": "array-replacement",
+      "input": {
+        "layers": [
+          {
+            "id": "enterprise/acme",
+            "config": {
+              "streaming": {
+                "streams": [
+                  {
+                    "name": "enterprise",
+                    "sink": {
+                      "type": "kinesis",
+                      "streamName": "enterprise-stream"
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "id": "component/opcua-adapter",
+            "config": {
+              "streaming": {
+                "streams": [
+                  {
+                    "name": "component",
+                    "sink": {
+                      "type": "kafka",
+                      "bootstrapServers": "localhost:9092",
+                      "topic": "component-topic"
+                    }
+                  }
+                ]
+              },
+              "component": { "token": "opcua-adapter" }
+            }
+          }
+        ]
+      },
+      "expected": {
+        "effective": {
+          "streaming": {
+            "streams": [
+              {
+                "name": "component",
+                "sink": {
+                  "type": "kafka",
+                  "bootstrapServers": "localhost:9092",
+                  "topic": "component-topic"
+                }
+              }
+            ]
+          },
+          "component": { "token": "opcua-adapter" }
+        }
+      }
+    },
+    {
+      "name": "scalar-replacement",
+      "input": {
+        "layers": [
+          { "id": "enterprise/acme", "config": { "logging": { "level": "INFO" } } },
+          { "id": "zone/packaging", "config": { "logging": { "level": "WARN" } } },
+          {
+            "id": "component/opcua-adapter",
+            "config": {
+              "logging": { "level": "DEBUG" },
+              "component": { "token": "opcua-adapter" }
+            }
+          }
+        ]
+      },
+      "expected": {
+        "effective": {
+          "logging": { "level": "DEBUG" },
+          "component": { "token": "opcua-adapter" }
+        }
+      }
+    },
+    {
+      "name": "null-replacement",
+      "input": {
+        "layers": [
+          {
+            "id": "enterprise/acme",
+            "config": { "tags": { "owner": "central-ops", "line": "line-7" } }
+          },
+          {
+            "id": "component/opcua-adapter",
+            "config": {
+              "tags": null,
+              "component": { "token": "opcua-adapter" }
+            }
+          }
+        ]
+      },
+      "expected": {
+        "effective": {
+          "tags": null,
+          "component": { "token": "opcua-adapter" }
+        }
+      }
+    },
+    {
+      "name": "type-conflict-later-layer-wins",
+      "input": {
+        "layers": [
+          {
+            "id": "enterprise/acme",
+            "config": { "logging": { "level": "INFO" } }
+          },
+          {
+            "id": "component/opcua-adapter",
+            "config": {
+              "logging": "DEBUG",
+              "component": { "token": "opcua-adapter" }
+            }
+          }
+        ]
+      },
+      "expected": {
+        "effective": {
+          "logging": "DEBUG",
+          "component": { "token": "opcua-adapter" }
+        },
+        "warnings": [
+          { "path": "$.logging", "code": "TYPE_CONFLICT_LATER_LAYER_WINS" }
+        ]
+      }
+    }
+  ]
+}
+

@@ -60,6 +60,53 @@ class ConfigManagerTest {
     }
 
     @Test
+    void testTemplateResolutionUsesHierarchyIdentityWithoutTags() throws IOException {
+        String configJson = """
+                {
+                  "logging": {"level": "INFO"},
+                  "metricEmission": {"target": "log"},
+                  "heartbeat": {"intervalSecs": 30},
+                  "hierarchy": {"levels": ["site", "area", "device"]},
+                  "identity": {"site": "plant/one", "area": "line+7#north..zone"},
+                  "tags": {"site": "tag-site", "environment": "production"},
+                  "component": {"global": {}}
+                }""";
+
+        runWithTempConfig(configJson, configManager -> {
+            String resolved = configManager.resolveTemplate(
+                    "topic/{site}/{area}/{device}/{environment}/{unknown}");
+
+            assertEquals("topic/plant_one/line_7_north_zone/test-thing/production/{unknown}",
+                    resolved);
+        });
+    }
+
+    @Test
+    void testTemplateResolutionBuiltinsWinOverIdentityAndTags() throws IOException {
+        String configJson = """
+                {
+                  "logging": {"level": "INFO"},
+                  "metricEmission": {"target": "log"},
+                  "heartbeat": {"intervalSecs": 30},
+                  "hierarchy": {"levels": ["ComponentName", "ThingName", "device"]},
+                  "identity": {"ComponentName": "identity-component", "ThingName": "identity-thing"},
+                  "tags": {
+                    "ComponentName": "tag-component",
+                    "ThingName": "tag-thing",
+                    "ComponentFullName": "tag-full"
+                  },
+                  "component": {"global": {}}
+                }""";
+
+        runWithTempConfig(configJson, configManager -> {
+            String resolved = configManager.resolveTemplate(
+                    "{ComponentName}|{ThingName}|{ComponentFullName}");
+
+            assertEquals("TestComponent|test-thing|com.test.TestComponent", resolved);
+        });
+    }
+
+    @Test
     void testTemplateSanitizationOfHostileValues() throws IOException {
         // A tag value containing path separators, traversal dots, and MQTT
         // wildcards must be neutralized so it cannot break out of the path/topic

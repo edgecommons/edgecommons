@@ -60,6 +60,7 @@ class FakeMqttClient:
         self.subscribe_rc = mqtt.MQTT_ERR_SUCCESS
         self.publish_rc = mqtt.MQTT_ERR_SUCCESS
         self.suback_failure_topics = set()
+        self.suback_before_return = False
         FakeMqttClient.instances.append(self)
 
     # ---- configuration calls
@@ -98,12 +99,16 @@ class FakeMqttClient:
         self.subscribed.append((topic, qos))
         granted = [0x80] if topic in self.suback_failure_topics else [qos]
         if self.auto_suback:
-            # SUBACK arrives asynchronously, AFTER subscribe() returns and the
-            # provider has registered mid->topic (mirrors a real broker).
-            threading.Timer(
-                0.02,
-                lambda: self.on_subscribe and self.on_subscribe(self, None, mid, granted, None),
-            ).start()
+            callback = lambda: self.on_subscribe and self.on_subscribe(self, None, mid, granted, None)
+            if self.suback_before_return:
+                # Model a very fast broker: the SUBACK can be processed on paho's
+                # network thread before subscribe() returns to the caller.
+                threading.Thread(target=callback, daemon=True).start()
+                time.sleep(0.02)
+            else:
+                # SUBACK arrives asynchronously, AFTER subscribe() returns and the
+                # provider has registered mid->topic (mirrors the usual broker path).
+                threading.Timer(0.02, callback).start()
         return (mqtt.MQTT_ERR_SUCCESS, mid)
 
     def publish(self, topic, payload, qos=0):
@@ -347,6 +352,18 @@ class TestSubscribeDispatch:
         with pytest.raises(TimeoutError):
             prov.subscribe("slow/topic", lambda t, m: None)
         assert "slow/topic" not in prov._local.pending_subscriptions
+        prov.disconnect()
+
+    def test_fast_suback_before_subscribe_returns_unblocks(self):
+        prov = StandaloneProvider(_local_only_config(), "t")
+        client = prov.get_native_client()["local"]
+        client.suback_before_return = True
+        prov._subscription_timeout = 0.5
+
+        prov.subscribe("fast/topic", lambda t, m: None)
+
+        assert "fast/topic" in prov._local.subscriptions
+        assert "fast/topic" not in prov._local.pending_subscriptions
         prov.disconnect()
 
     def test_suback_failure_still_unblocks(self):

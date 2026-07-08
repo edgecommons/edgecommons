@@ -15,7 +15,7 @@
  *   body** with `{"component": "<short name>"}` (§1.5).
  * - **set-config push**: the server pushes a fire-and-forget `cmd` (no `reply_to` — a
  *   notification-style command) to the component's own inbox
- *   `ecv1/{device}/{component}/main/cmd/set-config`; the body is the new configuration,
+ *   `ecv1/{device}/{component}/main/cmd/set-config`; the body is a lineage bundle,
  *   delivered to the watch callback.
  *
  * The topics are minted locally from the resolved thing name and component name handed to the
@@ -25,7 +25,8 @@
  * surface and pass the reserved-topic guard.
  *
  * `load` sends a `GetConfiguration` v1.0 request and awaits the reply (30 s per attempt — the
- * pre-config built-in deadline, §5 — up to 3 attempts), returning the reply body; it throws a
+ * pre-config built-in deadline, §5 — up to 3 attempts), returning the reply body for the
+ * layered coordinator to parse as a lineage bundle; it throws a
  * {@link EdgeCommonsError} of kind `Config` after 3 failures. `watch` subscribes to the set-config inbox
  * and forwards each message body.
  */

@@ -65,7 +65,7 @@ What the harness proves end-to-end:
 | `emqx.yaml` | In-cluster EMQX MQTT broker (Deployment + ClusterIP Service `edgecommons-emqx`, plaintext 1883). |
 | `Dockerfile` | Builds the default (Python) component image used by the smoke test. |
 | `smoke.sh` | Assertion script the **orchestrator/CI runs live** (installs everything, asserts the four points above incl. the hot-reload test). |
-| `split-config/` | Full split-config E2E harness: EMQX + Rust ConfigComponent + Java/Python/Rust/TypeScript skeletons + verifier Job. |
+| `hierarchical-config/` | Full hierarchical-config E2E harness: EMQX + Rust ConfigComponent + Java/Python/Rust/TypeScript skeletons + verifier Job. |
 | `setup-runner-vm.sh` | Bootstrap script for a dedicated Ubuntu VM used as the repeatable local Kubernetes E2E runner. |
 | `../../.github/workflows/k8s.yml` | CI job: kind + build/load image + helm install + `smoke.sh`. |
 
@@ -145,31 +145,33 @@ v0.30.0, `kind load docker-image` can fail against this node image with
 `smoke.sh` cleans up the namespace on exit. Use `KEEP=1` only while collecting diagnostics, then
 delete the namespace when evidence has been captured.
 
-## Run full split-config E2E
+## Run full hierarchical-config E2E
 
-The smoke test above is not the full split-config acceptance gate. For split-config changes, run the
+The smoke test above is not the full hierarchical-config acceptance gate. For hierarchical-config
+changes, run the
 checked-in harness:
 
 ```bash
 cd ~/source/edgecommons/core
-bash test-infra/k8s/split-config/run.sh
+bash test-infra/k8s/hierarchical-config/run.sh
 ```
 
 For evidence collection:
 
 ```bash
 cd ~/source/edgecommons/core
-KEEP=1 bash test-infra/k8s/split-config/run.sh | tee /tmp/edgecommons-split-e2e.log
-kubectl -n edgecommons-split get pods
-kubectl -n edgecommons-split logs job/edgecommons-split-verifier
-kubectl delete namespace edgecommons-split --wait=false
+KEEP=1 bash test-infra/k8s/hierarchical-config/run.sh | tee /tmp/edgecommons-hierarchical-e2e.log
+kubectl -n edgecommons-hierarchical get pods
+kubectl -n edgecommons-hierarchical logs job/edgecommons-hierarchical-verifier
+kubectl delete namespace edgecommons-hierarchical --wait=false
 ```
 
 The harness builds local images from the current VM checkout and does not require a GitHub push. If
 the code under test is local to the Windows workstation, copy or `rsync` the relevant source trees to
 the runner VM first. The full run proves that ConfigComponent bootstraps from ConfigMap/file config,
 all four skeletons bootstrap with `CONFIG_COMPONENT`, a volatile `update-catalog` message fans out
-new split bundles, each skeleton dynamically reloads, and no split-config pod restarts.
+new lineage bundles over a four-layer `enterprise -> site -> zone -> line -> device` hierarchy, each
+skeleton dynamically reloads, and no hierarchical-config pod restarts.
 
 ## Run it on lab k3s
 

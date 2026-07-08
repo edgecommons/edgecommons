@@ -62,17 +62,16 @@ map. `tags` and `logging.loggers` accept any matching key but constrain the valu
 enum). Everything else rejects unknown keys.
 </Aside>
 
-### Split-config layers
+### Hierarchical config layers
 
-The schema validates the **effective** document after split-config layering. Raw base layers and raw
-component layers are allowed to be partial fragments, so they are not validated independently. After
-the SDK deep-merges the base and component layers, the merged document must satisfy the strict schema
-below.
+The schema validates the **effective** document after hierarchical layering. Raw catalog node layers
+and raw component layers are allowed to be partial fragments, so they are not validated
+independently. After the SDK deep-merges `layers[].config`, the merged document must satisfy the
+strict schema below.
 
-`extends` and `sharedConfig` are split-config control fields on raw component layers. They are read
-before merge and removed before validation, so they are not legal fields in the effective document.
-The `CONFIG_COMPONENT` transport wrapper with top-level `base` and `component` fields is also not a
-schema document; it is unwrapped and merged before validation.
+The `CONFIG_COMPONENT` transport wrapper is not itself a schema document. It must contain
+`lineageVersion: 1`, a `catalogVersion`, a requested `component`, and a non-empty `layers` array.
+Only each layer's `config` object participates in the effective document.
 
 ### `component` is the only required section
 
@@ -359,7 +358,7 @@ only to plaintext MQTT auth.
 High-rate telemetry streaming to Kinesis or Kafka, fronted by the embedded durable/in-memory buffer.
 Object, strict.
 
-When this section is inherited from a split-config shared layer, it is still just configuration.
+When this section is inherited from a hierarchical config layer, it is still just configuration.
 Each component opens and owns its own streams, buffers, drains, metrics, and shutdown lifecycle.
 For disk buffers, configure paths that resolve per component, commonly with `{ComponentName}`.
 

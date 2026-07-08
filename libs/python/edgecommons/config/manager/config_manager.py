@@ -18,14 +18,10 @@ from edgecommons.config.metric_config import MetricConfiguration
 from edgecommons.config.tag_config import TagConfiguration
 from edgecommons.config.enhanced_logging_config import EnhancedLoggingConfiguration
 from edgecommons.config.manager.configuration_change_listener import ConfigurationChangeListener
-from edgecommons.config.manager.split_config import (
-    BaseLayer,
-    CONTROL_FIELDS,
+from edgecommons.config.manager.hierarchical_config import (
     deep_merge_layers,
     parse_config_component_payload,
-    shared_config_enabled,
-    validate_base_layer,
-    validate_component_layer,
+    HierarchicalConfigError,
 )
 
 logger = logging.getLogger("ConfigManager")
@@ -71,7 +67,6 @@ class ConfigManager:
         thing_name: str = None,
         validate_config: bool = True,
         platform=None,
-        no_shared_config: bool = False,
     ):
         if not component_name:
             raise ValueError("Component name cannot be None or empty")
@@ -95,7 +90,6 @@ class ConfigManager:
         self._thing_name = thing_name
         self._component_full_name = component_name
         self._validate_config = validate_config
-        self._no_shared_config = bool(no_shared_config)
         self._initializing = True
         self._config_source = "unknown"
         self._config_provider_family = "UNKNOWN"
@@ -180,8 +174,8 @@ class ConfigManager:
             self._parse_messaging_request_timeout_seconds(config)
         )
 
-        # Tags first: the log file path template ({ThingName}/{ComponentName}/{tag})
-        # is resolved during logging setup below, so tag_config must already exist.
+        # Log file path templates may use tags, so tag_config must exist before
+        # logging setup. Template precedence itself lives in resolve_template().
         tag_json = config.get("tags")
         self._tag_config = TagConfiguration(tag_json)
 
@@ -257,19 +251,11 @@ class ConfigManager:
                 correlation[field] = value
         return correlation
 
-    def configuration_changed(
-        self,
-        new_config: dict,
-        *,
-        preserve_config_component_legacy_base: bool = True,
-    ) -> bool:
+    def configuration_changed(self, new_config: dict) -> bool:
         try:
             logger.debug("Processing configuration change")
             component_layer, base_layer, base_source, effective_config = (
-                self._effective_from_source_payload(
-                    new_config,
-                    preserve_config_component_legacy_base=preserve_config_component_legacy_base,
-                )
+                self._effective_from_source_payload(new_config)
             )
             
             # Validate new configuration if enabled
@@ -326,14 +312,11 @@ class ConfigManager:
             return False
         try:
             component_layer, base_layer, base_source, new_config = (
-                self._effective_from_source_payload(
-                    source_payload,
-                    preserve_config_component_legacy_base=False,
-                )
+                self._effective_from_source_payload(source_payload)
             )
         except Exception as e:
             logger.warning(
-                f"reload-config: split-config merge from the '{self._config_source}'"
+                f"reload-config: hierarchical config merge from the '{self._config_source}'"
                 f" source failed: {e}"
             )
             return False
@@ -581,10 +564,15 @@ class ConfigManager:
             ret_val = ret_val.replace("{ComponentName}", _sanitize(self._component_name))
         if "{ComponentFullName}" in template:
             ret_val = ret_val.replace("{ComponentFullName}", _sanitize(self._component_full_name))
+        if self._component_identity is not None:
+            for entry in self._component_identity.hier:
+                identity_template = "{" + entry.level + "}"
+                if identity_template in ret_val:
+                    ret_val = ret_val.replace(identity_template, _sanitize(entry.value))
         tag_dict = {} if self._tag_config is None else self._tag_config.to_dict()
         for k in tag_dict.keys():
             key_template = "{" + k + "}"
-            if key_template in template:
+            if key_template in ret_val:
                 ret_val = ret_val.replace(key_template, _sanitize(tag_dict[k]))
         return ret_val
 
@@ -598,59 +586,39 @@ class ConfigManager:
             source_payload = {"component": {}}
         return self._effective_from_source_payload(
             source_payload,
-            preserve_config_component_legacy_base=False,
         )
 
     def _effective_from_source_payload(
         self,
         source_payload,
-        *,
-        preserve_config_component_legacy_base: bool = False,
     ):
         if self._config_provider_family == "CONFIG_COMPONENT":
-            parsed = parse_config_component_payload(source_payload)
-            component_layer = parsed.component
-            if parsed.base_present:
-                base_layer = parsed.base
-                base_source = "config-component:bundle"
-            elif preserve_config_component_legacy_base:
-                base_layer = self._latest_base_layer
-                base_source = self._latest_base_source
-            else:
-                base_layer = None
-                base_source = None
+            parsed = parse_config_component_payload(
+                source_payload,
+                request_component=self._expected_config_component_token(),
+            )
+            component_layer = parsed.configs[-1]
+            base_layer = None
+            base_source = f"config-component:lineage:{parsed.catalog_version}"
+            effective = deep_merge_layers(parsed.configs, self._warn_type_conflict)
+            logger.info(
+                "CONFIG_COMPONENT lineage applied: catalogVersion=%s component=%s layers=%d",
+                parsed.catalog_version,
+                parsed.component,
+                len(parsed.layers),
+            )
         else:
+            if not isinstance(source_payload, dict):
+                raise HierarchicalConfigError("CONFIG_LAYER_INVALID", "config document must be a JSON object")
             component_layer = source_payload
             base_layer = None
             base_source = None
-
-        validate_component_layer(component_layer)
-        if shared_config_enabled(component_layer, self._no_shared_config):
-            if self._config_provider_family == "CONFIG_COMPONENT":
-                validate_base_layer(base_layer)
-            else:
-                resolved_base = self._resolve_base_layer(component_layer)
-                base_layer = resolved_base.value
-                base_source = resolved_base.source
-                validate_base_layer(base_layer)
-        else:
-            logger.info("Shared config disabled")
-            base_layer = None
-            base_source = None
-
-        layers = [base_layer, component_layer] if base_layer is not None else [component_layer]
-        if base_layer is None and not any(key in component_layer for key in CONTROL_FIELDS):
             effective = component_layer
-        else:
-            effective = deep_merge_layers(layers, self._warn_type_conflict)
-        if base_layer is None:
-            logger.info("Shared config absent or not applied")
-        else:
-            logger.info("Shared config applied from %s", base_source or "unknown")
+            logger.info("Direct config source supplied one effective document")
         return component_layer, base_layer, base_source, effective
 
-    def _resolve_base_layer(self, component_layer: Dict[str, Any]) -> BaseLayer:
-        return BaseLayer(None, None)
+    def _expected_config_component_token(self) -> str:
+        return self.sanitize(self.get_component_name())
 
     def _commit_layers(
         self,
@@ -665,7 +633,7 @@ class ConfigManager:
     @staticmethod
     def _warn_type_conflict(path: str, left_type: str, right_type: str) -> None:
         logger.warning(
-            "Split config type conflict at %s: %s replaced by %s from later layer",
+            "Hierarchical config type conflict at %s: %s replaced by %s from later layer",
             path,
             left_type,
             right_type,

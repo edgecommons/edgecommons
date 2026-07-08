@@ -1,5 +1,5 @@
 param(
-  [string]$RunId = ("split-" + (Get-Date -Format "yyyyMMddHHmmss")),
+  [string]$RunId = ("hierarchical-" + (Get-Date -Format "yyyyMMddHHmmss")),
   [string]$Version = ("1.0." + ([int](Get-Date -Format "Hmmss"))),
   [string]$OutputRoot = ""
 )
@@ -12,7 +12,7 @@ $orgRoot = (Resolve-Path (Join-Path $repoRoot "..")).Path
 $configComponentRoot = Join-Path $orgRoot "config-component"
 
 if ($OutputRoot -eq "") {
-  $OutputRoot = Join-Path $repoRoot "build\gg-split-config-interop\$RunId"
+  $OutputRoot = Join-Path $repoRoot "build\gg-hierarchical-config-interop\$RunId"
 }
 
 $outputRootPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputRoot)
@@ -69,10 +69,11 @@ function New-ZipArtifact {
   $archive = [System.IO.Compression.ZipFile]::Open($zipPath, [System.IO.Compression.ZipArchiveMode]::Create)
   try {
     foreach ($file in Get-ChildItem -LiteralPath $sourceFull -Recurse -File) {
-      if (-not $file.FullName.StartsWith($sourceParentPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+      $sourcePrefix = $sourceFull.TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
+      if (-not $file.FullName.StartsWith($sourcePrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
         throw "Refusing to archive unexpected path outside source parent: $($file.FullName)"
       }
-      $relative = $file.FullName.Substring($sourceParentPrefix.Length).Replace('\', '/')
+      $relative = $file.FullName.Substring($sourcePrefix.Length).Replace('\', '/')
       [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
         $archive,
         $file.FullName,
@@ -100,18 +101,18 @@ function New-SkeletonRecipe {
 RecipeFormatVersion: "2020-01-25"
 ComponentName: "$ComponentName"
 ComponentVersion: "$Version"
-ComponentDescription: "$ComponentName split-config validation build"
+ComponentDescription: "$ComponentName hierarchical-config validation build"
 ComponentPublisher: "edgecommons"
 ComponentConfiguration:
   DefaultConfiguration:
     accessControl:
       aws.greengrass.ipc.pubsub:
-        "$ComponentName:pubsub:1":
-          policyDescription: "Allow local IPC pub/sub for split-config validation."
+        "${ComponentName}:pubsub:1":
+          policyDescription: "Allow local IPC pub/sub for hierarchical-config validation."
           operations: ["aws.greengrass#PublishToTopic", "aws.greengrass#SubscribeToTopic"]
           resources: ["*"]
       aws.greengrass.ipc.mqttproxy:
-        "$ComponentName:northbound:1":
+        "${ComponentName}:northbound:1":
           policyDescription: "Allow IoT Core pub/sub for skeleton demo paths."
           operations: ["aws.greengrass#PublishToIoTCore", "aws.greengrass#SubscribeToIoTCore"]
           resources: ["*"]
@@ -131,7 +132,7 @@ $components = [ordered]@{
   Python = "com.mbreissi.edgecommons.PythonComponentSkeleton"
   Rust = "com.mbreissi.edgecommons.RustComponentSkeleton"
   Ts = "com.mbreissi.edgecommons.TsComponentSkeleton"
-  Verifier = "com.mbreissi.edgecommons.SplitConfigVerifier"
+  Verifier = "com.mbreissi.edgecommons.HierarchicalConfigVerifier"
 }
 
 $javaJar = Join-Path $repoRoot "examples\java\target\java-component-skeleton-1.0.0.jar"
@@ -158,7 +159,7 @@ New-Item -ItemType Directory -Force -Path $pythonStage | Out-Null
 Copy-Item -LiteralPath (Join-Path $repoRoot "examples\python\main.py") -Destination $pythonStage -Force
 Copy-Item -LiteralPath (Join-Path $repoRoot "examples\python\app") -Destination $pythonStage -Recurse -Force
 Copy-Item -LiteralPath (Join-Path $repoRoot "examples\python\requirements.txt") -Destination $pythonStage -Force
-Write-Utf8NoBom -Path (Join-Path $pythonStage "requirements-split.txt") -Content "psutil>=5.9.6`nawsiotsdk>=1.19.0`nawsiot>=0.1.3`npaho-mqtt>=2.0.0`nwatchdog>=3.0.0`n"
+Write-Utf8NoBom -Path (Join-Path $pythonStage "requirements-hierarchical.txt") -Content "psutil>=5.9.6`nawsiotsdk>=1.19.0`nawsiot>=0.1.3`npaho-mqtt>=2.0.0`nwatchdog>=3.0.0`n"
 $pythonLibStage = Join-Path $pythonStage "libs\python"
 New-Item -ItemType Directory -Force -Path $pythonLibStage | Out-Null
 Copy-Item -LiteralPath (Join-Path $repoRoot "libs\python\edgecommons") -Destination $pythonLibStage -Recurse -Force
@@ -205,7 +206,7 @@ $configRecipe = @"
 RecipeFormatVersion: "2020-01-25"
 ComponentName: "$($components.ConfigComponent)"
 ComponentVersion: "$Version"
-ComponentDescription: "Dedicated EdgeCommons split-configuration catalog server validation build"
+ComponentDescription: "Dedicated EdgeCommons hierarchical-configuration catalog server validation build"
 ComponentPublisher: "edgecommons"
 ComponentDependencies:
   aws.greengrass.TokenExchangeService:
@@ -244,19 +245,13 @@ ComponentConfiguration:
           operations:
             - "aws.greengrass#SubscribeToTopic"
           resources:
-            - "ecv1/*/config/main/cmd/get-configuration"
-            - "ecv1/*/config/main/cmd/update-catalog"
-            - "ecv1/*/edgecommons-config-component/main/cmd/*"
-            - "ecv1/*/_bcast/main/cmd/*"
+            - "*"
         "$($components.ConfigComponent):config-server-publish:1":
           policyDescription: "Allow config server replies and set-config pushes."
           operations:
             - "aws.greengrass#PublishToTopic"
           resources:
-            - "edgecommons/reply-*"
-            - "ecv1/*/*/main/cmd/set-config"
-            - "ecv1/*/edgecommons-config-component/main/state"
-            - "ecv1/*/edgecommons-config-component/main/cfg"
+            - "*"
 Manifests:
   - Platform: { os: linux }
     Artifacts:
@@ -280,7 +275,7 @@ $pythonLifecycle = @'
         Script: |
           python3 -m venv /greengrass/v2/work/com.mbreissi.edgecommons.PythonComponentSkeleton/venv
           /greengrass/v2/work/com.mbreissi.edgecommons.PythonComponentSkeleton/venv/bin/python -m pip install {artifacts:decompressedPath}/python-component-skeleton/libs/python
-          /greengrass/v2/work/com.mbreissi.edgecommons.PythonComponentSkeleton/venv/bin/python -m pip install -r {artifacts:decompressedPath}/python-component-skeleton/requirements-split.txt
+          /greengrass/v2/work/com.mbreissi.edgecommons.PythonComponentSkeleton/venv/bin/python -m pip install -r {artifacts:decompressedPath}/python-component-skeleton/requirements-hierarchical.txt
       Run:
         Script: "exec /greengrass/v2/work/com.mbreissi.edgecommons.PythonComponentSkeleton/venv/bin/python -u {artifacts:decompressedPath}/python-component-skeleton/main.py --platform GREENGRASS -c CONFIG_COMPONENT"
 '@
@@ -309,14 +304,14 @@ $verifierRecipe = @"
 RecipeFormatVersion: "2020-01-25"
 ComponentName: "$($components.Verifier)"
 ComponentVersion: "$Version"
-ComponentDescription: "One-shot verifier for split-config update-catalog push behavior"
+ComponentDescription: "One-shot verifier for hierarchical update-catalog push behavior"
 ComponentPublisher: "edgecommons"
 ComponentConfiguration:
   DefaultConfiguration:
     accessControl:
       aws.greengrass.ipc.pubsub:
         "$($components.Verifier):pubsub:1":
-          policyDescription: "Allow local IPC pub/sub for split-config verification."
+          policyDescription: "Allow local IPC pub/sub for hierarchical-config verification."
           operations: ["aws.greengrass#PublishToTopic", "aws.greengrass#SubscribeToTopic"]
           resources: ["*"]
 Manifests:
@@ -343,25 +338,105 @@ Write-Utf8NoBom -Path (Join-Path $recipesDir "$($components.Verifier)-$Version.y
 $catalogInitial = @'
 {
   "schemaVersion": 1,
-  "version": "initial-full-interop",
+  "version": "initial-hierarchical-full-interop",
   "provenance": { "source": "file", "uri": "greengrass-full-interop" },
-  "base": {
-    "logging": { "level": "INFO" },
-    "heartbeat": { "enabled": true, "intervalSecs": 5, "destination": "local" },
-    "tags": { "site": "interop-initial" }
+  "hierarchy": {
+    "levels": ["enterprise", "site", "zone", "line", "device"]
+  },
+  "nodes": {
+    "enterprise/acme": {
+      "scope": { "enterprise": "acme" },
+      "config": {
+        "hierarchy": {
+          "levels": ["enterprise", "site", "zone", "line", "device"]
+        },
+        "identity": { "enterprise": "acme" },
+        "logging": { "level": "INFO" },
+        "heartbeat": { "enabled": true, "intervalSecs": 5, "destination": "local" },
+        "tags": { "lineageMarker": "gg-hierarchical-initial", "enterpriseOwner": "central-ops" }
+      }
+    },
+    "site/integration-lab": {
+      "parent": "enterprise/acme",
+      "scope": { "enterprise": "acme", "site": "integration-lab" },
+      "config": {
+        "identity": { "site": "integration-lab" },
+        "metricEmission": {
+          "target": "log",
+          "namespace": "edgecommons_hierarchical"
+        }
+      }
+    },
+    "zone/greengrass-zone": {
+      "parent": "site/integration-lab",
+      "scope": {
+        "enterprise": "acme",
+        "site": "integration-lab",
+        "zone": "greengrass-zone"
+      },
+      "config": {
+        "identity": { "zone": "greengrass-zone" },
+        "tags": { "zoneClass": "validation" }
+      }
+    },
+    "line/line-7": {
+      "parent": "zone/greengrass-zone",
+      "scope": {
+        "enterprise": "acme",
+        "site": "integration-lab",
+        "zone": "greengrass-zone",
+        "line": "line-7"
+      },
+      "config": {
+        "identity": { "line": "line-7" },
+        "logging": { "level": "WARN" }
+      }
+    }
   },
   "components": {
     "JavaComponentSkeleton": {
-      "component": { "token": "java-component-skeleton", "global": { "publish_interval": 3 }, "instances": [] }
+      "parent": "line/line-7",
+      "config": {
+        "component": {
+          "token": "java-component-skeleton",
+          "global": { "publish_interval": 3, "unique_token": "java-initial" },
+          "instances": []
+        },
+        "tags": { "componentMarker": "java" }
+      }
     },
     "PythonComponentSkeleton": {
-      "component": { "token": "python-component-skeleton", "global": { "publish_interval": 3 }, "instances": [] }
+      "parent": "line/line-7",
+      "config": {
+        "component": {
+          "token": "python-component-skeleton",
+          "global": { "publish_interval": 3, "unique_token": "python-initial" },
+          "instances": []
+        },
+        "tags": { "componentMarker": "python" }
+      }
     },
     "RustComponentSkeleton": {
-      "component": { "token": "rust-component-skeleton", "global": { "publish_interval": 3 }, "instances": [] }
+      "parent": "line/line-7",
+      "config": {
+        "component": {
+          "token": "rust-component-skeleton",
+          "global": { "publish_interval": 3, "unique_token": "rust-initial" },
+          "instances": []
+        },
+        "tags": { "componentMarker": "rust" }
+      }
     },
     "TsComponentSkeleton": {
-      "component": { "token": "ts-component-skeleton", "global": { "publish_interval": 3 }, "instances": [] }
+      "parent": "line/line-7",
+      "config": {
+        "component": {
+          "token": "ts-component-skeleton",
+          "global": { "publish_interval": 3, "unique_token": "ts-initial" },
+          "instances": []
+        },
+        "tags": { "componentMarker": "ts" }
+      }
     }
   }
 }
@@ -369,25 +444,105 @@ $catalogInitial = @'
 $catalogUpdate = @'
 {
   "schemaVersion": 1,
-  "version": "second-pass-full-interop",
+  "version": "second-pass-hierarchical-full-interop",
   "provenance": { "source": "message", "uri": "greengrass-full-interop-second-pass" },
-  "base": {
-    "logging": { "level": "INFO" },
-    "heartbeat": { "enabled": true, "intervalSecs": 5, "destination": "local" },
-    "tags": { "site": "interop-second-pass" }
+  "hierarchy": {
+    "levels": ["enterprise", "site", "zone", "line", "device"]
+  },
+  "nodes": {
+    "enterprise/acme": {
+      "scope": { "enterprise": "acme" },
+      "config": {
+        "hierarchy": {
+          "levels": ["enterprise", "site", "zone", "line", "device"]
+        },
+        "identity": { "enterprise": "acme" },
+        "logging": { "level": "INFO" },
+        "heartbeat": { "enabled": true, "intervalSecs": 5, "destination": "local" },
+        "tags": { "lineageMarker": "gg-hierarchical-second-pass", "enterpriseOwner": "central-ops" }
+      }
+    },
+    "site/integration-lab": {
+      "parent": "enterprise/acme",
+      "scope": { "enterprise": "acme", "site": "integration-lab" },
+      "config": {
+        "identity": { "site": "integration-lab" },
+        "metricEmission": {
+          "target": "log",
+          "namespace": "edgecommons_hierarchical"
+        }
+      }
+    },
+    "zone/greengrass-zone": {
+      "parent": "site/integration-lab",
+      "scope": {
+        "enterprise": "acme",
+        "site": "integration-lab",
+        "zone": "greengrass-zone"
+      },
+      "config": {
+        "identity": { "zone": "greengrass-zone" },
+        "tags": { "zoneClass": "validation" }
+      }
+    },
+    "line/line-7": {
+      "parent": "zone/greengrass-zone",
+      "scope": {
+        "enterprise": "acme",
+        "site": "integration-lab",
+        "zone": "greengrass-zone",
+        "line": "line-7"
+      },
+      "config": {
+        "identity": { "line": "line-7" },
+        "logging": { "level": "DEBUG" }
+      }
+    }
   },
   "components": {
     "JavaComponentSkeleton": {
-      "component": { "token": "java-component-skeleton", "global": { "publish_interval": 21 }, "instances": [] }
+      "parent": "line/line-7",
+      "config": {
+        "component": {
+          "token": "java-component-skeleton",
+          "global": { "publish_interval": 21, "unique_token": "java-updated" },
+          "instances": []
+        },
+        "tags": { "componentMarker": "java" }
+      }
     },
     "PythonComponentSkeleton": {
-      "component": { "token": "python-component-skeleton", "global": { "publish_interval": 23 }, "instances": [] }
+      "parent": "line/line-7",
+      "config": {
+        "component": {
+          "token": "python-component-skeleton",
+          "global": { "publish_interval": 23, "unique_token": "python-updated" },
+          "instances": []
+        },
+        "tags": { "componentMarker": "python" }
+      }
     },
     "RustComponentSkeleton": {
-      "component": { "token": "rust-component-skeleton", "global": { "publish_interval": 29 }, "instances": [] }
+      "parent": "line/line-7",
+      "config": {
+        "component": {
+          "token": "rust-component-skeleton",
+          "global": { "publish_interval": 29, "unique_token": "rust-updated" },
+          "instances": []
+        },
+        "tags": { "componentMarker": "rust" }
+      }
     },
     "TsComponentSkeleton": {
-      "component": { "token": "ts-component-skeleton", "global": { "publish_interval": 31 }, "instances": [] }
+      "parent": "line/line-7",
+      "config": {
+        "component": {
+          "token": "ts-component-skeleton",
+          "global": { "publish_interval": 31, "unique_token": "ts-updated" },
+          "instances": []
+        },
+        "tags": { "componentMarker": "ts" }
+      }
     }
   }
 }

@@ -1,0 +1,492 @@
+{
+  "description": "edgecommons hierarchical ConfigComponent catalog conformance vectors",
+  "constants": {
+    "thingName": "line-7-edge-01",
+    "hierarchyLevels": ["enterprise", "site", "zone", "line", "device"],
+    "lookupToken": "opcua-adapter",
+    "runtimeComponentToken": "opcua-adapter"
+  },
+  "validCatalogs": [
+    {
+      "name": "four-layer-line-with-one-device",
+      "catalog": {
+        "schemaVersion": 1,
+        "version": "enterprise-site-zone-line-v1",
+        "provenance": {
+          "source": "file",
+          "uri": "/etc/edgecommons/catalog.json"
+        },
+        "hierarchy": {
+          "levels": ["enterprise", "site", "zone", "line", "device"]
+        },
+        "nodes": {
+          "enterprise/acme": {
+            "scope": { "enterprise": "acme" },
+            "config": {
+              "hierarchy": {
+                "levels": ["enterprise", "site", "zone", "line", "device"]
+              },
+              "identity": { "enterprise": "acme" },
+              "logging": { "level": "INFO" },
+              "tags": { "owner": "central-ops" }
+            }
+          },
+          "site/dallas": {
+            "parent": "enterprise/acme",
+            "scope": { "enterprise": "acme", "site": "dallas" },
+            "config": {
+              "identity": { "site": "dallas" },
+              "metricEmission": {
+                "target": "log",
+                "namespace": "edgecommons"
+              }
+            }
+          },
+          "zone/packaging": {
+            "parent": "site/dallas",
+            "scope": {
+              "enterprise": "acme",
+              "site": "dallas",
+              "zone": "packaging"
+            },
+            "config": {
+              "identity": { "zone": "packaging" },
+              "tags": { "zoneClass": "packaging" }
+            }
+          },
+          "line/line-7": {
+            "parent": "zone/packaging",
+            "scope": {
+              "enterprise": "acme",
+              "site": "dallas",
+              "zone": "packaging",
+              "line": "line-7"
+            },
+            "config": {
+              "identity": { "line": "line-7" },
+              "logging": { "level": "WARN" },
+              "heartbeat": { "intervalSecs": 10 }
+            }
+          }
+        },
+        "components": {
+          "opcua-adapter": {
+            "parent": "line/line-7",
+            "config": {
+              "component": {
+                "token": "opcua-adapter",
+                "global": {
+                  "endpoint": "opc.tcp://10.10.7.20:4840",
+                  "publish_interval": 3
+                },
+                "instances": []
+              },
+              "logging": { "level": "DEBUG" },
+              "tags": { "componentMarker": "opcua" }
+            }
+          },
+          "modbus-adapter": {
+            "parent": "line/line-7",
+            "config": {
+              "component": {
+                "token": "modbus-adapter",
+                "global": {
+                  "endpoint": "tcp://10.10.7.21:502",
+                  "publish_interval": 3
+                },
+                "instances": []
+              },
+              "tags": { "componentMarker": "modbus" }
+            }
+          }
+        }
+      },
+      "request": { "component": "opcua-adapter" },
+      "expected": {
+        "version": "enterprise-site-zone-line-v1",
+        "componentCount": 2,
+        "lineageIds": [
+          "enterprise/acme",
+          "site/dallas",
+          "zone/packaging",
+          "line/line-7",
+          "component/opcua-adapter"
+        ],
+        "pushTopics": [
+          "ecv1/line-7-edge-01/opcua-adapter/main/cmd/set-config",
+          "ecv1/line-7-edge-01/modbus-adapter/main/cmd/set-config"
+        ]
+      }
+    },
+    {
+      "name": "component-only-lineage",
+      "catalog": {
+        "schemaVersion": 1,
+        "version": "component-only-v1",
+        "hierarchy": {
+          "levels": ["enterprise", "site", "zone", "line", "device"]
+        },
+        "nodes": {},
+        "components": {
+          "opcua-adapter": {
+            "config": {
+              "hierarchy": {
+                "levels": ["enterprise", "site", "zone", "line", "device"]
+              },
+              "identity": {
+                "enterprise": "acme",
+                "site": "dallas",
+                "zone": "packaging",
+                "line": "line-7"
+              },
+              "component": { "token": "opcua-adapter" }
+            }
+          }
+        }
+      },
+      "request": { "component": "opcua-adapter" },
+      "expected": {
+        "lineageIds": ["component/opcua-adapter"]
+      }
+    },
+    {
+      "name": "reload-relocates-line-and-pushes-all-components",
+      "oldCatalogVersion": "enterprise-site-zone-line-v1",
+      "newCatalog": {
+        "schemaVersion": 1,
+        "version": "enterprise-site-zone-line-v2",
+        "provenance": {
+          "source": "message",
+          "volatile": true
+        },
+        "hierarchy": {
+          "levels": ["enterprise", "site", "zone", "line", "device"]
+        },
+        "nodes": {
+          "enterprise/contoso": {
+            "scope": { "enterprise": "contoso" },
+            "config": {
+              "hierarchy": {
+                "levels": ["enterprise", "site", "zone", "line", "device"]
+              },
+              "identity": { "enterprise": "contoso" },
+              "tags": { "owner": "north-region" }
+            }
+          },
+          "site/austin": {
+            "parent": "enterprise/contoso",
+            "scope": { "enterprise": "contoso", "site": "austin" },
+            "config": { "identity": { "site": "austin" } }
+          },
+          "zone/filling": {
+            "parent": "site/austin",
+            "scope": {
+              "enterprise": "contoso",
+              "site": "austin",
+              "zone": "filling"
+            },
+            "config": { "identity": { "zone": "filling" } }
+          },
+          "line/line-8": {
+            "parent": "zone/filling",
+            "scope": {
+              "enterprise": "contoso",
+              "site": "austin",
+              "zone": "filling",
+              "line": "line-8"
+            },
+            "config": {
+              "identity": { "line": "line-8" },
+              "heartbeat": { "intervalSecs": 5 }
+            }
+          }
+        },
+        "components": {
+          "opcua-adapter": {
+            "parent": "line/line-8",
+            "config": {
+              "component": {
+                "token": "opcua-adapter",
+                "global": { "publish_interval": 1 },
+                "instances": []
+              }
+            }
+          },
+          "modbus-adapter": {
+            "parent": "line/line-8",
+            "config": {
+              "component": {
+                "token": "modbus-adapter",
+                "global": { "publish_interval": 1 },
+                "instances": []
+              }
+            }
+          }
+        }
+      },
+      "expected": {
+        "promote": true,
+        "persist": false,
+        "pushCount": 2,
+        "pushedVersion": "enterprise-site-zone-line-v2"
+      }
+    }
+  ],
+  "invalidCatalogs": [
+    {
+      "name": "old-split-catalog-with-base-is-invalid",
+      "catalog": {
+        "schemaVersion": 1,
+        "version": "old",
+        "base": { "logging": { "level": "INFO" } },
+        "components": {
+          "opcua-adapter": { "component": { "token": "opcua-adapter" } }
+        }
+      },
+      "expected": { "error": "CATALOG_INVALID" }
+    },
+    {
+      "name": "missing-hierarchy",
+      "catalog": {
+        "schemaVersion": 1,
+        "version": "bad",
+        "nodes": {},
+        "components": {}
+      },
+      "expected": { "error": "CATALOG_INVALID" }
+    },
+    {
+      "name": "duplicate-hierarchy-level",
+      "catalog": {
+        "schemaVersion": 1,
+        "version": "bad",
+        "hierarchy": { "levels": ["enterprise", "site", "site", "device"] },
+        "nodes": {},
+        "components": {}
+      },
+      "expected": { "error": "CATALOG_INVALID" }
+    },
+    {
+      "name": "device-in-catalog-scope",
+      "catalog": {
+        "schemaVersion": 1,
+        "version": "bad",
+        "hierarchy": {
+          "levels": ["enterprise", "site", "zone", "line", "device"]
+        },
+        "nodes": {
+          "line/line-7": {
+            "scope": { "line": "line-7", "device": "line-7-edge-01" },
+            "config": { "identity": { "line": "line-7" } }
+          }
+        },
+        "components": {
+          "opcua-adapter": {
+            "parent": "line/line-7",
+            "config": { "component": { "token": "opcua-adapter" } }
+          }
+        }
+      },
+      "expected": { "error": "CATALOG_INVALID" }
+    },
+    {
+      "name": "node-missing-scope",
+      "catalog": {
+        "schemaVersion": 1,
+        "version": "bad",
+        "hierarchy": {
+          "levels": ["enterprise", "site", "zone", "line", "device"]
+        },
+        "nodes": {
+          "line/line-7": {
+            "config": { "identity": { "line": "line-7" } }
+          }
+        },
+        "components": {
+          "opcua-adapter": {
+            "parent": "line/line-7",
+            "config": { "component": { "token": "opcua-adapter" } }
+          }
+        }
+      },
+      "expected": { "error": "CATALOG_INVALID" }
+    },
+    {
+      "name": "node-scope-does-not-own-node-id",
+      "catalog": {
+        "schemaVersion": 1,
+        "version": "bad",
+        "hierarchy": {
+          "levels": ["enterprise", "site", "zone", "line", "device"]
+        },
+        "nodes": {
+          "line/line-7": {
+            "scope": { "line": "line-8" },
+            "config": { "identity": { "line": "line-8" } }
+          }
+        },
+        "components": {
+          "opcua-adapter": {
+            "parent": "line/line-7",
+            "config": { "component": { "token": "opcua-adapter" } }
+          }
+        }
+      },
+      "expected": { "error": "CATALOG_INVALID" }
+    },
+    {
+      "name": "unknown-parent",
+      "catalog": {
+        "schemaVersion": 1,
+        "version": "bad",
+        "hierarchy": {
+          "levels": ["enterprise", "site", "zone", "line", "device"]
+        },
+        "nodes": {},
+        "components": {
+          "opcua-adapter": {
+            "parent": "line/missing",
+            "config": { "component": { "token": "opcua-adapter" } }
+          }
+        }
+      },
+      "expected": { "error": "LINEAGE_PARENT_MISSING" }
+    },
+    {
+      "name": "unreferenced-node-unknown-parent",
+      "catalog": {
+        "schemaVersion": 1,
+        "version": "bad",
+        "hierarchy": {
+          "levels": ["enterprise", "site", "zone", "line", "device"]
+        },
+        "nodes": {
+          "site/dallas": {
+            "parent": "enterprise/missing",
+            "scope": { "site": "dallas" },
+            "config": { "identity": { "site": "dallas" } }
+          }
+        },
+        "components": {
+          "opcua-adapter": {
+            "config": { "component": { "token": "opcua-adapter" } }
+          }
+        }
+      },
+      "expected": { "error": "LINEAGE_PARENT_MISSING" }
+    },
+    {
+      "name": "cycle",
+      "catalog": {
+        "schemaVersion": 1,
+        "version": "bad",
+        "hierarchy": {
+          "levels": ["enterprise", "site", "zone", "line", "device"]
+        },
+        "nodes": {
+          "site/dallas": {
+            "parent": "zone/packaging",
+            "scope": { "site": "dallas" },
+            "config": { "identity": { "site": "dallas" } }
+          },
+          "zone/packaging": {
+            "parent": "site/dallas",
+            "scope": { "site": "dallas", "zone": "packaging" },
+            "config": { "identity": { "zone": "packaging" } }
+          }
+        },
+        "components": {
+          "opcua-adapter": {
+            "parent": "zone/packaging",
+            "config": { "component": { "token": "opcua-adapter" } }
+          }
+        }
+      },
+      "expected": { "error": "LINEAGE_CYCLE" }
+    },
+    {
+      "name": "unreferenced-node-cycle",
+      "catalog": {
+        "schemaVersion": 1,
+        "version": "bad",
+        "hierarchy": {
+          "levels": ["enterprise", "site", "zone", "line", "device"]
+        },
+        "nodes": {
+          "site/dallas": {
+            "parent": "zone/packaging",
+            "scope": { "site": "dallas" },
+            "config": { "identity": { "site": "dallas" } }
+          },
+          "zone/packaging": {
+            "parent": "site/dallas",
+            "scope": { "site": "dallas", "zone": "packaging" },
+            "config": { "identity": { "zone": "packaging" } }
+          }
+        },
+        "components": {
+          "opcua-adapter": {
+            "config": { "component": { "token": "opcua-adapter" } }
+          }
+        }
+      },
+      "expected": { "error": "LINEAGE_CYCLE" }
+    },
+    {
+      "name": "scope-conflict",
+      "catalog": {
+        "schemaVersion": 1,
+        "version": "bad",
+        "hierarchy": {
+          "levels": ["enterprise", "site", "zone", "line", "device"]
+        },
+        "nodes": {
+          "enterprise/acme": {
+            "scope": { "enterprise": "acme" },
+            "config": { "identity": { "enterprise": "acme" } }
+          },
+          "site/dallas": {
+            "parent": "enterprise/acme",
+            "scope": { "enterprise": "contoso", "site": "dallas" },
+            "config": { "identity": { "site": "dallas" } }
+          }
+        },
+        "components": {
+          "opcua-adapter": {
+            "parent": "site/dallas",
+            "config": { "component": { "token": "opcua-adapter" } }
+          }
+        }
+      },
+      "expected": { "error": "LINEAGE_SCOPE_CONFLICT" }
+    },
+    {
+      "name": "identity-conflict",
+      "catalog": {
+        "schemaVersion": 1,
+        "version": "bad",
+        "hierarchy": {
+          "levels": ["enterprise", "site", "zone", "line", "device"]
+        },
+        "nodes": {
+          "site/dallas": {
+            "scope": { "site": "dallas" },
+            "config": { "identity": { "site": "dallas" } }
+          },
+          "zone/packaging": {
+            "parent": "site/dallas",
+            "scope": { "site": "dallas", "zone": "packaging" },
+            "config": { "identity": { "site": "austin", "zone": "packaging" } }
+          }
+        },
+        "components": {
+          "opcua-adapter": {
+            "parent": "zone/packaging",
+            "config": { "component": { "token": "opcua-adapter" } }
+          }
+        }
+      },
+      "expected": { "error": "LINEAGE_IDENTITY_CONFLICT" }
+    }
+  ]
+}

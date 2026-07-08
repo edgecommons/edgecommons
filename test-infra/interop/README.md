@@ -79,5 +79,5 @@ auto-discovered (JAVA_HOME or `C:/Users/breis/tools/jdk`).
 
 Use [FULL_INTEROP_GREENGRASS_K8S.md](FULL_INTEROP_GREENGRASS_K8S.md) when a change must be proven
 through deployed skeleton components on Greengrass and Kubernetes, especially for Greengrass IPC,
-request/reply behavior, binary payloads, or split-config behavior through
+request/reply behavior, binary payloads, or hierarchical-config behavior through
 `com.mbreissi.edgecommons.ConfigComponent`.

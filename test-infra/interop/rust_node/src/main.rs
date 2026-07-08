@@ -18,7 +18,7 @@ use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine as _;
 use serde_json::json;
 #[cfg(feature = "greengrass")]
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use edgecommons::error::EdgeCommonsError;
 use edgecommons::messaging::config::MessagingConfig;
@@ -35,6 +35,104 @@ use edgecommons::messaging::service::{DefaultMessagingService, MessagingService}
 use edgecommons::uns::{Uns, UnsClass};
 
 const LANG: &str = "rust";
+
+#[cfg(feature = "greengrass")]
+fn deep_merge_value(left: Value, right: Value) -> Value {
+    match (left, right) {
+        (Value::Object(mut left), Value::Object(right)) => {
+            for (key, right_value) in right {
+                let merged = match left.remove(&key) {
+                    Some(left_value) => deep_merge_value(left_value, right_value),
+                    None => right_value,
+                };
+                left.insert(key, merged);
+            }
+            Value::Object(left)
+        }
+        (_, right) => right,
+    }
+}
+
+#[cfg(feature = "greengrass")]
+fn validate_lineage_bundle(
+    token: &str,
+    body: &Value,
+    expected_catalog_version: Option<&str>,
+) -> (bool, Value) {
+    let mut errors = Vec::new();
+    if body.get("base").is_some() {
+        errors.push("old top-level base layer is present".to_string());
+    }
+    if body.get("lineageVersion").and_then(Value::as_i64) != Some(1) {
+        errors.push("lineageVersion must be 1".to_string());
+    }
+    let catalog_version = body.get("catalogVersion").and_then(Value::as_str);
+    if let Some(expected) = expected_catalog_version {
+        if catalog_version != Some(expected) {
+            errors.push(format!(
+                "catalogVersion must be {expected}, got {}",
+                catalog_version.unwrap_or("<missing>")
+            ));
+        }
+    }
+    if body.get("component").and_then(Value::as_str) != Some(token) {
+        errors.push(format!(
+            "component must be {token}, got {}",
+            body.get("component")
+                .and_then(Value::as_str)
+                .unwrap_or("<missing>")
+        ));
+    }
+
+    let mut effective = Value::Object(Map::new());
+    let mut layer_ids = Vec::new();
+    match body.get("layers").and_then(Value::as_array) {
+        Some(layers) if !layers.is_empty() => {
+            for layer in layers {
+                let id = layer
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("<missing>")
+                    .to_string();
+                layer_ids.push(Value::String(id));
+                match layer.get("config") {
+                    Some(Value::Object(_)) => {
+                        effective = deep_merge_value(effective, layer["config"].clone());
+                    }
+                    Some(_) => errors.push("layer config must be an object".to_string()),
+                    None => errors.push("layer config is missing".to_string()),
+                }
+            }
+        }
+        Some(_) => errors.push("layers must not be empty".to_string()),
+        None => errors.push("layers must be an array".to_string()),
+    }
+
+    let embedded_token = effective
+        .get("component")
+        .and_then(|component| component.get("token"))
+        .and_then(Value::as_str);
+    let publish_interval = effective
+        .get("component")
+        .and_then(|component| component.get("global"))
+        .and_then(|global| global.get("publish_interval"))
+        .and_then(Value::as_i64);
+    let identity = effective.get("identity").cloned().unwrap_or(Value::Null);
+
+    (
+        errors.is_empty(),
+        json!({
+            "ok": errors.is_empty(),
+            "errors": errors,
+            "catalogVersion": catalog_version,
+            "layerIds": layer_ids,
+            "embeddedComponentToken": embedded_token,
+            "publishInterval": publish_interval,
+            "identity": identity,
+            "effective": effective,
+        }),
+    )
+}
 
 fn decode_hex(s: &str) -> Result<Vec<u8>, String> {
     if s.len() % 2 != 0 {
@@ -397,13 +495,12 @@ async fn run_gg_config_request(args: &[String]) -> ! {
     let result = match tokio::time::timeout(Duration::from_secs(20), fut).await {
         Ok(Ok(reply)) => {
             let matched = reply.header.correlation_id == corr;
-            let has_component_layer = reply.body.get("component").is_some();
-            let has_base_layer = reply.body.get("base").is_some();
+            let (lineage_ok, lineage_check) = validate_lineage_bundle(&component, &reply.body, None);
             json!({
-                "ok": matched && has_component_layer && has_base_layer,
+                "ok": matched && lineage_ok,
                 "correlation_match": matched,
-                "has_base_layer": has_base_layer,
-                "has_component_layer": has_component_layer,
+                "lineage_ok": lineage_ok,
+                "lineage_check": lineage_check,
                 "reply_body": reply.body,
             })
         }
@@ -466,28 +563,70 @@ async fn run_gg_config_update(args: &[String]) -> ! {
             "source": "message",
             "uri": "greengrass-smoke"
         },
-        "base": {
-            "logging": {
-                "level": "INFO"
+        "hierarchy": {
+            "levels": ["enterprise", "site", "zone", "line", "device"]
+        },
+        "nodes": {
+            "enterprise/acme": {
+                "scope": { "enterprise": "acme" },
+                "config": {
+                    "hierarchy": {
+                        "levels": ["enterprise", "site", "zone", "line", "device"]
+                    },
+                    "identity": { "enterprise": "acme" },
+                    "logging": { "level": "INFO" }
+                }
             },
-            "tags": {
-                "site": "dallas"
+            "site/dallas": {
+                "parent": "enterprise/acme",
+                "scope": { "enterprise": "acme", "site": "dallas" },
+                "config": {
+                    "identity": { "site": "dallas" },
+                    "tags": { "site": "dallas" }
+                }
+            },
+            "zone/smoke": {
+                "parent": "site/dallas",
+                "scope": { "enterprise": "acme", "site": "dallas", "zone": "smoke" },
+                "config": {
+                    "identity": { "zone": "smoke" }
+                }
+            },
+            "line/line-7": {
+                "parent": "zone/smoke",
+                "scope": {
+                    "enterprise": "acme",
+                    "site": "dallas",
+                    "zone": "smoke",
+                    "line": "line-7"
+                },
+                "config": {
+                    "identity": { "line": "line-7" }
+                }
             }
         },
         "components": {
             "opcua-adapter": {
-                "component": {
-                    "token": "opcua-adapter",
-                    "global": {
-                        "endpoint": "opc.tcp://plc-1:4840"
+                "parent": "line/line-7",
+                "config": {
+                    "component": {
+                        "token": "opcua-adapter",
+                        "global": {
+                            "endpoint": "opc.tcp://plc-1:4840"
+                        },
+                        "instances": []
                     }
                 }
             },
             "modbus-adapter": {
-                "component": {
-                    "token": "modbus-adapter",
-                    "global": {
-                        "unitId": 1
+                "parent": "line/line-7",
+                "config": {
+                    "component": {
+                        "token": "modbus-adapter",
+                        "global": {
+                            "unitId": 1
+                        },
+                        "instances": []
                     }
                 }
             }
@@ -535,12 +674,35 @@ async fn run_gg_config_update(args: &[String]) -> ! {
         .map(|guard| Value::Object(guard.clone()))
         .unwrap_or_else(|_| json!({"error": "received push map poisoned"}));
     let pushed_count = pushes.as_object().map(|map| map.len()).unwrap_or_default();
+    let mut push_checks = Map::new();
+    let mut pushes_valid = true;
+    if let Some(push_map) = pushes.as_object() {
+        for token in ["opcua-adapter", "modbus-adapter"] {
+            match push_map.get(token) {
+                Some(body) => {
+                    let (ok, check) = validate_lineage_bundle(token, body, Some(&version));
+                    pushes_valid &= ok;
+                    push_checks.insert(token.to_string(), check);
+                }
+                None => {
+                    pushes_valid = false;
+                    push_checks.insert(
+                        token.to_string(),
+                        json!({"ok": false, "errors": ["missing set-config push"]}),
+                    );
+                }
+            }
+        }
+    } else {
+        pushes_valid = false;
+    }
     let result = json!({
-        "ok": ack_ok && correlation_match && pushed_count >= 2,
+        "ok": ack_ok && correlation_match && pushed_count >= 2 && pushes_valid,
         "ack_ok": ack_ok,
         "correlation_match": correlation_match,
         "pushed_count": pushed_count,
         "ack_body": ack_body,
+        "push_checks": Value::Object(push_checks),
         "pushes": pushes,
     });
     let _ = std::fs::write(&output, serde_json::to_string_pretty(&result).unwrap());
@@ -659,13 +821,36 @@ async fn run_gg_config_update_file(args: &[String]) -> ! {
         .map(|guard| Value::Object(guard.clone()))
         .unwrap_or_else(|_| json!({"error": "received push map poisoned"}));
     let pushed_count = pushes.as_object().map(|map| map.len()).unwrap_or_default();
+    let mut push_checks = Map::new();
+    let mut pushes_valid = true;
+    if let Some(push_map) = pushes.as_object() {
+        for token in &tokens {
+            match push_map.get(token) {
+                Some(body) => {
+                    let (ok, check) = validate_lineage_bundle(token, body, Some(&version));
+                    pushes_valid &= ok;
+                    push_checks.insert(token.clone(), check);
+                }
+                None => {
+                    pushes_valid = false;
+                    push_checks.insert(
+                        token.clone(),
+                        json!({"ok": false, "errors": ["missing set-config push"]}),
+                    );
+                }
+            }
+        }
+    } else {
+        pushes_valid = false;
+    }
     let result = json!({
-        "ok": ack_ok && correlation_match && pushed_count >= tokens.len(),
+        "ok": ack_ok && correlation_match && pushed_count >= tokens.len() && pushes_valid,
         "ack_ok": ack_ok,
         "correlation_match": correlation_match,
         "expected_pushes": tokens.len(),
         "pushed_count": pushed_count,
         "ack_body": ack_body,
+        "push_checks": Value::Object(push_checks),
         "pushes": pushes,
     });
     let _ = std::fs::write(&output, serde_json::to_string_pretty(&result).unwrap());

@@ -11,7 +11,6 @@
 //!   the platform; validated by the IPC lock).
 //! - `-c/--config <SOURCE> [args...]` — `FILE | ENV | GG_CONFIG | SHADOW | CONFIG_COMPONENT`
 //!   (default: from the resolved platform profile).
-//! - `--no-shared-config` — disable split-config shared-layer resolution.
 //! - `-t/--thing <name>` — IoT Thing name (takes the **full** string value).
 //!
 //! ## Semantics & Architecture
@@ -91,8 +90,6 @@ pub struct ParsedArgs {
     /// ConfigMap file (mount dir + key), so a single mounted `config.json` carrying a
     /// `.messaging` section doubles as the messaging config and the component config.
     pub messaging_config_path: Option<PathBuf>,
-    /// Operator override that disables split-config shared-layer resolution for this process.
-    pub no_shared_config: bool,
 }
 
 const DEFAULT_CONFIG_FILE: &str = "config.json";
@@ -143,12 +140,6 @@ pub fn command() -> Command {
                 .value_parser(clap::value_parser!(String))
                 .value_name("NAME")
                 .help("IoT Thing name"),
-        )
-        .arg(
-            Arg::new("no_shared_config")
-                .long("no-shared-config")
-                .action(clap::ArgAction::SetTrue)
-                .help("Disable split-config shared-layer resolution for this process"),
         )
 }
 
@@ -217,8 +208,6 @@ where
         };
 
     let thing_flag = matches.get_one::<String>("thing").cloned();
-    let no_shared_config = matches.get_flag("no_shared_config");
-
     let inputs = ResolverInputs {
         platform: platform_flag,
         transport: transport_flag,
@@ -251,7 +240,6 @@ where
         thing: thing_flag,
         identity: resolved.identity,
         messaging_config_path,
-        no_shared_config,
     })
 }
 
@@ -375,12 +363,6 @@ mod tests {
                 path: PathBuf::from("custom.json")
             }
         );
-    }
-
-    #[test]
-    fn no_shared_config_flag_is_carried() {
-        let a = parse(&["--platform", "HOST", "--no-shared-config"]).unwrap();
-        assert!(a.no_shared_config);
     }
 
     #[test]
@@ -590,6 +572,11 @@ mod tests {
     #[test]
     fn unknown_transport_is_rejected() {
         assert!(parse(&["--platform", "HOST", "--transport", "BOGUS"]).is_err());
+    }
+
+    #[test]
+    fn shared_config_disable_flag_is_removed() {
+        assert!(parse(&["--platform", "HOST", "--no-shared-config"]).is_err());
     }
 
     #[test]

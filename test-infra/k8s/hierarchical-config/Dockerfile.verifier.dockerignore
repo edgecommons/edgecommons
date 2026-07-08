@@ -1,0 +1,8 @@
+**
+!libs/
+!libs/python/
+!libs/python/**
+!test-infra/
+!test-infra/k8s/
+!test-infra/k8s/hierarchical-config/
+!test-infra/k8s/hierarchical-config/verifier.py

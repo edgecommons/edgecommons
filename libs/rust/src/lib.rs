@@ -475,8 +475,7 @@ impl EdgeCommonsBuilder {
             Arc::new(config::layered::LayeredConfigSource::new(
                 source,
                 parsed.config.clone(),
-                parsed.no_shared_config,
-                thing_name.clone(),
+                &self.component_name,
             ));
         let raw = source.load().await?;
         config::validation::validate(&raw)?;

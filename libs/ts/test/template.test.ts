@@ -25,8 +25,55 @@ describe("template resolve", () => {
   });
 
   it("leaves unknown placeholders untouched", () => {
-    const cfg = Config.fromValue("c", "t", {});
-    expect(resolve(cfg, "{Unknown}")).toBe("{Unknown}");
+    const cfg = Config.fromValue("c", "t", {
+      hierarchy: { levels: ["site", "device"] },
+      identity: { site: "factory-1" },
+    });
+    expect(resolve(cfg, "{Unknown}/{site}")).toBe("{Unknown}/factory-1");
+  });
+
+  it("substitutes hierarchy identity names without tags", () => {
+    const cfg = Config.fromValue("com.example.MyComponent", "gw-01", {
+      hierarchy: { levels: ["site", "line", "device"] },
+      identity: {
+        site: "factory/1",
+        line: "line+2",
+      },
+    });
+
+    expect(resolve(cfg, "{site}/{line}/{device}/{ThingName}")).toBe(
+      "factory_1/line_2/gw-01/gw-01",
+    );
+  });
+
+  it("identity placeholders win over colliding tags", () => {
+    const cfg = Config.fromValue("com.example.MyComponent", "gw-01", {
+      hierarchy: { levels: ["site", "device"] },
+      identity: { site: "identity-site" },
+      tags: {
+        site: "tag-site",
+        device: "tag-device",
+        zone: "tag-zone",
+      },
+    });
+
+    expect(resolve(cfg, "{site}/{device}/{zone}")).toBe("identity-site/gw-01/tag-zone");
+  });
+
+  it("builtins win over identity and tags with the same symbol", () => {
+    const cfg = Config.fromValue("com.example.MyComponent", "gw-01", {
+      hierarchy: { levels: ["ThingName", "device"] },
+      identity: { ThingName: "identity-thing" },
+      tags: {
+        ThingName: "tag-thing",
+        ComponentName: "tag-component",
+        ComponentFullName: "tag-full",
+      },
+    });
+
+    expect(resolve(cfg, "{ThingName}/{ComponentName}/{ComponentFullName}")).toBe(
+      "gw-01/MyComponent/com.example.MyComponent",
+    );
   });
 
   it("sanitizes path traversal and topic wildcards in values, preserving template separators", () => {

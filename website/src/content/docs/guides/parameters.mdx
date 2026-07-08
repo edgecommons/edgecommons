@@ -43,9 +43,9 @@ The full set of keys: `source.{type,region,endpointUrl,withDecryption,root,secur
 `cache.{persist,path,keyProvider}`, `refreshIntervalSecs` (default `300`; `0` disables periodic
 refresh), `bootstrapOnStart` (default `true`), and `sync.{names,paths}`.
 
-In split-config deployments, the shared base layer can define common `parameters.source` and cache
-defaults once. Each component still owns its own parameter service, cache lifecycle, and sync set;
-inherited settings do not create a shared on-disk cache.
+In hierarchical-config deployments, an inherited hierarchy layer can define common
+`parameters.source` and cache defaults once. Each component still owns its own parameter service,
+cache lifecycle, and sync set; inherited settings do not create a shared on-disk cache.
 
 ### Rust: enable the cargo feature
 

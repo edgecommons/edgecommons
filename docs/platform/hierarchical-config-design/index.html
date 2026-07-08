@@ -1,0 +1,703 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>EdgeCommons Hierarchical Config Design</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='27' fill='%23f7f8f5' stroke='%23172022' stroke-width='5'/%3E%3Cpath d='M32 13v38M16 28h32M22 42h20' stroke='%231f8a8a' stroke-width='5' stroke-linecap='round'/%3E%3Ccircle cx='32' cy='32' r='6' fill='%23b35c34'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <div class="site-shell">
+      <aside class="rail" aria-label="Design navigation">
+        <div class="rail__brand">
+          <span class="rail__mark" aria-hidden="true"></span>
+          <div>
+            <strong>EdgeCommons</strong>
+            <span>hierarchical config</span>
+          </div>
+        </div>
+        <nav class="rail__nav">
+          <a href="#thesis">Thesis</a>
+          <a href="#current">Current model</a>
+          <a href="#target">Target model</a>
+          <a href="#contract">Layer contract</a>
+          <a href="#providers">Provider matrix</a>
+          <a href="#deployments">Deployments</a>
+          <a href="#implementation">Implementation</a>
+          <a href="#runtime">Runtime pipeline</a>
+          <a href="#usability">Usability</a>
+          <a href="#cutover">Cutover</a>
+          <a href="#work-slices">Work slices</a>
+          <a href="#validation">Validation</a>
+          <a href="#decisions">Decisions</a>
+        </nav>
+      </aside>
+
+      <main id="main">
+        <section id="thesis" class="hero section">
+          <div class="hero__copy">
+            <p class="eyebrow">Implementation design grounded in the existing layered-config code</p>
+            <h1>Make shared config follow the user's real hierarchy.</h1>
+            <p class="hero__lead">
+              The previous two-layer model proved the right merge contract: raw partial layers become
+              one validated effective config. The next step is to stop treating "shared" as exactly one
+              line layer, and instead resolve every catalog ancestor the deployment defines:
+              enterprise, site, building, zone, line, and then the component leaf. The device
+              remains runtime identity.
+            </p>
+          </div>
+
+          <div class="hero__visual" aria-label="Interactive hierarchy merge preview">
+            <div class="visual-toolbar">
+              <button class="icon-button" type="button" id="depthMinus" aria-label="Remove one hierarchy level">
+                -
+              </button>
+              <span id="depthLabel">5 catalog scopes</span>
+              <button class="icon-button" type="button" id="depthPlus" aria-label="Add one hierarchy level">
+                +
+              </button>
+            </div>
+            <div class="lineage-board">
+              <svg class="lineage-svg" viewBox="0 0 720 520" role="img" aria-labelledby="lineageTitle lineageDesc">
+                <title id="lineageTitle">Resolved hierarchical config layers</title>
+                <desc id="lineageDesc">
+                  A root to component chain where each layer contributes a small part of the final effective config.
+                </desc>
+                <defs>
+                  <filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%">
+                    <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#203040" flood-opacity="0.18" />
+                  </filter>
+                  <marker id="arrow" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto">
+                    <path d="M0,0 L8,4 L0,8 Z" fill="#264653" />
+                  </marker>
+                </defs>
+                <g id="lineageLinks"></g>
+                <g id="lineageNodes"></g>
+              </svg>
+              <div class="effective-card">
+                <span>Effective config</span>
+                <pre id="effectivePreview"></pre>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="section callout-band">
+          <div class="callout-band__item">
+            <strong>Keep</strong>
+            <span>existing config providers, merge semantics, validation timing, hot reload, and one effective snapshot.</span>
+          </div>
+          <div class="callout-band__item">
+            <strong>Change</strong>
+            <span>the ConfigComponent catalog from "one base plus one component" to "ordered lineage layers."</span>
+          </div>
+          <div class="callout-band__item">
+            <strong>Avoid</strong>
+            <span>server-side merging, recursive ordinary providers, or forcing workload components to know catalog layout.</span>
+          </div>
+        </section>
+
+        <section id="current" class="section two-column">
+          <div>
+            <p class="eyebrow">Current implementation</p>
+            <h2>What exists already is the right foundation.</h2>
+            <p>
+              The first layered-config implementation was deliberately conservative. A provider loads a
+              component layer, an optional shared layer is resolved from the same provider family,
+              raw control fields are stripped, and the merged result is validated as the only runtime
+              config document.
+            </p>
+            <p>
+              The arbitrary-depth UNS identity model already exists: `hierarchy.levels` can describe
+              a real hierarchy, and `identity` supplies values for every level above the device. The
+              limitation is not the identity model. The limitation is the config-layer resolver.
+            </p>
+          </div>
+          <div class="evidence-grid">
+            <article>
+              <span class="evidence-tag">Java</span>
+              <h3>`LayeredConfigCoordinator`</h3>
+              <p>Builds a candidate from component plus base, validates the effective result, and is the startup seam to replace with N-layer merge.</p>
+            </article>
+            <article>
+              <span class="evidence-tag">TS / Rust / Python</span>
+              <h3>Parallel merge helpers</h3>
+              <p>All four implementations use ordered deep merge semantics: objects merge, arrays and scalars replace, later layers win.</p>
+            </article>
+            <article>
+              <span class="evidence-tag">ConfigComponent</span>
+              <h3>Catalog bundles</h3>
+              <p>The previous server returned `{ "base": ..., "component": ... }`; the target server resolves catalog lineage and returns ordered `layers[]`.</p>
+            </article>
+            <article>
+              <span class="evidence-tag">Runtime</span>
+              <h3>One effective config</h3>
+              <p>`gg.config()` and the library-owned `cfg` publisher expose the merged, redacted effective config, not raw layers.</p>
+            </article>
+          </div>
+        </section>
+
+        <section id="target" class="section">
+          <div class="section-heading">
+            <p class="eyebrow">Target model</p>
+            <h2>Shared config becomes ancestry.</h2>
+            <p>
+              A component does not inherit from "shared" as a special second document. It inherits
+              from a deterministic chain of parent scopes served by ConfigComponent. The chain can
+              be a single component layer or a rich enterprise/site/building/zone/line/component
+              lineage with runtime device identity, but workload components still read one config source.
+            </p>
+          </div>
+
+          <div class="interactive-panel">
+            <div class="panel-controls" role="group" aria-label="Layer scenario controls">
+              <button class="mode-tab is-active" type="button" data-scenario="line">Line deployment</button>
+              <button class="mode-tab" type="button" data-scenario="zone">Zone override</button>
+              <button class="mode-tab" type="button" data-scenario="conflict">Identity conflict</button>
+            </div>
+            <div class="merge-stage">
+              <div id="scopeStack" class="scope-stack" aria-label="Layer stack"></div>
+              <div class="merge-arrow" aria-hidden="true">=</div>
+              <div class="merge-result">
+                <h3 id="scenarioTitle">Line deployment</h3>
+                <p id="scenarioNarrative"></p>
+                <pre id="scenarioJson"></pre>
+              </div>
+            </div>
+          </div>
+
+          <div class="principles">
+            <article>
+              <h3>Single parent chain</h3>
+              <p>
+                The target model allows arbitrary depth but still resolves one lineage per component.
+                Multiple inheritance is left out because it makes operator intent and conflict
+                reporting much harder.
+              </p>
+            </article>
+            <article>
+              <h3>Central lineage resolver</h3>
+              <p>
+                Arbitrary ancestry is resolved by ConfigComponent. FILE, ENV, and CONFIGMAP are
+                catalog source descriptors; GG_CONFIG and SHADOW can deliver the server bootstrap
+                config. None of them becomes a workload-side graph resolver.
+              </p>
+            </article>
+            <article>
+              <h3>Merge after resolution</h3>
+              <p>
+                Each raw layer can remain partial. Only the final effective document is schema
+                validated and exposed to application code.
+              </p>
+            </article>
+          </div>
+        </section>
+
+        <section id="contract" class="section two-column">
+          <div>
+            <p class="eyebrow">Layer contract</p>
+            <h2>A small internal contract replaces the two-layer assumption.</h2>
+            <p>
+              The public component config shape should stay focused on effective runtime behavior.
+              Hierarchy metadata lives in the ConfigComponent catalog. The `CONFIG_COMPONENT` source
+              receives `ResolvedConfigLayer[]`, ordered from broadest ancestor to component, and the
+              existing merge function consumes the same list shape it was already built to support.
+            </p>
+          </div>
+          <div class="code-card">
+            <pre><code>type ResolvedConfigLayer = {
+  id: string
+  kind: "scope" | "component"
+  scope?: Record&lt;string, string&gt; // required for scope layers
+  component?: string              // required for final layer
+  config: JsonObject
+}
+
+effective = deepMerge(
+  lineage.map(layer =&gt; layer.config)
+)</code></pre>
+          </div>
+        </section>
+
+        <section class="section contract-grid">
+          <article>
+            <h3>Pure config fragments</h3>
+            <p>
+              Each layer carries metadata outside `config`. The `config` object is a partial
+              EdgeCommons config fragment. New public authoring should not use `extends`,
+              `sharedConfig`, or `base` inside component config.
+            </p>
+          </article>
+          <article>
+            <h3>Catalog resolver</h3>
+            <p>
+              Use `lineage_for()` for request/reply and `lineages()` for pushes. Follow catalog `parent` links until root,
+              detect cycles, enforce a practical maximum depth, and preserve source provenance for
+              diagnostics.
+            </p>
+          </article>
+          <article>
+            <h3>Identity consistency</h3>
+            <p>
+              Lower layers may add missing lower-level identity keys but must not change an
+              already-owned ancestor identity value. Moving a component to a different site, zone,
+              or line is an ancestry change, not a local override.
+            </p>
+          </article>
+          <article>
+            <h3>Atomic reload</h3>
+            <p>
+              A reload re-resolves the full lineage. If any layer is missing, malformed, cyclic, or
+              produces an invalid effective config, the previous effective snapshot stays active.
+            </p>
+          </article>
+        </section>
+
+        <section id="providers" class="section">
+          <div class="section-heading">
+            <p class="eyebrow">Provider matrix</p>
+            <h2>Every provider participates without every provider becoming recursive.</h2>
+            <p>
+              To minimize the core extension surface, arbitrary hierarchy is resolved by
+              ConfigComponent. Other providers back the ConfigComponent catalog or continue to load
+              a single effective document directly. Click a provider to inspect its role.
+            </p>
+          </div>
+          <div class="provider-layout">
+            <div class="provider-tabs" role="tablist" aria-label="Config providers">
+              <button role="tab" aria-selected="true" data-provider="FILE">FILE</button>
+              <button role="tab" aria-selected="false" data-provider="ENV">ENV</button>
+              <button role="tab" aria-selected="false" data-provider="CONFIGMAP">CONFIGMAP</button>
+              <button role="tab" aria-selected="false" data-provider="GG_CONFIG">GG_CONFIG</button>
+              <button role="tab" aria-selected="false" data-provider="SHADOW">SHADOW</button>
+              <button role="tab" aria-selected="false" data-provider="CONFIG_COMPONENT">CONFIG_COMPONENT</button>
+            </div>
+            <div class="provider-card" id="providerCard" role="tabpanel"></div>
+          </div>
+        </section>
+
+        <section id="deployments" class="section">
+          <div class="section-heading">
+            <p class="eyebrow">Deployment fit</p>
+            <h2>ConfigComponent is the common control plane; transport is the platform detail.</h2>
+            <p>
+              The optimal deployment shape is the same on every platform: ordinary components read
+              config from ConfigComponent and receive ordered `layers[]` bundles. The platform decides
+              how that request/reply and push path travels: local MQTT on hosts, in-cluster MQTT on
+              Kubernetes, and Greengrass IPC on Nucleus-managed devices.
+            </p>
+          </div>
+          <div class="deployment-switch" role="group" aria-label="Deployment target selector">
+            <button class="mode-tab is-active" type="button" data-deployment="host">Host / supervisord</button>
+            <button class="mode-tab" type="button" data-deployment="k8s">Kubernetes</button>
+            <button class="mode-tab" type="button" data-deployment="gg">Greengrass</button>
+          </div>
+          <div id="deploymentView" class="deployment-view"></div>
+        </section>
+
+        <section id="implementation" class="section">
+          <div class="section-heading">
+            <p class="eyebrow">Architect handoff</p>
+            <h2>Implementation should replace the two-layer resolver, not broaden every provider.</h2>
+            <p>
+              The development plan should keep the runtime contract narrow: ConfigComponent owns
+              catalog lineage, core libraries own parsing and merging `layers[]`, and application code
+              still observes one validated effective config snapshot.
+            </p>
+          </div>
+
+          <div class="handoff-grid">
+            <article>
+              <h3>Non-negotiable success criteria</h3>
+              <ul>
+                <li>Ordinary components use `-c CONFIG_COMPONENT` for hierarchical config on HOST, Kubernetes, and Greengrass.</li>
+                <li>ConfigComponent responses and pushes contain only ordered `layers[]` bundles, never `{ base, component }`.</li>
+                <li>Clients merge `layers[].config`, validate the effective config, and keep reject-and-keep reload behavior.</li>
+                <li>FILE, ENV, and CONFIGMAP are supported catalog sources; GG_CONFIG and SHADOW can deliver ConfigComponent bootstrap config.</li>
+                <li>`extends`, `sharedConfig`, `base`, and `--no-shared-config` are removed from the public authoring model.</li>
+              </ul>
+            </article>
+            <article>
+              <h3>Minimal replacement boundary</h3>
+              <p>
+                Do not teach every ordinary config provider to follow parent chains. That multiplies
+                platform-specific edge cases and puts hierarchy resolution inside every workload.
+                The replacement boundary is:
+              </p>
+              <ol>
+                <li>ConfigComponent catalog source adapters load a catalog snapshot.</li>
+                <li>ConfigComponent resolves a component token to root-to-leaf layer metadata.</li>
+                <li>Language libraries consume the `layers[]` protocol and deep-merge configs.</li>
+              </ol>
+            </article>
+          </div>
+
+          <div class="implementation-shell">
+            <div class="panel-controls" role="tablist" aria-label="Implementation handoff tabs">
+              <button class="mode-tab is-active" type="button" data-impl="contract">Contract</button>
+              <button class="mode-tab" type="button" data-impl="server">ConfigComponent</button>
+              <button class="mode-tab" type="button" data-impl="clients">Core libraries</button>
+              <button class="mode-tab" type="button" data-impl="deploy">Deployments</button>
+              <button class="mode-tab" type="button" data-impl="vectors">Vectors</button>
+            </div>
+            <div id="implementationPanel" class="implementation-panel" role="tabpanel"></div>
+          </div>
+        </section>
+
+        <section class="section catalog-spec">
+          <div class="section-heading">
+            <p class="eyebrow">Catalog and wire contract</p>
+            <h2>The server catalog is a graph; the client protocol is an ordered list.</h2>
+            <p>
+              The catalog can express arbitrary hierarchy, but the wire protocol sent to workload
+              components should be deliberately boring: a catalog version, optional provenance, and
+              ordered layers with pure config fragments.
+            </p>
+          </div>
+
+          <div class="spec-grid">
+            <article class="code-card">
+              <h3>Catalog snapshot</h3>
+              <pre><code>{
+  "schemaVersion": 1,
+  "version": "2026-07-08T05:00Z",
+  "hierarchy": {
+    "levels": ["enterprise", "site", "building", "zone", "line", "device"]
+  },
+  "nodes": {
+    "enterprise/acme": {
+      "scope": { "enterprise": "acme" },
+      "config": { "hierarchy": { "levels": ["enterprise", "site", "building", "zone", "line", "device"] } }
+    },
+    "site/dallas": {
+      "parent": "enterprise/acme",
+      "scope": { "enterprise": "acme", "site": "dallas" },
+      "config": { "identity": { "site": "dallas" } }
+    },
+    "line/line-7": {
+      "parent": "site/dallas",
+      "scope": { "enterprise": "acme", "site": "dallas", "line": "line-7" },
+      "config": { "heartbeat": { "intervalSecs": 10 } }
+    }
+  },
+  "components": {
+    "opcua-adapter": {
+      "parent": "line/line-7",
+      "config": { "component": { "token": "opcua-adapter" } }
+    }
+  }
+}</code></pre>
+            </article>
+
+            <article class="code-card">
+              <h3>GetConfiguration reply and set-config push</h3>
+              <pre><code>{
+  "lineageVersion": 1,
+  "catalogVersion": "2026-07-08T05:00Z",
+  "component": "opcua-adapter",
+  "layers": [
+    {
+      "id": "enterprise/acme",
+      "kind": "scope",
+      "scope": { "enterprise": "acme" },
+      "config": { "hierarchy": { "levels": ["enterprise", "site", "building", "zone", "line", "device"] } }
+    },
+    {
+      "id": "line/line-7",
+      "kind": "scope",
+      "scope": { "enterprise": "acme", "site": "dallas", "line": "line-7" },
+      "config": { "heartbeat": { "intervalSecs": 10 } }
+    },
+    {
+      "id": "component/opcua-adapter",
+      "kind": "component",
+      "component": "opcua-adapter",
+      "config": { "component": { "token": "opcua-adapter" } }
+    }
+  ]
+}</code></pre>
+            </article>
+          </div>
+
+          <div class="algorithm-grid">
+            <article>
+              <h3>Resolution algorithm</h3>
+              <ol>
+                <li>Accept `GetConfiguration` body `{ "component": string }` and sanitize to the short component token.</li>
+                <li>Load the active catalog snapshot; reject if none is valid.</li>
+                <li>Find `components[token]`; reject unknown tokens with `CONFIG_NOT_FOUND`.</li>
+                <li>Walk `parent` links through `nodes`, collecting leaf-to-root references.</li>
+                <li>Reject missing parents, duplicate node IDs, cycles, depth above 64, and malformed scopes.</li>
+                <li>Reverse to root-to-leaf order, append the component layer, and return `layers[]`.</li>
+                <li>On catalog reload, regenerate pushes for every component from the newly promoted catalog.</li>
+              </ol>
+            </article>
+            <article>
+              <h3>Client apply algorithm</h3>
+              <ol>
+                <li>Parse a reply or push as a lineage bundle. Reject absent or empty `layers[]`.</li>
+                <li>For each layer, require object metadata and object-valued `config`.</li>
+                <li>Validate monotonic scope ownership and identity ownership before merge.</li>
+                <li>Deep-merge `layers[].config` using the current object-merge, array-replace, scalar-replace semantics.</li>
+                <li>Validate only the merged effective config against the existing schema.</li>
+                <li>On reload failure, log the lineage error and retain the previous effective snapshot.</li>
+              </ol>
+            </article>
+          </div>
+        </section>
+
+        <section id="runtime" class="section">
+          <div class="section-heading">
+            <p class="eyebrow">Runtime pipeline</p>
+            <h2>The runtime still hands application code one config.</h2>
+            <p>
+              The implementation change sits before `ConfigManager` or `Config.fromValue`. Once the
+              effective config is accepted, all existing subsystems keep their current contracts.
+            </p>
+          </div>
+          <div class="pipeline" aria-label="Hierarchical config runtime pipeline">
+            <div class="pipeline-step" data-step="1">
+              <span>1</span>
+              <strong>Request lineage</strong>
+              <p>Client asks ConfigComponent for its token.</p>
+            </div>
+            <div class="pipeline-step" data-step="2">
+              <span>2</span>
+              <strong>Receive layers</strong>
+              <p>Server returns root-to-component `layers[]`.</p>
+            </div>
+            <div class="pipeline-step" data-step="3">
+              <span>3</span>
+              <strong>Merge ordered layers</strong>
+              <p>Objects merge, arrays/scalars replace.</p>
+            </div>
+            <div class="pipeline-step" data-step="4">
+              <span>4</span>
+              <strong>Validate effective config</strong>
+              <p>Reject-and-keep on bad reloads.</p>
+            </div>
+            <div class="pipeline-step" data-step="5">
+              <span>5</span>
+              <strong>Publish one snapshot</strong>
+              <p>`gg.config()` and `cfg` stay effective-only.</p>
+            </div>
+          </div>
+        </section>
+
+        <section id="usability" class="section two-column">
+          <div>
+            <p class="eyebrow">Operator experience</p>
+            <h2>The design should feel safer than copy-paste.</h2>
+            <p>
+              The user benefit is not just less duplication. Operators need to see which layer set a
+              value, understand why a reload was rejected, and preview the effective config before a
+              rollout hits production.
+            </p>
+          </div>
+          <div class="usability-list">
+            <article>
+              <span>Explain</span>
+              <p>`edgecommons config explain` should print lineage, source URI, version/hash, and winning layer per path.</p>
+            </article>
+            <article>
+              <span>Lint</span>
+              <p>Detect cycles, missing parents, ConfigMap projection artifacts, identity conflicts, and untemplated shared stream paths.</p>
+            </article>
+            <article>
+              <span>Preview</span>
+              <p>ConfigComponent can expose a dry-run endpoint that returns the resolved lineage and effective config for a component token.</p>
+            </article>
+            <article>
+              <span>Observe</span>
+              <p>Startup and reload logs should name the lineage without dumping config values. Redacted `cfg` remains the effective contract.</p>
+            </article>
+          </div>
+        </section>
+
+        <section id="cutover" class="section">
+          <div class="section-heading">
+            <p class="eyebrow">Cutover</p>
+            <h2>Replace the two-layer shape with fewer concepts.</h2>
+          </div>
+          <div class="cutover-track">
+            <div>
+              <span class="track-dot"></span>
+              <h3>Component leaf</h3>
+              <p>A component catalog entry is always the leaf. If it declares no parent, the lineage is simply `[component]`.</p>
+            </div>
+            <div>
+              <span class="track-dot"></span>
+              <h3>Catalog parent</h3>
+              <p>`parent` means parent scope in the ConfigComponent catalog. There is no special "base" concept.</p>
+            </div>
+            <div>
+              <span class="track-dot"></span>
+              <h3>Layer array</h3>
+              <p>ConfigComponent replies and pushes ordered `layers[]` bundles only. Clients merge that array directly.</p>
+            </div>
+            <div>
+              <span class="track-dot"></span>
+              <h3>Docs and vectors</h3>
+              <p>Conformance tests and public docs use catalog, lineage, layer, and effective config terms consistently.</p>
+            </div>
+          </div>
+        </section>
+
+        <section id="work-slices" class="section">
+          <div class="section-heading">
+            <p class="eyebrow">Developer-agent work slices</p>
+            <h2>The senior architect can turn these directly into implementation instructions.</h2>
+            <p>
+              The slices are ordered to force a shared contract before implementation. Java remains
+              canonical for core behavior, but all four language agents should consume the same vector
+              files and report any intentional language-specific API names explicitly.
+            </p>
+          </div>
+
+          <div class="slice-board">
+            <article>
+              <span>Slice A</span>
+              <h3>Contract vectors and schema notes</h3>
+              <p>Create shared JSON vectors for valid catalogs, invalid catalogs, lineage bundles,
+              merge outcomes, identity conflicts, push bodies, and error bodies.</p>
+              <code>schema/; test-infra/interop/; libs/*/tests</code>
+            </article>
+            <article>
+              <span>Slice B</span>
+              <h3>ConfigComponent catalog resolver</h3>
+              <p>Represent catalogs with `nodes`, `components`,
+              `lineage_for()`, depth/cycle/scope validation, and `layers[]` push generation.</p>
+              <code>config-component/src/catalog.rs; coordinator.rs; server.rs; source.rs</code>
+            </article>
+            <article>
+              <span>Slice C</span>
+              <h3>Java core canonical client</h3>
+              <p>Replace two-layer coordinator assumptions with lineage-bundle parsing, N-layer
+              merge, identity ownership validation, and reject-and-keep reload behavior.</p>
+              <code>libs/java/.../config; ConfigManagerFactory; provider/ConfigComponent*</code>
+            </article>
+            <article>
+              <span>Slice D</span>
+              <h3>Python core parity</h3>
+              <p>Update hierarchical-config helpers to parse `layers[]`, remove public shared-config flags,
+              and consume the same vectors as Java.</p>
+              <code>libs/python/edgecommons/config/manager</code>
+            </article>
+            <article>
+              <span>Slice E</span>
+              <h3>Rust core parity</h3>
+              <p>Update layered source/effective config loading, preserve `ArcSwap` snapshot apply,
+              and prove hot reload still notifies listeners only after successful validation.</p>
+              <code>libs/rust/src/config; libs/rust/src/lib.rs reload paths</code>
+            </article>
+            <article>
+              <span>Slice F</span>
+              <h3>TypeScript core parity</h3>
+              <p>Update `CONFIG_COMPONENT` source body parsing and layered merge helpers, then run
+              the shared vector suite under the existing test harness.</p>
+              <code>libs/ts/src/config/layered.ts; source/config_component.ts</code>
+            </article>
+            <article>
+              <span>Slice G</span>
+              <h3>Deployment packaging</h3>
+              <p>Update templates, recipes, and Helm/supervisord examples so ConfigComponent is
+              always present and workload components default to `-c CONFIG_COMPONENT`.</p>
+              <code>templates/; recipes/; docs/platform; website docs</code>
+            </article>
+            <article>
+              <span>Slice H</span>
+              <h3>Interop and deployed validation</h3>
+              <p>Run local MQTT, in-cluster MQTT, and Greengrass IPC request/reply and push flows
+              with each language acting as consumer. Prove deployed Greengrass on `lab-5950x`.</p>
+              <code>test-infra/interop; system-test; Greengrass deployment scripts</code>
+            </article>
+          </div>
+
+          <div class="error-grid">
+            <article>
+              <h3>Protocol error codes to pin</h3>
+              <p>`BAD_REQUEST`, `CATALOG_UNAVAILABLE`, `CATALOG_INVALID`,
+              `CONFIG_NOT_FOUND`, `LINEAGE_CYCLE`, `LINEAGE_PARENT_MISSING`,
+              `LINEAGE_DEPTH_EXCEEDED`, `LINEAGE_SCOPE_CONFLICT`,
+              `LINEAGE_IDENTITY_CONFLICT`, `LINEAGE_BUNDLE_INVALID`, and
+              `CONFIG_VALIDATION_FAILED`.</p>
+            </article>
+            <article>
+              <h3>Acceptance gate for each slice</h3>
+              <p>A slice is not complete until it passes the shared vectors, preserves one effective
+              runtime snapshot, reports exact lineage diagnostics, and documents any deviation before
+              a developer agent claims parity.</p>
+            </article>
+          </div>
+        </section>
+
+        <section id="validation" class="section validation">
+          <div>
+            <p class="eyebrow">Validation plan</p>
+            <h2>Four-way parity and deployment proof are part of the design.</h2>
+            <p>
+              This is a core config capability reachable from Greengrass components and from the
+              `CONFIG_COMPONENT` wire contract. Completion must be judged by design fidelity,
+              conformance vectors, local provider smokes, interop, and deployed regression.
+            </p>
+          </div>
+          <div class="validation-grid">
+            <article><strong>Vectors</strong><span>N-layer merge, identity ownership, cycles, missing parent, and `layers[]` bundles.</span></article>
+            <article><strong>Language parity</strong><span>Java canonical plus Python, Rust, and TypeScript consuming the same vector files.</span></article>
+            <article><strong>HOST</strong><span>ConfigComponent over local MQTT with file/ENV-backed catalog sources and supervisord-style process management.</span></article>
+            <article><strong>Kubernetes</strong><span>ConfigComponent over in-cluster MQTT with its catalog backed by ConfigMap or projected volume.</span></article>
+            <article><strong>Greengrass</strong><span>ConfigComponent over IPC deployed to `lab-5950x`, with non-recursive bootstrap and file/env catalogSource.</span></article>
+            <article><strong>Interop</strong><span>CONFIG_COMPONENT `layers[]` request/reply and push bundles over local MQTT, in-cluster MQTT, and Greengrass IPC.</span></article>
+          </div>
+        </section>
+
+        <section id="decisions" class="section decisions">
+          <div class="section-heading">
+            <p class="eyebrow">Recommended decisions</p>
+            <h2>Make the next implementation narrow, deep, and reversible.</h2>
+          </div>
+          <div class="decision-table" role="table" aria-label="Recommended design decisions">
+            <div role="row" class="decision-row decision-row--head">
+              <span role="columnheader">Decision</span>
+              <span role="columnheader">Recommendation</span>
+              <span role="columnheader">Reason</span>
+            </div>
+            <div role="row" class="decision-row">
+              <span role="cell">Depth</span>
+              <span role="cell">Arbitrary-depth single parent chain</span>
+              <span role="cell">Matches enterprise/site/building/zone/line without DAG ambiguity.</span>
+            </div>
+            <div role="row" class="decision-row">
+              <span role="cell">Merge</span>
+              <span role="cell">Keep current deep merge unchanged</span>
+              <span role="cell">Existing vectors and mental model stay valid; only the resolver grows.</span>
+            </div>
+            <div role="row" class="decision-row">
+              <span role="cell">Provider scope</span>
+              <span role="cell">Centralize hierarchy in ConfigComponent</span>
+              <span role="cell">Provider-specific complexity stays in catalog source adapters, not every workload.</span>
+            </div>
+            <div role="row" class="decision-row">
+              <span role="cell">ConfigComponent</span>
+              <span role="cell">Replace `base/components` bundles with catalog `nodes/components` and `layers[]`</span>
+              <span role="cell">Server can pre-resolve catalog lineage but clients still perform the merge.</span>
+            </div>
+            <div role="row" class="decision-row">
+              <span role="cell">Public API</span>
+              <span role="cell">Remove `extends`, `sharedConfig`, `base`, and `--no-shared-config`</span>
+              <span role="cell">Breaking changes are allowed, so stale two-layer authoring concepts should not survive.</span>
+            </div>
+            <div role="row" class="decision-row">
+              <span role="cell">Diagnostics</span>
+              <span role="cell">Add explain/lint before new authoring docs are promoted</span>
+              <span role="cell">N-layer inheritance without lineage visibility will be hard to operate safely.</span>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script src="./app.js"></script>
+  </body>
+</html>

@@ -64,11 +64,11 @@
       "repo": "edgecommons/config-component",
       "language": "RUST",
       "category": "service",
-      "description": "Rust dedicated configuration service for split-config deployments. Boots from its own non-CONFIG_COMPONENT source, loads a pluggable catalog, serves raw shared and component layer bundles over the CONFIG_COMPONENT rendezvous, accepts privileged catalog replacement messages, and pushes accepted versions to consumers.",
+      "description": "Rust dedicated configuration service for hierarchical-config deployments. Boots from its own non-CONFIG_COMPONENT source, loads a pluggable hierarchy catalog, serves ordered lineage bundles over the CONFIG_COMPONENT rendezvous, accepts privileged catalog replacement messages, and pushes accepted versions to consumers.",
       "status": "experimental",
       "platforms": ["GREENGRASS", "HOST", "KUBERNETES"],
       "library": "edgecommons",
-      "topics": ["edgecommons", "aws-iot-greengrass", "iiot", "configuration", "split-config", "edgecommons-service"]
+      "topics": ["edgecommons", "aws-iot-greengrass", "iiot", "configuration", "hierarchical-config", "edgecommons-service"]
     },
     {
       "name": "file-replicator",

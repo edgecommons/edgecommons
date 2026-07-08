@@ -419,14 +419,10 @@ class StandaloneProvider(MessagingProvider):
             event = threading.Event()
             with self._lock:
                 channel.pending_subscriptions[topic] = event
-
-            result = client.subscribe(topic, qos=mqtt_qos)
-            if result[0] != mqtt.MQTT_ERR_SUCCESS:
-                with self._lock:
+                result = client.subscribe(topic, qos=mqtt_qos)
+                if result[0] != mqtt.MQTT_ERR_SUCCESS:
                     channel.pending_subscriptions.pop(topic, None)
-                raise RuntimeError(f"Failed to send {channel.name} subscription request: {result[0]}")
-
-            with self._lock:
+                    raise RuntimeError(f"Failed to send {channel.name} subscription request: {result[0]}")
                 channel.mid_to_topic[result[1]] = topic
 
             # Block until SUBACK or timeout.

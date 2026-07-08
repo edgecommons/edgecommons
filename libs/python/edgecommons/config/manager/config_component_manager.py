@@ -58,11 +58,8 @@ class ConfigComponentManager(ConfigManager):
         thing_name: str,
         component_name: str,
         platform=None,
-        no_shared_config: bool = False,
     ):
-        super().__init__(
-            component_name, thing_name, platform=platform, no_shared_config=no_shared_config
-        )
+        super().__init__(component_name, thing_name, platform=platform)
         # Mint the UNS tokens locally (identity is not resolved yet): device =
         # sanitized resolved thing name, component = sanitized short name, mirroring
         # the {ThingName}/{ComponentName} template semantics and §1.5 steps 4-5.

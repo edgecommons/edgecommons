@@ -7,11 +7,13 @@ separators are preserved).
 
 from edgecommons.config.manager.config_manager import ConfigManager
 from edgecommons.config.tag_config import TagConfiguration
+from edgecommons.messaging.identity import HierEntry, MessageIdentity
 
 
-def _manager(tags=None):
+def _manager(tags=None, identity=None):
     cm = ConfigManager("com.test.TestComponent", "test-thing")
     cm._tag_config = TagConfiguration(tags or {})
+    cm._component_identity = identity
     return cm
 
 
@@ -41,6 +43,59 @@ def test_resolve_template_sanitizes_hostile_values():
     resolved = cm.resolve_template("prefix/{evil}/suffix")
     assert resolved == "prefix/a_b_c_d_e_g/suffix"
     assert "{evil}" not in resolved
+
+
+def test_resolve_template_substitutes_identity_without_tag_duplication():
+    identity = MessageIdentity(
+        [HierEntry("site", "plant-1"), HierEntry("device", "gw-01")],
+        "TestComponent",
+    )
+    cm = _manager(identity=identity)
+
+    assert (
+        cm.resolve_template("logs/{site}/{device}/{line}")
+        == "logs/plant-1/gw-01/{line}"
+    )
+
+
+def test_resolve_template_sanitizes_identity_values_like_tags():
+    identity = MessageIdentity(
+        [HierEntry("site", "plant/a+b#c..d"), HierEntry("device", "gw\\01")],
+        "TestComponent",
+    )
+    cm = _manager(identity=identity)
+
+    assert cm.resolve_template("{site}/{device}") == "plant_a_b_c_d/gw_01"
+
+
+def test_resolve_template_identity_wins_over_colliding_tag_key():
+    identity = MessageIdentity(
+        [HierEntry("site", "identity-site"), HierEntry("device", "gw-01")],
+        "TestComponent",
+    )
+    cm = _manager({"site": "tag-site"}, identity=identity)
+
+    assert cm.resolve_template("{site}") == "identity-site"
+
+
+def test_resolve_template_builtins_win_over_identity_and_tags():
+    identity = MessageIdentity(
+        [
+            HierEntry("ThingName", "identity-thing"),
+            HierEntry("ComponentName", "identity-component"),
+            HierEntry("device", "gw-01"),
+        ],
+        "TestComponent",
+    )
+    cm = _manager(
+        {"ThingName": "tag-thing", "ComponentName": "tag-component"},
+        identity=identity,
+    )
+
+    assert (
+        cm.resolve_template("{ThingName}/{ComponentName}")
+        == "test-thing/TestComponent"
+    )
 
 
 def test_resolve_template_preserves_clean_dotted_names():

@@ -13,6 +13,7 @@ import com.mbreissi.edgecommons.messaging.MessageBuilder;
 import com.mbreissi.edgecommons.messaging.ReplyFuture;
 import com.mbreissi.edgecommons.test.MockConfigurationService;
 import com.mbreissi.edgecommons.test.MockMessagingService;
+import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import org.junit.jupiter.api.Test;
 
@@ -130,6 +131,33 @@ class ConfigComponentProviderTest {
         return com.google.gson.JsonParser.parseString(json).getAsJsonObject();
     }
 
+    private static JsonObject lineage(JsonObject... configs) {
+        JsonArray layers = new JsonArray();
+        String[] scopeLevels = {"site", "zone", "line", "area"};
+        String[] scopeValues = {"dallas", "packaging", "line-7", "north"};
+        for (int i = 0; i < configs.length; i++) {
+            boolean componentLayer = i == configs.length - 1;
+            JsonObject layer = new JsonObject();
+            layer.addProperty("id", componentLayer ? "component/Comp" : scopeLevels[i] + "/" + scopeValues[i]);
+            layer.addProperty("kind", componentLayer ? "component" : "scope");
+            if (componentLayer) {
+                layer.addProperty("component", "Comp");
+            } else {
+                JsonObject scope = new JsonObject();
+                scope.addProperty(scopeLevels[i], scopeValues[i]);
+                layer.add("scope", scope);
+            }
+            layer.add("config", configs[i]);
+            layers.add(layer);
+        }
+        JsonObject bundle = new JsonObject();
+        bundle.addProperty("lineageVersion", 1);
+        bundle.addProperty("catalogVersion", "test");
+        bundle.addProperty("component", "Comp");
+        bundle.add("layers", layers);
+        return bundle;
+    }
+
     // ----- Flow A: the GET rendezvous (D-U19) -----
 
     @Test
@@ -162,15 +190,13 @@ class ConfigComponentProviderTest {
     }
 
     @Test
-    void bundleReplyMergesBaseAndComponentIntoEffectiveConfig() throws Exception {
+    void lineageReplyMergesLayersIntoEffectiveConfig() throws Exception {
         ScriptedMessaging messaging = new ScriptedMessaging();
-        JsonObject bundle = new JsonObject();
-        bundle.add("base", json("""
+        messaging.scripted.add(replied(lineage(json("""
                 {"logging":{"level":"INFO"},
                  "identity":{"site":"dallas"},
-                 "hierarchy":{"levels":["site","device"]}}"""));
-        bundle.add("component", json("{\"component\":{\"global\":{\"v\":1}}}"));
-        messaging.scripted.add(replied(bundle));
+                 "hierarchy":{"levels":["site","device"]}}"""),
+                json("{\"component\":{\"global\":{\"v\":1}}}"))));
 
         ConfigManager cm = ConfigManagerFactory.create("com.test.Comp",
                 configComponentCmdLine(), messaging);
@@ -178,7 +204,6 @@ class ConfigComponentProviderTest {
             assertEquals("INFO", cm.getFullConfig().getAsJsonObject("logging")
                     .get("level").getAsString());
             assertEquals(1, cm.getGlobalConfig().get("v").getAsInt());
-            assertFalse(cm.getFullConfig().has("base"));
         } finally {
             cm.close();
         }
@@ -207,22 +232,21 @@ class ConfigComponentProviderTest {
         ConfigurationException ex = assertThrows(ConfigurationException.class,
                 () -> ConfigManagerFactory.create("com.test.Comp",
                         configComponentCmdLine(), messaging));
-        assertTrue(ex.getMessage().contains("CONFIG_COMPONENT_BUNDLE_INVALID")
-                || (ex.getCause() != null && ex.getCause().getMessage().contains("CONFIG_COMPONENT_BUNDLE_INVALID")));
+        assertTrue(ex.getMessage().contains("LINEAGE_BUNDLE_INVALID")
+                || (ex.getCause() != null && ex.getCause().getMessage().contains("LINEAGE_BUNDLE_INVALID")));
     }
 
     @Test
-    void pushedBundleReloadMergesAndAppliesEffectiveConfig() throws Exception {
+    void pushedLineageReloadMergesAndAppliesEffectiveConfig() throws Exception {
         ScriptedMessaging messaging = new ScriptedMessaging();
-        messaging.scripted.add(replied(json("{\"component\":{\"global\":{\"v\":1}}}")));
+        messaging.scripted.add(replied(lineage(json("{\"component\":{\"global\":{\"v\":1}}}"))));
 
         ConfigManager cm = ConfigManagerFactory.create("com.test.Comp",
                 configComponentCmdLine(), messaging);
         cm.completeInitialization();
         try {
-            JsonObject push = new JsonObject();
-            push.add("base", json("{\"logging\":{\"level\":\"WARN\"}}"));
-            push.add("component", json("{\"component\":{\"global\":{\"v\":2}}}"));
+            JsonObject push = lineage(json("{\"logging\":{\"level\":\"WARN\"}}"),
+                    json("{\"component\":{\"global\":{\"v\":2}}}"));
             messaging.simulateMessage(EXPECTED_SET_CONFIG_TOPIC, setConfigPush(push));
 
             assertEquals("WARN", cm.getFullConfig().getAsJsonObject("logging")

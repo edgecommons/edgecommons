@@ -33,7 +33,7 @@
 > app-usable classes; §7.3 below is their summary, that doc is the source of truth),
 > [`DESIGN-channels.md`](DESIGN-channels.md) (the local/northbound/stream channel
 > model this concretizes), [`DESIGN-core.md`](DESIGN-core.md) (platform/transport resolution & identity
-> chain), [`../SHARED_CONFIG.md`](../SHARED_CONFIG.md) (how the hierarchy + shared identity are
+> chain), [`../HIERARCHICAL_CONFIG.md`](../HIERARCHICAL_CONFIG.md) (how the hierarchy + shared identity are
 > distributed), [`../TELEMETRY_STREAMING.md`](../TELEMETRY_STREAMING.md) (the streaming service enriched
 > here). The **`edge-console`** component (`edgecommons/edge-console`) is the first consumer and drove
 > this design; its own design doc depends on this one.
@@ -71,7 +71,7 @@ wildcards and needs zero per-component knowledge**, and every message is **self-
 - Not a new transport (still MQTT / Greengrass IPC per [`DESIGN-core.md`](DESIGN-core.md)).
 - Not a service registry (business components discover peers via `describe` + `broadcast`; platform
   service-discovery is left to Greengrass / Kubernetes).
-- Not the shared-config engine — the hierarchy/identity **distribution** is [`SHARED_CONFIG.md`](../SHARED_CONFIG.md); this doc defines what the values *mean* and how they are stamped.
+- Not the hierarchical-config engine — the hierarchy/identity **distribution** is [`HIERARCHICAL_CONFIG.md`](../HIERARCHICAL_CONFIG.md); this doc defines what the values *mean* and how they are stamped.
 
 ---
 
@@ -201,24 +201,21 @@ message pertains to — via an instance-scoped facade handle (`gg.instance("kep1
 or the originating-instance context — never a single `identity.instance` value. Component-level messages
 (the overall `state`) use the default token `main`.
 
-### 5.4 Distribution via Shared/Layered Config
+### 5.4 Distribution via Hierarchical Config
 
 Identity is **not repeated per component**. The `hierarchy` schema and the shared location values
-(`site`/`factory`/`zone` — everything above the device) live in the **shared-config base layer** and reach
-every component via the `base ⊕ component` deep-merge of [`SHARED_CONFIG.md`](../SHARED_CONFIG.md):
+(`site`/`factory`/`zone` — everything above the device) live in inherited hierarchy layers and reach
+every component via the lineage merge of [`HIERARCHICAL_CONFIG.md`](../HIERARCHICAL_CONFIG.md):
 
 ```jsonc
-// shared base (once per device/site)      // a component's own config: nothing identity-related
+// inherited hierarchy layer               // a component's own config: nothing identity-related
 "hierarchy": { "levels": [ … ] },          //   device    = resolved thing name
 "identity":  { "site":"dallas", … }        //   component = its own name; instance = per message
 ```
 
-The UNS is the **concrete driver** for the multi-level hierarchy SHARED_CONFIG anticipated but deferred
-(its §5.3 / D3 `[device, site, line, component]` layer chain): the model works today on the shipping
-2-layer base (the device base carries the full location path); the N-layer `extends` chain is the later
-refinement for defining site values once across devices. The location levels formerly illustrated under
-`tags.site/shop/line` in SHARED_CONFIG now live in this `identity`/`hierarchy` block — SHARED_CONFIG §5.3
-is reconciled to point here.
+The UNS is the **concrete driver** for the multi-level hierarchy: location levels live in this
+`identity`/`hierarchy` block and can be inherited from enterprise, site, zone, line, or other
+catalog scopes. Component layers supply only component-specific behavior.
 
 Location identity resolves **once** at startup (fail-fast if it doesn't cover `hierarchy.levels`); the
 library stamps `identity` (with `path`) on every message; `instance` is stamped per message.
@@ -612,7 +609,7 @@ a precise error — silent coexistence of old and new topics is the worst outcom
 | M2 | **Site-broker deploy recipes** (EMQX; HOST Docker / GG container / K8s notes) | P0 |
 | M3 | **The UNS grammar** — `ecv1/{device}/{component}/{instance}/{class}`, the message classes, `/`-delimited verbs | P0 |
 | M4 | **Messaging model** — `messaging()` (arbitrary topics; northbound method family; `request()` hardened) + `uns()` builder/validator + reserved facades; reserved-class guard | P0 |
-| M5 | **`identity` + `hierarchy`** — configurable hierarchy schema (last = node); top-level `identity` (ordered `hier` + `path`; per-message `instance`); distributed via SHARED_CONFIG base layer; `tags.thing` removed | P0 |
+| M5 | **`identity` + `hierarchy`** — configurable hierarchy schema (last = node); top-level `identity` (ordered `hier` + `path`; per-message `instance`); distributed via hierarchical config layers; `tags.thing` removed | P0 |
 | M6 | **Request/reply hardening** — internal default deadline + optional timeout overload + guaranteed reply-topic cleanup; `reply()`/`subscribe()` unchanged | P0 |
 | M7 | **MQTT LWT hook** in `MessagingProvider` — `uns-bridge` derives and sets it on the site-broker connection → whole-device UNREACHABLE; generic HOST/K8s component config does not expose an LWT. **Retain deferred** (redundant with broadcast `republish-state` + the consumer's timestamped cache; can't express staleness; if ever wanted, owned by the bridge). | P0 |
 | M8 | **Named/secondary MessagingClient** (two connections in one process; the bridge needs it) | P0 |
@@ -631,7 +628,7 @@ a precise error — silent coexistence of old and new topics is the worst outcom
 - **`uns-test-vectors/`** (mirroring `vault-test-vectors/`): a JSON table of `(identity, class, channel) →
   exact topic` plus golden envelopes per class; all four suites consume it; the interop harness gains a
   UNS suite asserting cross-language byte-identical topics and `identity` == the resolved values.
-- The `deep_merge` of SHARED_CONFIG is the identity-distribution conformance target (shared vectors there).
+- The hierarchical-config lineage merge is the identity-distribution conformance target (shared vectors there).
 - 90% line-coverage gate applies to every new facade in all four languages (pure CI-testable surface).
 
 ## 13. Phasing

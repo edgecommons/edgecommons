@@ -16,9 +16,9 @@
 //!   (§1.5).
 //! - **set-config push**: the server pushes a fire-and-forget `cmd` (no `reply_to`
 //!   — a notification-style command) to the component's own inbox
-//!   `ecv1/{device}/{component}/main/cmd/set-config`; the body is the new
-//!   configuration, forwarded through [`ConfigSource::watch`] into the runtime's
-//!   validate-and-swap reload path.
+//!   `ecv1/{device}/{component}/main/cmd/set-config`; the body is the
+//!   `lineageVersion: 1` lineage bundle, forwarded through [`ConfigSource::watch`]
+//!   into the runtime's lineage-merge, validate-and-swap reload path.
 //!
 //! The topics are minted locally from the resolved thing name and the component
 //! name handed to the constructor (the same inputs the config layer later uses for

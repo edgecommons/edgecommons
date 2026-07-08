@@ -8,13 +8,11 @@ import org.apache.logging.log4j.Logger;
 import java.util.List;
 
 /**
- * Split-config deep merge. Later layers win; objects merge recursively; arrays, scalars and null
- * replace. Raw-layer control fields are stripped from every layer before merging.
+ * Hierarchical-config deep merge. Later layers win; objects merge recursively; arrays, scalars
+ * and null replace.
  */
 final class DeepMerge {
     private static final Logger LOGGER = LogManager.getLogger(DeepMerge.class);
-    static final String EXTENDS = "extends";
-    static final String SHARED_CONFIG = "sharedConfig";
 
     private DeepMerge() {
     }
@@ -25,16 +23,9 @@ final class DeepMerge {
             if (layer == null) {
                 continue;
             }
-            mergeObject(result, stripControls(layer), "$");
+            mergeObject(result, layer, "$");
         }
         return result;
-    }
-
-    static JsonObject stripControls(JsonObject layer) {
-        JsonObject stripped = layer.deepCopy();
-        stripped.remove(EXTENDS);
-        stripped.remove(SHARED_CONFIG);
-        return stripped;
     }
 
     private static void mergeObject(JsonObject target, JsonObject incoming, String path) {
@@ -46,7 +37,7 @@ final class DeepMerge {
                 mergeObject(current.getAsJsonObject(), next.getAsJsonObject(), childPath);
             } else {
                 if (current != null && next != null && incompatibleForWarning(current, next)) {
-                    LOGGER.warn("split-config type conflict at {}; component layer wins", childPath);
+                    LOGGER.warn("hierarchical-config type conflict at {}; later layer wins", childPath);
                 }
                 target.add(key, next == null ? null : next.deepCopy());
             }

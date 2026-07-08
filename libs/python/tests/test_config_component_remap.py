@@ -28,13 +28,40 @@ def _reply(body):
     return reply
 
 
+def _bundle(component, component_config=None):
+    if component_config is None:
+        component_config = {"component": {}}
+    return {
+        "lineageVersion": 1,
+        "catalogVersion": "test-catalog",
+        "component": component,
+        "layers": [
+            {
+                "id": "line/line-7",
+                "kind": "scope",
+                "scope": {"line": "line-7"},
+                "config": {
+                    "hierarchy": {"levels": ["line", "device"]},
+                    "identity": {"line": "line-7"},
+                },
+            },
+            {
+                "id": f"component/{component}",
+                "kind": "component",
+                "component": component,
+                "config": component_config,
+            },
+        ],
+    }
+
+
 class TestFlowATopics:
     def test_topics_and_bootstrap_body(self, no_subscribe, monkeypatch):
         requests = []
 
         def fake_request(topic, msg):
             requests.append((topic, msg))
-            return SimpleNamespace(get=lambda timeout=None: (True, _reply({"component": {}})))
+            return SimpleNamespace(get=lambda timeout=None: (True, _reply(_bundle("My_Comp"))))
 
         monkeypatch.setattr(ccm.MessagingClient, "request", staticmethod(fake_request))
         mgr = ccm.ConfigComponentManager("thing 1", "com.example.My+Comp")
@@ -54,13 +81,13 @@ class TestFlowATopics:
         monkeypatch.setattr(
             ccm.MessagingClient, "request",
             staticmethod(lambda t, m: SimpleNamespace(
-                get=lambda timeout=None: (True, _reply({"component": {}})))),
+                get=lambda timeout=None: (True, _reply(_bundle("C"))))),
         )
         mgr = ccm.ConfigComponentManager("thing-1", "com.example.C")
         mgr.complete_initialization()
 
         push = Message()
-        push.body = {"component": {"global": {"k": "pushed"}}}
+        push.body = _bundle("C", {"component": {"global": {"k": "pushed"}}})
         no_subscribe["cb"](no_subscribe["topic"], push)
         assert mgr.get_global_config() == {"k": "pushed"}
 
@@ -80,7 +107,9 @@ class TestRetryPolicy:
             if len(attempts) < 3:
                 return _TimedOutIou()
             return SimpleNamespace(get=lambda timeout=None: (
-                True, _reply({"component": {"global": {"k": "third-time"}}})))
+                True,
+                _reply(_bundle("C", {"component": {"global": {"k": "third-time"}}})),
+            ))
 
         monkeypatch.setattr(ccm.MessagingClient, "request", staticmethod(fake_request))
         mgr = ccm.ConfigComponentManager("thing-1", "com.example.C")
@@ -128,7 +157,9 @@ class TestRetryPolicy:
         monkeypatch.setattr(
             ccm.MessagingClient, "request",
             staticmethod(lambda t, m: SimpleNamespace(get=lambda timeout=None: (
-                True, _reply(json.dumps({"component": {"global": {"k": "str"}}}))))),
+                True,
+                _reply(json.dumps(_bundle("C", {"component": {"global": {"k": "str"}}}))),
+            ))),
         )
         mgr = ccm.ConfigComponentManager("thing-1", "com.example.C")
         assert mgr.get_global_config() == {"k": "str"}

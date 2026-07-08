@@ -8,7 +8,7 @@ WORKDIR /app
 COPY libs/python /src/libs/python
 RUN pip install --no-cache-dir /src/libs/python
 
-COPY test-infra/k8s/split-config/verifier.py /app/verifier.py
+COPY test-infra/k8s/hierarchical-config/verifier.py /app/verifier.py
 
 USER 65532:65532
 

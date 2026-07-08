@@ -16,7 +16,7 @@ Rust only when the `streaming` cargo feature is enabled. All four languages bind
 core (`edgestreamlog`): Rust links it directly, while Java (FFM / Panama), Python (PyO3), and
 TypeScript (napi-rs) reach it through a native binding.
 
-In split-config deployments, `streaming.streams` may be inherited from the shared base layer. The
+In hierarchical-config deployments, `streaming.streams` may be inherited from a hierarchy layer. The
 inherited entries do not create a shared runtime service: each component owns its own stream service,
 buffer files, drains, metrics bridge, and shutdown lifecycle. Disk buffer paths must resolve to
 component-unique locations.

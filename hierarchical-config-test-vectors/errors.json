@@ -1,0 +1,116 @@
+{
+  "description": "edgecommons hierarchical config error and reload conformance vectors",
+  "cases": [
+    {
+      "name": "structured-catalog-error-surfaces-code",
+      "input": {
+        "previousEffective": {
+          "component": { "token": "opcua-adapter" },
+          "logging": { "level": "INFO" }
+        },
+        "body": {
+          "ok": false,
+          "error": {
+            "code": "CONFIG_NOT_FOUND",
+            "message": "No configuration catalog entry for component 'missing'"
+          }
+        }
+      },
+      "expected": {
+        "error": "CONFIG_NOT_FOUND",
+        "retainPrevious": true,
+        "notifyListeners": false,
+        "publishCfg": false
+      }
+    },
+    {
+      "name": "invalid-push-keeps-previous-effective",
+      "input": {
+        "previousEffective": {
+          "component": { "token": "opcua-adapter" },
+          "logging": { "level": "INFO" }
+        },
+        "push": {
+          "lineageVersion": 1,
+          "catalogVersion": "bad",
+          "component": "opcua-adapter",
+          "layers": []
+        }
+      },
+      "expected": {
+        "error": "LINEAGE_BUNDLE_INVALID",
+        "effective": {
+          "component": { "token": "opcua-adapter" },
+          "logging": { "level": "INFO" }
+        },
+        "notifyListeners": false,
+        "publishCfg": false
+      }
+    },
+    {
+      "name": "invalid-effective-config-keeps-previous-effective",
+      "input": {
+        "previousEffective": {
+          "component": { "token": "opcua-adapter" },
+          "logging": { "level": "INFO" }
+        },
+        "push": {
+          "lineageVersion": 1,
+          "catalogVersion": "bad",
+          "component": "opcua-adapter",
+          "layers": [
+            {
+              "id": "component/opcua-adapter",
+              "kind": "component",
+              "component": "opcua-adapter",
+              "config": { "logging": { "level": "WARN" } }
+            }
+          ]
+        }
+      },
+      "expected": {
+        "error": "CONFIG_VALIDATION_FAILED",
+        "effective": {
+          "component": { "token": "opcua-adapter" },
+          "logging": { "level": "INFO" }
+        },
+        "notifyListeners": false,
+        "publishCfg": false
+      }
+    },
+    {
+      "name": "valid-push-replaces-previous-effective",
+      "input": {
+        "previousEffective": {
+          "component": { "token": "opcua-adapter" },
+          "logging": { "level": "INFO" }
+        },
+        "push": {
+          "lineageVersion": 1,
+          "catalogVersion": "enterprise-site-zone-line-v2",
+          "component": "opcua-adapter",
+          "layers": [
+            {
+              "id": "component/opcua-adapter",
+              "kind": "component",
+              "component": "opcua-adapter",
+              "config": {
+                "component": { "token": "opcua-adapter" },
+                "logging": { "level": "WARN" }
+              }
+            }
+          ]
+        }
+      },
+      "expected": {
+        "effective": {
+          "component": { "token": "opcua-adapter" },
+          "logging": { "level": "WARN" }
+        },
+        "notifyListeners": true,
+        "publishCfg": true
+      }
+    }
+  ]
+}
+

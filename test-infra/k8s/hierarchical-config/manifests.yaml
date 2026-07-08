@@ -22,7 +22,7 @@ data:
         }
       },
       "metricEmission": {
-        "namespace": "edgecommons_split"
+        "namespace": "edgecommons_hierarchical"
       },
       "messaging": {
         "local": {
@@ -52,82 +52,130 @@ data:
   catalog.json: |-
     {
       "schemaVersion": 1,
-      "version": "k8s-split-initial",
+      "version": "k8s-hierarchical-initial",
       "provenance": {
         "source": "configmap",
         "uri": "edgecommons-config-component-config/catalog.json"
       },
-      "base": {
-        "logging": {
-          "level": "INFO"
-        },
-        "heartbeat": {
-          "enabled": true,
-          "intervalSecs": 5,
-          "destination": "local",
-          "measures": {
-            "cpu": false,
-            "memory": false,
-            "disk": false,
-            "files": false,
-            "threads": false,
-            "fds": false
+      "hierarchy": {
+        "levels": ["enterprise", "site", "zone", "line", "device"]
+      },
+      "nodes": {
+        "enterprise/acme": {
+          "scope": { "enterprise": "acme" },
+          "config": {
+            "hierarchy": {
+              "levels": ["enterprise", "site", "zone", "line", "device"]
+            },
+            "identity": { "enterprise": "acme" },
+            "logging": { "level": "INFO" },
+            "heartbeat": {
+              "enabled": true,
+              "intervalSecs": 5,
+              "destination": "local",
+              "measures": {
+                "cpu": false,
+                "memory": false,
+                "disk": false,
+                "files": false,
+                "threads": false,
+                "fds": false
+              }
+            },
+            "metricEmission": {
+              "namespace": "edgecommons_hierarchical"
+            },
+            "messaging": {
+              "local": {
+                "type": "mqtt",
+                "host": "edgecommons-emqx",
+                "port": 1883
+              }
+            },
+            "tags": {
+              "lineageMarker": "k8s-hierarchical-initial"
+            }
           }
         },
-        "metricEmission": {
-          "namespace": "edgecommons_split"
+        "site/integration-lab": {
+          "parent": "enterprise/acme",
+          "scope": {
+            "enterprise": "acme",
+            "site": "integration-lab"
+          },
+          "config": { "identity": { "site": "integration-lab" } }
         },
-        "messaging": {
-          "local": {
-            "type": "mqtt",
-            "host": "edgecommons-emqx",
-            "port": 1883
-          }
+        "zone/k8s-zone": {
+          "parent": "site/integration-lab",
+          "scope": {
+            "enterprise": "acme",
+            "site": "integration-lab",
+            "zone": "k8s-zone"
+          },
+          "config": { "identity": { "zone": "k8s-zone" } }
         },
-        "tags": {
-          "sharedLayer": "k8s-split-initial",
-          "site": "integration-lab"
+        "line/line-7": {
+          "parent": "zone/k8s-zone",
+          "scope": {
+            "enterprise": "acme",
+            "site": "integration-lab",
+            "zone": "k8s-zone",
+            "line": "line-7"
+          },
+          "config": { "identity": { "line": "line-7" } }
         }
       },
       "components": {
         "JavaComponentSkeleton": {
-          "component": {
-            "token": "java-component-skeleton",
-            "global": {
-              "publish_interval": 5,
-              "unique_token": "JavaComponentSkeleton"
-            },
-            "instances": []
+          "parent": "line/line-7",
+          "config": {
+            "component": {
+              "token": "java-component-skeleton",
+              "global": {
+                "publish_interval": 5,
+                "unique_token": "JavaComponentSkeleton"
+              },
+              "instances": []
+            }
           }
         },
         "PythonComponentSkeleton": {
-          "component": {
-            "token": "python-component-skeleton",
-            "global": {
-              "publish_interval": 5,
-              "unique_token": "PythonComponentSkeleton"
-            },
-            "instances": []
+          "parent": "line/line-7",
+          "config": {
+            "component": {
+              "token": "python-component-skeleton",
+              "global": {
+                "publish_interval": 5,
+                "unique_token": "PythonComponentSkeleton"
+              },
+              "instances": []
+            }
           }
         },
         "RustComponentSkeleton": {
-          "component": {
-            "token": "rust-component-skeleton",
-            "global": {
-              "publish_interval": 5,
-              "unique_token": "RustComponentSkeleton"
-            },
-            "instances": []
+          "parent": "line/line-7",
+          "config": {
+            "component": {
+              "token": "rust-component-skeleton",
+              "global": {
+                "publish_interval": 5,
+                "unique_token": "RustComponentSkeleton"
+              },
+              "instances": []
+            }
           }
         },
         "TsComponentSkeleton": {
-          "component": {
-            "token": "ts-component-skeleton",
-            "global": {
-              "publish_interval": 5,
-              "unique_token": "TsComponentSkeleton"
-            },
-            "instances": []
+          "parent": "line/line-7",
+          "config": {
+            "component": {
+              "token": "ts-component-skeleton",
+              "global": {
+                "publish_interval": 5,
+                "unique_token": "TsComponentSkeleton"
+              },
+              "instances": []
+            }
           }
         }
       }
@@ -150,83 +198,135 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: edgecommons-split-update-catalog
+  name: edgecommons-hierarchical-update-catalog
 data:
   updated-catalog.json: |-
     {
       "schemaVersion": 1,
-      "version": "k8s-split-updated",
-      "base": {
-        "logging": {
-          "level": "INFO"
-        },
-        "heartbeat": {
-          "enabled": true,
-          "intervalSecs": 5,
-          "destination": "local",
-          "measures": {
-            "cpu": false,
-            "memory": false,
-            "disk": false,
-            "files": false,
-            "threads": false,
-            "fds": false
+      "version": "k8s-hierarchical-updated",
+      "provenance": {
+        "source": "message",
+        "volatile": true
+      },
+      "hierarchy": {
+        "levels": ["enterprise", "site", "zone", "line", "device"]
+      },
+      "nodes": {
+        "enterprise/acme": {
+          "scope": { "enterprise": "acme" },
+          "config": {
+            "hierarchy": {
+              "levels": ["enterprise", "site", "zone", "line", "device"]
+            },
+            "identity": { "enterprise": "acme" },
+            "logging": { "level": "INFO" },
+            "heartbeat": {
+              "enabled": true,
+              "intervalSecs": 5,
+              "destination": "local",
+              "measures": {
+                "cpu": false,
+                "memory": false,
+                "disk": false,
+                "files": false,
+                "threads": false,
+                "fds": false
+              }
+            },
+            "metricEmission": {
+              "namespace": "edgecommons_hierarchical"
+            },
+            "messaging": {
+              "local": {
+                "type": "mqtt",
+                "host": "edgecommons-emqx",
+                "port": 1883
+              }
+            },
+            "tags": {
+              "lineageMarker": "k8s-hierarchical-updated"
+            }
           }
         },
-        "metricEmission": {
-          "namespace": "edgecommons_split"
+        "site/integration-lab": {
+          "parent": "enterprise/acme",
+          "scope": {
+            "enterprise": "acme",
+            "site": "integration-lab"
+          },
+          "config": { "identity": { "site": "integration-lab" } }
         },
-        "messaging": {
-          "local": {
-            "type": "mqtt",
-            "host": "edgecommons-emqx",
-            "port": 1883
-          }
+        "zone/k8s-zone": {
+          "parent": "site/integration-lab",
+          "scope": {
+            "enterprise": "acme",
+            "site": "integration-lab",
+            "zone": "k8s-zone"
+          },
+          "config": { "identity": { "zone": "k8s-zone" } }
         },
-        "tags": {
-          "sharedLayer": "k8s-split-updated",
-          "site": "integration-lab"
+        "line/line-7": {
+          "parent": "zone/k8s-zone",
+          "scope": {
+            "enterprise": "acme",
+            "site": "integration-lab",
+            "zone": "k8s-zone",
+            "line": "line-7"
+          },
+          "config": { "identity": { "line": "line-7" } }
         }
       },
       "components": {
         "JavaComponentSkeleton": {
-          "component": {
-            "token": "java-component-skeleton",
-            "global": {
-              "publish_interval": 1,
-              "unique_token": "JavaComponentSkeleton"
-            },
-            "instances": []
+          "parent": "line/line-7",
+          "config": {
+            "component": {
+              "token": "java-component-skeleton",
+              "global": {
+                "publish_interval": 1,
+                "unique_token": "JavaComponentSkeleton"
+              },
+              "instances": []
+            }
           }
         },
         "PythonComponentSkeleton": {
-          "component": {
-            "token": "python-component-skeleton",
-            "global": {
-              "publish_interval": 1,
-              "unique_token": "PythonComponentSkeleton"
-            },
-            "instances": []
+          "parent": "line/line-7",
+          "config": {
+            "component": {
+              "token": "python-component-skeleton",
+              "global": {
+                "publish_interval": 1,
+                "unique_token": "PythonComponentSkeleton"
+              },
+              "instances": []
+            }
           }
         },
         "RustComponentSkeleton": {
-          "component": {
-            "token": "rust-component-skeleton",
-            "global": {
-              "publish_interval": 1,
-              "unique_token": "RustComponentSkeleton"
-            },
-            "instances": []
+          "parent": "line/line-7",
+          "config": {
+            "component": {
+              "token": "rust-component-skeleton",
+              "global": {
+                "publish_interval": 1,
+                "unique_token": "RustComponentSkeleton"
+              },
+              "instances": []
+            }
           }
         },
         "TsComponentSkeleton": {
-          "component": {
-            "token": "ts-component-skeleton",
-            "global": {
-              "publish_interval": 1,
-              "unique_token": "TsComponentSkeleton"
-            },
-            "instances": []
+          "parent": "line/line-7",
+          "config": {
+            "component": {
+              "token": "ts-component-skeleton",
+              "global": {
+                "publish_interval": 1,
+                "unique_token": "TsComponentSkeleton"
+              },
+              "instances": []
+            }
           }
         }
       }
@@ -238,7 +338,7 @@ metadata:
   name: edgecommons-config-component
   labels:
     app.kubernetes.io/name: edgecommons-config-component
-    app.kubernetes.io/part-of: edgecommons-split-config
+    app.kubernetes.io/part-of: edgecommons-hierarchical-config
 spec:
   replicas: 1
   selector:
@@ -248,7 +348,7 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: edgecommons-config-component
-        app.kubernetes.io/part-of: edgecommons-split-config
+        app.kubernetes.io/part-of: edgecommons-hierarchical-config
     spec:
       automountServiceAccountToken: true
       terminationGracePeriodSeconds: 30
@@ -258,7 +358,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: config-component
-          image: edgecommons-config-component:split-ci
+          image: edgecommons-config-component:hierarchical-ci
           imagePullPolicy: IfNotPresent
           args:
             - "--platform"
@@ -271,10 +371,10 @@ spec:
             - "/etc/edgecommons/config"
             - "config.json"
             - "-t"
-            - "edgecommons-k8s-split"
+            - "edgecommons-k8s-line-7"
           env:
             - name: EDGECOMMONS_THING_NAME
-              value: edgecommons-k8s-split
+              value: edgecommons-k8s-line-7
             - name: POD_NAME
               valueFrom:
                 fieldRef:
@@ -318,7 +418,7 @@ metadata:
   name: edgecommons-java-skeleton
   labels:
     app.kubernetes.io/name: edgecommons-java-skeleton
-    app.kubernetes.io/part-of: edgecommons-split-config
+    app.kubernetes.io/part-of: edgecommons-hierarchical-config
 spec:
   replicas: 1
   selector:
@@ -328,7 +428,7 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: edgecommons-java-skeleton
-        app.kubernetes.io/part-of: edgecommons-split-config
+        app.kubernetes.io/part-of: edgecommons-hierarchical-config
     spec:
       automountServiceAccountToken: true
       terminationGracePeriodSeconds: 30
@@ -338,12 +438,12 @@ spec:
           type: RuntimeDefault
       containers:
         - name: skeleton
-          image: edgecommons-java-skeleton:split-ci
+          image: edgecommons-java-skeleton:hierarchical-ci
           imagePullPolicy: IfNotPresent
-          args: ["--platform", "KUBERNETES", "--transport", "MQTT", "/etc/edgecommons/bootstrap/java-messaging.json", "-c", "CONFIG_COMPONENT", "-t", "edgecommons-k8s-split"]
+          args: ["--platform", "KUBERNETES", "--transport", "MQTT", "/etc/edgecommons/bootstrap/java-messaging.json", "-c", "CONFIG_COMPONENT", "-t", "edgecommons-k8s-line-7"]
           env:
             - name: EDGECOMMONS_THING_NAME
-              value: edgecommons-k8s-split
+              value: edgecommons-k8s-line-7
             - name: POD_NAME
               valueFrom:
                 fieldRef:
@@ -387,7 +487,7 @@ metadata:
   name: edgecommons-python-skeleton
   labels:
     app.kubernetes.io/name: edgecommons-python-skeleton
-    app.kubernetes.io/part-of: edgecommons-split-config
+    app.kubernetes.io/part-of: edgecommons-hierarchical-config
 spec:
   replicas: 1
   selector:
@@ -397,7 +497,7 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: edgecommons-python-skeleton
-        app.kubernetes.io/part-of: edgecommons-split-config
+        app.kubernetes.io/part-of: edgecommons-hierarchical-config
     spec:
       automountServiceAccountToken: true
       terminationGracePeriodSeconds: 30
@@ -407,12 +507,12 @@ spec:
           type: RuntimeDefault
       containers:
         - name: skeleton
-          image: edgecommons-python-skeleton:split-ci
+          image: edgecommons-python-skeleton:hierarchical-ci
           imagePullPolicy: IfNotPresent
-          args: ["--platform", "KUBERNETES", "--transport", "MQTT", "/etc/edgecommons/bootstrap/python-messaging.json", "-c", "CONFIG_COMPONENT", "-t", "edgecommons-k8s-split"]
+          args: ["--platform", "KUBERNETES", "--transport", "MQTT", "/etc/edgecommons/bootstrap/python-messaging.json", "-c", "CONFIG_COMPONENT", "-t", "edgecommons-k8s-line-7"]
           env:
             - name: EDGECOMMONS_THING_NAME
-              value: edgecommons-k8s-split
+              value: edgecommons-k8s-line-7
             - name: POD_NAME
               valueFrom:
                 fieldRef:
@@ -456,7 +556,7 @@ metadata:
   name: edgecommons-rust-skeleton
   labels:
     app.kubernetes.io/name: edgecommons-rust-skeleton
-    app.kubernetes.io/part-of: edgecommons-split-config
+    app.kubernetes.io/part-of: edgecommons-hierarchical-config
 spec:
   replicas: 1
   selector:
@@ -466,7 +566,7 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: edgecommons-rust-skeleton
-        app.kubernetes.io/part-of: edgecommons-split-config
+        app.kubernetes.io/part-of: edgecommons-hierarchical-config
     spec:
       automountServiceAccountToken: true
       terminationGracePeriodSeconds: 30
@@ -476,12 +576,12 @@ spec:
           type: RuntimeDefault
       containers:
         - name: skeleton
-          image: edgecommons-rust-skeleton:split-ci
+          image: edgecommons-rust-skeleton:hierarchical-ci
           imagePullPolicy: IfNotPresent
-          args: ["--platform", "KUBERNETES", "--transport", "MQTT", "/etc/edgecommons/bootstrap/rust-messaging.json", "-c", "CONFIG_COMPONENT", "-t", "edgecommons-k8s-split"]
+          args: ["--platform", "KUBERNETES", "--transport", "MQTT", "/etc/edgecommons/bootstrap/rust-messaging.json", "-c", "CONFIG_COMPONENT", "-t", "edgecommons-k8s-line-7"]
           env:
             - name: EDGECOMMONS_THING_NAME
-              value: edgecommons-k8s-split
+              value: edgecommons-k8s-line-7
             - name: POD_NAME
               valueFrom:
                 fieldRef:
@@ -525,7 +625,7 @@ metadata:
   name: edgecommons-ts-skeleton
   labels:
     app.kubernetes.io/name: edgecommons-ts-skeleton
-    app.kubernetes.io/part-of: edgecommons-split-config
+    app.kubernetes.io/part-of: edgecommons-hierarchical-config
 spec:
   replicas: 1
   selector:
@@ -535,7 +635,7 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: edgecommons-ts-skeleton
-        app.kubernetes.io/part-of: edgecommons-split-config
+        app.kubernetes.io/part-of: edgecommons-hierarchical-config
     spec:
       automountServiceAccountToken: true
       terminationGracePeriodSeconds: 30
@@ -545,12 +645,12 @@ spec:
           type: RuntimeDefault
       containers:
         - name: skeleton
-          image: edgecommons-ts-skeleton:split-ci
+          image: edgecommons-ts-skeleton:hierarchical-ci
           imagePullPolicy: IfNotPresent
-          args: ["--platform", "KUBERNETES", "--transport", "MQTT", "/etc/edgecommons/bootstrap/ts-messaging.json", "-c", "CONFIG_COMPONENT", "-t", "edgecommons-k8s-split"]
+          args: ["--platform", "KUBERNETES", "--transport", "MQTT", "/etc/edgecommons/bootstrap/ts-messaging.json", "-c", "CONFIG_COMPONENT", "-t", "edgecommons-k8s-line-7"]
           env:
             - name: EDGECOMMONS_THING_NAME
-              value: edgecommons-k8s-split
+              value: edgecommons-k8s-line-7
             - name: POD_NAME
               valueFrom:
                 fieldRef:

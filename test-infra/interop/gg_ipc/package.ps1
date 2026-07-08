@@ -192,13 +192,20 @@ $envPrefix = "export EDGECOMMONS_GG_READY_LANGS=python,java,rust,rustpeer,ts`n  
 $pythonLifecycle = @"
       Install:
         Script: |
-          python3 -m venv /tmp/edgecommons-gg-ipc-python-venv
-          /tmp/edgecommons-gg-ipc-python-venv/bin/python -m pip install --upgrade pip
-          /tmp/edgecommons-gg-ipc-python-venv/bin/python -m pip install "{artifacts:decompressedPath}/python/ggpython/libs/python"
+          PY_WORK="/greengrass/v2/work/$($components.python)"
+          PY_SRC="`$PY_WORK/libs-python"
+          PY_VENV="`$PY_WORK/venv"
+          rm -rf "`$PY_SRC" "`$PY_VENV"
+          mkdir -p "`$PY_SRC"
+          cp -R "{artifacts:decompressedPath}/python/ggpython/libs/python/." "`$PY_SRC/"
+          python3 -m venv "`$PY_VENV"
+          "`$PY_VENV/bin/python" -m pip install --upgrade pip
+          "`$PY_VENV/bin/python" -m pip install "`$PY_SRC"
       Run:
         Script: |
           $envPrefix
-          exec env PYTHONPATH="{artifacts:decompressedPath}/python/ggpython/libs/python" /tmp/edgecommons-gg-ipc-python-venv/bin/python -u "{artifacts:decompressedPath}/python/ggpython/python_node.py" gg-binary-matrix "$RunId" "$Langs" "$BinaryHex"
+          PY_WORK="/greengrass/v2/work/$($components.python)"
+          exec env PYTHONPATH="`$PY_WORK/libs-python" "`$PY_WORK/venv/bin/python" -u "{artifacts:decompressedPath}/python/ggpython/python_node.py" gg-binary-matrix "$RunId" "$Langs" "$BinaryHex"
 "@
 
 $javaLifecycle = @"

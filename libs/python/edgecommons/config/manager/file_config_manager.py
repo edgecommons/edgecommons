@@ -6,7 +6,6 @@ from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
 from edgecommons.config.manager.config_manager import ConfigManager
-from edgecommons.config.manager.split_config import BaseLayer, resolve_file_base
 
 logger = logging.getLogger("FileConfigManager")
 
@@ -18,11 +17,8 @@ class FileConfigManager(ConfigManager):
         component_name: str,
         config_file_path: str,
         platform=None,
-        no_shared_config: bool = False,
     ):
-        super().__init__(
-            component_name, thing_name, platform=platform, no_shared_config=no_shared_config
-        )
+        super().__init__(component_name, thing_name, platform=platform)
         self._config_file_path = config_file_path
         self._config_source = f"Config File (file name: {config_file_path})"
         self._config_provider_family = "FILE"
@@ -46,14 +42,8 @@ class FileConfigManager(ConfigManager):
                 f"Unable to open config file at {self._config_file_path}"
             ) from e
 
-    def _resolve_base_layer(self, component_layer: dict) -> BaseLayer:
-        return resolve_file_base(self._config_file_path, component_layer)
-
     def _watch_directories(self) -> list:
-        dirs = {os.path.dirname(os.path.abspath(self._config_file_path))}
-        if self._latest_base_source and os.path.isabs(self._latest_base_source):
-            dirs.add(os.path.dirname(os.path.abspath(self._latest_base_source)))
-        return list(dirs)
+        return [os.path.dirname(os.path.abspath(self._config_file_path))]
 
     def _sync_watch_directories(self) -> None:
         observer = getattr(self, "_observer", None)
@@ -67,17 +57,10 @@ class FileConfigManager(ConfigManager):
             observer.schedule(handler, path=resolved, recursive=False)
             self._watched_dirs.add(resolved)
 
-    def _commit_layers(self, component_layer, base_layer, base_source) -> None:
-        super()._commit_layers(component_layer, base_layer, base_source)
-        self._sync_watch_directories()
-
     def _is_relevant_config_path(self, path: str) -> bool:
         if not path:
             return False
-        candidates = {os.path.abspath(self._config_file_path)}
-        if self._latest_base_source and os.path.isabs(self._latest_base_source):
-            candidates.add(os.path.abspath(self._latest_base_source))
-        return os.path.abspath(path) in candidates
+        return os.path.abspath(path) == os.path.abspath(self._config_file_path)
 
     def close(self) -> None:
         """Stop the file-change observer thread so it does not leak on shutdown."""

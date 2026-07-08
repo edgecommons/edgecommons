@@ -123,5 +123,5 @@ open `trait`/`interface` seams in Rust/TS — a compile error if forgotten (safe
 
 Update each subsystem's `doc/`/`docs/` page and the cross-language design docs, plus the CLAUDE.md
 "Standard CLI contract" section (the `-m` contract changes). New `docs/platform/` (this set) documents the
-platform model and deployment. Every schema edit is the 6-file synced commit. `docs/SHARED_CONFIG.md`
+platform model and deployment. Every schema edit is the 6-file synced commit. `docs/HIERARCHICAL_CONFIG.md`
 (layered config) is the natural place to also document platform/transport layering.

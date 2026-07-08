@@ -17,14 +17,13 @@ The contract is **identical in all four languages** — the same flags, the same
 validation. Only the launcher in front of the flags (`java -jar`, `python3`, the Rust binary,
 `node`) differs.
 
-## The six flags
+## The five flags
 
 | Flag | Values | Default |
 |------|--------|---------|
 | `-c` / `--config <SOURCE> [args...]` | `FILE` \| `CONFIGMAP` \| `ENV` \| `GG_CONFIG` \| `SHADOW` \| `CONFIG_COMPONENT` | from the resolved platform profile |
 | `--platform <PLATFORM>` | `GREENGRASS` \| `HOST` \| `KUBERNETES` \| `auto` | `auto` (auto-detected) |
 | `--transport <TRANSPORT> [path]` | `IPC` \| `MQTT [messaging_config.json]` | derived from the platform |
-| `--no-shared-config` | *(takes no value)* | shared layer resolution enabled |
 | `-t` / `--thing <name>` | IoT Thing name (full string) | resolved from env (see below) |
 | `-h` / `--help` | *(takes no value)* | prints the usage banner and exits 0 |
 
@@ -51,10 +50,6 @@ When `--config` is omitted entirely, the source comes from the resolved platform
 config from a mounted ConfigMap directory with `..data`-swap hot-reload), and `GG_CONFIG` reads from
 the Greengrass deployment. See the [Configuration guide](/guides/configuration/) for what each source
 reads.
-
-`--no-shared-config` disables shared-layer resolution for this process. It wins over any
-`sharedConfig` setting in the component layer and leaves the component layer as the only config
-document before validation.
 
 <Aside type="note">
 On Kubernetes, the same mounted ConfigMap file can serve as **both** the component config and the

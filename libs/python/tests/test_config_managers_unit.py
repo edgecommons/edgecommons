@@ -483,6 +483,33 @@ class TestConfigManagerBuilderDispatch:
 # ----------------------------------------------------------- config component mgr
 
 
+def _lineage_bundle(component, component_config=None):
+    if component_config is None:
+        component_config = {"component": {}}
+    return {
+        "lineageVersion": 1,
+        "catalogVersion": "unit-test-catalog",
+        "component": component,
+        "layers": [
+            {
+                "id": "line/line-7",
+                "kind": "scope",
+                "scope": {"line": "line-7"},
+                "config": {
+                    "hierarchy": {"levels": ["line", "device"]},
+                    "identity": {"line": "line-7"},
+                },
+            },
+            {
+                "id": f"component/{component}",
+                "kind": "component",
+                "component": component,
+                "config": component_config,
+            },
+        ],
+    }
+
+
 class TestConfigComponentManager:
     def test_init_requests_and_subscribes(self, monkeypatch):
         import edgecommons.config.manager.config_component_manager as ccm
@@ -495,7 +522,7 @@ class TestConfigComponentManager:
         )
 
         reply = Message()
-        reply.body = {"component": {"global": {"k": "from-component"}}}
+        reply.body = _lineage_bundle("C", {"component": {"global": {"k": "from-component"}}})
 
         requested = {}
 
@@ -521,7 +548,7 @@ class TestConfigComponentManager:
 
         monkeypatch.setattr(ccm.MessagingClient, "subscribe", staticmethod(lambda t, cb: None))
         reply = Message()
-        reply.body = json.dumps({"component": {"global": {"k": "str-body"}}})
+        reply.body = json.dumps(_lineage_bundle("C", {"component": {"global": {"k": "str-body"}}}))
         monkeypatch.setattr(
             ccm.MessagingClient, "request",
             staticmethod(lambda topic, msg: SimpleNamespace(get=lambda timeout=None: (True, reply))),
@@ -535,7 +562,7 @@ class TestConfigComponentManager:
 
         monkeypatch.setattr(ccm.MessagingClient, "subscribe", staticmethod(lambda t, cb: None))
         reply = Message()
-        reply.body = {"component": {}}
+        reply.body = _lineage_bundle("C")
         monkeypatch.setattr(
             ccm.MessagingClient, "request",
             staticmethod(lambda topic, msg: SimpleNamespace(get=lambda timeout=None: (True, reply))),
@@ -544,6 +571,6 @@ class TestConfigComponentManager:
         mgr.complete_initialization()
 
         update = Message()
-        update.body = {"component": {"global": {"k": "updated"}}}
+        update.body = _lineage_bundle("C", {"component": {"global": {"k": "updated"}}})
         mgr.load_and_apply_config("topic", update)
         assert mgr.get_global_config() == {"k": "updated"}

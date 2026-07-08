@@ -1,0 +1,521 @@
+{
+  "description": "edgecommons CONFIG_COMPONENT lineage bundle conformance vectors",
+  "cases": [
+    {
+      "name": "enterprise-site-zone-line-component",
+      "input": {
+        "requestComponent": "opcua-adapter",
+        "body": {
+          "lineageVersion": 1,
+          "catalogVersion": "enterprise-site-zone-line-v1",
+          "component": "opcua-adapter",
+          "provenance": {
+            "source": "file",
+            "uri": "/etc/edgecommons/catalog.json"
+          },
+          "layers": [
+            {
+              "id": "enterprise/acme",
+              "kind": "scope",
+              "scope": { "enterprise": "acme" },
+              "config": {
+                "hierarchy": {
+                  "levels": ["enterprise", "site", "zone", "line", "device"]
+                },
+                "identity": { "enterprise": "acme" },
+                "logging": { "level": "INFO" }
+              }
+            },
+            {
+              "id": "site/dallas",
+              "kind": "scope",
+              "scope": { "enterprise": "acme", "site": "dallas" },
+              "config": {
+                "identity": { "site": "dallas" },
+                "metricEmission": {
+                  "target": "log",
+                  "namespace": "edgecommons"
+                }
+              }
+            },
+            {
+              "id": "zone/packaging",
+              "kind": "scope",
+              "scope": {
+                "enterprise": "acme",
+                "site": "dallas",
+                "zone": "packaging"
+              },
+              "config": {
+                "identity": { "zone": "packaging" },
+                "tags": { "zoneClass": "packaging" }
+              }
+            },
+            {
+              "id": "line/line-7",
+              "kind": "scope",
+              "scope": {
+                "enterprise": "acme",
+                "site": "dallas",
+                "zone": "packaging",
+                "line": "line-7"
+              },
+              "config": {
+                "identity": { "line": "line-7" },
+                "logging": { "level": "WARN" },
+                "heartbeat": { "intervalSecs": 10 }
+              }
+            },
+            {
+              "id": "component/opcua-adapter",
+              "kind": "component",
+              "component": "opcua-adapter",
+              "config": {
+                "component": {
+                  "token": "opcua-adapter",
+                  "global": {
+                    "endpoint": "opc.tcp://10.10.7.20:4840",
+                    "publish_interval": 3
+                  },
+                  "instances": []
+                },
+                "logging": { "level": "DEBUG" },
+                "tags": { "componentMarker": "opcua" }
+              }
+            }
+          ]
+        }
+      },
+      "expected": {
+        "effective": {
+          "hierarchy": {
+            "levels": ["enterprise", "site", "zone", "line", "device"]
+          },
+          "identity": {
+            "enterprise": "acme",
+            "site": "dallas",
+            "zone": "packaging",
+            "line": "line-7"
+          },
+          "logging": { "level": "DEBUG" },
+          "metricEmission": {
+            "target": "log",
+            "namespace": "edgecommons"
+          },
+          "tags": {
+            "zoneClass": "packaging",
+            "componentMarker": "opcua"
+          },
+          "heartbeat": { "intervalSecs": 10 },
+          "component": {
+            "token": "opcua-adapter",
+            "global": {
+              "endpoint": "opc.tcp://10.10.7.20:4840",
+              "publish_interval": 3
+            },
+            "instances": []
+          }
+        }
+      }
+    },
+    {
+      "name": "component-only-lineage",
+      "input": {
+        "requestComponent": "opcua-adapter",
+        "body": {
+          "lineageVersion": 1,
+          "catalogVersion": "component-only-v1",
+          "component": "opcua-adapter",
+          "layers": [
+            {
+              "id": "component/opcua-adapter",
+              "kind": "component",
+              "component": "opcua-adapter",
+              "config": {
+                "hierarchy": {
+                  "levels": ["enterprise", "site", "zone", "line", "device"]
+                },
+                "identity": {
+                  "enterprise": "acme",
+                  "site": "dallas",
+                  "zone": "packaging",
+                  "line": "line-7"
+                },
+                "component": { "token": "opcua-adapter" }
+              }
+            }
+          ]
+        }
+      },
+      "expected": {
+        "effective": {
+          "hierarchy": {
+            "levels": ["enterprise", "site", "zone", "line", "device"]
+          },
+          "identity": {
+            "enterprise": "acme",
+            "site": "dallas",
+            "zone": "packaging",
+            "line": "line-7"
+          },
+          "component": { "token": "opcua-adapter" }
+        }
+      }
+    },
+    {
+      "name": "structured-error-reply",
+      "input": {
+        "requestComponent": "missing",
+        "body": {
+          "ok": false,
+          "error": {
+            "code": "CONFIG_NOT_FOUND",
+            "message": "No configuration catalog entry for component 'missing'"
+          }
+        }
+      },
+      "expected": { "error": "CONFIG_NOT_FOUND" }
+    },
+    {
+      "name": "old-base-component-bundle-rejected",
+      "input": {
+        "requestComponent": "opcua-adapter",
+        "body": {
+          "base": { "logging": { "level": "INFO" } },
+          "component": { "component": { "token": "opcua-adapter" } }
+        }
+      },
+      "expected": { "error": "LINEAGE_BUNDLE_INVALID" }
+    },
+    {
+      "name": "legacy-component-document-rejected",
+      "input": {
+        "requestComponent": "opcua-adapter",
+        "body": {
+          "logging": { "level": "INFO" },
+          "component": { "token": "opcua-adapter" }
+        }
+      },
+      "expected": { "error": "LINEAGE_BUNDLE_INVALID" }
+    },
+    {
+      "name": "empty-layers-rejected",
+      "input": {
+        "requestComponent": "opcua-adapter",
+        "body": {
+          "lineageVersion": 1,
+          "catalogVersion": "bad",
+          "component": "opcua-adapter",
+          "layers": []
+        }
+      },
+      "expected": { "error": "LINEAGE_BUNDLE_INVALID" }
+    },
+    {
+      "name": "missing-layer-config-rejected",
+      "input": {
+        "requestComponent": "opcua-adapter",
+        "body": {
+          "lineageVersion": 1,
+          "catalogVersion": "bad",
+          "component": "opcua-adapter",
+          "layers": [
+            {
+              "id": "component/opcua-adapter",
+              "kind": "component",
+              "component": "opcua-adapter"
+            }
+          ]
+        }
+      },
+      "expected": { "error": "LINEAGE_BUNDLE_INVALID" }
+    },
+    {
+      "name": "non-object-layer-config-rejected",
+      "input": {
+        "requestComponent": "opcua-adapter",
+        "body": {
+          "lineageVersion": 1,
+          "catalogVersion": "bad",
+          "component": "opcua-adapter",
+          "layers": [
+            {
+              "id": "component/opcua-adapter",
+              "kind": "component",
+              "component": "opcua-adapter",
+              "config": "bad"
+            }
+          ]
+        }
+      },
+      "expected": { "error": "LINEAGE_BUNDLE_INVALID" }
+    },
+    {
+      "name": "missing-layer-id-rejected",
+      "input": {
+        "requestComponent": "opcua-adapter",
+        "body": {
+          "lineageVersion": 1,
+          "catalogVersion": "bad",
+          "component": "opcua-adapter",
+          "layers": [
+            {
+              "kind": "component",
+              "component": "opcua-adapter",
+              "config": { "component": { "token": "opcua-adapter" } }
+            }
+          ]
+        }
+      },
+      "expected": { "error": "LINEAGE_BUNDLE_INVALID" }
+    },
+    {
+      "name": "missing-layer-kind-rejected",
+      "input": {
+        "requestComponent": "opcua-adapter",
+        "body": {
+          "lineageVersion": 1,
+          "catalogVersion": "bad",
+          "component": "opcua-adapter",
+          "layers": [
+            {
+              "id": "component/opcua-adapter",
+              "component": "opcua-adapter",
+              "config": { "component": { "token": "opcua-adapter" } }
+            }
+          ]
+        }
+      },
+      "expected": { "error": "LINEAGE_BUNDLE_INVALID" }
+    },
+    {
+      "name": "invalid-layer-kind-rejected",
+      "input": {
+        "requestComponent": "opcua-adapter",
+        "body": {
+          "lineageVersion": 1,
+          "catalogVersion": "bad",
+          "component": "opcua-adapter",
+          "layers": [
+            {
+              "id": "line/line-7",
+              "kind": "node",
+              "scope": { "line": "line-7" },
+              "config": { "identity": { "line": "line-7" } }
+            },
+            {
+              "id": "component/opcua-adapter",
+              "kind": "component",
+              "component": "opcua-adapter",
+              "config": { "component": { "token": "opcua-adapter" } }
+            }
+          ]
+        }
+      },
+      "expected": { "error": "LINEAGE_BUNDLE_INVALID" }
+    },
+    {
+      "name": "scope-layer-missing-scope-rejected",
+      "input": {
+        "requestComponent": "opcua-adapter",
+        "body": {
+          "lineageVersion": 1,
+          "catalogVersion": "bad",
+          "component": "opcua-adapter",
+          "layers": [
+            {
+              "id": "line/line-7",
+              "kind": "scope",
+              "config": { "identity": { "line": "line-7" } }
+            },
+            {
+              "id": "component/opcua-adapter",
+              "kind": "component",
+              "component": "opcua-adapter",
+              "config": { "component": { "token": "opcua-adapter" } }
+            }
+          ]
+        }
+      },
+      "expected": { "error": "LINEAGE_BUNDLE_INVALID" }
+    },
+    {
+      "name": "component-layer-not-final-rejected",
+      "input": {
+        "requestComponent": "opcua-adapter",
+        "body": {
+          "lineageVersion": 1,
+          "catalogVersion": "bad",
+          "component": "opcua-adapter",
+          "layers": [
+            {
+              "id": "component/opcua-adapter",
+              "kind": "component",
+              "component": "opcua-adapter",
+              "config": { "component": { "token": "opcua-adapter" } }
+            },
+            {
+              "id": "line/line-7",
+              "kind": "scope",
+              "scope": { "line": "line-7" },
+              "config": { "identity": { "line": "line-7" } }
+            }
+          ]
+        }
+      },
+      "expected": { "error": "LINEAGE_BUNDLE_INVALID" }
+    },
+    {
+      "name": "multiple-component-layers-rejected",
+      "input": {
+        "requestComponent": "opcua-adapter",
+        "body": {
+          "lineageVersion": 1,
+          "catalogVersion": "bad",
+          "component": "opcua-adapter",
+          "layers": [
+            {
+              "id": "component/opcua-adapter",
+              "kind": "component",
+              "component": "opcua-adapter",
+              "config": { "component": { "token": "opcua-adapter" } }
+            },
+            {
+              "id": "component/opcua-adapter-shadow",
+              "kind": "component",
+              "component": "opcua-adapter",
+              "config": { "tags": { "duplicate": "true" } }
+            }
+          ]
+        }
+      },
+      "expected": { "error": "LINEAGE_BUNDLE_INVALID" }
+    },
+    {
+      "name": "component-layer-token-mismatch-rejected",
+      "input": {
+        "requestComponent": "opcua-adapter",
+        "body": {
+          "lineageVersion": 1,
+          "catalogVersion": "bad",
+          "component": "opcua-adapter",
+          "layers": [
+            {
+              "id": "component/modbus-adapter",
+              "kind": "component",
+              "component": "modbus-adapter",
+              "config": { "component": { "token": "modbus-adapter" } }
+            }
+          ]
+        }
+      },
+      "expected": { "error": "LINEAGE_BUNDLE_INVALID" }
+    },
+    {
+      "name": "unsupported-lineage-version-rejected",
+      "input": {
+        "requestComponent": "opcua-adapter",
+        "body": {
+          "lineageVersion": 2,
+          "catalogVersion": "bad",
+          "component": "opcua-adapter",
+          "layers": [
+            {
+              "id": "component/opcua-adapter",
+              "kind": "component",
+              "component": "opcua-adapter",
+              "config": { "component": { "token": "opcua-adapter" } }
+            }
+          ]
+        }
+      },
+      "expected": { "error": "LINEAGE_BUNDLE_INVALID" }
+    },
+    {
+      "name": "component-lookup-mismatch-rejected",
+      "input": {
+        "requestComponent": "opcua-adapter",
+        "body": {
+          "lineageVersion": 1,
+          "catalogVersion": "bad",
+          "component": "modbus-adapter",
+          "layers": [
+            {
+              "id": "component/modbus-adapter",
+              "kind": "component",
+              "component": "modbus-adapter",
+              "config": { "component": { "token": "modbus-adapter" } }
+            }
+          ]
+        }
+      },
+      "expected": { "error": "LINEAGE_BUNDLE_INVALID" }
+    },
+    {
+      "name": "scope-conflict-rejected",
+      "input": {
+        "requestComponent": "opcua-adapter",
+        "body": {
+          "lineageVersion": 1,
+          "catalogVersion": "bad",
+          "component": "opcua-adapter",
+          "layers": [
+            {
+              "id": "enterprise/acme",
+              "kind": "scope",
+              "scope": { "enterprise": "acme" },
+              "config": { "identity": { "enterprise": "acme" } }
+            },
+            {
+              "id": "site/dallas",
+              "kind": "scope",
+              "scope": { "enterprise": "contoso", "site": "dallas" },
+              "config": { "identity": { "site": "dallas" } }
+            },
+            {
+              "id": "component/opcua-adapter",
+              "kind": "component",
+              "component": "opcua-adapter",
+              "config": { "component": { "token": "opcua-adapter" } }
+            }
+          ]
+        }
+      },
+      "expected": { "error": "LINEAGE_SCOPE_CONFLICT" }
+    },
+    {
+      "name": "identity-conflict-rejected",
+      "input": {
+        "requestComponent": "opcua-adapter",
+        "body": {
+          "lineageVersion": 1,
+          "catalogVersion": "bad",
+          "component": "opcua-adapter",
+          "layers": [
+            {
+              "id": "site/dallas",
+              "kind": "scope",
+              "scope": { "site": "dallas" },
+              "config": { "identity": { "site": "dallas" } }
+            },
+            {
+              "id": "zone/packaging",
+              "kind": "scope",
+              "scope": { "site": "dallas", "zone": "packaging" },
+              "config": {
+                "identity": { "site": "austin", "zone": "packaging" }
+              }
+            },
+            {
+              "id": "component/opcua-adapter",
+              "kind": "component",
+              "component": "opcua-adapter",
+              "config": { "component": { "token": "opcua-adapter" } }
+            }
+          ]
+        }
+      },
+      "expected": { "error": "LINEAGE_IDENTITY_CONFLICT" }
+    }
+  ]
+}

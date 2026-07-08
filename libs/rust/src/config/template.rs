@@ -1,7 +1,8 @@
 //! # Configuration — template substitution
 //!
 //! **One-liner purpose**: Resolve `{ThingName}`, `{ComponentName}`,
-//! `{ComponentFullName}`, and any `tags` key inside config strings.
+//! `{ComponentFullName}`, hierarchy identity level names, and any `tags` key
+//! inside config strings.
 //!
 //! ## Overview
 //! Used to expand placeholders in values such as log file paths and MQTT topics,
@@ -23,12 +24,12 @@
 //!
 //! ## Design Choices
 //! Simple `String::replace` passes. The **substituted values** (thing name,
-//! component name, tag values) are sanitized before insertion so a hostile value
-//! cannot inject path traversal (`..`, `/`, `\`) or MQTT topic wildcards (`+`, `#`)
-//! into a resolved file path or topic — closing the Java path-traversal /
-//! topic-injection concern (review M15). The template literal itself is left
-//! intact, so legitimate separators in the template (e.g. `a/{ThingName}/b`) are
-//! preserved.
+//! component name, hierarchy identity values, tag values) are sanitized before
+//! insertion so a hostile value cannot inject path traversal (`..`, `/`, `\`) or
+//! MQTT topic wildcards (`+`, `#`) into a resolved file path or topic — closing
+//! the Java path-traversal / topic-injection concern (review M15). The template
+//! literal itself is left intact, so legitimate separators in the template (e.g.
+//! `a/{ThingName}/b`) are preserved.
 //!
 //! ## Safety & Panics
 //! None.
@@ -56,12 +57,32 @@ pub fn resolve(config: &Config, template: &str) -> String {
         .replace("{ComponentFullName}", &sanitize(&config.component_name))
         .replace("{ComponentName}", &sanitize(short_name));
 
+    for entry in config.identity().hier() {
+        if is_builtin_symbol(&entry.level) {
+            continue;
+        }
+        out = out.replace(&format!("{{{}}}", entry.level), &sanitize(&entry.value));
+    }
+
     for (key, value) in &config.parsed.tags {
+        if is_builtin_symbol(key)
+            || config
+                .identity()
+                .hier()
+                .iter()
+                .any(|entry| entry.level == key.as_str())
+        {
+            continue;
+        }
         if let Some(s) = value.as_str() {
             out = out.replace(&format!("{{{key}}}"), &sanitize(s));
         }
     }
     out
+}
+
+fn is_builtin_symbol(symbol: &str) -> bool {
+    matches!(symbol, "ThingName" | "ComponentName" | "ComponentFullName")
 }
 
 /// Neutralize characters in a substituted value that are dangerous in a file path
@@ -131,8 +152,83 @@ mod tests {
 
     #[test]
     fn leaves_unknown_placeholders_untouched() {
-        let cfg = Config::from_value("c", "t", json!({})).unwrap();
-        assert_eq!(resolve(&cfg, "{Unknown}"), "{Unknown}");
+        let cfg = Config::from_value(
+            "c",
+            "t",
+            json!({
+                "hierarchy": { "levels": ["site", "device"] },
+                "identity": { "site": "factory-1" }
+            }),
+        )
+        .unwrap();
+        assert_eq!(resolve(&cfg, "{Unknown}/{site}"), "{Unknown}/factory-1");
+    }
+
+    #[test]
+    fn substitutes_hierarchy_identity_names_without_tags() {
+        let cfg = Config::from_value(
+            "com.example.MyComponent",
+            "gw-01",
+            json!({
+                "hierarchy": { "levels": ["site", "line", "device"] },
+                "identity": {
+                    "site": "factory/1",
+                    "line": "line+2"
+                }
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(
+            resolve(&cfg, "{site}/{line}/{device}/{ThingName}"),
+            "factory_1/line_2/gw-01/gw-01"
+        );
+    }
+
+    #[test]
+    fn identity_placeholders_win_over_tags() {
+        let cfg = Config::from_value(
+            "com.example.MyComponent",
+            "gw-01",
+            json!({
+                "hierarchy": { "levels": ["site", "device"] },
+                "identity": { "site": "identity-site" },
+                "tags": {
+                    "site": "tag-site",
+                    "device": "tag-device",
+                    "zone": "tag-zone"
+                }
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(
+            resolve(&cfg, "{site}/{device}/{zone}"),
+            "identity-site/gw-01/tag-zone"
+        );
+    }
+
+    #[test]
+    fn builtins_win_over_identity_and_tags_with_same_symbol() {
+        let cfg = Config::from_value(
+            "com.example.MyComponent",
+            "gw-01",
+            json!({
+                "hierarchy": { "levels": ["ThingName", "device"] },
+                "identity": { "ThingName": "identity-thing" },
+                "tags": {
+                    "ThingName": "tag-thing",
+                    "ComponentName": "tag-component",
+                    "ComponentFullName": "tag-full"
+                }
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(
+            resolve(&cfg, "{ThingName}/{ComponentName}/{ComponentFullName}"),
+            "gw-01/MyComponent/com.example.MyComponent"
+        );
     }
 
     #[test]
