@@ -49,8 +49,17 @@ jobs:
       - name: Create kind cluster
         uses: helm/kind-action@v1
         with:
+          version: v0.31.0
+          kubectl_version: v1.35.0
           cluster_name: edgecommons
           config: test-infra/k8s/kind-config.yaml
+          wait: 120s
+
+      - name: Show cluster tool versions
+        run: |
+          kind version
+          kubectl version --client=true
+          docker version
 
       - name: Load the component image into kind
         run: kind load docker-image edgecommons-component:ci --name edgecommons

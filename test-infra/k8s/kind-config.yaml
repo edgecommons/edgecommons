@@ -10,7 +10,10 @@ apiVersion: kind.x-k8s.io/v1alpha4
 name: edgecommons
 nodes:
   - role: control-plane
-    image: kindest/node:v1.36.1
+    # Do not pin a bleeding-edge node image here. kind's image-loading path must understand the
+    # node image's containerd config format; Kubernetes 1.36 node images use containerd config v4,
+    # which currently breaks `kind load docker-image` on GitHub runners before the smoke can run.
+    # Let the pinned kind binary choose its compatible default node image.
     # Make ConfigMap→volume propagation fast and deterministic for the ..data hot-reload
     # test. The kubelet refreshes a mounted ConfigMap on its sync loop; at the 1m default
     # `syncFrequency` (+ cache TTL) a patched ConfigMap can take minutes to reach the pod —

@@ -394,7 +394,7 @@ fn merge_bundle_candidate(bundle: LayerBundle, no_shared_config: bool) -> Result
     let enabled = shared_config_enabled(&bundle.component, no_shared_config)?;
     if !enabled {
         tracing::info!("split-config shared layer disabled");
-        let effective = deep_merge(&[bundle.component.clone()]);
+        let effective = deep_merge(std::slice::from_ref(&bundle.component));
         return Ok(EffectiveLayers {
             effective,
             component: bundle.component,
@@ -414,7 +414,7 @@ fn merge_bundle_candidate(bundle: LayerBundle, no_shared_config: bool) -> Result
         }
         None => {
             tracing::info!("split-config shared layer absent");
-            let effective = deep_merge(&[bundle.component.clone()]);
+            let effective = deep_merge(std::slice::from_ref(&bundle.component));
             Ok(EffectiveLayers {
                 effective,
                 component: bundle.component,
@@ -615,7 +615,7 @@ fn validate_shared_config_control(component: &Value) -> Result<()> {
         }
     }
     if let Some(value) = component.get("extends") {
-        if !value.as_str().is_some_and(|value| !value.is_empty()) {
+        if value.as_str().is_none_or(|value| value.is_empty()) {
             return Err(EdgeCommonsError::Config(
                 "extends must be a non-empty string when present".to_string(),
             ));
