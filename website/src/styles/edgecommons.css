@@ -1,0 +1,56 @@
+/*
+ * EdgeCommons brand applied to Starlight.
+ *
+ * Starlight inverts `white` and `black` per theme and derives text, backgrounds, and hairlines
+ * from a gray ramp plus an accent triplet — so overriding those roots is enough to rebrand the
+ * whole site. The ramp sits on the Night Iris hue rather than Starlight's default blue.
+ *
+ * Dark is Starlight's `:root` default; light is `[data-theme='light']`. That is the same
+ * attribute the brand tokens key their own palette off, so the two stay in step automatically.
+ */
+
+:root {
+  --sl-font: var(--ec-font-sans);
+  --sl-font-mono: var(--ec-font-mono);
+
+  /* Dark: the page is Night Iris, ink is Paper. */
+  --sl-color-white: var(--ec-paper);
+  --sl-color-gray-1: #edeef5;
+  --sl-color-gray-2: #cfd0de;
+  --sl-color-gray-3: #9b9cb1;
+  --sl-color-gray-4: #6e6f86;
+  --sl-color-gray-5: #4a4b60;
+  --sl-color-gray-6: #343448;
+  --sl-color-gray-7: #2b2c3f;
+  --sl-color-black: var(--ec-night-iris);
+
+  /* Iris Deep is 1.61:1 on Night Iris — the dark accent is a lifted step of the same hue. */
+  --sl-color-accent-low: var(--ec-night-iris);
+  --sl-color-accent: #9ca1e4;
+  --sl-color-accent-high: #b5baff;
+}
+
+:root[data-theme="light"] {
+  /* Light: the page is Paper, ink is Night Iris. The ramp reverses. */
+  --sl-color-white: var(--ec-night-iris);
+  --sl-color-gray-1: #2b2c3f;
+  --sl-color-gray-2: #3f4055;
+  --sl-color-gray-3: #66677a;
+  --sl-color-gray-4: #8f90a3;
+  --sl-color-gray-5: #c2c3d1;
+  --sl-color-gray-6: #e7e7ef;
+  --sl-color-gray-7: #f3f3f7;
+  --sl-color-black: var(--ec-paper);
+
+  --sl-color-accent-low: #dbdcf2;
+  --sl-color-accent: var(--ec-iris-deep);
+  --sl-color-accent-high: var(--ec-night-iris);
+}
+
+/* Source Copper is the authored-logic accent; it marks the active page and nothing else. */
+.sidebar-content a[aria-current="page"],
+.sidebar-content a[aria-current="page"]:hover {
+  color: var(--ec-color-accent-text);
+  background-color: transparent;
+  box-shadow: inset 3px 0 0 var(--ec-source-copper);
+}

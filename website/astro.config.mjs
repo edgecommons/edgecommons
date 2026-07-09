@@ -15,6 +15,11 @@ export default defineConfig({
 			// Fails the build on broken internal links / heading anchors — guards against the
 			// stale-slug class of bug (e.g. the old /reference/configuration/ links).
 			plugins: [starlightLinksValidator()],
+			// Brand tokens first; the second file maps them onto Starlight's own variables.
+			customCss: [
+				'./src/styles/edgecommons-tokens.css',
+				'./src/styles/edgecommons.css',
+			],
 			title: 'EdgeCommons',
 			description:
 				'EdgeCommons — one library in four languages (Java, Python, Rust, TypeScript) for building edge components that run on AWS IoT Greengrass, Docker, or Kubernetes.',
